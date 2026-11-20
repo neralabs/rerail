@@ -25,6 +25,416 @@ use std::path::{Path, PathBuf};
 
 
 
+/// JSON in simdjson's structure (`json_parser/json-simdjson.bitlex`, page 40), compiled.
+fn simdjson_form() -> Compiled {
+    let source = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../json_parser/json-simdjson.bitlex")).expect("reads");
+    compile_step("json-simdjson", &source)
+}
+
+/// Page 40, stage 1: the simdjson form's tier 1 records a token where simdjson's stage 1 writes a
+/// structural index, and nowhere else: its starts are simdjson's indexes, by count and by hash
+/// (`fixtures/simdjson-stage1/expected.txt`, from `stage1_indexes.cpp`), on each file there.
+#[test]
+fn simdjson_forms_starts_are_simdjsons_indexes() {
+    let c = simdjson_form();
+    let block = &c.program.block_programs[0];
+    let r = block.records.as_ref().expect("records");
+    assert!(r.skip.is_none(), "tier 1 is the block of masks, not a token loop");
+    // Tier 2 makes the records (`Records::fetched_in_tier2`): the CPU's tier 1 has no record
+    // pass, and writes the starts alone, as simdjson's `bit_indexer::write`.
+    assert!(r.fetched_in_tier2(), "tier 2 makes the records");
+    assert!(c.parser.tier1.records.is_none(), "the CPU's tier 1 has no record pass");
+    // Tier 2's tape is sized from the input once, as simdjson's: no room check a token.
+    assert!(!c.parser.tier2.room_checked(), "no room check a token");
+    // The scan for a string's next part only in the string loops, as simdjson's `parse_string`
+    // only where a string is read: the `TOKEN`s whose switch takes the escapes.
+    let native = rerail_compiler::native_ir::lower(&c.program, 0, 0).expect("lowers");
+    let escapes: Vec<u16> = (0..9).collect();
+    let loops: Vec<usize> = (0..native.structural.len())
+        .filter(|&pc| matches!(native.structural[pc].operation, rerail_compiler::native_ir::StructuralOperation::Token { .. }))
+        .filter(|&pc| match native.structural.get(pc + 1).map(|w| w.operation) {
+            Some(rerail_compiler::native_ir::StructuralOperation::Switch { table }) => escapes.iter().all(|&e| native.switches[usize::from(table)].word(e).is_some()),
+            _ => false,
+        })
+        .collect();
+    assert!(!loops.is_empty(), "the string loops");
+    assert_eq!(c.parser.tier2.part_scans, loops, "the part scan in the string loops alone");
+    // Each part branches once, as `parse_string`'s: the scan's outcome goes straight to the place
+    // the switch after would take it to, not back through the token's path and the switch.
+    assert_eq!(c.parser.tier2.part_onward, loops, "every string loop's parts go straight on");
+    // A number is read once, as `parse_number` reads it: its check (over the token's bytes
+    // alone) made in the switch's edge that finds its end, from the one read of its bytes.
+    let number_checks: Vec<usize> = (0..native.structural.len())
+        .filter(|&pc| match native.structural[pc].operation {
+            rerail_compiler::native_ir::StructuralOperation::Check { check } => {
+                let lc = &native.local_checks[usize::from(check)];
+                lc.token && lc.back == 0
+            }
+            _ => false,
+        })
+        .collect();
+    assert!(!number_checks.is_empty(), "the numbers' checks");
+    // At a check after a number's run: made there. At one after an atom (a keyword of the row):
+    // decided by the atom's bytes as tier 2 compiles. Every check over a token's bytes is one.
+    let mut either: Vec<usize> = c.parser.tier2.fused_checks.iter().chain(&c.parser.tier2.static_checks).copied().collect();
+    either.sort_unstable();
+    either.dedup();
+    assert_eq!(either, number_checks, "every check of a number's row made where its token is found");
+    assert!(!c.parser.tier2.fused_checks.is_empty() && !c.parser.tier2.static_checks.is_empty(), "both: {:?}, {:?}", c.parser.tier2.fused_checks, c.parser.tier2.static_checks);
+    // The loop's state in registers, as simdjson's `src` and `next_structural`: no word of the
+    // string loops or the continue states (the `TOKEN`s whose switch takes the `,` and no
+    // escape) reads or writes the frame. Their cold calls keep the caller's registers
+    // (`preserve_most`), and `ctx`'s fields are read from the pinned register in place.
+    #[cfg(target_arch = "aarch64")]
+    {
+        use rerail_compiler::native_ir::StructuralOperation;
+        let continues = (0..native.structural.len()).filter(|&pc| matches!(native.structural[pc].operation, StructuralOperation::Token { .. })).filter(|&pc| match native.structural.get(pc + 1).map(|w| w.operation) {
+            Some(StructuralOperation::Switch { table }) => native.switches[usize::from(table)].word(14).is_some() && native.switches[usize::from(table)].word(0).is_none(),
+            _ => false,
+        });
+        let hot: Vec<u32> = loops.iter().copied().chain(continues).flat_map(|pc| [pc as u32, pc as u32 + 1]).collect();
+        assert!(hot.len() > loops.len() * 2, "the continue states");
+        let t2 = &c.parser.tier2;
+        for &(pc, from, to) in t2.word_ranges.iter().filter(|r| hot.contains(&r.0)) {
+            for at in (from as usize..to as usize).step_by(4) {
+                let w = u32::from_le_bytes(t2.code_bytes[at..at + 4].try_into().unwrap());
+                // A load or store (op0 `x1x0`), not a literal load (no base), with `sp` its base.
+                let on_frame = (w >> 25) & 0b101 == 0b100 && (w >> 24) & 0x3b != 0x18 && (w >> 5) & 31 == 31;
+                assert!(!on_frame, "word {pc} reads or writes the frame at {at:#x}: {w:#010x}");
+            }
+        }
+    }
+    // Nor a row of what tier 2 reads from the bytes (the run's mask, the string's quote), or
+    // not at all: the string's escape part, as tier 2 reads a string as simdjson's
+    // `parse_string` does (first quote or backslash), with no escape carry.
+    let unstored = rerail_compiler::block_native::BlockNative::lower(block).cpu_unstored();
+    let read: Vec<usize> = r
+        .rules
+        .iter()
+        .filter_map(|x| match *x {
+            rerail_compiler::records::EndRule::Run(o) => Some(usize::from(o)),
+            _ => None,
+        })
+        .chain(r.readers.iter().flat_map(|rd| rd.arms.iter().map(|a| usize::from(a.closer)).chain(rd.parts.iter().map(|p| usize::from(p.start)))))
+        .collect();
+    assert!(!read.is_empty() && read.iter().all(|o| unstored.contains(o)), "the CPU's tier 1 stores no row tier 2 makes from the bytes: {read:?} against {unstored:?}");
+    for line in crate::block_tests::STAGE1_EXPECTED.lines() {
+        let f: Vec<&str> = line.split_whitespace().collect();
+        let (path, len, n, hash) = (f[0], f[1].parse::<usize>().unwrap(), f[2].parse::<usize>().unwrap(), u64::from_str_radix(f[3], 16).unwrap());
+        if len > 200_000 {
+            continue;
+        }
+        let bytes = crate::block_tests::repo_file(path);
+        let run = block.run(&bytes);
+        // A file stage 1's edges hold need not be valid JSON: its starts are compared all the same.
+        eprintln!("{path}: tier 1 {}", if run.totals.iter().any(|&t| t != 0) { "refuses it" } else { "accepts it" });
+        let starts = &run.positions[usize::from(r.starts)];
+        assert_eq!((starts.len(), crate::block_tests::fnv(starts)), (n, hash), "{path}: tier 1's starts against simdjson's indexes");
+        let cpu = c.parser.tier1.run_files(&[&bytes]).remove(0);
+        let cpu_starts = &cpu.positions[usize::from(r.starts)];
+        assert_eq!((cpu_starts.len(), crate::block_tests::fnv(cpu_starts)), (n, hash), "{path}: the CPU's tier 1's starts against simdjson's indexes");
+        assert!(cpu.positions[usize::from(r.lasts)].is_empty() && cpu.codes.is_empty(), "{path}: the CPU's tier 1 writes no lasts and no codes");
+    }
+}
+
+/// Page 40, stage 2: the simdjson form's trees are `14-json`'s, by the interpreter and by
+/// Cranelift, though its tier 1 records only simdjson's structurals and tier 2 reads each
+/// string's parts. Strings with escapes at every offset of a block's edge, invalid documents,
+/// and the corpus (`RERAIL_JSON_CORPUS`, where set).
+#[test]
+fn simdjson_forms_trees_are_14_jsons() {
+    let (sj, j14) = (simdjson_form(), form("14-json"));
+    let inputs = tree_inputs();
+    let (mut parsed, mut refused) = (0, 0);
+    for (k, f) in inputs.iter().enumerate() {
+        let show = || String::from_utf8_lossy(&f[..f.len().min(80)]).into_owned();
+        let want = ours(&j14, f);
+        let by_interp = stream::run(&sj.program, f, &sj.program.block_programs[0].run(f)).ok().map(|n| n.iter().map(|x| (x.kind, x.start, x.end)).collect::<Vec<_>>());
+        let want_interp = stream::run(&j14.program, f, &j14.program.block_programs[0].run(f)).ok().map(|n| n.iter().map(|x| (x.kind, x.start, x.end)).collect::<Vec<_>>());
+        assert_eq!(by_interp.is_some(), want_interp.is_some(), "file {k} ({:?}): the interpreter's verdict", show());
+        assert_eq!(ours(&sj, f), want, "file {k} ({:?}): Cranelift's nodes", show());
+        if want.is_some() { parsed += 1 } else { refused += 1 }
+    }
+    eprintln!("{} files: {parsed} parsed, {refused} refused, by both forms alike", inputs.len());
+}
+
+/// Each dispatch's arm (`'bX: loop { match d { … } }`, its top level) that is only `d = M;
+/// continue 'bX;`, back into its own loop, in generated Rust whose comments hold no braces.
+#[cfg(target_arch = "aarch64")]
+fn dispatch_resets(src: &str) -> Vec<String> {
+    let lines: Vec<&str> = src.lines().filter(|l| !l.trim_start().starts_with("//")).collect();
+    let mut out = Vec::new();
+    for (i, l) in lines.iter().enumerate() {
+        let Some(b) = l.strip_prefix("'b").and_then(|r| r.strip_suffix(": loop {")) else { continue };
+        let Some(m) = lines[i + 1..].iter().position(|l| !l.starts_with("'m")).map(|k| i + 1 + k).filter(|&k| lines[k] == "match d {") else { continue };
+        let own = format!("continue 'b{b}; }}");
+        let mut depth = 1i64;
+        for l in &lines[m + 1..] {
+            let arm = l.split_once(" => { d = ").filter(|(a, _)| a.parse::<u32>().is_ok());
+            if depth == 1 && arm.is_some_and(|(_, rest)| rest.split_once("; ").is_some_and(|(n, tail)| n.parse::<u32>().is_ok() && tail == own)) {
+                out.push(format!("'b{b}: {l}"));
+            }
+            depth += l.matches('{').count() as i64 - l.matches('}').count() as i64;
+            if depth <= 0 {
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// The trees test's files: the made-up cases, then the corpus (`RERAIL_JSON_CORPUS`) where set.
+fn tree_inputs() -> Vec<Vec<u8>> {
+    let mut inputs: Vec<Vec<u8>> = vec![
+        br#"{"a": [1, -2.5e3, true, null], "b\n": {"c": "dAx"}}"#.to_vec(),
+        br#"["", "\\", "a\"b", "\\\"", "x", "\n\t", "true", "\u00e9\ud83d\ude00"]"#.to_vec(),
+        br#""open"#.to_vec(),
+        br#"["\q"]"#.to_vec(),
+        br#"[1 2]"#.to_vec(),
+        br#"{"a" 1}"#.to_vec(),
+        br#"[tru]"#.to_vec(),
+        br#"[01]"#.to_vec(),
+        br#"  "s"  "#.to_vec(),
+        b"\xef\xbb\xbf[1]".to_vec(),
+        // Atoms as simdjson tests them (page 40, step 3): at the file's end, a run longer than
+        // the word, a word cut short, before a structural and before whitespace.
+        br#"true"#.to_vec(),
+        br#"null"#.to_vec(),
+        br#"[truex]"#.to_vec(),
+        br#"[nul]"#.to_vec(),
+        br#"{"k":false,"t":true}"#.to_vec(),
+        br#"[null ,true	]"#.to_vec(),
+        br#"["\u0041true", "null\n", "fals"]"#.to_vec(),
+        // A continue state takes only its punctuation (`,` and `]`, or `,` and `}`), each
+        // straight to its target; every other token there is refused at once.
+        br#"[1 true]"#.to_vec(),
+        br#"[1 "x"]"#.to_vec(),
+        br#"[1 {}]"#.to_vec(),
+        br#"[1,]"#.to_vec(),
+        br#"[1:2]"#.to_vec(),
+        br#"{"a":1 true}"#.to_vec(),
+        br#"{"a":1,}"#.to_vec(),
+        br#"{"a":1]"#.to_vec(),
+        br#"{"a",1}"#.to_vec(),
+        br#"{"a":[1}"#.to_vec(),
+        br#"[[],{},[1,{"b":[]}]]"#.to_vec(),
+        br#"[] x"#.to_vec(),
+        // A number checked in the pass that finds its end (step 12): each value place, good and
+        // bad, at the file's end, and longer than the 16 bytes read at once.
+        br#"[1.]"#.to_vec(),
+        br#"[-]"#.to_vec(),
+        br#"[1e]"#.to_vec(),
+        br#"[1.5e+]"#.to_vec(),
+        br#"[1x,2]"#.to_vec(),
+        br#"[-0.25e-7,0,-0,1E+2]"#.to_vec(),
+        br#"{"a":01}"#.to_vec(),
+        br#"{"a":-1.5E3,"b":2}"#.to_vec(),
+        br#"-12"#.to_vec(),
+        br#"1."#.to_vec(),
+        br#"[123456789012345]"#.to_vec(),
+        br#"[1234567890123456,12345678901234567]"#.to_vec(),
+        br#"[1.234567890123456e+10]"#.to_vec(),
+        br#"[1.23456789012345.6]"#.to_vec(),
+        // `\u` escapes that fail its checks, beside the other escapes, which skip them.
+        br#"["\u12g4"]"#.to_vec(),
+        br#"["\ud800"]"#.to_vec(),
+        br#"["\ud800\u0041"]"#.to_vec(),
+        br#"["\n\ud83d\ude00\t", "\u004"]"#.to_vec(),
+        br#"["\n\ud83d\ude00\t\\", "\/\u00e9\"\b"]"#.to_vec(),
+    ];
+    for pad in [0usize, 1, 61, 62, 63, 64, 65, 127] {
+        for n in [0usize, 1, 62, 63, 64, 130] {
+            inputs.push(format!("{}[\"{}\\n{}\", \"\\\\\\\"{}\", {}]", " ".repeat(pad), "s".repeat(n), "t".repeat(n), "u".repeat(n), "9".repeat(n.max(1))).into_bytes());
+        }
+    }
+    if std::env::var("RERAIL_JSON_CORPUS").is_ok() {
+        inputs.extend(files_in("RERAIL_JSON_CORPUS").iter().map(|p| std::fs::read(p).expect("reads")));
+    }
+    inputs
+}
+
+/// The trees test's form: tier 2 as `rust_stream` writes it, compiled by rustc and run on the JIT's
+/// harness in place of Cranelift's code, gives the JIT's trees, file for file (page 40: the
+/// comparison with simdjson is made on this Rust).
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn simdjson_forms_rust_trees_are_the_jits() {
+    let (jit, mut aot) = (simdjson_form(), simdjson_form());
+    let native = rerail_compiler::native_ir::lower(&aot.program, 0, 0).expect("lowers");
+    let (widths, tag) = aot.parser.tier2.widths_tag();
+    let rust = rerail_compiler::rust_stream::rust_source_at(&native, widths, tag).expect("tier 2 as Rust");
+    // The shape is read with each line's indent dropped (the writer indents by braces).
+    let src: String = rust.lines().map(str::trim_start).collect::<Vec<_>>().join("\n");
+    // A number is read once, as `parse_number` reads it: each arm of a number's first bytes makes
+    // its end and its check from one read of its bytes (`run_R_check_C`).
+    let arms: Vec<&str> = src.split("0x2d | 0x30..=0x39 => {\n").skip(1).collect();
+    assert!(!arms.is_empty(), "the numbers' arms");
+    for arm in &arms {
+        let first = arm.lines().nth(1).unwrap_or("");
+        assert!(first.starts_with("match s.run_") && first.contains("_check_"), "a number's arm reads its bytes once: {first}");
+    }
+    // One dispatch a value, as `walk_document`'s `switch (*value)`: no variable saying which
+    // place a loop was entered at (the array's first value goes to the one value switch), and a
+    // switch on the kind only where a call's return switches on its token again (`again`).
+    // One function, as `walk_document`: the nesting on a stack of its own (`s.ret`, as
+    // `is_array[depth]`), not the machine's; the loops a value is entered at from an array, an
+    // object and the document are dispatched (`match d`), as simdjson's `goto`s into them.
+    // A rule's function is named by its rule (`rust_stream`'s `function`): counted by its signature.
+    assert!(src.matches("/// The rule entered at word ").count() == 1 && src.contains("match ret {"), "one function, an explicit stack");
+    // One stack, the nodes': a call's number kept in its container's row (`keep_ret`), read back
+    // by the `CLOSE` before its `RETURN`; no call stack of its own, and no `CLOSE` tests for a
+    // node open (`OneFn::stacked`). The depth counts as simdjson's, for its limit alone.
+    assert!(!src.contains("s.ret[") && src.contains("s.keep_ret(") && !src.contains("close::<true, false>") && !src.contains("close::<false, false>"), "one stack");
+    let again: std::collections::BTreeSet<usize> = native
+        .structural
+        .iter()
+        .filter_map(|w| if let rerail_compiler::native_ir::StructuralOperation::Push { target, .. } = w.operation { Some(usize::from(target) + 1) } else { None })
+        .filter(|&t| matches!(native.structural.get(t).map(|w| w.operation), Some(rerail_compiler::native_ir::StructuralOperation::Switch { .. })))
+        // A call's one after is a return's place only where a `RETURN` gives `again`.
+        .filter(|_| native.structural.iter().any(|w| matches!(w.operation, rerail_compiler::native_ir::StructuralOperation::Return { again: true })))
+        .collect();
+    let kind_paths = src.matches("if s.rec_end == 0 && !s.at_end {").count() + src.matches("if s.rec_end == 0 && !(s.start == s.len) {").count();
+    assert_eq!(kind_paths, again.len(), "the kind path only where a call returns: {again:?}");
+    // The `\u` checks only after a `u`, as simdjson's `\u` work: every call of them in the arm of
+    // the escape `\u`; every other escape goes past them.
+    let words = &aot.program.block_programs[0].records.as_ref().expect("records").words;
+    let u = words.iter().position(|w| w.as_slice() == b"\\u").expect("the escape \\u") + 1;
+    // The word by its name (`mod w`), else its number.
+    let u = src.lines().skip_while(|l| *l != "mod w {").find_map(|l| l.strip_prefix("pub const ").and_then(|r| r.strip_suffix(&format!(": u32 = {u};")))).map_or_else(|| u.to_string(), |n| format!("w::{n}"));
+    let calls = src.matches("s.check_1()?;").count();
+    assert!(calls > 0 && src.matches(&format!("{u} => {{ s.check_1()?;")).count() == calls, "the \\u checks in the \\u arm alone");
+    // The end tested only where it is taken: `TOKEN` gives the file's length as the start past
+    // the last token, and the value switches refuse its byte, as simdjson's switch the index past
+    // its last. No `at_end` field is read.
+    assert!(!src.contains("s.at_end") && !src.contains("self.at_end") && !src.contains("if (s.start == s.len) { return Err(false); }"), "no end test where the switch refuses the end");
+    // No record field written that no word reads: no `live` (no marks), no `rec_end = 0` (no
+    // kind path), and the code only where the escapes' word `match` reads it; the atoms write
+    // their leaves with their kinds, as simdjson's `case 't'` its tape word.
+    let code_writes: Vec<&str> = src.lines().filter(|l| l.starts_with("s.code = ")).collect();
+    assert!(code_writes.iter().all(|l| l.starts_with("s.code = S::CODES2[")) && !code_writes.is_empty(), "code written where no word reads it: {code_writes:?}");
+    assert!(!src.contains("live =") && !src.contains("rec_end = 0;") && !src.contains("s.word_kind()") && !src.contains("rec_end == 0"), "a field written that no word reads");
+    // A string as `copy_and_find`: 32 bytes a step, the stop's kind from the masks (no byte read
+    // again), a content part then its stop in the same pass, and no test of a one-byte token's
+    // length after it is set.
+    let parts = src.matches("let (i, closer) = s.part_stop(at)?;").count();
+    assert!(parts > 0 && src.contains("p += 32;") && !src.contains("matches!(s.byte(i)") && src.matches("}\nif closer {").count() == parts && !src.contains("!= s.rec_end"), "a string's stops as copy_and_find's");
+    // Each node's code written as it is made (`code_now`), no commit pass over the nodes after.
+    let made = src.matches("s.open(").count() + src.matches("s.leaf::<").count();
+    assert!(!src.contains("self.commit(") && src.matches("s.code_now(").count() == made, "each node's code as it is made");
+    // No dispatch's arm only sets `d` again for its own loop (`Shape::threaded`).
+    let resets = dispatch_resets(&src);
+    assert!(resets.is_empty(), "a dispatch's arm only re-sets d: {resets:?}");
+    // No room check a token: the harness sizes the tape from the input once, as simdjson's.
+    assert!(!aot.parser.tier2.room_checked() && !src.contains("room()?"), "no room check a token");
+    let entry = aot_entry(&rust);
+    // SAFETY: the source is this program's tier 2 (from its own native IR), reading and writing
+    // `Ctx` as the JIT's does; it counts its calls open itself.
+    unsafe { aot.parser.tier2.set_entry(entry, 4) };
+    let inputs = tree_inputs();
+    let (mut parsed, mut refused) = (0, 0);
+    for (k, f) in inputs.iter().enumerate() {
+        let show = || String::from_utf8_lossy(&f[..f.len().min(80)]).into_owned();
+        let want = ours(&jit, f);
+        assert_eq!(ours(&aot, f), want, "file {k} ({:?}): the Rust's nodes", show());
+        // The tape's bytes alike too: each code, its supertypes' classes, the columns.
+        if want.is_some() {
+            assert!(aot.parser.image(f).ok() == jit.parser.image(f).ok(), "file {k} ({:?}): the Rust's tape image", show());
+        }
+        if want.is_some() { parsed += 1 } else { refused += 1 }
+    }
+    eprintln!("{} files: {parsed} parsed, {refused} refused, by the Rust and the JIT alike, tape bytes and all", inputs.len());
+    // Format 16 (decision 0434): the Rust passes each node to the writer's ops at its word, as it is
+    // made (`rust_source_16`), and writes the JIT's format 16 run's bytes, 16 and 16z: the ops' calls
+    // are `native_cpu_tape::pass`'s, with no rows passed again.
+    let (widths16, tag16) = jit.parser.sixteen().expect("a format 16 tier 2").widths_tag();
+    // The JIT's run in the simdjson form passes each node to the ops at its word (`direct`), as the Rust: no working
+    // row, so no step on the rows is called.
+    let s16 = jit.parser.sixteen().expect("a format 16 tier 2");
+    assert!(s16.direct && s16.row_calls == 0, "the JIT's format 16 run: direct {}, {} calls of a step on the rows", s16.direct, s16.row_calls);
+    assert_eq!(s16.tape(1000).held(), [0, 0], "the direct run's tape: no format 15 buffer, no working row");
+    let src16 = rerail_compiler::rust_stream::rust_source_16(&native, widths16, tag16).expect("tier 2 writing format 16, as Rust");
+    let made16 = src16.matches("s.open16(").count() + src16.matches("s.leaf16(").count();
+    // No working row: the rule touches neither rows nor supertype records, only the stack of open
+    // nodes (a call's number in each) and the ops.
+    let rule16 = src16.split("\nfn r0(").nth(1).expect("the rule");
+    assert!(!rule16.contains("s.row(") && !rule16.contains("s.open(") && !rule16.contains("s.leaf::<") && !rule16.contains("s.node_super("), "no row in a format 16 run");
+    assert!(made16 == made && src16.contains("mod ops {") && !src16.contains("self.finish(") && !src16.contains("s.code_now("), "each node to the ops as it is made, no image");
+    if let Ok(dir) = std::env::var("RERAIL_DUMP_TIER2") {
+        std::fs::write(std::path::Path::new(&dir).join("simdjson16.rs"), &src16).expect("writes the source");
+    }
+    // Written once: no format 15 cell (an offset, a block's base, a size, a tail) beside the ops' cells.
+    // (The edits' methods, which no word of this program calls, keep theirs.)
+    let body = |name: &str| src16.split(name).nth(1).and_then(|rest| rest.split("\n    }\n").next()).unwrap_or_else(|| panic!("{name}")).to_string();
+    for name in ["    fn open16(", "    fn leaf16(", "    fn close<", "    fn accept(", "    fn keep_ret(", "    fn taken_ret("] {
+        let b = body(name);
+        assert!(!b.contains("self.push_off(") && !b.contains("self.close_cells(") && !b.contains("_c.add(") && !b.contains("self.row("), "no format 15 cells or rows in a format 16 run's {name}");
+    }
+    let entry16 = aot_entry(&src16);
+    // SAFETY: as the format 15 entry's, on the format 16 run's harness (`write16`: the writer and numbers set).
+    unsafe { aot.parser.sixteen_mut().expect("a format 16 tier 2").set_entry(entry16, 4) };
+    // The tape's home: the tape, then its presence (the document's and each block's), which the
+    // ops make as they write.
+    let bytes_of = |w: &rerail_tape_format::f16::Written| {
+        assert!(w.presence_bytes().is_some(), "a format 16 run's presence");
+        w.extent().to_vec()
+    };
+    let mut written = 0;
+    for (k, f) in inputs.iter().enumerate() {
+        let Ok(image) = jit.parser.image(f) else { continue };
+        let (_, table) = rerail_tape_format::tape::f15_columns(&image).expect("a format 15 tape");
+        let lang = rerail_tape_format::f16::Lang::new(table.clone(), [1, 1, 1], 1).expect("a language");
+        let numbers = jit.parser.sixteen().expect("a format 16 tier 2").numbers(&lang);
+        // The reference: format 15's tape written in format 16 by the writer (`f16::write_from_with_presence`), apart
+        // from either run's passes; both runs pass each node at its word (`rust_stream::direct_keys`).
+        let (columns, _) = rerail_tape_format::tape::f15_columns(&image).expect("a format 15 tape");
+        let t = rerail_tape_format::tape::F15::new(&image, columns, &table).expect("reads");
+        let number = rerail_tape_format::f16::numbers(&lang, &table).expect("numbers");
+        for z in [false, true] {
+            let reference = rerail_tape_format::f16::write_from_with_presence(&lang, &t, &number, f, tag16, z).expect("the writer's tape").tape;
+            let want = jit.parser.image16(f, &lang, &numbers, z).map(|w| bytes_of(&w));
+            let got = aot.parser.image16(f, &lang, &numbers, z).map(|w| bytes_of(&w));
+            assert!(want.is_ok(), "file {k}: the JIT's format 16 run: {want:?}");
+            assert!(want.as_ref().ok() == Some(&reference.extent().to_vec()), "file {k} (16z {z}): the JIT's format 16 home is not the writer's of its format 15 tape");
+            if got != want {
+                let (g, w) = (got.clone().unwrap_or_default(), want.clone().unwrap_or_default());
+                let first = (0..g.len().min(w.len())).find(|&i| g[i] != w[i]);
+                panic!("file {k} (16z {z}): the Rust's format 16 tape: {:?}, lengths {} and {}, first differing at {first:?}\n  rust {:?}\n  jit  {:?}", got.as_ref().err(), g.len(), w.len(), &g[..g.len().min(160)], &w[..w.len().min(160)]);
+            }
+        }
+        written += 1;
+    }
+    assert_eq!(written, parsed, "every parsed file written in format 16");
+    eprintln!("{written} files in format 16 and 16z, the Rust's bytes the JIT's");
+}
+
+/// `src`, tier 2's Rust, built by rustc (optimized, as the ahead-of-time build) into a library
+/// and loaded: its entry.
+#[cfg(target_arch = "aarch64")]
+fn aot_entry(src: &str) -> rerail_compiler::native_cpu_stream::Entry {
+    // A directory a source: the loader gives back the library already loaded at a path, so two
+    // sources built at one path would both run the first.
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    std::hash::Hash::hash(src, &mut h);
+    let dir = std::env::temp_dir().join(format!("rerail-json-aot-{}-{:x}", std::process::id(), std::hash::Hasher::finish(&h)));
+    std::fs::create_dir_all(&dir).expect("a directory");
+    let (rs, lib) = (dir.join("tier2.rs"), dir.join("libtier2.dylib"));
+    std::fs::write(&rs, format!("{src}\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn rerail_tier2_entry(ctx: u64) -> u64 {{\n    unsafe {{ tier2_entry(ctx) }}\n}}\n")).expect("writes");
+    let out = std::process::Command::new("rustc").args(["--edition", "2024", "--crate-type", "cdylib", "-C", "opt-level=3", "-o"]).arg(&lib).arg(&rs).output().expect("runs rustc");
+    assert!(out.status.success(), "rustc: {}", String::from_utf8_lossy(&out.stderr));
+    let path = std::ffi::CString::new(lib.to_str().expect("a path")).expect("a path");
+    // SAFETY: a library rustc just built from the source above; kept loaded for the process.
+    let f = unsafe {
+        let h = libc::dlopen(path.as_ptr(), libc::RTLD_NOW);
+        assert!(!h.is_null(), "dlopen");
+        let f = libc::dlsym(h, c"rerail_tier2_entry".as_ptr());
+        assert!(!f.is_null(), "dlsym");
+        std::mem::transmute::<*mut libc::c_void, rerail_compiler::native_cpu_stream::Entry>(f)
+    };
+    // Loaded: the files are no longer needed.
+    let _ = std::fs::remove_dir_all(&dir);
+    f
+}
+
 fn ours(c: &Compiled, bytes: &[u8]) -> Option<Vec<IdNode>> {
     c.parser.parse(bytes).ok().map(as_ids)
 }
@@ -306,6 +716,61 @@ fn json_bench() {
             println!("{}\t{}\t{name}\t{:.0}\t{:.0}\t{t_ts:.0}", base(path), f.len(), median(one), median(two));
         }
     }
+}
+
+/// JSON's tier 2 as written, for reading it next to simdjson's stage 2: each word's operation,
+/// a switch's targets by byte (runs of bytes to one target), and the code (CLIF, machine code,
+/// each word's byte ranges in it). Into `RERAIL_DUMP_TIER2`; `RERAIL_FORM`.
+#[test]
+#[ignore = "a dump: run by name with RERAIL_DUMP_TIER2"]
+fn json_tier2_by_word() {
+    let name = std::env::var("RERAIL_FORM").unwrap_or_else(|_| "14-json".to_owned());
+    // Each function's IR kept, for its Rust (`rerail_clif::rust`): the run's option (decision 0442).
+    let _run = rerail_context::test_run();
+    rerail_compiler::native_cpu_codegen::options().keep_ir.store(true, std::sync::atomic::Ordering::Relaxed);
+    let c = if name == "simdjson" { simdjson_form() } else { form(&name) };
+    let native = rerail_compiler::native_ir::lower(&c.program, 0, 0).expect("lowers");
+    let dir = std::env::var("RERAIL_DUMP_TIER2").expect("RERAIL_DUMP_TIER2");
+    std::fs::write(format!("{dir}/{name}.clif"), &c.parser.tier2.clif).expect("writes");
+    std::fs::write(format!("{dir}/{name}.s"), &c.parser.tier2.disassembly).expect("writes");
+    std::fs::write(format!("{dir}/{name}.bin"), &c.parser.tier2.code_bytes).expect("writes");
+    let ranges: String = c.parser.tier2.word_ranges.iter().map(|&(pc, a, b)| format!("{pc}\t{a}\t{b}\n")).collect();
+    std::fs::write(format!("{dir}/{name}.ranges"), ranges).expect("writes");
+    let show = |b: u8| if b.is_ascii_graphic() { format!("{}", b as char) } else { format!("{b:#04x}") };
+    let mut words = String::new();
+    for (pc, w) in native.structural.iter().enumerate() {
+        words += &format!("{pc}\t{:?}\n", w.operation);
+        if let rerail_compiler::native_ir::StructuralOperation::Switch { table } = w.operation {
+            let s = &native.switches[usize::from(table)];
+            let mut b = 0usize;
+            while b < 256 {
+                let t = s.targets[b];
+                let mut e = b;
+                while e + 1 < 256 && s.targets[e + 1] == t {
+                    e += 1;
+                }
+                if t != rerail_compiler::stream::REFUSE {
+                    words += &format!("\t\t{}..{} -> {t}\n", show(b as u8), show(e as u8));
+                }
+                b = e + 1;
+            }
+            words += &format!("\t\tend -> {}{}\n", s.end, if s.words.is_empty() { String::new() } else { format!(", words {:?}", s.words) });
+        }
+        // A check: a token's (over its bytes) or at a tier-1 mask's bits, and its ops.
+        if let rerail_compiler::native_ir::StructuralOperation::Check { check } = w.operation {
+            let c = &native.local_checks[usize::from(check)];
+            let at = if c.token { "the token's bytes".to_owned() } else { format!("mask {}", c.mask) };
+            words += &format!("\t\t{at}, delay {}, back {}: {:?}\n", c.delay, c.back, c.ops);
+        }
+    }
+    std::fs::write(format!("{dir}/{name}.words"), words).expect("writes");
+    // Tier 2 as generated Rust, to read beside simdjson's stage 2: the structured backend's
+    // (`rust_stream`), and the compiler's own IR as Rust (`rerail_clif::rust`).
+    let rust = rerail_compiler::rust_stream::rust_source(&native).unwrap_or_else(|e| format!("// not generated: {e}\n"));
+    std::fs::write(format!("{dir}/{name}.rs"), rust).expect("writes");
+    let t2 = &c.parser.tier2;
+    let ir = rerail_compiler::clif_rust::translate(&t2.ir, &[(t2.entry_id, "tier2")], &[]).unwrap_or_else(|e| format!("// not translated: {e}\n"));
+    std::fs::write(format!("{dir}/{name}.ir.rs"), ir).expect("writes");
 }
 
 /// Cranelift's optimizer on JSON (doc 28): step 14 compiled four ways (optimizer off, on tier
@@ -684,7 +1149,10 @@ fn json_gated_regions_equal_the_interpreter() {
         let c = form(name);
         // Each region behind its branch in the full body (one: the ASCII test is a branch in it,
         // 0364), none computed in place. A region with a test before its gate's has two.
-        let plan = native_cpu_block::State::of(&c.native.block_programs[0]).plan;
+        // The plan of the program the CPU compiles: its form (`cpu_form`), whose outputs the
+        // record pass makes are zero, so values only they read are a region's (decision 0428:
+        // with the lone low surrogate tier 2's, the forms' plans differ).
+        let plan = native_cpu_block::State::of(&c.native.block_programs[0].cpu_form()).plan;
         assert!(!plan.regions.is_empty(), "{name}: no gated region");
         let tests: usize = plan.regions.iter().map(|r| 1 + usize::from(r.pre.is_some())).sum();
         assert_eq!(c.parser.tier1.gate_branches, tests, "{name}: a region without its branch, or made twice");

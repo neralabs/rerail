@@ -171,12 +171,12 @@ fn a_pool_job_runs_in_the_context_it_was_started_in() {
     assert_eq!(*seen.lock().unwrap(), vec![true; 4]);
 }
 
-/// A lattice a run declares (`shortlex_min<>` over its store's atoms) is that run's: another thread declaring its own
-/// under the same name, as a run beside it does, changes neither this thread's nor a job it carries its context to.
+/// A lattice a run declares (`shortlex_min<>` over its store's atoms) is that run's: another run declaring its own
+/// under the same name, beside it, changes neither this run's nor a job it carries its context to.
 /// Declared only process-wide, the coverage probe's shortlex order read another test's atoms ("ba" for "ab") as the
 /// tests beside it ran.
 #[test]
-fn a_declared_lattice_is_its_threads_and_carried_to_its_jobs() {
+fn a_declared_lattice_is_its_runs_and_carried_to_its_jobs() {
     use crate::code_rule_dsl::logic::native::{Lattice, TOP, declare, lattice};
     use std::sync::Arc;
     struct Fixed(i64);
@@ -192,16 +192,18 @@ fn a_declared_lattice_is_its_threads_and_carried_to_its_jobs() {
         }
     }
     let name = "rerail_test_lattice_scope";
-    // A run's lattices are the run's (decision 0442): another run's, on another thread, are its own.
+    // The run's own (decision 0442): declared in the test's run, and seen by no other run.
     let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     declare(name, Arc::new(Fixed(1)));
-    std::thread::scope(|s| {
+    let other = std::thread::scope(|s| {
         s.spawn(|| {
-            let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+            let _other = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
             declare(name, Arc::new(Fixed(2)));
-        }).join().unwrap();
+            lattice(name).unwrap().lub(0, 0)
+        }).join().unwrap()
     });
-    assert_eq!(lattice(name).unwrap().lub(0, 0), 1, "this run's own, whatever another declared since");
+    assert_eq!(other, 2, "another run's own");
+    assert_eq!(lattice(name).unwrap().lub(0, 0), 1, "this run's own, whatever another run declared since");
     let carry = super::Carry::here();
     let on_job = std::thread::scope(|s| s.spawn(|| {
         let _entered = carry.enter();

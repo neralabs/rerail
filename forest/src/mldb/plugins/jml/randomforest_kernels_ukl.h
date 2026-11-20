@@ -2,6 +2,7 @@
     Jeremy Barnes, 13 October 2018
     Copyright (c) 2018 mldb.ai inc.  All rights reserved.
     This file is part of MLDB. Copyright 2016 mldb.ai inc. All rights reserved.
+    Used here under the Apache License, Version 2.0: MLDB's license is https://github.com/mldbai/mldb/blob/e3caed6fa44782d08eb640702fd60e9a2576d939/LICENSE
 
     The random forest's kernels, written once in UKL for every backend (Rerail, decision 0440 step 2): each
     kernel's parameters are rows of access, type, name and bounds, and its body calls the shared implementation

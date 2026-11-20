@@ -320,13 +320,13 @@ impl Summary {
         let module = Some(reader.u32()?).filter(|id| *id != u32::MAX);
         let open_sites = reader.u8()? != 0;
         let source_bytes = reader.u32()?;
-        let names = (0..reader.count(4)?)
+        let texts = (0..reader.count(4)?)
             .map(|_| {
                 let len = reader.u32()? as usize;
-                let text = std::str::from_utf8(reader.take(len)?).ok()?;
-                Some(Name::new(family, text))
+                std::str::from_utf8(reader.take(len)?).ok()
             })
             .collect::<Option<Vec<_>>>()?;
+        let names = Name::new_all(family, texts);
         let known = |id: u32| (id as usize) < names.len();
         if module.is_some_and(|id| !known(id)) {
             return None;

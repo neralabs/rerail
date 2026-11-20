@@ -256,7 +256,7 @@ fn parallel<I: Sync, R: Send>(items: &[I], work: impl Fn(&I) -> R + Sync + Send)
     if items.len() < 256 {
         items.iter().map(work).collect()
     } else {
-        items.par_iter().map(work).collect()
+        crate::code_rule_dsl::logic::profile::on_cores(|| items.par_iter().map(work).collect())
     }
 }
 
@@ -1108,8 +1108,7 @@ impl Graph {
                 relay_callers(file, first, changes);
             }
         } else {
-            jobs.par_iter_mut()
-                .for_each(|(_, file, changes)| relay_callers(file, first, changes));
+            crate::code_rule_dsl::logic::profile::on_cores(|| jobs.par_iter_mut().for_each(|(_, file, changes)| relay_callers(file, first, changes)));
         }
         for (slot, file, _) in jobs {
             self.slots[slot as usize] = Some(file);

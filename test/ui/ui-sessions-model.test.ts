@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { placeCorrections, resumeCommand, sessionTurns, type Correction } from "../../ui/sessions-model.js";
+import { callToolLabel, mcpToolLabel, placeCorrections, resumeCommand, sessionTurns, type Correction } from "../../ui/sessions-model.js";
 import { titleFromPrompts } from "../../ui/poll.js";
 import { sinceFor } from "../../ui/state.js";
 
@@ -174,6 +174,44 @@ describe("placeCorrections", () => {
     const single = sessionTurns(events([prompt("Hi"), turnEnd("Hello")]));
     placeCorrections(single, [correction("k1", null, at(1))]);
     expect(single[0]!.orphans.map(c => c.key)).toEqual(["k1"]);
+  });
+});
+
+describe("mcpToolLabel", () => {
+  it("names an MCP call's server and tool, shown beside its badge", () => {
+    expect(mcpToolLabel("mcp__Claude_Browser__browser_batch")).toBe("Claude_Browser · browser_batch");
+    expect(mcpToolLabel("mcp__plugin_linear_linear__get_issue")).toBe("plugin_linear_linear · get_issue");
+  });
+
+  it("keeps a server whose own name has a double underscore, and splits off only the tool", () => {
+    expect(mcpToolLabel("mcp__my__server__tool")).toBe("my__server · tool");
+  });
+
+  it("shows a name with no server and tool parts whole", () => {
+    expect(mcpToolLabel("mcp_search")).toBe("mcp_search");
+    expect(mcpToolLabel("mcp__")).toBe("mcp__");
+    expect(mcpToolLabel(undefined)).toBe("");
+  });
+});
+
+describe("callToolLabel", () => {
+  const call = (toolName: string, input: unknown = {}) => sessionTurns([{ sequence: 1, eventId: "c", kind: "call", observedAt: T0, payload: { toolName, input } }])[0]!.tools[0]!;
+
+  it("names the tool beside a command, a search or a plan, where the badge says less", () => {
+    expect(callToolLabel(call("Bash", { command: "npm test" }))).toBe("Bash");
+    expect(callToolLabel(call("Grep", { pattern: "x" }))).toBe("Grep");
+    expect(callToolLabel(call("update_plan"))).toBe("update_plan");
+  });
+
+  it("names an MCP call's server and tool", () => {
+    expect(callToolLabel(call("mcp__github__get_pull_request"))).toBe("github · get_pull_request");
+  });
+
+  it("names nothing beside a file change, which names its file, or where the badge is the tool", () => {
+    expect(callToolLabel(call("Edit", { file_path: "a.ts" }))).toBeNull();
+    expect(callToolLabel(call("Write", { file_path: "a.ts" }))).toBeNull();
+    expect(callToolLabel(call("Read", { file_path: "a.ts" }))).toBeNull();
+    expect(callToolLabel(call("some_custom_tool"))).toBeNull();
   });
 });
 

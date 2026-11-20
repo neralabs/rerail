@@ -79,7 +79,6 @@ struct Api {
     enqueue_nd_range_kernel: unsafe extern "C" fn(Ptr, Ptr, ClUint, *const usize, *const usize, *const usize, ClUint, *const Ptr, *mut Ptr) -> ClInt,
     enqueue_write_buffer: unsafe extern "C" fn(Ptr, Ptr, ClUint, usize, usize, *const c_void, ClUint, *const Ptr, *mut Ptr) -> ClInt,
     enqueue_copy_buffer: unsafe extern "C" fn(Ptr, Ptr, Ptr, usize, usize, usize, ClUint, *const Ptr, *mut Ptr) -> ClInt,
-    enqueue_fill_buffer: unsafe extern "C" fn(Ptr, Ptr, *const c_void, usize, usize, usize, ClUint, *const Ptr, *mut Ptr) -> ClInt,
     enqueue_marker_with_wait_list: unsafe extern "C" fn(Ptr, ClUint, *const Ptr, *mut Ptr) -> ClInt,
     wait_for_events: unsafe extern "C" fn(ClUint, *const Ptr) -> ClInt,
     get_event_info: unsafe extern "C" fn(Ptr, ClUint, usize, Ptr, *mut usize) -> ClInt,
@@ -143,7 +142,6 @@ fn api() -> Result<&'static Api, String> {
             enqueue_nd_range_kernel: f!("clEnqueueNDRangeKernel"),
             enqueue_write_buffer: f!("clEnqueueWriteBuffer"),
             enqueue_copy_buffer: f!("clEnqueueCopyBuffer"),
-            enqueue_fill_buffer: f!("clEnqueueFillBuffer"),
             enqueue_marker_with_wait_list: f!("clEnqueueMarkerWithWaitList"),
             wait_for_events: f!("clWaitForEvents"),
             get_event_info: f!("clGetEventInfo"),
@@ -630,7 +628,24 @@ impl ClComputeFunction {
 struct RootState {
     q: Ptr,
     backlog: std::collections::VecDeque<Pending>,
+    device: ClDevice,
+    /// The fill kernel (`FILL`) and its library, compiled at the root's first fill.
+    fill: Option<Result<(Arc<ClComputeFunctionLibrary>, Arc<Mutex<Kernel>>), String>>,
 }
+
+/// A fill's kernel (`ClComputeQueue::enqueue_fill_array`), OpenCL C (the device layer is below the UKL
+/// preprocessor): word `first + i` of `out` is the pattern's word `i % period`, for `i < count`.
+const FILL: &str = r#"
+__kernel void ukl_fill_words(__global uint* out, uint first, uint count, uint period,
+                             uint w0, uint w1, uint w2, uint w3, uint w4, uint w5, uint w6, uint w7) {
+    uint i = get_global_id(0);
+    if (i >= count)
+        return;
+    uint k = i % period;
+    uint w = k == 0u ? w0 : k == 1u ? w1 : k == 2u ? w2 : k == 3u ? w3 : k == 4u ? w4 : k == 5u ? w5 : k == 6u ? w6 : w7;
+    out[first + i] = w;
+}
+"#;
 
 unsafe impl Send for RootState {}
 
@@ -645,7 +660,21 @@ impl ClQueueRoot {
         let mut e = 0;
         let q = unsafe { (a.create_command_queue)(device.0.context, device.0.device, CL_QUEUE_PROFILING_ENABLE, &mut e) };
         check("clCreateCommandQueue", e)?;
-        Ok(ClQueueRoot(Arc::new(Mutex::new(RootState { q, backlog: Default::default() }))))
+        Ok(ClQueueRoot(Arc::new(Mutex::new(RootState { q, backlog: Default::default(), device: device.clone(), fill: None }))))
+    }
+
+    /// The fill kernel (`FILL`), compiled at the first fill.
+    fn fill(&self) -> Result<Arc<Mutex<Kernel>>, String> {
+        let mut root = self.0.lock().unwrap();
+        let device = root.device.clone();
+        root.fill
+            .get_or_insert_with(|| {
+                let lib = ClComputeFunctionLibrary::compile_from_source(&device, FILL, "the fill kernel")?;
+                let kernel = lib.kernel("ukl_fill_words")?;
+                Ok((Arc::new(lib), Arc::new(Mutex::new(kernel))))
+            })
+            .clone()
+            .map(|(_, kernel)| kernel)
     }
 
     /// Enqueues the backlog in order, up to a wait for a host-signalled event that has not reached its value: there
@@ -786,6 +815,10 @@ impl ClComputeQueue {
     }
 
     /// `enqueueFillArray`: `count` copies of `value` into `dst` from element `offset` (all of it when `None`).
+    ///
+    /// A kernel writes them (`FILL`), never `clEnqueueFillBuffer`: Apple's leaves what was there, or garbage, in a
+    /// buffer over host pages that a kernel then reads (`a_fill_then_a_kernel_are_in_the_host_pages`). A pattern
+    /// of 1 or 2 bytes is widened to a word; one of no whole words, or of more than 8, is written from the host.
     pub fn enqueue_fill_array<T: crate::Pod>(&self, dst: &ClBuffer, value: &T, offset: usize, count: Option<usize>) {
         let size = std::mem::size_of::<T>();
         let count = count.unwrap_or(dst.length() as usize / size - offset);
@@ -793,17 +826,41 @@ impl ClComputeQueue {
             return;
         }
         let one = unsafe { std::slice::from_raw_parts((value as *const T).cast::<u8>(), size) }.to_vec();
-        if !size.is_power_of_two() || size > 128 {
-            let bytes: Vec<u8> = one.iter().copied().cycle().take(count * size).collect();
-            return self.enqueue_copy_from_host(dst, (offset * size) as u64, &bytes);
+        let words: Option<Vec<u32>> = match size {
+            1 => Some(vec![u32::from_ne_bytes([one[0]; 4])]),
+            2 => Some(vec![u32::from_ne_bytes([one[0], one[1], one[0], one[1]])]),
+            _ if size % 4 == 0 && size <= 32 => Some(one.chunks(4).map(|w| u32::from_ne_bytes(w.try_into().unwrap())).collect()),
+            _ => None,
+        };
+        let (start, bytes) = (offset * size, count * size);
+        let whole = start % 4 == 0 && bytes % 4 == 0 && u32::try_from((start + bytes) / 4).is_ok();
+        match words.filter(|_| whole) {
+            Some(words) => {
+                let kernel = self.root.fill().unwrap_or_else(|e| panic!("OpenCL: the fill kernel: {e}"));
+                let mut w = [0u32; 8];
+                w[..words.len()].copy_from_slice(&words);
+                let mut args = vec![(start / 4) as u32, (bytes / 4) as u32, words.len() as u32];
+                args.extend_from_slice(&w);
+                let d = dst.0.mem as usize;
+                self.keep(dst.clone());
+                self.push(move |c| {
+                    let k = kernel.lock().unwrap();
+                    let mem = d as Ptr;
+                    check("clSetKernelArg", unsafe { (c.a.set_kernel_arg)(k.0, 0, std::mem::size_of::<Ptr>(), (&mem as *const Ptr).cast()) })?;
+                    for (i, v) in args.iter().enumerate() {
+                        check("clSetKernelArg", unsafe { (c.a.set_kernel_arg)(k.0, 1 + i as ClUint, 4, (v as *const u32).cast()) })?;
+                    }
+                    let global = args[1] as usize;
+                    check("the fill kernel", unsafe {
+                        (c.a.enqueue_nd_range_kernel)(c.q, k.0, 1, std::ptr::null(), &global, std::ptr::null(), 0, std::ptr::null(), std::ptr::null_mut())
+                    })
+                });
+            }
+            None => {
+                let bytes: Vec<u8> = one.iter().copied().cycle().take(count * size).collect();
+                self.enqueue_copy_from_host(dst, start as u64, &bytes);
+            }
         }
-        let d = dst.0.mem as usize;
-        self.keep(dst.clone());
-        self.push(move |c| {
-            check("clEnqueueFillBuffer", unsafe {
-                (c.a.enqueue_fill_buffer)(c.q, d as Ptr, one.as_ptr().cast(), size, offset * size, count * size, 0, std::ptr::null(), std::ptr::null_mut())
-            })
-        });
     }
 
     /// `enqueueCopyBetweenDeviceRegions`.
@@ -1052,6 +1109,15 @@ DEFINE_KERNEL2(t, t_write,
     if (i == 0u)
         out[0] = out[0] * 10u + args.value;
 }
+
+DEFINE_KERNEL2(t, t_count,
+               ARGS,     Args,     args, ,
+               RWBUFFER, uint32_t, out,  "[1]",
+               GID0,     uint32_t, i,    )
+{
+    if (i < args.value)
+        ukl_atomic_add(&out[0], 1u);
+}
 "#;
 
     fn write(q: &ClComputeQueue, f: &ClComputeFunction, out: &ClBuffer, value: u32) {
@@ -1061,12 +1127,50 @@ DEFINE_KERNEL2(t, t_write,
         ctx.launch(&[1], &[32]).unwrap();
     }
 
+    /// A fill and the kernel after it, in one flush, are in the buffer's host pages once it completes, read with no
+    /// map: the fill zeroes what the host wrote before, then the kernel's write lands on the zero.
+    #[test]
+    fn a_fill_then_a_kernel_are_in_the_host_pages() {
+        let Some((device, lib)) = compile("fill.uglykl", KERNELS) else { return };
+        let f = lib.get_function(&device, "t_write").unwrap();
+        let root = ClQueueRoot::new(&device).unwrap();
+        let out = alloc_uninitialized_array_sync::<u32>(&device, 1);
+        // SAFETY: the buffer's host pages, which no work uses yet.
+        unsafe { out.contents().cast::<u32>().write(7) };
+        let mut q = ClComputeQueue::new(&root);
+        q.enqueue_fill_array(&out, &0u32, 0, Some(1));
+        write(&q, &f, &out, 5);
+        q.flush().await_().unwrap();
+        // SAFETY: the work completed.
+        assert_eq!(unsafe { std::ptr::read_volatile(out.contents().cast::<u32>()) }, 5, "zeroed, then 0 * 10 + 5");
+        // An atomic count after a fill, as a kernel appending its hits counts them.
+        let count = lib.get_function(&device, "t_count").unwrap();
+        let mut q = ClComputeQueue::new(&root);
+        q.enqueue_fill_array(&out, &0u32, 0, Some(1));
+        let mut ctx = q.new_bind_context(&count);
+        ctx.set_primitive(0, &25u32.to_ne_bytes());
+        ctx.set_buffer(1, &out);
+        ctx.launch(&[32], &[32]).unwrap();
+        q.flush().await_().unwrap();
+        // SAFETY: the work completed.
+        assert_eq!(unsafe { std::ptr::read_volatile(out.contents().cast::<u32>()) }, 25, "zeroed, then counted to 25");
+        // A byte pattern over a range, widened to words: the bytes around it stay.
+        let bytes = alloc_uninitialized_array_sync::<u8>(&device, 16);
+        let mut q = ClComputeQueue::new(&root);
+        q.enqueue_fill_array(&bytes, &0x11u8, 0, Some(16));
+        q.enqueue_fill_array(&bytes, &0xABu8, 4, Some(8));
+        q.flush().await_().unwrap();
+        // SAFETY: the work completed.
+        let seen = unsafe { std::slice::from_raw_parts(bytes.contents().cast::<u8>(), 16) };
+        assert_eq!(seen, [[0x11; 4], [0xAB; 4], [0xAB; 4], [0x11; 4]].concat());
+    }
+
     /// Work behind a wait for a host-signalled event stays held until the signal, though another queue flushes onto
     /// the same root meanwhile; that queue's work waits behind it (as a Metal command buffer behind a waiting one),
     /// and both run, in order, at the signal.
     #[test]
     fn a_wait_holds_the_roots_later_work_until_the_signal() {
-        let Some((device, lib)) = compile("hold.ukl", KERNELS) else { return };
+        let Some((device, lib)) = compile("hold.uglykl", KERNELS) else { return };
         let f = lib.get_function(&device, "t_write").unwrap();
         assert_eq!(f.get_argument_info().iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), ["args", "out"]);
         let root = ClQueueRoot::new(&device).unwrap();

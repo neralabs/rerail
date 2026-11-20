@@ -1,13 +1,15 @@
 // Call-target resolution and call chains for Python, in Rerail's Datalog dialect.
 //
 // One points-to relation, `pv(n, kind, v)`: expression n may evaluate to v, a function (`fn`, a function_definition),
-// a class object (`cls`), an instance of a class (`inst`), a module (`mod`), or `super()` in a class (`super`).
+// a function under decorators from outside the run (`dfn`), a class object (`cls`), an instance of a class (`inst`), a
+// module (`mod`), or `super()` in a class (`super`).
 // `vopen(n)`: n may also evaluate to something no static name denotes. A call's answer is three-valued, as the
 // native `calls` relation's is: `call_open` (unknown), else the definitions `call_target` names (none: no edge).
 //
 // Python semantics covered: LEGB scope lookup (class scopes are invisible to nested functions), imports (absolute,
 // relative (any number of dots), aliased, star, function-local), re-exports through module bindings, later unconditional bindings
-// shadowing earlier ones, decorators (transparent ones, workspace decorators through their returns, others unknown),
+// shadowing earlier ones, decorators (transparent ones, workspace decorators through their returns, a def under
+// decorators from outside the run still the code its name's calls run, open; others unknown),
 // classes and inheritance (method lookup through bases, constructors to `__init__`, instances to `__call__`),
 // late-bound `self`/`cls` (the class and every workspace subclass), `super()`, and function values flowing through
 // assignments, returns and a function's returned parameter.
@@ -232,6 +234,37 @@ nopaque($f, $k) :- opaque_dec($f, _), $k = count { opaque_dec($f, _) }.
 // The one decorator that replaces the definition, when there is exactly one.
 .decl dec1(f: node, e: node)
 dec1($f, $e) :- nopaque($f, 1), opaque_dec($f, $e).
+// A def whose every decorator not transparent is imported from outside the run (`@contextlib.contextmanager`,
+// `@functools.lru_cache(maxsize=None)`, `@retry(3)` of a library) is still the code a call of its name runs, as far as
+// the program can tell: such a decorator wraps the def and calls it, or gives it back. Its name holds `dfn` f: a call
+// of it targets f, and is open (`bopen`), for the wrapper is code the program does not read: it may run more, or run f
+// later (a context manager's `__enter__`). A decorator that replaces the def by a value whose call does not run it (a
+// `…property`, `functools.cached_property`) keeps the name unknown, with no target.
+// dpart(e, p): p is decorator expression e or a part of its head (`functools.lru_cache` and `functools` of
+// `functools.lru_cache(maxsize=None)`).
+.decl dpart(e: node, p: node)
+dpart($e, $e) :- dexpr(_, $e).
+dpart($e, $o) :- dpart($e, $p), kind($p, "attribute"), field($p, "object", $o).
+dpart($e, $g) :- dpart($e, $p), kind($p, "call"), field($p, "function", $g).
+// dleaf(e, x): the last name of decorator e, or of the function a decorator call calls (`lru_cache`, `setter`).
+.decl dleaf(e: node, x: sym)
+dleaf($e, $x) :- dexpr(_, $e), kind($e, "identifier"), text($e, $x).
+dleaf($e, $x) :- dexpr(_, $e), attr_of($e, _, $x).
+dleaf($e, $x) :- dexpr(_, $e), kind($e, "call"), field($e, "function", $g), kind($g, "identifier"), text($g, $x).
+dleaf($e, $x) :- dexpr(_, $e), kind($e, "call"), field($e, "function", $g), attr_of($g, _, $x).
+.decl replacing_dec(e: node)
+replacing_dec($e) :- dleaf($e, $x), @suffix($x, "property").
+.decl outside_dec(e: node)
+outside_dec($e) :- dpart($e, $h), nameref($h, $x), look($h, $x, $s), ext_import($s, $x), !run_import($s, $x), !rasg($s, $x, _, _),
+    !rdefn($s, $x, _), !replacing_dec($e).
+// run_import(s, x): scope s imports x from a module of the run too (`try: from lib import x` / `except ImportError:
+// from .compat import x`): the decorator may be the run's, read through `decfn`.
+.decl run_import(s: node, x: sym)
+run_import($s, $x) :- rifrom($s, $x, $m, _), isqmod($m).
+run_import($s, $x) :- ribind($s, $x, $q), !rifrom($s, $x, _, _), isqmod($q).
+// inner_dec(f): f has a decorator neither transparent nor from outside the run.
+.decl inner_dec(f: node)
+inner_dec($f) :- opaque_dec($f, $e), !outside_dec($e).
 
 // ---- functions: returns, returned parameters ----------------------------------------------------------------------
 .decl isasync(f: node)
@@ -675,6 +708,8 @@ bv($m, $x, $k, $v) :- starx($m, $x, $m2), bv($m2, $x, $k, $v).
 // Binding values: what name x of scope s may hold.
 .decl bv(s: node, x: sym, k: sym, v: node)
 bv($s, $x, "fn", $f) :- live_def($s, $x, $f), kind($f, "function_definition"), !opaque_dec($f, _).
+// A def under decorators from outside the run (`outside_dec`): its calls run it, and more the program does not read.
+bv($s, $x, "dfn", $f) :- live_def($s, $x, $f), kind($f, "function_definition"), opaque_dec($f, _), !inner_dec($f).
 bv($s, $x, "cls", $c) :- live_def($s, $x, $c), kind($c, "class_definition").
 // decfn(f, g): f's one decorator is function g; decval(f, k, v): what g returns, f's value. Made first, so each
 // join starts from the few decorated definitions, not from every expression that names g.
@@ -961,6 +996,7 @@ vopen($c) :- vpos($c), ifn($c, $f), !rclosed($f), method($f, _), retparam($f, _,
 .decl call_target(c: node, f: node)
 call_target($c, $f) :- callee($c, $e), pv($e, "fn", $f), !mro_dropped($e, $f).
 call_target($c, $f) :- wcall($c, $f, _).
+call_target($c, $f) :- callee($c, $e), pv($e, "dfn", $f), !mro_dropped($e, $f).
 // Method resolution order. `found` is the union over every base, depth first, so in a diamond (`class D(B, C)`,
 // both from `A`) `D.who` finds `A.who` through `B` and `C.who` through `C`. C3 gives `C.who`. A definition found
 // on a class that another candidate class subclasses is never the one called, so it is dropped here, at the
@@ -972,10 +1008,14 @@ mro_cand($n, $c, $at) :- alook($n, $c, $a), found($c, $a, $at).
 // Per receiver class c: a late-bound `self` may be several classes, each with its own resolution.
 .decl mro_shadowed(n: node, c: node, at: node)
 mro_shadowed($n, $c, $at) :- mro_cand($n, $c, $at), mro_cand($n, $c, $x), $x != $at, anc($x, $at).
+// method_kind(k): a binding of kind k is a function a method lookup may find, its own or one under outside decorators.
+.decl method_kind(k: sym)
+method_kind("fn"). method_kind("dfn").
 .decl mro_kept(n: node, f: node)
-mro_kept($n, $f) :- mro_cand($n, $c, $at), !mro_shadowed($n, $c, $at), attr_of($n, _, $a), bv($at, $a, "fn", $f).
+mro_kept($n, $f) :- mro_cand($n, $c, $at), !mro_shadowed($n, $c, $at), attr_of($n, _, $a), bv($at, $a, $k, $f), method_kind($k).
 .decl mro_dropped(n: node, f: node)
-mro_dropped($n, $f) :- mro_cand($n, $c, $at), mro_shadowed($n, $c, $at), attr_of($n, _, $a), bv($at, $a, "fn", $f), !mro_kept($n, $f).
+mro_dropped($n, $f) :- mro_cand($n, $c, $at), mro_shadowed($n, $c, $at), attr_of($n, _, $a), bv($at, $a, $k, $f), method_kind($k),
+    !mro_kept($n, $f).
 .decl mro_ambiguous(n: node)
 mro_ambiguous($n) :- mro_cand($n, $c, $x), mro_cand($n, $c, $y), $x != $y, !mro_shadowed($n, $c, $x), !mro_shadowed($n, $c, $y).
 call_target($c, $f) :- callee($c, $e), pv($e, "cls", $k), found($k, "__init__", $at), bv($at, "__init__", "fn", $f).

@@ -386,7 +386,6 @@ pub struct GpuTotal {
     pub upload_bytes: u64,
     /// Uploads by what was read (`UPLOAD_KINDS`): bytes and the host's CPU.
     pub upload_by: [(u64, f64); 4],
-    pub resident: u64,
     /// Relations read where they lie, in their block (decision 0325): nothing uploaded.
     pub in_place: u64,
     pub sorts: u64,
@@ -426,7 +425,6 @@ impl GpuTotal {
             a.0 += b.0;
             a.1 += b.1;
         }
-        self.resident += o.resident;
         self.in_place += o.in_place;
         self.sorts += o.sorts;
         self.sort_hits += o.sort_hits;
@@ -1328,8 +1326,11 @@ impl InRun {
 pub fn par_pieces<T: Sync, R: Send>(name: &'static str, items: &[T], min: usize, f: impl Fn(&[T]) -> Vec<R> + Sync + Send) -> Vec<R> {
     use rayon::prelude::*;
     const PIECES_PER_THREAD: usize = 4;
-    let size = items.len().div_ceil(rayon::current_num_threads() * PIECES_PER_THREAD).max(min).max(1);
-    let pieces: Vec<Vec<R>> = items.par_chunks(size).map(carried(name, f)).collect();
+    // On the machine's pool (decision 0442), whose threads the pieces are sized by.
+    let pieces: Vec<Vec<R>> = on_cores(|| {
+        let size = items.len().div_ceil(rayon::current_num_threads() * PIECES_PER_THREAD).max(min).max(1);
+        items.par_chunks(size).map(carried(name, f)).collect()
+    });
     let mut out = Vec::with_capacity(items.len());
     pieces.into_iter().for_each(|p| out.extend(p));
     out
@@ -1541,7 +1542,7 @@ const INSIDE: u8 = 2;
 #[derive(Clone, Copy, Default)]
 struct Stage(u8);
 
-pub use rerail_context::{AnyArc, Bound, Caller, Machine, bind, bind_here, bound, caller, holds, job_run, with_bound, RUN, RunOwn, RunValues, Shared, default_shared, engine_thread, enter, left_run, run_ended, local, local_if_any, machine, misses, run_own, setting, shared, shared_here, shared_object, starter_object, with_local, with_shared, within};
+pub use rerail_context::{AnyArc, Cores, is_main_thread, cores_scope, cores_spawn, cores_spawn_fifo, cores_threads, on_cores, Bound, Caller, Machine, bind, bind_here, bound, caller, holds, job_run, with_bound, RUN, RunOwn, RunValues, Shared, default_shared, engine_thread, enter, left_run, run_ended, local, local_if_any, machine, misses, run_own, setting, shared, shared_here, shared_object, starter_object, with_local, with_shared, within};
 
 /// A run starts on this thread (`plan::corpus`): before its first wave, unless it is nested in a run inside its
 /// waves, until the guard drops.
@@ -2207,8 +2208,8 @@ pub fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
         ms(sum.gpu), sum.submissions, sum.dispatches, sum.reruns, sum.arena_reruns, sum.waved, sum.sized);
     let _ = writeln!(r, "  host CPU {:.1} ms: encode {:.1}, uploads {:.1}, wait {:.1} ({:.1} ms wall), rows back into the store {:.1}",
         ms(sum.host()), ms(sum.encode), ms(sum.upload), ms(sum.wait), ms(sum.wait_wall), ms(sum.decode));
-    let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), read in place {}, found resident {}; sorts made {}, found resident {}; bindings {}, head rows {} ({} distinct, made so on the device; {} written in place into their heads' blocks); texts made {}",
-        sum.uploads, sum.upload_bytes as f64 / 1e6, sum.in_place, sum.resident, sum.sorts, sum.sort_hits, sum.bindings, sum.rows, sum.distinct, sum.placed, sum.made);
+    let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), read in place {}; sorts made {}, found in their blocks {}; bindings {}, head rows {} ({} distinct, made so on the device; {} written in place into their heads' blocks); texts made {}",
+        sum.uploads, sum.upload_bytes as f64 / 1e6, sum.in_place, sum.sorts, sum.sort_hits, sum.bindings, sum.rows, sum.distinct, sum.placed, sum.made);
     let by: Vec<String> = UPLOAD_KINDS.iter().zip(&sum.upload_by).map(|(k, (b, c))| format!("{k} {:.1} MB in {:.1} ms", *b as f64 / 1e6, ms(*c))).collect();
     let _ = writeln!(r, "  uploads by what they read: {}", by.join(", "));
     let mut top = ran.clone();
@@ -2896,9 +2897,9 @@ pub mod tests {
                 let tx = tx.clone();
                 // Each thread in the test's run, profiled (decision 0442: the records and the switch are the run's
                 // and its caller's).
-                let run = run_own();
+                let run = job_run();
                 std::thread::spawn(move || {
-                    let _run = InRun::enter(&run, true);
+                    let _run = InRun::enter(&run);
                     for _ in 0..10 {
                         let _s = span(|| "xsharded".into());
                         decision("xshard", || "on another thread".into());
@@ -2997,10 +2998,10 @@ pub mod tests {
             piece
         };
         // The other thread in the test's run, profiled (decision 0442), its own span open when it takes the piece.
-        let run = run_own();
+        let run = job_run();
         std::thread::scope(|t| {
             t.spawn(|| {
-                let _run = InRun::enter(&run, true);
+                let _run = InRun::enter(&run);
                 let _waiting = span(|| "waiting".into());
                 piece(30);
             });
@@ -3032,11 +3033,11 @@ pub mod tests {
         }
         // Another thread, stopped inside a span with a statement running, while this one dumps.
         let (opened, release) = (std::sync::mpsc::channel(), std::sync::mpsc::channel::<()>());
-        let run = run_own();
+        let run = job_run();
         let holder = std::thread::Builder::new()
             .name("holder".into())
             .spawn(move || {
-                let _run = InRun::enter(&run, true);
+                let _run = InRun::enter(&run);
                 let _held = span(|| "held open".into());
                 statement(Some("SELECT 42".into()));
                 opened.0.send(()).unwrap();
@@ -3109,7 +3110,6 @@ pub struct Report {
     pub upload_bytes: u64,
     /// The uploads by what they read (`UPLOAD_KINDS`, in order): bytes and this thread's CPU.
     pub upload_by: [(u64, f64); 4],
-    pub resident_hits: u32,
     /// Relations read where they lie, in their block (decision 0325).
     pub in_place: u32,
     pub sorts: u32,

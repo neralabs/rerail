@@ -90,7 +90,7 @@ pub fn traffic(program: &crate::program::Words, files: &[&[u8]]) -> HashMap<(u32
 /// (`native_cpu_stream::shared_runs`) runs as the body's word, at the first place.
 fn lowered_at(native: &Structure) -> (Vec<usize>, Vec<bool>) {
     let pushes = crate::native_cpu_stream::push_targets(native);
-    let shared = crate::native_cpu_stream::shared_runs(native, &pushes);
+    let shared = crate::native_cpu_stream::shared_runs(native, &pushes, None, None);
     let n = native.structural.len();
     let mut at: Vec<usize> = (0..n).collect();
     for (&s, &(b, _)) in &shared.at {

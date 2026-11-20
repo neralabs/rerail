@@ -203,6 +203,8 @@ struct Made {
     wanted: std::collections::HashSet<[u8; 32]>,
     /// Fixed pipelines this process recorded in the manifest (once each).
     fixed: std::collections::HashSet<[u8; 32]>,
+    /// The kernels on a device other than Metal (`elsewhere`), by pipeline key and constant.
+    elsewhere: HashMap<([u8; 32], Option<u32>), Arc<Function>>,
 }
 
 /// The machine's compiled kernels (decision 0442: the device's pipelines are the machine's).
@@ -267,20 +269,10 @@ fn count(f: impl FnOnce(&mut Counts)) {
     f(&mut rerail_context::machine::<CountsHeld>().0.lock().unwrap_or_else(|p| p.into_inner()));
 }
 
-/// The pipeline `name` (with `constant` at function constant 0) of `source`: from this process, else from an
-/// archive (shipped or in the store), else compiled on this thread and archived in the store. For a caller with
-/// no other form of the work. A kernel that does not compile is fatal.
-pub fn pipeline(source: &str, name: &str, constant: Option<u32>) -> ComputePipelineState {
-    state(&function(source, name, constant))
-}
-
-/// A Metal function's pipeline.
-fn state(f: &Function) -> ComputePipelineState {
-    f.metal().expect("a Metal kernel").compute_pipeline_state.clone()
-}
-
-/// [`pipeline`] as the device layer launches it, on the process's device: on Metal made as `pipeline` makes it
-/// (from this process, an archive, or compiled and archived), with its arguments' reflection; elsewhere `source`
+/// The kernel `name` (with `constant` at function constant 0) of `source` (UKL), as the device layer launches it, on
+/// the process's device. On Metal: from this process, else from an archive (shipped or in the store), else compiled
+/// on this thread and archived in the store, with its arguments' reflection. For a caller with no other form of the
+/// work. A kernel that does not compile is fatal. Elsewhere `source`
 /// (UKL) compiled by the device layer, `constant` given as the define `UKL_CONSTANT_0` (`UKL_CONSTANT_U32`).
 pub fn function(source: &str, name: &str, constant: Option<u32>) -> Arc<Function> {
     if super::shared::get().is_none() {
@@ -305,33 +297,25 @@ pub fn function(source: &str, name: &str, constant: Option<u32>) -> Arc<Function
 /// A kernel on a device other than Metal: compiled by the device layer (`rerail_gpu::kernels`, its store keeping
 /// the backend's compiled form).
 fn elsewhere(source: &str, name: &str, constant: Option<u32>) -> Result<Arc<Function>, String> {
-    // The kernels compiled on this machine's device (decision 0442: the machine's, as its device is).
-    #[derive(Default)]
-    struct Made(Mutex<HashMap<([u8; 32], Option<u32>), Arc<Function>>>);
-    let made = rerail_context::machine::<Made>();
     let key = (Key::of(source, name, constant).pipeline, constant);
-    if let Some(f) = made.0.lock().unwrap_or_else(|p| p.into_inner()).get(&key) {
+    let held = made();
+    if let Some(f) = held.0.lock().unwrap_or_else(|p| p.into_inner()).elsewhere.get(&key) {
         return Ok(Arc::clone(f));
     }
     let value = constant.map(|c| format!("{c}u"));
     let defines: Vec<(&str, &str)> = value.as_deref().map(|v| ("UKL_CONSTANT_0", v)).into_iter().collect();
-    let program = rerail_gpu::kernels::program_with(&format!("{name}.ukl"), source, &defines)?;
+    let program = rerail_gpu::kernels::program_with(&format!("{name}.uglykl"), source, &defines)?;
     let shared = rerail_gpu::shared::get().ok_or("no device")?;
     let f = Arc::new(program.library().get_function(&shared.device, name)?);
-    made.0.lock().unwrap_or_else(|p| p.into_inner()).insert(key, Arc::clone(&f));
+    // Made here, not found in this process's memory: as Metal's kernels are counted (`made_here`).
+    MADE_HERE.set(MADE_HERE.get() + 1);
+    held.0.lock().unwrap_or_else(|p| p.into_inner()).elsewhere.insert(key, Arc::clone(&f));
     Ok(f)
 }
 
-/// [`pipeline`] of a fixed source: an interpreter's or a relational kernel's, the same for every rule set. Recorded
+/// [`function`] of a fixed source: an interpreter's or a relational kernel's, the same for every rule set. Recorded
 /// in the store's manifest of fixed kernels (`fixed.list`), which `ship` compiles ahead of time for the engine's
 /// bundle: the tier between a kernel generated for the work and the CPU.
-pub fn pipeline_fixed(source: &str, name: &str, constant: Option<u32>) -> ComputePipelineState {
-    let p = pipeline(source, name, constant);
-    record_fixed(source, name, constant);
-    p
-}
-
-/// [`function`] of a fixed source ([`pipeline_fixed`]).
 pub fn function_fixed(source: &str, name: &str, constant: Option<u32>) -> Arc<Function> {
     let f = function(source, name, constant);
     if super::shared::get().is_some() {
@@ -360,14 +344,9 @@ fn record_fixed(source: &str, name: &str, constant: Option<u32>) {
     let _ = std::fs::File::options().create(true).append(true).open(&list).and_then(|mut f| f.write_all(line.as_bytes()));
 }
 
-/// The pipeline when there is a form of it this process can have without the back end's compile (made here
-/// before, or an archive); otherwise `None`, and what the mode says (`Mode`): the caller runs another form of the
-/// work meanwhile. In `Wait` it is compiled here and returned.
-pub fn ready(source: &str, name: &str, constant: Option<u32>) -> Option<ComputePipelineState> {
-    ready_in(mode(), source, name, constant).map(|f| state(&f))
-}
-
-/// [`ready`] as the device layer launches it ([`function`]). Elsewhere than Metal, compiled on the caller's
+/// The kernel ([`function`]) when there is a form of it this process can have without the back end's compile (made
+/// here before, or an archive); otherwise `None`, and what the mode says (`Mode`): the caller runs another form of the
+/// work meanwhile. In `Wait` it is compiled here and returned. Elsewhere than Metal, compiled on the caller's
 /// thread: the device layer's store is its tier.
 pub fn ready_function(source: &str, name: &str, constant: Option<u32>) -> Option<Arc<Function>> {
     if super::shared::get().is_none() {
@@ -376,14 +355,17 @@ pub fn ready_function(source: &str, name: &str, constant: Option<u32>) -> Option
     ready_in(mode(), source, name, constant)
 }
 
-/// [`ready`] that never waits: in `Wait`, the compile runs behind the caller as in `Background` (decision 0012's
-/// callers, which swap to the kernel at a later batch).
-pub fn ready_behind(source: &str, name: &str, constant: Option<u32>) -> Option<ComputePipelineState> {
+/// [`ready_function`] that never waits: in `Wait`, the compile runs behind the caller as in `Background` (decision
+/// 0012's callers, which swap to the kernel at a later batch). Elsewhere than Metal, compiled on the caller's thread.
+pub fn ready_behind_function(source: &str, name: &str, constant: Option<u32>) -> Option<Arc<Function>> {
+    if super::shared::get().is_none() {
+        return Some(function(source, name, constant));
+    }
     let mode = match mode() {
         Mode::Wait => Mode::Background,
         m => m,
     };
-    ready_in(mode, source, name, constant).map(|f| state(&f))
+    ready_in(mode, source, name, constant)
 }
 
 fn ready_in(mode: Mode, source: &str, name: &str, constant: Option<u32>) -> Option<Arc<Function>> {
@@ -412,7 +394,7 @@ fn ready_in(mode: Mode, source: &str, name: &str, constant: Option<u32>) -> Opti
             let spawned = crate::exec::service("rerail-msl-compile", None, move || {
                 crate::upkeep::lower_this_thread();
                 let started = std::time::Instant::now();
-                let _ = pipeline(&source, &name, constant);
+                let _ = function(&source, &name, constant);
                 crate::forms::compiled("msl-pipeline", &hex(&key.pipeline), &name, started.elapsed().as_secs_f64(), true);
                 made().0.lock().unwrap_or_else(|p| p.into_inner()).compiling.remove(&key.pipeline);
             });
@@ -966,14 +948,14 @@ mod tests {
         if super::super::shared::get().is_none() || store_dir().is_none() {
             return;
         }
-        let source = "#include <metal_stdlib>\nusing namespace metal;\nkernel void kernels_store_test(device uint* o [[buffer(0)]], uint i [[thread_position_in_grid]]) { o[i] = i * 3u; }\n";
+        let source = "#include <ukl/backend.h>\nDEFINE_KERNEL2(store, kernels_store_test, RWBUFFER, uint32_t, o, \"[n]\", GID0, uint32_t, i, ) { o[i] = i * 3u; }\n";
         let name = "kernels_store_test";
-        let _ = pipeline(source, name, None);
+        let _ = function(source, name, None);
         assert!(archive_path(&Key::of(source, name, None)).is_some(), "its archive is in the store");
         release();
         // This thread's counts: other tests make pipelines beside this one, and `release` drops theirs too.
         let before = here();
-        let _ = pipeline(source, name, None);
+        let _ = function(source, name, None);
         assert_eq!(here().0, before.0 + 1, "made again from its archive");
         assert_eq!(here().1, before.1, "not compiled again");
 
@@ -984,12 +966,12 @@ mod tests {
         }
         release();
         set_mode(rerail_context::shared_here().machine(), Mode::Defer);
-        assert!(ready(&other, name, None).is_none(), "not compiled: the caller runs another form");
+        assert!(ready_function(&other, name, None).is_none(), "not compiled: the caller runs another form");
         assert!(made().0.lock().unwrap().wanted.contains(&key.pipeline), "recorded as wanted");
         assert!(store_dir().unwrap().join("src").join(format!("{}.metal", hex(&key.library))).is_file(), "its source in the store");
         let _ = make(key, &other, name, None, true);
         release();
-        assert!(ready(&other, name, None).is_some(), "compiled, it is ready from its archive");
+        assert!(ready_function(&other, name, None).is_some(), "compiled, it is ready from its archive");
         set_mode(rerail_context::shared_here().machine(), Mode::Wait);
     }
 }

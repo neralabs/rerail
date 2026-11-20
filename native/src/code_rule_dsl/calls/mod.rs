@@ -1230,7 +1230,7 @@ pub(crate) fn calls_document(
     doc: crate::code_rule_dsl::tape::TapeDoc,
     language: GrammarDialect,
 ) -> Option<(crate::code_rule_dsl::tape::TapeDoc, GrammarDialect)> {
-    if language.embeds().is_empty() {
+    if language.program_embeds().is_empty() {
         return Some((doc, language));
     }
     doc.guests()?.iter().find_map(|guest| {

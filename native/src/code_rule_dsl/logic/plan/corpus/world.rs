@@ -539,27 +539,29 @@ pub(in crate::code_rule_dsl::logic::plan) fn bytes_digests_held(paths: &[PathBuf
         DigestStep::Read(read) if let Some(key) = read.blob_key() => *first_by_blob.entry(key).or_insert(i),
         _ => i,
     }).collect();
-    let hashed: Vec<_> = steps
-        .par_iter()
-        .zip(paths.par_iter())
-        .enumerate()
-        .map(|(i, (s, path))| match s {
-            DigestStep::Read(r) if representatives[i] == i => {
-                let bytes = r.read()?;
-                let hashed = DigestRead::hashed(&bytes);
-                let mut git_text = None;
-                if let Some(hold) = hold {
-                    if let Some(s) = r.stat() {
-                        hold.keep(path, crate::content_store::FileStat { size: s.size, mtime_ns: s.mtime_ns, inode: s.ino }, bytes);
-                    } else {
-                        git_text = Some(bytes);
+    let hashed: Vec<_> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+        steps
+            .par_iter()
+            .zip(paths.par_iter())
+            .enumerate()
+            .map(|(i, (s, path))| match s {
+                DigestStep::Read(r) if representatives[i] == i => {
+                    let bytes = r.read()?;
+                    let hashed = DigestRead::hashed(&bytes);
+                    let mut git_text = None;
+                    if let Some(hold) = hold {
+                        if let Some(s) = r.stat() {
+                            hold.keep(path, crate::content_store::FileStat { size: s.size, mtime_ns: s.mtime_ns, inode: s.ino }, bytes);
+                        } else {
+                            git_text = Some(bytes);
+                        }
                     }
+                    Some((hashed, git_text))
                 }
-                Some((hashed, git_text))
-            }
-            _ => None,
-        })
-        .collect();
+                _ => None,
+            })
+            .collect()
+    });
     if let Some(hold) = hold {
         for (path, &first) in paths.iter().zip(&representatives) {
             if let Some((_, Some(bytes))) = &hashed[first] {

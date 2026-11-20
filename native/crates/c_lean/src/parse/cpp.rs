@@ -897,10 +897,9 @@ impl<'a> P<'a> {
         // A call's arguments then an operand (`a < b > (c) d`): comparisons.
         if self.kind_at(e + 1) == T::LParen
             && let Some(p) = self.paren_end(e + 1)
-            && (matches!(self.kind_at(p + 1), T::Number | T::Str | T::Char) || self.is_ident_at(p + 1))
-        {
-            return false;
-        }
+                && (matches!(self.kind_at(p + 1), T::Number | T::Str | T::Char) || self.is_ident_at(p + 1)) {
+                    return false;
+                }
         matches!(
             self.kind_at(e + 1),
             T::LParen | T::ColonColon | T::LBrace | T::Semi | T::Comma | T::RParen | T::RBracket | T::Gt | T::GtGt | T::Eq | T::DotDotDot | T::Colon | T::RBrace | T::Eof | T::EqEq | T::Ne | T::AmpAmp | T::PipePipe | T::Question
@@ -1694,15 +1693,13 @@ impl<'a> P<'a> {
     /// template) name.
     fn name_expr(&mut self, s: Slot) -> R<N> {
         if let Some(e) = self.class_name_end(0)
-            && self.kind_at(e) == T::LBrace
-            && !self.no_brace_literal()
-        {
-            let n = self.open_in(K::CompoundLiteralExpression, s);
-            self.class_name(slot(f::TYPE, Ctx::Bare))?;
-            self.initializer_list(slot(f::VALUE, Ctx::Bare))?;
-            self.close(n);
-            return Ok(n);
-        }
+            && self.kind_at(e) == T::LBrace && !self.no_brace_literal() {
+                let n = self.open_in(K::CompoundLiteralExpression, s);
+                self.class_name(slot(f::TYPE, Ctx::Bare))?;
+                self.initializer_list(slot(f::VALUE, Ctx::Bare))?;
+                self.close(n);
+                return Ok(n);
+            }
         if self.is_word(w::DECLTYPE) && !self.scope_ahead() {
             return self.decltype(s);
         }

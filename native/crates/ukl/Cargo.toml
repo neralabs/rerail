@@ -16,4 +16,5 @@ rerail-c-pp = { path = "../c_pp" }
 rerail-c-lean = { path = "../c_lean" }
 
 [dev-dependencies]
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-ukl = { path = ".", features = ["test-hooks"] }

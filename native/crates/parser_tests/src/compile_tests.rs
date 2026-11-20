@@ -257,21 +257,26 @@ fn later_masks_equal_the_evaluator_on_every_executor() {
     }
 }
 
+/// A grammar of the IR's tests of its backward pass (decision 0416): its `fill` named `ahead`, a
+/// `back_fill` (`syntax::backward`), as no grammar may write one.
+fn backward(text: &str) -> Vec<::bitlex::syntax::Stmt> {
+    ::bitlex::syntax::backward(::bitlex::syntax::parse(text).expect("parses"), &["ahead"]).expect("a fill named `ahead`")
+}
+
 /// Numbers (`number`): planes of a place, carried back and forth, subtracted and compared, in a
 /// fixed point too; each mask equals the evaluator's, which holds the numbers whole.
 const NUMBERS: &str = r#"
 lexer numbers
-deprecated back_fill
 class tick = '`'
 mask last  = tick & ~next(tick)
-number end = back_fill(last, ~tick, position)
-number rem = end - position
+number ahead = fill(last, ~tick, position)
+number rem = ahead - position
 mask long  = tick & at_least(rem, 3)
 number n   = fill(long, long, rem)
 mask close = tick & at_least(rem, n) & ~long
 mask over  = above(n, rem)
 mask far   = at_least(position, 1000) & ~at_least(position, 66000)
-mask odd   = above(end, 65537)
+mask odd   = above(ahead, 65537)
 rounds until settled {
   carry h  = empty
   mask o   = long & ~h
@@ -285,7 +290,7 @@ rounds until settled {
 #[test]
 fn numbers_equal_the_evaluator_on_every_executor() {
     let names = ["long", "close", "over", "far", "odd", "o", "c", "f"];
-    let stmts = ::bitlex::syntax::parse(NUMBERS).expect("parses");
+    let stmts = backward(NUMBERS);
     let compiled = bitlex_compile::compile(&stmts, &names, None).unwrap_or_else(|e| panic!("compiles: {e}"));
     assert!(compiled.rows.contains("position 6") && !compiled.rows.contains("position 5"), "planes from bit 6 are the block's place\n{}", compiled.rows);
     let text = format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows);
@@ -311,13 +316,13 @@ fn numbers_equal_the_evaluator_on_every_executor() {
 }
 
 /// Values made from the position alone, read after a backward pass (stored by the first pass and
-/// loaded): `aligned(_, 3)`'s phases and `end - position`'s previous position, on every executor,
+/// loaded): `aligned(_, 3)`'s phases and `ahead - position`'s previous position, on every executor,
 /// Metal's forward carry and backward passes included.
 #[test]
 fn positions_after_a_backward_pass_equal_the_evaluator_on_every_executor() {
-    let aligned = "lexer t\ndeprecated back_fill\nclass d = '0'..'9'\nclass q = '\"'\nclass sp = ' '\nmask s = back_fill(q, sp)\nmask a = aligned(d, 3)\nmask b = aligned(s, 3)\n";
+    let aligned = "lexer t\nclass d = '0'..'9'\nclass q = '\"'\nclass sp = ' '\nmask ahead = fill(q, sp)\nmask a = aligned(d, 3)\nmask b = aligned(ahead, 3)\n";
     for (text, names) in [(aligned, &["a", "b"][..]), (NUMBERS, &["long", "close", "over", "far", "odd"][..])] {
-        let stmts = ::bitlex::syntax::parse(text).expect("parses");
+        let stmts = backward(text);
         let compiled = bitlex_compile::compile(&stmts, names, None).unwrap_or_else(|e| panic!("compiles: {e}"));
         let rows = format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows);
         let p = rir::assemble(&rows).unwrap_or_else(|e| panic!("{e}\n{rows}"));
@@ -357,10 +362,10 @@ fn positions_after_a_backward_pass_equal_the_evaluator_on_every_executor() {
 #[ignore = "a measurement: run by hand"]
 fn positions_after_a_backward_pass_metal_payoff() {
     use metal_program_backend::block_program::serial::{Segments, run_serial_split};
-    let aligned = "lexer t\ndeprecated back_fill\nclass d = '0'..'9'\nclass q = '\"'\nclass sp = ' '\nmask s = back_fill(q, sp)\nmask a = aligned(d, 3)\nmask b = aligned(s, 3)\n";
+    let aligned = "lexer t\nclass d = '0'..'9'\nclass q = '\"'\nclass sp = ' '\nmask ahead = fill(q, sp)\nmask a = aligned(d, 3)\nmask b = aligned(ahead, 3)\n";
     for (name, text, names, mb) in [("aligned", aligned, &["a", "b"][..], 8), ("numbers", NUMBERS, &["long", "close", "over", "far", "odd"][..], 1)] {
         let file: Vec<u8> = runs().into_iter().flatten().map(|b| [b'1', b'`', b'"', b' '][usize::from(b) % 4]).cycle().take(mb << 20).collect();
-        let stmts = ::bitlex::syntax::parse(text).expect("parses");
+        let stmts = backward(text);
         let compiled = bitlex_compile::compile(&stmts, names, None).unwrap_or_else(|e| panic!("compiles: {e}"));
         let p = rir::assemble(&format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows)).expect("assembles");
         let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
@@ -439,11 +444,13 @@ fn json_stream_equals_the_evaluator_on_every_executor() {
     assert!(compared > 0 && rejected > 0);
 }
 
-/// All of `json.bitlex` as generated MSL: one kernel, a few lines per instruction (it was 0.7 to
-/// 1.1 MB of round kernels, each recomputing what came before it, and took Metal minutes).
+/// All of `json.bitlex` as generated UKL: one kernel, a few lines per instruction (it was 0.7 to
+/// 1.1 MB of round kernels, each recomputing what came before it, and took Metal minutes). The lines
+/// counted are those generated for the program, after the head every source shares
+/// (`block_program::head`: the carries, the sinks and the interpreter's helpers, 0440 step C).
 #[test]
 #[cfg(target_os = "macos")]
-fn json_msl_is_one_kernel() {
+fn json_ukl_is_one_kernel() {
         use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_with};
     let grammar = tree_sitter::Language::new(tree_sitter_json::LANGUAGE);
     let kind = |name: &str| match grammar.id_for_node_kind(name, true) {
@@ -459,9 +466,10 @@ fn json_msl_is_one_kernel() {
     let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
     for width in LaneWidth::ALL {
         for strategy in ClassStrategy::ALL {
-            let msl = generate_with(&native, width, strategy);
-            assert_eq!(msl.matches("kernel void ").count(), 1);
-            let lines = msl.lines().count();
+            let ukl = generate_with(&native, width, strategy);
+            assert_eq!(ukl.matches("DEFINE_KERNEL2(").count(), 1);
+            let generated = ukl.strip_prefix(&metal_program_backend::block_program::head(width)).expect("a source starts with the shared head");
+            let lines = generated.lines().count();
             // Counted on the form generated: `Planes` writes each class out as the planes' logic.
             let insts = match strategy {
                 ClassStrategy::Lookup => native.insts.len(),
@@ -562,14 +570,18 @@ fn the_cpu_executors_take_a_batch() {
     let bytes = batch_bytes();
     let files = batch_files(&bytes, blocks.len());
     let want: Vec<_> = files.iter().map(|f| blocks[f.program].run(f.bytes)).collect();
-    // The outputs the CPU's record pass makes instead of a mask (decision 0411): not compared.
-    let made: Vec<Vec<usize>> = programs.iter().map(|p| rerail_compiler::block_native::BlockNative::lower(&p.block_programs[0]).records_made()).collect();
+    // The rows the CPU's tier 1 does not store (0406): a total no one reads by its rows is its
+    // flag only, compared below.
+    let unstored: Vec<Vec<usize>> = blocks.iter().map(|b| rerail_compiler::block_native::BlockNative::lower(b).cpu_unstored()).collect();
     for (name, got) in [("interpreter", block::run_batch(&blocks, &files)), ("cranelift", native_cpu_block::run_batch(&compiled, &files))] {
         assert_eq!(got.len(), files.len());
         for (k, (got, want)) in got.iter().zip(&want).enumerate() {
             let what = format!("{name}: file {k} ({} bytes, program {})", files[k].bytes.len(), files[k].program);
-            let made: &[usize] = if name == "cranelift" { &made[files[k].program] } else { &[] };
-            assert_eq!(got.without(made).outputs, want.without(made).outputs, "{what}");
+            let rows = |r: &block::BlockRun| -> Vec<Vec<u64>> {
+                r.outputs.iter().enumerate().filter(|&(o, _)| name == "interpreter" || !unstored[files[k].program].contains(&o)).map(|(_, w)| w.clone()).collect()
+            };
+            assert_eq!(rows(got), rows(want), "{what}");
+            assert_eq!(got.totals, want.totals, "{what}: the totals");
             if name == "interpreter" {
                 // Cranelift has no lowering of `extract` rows (docs/parser-generators/20-the-ir.md).
                 assert_eq!(got.positions, want.positions, "{what}");
@@ -1028,7 +1040,11 @@ fn only_the_compiler_reads_tier2s_states() {
                     ["rd", "reader", "shape", "cols", "c", "self"].contains(&receiver) || indexed
                 })
             };
-            let table_line = |line: &str| needles[1..].iter().any(|n| line.contains(n)) || (line.contains(".arms") && !other_arms(line));
+            // And `.arms` is the table's only in code that reaches `grammar` (its rows are
+            // `grammar::ArmRow`s); a comment reads nothing.
+            let code = |line: &str| !line.trim_start().starts_with("//");
+            let reaches_grammar = text.lines().filter(|l| code(l)).any(|l| l.contains("grammar::"));
+            let table_line = |line: &str| code(line) && (needles[1..].iter().any(|n| line.contains(n)) || (reaches_grammar && line.contains(".arms") && !other_arms(line)));
             if text.lines().any(table_line) {
                 readers.push(path.display().to_string());
             }

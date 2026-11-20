@@ -23,7 +23,7 @@ impl Observed {
     /// # Safety
     /// `statement` is a live statement of the observed connection, as SQLite gives its trace callback, for the
     /// length of the call.
-    pub unsafe fn start(&self, statement: *mut ffi::sqlite3_stmt) {
+    pub(crate) unsafe fn start(&self, statement: *mut ffi::sqlite3_stmt) {
         let mut running = self.running.lock();
         if running.contains_key(&(statement as usize)) {
             return;
@@ -65,7 +65,7 @@ impl Observed {
     ///
     /// # Safety
     /// As `start`'s: a live statement of the observed connection, for the length of the call.
-    pub unsafe fn end(&self, statement: *mut ffi::sqlite3_stmt) {
+    pub(crate) unsafe fn end(&self, statement: *mut ffi::sqlite3_stmt) {
         let running = self.running.lock().remove(&(statement as usize));
         if let Some(Running { receipt, vm_before }) = running {
             let mut measured_steps = None;

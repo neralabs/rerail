@@ -258,7 +258,7 @@ impl Executor {
     /// Runs `f` with a host stream named `name` open (a scope: its jobs may borrow what outlives the call). Jobs still
     /// queued when `f` returns (its caller waited for none of them: an error left early) are dropped unrun.
     pub fn stream<'s, R>(&self, name: &'static str, f: impl FnOnce(&Stream<'s, '_>) -> R) -> R {
-        rayon::in_place_scope(|scope: &rayon::Scope<'s>| {
+        rerail_context::cores_scope(|scope: &rayon::Scope<'s>| {
             let state = Arc::new(State {
                 name,
                 queue: Mutex::new(Vec::new()),

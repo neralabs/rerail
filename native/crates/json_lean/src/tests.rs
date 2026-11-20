@@ -116,8 +116,8 @@ fn tape_is_the_kernels() {
     eprintln!("{} files, {accepted} accepted; each tape and refusal the kernel's", files.len());
 }
 
-/// The process's instructions retired and cycles (macOS: `proc_pid_rusage`); zero elsewhere (a
-/// Linux host builds and runs these tests too: its measurements read 0).
+/// The process's instructions retired and cycles (`proc_pid_rusage`, macOS's).
+#[cfg(target_os = "macos")]
 fn retired() -> (u64, u64) {
     #[cfg(target_os = "macos")]
     {

@@ -538,8 +538,7 @@ fn writers() -> Arc<Writers> {
 pub(super) fn register(path: &Path) -> Arc<Writer> {
     let held = writers();
     let mut all = held.0.lock().expect("the writers");
-    let entry = all.entry(path.to_path_buf()).or_default();
-    let w = Arc::clone(entry);
+    let w = Arc::clone(all.entry(path.to_path_buf()).or_default());
     w.handles.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     w
 }

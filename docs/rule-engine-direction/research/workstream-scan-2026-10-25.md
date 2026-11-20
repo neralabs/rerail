@@ -18,7 +18,7 @@ The scan was read-only. Each section is measured against `docs/rule-engine-direc
 
 ## DLRE
 
-**New numbers.** From `docs/data-layer-performance-journal.md` ("Full-repository measurement reset"), first-50 rules over 9,021 files:
+**New numbers.** From `docs/data-layer-performance-journal.md` (removed; at 7efcac9c67) ("Full-repository measurement reset"), first-50 rules over 9,021 files:
 
 | | Passing pre-SQL reference | Last SQL run | Current |
 |---|---|---|---|

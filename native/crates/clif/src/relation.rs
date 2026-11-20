@@ -150,7 +150,7 @@ pub fn rows_at(b: &mut B<'_, '_>) -> Value {
 
 /// `rows_put(rows, i, c, v)`: `v` written as row `i`'s value in column `c`, at the column's width; 1. Where the row
 /// is not below the rows the chunks hold (`reserved`), or the column not below the columns, nothing is written and
-/// the rows' `needed` is counted (the overflow protocol); 0. Decision 0427: a device writer's row and column come
+/// the rows' `needed` is counted (the overflow protocol); 0. Decision 0463: a device writer's row and column come
 /// from its sizes and its kernels, which the host's sizing bounds; this bounds them whatever the sizes held. A row
 /// past the chunks made would find a chunk's offset 0, its address the column's directory, and overwrite it and the
 /// descriptors after it (Q265).
@@ -398,7 +398,7 @@ mod tests {
         }
     }
 
-    /// Decision 0427: the device's row writer (`rows_put`) writes a row the chunks hold at its column's width, and
+    /// Decision 0463: the device's row writer (`rows_put`) writes a row the chunks hold at its column's width, and
     /// a row past them, or a column past the columns, not at all: it counts the rows' `needed`, and the relation's
     /// directory and descriptor are as they were (a row past the chunks made would have found a chunk offset of 0,
     /// its address the column's directory: Q265).

@@ -222,9 +222,11 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
     let io = |e: std::io::Error| StoreError::Io(e);
     let dir = space_dir(store, space);
     private_dir(&dir).map_err(io)?;
+    let opened = rerail_prof::code_rule_dsl::logic::profile::span(|| "kept facts: the space's files opened".into());
     let rows = chain_rows(t, space)?;
     sweep(&dir, &rows);
     let old = KeptSpace::open(store, space, &rows)?;
+    drop(opened);
     let chain = old.view();
     let put_keys: HashSet<FactKey<'_>> = puts.iter().map(KeptPut::key).collect();
     // The files merged into this one: the newest ones, each weighing no more than twice the bytes joining it.
@@ -255,6 +257,7 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
     let name = format!("c{seq}-{tag:016x}.blk");
     let making = dir.join(format!("{name}.new"));
     let mut w = KeptW::create(&making, tag, reserve).map_err(io)?;
+    let carrying = rerail_prof::code_rule_dsl::logic::profile::span(|| "kept facts: the merged files' entries carried".into());
     // What the merged files held: rows copied whole; a gone or reads-only entry kept while an older file holds the key.
     for (key, n) in &carried {
         match n {
@@ -272,6 +275,8 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
             }
         }
     }
+    drop(carrying);
+    let putting = rerail_prof::code_rule_dsl::logic::profile::span(|| "kept facts: the puts written".into());
     for p in &puts {
         let reads: Vec<(&str, u64)> = p.reads.iter().map(|(r, d)| (r.as_str(), *d)).collect();
         let meta = Meta { key: p.key(), digest: p.digest, reads: &reads, types: &p.types };
@@ -297,10 +302,13 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
             }
         }
     }
-    let finishing = rerail_prof::code_rule_dsl::logic::profile::span(|| "kept facts: the file finished and synced".into());
-    w.finish().map_err(io)?;
+    drop(putting);
+    let finishing = rerail_prof::code_rule_dsl::logic::profile::span(|| "kept facts: the block finished and synced".into());
+    // Written back as the store's flush mode says (decision 0481): by default the OS writes it at its own pace.
+    let flush = crate::content_store::connection::flush_of(t);
+    w.finish(flush).map_err(io)?;
     std::fs::rename(&making, dir.join(&name)).map_err(io)?;
-    sync_dir(&dir).map_err(io)?;
+    sync_dir(&dir, flush).map_err(io)?;
     drop(finishing);
     if from < rows.len() {
         t.prepare_cached("DELETE FROM main.facts_chain WHERE space = ?1 AND seq >= ?2")?.execute(rusqlite::params![&space[..], rows[from].0])?;

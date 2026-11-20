@@ -1,6 +1,7 @@
 //! The `.rerail` ladder (docs/parser-generators/24-rr-and-bitlex-plan.md §3): `.rerail`, the rule
-//! language, a construct at a time, each step a Bitlex file in `bitlex_ladder/rr/`, parsed with
-//! no Rust between the bytes and the nodes.
+//! language, built a construct at a time, parsed with no Rust between the bytes and the nodes. The
+//! tree keeps its last step, `rr_syntax/bitlex_ladder/22-test-blocks.bitlex`, the `.rerail` parser's
+//! grammar; git's history keeps the steps before it (decision 0422).
 //!
 //! Each step is checked as the ladder's are (`bitlex_ladder_tests::check_ladder`): the reference
 //! evaluator, the interpreters and Cranelift give the same nodes on every document, and each
@@ -419,14 +420,14 @@ fn rr_cases_parse_from_their_steps() {
 /// each level they call refusing it too, no level that may end and go on.
 #[test]
 fn a_refused_mark_is_checked() {
-    let source = std::fs::read_to_string(format!("{DIR}/10-policy.bitlex")).expect("step 10");
+    let source = std::fs::read_to_string(format!("{DIR}/22-test-blocks.bitlex")).expect("the grammar");
     assert_eq!(rerail_compiler::ladder::compile_error(&source), None);
     let refuse = "refuse json_bad in json_document json_inner_object json_inner_array";
     for (from, to, why) in [
         (refuse, "refuse json_bad in json_document json_inner_object", "calls one that does not"),
         (refuse, "refuse json_bad in json_document json_member json_inner_object json_inner_array", "no nested level"),
         (refuse, "refuse json_bad in source_file json_document json_inner_object json_inner_array", "the root"),
-        ("hidden line newline json_bad", "hidden line newline", "no hidden mark"),
+        ("newline policy_on json_bad fix_on", "newline policy_on fix_on", "no hidden mark"),
         ("merge json_object ']'", "merge json_object ']' [merge json_object '.']", "may end only after its last token"),
     ] {
         assert_eq!(source.matches(from).count(), 1, "{from}");
@@ -439,7 +440,7 @@ fn a_refused_mark_is_checked() {
 /// the program (`RETAG m=3` names one; `provisional` fields the program checks at `ACCEPT`).
 #[test]
 fn a_reading_is_checked() {
-    let source = std::fs::read_to_string(format!("{DIR}/12-parenthesized.bitlex")).expect("step 12");
+    let source = std::fs::read_to_string(format!("{DIR}/22-test-blocks.bitlex")).expect("the grammar");
     assert_eq!(rerail_compiler::ladder::compile_error(&source), None);
     for (from, to, why) in [
         ("reread parenthesized_strict pattern_tail\n  provisional", "reread nowhere pattern_tail\n  provisional", "no reading of that name"),
@@ -450,8 +451,8 @@ fn a_reading_is_checked() {
         let e = rerail_compiler::ladder::compile_error(&source.replace(from, to));
         assert!(e.as_deref().is_some_and(|e| e.contains(why)), "{to}: {e:?}");
     }
-    let c = rerail_compiler::ladder::compile_step("12", &source);
-    assert_eq!(c.program.readings.maps.len(), 2);
+    let c = rerail_compiler::ladder::compile_step("22", &source);
+    assert_eq!(c.program.readings.maps.len(), source.lines().filter(|l| l.trim_start().starts_with("reading ")).count());
     assert_eq!(c.program.readings.provisional, [c.ids.of("field bare")]);
     let rereads = c.native.structural.iter().filter(|b| matches!(b.operation, rerail_compiler::native_ir::StructuralOperation::Reread { .. })).count();
     assert!(rereads > 0, "the words reread");

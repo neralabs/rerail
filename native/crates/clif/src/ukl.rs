@@ -212,6 +212,7 @@ fn body(out: &mut String, f: &ir::Function, named: &dyn Fn(u32) -> Result<String
     // read's own parameters are its arguments.
     for (k, &p) in dfg.block_params(entry).iter().enumerate() {
         if family != Family::Tape && k == 0 {
+            // The descriptor: its offset from `t`.
             writeln!(out, " {}=a0;", name(p)).unwrap();
         } else if k < family.pointers() {
             writeln!(out, " {}=0;", name(p)).unwrap();
@@ -753,8 +754,12 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::AtomicLoad => set(format!("ukl_atomic_load_at(t,{})", wide_addr(&args[0]))),
         Opcode::AtomicStore => format!("ukl_atomic_store_at(t,{},((uint32_t)({})));", wide_addr(&args[1]), args[0]),
         Opcode::AtomicRmw => {
-            let InstructionData::AtomicRmw { op: ir::AtomicRmwOp::Add, .. } = data else { return Err("an atomic other than an add".into()) };
-            set(format!("ukl_atomic_add_at(t,{},((uint32_t)({})))", wide_addr(&args[0]), args[1]))
+            let how = match data {
+                InstructionData::AtomicRmw { op: ir::AtomicRmwOp::Add, .. } => "ukl_atomic_add_at",
+                InstructionData::AtomicRmw { op: ir::AtomicRmwOp::Or, .. } => "ukl_atomic_or_at",
+                _ => return Err("an atomic other than an add or an or".into()),
+            };
+            set(format!("{how}(t,{},((uint32_t)({})))", wide_addr(&args[0]), args[1]))
         }
         Opcode::AtomicCas => set(format!("ukl_atomic_cas_at(t,{},((uint32_t)({})),((uint32_t)({})))", wide_addr(&args[0]), args[1], args[2])),
         Opcode::Fence => "ukl_fence_device();".to_owned(),

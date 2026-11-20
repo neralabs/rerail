@@ -109,7 +109,7 @@ Each has its test before the code that meets it.
   granule left; instructions cold 198.9 G to 212.3 G, the edit 37.3 G to 35.2 G; peak memory cold 888 MB to 724 MB.
   Two costs it found are fixed: the old version (`Before`) answered no lookup, so every stratum hashed all its rows,
   and the corpus batch made what the cross part does not read (tree digests). Kept after an edit is still the cross
-  part's `kind`, a view of `node` the maintain mode derives (work queue Q361, as before this decision).
+  part's `kind`, a view of `node` the maintain mode derives (work queue Q382, as before this decision).
 - **A session** (2026-11-20). A session's run digests its base relations by their documents as every run does
   (`kept_source_digested`, the corpus batch's digest). It holds its corpus batch from run to run
   (`session::HeldCorpus`, under the maintained cross program's key, as its kept part is): each path's documents, with

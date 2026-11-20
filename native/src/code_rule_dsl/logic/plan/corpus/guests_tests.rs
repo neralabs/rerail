@@ -1,10 +1,7 @@
-//! Markdown's inline guests (`guests::markdown_inline_text`) against tree-sitter-md's inline trees. They parse files,
-//! so they run where the languages are registered.
+//! Markdown's inline programs (`embed::inline_content`, decision 0431 §4) against tree-sitter-md's inline trees. They
+//! parse files, so they run where the languages are registered.
 
-use super::guests::markdown_inline_text;
-use crate::code_rule_dsl::facts::core::{self, Built};
-use crate::code_rule_dsl::facts::vtab::syntax;
-use std::sync::Arc;
+use crate::code_rule_dsl::embed::Embedder as _;
 
 /// Each node of `tree` in preorder, named or not: its kind, and its span through `host` (a guest's map).
 fn nodes(tree: &tree_sitter::Tree, host: &dyn Fn([u32; 2]) -> [u32; 2]) -> Vec<(String, [u32; 2])> {
@@ -24,14 +21,14 @@ fn nodes(tree: &tree_sitter::Tree, host: &dyn Fn([u32; 2]) -> [u32; 2]) -> Vec<(
     }
 }
 
-/// The differences, for `md`, between each inline guest's tree (its text, `markdown_inline_text`, parsed by the
-/// inline grammar and mapped back) and tree-sitter-md's inline tree (`MarkdownParser`: the inline grammar over the
-/// node's ranges less its named children after the first). `None`: the file has none.
+/// The differences, for `md`, between each inline program's tree (its text, `InlineContent`'s, parsed by the inline
+/// grammar and mapped back through its segments) and tree-sitter-md's inline tree (`MarkdownParser`: the inline
+/// grammar over the node's ranges less its named children after the first). Empty where none differs.
 fn guest_differences(md: &str) -> Vec<String> {
     use ast_grep_language::LanguageExt;
     use crate::code_rule_dsl::language::GrammarDialect;
-    let file = core::Source { language: "markdown".to_owned(), source: Arc::new(md.to_owned()) };
-    let Ok(Built::Facts(f)) = core::build(&file) else { return vec!["no facts".to_owned()] };
+    let tape = crate::code_rule_dsl::embed::host::Tape::of(GrammarDialect::Markdown, md);
+    let programs = crate::code_rule_dsl::embed::inline_content::InlineContent.build_all(tape.root(), md, &|| false);
     let block = {
         let mut p = tree_sitter::Parser::new();
         p.set_language(&GrammarDialect::Markdown.get_ts_language()).unwrap();
@@ -40,15 +37,15 @@ fn guest_differences(md: &str) -> Vec<String> {
     let mut inline = tree_sitter::Parser::new();
     inline.set_language(&GrammarDialect::MarkdownInline.get_ts_language()).unwrap();
     let mut out = Vec::new();
-    for id in 0..f.len() as u32 {
-        if !matches!(syntax::kind_name(&f, id), "inline" | "pipe_table_cell") {
-            continue;
-        }
-        let (text, place) = markdown_inline_text(&f, id);
-        let ours = inline.parse(&text, None).unwrap();
-        let ours = nodes(&ours, &|span| place.host(span));
+    for program in &programs {
+        let ours = inline.parse(&program.text, None).unwrap();
+        let ours = nodes(&ours, &|[a, b]| {
+            let r = program.segments.bounds(a as usize..b as usize);
+            [r.start as u32, r.end as u32]
+        });
         // tree-sitter-md's ranges, from its block tree's node at the same place.
-        let (start, end) = (f.start(id) as usize, f.end(id) as usize);
+        let whole = program.segments.bounds(0..program.text.len());
+        let (start, end) = (whole.start, whole.end);
         let node = block.root_node().descendant_for_byte_range(start, end).unwrap();
         let node = std::iter::successors(Some(node), |n| n.parent()).find(|n| n.start_byte() == start && n.end_byte() == end && matches!(n.kind(), "inline" | "pipe_table_cell")).unwrap();
         let mut range = node.range();

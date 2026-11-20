@@ -129,12 +129,49 @@ UKL_DEFINE_PACKED_LOAD(ukl_ldc, UKL_COHERENT)
 UKL_DEFINE_STORES(uint32_t)
 UKL_DEFINE_STORES(uint64_t)
 
+// Memory read and written at several widths (a field written as 32 bits, read in a 64-bit word): every access a byte
+// or an aligned 64-bit word (`ukl_ldw_*`, `ukl_stw_*`), so no direct access of another width lets the compiler's
+// type-based alias rules reorder them. A write of a value that is not a byte, or not an aligned 64-bit word, is a
+// read-modify-write of its words: not atomic with another thread's write to the same word.
+#define __UKL_WORD_ukl_ldw(p) (*(p))
+#define __UKL_DIRECT_ukl_ldw 0
+UKL_DEFINE_BYTE_LOADS(ukl_ldw, UKL_GLOBAL, uint32_t)
+UKL_DEFINE_BYTE_LOADS(ukl_ldw, UKL_GLOBAL, uint64_t)
+
+#define UKL_DEFINE_WORD_STORES(A)                                                                                    \
+    UKL_INLINE UKL_OVERLOAD void ukl_stw_window(UKL_GLOBAL uint8_t* t, A a, uint64_t x, uint32_t n)                  \
+    {                                                                                                                \
+        UKL_GLOBAL uint64_t* w = (UKL_GLOBAL uint64_t*)(t + (a & ~(A)7));                                            \
+        uint32_t s = (uint32_t)(a & (A)7) * 8u;                                                                      \
+        uint64_t m = ukl_mask64(n);                                                                                  \
+        x &= m;                                                                                                      \
+        w[0] = (w[0] & ~(m << s)) | (x << s);                                                                        \
+        if (s != 0u && s + n > 64u) {                                                                                \
+            uint32_t r = 64u - s;                                                                                    \
+            w[1] = (w[1] & ~(m >> r)) | (x >> r);                                                                    \
+        }                                                                                                            \
+    }                                                                                                                \
+    UKL_INLINE UKL_OVERLOAD void ukl_stw_u8(UKL_GLOBAL uint8_t* t, A a, uint64_t x) { t[a] = (uint8_t)x; }           \
+    UKL_INLINE UKL_OVERLOAD void ukl_stw_u16(UKL_GLOBAL uint8_t* t, A a, uint64_t x) { ukl_stw_window(t, a, x, 16u); } \
+    UKL_INLINE UKL_OVERLOAD void ukl_stw_u32(UKL_GLOBAL uint8_t* t, A a, uint64_t x) { ukl_stw_window(t, a, x, 32u); } \
+    UKL_INLINE UKL_OVERLOAD void ukl_stw_u64(UKL_GLOBAL uint8_t* t, A a, uint64_t x)                                 \
+    {                                                                                                                \
+        if ((a & (A)7) == 0)                                                                                         \
+            *(UKL_GLOBAL uint64_t*)(t + a) = x;                                                                      \
+        else                                                                                                         \
+            ukl_stw_window(t, a, x, 64u);                                                                            \
+    }
+
+UKL_DEFINE_WORD_STORES(uint32_t)
+UKL_DEFINE_WORD_STORES(uint64_t)
+
 // Relaxed atomics on the aligned 32-bit word at byte `a` of a block.
 #define UKL_DEFINE_ATOMICS_AT(A)                                                                                        \
     UKL_INLINE UKL_OVERLOAD UKL_GLOBAL uint32_t* ukl_word_at(UKL_GLOBAL const uint8_t* t, A a) { return (UKL_GLOBAL uint32_t*)(t + a); } \
     UKL_INLINE UKL_OVERLOAD uint32_t ukl_atomic_load_at(UKL_GLOBAL const uint8_t* t, A a) { return ukl_atomic_load(ukl_word_at(t, a)); } \
     UKL_INLINE UKL_OVERLOAD void ukl_atomic_store_at(UKL_GLOBAL const uint8_t* t, A a, uint32_t x) { ukl_atomic_store(ukl_word_at(t, a), x); } \
     UKL_INLINE UKL_OVERLOAD uint32_t ukl_atomic_add_at(UKL_GLOBAL const uint8_t* t, A a, uint32_t x) { return ukl_atomic_add(ukl_word_at(t, a), x); } \
+    UKL_INLINE UKL_OVERLOAD uint32_t ukl_atomic_or_at(UKL_GLOBAL const uint8_t* t, A a, uint32_t x) { return ukl_atomic_or(ukl_word_at(t, a), x); } \
     UKL_INLINE UKL_OVERLOAD uint32_t ukl_atomic_cas_at(UKL_GLOBAL const uint8_t* t, A a, uint32_t e, uint32_t n) { return ukl_atomic_cas(ukl_word_at(t, a), e, n); }
 
 UKL_DEFINE_ATOMICS_AT(uint32_t)

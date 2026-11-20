@@ -620,9 +620,9 @@ pub fn view_root(path: &Path) -> Option<PathBuf> {
 #[derive(Debug)]
 pub struct Snapshot {
     view: Arc<View>,
-    /// Its pin in the object of the run it was made in (a test's, `starter_object`); none when made outside any run
-    /// (the host's `GitRevisionSource`), whose taker pins it (`pin`).
-    made_in: Option<Pinned>,
+    /// Its pin in the object of the run it was made in (a test's, `starter_object`), held for its drop; none when made
+    /// outside any run (the host's `GitRevisionSource`), whose taker pins it (`pin`).
+    _made_in: Option<Pinned>,
 }
 
 /// A repository, selected object and directory within it, shared by equivalent source views.
@@ -927,7 +927,7 @@ impl Snapshot {
             }).map_err(|error| error.to_string())??;
         }
         let made_in = rerail_prof::code_rule_dsl::logic::profile::starter_object().map(|shared| pin_view(&view, &shared));
-        Ok(Self { view, made_in })
+        Ok(Self { view, _made_in: made_in })
     }
 
     /// Pins this revision in `shared` (decision 0442): the runs on that object (a workspace's, an entry point's) read
@@ -1317,7 +1317,7 @@ mod tests {
     use super::*;
     use gix::objs::tree::{Entry as TreeEntry, EntryKind};
 
-    /// Q352 (decision 0442): a pinned revision is its shared object's. Two workspaces' objects in one process: the
+    /// Q379 (decision 0442): a pinned revision is its shared object's. Two workspaces' objects in one process: the
     /// runs of the one that pinned the revision read the paths under its root from it, the other's see no revision
     /// there, and once the pin drops neither does. A read with no run sees none.
     #[test]
@@ -1333,7 +1333,7 @@ mod tests {
         // Made off any run (a host's `GitRevisionSource`): pinned nowhere until taken.
         let (git_dir, tree) = (repo.git_dir().to_owned(), tree.to_string());
         let snapshot = std::thread::scope(|s| s.spawn(|| { engine_thread(); Snapshot::new(&git_dir, &tree).unwrap() }).join().unwrap());
-        assert!(snapshot.made_in.is_none());
+        assert!(snapshot._made_in.is_none());
         let file = snapshot.root().join("a.py");
         let (pinning, other) = (Shared::new(), Shared::new());
         let pinned = snapshot.pin(&pinning);

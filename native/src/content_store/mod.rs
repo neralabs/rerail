@@ -21,6 +21,8 @@ pub use corpus_runs::process_gone;
 pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, RETIRED_CORPUS_MEMO_SCHEMAS, StatIndex, live_fact_schema, stat_blob_key};
 #[cfg(not(any(windows, target_family = "wasm")))]
 pub use connection::sqlite_on_jemalloc;
+pub use connection::{flush_of, store_flush};
+pub use rerail_blocks::block::Flush;
 mod derivation;
 mod held;
 pub mod kept_facts;
@@ -729,7 +731,7 @@ impl ContentStore {
     fn sibling(&self) -> ContentStore {
         ContentStore {
             database_path: self.database_path.clone(),
-            connection: ThreadConnection::new(self.database_path.clone(), self.connection.identity()),
+            connection: ThreadConnection::new(self.database_path.clone(), self.connection.identity(), self.connection.flush()),
             compression_level: self.compression_level,
             local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
             facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),
@@ -771,9 +773,10 @@ impl ContentStore {
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
         let mut connection = Connection::open_with_flags(path, flags)?;
+        let flush = connection::store_flush()?;
         // Only creating or migrating the schema takes the write lock (`initialize`).
         let identity = retry_busy(&mut BusyRetries::default(), || {
-            Self::initialize(&mut connection)
+            Self::initialize(&mut connection, flush)
         })?;
         drop(connection);
         // Compiled Neural Engine models are facts of this store (decision 0098 §3).
@@ -783,19 +786,20 @@ impl ContentStore {
         }
         #[cfg(not(target_os = "macos"))]
         let _ = models;
-        // A store created again at its path has a writer of its own too.
+        // A store created again at its path has atoms and a writer of its own too.
         Ok(Self::with_connection(
-            path.to_path_buf(), ThreadConnection::new(path.to_path_buf(), identity),
+            path.to_path_buf(), ThreadConnection::new(path.to_path_buf(), identity, flush),
             atoms::Atoms::for_database(path, Some(identity)), Some(write_back::register_store(path, identity)),
         ))
     }
 
-    /// The scratch store for fact-only evaluation with the durable cache disabled.
+    /// The scratch store for fact-only evaluation with the durable cache disabled: in memory, so nothing is flushed
+    /// (decision 0481's `none`).
     pub fn open_ephemeral() -> StoreResult<Self> {
         let mut connection = Connection::open_in_memory()?;
         let atoms = atoms::Atoms::ephemeral();
         atoms::Atoms::share_memory(&connection, std::sync::Arc::clone(&atoms))?;
-        let identity = Self::initialize(&mut connection)?;
+        let identity = Self::initialize(&mut connection, rerail_blocks::block::Flush::None)?;
         Ok(Self::with_connection(PathBuf::from(":memory:"), ThreadConnection::memory(connection, identity), atoms, None))
     }
 

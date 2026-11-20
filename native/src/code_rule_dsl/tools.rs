@@ -907,6 +907,14 @@ pub fn flatten(path: &std::path::Path) -> Result<String, String> {
     program_text(path)
 }
 
+/// The program `run-rr` runs for a rule file: read, its includes resolved and lowered (`rr::read_file`), printed as
+/// `.rerail`. Its size is the lowering's (rules, helper relations), before the run adds its libraries and plans it.
+/// (02439e9145, which an earlier merge into the hub lost, restored at the merge of main 6ec384ad9.)
+pub fn flatten_lowered(path: &std::path::Path) -> Result<String, String> {
+    let (program, _) = super::logic::rr::read_file(path).map_err(|e| e.to_string())?;
+    super::logic::rr::print_version(&program).map_err(|e| e.to_string())
+}
+
 /// `programs` (`.rerail` texts) over the corpus T's `t_facts` names under `root` (list step 23): the outputs as T's
 /// `rdl.py sql` writes them, into `out`, and a report of each phase's CPU and the peak RSS. Several programs run as
 /// one (decision 0051): each file is parsed and batched once for all of them, and `violation` holds every one's
@@ -1079,41 +1087,6 @@ fn logic_checked(programs: &[String], root: &std::path::Path, t_facts: Option<&s
 }
 
 
-#[cfg(test)]
-mod settings_tests {
-    #[test]
-    fn settings_become_env_rows_for_a_program_that_declares_env() {
-        let root = std::env::temp_dir().join(format!("rerail-settings-{}", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("rerail.env"), "# comment\npython.version = 3.12\nquote=a\"b\n").unwrap();
-        let settings = super::settings(&root, &["python.version=3.13".into()]).unwrap();
-        std::fs::remove_dir_all(&root).unwrap();
-        assert_eq!(settings, vec![("quote".into(), "a\"b".into()), ("python.version".into(), "3.13".into())]);
-        // Rows given to a program that declares `env`, and to no other (decision 0249).
-        use crate::code_rule_dsl::logic::front::Value;
-        let added = crate::code_rule_dsl::logic::plan::corpus::added::Added::settings(&settings);
-        use crate::code_rule_dsl::logic::program_image::{Builder, fields::ProgramFields};
-        let mut declares = Builder::base();
-        declares.fields().declare("env", &[("key", "symbol"), ("value", "symbol")]);
-        added.add_to(&mut declares.fields());
-        let rows: Vec<Vec<Value>> = declares.fact_rows("env").iter().map(|r| r.to_vec()).collect();
-        assert_eq!(rows, [vec![Value::Str("quote".into()), Value::Str("a\"b".into())], vec![Value::Str("python.version".into()), Value::Str("3.13".into())]]);
-        let mut not = Builder::base();
-        not.fields().declare("envy", &[("x", "symbol")]);
-        added.add_to(&mut not.fields());
-        assert!(!not.has_fact_rows("env"));
-    }
-
-    #[test]
-    fn the_command_lines_runs_keep_their_outputs_with_or_without_options() {
-        use serde_json::json;
-        // `run-policies` passes no options (`null`): its runs ask for the cutoff too.
-        assert_eq!(super::with_reuse(&serde_json::Value::Null), json!({"reuse": true}));
-        assert_eq!(super::with_reuse(&json!({"x": 1})), json!({"x": 1, "reuse": true}));
-        assert_eq!(super::with_reuse(&json!({"reuse": false})), json!({"reuse": false}));
-    }
-}
-
 // ---------------------------------------------------------------- the command line
 //
 //   rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <json>]
@@ -1123,12 +1096,12 @@ mod settings_tests {
 //   rerail-engine sql <store.sqlite> <request.json>
 //   rerail-engine flatten <program.rerail>
 //   rerail-engine run-rr <policy.rerail> <corpus root> <out dir> [<options.json>]
-//   rerail-engine run-policies <corpus root> <out dir> <policy.rerail>...
+//   rerail-engine run-policies [--tool-calls <calls.json>] <corpus root> <out dir> <policy.rerail>...
 //   rerail-engine check-rr <rule>... | convert-rr <rule>...
 //   rerail-engine test-rr <rule or directory>... [--filter <text>]
 use std::path::Path;
 
-const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rerail | dir of .rerail> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>] [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rerail>...\n  rerail-engine images pack <exported dir> <bundle>\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine delete-scope <store.sqlite> <name>\n  rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>] [--all-tokens]\n  rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]\n  rerail-engine kernels [list | compile [--all] [--idle] | ship <dir> [--from <store dir>] [--air] | prune [--mb <n>]]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rerail>\n  rerail-engine csv <out dir> [<to dir>]\n  rerail-engine run-rr <policy.rerail> <corpus root> <out dir> [<options.json>] [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rerail>... [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
+const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rerail | dir of .rerail> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>] [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rerail>...\n  rerail-engine images pack <exported dir> <bundle>\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine delete-scope <store.sqlite> <name>\n  rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>] [--all-tokens]\n  rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]\n  rerail-engine kernels [list | compile [--all] [--idle] | ship <dir> [--from <store dir>] [--air] | prune [--mb <n>]]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten [--lowered] <program.rerail>\n  rerail-engine csv <out dir> [<to dir>]\n  rerail-engine run-rr <policy.rerail> <corpus root> <out dir> [<options.json>] [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine run-policies [--tool-calls <calls.json>] <corpus root> <out dir> <policy.rerail>... [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
 
 /// One `rerail-engine` command (`args` after the program's name): its output, or the error to report. The binary
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
@@ -1138,7 +1111,7 @@ const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine du
 /// Returns the command's result, and where it cut a relation at the width cap (decision 0462, `RERAIL_WIDEST=cut`) the
 /// message that its results are incomplete: the caller fails the process with it. So too where the engine read state
 /// outside any run (decision 0442, `rerail_context::misses`): a refused read, which took a value of its own.
-pub fn cli(args: &[String]) -> (Result<String, String>, Option<String>) {
+pub fn cli(args: &[String], machine: &std::sync::Arc<crate::threads::Machine>) -> (Result<String, String>, Option<String>) {
     // Decision 0272 (O167): the process ends with its command, before any idle time, so each run serves its waiting
     // join searches at its end, within a share of its CPU (decision 0243). A long-lived caller of `cli_in` leaves
     // them to the idle job.
@@ -1147,8 +1120,9 @@ pub fn cli(args: &[String]) -> (Result<String, String>, Option<String>) {
     crate::code_rule_dsl::logic::profile::command_begins();
     // Decision 0395: a run never waits on a Metal compile of a kernel it has another form of; the kernels it went
     // without are compiled by maintenance (below, upkeep, `kernels compile`).
-    // The process's command, its own caller: what it shares by design is its own (decision 0442), its machine too.
-    let shared = crate::code_rule_dsl::logic::run::Shared::new();
+    // The process's command, its own caller: what it shares by design is its own, on the machine its program made
+    // (decision 0442).
+    let shared = crate::code_rule_dsl::logic::profile::Shared::on(machine);
     #[cfg(target_os = "macos")]
     if args.first().is_none_or(|c| c != "kernels") {
         rerail_accel::gpu::kernels::set_mode(shared.machine(), rerail_accel::gpu::kernels::Mode::Defer);
@@ -1250,81 +1224,26 @@ fn command(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus
     match args.first().map(String::as_str) {
         #[cfg(feature = "dump-cli")]
         Some("dump") => dump_command(&args[1..]),
-        Some("asm") => match &args[1..] {
-            [file] => crate::tools::assemble(&read(file)?),
-            _ => Err(USAGE.into()),
-        },
-        Some("sql") => match &args[1..] {
-            [store, request] => crate::tools::sql(Path::new(store), &read(request)?),
-            _ => Err("usage: rerail-engine sql <store.sqlite> <request.json>".into()),
-        },
+        Some("asm") => asm_command(&args[1..]),
+        Some("sql") => sql_command(&args[1..]),
         Some("logic") => logic_command(&args[1..]),
-        Some("repeat") => match &args[1..] {
-            [script] => repeat_command(&read(script)?),
-            _ => Err("usage: rerail-engine repeat <script>".into()),
-        },
+        Some("repeat") => repeat_script_command(&args[1..]),
         Some("facts-stamp") => facts_stamp_command(&args[1..]),
         Some("capture-tapes") => capture_tapes_command(&args[1..]),
         Some("kind-names") => kind_names_command(&args[1..]),
-        Some("run-rr") if args.len() == 4 || args.len() == 5 => {
-            let options = if args.len() == 5 { serde_json::from_str(&read(&args[4])?).map_err(|e| e.to_string())? } else { serde_json::Value::Null };
-            policy_command_report(crate::tools::run_rr(Path::new(&args[1]), Path::new(&args[2]), Path::new(&args[3]), &with_revision(options))?)
-        }
-        // Several policies over one repository, each over its own language's files (O105).
-        Some("run-policies") if args.len() > 3 => {
-            let paths = args[3..].iter().map(std::path::PathBuf::from).collect::<Vec<_>>();
-            policy_command_report(crate::tools::run_policies(&paths, Path::new(&args[1]), Path::new(&args[2]), &with_revision(serde_json::Value::Null))?)
-        }
-        Some("check-rr") if args.len() > 1 => {
-            let paths = args[1..].iter().map(std::path::PathBuf::from).collect::<Vec<_>>();
-            let report = crate::tools::check_rr(&paths);
-            let failures = report.as_array().expect("rule reports").iter().filter(|row| row["status"] == "reader-failed").count();
-            let text = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
-            if failures > 0 {
-                println!("{text}");
-                Err(format!("{failures} rules failed the .rerail reader"))
-            } else { Ok(text) }
-        }
+        Some("run-rr") => run_rr_command(&args[1..], &with_revision),
+        // Several policies over one repository, each over its own language's files (O105), and the tool calls it is
+        // given.
+        Some("run-policies") => run_policies_command(&args[1..], &with_revision),
+        Some("check-rr") => check_rr_command(&args[1..]),
         // Main's JSON rules as the engine reads them: each `<id>.json` to `<out>/<id>.rerail` (decision 0175).
         Some("translate-json") => translate_json_command(&args[1..]),
         // Each test the files carry (decision 0130).
         Some("test-rr") => crate::code_rule_dsl::logic::rr::testing::command(&args[1..]),
-        // `--cases <file>` gives the next rule its cases (decision 0130).
-        Some("convert-rr") if args.len() > 1 => {
-            let (mut rules, mut cases) = (Vec::new(), None);
-            let mut rest = args[1..].iter();
-            while let Some(a) = rest.next() {
-                if a == "--cases" {
-                    cases = Some(std::path::PathBuf::from(rest.next().ok_or("--cases <cases.json> <rule>")?));
-                } else {
-                    rules.push((std::path::PathBuf::from(a), cases.take()));
-                }
-            }
-            serde_json::to_string_pretty(&crate::tools::convert_rr_with(&rules)).map_err(|e| e.to_string())
-        }
-        // The program `logic` runs for a file: `core.rerail` and its includes resolved, lowered and printed as `.rerail`.
-        Some("flatten") => match &args[1..] {
-            [file] => crate::tools::flatten(Path::new(file.as_str())),
-            _ => Err(USAGE.into()),
-        },
-        // The rule images shipped with the engine (decision 0264): packed from those a run exported
-        // (`RERAIL_EXPORT_IMAGES=<dir>`), into the bundle placed beside the engine (`rerail-library.images`).
-        Some("images") => match &args[1..] {
-            [pack, dir, out] if pack == "pack" => crate::code_rule_dsl::logic::rr::images::pack(Path::new(dir.as_str()), Path::new(out.as_str()))
-                .map(|n| format!("{n} images packed into {out}"))
-                .map_err(|e| e.to_string()),
-            _ => Err("usage: rerail-engine images pack <exported dir> <bundle>".into()),
-        },
-        // A run's outputs (`out/outputs.rro`, decision 0239) as `.csv` files, one per relation, in `to` (`out` itself
-        // when not given): for scripts that read them.
-        Some("csv") => match &args[1..] {
-            [out] | [out, _] => {
-                let to = Path::new(args.get(2).unwrap_or(out).as_str());
-                let n = crate::code_rule_dsl::logic::plan::output::to_csv(Path::new(out.as_str()), to).map_err(|e| e.to_string())?;
-                Ok(format!("{n} relations written to {}\n", to.display()))
-            }
-            _ => Err(USAGE.into()),
-        },
+        Some("convert-rr") => convert_rr_command(&args[1..]),
+        Some("flatten") => flatten_command(&args[1..]),
+        Some("images") => images_command(&args[1..]),
+        Some("csv") => csv_command(&args[1..]),
         #[cfg(target_os = "macos")]
         Some("kernels") => kernels_command(&args[1..]),
         #[cfg(feature = "tape-cache")]
@@ -1356,6 +1275,130 @@ fn policy_command_report(report: serde_json::Value) -> Result<String, String> {
         Err("analysis failed; see the policy and source errors in the report".into())
     } else {
         Ok(text)
+    }
+}
+
+/// `asm <file.rir>`.
+fn asm_command(args: &[String]) -> Result<String, String> {
+    match args {
+        [file] => crate::tools::assemble(&read(file)?),
+        _ => Err(USAGE.into()),
+    }
+}
+
+/// `sql <store.sqlite> <request.json>`.
+fn sql_command(args: &[String]) -> Result<String, String> {
+    match args {
+        [store, request] => crate::tools::sql(Path::new(store), &read(request)?),
+        _ => Err("usage: rerail-engine sql <store.sqlite> <request.json>".into()),
+    }
+}
+
+/// `repeat <script>` (`repeat_command`).
+fn repeat_script_command(args: &[String]) -> Result<String, String> {
+    match args {
+        [script] => repeat_command(&read(script)?),
+        _ => Err("usage: rerail-engine repeat <script>".into()),
+    }
+}
+
+/// `run-rr <policy.rerail> <corpus root> <out dir> [<options.json>]`.
+fn run_rr_command(args: &[String], with_revision: &dyn Fn(serde_json::Value) -> serde_json::Value) -> Result<String, String> {
+    let options = match args {
+        [_, _, _] => serde_json::Value::Null,
+        [_, _, _, file] => serde_json::from_str(&read(file)?).map_err(|e| e.to_string())?,
+        _ => return Err(USAGE.into()),
+    };
+    policy_command_report(crate::tools::run_rr(Path::new(&args[0]), Path::new(&args[1]), Path::new(&args[2]), &with_revision(options))?)
+}
+
+/// `run-policies [--tool-calls <calls.json>] <corpus root> <out dir> <policy.rerail>...`: several policies over one
+/// repository, each over its own language's files (O105). `--tool-calls`: the tool calls the run is given (`[{"id",
+/// "tool", "input"}]`, the `toolCalls` option: `corpus::added`), which `.scope tool_calls` policies read.
+fn run_policies_command(args: &[String], with_revision: &dyn Fn(serde_json::Value) -> serde_json::Value) -> Result<String, String> {
+    let usage = "usage: rerail-engine run-policies [--tool-calls <calls.json>] <corpus root> <out dir> <policy.rerail>...";
+    let (mut positional, mut options) = (Vec::new(), serde_json::Value::Null);
+    let mut rest = args.iter();
+    while let Some(a) = rest.next() {
+        match a.as_str() {
+            "--tool-calls" => options = tool_calls_option(rest.next().ok_or(usage)?)?,
+            _ => positional.push(a),
+        }
+    }
+    let [root, out, first, more @ ..] = positional.as_slice() else { return Err(usage.into()) };
+    let paths: Vec<std::path::PathBuf> = std::iter::once(first).chain(more).map(|p| std::path::PathBuf::from(p.as_str())).collect();
+    policy_command_report(crate::tools::run_policies(&paths, Path::new(root.as_str()), Path::new(out.as_str()), &with_revision(options))?)
+}
+
+/// The run's options of the tool calls in `file`, once they are of their shape (`added::tool_call_rows`).
+fn tool_calls_option(file: &str) -> Result<serde_json::Value, String> {
+    let calls: serde_json::Value = serde_json::from_str(&read(file)?).map_err(|e| format!("{file}: {e}"))?;
+    crate::code_rule_dsl::logic::plan::corpus::added::tool_call_rows(&calls).map_err(|e| format!("{file}: {e}"))?;
+    Ok(serde_json::json!({ "toolCalls": calls }))
+}
+
+/// `check-rr <rule>...`: the rules as the `.rerail` reader reads them; an error when any fails.
+fn check_rr_command(args: &[String]) -> Result<String, String> {
+    if args.is_empty() {
+        return Err(USAGE.into());
+    }
+    let report = crate::tools::check_rr(&args.iter().map(std::path::PathBuf::from).collect::<Vec<_>>());
+    let failures = report.as_array().expect("rule reports").iter().filter(|row| row["status"] == "reader-failed").count();
+    let text = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
+    if failures > 0 {
+        println!("{text}");
+        return Err(format!("{failures} rules failed the .rerail reader"));
+    }
+    Ok(text)
+}
+
+/// `convert-rr [--cases <cases.json>] <rule>...`: `--cases <file>` gives the next rule its cases (decision 0130).
+fn convert_rr_command(args: &[String]) -> Result<String, String> {
+    if args.is_empty() {
+        return Err(USAGE.into());
+    }
+    let (mut rules, mut cases) = (Vec::new(), None);
+    let mut rest = args.iter();
+    while let Some(a) = rest.next() {
+        match a.as_str() {
+            "--cases" => cases = Some(std::path::PathBuf::from(rest.next().ok_or("--cases <cases.json> <rule>")?)),
+            _ => rules.push((std::path::PathBuf::from(a), cases.take())),
+        }
+    }
+    serde_json::to_string_pretty(&crate::tools::convert_rr_with(&rules)).map_err(|e| e.to_string())
+}
+
+/// `flatten [--lowered] <program.rerail>`: the program `logic` runs for a file, `core.rerail` and its includes
+/// resolved, as `.rerail` text; with `--lowered`, the program `run-rr` runs, lowered and printed as `.rerail`.
+fn flatten_command(args: &[String]) -> Result<String, String> {
+    match args {
+        [file] => crate::tools::flatten(Path::new(file.as_str())),
+        [flag, file] if flag == "--lowered" => crate::tools::flatten_lowered(Path::new(file.as_str())),
+        _ => Err(USAGE.into()),
+    }
+}
+
+/// `images pack <exported dir> <bundle>`: the rule images shipped with the engine (decision 0264), packed from those
+/// a run exported (`RERAIL_EXPORT_IMAGES=<dir>`), into the bundle placed beside the engine (`rerail-library.images`).
+fn images_command(args: &[String]) -> Result<String, String> {
+    match args {
+        [pack, dir, out] if pack == "pack" => crate::code_rule_dsl::logic::rr::images::pack(Path::new(dir.as_str()), Path::new(out.as_str()))
+            .map(|n| format!("{n} images packed into {out}"))
+            .map_err(|e| e.to_string()),
+        _ => Err("usage: rerail-engine images pack <exported dir> <bundle>".into()),
+    }
+}
+
+/// `csv <out dir> [<to dir>]`: a run's outputs (`out/outputs.rro`, decision 0239) as `.csv` files, one per relation,
+/// in `to` (`out` itself when not given), for scripts that read them.
+fn csv_command(args: &[String]) -> Result<String, String> {
+    match args {
+        [out] | [out, _] => {
+            let to = Path::new(args.get(1).unwrap_or(out).as_str());
+            let n = crate::code_rule_dsl::logic::plan::output::to_csv(Path::new(out.as_str()), to).map_err(|e| e.to_string())?;
+            Ok(format!("{n} relations written to {}\n", to.display()))
+        }
+        _ => Err(USAGE.into()),
     }
 }
 
@@ -2220,7 +2263,7 @@ Seen(@place(p, l), text, message, email, head) :- doc(d, p, _), split_line(d, l,
 "#).unwrap();
         let args = vec!["run-rr".to_owned(), policy.display().to_string(), root.display().to_string(),
             fixture.path().join("commit-out").display().to_string(), "--analysis-scope".to_owned(), "review".to_owned(), "--revision".to_owned(), commit];
-        let result: serde_json::Value = serde_json::from_str(&cli(&args).0.unwrap()).unwrap();
+        let result: serde_json::Value = serde_json::from_str(&cli(&args, &crate::threads::Machine::new()).0.unwrap()).unwrap();
         let diagnostics = result["diagnostics"].as_array().unwrap();
         assert_eq!(diagnostics.len(), 1, "{result}");
         assert_eq!(diagnostics[0]["code"], "Seen");
@@ -2245,7 +2288,7 @@ Seen(@place(p, l), text, tree) :- doc(d, p, _), split_line(d, l, text), git_rev(
         assert!(root.join("untracked.py").exists());
         let mut missing = args.clone();
         missing.pop();
-        assert!(cli(&missing).0.unwrap_err().contains("--revision requires"));
+        assert!(cli(&missing, &crate::threads::Machine::new()).0.unwrap_err().contains("--revision requires"));
     }
 
     #[test]
@@ -2274,8 +2317,70 @@ subject(s) :- git_source_commit(r, c), git_subject(r, c, s).
 "#).unwrap();
         let output = fixture.path().join("metadata-out");
         cli(&["logic".into(), policy.display().to_string(), root.display().to_string(), output.display().to_string(),
-            "--revision".into(), commit, "--analysis-scope".into(), "review".into()]).0.unwrap();
+            "--revision".into(), commit, "--analysis-scope".into(), "review".into()], &crate::threads::Machine::new()).0.unwrap();
         let facts = super::super::logic::plan::output::Outputs::open(&output).unwrap();
         assert_eq!(facts.rows("subject")[0].get(0).text(), Some("message without a tree"));
+    }
+}
+
+#[cfg(test)]
+mod settings_tests {
+    #[test]
+    fn settings_become_env_rows_for_a_program_that_declares_env() {
+        let root = std::env::temp_dir().join(format!("rerail-settings-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("rerail.env"), "# comment\npython.version = 3.12\nquote=a\"b\n").unwrap();
+        let settings = super::settings(&root, &["python.version=3.13".into()]).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(settings, vec![("quote".into(), "a\"b".into()), ("python.version".into(), "3.13".into())]);
+        // Rows given to a program that declares `env`, and to no other (decision 0249).
+        use crate::code_rule_dsl::logic::front::Value;
+        let added = crate::code_rule_dsl::logic::plan::corpus::added::Added::settings(&settings);
+        use crate::code_rule_dsl::logic::program_image::{Builder, fields::ProgramFields};
+        let mut declares = Builder::base();
+        declares.fields().declare("env", &[("key", "symbol"), ("value", "symbol")]);
+        added.add_to(&mut declares.fields());
+        let rows: Vec<Vec<Value>> = declares.fact_rows("env").iter().map(|r| r.to_vec()).collect();
+        assert_eq!(rows, [vec![Value::Str("quote".into()), Value::Str("a\"b".into())], vec![Value::Str("python.version".into()), Value::Str("3.13".into())]]);
+        let mut not = Builder::base();
+        not.fields().declare("envy", &[("x", "symbol")]);
+        added.add_to(&mut not.fields());
+        assert!(!not.has_fact_rows("env"));
+    }
+
+    #[test]
+    fn the_command_lines_runs_keep_their_outputs_with_or_without_options() {
+        use serde_json::json;
+        // `run-policies` passes no options (`null`): its runs ask for the cutoff too.
+        assert_eq!(super::with_reuse(&serde_json::Value::Null), json!({"reuse": true}));
+        assert_eq!(super::with_reuse(&json!({"x": 1})), json!({"x": 1, "reuse": true}));
+        assert_eq!(super::with_reuse(&json!({"reuse": false})), json!({"reuse": false}));
+    }
+
+    /// `run-policies --tool-calls <calls.json>` gives the run its tool calls (`docs/rule-syntax/tool-calls.md`): a
+    /// `.scope tool_calls` policy's finding is at the call. A file not of their shape, or no policy, is an error, and
+    /// the form with no calls runs as before.
+    #[test]
+    fn run_policies_takes_its_tool_calls_from_the_command_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let at = |name: &str| dir.path().join(name).display().to_string();
+        std::fs::create_dir_all(at("root")).unwrap();
+        std::fs::write(at("p.rerail"), ".policy \"t:cli-calls\" revision 1\n.scope tool_calls\n.violation Push(at: symbol) code \"no-push\" \"a push\"\nPush(c) :- tool_input(c, \"command\", s), match(\"(?s:.*)(?:git push)(?s:.*)\", s).\n").unwrap();
+        std::fs::write(at("calls.json"), r#"[{"id": "e1", "tool": "Bash", "input": {"command": "git push"}}]"#).unwrap();
+        std::fs::write(at("bad.json"), "{}").unwrap();
+        let shared = crate::code_rule_dsl::logic::run::Shared::new();
+        let run = |args: &[String]| super::cli_in(&[vec!["run-policies".to_owned()], args.to_vec()].concat(), &mut Default::default(), &shared).0;
+        let at_of = |out: String| -> Vec<serde_json::Value> {
+            let report: serde_json::Value = serde_json::from_str(&out).unwrap();
+            report["diagnostics"].as_array().unwrap().iter().map(|d| d["at"].clone()).collect()
+        };
+        assert_eq!(at_of(run(&["--tool-calls".into(), at("calls.json"), at("root"), at("out1"), at("p.rerail")]).unwrap()), [serde_json::json!("e1")]);
+        assert_eq!(at_of(run(&[at("root"), at("out2"), at("p.rerail")]).unwrap()), Vec::<serde_json::Value>::new());
+        let shape = run(&["--tool-calls".into(), at("bad.json"), at("root"), at("out3"), at("p.rerail")]).unwrap_err();
+        assert!(shape.contains("toolCalls: a JSON array"), "{shape}");
+        for args in [vec![at("root"), at("out4")], vec![at("root"), at("out4"), at("p.rerail"), "--tool-calls".into()]] {
+            let usage = run(&args).unwrap_err();
+            assert!(usage.starts_with("usage: rerail-engine run-policies [--tool-calls <calls.json>]"), "{args:?}: {usage}");
+        }
     }
 }

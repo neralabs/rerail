@@ -390,7 +390,7 @@ Progress (2026-11-18):
   fixpoint's edge tables) read rules through their handles and write their parts through the builder
   (`made_parts`); `Run::tree`, `identities_of` and `Leaves`' tree entries are gone; the version trace, the inline
   and run dumps print versions. The findings layer reads its tables from its version.
-- **Stage 3, `program_text`** (2026-11-18): a stored program is its image only. The `.rr` text form of 0155 and its
+- **Stage 3, `program_text`** (2026-11-18): a stored program is its image only. The `.rerail` text form of 0155 and its
   tape reader of 0162 (`print`, `read`, `program_text/from_tape.rs`) read and wrote the tree, and are gone with it,
   as is `RERAIL_PROGRAM_IMAGE` (`off` kept texts, `require` refused them). A program a store kept as text alone (a
   store written before images) is not read: `stored` leaves it out, the run compiles it again, and its source stays
@@ -532,7 +532,7 @@ Progress (2026-11-18):
       each fed to the scan first. A clause's term is read straight into a builder term (`term_tm`: the SQL builtins,
       `printf`'s pieces, `concat`'s folds, arithmetic, floats' keys). A context, a cover and a negated conjunction
       are their helper's name and head terms; a test set writes its test where picked; the demands, climbs,
-      `precedes_stop`, `match_all`'s native rule and core.rr's rewritten relations write term by term
+      `precedes_stop`, `match_all`'s native rule and core.rerail's rewritten relations write term by term
       (`fixed_rule_with`, `core::write_definition`). `unset` is applied per atom (`emit_atom`), and a negated test is
       held as a term until the next literal (`merge_negated_test`). Gone: `emit(Literal)`, `fixed_rule` over
       literals, `put_rule`, `put_literal`, `Written::write`, `Lowerer::write`, `RulesSeen::of`, `rename_literal`,

@@ -427,6 +427,47 @@ fn a_batchs_policies_of_several_dialects_run_as_one_pack_a_dialect() {
     assert!(written.iter().all(|w| w.contains("\"call\"")), "{written:?}");
 }
 
+/// A policy that reads `within(n, a)` finds in a pack, in either order, what it finds alone. A pack's programs are
+/// lowered in their libraries' scope (`rr::Text::lower_in`), which took the program's declaration of `within` out as
+/// the library's; the library part, whose rules read no `within`, declared none, and the run panicked (`no declaration
+/// of within`) where each policy alone ran.
+#[test]
+fn a_policy_that_reads_within_finds_in_a_pack_in_either_order_what_it_finds_alone() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rrwithinpack");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.js"), "const f = (y) => y + z;\ndebugger;\nw;\n").unwrap();
+    let policy = |name: &str, body: &str| {
+        let path = dir.join(format!("{name}.rerail"));
+        std::fs::write(&path, format!(".policy \"t:{name}\" revision 1\n.language javascript\n{body}\n")).unwrap();
+        path
+    };
+    let under = policy("under", ".violation Under(at: node, name: symbol) code \"under\" \"{name}\"\nUnder(n, x) :- kind(n, \"identifier\"), within(n, a), kind(a, \"arrow_function\"), text(n, x).");
+    let stops = policy("stops", ".violation Stop(at: node) code \"stop\" \"stop\"\nStop(n) :- kind(n, \"debugger_statement\").");
+    let found = |report: &serde_json::Value| -> Vec<(String, String, u64)> {
+        let mut found: Vec<(String, String, u64)> = report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| (d["code"].as_str().unwrap_or("").to_owned(), d["message"].as_str().unwrap_or("").to_owned(), d["line"].as_u64().unwrap_or(0)))
+            .collect();
+        found.sort();
+        found
+    };
+    let run = |paths: &[std::path::PathBuf], out: &str| crate::code_rule_dsl::tools::run_policies(paths, &dir, &dir.join(out), &serde_json::Value::Null).unwrap_or_else(|e| panic!("{out}: {e}"));
+    let mut alone: Vec<_> = [&under, &stops].into_iter().enumerate().flat_map(|(k, p)| found(&run(std::slice::from_ref(p), &format!("alone{k}")))).collect();
+    alone.sort();
+    let first = run(&[under.clone(), stops.clone()], "first");
+    let second = run(&[stops.clone(), under.clone()], "second");
+    let _ = std::fs::remove_dir_all(&dir);
+    let e = |c: &str, m: &str, l: u64| (c.to_owned(), m.to_owned(), l);
+    assert_eq!(alone, [e("stop", "stop", 2), e("under", "y", 1), e("under", "y", 1), e("under", "z", 1)]);
+    assert_eq!(found(&first), alone, "{first:#}");
+    assert_eq!(found(&second), alone, "{second:#}");
+    let together = |report: &serde_json::Value| -> Vec<u64> { report["runs"].as_array().unwrap().iter().map(|r| r["together"].as_u64().unwrap_or(0)).collect() };
+    assert_eq!(together(&first), [2, 2], "one pack: {first:#}");
+    assert_eq!(together(&second), [2, 2], "one pack: {second:#}");
+}
+
 /// A pack's programs make one set of guests (decision 0055), and a rule that reaches a guest reads every one the run
 /// made: `ruff-classes.rerail`'s `ann_input` asks for the annotation in `Literal["dict({})"]`, and C408, which reads
 /// string annotations, found a `dict({})` call there once a policy that only includes that file ran beside it. A
@@ -565,7 +606,7 @@ fn statements_from_the_tape_are_the_parsers() {
                 pending.push(path);
                 continue;
             }
-            if path.extension().is_none_or(|e| e != "rerail") {
+            if !path.extension().is_some_and(|e| e == "rerail") {
                 continue;
             }
             let src = std::fs::read_to_string(&path).unwrap();

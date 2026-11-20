@@ -8,6 +8,14 @@
 //! (`tape_number`, `tape_start`, `tape_end`); a kind is its code's, by the derived table of the tape's codes.
 
 use crate::ids::Run;
+#[cfg(feature = "ir")]
+use crate::reads::B;
+#[cfg(feature = "ir")]
+use cranelift_codegen::ir::{
+    InstBuilder, Value,
+    condcodes::IntCC,
+    types::{I32, I64},
+};
 
 /// A document's entry for its views' reads (`ViewDoc` in the kernels).
 #[repr(C)]
@@ -169,19 +177,6 @@ pub fn ukl() -> String {
 // The reads themselves, in CLIF: with the IR (`ir`) alone. The entry's layout above is the view's too, which the
 // tape crate reads without the IR.
 #[cfg(feature = "ir")]
-pub use reads_ir::*;
-
-#[cfg(feature = "ir")]
-mod reads_ir {
-use super::*;
-use crate::reads::B;
-use cranelift_codegen::ir::{
-    InstBuilder, Value,
-    condcodes::IntCC,
-    types::{I32, I64},
-};
-
-#[cfg(feature = "ir")]
 impl B<'_, '_> {
     /// The entry's u32 at `offset`, widened.
     fn entry_u32(&mut self, offset: i32) -> Value {
@@ -235,14 +230,14 @@ impl B<'_, '_> {
     }
 }
 
-/// `view_node(l, col)`: column `col` of the `node` view's row of numbered node `l`: the document, the id, the kind
-/// atom, the start, the end (`Viewed::value_of`).
+/// `view_node(l, col)`: column `col` of the `node` view's row of numbered node `l`: the document (a program's file,
+/// decision 0431 §4), the id, the kind atom, the start, the end (`Viewed::value_of`).
 #[cfg(feature = "ir")]
 pub fn node(b: &mut B<'_, '_>) -> Value {
     let (l, col) = (b.arg(0), b.arg(1));
     let is = |b: &mut B<'_, '_>, k: i64| b.f.ins().icmp_imm(IntCC::Equal, col, k);
     let c = is(b, 0);
-    b.either(I64, c, |b| b.entry_u32(at::KEY), |b| {
+    b.either(I64, c, |b| b.entry_u32(at::FILE), |b| {
         let c = is(b, 1);
         b.either(I64, c, |b| b.node_id(l), |b| {
             let x = b.tape_node(l);
@@ -556,10 +551,11 @@ pub fn loc_docof(b: &mut B<'_, '_>) -> Value {
 /// No row: a parent probe's end (`view_child_first`, `view_child_next`, `view_number`).
 pub const NO_ROW: u32 = u32::MAX;
 
+#[cfg(feature = "ir")]
 impl B<'_, '_> {
     /// The `child` row of the first numbered node from tape node `c` on, `c` and each sibling after it within
     /// `end` (`tape_next_in`), or `NO_ROW`: numbered node `l`'s row is `l - 1`. The loop ends: each sibling is past
-    /// the last, and `tape_next_in` gives none at `end` (decision 0427's reads stay within the tape).
+    /// the last, and `tape_next_in` gives none at `end` (decision 0463's reads stay within the tape).
     fn numbered_from(&mut self, c: Value, end: Value) -> Value {
         let (head, test, step, found, done) = (self.f.create_block(), self.f.create_block(), self.f.create_block(), self.f.create_block(), self.f.create_block());
         self.f.append_block_param(head, I32);
@@ -595,6 +591,7 @@ impl B<'_, '_> {
 /// For a node other than the root: a numbered node's parent is its tape parent where that is numbered, so its
 /// children are its numbered tape children. The root's are also the nodes under unnumbered ones (a narrowed
 /// projection): a probe of the root scans its document's rows instead.
+#[cfg(feature = "ir")]
 pub fn child_first(b: &mut B<'_, '_>) -> Value {
     let l = b.arg(0);
     let x = b.tape_node(l);
@@ -605,6 +602,7 @@ pub fn child_first(b: &mut B<'_, '_>) -> Value {
 
 /// `view_child_next(i)`: the `child` row of the next child of the parent of `child` row `i` (numbered node `i +
 /// 1`'s next numbered tape sibling), or `NO_ROW`. For a child of a parent other than the root (`view_child_first`).
+#[cfg(feature = "ir")]
 pub fn child_next(b: &mut B<'_, '_>) -> Value {
     let i = b.arg(0);
     let l = b.f.ins().iadd_imm(i, 1);
@@ -621,6 +619,7 @@ pub fn child_next(b: &mut B<'_, '_>) -> Value {
 /// `view_number(low)`: the numbered node whose id's low 32 bits are `low` (its document's: the key is the caller's
 /// to match), or `NO_ROW`: `low` itself where ids are local ids, else the numbering's inverse (`num_number_of`,
 /// a node's, not a token's).
+#[cfg(feature = "ir")]
 pub fn number(b: &mut B<'_, '_>) -> Value {
     let low = b.arg(0);
     let preorder = b.word_at(I32, b.tape, at::PREORDER);
@@ -639,5 +638,4 @@ pub fn number(b: &mut B<'_, '_>) -> Value {
     let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, l, n);
     let no = b.c32(i64::from(NO_ROW));
     b.f.ins().select(inside, l, no)
-}
 }

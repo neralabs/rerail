@@ -145,6 +145,7 @@ impl View {
             text: self.text,
             segments: self.segments,
             host_errors: Vec::new(),
+            at: None,
         }
     }
 

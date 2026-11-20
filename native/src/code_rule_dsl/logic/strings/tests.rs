@@ -93,11 +93,14 @@ fn tests_on_text_relations_become_relations() {
     // the globs 1, the suffix 2.
     assert_eq!(v.tests.len(), 3, "{:?}", v.tests.iter().map(|t| &t.0).collect::<Vec<_>>());
     let text = rules_of(&prog);
-    // Tests are numbered in their content's order, operator then patterns: `equals`, `glob`, `suffix`.
-    assert!(text.contains("!strtest_2($s)"), "{text}");
-    assert!(text.contains("@prefix"), "{text}");
+    // The tests are numbered by their content, not the rules' order: each is named here by what it matches.
     let rows = v.rows(&["_x".into(), "x_async".into(), "db".into(), "y".into()], &[1, 2, 3, 4]);
-    assert_eq!(rows, [vec![3], vec![1, 2], vec![2]]);
+    let suffix = rows.iter().position(|r| *r == [2]).expect("the suffix test");
+    assert!(text.contains(&format!("!strtest_{suffix}($s)")), "{text}");
+    assert!(text.contains("@prefix"), "{text}");
+    let mut sorted = rows.clone();
+    sorted.sort();
+    assert_eq!(sorted, [vec![1, 2], vec![2], vec![3]], "the glob set, the suffix, the names");
 }
 
 /// `fstring_template`'s markers are the program's constants, each once; a marker that is not a constant is an error.
@@ -178,9 +181,10 @@ finding(d,l) :- selected(d,l,t), contains("inspect",t).
     assert_eq!(vocabulary.tests.len(), 2, "both line predicates must be batched");
     let rendered = rules_of(&program);
     assert!(!rendered.contains("@prefix") && !rendered.contains("@contains"), "{rendered}");
-    // In the tests' content order: `contains` before `prefix`.
-    assert_eq!(vocabulary.rows(&["#inspect".into(), "inspect".into(), "clean".into()], &[11,12,13]),
-               [vec![11,12], vec![11]]);
+    // Numbered by their content: `prefix` and `contains` in either order.
+    let mut rows = vocabulary.rows(&["#inspect".into(), "inspect".into(), "clean".into()], &[11,12,13]);
+    rows.sort();
+    assert_eq!(rows, [vec![11], vec![11,12]]);
 }
 
 /// A second writer can construct strings that the prepared vocabulary never saw.
@@ -271,8 +275,8 @@ fn batches_test_their_strings_at_once_on_one_pool() {
                         // Each batch's strings are new to the vocabulary, and enough that the search splits across the pool.
                         // Made on the pool first, as a batch's facts are: a thread waiting here takes other batches' jobs.
                         use rayon::prelude::*;
-                        let symbols: Vec<u32> = (0..20_000).into_par_iter().map(|i| (round * 96 + batch) * 20_000 + i).collect();
-                        let strings: Vec<String> = symbols.par_iter().map(|s| format!("item_{s}")).collect();
+                        let symbols: Vec<u32> = rerail_prof::code_rule_dsl::logic::profile::on_cores(|| (0..20_000).into_par_iter().map(|i| (round * 96 + batch) * 20_000 + i).collect());
+                        let strings: Vec<String> = rerail_prof::code_rule_dsl::logic::profile::on_cores(|| symbols.par_iter().map(|s| format!("item_{s}")).collect());
                         let rows = vocabulary.rows(&strings, &symbols);
                         *passed.lock().unwrap() += rows[0].len();
                         *expected.lock().unwrap() += strings.iter().filter(|s| s.starts_with("item_1")).count();

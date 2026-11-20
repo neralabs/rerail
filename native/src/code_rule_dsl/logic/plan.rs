@@ -880,7 +880,6 @@ pub struct Model {
 #[derive(Clone, Copy, Default)]
 struct NoShapes(bool);
 
-
 #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
 pub fn shaped_statistics() -> u64 {
     run_counts().shaped.load(std::sync::atomic::Ordering::Relaxed)
@@ -1099,7 +1098,6 @@ struct QuietTally {
     strata: std::sync::atomic::AtomicUsize,
     unmeasured: std::sync::atomic::AtomicUsize,
 }
-
 
 /// CPython's iteration order over a `frozenset` of small ints (the subset in `plan_rule`'s DP, whose ties go to the
 /// first): sets of up to four live in eight slots, probed `i = 5i + 1`; larger ones were resized to 32 slots.
@@ -1375,6 +1373,10 @@ pub struct ChunkView {
     kept: arc_swap::ArcSwap<Plans>,
     own: parking_lot::Mutex<rustc_hash::FxHashSet<PlanKey>>,
     observed: Option<keeps::SharedObserved>,
+    /// The joins' memo as the run's was filed when it began, with its own writes (Q314, `joins::ChunkMemo`).
+    memo: Arc<joins::ChunkMemo>,
+    /// The planning choices (inline or store, demand) likewise (Q314, `choices::ChunkChoices`).
+    choices: Arc<choices::ChunkChoices>,
 }
 
 impl ChunkView {
@@ -1395,7 +1397,7 @@ impl ChunkView {
 
 /// What a chunk planned, learnt and observed (`in_view`), for the run's in the chunks' order (`OrderedPlans::file`).
 #[derive(Default)]
-pub struct ChunkPlans(Vec<(PlanKey, Kept)>, Option<keeps::Observed>);
+pub struct ChunkPlans(Vec<(PlanKey, Kept)>, Option<keeps::Observed>, Vec<joins::Op>, Vec<([u8; 32], choices::Chosen, bool)>);
 
 /// Q88: the run's plans and observations as its chunks are filed, in their order. Chunk `n` (from 0) sees them as they
 /// were once chunks `0..=n - window` were filed; what it made is the run's when it is filed.
@@ -1403,8 +1405,9 @@ pub struct OrderedPlans {
     run: SharedPlans,
     observed: Option<keeps::SharedObserved>,
     window: usize,
-    /// The run's plans and observations once `first + i` chunks were filed, for those a chunk to begin may see.
-    snapshots: std::collections::VecDeque<(Arc<Plans>, Option<Arc<keeps::Observed>>)>,
+    /// The run's plans, observations and joins' memo once `first + i` chunks were filed, for those a chunk to begin
+    /// may see.
+    snapshots: std::collections::VecDeque<(Arc<Plans>, Option<Arc<keeps::Observed>>, Arc<joins::Memo>, ChoicesAt)>,
     first: usize,
     begun: usize,
     filed: usize,
@@ -1415,7 +1418,7 @@ impl OrderedPlans {
     pub fn begin(window: usize) -> Option<Self> {
         let run = share_plans()?;
         let observed = keeps::share_observed();
-        let at = (run.kept.load_full(), keeps::observed_now(&observed));
+        let at = (run.kept.load_full(), keeps::observed_now(&observed), joins::snapshot(), choices::snapshot());
         let observed = at.1.is_some().then_some(observed);
         Some(OrderedPlans { run, observed, window: window.max(1), snapshots: [at].into(), first: 0, begun: 0, filed: 0 })
     }
@@ -1430,23 +1433,27 @@ impl OrderedPlans {
             self.snapshots.pop_front();
             self.first += 1;
         }
-        let (plans, observed) = self.snapshots[at - self.first].clone();
+        let (plans, observed, memo, chosen) = self.snapshots[at - self.first].clone();
         Arc::new(ChunkView {
             kept: arc_swap::ArcSwap::new(plans),
             own: Default::default(),
             observed: self.observed.as_ref().map(|_| keeps::chunk_observed(observed)),
+            memo: joins::chunk_memo(&memo),
+            choices: choices::chunk_choices(&chosen),
         })
     }
 
     /// Files the next chunk's plans and observations into the run's, in the chunks' order.
     pub fn file(&mut self, made: ChunkPlans) {
-        let ChunkPlans(plans, observed) = made;
+        let ChunkPlans(plans, observed, ops, chosen) = made;
         self.run.publish(plans);
         if let (Some(run), Some(o)) = (&self.observed, observed) {
             keeps::file_observed(run, o);
         }
+        joins::file_ops(ops);
+        choices::file(chosen);
         self.filed += 1;
-        let at = (self.run.kept.load_full(), self.observed.as_ref().and_then(keeps::observed_now));
+        let at = (self.run.kept.load_full(), self.observed.as_ref().and_then(keeps::observed_now), joins::snapshot(), choices::snapshot());
         self.snapshots.push_back(at);
     }
 }
@@ -1458,6 +1465,8 @@ pub fn in_view<R>(view: &Arc<ChunkView>, f: impl FnOnce() -> R) -> (R, ChunkPlan
     let shared = SharedPlans { run: Arc::clone(&run.run), view: Some(Arc::clone(view)) };
     // The view is the plans its extent binds (its jobs carry it), and its own (`enter_plans`) go back to it.
     let r = {
+        // The chunk's plans are the run's context's while `f` runs (and its jobs', which carry the context), and
+        // what it plans is put into the view as the job's own end (`enter_plans`), before the binding goes.
         let _bound = rerail_prof::code_rule_dsl::logic::profile::bind(KeptPlans(Some(shared.clone())));
         let _plans = enter_plans(Some(shared));
         let _observed_at = view.observed.clone().map(keeps::bind_observed);
@@ -1471,7 +1480,20 @@ pub fn in_view<R>(view: &Arc<ChunkView>, f: impl FnOnce() -> R) -> (R, ChunkPlan
     };
     let kept = view.kept.load();
     let plans = keys.into_iter().filter_map(|k| kept.get(&k).map(|e| (k, e.kept()))).collect();
-    (r, ChunkPlans(plans, view.observed.as_ref().map(keeps::observed_made)))
+    (r, ChunkPlans(plans, view.observed.as_ref().map(keeps::observed_made), joins::ops_of(&view.memo), choices::made_in(&view.choices)))
+}
+
+/// The planning choices kept in the process, as a chunk begins from them (`choices::snapshot`).
+type ChoicesAt = Arc<std::collections::HashMap<[u8; 32], choices::Chosen>>;
+
+/// The joins' memo a chunk's planning reads and writes (Q261): its view's, where the run is in one (`in_view`).
+fn chunk_memo() -> Option<Arc<joins::ChunkMemo>> {
+    with_plans(|p| p.as_ref().and_then(|s| s.view.as_ref()).map(|v| Arc::clone(&v.memo)))
+}
+
+/// The planning choices a chunk's planning reads and makes (Q261): its view's, where the run is in one (`in_view`).
+fn chunk_choices() -> Option<Arc<choices::ChunkChoices>> {
+    with_plans(|p| p.as_ref().and_then(|s| s.view.as_ref()).map(|v| Arc::clone(&v.choices)))
 }
 
 /// A kept plan as the run shares it (decision 0301): its order and what its search found of it (work per node,
@@ -2087,6 +2109,12 @@ impl Drop for KeepPlans {
             let searches: Vec<u64> = run_counts().searches.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
             let lazy = lazy_probes_counted();
             eprintln!("plan cache: {}; budget missed: {}; statistics: {} batches of {} relations, {} late, {} answered by layouts; {} lines prepared, {} searched once heavy ({} versions' plans read, {} made); mispredicted: {} blown up, {} over-estimated; orders: {} searched, {} greedy (under a search's cost); probes: {} left unplanned at open, {} planned later", counts.join(", "), miss.join(", "), st[0], st[1], st[2], run_counts().shaped.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::run_counts().taken.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::run_counts().searched.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::run_counts().versions[0].swap(0, std::sync::atomic::Ordering::Relaxed), prepared::run_counts().versions[1].swap(0, std::sync::atomic::Ordering::Relaxed), joins::run_counts().misses[0].swap(0, std::sync::atomic::Ordering::Relaxed), joins::run_counts().misses[1].swap(0, std::sync::atomic::Ordering::Relaxed), searches[0], searches[1], lazy.0, lazy.1);
+        }
+        // The layout facts the run's rows broke (decision 0361 step 6), each named in the profile as it broke.
+        if std::env::var_os("RERAIL_PLAN_CACHE_COUNTS").is_some() {
+            let b = shapes::run_broken();
+            let broken = b.facts();
+            eprintln!("layout facts: {} probe steps checked; broken: {}", b.1.swap(0, std::sync::atomic::Ordering::Relaxed), if broken.is_empty() { "none".to_owned() } else { broken.iter().map(|(r, f)| format!("{r} {f}")).collect::<Vec<_>>().join(", ") });
         }
         compose::clear();
         // Every job that entered them has ended: the run's thread holds the last handle.
@@ -2982,7 +3010,8 @@ impl Model {
             return self.plan_inner(pf, b, first, None, true);
         }
         // A line planned with the program (decision 0361 step 5): no key, no cache, no price.
-        if let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes) {
+        if let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes, b, &self.stats.shapes) {
+            self.log_assumed(line_key(b, first));
             super::profile::decision("prepared plans (decision 0361 step 5)", || "a live plan taken as prepared: not searched or priced".to_owned());
             return Ok((plan, None));
         }
@@ -3249,6 +3278,59 @@ impl Model {
         })
     }
 
+    /// Q290's measurement (`prepared::sizes_log`): a prepared plan taken for `line`, each relation it assumed a size of
+    /// against what this model holds of it, rows per node. A relation still being solved is left out (its rows so far).
+    fn log_assumed(&self, line: u128) {
+        let Some(log) = prepared::sizes_log() else { return };
+        use std::io::Write as _;
+        let n = self.stats.nodes.max(1.0);
+        let mut log = log.lock();
+        for (r, per) in self.stats.prepared.assumed(line) {
+            if !self.stats.solving.contains(r) {
+                let _ = writeln!(log, "seen\t{r}\t{per}\t{}\t{n}", self.card(r) / n);
+            }
+        }
+    }
+
+    /// Decision 0361 step 6: a running line's rows step by step (`steps`, the executors' counts, decision 0203) against
+    /// the facts its probes were priced by. A probe returning past `shapes::BROKEN_BY` times the most its relation's key
+    /// or fan-out lets it, a probe on average, breaks that fact: the run notes it (`shapes::Broken`), names it in the
+    /// profile (and on stderr in a strict run), and this model's shapes leave the relation out, as every later model's
+    /// do (`Shapes::for_run`): planned from statistics for the rest of the run. Whether a fact broke here.
+    #[doc(hidden)]
+    pub fn layout_broken(&mut self, b: &Body<'_>, order: &[Step], steps: &[(u64, u64)]) -> bool {
+        if self.stats.shapes.0.is_empty() || order.len() != steps.len() {
+            return false;
+        }
+        let mut bound = VarSet::new();
+        let mut broke = false;
+        for (k, s) in order.iter().enumerate() {
+            if k > 0
+                && s.mode.is_none()
+                && let Some(a) = b.atom(s.at).filter(|a| !a.neg())
+            {
+                let rel = b.rel(a);
+                let cols: Vec<usize> = b.args(s.at).iter().enumerate().filter(|(_, t)| t.var().is_some_and(|v| bound.contains(v)) || b.constant(**t).is_some()).map(|(c, _)| c).collect();
+                let (into, made) = steps[k];
+                if let Some(fact) = self.stats.shapes.broken_at(rel, &cols, into, made) {
+                    if shapes::run_broken().note(rel, fact.clone()) {
+                        let text = format!("{rel}: {fact} broken: {into} probes made {made} rows, in {}; planned from statistics for the rest of the run", b.head_text());
+                        if super::profile::strict() {
+                            eprintln!("rerail: a layout fact broken (decision 0361 step 6): {text}");
+                        }
+                        super::profile::decision("broken layout facts (decision 0361 step 6)", || text);
+                    }
+                    broke = true;
+                }
+            }
+            bound.extend(b.vars(s.at));
+        }
+        if broke {
+            self.stats.shapes = shapes::Shapes::for_run(std::sync::Arc::clone(&self.stats.shapes));
+        }
+        broke
+    }
+
     #[doc(hidden)]
     pub fn prepared_heavy(&self, b: &Body<'_>, firsts: &[Option<usize>], running: &[Step]) -> Option<u128> {
         let (line, p) = firsts.iter().map(|f| line_key(b, *f)).find_map(|k| self.stats.prepared.0.get(&k).filter(|p| same_order(&p.order, running)).map(|p| (k, p)))?;
@@ -3389,8 +3471,9 @@ impl Model {
     ) -> Result<(Plan, Option<super::profile::RulePlan>)> {
         // A line planned with the program from its layouts (decision 0361 step 5): taken as kept, not searched.
         if fixed.is_none()
-            && let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes)
+            && let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes, b, &self.stats.shapes)
         {
+            self.log_assumed(line_key(b, first));
             super::profile::decision("prepared plans (decision 0361 step 5)", || "a line's plan taken as prepared: not searched".to_owned());
             if std::env::var("RERAIL_PLAN_SHOW").is_ok_and(|r| r.split(',').any(|name| name == b.rel(b.head()))) {
                 eprintln!("plan show {} prepared: work {:.1} rows {:.1}: {}", b.show_head(), plan.1, plan.2, b.shown(&plan.0).join(" , "));
@@ -4312,7 +4395,7 @@ impl Model {
             raw: f64,
             tail: Option<(f64, f64)>,
             /// Its rows as its steps make them, the cut past the head's binding aside (`rows` is what the walk passes
-            /// on): how many of the tail's rows are witnesses, which `witnessed` scales its work by (Q240 with Q357
+            /// on): how many of the tail's rows are witnesses, which `witnessed` scales its work by (Q240 with Q354
             /// item 5). Cut, the tail never had more rows than bindings, and every read past the head stayed priced.
             full: f64,
         }
@@ -5088,7 +5171,8 @@ pub fn make_plan(p: &body::Placed, db: &Connection, mut inputs: Inputs) -> Resul
         .chain(f.fact_rels().into_iter().map(|r| f.text(r.name())).filter(|rel| !f.is_input(rel)).map(str::to_owned))
         .collect();
     let mut stats = Stats::new(db, p, &mut inputs)?;
-    stats.shapes = shapes::Shapes::of_version(&p.v);
+    // Without the relations whose facts the run's rows broke (decision 0361 step 6).
+    stats.shapes = shapes::Shapes::for_run(shapes::Shapes::of_version(&p.v));
     stats.prepared = prepared::Prepared::of_version(&p.v);
     let mut ndv = ColMap::default();
     for (rel, (_, rows)) in &inputs.batch {
@@ -9328,7 +9412,10 @@ impl<'a> Run<'a, '_> {
                     let checked = joins::check(key, work, &probes[k].2);
                     // Its rows against its order's step by step: the widest blown up, or a step far under its price.
                     let miss = self.model.line_miss(pf, &vs.at(r), Some(ai), &probes[k].2, key, c, &mut expected[line]);
-                    if (checked || miss.is_some() || self.model.prepared_horribly_slow(&vs.at(r), &[Some(ai)], &probes[k].2, work))
+                    // Its probes' rows against the facts they were priced by (decision 0361 step 6): a fact broken
+                    // leaves its relation to the statistics, and a prepared order priced by it is searched.
+                    let broken = self.model.layout_broken(&vs.at(r), &probes[k].2, c);
+                    if (checked || miss.is_some() || broken || self.model.prepared_horribly_slow(&vs.at(r), &[Some(ai)], &probes[k].2, work))
                         && self.model.prepared_heavy(&vs.at(r), &[Some(ai)], &probes[k].2).is_some()
                     {
                         replanned_at.force(k);
@@ -9595,6 +9682,10 @@ impl<'a> Run<'a, '_> {
                 // A seed or whole plan is checked here, at its cut (a probe was, above).
                 if led && let Some(key) = keys.get(line).copied().flatten() {
                     let running = order_now(&orders, &probes, &wholes);
+                    // Its rows against the facts its order was priced by (decision 0361 step 6).
+                    if let Some(steps) = counted.get(line) {
+                        self.model.layout_broken(&b, &running, steps);
+                    }
                     // Its prepared order, heavy: searched now with the run's statistics, and a better order goes on
                     // under the handoff (decision 0206), which goes back to this one where it runs slower a row.
                     if self.model.prepared_heavy(&b, &[first, None], &running).is_some() {
@@ -11053,7 +11144,7 @@ impl<'a> Cells<'a> {
         const PART: usize = 1 << 15;
         if rows.len() / w >= 2 * PART {
             use rayon::prelude::*;
-            return rows.par_chunks(PART * w).map(|part| self.sum_one(part)).reduce(|| 0, u64::wrapping_add);
+            return super::profile::on_cores(|| rows.par_chunks(PART * w).map(|part| self.sum_one(part)).reduce(|| 0, u64::wrapping_add));
         }
         self.sum_one(rows)
     }
@@ -11071,7 +11162,7 @@ impl<'a> Cells<'a> {
             0
         } else if ids >= 2 * PART {
             use rayon::prelude::*;
-            (0..ids).into_par_iter().step_by(PART).map(part).reduce(|| 0, u64::wrapping_add)
+            super::profile::on_cores(|| (0..ids).into_par_iter().step_by(PART).map(part).reduce(|| 0, u64::wrapping_add))
         } else {
             part(0)
         };
@@ -14567,5 +14658,82 @@ mod ordered_tests {
         assert_eq!(plans_get(&1).and_then(|k| k.5), None, "unfiled");
         ordered.file(m2);
         assert_eq!(plans_get(&1).and_then(|k| k.5), Some(5.0), "filed");
+    }
+
+    /// Q314: the joins' memo follows the chunks' order as the plans do. A note chunk 0 writes is in no view of a
+    /// chunk beside it, nor the run's until chunk 0 is filed; chunk 2 (a window of 2) begins with it.
+    #[test]
+    fn a_chunk_sees_the_joins_notes_filed_before_its_window_never_a_neighbours() {
+        // The test's own joins memo (decision 0442), empty and no other test's.
+        let _own = crate::code_rule_dsl::logic::profile::within(crate::code_rule_dsl::logic::profile::Shared::new());
+        let _plans = KeepPlans::start(None);
+        let mut ordered = OrderedPlans::begin(2).expect("a corpus run's plans");
+        let key: PlanKey = 0x0261_0001;
+        let order = [Step { at: 0, mode: None }, Step { at: 1, mode: None }];
+        let noted = || joins::note(&key).is_some();
+        let (v0, v1) = (ordered.next(), ordered.next());
+        let ((), m0) = in_view(&v0, || joins::put_tried(key, 7, &order, 3.0));
+        assert!(in_view(&v0, noted).0, "a chunk reads its own notes");
+        assert!(!in_view(&v1, noted).0, "a neighbour's, finished first");
+        assert!(!noted(), "the run's memo holds no chunk's until it is filed");
+        ordered.file(m0);
+        assert!(noted(), "chunk 0 filed");
+        assert!(!in_view(&v1, noted).0, "a view stays as its chunk began");
+        let ((), m1) = in_view(&v1, || ());
+        ordered.file(m1);
+        assert!(in_view(&ordered.next(), noted).0, "chunk 2 begins with chunk 0's");
+    }
+
+    /// Decision 0478 step 7: a device stage's growth (rows out per row in, which sizes its next run's space) is read as
+    /// filed before its chunk's window began, never as a chunk beside it or the chunk's own strata ran, by the
+    /// threads' timing; a chunk's growths are filed whatever order its threads wrote them in, each its most.
+    #[test]
+    fn a_stages_growth_is_read_as_filed_never_as_the_threads_ran() {
+        // The test's own joins memo (decision 0442), empty and no other test's.
+        let _own = crate::code_rule_dsl::logic::profile::within(crate::code_rule_dsl::logic::profile::Shared::new());
+        let _plans = KeepPlans::start(None);
+        let mut ordered = OrderedPlans::begin(2).expect("a corpus run's plans");
+        let (rule, stage) = (0x0450_0007u64, 3);
+        let seen = || joins::growth(rule, stage);
+        let (v0, v1) = (ordered.next(), ordered.next());
+        let ((), m0) = in_view(&v0, || {
+            joins::note_growth(rule, stage, 2.0);
+            joins::note_growth(rule, stage, 5.0);
+            joins::note_growth(rule, stage, 3.0);
+        });
+        assert_eq!(in_view(&v0, seen).0, None, "a chunk's own strata read its growth as filed when it began");
+        assert_eq!(in_view(&v1, seen).0, None, "a neighbour's");
+        assert_eq!(seen(), None, "the run's holds no chunk's until it is filed");
+        let ((), m1) = in_view(&v1, || {
+            joins::note_growth(rule, stage, 4.0);
+            joins::note_growth(rule, stage, 1.0);
+        });
+        ordered.file(m0);
+        assert_eq!(seen(), Some(5.0), "a chunk's most");
+        ordered.file(m1);
+        assert_eq!(seen(), Some(4.0), "filed in the chunks' order: the later chunk's stands");
+        assert_eq!(in_view(&ordered.next(), seen).0, Some(5.0), "chunk 2 begins with chunk 0's");
+    }
+
+    /// Q314: so do the planning choices (inline or store, demand). A program chunk 0 chose for is chosen again by a
+    /// chunk beside it, not taken from chunk 0 by whichever planned first; chunk 2 takes chunk 0's.
+    #[test]
+    fn a_chunk_takes_the_planning_choices_filed_before_its_window_never_a_neighbours() {
+        let _plans = KeepPlans::start(None);
+        let mut ordered = OrderedPlans::begin(2).expect("a corpus run's plans");
+        let key = [0x61u8; 32];
+        let chosen = |rel: &str| choices::Chosen { version: None, inlined: vec![rel.to_owned()], demanded: Vec::new(), nodes: 1000.0 };
+        let taken = || choices::lookup(&key, 1000.0).map(|c| c.inlined);
+        let (v0, v1) = (ordered.next(), ordered.next());
+        let ((), m0) = in_view(&v0, || choices::remember(key, chosen("a")));
+        assert_eq!(in_view(&v0, taken).0, Some(vec!["a".to_owned()]), "a chunk takes its own");
+        assert_eq!(in_view(&v1, taken).0, None, "a neighbour's, made first");
+        assert_eq!(taken(), None, "the process's hold no chunk's until it is filed");
+        let ((), m1) = in_view(&v1, || choices::remember(key, chosen("b")));
+        ordered.file(m0);
+        assert_eq!(taken(), Some(vec!["a".to_owned()]));
+        ordered.file(m1);
+        assert_eq!(taken(), Some(vec!["b".to_owned()]), "filed in the chunks' order: the later chunk's stands");
+        assert_eq!(in_view(&ordered.next(), taken).0, Some(vec!["a".to_owned()]), "chunk 2 begins with chunk 0's");
     }
 }

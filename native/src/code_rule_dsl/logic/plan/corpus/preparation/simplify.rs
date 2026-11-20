@@ -2739,19 +2739,7 @@ impl ProgramPass for DropUnread {
     }
 }
 
-/// Whether column `c` of derived relation `rel` holds a location.
-///
-/// **Columns no reader reads go** (decision 0098 §1: `count only`, inferred). A derived relation whose column is `_` in
-/// every atom that reads it, positive or negated, keeps only its other columns: its rows become their projection, so
-/// a reader that asks only whether a row exists (`!r($x, _)`, `r($x, _)`) reads one row per key, not every row the
-/// rules make. The rows the readers see are the same: the column decides nothing they test.
-/// Not projected: kept relations (outputs, inputs, lattices, natives and what they read, facts, demand, gates),
-/// answered and nullary ones, and a relation an aggregate reads (a count, a sum or a string join counts its rows, which
-/// a projection would merge). One column at least stays. Dropping a head column can leave its variable named once in
-/// the body, made `_` there, which can free another relation's column: so it repeats until nothing changes.
-/// base locations): declared a node, or filled by every rule from a node column, or a document column, of a base
-/// relation it reads. A location through another derived relation's number column is not seen (none is projected
-/// today: such a column holds a document key only where it is filled from one). `rules` are `rel`'s, by
+/// `simplify::location_column`: whether column `c` of derived relation `rel` holds a location. `rules` are `rel`'s, by
 /// its head (`ProjectAll` indexes them once: a scan of every rule for each relation and column was quadratic in the
 /// program).
 fn location_column(v: &Version, f: &Fields<'_>, rel: &str, rules: &[RuleRef<'_>], c: usize) -> bool {
@@ -2775,11 +2763,13 @@ fn location_column(v: &Version, f: &Fields<'_>, rel: &str, rules: &[RuleRef<'_>]
 /// location is no file's, and a location kept there only multiplies its rows: `bcgp_decorated`'s zero count read
 /// `!rr_agg15($a, $b, $p, _)`, whose helper over `rr_ctx16($a, $b, $p)` (pairs of a decorator and a later def, no
 /// location) kept each line's span, a row per line between every pair (3.6-10 M rows priced for 25,425 pairs).
-fn file_local_reads(v: &Version, f: &Fields<'_>, by_head: &BTreeMap<&str, Vec<RuleRef<'_>>>, rel: &str) -> bool {
-    by_head.get(rel).into_iter().flatten().all(|r| {
+/// `rules` are the relation's, and `by_head` every derived relation's, indexed once (`ProjectAll`).
+fn file_local_reads(v: &Version, f: &Fields<'_>, by_head: &BTreeMap<&str, Vec<RuleRef<'_>>>, rules: &[RuleRef<'_>]) -> bool {
+    rules.iter().all(|r| {
+        let rel = v.rel_name(r.head().rel());
         r.body().filter_map(|l| if let Lit::Atom(a) = l.view() { Some(a) } else { None }).filter(|a| !a.neg()).all(|a| {
             let name = v.rel_name(a.rel());
-            name == rel || by_head.get(name).is_none_or(|rules| (0..a.args().count()).any(|c| location_column(v, f, name, rules, c)))
+            name == rel || by_head.get(name).is_none_or(|of| (0..a.args().count()).any(|c| location_column(v, f, name, of, c)))
         })
     })
 }
@@ -2849,7 +2839,7 @@ impl ProgramPass for ProjectAll {
             // and a load hands on a document's rows by it (`py_docmod(d, p, q)`, read as `py_docmod(_, p, q)`). One
             // is enough: the first, when no column read is one.
             if !keep.iter().any(|&c| location_column(v, &f, rel, rules, c))
-                && file_local_reads(v, &f, &by_head, rel)
+                && file_local_reads(v, &f, &by_head, rules)
                 && let Some(c) = (0..n).find(|&c| location_column(v, &f, rel, rules, c))
             {
                 keep.push(c);

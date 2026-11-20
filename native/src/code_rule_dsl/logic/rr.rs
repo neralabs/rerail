@@ -415,6 +415,28 @@ pub fn modules(src: &str) -> Result<Option<Modules>, Error> {
     Ok(read_text(src)?.modules())
 }
 
+/// `modules` of many texts, in their order: every text's include graph derived by one run of phase 0 first, as a
+/// corpus run reads its programs (`phase0::graphs`), not one nested run a text; then the texts read on the pool, each
+/// finding its graph kept. A text that does not read gives its error in its place.
+pub fn modules_of(srcs: &[&str]) -> Vec<Result<Option<Modules>, Error>> {
+    use rayon::prelude::*;
+    let seeds: Vec<_> = srcs.iter().filter_map(|src| read_seed(src).ok()?.seed).collect();
+    if !seeds.is_empty() {
+        // An error is left to the read that meets it, which reports it in its text's place.
+        let _ = super::plan::corpus::phase0::graphs(&seeds);
+    }
+    // The caller's context on each job's thread (its observer and store, a test's own), as the corpus's reads carry it.
+    let carry = super::run_state::Carry::here();
+    super::profile::on_cores(|| {
+        srcs.par_iter()
+            .map(|src| {
+                let _in = carry.enter();
+                modules(src)
+            })
+            .collect()
+    })
+}
+
 /// A run's library (decision 0089): its modules, each with its files (canonical paths), and the program linked from
 /// them. A program that asks nothing of the library is lowered against the modules its includes reach
 /// (`Text::lower_in`), and the run holds the linked program once.
@@ -999,7 +1021,7 @@ fn link_seeded_version(linked: lower::Linked, own_v: std::sync::Arc<super::progr
     let lower::Linked { lowered, stated, own_stated, .. } = linked;
     let v = lowering_tail_on(scoped.version()?, vec![(own_v, stated, own_stated)], true, lowered, library)?;
     let mut b = Builder::on(&v);
-    lower::unseed(&mut b.fields(), seeds, core);
+    lower::unseed(&mut b.fields(), seeds, core, library.map(|l| &*l.version));
     b.finish().map(|(v, _)| v).map_err(Error::Syntax)
 }
 
@@ -1400,9 +1422,8 @@ impl LibraryFile {
 /// The lowered program is a derivation of those files (0044 §4): it is kept for the process and
 /// reused while every file it read hashes the same, so only an edit to a file it read (or a
 /// file appearing where an include looked) reads and lowers it again.
-/// The relations `core.rerail` declares for libraries to derive: the engine reads them (decision 0055's embeds).
-/// And the documents they load (t21 E2).
-pub const LIBRARY_DERIVED: [&str; 3] = ["embed", "embed_value", "load"];
+/// The relations `core.rerail` declares for libraries to derive for the engine to read: the documents they load (t21 E2).
+pub const LIBRARY_DERIVED: [&str; 1] = ["load"];
 /// The library's programs the engine adds to a run itself (decision 0076's import components).
 const ENGINE_FILES: [&str; 1] = ["components.rerail"];
 
@@ -1651,7 +1672,7 @@ fn reached_statements(own: &Path, statements: &[(&PathBuf, Vec<&Stmt>)]) -> File
         }
     }
     let whole: Vec<PathBuf> = ["core.rerail"].iter().chain(ENGINE_FILES.iter()).filter_map(|f| library().join(f).canonicalize().ok()).chain(std::iter::once(own.to_owned())).collect();
-    // The relations a library derives for the engine to read (`LIBRARY_DERIVED`: embeds, loads) are reached: no rule
+    // The relations a library derives for the engine to read (`LIBRARY_DERIVED`: loads) are reached: no rule
     // reads them, and the corpus run makes them outputs (`corpus::run_observed`'s requests). Dropped, a library's
     // `load(…)` asked for no document, and no import was resolved.
     let mut reached: BTreeSet<String> = LIBRARY_DERIVED.iter().map(|r| (*r).to_owned()).collect();
@@ -1754,16 +1775,16 @@ pub fn guest_asks(src: &str) -> Result<GuestAsks, Error> {
         }
         out
     };
-    let asking = |heads: &[&str], read: &BTreeSet<String>| {
-        read.iter().any(|r| asks(r) && !WORLD.iter().any(|(w, _)| w == r)) || heads.iter().any(|h| LIBRARY_DERIVED[..2].contains(h))
-    };
+    // A clause asks the run when it reads what the run answers (not the world's own). A head of the engine's to read
+    // asked too while it named an embed; the embeds are gone (0450 §3), and `LIBRARY_DERIVED`'s loads ask nothing.
+    let asking = |read: &BTreeSet<String>| read.iter().any(|r| asks(r) && !WORLD.iter().any(|(w, _)| w == r));
     let reads_guest = |read: &BTreeSet<String>| read.iter().any(|r| READS.contains(&r.as_str()) || r == "parse" || r == "splice");
     let mut by_head: std::collections::HashMap<&str, Vec<BTreeSet<String>>> = std::collections::HashMap::new();
     let mut asking_files: Vec<PathBuf> = Vec::new();
     for (path, statements) in &files {
         for st in statements.iter().filter(|st| matches!(st.what(), Some(S::Clause))) {
             let (heads, r) = (st.heads(), read(st));
-            if asking(&heads, &r) && !asking_files.iter().any(|p| p == path) {
+            if asking(&r) && !asking_files.iter().any(|p| p == path) {
                 asking_files.push(path.to_path_buf());
             }
             heads.iter().for_each(|h| by_head.entry(h).or_default().push(r.clone()));
@@ -1774,7 +1795,7 @@ pub fn guest_asks(src: &str) -> Result<GuestAsks, Error> {
     let mut reached: BTreeSet<String> = BTreeSet::new();
     for st in own.iter().filter(|st| matches!(st.what(), Some(S::Clause))) {
         let (heads, r) = (st.heads(), read(st));
-        own_asks |= asking(&heads, &r);
+        own_asks |= asking(&r);
         reads |= reads_guest(&r);
         reached.extend(heads.iter().map(|h| (*h).to_owned()));
         reached.extend(r);

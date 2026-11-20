@@ -21,6 +21,17 @@ UKL_DEFINE_MIN_MAX(float)
 UKL_INLINE uint32_t ukl_mask32(uint32_t n) { return n >= 32u ? 0xffffffffu : (1u << n) - 1u; }
 UKL_INLINE uint64_t ukl_mask64(uint32_t n) { return n >= 64u ? ~(uint64_t)0 : (((uint64_t)1) << n) - 1u; }
 
+// The bits of `x` in reverse order (bit 0 to bit 31 or 63).
+UKL_INLINE uint32_t ukl_reverse32(uint32_t x)
+{
+    x = ((x >> 1) & 0x55555555u) | ((x & 0x55555555u) << 1);
+    x = ((x >> 2) & 0x33333333u) | ((x & 0x33333333u) << 2);
+    x = ((x >> 4) & 0x0f0f0f0fu) | ((x & 0x0f0f0f0fu) << 4);
+    x = ((x >> 8) & 0x00ff00ffu) | ((x & 0x00ff00ffu) << 8);
+    return (x >> 16) | (x << 16);
+}
+UKL_INLINE uint64_t ukl_reverse64(uint64_t x) { return ((uint64_t)ukl_reverse32((uint32_t)x) << 32) | (uint64_t)ukl_reverse32((uint32_t)(x >> 32)); }
+
 // `n` bits of `v` from bit `off` up (zero past the word's end).
 UKL_INLINE uint32_t ukl_bits32(uint32_t v, uint32_t off, uint32_t n) { return off >= 32u ? 0u : (v >> off) & ukl_mask32(n); }
 UKL_INLINE uint64_t ukl_bits64(uint64_t v, uint32_t off, uint32_t n) { return off >= 64u ? 0u : (v >> off) & ukl_mask64(n); }

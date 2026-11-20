@@ -770,7 +770,6 @@ impl Source for Within {
     }
     /// Read whole by the device: the batch's solve, the relation it was written into, where it lies (decision 0353
     /// step 5).
-    #[cfg(target_os = "macos")]
     fn in_block(&self) -> Option<crate::code_rule_dsl::facts::rows::InBlock> {
         self.solvable().then(|| self.solved_rows().in_block(self.solved_rows().len()))
     }

@@ -266,7 +266,7 @@ unsafe extern "C" fn flush_events(sink: *mut Sink) {
     }
 }
 
-/// `src` walked by `kernel` for format 16 (decision 0426): no column is written; each node's event (`EV_OPEN`, its
+/// `src` walked by `kernel` for format 16 (decision 0434): no column is written; each node's event (`EV_OPEN`, its
 /// code id and start; `EV_LEAF`, its code id, start and end; `EV_CLOSE` and its end; three words each) is given to
 /// `on` in preorder, a window of them at a time, with the codes numbered so far. The walk never edits a node it
 /// gave. `jsonc` reads the file as JSONC (`tape_jsonc_with`). The source's SHA-256, or why it has no tape: then `on`

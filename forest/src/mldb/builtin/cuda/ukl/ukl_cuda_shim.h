@@ -1,5 +1,6 @@
 /** ukl_cuda_shim.h                                     -*- C++ -*-
     Copyright (c) Jeremy Barnes.  All rights reserved.
+    Used here under the Apache License, Version 2.0: MLDB's license is https://github.com/mldbai/mldb/blob/e3caed6fa44782d08eb640702fd60e9a2576d939/LICENSE
     This file is part of MLDB.
 
     UKL's shim for CUDA: a UKL kernel as CUDA C++ for NVRTC.

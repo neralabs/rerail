@@ -57,7 +57,7 @@ mod aot {
 /// The fewest floating-point operations (dense) a model's prediction must do: below about this, Core ML places a
 /// model on the CPU whatever the Neural Engine supports (the spike's A1), so the lane does not compile one. A floor,
 /// not the cutoff: above it, the chip's planner decides, and the placement check (`coreml::check_placement`) refuses
-/// a constant it puts elsewhere (the M3 placed 0.46e9 operations on the CPU, Q290).
+/// a constant it puts elsewhere (the M3 placed 0.46e9 operations on the CPU, Q294).
 pub const MIN_FLOPS: f64 = 0.25e9;
 /// Loaded models kept at once (Core ML holds at most about 119 compiled models per process).
 pub const MAX_LOADED: usize = 64;
@@ -561,12 +561,14 @@ impl Ane {
                             let (w0, w1) = t.pieces[p];
                             let k = t.k(p);
                             let mut buf = vec![0u16; t.m * k];
-                            buf.par_chunks_mut(k).enumerate().for_each(|(r, out)| {
-                                let g = tile * t.m + r;
-                                if g < total {
-                                    let (a, i) = row_of(g);
-                                    expand(&a.row(i)[w0..w1], out);
-                                }
+                            rerail_context::on_cores(|| {
+                                buf.par_chunks_mut(k).enumerate().for_each(|(r, out)| {
+                                    let g = tile * t.m + r;
+                                    if g < total {
+                                        let (a, i) = row_of(g);
+                                        expand(&a.row(i)[w0..w1], out);
+                                    }
+                                })
                             });
                             buf
                         })
@@ -593,10 +595,12 @@ impl Ane {
                 let tile = first + item;
                 let lo = tile * t.m;
                 let hi = (lo + t.m).min(total);
-                counts[lo * n..hi * n].par_chunks_mut(n).enumerate().for_each(|(r, out)| {
-                    if !add_counts(out, &data[r * stride..r * stride + n]) {
-                        bad.store(true, Ordering::Relaxed);
-                    }
+                rerail_context::on_cores(|| {
+                    counts[lo * n..hi * n].par_chunks_mut(n).enumerate().for_each(|(r, out)| {
+                        if !add_counts(out, &data[r * stride..r * stride + n]) {
+                            bad.store(true, Ordering::Relaxed);
+                        }
+                    })
                 });
                 Ok(())
             })?;

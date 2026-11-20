@@ -928,8 +928,8 @@ impl ContentStore {
     /// every SCHEMA object is only read, so opening it never waits for another process's writer;
     /// creation, a floor raise or a missing object (an index this build added) takes the
     /// exclusive lock and applies SCHEMA. Returns the store's identity (`store_identity`).
-    pub(super) fn initialize(connection: &mut Connection) -> StoreResult<i64> {
-        configure_connection(connection)?;
+    pub(super) fn initialize(connection: &mut Connection, flush: rerail_blocks::block::Flush) -> StoreResult<i64> {
+        configure_connection(connection, flush)?;
         if compatible_version(connection)? != SCHEMA_VERSION || !holds_schema_objects(connection)? || holds_retired(connection)? {
             // A store made here is made by a writer's thread (decision 0104: a run's own threads only read): once,
             // before anything reads it.

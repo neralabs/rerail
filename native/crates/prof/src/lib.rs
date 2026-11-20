@@ -583,40 +583,34 @@ pub mod heap {
         pub(super) fn record(at: usize) {
             let Some(t) = table() else { return };
             let row = &t[at * DEPTH..(at + 1) * DEPTH];
-            let got = walk();
+            // The return addresses of the frames calling it, outermost last, by the frame pointers' chain, read in
+            // its own frame. Off macOS on Apple silicon no frame is walked: the row stays empty.
+            #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+            let got = [0usize; DEPTH + SKIP];
+            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+            let got = {
+                let mut got = [0usize; DEPTH + SKIP];
+                let mut fp: usize;
+                unsafe { std::arch::asm!("mov {}, x29", out(reg) fp) };
+                let start = fp;
+                for slot in got.iter_mut() {
+                    // A frame record is (the caller's frame pointer, the return address); the stack grows down, so each
+                    // caller's record is higher, and a walk out of the stack stops.
+                    if fp == 0 || fp % 8 != 0 || fp < start || fp > start + (64 << 20) {
+                        break;
+                    }
+                    let (next, ret) = unsafe { (*(fp as *const usize), *((fp + 8) as *const usize)) };
+                    *slot = ret & 0x0000_ffff_ffff_ffff;
+                    if next <= fp {
+                        break;
+                    }
+                    fp = next;
+                }
+                got
+            };
             for (cell, v) in row.iter().zip(got[SKIP..].iter()) {
                 cell.store(*v, Relaxed);
             }
-        }
-
-        /// The return addresses of the frames calling `record`, outermost last, by the frame pointers' chain; none
-        /// where the chain is not read (only aarch64 macOS's is).
-        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-        #[inline(always)]
-        fn walk() -> [usize; DEPTH + SKIP] {
-            let mut got = [0usize; DEPTH + SKIP];
-            let mut fp: usize;
-            unsafe { std::arch::asm!("mov {}, x29", out(reg) fp) };
-            let start = fp;
-            for slot in got.iter_mut() {
-                // A frame record is (the caller's frame pointer, the return address); the stack grows down, so each
-                // caller's record is higher, and a walk out of the stack stops.
-                if fp == 0 || fp % 8 != 0 || fp < start || fp > start + (64 << 20) {
-                    break;
-                }
-                let (next, ret) = unsafe { (*(fp as *const usize), *((fp + 8) as *const usize)) };
-                *slot = ret & 0x0000_ffff_ffff_ffff;
-                if next <= fp {
-                    break;
-                }
-                fp = next;
-            }
-            got
-        }
-
-        #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
-        fn walk() -> [usize; DEPTH + SKIP] {
-            [0usize; DEPTH + SKIP]
         }
 
         pub(super) fn of(at: usize) -> Option<Vec<usize>> {

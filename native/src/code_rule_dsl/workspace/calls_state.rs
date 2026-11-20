@@ -447,7 +447,7 @@ impl CallsState {
         let changed: Vec<Restamp> = if candidates.len() < 256 {
             candidates.into_iter().filter_map(stamp).collect()
         } else {
-            candidates.into_par_iter().filter_map(stamp).collect()
+            crate::code_rule_dsl::logic::profile::on_cores(|| candidates.into_par_iter().filter_map(stamp).collect())
         };
         Some((view, changed))
     }

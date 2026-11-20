@@ -78,21 +78,23 @@ pub(in crate::code_rule_dsl) fn rows(
     // Every slot's scan of a file in one batch: their literal plans share one pass.
     let batch = scan::Batch::of(lowered);
     use rayon::prelude::*;
-    out.par_iter_mut().enumerate().for_each(|(at, rows)| {
-        let tape = tapes[at].1;
-        let len = tape.transducer_len();
-        let span = |node: u32| tape.transducer_span(node);
-        let uncovered = missing[at].iter().copied().filter(|&node| (node as usize) < len).collect::<Vec<_>>();
-        // The uncovered nodes, decided by one pass over the file's text for every slot.
-        let nodes = scan::Nodes { text: tape.transducer_source(), len, candidates: &uncovered, span: &span };
-        let scanned = batch.bits(&nodes);
-        for (slot, bits) in slots.iter().zip(scanned) {
-            let Some(mut bits) = bits else { continue };
-            for &node in found[&slot.lowered.key][at].iter().filter(|&&node| (node as usize) < len) {
-                bits[node as usize / 64] |= 1 << (node % 64);
+    crate::code_rule_dsl::logic::profile::on_cores(|| {
+        out.par_iter_mut().enumerate().for_each(|(at, rows)| {
+            let tape = tapes[at].1;
+            let len = tape.transducer_len();
+            let span = |node: u32| tape.transducer_span(node);
+            let uncovered = missing[at].iter().copied().filter(|&node| (node as usize) < len).collect::<Vec<_>>();
+            // The uncovered nodes, decided by one pass over the file's text for every slot.
+            let nodes = scan::Nodes { text: tape.transducer_source(), len, candidates: &uncovered, span: &span };
+            let scanned = batch.bits(&nodes);
+            for (slot, bits) in slots.iter().zip(scanned) {
+                let Some(mut bits) = bits else { continue };
+                for &node in found[&slot.lowered.key][at].iter().filter(|&&node| (node as usize) < len) {
+                    bits[node as usize / 64] |= 1 << (node % 64);
+                }
+                rows.insert(slot.key.clone(), Arc::new(bits));
             }
-            rows.insert(slot.key.clone(), Arc::new(bits));
-        }
+        })
     });
     crate::code_rule_dsl::prof::count("terms.slots", slots.len());
     crate::code_rule_dsl::prof::count("terms.uncovered", missing.iter().map(Vec::len).sum());

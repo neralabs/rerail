@@ -1077,7 +1077,7 @@ mod tests {
         let mut repeats = super::DropRepeated::default();
         p.program(&mut repeats);
         let out = p.current().unwrap().clone();
-        assert_eq!(repeats.0, 1);
+        assert_eq!((repeats.0, out.rules().count()), (1, 2));
         let want = image(false, vec![by(&["r1", "r3"]), by(&["r2"])]);
         assert_eq!(out.asked().get("q"), Some(&vec![BTreeSet::from(["r1".to_owned(), "r3".to_owned()]), BTreeSet::from(["r2".to_owned()])]), "the step's own record, by rule");
         assert!(crate::code_rule_dsl::logic::program_image::same_program(&want, &out), "{}", crate::code_rule_dsl::logic::program_image::differences(&want, &out));

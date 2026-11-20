@@ -133,19 +133,26 @@ fn a_noted_line_explores_untried_orders_within_the_margin() {
     let _serial = SERIAL.lock();
     let _own = own();
     let order = |at: &[usize]| at.iter().map(|&a| Step { at: a, mode: None }).collect::<Vec<_>>();
-    critical(&["s".into()], &[vec![]], &[LineRun { stratum: "s".into(), key: 300, rule: 1, order: steps(&order(&[0, 1, 2])), work: 1e6, est: 1e6, ..Default::default() }]);
     let candidates = vec![
         Candidate { order: order(&[0, 1, 2]), est: 100.0, steps: Vec::new() },
         Candidate { order: order(&[1, 0, 2]), est: 150.0, steps: Vec::new() },
         Candidate { order: order(&[2, 1, 0]), est: 10_000.0, steps: Vec::new() },
     ];
+    // 400 lines, each noted on its run's path: the draw is a line's and its measures' (Q314), so a share of the
+    // lines explore, and a line chooses the same at every plan until it measures more.
     let mut explored = [0usize; 3];
-    for _ in 0..400 {
-        let mut round = vec![Choice { key: 300, candidates: candidates.clone(), chosen: 0, why: "" }];
-        choose(&mut round);
-        explored[round[0].chosen] += 1;
+    for key in 300..700u128 {
+        critical(&["s".into()], &[vec![]], &[LineRun { stratum: "s".into(), key, rule: 1, order: steps(&order(&[0, 1, 2])), work: 1e6, est: 1e6, ..Default::default() }]);
+        let pick = || {
+            let mut round = vec![Choice { key, candidates: candidates.clone(), chosen: 0, why: "" }];
+            choose(&mut round);
+            round[0].chosen
+        };
+        let first = pick();
+        assert_eq!(pick(), first, "line {key} chooses the same at each plan");
+        explored[first] += 1;
     }
-    assert!(explored[1] > 0, "an untried order within the margin is tried now and then: {explored:?}");
+    assert!(explored[1] > 0, "an untried order within the margin is tried by some lines: {explored:?}");
     assert_eq!(explored[2], 0, "never one past the margin");
     assert!(explored[0] > explored[1], "mostly the best: {explored:?}");
 }
@@ -441,7 +448,8 @@ fn a_slow_line_is_bounded_on_every_path() {
 
 /// Decision 0208: the path as the strata ran. s1 does the most work but ran as a job beside s2, which took longer:
 /// the measured path is s0, s2, s3 (s3 waited on s2, ending last), not the predicted s0, s1, s3; the loop's thread
-/// ran s0 then s2, so s2 also waited on s0 there. Its line is noted by its share of the path's seconds.
+/// ran s0 then s2, so s2 also waited on s0 there. The measured path is reported; lines are noted by their work on
+/// the predicted one (Q314: the seconds made every run's notes, and so its plans, the clock's).
 #[test]
 fn the_measured_critical_path_follows_what_each_stratum_waited_for() {
     let _serial = SERIAL.lock();
@@ -459,9 +467,15 @@ fn the_measured_critical_path_follows_what_each_stratum_waited_for() {
     let measured = path.measured.as_ref().unwrap();
     assert_eq!((measured.strata.clone(), measured.shared), (vec![0, 2, 3], 2));
     let noted: Vec<PlanKey> = path.lines.iter().map(|l| l.0).collect();
-    assert_eq!(noted, vec![702, 703], "the lines on the measured path, by seconds: {:?}", path.lines);
-    assert!(note(&701).is_none(), "s1 is off the measured path");
-    assert!((path.lines[0].1 - 0.7 / 0.74).abs() < 1e-9);
+    assert_eq!(noted, vec![701], "the lines on the predicted path, by work (s3's is under the share): {:?}", path.lines);
+    assert!(note(&702).is_none(), "s2 is off the predicted path, though the measured one waited on it");
+    assert!((path.lines[0].1 - 500_000.0 / 520_000.0).abs() < 1e-9);
+    // The same runs, timed otherwise, note the same.
+    clear();
+    let other = vec![Some((0.0, 0.1, 0)), Some((0.1, 0.9, 1)), Some((0.12, 0.2, 0)), Some((0.95, 1.0, 0))];
+    let again = critical_timed(&names, &producers, &runs, Some(&other));
+    assert_eq!(again.lines, path.lines);
+    clear();
 }
 
 /// Decision 0209 §4: `h(a, b, c) :- r(f, a), r(f, b), r(f, c)` over a key of 100 values of one row and one of 300. A
@@ -845,4 +859,33 @@ fn clear() {
 /// A shared object of the test's own, so its memo is empty and no other test's (decision 0442).
 fn own() -> impl Drop {
     crate::code_rule_dsl::logic::profile::within(crate::code_rule_dsl::logic::profile::Shared::new())
+}
+
+/// Q314: a chunk's writes enter the run's memo when it is filed, each line's in the order the chunk wrote them; the
+/// order its jobs wrote different lines in (the threads') changes nothing, and until it is filed the run's memo is as
+/// it was.
+#[test]
+fn a_chunks_notes_enter_the_memo_at_its_filing_whatever_its_threads_order() {
+    let _serial = SERIAL.lock();
+    let _own = own();
+    let o = |a: u16| vec![(a, None), (a + 1, None)];
+    let tried = |key: PlanKey, a: u16, ratio: f64| Op::Tried { key, rule: key as u64, order: o(a), ratio, weight: TRIAL_WEIGHT };
+    let ops = vec![tried(801, 0, 2.0), tried(802, 0, 3.0), tried(801, 0, 8.0), Op::Slow { key: 802, rule: 802, order: o(0), est: 10.0, ran: 90.0 }, tried(801, 2, 0.5)];
+    let rows = || [801, 802].map(|k| note(&k).map(|n| note_row(k, &n)));
+    let chunk = chunk_memo(&snapshot());
+    for op in &ops {
+        op.apply(&mut chunk.memo.write());
+        chunk.ops.lock().push(op.clone());
+    }
+    assert_eq!(rows(), [None, None], "the run's memo is unchanged until the chunk is filed");
+    file_ops(ops_of(&chunk));
+    let filed = rows();
+    assert!(filed.iter().all(Option::is_some));
+    // The same writes, the lines interleaved otherwise (each line's own in its order).
+    clear();
+    let mut other: Vec<Op> = ops.iter().filter(|op| op.key() == 802).cloned().collect();
+    other.extend(ops.iter().filter(|op| op.key() == 801).cloned());
+    file_ops(other);
+    assert_eq!(rows(), filed);
+    clear();
 }

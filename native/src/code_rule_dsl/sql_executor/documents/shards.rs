@@ -111,15 +111,15 @@ fn domains(name: &str) -> (&'static [usize], &'static [usize]) {
         "py_exec_context" => (&[1, 2], &[0]),
         "py_call_arg" => (&[1, 2, 4, 6], &[0]),
         // Guests belong to the host file's shard. A guest id can identify a different document.
-        "guest" => (&[2], &[1]),
-        "doc_root" => (&[1], &[0]),
         "sub_tape" => (&[0], &[]),
         "host_node" => (&[1], &[]),
         // Decision 0431: a string's parsed nodes are its file's rows.
         "guest_of" | "guest_place" => (&[1], &[]),
         "str_part" | "str_part_word" => (&[0, 3], &[]),
         "doc" | "pkg" | "path_part" | "file_name" | "source" | "src_line" | "split_line"
-        | "lf_line" | "line_count" | "syntax_error" | "doc_role" | "doc_grammar" | "tape_of" => (&[], &[0]),
+        | "lf_line" | "line_count" | "syntax_error" | "doc_grammar" | "tape_of" => (&[], &[0]),
+        // A program's document underneath is its file's shard's.
+        "rr_program" => (&[], &[1]),
         "name" | "text" | "str" | "strprefix" | "comment" | "value" | "static_value" | "rr_value_lit" | "intval"
         | "op" | "op_t" | "op_at" | "line" | "end_line" | "col" | "visit_index" | "ast_depth" | "node_order"
         | "tree_digest" | "def_digest" | "spread" | "str_part_start" | "structural_before" | "structural_after" => (&[0], &[]),

@@ -216,7 +216,7 @@ pub trait Tape {
     /// The nodes.
     fn len(&self) -> usize;
     /// Whether block `block` (nodes `f16::Z * block ..`; `u32::MAX`: the document) may have a node of kind `kind`,
-    /// by the tape's presence in its home (`tape_has_kind`, decision 0426 §4, step 6): true for a tape that has none.
+    /// by the tape's presence in its home (`tape_has_kind`, decision 0434 §4, step 6): true for a tape that has none.
     fn has_kind(&self, block: u32, kind: u16) -> bool {
         let _ = (block, kind);
         true
@@ -345,7 +345,7 @@ pub struct F15Columns<'a> {
     pub tail: &'a [u8],
     pub widths: [u8; 3],
     pub from_start: bool,
-    /// The source's length (its header's, or its image's): a view's spans are held to it (decision 0427).
+    /// The source's length (its header's, or its image's): a view's spans are held to it (decision 0463).
     pub source_len: u64,
 }
 
@@ -450,7 +450,7 @@ impl Tape for F15<'_> {
     fn end(&self, i: usize) -> u64 {
         u64::from(reads::tape_end(self.bytes, &self.view, i as u32))
     }
-    /// A scan's span is the tape's as stated (decision 0427: what its check reads; its slices are checked).
+    /// A scan's span is the tape's as stated (decision 0463: what its check reads; its slices are checked).
     fn start_next(&self, i: usize, _prev_start: u64) -> u64 {
         u64::from(reads::tape_start_stated(self.bytes, &self.view, i as u32))
     }

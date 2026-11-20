@@ -70,12 +70,29 @@ pub fn tape(src: &[u8]) -> Result<Tape, Refusal> {
 }
 
 /// [`tape`], the parser's writer writing to `finish`'s target and finished by it: format 15's columns (`tape`), or
-/// format 16 written by its ops as the parse goes (`Writer::finish_16`, decision 0426).
+/// format 16 written by its ops as the parse goes (`Writer::finish_16`, decision 0434).
 pub fn tape_into<T>(src: &[u8], finish: &mut dyn rerail_tape_format::Sink<T>) -> Result<T, Refusal> {
     if src.len() >= u32::MAX as usize / 2 {
         return Err(Refusal::TooLarge);
     }
     parse::parse_into(src, finish)
+}
+
+/// The node kinds a parse may start at (decision 0466): a whole document, or one element alone ([`tape_from_into`]).
+pub const STARTS: &[&str] = &["document", "element"];
+
+/// [`tape_into`] from the node kind `start` (one of [`STARTS`]): its tape's root is one node of that kind over `src`,
+/// less blanks. `None` for a kind it does not start at.
+pub fn tape_from_into<T>(src: &[u8], start: &str, finish: &mut dyn rerail_tape_format::Sink<T>) -> Option<Result<T, Refusal>> {
+    let start = match start {
+        "document" => parse::Start::Document,
+        "element" => parse::Start::Element,
+        _ => return None,
+    };
+    if src.len() >= u32::MAX as usize / 2 {
+        return Some(Err(Refusal::TooLarge));
+    }
+    Some(parse::parse_from(src, start, finish))
 }
 
 /// A tape as plain text, as the engine's `python_tape_plain` writes one (the oracle's form): a node
@@ -127,5 +144,40 @@ mod tests {
         assert!(kinds::DROPPED.windows(2).all(|w| w[0] < w[1]));
         // The parser writes `<` before it knows a start tag from a self-closing one.
         assert_eq!(stores(K::StartTag, K::TLt), stores(K::SelfClosingTag, K::TLt));
+    }
+
+    fn element(src: &str) -> Result<Tape, Refusal> {
+        tape_from_into(src.as_bytes(), "element", &mut rerail_tape_format::Writer::<rerail_tape_format::Widths>::finish_columns).unwrap()
+    }
+
+    /// Decision 0466 R1: an element alone is one `element` root over the text less blanks, nothing above it, and the
+    /// same nodes as the document's element of the same text (no `html`, `head` or `body` implied around it).
+    #[test]
+    fn an_element_fragment_is_rooted_at_its_element() {
+        for (src, span) in [
+            ("<div class=\"a\">x &amp; <b>y</b></div>", "[0..37]"),
+            ("  <ul><li>a<li>b</ul>\n", "[2..21]"),
+            ("<br>", "[0..4]"),
+            ("<td>x</td>", "[0..10]"),
+        ] {
+            let ours = tape_text(&element(src).unwrap_or_else(|e| panic!("{src:?}: {e:?}")));
+            let first = ours.lines().next().unwrap();
+            assert!(first.starts_with("element") && first.ends_with(span), "{src:?}:\n{ours}");
+            assert!(ours.lines().skip(1).all(|l| l.starts_with(' ')), "one root: {src:?}:\n{ours}");
+            // Where the document's element ends where the fragment's does, its nodes are the fragment's.
+            let doc = tape_text(&tape(src.trim_end().as_bytes()).unwrap());
+            let theirs: Vec<String> = doc.lines().skip(1).map(|l| l[2..].to_owned()).collect();
+            assert_eq!(ours.lines().collect::<Vec<_>>(), theirs.iter().map(String::as_str).collect::<Vec<_>>(), "{src:?}");
+        }
+    }
+
+    /// Refused: no element first, another node after it, an end tag that closes nothing, a `script` or `style` (kinds of their own), an element the scanner does not
+    /// end at the text's end (as in a document).
+    #[test]
+    fn an_element_fragment_is_one_element() {
+        for src in ["", "x", "<!-- c --><a></a>", "<!doctype html>", "<a></a><b></b>", "<a></a> x", "<p>a<div>b</div>", "</a>", "<div>", "<p>a ", "<script>if (a < b) {}</script>", "<style>a {}</style>"] {
+            assert!(element(src).is_err(), "{src:?}");
+        }
+        assert!(tape_from_into(b"<a></a>", "text", &mut rerail_tape_format::Writer::<rerail_tape_format::Widths>::finish_columns).is_none());
     }
 }

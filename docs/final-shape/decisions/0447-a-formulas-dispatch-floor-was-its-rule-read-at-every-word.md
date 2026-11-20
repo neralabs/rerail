@@ -1,7 +1,8 @@
 # 0447. A formula's dispatch floor was its rule, read at every word
 
 Status: accepted (2026-11-19). Follows 0457. Answers its "What is left" (the floor of a dispatch), and keeps the
-parent reads of ops 7 and 8.
+parent reads of ops 7 and 8. Its measurement switch (`RERAIL_GPU_ENCODER_TIMES`) is not on the hub's device-layer
+launches since the roll-up (work queue Q335).
 
 ## Intro
 
@@ -69,4 +70,4 @@ took 16.0 and 16.4 ms, 1,024 took 19.7 and 22.4 ms.
 ## What is left
 
 - **`label_leaves` is now most of the GPU time:** 32.2 ms of internal_dead_code's 50.7 ms, in 12 encoders of about
-  2.7 ms each (Q326).
+  2.7 ms each (Q281).

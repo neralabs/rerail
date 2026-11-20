@@ -2674,10 +2674,12 @@ fn execute_batch_packed_once(
     }
     // A cold process compiles each program once (06 S7: 71 programs, 0.3 s); they compile in
     // parallel.
-    let compiled = crate::code_rule_dsl::prof::time("jit.compile", || programs
-        .par_iter()
-        .map(crate::code_rule_dsl::logic::profile::carried("native compile (pool)", compile_cached))
-        .collect::<Result<Vec<_>, Error>>())?;
+    let compiled = crate::code_rule_dsl::prof::time("jit.compile", crate::code_rule_dsl::logic::profile::on_cores(|| {
+        || programs
+            .par_iter()
+            .map(crate::code_rule_dsl::logic::profile::carried("native compile (pool)", compile_cached))
+            .collect::<Result<Vec<_>, Error>>()
+    }))?;
     let allocation_started = std::time::Instant::now();
     let regions = crate::code_rule_dsl::prof::Stage::start("jit.regions");
     let mut pending = DemandZeroRegion::<PendingRecord>::new(totals.pending as usize)?;
@@ -2909,7 +2911,8 @@ fn execute_batch_packed_once(
             return Err(Error::BackendFailure);
         }
     }
-    let task_outputs = spans
+    let task_outputs = crate::code_rule_dsl::logic::profile::on_cores(|| {
+        spans
             .into_par_iter()
             .map(|span| span.iter_mut().map(|(program, context)| {
                 // The queue uses tombstones within a task. Keeping a full
@@ -2977,7 +2980,8 @@ fn execute_batch_packed_once(
                     },
                 })
             }).collect::<Result<Vec<_>, Error>>())
-            .collect::<Result<Vec<Vec<_>>, Error>>()?
+            .collect::<Result<Vec<Vec<_>>, Error>>()
+    })?
     .into_iter()
     .flatten()
     .collect::<Vec<_>>();

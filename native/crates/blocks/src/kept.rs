@@ -12,7 +12,7 @@
 //! An entry is the relation's rows, or a gone entry (no longer kept), or a reads-only entry (new reads, the rows the
 //! newest older entry's). `KeptChain` reads the files as one, newest first.
 
-use crate::block::{Block, FROZEN, kind};
+use crate::block::{Block, FROZEN, Flush, kind};
 use crate::packed::{Packed, Prepared};
 use crate::refs::{Ptr, Span};
 use crate::structure;
@@ -533,9 +533,9 @@ impl KeptW {
         self.block.used()
     }
 
-    /// The directory written, sorted by key, then the file frozen (truncated to what it holds) and put on the disk.
-    /// A key put twice is refused.
-    pub fn finish(mut self) -> io::Result<()> {
+    /// The directory written, sorted by key, then the file frozen (truncated to what it holds) and written back as
+    /// `flush` says (decision 0481). A key put twice is refused.
+    pub fn finish(mut self, flush: Flush) -> io::Result<()> {
         self.pending.sort_by(|a, b| (a.rel.as_str(), &a.ident, a.part).cmp(&(b.rel.as_str(), &b.ident, b.part)));
         if let Some(w) = self.pending.windows(2).find(|w| (w[0].rel.as_str(), &w[0].ident, w[0].part) == (w[1].rel.as_str(), &w[1].ident, w[1].part)) {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("kept relation {} part {} put twice", w[0].rel, w[0].part)));
@@ -600,9 +600,9 @@ impl KeptW {
         }
         #[cfg(unix)]
         {
-            self.block.sync_mapped()?;
+            self.block.sync_mapped(flush)?;
             let frozen = self.block.freeze();
-            frozen.sync_mapped()?;
+            frozen.sync_mapped(flush)?;
         }
         #[cfg(not(unix))]
         {
@@ -610,7 +610,9 @@ impl KeptW {
             let frozen = self.block.freeze();
             let mut f = std::fs::File::create(&self.path)?;
             f.write_all(frozen.bytes(0, frozen.header().length as usize))?;
-            f.sync_data()?;
+            if flush.waits() {
+                f.sync_data()?;
+            }
         }
         Ok(())
     }
@@ -656,7 +658,7 @@ mod tests {
         let p = put(&mut w, Meta { reads: &reads, types: b"ii", ..meta(FactKey { rel: "calls", ident: &A, part: 0 }, 99) }, &data, Some(&levels));
         assert!(!p.in_order && p.rows == 5_000);
         assert!(p.bytes < 5_000 * 16 / 3, "{} bytes for 5,000 rows of two columns", p.bytes);
-        w.finish().unwrap();
+        w.finish(Flush::Synced).unwrap();
         let files = [KeptFacts::open(&d.join("c1.blk"), 11).unwrap()];
         let chain = KeptChain { files: &files };
         let got = chain.get(&FactKey { rel: "calls", ident: &A, part: 0 }).unwrap();
@@ -687,13 +689,13 @@ mod tests {
         put(&mut w, meta(key("p", &A, 0), 1), &[(1, 1)], None);
         put(&mut w, meta(key("p", &A, 7), 2), &[(2, 2)], None);
         put(&mut w, meta(key("q", &B, 0), 3), &[(3, 3), (4, 4)], Some(&[5, 6]));
-        w.finish().unwrap();
+        w.finish(Flush::Synced).unwrap();
         let mut w = KeptW::create(&d.join("c2.blk"), 2, 16 << 20).unwrap();
         put(&mut w, meta(key("p", &A, 7), 20), &[(3, 3)], None);
         w.gone(key("p", &A, 0));
         put(&mut w, meta(key("p", &A, 3), 30), &[(1, 1)], None);
         w.same(Meta { reads: &[("x", 9)], ..meta(key("q", &B, 0), 33) });
-        w.finish().unwrap();
+        w.finish(Flush::Synced).unwrap();
         let files = [KeptFacts::open(&d.join("c1.blk"), 1).unwrap(), KeptFacts::open(&d.join("c2.blk"), 2).unwrap()];
         let v = KeptChain { files: &files };
         assert_eq!(v.of("p").map(|k| (k.key.part, k.digest)).collect::<Vec<_>>(), [(3, 30), (7, 20)]);
@@ -710,7 +712,7 @@ mod tests {
         for k in v.all() {
             w.copy(&k, None).unwrap();
         }
-        w.finish().unwrap();
+        w.finish(Flush::Synced).unwrap();
         let rolled = [KeptFacts::open(&d.join("c3.blk"), 3).unwrap()];
         let r = KeptChain { files: &rolled };
         type Flat = Vec<(String, i64, u64, Vec<(String, u64)>, Vec<Vec<i64>>, Option<Vec<i64>>)>;
@@ -735,7 +737,7 @@ mod tests {
         let mut w = KeptW::create(&d.join("c1.blk"), 1, 16 << 20).unwrap();
         put(&mut w, meta(FactKey { rel: "p", ident: &A, part: 0 }, 1), &[(1, 1)], None);
         put(&mut w, meta(FactKey { rel: "p", ident: &A, part: 0 }, 1), &[(1, 1)], None);
-        assert!(w.finish().is_err());
+        assert!(w.finish(Flush::Synced).is_err());
         let _ = std::fs::remove_dir_all(&d);
     }
 }

@@ -449,7 +449,7 @@ pub fn document_column(relation: &str) -> Option<usize> {
         "node" | "doc" | "pkg" | "path_part" | "file_name" | "syntax_error" | "cpython_syntax_error" |
         "source" | "src_line" | "src_line_lf" | "tape_line" | "split_line" | "lf_line" | "line_count" | "parsed"
         // Decision 0055's: a guest and its host are one file (`corpus::guests` attributes its rows to the host).
-        | "doc_role" | "doc_grammar" | "doc_root" | "tape_of" | "guest" | "host_node" => Some(0),
+        | "tape_of" | "rr_program" | "doc_grammar" | "host_node" => Some(0),
         // Decision 0431: a string's parsed nodes, by the string (its file's node).
         "docof" | "guest_of" | "guest_place" => Some(1),
         _ => None,

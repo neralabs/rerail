@@ -1,8 +1,10 @@
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import type { AdapterDelivery } from "../../../src/engine/index.js";
 import type { MergeAssistRuntime } from "../../../src/runtime/index.js";
 import type { PullRequestListing } from "../../../src/runtime/merge-assist/github.js";
 import type { SessionSuspension, SuspendedSessions } from "../../../src/runtime/runtime.js";
+import { deliveryEntries } from "../../support/ledger/deliveries.js";
 import { commit, writeFiles } from "../../support/merge-assist/git.js";
 import { FakeGithub, mergeAssistWorkspaces } from "../../support/merge-assist/workspace.js";
 import { sessionRuntime } from "./support/conflict-sessions.js";
@@ -142,6 +144,40 @@ describe("Merge Assist in a session", { timeout: 60_000 }, () => {
       expect(await service.detectAfterEdit(ws.repo, sessionId, "claude-code")).toBe(true);
       expect((await service.status(ws.repo)).conflicts).toEqual([expect.objectContaining({ id: conflict!.id, status: "dismissed" })]);
       expect(await runtime.ingest({ kind: "user-prompt", eventId: "third", sessionId, text: "Thanks." })).toEqual([]);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it("gives a note whose answer no hook heard to the session's next boundary, recorded and marked given once", async () => {
+    const model = Array.from({ length: 30 }, (_, index) => `  line ${index + 1}`);
+    const text = (line: number, value: string) => `${model.map((entry, index) => (index + 1 === line ? value : entry)).join("\n")}\n`;
+    const ws = await workspace({ files: { "src/api/model.ts": text(0, "") } });
+    commit(ws.worktree("jbarnes-model"), { "src/api/model.ts": text(10, SHARED) }, "Share compiled matchers");
+    writeFiles(ws.repo, { "src/api/model.ts": text(12, "  cloned 12") });
+    const service = ws.service();
+    await service.setEnabled(ws.repo, true);
+    let marked = 0;
+    const markNotesDelivered = service.markNotesDelivered.bind(service);
+    service.markNotesDelivered = (...args) => {
+      marked += 1;
+      markNotesDelivered(...args);
+    };
+    const scanEnded = sessionScan(service);
+    const runtime = sessionRuntime(ws, service);
+    const session = { host: "claude-code" as const, sessionId: "unheard-session", cwd: ws.repo };
+    const { sessionId } = session;
+    const contents = (deliveries: readonly AdapterDelivery[]): string[] => deliveries.map(delivery => delivery.content);
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "start", session });
+      await scanEnded();
+      const unheard = await runtime.ingest({ kind: "user-prompt", eventId: "unheard", sessionId, text: "Go on." });
+      expect(contents(unheard)).toEqual([expect.stringContaining("overlaps open work")]);
+      // Its hook gave up before the answer came: the engine service gives back what the answer took.
+      await runtime.returnUndelivered(sessionId, unheard);
+      expect(contents(await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId, text: "Go on." }))).toEqual(contents(unheard));
+      expect(await runtime.ingest({ kind: "user-prompt", eventId: "after", sessionId, text: "Thanks." })).toEqual([]);
+      expect({ recorded: await deliveryEntries(join(ws.folder, "sessions"), unheard[0]!.content), marked }).toEqual({ recorded: 1, marked: 1 });
     } finally {
       await runtime.dispose();
     }

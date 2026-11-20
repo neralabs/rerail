@@ -71,8 +71,8 @@ pub const LIBRARY: &[(&str, &str)] = &[
     ("ukl/reads/relation.h", include_str!("../lib/ukl/reads/relation.h")),
     ("ukl/reads/ids.h", include_str!("../lib/ukl/reads/ids.h")),
     ("ukl/reads/view.h", include_str!("../lib/ukl/reads/view.h")),
-    // The tape's writer's ops (decision 0426 §6, R15), from the same CLIF as the host's (`rerail_clif::writer`).
-    ("ukl/reads/writer.h", include_str!("../lib/ukl/reads/writer.h")),
+    // The tape's writer's ops written once in CLIF (decision 0434 §6), as `rerail_clif::writer::ukl_source` writes them.
+    ("ukl/writer.h", include_str!("../lib/ukl/writer.h")),
 ];
 
 /// The Metal front end's own headers, which it includes in every source itself: empty when a source that names them

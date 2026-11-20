@@ -12,28 +12,26 @@
 //!
 //! A node's id is its document's key `<< 32` and its index, so "shown" is one bound on a location value.
 //!
-//! A variable is *scoped* when the rule reached it from a guest relation (`guest`, `parsed`, `doc_root`, `doc_role`,
-//! `tape_of`, `host_node`, `string_annotation`): it is a location in a guest column of one, or it shares a base atom's location columns
+//! A variable is *scoped* when the rule reached it from a guest relation (`parsed`, `tape_of`, `host_node`,
+//! `guest_of`, `string_annotation`; the lowering's `rr_program`): it is a location in a guest column of one, or it shares a base atom's location columns
 //! with a scoped variable (they are in one document), or it is read from a derived relation's column that some rule
 //! fills from a scoped variable. Every other variable in a positive base atom's location column gets the bound
 //! (`n < bound << 32`, `d < bound`). The bound is a comparison on a value the join already has: no row is copied,
 //! and a run that makes no guests is not changed at all.
 //!
-//! A scoped variable also knows its grammar when the guest relation names it (`parsed(s, "sql", r)`, `guest(g, _,
-//! _, "sql")`, a tape from `@parse("sql", …)`). A kind or field constant on such a node is resolved in that grammar
+//! A scoped variable also knows its grammar when the guest relation names it (`parsed(s, "sql", r)`, a tape from
+//! `@parse("sql", …)`). A kind or field constant on such a node is resolved in that grammar
 //! (`"sql:select"`, `plan::lower::Constants`), so a Python policy can name SQL kinds inside its SQL guests.
 
 /// The relations a rule enters a guest through, and their columns that are the guest's: (relation, guest location
 /// columns, grammar column, tape column).
 /// `string_annotation(s)` is one: Ruff's strings that are type definitions, nested ones too, whose nodes are in an
 /// annotation's document (not shown, `guests::key`).
-pub(super) const ENTRIES: [(&str, &[usize], Option<usize>, Option<usize>); 13] = [
-    ("guest", &[0], Some(3), None),
+pub(super) const ENTRIES: [(&str, &[usize], Option<usize>, Option<usize>); 11] = [
+    ("rr_program", &[0], Some(2), None),
     ("string_annotation", &[0], None, None),
     ("parsed", &[2], Some(1), None),
     ("sub_tape", &[], Some(1), Some(2)),
-    ("doc_root", &[0, 1], None, None),
-    ("doc_role", &[0], None, None),
     ("doc_grammar", &[0], Some(1), None),
     ("tape_of", &[0], None, Some(1)),
     ("host_node", &[0], None, None),
@@ -46,9 +44,9 @@ pub(super) const ENTRIES: [(&str, &[usize], Option<usize>, Option<usize>); 13] =
 /// Views of base relations the lowering writes as rules.
 pub(super) const VIEWS: [&str; 3] = ["kind", "docof", "precedes"];
 
-/// The grammar a guest's kinds are named in: a dialect label (`annotation` is Python's expression).
+/// The grammar a guest's kinds are named in: a dialect label (a fragment's is its dialect's, decision 0466).
 pub(super) fn dialect_label(grammar: &str) -> &str {
-    if grammar == "annotation" { "python" } else { grammar }
+    crate::code_rule_dsl::language::kinds_label(grammar)
 }
 
 /// The bound of `prog`'s shown documents: files, and the run language's guests unless `.guests off`.

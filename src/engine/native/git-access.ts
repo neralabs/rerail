@@ -2,6 +2,9 @@ import { tmpdir } from "node:os";
 import { GitUnavailableError, runGit, type GitResult, type RunGitOptions } from "../git.js";
 import { loadNativeBinding, type NativeBinding, type NativeGitAccess, type NativeGitInstallation } from "./native.js";
 
+/** A Git run whose stdout is text: {@link runGit}'s, or a test's stand-in. */
+type GitRun = (cwd: string, args: readonly string[], options?: RunGitOptions) => GitResult;
+
 const NULL_DEVICE = process.platform === "win32" ? "nul" : "/dev/null";
 
 /**
@@ -34,7 +37,7 @@ export interface GitInstallationReport {
  * file (no Git, a Git before 2.26 that rejects `--show-scope`, a failed ask) it reports none, and the engine then reads
  * gix's `/etc/gitconfig` on Linux and macOS, and no system file on Windows, where finding one would start a Git.
  */
-export function readGitInstallation(run: typeof runGit = runGit): GitInstallationReport {
+export function readGitInstallation(run: GitRun = runGit): GitInstallationReport {
   const folder = tmpdir();
   let system: GitResult;
   try {
@@ -61,7 +64,7 @@ export function readGitInstallation(run: typeof runGit = runGit): GitInstallatio
  * again once {@link GIT_ASK_AGAIN_MS} has passed. A new owner is made only when the answer changed, since readers open
  * their matchers again under a new one. Where Git named no system file, stderr says so once.
  */
-export function gitAccessOwner(binding: NativeBinding, run: typeof runGit = runGit, now: () => number = Date.now): () => NativeGitAccess {
+export function gitAccessOwner(binding: NativeBinding, run: GitRun = runGit, now: () => number = Date.now): () => NativeGitAccess {
   let owner: NativeGitAccess | undefined;
   let answer = "";
   let askAgainAt = Number.POSITIVE_INFINITY;

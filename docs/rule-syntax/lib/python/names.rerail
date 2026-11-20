@@ -442,10 +442,15 @@ binding_value(a, v) :- kind(a, "named_expression"), field(a, "value", v).
 // The main "what is this expression" relation for rules. e.g. with `from django.db import models`, the expression
 // `models.Model` has sym_of "django.db.models.Model"; if a workspace package re-exports a name, resolve_export
 // (python/imports) follows it to the defining module.
-// Rule 1: through an import (qn) then re-exports. Rule 2: a local def/class, by its qualname. Rule 3: a builtin.
+// Rule 1: through an import (qn) then re-exports. Rule 2: a local def/class, by its qualname. Rule 3: a def or class
+// of the run read as an attribute of its class, by its qualname: with `class Base` in pkg/m.py, `Base.Meta` is
+// "pkg.m.Base.Meta" and `Base.f` "pkg.m.Base.f" there, as where Base is imported. Like rule 2, it names definitions
+// only: a value the class assigns (`Base.X`, `Service.logger`) has none, as a module's own variable has none, so a
+// rule's fallback for names that do not resolve (`!sym_of(n, _)`) still reads it. Rule 4: a builtin.
 .decl sym_of(n: node, q: symbol)
 sym_of(n, q) :- qn(n, q0), resolve_export(q0, q).
 sym_of(n, q) :- look(n, x, s), defn(s, x, f), qualname(f, q).
+sym_of(n, q) :- attr_of(n, o, a), sym_of(o, c), class_def(_, c), q = @dot(c, a), qualname(_, q).
 sym_of(n, q) :- builtin_ref(n, x), q = @dot("builtins", x).
 // global_ref(n, x): n reads builtin x (kept as a separate name for rules that speak of "globals").
 .decl global_ref(n: node, x: symbol)
@@ -477,9 +482,9 @@ ann_root(t) :- kind(a, "assignment"), field(a, "type", t).
 ann_ctx(s) :- ann_root(a), (s = a ; within(s, a)).
 parsed_in(e, s) :- !guest_policy("library", "off"), ann_ctx(s), ann_str(s), parsed(s, "annotation", r), (e = r ; within(e, r)).
 // s is a string inside a parsed annotation: only those are asked to be parsed again. parsed_in binds s inside a
-// parsed tree, so s is in a fragment document already; a test of its document's role (`d = @doc(s), doc_role(d,
-// "fragment")`, once frag_str) was planned before the fragments existed and crossed each with every string of the
-// chunk (4.2 M rows on 859 posthog files, none kept).
+// parsed tree, so s is in a parsed string already; a test of its document's role (`d = @doc(s)` and the role
+// relation decision 0431 removed, once frag_str) was planned before the fragments existed and crossed each with
+// every string of the chunk (4.2 M rows on 859 posthog files, none kept).
 parsed_in(e, s0) :- !guest_policy("library", "off"), parsed_in(s, s0), ann_str(s), parsed(s, "annotation", r), (e = r ; within(e, r)).
 .decl str_node(s: node)  // a string or an implicit concatenation: what a parse request may name
 str_node(s) :- kind(s, "string").
@@ -644,3 +649,103 @@ builtin("UnicodeTranslateError"). builtin("UnicodeWarning"). builtin("WindowsErr
 builtin("None"). builtin("True"). builtin("copyright"). builtin("credits"). builtin("exit"). builtin("license").
 builtin("quit"). builtin("__build_class__"). builtin("__loader__"). builtin("__package__").
 builtin("__annotations__"). builtin("__builtins__"). builtin("__cached__").
+
+// ---- tests ---------------------------------------------------------------------------------------------------------
+// sym_of of an attribute of a class: of the same module, of an imported class, and of what is no definition of the run.
+.fixtures class_attributes
+    .fixture "pkg/__init__.py" ```
+        # package
+        ```
+    .fixture "pkg/m.py" ```
+        class Base:
+            X = 1
+
+            class Meta:
+                abstract = True
+
+            def f(self):
+                pass
+
+
+        a = Base.Meta
+        b = Base.f
+        c = Base.X
+        d = Base
+
+
+        class Child(Base):
+            class Meta(Base.Meta):
+                ordering = Base.Meta.abstract
+
+
+        def g():
+            pass
+
+
+        e = g.attr
+        ```
+    .fixture "pkg/svc.py" ```
+        import logging
+
+
+        class Service:
+            logger = logging.getLogger(__name__)
+
+
+        Service.logger.info(f"x {1}")
+        ```
+    .fixture "shop/__init__.py" ```
+        # package
+        ```
+    .fixture "shop/base.py" ```
+        class Other:
+            class Meta:
+                abstract = True
+        ```
+    .fixture "shop/models.py" ```
+        from shop.base import Other
+
+        e = Other.Meta
+
+
+        class Thing(Other):
+            class Meta(Other.Meta):
+                pass
+        ```
+.end
+
+// A def or class of a same-module class, read as its attribute, is its qualified name, as for an imported class.
+.test an_attribute_of_a_same_module_class_has_its_qualified_name uses class_attributes
+    .decl rhs(p: symbol, l: number, q: symbol)
+    rhs(p, l, q) :- kind(a, "assignment"), field(a, "right", r), sym_of(r, q), line(r, l), docof(r, d), doc(d, p, _).
+    .expect rhs("pkg/m.py", 11, "pkg.m.Base.Meta")
+    .expect rhs("pkg/m.py", 12, "pkg.m.Base.f")
+    .expect rhs("pkg/m.py", 14, "pkg.m.Base")
+    .expect rhs("shop/models.py", 3, "shop.base.Other.Meta")
+.end
+
+// `class Meta(Base.Meta)`, Base of the same module, lists its base as an imported one's does (Django's Meta options).
+.test a_meta_based_on_a_same_module_class_meta_has_its_base uses class_attributes
+    .decl base_at(p: symbol, l: number, q: symbol)
+    base_at(p, l, q) :- class_base(c, q), line(c, l), docof(c, d), doc(d, p, _).
+    .expect base_at("pkg/m.py", 17, "pkg.m.Base")
+    .expect base_at("pkg/m.py", 18, "pkg.m.Base.Meta")
+    .expect base_at("shop/models.py", 7, "shop.base.Other.Meta")
+.end
+
+// A value a class assigns (`Base.X`, `Base.Meta.abstract`, `Service.logger`) has no qualified name, as a module's own
+// variable has none, and an attribute of a def has none: the step names definitions of the run only, and a rule's
+// fallback for what does not resolve (the logging rules' `!sym_of(n, _)` over `Service.logger`) still reads them.
+.test an_assigned_attribute_or_one_of_a_function_has_no_qualified_name uses class_attributes
+    .decl rhs_at(l: number)
+    rhs_at(l) :- kind(a, "assignment"), field(a, "right", r), sym_of(r, _), line(r, l), docof(r, d), doc(d, "pkg/m.py", _).
+    .decl logger_resolves(l: number)
+    logger_resolves(l) :- kind(n, "attribute"), text(n, "Service.logger"), sym_of(n, _), line(n, l).
+    .decl logger_at(l: number)
+    logger_at(l) :- kind(n, "attribute"), text(n, "Service.logger"), line(n, l).
+    .expect no rhs_at(13)
+    .expect no rhs_at(19)
+    .expect no rhs_at(26)
+    .expect logger_at(8)
+    .expect no logger_resolves(8)
+.end

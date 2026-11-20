@@ -23,7 +23,7 @@ import { ENTRY_POINTS } from "../engine/package-root.js";
 import { RULES_DUMP_FILE } from "../engine/catalog/rule-bootstrap.js";
 import { INSTALLED_PACKS_DIR, installedPacksPrefix } from "../engine/catalog/rule-catalog.js";
 import { PACK_COMPILE_CHECKS_FILE } from "../engine/catalog/pack-compile-checks.js";
-import { MACHINE_ID_FILE, REMOTE_CONFIG_FILE, REMOTE_OUTBOX_FILE, REMOTE_TOKENS_FOLDER } from "../engine/storage/rerail-home.js";
+import { MACHINE_ID_FILE, REMOTE_CONFIG_FILE, REMOTE_OUTBOX_FILE, REMOTE_TOKENS_FOLDER, STATUS_LINES_FOLDER } from "../engine/storage/rerail-home.js";
 import { MAIN_INSTANCE_HOLDER_FILE } from "../engine/native/main-instance.js";
 import { LOCKS_DIR } from "../engine/native/file-lock.js";
 import { contentStoreFiles, contentStoreOverride, legacyWindowsContentStoreDirectory, mainContentStoreDirectory } from "../engine/native/rerail-build.js";
@@ -40,9 +40,11 @@ import {
   openDashboard,
   START_LOCK_DIR,
   startDaemon,
+  STOP_ANSWERS,
   stopDaemon,
   type DaemonMachine,
   type DaemonState,
+  type StopDaemonResult,
 } from "../runtime/daemon-control.js";
 import { DAEMON_PORT_FILE, DEFAULT_DAEMON_PORT, parseArguments, parsePort } from "../daemon/daemon.js";
 import { ACTIVE_PROFILE_FILE, PROFILES_DIR } from "../activation/customer-profile.js";
@@ -67,6 +69,7 @@ import { npmPackStore, type PackStore, type PackVersion } from "../setup/rule-pa
 import { workspaceStartState, type RepositorySetupIo } from "../runtime/repository-start.js";
 import { renderBanner, renderInstalled, renderOnPath, SETUP_FLAGS, type DashboardLink, type SetupCommand, type SetupLane } from "../harness/setup-screens.js";
 import { colourDepth } from "../presentation/rerail-mark.js";
+import { isStatusFileEntry } from "../presentation/claude-status-files.js";
 import type { SetupStep } from "../harness/setup-step.js";
 import { CURRENT_LINK, LAUNCHER_DIR, LAUNCHER_HEADER, UPDATE_LOCK_DIR, UPDATE_STATE_FILE, VERSIONS_DIR, type ManagedUpdater } from "../setup/updater.js";
 import { requireLfsContent } from "../setup/lfs-pointers.js";
@@ -192,6 +195,16 @@ const BACKED_UP_DATABASES = ["", "-wal", "-shm"].map(suffix => `${RERAIL_DATABAS
 const LOCKED_MOVE_MS = 10_000;
 
 /**
+ * What the uninstall says of its stop of the daemon before it backs up or deletes the data: whether it stopped one, else
+ * that none was running, unless daemon.json changed under the stop, which then ended nothing and may name a daemon that
+ * runs: that gets the stop's own answer ({@link STOP_ANSWERS}).
+ */
+function stopLine(result: StopDaemonResult): string {
+  if (result === "stopped") return "Stopped the Rerail daemon.\n";
+  return result === "record-changed" ? STOP_ANSWERS[result] : "The Rerail daemon was not running.\n";
+}
+
+/**
  * After the coding agents are disconnected, nothing reopens the database: stop the daemon, then
  * move rules and history aside so a later install starts clean and can restore them. The files are
  * listed only after the stop: closing the daemon's last connection checkpoints the WAL and deletes
@@ -201,30 +214,37 @@ async function backUpRulesAndHistory(home: string, dryRun: boolean): Promise<voi
   const target = join(backupRoot(), "rerail-home");
   const present = () => BACKED_UP_DATABASES.filter(name => existsSync(join(home, name)));
   if (dryRun) {
-    const listed = present();
-    const moves = listed.length === 0 ? "" : " and move " + listed.join(", ") + " to " + target;
-    process.stdout.write(`Would stop the Rerail daemon${moves}.\n`);
+    process.stdout.write(`Would stop the Rerail daemon${plannedMoves(present(), target)}.\n`);
     return;
   }
-  process.stdout.write(await stopDaemon(home) === "stopped" ? "Stopped the Rerail daemon.\n" : "The Rerail daemon was not running.\n");
+  process.stdout.write(stopLine(await stopDaemon(home)));
   const listed = present();
   if (listed.length === 0) {
     process.stdout.write("No rules or history to back up.\n");
     return;
   }
   await mkdir(target, { recursive: true, mode: 0o700 });
-  for (const name of listed) {
-    // Windows keeps a file locked for a moment after the process holding it has exited (and an
-    // antivirus scan can hold it too), so a locked move is retried briefly before giving up.
-    try {
-      await renameWithRetry(join(home, name), join(target, name), { retryMs: LOCKED_MOVE_MS });
-    } catch (error) {
-      const code = error instanceof Error && "code" in error ? error.code : undefined;
-      // A sidecar SQLite removed between the listing and the move holds nothing the main file lacks.
-      if (code !== "ENOENT" || !/-(wal|shm)$/u.test(name)) throw error;
-    }
-  }
+  for (const name of listed) await moveIntoBackup(join(home, name), join(target, name));
   process.stdout.write(`Backup: ${target} holds your rules and history. Install Rerail again and restore this backup to get them back.\n`);
+}
+
+/** What a dry run of the backup says it would move to `target`: the files `listed`, or nothing when there are none. */
+function plannedMoves(listed: readonly string[], target: string): string {
+  return listed.length === 0 ? "" : " and move " + listed.join(", ") + " to " + target;
+}
+
+/**
+ * Moves one file of Rerail's databases from `from` into the backup at `to`. Windows keeps a file locked for a moment
+ * after the process holding it has exited (and an antivirus scan can hold it too), so a locked move is retried briefly
+ * before giving up. A sidecar SQLite removed between the listing and the move holds nothing the main file lacks.
+ */
+async function moveIntoBackup(from: string, to: string): Promise<void> {
+  try {
+    await renameWithRetry(from, to, { retryMs: LOCKED_MOVE_MS });
+  } catch (error) {
+    const code = error instanceof Error && "code" in error ? error.code : undefined;
+    if (code !== "ENOENT" || !/-(wal|shm)$/u.test(from)) throw error;
+  }
 }
 
 /** Rerail's databases in its home, with every file named after them: WAL, shared memory, journal, `.restoring`, copies. */
@@ -353,7 +373,7 @@ function heldCacheCleanup(path: string): string {
  */
 async function deleteRulesAndHistory(home: string, dryRun: boolean, machine: DaemonMachine | undefined): Promise<ReadonlySet<string>> {
   if (dryRun) process.stdout.write("Would stop the Rerail daemon.\n");
-  else process.stdout.write(await stopDaemon(home) === "stopped" ? "Stopped the Rerail daemon.\n" : "The Rerail daemon was not running.\n");
+  else process.stdout.write(stopLine(await stopDaemon(home)));
   const deletion = planDataDeletion(home, machine);
   if (dryRun) {
     for (const { path, what } of deletion.remove) process.stdout.write(`Would delete ${path} (${what}).\n`);
@@ -402,9 +422,10 @@ function printFailedRemovals(failed: readonly FailedRemoval[]): void {
 }
 
 /**
- * What the uninstall deletes from the installation, each with what it is, in the order it goes. A folder with `ours`
- * goes whole only when everything in it is Rerail's; otherwise only Rerail's entries go and the folder stays, so a
- * Rerail home shared with other files (`RERAIL_HOME=$HOME`) keeps its own `bin`, `versions` or `packs`.
+ * What the uninstall deletes from the installation, each with what it is, in the order it goes: the installed
+ * package and what it drew for the coding agents it is now disconnected from. A folder with `ours` goes whole only
+ * when everything in it is Rerail's; otherwise only Rerail's entries go and the folder stays, so a Rerail home shared
+ * with other files (`RERAIL_HOME=$HOME`) keeps its own `bin`, `versions` or `packs`.
  */
 function installedFiles(context: SetupContext): Array<{ path: string; what: string; ours?: (name: string, path: string) => boolean }> {
   const { updater } = context;
@@ -426,6 +447,7 @@ function installedFiles(context: SetupContext): Array<{ path: string; what: stri
     },
     { path: updater.statePath, what: "the record of them" },
     { path: installedPacksPrefix(context.home), what: "the installed rule packs", ours: name => RULE_PACK_PREFIX_ENTRIES.has(name) },
+    { path: join(context.home, STATUS_LINES_FOLDER), what: "the Claude Code status lines", ours: isStatusFileEntry },
     { path: mainContentStoreDirectory(), what: "the cache" },
     ...(process.platform === "win32" ? [{ path: legacyWindowsContentStoreDirectory(), what: "the cache an earlier release kept" }] : []),
   ];
@@ -467,6 +489,7 @@ const RERAIL_HOME_ENTRIES: readonly string[] = [
   REMOTE_CONFIG_FILE,
   REMOTE_TOKENS_FOLDER,
   MACHINE_ID_FILE,
+  STATUS_LINES_FOLDER,
   UPDATE_STATE_FILE,
   UPDATE_LOCK_DIR,
   VERSIONS_DIR,

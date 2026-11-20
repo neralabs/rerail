@@ -1119,10 +1119,10 @@ pub(in crate::code_rule_dsl) fn file_observed(run: &SharedObserved, made: Observ
     run.change(|o| o.add(made));
 }
 
-/// The observations `to` (a chunk's, `chunk_observed`) bound as the run's for the guard's extent: its jobs observe
-/// into them too (`plan::in_view`, Q88).
-pub(in crate::code_rule_dsl) fn bind_observed(to: SharedObserved) -> crate::code_rule_dsl::logic::profile::Bound {
-    crate::code_rule_dsl::logic::profile::bind(ObservedAt(to))
+/// Makes `observed` the run's observations while the guard lives (a chunk's, Q88: `plan::in_view`), for this thread
+/// and the jobs it starts, which carry the context.
+pub(in crate::code_rule_dsl) fn bind_observed(observed: SharedObserved) -> crate::code_rule_dsl::logic::profile::Bound {
+    crate::code_rule_dsl::logic::profile::bind(ObservedAt(observed))
 }
 
 /// The run's observations (`ObservedAt`).
@@ -1473,17 +1473,19 @@ fn estimate(f: Fields<'_>, model: &mut Model, (base, ids_of): (&Placed, &BTreeMa
         let model_now: &Model = model;
         // In the run, on whichever thread prices a relation: its plans read the run's and the object's statistics.
         let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
-        let sums: Vec<(f64, f64)> = each.par_iter().zip(&measured_only).map(|(&i, &measured_only)| {
-            let _in = carry.enter();
-            let (mut rows, mut work) = (0.0, 0.0);
-            for &k in order[i].1.iter().filter(|_| !measured_only) {
-                if let Some((w, n)) = calibrated_rows(f, model_now, &base.body(k)) {
-                    rows += n;
-                    work += w;
+        let sums: Vec<(f64, f64)> = super::super::profile::on_cores(|| {
+            each.par_iter().zip(&measured_only).map(|(&i, &measured_only)| {
+                let _in = carry.enter();
+                let (mut rows, mut work) = (0.0, 0.0);
+                for &k in order[i].1.iter().filter(|_| !measured_only) {
+                    if let Some((w, n)) = calibrated_rows(f, model_now, &base.body(k)) {
+                        rows += n;
+                        work += w;
+                    }
                 }
-            }
-            (rows, work)
-        }).collect();
+                (rows, work)
+            }).collect()
+        });
         for (&i, sum) in each.iter().zip(sums) {
             planned[i] = sum;
         }

@@ -60,10 +60,15 @@ pub struct DeviceView<'a> {
     /// Where a stage reads the view in place (decision 0353 step 4d), when it can: nothing makes its rows.
     #[cfg(target_os = "macos")]
     pub in_place: Option<ViewInPlace>,
+    /// With `in_place`, the view's relation of no columns, whose block its probes' indexes go in (decision 0478 step
+    /// 3, R4): made once by the source, which holds it (its batch's life), so every stratum on any thread finds them.
+    pub home: Option<crate::code_rule_dsl::facts::rows::Part>,
 }
 
 /// A view a stage reads in place (decision 0353 step 4d): its batch's directory's GPU address, the view's number in
-/// the kernels' reads (1 + `device_chunk::VIEW_*`), the buffers its reads reach by address, and what keeps them.
+/// the kernels' reads (1 + `device_chunk::VIEW_*`), the buffers its reads reach by address (the device layer's, as
+/// the stages bind them), and what keeps them. Made where the process's device is Metal: the directory is of Metal's
+/// addresses (`device_chunk::views_in_place`).
 /// A 16z batch's views read their blocks through its cache (`cache`, decision 0353 step 4b), which its reads write:
 /// a stage that reads the view is refused when the cache's failures rise past `failed` (no room found).
 #[cfg(target_os = "macos")]
@@ -71,8 +76,8 @@ pub struct DeviceView<'a> {
 pub struct ViewInPlace {
     pub dir: u64,
     pub kind: u32,
-    pub buffers: Vec<metal::Buffer>,
-    pub cache: Option<metal::Buffer>,
+    pub buffers: Vec<rerail_device::device::Buffer>,
+    pub cache: Option<rerail_device::device::Buffer>,
     pub failed: u32,
     pub keep: Arc<dyn std::any::Any + Send + Sync>,
 }
@@ -230,8 +235,8 @@ pub trait Source: Send + Sync {
         None
     }
     /// Its rows as one relation of `rerail_blocks` in one block, every source column at its own place, which the
-    /// device reads where they lie (decision 0325 step 3), a probe reads through the relation's own index (on every
-    /// target), and a host join holds in place (`setfix`, every platform). `None`: the device copies them
+    /// device reads where they lie (decision 0325 step 3), a probe reads through the relation's own index, and the CPU's
+    /// index of a whole source finds or builds in its block (setfix), on every target. `None`: the device copies them
     /// (`device_view`, `row_at`).
     fn in_block(&self) -> Option<super::rows::InBlock> {
         None

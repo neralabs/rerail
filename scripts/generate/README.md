@@ -120,3 +120,9 @@ exemption `engine-layout`).
 | `packs/react/conformance.json` | `scripts/generate/packs/react-policies.mjs` | as `packs/react/rules/`; lists the specs and the `HAND_WRITTEN` ports, and `OWN` as `own` |
 | `packs/react/candidates/probes/rules/` | `scripts/generate/packs/react-probes.mjs` | `node scripts/generate/packs/react-probes.mjs`; the probe pack's `conformance.json` and `labels/` are written by hand, and the run fails when `conformance.json` does not list exactly its probes |
 | `conformance/biome-same-sources.generated.ts` | `scripts/generate/packs/biome-suppression.mjs` | as `native/src/code_rule_dsl/suppress/biome_registry.generated.rs`; the run also sets `suppress.biome` on every violation of `packs/<id>/rules/` and `packs/<id>/candidates/` that carries `suppress.eslint`, bumping a shipped document's revision when it changes |
+
+## Tests
+
+| Generated file | Generator | Command |
+|---|---|---|
+| `test/support/shards/unit-test-times.generated.ts` | `scripts/generate/tests/unit-test-times.mjs` | `node scripts/generate/tests/unit-test-times.mjs [<run id>...]`, with the GitHub CLI signed in: each unit test file's median time in CI's unit test jobs, per platform, which `test/support/shards/time-balanced-sequencer.ts` splits CI's shards by. With no run ids it reads main's five latest successful CI runs. Rerun it when the shards' times in CI drift apart; stale times only make the shards less even |

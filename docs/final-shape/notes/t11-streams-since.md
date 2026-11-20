@@ -10,8 +10,8 @@ Research track T11. Read-only notes; nothing was built, run, or benchmarked.
   - **SSC** = `/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition` (HEAD `b3e97cd4` "Define transition from matcher continuations to shared execution plans").
 - Citations are `file:line` (line numbers of the files at those HEADs).
 - Tags: **M** = a measured number reported by the source; **D** = a decision the source records (keep/reject/selected); **A** = an assertion, proposal, or design requirement that the source does not claim to have measured or implemented.
-- Journal citations for DLRE use the current line numbers of `docs/data-layer-performance-journal.md`. The `d3470da2..HEAD` diff adds two blocks: lines 3695–4253 and 4261–5056 (verified with `git diff -U0`; the hunks are `+3695,559` and `+4261,796`). Lines 4254–4260 ("Future entries") predate the range.
-- SSC `c17d2e47..HEAD` changes exactly four docs: `sql-matcher-batch-implementation.md` (184 lines), `sql-matcher-batch-optimization.md` (193), `sql-matcher-fragment-transition.md` (1,210 added; the file is 1,583 lines), `sql-structural-execution-plan.md` (387). I read all four in full.
+- Journal citations for DLRE use the current line numbers of `docs/data-layer-performance-journal.md` (removed; at 7efcac9c67). The `d3470da2..HEAD` diff adds two blocks: lines 3695–4253 and 4261–5056 (verified with `git diff -U0`; the hunks are `+3695,559` and `+4261,796`). Lines 4254–4260 ("Future entries") predate the range.
+- SSC `c17d2e47..HEAD` changes exactly four docs: `sql-matcher-batch-implementation.md` (184 lines), `sql-matcher-batch-optimization.md` (193), `sql-matcher-fragment-transition.md` (1,210 added; the file is 1,583 lines), `sql-structural-execution-plan.md` (387; removed; at 7efcac9c67). I read all four in full.
 - Workloads differ between streams and are **not comparable**. DLRE uses the "data-layer" repository: 9,021 files, 137,924,324 source bytes, 50 or 60 ported rules. SSC uses the shipped Python catalog: 5,725 files, 95,697,853 bytes, 146 AST grammars, 138 policies. N1562's design doc has no measurements.
 
 ---
@@ -554,7 +554,7 @@ Ordering is not independently verified: I checked that rows are produced file-ma
 
 ## Source 3: SSC (sql-set-composition)
 
-### 3.1 `docs/sql-structural-execution-plan.md` (proposed, 2026-10-26; baseline `c6ff8110`)
+### 3.1 `docs/sql-structural-execution-plan.md` (proposed, 2026-10-26; baseline `c6ff8110`; removed; at 7efcac9c67)
 
 Status: "proposed transition plan … changes no engine behavior" (`:3`). The integration reference is `Pulling-it-all-together` at `0b941fb4` (`:5`).
 - **Thesis** (`:7-9`): "The target compiler emits a graph of local pattern groups, shared facts, and relational operators. The unit of execution is a producer or a compiled group over a bounded document batch. The cohort interpreter remains a migration oracle. It is absent from the final production execution path."

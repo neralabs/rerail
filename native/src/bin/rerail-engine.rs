@@ -25,11 +25,12 @@ fn main() -> ExitCode {
     }
     // Before any thread starts: a stop signal or `RERAIL_DEADLINE` dumps the run first (decision 0084).
     rerail_engine::tools::watch();
-    // Before any pool is made: the one pool, of the most threads the process uses (`RERAIL_THREADS`), this thread
-    // one of them.
-    rerail_engine::threads::configure(true);
+    // Before any block is made: the one block policy. The command's machine: its pool, of the most threads the
+    // process uses (`RERAIL_THREADS`), this thread one of them (decision 0442).
+    rerail_engine::threads::configure();
+    let machine = rerail_engine::threads::Machine::here();
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let (out, incomplete) = rerail_engine::tools::cli(&args);
+    let (out, incomplete) = rerail_engine::tools::cli(&args, &machine);
     match out {
         Ok(text) => {
             print!("{text}");

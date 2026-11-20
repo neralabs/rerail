@@ -277,7 +277,7 @@ impl Image {
             let b = (*bytes).as_ref();
             (b.as_ptr() as usize, b.len())
         };
-        if at % 16 != 0 {
+        if !at.is_multiple_of(16) {
             return Err(bad("shared bytes not at 16 bytes"));
         }
         Image::checked(Image { buf: Buf::Shared(bytes), len, regions: [(0, 0); REGIONS] }, Depth::Held)
@@ -309,7 +309,7 @@ impl Image {
                 return Err(bad(format!("region {r} is {width} bytes wide, not {}", WIDTH[r])));
             }
             let end = count.checked_mul(width as usize).and_then(|n| n.checked_add(offset));
-            if offset % 16 != 0 || offset < HEADER || end.is_none_or(|e| e > b.len()) {
+            if !offset.is_multiple_of(16) || offset < HEADER || end.is_none_or(|e| e > b.len()) {
                 return Err(bad(format!("region {r} out of bounds")));
             }
             *region = (offset, count);

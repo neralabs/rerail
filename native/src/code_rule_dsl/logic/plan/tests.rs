@@ -128,7 +128,7 @@ fn rules_of_one_body_and_two_heads_both_run_their_whole_plan() {
 fn a_relation_past_the_width_cap_stops_the_run_or_is_cut() {
     use super::super::native::width;
     let facts: String = (1..=100).map(|i| format!("l({i}).\nr({i}).\n")).collect();
-    let p = parse(&format!(".decl l(x:number)\n.decl r(x:number)\n{facts}.decl pairs(x:number,y:number)\npairs(x, y) :- l(x), r(y).\n.output pairs\n")).unwrap();
+    let p = parse_version(&format!(".decl l(x:number)\n.decl r(x:number)\n{facts}.decl pairs(x:number,y:number)\npairs(x, y) :- l(x), r(y).\n.output pairs\n")).unwrap();
     let run = || {
         let path = crate::code_rule_dsl::fixtures::temp();
         let store = ContentStore::open(&path).unwrap();
@@ -288,8 +288,17 @@ fn closures_of_a_level_wider_than_a_component_launch_in_one_wave() {
 /// Decision 0123 §9: a probe with no kept plan is planned when its delta first has rows. In `{r, s, t}`, `s` never
 /// has a row (`g` is empty, though not to the program's prune: no edge is a loop), so `r`'s probe by `s` is never
 /// planned; the probes by `r` are planned when the first wave returns, and the run derives what the SQL run does.
+/// The probes' counts are the process's (`lazy_probes_counted`), read by difference around the run: in a process of
+/// the test's own (`test_support::alone`), since another test's run plans probes it left before the run began, and in
+/// the shared process `planned` grew past `left` within the run's window.
 #[test]
 fn a_probe_is_planned_when_its_delta_first_has_rows() {
+    crate::code_rule_dsl::test_support::alone("code_rule_dsl::logic::plan::tests::a_probe_is_planned_when_its_delta_first_has_rows_child");
+}
+
+#[test]
+#[ignore = "child process of a_probe_is_planned_when_its_delta_first_has_rows"]
+fn a_probe_is_planned_when_its_delta_first_has_rows_child() {
     let src = ".decl e(a: number, b: number)\ne(1, 2).\ne(2, 3).\ne(3, 4).\ne(4, 1).\n\
                .decl g(a: number)\ng(a) :- e(a, a).\n.decl h(a: number)\nh(3).\n\
                .decl r(a: number, b: number)\n.decl s(a: number, b: number)\n.decl t(a: number, b: number)\n\
@@ -299,8 +308,8 @@ fn a_probe_is_planned_when_its_delta_first_has_rows() {
     let p = parse_version(src).unwrap();
     let mut outputs = Vec::new();
     for modes in ["", "program"] {
-        // The counts are the run's (decision 0442): the test holds the run they are read in, which the run joins.
-        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+        // The probes' counts are the run's (decision 0442): one run holds them.
+        let _run = super::super::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         let _plans = KeepPlans::start(None);
         let path = crate::code_rule_dsl::fixtures::temp();
         let store = ContentStore::open(&path).unwrap();
@@ -315,7 +324,7 @@ fn a_probe_is_planned_when_its_delta_first_has_rows() {
         if !modes.is_empty() {
             assert!(got.native.iter().any(|c| c.split('/').any(|r| r == "r")), "r's component runs natively: {:?}", got.native);
             // The probes searched: r by r, r by s, s by r, t by r (`r(a, b) :- t(b, a)` is a copy, with no order to
-            // find). Other tests' runs only add to both counts, and never plan more probes than they left.
+            // find). The process is the test's own, so the counts moved by this run's alone.
             let (left, planned) = (after.0 - before.0, after.1 - before.1);
             assert!(left >= 4 && planned >= 3, "left {left}, planned {planned}; native {:?}, inlined {:?}", got.native, got.inlined);
             assert!(left - planned >= 1, "r's probe by s is never planned: left {left}, planned {planned}");
@@ -3294,7 +3303,7 @@ fn bodies_by_head(placed: &body::Placed) -> Vec<(String, usize)> {
 /// the program, from the facts alone; its order covers its literals. A rule reading a relation with no size (`part`)
 /// is not: it is planned at run time. A recursive rule over a declared relation is planned for its delta too. A rule
 /// that tests a constant on a column a `values` fact answers (`kind2(p, "x")`) is not either: the fact gives the
-/// column's distinct values, not this one's rows, and the order turns on them (PostHog's `param`, work queue Q338).
+/// column's distinct values, not this one's rows, and the order turns on them (PostHog's `param`, work queue Q297).
 #[test]
 fn a_rule_over_shaped_relations_is_planned_with_the_program() {
     let p = prepared_program();
@@ -3364,6 +3373,64 @@ fn a_run_takes_a_prepared_plan_without_searching() {
     assert_eq!(model.prepared_heavy(&b, &[Some(0), None], &odd), None, "once a line");
     let got = model.plan_rule(f, &b, None).unwrap();
     assert_ne!(got.0, odd, "searched, not the order prepared");
+}
+
+/// Decision 0361 step 6: a probe's rows past `BROKEN_BY` times what its relation's fan-out lets a probe return break
+/// the fact. The run notes it once, the model's shapes leave the relation out (and every relation whose facts were
+/// inferred from it), as a later model's do, and a prepared plan reading it is not taken. Rows within it break nothing,
+/// nor a few probes.
+#[test]
+fn a_fan_out_the_rows_break_leaves_its_relation_to_the_statistics() {
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    let p = prepared_program();
+    let placed = body::Placed::whole(p.clone());
+    let f = placed.fields().unwrap();
+    let db = Connection::open_in_memory().unwrap();
+    let mut inputs = Inputs::file();
+    inputs.facts.clear();
+    let mut given = Stats::empty_of(&f);
+    for (rel, width) in [("child2", 3), ("kind2", 2), ("part", 2)] {
+        given.measured(rel, (0..width).map(|c| (format!("c{c}"), [1_000, 300, 4_000, 4_000])), []);
+        given.card.insert(rel.to_owned(), 1_000.0);
+    }
+    inputs.given = Some(given);
+    inputs.atoms = Some([0; 3]);
+    let mut model = make_plan(&placed, &db, inputs).unwrap();
+    let k = bodies_by_head(&placed).into_iter().find(|(h, _)| h == "o").unwrap().1;
+    let b = placed.body(k);
+    assert!(model.stats.shapes.0.contains_key("child2"));
+    // `o(c, k) :- child2(p, c, _), kind2(c, k), kind2(p, "x")`, run as kind2(p, "x"), child2 (`p` bound: `few`, at
+    // most 16 a probe), kind2(c, k) (`c` bound: its key).
+    let order = [Step { at: 2, mode: None }, Step { at: 0, mode: None }, Step { at: 1, mode: None }];
+    let line = crate::code_rule_dsl::logic::plan::line_key(&b, None);
+    model.stats.prepared = std::sync::Arc::new(prepared::Prepared([(line, prepared::PreparedPlan { order: order.to_vec(), work_per_node: 3.0, rows_per_node: 0.5, assumed: vec![] })].into_iter().collect()));
+    assert_eq!(model.plan_rule(f, &b, None).unwrap().0, order.to_vec(), "taken as prepared");
+    assert!(prepared::run_counts().taken.load(std::sync::atomic::Ordering::Relaxed) > 0);
+    // 10 children a parent: within `few`. 200 a parent, over 40 parents: too few probes to tell.
+    assert!(!model.layout_broken(&b, &order, &[(0, 100), (100, 1_000), (1_000, 1_000)]));
+    assert!(!model.layout_broken(&b, &order, &[(0, 40), (40, 8_000), (8_000, 8_000)]));
+    assert!(model.stats.shapes.0.contains_key("child2"));
+    // 200 a parent over 100 parents: past 8 times 16.
+    assert!(model.layout_broken(&b, &order, &[(0, 100), (100, 20_000), (20_000, 20_000)]));
+    let broken = shapes::run_broken().facts();
+    assert_eq!(broken.len(), 1, "{broken:?}");
+    assert!(broken["child2"].contains("fanout"), "{broken:?}");
+    assert!(!model.stats.shapes.0.contains_key("child2") && model.stats.shapes.left_out("child2"));
+    assert!(model.stats.shapes.0.contains_key("kind2"), "kind2's facts hold");
+    for (rel, from) in &model.stats.shapes.1 {
+        if from.contains("child2") {
+            assert!(model.stats.shapes.left_out(rel), "{rel}'s facts were inferred from child2's");
+        }
+    }
+    // A later model of the run leaves it out too; a prepared plan reading it is not taken.
+    assert!(shapes::Shapes::for_run(shapes::Shapes::of_version(&placed.v)).left_out("child2"));
+    let taken = || prepared::run_counts().taken.load(std::sync::atomic::Ordering::Relaxed);
+    let before = taken();
+    model.plan_rule(f, &b, None).unwrap();
+    assert_eq!(taken(), before, "searched, not taken as prepared");
+    // Left out, it is not checked again: noted once.
+    assert!(!model.layout_broken(&b, &order, &[(0, 100), (100, 20_000), (20_000, 20_000)]));
+    assert_eq!(shapes::run_broken().facts().len(), 1);
 }
 
 /// The prepared plans as an image stores them (decision 0333 §4): read back the same.
@@ -3451,36 +3518,6 @@ fn a_later_run_reads_the_prepared_plans_an_earlier_one_made() {
     assert!(std::sync::Arc::ptr_eq(&read, &prepared::Prepared::of_version(&v)), "held by the version");
 }
 
-/// Decision 0361 step 5, derived relations: one the facts do not size is sized from its rules' plans, in dependency
-/// order, so the rules that read it are prepared too. A union's rows are its rules' summed, and only where every rule
-/// is planned (`u` has a branch over `part`, which has no size: what reads it is not prepared); a recursion's are its
-/// base rules' times a nominal depth (`anc`, with no fact declared). `o`, testing a constant on `kind2`'s `values`
-/// column, is planned at run time, and its rows still size it.
-#[test]
-fn a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it() {
-    let p = parse(".decl child2(p: node, c: node, i: number)\n.input child2\n.layout child2 key(c) fanout(p -> c, few) order(i dense in p)\n\
-                   .decl kind2(n: node, k: symbol)\n.input kind2\n.layout kind2 key(n) size(per n) values(k, kinds)\n\
-                   .decl part(x: number, y: number)\n.input part\n\
-                   .decl o(c: node, k: symbol)\no(c, k) :- child2(p, c, _), kind2(c, k), kind2(p, \"x\").\n\
-                   .decl r(c: node)\n.output r\nr(c) :- o(c, k), kind2(c, k).\n\
-                   .decl u(c: node)\nu(c) :- o(c, _).\nu(c) :- part(c, _).\n\
-                   .decl w(c: node)\n.output w\nw(c) :- u(c), kind2(c, _).\n\
-                   .decl anc(a: node, b: node)\nanc(a, b) :- child2(a, b, _).\nanc(a, c) :- anc(a, b), child2(b, c, _).\n\
-                   .decl z(a: node)\n.output z\nz(a) :- anc(a, b), kind2(b, _).\n").unwrap();
-    let v = p;
-    let placed = body::Placed::whole(std::sync::Arc::clone(&v));
-    let prep = prepared::Prepared::of_version(&v);
-    let line = |head: &str, nth: usize, first: Option<usize>| {
-        let k = bodies_by_head(&placed).into_iter().filter(|(h, _)| h == head).nth(nth).unwrap().1;
-        crate::code_rule_dsl::logic::plan::line_key(&placed.body(k), first)
-    };
-    assert!(prep.0.contains_key(&line("r", 0, None)), "`o` sized by its rule: `r` is prepared");
-    assert!(prep.0.contains_key(&line("u", 0, None)) && !prep.0.contains_key(&line("u", 1, None)), "`u`'s branch over `part` is not");
-    assert!(!prep.0.contains_key(&line("w", 0, None)), "`u` is not sized: one of its rules is not planned");
-    assert!(prep.0.contains_key(&line("anc", 1, None)) && prep.0.contains_key(&line("anc", 1, Some(0))), "the recursion, sized by its base rule");
-    assert!(prep.0.contains_key(&line("z", 0, None)), "`anc` sized: `z` is prepared");
-}
-
 /// A probe whose new variable later comparisons bound reads a range (`setfix::ranges`), and past the head's variables
 /// a step passes on one witness a binding (`setfix::tail`). A zero count's helper, `h(a, b, p) :- ctx(a, b, p),
 /// line(p, l, _), !at(p, l), l > a, l < b` (`bounded-composed-graph-paths`' `rr_agg15`; 91 files: 25,425 pairs, 6,027
@@ -3488,7 +3525,7 @@ fn a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it() {
 /// pair reads its lines between its ends and stops at the first.
 #[test]
 fn a_probe_bounded_by_comparisons_reads_a_range() {
-    let p = parse_version(".decl ctx(a:number,b:number,p:number)\n.decl src(p:number,l:number,s:number)\n.decl at(p:number,l:number)\n.input ctx, src, at\n.decl line(p:number,l:number,s:number)\nline(p,l,s) :- src(p,l,s).\n.decl h(a:number,b:number,p:number)\nh(a,b,p) :- ctx(a,b,p), line(p,l,_), !at(p,l), l > a, l < b.\n.output h\n").unwrap();
+    let p = parse(".decl ctx(a:number,b:number,p:number)\n.decl src(p:number,l:number,s:number)\n.decl at(p:number,l:number)\n.input ctx, src, at\n.decl line(p:number,l:number,s:number)\nline(p,l,s) :- src(p,l,s).\n.decl h(a:number,b:number,p:number)\nh(a,b,p) :- ctx(a,b,p), line(p,l,_), !at(p,l), l > a, l < b.\n.output h\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
     let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
@@ -3507,8 +3544,56 @@ fn a_probe_bounded_by_comparisons_reads_a_range() {
     let r = p.rules().position(|r| p.rel_name(r.head().rel()) == "h").unwrap();
     let ((order, work, _), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), None).unwrap();
     let b = body::nth(&p, r);
-    let order: Vec<_> = order.iter().filter_map(|s| b.atom(s.at)).filter(|a| !a.neg()).map(|a| b.rel(a)).collect();
+    let order: Vec<&str> = order.iter().filter_map(|s| b.atom(s.at)).filter(|a| !a.neg()).map(|a| b.rel(a)).collect();
     assert_eq!(order, ["ctx", "line"], "{order:?}, work={work}");
     // A pair's lines between its ends, a ninth of its file's as the comparisons are priced (a third each).
     assert!(work < 5e6, "a range a pair: {work}");
+}
+
+/// Decision 0361 step 5, derived relations: one the facts do not size is sized from its rules' plans, in dependency
+/// order, so the rules that read it are prepared too. A union's rows are its rules' summed, and only where every rule
+/// is planned (`u` has a branch over `part`, which has no size: what reads it is not prepared); a recursion's are its
+/// base rules' times a nominal depth (`anc`, with no fact declared). `o`, testing a constant on `kind2`'s `values`
+/// column, is planned at run time, and its rows still size it.
+#[test]
+fn a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it() {
+    // Off by default (Q290): turned on here, as a measurement turns it on.
+    let _on = rerail_prof::code_rule_dsl::logic::profile::bind(prepared::DerivedEstimates(Some(true)));
+    let text = ".decl child2(p: node, c: node, i: number)\n.input child2\n.layout child2 key(c) fanout(p -> c, few) order(i dense in p)\n\
+                   .decl kind2(n: node, k: symbol)\n.input kind2\n.layout kind2 key(n) size(per n) values(k, kinds)\n\
+                   .decl part(x: number, y: number)\n.input part\n\
+                   .decl o(c: node, k: symbol)\no(c, k) :- child2(p, c, _), kind2(c, k), kind2(p, \"x\").\n\
+                   .decl r(c: node)\n.output r\nr(c) :- o(c, k), kind2(c, k).\n\
+                   .decl u(c: node)\nu(c) :- o(c, _).\nu(c) :- part(c, _).\n\
+                   .decl w(c: node)\n.output w\nw(c) :- u(c), kind2(c, _).\n\
+                   .decl anc(a: node, b: node)\nanc(a, b) :- child2(a, b, _).\nanc(a, c) :- anc(a, b), child2(b, c, _).\n\
+                   .decl z(a: node)\n.output z\nz(a) :- anc(a, b), kind2(b, _).\n";
+    let p = parse(text).unwrap();
+    let v = p;
+    let placed = body::Placed::whole(std::sync::Arc::clone(&v));
+    let prep = prepared::Prepared::of_version(&v);
+    let line = |head: &str, nth: usize, first: Option<usize>| {
+        let k = bodies_by_head(&placed).into_iter().filter(|(h, _)| h == head).nth(nth).unwrap().1;
+        crate::code_rule_dsl::logic::plan::line_key(&placed.body(k), first)
+    };
+    assert!(prep.0.contains_key(&line("r", 0, None)), "`o` sized by its rule: `r` is prepared");
+    assert!(prep.0.contains_key(&line("u", 0, None)) && !prep.0.contains_key(&line("u", 1, None)), "`u`'s branch over `part` is not");
+    assert!(!prep.0.contains_key(&line("w", 0, None)), "`u` is not sized: one of its rules is not planned");
+    assert!(prep.0.contains_key(&line("anc", 1, None)) && prep.0.contains_key(&line("anc", 1, Some(0))), "the recursion, sized by its base rule");
+    assert!(prep.0.contains_key(&line("z", 0, None)), "`anc` sized: `z` is prepared");
+    // By default no derived relation is sized by an estimate: the recursion `anc`, which no fact sizes, is not, and `z`,
+    // which reads it, is not prepared. `o`'s rule, over the inputs, is not either: it tests a constant on `kind2`'s
+    // `values` column, planned at run time (Q297); and `r`, as `o`'s facts (inferred from its rule) size it. (Another program: a version of the same digest holds the prepared plans made above.)
+    drop(_on);
+    let p = parse(&format!("{text}.decl apart(x: number)\n")).unwrap();
+    let v = p;
+    let placed = body::Placed::whole(std::sync::Arc::clone(&v));
+    let prep = prepared::Prepared::of_version(&v);
+    let line = |head: &str, nth: usize, first: Option<usize>| {
+        let k = bodies_by_head(&placed).into_iter().filter(|(h, _)| h == head).nth(nth).unwrap().1;
+        crate::code_rule_dsl::logic::plan::line_key(&placed.body(k), first)
+    };
+    assert!(!prep.0.contains_key(&line("o", 0, None)), "`o` tests a constant on a `values` column");
+    assert!(prep.0.contains_key(&line("r", 0, None)), "`o`'s inferred facts size it");
+    assert!(!prep.0.contains_key(&line("z", 0, None)), "`anc` is not sized: `z` is not prepared");
 }

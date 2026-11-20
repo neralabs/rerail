@@ -571,32 +571,34 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
     for (name, language, source) in fixtures {
         // Compiling the queries is most of the test's work; each compiles alone.
         use rayon::prelude::*;
-        let compiled: Vec<_> = queries
-            .par_iter()
-            .filter(|(query, _)| query["language"] == name)
-            .map(|(query, defines)| {
-                let mut clauses = defines.clone();
-                clauses.push(json!({
-                    "id": "ast-match",
-                    "forbid": { "ast": query },
-                    "violation": { "anchor": "witness.span", "code": "AST_MATCH", "message": "match" },
-                }));
-                let document = json!({
-                    "format": "rerail.policy/v1",
-                    "id": "catalog-query",
-                    "revision": 1,
-                    "mode": "block",
-                    "clauses": clauses,
-                });
-                let compiled = crate::code_rule_dsl::CodeRuleDslRuntime::compile(
-                    document.to_string(),
-                    "json".to_owned(),
-                    crate::code_rule_dsl::test_support::CAPABILITIES.to_owned(),
-                )
-                .unwrap_or_else(|error| panic!("{query}: {}", error.reason));
-                (query.to_string(), compiled)
-            })
-            .collect();
+        let compiled: Vec<_> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+            queries
+                .par_iter()
+                .filter(|(query, _)| query["language"] == name)
+                .map(|(query, defines)| {
+                    let mut clauses = defines.clone();
+                    clauses.push(json!({
+                        "id": "ast-match",
+                        "forbid": { "ast": query },
+                        "violation": { "anchor": "witness.span", "code": "AST_MATCH", "message": "match" },
+                    }));
+                    let document = json!({
+                        "format": "rerail.policy/v1",
+                        "id": "catalog-query",
+                        "revision": 1,
+                        "mode": "block",
+                        "clauses": clauses,
+                    });
+                    let compiled = crate::code_rule_dsl::CodeRuleDslRuntime::compile(
+                        document.to_string(),
+                        "json".to_owned(),
+                        crate::code_rule_dsl::test_support::CAPABILITIES.to_owned(),
+                    )
+                    .unwrap_or_else(|error| panic!("{query}: {}", error.reason));
+                    (query.to_string(), compiled)
+                })
+                .collect()
+        });
         let matchers: Vec<_> = compiled
             .iter()
             .flat_map(|(query, compiled)| {

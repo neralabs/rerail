@@ -2,17 +2,14 @@
 //! batch's node records they replace (decision 0032): every node of a batch of stored fixtures. The kernel is UKL,
 //! launched through the device layer (decision 0440 step C): it runs on the process's device, and its source
 //! compiles for every backend this machine has.
-use super::*;
 use crate::code_rule_dsl::language::{self, GrammarDialect};
 use crate::code_rule_dsl::fixtures::{document, temp};
 use crate::code_rule_dsl::residency::slabs::{self, DocTable, DocView};
 use crate::code_rule_dsl::tape::{Grammar, TapeDoc};
 use crate::content_store::ContentStore;
 use sha2::{Digest as _, Sha256};
-use crate::code_rule_dsl::transducer::packed::metal_backend::{MappedBuffer, pipeline_named};
 use rerail_gpu::device::{ComputeFunctionLibrary, ComputeQueue};
 use rerail_gpu::kernels::{buffer_of, launch, read};
-use metal::MTLSize;
 
 const TAPE: &str = concat!("#include <ukl/reads/tape_z.h>\n", include_str!("device_tape.h"));
 const FIELDS: usize = 12;
@@ -66,7 +63,9 @@ fn bytemuck_words(views: &[DocView]) -> &[u32] {
 
 #[test]
 fn the_device_reads_resident_tapes_as_the_packed_batch_records_them() {
-    let Some(device) = METAL_DEVICE.as_ref() else { return };
+    if rerail_gpu::shared::get().is_none() {
+        return;
+    }
     let path = temp();
     let store = ContentStore::open(&path).unwrap();
     let (mut digests, mut tapes) = (Vec::new(), Vec::new());
@@ -84,9 +83,8 @@ fn the_device_reads_resident_tapes_as_the_packed_batch_records_them() {
     let table = DocTable::new(slabs::admit(&store, &digests, &grammar).unwrap()).unwrap();
     assert_eq!(tapes.iter().map(TapeDoc::transducer_len).sum::<usize>(), table.nodes);
     let node_doc = table.views.iter().enumerate().flat_map(|(doc, view)| std::iter::repeat_n(doc as u32, view.nodes as usize)).collect::<Vec<_>>();
-    let _ = device;
     let shared = rerail_gpu::shared::get().expect("the process's device");
-    let source = format!("{}{TAPE}{KERNEL}", slabs::msl());
+    let source = format!("{}{TAPE}{KERNEL}", slabs::ukl());
     // The same source for every backend this machine has: the views are portable UKL.
     let others = [
         rerail_gpu::compute_kernel_cpu::CpuDevice::system_default().map(rerail_gpu::device::Device::Cpu),
@@ -94,15 +92,15 @@ fn the_device_reads_resident_tapes_as_the_packed_batch_records_them() {
     ];
     for device in others.into_iter().flatten() {
         let which = if device.is_cpu() { "the CPU" } else { "OpenCL" };
-        let text = rerail_gpu::Preprocessing::preprocess(&device).file("/<tests>/tape_conformance.ukl", source.as_str()).run("/<tests>/tape_conformance.ukl").unwrap_or_else(|e| panic!("{which}: {e}"));
-        let lib = ComputeFunctionLibrary::compile_from_source(&device, &text, "tape_conformance.ukl").unwrap_or_else(|e| {
+        let text = rerail_gpu::Preprocessing::preprocess(&device).file("/<tests>/tape_conformance.uglykl", source.as_str()).run("/<tests>/tape_conformance.uglykl").unwrap_or_else(|e| panic!("{which}: {e}"));
+        let lib = ComputeFunctionLibrary::compile_from_source(&device, &text, "tape_conformance.uglykl").unwrap_or_else(|e| {
             let kept = std::env::temp_dir().join(format!("tape_conformance.{}.cl", std::process::id()));
             let _ = std::fs::write(&kept, &text);
             panic!("{which}: {e} (the text compiled: {})", kept.display())
         });
         lib.get_function(&device, "tape_conformance").unwrap_or_else(|e| panic!("{which}: {e}"));
     }
-    let program = rerail_gpu::kernels::program("tape_conformance.ukl", Box::leak(source.into_boxed_str())).unwrap_or_else(|e| panic!("{e}"));
+    let program = rerail_gpu::kernels::program("tape_conformance.uglykl", Box::leak(source.into_boxed_str())).unwrap_or_else(|e| panic!("{e}"));
     let docs = buffer_of::<u32>(bytemuck_words(&table.views)).unwrap();
     let node_doc = buffer_of(&node_doc).unwrap();
     let out = buffer_of(&vec![0u32; table.nodes * FIELDS]).unwrap();
@@ -159,44 +157,68 @@ fn the_device_reads_resident_tapes_as_the_packed_batch_records_them() {
     let _ = std::fs::remove_file(path);
 }
 
+/// The diagnostics' kernels (UKL): `touch` writes each thread's index; `deep` keeps a private array of
+/// `DEEP_WORDS` words (a define), so the driver gives it a stack of that size.
+const DIAG: &str = r#"
+#include <ukl/backend.h>
+DEFINE_KERNEL2(diag, touch, RWBUFFER, uint32_t, o, "[threads]", GID0, uint32_t, g, ) { o[g] = g; }
+DEFINE_KERNEL2(diag, deep, RWBUFFER, uint32_t, o, "[threads]", GID0, uint32_t, g, )
+{
+    uint32_t s[DEEP_WORDS];
+    for (uint32_t i = 0u; i < DEEP_WORDS; i++) s[(i * 7u + g) % DEEP_WORDS] = i ^ g;
+    uint32_t a = 0u;
+    for (uint32_t i = 0u; i < DEEP_WORDS; i += 13u) a += s[(i + o[g]) % DEEP_WORDS];
+    o[g] = a;
+}
+"#;
+
+/// A diagnostic's kernel, with its stack's words.
+fn diag_kernel(name: &str, words: usize) -> rerail_metal::lane::Kernel {
+    rerail_metal::lane::kernel(&format!("#define DEEP_WORDS {words}u\n{DIAG}"), name, None)
+}
+
+/// One launch of `kernel` over `threads` threads of 64, waited for.
+fn diag_submit(kernel: &rerail_metal::lane::Kernel, out: &rerail_gpu::device::Buffer, threads: u64) {
+    let _scope = rerail_metal::launch::LaunchScope::enter();
+    let mut command = rerail_metal::lane::Command::new("diagnostic");
+    command.launch(kernel, "diagnostic").buffer("o", out).threads(threads, 64);
+    command.run().expect("the diagnostic's launch");
+}
+
 /// Diagnostic (O39): the process footprint a command queue and a submission add, run alone
-/// (`--ignored --nocapture`).
+/// (`--ignored --nocapture`). The kernel is UKL, on the process's device; the queues made apart
+/// from the device's own are Metal's (a device layer's queue is the device's).
 #[test]
 #[ignore = "diagnostic: prints the footprint of queues and submissions"]
 fn a_submission_costs_footprint() {
-    let Some(device) = METAL_DEVICE.as_ref() else { return };
+    let Ok(device) = rerail_metal::lane::device() else { return };
     let mb = crate::code_rule_dsl::prof::footprint_mb;
-    let source = "#include <metal_stdlib>\nusing namespace metal;\nkernel void touch(device uint* o [[buffer(0)]],uint g [[thread_position_in_grid]]){o[g]=g;}";
-    let pipeline = pipeline_named(source, "touch").unwrap();
+    let touch = diag_kernel("touch", 1);
     eprintln!("start {} MB", mb());
-    let out = MappedBuffer::zeroed::<u32>(device, 1 << 20).unwrap();
-    let submit = |queue: &metal::CommandQueueRef| {
-        let command = queue.new_command_buffer();
-        let encoder = command.new_compute_command_encoder();
-        encoder.set_compute_pipeline_state(&pipeline);
-        encoder.set_buffer(0, Some(&out.buffer), 0);
-        let threads = std::env::var("RERAIL_DIAG_THREADS").ok().and_then(|s| s.parse().ok()).unwrap_or(1_u64 << 20);
-        encoder.dispatch_threads(MTLSize::new(threads, 1, 1), MTLSize::new(64, 1, 1));
-        encoder.end_encoding();
-        command.commit();
-        command.wait_until_completed();
-    };
-    let queue = device.new_command_queue();
-    eprintln!("queue {} MB", mb());
-    submit(&queue);
+    let threads = std::env::var("RERAIL_DIAG_THREADS").ok().and_then(|s| s.parse().ok()).unwrap_or(1_u64 << 20);
+    let out = rerail_metal::lane::buffer_of(device, &vec![0u32; threads as usize]);
+    diag_submit(&touch, &out, threads);
     eprintln!("first submission {} MB", mb());
     for _ in 0..10 {
-        submit(&queue);
+        diag_submit(&touch, &out, threads);
     }
     eprintln!("ten more on one queue {} MB", mb());
-    for _ in 0..10 {
-        metal::objc::rc::autoreleasepool(|| submit(&device.new_command_queue()));
+    if let Some(metal) = device.metal() {
+        let submit = |queue: metal::CommandQueue| {
+            let queue = rerail_gpu::device::QueueRoot::Native(queue);
+            let mut q = ComputeQueue::new(&queue);
+            launch(&q, &touch).buffer("o", &out).run(&[threads.div_ceil(64)], &[64]).expect("the launch");
+            q.flush().await_().expect("the queue");
+        };
+        for _ in 0..10 {
+            metal::objc::rc::autoreleasepool(|| submit(metal.new_command_queue()));
+        }
+        eprintln!("ten new queues, pooled {} MB", mb());
+        for _ in 0..10 {
+            submit(metal.new_command_queue());
+        }
+        eprintln!("ten new queues, unpooled {} MB", mb());
     }
-    eprintln!("ten new queues, pooled {} MB", mb());
-    for _ in 0..10 {
-        submit(&device.new_command_queue());
-    }
-    eprintln!("ten new queues, unpooled {} MB", mb());
     // `RERAIL_DIAG_PAUSE`: seconds to wait here, for `footprint`/`vmmap` on the process.
     if let Some(seconds) = std::env::var("RERAIL_DIAG_PAUSE").ok().and_then(|s| s.parse().ok()) {
         eprintln!("pid {}", std::process::id());
@@ -209,70 +231,51 @@ fn a_submission_costs_footprint() {
 #[test]
 #[ignore = "diagnostic: prints the footprint of a kernel's private stack"]
 fn a_private_stack_costs_footprint() {
-    let Some(device) = METAL_DEVICE.as_ref() else { return };
+    let Ok(device) = rerail_metal::lane::device() else { return };
     let mb = crate::code_rule_dsl::prof::footprint_mb;
     let words: usize = std::env::var("RERAIL_DIAG_WORDS").ok().and_then(|s| s.parse().ok()).unwrap_or(1024);
-    let source = format!(
-        "#include <metal_stdlib>\nusing namespace metal;\nkernel void deep(device uint* o [[buffer(0)]],uint g [[thread_position_in_grid]]){{uint s[{words}];for(uint i=0;i<{words}u;i++)s[(i*7u+g)%{words}u]=i^g;uint a=0;for(uint i=0;i<{words}u;i+=13u)a+=s[(i+o[g])%{words}u];o[g]=a;}}"
-    );
-    let shallow = "#include <metal_stdlib>\nusing namespace metal;\nkernel void touch(device uint* o [[buffer(0)]],uint g [[thread_position_in_grid]]){o[g]=g;}";
-    let out = MappedBuffer::zeroed::<u32>(device, 1 << 20).unwrap();
-    let queue = device.new_command_queue();
-    let submit = |pipeline: &metal::ComputePipelineState| {
-        let command = queue.new_command_buffer();
-        let encoder = command.new_compute_command_encoder();
-        encoder.set_compute_pipeline_state(pipeline);
-        encoder.set_buffer(0, Some(&out.buffer), 0);
-        encoder.dispatch_threads(MTLSize::new(1 << 20, 1, 1), MTLSize::new(64, 1, 1));
-        encoder.end_encoding();
-        command.commit();
-        command.wait_until_completed();
-    };
-    submit(&pipeline_named(shallow, "touch").unwrap());
+    let out = rerail_metal::lane::buffer_of(device, &vec![0u32; 1 << 20]);
+    diag_submit(&diag_kernel("touch", words), &out, 1 << 20);
     eprintln!("after a shallow kernel {} MB", mb());
-    let deep = pipeline_named(&source, "deep").unwrap();
+    let deep = diag_kernel("deep", words);
     eprintln!("compiled, {words} words {} MB", mb());
-    submit(&deep);
+    diag_submit(&deep, &out, 1 << 20);
     eprintln!("after a {words}-word stack {} MB", mb());
 }
 
 /// Diagnostic (O39): the footprint one label kernel's dispatch adds (`RERAIL_DIAG_KERNEL`), with
 /// no items, in a fresh process: its private memory, which the driver sizes for every thread in
-/// flight and keeps.
+/// flight and keeps. A source of one's own (`RERAIL_DIAG_SOURCE`) is UKL too.
 #[test]
 #[ignore = "diagnostic: prints the footprint of one label kernel's dispatch"]
 fn a_label_kernel_costs_footprint() {
-    let Some(device) = METAL_DEVICE.as_ref() else { return };
+    let Ok(device) = rerail_metal::lane::device() else { return };
     let Ok(name) = std::env::var("RERAIL_DIAG_KERNEL") else { return };
     let mb = crate::code_rule_dsl::prof::footprint_mb;
     let source = match std::env::var_os("RERAIL_DIAG_SOURCE") {
         Some(path) => std::fs::read_to_string(path).unwrap(),
         None => String::new(),
     };
-    // The label kernels (UKL) through the kernel store, for a mixed batch; a source of one's own as plain Metal.
-    let pipeline = if source.is_empty() {
-        rerail_accel::gpu::kernels::pipeline_fixed(super::label_passes::label_source().0, &name, Some(0))
+    // The label kernels through the kernel store, for a mixed batch.
+    let kernel = if source.is_empty() {
+        rerail_metal::lane::kernel_fixed(super::label_passes::label_source().0, &name, Some(0))
     } else {
-        pipeline_named(&source, &name).unwrap()
+        rerail_metal::lane::kernel(&source, &name, None)
     };
-    let zero = MappedBuffer::zeroed::<u32>(device, 1 << 18).unwrap();
-    let queue = device.new_command_queue();
-    let submit = |pipeline: &metal::ComputePipelineState| {
-        let command = queue.new_command_buffer();
-        let encoder = command.new_compute_command_encoder();
-        encoder.set_compute_pipeline_state(pipeline);
-        for slot in 0..31 {
-            encoder.set_buffer(slot, Some(&zero.buffer), 0);
-        }
-        encoder.dispatch_thread_groups(MTLSize::new(1, 1, 1), MTLSize::new(64, 1, 1));
-        encoder.end_encoding();
-        command.commit();
-        command.wait_until_completed();
-    };
-    let touch = pipeline_named("#include <metal_stdlib>\nusing namespace metal;\nkernel void touch(device uint* o [[buffer(0)]],uint g [[thread_position_in_grid]]){o[g]=0;}", "touch").unwrap();
-    submit(&touch);
+    let zero = rerail_metal::lane::buffer_of(device, &vec![0u32; 1 << 18]);
+    diag_submit(&diag_kernel("touch", 1), &zero, 1 << 18);
     let before = mb();
-    submit(&pipeline);
+    {
+        // Every row zero: each buffer the zero buffer, each value zero bytes of its type's width.
+        let _scope = rerail_metal::launch::LaunchScope::enter();
+        let mut command = rerail_metal::lane::Command::new("diagnostic");
+        let mut launch = command.launch(&kernel, "diagnostic");
+        for a in kernel.get_argument_info() {
+            launch = if a.ty.dims > 0 { launch.buffer(&a.name, &zero) } else { launch.bytes(&a.name, &vec![0u8; a.ty.base_type.width() as usize]) };
+        }
+        launch.groups([1, 1, 1], [64, 1, 1]);
+        command.run().expect("the label kernel's launch");
+    }
     eprintln!("KERNEL {name}: +{} MB", mb() as i64 - before as i64);
 }
 
@@ -364,13 +367,13 @@ fn label_kernels_compile_cost() {
 
 #[test]
 fn the_label_kernels_compile_for_every_format() {
-    if METAL_DEVICE.is_none() {
+    if rerail_gpu::shared::get().is_none() {
         return;
     }
     for format in [0, 15, 16] {
         let compiled = super::label_passes::compile_label_kernels(format).unwrap_or_else(|_| panic!("the label kernels for format {format}"));
         // 9: each walk's stack tiers are one kernel (work queue Q181), with decision 0365's `label_leaves` and
-        // 0463's `label_phase` and `label_parents`.
+        // 0475's `label_phase` and `label_parents`.
         assert_eq!(compiled, (9, 1), "format {format}: the label kernels, then the pattern kernel");
     }
 }

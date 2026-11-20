@@ -1,6 +1,7 @@
-// blade/view: a template's compiled view as a guest document (decision 0222).
+// blade/view: a template's compiled view, its file's program (decisions 0222, 0431 §4).
 //
 // The PHP main compiles a Blade template to (`embedded: compiled-view`), written by main's view builder and placed
-// at the Blade construct each of its tokens stands for, as vue/view.rerail's Vue view is:
-//   guest(g, file, root, "php")   g is the compiled view; host_node(n, h): the Blade node n stands for
-embed(d, r, "compiled-view", "program") :- doc_role(d, "primary"), doc_root(d, r).
+// at the Blade construct each of its tokens stands for, as vue/view.rerail's Vue view is. The Blade language declares
+// it (`languages/blade.json`'s `embeds`, built by `embed::compiled_view` from the file's tape at its load), so this
+// library derives nothing:
+//   parsed(r, "php", v)   r is the file's root, v the compiled view's; host_node(n, h): the Blade node n stands for

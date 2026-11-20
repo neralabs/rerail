@@ -7,8 +7,9 @@
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TapeView {
-    /// The document's first byte in its batch's chunk block (the device's; 0 on the host): every
-    /// offset below counts from it, so a copy into another block changes `at` alone (0289 §4).
+    /// The document's first byte from its batch's bound block (the device's; 0 on the host), with `at_high` an i64:
+    /// every offset below counts from it. A document in another slab of the batch is reached by the difference of
+    /// the slabs' GPU addresses (decision 0353 step 4, 0471), so a batch reads its documents where they lie.
     pub at: u32,
     pub nodes: u32,
     pub node_base: u32,
@@ -19,7 +20,7 @@ pub struct TapeView {
     /// measured from the node's own start. Format 16: the slot, gap and length widths at bits 0, 4
     /// and 8, the checkpoints' at 12, and the four side lists' value widths at 16, 20, 24 and 28.
     pub widths: u32,
-    /// Format 15's columns (code, size, base, off, tail). Format 16 (block-major, decision 0426): block
+    /// Format 15's columns (code, size, base, off, tail). Format 16 (block-major, decision 0434): block
     /// 0's start, then the bytes a row holds before the slots, the gaps, the lengths and the checkpoints
     /// (a block of R rows holds column r at `R * columns[r]` from its start).
     pub columns: [u32; 5],
@@ -47,18 +48,32 @@ pub struct TapeView {
     pub line_base: u32,
     /// Where the stored tape starts.
     pub tape: u32,
-    /// Format 16 and 16z: the tape's presence (decision 0426 §4, step 6), in its home after the tape: `[u32 kind words,
+    /// Format 16 and 16z: the tape's presence (decision 0434 §4, step 6), in its home after the tape: `[u32 kind words,
     /// u32 field words, u32 presences, u32 0]`, then the document's words and each block's (`tape_has_kind`). 0 where
     /// it has none (format 15, or a tape stored without one).
     pub presence: u32,
+    /// `at`'s high word (`at` and this, an i64: `TapeView::offset`).
+    pub at_high: u32,
 }
-const _: () = assert!(std::mem::size_of::<TapeView>() == 124);
+const _: () = assert!(std::mem::size_of::<TapeView>() == 128);
+
+impl TapeView {
+    /// The document's first byte from its batch's bound block: `at` and `at_high`, an i64.
+    pub fn offset(&self) -> i64 {
+        (u64::from(self.at_high) << 32 | u64::from(self.at)) as i64
+    }
+
+    /// Sets the document's first byte from its batch's bound block (`offset`).
+    pub fn set_offset(&mut self, offset: i64) {
+        (self.at, self.at_high) = (offset as u32, (offset >> 32) as u32);
+    }
+}
 
 /// The view in UKL: `struct TapeView`, `DocView` its name in the kernels, and each field's offset and
 /// the size asserted against this definition's, so the kernels cannot read a layout of their own.
 pub fn ukl() -> String {
     use std::mem::offset_of;
-    let fields: [(&str, &str, usize); 21] = [
+    let fields: [(&str, &str, usize); 22] = [
         ("uint32_t", "at", offset_of!(TapeView, at)),
         ("uint32_t", "nodes", offset_of!(TapeView, nodes)),
         ("uint32_t", "node_base", offset_of!(TapeView, node_base)),
@@ -80,6 +95,7 @@ pub fn ukl() -> String {
         ("uint32_t", "line_base", offset_of!(TapeView, line_base)),
         ("uint32_t", "tape", offset_of!(TapeView, tape)),
         ("uint32_t", "presence", offset_of!(TapeView, presence)),
+        ("uint32_t", "at_high", offset_of!(TapeView, at_high)),
     ];
     let mut s = String::from("#include <ukl/backend.h>\ntypedef struct TapeView {\n");
     for (ty, name, _) in fields.iter() {
@@ -101,7 +117,7 @@ pub const F16_BLOCK: u32 = 256;
 pub const F16_PART: u32 = 1024;
 pub const F16_SUB: u32 = F16_PART / F16_BLOCK;
 /// A 16z tape's format in its view (decision 0353 step 4b): format 16 stored a block of `F16Z_BLOCK` nodes at a
-/// time in `F16Z_PIECES` pieces (decision 0426 §3), read in place, a block decoded where a read falls into an entry
+/// time in `F16Z_PIECES` pieces (decision 0434 §3), read in place, a block decoded where a read falls into an entry
 /// of a rolling cache (`cache`). Its view's `columns` are the piece index's offset (each piece's start in the
 /// payload, a u32; then each one's length; then each one's kind, a byte), the side lists' part starts' (list `k`'s
 /// `blocks + 1` u32s, list after list), the checkpoints' (raw, `F16Z_BLOCK / F16_K` a block), the cache's entry
@@ -111,7 +127,7 @@ pub const F16_SUB: u32 = F16_PART / F16_BLOCK;
 /// per are format 16's.
 pub const F16Z_FORMAT: u32 = 1016;
 pub const F16Z_BLOCK: u32 = 1024;
-/// The pieces a 16z block is stored in (decision 0426 §3): codes, slots, gaps, lengths, each its array's column in
+/// The pieces a 16z block is stored in (decision 0434 §3): codes, slots, gaps, lengths, each its array's column in
 /// the block then its side list's part.
 pub const F16Z_PIECES: u32 = 4;
 
@@ -131,8 +147,10 @@ pub mod z {
     pub const REPEAT: u8 = 2;
 }
 
-/// A rolling cache (decision 0353 step 4b, the user's design): a key (a u64) to an entry of fixed size, in `gens`
-/// generations, each a hash index (u32 slots: an entry's number plus one) and an arena of entries. Of the
+/// A rolling cache (decision 0353 step 4b, the user's design): a key (a u64) to an entry, in `gens` generations,
+/// each a hash index (u32 slots: an entry's number plus one), its entries' offsets by number, and a bump arena of
+/// entries of any size up to the cache's most (decision 0478 step 2e: a generation is full when its index or its
+/// arena is, so the bound is in bytes too). Of the
 /// generations, `gens - 1` are live at an epoch `E` (the head, `E`, and the frozen ones behind it, `E - 1` ...) and
 /// one, `E + 1`, is a spare, cleared ahead. A lookup looks in the live ones, head first; a miss computes its entry
 /// into the head; a full head makes the spare the head (one compare-and-swap of the epoch) and the thread that
@@ -145,8 +163,8 @@ pub mod cache {
     pub const GENS: i32 = 4;
     /// Entries a generation.
     pub const ENTRIES: i32 = 8;
-    /// An entry's size, its log2.
-    pub const SHIFT: i32 = 12;
+    /// The most bytes an entry takes (its header with its payload): a larger one is not kept (the dead entry).
+    pub const MAX: i32 = 12;
     /// Index slots a generation, a power of two.
     pub const SLOTS: i32 = 16;
     pub const GEN_STRIDE: i32 = 20;
@@ -167,14 +185,33 @@ pub mod cache {
     pub const WAITED: i32 = 56;
     pub const DUPLICATES: i32 = 60;
     pub const HEAD: usize = 64;
-    /// A generation's u32s: the epoch it holds (0 while it is cleared) and its entries taken; its index after.
+    /// A generation's u32s: the epoch it holds (0 while it is cleared), its entries taken, its arena's bytes taken,
+    /// and its writers (threads between taking an entry and completing it); its index after, then its entries'
+    /// offsets in its arena (a u32 each, by number), then the arena.
     pub const STAMP: i32 = 0;
     pub const USED: i32 = 4;
+    pub const BUMP: i32 = 8;
+    pub const WRITERS: i32 = 12;
     pub const INDEX: i32 = 16;
-    /// An entry's: its key (a u64) and the epoch it was completed in (0 while it is written); its payload after.
+    /// An entry's: its key (a u64), the epoch it was completed in (0 while it is written) and its bytes (header and
+    /// payload); its payload after.
     pub const KEY: i32 = 0;
     pub const READY: i32 = 8;
+    pub const LEN: i32 = 12;
     pub const PAYLOAD: i32 = 16;
+    /// What an open lookup (`cache_lookup` with no fill) found, in its result's low bits (an entry is `ALIGN`-aligned).
+    pub const FOUND: i64 = 0;
+    /// An entry of the size asked taken, being written: the caller writes its payload, then `cache_done`.
+    pub const TAKEN: i64 = 1;
+    /// None kept, none taken (a size of 0 asked, past the most, or no room): the dead entry.
+    pub const NOT_KEPT: i64 = 2;
+    /// Another thread writes the key's entry: the dead entry; read again after that writer's pass.
+    pub const PENDING: i64 = 3;
+    /// An entry's alignment in its arena.
+    pub const ALIGN: usize = 64;
+    /// A generation's stamp while the thread that turned it clears it (a spare whose writers were not yet done is
+    /// stamped 0 and cleared by a later full head).
+    pub const CLEARING: u32 = u32::MAX;
     /// An entry's completion while a writer of that epoch writes it (the epoch's bit 31 set).
     pub const WRITING: u32 = 1 << 31;
     /// A lookup's probes of a generation's index, its tries, and its waits for an entry another thread writes.
@@ -187,7 +224,7 @@ pub mod cache {
     pub const NUMBER: u32 = (1 << TAG_SHIFT) - 1;
     /// The room past the dead entry: an entry's masked loads reach at most an entry and a word past it.
     pub const SLACK: usize = 256;
-    /// A guard after the slack, of `GUARD_BYTE`s: no read or write of the cache reaches it (decision 0427), and
+    /// A guard after the slack, of `GUARD_BYTE`s: no read or write of the cache reaches it (decision 0463), and
     /// `Spec::check` finds it as `init` wrote it, else a writer missed its own memory.
     pub const GUARD: usize = 256;
     pub const GUARD_BYTE: u8 = 0xA5;
@@ -197,9 +234,11 @@ pub mod cache {
     pub struct Spec {
         /// Generations, 3 or more (one is the spare).
         pub gens: u32,
+        /// The most entries a generation holds, and its arena's bytes.
         pub entries: u32,
-        /// An entry's size, its log2.
-        pub shift: u32,
+        pub arena: u32,
+        /// The most bytes an entry takes (a multiple of `ALIGN`).
+        pub max: u32,
         /// Index slots a generation, a power of two of at least twice the entries.
         pub slots: u32,
         /// Whether its lookups keep the statistics mode's counts (`STATS`).
@@ -207,11 +246,19 @@ pub mod cache {
     }
 
     impl Spec {
-        /// The smallest index for `entries`.
+        /// `entries` entries of `entry_bytes` (rounded up to a power of two) a generation: an arena of them, the
+        /// smallest index for them.
         pub fn new(gens: u32, entries: u32, entry_bytes: usize) -> Spec {
-            let shift = entry_bytes.next_power_of_two().trailing_zeros();
+            let max = entry_bytes.next_power_of_two().max(ALIGN);
             let entries = entries.clamp(1, NUMBER - 1);
-            Spec { gens: gens.max(3), entries, shift, slots: (2 * entries).next_power_of_two().max(8), stats: false }
+            Spec::arena(gens, entries, entries as usize * max, max)
+        }
+        /// At most `entries` entries a generation in an arena of `arena` bytes, each of at most `max` bytes.
+        pub fn arena(gens: u32, entries: u32, arena: usize, max: usize) -> Spec {
+            let max = max.next_multiple_of(ALIGN);
+            let entries = entries.clamp(1, NUMBER - 1);
+            let arena = u32::try_from(arena.max(max).next_multiple_of(ALIGN)).unwrap_or(u32::MAX / ALIGN as u32 * ALIGN as u32);
+            Spec { gens: gens.max(3), entries, arena, max: u32::try_from(max).unwrap_or(u32::MAX), slots: (2 * entries).next_power_of_two().max(8), stats: false }
         }
         /// A cache for `blocks` blocks of at most `entry` bytes decoded, in at most `budget` bytes (decision 0353
         /// step 4b): three generations, each of four times the blocks (64 at least) where the budget allows, else
@@ -237,14 +284,19 @@ pub mod cache {
         pub fn with_stats(self) -> Spec {
             Spec { stats: true, ..self }
         }
+        /// The most bytes an entry takes.
         pub fn entry_bytes(&self) -> usize {
-            1 << self.shift
+            self.max as usize
+        }
+        /// Where a generation's entries' offsets start, and its arena.
+        pub fn offsets(&self) -> usize {
+            INDEX as usize + 4 * self.slots as usize
         }
         pub fn first_entry(&self) -> usize {
-            (INDEX as usize + 4 * self.slots as usize).next_multiple_of(64)
+            (self.offsets() + 4 * self.entries as usize).next_multiple_of(ALIGN)
         }
         pub fn gen_stride(&self) -> usize {
-            self.first_entry() + (self.entries as usize) * self.entry_bytes()
+            self.first_entry() + self.arena as usize
         }
         pub fn dead(&self) -> usize {
             HEAD + self.gens as usize * self.gen_stride()
@@ -253,14 +305,17 @@ pub mod cache {
             self.dead() + self.entry_bytes() + SLACK + GUARD
         }
 
-        /// The cache in `buf` checked as `init` made it (decision 0427): its shape's words, from which every
+        /// The cache in `buf` checked as `init` made it (decision 0463): its shape's words, from which every
         /// address its reads take is made, and its guard. A cache whose threads are done (or a sample while they
         /// run). `Err` says what was overwritten: a write that missed its own memory, never one of the cache's.
         pub fn check(buf: &[u8]) -> Result<Spec, String> {
             let get = |at: i32| buf.get(at as usize..at as usize + 4).map(|b| u32::from_le_bytes(b.try_into().expect("4 bytes")));
             let word = |at: i32| get(at).ok_or_else(|| format!("a cache of {} bytes, shorter than its header", buf.len()));
-            let spec = Spec { gens: word(GENS)?, entries: word(ENTRIES)?, shift: word(SHIFT)?, slots: word(SLOTS)?, stats: word(STATS)? != 0 };
-            if spec.gens < 3 || spec.shift >= 32 || !spec.slots.is_power_of_two() || spec.entries == 0 || spec.entries >= NUMBER || spec.slots < 2 * spec.entries {
+            let (stride, first) = (word(GEN_STRIDE)? as usize, word(FIRST_ENTRY)? as usize);
+            let max = word(MAX)?;
+            let mut spec = Spec { gens: word(GENS)?, entries: word(ENTRIES)?, arena: 0, max, slots: word(SLOTS)?, stats: word(STATS)? != 0 };
+            spec.arena = u32::try_from(stride.saturating_sub(first)).unwrap_or(0);
+            if spec.gens < 3 || max == 0 || max as usize % ALIGN != 0 || spec.arena < max || !spec.slots.is_power_of_two() || spec.entries == 0 || spec.entries >= NUMBER || spec.slots < 2 * spec.entries {
                 return Err(format!("a cache's shape overwritten: {spec:?}"));
             }
             let stated = [(GEN_STRIDE, spec.gen_stride()), (FIRST_ENTRY, spec.first_entry()), (DEAD, spec.dead())];
@@ -277,17 +332,25 @@ pub mod cache {
         /// `buf` (`bytes()` long, 8-aligned) made an empty cache: its header, each generation stamped (the live
         /// ones at the first epoch, the spare at the next), nothing taken.
         pub fn init(&self, buf: &mut [u8]) -> Result<(), String> {
+            if buf.len() >= self.bytes() {
+                buf[..self.bytes()].fill(0);
+            }
+            self.init_zeroed(buf)
+        }
+
+        /// `init` of a `buf` whose bytes are zero already (fresh anonymous memory): only the header, the stamps and
+        /// the guard written, so the pages of entries never taken are never touched (decision 0478 step 2d).
+        pub fn init_zeroed(&self, buf: &mut [u8]) -> Result<(), String> {
             if buf.len() < self.bytes() || !self.slots.is_power_of_two() || self.gens < 3 {
                 return Err(format!("a cache of {} bytes for {self:?}", buf.len()));
             }
             let word = |v: usize| u32::try_from(v).map_err(|_| format!("a cache past 4 GiB: {self:?}"));
-            buf.fill(0);
             let mut put = |at: usize, v: u32| buf[at..at + 4].copy_from_slice(&v.to_le_bytes());
             let epoch = self.gens;
             put(EPOCH as usize, epoch);
             put(GENS as usize, self.gens);
             put(ENTRIES as usize, self.entries);
-            put(SHIFT as usize, self.shift);
+            put(MAX as usize, self.max);
             put(SLOTS as usize, self.slots);
             put(GEN_STRIDE as usize, word(self.gen_stride())?);
             put(FIRST_ENTRY as usize, word(self.first_entry())?);
@@ -319,10 +382,10 @@ pub mod cache {
 
     impl Counts {
         /// The counts of the cache `buf` (a whole cache), checked first (`Spec::check`): a cache found overwritten
-        /// panics, naming what was (decision 0427): memory a writer missed is no state to go on from.
+        /// panics, naming what was (decision 0463): memory a writer missed is no state to go on from.
         pub fn checked(buf: &[u8]) -> Counts {
             if let Err(e) = Spec::check(buf) {
-                panic!("a 16z block cache (decision 0427): {e}");
+                panic!("a 16z block cache (decision 0463): {e}");
             }
             // SAFETY: a cache's header, checked just now, in `buf`.
             unsafe { Counts::read(buf.as_ptr()) }
@@ -395,12 +458,12 @@ impl Reader {
 
 impl Drop for Reader {
     fn drop(&mut self) {
-        // A 16z reader's cache checked as its reads leave it (decision 0427).
+        // A 16z reader's cache checked as its reads leave it (decision 0463).
         if 16 * self.len > READER_CACHE {
             // SAFETY: the cache's bytes after the view, in the buffer `new` made, which no read uses now.
             let cache = unsafe { std::slice::from_raw_parts(self.words.cast::<u8>().add(READER_CACHE), 16 * self.len - READER_CACHE) };
             if let Err(e) = cache::Spec::check(cache) {
-                panic!("a 16z reader's block cache (decision 0427): {e}");
+                panic!("a 16z reader's block cache (decision 0463): {e}");
             }
         }
         // SAFETY: the buffer `new` made, of `len` words.

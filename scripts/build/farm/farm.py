@@ -22,7 +22,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 38
+VERSION = 42
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -1026,10 +1026,25 @@ def hosts():
 
 
 def host_os(host):
-    """`host`'s system: "macos" (the default) or "linux" (`os` in the configuration). A Linux host
-    runs test commands as a Linux build (test-remote), Relax runs (live-test-remote), and this Mac's
-    compiles that need no macOS library (`linux_compiles`)."""
+    """`host`'s system: "macos" (the default), "linux" or "windows" (`os` in the configuration). A
+    Linux host runs test commands as a Linux build (test-remote), Relax runs (live-test-remote), and
+    this Mac's compiles that need no macOS library (`linux_compiles`). A Windows host is a Windows
+    PC's (or VM's) Windows side, reached through its WSL (`shares` the
+    machine's Linux entry, `windows_dir` its farm directory on the Windows drive as WSL mounts
+    it): test commands run there as a Windows build ("Windows hosts")."""
     return host.get("os", "macos")
+
+
+def entry(name):
+    """`name`'s configuration entry, or {} (a name ssh knows that the farm does not)."""
+    return next((h for h in hosts() if h["name"] == name), {})
+
+
+def shared_base(host):
+    """The entry whose test slots `host` takes (`shares`: one machine's Linux and Windows sides
+    take one set of slots, whichever commands come), else `host` itself."""
+    base = host.get("shares")
+    return (entry(base) or host) if base else host
 
 
 def read_json(path, default):
@@ -1112,12 +1127,12 @@ def probe(host, cfg, fell_back=False, recovered=False):
     available = shlex.quote(AVAILABLE_JS)
     # Linux: df alone (no purgeable space), no input to idle on (a server: never attended), the
     # interface that holds the address ssh arrived at, /proc's load, and NFS mounts by findmnt.
-    linux = ('echo "$SSH_CONNECTION"; df -k "$HOME" | tail -1 | awk \'{print $4}\'; echo 1000000000000000;'
+    linux = ('echo "$SSH_CONNECTION"; df -k "${RERAIL_FARM_WINDIR:-$HOME}" | tail -1 | awk \'{print $4}\'; echo 1000000000000000;'
              " s=$(echo $SSH_CONNECTION | cut -d' ' -f3); echo \"$(ip -o addr show | awk -v s=\"$s\" '{split($4, a, \"/\")} a[1]==s {print $2; exit}')\";"
              " a=$(head -1 /proc/stat); sleep 0.3; b=$(head -1 /proc/stat);"
              " echo \"$(cut -d' ' -f1 /proc/loadavg) busy=$(printf '%s\\n%s\\n' \"$a\" \"$b\" | awk '{i=$5+$6; t=0; for (k=2; k<=NF; k++) t+=$k;"
              " if (NR==1) {i0=i; t0=t} else print int(100*(1-(i-i0)/(t-t0)))}')\"; findmnt -rn -t nfs,nfs4 -o TARGET; true")
-    script = linux if host_os(host) == "linux" else ('echo "$SSH_CONNECTION"; echo "$(osascript -l JavaScript -e ' + available + ' 2>/dev/null) $(df -k "$HOME" | tail -1 | awk \'{print $4}\')";'
+    script = linux if host_os(host) in ("linux", "windows") else ('echo "$SSH_CONNECTION"; echo "$(osascript -l JavaScript -e ' + available + ' 2>/dev/null) $(df -k "$HOME" | tail -1 | awk \'{print $4}\')";'
               " ioreg -c IOHIDSystem -d 4 | awk '/HIDIdleTime/ {print $NF; exit}'; echo \"$(" + ARRIVAL + ")\";"
               " echo \"$(sysctl -n vm.loadavg) busy=$(ps -A -o %cpu= | awk -v n=$(sysctl -n hw.logicalcpu) '{s+=$1} END {print int(s/n)}')\";"
               " mount -t nfs | sed 's/.* on \\(.*\\) (.*/\\1/'")
@@ -1176,7 +1191,9 @@ def probe(host, cfg, fell_back=False, recovered=False):
             break
     h["rtt_ms"] = min(rtts)
     link = link_of(host)
-    if time.time() - h["mbps_at"] > PROBE_SECONDS or (h["mbps"] or 0) < cfg["min_mbps"]:
+    # A host's own floor (`min_mbps` in its entry: a slower link it is still worth using over), else the farm's.
+    min_mbps = host.get("min_mbps", cfg["min_mbps"])
+    if time.time() - h["mbps_at"] > PROBE_SECONDS or (h["mbps"] or 0) < min_mbps:
         data = os.urandom(PROBE_BYTES)  # made before the clock starts: 70 ms on a loaded Mac
         # A plain pipe: `run(input=, capture_output=True)` writes stdin 512 bytes at a time while
         # it reads, and measured itself (57 MB/s where the pipe does 270).
@@ -1210,8 +1227,8 @@ def probe(host, cfg, fell_back=False, recovered=False):
     # and more) pushed it past the limits on the fast link, taking healthy hosts out mid-build.
     elif not link and h["rtt_ms"] > cfg["max_rtt_ms"]:
         h["why"] = f"a {h['rtt_ms']} ms round trip, over {cfg['max_rtt_ms']}"
-    elif not link and (h["mbps"] or 0) < cfg["min_mbps"]:
-        h["why"] = f"{h['mbps']} MB/s, under {cfg['min_mbps']}"
+    elif not link and (h["mbps"] or 0) < min_mbps:
+        h["why"] = f"{h['mbps']} MB/s, under {min_mbps}"
     else:
         h["ok"], h["why"], h["failures"] = True, "", 0
         if h["free_gb"] < cfg["min_free_gb"]:
@@ -1378,9 +1395,10 @@ def free_test_slots(host):
 
 
 def test_slot_paths(name, host=None):
-    """The lock files of `name`'s test slots."""
-    host = host or next((h for h in hosts() if h["name"] == name), {"name": name})
-    return [state("tests", f"{name}.{i}.lock") for i in range(test_slots(host))]
+    """The lock files of `name`'s test slots: the machine's, which its Linux and Windows sides share
+    (`shared_base`), so the commands queued decide how many of each run."""
+    host = shared_base(host or entry(name) or {"name": name})
+    return [state("tests", f"{host['name']}.{i}.lock") for i in range(test_slots(host))]
 
 
 def capacity(host):
@@ -1515,6 +1533,11 @@ def ssh(host, command, channel=None, address=None, alias=None):
         # Each route has its own masters: one made over another link is never reused.
         control = state("ssh", f"{host}.{key(r.get('address') or '')[:6]}.{channel or CHANNEL[0]}")
         shared = ["-o", "ControlMaster=auto", "-o", f"ControlPath={control}", "-o", "ControlPersist=10m"]
+    # A Windows host's builds are on its Windows drive, as its WSL mounts it (`windows_dir`): every
+    # command there (the agent, the probe's free disk) is told.
+    windows_dir = entry(host).get("windows_dir")
+    if windows_dir:
+        command = f"export RERAIL_FARM_WINDIR={shlex.quote(windows_dir)}; {command}"
     return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "-o", "ServerAliveInterval=5",
             "-o", "ServerAliveCountMax=3"] + via + shared + [host, command]
 

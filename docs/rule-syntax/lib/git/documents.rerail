@@ -21,5 +21,5 @@ git_source_file(v, p, m, b) :-
 
 .decl source_document(view: symbol, path: symbol, module: symbol, grammar: symbol, profile: symbol, parsed: tape, document: number)
 source_document(v, p, m, g, profile, t, d) :-
-    git_source_file(v, p, _, _), doc(d, p, m), doc_role(d, "primary"), doc_grammar(d, g), tape_of(d, t),
+    git_source_file(v, p, _, _), doc(d, p, m), doc_grammar(d, g), tape_of(d, t),
     source_tape_version(build, format), profile = cat(build, "/", to_string(format)).

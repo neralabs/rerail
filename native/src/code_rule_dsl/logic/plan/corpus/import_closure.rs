@@ -26,7 +26,8 @@ pub(super) fn add_to(v: &Arc<Version>) -> Result<Arc<Version>> {
     let mut needed: BTreeSet<String> = BTreeSet::new();
     for r in &rules {
         needed.insert(image.rel_name(r.head().rel()).to_owned());
-        needed.extend(r.body().filter_map(|l| l.atom()).map(|a| image.rel_name(a.rel()).to_owned()));
+        // Each relation it reads, an aggregate's too.
+        needed.extend(r.reads().map(|a| image.rel_name(a.rel()).to_owned()));
     }
     let mut b = Builder::on(v);
     // The fields first: a copied rule's relations are declared.
@@ -97,7 +98,7 @@ fn taken<'v>(image: &'v Version, declared: impl Fn(&str) -> Option<Vec<(String, 
     while let Some(rel) = todo.pop() {
         let Some(id) = image.rel(&rel) else { continue };
         for r in image.heads(id) {
-            for read in r.body().filter_map(|l| l.atom()).map(|a| image.rel_name(a.rel()).to_owned()) {
+            for read in r.reads().map(|a| image.rel_name(a.rel()).to_owned()) {
                 let same_decl = declared(&read).is_none_or(|d| image.columns_of(&read).is_some_and(|c| c == d));
                 if !want.contains(&read) && same_decl && heads(&read) && !derives(&read) {
                     want.insert(read.clone());

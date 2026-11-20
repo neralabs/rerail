@@ -183,6 +183,14 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
     },
   },
   {
+    // A rule's `title`, of either kind, which the dashboard shows. No floor: an older build never reads the column; its
+    // inserts leave it null, and its updates of a row keep the title the row had.
+    id: "rules-title",
+    up(database) {
+      addColumn(database, "rules", "title", "text");
+    },
+  },
+  {
     id: "analysis-scope-release-retry",
     up(database) {
       addColumn(database, "analysis_scope_releases", "next_attempt_at", "integer DEFAULT 0 NOT NULL");

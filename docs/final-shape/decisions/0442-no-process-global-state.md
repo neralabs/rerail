@@ -81,6 +81,10 @@ by any caller in the process, so two callers of different trust could not be kep
     the nearest such choice of its type and never a guard's binding.
   - **Still kept maps.** A context value holding more than a number or a flag is counted by decision 0104's scan
     (`facts_only::maps`) as the thread-local was: by its type's name, in the module that binds it.
+  - **Its cost.** A read walks the chain to the nearest binding of its type. B-now (corpus0, 317 rules, profiling
+    build), on one M1 Max at load 17-40, two runs each: 985.5 and 979.3 G instructions before the context
+    (65d1d55f07), 985.0 and 1015.9 G with every value moved (420f98435c); the same 463 findings. The two builds'
+    runs overlap, and two runs of one build differ by 3%: no cost shows at that resolution.
 - Step 3 (the profile), as done:
   - A run's records are the run's (`profile::Records`, a run local). Each thread's shard of them is listed in the run
     it records for. Outside a run nothing keeps them: a test that reads a profile holds a run (`run::scope`, or
@@ -91,10 +95,11 @@ by any caller in the process, so two callers of different trust could not be kep
     item.
   - The process lock that let one profiled run at a time (`one_run`) is gone. A corpus run holds its run's records
     (`hold_records`); one nested in it neither resets nor writes them.
-  - The threads' CPU accounts (`THREADS`, `EXITED`, `EXITED_GAPS`) are the pool's, which is shared by design. They
-    move with the pool into `Shared` (step 5).
-  - Not done yet: `WAVES` (the process's count of waves, for a thread with no run's context) and `WARM_FAULTS` (the
-    process's exit status under `RERAIL_WARM=list`).
+  - The threads' CPU accounts (`THREADS`, `EXITED`, `EXITED_GAPS`) were to move with the pool (step 5). They stay
+    with the threads, the process's: a machine's pool threads are threads of the process (step 5, below).
+  - `WAVES` (an id counter) and `WARM_FAULTS` (the process's exit status under `RERAIL_WARM=list`, which an atexit
+    handler reads) stay (step 5's list, below); which wave a thread's writes join is the run's context
+    (`write_back::RunWaves`).
 - Step 4 (the connection), first part:
   - Each connection holds the engine's values for it in its SQLite client data (`vtab::ConnData`, by type). They are
     dropped as it closes, after `Forget::scope` has taken what it frees on a thread of its own.
@@ -137,7 +142,7 @@ by any caller in the process, so two callers of different trust could not be kep
 - Step 5, as done (2026-11-19). `global-state.txt` holds only `stays` (293 entries); no class that moves is left.
   At its merge into the sync branch (2026-11-19) the statics that branch had added were classed, each with its
   reason, and two left as `shared`: the pinned Git revisions (`git_snapshot`'s `VIEWS` and its count), a read under
-  a root from any run in the process goes to them (work queue Q352).
+  a root from any run in the process goes to them (work queue Q379).
   - What moved:
     - The machine's: the pool's accounts, the device and its pipelines, the price and cost tables, the lanes, the
       batch pricer, the roofline, the CPU slot for workspace work.
@@ -187,10 +192,20 @@ by any caller in the process, so two callers of different trust could not be kep
       values (`SEEN`) is dropped when the run leaves the thread and nothing holds it (`left_run`, `run_ended`), not
       when the thread next enters a run or exits. Kept, a finished run's values (its device leases, its blocks) were
       pinned on an idle pool thread until it ran another run's job.
-  - The CPU job pool is rayon's global pool, the process's. A job carries its caller's run and object, so nothing
-    crosses between callers through it, but two machines in one process share its threads. So the threads' CPU
-    accounts (`THREADS`, `EXITED`, `EXITED_GAPS`) stay with the threads, the process's, and do not move into
-    `Machine`.
+  - **A job pool per machine** (2026-11-19). A machine's pool is its own (`rerail_context::Cores`, a machine value
+    made at its first job, `threads` threads named `rerail-cpu <i>`); rayon's global pool is never built. Rayon's
+    functions reach the pool of the thread they run on, else the global one, so every parallel loop and every rayon
+    call that starts work goes through the machine's entry points: `on_cores(|| …)` (on a pool's thread it runs
+    there; else on the caller's machine's pool, in the caller's run and context, while the caller waits),
+    `cores_spawn`, `cores_spawn_fifo`, `cores_scope`, `cores_threads`. 110 loops in 51 files were put inside them,
+    forest's included (its prediction ran on the caller's thread). `scripts/check/check_machine_pool.py`
+    (pre-commit) refuses a loop or call outside them, `build_global`, and a pool made where its list says no reason.
+  - A program's main thread is one of its machine's pool's (`Machine::here`): the CLI's `main` makes its machine so
+    and hands it to the command (`tools::cli`), and Node's main environment makes its machine so on its first
+    workspace (`environment_machine`; any other environment's pool has threads of its own). Rayon keeps a pool's
+    hold on such a thread, so only the thread that lives as long as the process makes one.
+  - The threads' CPU accounts (`THREADS`, `EXITED`, `EXITED_GAPS`) stay with the threads, the process's: a
+    machine's pool threads are threads of the process, and the accounts measure the process as the OS reports it.
   - Stays, each with its reason in `global-state.txt`:
     - the heap sampler and the footprint sampler (they measure the process, as the OS reports it);
     - `RESERVED` (the process's own mappings, its address space);

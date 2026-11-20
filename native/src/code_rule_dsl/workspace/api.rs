@@ -324,7 +324,10 @@ fn check_store_identity(store: &crate::content_store::ContentStore, expected: Op
 
 /// The Node environment's machine (decision 0442). The addon's caller is the environment: it makes one machine and
 /// keeps it in its instance data, so every workspace it makes shares its pool, its CPU slot and its learned model,
-/// each workspace on a shared object of its own. Another environment (a worker thread) has its own.
+/// each workspace on a shared object of its own. Another environment (a worker thread) has its own. Its pool's
+/// threads are all its own, the loading thread none of them: JavaScript may park that thread waiting on a background
+/// call, so even a pool of one thread has its own worker (98c76de865; the CLI's `main` alone takes its thread,
+/// `Machine::here`).
 fn environment_machine(env: &napi::Env) -> Result<Arc<crate::code_rule_dsl::logic::profile::Machine>> {
     if let Some(machine) = env.get_instance_data::<Arc<crate::code_rule_dsl::logic::profile::Machine>>()? {
         return Ok(Arc::clone(machine));

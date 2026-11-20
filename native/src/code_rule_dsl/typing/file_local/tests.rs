@@ -207,7 +207,8 @@ fn nearest_costs(cap: usize) {
         }
     }
     let one_pass = t.elapsed();
-    std::hint::black_box(&one);
+    // Both timed results held (the device's runs, macOS only, are compared with `cpu`).
+    std::hint::black_box((&cpu, &one));
     println!("NEAREST {n} nodes, max depth {depth}, {} copies; CPU worklist {:.2} ms, one preorder pass {:.3} ms", sys.copies.len(), cpu_worklist.as_secs_f64() * 1e3, one_pass.as_secs_f64() * 1e3);
     #[cfg(target_os = "macos")]
     use crate::code_rule_dsl::transducer::packed::metal_nearest;
@@ -734,8 +735,8 @@ fn a_local_join_can_export_a_node_bound_by_equality() {
         .output observed
         observed(answer) :- node(_, p, "some-kind", _, _), child(p, g, 0), mid = g, answer = mid, !excluded(g).
     "#;
-    // The version pass alone (0276 step 6: the tree twin it was compared with is gone), under `push_equal_columns`'s
-    // switch (public, so every crate that compiles these tests reads the one definition).
+    // The version pass alone (0276 step 6: the tree twin it was compared with is gone). `push_equal_columns`'s
+    // switch, read as it reads it (the test is compiled in crates that see only `rerail-logic`'s public items).
     let (result, made) = pushed(read(text));
     for m in &made {
         assert!(result.rules().any(|r| reads(&result, r).contains(m)), "{m} is read:\n{}", result.show());

@@ -39,6 +39,8 @@ pod!(u8, i8, u16, i16, u32, i32, u64, i64, f32, f64);
 
 // Pairs of floats (a row's weights to false and true, in the forest).
 unsafe impl Pod for [f32; 2] {}
+// Four words (a launch's parameters, a block program's segment).
+unsafe impl Pod for [u32; 4] {}
 
 /// The process's one device and command queue. They are made here, in the lowest crate that uses the device, so
 /// that the forest's training and prediction and the engine's every submission (`rerail_accel::gpu::shared`, which
@@ -59,8 +61,8 @@ pub mod shared {
 
     static SHARED: OnceLock<Option<Shared>> = OnceLock::new();
 
-    /// The process's device and queue once something opened them (`get`), without opening them: what a report of the
-    /// device's memory reads, so a run that does no device work never opens it to say so.
+    /// The process's device and queue once something opened them (`get`), without opening them: what a report
+    /// of the device's memory reads, so a run that does no device work never opens it to say so.
     pub fn opened() -> Option<&'static Shared> {
         SHARED.get().and_then(Option::as_ref)
     }

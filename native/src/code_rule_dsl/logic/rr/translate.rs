@@ -9,6 +9,7 @@
 //! | `.decl r(k: t; v: sym) merge @f widen 8` | `.lattice f<symbol> { Lub -> @f }` and `.decl r(k: t, v: f<>) widen 8` |
 //! | `.demand a, b`                           | `.pragma "magic-transform" "a, b"`                         |
 //! | `.kindset k = "a" \| "b"`                | `.decl k(kind: symbol)` and `k("a"). k("b").`              |
+//! | `.layout r fanout(q -> v, few)`          | the same                                                   |
 //! | `@prefix($s, "_")`, `!@prefix(…)`        | `prefix("_", s)`, `!prefix("_", s)` (pattern first)        |
 //! | `@glob($s, {"a", "b"})`                  | `(glob("a", s) ; glob("b", s))`                            |
 //! | `!@glob($s, {"a", "b"})`                 | `!glob("a", s), !glob("b", s)`                             |

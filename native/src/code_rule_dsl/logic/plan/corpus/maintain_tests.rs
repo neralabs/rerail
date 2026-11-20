@@ -224,6 +224,9 @@ fn r2_a_new_process_hashes_only_the_changed_documents_rows_of_its_inputs() {
         // the changed documents' rows are hashed.
         assert!(ran.shape.inputs_hashed > 0, "R2: after {what}, the inputs' deltas are found by their documents");
         assert_eq!(ran.shape.inputs_hashed_whole, 0, "R2: after {what}, no input's every row is hashed, only the changed documents' ({} inputs)", ran.shape.inputs_hashed);
+        // Its changed inputs' old rows of the unchanged documents are their new rows, read in place
+        // (`retain::OldInput`, 0353): only the changed documents' granules are bound.
+        assert_eq!(ran.shape.inputs_read_whole, 0, "R2: after {what}, no changed input's old rows are bound whole");
         // An input's delta names its rows where they lie, old and new (`retain::rows_delta`), as a session's does.
         assert_eq!(ran.shape.rows_copied, 0, "R2: after {what}, a new process copies no row to state a change");
     }
@@ -472,7 +475,7 @@ fn r9_each_reached_stratum_is_skipped_maintained_or_derived_again() {
     assert_eq!(r.cross_strata.expect("a session's run").0, r.cross_skipped + r.cross_maintained.0 + again, "R9: every reached stratum is skipped, maintained or derived again: {:?}", (r.cross_strata, r.cross_skipped, r.cross_maintained, &r.cross_again));
 }
 
-/// Q361: a view of an input's columns (`kind`, `docof` of `node`) is never kept as rows (0353), cold or after an edit,
+/// Q382: a view of an input's columns (`kind`, `docof` of `node`) is never kept as rows (0353), cold or after an edit,
 /// on the kept frames' route and in a session: `retain::after` refuses a view by the program's rules
 /// (`Cut::views`) whatever form a run held it in, and the maintain mode holds it as a view.
 #[test]

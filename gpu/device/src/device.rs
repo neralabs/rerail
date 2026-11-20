@@ -32,6 +32,10 @@ mod native {
     pub type QueueRoot = metal::CommandQueue;
     pub type SharedEvent = metal::SharedEvent;
     pub const NAME: &str = "Metal";
+    /// The device's own name (the GPU's model).
+    pub fn device_name(d: &Device) -> String {
+        d.name().to_owned()
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -46,6 +50,10 @@ mod native {
         Some(b.device_address())
     }
     pub const NAME: &str = "CUDA";
+    /// The device's own name: the backend's until the driver's is read (step E).
+    pub fn device_name(_d: &Device) -> String {
+        NAME.to_owned()
+    }
 }
 
 /// The backend `RERAIL_GPU` chooses, lower case: "cpu", "opencl", or "" for the target's GPU.
@@ -101,6 +109,16 @@ pub enum Device {
 pub type DeviceRef = Device;
 
 impl Device {
+    /// The device's name, as a machine's samples are keyed: the GPU's model on the target's GPU, its backend and
+    /// its own name on OpenCL, "CPU" on the CPU's.
+    pub fn name(&self) -> String {
+        match self {
+            Device::Native(d) => native::device_name(d),
+            Device::Cpu(_) => "CPU".to_owned(),
+            Device::OpenCl(d) => format!("OpenCL {}", d.name()),
+        }
+    }
+
     /// The Metal device, when the process's is Metal (the engine's own Metal kernels need it).
     #[cfg(target_os = "macos")]
     pub fn metal(&self) -> Option<&metal::Device> {
@@ -126,6 +144,11 @@ impl Device {
             Device::Cpu(_) => cpu::simd_width(),
             Device::OpenCl(_) => cl::simd_width(),
         }
+    }
+
+    /// Whether its buffers have a kernels' address (`Buffer::device_address`): every backend's but OpenCL 1.2's.
+    pub fn has_addresses(&self) -> bool {
+        !matches!(self, Device::OpenCl(_))
     }
 
     /// The most threads a threadgroup can have: 1,024 on Metal, CUDA and the CPU; an OpenCL device's own (256 on

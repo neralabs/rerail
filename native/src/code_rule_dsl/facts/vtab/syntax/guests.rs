@@ -1,29 +1,29 @@
-//! Decision 0055's relations of a batch: every document's role, root and tape, and each guest's place.
+//! Decision 0055's relations of a batch: every document's tape, and each guest's place.
 //!
 //! ```text
 //! tape_of(d, t)               document d places tape t (its content key, hex)
-//! doc_role(d, r)              "primary", "program" or "fragment"
-//! doc_root(d, n)              the root of d's tree; a fragment's is the expression inside its wrapper
-//! guest(g, host, at, grammar) guest document g is the code at host node or span `at`, parsed as `grammar`
-//! parsed(at, grammar, r)      `guest` and `doc_root` joined: the view `core.rerail` has always declared
-//! sub_tape(at, grammar, t)    `guest` and `tape_of` joined
+//! rr_program(d, f, grammar)   d is the document underneath file f's program of `grammar` (decision 0431 §4), for
+//!                             the engine's rules alone (findings, memo components): a rule names a program by its
+//!                             file and place
+//! parsed(at, grammar, r)      the root r of the guest at host node or span `at`, parsed as `grammar`; a fragment's
+//!                             is the expression inside its wrapper
+//! sub_tape(at, grammar, t)    the guest at `at`'s tape
 //! host_node(n, h)             h is the innermost host node over the bytes guest node n stands for
 //! parse_of(x, g, t)           `@parse(g, x)` is tape t (decision 0058 §4): a value document places it
 //! splice_of(t, n, t2, t3)     `@splice(t, n, t2)` is tape t3
 //! unparse_of(t, x)            `@unparse(t)` is x, for a guest's or a value's tape
 //! ```
 //!
-//! A withheld guest (one that does not parse, `.on guest_error skip`) has its `guest`, `doc_role`, `tape_of` and
-//! `sub_tape` rows, and no `doc_root` or `parsed`: it has no nodes.
+//! A withheld guest (one that does not parse, `.on guest_error skip`) has its `rr_program`, `tape_of` and `sub_tape`
+//! rows, and no `parsed`: it has no nodes.
 
 use super::{Document, Guest, Made, Placement, Projected, Relation, TapePlace};
 
 #[derive(Default)]
 pub struct GuestRows {
-    guest: Vec<[i64; 4]>,
-    role: Vec<[i64; 2]>,
+    program: Vec<[i64; 3]>,
+    /// A file's grammar (`doc_grammar`): what parsed it, for the rules that read a document's Git provenance.
     grammar: Vec<[i64; 2]>,
-    root: Vec<[i64; 2]>,
     tape: Vec<[i64; 2]>,
     parsed: Vec<[i64; 3]>,
     sub_tape: Vec<[i64; 3]>,
@@ -47,17 +47,13 @@ impl GuestRows {
         let key = i64::from(p.key);
         let tape = string(&hex(&d.digest)) as i64;
         self.tape.push([key, tape]);
-        self.role.push([key, string(guest.map_or("primary", |g| g.role.as_str())) as i64]);
-        if let Some(grammar) = guest.map(|g| g.grammar.as_str()).or_else(|| {
-            d.facts.tape.as_ref()?;
-            crate::code_rule_dsl::language::from_tape_tag(d.facts.tag).and_then(crate::code_rule_dsl::language::label)
-        }) {
-            self.grammar.push([key, string(grammar) as i64]);
+        // A file's grammar (a program's is its `rr_program` row's).
+        if guest.is_none() {
+            if let Some(grammar) = d.facts.tape.as_ref().and_then(|_| crate::code_rule_dsl::language::from_tape_tag(d.facts.tag).and_then(crate::code_rule_dsl::language::label)) {
+                self.grammar.push([key, string(grammar) as i64]);
+            }
         }
         let root = (!withheld && p.len() > 0).then(|| p.global(0));
-        if let Some(r) = root {
-            self.root.push([key, r]);
-        }
         let Some(g) = guest else { return };
         if unparse {
             self.unparse_of.push([tape, string(super::unparsed(d)) as i64]);
@@ -66,8 +62,8 @@ impl GuestRows {
         // A value document has no host: what made it is its row.
         match &g.made {
             Made::Host => {}
-            // A tape value (decision 0431): a row of each relation for each place, and no `guest` row: it is no
-            // document's guest.
+            // A tape value (decision 0431): a row of each relation for each place, and no `rr_program` row: it is
+            // no file's program.
             Made::Tape { places } => {
                 self.tape_places(p, places, grammar, tape, root, docs, [host_nodes, guest_of, guest_place]);
                 return;
@@ -81,7 +77,7 @@ impl GuestRows {
                 return;
             }
         }
-        self.guest.push([key, i64::from(g.host), g.at, grammar]);
+        self.program.push([key, i64::from(g.file), grammar]);
         self.sub_tape.push([g.at, grammar, tape]);
         let Some(r) = root else { return };
         self.parsed.push([g.at, grammar, r]);
@@ -160,10 +156,8 @@ impl GuestRows {
 
     pub(super) fn relations(&self, atom: &dyn Fn(i64) -> i64, rel: super::Make) -> Vec<(&'static str, Relation)> {
         vec![
-            ("guest", rel(&["g", "host", "at", "grammar"], &mut self.guest.iter().map(|&[g, h, a, s]| vec![g, h, a, atom(s)]))),
+            ("rr_program", rel(&["d", "file", "grammar"], &mut self.program.iter().map(|&[d, f, s]| vec![d, f, atom(s)]))),
             ("doc_grammar", rel(&["d", "g"], &mut self.grammar.iter().map(|&[d, g]| vec![d, atom(g)]))),
-            ("doc_role", rel(&["d", "r"], &mut self.role.iter().map(|&[d, r]| vec![d, atom(r)]))),
-            ("doc_root", rel(&["d", "n"], &mut self.root.iter().map(|r| r.to_vec()))),
             ("tape_of", rel(&["d", "t"], &mut self.tape.iter().map(|&[d, t]| vec![d, atom(t)]))),
             ("parsed", rel(&["s", "grammar", "root"], &mut self.parsed.iter().map(|&[s, g, r]| vec![s, atom(g), r]))),
             ("sub_tape", rel(&["at", "grammar", "t"], &mut self.sub_tape.iter().map(|&[a, g, t]| vec![a, atom(g), atom(t)]))),

@@ -214,7 +214,7 @@ impl Unpacked {
             }
             bytes.push(raw);
         }
-        let placing = Placing::write(database, &bytes.iter().map(Vec::as_slice).collect::<Vec<_>>())?;
+        let placing = Placing::write(database, &bytes.iter().map(Vec::as_slice).collect::<Vec<_>>(), super::connection::flush_of(connection))?;
         Ok(Some(Unpacked { kind, table, key, ids: frames.iter().map(|f| f.0).collect(), placing }))
     }
 

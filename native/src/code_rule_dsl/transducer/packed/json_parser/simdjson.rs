@@ -55,7 +55,7 @@ pub fn encode_with(route: Option<rerail_simdjson::Kernel>, grammar: &Grammar, so
         return Ok(Err("tree-sitter-json lacks a kind or field simdjson's tape names".into()));
     };
     let src = source.as_bytes();
-    // A run that stores format 16 or 16z: the kernel's walk gives its nodes to format 16's ops (decision 0426).
+    // A run that stores format 16 or 16z: the kernel's walk gives its nodes to format 16's ops (decision 0434).
     if let Some(kernel) = route
         && let Some(image) = encode_16(kernel, kinds, *value, source, budget)?
     {
@@ -205,8 +205,7 @@ pub fn registrations() -> Vec<ParserImpl> {
 
 impl TreeParser for Simdjson {
     fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
-        if !grammar.lang.embeds().is_empty()
-            || !matches!(crate::code_rule_dsl::language::base(crate::code_rule_dsl::language::Family::of(grammar.lang)).parse_input(source), std::borrow::Cow::Borrowed(_))
+        if !matches!(crate::code_rule_dsl::language::base(crate::code_rule_dsl::language::Family::of(grammar.lang)).parse_input(source), std::borrow::Cow::Borrowed(_))
         {
             return None;
         }

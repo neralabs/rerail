@@ -67,6 +67,28 @@ export function storedPath(path: string): string {
 }
 
 /**
+ * {@link storedPath}, or `path` as given where the system cannot resolve it: one spelling for each folder, whatever link,
+ * letter case or 8.3 short name reached it, to match two paths by. Never for opening.
+ */
+export function storedForm(path: string): string {
+  try {
+    return storedPath(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
+ * The native realpath of `path` with nothing taken off its text first, so the system resolves its names in turn and
+ * follows each link before the `..` after it, as Git resolves a path it reads from a file on Linux and macOS; `resolve`
+ * and the JS realpath cancel `link/..` as text. Throws where the system cannot resolve it. On Windows Node takes a `..`
+ * off the text before it asks the system, as Windows itself does.
+ */
+export function realpathNamesInTurn(path: string): string {
+  return realpathSync.native(path);
+}
+
+/**
  * {@link storedPath} without blocking: a folder on a share that does not answer holds one of the pool's threads until
  * it does, and never the caller's. `fs.promises.realpath` is the native realpath, as `realpathSync.native` is.
  */

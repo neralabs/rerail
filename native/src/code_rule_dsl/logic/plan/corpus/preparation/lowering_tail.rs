@@ -998,12 +998,13 @@ pub struct ScopeGlobs;
 impl ProgramPass for ScopeGlobs {
     const NAME: &'static str = "the scope's globs";
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
-        use crate::code_rule_dsl::logic::rr::lower::{scope_globs, scope_text_globs};
+        use crate::code_rule_dsl::logic::rr::lower::{reads_tool_calls, scope_globs, scope_text_globs};
         let v = cx.v();
         let settings = v.settings()?;
         let (was_globs, was_scopes) = (v.text_globs()?, v.doc_scopes()?);
         let globs = scope_text_globs(&settings);
-        let scopes = was_scopes.clone().or_else(|| scope_globs(&settings).map(|g| vec![g]));
+        // A program of tool calls selects no document: no entry reads a path (main's #866, `.scope tool_calls`).
+        let scopes = if reads_tool_calls(&settings) { Some(Vec::new()) } else { was_scopes.clone().or_else(|| scope_globs(&settings).map(|g| vec![g])) };
         if globs != was_globs {
             w.on()?.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::TextGlobs(&globs));
         }
@@ -1488,6 +1489,10 @@ impl ProgramPass for Findings {
             }),
             reads_guest_policy: v.rules().flat_map(|r| r.body()).any(|l| matches!(l.view(), L::Atom(a) | L::Agg { atom: a, .. } if v.rel_name(a.rel()) == crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY)),
             heads: v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect(),
+            reads_tool_call: v.rules().flat_map(|r| r.body()).find_map(|l| match l.view() {
+                L::Atom(a) => crate::code_rule_dsl::logic::rr::lower::TOOL_CALLS.into_iter().find(|t| v.rel_name(a.rel()) == *t),
+                _ => None,
+            }),
         };
         let input = std::sync::Arc::clone(w.input());
         if !findings_write(&*input, &self.pending) {

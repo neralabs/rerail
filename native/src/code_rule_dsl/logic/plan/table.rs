@@ -500,13 +500,15 @@ pub fn heavy_batch(reqs: Vec<HeavyReq>) -> Vec<Option<Vec<HeavyCol>>> {
     let rows: usize = reqs.iter().map(|(s, _, cols)| s.as_ref().map_or(0, |s| s.len() * cols.len())).sum();
     if gpu_pays(rows) {
         // Values gathered only for a source the engine does not hold as a relation.
-        let values: Vec<Option<Vec<Vec<i64>>>> = reqs
-            .par_iter()
-            .map(|(src, rel, cols)| match (src, rel) {
-                (Some(src), None) => Some(cols.iter().map(|&c| (0..src.len()).map(|row| src.value(row, c)).collect()).collect()),
-                _ => None,
-            })
-            .collect();
+        let values: Vec<Option<Vec<Vec<i64>>>> = rerail_prof::code_rule_dsl::logic::profile::on_cores(|| {
+            reqs
+                .par_iter()
+                .map(|(src, rel, cols)| match (src, rel) {
+                    (Some(src), None) => Some(cols.iter().map(|&c| (0..src.len()).map(|row| src.value(row, c)).collect()).collect()),
+                    _ => None,
+                })
+                .collect()
+        });
         let mut cols: Vec<StatColumn<'_>> = Vec::new();
         for ((src, rel, cs), v) in reqs.iter().zip(&values) {
             match (src, rel, v) {
@@ -522,18 +524,20 @@ pub fn heavy_batch(reqs: Vec<HeavyReq>) -> Vec<Option<Vec<HeavyCol>>> {
         }
     }
     rerail_prof::code_rule_dsl::logic::profile::local::<Batches>().0[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    reqs.into_par_iter()
-        .map(|(src, _, cols)| {
-            let src = src?;
-            let mut counts: Vec<FxHashMap<i64, u64>> = cols.iter().map(|_| FxHashMap::default()).collect();
-            for row in 0..src.len() {
-                for (k, &c) in cols.iter().enumerate() {
-                    *counts[k].entry(src.value(row, c)).or_default() += 1;
+    rerail_prof::code_rule_dsl::logic::profile::on_cores(|| {
+        reqs.into_par_iter()
+            .map(|(src, _, cols)| {
+                let src = src?;
+                let mut counts: Vec<FxHashMap<i64, u64>> = cols.iter().map(|_| FxHashMap::default()).collect();
+                for row in 0..src.len() {
+                    for (k, &c) in cols.iter().enumerate() {
+                        *counts[k].entry(src.value(row, c)).or_default() += 1;
+                    }
                 }
-            }
-            Some(counts.into_iter().map(HeavyCol::of_counts).collect())
-        })
-        .collect()
+                Some(counts.into_iter().map(HeavyCol::of_counts).collect())
+            })
+            .collect()
+    })
 }
 
 /// A request of `heavy_batch`: a relation's source, the engine's relation where it holds one, and the columns.

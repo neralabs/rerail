@@ -3200,7 +3200,7 @@ dependencies = [
  "rerail-blocks",
  "rerail-context",
  "rerail-device",
- "rerail-ukl",
+ "rerail-gpu",
  "windows-sys 0.61.2",
 ]
 
@@ -3274,7 +3274,9 @@ dependencies = [
 name = "rerail-context"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "parking_lot",
+ "rayon",
  "rerail-context",
  "rustc-hash",
 ]
@@ -3350,6 +3352,7 @@ dependencies = [
  "rerail-accel",
  "rerail-blocks",
  "rerail-compiler",
+ "rerail-device",
  "rerail-device-metal",
  "rerail-facts",
  "rerail-lang",
@@ -3548,6 +3551,7 @@ dependencies = [
  "rerail-blocks",
  "rerail-clif",
  "rerail-compiler",
+ "rerail-device",
  "rerail-facts",
  "rerail-lang",
  "rerail-prof",
@@ -3582,10 +3586,12 @@ name = "rerail-forest"
 version = "0.1.0"
 dependencies = [
  "block",
+ "cc",
  "libc",
  "metal",
  "objc",
  "rayon",
+ "rerail-context",
  "rerail-gpu",
  "rerail-ukl",
  "sha2 0.10.9",
@@ -3649,9 +3655,11 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "rerail-compiler",
+ "rerail-context",
  "rerail-kotlin-aot",
  "rerail-kotlin-lean",
  "rerail-kotlin-parser",
+ "rerail-simd8",
 ]
 
 [[package]]
@@ -4305,11 +4313,13 @@ name = "rerail-parser-tests"
 version = "0.1.0"
 dependencies = [
  "bitlex",
+ "libc",
  "rerail-compiler",
  "rerail-context",
  "rerail-metal",
  "rerail-parser-tests",
  "rerail-rr-syntax",
+ "rerail-tape-format",
  "tree-sitter",
  "tree-sitter-json",
 ]
@@ -4718,6 +4728,7 @@ dependencies = [
  "regex-syntax",
  "rerail-accel",
  "rerail-blocks",
+ "rerail-clif",
  "rerail-prof",
  "rerail-store",
  "rusqlite",

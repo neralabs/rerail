@@ -72,19 +72,9 @@ pub fn zeroed_bytes() -> u64 {
     rerail_context::with_local::<Zeroed, _>(|z| z.0.load(Relaxed))
 }
 
-/// `zeroed_bytes` counted on this thread alone: what a caller's own allocations zeroed, which the other threads'
-/// (a test's neighbours) do not move.
-pub fn zeroed_bytes_here() -> u64 {
-    ZEROED_HERE.with(std::cell::Cell::get)
-}
-
 /// The run's count (decision 0442: a measurement of the run's).
 #[derive(Default)]
 struct Zeroed(std::sync::atomic::AtomicU64);
-
-thread_local! {
-    static ZEROED_HERE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
 
 /// Zeroes `len` bytes at `p`, counted (`zeroed_bytes`).
 ///
@@ -93,7 +83,6 @@ thread_local! {
 unsafe fn zero(p: *mut u8, len: usize) {
     unsafe { std::ptr::write_bytes(p, 0, len) };
     rerail_context::with_local::<Zeroed, _>(|z| z.0.fetch_add(len as u64, Relaxed));
-    ZEROED_HERE.with(|z| z.set(z.get() + len as u64));
 }
 
 /// What a block has used, and holds free (its free list's bytes): shared with a ledger that counts live blocks
@@ -132,6 +121,41 @@ unsafe impl Sync for Block {}
 
 fn round_up(n: usize, to: usize) -> usize {
     n.div_ceil(to) * to
+}
+
+
+/// How a file-backed block's writes reach the disk (decision 0481).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Flush {
+    /// Each write-back waits until the pages are on the disk (`msync` with `MS_SYNC`, then a barrier on macOS,
+    /// `fdatasync` elsewhere) before the store commits what names them: the store survives a power loss.
+    Synced,
+    /// The default: nothing waits, and the OS writes the pages back at its own pace. The store survives the
+    /// process's end (the pages are the OS's), not a power loss or a crash of the OS before they are written.
+    #[default]
+    Os,
+    /// Nothing is flushed, and the store's SQLite syncs nothing either: tests, whose stores are thrown away.
+    None,
+}
+
+impl Flush {
+    /// Whether a write-back waits for the disk.
+    pub fn waits(self) -> bool {
+        self == Flush::Synced
+    }
+
+    /// The mode `RERAIL_FLUSH` names (`synced`, `os`, `none`), else `default`. An unknown value is refused.
+    pub fn from_env_or(default: Flush) -> Result<Flush, String> {
+        match std::env::var("RERAIL_FLUSH") {
+            Err(_) => Ok(default),
+            Ok(v) => match v.as_str() {
+                "synced" => Ok(Flush::Synced),
+                "os" => Ok(Flush::Os),
+                "none" => Ok(Flush::None),
+                other => Err(format!("RERAIL_FLUSH={other}: not synced, os or none")),
+            },
+        }
+    }
 }
 
 impl Block {
@@ -389,11 +413,11 @@ impl Block {
         b
     }
 
-    /// Lets go of the no-copy wrap `gpu_buffer` kept; the device must be done with it. It does not let the OS write
+    /// Lets go of the no-copy wrap `device_buffer` kept; the device must be done with it. It does not let the OS write
     /// back a file block's pages a kernel wrote: the driver holds them wired until the range is unmapped (decision
     /// 0295 §1 and §7, measured by `examples/deferrable`).
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    pub fn release_gpu_buffer(&self) {
+    pub fn release_device_buffer(&self) {
         self.gpu.lock().unwrap().take();
     }
 
@@ -421,14 +445,6 @@ impl Block {
         let b = unsafe { rerail_device::device::wrap_host_memory(device, self.base, len)? };
         *kept = Some((b.clone(), len));
         Ok(b)
-    }
-
-    /// `device_buffer` for the engine's Metal kernels not yet on the device layer (decision 0440 step C moves each
-    /// with its kernel): the block's buffer as Metal's.
-    #[cfg(target_os = "macos")]
-    pub fn gpu_buffer(&self, device: &metal::DeviceRef) -> metal::Buffer {
-        let b = self.device_buffer(&rerail_device::device::Device::Native(device.to_owned())).unwrap_or_else(|e| panic!("a block's device buffer: {e}"));
-        b.metal().expect("a block bound to a Metal kernel has a Metal buffer").clone()
     }
 
     fn init(&self, kind: u32) {
@@ -586,7 +602,7 @@ impl Block {
             f.set_len(len as u64).expect("truncate a journal block");
         } else if self.backing.is_none() {
             // A free-listed block's reservation past its length goes back: nothing is written there now.
-            // Whole MBs, and never under a device buffer made over it (`gpu_buffer`'s extent).
+            // Whole MBs, and never under a device buffer made over it (`device_buffer`'s extent).
             #[allow(unused_mut)]
             let mut keep = round_up(len.max(1 << 20), 1 << 20);
             #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -681,12 +697,19 @@ impl Block {
         Ok(b)
     }
 
-    /// What is written in a block mapped from its file on the disk: its dirty pages written back, then the file
-    /// flushed (a barrier on macOS, `fdatasync` elsewhere). Nothing to do for a block with no file.
+    /// What is written in a block mapped from its file on the disk, with `Flush::Synced`: its dirty pages written
+    /// back, then the file flushed (a barrier on macOS, `fdatasync` elsewhere). Otherwise nothing: the OS writes the
+    /// pages back at its own pace (decision 0481). Nothing to do for a block with no file.
     #[cfg(unix)]
-    pub fn sync_mapped(&self) -> io::Result<()> {
-        // SAFETY: the block's own mapping, its whole length.
-        if unsafe { libc::msync(self.base.cast(), self.reserved, libc::MS_SYNC) } != 0 {
+    pub fn sync_mapped(&self, flush: Flush) -> io::Result<()> {
+        if !flush.waits() {
+            return Ok(());
+        }
+        // The pages written: nothing past `used` is (a kept file's reservation is hundreds of MB, its facts a few;
+        // asked of the whole, the kernel walked every page of it, Q361).
+        let written = self.used().next_multiple_of(PAGE).min(self.reserved);
+        // SAFETY: the block's own mapping, its first `written` bytes.
+        if unsafe { libc::msync(self.base.cast(), written, libc::MS_SYNC) } != 0 {
             return Err(io::Error::last_os_error());
         }
         let Some(f) = &self.file else { return Ok(()) };

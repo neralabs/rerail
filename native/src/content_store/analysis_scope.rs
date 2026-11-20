@@ -611,7 +611,7 @@ fn existing_analysis_store(file: &Path, expected: &[i64]) -> StoreResult<(rusqli
                 WHERE type='table' AND name IN ('source_objects','corpus_state','corpus_manifests')", [], |row| row.get(0))?;
             if !known { return Err(super::StoreError::Invalid("expected an existing analysis store".into())); }
         }
-        ContentStore::initialize(&mut db)
+        ContentStore::initialize(&mut db, super::connection::store_flush()?)
     })?;
     Ok((db, identity))
 }
@@ -620,7 +620,7 @@ impl ContentStore {
     /// Open a maintenance target without creating a file or changing an unrelated database.
     pub fn open_for_collection(file: &Path, expected: &[i64]) -> StoreResult<Self> {
         let (db, identity) = existing_analysis_store(file, expected)?;
-        let connection = super::connection::ThreadConnection::pinned(file.to_owned(), db, identity);
+        let connection = super::connection::ThreadConnection::pinned(file.to_owned(), db, identity, super::connection::store_flush()?);
         let store = Self::with_connection(file.to_owned(), connection, super::atoms::Atoms::for_database(file, Some(identity)), None);
         #[cfg(not(target_family = "wasm"))]
         let store = {

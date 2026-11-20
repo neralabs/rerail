@@ -20,8 +20,12 @@
 typedef struct DeviceCode{uint16_t kind,field;uint8_t flags,classCount;uint16_t reserved;uint16_t classes[8];} DeviceCode;
 UKL_STATIC_ASSERT(sizeof(DeviceCode)==24u,"the code layout");
 #define TAPE_NONE 0xffffffffu
-// A document's first byte in the batch's chunk block: its parts are offsets from it.
-UKL_INLINE UKL_GLOBAL const uint8_t* tape_doc(UKL_GLOBAL const uint8_t* chunk,DocView d){return chunk+d.at;}
+// A document's first byte from the batch's bound block: its parts are offsets from it. `at` and `at_high` are an
+// i64, the slabs' GPU addresses apart where the document is in another slab of the batch (0353 step 4, 0471).
+UKL_INLINE UKL_GLOBAL const uint8_t* tape_doc(UKL_GLOBAL const uint8_t* chunk,DocView d){return chunk+(int64_t)(((uint64_t)d.at_high<<32)|(uint64_t)d.at);}
+// The document of a batch's global node `node`, of `count` views in node order: its number, and its view.
+UKL_INLINE uint32_t doc_index(UKL_GLOBAL const DocView* docs,uint32_t count,uint32_t node){uint32_t first=0u,last=count;while(last-first>1u){uint32_t middle=(first+last)/2u;if(docs[middle].node_base<=node)first=middle;else last=middle;}return first;}
+UKL_INLINE DocView doc_of(UKL_GLOBAL const DocView* docs,uint32_t count,uint32_t node){return docs[doc_index(docs,count,node)];}
 
 // ---- the reads (decision 0310): `<ukl/reads/tape.h>`, written from the tape's reads in CLIF, which the CPU's
 // JIT and the tape crate read through too; each takes the document's first byte and its view.
@@ -29,9 +33,9 @@ UKL_INLINE UKL_GLOBAL const uint8_t* tape_doc(UKL_GLOBAL const uint8_t* chunk,Do
 UKL_INLINE uint32_t tape_size(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_size(TAPE_READ(s,d),i);}
 // The node's code's number in its document's (format 16: its language's) table.
 UKL_INLINE uint32_t tape_number(UKL_GLOBAL const uint8_t* doc,DocView d,uint32_t i){return clif_tape_number(doc,(CLIF_VIEW_SPACE const uint32_t*)&d,i);}
-// The node's code: its document's table (format 15), or its language's, its block's (format 16): `at + codes`
-// modulo 2^32, so a table before the document is reached too (decision 0336 §7).
-UKL_INLINE UKL_GLOBAL const DeviceCode* tape_code(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return ((UKL_GLOBAL const DeviceCode*)(s+(d.at+d.codes)))+tape_number(tape_doc(s,d),d,i);}
+// The node's code: its document's table (format 15), or its language's, its slab's (format 16): `codes` from the
+// document, modulo 2^32 (an i32), so a table before the document is reached too (decision 0336 §7).
+UKL_INLINE UKL_GLOBAL const DeviceCode* tape_code(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){UKL_GLOBAL const uint8_t* doc=tape_doc(s,d);return ((UKL_GLOBAL const DeviceCode*)(doc+(int32_t)d.codes))+tape_number(doc,d,i);}
 UKL_INLINE uint32_t tape_kind(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return tape_code(s,d,i)->kind;}
 UKL_INLINE uint32_t tape_field(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return tape_code(s,d,i)->field;}
 UKL_INLINE uint32_t tape_flags(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return tape_code(s,d,i)->flags;}
@@ -84,10 +88,10 @@ UKL_INLINE bool code_admits(UKL_GLOBAL const uint32_t* rule,UKL_GLOBAL const Dev
  return true;
 }
 // The kind a presence records for a node of kind `kind`: an ERROR node's (0xffff) is ERROR_CODE (0), the tape's folded
-// code (decision 0426 §4; the host's `tape::presence_kind`).
+// code (decision 0434 §4; the host's `tape::presence_kind`).
 UKL_INLINE uint32_t presence_kind(uint32_t kind){return kind==0xffffu?0u:kind;}
 // Whether block `block` of document `d` (its nodes 1024*block ..) may hold a node a rule over codes admits, by the
-// tape's presence in its home (decision 0426 §4, step 6), read where it lies by `tape_has_kind`, the read the host's
+// tape's presence in its home (decision 0434 §4, step 6), read where it lies by `tape_has_kind`, the read the host's
 // planners and walks make too (`Roots::may_in`): one of its kinds, and each kind its tests name. A tape that holds no
 // presence admits every block.
 UKL_INLINE bool rule_may_in(UKL_GLOBAL const uint8_t* s,DocView d,UKL_GLOBAL const uint32_t* rule,uint32_t block){

@@ -1,5 +1,5 @@
 use super::*;
-use crate::code_rule_dsl::facts::rows::{Rows, Shared};
+use crate::code_rule_dsl::facts::rows::{BlockVec, Rows};
 use crate::content_store::KeptRel;
 use crate::content_store::kept_facts::{KeptPut, KeptWhat};
 
@@ -19,8 +19,8 @@ fn a_kept_relation_is_read_where_it_lies() {
     let dir = tempfile::tempdir().unwrap();
     let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
     // Two relations of three rows in a block: one with no levels; one with its levels, its second row dead.
-    let whole = InRel::held_shared(Rows::frozen(2, vec![3, 30, 1, 10, 2, 20], 3), 3, vec![b'i', b'i'], Shared::default(), Shared::default());
-    let some_dead = InRel::held_shared(Rows::frozen(2, vec![3, 30, 2, 20, 1, 10], 3), 3, vec![b'i', b'i'], vec![0b010u64].into(), vec![5u32, 6, 7].into());
+    let whole = InRel::held_shared(Rows::frozen(2, vec![3, 30, 1, 10, 2, 20], 3), 3, vec![b'i', b'i'], BlockVec::new(), BlockVec::new());
+    let some_dead = InRel::held_shared(Rows::frozen(2, vec![3, 30, 2, 20, 1, 10], 3), 3, vec![b'i', b'i'], BlockVec::from_iter_in(None, [0b010u64]), BlockVec::from_iter_in(None, [5u32, 6, 7]));
     let puts = [("whole", &whole), ("some_dead", &some_dead)].map(|(r, held)| super::super::kept_rows(&name(r), 77, vec![("q".into(), 9)], vec![b'i', b'i'], held).expect("a relation in a block"));
     store.queue_kept(SPACE, puts.into_iter().collect());
     let bound = Bound::of(&store, &SPACE).unwrap().expect("the space keeps facts");

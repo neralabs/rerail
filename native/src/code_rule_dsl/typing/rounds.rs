@@ -697,27 +697,31 @@ fn waves_par<A: AL>(g: &Graph, seed: &[u64]) -> (Vec<u64>, St) {
     let mut st = St::default();
     let vals: Vec<AtomicU64> = seed.iter().map(|&s| AtomicU64::new(s)).collect();
     let stamp: Vec<AtomicU32> = (0..g.n).map(|_| AtomicU32::new(0)).collect();
-    let mut frontier: Vec<u32> = (0..g.n as u32).into_par_iter().filter(|&v| seed[v as usize] != A::BOT && !g.outs(v as usize).is_empty()).collect();
+    let mut frontier: Vec<u32> = crate::code_rule_dsl::logic::profile::on_cores(|| (0..g.n as u32).into_par_iter().filter(|&v| seed[v as usize] != A::BOT && !g.outs(v as usize).is_empty()).collect());
     st.max_frontier = frontier.len();
     let mut wave = 0u32;
     while !frontier.is_empty() {
         wave += 1;
-        let cand: Vec<u32> = frontier
-            .par_iter()
-            .with_min_len(256)
-            .flat_map_iter(|&u| g.outs(u as usize).iter().copied())
-            .filter(|&v| stamp[v as usize].swap(wave, Relaxed) != wave)
-            .collect();
+        let cand: Vec<u32> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+            frontier
+                .par_iter()
+                .with_min_len(256)
+                .flat_map_iter(|&u| g.outs(u as usize).iter().copied())
+                .filter(|&v| stamp[v as usize].swap(wave, Relaxed) != wave)
+                .collect()
+        });
         st.visits += cand.len() as u64;
-        frontier = cand
-            .par_iter()
-            .with_min_len(256)
-            .copied()
-            .filter(|&v| {
-                let x = eval_a::<A>(g, seed, &vals, v as usize);
-                cas_join::<A>(&vals[v as usize], x)
-            })
-            .collect();
+        frontier = crate::code_rule_dsl::logic::profile::on_cores(|| {
+            cand
+                .par_iter()
+                .with_min_len(256)
+                .copied()
+                .filter(|&v| {
+                    let x = eval_a::<A>(g, seed, &vals, v as usize);
+                    cas_join::<A>(&vals[v as usize], x)
+                })
+                .collect()
+        });
         st.max_frontier = st.max_frontier.max(frontier.len());
     }
     st.iters = wave as usize;
@@ -1238,7 +1242,7 @@ pub(crate) fn main(dir: &str, gold: &str) {
             TyK { top: false, s }
         }
     };
-    let threads = rayon::current_num_threads();
+    let threads = crate::code_rule_dsl::logic::profile::cores_threads();
     println!("\n| wave-parallel ({threads} threads, atomics) | ms | waves | node visits | — | max frontier | agrees with sequential |");
     println!("|---|---|---|---|---|---|---|");
     let (v, st) = waves_par::<ACv>(&cg, &acv_seed);
@@ -1279,21 +1283,23 @@ pub(crate) fn main(dir: &str, gold: &str) {
     for &(v, op, l, r) in &b.cv_bins {
         cv_bins_local[b.gdoc[v as usize] as usize].push((g2l[v as usize], op, g2l[l as usize], g2l[r as usize]));
     }
-    let docs: Vec<DocG> = (0..ndoc)
-        .into_par_iter()
-        .map(|d| {
-            let g = Graph::new(members[d].len(), &ty_local[d], &[]);
-            let comps = tarjan(&g);
-            DocG { l2g: members[d].clone(), comps, cv_g: Graph::new(members[d].len(), &cv_local[d], &cv_bins_local[d]), g, cross_in: cross[d].clone() }
-        })
-        .collect();
+    let docs: Vec<DocG> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+        (0..ndoc)
+            .into_par_iter()
+            .map(|d| {
+                let g = Graph::new(members[d].len(), &ty_local[d], &[]);
+                let comps = tarjan(&g);
+                DocG { l2g: members[d].clone(), comps, cv_g: Graph::new(members[d].len(), &cv_local[d], &cv_bins_local[d]), g, cross_in: cross[d].clone() }
+            })
+            .collect()
+    });
     println!("\nper-document subgraphs built in {:.0} ms (parallel); cross-file type edges {}", tb.elapsed().as_secs_f64() * 1e3, cross.iter().map(Vec::len).sum::<usize>());
     let lseed_ty = |d: &DocG| -> Vec<Ty> { d.l2g.iter().map(|&v| b.ty_seed[v as usize].clone()).collect() };
     let lseed_cv = |d: &DocG| -> Vec<Cv> { d.l2g.iter().map(|&v| cv_seed[v as usize].clone()).collect() };
 
     // Per-document cv in parallel (cv is entirely doc-local, so this is the whole answer).
     let tp = Instant::now();
-    let per: Vec<(Vec<Cv>, St)> = docs.par_iter().map(|d| scc(&d.cv_g, &lseed_cv(d), &tarjan(&d.cv_g))).collect();
+    let per: Vec<(Vec<Cv>, St)> = crate::code_rule_dsl::logic::profile::on_cores(|| docs.par_iter().map(|d| scc(&d.cv_g, &lseed_cv(d), &tarjan(&d.cv_g))).collect());
     let par_ms = tp.elapsed().as_secs_f64() * 1e3;
     let mut cv_all = vec![Cv::Bot; b.gn];
     for (d, (vals, _)) in docs.iter().zip(&per) {
@@ -1303,21 +1309,23 @@ pub(crate) fn main(dir: &str, gold: &str) {
     }
     println!("per-document rayon, cv (SCC per document, Tarjan included): {par_ms:.1} ms, {}", ck_cv(&cv_all));
     let tp = Instant::now();
-    let _: Vec<(Vec<Ty>, St)> = docs.par_iter().map(|d| scc(&d.g, &lseed_ty(d), &d.comps)).collect();
+    let _: Vec<(Vec<Ty>, St)> = crate::code_rule_dsl::logic::profile::on_cores(|| docs.par_iter().map(|d| scc(&d.g, &lseed_ty(d), &d.comps)).collect());
     println!("per-document rayon, exact types, doc-local part only (R0): {:.1} ms", tp.elapsed().as_secs_f64() * 1e3);
     let tp = Instant::now();
     let _: Vec<(Vec<Ty>, St)> = (0..ndoc).map(|i| scc(&docs[i].g, &lseed_ty(&docs[i]), &docs[i].comps)).collect();
     println!("same, one thread: {:.1} ms", tp.elapsed().as_secs_f64() * 1e3);
 
     // Waves per document (semi-naive, doc-local), for the GPU estimate.
-    let mut wv: Vec<(usize, usize, usize, u32)> = docs
-        .par_iter()
-        .map(|d| {
-            let (_, a) = waves(&d.cv_g, &lseed_cv(d));
-            let (_, t) = waves(&d.g, &lseed_ty(d).iter().map(|s| TyK { top: s.0.len() > K, s: if s.0.len() > K { vec![] } else { s.0.clone() } }).collect::<Vec<_>>());
-            (a.iters, t.iters, d.l2g.len(), a.max_changes.max(t.max_changes))
-        })
-        .collect();
+    let mut wv: Vec<(usize, usize, usize, u32)> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+        docs
+            .par_iter()
+            .map(|d| {
+                let (_, a) = waves(&d.cv_g, &lseed_cv(d));
+                let (_, t) = waves(&d.g, &lseed_ty(d).iter().map(|s| TyK { top: s.0.len() > K, s: if s.0.len() > K { vec![] } else { s.0.clone() } }).collect::<Vec<_>>());
+                (a.iters, t.iters, d.l2g.len(), a.max_changes.max(t.max_changes))
+            })
+            .collect()
+    });
     let pct = |v: &mut Vec<usize>, p: f64| {
         v.sort_unstable();
         v[((v.len() as f64 - 1.0) * p) as usize]
@@ -1425,35 +1433,37 @@ pub(crate) fn main(dir: &str, gold: &str) {
         for l in 0..nlayers {
             let comps: Vec<usize> = (0..dcomps.len()).filter(|&i| layer[i] == l).collect();
             // Components of one layer are independent; run them in parallel.
-            let out: Vec<(usize, Vec<(usize, Vec<Ty>)>)> = comps
-                .par_iter()
-                .map(|&ci| {
-                    let mut over: HashMap<u32, Ty> = HashMap::new();
-                    let mut res: Vec<(usize, Vec<Ty>)> = Vec::new();
-                    let single = dcomps[ci].len() == 1;
-                    let mut rounds = 0;
-                    loop {
-                        rounds += 1;
-                        let before: Vec<u64> = dcomps[ci].iter().map(|&d| digest(d as usize, &all, &over)).collect();
-                        res.clear();
-                        for &d in &dcomps[ci] {
-                            let vals = eval_doc(d as usize, &all, &over, extra);
-                            for (i, x) in vals.iter().enumerate() {
-                                let gv = docs[d as usize].l2g[i];
-                                if gv as usize >= n {
-                                    over.insert(gv, x.clone());
+            let out: Vec<(usize, Vec<(usize, Vec<Ty>)>)> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+                comps
+                    .par_iter()
+                    .map(|&ci| {
+                        let mut over: HashMap<u32, Ty> = HashMap::new();
+                        let mut res: Vec<(usize, Vec<Ty>)> = Vec::new();
+                        let single = dcomps[ci].len() == 1;
+                        let mut rounds = 0;
+                        loop {
+                            rounds += 1;
+                            let before: Vec<u64> = dcomps[ci].iter().map(|&d| digest(d as usize, &all, &over)).collect();
+                            res.clear();
+                            for &d in &dcomps[ci] {
+                                let vals = eval_doc(d as usize, &all, &over, extra);
+                                for (i, x) in vals.iter().enumerate() {
+                                    let gv = docs[d as usize].l2g[i];
+                                    if gv as usize >= n {
+                                        over.insert(gv, x.clone());
+                                    }
                                 }
+                                res.push((d as usize, vals));
                             }
-                            res.push((d as usize, vals));
+                            let after: Vec<u64> = dcomps[ci].iter().map(|&d| digest(d as usize, &all, &over)).collect();
+                            if single || before == after {
+                                break;
+                            }
                         }
-                        let after: Vec<u64> = dcomps[ci].iter().map(|&d| digest(d as usize, &all, &over)).collect();
-                        if single || before == after {
-                            break;
-                        }
-                    }
-                    (rounds * dcomps[ci].len(), res)
-                })
-                .collect();
+                        (rounds * dcomps[ci].len(), res)
+                    })
+                    .collect()
+            });
             for (count, res) in out {
                 evals += count;
                 for (d, vals) in res {

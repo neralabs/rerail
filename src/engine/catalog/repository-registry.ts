@@ -16,7 +16,7 @@ import type { CheckoutContext, CheckoutRecord, RepositoryKey, RepositoryRecord, 
 import {
   checkoutIdentity,
   GIT_IDENTITY_FILE,
-  legacyBareCloneId,
+  folderMarkerCloneId,
   normalizeRemoteAddress,
   outsideGit,
   readCloneIdAt,
@@ -164,7 +164,7 @@ function deleteCheckoutSettings(db: Writer, checkoutPaths: readonly string[]): v
     db.delete(ruleSettings).where(and(eq(ruleSettings.ownerKind, "checkout"), inArray(ruleSettings.ownerId, paths))).run();
   }
   // The keys `runtime/merge-assist/state.ts` keeps per checkout (`STATE_KEYS`).
-  const keys = checkoutPaths.flatMap(path => [`conflicts:${path}`, `scan:${path}`, `scanning:${path}`]);
+  const keys = checkoutPaths.flatMap(path => [`conflicts:${path}`, `scan:${path}`, `scanning:${path}`, `unheard:${path}`]);
   for (const run of statementRuns(keys)) db.delete(mergeAssistState).where(inArray(mergeAssistState.key, run)).run();
 }
 
@@ -228,9 +228,9 @@ function recordCheckoutRow(
     tx.update(checkouts).set({ lastSeenAt: now }).where(eq(checkouts.checkoutPath, checkoutPath)).run();
     return existing.repositoryKey;
   }
-  // A bare repository's own checkout recorded under the id it had before bare clones and their linked checkouts shared
-  // one: the same checkout, its settings kept.
-  if (existing && location.main && location.workspaceRoot === dirname(location.identityPath) && existing.cloneId === legacyBareCloneId(location)) {
+  // A bare repository recorded under its own marker before its linked checkouts gave it their shared id: the same
+  // checkout, its settings kept.
+  if (existing && existing.cloneId !== cloneId && existing.cloneId === folderMarkerCloneId(location)) {
     const repositoryKey = cloneRepository(tx, cloneId) ?? existing.repositoryKey;
     tx.update(checkouts).set({ cloneId, repositoryKey, lastSeenAt: now }).where(eq(checkouts.checkoutPath, checkoutPath)).run();
     return repositoryKey;
@@ -318,6 +318,15 @@ export function lookupCheckout(db: Reader, workspace: string): CheckoutContext |
     throw error;
   }
   return lookupAt(db, repositoryIdentityLocation(workspace));
+}
+
+/**
+ * {@link lookupCheckout} at a location the caller read ({@link repositoryIdentityLocationAsync}, which runs its Git off
+ * the thread): a checkout whose marker names its clone, recorded, is found with no Git process. One with no marker
+ * reads its legacy id from Git's config, as {@link checkoutIdentity} does.
+ */
+export function lookupCheckoutAt(db: Reader, location: RepositoryIdentityLocation): CheckoutContext | undefined {
+  return lookupAt(db, location);
 }
 
 function lookupAt(db: Reader, location: RepositoryIdentityLocation): CheckoutContext | undefined {

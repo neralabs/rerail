@@ -73,10 +73,9 @@ impl<'a> P<'a> {
             _ => return self.expression_statement(s, top),
         }
         if self.cpp
-            && let Some(n) = self.cpp_statement(s)?
-        {
-            return Ok(n);
-        }
+            && let Some(n) = self.cpp_statement(s)? {
+                return Ok(n);
+            }
         match t.word {
             w::IF => self.if_statement(s),
             w::SWITCH => {

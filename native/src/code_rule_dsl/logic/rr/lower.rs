@@ -151,6 +151,13 @@ struct Violation {
     tag: Option<usize>,
 }
 
+impl Violation {
+    /// Whether its findings are at a tool call: its `at` is the call's id (`.scope tool_calls`).
+    fn call(&self) -> bool {
+        self.columns.first().is_some_and(|(_, ty)| ty == "symbol")
+    }
+}
+
 /// A finding's code: the violation's name, a column's value, or a constant.
 #[derive(Clone, Debug)]
 enum FindingCode {
@@ -508,6 +515,26 @@ fn once_key(v: &crate::code_rule_dsl::logic::program_image::Version, name: &str,
     let cols = F::columns_of(v, name).unwrap_or_default().into_iter().map(|(_, t)| t).collect();
     let rules = v.rules().filter(|r| v.rel_name(r.head().rel()) == name).take(k).map(|r| template_of(v, r, named)).collect();
     (stem.to_owned(), cols, rules)
+}
+
+/// The relations of the tool calls a run is given (`docs/rule-syntax/tool-calls.md`), core.rerail's: `tool_call(call,
+/// tool)` and `tool_input(call, key, value)`. A run's `toolCalls` option is their rows (`corpus::added`).
+pub const TOOL_CALLS: [&str; 2] = ["tool_call", "tool_input"];
+
+/// `.scope tool_calls`: the policy reads the tool calls a run is given ([`TOOL_CALLS`]) and no file, and its findings
+/// are at a call.
+pub fn reads_tool_calls(settings: &[(String, String)]) -> bool {
+    settings.iter().any(|(k, t)| k == "scope" && t.trim() == "tool_calls")
+}
+
+/// Whether a `.violation`'s `at` is a node; a span, a loc and a tool call's id (a symbol, in a `.scope tool_calls`
+/// policy: `findings::tool_call_findings`) are not, and anything else is no `at`.
+fn at_is_node(name: &str, at: &str) -> Result<bool, Error> {
+    match at {
+        "node" => Ok(true),
+        "span" | "loc" | "symbol" => Ok(false),
+        _ => Err(Error::Syntax(format!(".violation {name}: `at` is a node, a span, a loc or a tool call (symbol), not a {at}"))),
+    }
 }
 
 /// The globs a program's `.scope` settings select documents by: (within, out), `dirs` and `include` within, `exclude`
@@ -1538,11 +1565,15 @@ fn renamed_fields(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_
 }
 
 /// The scope's own declarations taken out of a module's program linked in it (`rr::link_seeded_version`), but for
-/// `core`'s.
-pub fn unseed(program: &mut (impl crate::code_rule_dsl::logic::program_image::fields::FieldsMut + ?Sized), seeds: &Seeds, core: &BTreeSet<String>) {
+/// `core`'s, and but for those the run's library part does not declare (`library`, its linked version): a seeded
+/// relation is the library's only where that part holds it. `core.rerail`'s `within`, which the library's linking
+/// keeps only where a library rule reads it, was read by the program and declared by no part of the run (`no
+/// declaration of within`), so a policy reading it ran alone (main's #863). A relation no part holds stays with the
+/// program, as `corpus::own_part` leaves a base relation it reads.
+pub fn unseed(program: &mut (impl crate::code_rule_dsl::logic::program_image::fields::FieldsMut + ?Sized), seeds: &Seeds, core: &BTreeSet<String>, library: Option<&crate::code_rule_dsl::logic::program_image::Version>) {
     use crate::code_rule_dsl::logic::program_facts::Field;
     let seeded = &seeds.seeded;
-    let gone = |r: &str| !core.contains(r);
+    let gone = |r: &str| !core.contains(r) && library.is_none_or(|l| l.declares(r));
     for r in program.declared_names() {
         if seeded.decls.contains(&r) && gone(&r) {
             program.undeclare(&r);
@@ -1656,6 +1687,8 @@ pub struct RulesSeen {
     /// The relations the rules derive: a violation none derives, with no facts and no input, is made of `@place`
     /// heads alone and has no document's rows to find.
     pub heads: BTreeSet<String>,
+    /// The first tool call's relation a rule reads (`TOOL_CALLS`), refused outside `.scope tool_calls`.
+    pub reads_tool_call: Option<&'static str>,
 }
 
 /// Whether a term makes a `@place` value (`RulesSeen`).
@@ -2038,7 +2071,6 @@ pub struct SpanProgram<'a> {
 /// The column of a relation that names a grammar (`grammar_names`).
 pub fn grammar_column(rel: &str) -> Option<usize> {
     match rel {
-        "embed" | "embed_value" => Some(2),
         "parsed" | "sub_tape" => Some(1),
         _ => None,
     }
@@ -2823,10 +2855,7 @@ impl Lowerer {
         use super::tape::{Field as F, Kind as K};
         let (name, cols, message) = t.violation(s)?;
         let Some((_, at)) = cols.first() else { return Err(Error::Syntax(format!(".violation {name} has no `at` column"))) };
-        if !matches!(at.as_str(), "node" | "span" | "loc") {
-            return Err(Error::Syntax(format!(".violation {name}: `at` is a node, a span or a loc, not a {at}")));
-        }
-        let node = at == "node";
+        let node = at_is_node(&name, at)?;
         let column = |c: &str| cols.iter().position(|(n, _)| n == c).ok_or_else(|| Error::Syntax(format!(".violation {name}: no column {c}")));
         let tag = match t.all(s, F::Tag).last() {
             Some(x) => Some(column(&t.brace_column(t.one(x, F::Column)?))?),
@@ -3870,8 +3899,10 @@ impl Lowerer {
             self.prog.fields().add_input(within);
         }
         let below = |me: &mut Self, neg: bool| me.emit_atom(within, vec![n.clone(), a.clone()], neg, false);
+        // One alternative, written when it is the one picked: inside a group, `(n = a ; within(n, a))`, the first
+        // alternative's rule holds no `within`.
         let Some(stop) = stop else {
-            below(self, neg)?;
+            self.alt(0, pick, |me| below(me, neg))?;
             return Ok(1);
         };
         let set = self.set_name("within_stop", stop)?;
@@ -5530,7 +5561,7 @@ const DEMANDS: [&str; 3] = ["rr_embed_req", "rr_parse_req", "rr_splice_req"];
 /// The placeholder for a demand's location (`value_demand`).
 const LOCATED: &str = "rr_located";
 
-const GUEST_RELATIONS: [&str; 13] = ["parsed", "sub_tape", "guest", "doc_root", "doc_grammar", "doc_role", "tape_of", "host_node", "guest_of", "guest_place", "parse_of", "unparse_of", "splice_of"];
+const GUEST_RELATIONS: [&str; 11] = ["parsed", "sub_tape", "rr_program", "doc_grammar", "tape_of", "host_node", "guest_of", "guest_place", "parse_of", "unparse_of", "splice_of"];
 
 /// The tape operations (decision 0058 §4): function, arity, the relation it reads, and that relation's columns.
 pub(super) const TAPE_OPS: [(&str, usize, &str, &[(&str, &str)]); 3] = [

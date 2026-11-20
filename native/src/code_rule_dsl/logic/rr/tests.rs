@@ -17,6 +17,18 @@ fn shown(v: &Version, keep: impl Fn(&str) -> bool) -> Vec<String> {
     v.rules().filter(|r| keep(v.rel_name(r.head().rel()))).map(|r| v.show_rule(r)).collect()
 }
 
+/// An alternative of a disjunction holds its own literals alone: `(i = k ; within(i, k))` is a rule with `i = k` and
+/// one with `within(i, k)`. The rule `within` wrote outside its pick held both, so the first alternative read only
+/// the keys' descendants (django-practice-bulk-not-loop reported `filter(**{field: value})`).
+#[test]
+fn an_alternative_holds_only_its_own_literals() {
+    let p = parse(".decl key(i: node)\nkey(i) :- kind(p, \"pair\"), field(p, \"key\", k), (i = k ; within(i, k)).\n.output key\n").unwrap();
+    let rules = shown(&p, |h| h == "key");
+    let within = format!("{}(", crate::code_rule_dsl::facts::vtab::syntax::WITHIN);
+    assert_eq!(rules.len(), 2, "{rules:?}");
+    assert_eq!(rules.iter().filter(|r| r.contains(&within)).count(), 1, "one alternative reads `within`: {rules:?}");
+}
+
 /// `v`'s rules whose head's relation passes `keep`.
 fn rules_of<'v>(v: &'v Version, keep: impl Fn(&str) -> bool) -> Vec<RuleRef<'v>> {
     v.rules().filter(|r| keep(v.rel_name(r.head().rel()))).collect()
@@ -2367,7 +2379,8 @@ roots(k) :- kind(s, "string"), parsed(s, "annotation", r), kind(r, k).
     // ("Li" "st"): each part is a string of its own, and the concatenation is List, from its first part's text.
     assert!(names.contains(&shown_row(&["Li", "5", "5"])), "{names:?}");
     assert_eq!(whole, [["List", "5", "5"]]);
-    assert_eq!(roots, [["identifier"], ["subscript"]]);
+    // Each root is a `type` (decision 0466 R5): what follows `x:` in a file.
+    assert_eq!(roots, [["type"]]);
     // 'Baz' inside "Opt['Baz']": round 2, through the annotation; `ident` does not see inside it.
     assert_eq!(nested, [["Baz"]]);
     assert!(!names.iter().any(|n| n[0].starts_with("Baz")), "{names:?}");
@@ -2376,7 +2389,8 @@ roots(k) :- kind(s, "string"), parsed(s, "annotation", r), kind(r, k).
 
 /// Decision 0431 §7 (it replaces Q30): a string a rule parses is a tape value, stored with its text behind the run,
 /// so the next run finds it by the text and parses nothing (R6). The host's source is stored, and so is the
-/// annotation's text as it is parsed (wrapped: `(List[int])`).
+/// annotation's text, as it is (no wrapper). Decision 0466 R6: its tape is stored under the fragment's own tag, and
+/// no tape of the text under Python's.
 #[test]
 fn a_run_stores_its_tape_values_by_their_text() {
     use sha2::Digest as _;
@@ -2391,7 +2405,13 @@ ident(x) :- kind(s, "string"), parsed(s, "annotation", _), guest_of(i, s), kind(
     let store = crate::content_store::ContentStore::open(&crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().unwrap()).unwrap();
     let key = |t: &str| crate::content_store::HashKey::from_sha256_digest(sha2::Sha256::digest(t.as_bytes()).into());
     assert!(store.source_by_hash(key(py)).unwrap().is_some(), "the host's source is stored");
-    assert!(store.source_by_hash(key("(List[int])")).unwrap().is_some(), "the tape value's text is stored");
+    let text = store.source_by_hash(key("List[int]")).unwrap().expect("the tape value's text is stored");
+    let (gv, fv) = (crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()));
+    let tag = |t: u8| i64::from(t);
+    let fragment = crate::code_rule_dsl::language::fragment_tag("annotation").unwrap();
+    let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python).unwrap();
+    assert!(store.tape_frames_for(&[text], tag(fragment), gv, fv).unwrap()[0].is_some(), "under the fragment's tag");
+    assert!(store.tape_frames_for(&[text], tag(python), gv, fv).unwrap()[0].is_none(), "not under Python's");
 }
 
 /// Decision 0431 R1: there are no guest documents. A program the grammar holds (an HTML file's scripts) is part of its
@@ -2544,20 +2564,18 @@ kept(l) :- kind(s, "string"), sub_tape(s, "annotation", _), line(s, l).
     assert_eq!(roots, [["1"], ["2"]], "the broken guest keeps its partial tree");
 }
 
-/// A library's `embed` and `embed_value` declare guests of a role. `sub_tape` gives a guest's tape: equal texts share
-/// one. Guests in the run's language are shown to rules that do not name them (`top`) unless `.guests off`; a rule
-/// that reaches them through a guest relation (`doc_role`) sees them either way (decision 0058 §1).
+/// A string a rule parses is reached through `parsed` (decision 0431 §2; the libraries' `embed` went with §4).
+/// `sub_tape` gives its tape: equal texts share one. A tape value is never code to a rule that does not name it
+/// (`top`), `.guests off` or not; the rule that parses it reaches it either way (decision 0058 §1).
 #[test]
-fn embeds_declare_guests_and_guests_off_leaves_them_out() {
+fn parsed_strings_are_reached_through_parsed_and_guests_off_leaves_them_reached() {
     let py = "a = \"import os\"\nb = \"import os\"\nc = 1\n";
     let rule = |guests: &str| {
         format!(
             r#"
 {guests}
-embed(d, s, "python", "code") :- kind(s, "string"), docof(s, d).
-embed_value(d, n, "python", "made", "import sys") :- kind(n, "integer"), docof(n, d).
-.decl imp(r: symbol, x: symbol, l: number)
-imp(r, x, l) :- doc_role(g, r), node(g, i, "import_statement", _, _), text(i, x), line(i, l).
+.decl imp(x: symbol, l: number)
+imp(x, l) :- kind(s, "string"), parsed(s, "python", r), within(i, r), kind(i, "import_statement"), text(i, x), line(s, l).
 .decl tapes(t: tape)
 tapes(t) :- kind(s, "string"), sub_tape(s, "python", t).
 .decl top(x: symbol, l: number)
@@ -2566,30 +2584,31 @@ top(x, l) :- kind(i, "import_statement"), text(i, x), line(i, l).
 "#
         )
     };
-    let guests = [["code", "import os", "1"], ["code", "import os", "2"], ["made", "import sys", "3"]];
+    let parsed = [["import os", "1"], ["import os", "2"]];
     let [imp, tapes, top] = <[Vec<Vec<String>>; 3]>::try_from(guests_run("embed", &[("a.py", py)], &rule(""), &["imp", "tapes", "top"])).unwrap();
-    assert_eq!(imp, guests);
+    assert_eq!(imp, parsed);
     assert_eq!(tapes.len(), 1, "{tapes:?}");
-    assert_eq!(top, [["import os", "1"], ["import os", "2"], ["import sys", "3"]], "Python guests are shown in a Python run");
+    assert!(top.is_empty(), "a tape value is no rule's code that does not name it: {top:?}");
     let [imp, top] = <[Vec<Vec<String>>; 2]>::try_from(guests_run("embedoff", &[("a.py", py)], &rule(".guests off"), &["imp", "top"])).unwrap();
-    assert_eq!(imp, guests, "`.guests off` hides guests; it does not stop a library's embeds");
+    assert_eq!(imp, parsed, "`.guests off` hides guests; `parsed` still reaches them");
     assert!(top.is_empty(), "{top:?}");
 }
 
-/// SQL in a Python string (decision 0058 §1–2): a library's `embed` makes an SQL guest on an SQL tape (tag 10). A
-/// rule that reaches it through `guest` names SQL kinds, and they print as SQL's; a rule that does not name a guest
-/// sees only the Python file, even for the qualified `"sql:…"` kind.
+/// SQL in a Python string (decision 0058 §1–2): a rule's `parsed` makes an SQL tape value (tag 10). A rule that
+/// reaches it through `parsed` names SQL kinds, and they print as SQL's, placed at the file's lines through the string
+/// (`guest_place`); a rule that does not name a guest sees only the Python file, even for the qualified `"sql:…"` kind.
 #[test]
 fn sql_in_python_is_an_sql_tape_hidden_from_unscoped_rules() {
     let py = "def f(db):\n    db.execute(\"SELECT name FROM users WHERE id = 1\")\n    db.execute(\"SELECT \\\"id\\\" FROM orders\")\n";
     let rule = r#"
-embed(d, s, "sql", "query") :- kind(c, "call"), field(c, "arguments", a), child(a, s, _), kind(s, "string"), docof(s, d).
+.decl sqlstr(s: node)
+sqlstr(s) :- kind(c, "call"), field(c, "arguments", a), child(a, s, _), kind(s, "string").
 .decl sqlkinds(k: symbol)
-sqlkinds(k) :- guest(g, _, _, "sql"), node(g, _, k, _, _).
+sqlkinds(k) :- sqlstr(s), parsed(s, "sql", r), (n = r ; within(n, r)), node(_, n, k, _, _).
 .decl docs(g: number)
-docs(g) :- guest(g, _, _, "sql").
+docs(g) :- sqlstr(s), parsed(s, "sql", r), node(g, r, _, _, _).
 .decl objects(x: symbol, l: number, c: number)
-objects(x, l, c) :- guest(g, _, _, "sql"), node(g, n, "object_reference", _, _), text(n, x), line(n, l), col(n, c).
+objects(x, l, c) :- sqlstr(s), parsed(s, "sql", r), within(n, r), kind(n, "object_reference"), text(n, x), guest_place(n, s, l, c).
 .decl unscoped(k: symbol)
 unscoped(k) :- node(_, _, k, _, _).
 .decl qualified(x: symbol)
@@ -2606,7 +2625,7 @@ counted(c) :- c = count : { kind(_, "sql:object_reference") }.
     let [sqlkinds, objects, unscoped, qualified, counted] = <[Vec<Vec<String>>; 5]>::try_from(shown).unwrap();
     assert!(sqlkinds.contains(&shown_row(&["object_reference"])), "{sqlkinds:?}");
     assert!(!sqlkinds.contains(&shown_row(&["call"])), "SQL nodes are SQL's kinds: {sqlkinds:?}");
-    assert!(docs.len() == 2 && docs.iter().all(|&g| g >= i64::from(crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS)), "an SQL guest in a Python run is a hidden document: {docs:?}");
+    assert!(docs.len() == 2 && docs.iter().all(|&g| g >= i64::from(crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS)), "an SQL tape value in a Python run is hidden: {docs:?}");
     assert!(objects.contains(&shown_row(&["users", "2", "33"])), "{objects:?}");
     // `"SELECT \"id\" FROM orders"` parses as its normalized text, and `orders` keeps its column past the escapes.
     assert!(objects.contains(&shown_row(&["orders", "3", "35"])), "{objects:?}");
@@ -2617,7 +2636,8 @@ counted(c) :- c = count : { kind(_, "sql:object_reference") }.
     assert!(counted.iter().all(|c| c == &["0"]), "{counted:?}");
 }
 
-/// An HTML file's `<script>` and `<style>` are guests (`html/embeds.rerail`, decision 0238): a script's text is
+/// An HTML file's `<script>` and `<style>` are its grammar's programs (decision 0238; 0431 §4: `embed::raw_text`, which
+/// `html/embeds.rerail` describes): a script's text is
 /// JavaScript, or JSON by its type, and none for a type no grammar reads; a style's text is CSS. Each stands at its
 /// `raw_text`, so its nodes have the file's lines.
 #[test]
@@ -2627,25 +2647,34 @@ fn html_scripts_and_styles_are_javascript_json_and_css_guests() {
 .language html
 #include "html/embeds.rerail"
 .decl calls(x: symbol, l: number)
-calls(x, l) :- guest(g, _, _, "javascript"), node(g, c, "call_expression", _, _), text(c, x), line(c, l).
+calls(x, l) :- kind(t, "raw_text"), parsed(t, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x), line(c, l).
 .decl decls(x: symbol, l: number)
-decls(x, l) :- guest(g, _, _, "css"), node(g, n, "declaration", _, _), text(n, x), line(n, l).
+decls(x, l) :- kind(t, "raw_text"), parsed(t, "css", p), within(n, p), kind(n, "declaration"), text(n, x), line(n, l).
 .decl pairs(x: symbol, l: number)
-pairs(x, l) :- guest(g, _, _, "json"), node(g, n, "pair", _, _), text(n, x), line(n, l).
-.decl guests(g: symbol, r: symbol)
-guests(g, r) :- guest(d, _, _, g), doc_role(d, r).
-.output calls, decls, pairs, guests
+pairs(x, l) :- kind(t, "raw_text"), parsed(t, "json", p), within(n, p), kind(n, "pair"), text(n, x), line(n, l).
+.decl guests(g: symbol)
+guests(g) :- kind(t, "raw_text"), parsed(t, g, _).
+.decl own(x: symbol)
+own(x) :- kind(t, "raw_text"), parsed(t, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x), node(d, c, _, _, _), docof(t, d).
+.decl bydoc(x: symbol)
+bydoc(x) :- kind(t, "raw_text"), parsed(t, "javascript", p), node(d, p, _, _, _), node(d, c, "javascript:call_expression", _, _), text(c, x).
+.output calls, decls, pairs, guests, own, bydoc
 "#;
-    let [calls, decls, pairs, guests] = <[Vec<String>; 4]>::try_from(joined(guests_run("htmlguests", &[("a.html", html)], rule, &["calls", "decls", "pairs", "guests"]))).unwrap();
+    let [calls, decls, pairs, guests, own, bydoc] = <[Vec<String>; 6]>::try_from(joined(guests_run("htmlguests", &[("a.html", html)], rule, &["calls", "decls", "pairs", "guests", "own", "bydoc"]))).unwrap();
     assert_eq!(calls, ["f(1)\t3", "g(2)\t6"]);
     assert_eq!(decls, ["color: red;\t9"]);
     assert_eq!(pairs, ["\"a\": 1\t7"]);
-    assert_eq!(guests, ["css\tprogram", "javascript\tprogram", "json\tprogram"], "the template script has no guest");
+    assert_eq!(guests, ["css", "javascript", "json"], "the template script has no program");
+    // A program is named by its file and place (decision 0431 §4): its nodes' document is the file's, and a lookup by
+    // the file finds every program's. A file's document is no one grammar's, so a kind read through it is qualified.
+    assert_eq!(own, ["f(1)", "g(2)"], "a program's node is in its file's document");
+    assert_eq!(bydoc, ["f(1)", "g(2)"], "the file's document holds both scripts' calls");
 }
 
-/// A Markdown file's inline content is guests of tree-sitter-md's inline grammar (`markdown/embeds.rerail`, decision
-/// 0238): each `inline` and `pipe_table_cell` node, its text less the block continuations inside it (a quote's
-/// `> `), so its nodes stand at the file's lines and columns, past the continuations too.
+/// A Markdown file's inline content is its programs in tree-sitter-md's inline grammar (decision 0238; 0431 §4:
+/// `embed::inline_content`, which `markdown/embeds.rerail` describes): each `inline` and `pipe_table_cell` node, its text
+/// less the block continuations inside it (a quote's `> `), so its nodes stand at the file's lines and columns, past
+/// the continuations too.
 #[test]
 fn markdown_inline_content_is_a_guest_at_its_host_places() {
     let md = "# A *b*\n\n> Some *text* and a [link](u)\n> on `two` lines.\n\n| a | **b** |\n|---|---|\n| `c` | d |\n";
@@ -2653,15 +2682,17 @@ fn markdown_inline_content_is_a_guest_at_its_host_places() {
 .language markdown
 #include "markdown/embeds.rerail"
 .decl at(k: symbol, x: symbol, l: number, c: number)
-at("emphasis", x, l, c) :- guest(g, _, _, "markdown-inline"), node(g, n, "emphasis", _, _), text(n, x), line(n, l), col(n, c).
-at("strong_emphasis", x, l, c) :- guest(g, _, _, "markdown-inline"), node(g, n, "strong_emphasis", _, _), text(n, x), line(n, l), col(n, c).
-at("code_span", x, l, c) :- guest(g, _, _, "markdown-inline"), node(g, n, "code_span", _, _), text(n, x), line(n, l), col(n, c).
-at("link_destination", x, l, c) :- guest(g, _, _, "markdown-inline"), node(g, n, "link_destination", _, _), text(n, x), line(n, l), col(n, c).
-.decl roles(r: symbol)
-roles(r) :- guest(d, _, _, "markdown-inline"), doc_role(d, r).
-.output at, roles
+at("emphasis", x, l, c) :- parsed(_, "markdown-inline", p), within(n, p), kind(n, "emphasis"), text(n, x), line(n, l), col(n, c).
+at("strong_emphasis", x, l, c) :- parsed(_, "markdown-inline", p), within(n, p), kind(n, "strong_emphasis"), text(n, x), line(n, l), col(n, c).
+at("code_span", x, l, c) :- parsed(_, "markdown-inline", p), within(n, p), kind(n, "code_span"), text(n, x), line(n, l), col(n, c).
+at("link_destination", x, l, c) :- parsed(_, "markdown-inline", p), within(n, p), kind(n, "link_destination"), text(n, x), line(n, l), col(n, c).
+// A grammar named by a variable asks for nothing (`parsed(h, "markdown-inline", _)` beside `kind(h, k)` would ask
+// for every node's text): this reads the programs the file holds.
+.decl hosts(g: symbol, k: symbol)
+hosts(g, k) :- parsed(h, g, _), kind(h, k).
+.output at, hosts
 "#;
-    let [at, roles] = <[Vec<String>; 2]>::try_from(joined(guests_run("mdinline", &[("a.md", md)], rule, &["at", "roles"]))).unwrap();
+    let [at, hosts] = <[Vec<String>; 2]>::try_from(joined(guests_run("mdinline", &[("a.md", md)], rule, &["at", "hosts"]))).unwrap();
     assert_eq!(
         at,
         [
@@ -2673,7 +2704,7 @@ roles(r) :- guest(d, _, _, "markdown-inline"), doc_role(d, r).
             "strong_emphasis\t**b**\t6\t6",
         ]
     );
-    assert_eq!(roles, ["fragment"]);
+    assert_eq!(hosts, ["markdown-inline\tinline", "markdown-inline\tpipe_table_cell"], "each program stands at its inline or cell");
 }
 
 /// Tape operations (decision 0058 §4): `@parse(g, x)` makes a value document from a text (here a string's
@@ -2693,16 +2724,13 @@ back(x) :- q(_, x0), t = @parse("sql", x0), x = @unparse(t).
 fixed(x) :- q(_, x0), t = @parse("sql", x0), tape_of(d, t), node(d, n, "object_reference", _, _), text(n, "users"), t2 = @parse("sql", "accounts"), t3 = @splice(t, n, t2), x = @unparse(t3).
 .decl seen(x: symbol)
 seen(x) :- kind(n, "object_reference"), text(n, x).
-.decl roles(r: symbol)
-roles(r) :- doc_role(_, r).
-.output tables, back, fixed, seen, roles
+.output tables, back, fixed, seen
 "#;
-    let [tables, back, fixed, seen, roles] = <[Vec<Vec<String>>; 5]>::try_from(guests_run("tapeops", &[("a.py", py)], rule, &["tables", "back", "fixed", "seen", "roles"])).unwrap();
+    let [tables, back, fixed, seen] = <[Vec<Vec<String>>; 4]>::try_from(guests_run("tapeops", &[("a.py", py)], rule, &["tables", "back", "fixed", "seen"])).unwrap();
     // `"SELECT name \<newline> FROM users"`: the escaped newline is gone from the text that is parsed.
     assert_eq!(back, [["SELECT name  FROM users"]]);
     assert_eq!(tables, [["users", "1"]], "a value's places are its own text's");
     assert_eq!(fixed, [["SELECT name  FROM accounts"]]);
-    assert_eq!(roles, [["primary"], ["value"]]);
     assert!(seen.is_empty(), "{seen:?}");
 }
 
@@ -2866,7 +2894,8 @@ objects(n, x) :- q(s, x0), t = @parse("sql", x0), tape_of(d, t), node(d, n, "obj
 }
 
 /// A combined run's programs each see the guests their own `.guests` shows (decision 0058 §1, O97): one batch, one
-/// set of embeds, and each program's rules bounded by its own setting.
+/// set of tape values, and each program's rules bounded by its own setting. A tape value is no unscoped rule's code
+/// under either (decision 0431 §3); the rule that parses it reaches it under both.
 #[test]
 fn combined_programs_see_guests_by_their_own_policy() {
     let py = "a = \"import os\"\nb = \"import sys\"\n";
@@ -2874,11 +2903,10 @@ fn combined_programs_see_guests_by_their_own_policy() {
         format!(
             r#"
 {guests}
-embed(d, s, "python", "code") :- kind(s, "string"), docof(s, d).
 .decl top(x: symbol, l: number)
 top(x, l) :- kind(i, "import_statement"), text(i, x), line(i, l).
 .decl through(x: symbol)
-through(x) :- doc_role(g, "code"), node(g, i, "import_statement", _, _), text(i, x).
+through(x) :- kind(s, "string"), parsed(s, "python", r), within(i, r), kind(i, "import_statement"), text(i, x).
 .output top, through
 "#
         )
@@ -2901,7 +2929,7 @@ through(x) :- doc_role(g, "code"), node(g, i, "import_statement", _, _), text(i,
     let (off, on, off_through, on_through) = (read("p0_top"), read("p1_top"), read("p0_through"), read("p1_through"));
     let _ = std::fs::remove_dir_all(&dir);
     assert!(off.is_empty(), "`.guests off` hides the guests from its own rules: {off:?}");
-    assert_eq!(on, [["import os", "1"], ["import sys", "2"]], "the other program shows them");
+    assert!(on.is_empty(), "a tape value is no unscoped rule's code: {on:?}");
     assert_eq!(off_through, [["import os"], ["import sys"]], "a guest relation reaches them under `.guests off`");
     assert_eq!(on_through, off_through);
 }
@@ -2912,11 +2940,10 @@ through(x) :- doc_role(g, "code"), node(g, i, "import_statement", _, _), text(i,
 fn kind_sets_over_a_guest_are_its_grammars() {
     let py = "def f(db):\n    db.execute(\"SELECT name FROM users\")\n";
     let rule = r#"
-embed(d, s, "sql", "query") :- kind(c, "call"), field(c, "arguments", a), child(a, s, _), kind(s, "string"), docof(s, d).
 .decl clauses(kind: symbol)
 clauses("relation"). clauses("function_definition").
 .decl enclosing(x: symbol, k: symbol)
-enclosing(x, k) :- guest(g, _, _, "sql"), node(g, n, "object_reference", _, _), text(n, x), nearest(n, a, clauses), node(_, a, k, _, _).
+enclosing(x, k) :- kind(c, "call"), field(c, "arguments", l), child(l, s, _), kind(s, "string"), parsed(s, "sql", r), within(n, r), kind(n, "object_reference"), text(n, x), nearest(n, a, clauses), node(_, a, k, _, _).
 .decl outer(k: symbol)
 outer(k) :- kind(n, "call"), nearest(n, a, clauses), node(_, a, k, _, _).
 .output enclosing, outer
@@ -2942,6 +2969,49 @@ names(t) :- kind(s, "string"), parsed(s, "braceFormat", r), within(x, r), kind(x
     let [fields, names] = <[Vec<Vec<String>>; 2]>::try_from(guests_run("guestaxes", &[("a.py", py)], rule, &["fields", "names"])).unwrap();
     assert_eq!(fields, [["{a}"], ["{b:>{w}}"], ["{w}"]], "`has` reaches the guest's fields, nested ones too");
     assert_eq!(names, [["a"], ["b"], ["w"]], "`inside` climbs to a guest's field");
+}
+
+/// The `try` statements of `py` in a `with` block's body, read through a relation an annotation's root may fill too
+/// (as `sym_of` is), with `negated` (`!inside`, `within_stop` or `!has`) excluding those a def is around or in. Hiding
+/// clones the rule for annotation nodes, its axis over a copy of the kind set; folding that set into its original left
+/// the clone's axis on a set that no longer was, with no rows, so the negation held for every `try`.
+fn tries_in_the_block(name: &str, py: &str, negated: &str) -> Vec<Vec<String>> {
+    let rule = format!(
+        r#"
+.decl body(b: node)
+body(b) :- kind(w, "with_statement"), field(w, "body", b).
+body(r) :- kind(s, "string"), parsed(s, "annotation", r).
+.decl attempt(t: node)
+attempt(t) :- kind(t, "try_statement").
+.decl found(l: number)
+found(l) :- attempt(t), body(b), {negated}, line(t, l).
+.output found
+"#
+    );
+    guests_run(name, &[("a.py", py)], &rule, &["found"]).remove(0)
+}
+
+/// A `try` on line 2, and one on line 7 inside a def nested in the block.
+const TRY_IN_A_NESTED_DEF: &str = "with lock:\n    try:\n        pass\n    except E:\n        pass\n    def later():\n        try:\n            pass\n        except E:\n            pass\n";
+
+/// `!inside(t, _, S)` over a node of a relation an annotation may fill holds only where no ancestor is in S.
+#[test]
+fn a_negated_inside_over_a_maybe_annotation_node_reads_its_kind_set() {
+    assert_eq!(tries_in_the_block("negatedinside", TRY_IN_A_NESTED_DEF, "within(t, b), !inside(t, _, \"function_definition\")"), [["2"]]);
+}
+
+/// `within_stop(t, b, S)` from a node of a relation an annotation may fill stops at S.
+#[test]
+fn within_stop_over_a_maybe_annotation_node_stops_at_its_kind_set() {
+    assert_eq!(tries_in_the_block("withinstop", TRY_IN_A_NESTED_DEF, "within_stop(t, b, \"function_definition\")"), [["2"]]);
+}
+
+/// `!has(t, _, S)` over a node of a relation an annotation may fill holds only where no descendant is in S: the `try`
+/// on line 6 holds a def.
+#[test]
+fn a_negated_has_over_a_maybe_annotation_node_reads_its_kind_set() {
+    let py = "with lock:\n    try:\n        pass\n    except E:\n        pass\n    try:\n        def later():\n            pass\n    except E:\n        pass\n";
+    assert_eq!(tries_in_the_block("negatedhas", py, "within(t, b), !has(t, _, \"function_definition\")"), [["2"]]);
 }
 
 /// `.scope` selects a repository's files (`core.rerail`): a finding in a document outside `dirs`, or under a `tests`
@@ -3504,6 +3574,95 @@ reach(a, c) :- reach(a, b), edge(b, c).
     ]);
 }
 
+/// A tool call is a test's input (`.tool_call`, `docs/rule-syntax/tool-calls.md`): the run is given the test's calls,
+/// "1", "2", … in order, and a `.scope tool_calls` policy's finding is at the call (path "", line 0, `at` its id). A
+/// call of another tool, a `--dry-run`, or the command in another argument is no finding.
+#[test]
+fn a_tests_tool_calls_are_its_runs_and_a_finding_is_at_the_call() {
+    let policy = r#".policy "t:tool-calls" revision 1
+.mode steer
+.scope tool_calls
+.violation Push(at: symbol) code "no-push" "a push from call {at}"
+Push(c) :- tool_call(c, "Bash"), tool_input(c, "command", s), match("(?s:.*)(?:\\bgit\\s+push\\b)(?s:.*)", s), !match("(?s:.*)(?:--dry-run)(?s:.*)", s).
+.test caught exactly
+    .tool_call "Bash" `{"command": "cd x &&\ngit push origin main"}`
+    .tool_call "Bash" `{"command": "git status"}`
+    .expect "no-push"
+.end
+.test passes
+    .tool_call "Bash" `{"command": "git push --dry-run"}`
+    .tool_call "Read" `{"command": "git push"}`
+    .tool_call "Bash" `{"description": "git push"}`
+    .expect no "no-push"
+.end
+.test says_which_call
+    .tool_call "Bash" `{"command": "ls"}`
+    .tool_call "Bash" `{"command": "git push"}`
+    .expect no "no-push"
+.end
+"#;
+    assert_eq!(run_tests_of("rr-tool-calls", policy), [
+        ("caught".to_owned(), Ok(vec![])),
+        ("passes".to_owned(), Ok(vec![])),
+        ("says_which_call".to_owned(), Ok(vec!["line 20: .expect no no-push: reported no-push at call \"2\"".to_owned()])),
+    ]);
+    let refused = run_tests_of("rr-tool-call-bad", ".decl r(x: symbol)\n.test t\n    .tool_call \"Bash\" `[1]`\n.end\n");
+    assert!(matches!(&refused[..], [(_, Err(e))] if e.contains(":3: `.tool_call \"<tool>\"`")), "{refused:?}");
+    // An empty fence (two backticks and nothing else) is refused with its line, not read past its ends.
+    for (directive, usage) in [(".tool_call \"Bash\" ``", ":3: `.tool_call \"<tool>\"`"), (".fixture \"a.py\" ``", ":3: `.fixture \"<path>\"` then a fenced text")] {
+        let refused = run_tests_of("rr-empty-fence", &format!(".decl r(x: symbol)\n.test t\n    {directive}\n.end\n"));
+        assert!(matches!(&refused[..], [(_, Err(e))] if e.contains(usage)), "{directive}: {refused:?}");
+    }
+}
+
+/// A policy reads tool calls when it says so, `.scope tool_calls` (as a JSON rule that reads `input` samples tool
+/// calls), and then reads no file, its findings at a call (`at: symbol`).
+#[test]
+fn a_policy_reads_tool_calls_only_under_scope_tool_calls() {
+    let head = ".policy \"t\" revision 1\n";
+    let reads = "V(c) :- tool_input(c, \"command\", s), match(\"ls\", s).\n";
+    let program = super::read_text(&format!("{head}.scope tool_calls\n.violation V(at: symbol) \"v\"\n{reads}")).unwrap().lower_version(false).unwrap();
+    assert_eq!(crate::code_rule_dsl::logic::program_image::fields::ProgramFields::doc_scopes(&*program), Some(Vec::new()), "a policy of tool calls reads no document");
+    for (text, why) in [
+        (format!("{head}.decl r(s: symbol)\nr(s) :- tool_input(_, \"command\", s).\n.output r\n"), "a policy that reads tool calls says `.scope tool_calls`"),
+        (format!("{head}.scope tool_calls\n.violation V(at: node) \"v\"\nV(n) :- kind(n, \"call\").\n"), "findings are at a tool call, `at: symbol`"),
+        (format!("{head}.violation V(at: symbol) \"v\"\nV(s) :- tool_input(_, \"command\", s).\n"), "says `.scope tool_calls`"),
+        (format!("{head}.violation V(at: symbol) \"v\"\n.decl w(s: symbol)\nw(\"a\").\nV(s) :- w(s).\n"), "only in a `.scope tool_calls` policy"),
+        (format!("{head}.scope tool_calls\n.scope include \"**/*.py\"\n.violation V(at: symbol) \"v\"\n{reads}"), "no `.scope include \"**/*.py\"` beside it"),
+        // A call's message names its id (`{at}`), never a property of it: a call has no line or name.
+        (format!("{head}.scope tool_calls\n.violation V(at: symbol) \"v {{at.line}}\"\n{reads}"), "{at.line}: a tool call has only its id"),
+        (format!("{head}.scope tool_calls\n.violation V(at: symbol) \"v {{at.name}}\"\n{reads}"), "{at.name}: a tool call has only its id"),
+    ] {
+        let error = super::read_text(&text).unwrap().lower_version(false).unwrap_err().to_string();
+        assert!(error.contains(why), "{text}: {error}");
+    }
+}
+
+/// A run of a file policy and a tool-call policy together (`docs/rule-syntax/tool-calls.md`): each finds what it finds
+/// alone, the file's finding at its path and line, the call's at the call.
+#[test]
+fn a_run_of_file_and_tool_call_policies_finds_both() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.py"), "x = 1\nf()\n").unwrap();
+    let file = dir.path().join("calls-file.rerail");
+    std::fs::write(&file, ".policy \"t:calls-file\" revision 1\n.language python\n.violation Call(at: node) code \"C1\" \"a call\"\nCall(c) :- kind(c, \"call\").\n").unwrap();
+    let tool = dir.path().join("calls-tool.rerail");
+    std::fs::write(&tool, ".policy \"t:calls-tool\" revision 1\n.scope tool_calls\n.violation Push(at: symbol) code \"no-push\" \"a push in call {at}\"\nPush(c) :- tool_input(c, \"command\", s), match(\"(?s:.*)(?:git push)(?s:.*)\", s).\n").unwrap();
+    let calls = serde_json::json!({ "toolCalls": [{"id": "e1", "tool": "Bash", "input": {"command": "git push"}}, {"id": "e2", "tool": "Bash", "input": {"command": "ls"}}] });
+    let report = crate::code_rule_dsl::tools::run_policies(&[file, tool], &root, &dir.path().join("out"), &calls).unwrap();
+    let mut found: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|d| (d["code"].clone(), d["path"].clone(), d["line"].clone(), d["at"].as_str().map(str::to_owned))).collect();
+    found.sort_by_key(|f| f.0.to_string());
+    assert_eq!(found, [
+        (serde_json::json!("C1"), serde_json::json!("a.py"), serde_json::json!(2), None),
+        (serde_json::json!("no-push"), serde_json::json!(""), serde_json::json!(0), Some("e1".to_owned())),
+    ], "{report}");
+    // The message names the call by its id (`{at}`).
+    let messages: Vec<&str> = report["diagnostics"].as_array().unwrap().iter().filter(|d| d["code"] == "no-push").filter_map(|d| d["message"].as_str()).collect();
+    assert_eq!(messages, ["a push in call e1"], "{report}");
+}
+
 /// What a test may not do is refused with its line: give a core relation, give one no rule declares, use a set that
 /// is not there, or have two fixtures at one path.
 #[test]
@@ -3979,11 +4138,11 @@ fn has_over_a_guest_holds_with_two_programs() {
     let text = |clause: &str, body: &str| {
         let path = dir.join(format!("{clause}.rerail"));
         std::fs::write(&path, format!(
-            "embed(d, s, \"sql\", \"query\") :- kind(c, \"call\"), field(c, \"arguments\", a), child(a, s, _), kind(s, \"string\"), docof(s, d).\n.violation {clause}(at: node) code \"{clause}\" \"m\"\n{clause}(n) :- {body}.\n"
+            ".violation {clause}(at: node) code \"{clause}\" \"m\"\n{clause}(n) :- {body}.\n"
         )).unwrap();
         crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap()
     };
-    let has = text("has_ref", "guest(g, _, _, \"sql\"), doc_root(g, n), has(n, _, \"object_reference\")");
+    let has = text("has_ref", "kind(c, \"call\"), field(c, \"arguments\", a), child(a, s, _), kind(s, \"string\"), parsed(s, \"sql\", r), has(r, _, \"object_reference\"), n = s");
     let other = text("calls", "kind(n, \"call\")");
     let out = dir.join("out");
     let options = serde_json::json!({ "memo": "off" });
@@ -4004,13 +4163,17 @@ fn library_modules_link_to_the_lowering_of_them_together() {
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(&packs).unwrap().map(|e| e.unwrap().path()).filter(|p| p.is_dir()).collect();
     dirs.sort();
     let mut checked = 0;
-    for dir in dirs {
-        let mut programs: Vec<PathBuf> = walk_rr(&dir);
+    // Every pack's programs' include graphs in one run of phase 0 (`modules_of`), not one a program or a pack (Q361).
+    let srcs: Vec<(PathBuf, String)> = dirs.iter().flat_map(|dir| {
+        let mut programs = walk_rr(dir);
         programs.sort();
+        programs.into_iter().filter_map(|p| Some((dir.clone(), std::fs::read_to_string(&p).ok()?))).collect::<Vec<_>>()
+    }).collect();
+    let mut found: Vec<(PathBuf, Result<Option<Modules>, Error>)> = srcs.iter().map(|(d, _)| d.clone()).zip(super::modules_of(&srcs.iter().map(|(_, s)| s.as_str()).collect::<Vec<_>>())).collect();
+    for dir in dirs {
         let mut paths: Vec<PathBuf> = Vec::new();
-        for p in &programs {
-            let Ok(src) = std::fs::read_to_string(p) else { continue };
-            let Ok(Some(m)) = modules(&src) else { continue };
+        for (_, m) in found.extract_if(.., |(d, _)| *d == dir) {
+            let Ok(Some(m)) = m else { continue };
             for (path, _, _) in m.files {
                 if !paths.contains(&path) {
                     paths.push(path);
@@ -4797,4 +4960,96 @@ fn a_negated_cross_product_is_bound_by_the_rules_context() {
     let bound = |helper: &str| helper.contains("rr_ctx") || helper.contains("want(");
     assert!(bound(&apart) && apart.contains("lit($lo") && apart.contains("lit($hi"), "{apart}\n{shown:#?}");
     assert!(!bound(&tied), "{tied}");
+}
+
+/// The modules `demand_split_child` reads, and the builtin references each holds.
+const SPLIT_MODULES: usize = 32;
+const SPLIT_REFERENCES: usize = 4;
+
+/// python/calls over `SPLIT_MODULES` modules of `SPLIT_REFERENCES` builtin references each: no demand split's rows grow
+/// as the references times the modules (`plan::demand::over::disconnected`). `builtin_ref`'s split with `docof` cut
+/// was every reference against every module (8,801 rows of work in its `pre_<i>` here, over the 4,096 of references
+/// times modules; 129.7M rows on edx-platform's 4,459 files). The profile is the process's, so the run is a child
+/// process of its own (`demand_split_child`), its rows read from its `heads.tsv`.
+#[test]
+fn a_demand_split_stays_linear_in_the_modules() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("src");
+    std::fs::create_dir_all(&root).unwrap();
+    // Plain nodes make the program's rarer kinds anchors (fewer than 1/32 of the nodes), so `docof` is a candidate.
+    let filler = (1..=300).map(|i| i.to_string()).collect::<Vec<_>>().join(", ");
+    let source = format!("x = len([1])\nprint(x)\ny = len(\"ab\")\nprint(y)\nDATA = [{filler}]\n");
+    assert_eq!(source.matches("len(").count() + source.matches("print(").count(), SPLIT_REFERENCES);
+    for m in 0..SPLIT_MODULES {
+        std::fs::write(root.join(format!("m{m}.py")), &source).unwrap();
+    }
+    let rule = directory.path().join("calls.rerail");
+    std::fs::write(&rule, ".policy \"split-linear\" revision 1\n.language python\n.scope include \"**/*.py\"\n#include \"python/calls.rerail\"\n.violation P(at: node) \"c\"\nP(c) :- call_target(c, f), kind(f, \"nothing_has_this_kind\").\n").unwrap();
+    let profile = directory.path().join("profile");
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+    child
+        .args(["--exact", "code_rule_dsl::logic::rr::tests::demand_split_child", "--ignored", "--nocapture"])
+        .env("RERAIL_PROFILE", &profile)
+        .env("RERAIL_TAPE_CACHE", "off")
+        .env("DEMAND_SPLIT_RULE", &rule)
+        .env("DEMAND_SPLIT_ROOT", &root)
+        .env("DEMAND_SPLIT_OUT", directory.path().join("out"));
+    let status = crate::code_rule_dsl::logic::plan::corpus::switches::started(|| child.status()).unwrap();
+    assert!(status.success());
+    // part, head, cpu_s, work (rows into the head's steps), plans
+    let heads = std::fs::read_to_string(profile.join("heads.tsv")).unwrap();
+    let rows: Vec<(&str, &str, u64)> = heads.lines().skip(1).map(|l| {
+        let c: Vec<&str> = l.split('\t').collect();
+        (c[0], c[1], c[3].parse().unwrap())
+    }).collect();
+    assert!(rows.iter().any(|(part, _, _)| part.contains("typing programs")), "the typing program ran: {heads}");
+    let product = (SPLIT_MODULES * SPLIT_MODULES * SPLIT_REFERENCES) as u64;
+    for (part, head, work) in &rows {
+        if head.starts_with("pre_") || head.starts_with("demand_") {
+            assert!(*work < product / 4, "{head} ({part}): {work} rows, against {product} for every reference times every module");
+        }
+    }
+}
+
+#[test]
+#[ignore = "child process of a_demand_split_stays_linear_in_the_modules"]
+fn demand_split_child() {
+    let var = |k: &str| {
+        std::path::PathBuf::from(std::env::var_os(k).unwrap_or_else(|| panic!("{k} unset: run by a_demand_split_stays_linear_in_the_modules")))
+    };
+    crate::code_rule_dsl::tools::run_rr(&var("DEMAND_SPLIT_RULE"), &var("DEMAND_SPLIT_ROOT"), &var("DEMAND_SPLIT_OUT"), &serde_json::Value::Null).unwrap();
+}
+
+/// Decision 0470 R5: a string at a place the Python language declares (`markupsafe.Markup`'s argument) is an HTML
+/// program of its file, at the string: a Python rule reaches it through `parsed(s, "html", p)`, and its nodes stand at
+/// the file's lines. A string at no place is no program: a rule that asks for it gets a tape value, at its own text's
+/// lines.
+#[test]
+fn a_string_at_a_declared_place_is_a_program_of_its_file() {
+    let py = "from markupsafe import Markup\n\nx = Markup(\n    \"<p><b>a</b></p>\"\n)\ny = \"<i>not</i>\"\n";
+    let rule = r#"
+.decl tags(t: symbol, l: number)
+tags(t, l) :- kind(s, "string"), parsed(s, "html", p), within(e, p), kind(e, "tag_name"), text(e, t), line(e, l).
+.output tags
+"#;
+    let [tags] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("place-program", &[("a.py", py)], rule, &["tags"])).unwrap();
+    let tags: BTreeSet<Vec<String>> = tags.into_iter().collect();
+    // The rule asks every string: the one at no place is a tape value (decision 0431), at its own text's line.
+    assert_eq!(tags, [["b", "4"], ["i", "1"], ["p", "4"]].iter().map(|r| r.iter().map(|v| (*v).to_owned()).collect()).collect(), "{tags:?}");
+}
+
+/// Decision 0470 R5, an HTML run: a Python file's HTML program is code to it, at the file's lines.
+#[test]
+#[ignore = "Q327 step 2: a run reads only its own language's files (`CorpusFiles::of`), so no run sees a program another language's file holds (an HTML file's scripts in a JavaScript run neither)"]
+fn an_html_run_reads_a_python_files_html_program() {
+    let py = "from markupsafe import Markup\n\nx = Markup(\n    \"<p><b>a</b></p>\"\n)\ny = \"<i>not</i>\"\n";
+    let rule = r#"
+.language html
+.decl tags(t: symbol, l: number)
+tags(t, l) :- kind(e, "tag_name"), text(e, t), line(e, l).
+.output tags
+"#;
+    let [tags] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("place-program-html", &[("a.py", py)], rule, &["tags"])).unwrap();
+    let tags: BTreeSet<Vec<String>> = tags.into_iter().collect();
+    assert_eq!(tags, [["b", "4"], ["p", "4"]].iter().map(|r| r.iter().map(|v| (*v).to_owned()).collect()).collect(), "an HTML run: {tags:?}");
 }

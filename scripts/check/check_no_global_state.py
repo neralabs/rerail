@@ -6,7 +6,7 @@ different trust (a security boundary), never reach each other's state. What a st
 
 - a constant (a table, a slice, a string): not listed here;
 - `stays`: what cannot differ between runs or callers: code a crate above registers at load (a function pointer, a
-  device), a value computed once from the engine's own constants (a regex of a literal, core.rr's declarations);
+  device), a value computed once from the engine's own constants (a regex of a literal, core.rerail's declarations);
 - everything else is listed by where it moves, and the list only shrinks:
   - `run`: a run's own data, settings or measurement (`logic::run::Run`);
   - `connection`: a connection's own state (on the connection's object);

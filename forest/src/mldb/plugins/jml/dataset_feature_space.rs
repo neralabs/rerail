@@ -250,7 +250,7 @@ impl DatasetFeatureSpace {
     /// parallel; a column's index is its place in the list (upstream: the dataset's columns that were asked for).
     pub fn from_columns(columns: &[(String, Vec<crate::bucket::CellValue>)], label_info: FeatureType) -> Result<Self, String> {
         use rayon::prelude::*;
-        let infos: Vec<ColumnInfo> = columns.par_iter().map(|(name, values)| ColumnInfo::from_values(name, values, 255)).collect::<Result<_, _>>()?;
+        let infos: Vec<ColumnInfo> = rerail_context::on_cores(|| columns.par_iter().map(|(name, values)| ColumnInfo::from_values(name, values, 255)).collect::<Result<_, _>>())?;
         let mut fs = DatasetFeatureSpace { label_info, ..Default::default() };
         for (i, mut info) in infos.into_iter().enumerate() {
             info.index = i as i32;
@@ -431,7 +431,7 @@ impl DatasetFeatureSpace {
     /// `from_columns` on the device (`ColumnInfo::from_column_device`, 255 buckets), the columns in parallel.
     pub fn from_columns_device(columns: &[(String, ColumnData)], label_info: FeatureType) -> Result<Self, String> {
         use rayon::prelude::*;
-        let infos: Vec<ColumnInfo> = columns.par_iter().map(|(name, data)| ColumnInfo::from_column_device(name, data, 255)).collect::<Result<_, _>>()?;
+        let infos: Vec<ColumnInfo> = rerail_context::on_cores(|| columns.par_iter().map(|(name, data)| ColumnInfo::from_column_device(name, data, 255)).collect::<Result<_, _>>())?;
         let mut fs = DatasetFeatureSpace { label_info, ..Default::default() };
         for (i, mut info) in infos.into_iter().enumerate() {
             info.index = i as i32;
