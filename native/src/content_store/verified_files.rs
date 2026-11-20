@@ -145,9 +145,8 @@ impl ContentStore {
         let parts = self.stored_frame_parts(&space(), &worktrees)?;
         let keys: Vec<i64> = parts.iter().map(|(other, _)| *other).collect();
         let written = self.admit_parts_stored(&space(), &worktrees, &keys)?;
-        let old = |(other, _): &&(i64, u64)| {
-            *other != part && written_at(written.get(other)) < since
-        };
+        let old =
+            |(other, _): &&(i64, u64)| *other != part && written_at(written.get(other)) < since;
         Ok(parts
             .iter()
             .filter(old)
