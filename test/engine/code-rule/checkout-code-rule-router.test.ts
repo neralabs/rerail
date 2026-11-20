@@ -25,8 +25,26 @@ import { startTestRepository, stopTestRepository } from "../../support/started-r
 import { symlinkOrSkip } from "../../support/platform/links.js";
 import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
 import { GIT_OPEN_AGAIN_MS, nativeGitAccess } from "../../../src/engine/native/git-access.js";
+import type * as GitAccessModule from "../../../src/engine/native/git-access.js";
+import type { NativeGitAccess } from "../../../src/engine/native/native.js";
 import { NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
 import { GitIgnoreMatchers } from "../../../src/engine/native/git-ignore-matchers.js";
+
+/**
+ * The owner of Git reads `nativeGitAccess` hands out while a case swaps it, as a process does once Git answers an ask
+ * at last; the process's own otherwise.
+ */
+const swappedOwner = vi.hoisted(() => {
+  const swapped: { current: NativeGitAccess | undefined } = { current: undefined };
+  return swapped;
+});
+vi.mock("../../../src/engine/native/git-access.js", async importOriginal => {
+  const original = await importOriginal<typeof GitAccessModule>();
+  return {
+    ...original,
+    nativeGitAccess: (...args: Parameters<typeof original.nativeGitAccess>) => swappedOwner.current ?? original.nativeGitAccess(...args),
+  };
+});
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -846,6 +864,35 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     second.refreshCodeRules();
     expect(second.walkView().ignoresPath(api, true)).toBe(false);
     expect(opened.mock.calls.filter(([root]) => root === worktree)).toHaveLength(2);
+  });
+
+  it("lets go of the daemon's matchers it holds once the process's Git owner changes, which another router holding them keeps until it asks too", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    await mkdir(join(worktree, "api"), { recursive: true });
+    const matchers = new GitIgnoreMatchers();
+    const { recorder } = recordingAudits();
+    const first = router(session, databasePath, recorder, undefined, true, undefined, matchers);
+    const second = router(session, databasePath, recorder, undefined, true, undefined, matchers);
+    await first.openWorkspace("owner-change-first");
+    await second.openWorkspace("owner-change-second");
+    const api = walked(session, worktree, "api");
+    expect([first.walkView().ignoresPath(api, true), second.walkView().ignoresPath(api, true)]).toEqual([false, false]);
+    const held = matchers.size;
+
+    // Git answered at last: the process has a new owner of Git reads, which opens matchers as the old one did.
+    const old = nativeGitAccess();
+    swappedOwner.current = {
+      systemConfig: old.systemConfig,
+      installationConfig: old.installationConfig,
+      openGitIgnoreMatcher: root => old.openGitIgnoreMatcher(root),
+    };
+    cleanups.push(async () => { swappedOwner.current = undefined; });
+    // Each router asks only about the session's checkout, through its lane, which takes the new owner's matcher: the
+    // worktree's old one goes once neither router holds it, not because one asked about the worktree again.
+    expect(first.ignoresPath("api", true)).toBe(false);
+    expect(matchers.size).toBe(held + 1);
+    expect(second.ignoresPath("api", true)).toBe(false);
+    expect(matchers.size).toBe(1);
   });
 
   it("keeps a worktree's refused Git ignore rules as none for the walk's questions and says it once, while its lane opens them as it opens", async () => {
