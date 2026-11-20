@@ -102,6 +102,12 @@ An unscoped qualified kind (`kind(n, "sql:object_reference")` with nothing reach
 so it matches nothing in a Python run. Naming a grammar is not a way to see hidden documents; reaching them through
 a guest relation is.
 
+A relation that names no grammar for its guest node (`host_node(n, h)`, `string_annotation(s)`) cannot specialize
+its variable by grammar, but the node may be an annotation's, the one guest a rule does not see unless it reaches it
+(0165). Such a variable is *maybe an annotation's*. Its rule stays as written for every other guest, and an O110
+clone of the rule has the variable seeded in the `annotation` grammar, so that clone reads the annotations' copies.
+Before 2026-11-20 no copy was made for it at all (see the dated section below).
+
 ### 3. Normalized strings
 
 `str(n, v)` is a language's decoded string: the text the program holds at run time, with escapes resolved. A guest
@@ -287,7 +293,8 @@ folds them once it does, before the prepared program's key, which already holds 
 (`hiding::fold_own`). Readers read the original, the copies' rules and kind sets go, and a `python:` kind is written
 plainly. An O110 clone is then its rule again, and `merge_and_drop_repeats` drops it. Copies for another grammar's guests
 (an SQL string in Python) and every copy in a run with guests hidden are kept. `RERAIL_SHOWN_COPIES=on` keeps them
-all. Test: `copies_for_a_guest_in_the_runs_own_language_are_folded_into_their_originals`.
+all. Test: `copies_for_a_code_guest_fold_and_an_annotations_stay` (since 2026-11-20 an annotation's copies stay,
+0165).
 
 | O125 step 07, outputs equal to a full run's | Copies kept | Folded |
 |---|---:|---:|
@@ -296,3 +303,32 @@ all. Test: `copies_for_a_guest_in_the_runs_own_language_are_folded_into_their_or
 | Join work, session | 3.54 M | 1.75 M |
 | Instructions, whole replay without the full run | 551.3 G | 389.1 G |
 | Peak memory, the same | 1,064 MB | 815 MB |
+
+## Changed: a guest node no relation names a grammar for is maybe an annotation's (2026-11-20)
+
+**What was wrong.** §2 made copies only for a scoped variable whose grammar a guest relation names. A variable
+reached through `host_node` or `string_annotation` has none, so it read its relations' originals, which are bounded
+to the shown documents and hold no annotation's rows. The typing program (`typing/programs/calls.rerail`) looks a
+quoted annotation's names up that way:
+
+```
+walk(n, x, s) :- nameref(n, x), host_node(n, h), nearest(h, s, scope).
+```
+
+It found them only because other rules read `nameref` from a parsed annotation. That made a copy, and folding the
+copy widened `nameref` for every reader, `walk` included. With an annotation's copies kept apart from their
+originals (0165), `walk` read the bounded `nameref` and lost every name inside a quoted annotation. Over
+`fixtures/python/typing/quoted_ann`, `nameref` held 22 rows instead of 29, the 7 missing ones being the annotations'
+`Node` and `list`. `call_target` then lost `n.label()` (`def build(n: "Node")`) to `call_open`, and the tests
+`quoted_annotations_are_read_as_their_code` and `leg_083_typed_counts_resolve_by_the_receivers_type` failed. A
+rule's findings depended on whether another rule copied the relation it read.
+
+**What changed.** The guest node columns of guest relations that name no grammar (`hiding::MAYBE_ANNOTATION`:
+`host_node`'s guest node and `string_annotation`'s string) make their variable maybe an annotation's
+(`hiding::entry_fact`). The rule stays as written for every other guest, and an O110 clone has the variable seeded
+in the `annotation` grammar. The clone reads the annotations' copies, restricted to the annotations' documents in
+a Python run (0165). This changes when copies are made: before, such a variable never had one.
+
+Annotations are documents only in a Python run, so in another language the clone holds no annotation's rows.
+No library outside Python reads `host_node` or `string_annotation` in a rule. Test:
+`a_rule_that_reaches_an_annotation_through_host_node_reads_its_names_alone_and_beside_another`.

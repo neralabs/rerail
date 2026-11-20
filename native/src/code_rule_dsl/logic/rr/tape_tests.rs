@@ -410,6 +410,39 @@ fn a_policy_beside_one_that_reads_annotations_finds_what_it_finds_alone() {
     assert_eq!(found(&beside, "t:cmps"), found(&alone, "t:cmps"), "{beside:#}");
 }
 
+/// A rule that reaches an annotation's nodes through `host_node` reads its names whatever else the run holds. `guest`
+/// reads `named` with a node `host_node` gives, which names no grammar: alone it found nothing (`named` was bounded to
+/// the files), and beside `anns`, which reads `named` from a parsed annotation, it found the names only while that
+/// copy was folded into `named`, widening it for every reader. The node is maybe an annotation's, so a clone of the
+/// rule reads `named`'s annotation copy (`hiding::entry_fact`).
+#[test]
+fn a_rule_that_reaches_an_annotation_through_host_node_reads_its_names_alone_and_beside_another() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("host-node-annotations");
+    let (src, rules) = (root.join("src"), root.join("rules"));
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::create_dir_all(&rules).unwrap();
+    std::fs::write(src.join("x.py"), "x: \"Node\" = 1\n").unwrap();
+    let named = ".decl named(n: node, x: symbol)\nnamed(n, x) :- kind(n, \"identifier\"), text(n, x).";
+    let policy = |name: &str, body: &str| {
+        let path = rules.join(format!("{name}.rerail"));
+        std::fs::write(&path, format!(".policy \"t:{name}\" revision 1\n.language python\n#include \"python/ruff.rerail\"\n{named}\n{body}\n")).unwrap();
+        path
+    };
+    let guest = policy("guest", ".violation Guest(at: node, name: symbol) code \"guest\" \"{name}\"\nGuest(h, x) :- named(n, x), host_node(n, h), string_annotation(h), parsed(h, \"annotation\", _).");
+    let anns = policy("anns", ".violation Ann(at: node, name: symbol) code \"ann\" \"{name}\"\nAnn(r, x) :- string_annotation(s), parsed(s, \"annotation\", r), named(r, x).");
+    let found = |report: &serde_json::Value, policy: &str| -> Vec<(u64, String)> {
+        let rows = report["diagnostics"].as_array().unwrap().iter().filter(|d| d["policy"] == policy);
+        let mut found: Vec<(u64, String)> = rows.map(|d| (d["line"].as_u64().unwrap_or(0), d["message"].as_str().unwrap_or("").to_owned())).collect();
+        found.sort();
+        found
+    };
+    let run = |paths: &[PathBuf], out: &str| crate::code_rule_dsl::tools::run_policies(paths, &src, &root.join(out), &serde_json::Value::Null).unwrap();
+    let (alone, beside) = (run(std::slice::from_ref(&guest), "alone"), run(&[guest, anns], "beside"));
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(found(&alone, "t:guest"), [(1, "Node".to_owned())], "{alone:#}");
+    assert_eq!(found(&beside, "t:guest"), found(&alone, "t:guest"), "{beside:#}");
+}
+
 /// A batch's policies of a language of several dialects (`.language typescript`) run as one pack a dialect, as a
 /// policy alone runs once a dialect (`tools::run_program`): each policy's findings are its run alone's, from every
 /// dialect, and a policy whose scope gives other dialects runs in a pack of its own. Before, such policies ran alone.
