@@ -1,6 +1,6 @@
 # A tool call's URL is looked up on no other machine
 
-For the pull request of branch `JeanFrancoisGagne/url-in-tool-call-not-looked-up`, not opened yet, head ef665339b. [report.html](report.html) is the same report as one page: download it and open it.
+For the pull request of branch `JeanFrancoisGagne/url-in-tool-call-not-looked-up`, not opened yet, head d2171ebad. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -13,7 +13,7 @@ For the pull request of branch `JeanFrancoisGagne/url-in-tool-call-not-looked-up
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 893 lines in 6 files: 249 ship, 644 are tests and text | Careful. It changes which tool calls count as naming a secret. | Nothing. No CI run on GitHub yet: not pushed. | 2 |
+| 971 lines in 6 files: 239 ship, 732 are tests and text | Careful. It changes which tool calls count as naming a secret. | Nothing. No CI run on GitHub yet: not pushed. | 2 |
 
 ## 2. Intent, and the gap
 
@@ -51,7 +51,7 @@ Start with answer 1: the states where the check now judges by name a word `main`
 |---|---|---|
 | URL lookup | independent review | An independent check on both systems found the stall gone and robocopy's `/LOG:` and `smb://` skipped where `main` follows a link; both are now looked up as on `main`. Each of its 9 one-line mutants fails a case. |
 | URL lookup | users lose nothing | A link behind a `//` word after a `:` that is no URL (a Git Bash `PATH` entry), behind a name of this machine other than its host name, or behind a `/net` mount of another host is not followed. Its lookup is the contact this removes. |
-| URL lookup | CI at this head | No CI run at this head on GitHub yet: the branch is not pushed. CI's integration job passed on Linux x64 at e3f8b0017: 22 files, 90 tests, as at `main` 7efcac9c6. |
+| URL lookup | CI at this head | CI's integration job passed on Linux x64 at e3f8b0017: 22 files, 90 tests, as at `main` 7efcac9c6. |
 
 </details>
 
@@ -109,11 +109,11 @@ The description holds the failing cases, the daemon runs and the test files, und
 
 | Where | What ran | Result |
 |---|---|---|
-| Linux x64 and Windows 11 | The new cases of e3f8b0017, 5 rounds; with `main`'s check; with each fix line taken out | 10 passed each round on both. `main`'s check: 5 of 10 fail on Linux, 6 of 10 on Windows. The URL line out: 5 fail on both; the own-name line out: its case fails. |
+| Linux x64 and Windows 11 | The new cases of e3f8b0017, 5 runs; with `main`'s check; with each fix line taken out | 10 passed each run on both. `main`'s check: 5 of 10 fail on Linux, 6 of 10 on Windows. The URL line out: 5 fail on both; the own-name line out: its case fails. |
 | Linux x64 and Windows 11 | The cases at this head, and at 8ce30a6b0, which holds e3f8b0017's source | Windows: here 19 passed; at 8ce30a6b0 robocopy's switch, the PowerShell parameter, `smb://` and the device list fail. Linux: here 16 passed; the one-slash `PATH` entry fails at e3f8b0017's source. |
-| Linux x64 | A daemon and the Claude Code hook, `curl -s https://net/192.0.2.7/api/v2`, 5 rounds, the lookup held 1,000 ms by a stand-in, at `main` 7efcac9c6, at ba0545900 and at e3f8b0017 | `main` 7efcac9c6 looked it up 5 of 5, hook 1,102 ms (ba0545900: 5 of 5, 1,094 ms); e3f8b0017 0, 28 ms. A second session's longest gap: 1,294 ms at `main`, 82 ms at e3f8b0017. |
-| Windows 11 | The same probe with `curl -s https://192.0.2.7/api/v2`, and with `main`'s check under e3f8b0017 in turn | `main` 7efcac9c6 asked for `\\192.0.2.7\api\v2` in 10 of 10 rounds, 1,111 and 1,203 ms; e3f8b0017 none in 25 rounds, 59 to 80 ms. A second session's longest gap: 1,187 to 1,433 ms with `main`'s check, 189 to 404 ms. |
-| Windows 11 | A daemon and the hook, 3 rounds, `main` 7efcac9c6 and this head on one machine, each share answered as a link to a credential folder | robocopy's `/LOG:`, PowerShell's `-Path:`, `smb://` and `https:\\`: withheld 3 of 3 at both, one lookup a round. A web URL, lookup held 600 ms: `main` 696 ms; here no lookup, 72 ms. A Git Bash `PATH` entry: withheld at `main` only. |
+| Linux x64 | A daemon and the Claude Code hook, `curl -s https://net/192.0.2.7/api/v2`, 5 runs, the lookup held 1,000 ms by a stand-in, at `main` 7efcac9c6, at ba0545900 and at e3f8b0017 | `main` 7efcac9c6 looked it up 5 of 5, hook 1,102 ms (ba0545900: 5 of 5, 1,094 ms); e3f8b0017 0, 28 ms. A second session's longest gap: 1,294 ms at `main`, 82 ms at e3f8b0017. |
+| Windows 11 | The same probe with `curl -s https://192.0.2.7/api/v2`, and with `main`'s check under e3f8b0017 in turn | `main` 7efcac9c6 asked for `\\192.0.2.7\api\v2` in 10 of 10 runs, 1,111 and 1,203 ms; e3f8b0017 none in 25 runs, 59 to 80 ms. A second session's longest gap: 1,187 to 1,433 ms with `main`'s check, 189 to 404 ms. |
+| Windows 11 | A daemon and the hook, 3 runs, `main` 7efcac9c6 and this head on one machine, each share answered as a link to a credential folder | robocopy's `/LOG:`, PowerShell's `-Path:`, `smb://` and `https:\\`: withheld 3 of 3 at both, one lookup a run. A web URL, lookup held 600 ms: `main` 696 ms; here no lookup, 72 ms. A Git Bash `PATH` entry: withheld at `main` only. |
 | Linux x64 and Windows 11 | The 23 changed and importing test files, here and at `main` 7efcac9c6 on one machine | Windows: here 328 passed, `main` 315, none failed at either. Linux: here 316 passed, none failed; `main` 304, with two 5 s load timeouts. |
 | Linux x64 | CI's integration job | Exit 0 at e3f8b0017: 22 files, 90 tests passed, 4 skipped, as at `main` 7efcac9c6. Two earlier runs each failed one test, a different one each time, that passed in the other runs and in most runs alone, there and at `main`. |
 | Linux x64 | The automated reviewer's rules at `main` 7efcac9c6 over the diff against it | No new finding and no new complexity, with the published 0.1.5 and with Rerail built from `main`; every added or edited function at 5 or under. |
