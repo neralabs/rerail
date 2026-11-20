@@ -37,16 +37,31 @@ export type RrChildRequestOf = (out: string) => RrChildRequest;
 /** The most of a child's stderr kept for a failure's message. */
 const STDERR_TAIL = 4096;
 
-const live = new Set<ChildProcess>();
+/** The children running, each with its temporary directory. */
+const live = new Map<ChildProcess, string>();
 let killsOnExit = false;
 
-/** The children still running are killed as this process exits: none outlives it. */
+/**
+ * The children still running are killed as this process exits, and their temporary directories removed: none outlives
+ * it. (A process killed outright runs no exit handler: its children then end themselves, `rr-child.ts`.)
+ */
 function killLiveOnExit(): void {
   if (killsOnExit) return;
   killsOnExit = true;
   process.once("exit", () => {
-    for (const child of live) child.kill("SIGKILL");
+    for (const [child, directory] of live) {
+      child.kill("SIGKILL");
+      removeDirectory(directory);
+    }
   });
+}
+
+/**
+ * A child's temporary directory removed. On Windows a child just killed may still hold a file in it for a moment, so
+ * removal retries, as Node's `rm` does with `maxRetries`.
+ */
+function removeDirectory(directory: string): void {
+  rmSync(directory, { recursive: true, force: true, maxRetries: 5 });
 }
 
 /**
@@ -72,17 +87,28 @@ function childEnvironment(threads: number): NodeJS.ProcessEnv {
 /** A temporary directory for one child: its request written, an empty `out` for the run, its result's path. */
 function prepare(requestOf: RrChildRequestOf): { directory: string; args: string[]; resultFile: string } {
   const directory = mkdtempSync(join(tmpdir(), "rerail-rr-"));
-  mkdirSync(join(directory, "out"));
-  const requestFile = join(directory, "request.json");
-  const resultFile = join(directory, "result.json");
-  writeFileSync(requestFile, JSON.stringify(requestOf(join(directory, "out"))));
-  return { directory, args: [...childArguments(), requestFile, resultFile], resultFile };
+  try {
+    mkdirSync(join(directory, "out"));
+    const requestFile = join(directory, "request.json");
+    const resultFile = join(directory, "result.json");
+    writeFileSync(requestFile, JSON.stringify(requestOf(join(directory, "out"))));
+    return { directory, args: [...childArguments(), requestFile, resultFile], resultFile };
+  } catch (error) {
+    removeDirectory(directory);
+    throw error;
+  }
 }
 
-/** What the child wrote, or why there is nothing to read. */
+/** What the child wrote, or why there is nothing to read (`ended`: how the child ended). */
 function readResult(resultFile: string, ended: string): RrChildResult | { failed: string } {
   if (!existsSync(resultFile)) return { failed: `the .rerail child process ${ended} without an answer` };
-  return JSON.parse(readFileSync(resultFile, "utf8")) as RrChildResult;
+  const text = readFileSync(resultFile, "utf8");
+  try {
+    return JSON.parse(text) as RrChildResult;
+  } catch {
+    // A child stopped from outside (the system's out-of-memory killer) while it wrote its answer.
+    return { failed: `the .rerail child process ${ended} with its answer cut short` };
+  }
 }
 
 /** The outcome of a child that was not killed, from its result file. */
@@ -163,10 +189,10 @@ export async function runChild(requestOf: RrChildRequestOf, options: RrChildOpti
       env: childEnvironment(options.budgets.threads),
       stdio: ["ignore", "ignore", "pipe", "ipc"],
     });
-    live.add(child);
+    live.set(child, directory);
     return await watch(child, resultFile, options);
   } finally {
-    rmSync(directory, { recursive: true, force: true });
+    removeDirectory(directory);
   }
 }
 
@@ -191,6 +217,6 @@ export function runChildSync(requestOf: RrChildRequestOf, options: Omit<RrChildO
     const stderr = ran.stderr.toString("utf8").slice(-STDERR_TAIL).trim();
     return finished(resultFile, `exited (${ran.signal ?? `code ${ran.status}`})${stderr === "" ? "" : `: ${stderr}`}`, wallMs, 0);
   } finally {
-    rmSync(directory, { recursive: true, force: true });
+    removeDirectory(directory);
   }
 }

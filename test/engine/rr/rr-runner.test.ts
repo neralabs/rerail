@@ -32,26 +32,35 @@ Shout(c) :- kind(c, "call"), field(c, "function", f), text(f, "shout").
 const MULTI_BYTE = 'greeting = "héllo wörld 漢字"; shout("ü")\n';
 const MULTI_LINE = "def f():\n    return shout(\n        1,\n    )\n";
 
-/** Each test's TMPDIR: the runner's temporary directories, and the child's store, are made there. */
+/**
+ * This file's temporary folder, which `os.tmpdir()` reads (TMPDIR, and TEMP and TMP on Windows), and so the runner's
+ * children inherit: the runner's temporary directories, and the children's stores, are made there and nowhere else.
+ */
 let temporary: string;
-let previousTmpdir: string | undefined;
+const TEMPORARY_VARIABLES = ["TMPDIR", "TEMP", "TMP"] as const;
+const previous = new Map<string, string | undefined>();
 const roots: string[] = [];
 
 beforeAll(() => {
-  previousTmpdir = process.env.TMPDIR;
   temporary = realpathSync(mkdtempSync(join(tmpdir(), "rr-runner-test-")));
-  process.env.TMPDIR = temporary;
+  for (const name of TEMPORARY_VARIABLES) {
+    previous.set(name, process.env[name]);
+    process.env[name] = temporary;
+  }
 });
 
 afterEach(async () => {
   delete process.env.RERAIL_RR_MEMORY_MB;
+  delete process.env.RERAIL_RR_DEADLINE_MS;
   vi.clearAllMocks();
   await Promise.all(roots.splice(0).map(root => removeFolder(root)));
 });
 
 afterAll(async () => {
-  if (previousTmpdir === undefined) delete process.env.TMPDIR;
-  else process.env.TMPDIR = previousTmpdir;
+  for (const [name, value] of previous) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
   await removeFolder(temporary);
 });
 
@@ -155,9 +164,10 @@ describe("runRerailPolicies", () => {
     expect(two.status === "completed" && two.findings.map(finding => [finding.path, finding.line])).toEqual([["two.py", 2]]);
   });
 
-  it("kills a run past its deadline", async () => {
+  it("kills a run past its deadline, RERAIL_RR_DEADLINE_MS winning over the caller's", async () => {
+    process.env.RERAIL_RR_DEADLINE_MS = "1";
     const { root, rule } = checkout({ "a.py": "shout(1)\n" });
-    const outcome = await runRerailPolicies({ root, policies: [rule], deadlineMs: 1 });
+    const outcome = await runRerailPolicies({ root, policies: [rule], deadlineMs: 600_000 });
     expect(outcome).toMatchObject({ status: "killed", reason: "deadline" });
     expect(childrenGone()).toBe(true);
     expect(leftDirectories()).toEqual([]);

@@ -29,6 +29,15 @@ describe("shipsWithCore", () => {
       expect(shipsWithCore(path), path).toBe(false);
     }
   });
+
+  it("counts the .rerail rule library core ships from docs/, and no other documentation", () => {
+    for (const path of ["docs/rule-syntax/lib/core.rerail", "docs/rule-syntax/lib/python/django.rerail", "native/src/code_rule_dsl/typing/programs/sources.rerail"]) {
+      expect(shipsWithCore(path), path).toBe(true);
+    }
+    for (const path of ["docs/rule-syntax/packs/django/django-practice-count-not-len.rerail", "docs/rule-syntax/README.md", "docs/rule-syntax/library.md", "docs/rule-syntax/lib-notes.md"]) {
+      expect(shipsWithCore(path), path).toBe(false);
+    }
+  });
 });
 
 describe("lockChangesCore and coreChanges", () => {

@@ -4,7 +4,8 @@
  * runs it reports its resident memory to its parent, which kills it past its budget, and it ends itself when its
  * parent is gone. It runs in the checkout it reads: the engine keeps one store per working directory.
  */
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { loadNativeBinding } from "../native/native.js";
 import type { RrChildRequest, RrChildResult, RrMemoryReport } from "./rr-messages.js";
 
@@ -28,19 +29,34 @@ function reportMemory(): void {
   process.send?.(report);
 }
 
+/**
+ * Where the child was started with an IPC channel (`runRerailPolicies`; `describeRerailPoliciesSync` starts it
+ * without one): its memory reported now and every `MEMORY_REPORT_MS`, and its end when the parent is gone.
+ */
+function connectToParent(directory: string): void {
+  if (process.send === undefined) return;
+  reportMemory();
+  setInterval(reportMemory, MEMORY_REPORT_MS).unref();
+  // The parent is gone (it was killed, and ran no exit handler): nothing will read the answer, so the run stops here,
+  // and the temporary directory the parent made for it (`directory`) goes with it.
+  process.once("disconnect", () => {
+    rmSync(directory, { recursive: true, force: true, maxRetries: 5 });
+    process.kill(process.pid, "SIGKILL");
+  });
+}
+
+/** Why `error` was thrown, in words. */
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 async function main([requestFile, resultFile]: string[]): Promise<void> {
   if (requestFile === undefined || resultFile === undefined) throw new Error("usage: rr-child <request file> <result file>");
-  // Started with an IPC channel by `runRerailPolicies`; `describeRerailPoliciesSync` starts it without one.
-  if (process.send !== undefined) {
-    reportMemory();
-    setInterval(reportMemory, MEMORY_REPORT_MS).unref();
-    // The parent is gone (it exited, or was killed): nothing will read the answer, so the run stops here.
-    process.once("disconnect", () => process.kill(process.pid, "SIGKILL"));
-  }
+  connectToParent(dirname(requestFile));
   const request = JSON.parse(readFileSync(requestFile, "utf8")) as RrChildRequest;
   const result: RrChildResult = await answer(request).then(
     value => ({ ok: true, value, peakRssBytes: peakRssBytes() }),
-    (error: unknown) => ({ ok: false, message: error instanceof Error ? error.message : String(error), peakRssBytes: peakRssBytes() }),
+    (error: unknown) => ({ ok: false, message: messageOf(error), peakRssBytes: peakRssBytes() }),
   );
   writeFileSync(resultFile, JSON.stringify(result));
 }
@@ -48,7 +64,7 @@ async function main([requestFile, resultFile]: string[]): Promise<void> {
 main(process.argv.slice(2)).then(
   () => process.exit(0),
   (error: unknown) => {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(`${messageOf(error)}\n`);
     process.exit(1);
   },
 );
