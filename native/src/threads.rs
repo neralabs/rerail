@@ -82,12 +82,14 @@ pub fn scope<'s, R>(op: impl for<'r> FnOnce(&Jobs<'s, 'r>) -> R) -> R {
 }
 
 /// A job that takes turns with its caller (a request and its answers): it waits for the caller, so the caller's
-/// waits must never run it on the caller's own stack. It runs on another of the pool's threads, and the caller runs
-/// no other job until it has started ([`Beside::wait_for`]); with one thread (or none), on a thread of its own: one
-/// thread cannot hold both stacks.
+/// waits must never run it on the caller's own stack, and it may not hold one of the pool's threads (decision 0100
+/// §12: nothing that waits for another long job may itself be a job). It runs on a thread of its own: on the pool,
+/// its waits for the caller's answers held a thread the caller's chunks needed, and with 2 threads every run with a
+/// cone of requests stalled (the caller waited for chunks no thread was free to build). Its own parallel work still
+/// runs on the pool.
 pub(crate) struct Beside<T> {
     name: &'static str,
-    slot: std::sync::Arc<(parking_lot::Mutex<Option<std::thread::Result<T>>>, std::sync::atomic::AtomicBool)>,
+    slot: std::sync::Arc<parking_lot::Mutex<Option<std::thread::Result<T>>>>,
 }
 
 /// Frees `value` on the pool, off the caller's thread: freeing a large structure (a program analysis's results for
@@ -98,42 +100,28 @@ pub(crate) fn drop_behind<T: Send + 'static>(value: T) {
 
 /// Starts `f` beside the caller ([`Beside`]).
 pub(crate) fn beside<T: Send + 'static>(name: &'static str, f: impl FnOnce() -> T + Send + 'static) -> Beside<T> {
-    let slot = std::sync::Arc::new((parking_lot::Mutex::new(None), std::sync::atomic::AtomicBool::new(false)));
+    let slot = std::sync::Arc::new(parking_lot::Mutex::new(None));
     let held = std::sync::Arc::clone(&slot);
     let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
-    let run = move || {
-        held.1.store(true, std::sync::atomic::Ordering::Release);
+    let _ = rerail_accel::exec::service(name, Some(rerail_accel::exec::POOL_STACK), move || {
         let _in = carry.enter();
         let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || format!("{name} (job)"));
         let r = rerail_accel::exec::as_job(name, || std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
-        *held.0.lock() = Some(r);
-    };
-    if cfg!(not(target_family = "wasm")) && max() >= 2 {
-        rayon::spawn(run);
-    } else {
-        let _ = rerail_accel::exec::service(name, None, run);
-    }
+        *held.lock() = Some(r);
+    });
     Beside { name, slot }
 }
 
 impl<T> Beside<T> {
-    /// Waits until `poll` gives a value, the wait recorded under `site`. Once the job has started, the wait runs the
-    /// pool's other jobs; before, it only sleeps (a little more each time, to 1 ms), so it never takes the job itself.
-    pub(crate) fn wait_for<V>(&self, site: &'static str, mut poll: impl FnMut() -> Option<V>) -> V {
-        let mut nap = 20e-6f64;
-        while !self.slot.1.load(std::sync::atomic::Ordering::Acquire) {
-            if let Some(v) = poll() {
-                return v;
-            }
-            std::thread::sleep(std::time::Duration::from_secs_f64(nap));
-            nap = (nap * 2.0).min(1e-3);
-        }
+    /// Waits until `poll` gives a value, the wait recorded under `site`, running the pool's other jobs meanwhile: the
+    /// job is on a thread of its own, so the wait never takes it.
+    pub(crate) fn wait_for<V>(&self, site: &'static str, poll: impl FnMut() -> Option<V>) -> V {
         rerail_accel::exec::help_until_as(site, poll)
     }
 
     /// Its result, once it ends (a panic as `Err`).
     pub(crate) fn join(self) -> std::thread::Result<T> {
-        self.wait_for(self.name, || self.slot.0.lock().take())
+        self.wait_for(self.name, || self.slot.lock().take())
     }
 }
 
