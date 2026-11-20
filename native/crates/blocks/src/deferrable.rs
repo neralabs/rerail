@@ -149,10 +149,12 @@ impl Deferrable {
         self.on_release = Some(Box::new(f));
     }
 
-    /// The wave's half (module doc): every command buffer that used the block has completed. Does not wait for the
-    /// disk.
+    /// The wave's half (module doc): every command buffer that used the block has completed, which its ledger checks
+    /// (decision 0487 step 3: a seal under queued GPU work fails, since the work would write pages the writer reads).
+    /// Does not wait for the disk.
     pub fn seal(mut self) -> Sealed {
         let block = self.block.take().expect("an open deferrable block");
+        assert!(block.ledger().quiet(), "deferrable slab {}: sealed with GPU work that uses it queued (wait for its fence first)", self.path.display());
         let (mapping, path, kind) = (self.mapping.clone(), std::mem::take(&mut self.path), self.kind);
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
@@ -322,6 +324,26 @@ mod tests {
             None,
         )
         .unwrap()
+    }
+
+    /// Decision 0487 step 3: a seal under queued GPU work that uses the slab fails; once the work completes, it seals.
+    #[test]
+    fn a_seal_under_a_queued_gpu_use_fails() {
+        let d = dir("seal-queued");
+        let path = d.join("s.seg");
+        let slab = create(&path, 1 << 16, true);
+        let f = crate::ledger::Fence::new();
+        f.writes(slab.block());
+        let slab = std::sync::Mutex::new(Some(slab));
+        let sealed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| slab.lock().unwrap().take().unwrap().seal()));
+        assert!(sealed.is_err(), "sealed under the queued work");
+        f.complete();
+        let slab = create(&path, 1 << 16, false);
+        let g = crate::ledger::Fence::new();
+        g.writes(slab.block());
+        g.complete();
+        drop(slab.seal());
+        std::fs::remove_dir_all(&d).ok();
     }
 
     /// The host's writes: read in place once sealed, written back whole, frozen only by the writer.

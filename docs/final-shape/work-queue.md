@@ -7698,13 +7698,17 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
 - **Built:** step 1 (`rerail_blocks::ledger`: every chunk of a free-listed block tracked, frees and pages through it,
   `Fence`, R1-R8) and step 2's first part: accel's `Pass`, where the device joins bind every buffer, registers the
   block each bound buffer lies in on a fence its command buffer's completion handler ends.
-- **Next, step 2's rest:** the other encoders (the syntax side's `metal_*` passes, `crates/metal`, `blocks::gpu`) made
-  through one constructor that registers its bindings, so none binds unregistered; then `Batch::keep`, `read`, `held`
-  and `Held::kept` go where what they hold is a block's.
-- **Next, step 3:** the pool's buffers (`Pooled`, `Pooled::after`), `Scratch` resets, the residency slabs' `retire`
-  and the deferrable slabs under a ledger of their own.
-- **Next, step 4:** a chunk's CPU writers (BlockVec, a relation's rows) check the ledger at each write's start (R4).
-- **Then:** Q337's format-16 runs again, 20 at 1,629.
+- **Done, steps 2-4** (2026-11-20; decision 0487's "Built"): every queue on the process's device is made by
+  `rerail_accel::gpu::shared::Queue`, whose watch (the device layer's `Watch`) holds every buffer bound, resident,
+  copied or filled; every pooled lease is its own ledger's, and goes back to the pool after the work that bound it;
+  `Scratch` and the deferrable slabs refuse a reset or a seal under queued work; a relation's rows refuse a CPU write
+  into room lent to the device. Tests R9-R11; on a Linux host (CPU backend) rerail-blocks 67, rerail-accel 65,
+  rerail-metal 20 (its five `pp_blocks` tests now skip off Metal: the passes are Metal's library); on a farm Mac
+  (Metal) rerail-blocks 69, rerail-accel 90, rerail-metal 21 and the engine's 33 GPU, residency and slab tests.
+- **Q337's runs under it** (a profiling build, an M3 of the farm, format 16 (the default), cold hogql, each its own
+  store, load 9-10): 16 of 16 gave 1,629 findings, 66-78 B instructions, 3.1-35 s (the first a cold launch; runs 6-10
+  10-14 s), one device budget refusal in all, no panic. The host's link then dropped (it went unreachable), before the
+  last four.
 - **Then (decision 0491, the user, 2026-11-20):** region handles over blocks, MLDB's shape (`rerail_blocks::region`:
   `Mutable` / `Shared` / `Frozen`, pins, versions, implicit freeing), built. The owners move to them one at a time:
   `Cells` (done, 2026-11-20: a frozen region), a relation's arrays (done: `BlockVec` owns a `Mutable`), its rows (nothing to move: a `Part` is the handle), the device's buffers (done: every pooled lease is held by

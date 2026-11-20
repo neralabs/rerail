@@ -1657,6 +1657,9 @@ impl Rows {
             self.tail = Some(t);
         }
         let tail = self.tail.as_mut().expect("opened");
+        // Decision 0487 R4 at a write's start: room lent to another writer (the device, `Part::room`) is that writer's
+        // until its loan is claimed; the host writing there would write what the device writes.
+        assert_eq!(tail.lent.load(std::sync::atomic::Ordering::Acquire), 0, "a CPU write of a relation's rows with its room lent to the device (claim the loan first)");
         if n > 1 {
             tail.grow(u64::from(tail.len()) + n as u64);
         }

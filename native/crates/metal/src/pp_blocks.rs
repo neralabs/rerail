@@ -205,7 +205,7 @@ impl Enc<'_> {
             launch = launch.slot(k as u64, buffer, at);
         }
         for slab in self.resident {
-            launch = launch.uses(slab.device_buffer());
+            launch = launch.uses_read(slab.device_buffer());
         }
         for (k, w) in words.iter().enumerate() {
             launch = launch.slot_value((buffers.len() + k) as u64, w);

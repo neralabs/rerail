@@ -21,6 +21,12 @@ impl Rng {
     }
 }
 
+/// Whether the passes run here: they are Metal's library (`pp_eval::run` refuses another backend), so on Linux, or
+/// with `RERAIL_GPU=cpu`, there is nothing to compare.
+fn metal() -> bool {
+    cfg!(target_os = "macos") && matches!(crate::lane::device(), Ok(crate::lane::Device::Native(_)))
+}
+
 fn buf<T: Copy>(v: &[T]) -> HostMapped {
     if v.is_empty() { zeroed::<T>(1) } else { HostMapped::from_slice(v).unwrap() }
 }
@@ -58,6 +64,9 @@ fn run(f: impl FnOnce(&Enc<'_>) -> Result<(), Error>) {
 
 #[test]
 fn the_scan_equals_the_host() {
+    if !metal() {
+        return;
+    }
     let mut r = Rng(7);
     for &n in &SIZES {
         let input: Vec<u32> = (0..n).map(|_| (r.next() % 5) as u32).collect();
@@ -75,6 +84,9 @@ fn the_scan_equals_the_host() {
 
 #[test]
 fn the_segmented_scans_equal_the_host() {
+    if !metal() {
+        return;
+    }
     let mut r = Rng(11);
     for &n in &SIZES {
         for (op, sparse) in [(SegOp::Add, 3u64), (SegOp::Max, 3), (SegOp::Add, 5000), (SegOp::Max, 100_000)] {
@@ -101,6 +113,9 @@ fn the_segmented_scans_equal_the_host() {
 
 #[test]
 fn the_sort_is_stable_and_equals_the_host() {
+    if !metal() {
+        return;
+    }
     let mut r = Rng(13);
     for &n in &SIZES {
         for (bits, distinct) in [(64u32, u64::MAX), (40, 1000), (16, 7)] {
@@ -122,6 +137,9 @@ fn the_sort_is_stable_and_equals_the_host() {
 
 #[test]
 fn search_and_expand_equal_the_host() {
+    if !metal() {
+        return;
+    }
     let mut r = Rng(17);
     for &n in &SIZES[..10] {
         let mut sorted: Vec<u64> = (0..n).map(|_| r.next() % 5000).collect();
@@ -155,6 +173,9 @@ fn search_and_expand_equal_the_host() {
 /// refuses one that used a second command.
 #[test]
 fn an_evaluation_is_one_command() {
+    if !metal() {
+        return;
+    }
     let n = buf(&[5u32]);
     let args = buf(&[0u32; 3]);
     let one = crate::pp_eval::run(|enc| enc.run("pb_args", None, &[n.buffer(), args.buffer()], &[0], Grid::Groups(1)));

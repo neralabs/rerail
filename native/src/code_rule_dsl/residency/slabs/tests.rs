@@ -334,7 +334,7 @@ DEFINE_KERNEL2(slab_tests, tape_conformance,
             .buffer("chunk", table.block.as_ref().expect("one block bound").device_buffer())
             .value("args", &Conformance { count: table.nodes as u32, pad: 0 });
         for slab in &table.slabs {
-            launch = launch.uses(slab.device_buffer());
+            launch = launch.uses_read(slab.device_buffer());
         }
         if let Some(cache) = &table.cache {
             launch = launch.uses(cache);

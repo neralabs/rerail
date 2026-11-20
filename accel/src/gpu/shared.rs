@@ -169,7 +169,9 @@ pub fn opened_device() -> Option<&'static metal::DeviceRef> {
 #[derive(Clone, Copy)]
 pub struct Layer {
     pub device: &'static rerail_device::device::Device,
-    pub queue: &'static rerail_device::device::QueueRoot,
+    /// What the process's queues are made from: only by [`Queue::new`], so every buffer the engine's work reaches is
+    /// held (decision 0487 step 2).
+    pub(crate) queue: &'static rerail_device::device::QueueRoot,
     /// The device's largest buffer.
     pub max_buffer: u64,
 }
@@ -179,6 +181,100 @@ pub fn layer() -> Option<Layer> {
     crate::blocks::install();
     let one = rerail_forest::gpu::shared::get()?;
     Some(Layer { device: &one.device, queue: &one.queue, max_buffer: one.device.max_buffer_length() })
+}
+
+/// Holds what a queue's work reaches: the block or pooled lease each buffer lies in (by its contents' address), on
+/// the submission's fence, read or written as the work declares (decision 0491 step 2). A buffer of the device's own
+/// (`contents` 0, or memory no block or lease holds) is the device's to keep: its command buffer retains it.
+struct Holds(std::sync::Arc<rerail_blocks::ledger::Fence>);
+
+impl rerail_device::device::Watch for Holds {
+    fn reaches(&self, buffer: &rerail_device::device::Buffer, write: bool, what: &'static str) {
+        let at = buffer.contents() as usize;
+        if at != 0 {
+            rerail_blocks::region::bind_address(&self.0, at, write, what);
+        }
+    }
+}
+
+/// One submission on the process's queue (decision 0487 step 2): the only way the engine makes a queue on the
+/// process's device. Every buffer its launches bind or make resident, and every copy's and fill's, is held by its
+/// fence as it is enqueued, so no caller has to remember one, and nothing it reaches is freed, given back or reused
+/// before the work completes. Encoded through it as a `ComputeQueue` (`Deref`); [`Queue::flush`] commits it.
+pub struct Queue {
+    queue: rerail_device::device::ComputeQueue,
+    fence: std::sync::Arc<rerail_blocks::ledger::Fence>,
+}
+
+impl Queue {
+    pub fn new() -> Result<Queue, String> {
+        let layer = layer().ok_or("no device")?;
+        let fence = rerail_blocks::ledger::Fence::new();
+        let queue = rerail_device::device::ComputeQueue::watched(layer.queue, std::sync::Arc::new(Holds(fence.clone())));
+        Ok(Queue { queue, fence })
+    }
+
+    /// Its submission's fence: what a caller registers a use on that no buffer of its binds names.
+    pub fn fence(&self) -> &std::sync::Arc<rerail_blocks::ledger::Fence> {
+        &self.fence
+    }
+
+    /// Commits its work: what to wait for. What it reached is held until that completes.
+    pub fn flush(mut self) -> Flushed {
+        let event = self.queue.flush();
+        self.fence.mark_committed();
+        Flushed { event: Some(event), fence: self.fence.clone() }
+    }
+}
+
+impl std::ops::Deref for Queue {
+    type Target = rerail_device::device::ComputeQueue;
+    fn deref(&self) -> &rerail_device::device::ComputeQueue {
+        &self.queue
+    }
+}
+
+/// A committed [`Queue`]'s work. Its fence completes when the work has: at [`Flushed::await_`], or at its drop,
+/// which waits for the work first (a submission let go unawaited still holds what it reads).
+pub struct Flushed {
+    event: Option<rerail_device::device::ComputeEvent>,
+    fence: std::sync::Arc<rerail_blocks::ledger::Fence>,
+}
+
+impl Flushed {
+    /// Waits for the work; then what it reached may go.
+    pub fn await_(&self) -> Result<(), String> {
+        let done = self.event().await_();
+        self.fence.complete();
+        done
+    }
+
+    pub fn event(&self) -> &rerail_device::device::ComputeEvent {
+        self.event.as_ref().expect("a flushed queue's event lives until dropped")
+    }
+
+    pub fn fence(&self) -> &std::sync::Arc<rerail_blocks::ledger::Fence> {
+        &self.fence
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.event().is_complete()
+    }
+
+    pub fn gpu_seconds(&self) -> f64 {
+        self.event().gpu_seconds()
+    }
+}
+
+impl Drop for Flushed {
+    fn drop(&mut self) {
+        if !self.fence.is_complete() {
+            if let Some(e) = &self.event {
+                let _ = e.await_();
+            }
+            self.fence.complete();
+        }
+    }
 }
 
 /// The process's device and queue as Metal's: `None` without a Metal device. Metal's tier (its pipelines and
@@ -304,9 +400,44 @@ pub struct Pooled {
     /// The thread whose bounded lease it is (`lease_within`, `holder`), 0 for another: its bytes are that thread's in
     /// the admission's count of what each thread holds.
     owner: u64,
+    /// Its ledger (decision 0487 step 3): a kernel's bind of its bytes, found by their address, holds it, and its
+    /// return to the pool (`Back`) waits for that work, whoever holds the lease and whether or not they remember.
+    /// None for a buffer whose memory the host cannot reach (it is no block's, and its command buffer retains it).
+    held: Option<rerail_blocks::ledger::Tracked<Option<Back>>>,
+}
+
+/// A lease's buffer on its way back to the pool, once no queued work reaches it (`Pooled::held`).
+struct Back {
+    on: std::sync::Arc<Memory>,
+    budgets: std::sync::Arc<crate::budget::Budgets>,
+    buffer: DeviceBuffer,
+}
+
+impl Drop for Back {
+    fn drop(&mut self) {
+        let b = self.buffer.clone();
+        let class = b.length() as usize;
+        let mut p = self.on.pool.lock().expect("the pool");
+        p.returned += 1;
+        let at = p.returned;
+        p.held += class;
+        if class >= SLAB_MIN {
+            p.held_slabs += class;
+        }
+        p.idle.entry(class).or_default().push((at, b));
+        let room = self.on.idle_room(&self.budgets, 0);
+        p.trim(room, self.on.slab_idle_limit());
+    }
 }
 
 impl Pooled {
+    /// A lease of `buffer`, held by a ledger of its own where the host reaches its memory.
+    fn of(buffer: DeviceBuffer, keep: bool, fresh: bool) -> Pooled {
+        let base = buffer.contents().cast::<u8>();
+        let held = (!base.is_null()).then(|| rerail_blocks::ledger::Tracked::new(None, base, buffer.length() as usize));
+        Pooled { on: dev(), budgets: crate::budget::budgets(), buffer: Some(buffer), keep, fresh, owner: 0, held }
+    }
+
     /// The lease's buffer as Metal's (the pool is Metal's while `get` is: the process's device is Metal).
     #[cfg(target_os = "macos")]
     pub fn buffer(&self) -> &Buffer {
@@ -515,20 +646,13 @@ impl Drop for Pooled {
         if let Some(hook) = LEASE_HOOK.get() {
             hook(b.contents() as usize, 0);
         }
-        if !self.keep {
-            return;
+        // Released to the device instead (`release`): its command buffers retain it. Else back to the pool once no
+        // queued work reaches it: the next lease's host writes are never ordered before a queued kernel's reads.
+        let back = self.keep.then(|| Back { on: self.on.clone(), budgets: self.budgets.clone(), buffer: b });
+        match self.held.take() {
+            Some(mut held) => *held = back,
+            None => drop(back),
         }
-        let class = b.length() as usize;
-        let mut p = self.on.pool.lock().expect("the pool");
-        p.returned += 1;
-        let at = p.returned;
-        p.held += class;
-        if class >= SLAB_MIN {
-            p.held_slabs += class;
-        }
-        p.idle.entry(class).or_default().push((at, b));
-        let room = self.on.idle_room(&self.budgets, 0);
-        p.trim(room, self.on.slab_idle_limit());
     }
 }
 
@@ -550,14 +674,14 @@ pub fn lease(bytes: usize) -> Result<Pooled, String> {
         traced_new(bytes);
         let b = rerail_device::device::alloc_uninitialized_array_sync::<u8>(shared.device, bytes);
         leased(&b);
-        return Ok(Pooled { on: dev(), budgets: crate::budget::budgets(), buffer: Some(b), keep: false, fresh: true, owner: 0 });
+        return Ok(Pooled::of(b, false, true));
     }
     let st_ = dev();
     let mut p = st_.pool.lock().expect("the pool");
     if let Some(b) = p.take(class) {
         p.reused += 1;
         leased(&b);
-        return Ok(Pooled { on: dev(), budgets: crate::budget::budgets(), buffer: Some(b), keep: true, fresh: false, owner: 0 });
+        return Ok(Pooled::of(b, true, false));
     }
     p.made += 1;
     // A new buffer: idle ones give way to it first, so the budget holds both.
@@ -566,7 +690,7 @@ pub fn lease(bytes: usize) -> Result<Pooled, String> {
     traced_new(class);
     let b = crate::score::phase("new buffer", || rerail_device::device::alloc_uninitialized_array_sync::<u8>(shared.device, class));
     leased(&b);
-    Ok(Pooled { on: dev(), budgets: crate::budget::budgets(), buffer: Some(b), keep: true, fresh: true, owner: 0 })
+    Ok(Pooled::of(b, true, true))
 }
 
 /// What else holds the device's budget beside relational work (the buffer pool's reservations, `rerail-metal`'s
@@ -871,6 +995,31 @@ pub fn guard() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Decision 0487 steps 2 and 3: what the process's queue reaches is held by the submission's fence, with no caller
+    /// registering it; a pooled lease dropped before that work completes is still its ledger's (not back in the pool,
+    /// where the next lease's host writes would overtake the work) until the work completes.
+    #[test]
+    fn a_lease_the_queue_reaches_goes_back_after_its_work() {
+        if layer().is_none() {
+            return;
+        }
+        let p = lease(1 << 16).unwrap();
+        let at = p.host() as usize;
+        let q = Queue::new().unwrap();
+        q.enqueue_fill_array(p.device_buffer(), &7u32, 0, Some(16));
+        assert!(!rerail_blocks::ledger::of_address(at).expect("a lease is its ledger's").quiet(), "the fill holds the lease");
+        drop(p);
+        assert!(rerail_blocks::ledger::of_address(at).is_some(), "dropped under the work, it is held");
+        let done = q.flush();
+        done.await_().unwrap();
+        assert!(rerail_blocks::ledger::of_address(at).is_none(), "back in the pool once the work completed");
+        // Unbound, a lease goes back at once.
+        let p = lease(1 << 16).unwrap();
+        let at = p.host() as usize;
+        drop(p);
+        assert!(rerail_blocks::ledger::of_address(at).is_none());
+    }
 
     /// Held by each test that leases tens of MB at once: the budget test counts every live lease in the process.
     fn big_leases() -> std::sync::MutexGuard<'static, ()> {

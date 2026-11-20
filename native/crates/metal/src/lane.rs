@@ -12,7 +12,7 @@
 
 use crate::Error;
 use rerail_device::compute_kernel_grid::GridBindContext;
-use rerail_device::device::{ComputeEvent, ComputeFunction, ComputeQueue};
+use rerail_device::device::{ComputeFunction, ComputeQueue};
 pub use rerail_device::Pod;
 pub use rerail_device::device::{Buffer, Device, backend};
 pub use crate::runtime::HostMapped;
@@ -80,7 +80,8 @@ enum Arg {
     SlotValue(u64, Vec<u8>),
     Value(String, Vec<u8>),
     Local(String, u64),
-    Uses(Buffer),
+    /// A buffer reached through an address another holds, and whether the kernel writes it.
+    Uses(Buffer, bool),
 }
 
 enum Grid {
@@ -147,8 +148,8 @@ impl Command {
     /// Submits the command: refused (and nothing of it run) when the evaluation is past its launch budget.
     pub fn commit(self) -> Result<Committed, Error> {
         crate::launch::check_submission()?;
-        let layer = rerail_accel::gpu::shared::layer().ok_or(Error::UnsupportedBackend)?;
-        let mut queue = ComputeQueue::new(layer.queue);
+        // The process's queue: every buffer its steps reach is held until the command completes (decision 0487).
+        let queue = rerail_accel::gpu::shared::Queue::new().map_err(|_| Error::UnsupportedBackend)?;
         for step in &self.steps {
             match step {
                 Step::Launch { kernel, label, args, grid } => {
@@ -190,7 +191,8 @@ fn bind_and_run(queue: &ComputeQueue, kernel: &ComputeFunction, args: &[Arg], gr
             Arg::SlotValue(at, bytes) => ctx.set_primitive(*at, bytes),
             Arg::Value(name, bytes) => ctx.set_primitive(index(kernel, name)?, bytes),
             Arg::Local(name, bytes) => ctx.set_thread_group_memory(index(kernel, name)?, *bytes),
-            Arg::Uses(b) => ctx.use_buffer(b),
+            Arg::Uses(b, true) => ctx.use_buffer(b),
+            Arg::Uses(b, false) => ctx.use_buffer_read(b),
         }
     }
     match grid {
@@ -267,9 +269,15 @@ impl Launch<'_> {
         self
     }
 
-    /// A buffer the kernel reaches through an address another holds.
+    /// A buffer the kernel reaches through an address another holds, and may write (a cache its reads fill).
     pub fn uses(mut self, buffer: &Buffer) -> Self {
-        self.args.push(Arg::Uses(buffer.clone()));
+        self.args.push(Arg::Uses(buffer.clone(), true));
+        self
+    }
+
+    /// A buffer the kernel only reads through an address another holds (a slab's blocks).
+    pub fn uses_read(mut self, buffer: &Buffer) -> Self {
+        self.args.push(Arg::Uses(buffer.clone(), false));
         self
     }
 
@@ -318,9 +326,9 @@ impl Launch<'_> {
     }
 }
 
-/// A committed command.
+/// A committed command. What it reaches is held until it completes: at its wait, or at its drop, which waits first.
 pub struct Committed {
-    event: ComputeEvent,
+    event: rerail_accel::gpu::shared::Flushed,
     key: Box<u8>,
     label: String,
     started: f64,
@@ -346,7 +354,7 @@ impl Committed {
             return Err(Error::BackendFailure);
         }
         crate::launch::mark(std::ptr::from_ref::<u8>(&self.key) as usize, true);
-        let host = crate::launch::command_times(&self.event);
+        let host = crate::launch::command_times(self.event.event());
         Ok(Times { device: self.event.gpu_seconds(), wall: crate::launch::host_seconds() - self.started, committed: self.started, host })
     }
 }

@@ -34,8 +34,8 @@ pub(crate) struct Staged {
 
 enum Store {
     #[cfg(gpu_lane)]
-    /// Held by the ledger at its address (decision 0491 step 2): a kernel that binds it holds it until its work completes.
-    Shared(rerail_blocks::ledger::Tracked<crate::gpu::shared::Pooled>),
+    /// Held by its lease's ledger (decision 0487 step 3): a kernel that binds it holds it until its work completes.
+    Shared(crate::gpu::shared::Pooled),
     Host(#[allow(dead_code)] Box<[i64]>),
 }
 
@@ -69,7 +69,7 @@ impl Col {
     #[cfg(gpu_lane)]
     pub(crate) fn shared(&self) -> Option<&crate::gpu::shared::Pooled> {
         match &*self.0 {
-            Data::Staged(Staged { store: Store::Shared(p), .. }) => Some(&**p),
+            Data::Staged(Staged { store: Store::Shared(p), .. }) => Some(p),
             _ => None,
         }
     }
@@ -237,8 +237,7 @@ impl Store {
         if crate::gpu::shared::layer().is_some() {
             let p = crate::gpu::shared::lease((len * 8).max(8))?;
             let ptr = p.host().cast::<i64>();
-            let len = p.length() as usize;
-            return Ok((Store::Shared(rerail_blocks::ledger::Tracked::new(p, ptr.cast(), len)), ptr));
+            return Ok((Store::Shared(p), ptr));
         }
         let mut b = vec![0i64; len.max(1)].into_boxed_slice();
         let ptr = b.as_mut_ptr();

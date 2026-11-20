@@ -155,6 +155,12 @@ impl<B: GridBindContext> Launch<'_, B> {
         self
     }
 
+    /// `uses` of a buffer the kernel only reads through the address (a view's directory, a slab).
+    pub fn uses_read(mut self, buffer: &BufferRef) -> Self {
+        self.ctx.use_buffer_read(buffer);
+        self
+    }
+
     /// Launched: `grid` threadgroups of `block` threads.
     pub fn run(mut self, grid: &[u64], block: &[u64]) -> Result<(), String> {
         if let Some(e) = self.error.take() {

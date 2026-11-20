@@ -20,6 +20,7 @@ accel/src/sharded.rs::NEXT	stays	an id counter: append-only
 accel/src/upkeep.rs::NEXT_ID	stays	an id counter: append-only
 accel/src/upkeep.rs::SERIAL	stays	a test lock
 native/crates/blocks/src/alloc.rs::POLICY	stays	code registered at load: the one policy accel installs, the first installed staying
+native/crates/blocks/src/ledger.rs::BLOCKS	stays	the process's mapped blocks and leases by address, each with its ledger (decision 0487 R8): what memory is, not what a run has
 native/crates/blocks/src/mem.rs::RESERVED	stays	the process's own mappings, counted as the OS counts them (address space is the process's)
 native/crates/c_directives/src/expand.rs::UKL	stays	computed once from the engine's own expansion program
 native/crates/c_directives/src/expand.rs::PROGRAM	stays	computed once from the engine's own expansion program
@@ -43,7 +44,6 @@ native/crates/kotlin_lean/src/lex.rs::HEX	stays	a byte class of a literal
 native/crates/kotlin_lean/src/lex.rs::TICK_BODY	stays	a byte class of a literal
 native/crates/kotlin_parser/src/lib.rs::PARSER	stays	computed once from the engine's own grammar
 native/crates/metal/src/block_program.rs::INTERPRETER	stays	computed once from the engine's own source
-native/crates/metal/src/launch.rs::RATIO	stays	the OS's timebase ratio: a constant of the machine read once
 native/crates/metal/src/lib.rs::METAL_DEVICE	stays	the device (code registered at load)
 native/crates/metal/src/lib.rs::POOL_HOOKS	stays	installs the pool's hooks into this crate once (code registered at load)
 native/crates/metal/src/pp_blocks.rs::SOURCE	stays	the engine's own MSL, preprocessed once

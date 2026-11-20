@@ -950,7 +950,7 @@ fn execute_packed_once(
     // The batch's other slabs, which its reads reach from the block by the views' offsets (decision 0353 step 4,
     // 0471), and the 16z documents' cache.
     for slab in &table.slabs {
-        launch = launch.uses(slab.device_buffer());
+        launch = launch.uses_read(slab.device_buffer());
     }
     if let Some(cache) = &table.cache {
         launch = launch.uses(cache);
