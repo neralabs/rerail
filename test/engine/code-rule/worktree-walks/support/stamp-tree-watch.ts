@@ -29,11 +29,11 @@ function entriesOf(root: string): Map<string, string> {
  * A `TreeWatch` that sees every write, as the engine's watch is meant to: each `take` compares each watched root's
  * entries with those of the last take, through `node:fs` calls a test's counted `node:fs/promises` never sees. A test
  * makes it miss a change (`unnoticed`), hand notices late (`hold`), lose notices (`lose`), end a watch (`end`), refuse
- * roots (`unwatchable`) or tell of a folder moved away as the system does (`movedAway`), and reads which roots it
- * watches and with which folders, and every notice it handed on (`told`). `byFolder` makes it watch as Linux's
- * watch does: only the entries of the folders a root was watched with, a folder made in one as an entry with nothing
- * under it, a folder it takes up from the moment it is given, not before, and a folder deleted or put back as another
- * let go of, with the folders under it, until a `watch` names it again.
+ * roots (`unwatchable`, until `watchable`) or tell of a folder moved away as the system does (`movedAway`), and reads
+ * which roots it watches and with which folders, and every notice it handed on (`told`). `byFolder` makes it watch as
+ * Linux's watch does: only the entries of the folders a root was watched with, a folder made in one as an entry with
+ * nothing under it, a folder it takes up from the moment it is given, not before, and a folder deleted or put back as
+ * another let go of, with the folders under it, until a `watch` names it again.
  */
 export class StampTreeWatch implements TreeWatch {
   readonly #entries = new Map<string, Map<string, string>>();
@@ -204,6 +204,11 @@ export class StampTreeWatch implements TreeWatch {
   /** Refuses to watch `root` from now on. */
   unwatchable(root: string): void {
     this.#unwatchable.add(root);
+  }
+
+  /** Watches `root` again when asked, as once Linux's watch budget has room. */
+  watchable(root: string): void {
+    this.#unwatchable.delete(root);
   }
 }
 

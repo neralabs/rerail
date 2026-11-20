@@ -514,9 +514,11 @@ export class LinkedFiles {
  * folder, which no notice of the folder tells of: a pass of noticed paths reads each such file, too. A pass that would
  * read half as many paths as the last whole walk looked at, or more (a checkout whose files a copy made by links shares,
  * a command that wrote much of the folder), reads the whole folder instead (`#noticed`); a whole walk stops noting the
- * files with another name once they reach that bound (`LinkedFiles`). A watch the engine
- * refused is not asked for again until a whole walk walks fewer folders than it refused, or the watch it had ended:
- * each ask costs the engine a look at the folder's file system, and on Linux each watch it took up before the refusal.
+ * files with another name once they reach that bound (`LinkedFiles`). A watch of more than the folder itself the
+ * engine refused is not asked for again until a whole walk walks fewer folders than it refused, or the watch it had
+ * ended: each ask costs the engine a look at the folder's file system, and on Linux each watch it took up before the
+ * refusal. The folder alone refused (Linux's watch budget used up for a moment, a path no watch takes) is asked for
+ * again at the next whole pass, which walks the whole folder anyway.
  *
  * What no notice tells of, the next whole pass reads: a write through a hard link made to a name outside the folder
  * after the last whole walk, a write through a memory map (on Linux only one its program still holds at the result: the
@@ -550,7 +552,10 @@ export class SessionNotices {
    * before the first.
    */
   #looks = Number.POSITIVE_INFINITY;
-  /** How many folders the engine last refused to watch: none is asked for again until a whole walk walks fewer. */
+  /**
+   * How many folders the engine last refused to watch, when more than the folder itself: none is asked for again until
+   * a whole walk walks fewer.
+   */
   #refused: number | undefined;
   /** The longest a write no notice tells of waits for a whole walk, from when the last one began. */
   readonly #fullWalkMs: number;
@@ -677,10 +682,13 @@ export class SessionNotices {
     this.#watching = this.#watchFolders([""]);
   }
 
-  /** Watches the folder through `folders`; a refusal stands until a whole walk walks fewer folders (`ended`). */
+  /**
+   * Watches the folder through `folders`. A refusal of more than one stands until a whole walk walks fewer folders
+   * (`ended`); the folder alone is asked for again at the next whole pass (`#open`).
+   */
   #watchFolders(folders: readonly string[]): boolean {
     const watching = this.#watch!.watch(this.#root, folders);
-    if (!watching) this.#refused = folders.length;
+    if (!watching && folders.length > 1) this.#refused = folders.length;
     return watching;
   }
 

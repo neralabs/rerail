@@ -507,16 +507,22 @@ describe("a shell command's result reads the session folder by its change notice
     })]);
   });
 
-  it("asks the engine to watch a folder it refused no more, until the watch it had ends", async () => {
+  it("asks the engine again at the next whole pass to watch a folder it refused alone, and reads by notices once it does", async () => {
     const root = await workspace();
     const watch = platformWatch();
     watch.unwatchable(root);
-    const { bridge } = await opened(root, watch);
-    const asked = watch.asked.get(root);
+    const { bridge, audits } = await opened(root, watch);
+    // The engine takes the folder again, as once Linux's watch budget has room: the turn's end watches it, and on Linux
+    // the one after takes up the folders it walked.
+    watch.watchable(root);
+    for (let pass = 0; pass < 2; pass += 1) await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    listed.folders.length = 0;
+
     await command(bridge, "shell-1", async () => await writeFile(join(root, "src", "pkg_0", "m.py"), "eval(a)\n"));
-    await bridge.checkpoint("turn");
-    expect(asked).toBe(1);
-    expect(watch.asked.get(root)).toBe(asked);
+
+    expect(listed.folders).toEqual([]);
+    expect(checked(audits).at(-1)).toEqual(["src/pkg_0/m.py"]);
   });
 
   it("notes the files with another name while they stay under half of what the last whole walk looked at", () => {
