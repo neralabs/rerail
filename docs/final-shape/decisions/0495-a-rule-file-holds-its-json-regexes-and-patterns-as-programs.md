@@ -37,7 +37,8 @@ nodes stand at the file's bytes. It is a program per place, at the leaf.
   matches with. Its tree: a `regex` root; `alternation`, `concatenation`, `group` (with its `name` where it is named),
   `repetition` (`*`, `+`, `?`, `{n,m}`, lazy or not), `class` (with its `range`s and `class_name`s), `literal`, `dot`,
   `anchor`, `escape`, `flags`. A look-around, a back-reference or another construct the dialect refuses is an
-  `unsupported` node over its bytes. A text the parser cannot read at all is one `ERROR` node (0466).
+  `unsupported` node over its bytes. A text the parser cannot read at all is a `regex` root over one `error` node, its value the message (the
+  literal grammars' convention).
 - **The place.** The first argument of a `match(re, s)` atom, when it is a plain string, holds a regex program. Its
   text is the string's decoded value. Its segments map each decoded character to the bytes it was written with, so an
   escaped character (`\\.`) stands at its two bytes.
@@ -73,6 +74,8 @@ nodes stand at the file's bytes. It is a program per place, at the leaf.
 
 - R1: `a_rule_files_json_objects_are_json_programs`.
 - R2: `the_regex_grammar_reads_the_rust_dialect`.
+  `every_rule_files_regex_reads_in_the_regex_grammar`: each of the repository's `match` regexes that the `regex` crate
+  compiles (over 5,000) reads with no `error` node.
 - R3: `a_match_regex_is_a_regex_program_at_its_bytes`.
 - R4: `a_python_pattern_reads_metavariables_as_names`.
 - R5: `a_rule_files_patterns_are_programs_of_its_language`.

@@ -4793,6 +4793,100 @@ fn a_rule_files_json_objects_are_json_programs() {
     assert!(off.is_empty(), "{off:?}");
 }
 
+/// Decision 0495 R2: the `regex` grammar reads the Rust dialect, the engine's own: its tree's kinds, each node's value
+/// where it has one, and what the dialect refuses as an `unsupported` node over its bytes.
+#[test]
+fn the_regex_grammar_reads_the_rust_dialect() {
+    use crate::code_rule_dsl::literal::{PNode, regex};
+    use crate::code_rule_dsl::value::Value;
+    fn show(n: &PNode, text: &str) -> String {
+        let kind = regex::GRAMMAR.kinds()[usize::from(n.kind) - 1];
+        let value = match &n.value {
+            Some(Value::Str(v)) => format!(":{v}"),
+            _ => String::new(),
+        };
+        let children: Vec<String> = n.children.iter().map(|c| show(c, text)).collect();
+        if children.is_empty() { format!("{kind}{value}") } else { format!("{kind}{value}({})", children.join(" ")) }
+    }
+    let cases = [
+        ("a|b*", "regex(alternation(literal:a repetition:*(literal:b)))"),
+        ("(?P<y>\\d{4})", "regex(group(name:y repetition:{4}(escape:\\d)))"),
+        ("[^a-z[:digit:]]", "regex(class:^(range(literal:a literal:z) class_name:digit))"),
+        ("(?<=a)b", "regex(concatenation(unsupported:look-around(literal:a) literal:b))"),
+        ("(?i)x.+?$", "regex(concatenation(group(flags:i) literal:x repetition:+?(dot) anchor:$))"),
+        ("\\1\\.", "regex(concatenation(unsupported:back-reference literal:.))"),
+        ("a{2,}b{x}", "regex(concatenation(repetition:{2,}(literal:a) literal:b literal:{ literal:x literal:}))"),
+        ("(a", "regex(error:a group is not closed)"),
+        ("a)", "regex(error:a `)` closes no group)"),
+    ];
+    for (text, want) in cases {
+        assert_eq!(show(&regex::tree(regex::GRAMMAR, text), text), want, "{text}");
+    }
+    // The spans are the text's bytes.
+    let root = regex::tree(regex::GRAMMAR, "(?<=a)b");
+    assert_eq!((root.children[0].children[0].start, root.children[0].children[0].end), (0, 6));
+}
+
+/// Decision 0495 R2, on the repository's own regexes: every `match("…", s)` string of every rule file that the
+/// `regex` crate compiles reads with no `error` node, and one it refuses with no tree that hides the refusal.
+#[test]
+fn every_rule_files_regex_reads_in_the_regex_grammar() {
+    use crate::code_rule_dsl::literal::{PNode, regex};
+    fn has(n: &PNode, kind: &str) -> bool {
+        regex::GRAMMAR.kinds()[usize::from(n.kind) - 1] == kind || n.children.iter().any(|c| has(c, kind))
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let (mut read, mut bad) = (0usize, Vec::new());
+    let mut todo = vec![root.join("docs/rule-syntax"), root.join("packs")];
+    while let Some(dir) = todo.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                todo.push(path);
+                continue;
+            }
+            if path.extension().is_none_or(|e| e != "rr") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap_or_default();
+            for (at, _) in text.match_indices("match(\"") {
+                let body = &text[at + 7..];
+                let mut end = 0;
+                let b = body.as_bytes();
+                while end < b.len() && b[end] != b'"' {
+                    end += if b[end] == b'\\' { 2 } else { 1 };
+                }
+                let Ok(value) = rerail_rr_syntax::syntax::unescape(&body[..end.min(b.len())]) else { continue };
+                if ::regex::Regex::new(&value).is_err() {
+                    continue;
+                }
+                read += 1;
+                if has(&regex::tree(regex::GRAMMAR, &value), "error") {
+                    bad.push(format!("{}: {value}", path.strip_prefix(&root).unwrap().display()));
+                }
+            }
+        }
+    }
+    assert!(read > 5000, "{read} regexes read");
+    assert!(bad.is_empty(), "{} of {read}: {:#?}", bad.len(), &bad[..bad.len().min(20)]);
+}
+
+/// Decision 0495 R3: a `match`'s first string is a regex program of its rule file, at the string's bytes through its
+/// escapes. A regex run that says `.embedded on` finds each look-around at the rule file's line, its text the bytes
+/// it was written with; without it, it reads its own files alone (here none).
+#[test]
+fn a_match_regex_is_a_regex_program_at_its_bytes() {
+    let rr = ".decl a(x: symbol)\n.decl b(x: symbol)\nb(x) :- a(x), match(\"(?<=q)\\.py\", x).\nb(x) :- a(x), match(\"ok\\\"(?!z)\", x), !match(X, x), X = \"y\".\n";
+    let found = |embedded: &str| format!(".language regex\n{embedded}\n.decl la(t: symbol, p: symbol, l: number)\nla(t, p, l) :- kind(n, \"unsupported\"), text(n, t), docof(n, d), doc(d, p, _), line(n, l).\n.decl lits(t: symbol)\nlits(t) :- kind(n, \"literal\"), text(n, t), t = \"\\\"\".\n.output la, lits\n");
+    let [la, lits] = <[Vec<Vec<String>>; 2]>::try_from(guests_run("rr-regex-on", &[("rules/r.rr", rr)], &found(".embedded on"), &["la", "lits"])).unwrap();
+    let la: BTreeSet<Vec<String>> = la.into_iter().collect();
+    let want: BTreeSet<Vec<String>> = [["(?<=q)", "rules/r.rr", "3"], ["(?!z)", "rules/r.rr", "4"]].iter().map(|r| r.iter().map(|v| (*v).to_owned()).collect()).collect();
+    assert_eq!(la, want);
+    assert_eq!(lits.len(), 1, "the escaped quote is the regex's `\"`: {lits:?}");
+    let [off] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("rr-regex-off", &[("rules/r.rr", rr)], &found(""), &["la"])).unwrap();
+    assert!(off.is_empty(), "{off:?}");
+}
+
 /// Q267 (decision 0431 §4, "a program is named by its file and place"): where a program declares `docof` over nodes
 /// as T's programs do, it is `node`'s projection, and `node`'s document column is a program's file, so `docof` of a
 /// script's node is the HTML file that holds it, as core.rr's `docof` is.

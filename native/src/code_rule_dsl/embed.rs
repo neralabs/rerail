@@ -37,6 +37,8 @@ pub mod host;
 pub mod inline_content;
 // cratify: `json_object` is rerail-rr's (the rule-file language's, decision 0495)
 pub mod json_object;
+// cratify: `match_regex` is rerail-rr's (the rule-file language's, decision 0495)
+pub mod match_regex;
 pub mod raw_text;
 pub mod segments;
 #[cfg(any(test, feature = "test-hooks"))]
@@ -74,6 +76,11 @@ impl Parse {
             GrammarDialect::Tsx => ecma(rerail_ecma_lean::Dialect::Tsx),
             GrammarDialect::Php => Grammar::embedded(dialect).ok().and_then(|grammar| php_lean::encode_program(&grammar, text, budget).ok()),
             GrammarDialect::Html => Grammar::embedded(dialect).ok().and_then(|grammar| html_lean::encode(&grammar, text, budget).ok()),
+            // A literal grammar's dialect (decision 0495 §2): tree-sitter has none, and its registered parser reads it.
+            GrammarDialect::Regex => {
+                let grammar = Grammar::embedded(dialect).ok()?;
+                return crate::code_rule_dsl::tape::TapeImage::parse(&grammar, text, &budget)?.ok().map(|image| Self::Tape(image.primary));
+            }
             _ => None,
         };
         if let Some(tape) = lean.and_then(Result::ok) {

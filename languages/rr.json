@@ -27,6 +27,10 @@
     {
       "language": "json",
       "via": "json-object"
+    },
+    {
+      "language": "regex",
+      "via": "match-regex"
     }
   ]
 }
