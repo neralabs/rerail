@@ -567,7 +567,13 @@ impl Found<'_> {
                     let (body, _) = lines.text(source, line);
                     named(Span::NoColumn(line, body.len() - body.trim_start_matches([' ', '\t', '\x0c']).len()), "unexpected indent".into())
                 }
-                ParseErrorType::ExpectedToken { expected: TokenKind::Colon, .. } => named(token, "expected ':'".into()),
+                // `&&':'` is forced in `def`, `for`, `try`, `finally` and `else` (`_PyPegen_expect_forced_token`); the
+                // other compound statements say "expected ':'" only where a NEWLINE follows (`invalid_if_stmt` and
+                // its kin), and fail as `invalid syntax` at any other token.
+                ParseErrorType::ExpectedToken { expected: TokenKind::Colon, found } if *found == TokenKind::Newline || colon_forced(tokens, self.at) => {
+                    named(token, "expected ':'".into())
+                }
+                ParseErrorType::ExpectedToken { expected: TokenKind::Colon, .. } => generic(token),
                 // `function_def_raw`'s forced `&&'('` after the name (`_PyPegen_expect_forced_token`): at the token found.
                 ParseErrorType::ExpectedToken { expected: TokenKind::Lpar, .. } if after_def_name(tokens, self.at) => {
                     named(token, "expected '('".into())
@@ -992,6 +998,15 @@ fn other_message(ruff: &str) -> Option<&'static str> {
 }
 
 /// Whether the token before `at` is a function's name: `def NAME` (`async def` too).
+/// Whether the statement `at` is in forces its `:` (`def`, `for`, `try`, `finally`, `else`; `async` passed over): its
+/// first token after the last line boundary (`Newline`, `Indent`, `Dedent`) before `at`.
+fn colon_forced(tokens: &Tokens, at: TextSize) -> bool {
+    let line: Vec<TokenKind> = tokens.iter().take_while(|t| t.start() < at).map(|t| t.kind()).filter(|k| !k.is_trivia()).collect();
+    let from = line.iter().rposition(|k| matches!(k, TokenKind::Newline | TokenKind::Indent | TokenKind::Dedent)).map_or(0, |i| i + 1);
+    let head = line[from..].iter().find(|k| **k != TokenKind::Async);
+    matches!(head, Some(TokenKind::Def | TokenKind::For | TokenKind::Try | TokenKind::Finally | TokenKind::Else))
+}
+
 /// Whether the tokens before `at` end with a function's name, `def NAME` (`async def` too); a line's end between them
 /// and `at` is passed over (Ruff reports a token missing there past the line's `Newline`).
 fn after_def_name(tokens: &Tokens, at: TextSize) -> bool {
