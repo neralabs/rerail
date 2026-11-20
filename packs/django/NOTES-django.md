@@ -234,8 +234,8 @@ edit costs more with the store than without, so the product runs a pack's `.rera
 for a rule its upstream turns on). From the column without a store, the run the product makes: the whole pack after
 an edit of netbox, the mid-size app, takes 123 s and 4.7 GB, inside the runner's default time and memory limits, so no
 rule is one that cannot finish there; and no rule alone is costly any more (bulk-not-loop's bound removed the only
-outlier). Limits: the runner may use half the machine's memory, at most 8 GiB, so with less than about 10 GB a run
-over netbox is stopped and its rules reported as not run, and edx-platform (7.7 GB) is near the cap. Open when this
+outlier). Limits: by default a run may use half the machine's memory, so with less than about 10 GB a run over
+netbox is stopped and its rules reported as not run, and below about 16 GB a run over edx-platform. Open when this
 was written: without a store, netbox stalled at 4 threads, and a 16-thread edx-platform run reported fewer findings
 than a 4-thread one (95, most of them get-handler-writes); both are being fixed in the engine.
 

@@ -88,9 +88,10 @@ threads:
 | netbox | 1,298 | 123 s | 4.7 GB |
 | edx-platform | 4,459 | 251 s | 7.7 GB |
 
-With fewer threads a run takes longer. A run may use at most half the machine's memory, and at most 8 GiB, so on a
-machine with less than about 10 GB of memory a run over a mid-size app like netbox is stopped at that limit; so is
-a run that passes its time limit. A stopped run reports each of its rules as not run (`budget-exceeded`, naming the
+With fewer threads a run takes longer: by default a run gets half the machine's cores, half its memory and 10
+minutes. So on a machine with less than about 10 GB of memory a run over a mid-size app like netbox is stopped at the
+memory limit, and below about 16 GB a run over a large one like edx-platform; so is a run past its time limit. A
+stopped run reports each of its rules as not run (`budget-exceeded`, naming the
 setting to raise); other rules' results stand. To raise the limits, set `RERAIL_RR_MEMORY_MB`,
 `RERAIL_RR_DEADLINE_MS` or `RERAIL_RR_THREADS` for Rerail
 ([Rules written in .rerail](../../docs/reference.md#rules-written-in-rerail)). How these figures were measured is in
