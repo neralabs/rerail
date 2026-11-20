@@ -8,7 +8,8 @@ import { appendFileSync, cpSync, mkdtempSync, readFileSync, realpathSync, writeF
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type * as RrRunner from "../../../../src/engine/rr/rr-runner.js";
 import { keptRerailDescriber } from "../../../../src/engine/catalog/rerail-rules/kept-rerail-descriptions.js";
 import { packCompileChecks, PACK_COMPILE_CHECKS_FILE } from "../../../../src/engine/catalog/pack-compile-checks.js";
 import type { RerailDescription } from "../../../../src/engine/catalog/rerail-rules/rerail-rule.js";
@@ -27,6 +28,20 @@ import { setUpTestRepository } from "../../../support/repository-rules.js";
 
 const SAMPLE = fixturesPath("packs", "rr-sample");
 const LIBRARY = join("rules", "lib", "sample-calls.rerail");
+
+/** Runs once the engine has described rules and before the catalog's read ends: a test's edit landing in between. */
+let afterDescribe: (() => void) | undefined;
+vi.mock("../../../../src/engine/rr/rr-runner.js", async importOriginal => {
+  const actual = await importOriginal<typeof RrRunner>();
+  return {
+    ...actual,
+    describeRerailPoliciesSync: (paths: string[]) => {
+      const rows = actual.describeRerailPoliciesSync(paths);
+      afterDescribe?.();
+      return rows;
+    },
+  };
+});
 
 const temporary: string[] = [];
 afterEach(() => {
@@ -105,6 +120,21 @@ describe("a pack's rules written in .rerail", { timeout: CHILD_TIMEOUT }, () => 
     expect(ruleDocumentDigest(after.documents.get("rr-sample-print-call")!)).not.toBe(ruleDocumentDigest(before.documents.get("rr-sample-print-call")!));
     expect(packApprovalDigest(after, after.packs.get("rr-sample")!)).not.toBe(packApprovalDigest(before, before.packs.get("rr-sample")!));
     expect(loadRuleCatalog()).toBe(after);
+  });
+
+  it("reads an installed pack again when one of its .rerail files changes while the catalog reads it", () => {
+    const installed = installPackDirectory(samplePack(), "rr-sample");
+    const library = join(installed, LIBRARY);
+    afterDescribe = () => {
+      afterDescribe = undefined;
+      appendFileSync(library, "// an edit while the catalog reads\n");
+    };
+    const first = loadRuleCatalog();
+    const second = loadRuleCatalog();
+    expect(second).not.toBe(first);
+    const edited = { path: realpathSync(library), sha256: createHash("sha256").update(readFileSync(library)).digest("hex") };
+    expect(second.documents.get("rr-sample-print-call")).toMatchObject({ kind: "rerail", rule: { includes: expect.arrayContaining([edited]) } });
+    expect(loadRuleCatalog()).toBe(second);
   });
 
   it("leaves out a pack whose .rerail rule the engine refuses, in the engine's words", () => {

@@ -11,8 +11,8 @@ import { basename, dirname, join, resolve } from "node:path";
 import semver from "semver";
 import { CodeRuleCompileError, EngineUnavailableError, readsLeftOutToken, relationalRulesOff, storableCodeRule } from "../code-rule/code-rule-compile.js";
 import type { CodeRule } from "../code-rule/code-rule-schema.js";
-import { describeRerailRules, type RerailRuleFile } from "./rerail-rules/rerail-rule.js";
-import { changedFile } from "../rr/rr-rule-files.js";
+import { describeRerailRules } from "./rerail-rules/rerail-rule.js";
+import { sha256Of } from "./rerail-rules/kept-rerail-descriptions.js";
 import { PACKAGE_ROOT, RERAIL_PACKAGE_NAME } from "../package-root.js";
 import { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "../stable-json.js";
 import { CURRENT_LINK, defaultRerailHome } from "../storage/rerail-home.js";
@@ -448,33 +448,33 @@ function installedStamp(home: string, directories: readonly string[], coreVersio
   return [home, coreVersion, fileStamp(lock), fileStamp(join(prefix, "package.json")), ...directories.flatMap(directory => [directory, fileStamp(join(directory, "package.json")), fileStamp(join(directory, "pack.json"))])].join("\0");
 }
 
-/** Every file the catalog's `.rerail` rules were read from: each rule file and each file it includes, with its digest. */
-function rerailFiles(catalog: RuleCatalog): RerailRuleFile[] {
-  return [...catalog.documents.values()].flatMap(document =>
-    (document.kind === "rerail" ? [{ path: document.rule.path, sha256: document.rule.sha256 }, ...document.rule.includes] : []));
-}
-
 /**
- * A stamp of every file the catalog's `.rerail` rules were read from. The `.rerail` runner reads them from disk, so an
- * edit to any of them reloads the catalog, which gives the rule, and its pack's approval, a new digest: an edit someone
- * has not approved runs in Log, as a JSON rule's would.
+ * A stamp of every file the catalog's `.rerail` rules were read from: each rule file and each file it includes. The
+ * `.rerail` runner reads them from disk, so an edit to any of them reloads the catalog, which gives the rule, and its
+ * pack's approval, a new digest: an edit someone has not approved runs in Log, as a JSON rule's would.
  */
 function rerailFilesStamp(catalog: RuleCatalog): string {
-  const paths = new Set(rerailFiles(catalog).map(file => file.path));
+  const paths = new Set([...catalog.documents.values()].flatMap(document => (document.kind === "rerail" ? [document.rule.path, ...document.rule.includes.map(file => file.path)] : [])));
   return [...paths].map(path => `${path}\0${fileStamp(path)}`).join("\0");
 }
 
-/**
- * The stamp to keep for a catalog just read: its files' stamp, taken before checking that each file still holds the
- * bytes the catalog read. An edit after the stamp changes it; one between the read and the stamp leaves other bytes
- * than the catalog's digest, and then no stamp is kept, so the next call reads the catalog again.
- */
-function keptRerailFilesStamp(catalog: RuleCatalog): string | undefined {
-  const stamp = rerailFilesStamp(catalog);
-  return changedFile(rerailFiles(catalog)) === undefined ? stamp : undefined;
+/** Whether every `.rerail` rule file of `catalog`, and every file it includes, still has the bytes the engine read. */
+function rerailFilesAsRead(catalog: RuleCatalog): boolean {
+  return [...catalog.documents.values()].every(document => document.kind !== "rerail"
+    || [{ path: document.rule.path, sha256: document.rule.sha256 }, ...document.rule.includes].every(file => sha256Of(file.path) === file.sha256));
 }
 
-let installed: { readonly stamp: string; readonly rerailFiles: string | undefined; readonly catalog: RuleCatalog } | undefined;
+/**
+ * The `.rerail` files' stamp for a catalog just read: taken first, then the files checked against the bytes the engine
+ * read. A file edited between the engine's read and the stamp would otherwise pin the older reading under the newer
+ * stamp; then no stamp is kept (empty), and the next load reads the packs again.
+ */
+function readRerailFilesStamp(catalog: RuleCatalog): string {
+  const stamp = rerailFilesStamp(catalog);
+  return rerailFilesAsRead(catalog) ? stamp : "";
+}
+
+let installed: { readonly stamp: string; readonly rerailFiles: string; readonly catalog: RuleCatalog } | undefined;
 
 /**
  * The catalog of the packs installed in the Rerail home `home`, checked against its active core and the engine. It is
@@ -493,7 +493,7 @@ export function loadRuleCatalog(home: string = defaultRerailHome()): RuleCatalog
     const compileChecks = packCompileChecks(home);
     const catalog = readRuleCatalog(directories, { coreVersion, compile: true, compileChecks, localSources: localSources(home, directories) });
     compileChecks.save();
-    installed = { stamp, rerailFiles: keptRerailFilesStamp(catalog), catalog: { ...catalog, skipped: [...catalog.skipped, ...unrecordedPacks(home)] } };
+    installed = { stamp, rerailFiles: readRerailFilesStamp(catalog), catalog: { ...catalog, skipped: [...catalog.skipped, ...unrecordedPacks(home)] } };
   }
   return installed.catalog;
 }

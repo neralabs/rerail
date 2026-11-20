@@ -18,9 +18,9 @@ function sha256Of(path: string): string | undefined {
   }
 }
 
-/** The first of `files` (a rule's file, then each file it includes) that no longer holds what the catalog read. */
-export function changedFile(files: RerailRuleEntry["files"]): string | undefined {
-  return files.find(file => sha256Of(file.path) !== file.sha256)?.path;
+/** The first of `rule`'s files (the rule, then each file it includes) that no longer holds what the catalog read. */
+function changedFile(rule: RerailRuleEntry): string | undefined {
+  return rule.files.find(file => sha256Of(file.path) !== file.sha256)?.path;
 }
 
 /** `rules` split into those whose files are as the catalog read them, and a failure for each of the others. */
@@ -28,7 +28,7 @@ export function unchangedRules(rules: readonly RerailRuleEntry[]): { rules: Rera
   const unchanged: RerailRuleEntry[] = [];
   const failures: AuditFailure[] = [];
   for (const rule of rules) {
-    const changed = changedFile(rule.files);
+    const changed = changedFile(rule);
     if (changed === undefined) unchanged.push(rule);
     else failures.push({
       ruleId: rule.id, clauseId: "run", code: "adapter-error", stage: "scan",
