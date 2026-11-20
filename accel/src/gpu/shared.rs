@@ -415,6 +415,8 @@ pub fn grow_block(b: rerail_blocks::Block, bytes: usize) -> Result<rerail_blocks
 /// Idle deferrable files the pool keeps at most, all classes (each beyond is removed): they hold disk, not memory.
 const IDLE_FILES: usize = 16;
 
+// Over a file's shared mapping (`rerail_blocks::deferrable`: POSIX's).
+#[cfg(unix)]
 /// A deferrable lease (decision 0295 §1): a block of `kind` in a file-backed shared mapping of at least `bytes` at
 /// `path`, wrapped for the device once. It counts in the one budget as a live lease until it is sealed
 /// (`Deferrable::seal`, at the wave's end) or dropped; then its pages are the OS's. A file the writer gave back
@@ -424,12 +426,16 @@ pub fn lease_deferrable(kind: u32, bytes: usize, path: &std::path::Path) -> Resu
     lease_file(kind, bytes, path, true)
 }
 
+// Over a file's shared mapping (`rerail_blocks::deferrable`: POSIX's).
+#[cfg(unix)]
 /// `lease_deferrable` for the host's writes alone (the store's writer): no wrap for the device, whose wire on the
 /// pages would hold their writeback some 200 ms (§7).
 pub fn lease_deferrable_host(kind: u32, bytes: usize, path: &std::path::Path) -> Result<rerail_blocks::deferrable::Deferrable, String> {
     lease_file(kind, bytes, path, false)
 }
 
+// Over a file's shared mapping (`rerail_blocks::deferrable`: POSIX's).
+#[cfg(unix)]
 fn lease_file(kind: u32, bytes: usize, path: &std::path::Path, for_device: bool) -> Result<rerail_blocks::deferrable::Deferrable, String> {
     let class = class(bytes.max(SLAB_MIN));
     let dir = path.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
@@ -463,6 +469,8 @@ fn lease_file(kind: u32, bytes: usize, path: &std::path::Path, for_device: bool)
     Ok(d)
 }
 
+// Over a file's shared mapping (`rerail_blocks::deferrable`: POSIX's).
+#[cfg(unix)]
 /// `lease_deferrable`, kept within the Metal budget (`lease_within`).
 pub fn lease_deferrable_within(kind: u32, bytes: usize, path: &std::path::Path) -> Result<rerail_blocks::deferrable::Deferrable, String> {
     let need = class(bytes.max(SLAB_MIN));
@@ -1147,6 +1155,7 @@ mod tests {
 
     /// A journal in a deferrable lease (decision 0295 §1): counted live until sealed, read in place once sealed,
     /// written back and frozen by the writer, and its file reused by the next lease of its class.
+    #[cfg(unix)]
     #[test]
     fn a_deferrable_journal_is_handed_off_and_its_file_reused() {
         use rerail_blocks::block::kind;

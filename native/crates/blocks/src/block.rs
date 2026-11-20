@@ -61,7 +61,7 @@ pub trait Backing: Send + Sync {
     fn base(&self) -> *mut u8;
     fn len(&self) -> usize;
     /// The device buffer over the whole of it, made once by its owner.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn buffer(&self) -> Option<rerail_device::device::Buffer> {
         None
     }
@@ -112,7 +112,7 @@ pub struct Block {
     was_free_listed: bool,
     /// The device buffer this block is read through, kept: a buffer's first use maps it into the GPU's address
     /// space at about 20 ms a GiB (0266 §12), so it is made once and remade only when the block outgrows it.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     gpu: std::sync::Mutex<Option<(rerail_device::device::Buffer, usize)>>,
     /// Its ledger (decision 0487): its live chunks, the GPU's queued uses, and when chunks and memory may go.
     ledger: Arc<crate::ledger::Ledger>,
@@ -211,7 +211,7 @@ impl Block {
             dirty,
             free: 0,
             was_free_listed: false,
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             gpu: std::sync::Mutex::new(None),
         }
     }
@@ -425,7 +425,7 @@ impl Block {
     /// Lets go of the no-copy wrap `device_buffer` kept; the device must be done with it. It does not let the OS write
     /// back a file block's pages a kernel wrote: the driver holds them wired until the range is unmapped (decision
     /// 0295 §1 and §7, measured by `examples/deferrable`).
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     pub fn release_device_buffer(&self) {
         self.gpu.lock().unwrap().take();
     }
@@ -433,7 +433,7 @@ impl Block {
     /// The device buffer to bind this block with: its slab's own, or a wrap of its used extent in place
     /// (`rerail_device::device::wrap_host_memory`: no copy, decision 0353) made once and kept (remade, twice as long,
     /// only when the block has outgrown it).
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     pub fn device_buffer(&self, device: &rerail_device::device::Device) -> Result<rerail_device::device::Buffer, String> {
         if let Some(b) = self.backing.as_ref().and_then(|b| b.buffer()) {
             return Ok(b);
@@ -621,7 +621,7 @@ impl Block {
             // Whole MBs, and never under a device buffer made over it (`device_buffer`'s extent).
             #[allow(unused_mut)]
             let mut keep = round_up(len.max(1 << 20), 1 << 20);
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             if let Some((_, l)) = self.gpu.lock().unwrap().as_ref() {
                 keep = keep.max(*l);
             }
@@ -784,10 +784,10 @@ impl Drop for Block {
     fn drop(&mut self) {
         let backing = self.backing.take();
         let (base, reserved, mapped) = (self.base as usize, self.reserved, self.mapped);
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         let wrap = self.gpu.get_mut().unwrap_or_else(|e| e.into_inner()).take();
         self.ledger.let_go(Box::new(move || {
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             drop(wrap);
             match backing {
                 Some(slab) => drop(slab),

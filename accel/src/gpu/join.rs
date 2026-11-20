@@ -255,10 +255,7 @@ pub fn host_clock() -> f64 {
 /// The host's monotonic clock in seconds (elsewhere than macOS no device timestamp shares it).
 #[cfg(not(target_os = "macos"))]
 pub fn host_clock() -> f64 {
-    let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-    // SAFETY: fills the struct.
-    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut t) };
-    t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    rerail_device::monotonic_seconds()
 }
 
 /// A completed Metal command buffer's timeline, as wall-only phases of the job (`crate::score`): commit to the
@@ -1869,11 +1866,7 @@ mod host_costs {
 
     /// The process's CPU, user and system: the device layer's own threads' too.
     fn cpu() -> f64 {
-        let mut u: libc::rusage = unsafe { std::mem::zeroed() };
-        // SAFETY: a valid rusage out.
-        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
-        let t = |v: libc::timeval| v.tv_sec as f64 + v.tv_usec as f64 / 1e6;
-        t(u.ru_utime) + t(u.ru_stime)
+        rerail_device::process_cpu_seconds()
     }
 
     /// Microseconds of this thread's CPU per run of `f`, over `n` runs.
