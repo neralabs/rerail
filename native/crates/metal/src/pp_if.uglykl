@@ -8,15 +8,6 @@
 // queue (`px_top_*`, `px_worker`), and each test's output is evaluated by one thread, as
 // `expr::eval` evaluates it.
 
-// The tests' operators, by their names' keys (`IF_OPKEYS`, the dialect's table): the `__has_*`
-// tests, and C++'s alternative tokens (`OPK_ALT` + the operator).
-#define OPK_HAS_INCLUDE (1u)
-#define OPK_HAS_INCLUDE_NEXT (2u)
-#define OPK_HAS_EMBED (3u)
-#define OPK_FEATURE (4u)
-// A test the configuration answers, 1 where it does not (`__is_identifier`).
-#define OPK_IS_IDENTIFIER (5u)
-#define OPK_ALT (64u)
 // A top token's mark (`IF_OPS`): `defined` as the operator; a `__has_*` test followed by `(`.
 #define IO_DEFINED (1u)
 #define IO_HAS (8u)
@@ -102,7 +93,7 @@ UKL_INLINE void p1_if_tokens(Ux u, UKL_GLOBAL const uint32_t* count, UKL_GLOBAL 
     }
     if (operand) return;
     uint32_t m = visible(u.sorted, u.perm, u.n_rows, u.name_keys, u.values, u.floors, u.n_units, u.keys[g], dslot[j], bad);
-    if (m == L_BUILTIN || m == L_IDENT) {
+    if (m == L_BUILTIN || m == L_IDENT || m == L_FEATURE) {
         uint32_t k = p1_if_opk(op_keys, op_kinds, n_ops, u.keys[g]);
         if (k >= OPK_HAS_INCLUDE && k <= OPK_IS_IDENTIFIER) {
             // Not followed by `(`, a test is a plain name (`Pp::next`).
@@ -557,33 +548,6 @@ UKL_INLINE bool if_char(UKL_PRIVATE const uint8_t* t, uint32_t n, UKL_PRIVATE ui
     else r = (int64_t)((uint32_t)(first));
     *bits = (uint64_t)(r);
     return true;
-}
-
-// A key over bytes given a piece at a time (`name_key`'s: the count first, then 8 bytes a word).
-typedef struct KeyAcc { uint64_t h, w; uint32_t m; } KeyAcc;
-UKL_INLINE KeyAcc ka_new(uint32_t len) { KeyAcc a; a.h = 0x9e3779b97f4a7c15ul ^ ((uint64_t)(len)); a.w = 0ul; a.m = 0u; return a; }
-UKL_INLINE void ka_byte(UKL_PRIVATE KeyAcc* a, uint8_t c) {
-    a->w |= ((uint64_t)(c)) << (8u * a->m);
-    if (++a->m == 8u) { a->h = key_mix(a->h, a->w); a->w = 0ul; a->m = 0u; }
-}
-UKL_INLINE uint64_t ka_end(KeyAcc a) {
-    uint64_t h = a.m != 0u ? key_mix(a.h, a.w) : a.h;
-    h *= 0xc4ceb9fe1a85ec53ul;
-    return h ^ (h >> 29);
-}
-// A token's phase-2 bytes into a key (`count` alone: only their count).
-UKL_INLINE uint32_t ka_span(UKL_PRIVATE KeyAcc* a, Span r, bool count) {
-    uint32_t n = 0u;
-    for (uint32_t i = 0u; i < r.len;) {
-        if (r.p[i] == ((uint8_t)('\\'))) {
-            uint32_t e = splice_end(r.p, i, r.len);
-            if (e != i) { i = e; continue; }
-        }
-        if (!count) ka_byte(a, r.p[i]);
-        n++;
-        i++;
-    }
-    return n;
 }
 
 // What a test reads of the unit's files: the file table, the files' search entries, each unit's

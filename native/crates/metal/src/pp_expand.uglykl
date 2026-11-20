@@ -368,6 +368,15 @@ typedef struct PpNode { uint32_t file, parent, pdir, depth, unit; } PpNode;
 #define RT_POP (2u)
 // A row that gives no value (a push, a pop with no push): a lookup walks past it.
 #define V_SKIP (0xfffffff0u)
+// The tests' operators, by their names' keys (`IF_OPKEYS`, the dialect's table): the `__has_*`
+// tests, and C++'s alternative tokens (`OPK_ALT` + the operator).
+#define OPK_HAS_INCLUDE (1u)
+#define OPK_HAS_INCLUDE_NEXT (2u)
+#define OPK_HAS_EMBED (3u)
+#define OPK_FEATURE (4u)
+// A test the configuration answers, 1 where it does not (`__is_identifier`).
+#define OPK_IS_IDENTIFIER (5u)
+#define OPK_ALT (64u)
 #define L_NOT_NAME (0xffffffffu)
 #define L_NONE (0xfffffffeu)
 #define L_BUILTIN (0xfffffffdu)
@@ -379,10 +388,16 @@ typedef struct PpNode { uint32_t file, parent, pdir, depth, unit; } PpNode;
 #define L_FILE_NAME (0xfffffff7u)
 #define L_BASE_FILE (0xfffffff6u)
 #define L_INCLUDE_LEVEL (0xfffffff5u)
-#define L_IDENT (0xfffffff4u)
-#define L_DEFS (0xfffffff4u)
+// A test the configuration answers (`__has_feature`, `__is_identifier`…): function-like.
+#define L_FEATURE (0xfffffff4u)
+#define L_IDENT (0xfffffff3u)
+#define L_DEFS (0xfffffff3u)
 // A built-in that expands to one token, a use of it an object-like call.
 UKL_INLINE bool px_one_token(uint32_t m) { return m >= L_INCLUDE_LEVEL && m <= L_FILE; }
+// A name a call is made of: a definition's, or a configuration's test.
+UKL_INLINE bool px_callable(uint32_t m) { return m < L_DEFS || m == L_FEATURE; }
+// A callable name whose call takes arguments.
+UKL_INLINE bool px_fnlike(UKL_GLOBAL const PpDef* defs, uint32_t m) { return m == L_FEATURE || (m < L_DEFS && (defs[m].flags & D_FNLIKE) != 0u); }
 #define WALK (64u)
 
 // Each instance's directive `j`'s row, where it makes one (a flag, then its place by a scan).
@@ -718,6 +733,19 @@ UKL_INLINE uint32_t top_end(UKL_GLOBAL const uint32_t* gat, uint32_t n_gaps, uin
 }
 
 // The unit, as every expansion kernel reads it.
+// A key over bytes given a piece at a time (`name_key`'s: the count first, then 8 bytes a word).
+typedef struct KeyAcc { uint64_t h, w; uint32_t m; } KeyAcc;
+UKL_INLINE KeyAcc ka_new(uint32_t len) { KeyAcc a; a.h = 0x9e3779b97f4a7c15ul ^ ((uint64_t)(len)); a.w = 0ul; a.m = 0u; return a; }
+UKL_INLINE void ka_byte(UKL_PRIVATE KeyAcc* a, uint8_t c) {
+    a->w |= ((uint64_t)(c)) << (8u * a->m);
+    if (++a->m == 8u) { a->h = key_mix(a->h, a->w); a->w = 0ul; a->m = 0u; }
+}
+UKL_INLINE uint64_t ka_end(KeyAcc a) {
+    uint64_t h = a.m != 0u ? key_mix(a.h, a.w) : a.h;
+    h *= 0xc4ceb9fe1a85ec53ul;
+    return h ^ (h >> 29);
+}
+
 typedef struct Ux {
     UKL_GLOBAL const PpFile* files; UKL_GLOBAL const uint8_t* data; UKL_GLOBAL const uint32_t* bases; uint32_t n_files;
     UKL_GLOBAL const uint64_t* keys; UKL_GLOBAL const PpDef* defs; UKL_GLOBAL const uint32_t* items;
@@ -729,6 +757,9 @@ typedef struct Ux {
     UKL_GLOBAL const uint32_t* floors; uint32_t n_units;
     // Each top stretch's instance, the include tree, each unit's main file.
     UKL_GLOBAL const uint32_t* tinst; UKL_GLOBAL const PpNode* nodes; UKL_GLOBAL const uint32_t* unit_file;
+    // The dialect's operators by their names' keys (their kinds), and the configuration's answers.
+    UKL_GLOBAL const uint64_t* op_keys; UKL_GLOBAL const uint32_t* op_kinds; uint32_t n_ops;
+    UKL_GLOBAL const uint64_t* feat_keys; UKL_GLOBAL const uint64_t* feat_vals; uint32_t n_feat;
 } Ux;
 
 // Whether `p[0..n)` holds a line splice (`\`, blanks, a newline): its phase-2 spelling differs.
@@ -745,6 +776,21 @@ UKL_INLINE bool has_splice(UKL_GLOBAL const uint8_t* p, uint32_t n) {
 // A token's bytes and kind: a tape node's in its file's source, a scratch token's in the scratch
 // bytes.
 typedef struct Span { UKL_GLOBAL const uint8_t* p; uint32_t len; uint32_t kind; } Span;
+
+// A token's phase-2 bytes into a key (`count` alone: only their count).
+UKL_INLINE uint32_t ka_span(UKL_PRIVATE KeyAcc* a, Span r, bool count) {
+    uint32_t n = 0u;
+    for (uint32_t i = 0u; i < r.len;) {
+        if (r.p[i] == ((uint8_t)('\\'))) {
+            uint32_t e = splice_end(r.p, i, r.len);
+            if (e != i) { i = e; continue; }
+        }
+        if (!count) ka_byte(a, r.p[i]);
+        n++;
+        i++;
+    }
+    return n;
+}
 UKL_INLINE Span ref_span(Ux u, uint32_t g) {
     Span r;
     if ((g & SCRATCH) != 0u) {
@@ -836,8 +882,8 @@ UKL_INLINE void px_top_calls(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const ui
         px_refuse(ctl, X_BUILTIN);
     } else if (px_one_token(m)) {
         e = s + 1u;
-    } else if (m < L_DEFS) {
-        if ((defs[m].flags & D_FNLIKE) == 0u) {
+    } else if (px_callable(m)) {
+        if (!px_fnlike(defs, m)) {
             e = s + 1u;
         } else {
             uint32_t end = top_end(gat, n_gaps[0], n, s);
@@ -874,7 +920,7 @@ UKL_INLINE void px_top_lists(UKL_GLOBAL const uint32_t* lookups, UKL_GLOBAL cons
     UKL_GLOBAL PxList* l = &lists[c];
     px_init(l, TOP, m, gslot[pb_item_of(gat, n_gaps[0], s)], LK_MACRO);
     l->lo = s; l->hi = cend[s] - 1u; l->at = l->lo; l->end = l->hi;
-    uint32_t item = m < L_DEFS && (defs[m].flags & D_FNLIKE) != 0u ? (c | IT_CALL) : (c | IT_SUBST);
+    uint32_t item = px_fnlike(defs, m) ? (c | IT_CALL) : (c | IT_SUBST);
     ukl_atomic_store(&slots[c], item + 1u);
 }
 
@@ -1228,10 +1274,10 @@ UKL_INLINE void px_scan(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
                     px_refuse(a.ctl, X_BUILTIN);
                 } else if (px_one_token(m)) {
                     call = true; e = j;
-                } else if (m < L_DEFS) {
-                    if (px_disabled(a.lists, l, m, a.ctl)) {
+                } else if (px_callable(m)) {
+                    if (m < L_DEFS && px_disabled(a.lists, l, m, a.ctl)) {
                         a.tflag[first + j] |= T_PAINT;
-                    } else if ((u.defs[m].flags & D_FNLIKE) == 0u) {
+                    } else if (!px_fnlike(u.defs, m)) {
                         call = true; e = j;
                     } else if (j + 1u < n) {
                         open = ref_is(u, a.tok[first + j + 1u], '(');
@@ -1295,7 +1341,7 @@ UKL_INLINE void px_scan(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
             a.tchild[first + j] = child + 1u;
         }
         px_fence();
-        if (call) px_push(a, child | (m < L_DEFS && (u.defs[m].flags & D_FNLIKE) != 0u ? IT_CALL : IT_SUBST));
+        if (call) px_push(a, child | (px_fnlike(u.defs, m) ? IT_CALL : IT_SUBST));
     }
     if (xj != NO_POS) px_exit(u, a, l, xj, xm, lane __UKL_ARGS);
     px_done(a, l, lane __UKL_ARGS);
@@ -1316,7 +1362,66 @@ UKL_INLINE void px_copy(Ar a, uint32_t dst, uint32_t src, uint32_t n, uint32_t l
 // count checked (a wrong one leaves the name alone, painted), and a list for each parameter used
 // expanded (claimed once), its tokens the argument's refs, its SCAN pushed. SUBST follows when the
 // last is flattened.
+// A number token in the scratch, by lane 0 (its ref broadcast).
+UKL_INLINE uint32_t px_number(Ar a, uint32_t value, uint32_t lane __UKL_PARAMS) {
+    uint32_t nd = 1u;
+    for (uint32_t v = value; v >= 10u; v /= 10u) nd++;
+    uint32_t id = 0u;
+    if (lane == 0u) {
+        uint32_t base = ukl_atomic_add(&a.ctl[4], nd);
+        id = ukl_atomic_add(&a.ctl[5], 1u);
+        if (base + nd > a.sb_cap || id >= a.st_cap) {
+            px_refuse(a.ctl, X_ROOM);
+        } else {
+            uint32_t v = value;
+            for (uint32_t q = 0u; q < nd; q++) { a.sbytes[base + nd - 1u - q] = ((uint8_t)('0' + v % 10u)); v /= 10u; }
+            a.stoks[id].start = base; a.stoks[id].end = base + nd; a.stoks[id].kind = K_NUMBER;
+        }
+    }
+    return SCRATCH | ukl_sg_broadcast(id, 0 __UKL_ARGS);
+}
+
+// A configuration's test called, list `l` (`Pp::builtin`'s `Feature`), by the 32 lanes: its
+// value by the test's name and its operand's raw tokens spelled together (`__is_identifier` 1
+// where the configuration has no row, any other 0), one number token with the name's space.
+UKL_INLINE void px_feature(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
+    UKL_GLOBAL PxList* L = &a.lists[l];
+    uint32_t p = L->src, open = L->at + 1u, close = L->end;
+    uint32_t n = 0u;
+    KeyAcc ka = ka_new(0u);
+    for (uint32_t k = open + 1u; k < close; k++) n += ka_span(&ka, ref_span(u, par_ref(u, a, p, k)), true);
+    ka = ka_new(n);
+    for (uint32_t k = open + 1u; k < close; k++) ka_span(&ka, ref_span(u, par_ref(u, a, p, k)), false);
+    uint64_t test = ref_key(u, par_ref(u, a, p, L->at));
+    uint64_t key = key_mix(test, ka_end(ka));
+    uint32_t c = pb_lower_bound(u.feat_keys, u.n_feat, key);
+    bool ident = false;
+    for (uint32_t k = 0u; k < u.n_ops && k < 256u; k++) ident = ident || (u.op_keys[k] == test && u.op_kinds[k] == OPK_IS_IDENTIFIER);
+    uint64_t v = c < u.n_feat && u.feat_keys[c] == key ? u.feat_vals[c] : (ident ? 1ul : 0ul);
+    if (v > 0xffffffffull) { if (lane == 0u) px_refuse(a.ctl, X_BUILTIN); v = 0ul; }
+    uint32_t ref = px_number(a, (uint32_t)(v), lane __UKL_ARGS);
+    if (lane == 0u) {
+        uint32_t base = ukl_atomic_add(&a.ctl[0], 1u);
+        if (base + 1u > a.tok_cap) {
+            px_refuse(a.ctl, X_ROOM);
+            L->len = 0u;
+        } else {
+            a.tok[base] = ref;
+            a.tflag[base] = par_flags(u, a, p, L->at) & T_SPACE;
+            a.tchild[base] = 0u;
+            a.texp[base] = l + 1u;
+            L->len = 1u;
+        }
+        L->first = base;
+    }
+    px_done(a, l, lane __UKL_ARGS);
+}
+
 UKL_INLINE void px_call(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
+    if (a.lists[l].def == L_FEATURE) {
+        px_feature(u, a, l, lane __UKL_ARGS);
+        return;
+    }
     UKL_GLOBAL PxList* L = &a.lists[l];
     PpDef d = u.defs[L->def];
     uint32_t np = d.n_params >= 2u ? (d.n_params - 1u) / 2u : 0u;
@@ -1644,24 +1749,6 @@ UKL_INLINE uint32_t px_line(Ux u, uint32_t g) {
     return tape_line_of(at.t, node_start(at.t, at.i)) + 1u;
 }
 
-// A number token in the scratch, by lane 0 (its ref broadcast).
-UKL_INLINE uint32_t px_number(Ar a, uint32_t value, uint32_t lane __UKL_PARAMS) {
-    uint32_t nd = 1u;
-    for (uint32_t v = value; v >= 10u; v /= 10u) nd++;
-    uint32_t id = 0u;
-    if (lane == 0u) {
-        uint32_t base = ukl_atomic_add(&a.ctl[4], nd);
-        id = ukl_atomic_add(&a.ctl[5], 1u);
-        if (base + nd > a.sb_cap || id >= a.st_cap) {
-            px_refuse(a.ctl, X_ROOM);
-        } else {
-            uint32_t v = value;
-            for (uint32_t q = 0u; q < nd; q++) { a.sbytes[base + nd - 1u - q] = ((uint8_t)('0' + v % 10u)); v /= 10u; }
-            a.stoks[id].start = base; a.stoks[id].end = base + nd; a.stoks[id].kind = K_NUMBER;
-        }
-    }
-    return SCRATCH | ukl_sg_broadcast(id, 0 __UKL_ARGS);
-}
 
 // A built-in's use, list `l` (an object-like call), by the 32 lanes: `__LINE__` the line of the
 // outermost call's end (the serial pass's: the token's origin climbed, each expansion's end
@@ -1921,7 +2008,8 @@ UKL_INLINE void px_place(Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
 }
 
 // The queue's workers: a SIMD group each, lane 0 taking an item and the 32 lanes doing it.
-UKL_INLINE void px_worker(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, UKL_GLOBAL const uint32_t* bases, UKL_GLOBAL const uint64_t* keys, UKL_GLOBAL const PpDef* defs, UKL_GLOBAL const uint32_t* items, UKL_GLOBAL const uint64_t* sorted, UKL_GLOBAL const uint32_t* perm, UKL_GLOBAL const uint32_t* n_rows, UKL_GLOBAL const uint64_t* name_keys, UKL_GLOBAL const uint32_t* values, UKL_GLOBAL const uint32_t* text_nodes, UKL_GLOBAL const uint32_t* gat, UKL_GLOBAL const uint32_t* n_gaps, UKL_GLOBAL const uint32_t* firsts, UKL_GLOBAL const uint32_t* n_toks, UKL_GLOBAL const uint32_t* tinst, UKL_GLOBAL const PpNode* nodes, UKL_GLOBAL const uint32_t* unit_file, UKL_GLOBAL const uint32_t* top_depth, UKL_GLOBAL PxList* lists, UKL_GLOBAL uint32_t* cols, UKL_GLOBAL PxArg* args, UKL_GLOBAL uint32_t* out, UKL_GLOBAL uint32_t* slots, UKL_GLOBAL uint32_t* qctl, UKL_GLOBAL uint32_t* ctl, UKL_GLOBAL const uint32_t* words, UKL_GLOBAL PxScratch* scratch, UKL_GLOBAL const uint64_t* closes, UKL_GLOBAL const uint32_t* n_close, UKL_GLOBAL const uint32_t* floors, uint32_t n_units, uint32_t lane __UKL_PARAMS) {
+UKL_INLINE void px_worker(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, UKL_GLOBAL const uint32_t* bases, UKL_GLOBAL const uint64_t* keys, UKL_GLOBAL const PpDef* defs, UKL_GLOBAL const uint32_t* items, UKL_GLOBAL const uint64_t* sorted, UKL_GLOBAL const uint32_t* perm, UKL_GLOBAL const uint32_t* n_rows, UKL_GLOBAL const uint64_t* name_keys, UKL_GLOBAL const uint32_t* values, UKL_GLOBAL const uint32_t* text_nodes, UKL_GLOBAL const uint32_t* gat, UKL_GLOBAL const uint32_t* n_gaps, UKL_GLOBAL const uint32_t* firsts, UKL_GLOBAL const uint32_t* n_toks, UKL_GLOBAL const uint32_t* tinst, UKL_GLOBAL const PpNode* nodes, UKL_GLOBAL const uint32_t* unit_file, UKL_GLOBAL const uint32_t* top_depth, UKL_GLOBAL PxList* lists, UKL_GLOBAL uint32_t* cols, UKL_GLOBAL PxArg* args, UKL_GLOBAL uint32_t* out, UKL_GLOBAL uint32_t* slots, UKL_GLOBAL uint32_t* qctl, UKL_GLOBAL uint32_t* ctl, UKL_GLOBAL const uint32_t* words, UKL_GLOBAL PxScratch* scratch, UKL_GLOBAL const uint64_t* closes, UKL_GLOBAL const uint32_t* n_close, UKL_GLOBAL const uint32_t* floors, uint32_t n_units,
+                          UKL_GLOBAL const uint64_t* op_keys, UKL_GLOBAL const uint32_t* op_kinds, uint32_t n_ops, UKL_GLOBAL const uint64_t* feat_keys, UKL_GLOBAL const uint64_t* feat_vals, uint32_t n_feat, uint32_t lane __UKL_PARAMS) {
     // words: n_files, tok_cap, list_cap, arg_cap, out_cap, q_cap, va_opt (low, high), the scratch
     // bytes' and tokens' capacities.
     Ux u;
@@ -1936,6 +2024,7 @@ UKL_INLINE void px_worker(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8
     u.closes = closes; u.n_close = n_close[0];
     u.floors = floors; u.n_units = n_units;
     u.tinst = tinst; u.nodes = nodes; u.unit_file = unit_file;
+    u.op_keys = op_keys; u.op_kinds = op_kinds; u.n_ops = n_ops; u.feat_keys = feat_keys; u.feat_vals = feat_vals; u.n_feat = n_feat;
     Ar a;
     // The tokens' columns, `tok_cap` words each: the ref, the flags, the child, the depth, the origin.
     uint32_t tc = words[1];

@@ -55,7 +55,8 @@
               AT(const uint64_t, SORT_KEYS), AT(const uint32_t, SORT_VA), AT(const uint32_t, N_ROWS), AT(const uint64_t, NAME_KEYS), \
               AT(const uint32_t, VALUES), T##_TOP, T##_INST, AT(const PpNode, P1_NODES), AT(const uint32_t, P1_UFILE), AT(const uint32_t, DEPTH), AT(PxList, LISTS),                                      \
               AT(uint32_t, TOKENS), AT(PxArg, ARGS), AT(uint32_t, OUT), AT(uint32_t, SLOTS), AT(uint32_t, QCTL),                  \
-              AT(uint32_t, CTL), AT(const uint32_t, WORDS), AT(PxScratch, SCRATCH), CLOSES, AT(const uint32_t, CLOSE_TOTAL), AT(const uint32_t, FLOORS), W(N_UNITS), lane __UKL_ARGS)
+              AT(uint32_t, CTL), AT(const uint32_t, WORDS), AT(PxScratch, SCRATCH), CLOSES, AT(const uint32_t, CLOSE_TOTAL), AT(const uint32_t, FLOORS), W(N_UNITS), \
+              AT(const uint64_t, IF_OPKEYS), AT(const uint32_t, IF_OPKINDS), W(N_IFOP), AT(const uint64_t, IF_FEATKEYS), AT(const uint64_t, IF_FEATVALS), W(N_FEAT), lane __UKL_ARGS)
 
 // The top level's rollback, its sizes and places, over a top of `nt_` tokens (`px_expand`'s
 // stage 0, after the queue's first phase).
@@ -119,7 +120,8 @@
     u.sbytes = (UKL_GLOBAL const uint8_t*)(AT(const PxScratch, SCRATCH) + AT(const uint32_t, WORDS)[9]);                      \
     u.relex_options = 0u; u.closes = AT(const uint64_t, CLOSE_KEYS); u.n_close = 0u;                                          \
     u.floors = AT(const uint32_t, FLOORS); u.n_units = W(N_UNITS); u.tinst = AT(const uint32_t, IF_INST); u.nodes = AT(const PpNode, P1_NODES); \
-    u.unit_file = AT(const uint32_t, P1_UFILE)
+    u.unit_file = AT(const uint32_t, P1_UFILE); u.op_keys = AT(const uint64_t, IF_OPKEYS); u.op_kinds = AT(const uint32_t, IF_OPKINDS); \
+    u.n_ops = W(N_IFOP); u.feat_keys = AT(const uint64_t, IF_FEATKEYS); u.feat_vals = AT(const uint64_t, IF_FEATVALS); u.n_feat = W(N_FEAT)
 
 // A group's threadgroup memory: the barrier's flag, the scans' scratch, and the sorts' counts or
 // a sorted tile (the segmented scans' two rows alias them: no phase runs two of them).

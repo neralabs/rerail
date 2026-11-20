@@ -327,7 +327,7 @@ fn unit_of(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, pat
 /// against `Vis::at`'s. `None` where P1 refuses it (the reason counted).
 fn lookups_agree(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, path: &str, cpp: bool, what: &str) -> Result<[usize; 3], &'static str> {
     use rerail_c_pp::stream::parallel::Lookup;
-    use rerail_metal::pp_expand::{L_BASE_FILE, L_BUILTIN, L_DATE, L_FILE, L_FILE_NAME, L_IDENT, L_INCLUDE_LEVEL, L_LINE, L_NONE, L_NOT_NAME, L_TIME, L_TIMESTAMP, lookups};
+    use rerail_metal::pp_expand::{L_BASE_FILE, L_BUILTIN, L_DATE, L_FILE, L_FEATURE, L_FILE_NAME, L_IDENT, L_INCLUDE_LEVEL, L_LINE, L_NONE, L_NOT_NAME, L_TIME, L_TIMESTAMP, lookups};
     let (d, p1) = unit_of(cfg, io, path, cpp)?;
     let p1 = p1?;
     let (ev, got, out) = lookups(&d.unit, &d.lay).unwrap();
@@ -371,7 +371,7 @@ fn lookups_agree(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::File
         let g = match g {
             L_NOT_NAME => Lookup::NotName,
             L_NONE => Lookup::None,
-            L_BUILTIN | L_LINE | L_FILE | L_DATE | L_TIME | L_TIMESTAMP | L_FILE_NAME | L_BASE_FILE | L_INCLUDE_LEVEL | L_IDENT => Lookup::Builtin,
+            L_BUILTIN | L_LINE | L_FILE | L_DATE | L_TIME | L_TIMESTAMP | L_FILE_NAME | L_BASE_FILE | L_INCLUDE_LEVEL | L_FEATURE | L_IDENT => Lookup::Builtin,
             r => {
                 let f = ev.dir_bases.partition_point(|&b| b <= r) - 1;
                 // By path: the device's files are in its rounds' order, the spike's in its own.
@@ -505,7 +505,9 @@ fn expanded_include_names_are_the_spikes() {
 }
 
 /// R7 of decision 0467: each case §6 lists, refused until step 7, gives the serial pass's
-/// tokens on the device, in C and C++, a round of 4 launches. Built so far: `__INCLUDE_LEVEL__`
+/// tokens on the device, in C and C++, a round of 4 launches. Built so far: the configuration's
+/// tests in text (direct, through macros, an operand a macro's name read raw, across lines, a name
+/// with no `(` plain, `__has_include` plain), `__INCLUDE_LEVEL__`
 /// (in the main file, a header, a header's header, a macro's body expanded in a header, an
 /// `#if`), `__FILE_NAME__` and `__BASE_FILE__` (in the main file and in nested headers in
 /// directories, through a macro, stringized and pasted).
@@ -513,6 +515,16 @@ fn expanded_include_names_are_the_spikes() {
 fn the_refused_cases_are_the_serial_passes() {
     use rerail_c_pp::files::DirKind;
     let shapes: &[(&str, &[(&str, &str)])] = &[
+        (
+            "the configuration's tests in text",
+            &[(
+                "main.c",
+                "__has_feature(cxx_rtti) __has_feature(nope) __has_builtin(__builtin_expect) [__has_cpp_attribute(clang::fallthrough)]\n\
+                 __is_identifier(foo) __has_feature __has_feature (cxx_rtti) __has_feature(\ncxx_rtti\n)\n\
+                 #define T __has_feature\n#define F(x) __has_feature(x)\n#define R cxx_rtti\nT(cxx_rtti) F(cxx_rtti) F(R) __has_feature(R) T (R)\n\
+                 #define S(x) #x\nS(__has_feature(cxx_rtti)) __has_attribute(F)\n__has_include(\"a.h\") __has_embed(\"a.h\")\n",
+            )],
+        ),
         (
             "the built-ins of the instance",
             &[
@@ -524,7 +536,10 @@ fn the_refused_cases_are_the_serial_passes() {
     ];
     for (what, files) in shapes {
         for cpp in [false, true] {
-            let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
+            let mut cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
+            for (t, op, v) in [("__has_feature", "cxx_rtti", 1), ("__has_builtin", "__builtin_expect", 1), ("__has_cpp_attribute", "clang::fallthrough", 201603), ("__has_attribute", "F", 1)] {
+                cfg.features.insert((t.to_string(), op.to_string()), v);
+            }
             let (got, want, rung, launches) = expanded_in(files, cfg, &[("inc", DirKind::Angle)], 0);
             same(got.map(|g| show(&g)), Ok(show(&want)), format!("{what}, C++ {cpp}"));
             same(launches, 4, format!("{what}: launches (rung {rung})"));

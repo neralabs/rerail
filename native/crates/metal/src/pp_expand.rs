@@ -351,7 +351,9 @@ pub const L_TIMESTAMP: u32 = 0xffff_fff8;
 pub const L_FILE_NAME: u32 = 0xffff_fff7;
 pub const L_BASE_FILE: u32 = 0xffff_fff6;
 pub const L_INCLUDE_LEVEL: u32 = 0xffff_fff5;
-pub const L_IDENT: u32 = 0xffff_fff4;
+/// A test the configuration answers, function-like in text.
+pub const L_FEATURE: u32 = 0xffff_fff4;
+pub const L_IDENT: u32 = 0xffff_fff3;
 
 /// A built-in's lookup value, by its name.
 fn builtin_value(key: u64) -> u32 {
@@ -539,7 +541,9 @@ impl Vis {
         for (k, &key) in lay.builtins.iter().enumerate() {
             sk[k] = key & 0xffff_ffff_0000_0000;
             nk[k] = key;
-            vals[k] = builtin_value(key);
+            // The configuration's tests, by the dialect's operators.
+            let feature = lay.if_ops.iter().any(|&(k, kind)| k == key && (kind == OPK_FEATURE || kind == OPK_IS_IDENTIFIER));
+            vals[k] = if feature { L_FEATURE } else { builtin_value(key) };
         }
         Ok(Vis {
             nodes: arena.from_slice(if nodes.is_empty() { &NO_NODE } else { &nodes })?,
