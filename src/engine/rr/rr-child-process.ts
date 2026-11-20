@@ -87,17 +87,28 @@ function childEnvironment(threads: number): NodeJS.ProcessEnv {
 /** A temporary directory for one child: its request written, an empty `out` for the run, its result's path. */
 function prepare(requestOf: RrChildRequestOf): { directory: string; args: string[]; resultFile: string } {
   const directory = mkdtempSync(join(tmpdir(), "rerail-rr-"));
-  mkdirSync(join(directory, "out"));
-  const requestFile = join(directory, "request.json");
-  const resultFile = join(directory, "result.json");
-  writeFileSync(requestFile, JSON.stringify(requestOf(join(directory, "out"))));
-  return { directory, args: [...childArguments(), requestFile, resultFile], resultFile };
+  try {
+    mkdirSync(join(directory, "out"));
+    const requestFile = join(directory, "request.json");
+    const resultFile = join(directory, "result.json");
+    writeFileSync(requestFile, JSON.stringify(requestOf(join(directory, "out"))));
+    return { directory, args: [...childArguments(), requestFile, resultFile], resultFile };
+  } catch (error) {
+    removeDirectory(directory);
+    throw error;
+  }
 }
 
-/** What the child wrote, or why there is nothing to read. */
+/** What the child wrote, or why there is nothing to read (`ended`: how the child ended). */
 function readResult(resultFile: string, ended: string): RrChildResult | { failed: string } {
   if (!existsSync(resultFile)) return { failed: `the .rerail child process ${ended} without an answer` };
-  return JSON.parse(readFileSync(resultFile, "utf8")) as RrChildResult;
+  const text = readFileSync(resultFile, "utf8");
+  try {
+    return JSON.parse(text) as RrChildResult;
+  } catch {
+    // A child stopped from outside (the system's out-of-memory killer) while it wrote its answer.
+    return { failed: `the .rerail child process ${ended} with its answer cut short` };
+  }
 }
 
 /** The outcome of a child that was not killed, from its result file. */

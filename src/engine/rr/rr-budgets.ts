@@ -15,24 +15,25 @@ export interface RrBudgets {
 
 /**
  * 10 minutes. The JSON path stops a repository audit at 5 minutes (`AUDIT_MAX_DURATION_MS`), but a `.rerail` pack
- * reads the whole corpus in one run and its cross-file rules are the costly part: the Django pack over netbox took
- * 164 s with every core of a 32-core machine, and runs here with half the cores ({@link defaultThreads}), so a
- * repository of that size needs about twice that. A run past 10 minutes is a run the session would not wait for.
+ * reads the whole corpus in one run, and its cross-file rules are the costly part. The Django pack's first run over
+ * a 229-file project took 45 to 50 s on 16 threads, and an edit costs a run of the same size. With half a laptop's
+ * cores ({@link defaultThreads}), a project a few times larger takes minutes. A run past 10 minutes is a run no
+ * session waits for.
  */
 const DEADLINE_MS = 10 * 60_000;
 
 /**
- * Half the cores, at least one. The run shares the machine with the person's editor, build and agent; with half the
- * cores the laptop stays usable, and the engine still parallelises (one thread is impractically slow: netbox's pack
- * takes over 10 minutes on one thread against under 3 on four).
+ * Half the cores, at least one. The run shares the machine with the person's editor, build and agent. With half the
+ * cores the laptop stays usable and the engine still runs in parallel; on one thread it is impractically slow.
  */
 function defaultThreads(): number {
   return Math.max(1, Math.floor(availableParallelism() / 2));
 }
 
 /**
- * Half the physical memory, at most 8 GiB. The Django pack peaked at 4.5 GiB over netbox; a run larger than half the
- * machine would push the person's own work into swap, and past 8 GiB a run is one no session waits for.
+ * Half the physical memory, at most 8 GiB. The Django pack's first run over a 229-file project peaked at 5.7 GiB.
+ * Over larger projects the engine's chunk budget does not hold the run (one of 1,300 files passed 55 GiB). Without
+ * this limit, a run would push the person's own work into swap long before it finished.
  */
 function defaultMemoryBytes(): number {
   return Math.min(8 * 1024 ** 3, Math.floor(totalmem() / 2));

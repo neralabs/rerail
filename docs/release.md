@@ -57,9 +57,9 @@ rule pack bumps ([docs/pack-format.md](pack-format.md#release)).
   request, is named in a warning not to merge: published so, no released Rerail could load it.
 - The tag is pushed with the `neralabs-ci` app's token.
 - **Anything core ships:** every path except packs, documentation, CI, changesets and pending changelog entries, tests,
-  fixtures, corpora, benchmarks, development and release scripts, and repository files npm does not pack.
-  `package-lock.json` counts only when more than its pack entries moved (`NOT_SHIPPED` in
-  `scripts/release/core-paths.mjs`).
+  fixtures, corpora, benchmarks, development and release scripts, and repository files npm does not pack. The `.rerail`
+  rule library under `docs/rule-syntax/lib/` ships with core, so it counts. `package-lock.json` counts only when more
+  than its pack entries moved (`NOT_SHIPPED` and `SHIPPED_FROM_NOT_SHIPPED` in `scripts/release/core-paths.mjs`).
 
 </details>
 
