@@ -372,15 +372,20 @@ describe("the daemon's change stream (GET /api/changes)", () => {
       await mergeAssist.setEnabled(checkout, true);
       const signedIn = storesFor({ changeFeed: { beatMs: BEAT_MS }, mergeAssist });
       const stream = messagesOf(await createRerailApi(signedIn, operations, { version: "0.0.0-test" }).request(`/api/changes?${new URLSearchParams({ checkout })}`));
+      // Each wait within a bound of its own, under the case's: a sign-in stamp the stream does not read fails here, not at
+      // the case's timeout.
+      const within = async <T>(waiting: Promise<T>): Promise<T | string> =>
+        await Promise.race([waiting, new Promise<string>(resolve => setTimeout(resolve, 2_000, "nothing within 2 s"))]);
       try {
         // The checkout's files and gh's sign-in, each read once at the start.
-        const read = await partsRead(stream, 2);
+        const read = await within(partsRead(stream, 2));
+        expect(read).not.toBe("nothing within 2 s");
 
         // `gh auth logout` rewrites the hosts file, so its stamp moves.
         github.options.signInStamp = "after gh auth logout";
         await vi.advanceTimersByTimeAsync(BEAT_MS);
 
-        expect(await movedFrom(stream, read.data)).toBeDefined();
+        expect(await within(movedFrom(stream, (read as Message).data))).not.toBe("nothing within 2 s");
       } finally {
         await stream.stop();
         signedIn.close();
@@ -398,13 +403,18 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     const mergeAssist = { signInStamp: () => new Promise<never>(() => undefined) } as unknown as MergeAssistService;
     const stalled = storesFor({ changeFeed: { beatMs: BEAT_MS }, mergeAssist });
     const stream = messagesOf(await createRerailApi(stalled, operations, { version: "0.0.0-test" }).request(`/api/changes?${new URLSearchParams({ checkout })}`));
+    // Each wait within a bound of its own, under the case's: files read behind the stalled stat fail here, not at the
+    // case's timeout.
+    const within = async <T>(waiting: Promise<T>): Promise<T | string> =>
+      await Promise.race([waiting, new Promise<string>(resolve => setTimeout(resolve, 2_000, "nothing within 2 s"))]);
     try {
-      const first = await filesRead(stream);
+      const first = await within(filesRead(stream));
+      expect(first).not.toBe("nothing within 2 s");
 
       writeFileSync(join(checkout, ".rerail", "rules", "local.json"), "{}\n");
       await vi.advanceTimersByTimeAsync(BEAT_MS);
 
-      expect(await movedFrom(stream, first.data)).toBeDefined();
+      expect(await within(movedFrom(stream, (first as Message).data))).not.toBe("nothing within 2 s");
     } finally {
       await stream.stop();
       stalled.close();

@@ -101,7 +101,9 @@ describe("the home's untaken events", () => {
     try {
       expect(taker.watch(() => undefined)).toBe(untakenFolderId(rerailHome));
       await leaveUntaken(rerailHome, 7, "left later", 5_000);
-      expect(await taken.promise).toEqual({ body: "left later", arrivedAt: 5_000 });
+      // Within a bound of its own, under the case's: a watch that tells nothing fails here, not at the case's timeout.
+      const none = new Promise(resolve => setTimeout(resolve, 4_000, "not taken within 4 s"));
+      expect(await Promise.race([taken.promise, none])).toEqual({ body: "left later", arrivedAt: 5_000 });
     } finally {
       taker.close();
     }

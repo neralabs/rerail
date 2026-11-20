@@ -64,8 +64,12 @@ describe("rerail merge-assist as its own process", () => {
     let stderr = "";
     started.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
     started.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
-    // Without the end, the process waits for the stat, and the case for its time limit.
-    const [code] = await once(started, "close");
+    // Without the end, the process waits for the stat: a bound of its own, under the case's, so such a process fails the
+    // case's assertion on its code, not the case's time limit.
+    const ended = once(started, "close").then(([code]) => code as unknown);
+    const running = new Promise(resolve => setTimeout(resolve, 30_000, "still running after 30 s"));
+    const code = await Promise.race([ended, running]);
+    if (code === "still running after 30 s") started.kill();
     return { code, stdout, stderr };
   }
 

@@ -1278,7 +1278,9 @@ describe("Rerail daemon", () => {
     await leaveUntaken(root, 1, engineRequestBody({ kind: "user-prompt", eventId: "left", sessionId: session.sessionId, session, text: "left" }), 1_000);
     const checked = Promise.withResolvers<UntakenPass>();
     await start({ stateFile: join(root, "daemon.json"), lateChecked: pass => checked.resolve(pass) });
-    expect(await checked.promise).toEqual({ events: 1, from: 1_000, to: 1_000, failed: 0 });
+    // Within a bound of its own, under the case's: a daemon that never checks them fails here, not at the case's timeout.
+    const none = new Promise(resolve => setTimeout(resolve, 4_000, "no check within 4 s"));
+    expect(await Promise.race([checked.promise, none])).toEqual({ events: 1, from: 1_000, to: 1_000, failed: 0 });
   });
 
   it("checks an event a hook leaves while it runs, as its watch sees it, with no event sent", async () => {
@@ -1288,7 +1290,9 @@ describe("Rerail daemon", () => {
     const checked = Promise.withResolvers<UntakenPass>();
     await start({ stateFile: join(root, "daemon.json"), lateChecked: pass => checked.resolve(pass) });
     await leaveUntaken(root, 1, engineRequestBody({ kind: "user-prompt", eventId: "left", sessionId: session.sessionId, session, text: "left" }), 5_000);
-    expect(await checked.promise).toEqual({ events: 1, from: 5_000, to: 5_000, failed: 0 });
+    // Within a bound of its own, under the case's: a daemon that never checks it fails here, not at the case's timeout.
+    const none = new Promise(resolve => setTimeout(resolve, 4_000, "no check within 4 s"));
+    expect(await Promise.race([checked.promise, none])).toEqual({ events: 1, from: 5_000, to: 5_000, failed: 0 });
   });
 
   // Windows sends a watch of a moved folder no notice; the folder id then keeps hooks asking.

@@ -616,8 +616,8 @@ describe("a hook beside a daemon that runs but does not read", () => {
     try {
       await leaveUntaken(rerailHome, process.pid, engineRequestBody(prompt("first")), 1_000);
       const handle = vi.fn(async (runtime: { ingest: (event: ReturnType<typeof prompt>) => Promise<unknown> }) => ({ answered: await runtime.ingest(prompt("second")) }));
-      // A deadline far off: a hook that asked the daemon would wait for it.
-      const options = { storageRoot: join(rerailHome, "sessions"), daemonDeadline: Date.now() + 60_000, arrivedAt: 2_000 };
+      // A deadline 2 s off, under the case's bound: a hook that asked the silent daemon would wait it out, and be counted.
+      const options = { storageRoot: join(rerailHome, "sessions"), daemonDeadline: Date.now() + 2_000, arrivedAt: 2_000 };
       expect(await runHostHook("claude-code", rerailHome, "s", false, options, handle, "UserPromptSubmit")).toEqual({ answered: [] });
       expect(await hookRerailStarted("claude-code", rerailHome)).toBe(false);
       expect(front.requests()).toBe(0);
