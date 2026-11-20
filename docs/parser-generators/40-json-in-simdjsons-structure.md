@@ -620,27 +620,27 @@ module `w`. The module is the ops in CLIF (`clif/src/writer.rs`), translated to 
 | D7. A kind's code | a constant (`'['`, `'t'`) | `code_of`: a table the walk keeps, its first use cold | `number16`: `numbers[k]` loaded every node, from the language given at run time |
 | D8. The source's form | named fields, expressions | named fields, expressions | the CLIF's SSA values as `let mut vN` declared at the top (hundreds an op), each phi as an assignment before a `break`, each field as an offset from `desc` (`v0 + 128`) |
 
-**The order, by what unblocks what.**
+**The order, by what unblocks what.** Corrected the same day (the user: "we should not be translating Rust from
+CLIF. We should be generating it directly. I already told you to do that."): the order first planned these as edits
+of the ops' CLIF, whose Rust is a translation. As tier 1's Rust is written directly (`rust_block`, 0451), so is the
+writer's:
 
-1. **D1 and D2: the writer's hot state is the walk's.** A run's node count, its last start, its open nodes and the
-   current block's cursors are one set of values, held as the lean parser's `Walk` holds them. The ops' CLIF takes
-   and gives them back, so that the Rust inlines them into `r0` and keeps them in registers. They are stored in the
-   descriptor only where a cold path or the end needs it. One stack of open nodes, not two. Until this is done,
-   inlining an op still loads and stores the state at every node, and D3's cursors have nowhere to live.
-2. **D3: a cursor a column.** The block's room and side area are worked out at the block's first node (the block
-   switch), and then every cell is a store at a cursor, as `Walk::open` writes. The block switch is the cold path:
-   once every 1,024 nodes.
-3. **D6: no commit a node in a direct run.** The blocks a run passes are settled at the block switch. `w_commit`
-   stays for producers that edit what they made (`.rr`, step 28's window).
-4. **D5: the hot visits inline, the rest cold.** `open`, `leaf` and `close` inline in the walk. The block switch,
-   `settle`, the side list's insert and a failure become cold calls, as simdjson's `allocate` is.
-5. **D4: the checks where simdjson and the lean parser have them, R14 kept.** The room is checked once a block, at
-   the block switch, for that block's nodes, and the open part's room once, for the depth bound. Decision 0434's R14
-   holds: an op fails as the reference does, and nothing is written past a part's capacity. Each check a producer
-   cannot show by construction stays.
-6. **D7: a kind's code a constant** where the language is known when the Rust is generated.
-7. **D8: the translator's form.** Once 1–6 have changed what the ops are, the generated source names the state's
-   fields and writes expressions, not one assignment a CLIF value.
+1. **`rust_stream` writes the writer's per-node work directly**, as methods of the walk's state, in the lean
+   parser's `Walk` shape: the node count, the last start, one stack of open nodes (tier 2's, its frames the
+   writer's), the current block's room. Each cell is a store at its column's offset from the block, its width and
+   escape constants of the generation (D1, D2, D3, D5, D8). The rules are the reference writer's
+   (`f16/reference.rs`): `open`, `close`, `leaf`, `put`, `put_code`.
+2. **The block switch and the side lists are cold**, as simdjson's `allocate` is: a block's room once every 1,024
+   nodes, the room checked there for its nodes (D4, R14 kept), an escaped value's side-list entry, a block made
+   final (`settle`, its presence). No commit a node in a direct run (D6).
+3. **The document's end written directly**: `finish` (the last block moved down, the tail laid) and 16z's
+   compression, so the `w` module is no longer in the generated source.
+4. **The kinds' numbers constants** where the language is known at generation (D7).
+5. **The host's writer** (`f16::Writer`, R16) the same direct Rust, not the translation; the ops' CLIF stays the
+   JIT's and the device's (R15), checked against the reference as now (R13).
+
+Each step is judged on the generated Rust beside `Walk` and `tape_builder`, and kept by the tests that compare
+the tape with the JIT's and the reference's byte for byte (`aot_tests`, `tier2_writes_format_16_by_the_ops`).
 
 **Steps 35–37 re-decided by shape.**
 
@@ -651,7 +651,7 @@ module `w`. The module is the ops in CLIF (`clif/src/writer.rs`), translated to 
   the lean lexer's shape: a token loop's tier 1 makes no mask, and its index is the scan's.
 - **Step 37 (0494), the per-node ops:** `w_leaf` as one op is kept: it is the lean parser's `leaf`, `open` and then
   its two writes. The other cuts (`settle` only where needed, `w_commit` hot, a node's block once an op) are steps
-  inside the ops whose shape items 1–4 replace. They are superseded by this order, not kept as reasons.
+  inside the ops whose shape items 1–4 replace. They are superseded by this order (the ops' CLIF is no longer the generated Rust's source), not kept as reasons.
 - Their counts tables are withdrawn as reasons.
 
 ## Step 37, in progress: the writer's per-node ops (decision 0494)
