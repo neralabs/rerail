@@ -796,13 +796,6 @@ async function configCopies(configs: readonly string[]): Promise<Array<{ copy: s
 }
 
 /**
- * `rerail install --refresh`: register this version again with every coding agent already connected to the managed
- * install, so commands it added arrive and ones it retired go, and write the launcher again; `rerail update` runs it
- * from the version it activated. Both then name the node it runs on. Coding agents never connected stay untouched, and
- * one whose configuration cannot be read to tell is named and left alone. Exits 1 only when a connected coding agent
- * could not be refreshed.
- */
-/**
  * {@link notRunLine} for the packs installed in `home`; undefined when every rule runs, or when the catalog cannot be
  * read, which `rerail packs list` reports.
  */
@@ -814,6 +807,13 @@ function installedRulesNotRun(home: string): string | undefined {
   }
 }
 
+/**
+ * `rerail install --refresh`: register this version again with every coding agent already connected to the managed
+ * install, so commands it added arrive and ones it retired go, and write the launcher again; `rerail update` runs it
+ * from the version it activated. Both then name the node it runs on. Coding agents never connected stay untouched, and
+ * one whose configuration cannot be read to tell is named and left alone. Exits 1 only when a connected coding agent
+ * could not be refreshed.
+ */
 async function runRefresh(context: SetupContext): Promise<number> {
   const root = registrationRoot(context);
   const result = await refreshCodingAgents(root, codingAgentHome());
