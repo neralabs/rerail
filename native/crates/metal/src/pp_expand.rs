@@ -1007,8 +1007,8 @@ impl Vis {
 /// The tokens' pool's heads (`<ukl/pool.h>`'s `UKL_POOL_CLASSES`, rounded up).
 const POOL_HEADS: usize = 128;
 
-/// A list (`PxList` in the UKL): 33 words; an argument (`PxArg`): 3.
-const LIST_WORDS: usize = 33;
+/// A list (`PxList` in the UKL): 34 words; an argument (`PxArg`): 3.
+const LIST_WORDS: usize = 34;
 const ARG_WORDS: usize = 3;
 
 /// Why a unit is refused (`pp_expand.uglykl`'s `X_*`). `X_ROOM` reruns it at the next rung.
@@ -1082,7 +1082,7 @@ pub struct Exp {
     vscan: Scan,
     lists: Buf,
     /// The tokens' columns, `tok_cap` words each: the ref, the flags, the child, the depth and the
-    /// origin (the list whose substitution wrote it); then the heads of the pool of blocks given
+    /// ref `__LINE__` reads for it (+ 1; 0 its own); then the heads of the pool of blocks given
     /// back (`POOL_HEADS`, decision 0478 §10), whose links are the first token's ref.
     tokens: Buf,
     args: Buf,
@@ -1149,15 +1149,19 @@ impl Exp {
         // top's high water over the passes (8 to 13: tokens, lists, args, scratch bytes and tokens,
         // queue items), the output's (14), the mark where the blocks no item reads again are given
         // back (15: a 32nd of the tokens' room past the front, decision 0478 §10), the times they were (16) and the
-        // drain's decision between runs (17: `PX_DRAIN`).
+        // drain's decision between runs (17: `PX_DRAIN`), the lists' and the arguments' entries'
+        // marks (18, 19: a 32nd of each room past its front).
         // The tokens' front between two givings: a 32nd of the room (at most 32 givings from the
         // front's growth, within `PX_GIVES`); less to test them.
         let gap = std::env::var("RERAIL_PP_GIVE_GAP").ok().and_then(|v| v.parse::<usize>().ok()).map_or(tok / 32, |g| g.min(tok)).max(1);
-        let mut ctl = [0u32; 18];
+        let mut ctl = [0u32; 20];
         ctl[4] = lit_bytes as u32;
         ctl[15] = gap as u32;
+        ctl[18] = (lists / 32).max(1) as u32;
+        ctl[19] = (args / 32).max(1) as u32;
         ctl[5] = nf as u32;
-        let words = [unit.len() as u32, tok as u32, lists as u32, args as u32, out as u32, q as u32, va_opt as u32, (va_opt >> 32) as u32, sb as u32, st as u32, lay.relex_options, gap as u32];
+        // The lists' and the arguments' entries' fronts between two givings: a 32nd of each room.
+        let words = [unit.len() as u32, tok as u32, lists as u32, args as u32, out as u32, q as u32, va_opt as u32, (va_opt >> 32) as u32, sb as u32, st as u32, lay.relex_options, gap as u32, (lists / 32).max(1) as u32, (args / 32).max(1) as u32];
         Ok(Exp {
             list_cap: lists as u32,
             out_cap: out as u32,
@@ -1189,9 +1193,10 @@ impl Exp {
             xpos: zeroed(top)?,
             xcover: zeroed(top)?,
             vscan: Scan::new(arena)?,
-            lists: zeroed(lists * LIST_WORDS)?,
+            // Past the records: the pools of ids given back, a link an id, then their heads.
+            lists: zeroed(lists * (LIST_WORDS + 1) + POOL_HEADS)?,
             tokens: zeroed(tok * 5 + POOL_HEADS)?,
-            args: zeroed(args * ARG_WORDS)?,
+            args: zeroed(args * (ARG_WORDS + 1) + POOL_HEADS)?,
             slots: zeroed(q)?,
             qctl: zeroed(5)?,
             ctl: arena.from_slice(&ctl)?,

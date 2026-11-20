@@ -77,7 +77,7 @@
     SCAN(nt_, V, OBASE, VTOTAL);                                                                       \
     EACH(s, nt_) px_top_place(files, data, AT(const uint32_t, BASES), nf, AT(const uint32_t, STATE), AT(const uint32_t, OID), AT(PxList, LISTS), TOKS, AT(const uint32_t, OBASE), T##_STRETCHES, AT(uint32_t, OUT), AT(uint32_t, SLOTS), AT(uint32_t, QCTL), AT(uint32_t, CTL), W(OUT_CAP), W(Q_CAP), s); \
     /* The second phase places what the first made: no compaction. */                                  \
-    ONE(x) ukl_atomic_store(&AT(uint32_t, CTL)[15], 0xffffffffu);                                      \
+    ONE(x) px_marks_off(AT(uint32_t, CTL));                                                            \
     BARRIER()
 
 // The queue made ready for another top: the slots of its ring's positions past its base emptied, the arena's tops back to the file literals' (`CTL` 6 and 7 keep
@@ -93,19 +93,25 @@
         c_[13] = ukl_max(c_[13], AT(const uint32_t, QCTL)[1] - AT(const uint32_t, QCTL)[4]);           \
         c_[14] = ukl_max(c_[14], AT(const uint32_t, VTOTAL)[0]);                                       \
         c_[0] = 0u; c_[1] = 0u; c_[3] = 0u; c_[4] = c_[6]; c_[5] = c_[7];                              \
-        c_[15] = AT(const uint32_t, WORDS)[11];                                                        \
+        c_[15] = AT(const uint32_t, WORDS)[11]; c_[18] = AT(const uint32_t, WORDS)[12]; c_[19] = AT(const uint32_t, WORDS)[13]; \
         AT(uint32_t, QCTL)[1] = 0u; AT(uint32_t, QCTL)[4] = 0u; AT(uint32_t, CNT)[1] = 0u;             \
     }                                                                                                  \
-    /* The tokens' pool empty (decision 0478 §10): its heads past the tokens' five columns. */          \
-    EACH(c, UKL_POOL_CLASSES) AT(uint32_t, TOKENS)[5u * AT(const uint32_t, WORDS)[1] + c] = UKL_POOL_NONE; \
+    /* The pools empty (decision 0478 §10): the tokens' heads past their five columns, the lists'    \
+       and the arguments' past their links. */                                                         \
+    EACH(c, UKL_POOL_CLASSES) {                                                                        \
+        AT(uint32_t, TOKENS)[5u * AT(const uint32_t, WORDS)[1] + c] = UKL_POOL_NONE;                  \
+        ((UKL_GLOBAL uint32_t*)(AT(PxList, LISTS) + W(LIST_CAP)))[W(LIST_CAP) + c] = UKL_POOL_NONE;    \
+        ((UKL_GLOBAL uint32_t*)(AT(PxArg, ARGS) + AT(const uint32_t, WORDS)[3]))[AT(const uint32_t, WORDS)[3] + c] = UKL_POOL_NONE; \
+    }                                                                                                  \
     BARRIER()
 
 // The queue's workers over a top, launched again in the kernel while work remains, a bounded
-// number of times. Between runs, where the tokens' front passed the mark (`CTL` 15, the workers
-// stopped there), the blocks no item reads again are given back (decision 0478 §10), `PX_GIVES`
-// times at most; then the mark is past every room.
+// number of times. Between runs, where a store's front passed its mark (`px_past_marks`, the
+// workers stopped there), the blocks and ids no item reads again are given back (decision 0478
+// §10), `PX_GIVES` times at most; then the marks are past every room. 64 a store (the tokens,
+// the lists, the arguments' entries): a 32nd of a room each, twice each room's growth.
 #define PX_RUNS (8u)
-#define PX_GIVES (64u)
+#define PX_GIVES (192u)
 #define PX_DRAIN(T, CLOSES)                                                                          \
     {                                                                                                  \
         uint32_t runs_ = 0u, gives_ = 0u;                                                              \
@@ -119,7 +125,7 @@
             ONE(x) {                                                                                   \
                 UKL_GLOBAL uint32_t* q_ = AT(uint32_t, QCTL);                                          \
                 uint32_t mark_ = ukl_atomic_load(&c_[15]);                                             \
-                bool give_ = ukl_atomic_load(&c_[0]) > mark_ || (mark_ != 0xffffffffu && q_[0] - q_[4] > W(Q_CAP) / 2u); \
+                bool give_ = px_past_marks(c_) || (mark_ != 0xffffffffu && q_[0] - q_[4] > W(Q_CAP) / 2u); \
                 ukl_atomic_store(&c_[17], ukl_atomic_load(&q_[2]) == 0u ? 0u : give_ ? 2u : 1u);      \
             }                                                                                          \
             BARRIER();                                                                                 \
@@ -127,7 +133,7 @@
             if (next_ == 0u) break;                                                                    \
             if (next_ == 2u) {                                                                         \
                 if (gives_ < PX_GIVES) { PX_GIVE(); gives_++; }                                        \
-                else { ONE(x) ukl_atomic_store(&c_[15], 0xffffffffu); BARRIER(); }                     \
+                else { ONE(x) px_marks_off(c_); BARRIER(); }                                           \
                 continue;                                                                              \
             }                                                                                          \
             if (++runs_ == PX_RUNS) { ONE(x) px_refuse(c_, X_QUEUE); break; }                          \
@@ -145,7 +151,17 @@
         UklPool gv_p; gv_p.heads = AT(uint32_t, TOKENS) + 5u * gv_tc; gv_p.next = AT(uint32_t, TOKENS); \
         EACH(i, gv_nl) px_gc_dead(AT(PxList, LISTS), i);                                               \
         BARRIER();                                                                                     \
-        EACH(i, gv_nl) px_give(AT(PxList, LISTS), gv_p, gv_nl, i);   \
+        EACH(i, gv_nl) px_give(AT(PxList, LISTS), gv_p, gv_nl, i);                                    \
+        BARRIER();                                                                                     \
+        /* The lists' ids and the arguments' entries no item reads again. */                           \
+        UklPool gv_lp; gv_lp.next = (UKL_GLOBAL uint32_t*)(AT(PxList, LISTS) + W(LIST_CAP)); gv_lp.heads = gv_lp.next + W(LIST_CAP); \
+        UklPool gv_ap; gv_ap.next = (UKL_GLOBAL uint32_t*)(AT(PxArg, ARGS) + AT(const uint32_t, WORDS)[3]); gv_ap.heads = gv_ap.next + AT(const uint32_t, WORDS)[3]; \
+        bool gv_counted = ukl_atomic_load(&AT(uint32_t, CNT)[1]) != 0u;                                \
+        EACH(i, gv_nl) px_free_mark(AT(PxList, LISTS), gv_ap, gv_counted, i);                          \
+        BARRIER();                                                                                     \
+        EACH(i, gv_nl) px_free_give(AT(const PxList, LISTS), gv_lp, gv_nl, i);                         \
+        BARRIER();                                                                                     \
+        EACH(i, gv_nl) px_free_done(AT(PxList, LISTS), i);                                             \
         /* The queue's ring: the slots taken since its base emptied, then its base at its head. */     \
         UklWorkQueue gv_q; gv_q.slots = AT(uint32_t, SLOTS); gv_q.control = AT(uint32_t, QCTL); gv_q.capacity = W(Q_CAP); gv_q.ring = 1u; \
         EACH(k, ukl_min(ukl_wq_taken(gv_q), W(Q_CAP))) ukl_wq_rebase_clear(gv_q, k);                  \
@@ -154,7 +170,9 @@
             gv_c[13] = ukl_max(gv_c[13], ukl_wq_used(gv_q));                                           \
             ukl_wq_rebase(gv_q);                                                                       \
             uint32_t front_ = ukl_min(ukl_atomic_load(&gv_c[0]), gv_tc);                               \
-            ukl_atomic_store(&gv_c[15], front_ + AT(const uint32_t, WORDS)[11]);                          \
+            ukl_atomic_store(&gv_c[15], front_ + AT(const uint32_t, WORDS)[11]);                       \
+            ukl_atomic_store(&gv_c[18], ukl_min(ukl_atomic_load(&gv_c[1]), W(LIST_CAP)) + AT(const uint32_t, WORDS)[12]); \
+            ukl_atomic_store(&gv_c[19], ukl_min(ukl_atomic_load(&gv_c[3]), AT(const uint32_t, WORDS)[3]) + AT(const uint32_t, WORDS)[13]); \
             gv_c[16] += 1u;                                                                            \
         }                                                                                              \
         BARRIER();                                                                                     \
@@ -468,6 +486,11 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
                 IF_UX(u);
                 PX_COUNTERS(u, 1u);
             }
+            // A refused expansion's output is not all written (past the room that ran out its items
+            // read what never was): the tests, the `#line` rows and the include names read refs
+            // from it into the tapes, so the iterations end here. The refusal stands (an `#if`'s
+            // is never cleared), and reruns the unit larger or refuses it.
+            if (ukl_atomic_load(&AT(uint32_t, CTL)[2]) != 0u) break;
         } else {
             ONE(x) AT(uint32_t, TRN)[3] = 0u;
             BARRIER();

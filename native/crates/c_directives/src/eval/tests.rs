@@ -1550,6 +1550,8 @@ fn line_and_file_are_the_serial_passes() {
         &[("main.c", "#include \"i.h\"\n__FILE__ __LINE__ H\n"), ("i.h", "\n#define H __FILE__ __LINE__\n__FILE__ __LINE__ H\n")],
         &[("main.c", "// a line\n/* two\nlines */ __LINE__ \\\n __LINE__\n#define C(a, b) a ## b\nC(__LI, NE__) C(__FILE, __)\n")],
         &[("main.c", "__DATE__ __TIME__ __TIMESTAMP__\n#define D __DATE__ x\nD __has_include __has_include(<a.h>) __has_embed(\"e\") __has_include_next\n")],
+        // An empty file included: its root has no children (its text map's owner is itself).
+        &[("main.c", "#include \"e.h\"\n__FILE__ __LINE__\n#include \"e.h\"\nx __LINE__\n"), ("e.h", "")],
     ];
     let (tokens, launches) = shapes_agree(shapes);
     eprintln!("{} shapes, {tokens} tokens, at most {launches} launches an evaluation", shapes.len() * 2);

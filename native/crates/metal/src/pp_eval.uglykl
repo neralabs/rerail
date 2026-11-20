@@ -223,7 +223,10 @@ UKL_INLINE void pp_node_flags(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const u
     uint32_t k = node_kind(t, i), size = node_size(t, i);
     dflag[g] = k >= K_DIRECTIVES && k < K_IDENTIFIER ? 1u : 0u;
     gflag[g] = k == K_GROUP ? 1u : 0u;
-    owner_in[g] = size > 1u ? g : 0u;
+    // A file's root seeds its own place too: past every node of the files before it, so no node's
+    // owner (the max scan's) is another file's. An empty file's root (size 1) took the file before's,
+    // and its text flag read that place in its own tape (4 billion nodes out).
+    owner_in[g] = size > 1u || i == 0u ? g : 0u;
     if (k == K_GROUP) {
         if (g + 1u < n) ukl_atomic_add(&dev[g + 1u], 1u);
         if (g + size < n) ukl_atomic_sub(&dev[g + size], 1u);

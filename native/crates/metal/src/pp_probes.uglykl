@@ -113,7 +113,8 @@ DEFINE_KERNEL2(pp, pb_barriers_alone,
 // (`ranges`: start, count), then each thread takes `args.b` blocks of the classes `classes` names
 // (its thread's `args.b` in a row), into `out` (a block's start, `UKL_POOL_NONE` none); each
 // later round gives back the blocks the round before took, then takes again. A take that finds
-// none tries again while its class is not empty, a bounded number of times.
+// none tries again while its class is not empty, a bounded number of times. `args.d` 1: split
+// takes (`ukl_pool_take_split`), tried again while any class at least the take's is not empty.
 DEFINE_KERNEL2(pp, pb_pool,
                RWBUFFER, uint32_t,    ctl,     "[3]",
                ROBUFFER, uint32_t,    ranges,  "[n]",
@@ -144,8 +145,10 @@ DEFINE_KERNEL2(pp, pb_pool,
         for (uint32_t k = 0u; k < args.b; k++) {
             uint32_t c = classes[t * args.b + k], at = UKL_POOL_NONE;
             for (uint32_t turn = 0u; turn < 1000u && at == UKL_POOL_NONE; turn++) {
-                at = ukl_pool_take(p, c);
-                if (at == UKL_POOL_NONE && ukl_atomic_load(&heads[c]) == UKL_POOL_NONE) break;
+                at = args.d != 0u ? ukl_pool_take_split(p, c) : ukl_pool_take(p, c);
+                bool any = false;
+                for (uint32_t k = c + 1u; args.d != 0u && k < UKL_POOL_CLASSES; k++) any = any || ukl_atomic_load(&heads[k]) != UKL_POOL_NONE;
+                if (at == UKL_POOL_NONE && ukl_atomic_load(&heads[c]) == UKL_POOL_NONE && !any) break;
             }
             out[t * args.b + k] = at;
         }

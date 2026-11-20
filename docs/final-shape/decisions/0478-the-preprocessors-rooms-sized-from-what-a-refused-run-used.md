@@ -103,17 +103,28 @@ On Boost.Preprocessor's tests that does not work:
       needs no room but its 32 heads (past the tokens' five columns). Class `c` is 2^c units; a
       range that is no class's size is given as pieces, its set bits, high to low. Giving happens
       only at a pause, taking only during a run (compare-and-swap on the head): no block is
-      pushed while another is popped, so there is no ABA and 32-bit atomics suffice. A take that
-      finds its class and the next one empty takes from the front, as before.
-    - **The pauses.** The workers stop between items where the tokens' front passed a mark
-      (`CTL` 15), or half the queue's ring is taken. One thread then decides (`CTL` 17) whether
+      given while another is popped, so there is no ABA and 32-bit atomics suffice.
+    - **A take splits a larger block** (`ukl_pool_take_split`): from the smallest class at least
+      its own that holds a block, its first 2^c units, the rest pushed back as pieces of 2^c,
+      2^(c+1), ... (`ukl_pool_push`: the link written, then a fence, then the swap that publishes
+      it, as others take). Still no ABA: each piece begins inside the block the taker popped,
+      past its first unit, and no other block holding that unit is in the pool, so no block is
+      pushed to a class twice between two givings. Ids given back as long runs went back as
+      pieces of 512 and 256 that no take of 1 or 2 met (the lists' front grew to 20k at rung 3
+      with 7.5k ids in the pool); taking the next class at most met none of them either. A take
+      that finds no class at least its own takes its class's size from the front.
+    - **The pauses.** The workers stop between items where a store's front passed its mark
+      (`px_past_marks`: the tokens' `CTL` 15, the lists' 18, the arguments' entries' 19, each a
+      32nd of its room past its front at the last giving), or half the queue's ring is taken. One thread then decides (`CTL` 17) whether
       the run is done, runs again, or gives first; the others read its decision after a barrier.
       Every thread reading the counters itself raced the groups past the barrier, whose next run
       changes them: the grid split between two paths (found on the CPU backend, below). A giving
       marks the dead lists, gives each list's blocks, empties the ring's taken slots and moves
       the next mark a 32nd of the room past the front (`RERAIL_PP_GIVE_GAP` for tests), at most
-      `PX_GIVES` (64) times. A mark at half the room left, halving as the front neared its end,
-      spent the 64 givings on little.
+      `PX_GIVES` (192: 64 a store, twice each room's growth) times. A mark at half the room left,
+      halving as the front neared its end, spent the givings on little. With the tokens' front
+      alone the pauses were too few for the lists: 94% of the lists a pause saw were dead, while
+      the lists' front ran out between pauses.
     - **What is dead** (`px_gc_dead`): an argument's list whose call is done; a join whose
       list after it is done; any list under a dead owner (`owner`: its nearest argument's list).
       A dead list gives its own block (but what its calls gave already) and its flatten's block.
@@ -138,6 +149,34 @@ On Boost.Preprocessor's tests that does not work:
     - **An exit climbing out of a call reads the call's depth at its `)` from the call**
       (`hdepth`, written where the call is made), not from its parent's tokens: the `)` may be
       given. Reading it there read a reused token (a call refused as past its list's end).
+    - **The lists' ids and the arguments' entries are given back and used again**, from a pool
+      each (`lpool`, `apool`: a link a record past the records, then 32 heads; emptied with the
+      tokens' at each top). Taken by `px_ids` (a scan's calls, an exit's join and call, an
+      argument's list, a call's entries), a block of their class or from the front at its class's
+      size (`n` exactly from the front came back as pieces no take of `n` met). A list block's ids
+      past those used are made dead lists with their blocks given, given back at the next pause.
+      After the givings of a pause (`px_free_mark`, `px_free_give`, `px_free_done`): a done
+      call's entries (`abl`, once: `F_AGIVEN`); each dead list whose blocks are given, its id
+      (`F_FREEING`, then `F_FREE`), runs of them as one range.
+      - **Nothing reads a dead list again.** Its owner's chain has a done call, and its parent's,
+        children's, join's, call's and arguments' lists share that chain (a list's owner is its
+        parent if that is an argument's, else its parent's), so each of them is dead in the same
+        pause; the ancestors of a live list are live. A token no longer names a list: its `texp`
+        is the ref `__LINE__` reads for it (+ 1; the list's `lref`, fixed when the list is made),
+        not the list whose substitution wrote it.
+      - **`__COUNTER__`'s uses climb their lists after the expansion** (`px_chain`, for their
+        order): in a top with one made, no list id is given back.
+      - **Checked by poison** (on the CPU backend): every freed list's record and every given
+        entry overwritten (its parent, call and owner itself, its spans past every room), takes
+        of ids off so none is used again: the evaluator's tests and a Boost unit equal the serial
+        pass.
+    - **An `#if`'s expansion refused ends P1's iterations**: its output past the room that ran
+      out was never written, and the tests, the `#line` rows and the include names read refs
+      from it into the tapes. The refusal stands and reruns the unit larger, or refuses it.
+    - **An empty file's text map** (found by the same runs, older than §10): a node's owner is a
+      max scan of the interior nodes' places, seeded 0 elsewhere, over the whole unit; an empty
+      file's root (no children) took the file before's, and its text flag read that place in its
+      own tape, 4 billion nodes out. A file's root seeds its own place.
     - **A top's work is bounded** (`PX_FUEL`): past 4 times the queue's capacity in items taken,
       the run is refused for room (`CTL` 13 keeps what it took) and runs again larger, so no
       launch runs on without bound (a Metal command buffer of minutes stalls the window server and
@@ -173,6 +212,8 @@ On Boost.Preprocessor's tests that does not work:
 | R5 | A flat argument in place: used once, twice, beside `#` and `##`, empty, painted, as a callee's name, variadic and under `__VA_OPT__`, and passed through levels. | `a_flat_argument_is_read_in_place` |
 | R6 | The pool gives each block once: blocks given back as ranges, taken by 8 groups, over 1 and 3 rounds of giving back and taking again, never overlap, each lies within one given range and fits its class, and a class's takes are its demand or its supply, whichever is less. | `pp_arena::tests::the_pool_gives_each_block_once` |
 | R7 | A chain of 150 calls passing a 120-token state settles at rung 0: plain, through a scanned argument, through an exit, with `__LINE__`, stringized; in C and C++. | `reclaimed_tokens_keep_a_chain_at_rung_0` |
+| R8 | The pool's split takes: every thread of 8 groups takes blocks of one class (1, 2 or 8 units) from pieces of every class, over 1 and 3 rounds; no unit is taken twice, each block lies within one given range, and the takes met are the demand or the pieces' room in blocks of the class, whichever is less. | `pp_arena::tests::the_pool_splits_a_larger_block` |
+| R9 | An empty file included: `__FILE__` and `__LINE__` after it as the serial pass's. | `line_and_file_are_the_serial_passes` (its last shape) |
 
 ## Measured (M1 Max farm host for the checks; this Mac for the runs, 2026-11-19)
 
@@ -212,13 +253,16 @@ what the 8 pauses had not given back yet.
 
 ## Open
 
-- **The lists and the arguments are linear**, and now the rooms that run out. On UKL's CPU
-  backend (2026-11-20), the first 3 of `arithmetic.cxx`'s checks as one unit: 67k tokens taken,
-  the front at 27k, the tokens' room never past rung 0; the lists (7.5k) and arguments (11k)
-  forced rung 2. The first 10 checks: 120k tokens taken, the front at 36k, at rung 2; arguments
-  21k of 21k. A dead list's id (and its arguments') could be given back as its tokens are, but
-  ids are read from parents, owners and the chain: a reused id needs each of those readers to
-  tell a list from the one before it.
+- **The scratch bytes are linear**, and now the room that runs out. On UKL's CPU backend
+  (2026-11-20), the first 3 of `arithmetic.cxx`'s checks as one unit settle at rung 0 (they
+  needed rung 2 with the tokens alone given back): lists 975 (were 6.3k), arguments' entries
+  1.9k (were 11k), tokens 9.8k, equal to the serial pass. The first 10 checks: lists 1.5k, 1.6k
+  and 4.5k at rungs 0 to 2 (were 2.6k, 5.2k, 7.3k, then 20k and 30k), but the pastes', the
+  stringizings' and `__LINE__`'s spellings (`CTL` 4) grow with the work: 206k bytes at rung 2,
+  532k where the run giving nothing back settled, so the unit needs rung 4 for them alone. A
+  scratch token is named by every token copied from it (`SCRATCH | id`), so giving one back
+  needs to know no live token names it; or a spelling made again is the one made before (a
+  paste's result is most often a name a definition already has).
 - **A forced small gap spends the givings early.** At `RERAIL_PP_GIVE_GAP=64` the 64 givings a
   launch cover 4k tokens of front; past them every take is a fresh power of two, and the tokens'
   room outgrows a run that gives nothing. The default gap (a 32nd of the room) covers twice it.
