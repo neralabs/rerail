@@ -294,22 +294,29 @@ export function historyScope(stores: RerailApiStores, caller: ApiCaller, reposit
   return historyRepositoryIds(stores, repositoryKey);
 }
 
-/** When each effective rule was added here and, for a rule created by you, last edited. */
+/**
+ * When each effective rule was added here and, for a rule created by you, when it was last edited and which By Rerail
+ * rule it is an edited copy of.
+ */
 interface RuleDates {
   /** `created_at` by attachment: `sourceKind\0sourceId\0folder`. */
   readonly added: ReadonlyMap<string, number>;
   /** `updated_at` by library rule id. */
   readonly updated: ReadonlyMap<string, number>;
+  /** `copied_from_rule_id` by library rule id, for the edited copies only. */
+  readonly copiedFrom: ReadonlyMap<string, string>;
 }
 
 function ruleDatesOf(db: RerailDatabase, repositoryKey: string): RuleDates {
   const attachments = db.select({
     sourceKind: ruleAttachments.sourceKind, sourceId: ruleAttachments.sourceId, folder: ruleAttachments.folder, createdAt: ruleAttachments.createdAt,
   }).from(ruleAttachments).where(eq(ruleAttachments.repositoryKey, repositoryKey)).all();
-  const library = db.select({ ruleId: libraryRules.ruleId, updatedAt: libraryRules.updatedAt }).from(libraryRules).all();
+  const library = db.select({ ruleId: libraryRules.ruleId, updatedAt: libraryRules.updatedAt, copiedFromRuleId: libraryRules.copiedFromRuleId })
+    .from(libraryRules).all();
   return {
     added: new Map(attachments.map(row => [`${row.sourceKind}\0${row.sourceId}\0${row.folder}`, row.createdAt])),
     updated: new Map(library.map(row => [row.ruleId, row.updatedAt])),
+    copiedFrom: new Map(library.flatMap(row => (row.copiedFromRuleId === null ? [] : [[row.ruleId, row.copiedFromRuleId] as const]))),
   };
 }
 
@@ -317,6 +324,7 @@ function effectiveRuleRecord(rule: EffectiveRule, dates: RuleDates): z.infer<typ
   const shared = {
     addedAt: dates.added.get(`${rule.source.kind}\0${rule.source.id}\0${rule.attachmentFolder}`) ?? null,
     updatedAt: rule.source.kind === "library_rule" ? dates.updated.get(rule.source.id) ?? null : null,
+    copiedFromRuleId: rule.source.kind === "library_rule" ? dates.copiedFrom.get(rule.source.id) ?? null : null,
     source: { ...rule.source },
     folder: rule.attachmentFolder,
     on: rule.on,

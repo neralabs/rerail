@@ -85,21 +85,28 @@ const LISTING_AGAIN_WAIT_MS = 1_000;
  * A source as a tool call found it: its text, why it could not be read, or neither when it did not exist. A file named
  * like one holding secrets (`sensitiveByName`) keeps only its SHA-256 and size (`withheld`): preimages go into the
  * session ledger in the checkout, so its text is never captured, and `rewind` refuses to put it back. A preimage whose
- * text holds a secret is written to the ledger the same way ({@link ledgerPreimage}), though the session keeps its text.
+ * text holds a secret is written to the ledger the same way ({@link ledgerPreimage}), though the session keeps its text,
+ * and so is one of a file named so only where it really is (`secretTarget`).
  */
 export interface Preimage {
   readonly text?: string;
   readonly readError?: string;
   readonly withheld?: { readonly sha256: string; readonly bytes: number };
+  /**
+   * The text is of a file named like one holding secrets where it really is (`Source.secretTarget`), not as the call
+   * spells it: the session keeps it, so `rewind` can put the file back, and the ledger keeps only its digest and size.
+   */
+  readonly secretTarget?: true;
 }
 
 /**
- * `preimage` as the session ledger records it: text holding a secret (`containsSecret`) is withheld, its SHA-256 and
- * size kept, so a session resumed from the ledger still finds the file unchanged by its digest but cannot put it back;
- * a read error is scrubbed. The live session keeps the text it captured.
+ * `preimage` as the session ledger records it: text holding a secret (`containsSecret`), or of a file named like one
+ * holding secrets where it really is (`secretTarget`), is withheld, its SHA-256 and size kept, so a session resumed from
+ * the ledger still finds the file unchanged by its digest but cannot put it back; a read error is scrubbed. The live
+ * session keeps the text it captured.
  */
 export function ledgerPreimage(preimage: Preimage): Preimage {
-  if (preimage.text !== undefined && containsSecret(preimage.text)) {
+  if (preimage.text !== undefined && (preimage.secretTarget === true || containsSecret(preimage.text))) {
     return { withheld: { sha256: createHash("sha256").update(preimage.text).digest("hex"), bytes: Buffer.byteLength(preimage.text) } };
   }
   return preimage.readError === undefined ? preimage : { ...preimage, readError: scrubSecrets(preimage.readError) };
@@ -116,6 +123,12 @@ export interface Source {
   readonly modifiedAt?: number;
   /** Filesystem-clock reading taken before the walk that produced this observation. */
   readonly observedAt?: number;
+  /**
+   * The file is named like one holding secrets where it really is, from the checkout that owns it, however `path`
+   * spells it: a link to a folder on the way (`conf/config.py`, `conf` a link to `.aws`) or a Windows short name
+   * (`AWS~1/config.py`) may lead there.
+   */
+  readonly secretTarget?: true;
 }
 export type ObservedSource = Omit<Source, "text" | "deleted">;
 /** Baseline observations keyed by workspace directory, shared so later sessions reuse digests of unchanged sources. */
@@ -201,16 +214,39 @@ interface FinishOptions {
   readonly rewindable?: boolean;
   readonly reported?: ReportedPreimage | undefined;
 }
-/** A source as a preimage: a file named like one holding secrets keeps only its digest and size. Undefined when it is none. */
+/** A source as a preimage (`textPreimage` for its text). Undefined when it is none. */
 function preimageOf(source: Source): Preimage | undefined {
-  if (source.text !== undefined)
-    return sensitiveByName(source.path) ? { withheld: { sha256: source.digest!, bytes: Buffer.byteLength(source.text) } } : { text: source.text };
+  if (source.text !== undefined) return textPreimage(source, source.text);
   if (source.readError !== undefined) return { readError: source.readError };
   return source.deleted === true ? {} : undefined;
 }
-/** `preimage` of the file at `path` as a capture keeps it: a file named like one holding secrets keeps only its digest and size. */
-function keptPreimage(path: string, preimage: Preimage): Preimage {
-  if (preimage.text === undefined || !sensitiveByName(path)) return preimage;
+/**
+ * `source`'s `text` as a preimage: a file named like one holding secrets as spelled keeps only its digest and size; one
+ * named so only where it really is (`secretTarget`) keeps its text for the session, marked so the ledger keeps only its
+ * digest and size too (`ledgerPreimage`).
+ */
+function textPreimage(source: Source, text: string): Preimage {
+  if (sensitiveByName(source.path)) return { withheld: { sha256: source.digest!, bytes: Buffer.byteLength(text) } };
+  return source.secretTarget === true ? { text, secretTarget: true } : { text };
+}
+function holdsSecrets(source: Source): boolean {
+  return source.secretTarget === true || sensitiveByName(source.path);
+}
+/**
+ * `source`, read at its spelled path, marked `secretTarget` when `real`, where it really is from the checkout that owns
+ * it, is named like a file holding secrets.
+ */
+function judgedWhereItLeads(source: Source | undefined, real: string): Source | undefined {
+  return source === undefined || !sensitiveByName(real) ? source : { ...source, secretTarget: true };
+}
+/**
+ * What a tool's result says `source` held, as its edit is read against it: a file named like one holding secrets, as
+ * spelled or where it really is (`holdsSecrets`), keeps only its digest and size, so its edit is read over the whole
+ * file, as a direct edit of it is. An edit read against what a result says is never rolled back (`RewindableEdit`), so
+ * the session needs no copy of that text.
+ */
+function keptPreimage(source: Source, preimage: Preimage): Preimage {
+  if (preimage.text === undefined || !holdsSecrets(source)) return preimage;
   return { withheld: { sha256: sha256(preimage.text), bytes: Buffer.byteLength(preimage.text) } };
 }
 /**
@@ -552,7 +588,7 @@ function editPreimage(source: Source, captured: Preimage | undefined, reported: 
  */
 function unchangedSinceWrite(source: Source, captured: Preimage, reported: ReportedPreimage): Preimage {
   const preimage = reportedText(reported, source.text);
-  if (preimage !== undefined) return keptPreimage(source.path, preimage);
+  if (preimage !== undefined) return keptPreimage(source, preimage);
   return captured.text !== undefined && placesBeforeWrite(reported, captured.text) ? captured : { readError: UNREBUILT_PREIMAGE };
 }
 /**
@@ -571,10 +607,10 @@ function changedSinceWrite(source: Source, captured: Preimage, reported: Reporte
   const text = captured.text;
   if (text === undefined) return captured;
   const before = textBeforeWrite(reported, text, source.text);
-  if (before !== undefined) return keptPreimage(source.path, before);
+  if (before !== undefined) return keptPreimage(source, before);
   if (placesBeforeWrite(reported, text) || capturedOtherThanMade(reported, text)) return captured;
   const said = unprovenCaptureBefore(reported, text, source.text);
-  return said === undefined ? captured : keptPreimage(source.path, said);
+  return said === undefined ? captured : keptPreimage(source, said);
 }
 /**
  * Whether an edit read against `preimage` was read against what its call captured: that capture, or its very text, as
@@ -3387,7 +3423,8 @@ export class CodeRuleBridge {
    * Reads the file through one descriptor opened without following a final symlink. Its real path must stay inside
    * the checkout that owns it (the session folder for an auditor that judges one folder), and still name the file
    * that was opened, so a folder swapped for a symlink mid-read cannot bring outside bytes in. A file the auditor
-   * finds no owner for is not read, and an unlisted path that is no regular file, or a binary one, is no source.
+   * finds no owner for is not read, and an unlisted path that is no regular file, or a binary one, is no source. The
+   * file is judged by where it really is as well as by its spelled path (`judgedWhereItLeads`), as the auditor judges it.
    */
   async #readLocatedSource(root: string, location: SourceLocation): Promise<Source | undefined> {
     const handle = await openSource(location.absolute);
@@ -3395,20 +3432,24 @@ export class CodeRuleBridge {
     try {
       const info = await handle.stat();
       if (!info.isFile()) return location.unlisted ? undefined : { path: location.path, language: location.language, readError: "Source is not a regular file" };
-      return await this.#readsInPlace(root, location, info) ? await readOpenedSource(handle, location, info) : undefined;
+      const real = await this.#realPathInPlace(root, location, info);
+      return real === undefined ? undefined : judgedWhereItLeads(await readOpenedSource(handle, location, info), real);
     } finally {
       await handle.close();
     }
   }
 
-  /** Whether the file's real path stays inside the checkout that owns it and still names the file that was opened. */
-  async #readsInPlace(root: string, location: SourceLocation, info: Stats): Promise<boolean> {
+  /**
+   * The file's real path, `/`-separated from the checkout that owns it, when it stays inside that checkout and still
+   * names the file that was opened; undefined otherwise.
+   */
+  async #realPathInPlace(root: string, location: SourceLocation, info: Stats): Promise<string | undefined> {
     const owner = this.#owningCheckout(root, location.path);
-    if (owner === undefined) return false;
+    if (owner === undefined) return undefined;
     const canonical = await realpath(location.absolute);
-    if (!withinFolder(owner, canonical)) return false;
+    if (!withinFolder(owner, canonical)) return undefined;
     const named = await lstat(canonical);
-    return named.dev === info.dev && named.ino === info.ino;
+    return named.dev === info.dev && named.ino === info.ino ? relative(owner, canonical).split(sep).join("/") : undefined;
   }
 
   #failedSourceRead(location: SourceLocation, error: unknown): Source {
