@@ -31,7 +31,7 @@ The package ships no rules. Each rule is one of:
 - **By its publisher** (`By @acme`): from a third party's pack (`rerail-pack-<id>` or `@<scope>/rerail-pack-<id>`), not reviewed by Rerail.
 - **Created by you**: stored once per machine in the library.
 
-`rerail rules export` writes the library and all repository configuration to `$RERAIL_HOME/rules.json` (or `--output <file>`); `rerail rules import <file> [--approve]` loads it back.
+`rerail rules export` writes the library and all repository configuration to `$RERAIL_HOME/rules.json` (or `--output <file>`); `rerail rules import <file> [--approve]` loads it back; it is a person's command, refused in a coding agent's session.
 
 <details>
 <summary>Pack rules, edited copies and backups</summary>
@@ -797,7 +797,7 @@ OMP and Pi expose these natively, with slash-completion descriptions; Claude Cod
 
 - **`/rerail`**: rendered by `rerail session`; Cursor gets the repository-level form.
 - **`/rerail-manage`**: the same link the footer's rule count carries.
-- **`/rerail-create`**: suggestions come from sessions (`rerail rules evidence`) and written standards. Following `skills/rerail-create`, the agent drafts each rule and tests it (`rerail rules test <draft.json>`). A suggested rule that passes is added with `rerail rules add <draft.json>` and left unapproved, so it runs in Log; the agent then asks once whether to approve them so they steer (`rerail rules approve <id>`), and the dashboard's Overview sends you to the rest, each approved on its page after it is read. A rule you asked for is read back, and on your yes `rerail rules add` and `rerail rules approve` add it to your library and this repository. Either way the repository is set up with that rule if needed. It also tunes misfiring rules, changes where a rule applies (its scope only, a shipped rule's as your copy, without the full review), and audits a pending rule or pack before asking you to approve it.
+- **`/rerail-create`**: suggestions come from sessions (`rerail rules evidence`) and written standards. Following `skills/rerail-create`, the agent drafts each rule and tests it (`rerail rules test <draft.json>`). A suggested rule that passes is added with `rerail rules add <draft.json>`, and a rule you asked for is read back and added on your yes. Either way it runs in Log until you approve it on its page in the dashboard, which the dashboard's Overview sends you to: `rerail rules approve <id>` is refused in the agent's session. Either way the repository is set up with that rule if needed. It also tunes misfiring rules, changes where a rule applies (its scope only, a shipped rule's as your copy, without the full review), and audits a pending rule or pack before asking you to approve it.
 - **`/rerail-start`**: OMP and Pi ask set-up's questions via their picker; Claude Code and Cursor as text.
 - **`/rerail-stop`**: the shared daemon keeps running; the reply names `rerail daemon stop`, run in a terminal.
 - **`/rerail-uninstall`**: offers both removals, keeping a backup or deleting everything, the second with its `--dry-run` output. OMP and Pi ask via a native selector, then confirm a full deletion after showing that output; Claude Code doesn't pre-approve either removal.
@@ -813,7 +813,7 @@ A draft is `{ kind, rule, folder?, cases: { caught: [...], passed: [...] } }`. `
 - `rerail rules show <rule id> [--repo <dir>]` prints a rule as a draft: one of yours, or a By Rerail rule as this repository runs it (the option values and mode the repository's settings give it, not a checkout's). A note on stderr, so stdout saves as a draft file, says where saving changes it: your rule here and in which other repositories, or that it is not added here; for a By Rerail rule, your copy, the copy this repository already has, or that the rule is not added or is off here (a copy would run on).
 - `rerail rules test` validates a draft, runs its cases and a repository pass over the folders `rules add` would add the rule at, and writes nothing. It says where `rules add` would refuse the draft, a draft without a `title` included; a worktree's rule file on its own is checked as it loads, with no title needed.
 - `rerail rules add` stores the draft in your library and adds it, on, to this repository (or the draft's `folder`). It refuses a rule without a `title`, the rule in your own words that the dashboard lists it by. A draft that keeps a By Rerail rule's id is stored as your copy (`<id>-copy`), added where the original is in this repository; approving the copy turns the original off there ([copy on edit](rule-scoping.md#coding-agents)).
-- The rule runs in Log until `rerail rules approve [<rule id | package> …] [--repo <dir>]` approves it as it is now ([approval](rule-scoping.md#approval)).
+- The rule runs in Log until `rerail rules approve [<rule id | package> …] [--repo <dir>]` approves it as it is now ([approval](rule-scoping.md#approval)), or a person approves it on its page in the dashboard. In a coding agent's session, `rules approve` only lists what waits, and `rules add` of a draft that changes one of your approved rules saves it as a copy that waits ([coding agents](rule-scoping.md#coding-agents)).
 
 <details>
 <summary>Test output and add details</summary>
