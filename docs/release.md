@@ -40,9 +40,11 @@ rule pack bumps ([docs/pack-format.md](pack-format.md#release)).
 
 - **Bump:** if anything core ships changed since the last `v<version>` tag, it bumps to the next patch (`0.1.0` →
   `0.1.1`) and writes its `CHANGELOG.md` section.
-- **Core ranges:** a pack it releases that an older core cannot load, because it holds a rule off or ships a rule in
-  a language added since, has its core range raised to leave those cores out, once core is at the release that first
-  loads it. The description lists each.
+- **Core ranges:** a pack it releases that an older core cannot load has its core range raised to leave those cores
+  out, once core is at the release that first loads it. Each released core from 0.1.5 checks the pack's rules itself,
+  with the `validateCodeRule` it exports (`acceptedFloor` in `scripts/release/core.mjs`), so any rule it refuses counts. For the
+  cores before 0.1.5, which can't check, a rule held off or a rule in a language or with an ast rule key added since
+  counts. The description lists each raised range, and the run log names the rules each core refuses.
 - **Merge:** tags the merge commit `v<version>`, which starts `release.yml`. Core and the packs publish to `next`.
 
 <details>
