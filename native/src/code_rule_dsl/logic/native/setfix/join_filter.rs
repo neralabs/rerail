@@ -1,23 +1,18 @@
 //! A negative membership test for a scan followed by a keyed probe. One walk builds the filter
 //! from its current build range and lends it to all morsels. An exact probe checks every positive.
+//! The filter is blocked (`logic::bloom`): a test is one hash, one load and one compare.
 use super::{
     JoinRule, Key, Rows, Src, Step, Store,
-    sketch::{Sketch, mix},
+    sketch::Sketch,
 };
+use crate::code_rule_dsl::logic::bloom::{self, Filter};
 
-const WORDS: usize = 256;
 const SAMPLES: usize = 64;
 
 pub(super) struct JoinFilter {
     slot: usize,
-    bits: Box<[u64; WORDS]>,
+    filter: Filter,
     _reservation: super::join_cache::Reservation,
-}
-
-fn positions(key: i64) -> impl Iterator<Item = usize> {
-    let hash = mix(key);
-    let stride = (hash >> 32) | 1;
-    (0..7).map(move |i: u64| hash.wrapping_add(i.wrapping_mul(stride)) as usize & (WORDS * 64 - 1))
 }
 
 struct Column<'a> {
@@ -60,6 +55,10 @@ impl<'a> Column<'a> {
 
 impl JoinFilter {
     pub(super) fn choose(j: &JoinRule, store: &Store) -> Option<Self> {
+        // `RERAIL_JOIN_SCREEN=off` (a measurement aid): no screen, every probe made.
+        if !rerail_prof::code_rule_dsl::logic::profile::setting(|| !std::env::var("RERAIL_JOIN_SCREEN").is_ok_and(|v| v == "off")) {
+            return None;
+        }
         let [
             Step::Atom {
                 src: left,
@@ -96,8 +95,10 @@ impl JoinFilter {
         if overlap.is_some_and(|p| p > 0.8) {
             return None;
         }
-        let (screen, rejects) = Self::build(
+        let words = bloom::words_for(inner.sketch.map_or(inner.len, |s| s.ndv().min(inner.len)));
+        let (screen, rejects) = Self::sized(
             *slot,
+            words,
             inner.len,
             |i| inner.at(i),
             outer.len,
@@ -119,17 +120,24 @@ impl JoinFilter {
         outer: usize,
         probe: impl Fn(usize) -> i64,
     ) -> Option<(Self, usize)> {
-        let reservation = super::join_cache::Reservation::take(WORDS * 8)?;
-        let mut screen = Self {
-            slot,
-            bits: Box::new([0; WORDS]),
-            _reservation: reservation,
-        };
+        Self::sized(slot, bloom::words_for(inner), inner, key, outer, probe)
+    }
+
+    /// `build` with `words` words: sized by the build side's distinct keys where its sketch has them.
+    fn sized(
+        slot: usize,
+        words: usize,
+        inner: usize,
+        key: impl Fn(usize) -> i64,
+        outer: usize,
+        probe: impl Fn(usize) -> i64,
+    ) -> Option<(Self, usize)> {
+        let reservation = super::join_cache::Reservation::take(words * 8)?;
+        let mut filter = Filter::new(words);
         for i in 0..inner {
-            for bit in positions(key(i)) {
-                screen.bits[bit / 64] |= 1 << (bit % 64);
-            }
+            filter.add(key(i));
         }
+        let screen = Self { slot, filter, _reservation: reservation };
         // Row-weighted probes expose a shared hot key even when distinct-key overlap is small.
         let rejects = (0..SAMPLES)
             .filter(|&i| screen.absent(probe((i as u64 * outer as u64 / SAMPLES as u64) as usize)))
@@ -137,10 +145,12 @@ impl JoinFilter {
         Some((screen, rejects))
     }
 
+    #[inline]
     fn absent(&self, key: i64) -> bool {
-        positions(key).any(|bit| self.bits[bit / 64] & (1 << (bit % 64)) == 0)
+        !self.filter.may_hold(key)
     }
 
+    #[inline]
     pub(super) fn rejects(&self, slots: &[i64]) -> bool {
         self.absent(slots[self.slot])
     }

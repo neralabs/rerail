@@ -55,13 +55,10 @@ impl Default for Sketch {
 }
 
 #[inline]
+/// The keys' hash: the Bloom filters' too (`logic::bloom`), so a filter and a sketch see the same keys alike.
+#[inline]
 pub(super) fn mix(v: i64) -> u64 {
-    let mut x = v as u64 ^ 0x9e37_79b9_7f4a_7c15;
-    x ^= x >> 30;
-    x = x.wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    x ^= x >> 27;
-    x = x.wrapping_mul(0x94d0_49bb_1331_11eb);
-    x ^ (x >> 31)
+    crate::code_rule_dsl::logic::bloom::hash(v)
 }
 
 impl Sketch {

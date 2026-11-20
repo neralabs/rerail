@@ -79,13 +79,37 @@ What changes from Release-debugging:
   costs time, never an answer.
 - On the version path the rewrite is one more keyed step. A tree loop around preparation would undo 0281.
 
+## The filters, blocked, and the join statistics (2026-11-19)
+
+- **One blocked filter** (`logic::bloom`): all of a key's 5 bits in one 64-bit word, from one hash, setfix's sketch
+  hash (the HyperLogLog sketches' too). A test is one hash, one load and one compare. The probe screen is built on
+  it, sized 16 bits a distinct key from the build side's sketch (256 B to 16 KiB). `RERAIL_JOIN_SCREEN=off` turns
+  the screens off, for measurements. corpus0 x B-now, off against on, alternating: 1,003.0 and 1,002.9 G
+  instructions against 998.6 and 1,013.5 G, the same findings. No effect either way there: the screens are for
+  PostHog's shape (a wide scan, a narrow build side), which corpus0 does not have.
+- **Each heavy-values column holds its filter** (`HeavyCol::keys`, 2,048 words, so any two compare). A value the
+  filter refuses has no rows (`rows_of`), and two columns' filters estimate the tail values they share. Containment
+  (0209 §4) counted the fewest tail values any column has left as shared. heavy_fan now separates the tail values a
+  binding is drawn from (those every placed column holds) from those that meet `here` too. A drawn value that meets
+  nothing is a binding of no rows, as the doc always said. Before, only the shared ones were counted. Two
+  identical filters (a self-join) keep containment's exact count. Test:
+  `the_columns_filters_count_the_tail_keys_two_columns_share` (2,000 keys a side, 50 shared: within 15% of the
+  exact fan, and closer than containment).
+- **The device builds the same filter** in the stats batch (`col_bloom`, `accel/src/gpu/join.rs`): one thread a
+  sorted run (a distinct value), its key plus the base (the host's or the span's on the device), five bits set with
+  32-bit atomics on the word's halves, the host's bytes. Read in place as before (0353): the filter is a derived
+  fact, the column is not copied. Tests (rerail-device-metal, cargo on a farm host; under Relax no device registers
+  as the binary loads): `the_gpu_batch_makes_the_cpu_batch_heavy_values` and
+  `column_statistics_read_a_resident_relation_in_place`, word for word, both widths.
+
 ## Open
 
-- **The screens are scalar.** Each scan row hashes its key 7 times and tests 7 bits in a 4,096-bit array. A blocked
-  filter (all of a key's bits in one 64-bit word) probed a morsel at a time is the next step. After that, a device
-  screen: Metal passes that read the column in its block (0353) and write a selection.
-- **Join statistics.** The planner's kept sketches (0096) share one hash across columns. So two columns' AMS
-  counters estimate a join's size (Σₖ L[k]·R[k]), and their levelled bitmaps estimate the keys they share. Both
-  are unused: a probe is priced by one side's fanout alone.
+- **The screen probes a row at a time.** A morsel probe (hash a block of keys, then test them, the loads
+  independent) is next. After that, a device screen: a pass over the scan column in its block (0353) that writes a
+  selection the probe kernel reads.
+- **The screen does not use the statistics' filters yet.** Where the build side's column has a `HeavyCol` filter,
+  the screen can take it, not build its own.
+- **The AMS counters (0096)** share one hash across columns, so two columns' counters estimate a join's size
+  (Σₖ L[k]·R[k]). They are not used yet.
 - **The deferred step decodes the tree** for every program it runs on (Q186).
 - Whole-pack timing and findings on `scripts/ship/corpora.json` were never compared in Release-debugging.
