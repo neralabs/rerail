@@ -6883,7 +6883,11 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         }
         match step {
             Step::Atom { src, neg, keys, binds, tests } => {
-                if i == 1 && cx.screen.is_some_and(|f| f.rejects(slots)) { return; }
+                // A screened probe (`join_filter`) whose key the filter refuses has no rows: a negated one holds.
+                if let Some(f) = cx.screen && i == f.step && f.rejects(slots) {
+                    if f.neg { go(cx, i + 1, slots); }
+                    return;
+                }
                 cx.key.clear();
                 cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
                 let given = if i == 0 { cx.first.take() } else { None };
