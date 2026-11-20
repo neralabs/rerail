@@ -57,6 +57,12 @@ export const LANGUAGE_REGISTRY = /* registry */ [
         "dialect": "python",
         "start": "type",
         "tapeTag": 30
+      },
+      {
+        "name": "python-pattern",
+        "dialect": "python",
+        "start": "pattern_module",
+        "tapeTag": 34
       }
     ]
   },
@@ -337,6 +343,10 @@ export const LANGUAGE_REGISTRY = /* registry */ [
       {
         "language": "regex",
         "via": "match-regex"
+      },
+      {
+        "language": "python",
+        "via": "pattern"
       }
     ]
   },

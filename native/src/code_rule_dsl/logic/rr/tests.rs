@@ -4887,6 +4887,60 @@ fn a_match_regex_is_a_regex_program_at_its_bytes() {
     assert!(off.is_empty(), "{off:?}");
 }
 
+/// Decision 0495 R4: Python's pattern fragment reads a rule's pattern as a module whose metavariables are names; a
+/// file's parse refuses the same text, so only a pattern reads `$`.
+#[test]
+fn a_python_pattern_reads_metavariables_as_names() {
+    let src = b"subprocess.run($CMD, shell=True)\nf($$$ARGS, $_, $$$)\n";
+    let tape = rerail_python_lean::tape_from(src, crate::code_rule_dsl::embed::rule_pattern::START).expect("a pattern reads");
+    let text = rerail_python_lean::tape_text(&tape);
+    assert!(text.starts_with("module"), "{text}");
+    assert!(!text.contains("ERROR"), "{text}");
+    // `subprocess`, `run`, `$CMD`, `shell`, `f`, `$$$ARGS`, `$_`, `$$$`: each a name.
+    assert_eq!(text.lines().filter(|l| l.trim_start().starts_with("identifier")).count(), 8, "{text}");
+    assert!(rerail_python_lean::tape(src).is_err(), "a file is not a pattern");
+    assert!(crate::code_rule_dsl::language::fragments().iter().any(|&(name, d, start, _)| name == "python-pattern" && d == crate::code_rule_dsl::language::GrammarDialect::Python && start == "pattern_module"));
+}
+
+/// Decision 0495 R5: a `.language python` rule file's patterns are Python programs. A Python run that says
+/// `.embedded on` reads each one at the rule file's line, a fence of two backticks without its spaces; a pattern in
+/// a rule file of a language with no pattern fragment (TypeScript) is none; without `.embedded on`, the run reads
+/// its own files alone (here none).
+#[test]
+fn a_rule_files_patterns_are_programs_of_its_language() {
+    let py = ".language python\n.decl call(c: node)\ncall(c) :- c ~ `subprocess.run($CMD, shell=True)`.\ncall(c) :- c ~ `` os.system($X) ``.\n";
+    let ts = ".language typescript\n.decl call(c: node)\ncall(c) :- c ~ `eval($X)`.\n";
+    let calls = |embedded: &str| format!(".language python\n{embedded}\n.decl calls(x: symbol, p: symbol, l: number)\ncalls(x, p, l) :- kind(c, \"call\"), text(c, x), docof(c, d), doc(d, p, _), line(c, l).\n.output calls\n");
+    // The Python rule file holds two programs, the TypeScript one none.
+    let held = |src: &str| {
+        let grammar = crate::code_rule_dsl::tape::Grammar::embedded(crate::code_rule_dsl::language::GrammarDialect::Rr).unwrap();
+        let image = crate::code_rule_dsl::tape::TapeImage::parse(&grammar, src, &|| false).expect("parsed").expect("encoded");
+        image.derived.iter().filter(|d| d.via == crate::code_rule_dsl::language::Via::Pattern).count()
+    };
+    assert_eq!((held(py), held(ts)), (2, 0));
+    let files = [("rules/p.rr", py), ("rules/t.rr", ts)];
+    let [on] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("rr-pattern-on", &files, &calls(".embedded on"), &["calls"])).unwrap();
+    let on: BTreeSet<Vec<String>> = on.into_iter().collect();
+    let want: BTreeSet<Vec<String>> = [["subprocess.run($CMD, shell=True)", "rules/p.rr", "3"], ["os.system($X)", "rules/p.rr", "4"]].iter().map(|r| r.iter().map(|v| (*v).to_owned()).collect()).collect();
+    assert_eq!(on, want);
+    let [off] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("rr-pattern-off", &files, &calls(""), &["calls"])).unwrap();
+    assert!(off.is_empty(), "{off:?}");
+}
+
+/// Decision 0470 step 2: a run under `.embedded on` reads a host file for its programs and sees none of the file's
+/// own nodes. It sees them (work queue Q385): hiding runs only for a program that makes guests, and bounding a
+/// program's document then hides the programs too, since a program's node's document is its host file's hidden key
+/// (Q267), while an annotation's nodes need that document bound.
+#[test]
+#[ignore = "Q385: a host file's own nodes are shown under `.embedded on`"]
+fn a_host_files_own_nodes_are_not_shown() {
+    let rr = ".decl a(x: symbol)\na({\"k\": 1}).\n";
+    let rule = ".language json\n.embedded on\n.decl pairs(x: symbol, p: symbol)\npairs(x, p) :- kind(n, \"pair\"), text(n, x), docof(n, d), doc(d, p, _).\n.decl own(k: symbol)\nown(k) :- kind(_, k), (k = \"source_file\" ; k = \"clause\").\n.output pairs, own\n";
+    let [pairs, own] = <[Vec<Vec<String>>; 2]>::try_from(guests_run("host-own-nodes", &[("rules/r.rr", rr)], rule, &["pairs", "own"])).unwrap();
+    assert_eq!(pairs, [["\"k\": 1", "rules/r.rr"]], "the program is shown, at its file");
+    assert!(own.is_empty(), "the host file's own nodes are not: {own:?}");
+}
+
 /// Q267 (decision 0431 §4, "a program is named by its file and place"): where a program declares `docof` over nodes
 /// as T's programs do, it is `node`'s projection, and `node`'s document column is a program's file, so `docof` of a
 /// script's node is the HTML file that holds it, as core.rr's `docof` is.

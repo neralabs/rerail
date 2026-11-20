@@ -5594,9 +5594,32 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
 - **No round outside the fixpoint, done** (2026-11-20, 0431 step 7, R12): `@parse` and `@splice` values are asked
   inside the fixpoint; the embed slice and its rounds are gone. The demand split no longer cuts a relation above a
   value's answer.
+- **Setting decided, done** (2026-11-20, decision 0494): `.guests` is retired; `.embedded` is the one setting.
+- **The rule-file language's embeds, done** (2026-11-20, decision 0495): JSON objects, `match` regexes (a new
+  `regex` grammar) and Python patterns (`python-pattern`) are a rule file's programs. Found on the way: Q385.
+- **Older than this item** (each fails at 3aeaf9336e, before 0431 step 6):
+  `maintain_tests::r7_the_recheck_order_is_priced` ("after a use added, every recheck line is priced") and
+  `corpus::tests::a_header_edit_asks_again_only_for_the_units_that_read_it` ("a file no unit looked at asks for
+  none"). `the_run_after_a_cold_one_writes_nothing` flakes under load (2026-11-18, above).
 - **Seen on the way**: `value::eslint_rules::no_dupe_keys_through_key_nodes` (3 of 16 lines found) and
   `typing::oracle_tests::a_loop_target_is_its_iterators_next_value_and_a_with_alias_the_value_entered` ("unbounded
   node Cartesian product in `base`") fail at 11d32e9f0 too, before step 7 (Q263's kind for the second).
+
+### Q385. A host file's own nodes are shown under `.embedded on`
+
+- **Seen** (2026-11-20, decision 0495 step 3): a JSON run under `.embedded on` sees a rule file's own nodes
+  (`source_file`, `clause`), and an HTML run a Python file's `module`. 0470 step 2 meant them hidden: a host file takes
+  a hidden key. But hiding runs only for a program that makes guests (`corpus.rs`, `guests_of`), and a program that
+  only says `.embedded on` makes none. 0470's tests ask only for kinds a host file has none of, so they pass.
+- **Tried, and taken back**: running hiding for `.embedded on` too hides the host's nodes, and its programs with
+  them. A program's node's document is its host file's (Q267), whose key is hidden, so `docof(n, d), doc(d, p, _)`
+  fails the document bound. Leaving a node's document unbounded (the node's bound deciding) shows Python's
+  annotations to rules that do not name them (`a_partial_hit_makes_only_the_guests_its_cone_can_see`): an
+  annotation's nodes have ids under their file's key, and only the document bound keeps them out.
+- **To decide**: one key range cannot both show a host file's document and hide its nodes. A likely shape: a host
+  file takes a shown document key, and its own nodes ids under a hidden key, as an annotation's are the other way
+  round. That changes how a file's nodes are numbered: the user's call.
+- **Test**: `a_host_files_own_nodes_are_not_shown` (ignored, naming this item).
 
 ### Q272. The store crate's tests: five fail on a farm host, one flakes
 

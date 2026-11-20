@@ -45,9 +45,15 @@ nodes stand at the file's bytes. It is a program per place, at the leaf.
 
 ### 3. Patterns (`via: pattern`), and a language's pattern fragment
 
-- **The fragment.** A language may register a fragment that starts at a `pattern` (0466). Python's lean parser reads
-  one: a module whose metavariables (`$X`, `$$$X`, `$_`) are names. Its tape is the pattern's tree as Python reads
-  it, so a Python rule set reads a pattern as it reads code.
+- **The fragment.** A language may register a fragment that starts at `pattern_module` (0466). Python's lean parser
+  reads one (`python-pattern`, tape tag 34): a module whose metavariables (`$X`, `$$$X`, `$_`, `$$$`) are names. Its
+  tape is the pattern's tree as Python reads it, so a Python rule set reads a pattern as it reads code. The start is
+  no kind of Python's (its `pattern` is a `case` pattern): it names a `module` and the mode it is read in, and the
+  tape's root is that `module`. That is the one way it differs from 0466, whose root is its start's node.
+- **The verdict.** A pattern is no file of its language: CPython refuses `$CMD`. So its syntax verdict is its tape's
+  (its `ERROR` and `MISSING` nodes), not Python's own check, or every pattern would be withheld as a syntax error.
+  The embedder says so (`Embedder::tape_verdict`), and the program's facts carry it (`Facts::tape_verdict`), which
+  `core_rr::verdict` reads before asking a family's own verdict.
 - **The place.** The backtick `code_literal` of a `pattern_match` (`n ~ \`…\``) holds a pattern program in the file's
   `.language`, where that language registers a pattern fragment. Otherwise it holds none. Its text is the literal's
   content, byte for byte.
@@ -56,6 +62,18 @@ nodes stand at the file's bytes. It is a program per place, at the leaf.
 
 - A rule that reads a regex as a value still parses it as any string: `parsed(s, "regex", r)`.
 - A run of another language reads a rule file for these programs only under `.embedded on`.
+
+## As built
+
+- Step 1 (22eced3a70): `json-object`. A rule file's parse now runs its embedders (`FileImage::embedding`), as a
+  lean parser's file does.
+- Step 2 (853a289190): the `regex` language (family `format`, built with `rr`, tape tag 33), `literal::regex`, and
+  `match-regex`. `embed::Parse::read` reads a literal grammar's dialect through its registered parser, since
+  tree-sitter has none.
+- Step 3: `python-pattern`, `pattern` (`embed::rule_pattern`), and the tape verdict.
+- **Found on the way (Q385)**: under `.embedded on`, a host file's own nodes are shown. Hiding runs only for a program
+  that makes guests. Running it for `.embedded on` too hides the programs with the host: a program node's document is
+  its host's hidden key (Q267), and annotations need that document bound. Left open, with an ignored test.
 
 ## Requirements (each with its test before the code)
 

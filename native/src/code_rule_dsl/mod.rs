@@ -4702,6 +4702,8 @@ pub(crate) fn install_languages() {
         (language::Via::JsonObject, &embed::json_object::JsonObject),
         #[cfg(feature = "lang-rr")]
         (language::Via::MatchRegex, &embed::match_regex::MatchRegex),
+        #[cfg(feature = "lang-rr")]
+        (language::Via::Pattern, &embed::rule_pattern::RulePattern),
         #[cfg(feature = "lang-vue")]
         (language::Via::ScriptBlock, &embed::script_block::ScriptBlock),
         #[cfg(any(test, feature = "test-hooks"))]

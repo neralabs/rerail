@@ -1,5 +1,10 @@
-// The code inside a `.rr` file (decision 0061 §5): its patterns, in the program's `.language`, with metavariables;
-// its JSON objects (an `ast` matcher, a policy, a violation's options); the regex a `match` names. A file's programs
-// are its language's declaration (decision 0431 §4), as HTML's, Vue's, Blade's and Markdown's are; the rule-file
-// language declares none yet (work queue Q268): the pattern and regex grammars are not registered, and no embedder
-// reads a JSON object. A rule that parses a `match`'s regex string reads it as any string, `parsed(s, "regex", r)`.
+// The code inside a `.rr` file (decisions 0061 §5, 0495): a file's programs are its language's declaration (decision
+// 0431 §4), as HTML's, Vue's, Blade's and Markdown's are. A rule file holds three kinds:
+//   .policy {"id": "p"}                   a JSON object (a policy, a violation's options, a `{ … }` term): a JSON
+//                                         program (`json-object`)
+//   match("(?i)select .*", t)             a `match`'s first plain string: a `regex` program (`match-regex`), in the
+//                                         Rust dialect the engine matches with; a look-around is `unsupported`
+//   c ~ `subprocess.run($CMD, shell=True)`  a pattern: a program in the file's `.language` (`pattern`), where that
+//                                         language registers a pattern fragment (Python's `python-pattern`)
+// A run of JSON, `regex` or Python reads them under `.embedded on`, at the rule file's lines. A rule that parses a
+// string as a regex value still reads it as any string: `parsed(s, "regex", r)`.

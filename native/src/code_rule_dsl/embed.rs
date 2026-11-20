@@ -39,6 +39,8 @@ pub mod inline_content;
 pub mod json_object;
 // cratify: `match_regex` is rerail-rr's (the rule-file language's, decision 0495)
 pub mod match_regex;
+// cratify: `rule_pattern` is rerail-rr's (the rule-file language's, decision 0495)
+pub mod rule_pattern;
 pub mod raw_text;
 pub mod segments;
 #[cfg(any(test, feature = "test-hooks"))]
@@ -150,6 +152,11 @@ pub trait Embedder: Send + Sync {
         false
     }
 
+    /// Whether its programs' syntax verdict is their tape's, not their language's own check of a file: they are no
+    /// files of their language (a rule's pattern, whose metavariables CPython refuses; decision 0495 §3).
+    fn tape_verdict(&self) -> bool {
+        false
+    }
     /// The programs of the host `doc` (`reads_scope`).
     fn build_in_doc(&self, _doc: &crate::code_rule_dsl::tape::TapeDoc, _budget: &dyn Fn() -> bool) -> Vec<Program> {
         Vec::new()

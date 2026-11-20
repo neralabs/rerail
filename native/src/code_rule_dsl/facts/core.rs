@@ -161,6 +161,10 @@ pub struct Facts {
     /// with its stored tape, and kept with it. `None` where they are not known (a tape stored before step 6, a
     /// program's own facts): the batch makes them from the tape.
     pub programs: Option<Arc<[crate::code_rule_dsl::tape::DerivedImage]>>,
+    /// Whether the document's syntax verdict is its tape's (its ERROR and MISSING nodes), not its language's own
+    /// check of a file: a program no file of its language is, as a rule's pattern is (decision 0495 §3,
+    /// `embed::Embedder::tape_verdict`).
+    pub tape_verdict: bool,
 }
 
 /// What a document holds, ascending: its codes, the kinds of those with no ERROR flag, and their classes.
@@ -651,6 +655,7 @@ pub fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, String> 
         held: Default::default(),
         python_syntax: Default::default(),
         programs: None,
+        tape_verdict: false,
     })
 }
 
@@ -667,7 +672,7 @@ pub fn from_image(source: Arc<String>, grammar: &Arc<crate::code_rule_dsl::tape:
 
 /// The facts of `tape` (checked), of `source` in `grammar`'s dialect.
 fn holding(tape: Arc<crate::code_rule_dsl::tape::formats::DocTape>, source: Arc<String>, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>, tag: u8, lines: Arc<LineTable>) -> Facts {
-    Facts { tag, source, lines, tape: Some(tape), grammar: Some(Arc::clone(grammar)), errors: Default::default(), held: Default::default(), python_syntax: Default::default(), programs: None }
+    Facts { tag, source, lines, tape: Some(tape), grammar: Some(Arc::clone(grammar)), errors: Default::default(), held: Default::default(), python_syntax: Default::default(), programs: None, tape_verdict: false }
 }
 
 /// The tape tag of a text-only document's facts (`text`): no dialect has it.
@@ -677,7 +682,7 @@ pub const TEXT: u8 = u8::MAX;
 /// for a file with no grammar (`Terminators::Eslint`: `\r\n`, `\r`, `\n`, U+2028, U+2029).
 pub fn text(source: Arc<String>) -> Facts {
     let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::Terminators::Eslint));
-    Facts { tag: TEXT, source, lines, tape: None, grammar: None, errors: std::sync::OnceLock::from(Vec::new()), held: Default::default(), python_syntax: Default::default(), programs: None }
+    Facts { tag: TEXT, source, lines, tape: None, grammar: None, errors: std::sync::OnceLock::from(Vec::new()), held: Default::default(), python_syntax: Default::default(), programs: None, tape_verdict: false }
 }
 
 /// Counts a read of the facts' `$part` of node `$node` (E17, `tape::reads`); nothing without `tape-reads`.

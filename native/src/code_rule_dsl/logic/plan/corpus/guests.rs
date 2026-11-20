@@ -646,7 +646,8 @@ impl Guests {
             }
         };
         let host_key = (at >> 32) as u32;
-        let Some(((facts, root, digest), tape)) = taped(&host.path, label, program.text, program.parse)? else { return Ok(None) };
+        let tape_verdict = crate::code_rule_dsl::embed::embedder(via).tape_verdict();
+        let Some(((facts, root, digest), tape)) = taped(&host.path, label, program.text, program.parse, tape_verdict)? else { return Ok(None) };
         let key = self.key_for(&[host.path.as_bytes(), &at.to_le_bytes(), via.id().as_bytes()], range, &host.path);
         let file = self.host_of.get(&i64::from(host_key)).copied().unwrap_or(i64::from(host_key));
         self.host_of.insert(i64::from(key), file);
@@ -851,11 +852,12 @@ fn parse(path: &str, label: &str, fragment: Option<core::Fragment>, text: String
 /// An embedded program's facts, read off the tape or tree its embedder parsed its text into (`parse`), with its tape
 /// kept beside them (decision 0222): the rules over a view read W's values (`value`, a key's text) as over a file,
 /// and a value is read off the document's tape. Its tape is not stored (Q30).
-fn taped(path: &str, label: &str, text: Arc<String>, parse: crate::code_rule_dsl::embed::Parse) -> Result<Option<(Parsed, Tape)>, String> {
+fn taped(path: &str, label: &str, text: Arc<String>, parse: crate::code_rule_dsl::embed::Parse, tape_verdict: bool) -> Result<Option<(Parsed, Tape)>, String> {
     let file = crate::code_rule_dsl::facts::core::Source { language: label.to_owned(), source: text };
     // Read off the embedder's parse, not parsed again.
     let built = core::build_parsed(&file, parse, true).map_err(|e| format!("{path}: {e}"))?;
-    let (Built::Facts(facts), tape) = built else { return Ok(None) };
+    let (Built::Facts(mut facts), tape) = built else { return Ok(None) };
+    facts.tape_verdict = tape_verdict;
     let digest = core::digest(&facts);
     let tape = tape.map(|doc| (doc, Arc::new(file) as Arc<dyn crate::code_rule_dsl::facts::core::SourceFile>));
     Ok(Some(((Arc::new(facts), 0, digest), tape)))
