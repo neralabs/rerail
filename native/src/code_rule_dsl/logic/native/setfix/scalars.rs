@@ -44,17 +44,71 @@ struct Memo {
     groups: HashMap<Vec<i64>, Summary>,
     preferred_value: Option<Arc<Bag>>,
     builds: usize,
-    lookups: usize,
+    /// Counted under a read lock: a hit takes no write lock.
+    lookups: std::sync::atomic::AtomicUsize,
 }
+/// The pool's shards, by a group's key: a join's morsels probe a summary a row, from every thread at once.
+const SHARDS: usize = 32;
+
+/// What a bag's memo holds, every shard's together (`Pool::memos`).
+#[derive(Clone, Debug)]
+pub(super) struct MemoStats {
+    pub bag: Arc<Bag>,
+    pub epoch: (usize, usize, usize, usize),
+    pub groups: usize,
+    pub builds: usize,
+    pub lookups: usize,
+}
+
 /// An input owns its cache. Component epochs include the visible row range and the rows deleted in place
 /// (`Rel::based`'s dead count, which only grows); rebound inputs own a new pool.
-#[derive(Default)]
-pub(super) struct Pool(Mutex<HashMap<Arc<Bag>, Memo>>);
+///
+/// Sharded by the group's key: with one lock, ten threads probing a summary a row waited on it for most of their
+/// time (on all, `public_best_len` and `public_best_route` held the run's thread 0.9 s each with 3 ms of its CPU,
+/// 0471). A key's memo is in its shard, each shard with its own epoch; each shard knows every bag's preferred value.
+pub(super) struct Pool([parking_lot::RwLock<HashMap<Arc<Bag>, Memo>>; SHARDS]);
+impl Default for Pool {
+    fn default() -> Self {
+        Self(std::array::from_fn(|_| parking_lot::RwLock::default()))
+    }
+}
 impl Pool {
+    fn shard(&self, key: &[i64]) -> &parking_lot::RwLock<HashMap<Arc<Bag>, Memo>> {
+        let hash = key.iter().fold(0u64, |h, &k| (h.rotate_left(5) ^ k as u64).wrapping_mul(0x517c_c1b7_2722_0a95));
+        &self.0[(hash >> (64 - SHARDS.trailing_zeros())) as usize]
+    }
+
+    /// Each bag's memo, every shard's summed (the epoch is the latest a shard saw).
+    pub fn memos(&self) -> Vec<MemoStats> {
+        let mut out: Vec<MemoStats> = Vec::new();
+        for shard in &self.0 {
+            for (bag, memo) in shard.read().iter() {
+                let at = match out.iter().position(|m| &m.bag == bag) {
+                    Some(at) => at,
+                    None => {
+                        out.push(MemoStats { bag: bag.clone(), epoch: memo.epoch, groups: 0, builds: 0, lookups: 0 });
+                        out.len() - 1
+                    }
+                };
+                let m = &mut out[at];
+                m.epoch = m.epoch.max(memo.epoch);
+                (m.groups, m.builds, m.lookups) = (m.groups + memo.groups.len(), m.builds + memo.builds, m.lookups + memo.lookups.load(std::sync::atomic::Ordering::Relaxed));
+            }
+        }
+        out
+    }
+
+    /// The bag a lookup of `bag` reads: its preferred value's, where it has one.
+    fn selected(&self, bag: &Arc<Bag>) -> Arc<Bag> {
+        if bag.value.is_some() {
+            return bag.clone();
+        }
+        self.0[0].read().get(bag).and_then(|m| m.preferred_value.clone()).unwrap_or_else(|| bag.clone())
+    }
+
     pub fn register(&self, bag: &Arc<Bag>) {
-        let mut pool = self.0.lock().unwrap();
-        pool.entry(bag.clone()).or_default();
-        if let Some(value) = bag.value {
+        // A count over a bag whose value's sum is proven the same bag reads that bag's summaries (its count).
+        let preferred = bag.value.and_then(|value| {
             let mut count = bag.as_ref().clone();
             count.value = None;
             let scalar = |kind, value| Scalar {
@@ -71,14 +125,13 @@ impl Pool {
                 dependent: false,
                 non_null: true,
             };
-            if scalar(Kind::Count, E::Integer(1))
-                .same_bag(&scalar(Kind::Sum, E::Column(value)))
-                .proven
-            {
-                pool.entry(Arc::new(count))
-                    .or_default()
-                    .preferred_value
-                    .get_or_insert_with(|| bag.clone());
+            scalar(Kind::Count, E::Integer(1)).same_bag(&scalar(Kind::Sum, E::Column(value))).proven.then(|| Arc::new(count))
+        });
+        for shard in &self.0 {
+            let mut pool = shard.write();
+            pool.entry(bag.clone()).or_default();
+            if let Some(count) = &preferred {
+                pool.entry(count.clone()).or_default().preferred_value.get_or_insert_with(|| bag.clone());
             }
         }
     }
@@ -90,8 +143,25 @@ impl Pool {
         build: impl FnOnce(Option<usize>) -> Summary,
     ) -> Summary {
         let mut selected = bag.clone();
+        let shard = self.shard(key);
+        // A hit: under the read lock.
         {
-            let mut pool = self.0.lock().unwrap();
+            let pool = shard.read();
+            let memo = if bag.value.is_none() {
+                pool.get(bag).and_then(|m| m.preferred_value.as_ref()).map_or_else(|| pool.get(bag), |p| pool.get(p))
+            } else {
+                pool.get(bag)
+            };
+            if let Some(memo) = memo
+                && memo.epoch == epoch
+                && let Some(summary) = memo.groups.get(key)
+            {
+                memo.lookups.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                return *summary;
+            }
+        }
+        {
+            let mut pool = shard.write();
             if selected.value.is_none() {
                 selected = pool
                     .get(bag)
@@ -99,7 +169,7 @@ impl Pool {
                     .unwrap_or(selected);
             }
             let memo = pool.entry(selected.clone()).or_default();
-            memo.lookups += 1;
+            memo.lookups.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if memo.epoch != epoch {
                 memo.groups.clear();
                 memo.epoch = epoch;
@@ -109,7 +179,7 @@ impl Pool {
             }
         }
         let summary = build(selected.value);
-        let mut pool = self.0.lock().unwrap();
+        let mut pool = shard.write();
         let memo = pool.get_mut(&selected).unwrap();
         memo.builds += 1;
         memo.groups.insert(key.to_vec(), summary);
@@ -140,14 +210,9 @@ pub(super) fn explain(steps: &[Step], store: &Store) {
             Src::In(r, _) => &r.summaries,
             Src::Full(r) | Src::FullMulti(r, _) | Src::Delta(r) => &store.rels[*r].summaries,
         };
-        let state = pool.0.lock().unwrap();
-        let selected = state
-            .get(bag)
-            .and_then(|m| m.preferred_value.as_ref())
-            .filter(|_| bag.value.is_none())
-            .unwrap_or(bag);
-        if let Some(memo) = state.get(selected) {
-            consumers.push(serde_json::json!({"step":step,"source_version_cache":format!("{:p}",pool),"columns":selected.columns,"tests":selected.tests,"value_column":selected.value,"epoch":memo.epoch,"cached_groups":memo.groups.len(),"folds":memo.builds,"lookups":memo.lookups}));
+        let selected = pool.selected(bag);
+        if let Some(memo) = pool.memos().into_iter().find(|m| m.bag == selected) {
+            consumers.push(serde_json::json!({"step":step,"source_version_cache":format!("{:p}",pool),"columns":selected.columns,"tests":selected.tests,"value_column":selected.value,"epoch":memo.epoch,"cached_groups":memo.groups,"folds":memo.builds,"lookups":memo.lookups}));
         }
     }
     profile::decision("native scalar storage", || {
@@ -470,18 +535,13 @@ pub mod tests {
         else {
             panic!("native scalar")
         };
-        let pool = rel.summaries.0.lock().unwrap();
-        let active = pool
-            .values()
-            .filter(|m| !m.groups.is_empty())
-            .collect::<Vec<_>>();
+        let active = rel.summaries.memos().into_iter().filter(|m| m.groups > 0).collect::<Vec<_>>();
         assert_eq!(active.len(), 1);
-        let memo = active[0];
+        let memo = &active[0];
         assert_eq!(
             memo.builds, 3,
             "one fold per demanded key, including an empty group, across both rules"
         );
-        drop(pool);
         // Rebinding equal-sized inputs must create a different immutable summary owner.
         forget_inputs(&db);
         db.execute_batch("UPDATE events SET v=1").unwrap();
@@ -600,13 +660,13 @@ pub mod tests {
         else {
             panic!("native input")
         };
-        let pool = rel.summaries.0.lock().unwrap();
+        let memos = rel.summaries.memos();
         assert_eq!(
-            pool.values().map(|m| m.builds).sum::<usize>(),
+            memos.iter().map(|m| m.builds).sum::<usize>(),
             1000,
             "80,000 scalar uses must share 1,000 bag folds"
         );
-        assert_eq!(pool.values().map(|m| m.groups.len()).sum::<usize>(), 1000);
+        assert_eq!(memos.iter().map(|m| m.groups).sum::<usize>(), 1000);
     }
 
     #[test]

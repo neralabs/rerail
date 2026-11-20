@@ -5624,6 +5624,8 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
 - **Next**, in order:
   1. Why the pool oversubscribes its cores, and the parse workers' CPU a file.
   2. `stats`' switches, `cross`' `public_best_*` waits, `combine`'s fixpoint waits.
+     **In progress** (0472): `public_best_*` were the pool's threads waiting on the scalar pool's one lock; sharded,
+     `cross` 6.2 → 3.6 s. Next: `tape_room`'s lock, `combine`'s waits.
   3. Trace where the small label runs come from, then batch them to a chunk's size.
      **Done** (0471): they were a wave halved until its files shared a slab (`gather` found no room). A batch now
      reads each document in its own slab; 78 runs on all, one a wave. The cold run's exit was the device joins'
