@@ -74,6 +74,9 @@ struct Facts<'a> {
     kind_names: HashMap<u16, String>,
     token_names: HashMap<u8, String>,
     word_names: Vec<String>,
+    /// The states' questions (`mark_chain`): each chain of mark tests one function, `ask_{i}`, its body here, as the
+    /// lean parser asks `asi()` once where a statement may end and matches its answer (decision 0497).
+    asks: std::cell::RefCell<Vec<String>>,
     /// Where tier 2 makes each token's record from its start (page 40), as simdjson's stage 2
     /// takes a structural index: the rules and the region read as `parse_string`.
     fetch: Option<Fetched>,
@@ -549,7 +552,7 @@ fn facts(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, sixtee
         (0..native.strings.len()).map(|i| d[&i].clone()).collect()
     };
     let loses = native.structural.iter().any(|b| matches!(b.operation, Op::LoseLast { .. }));
-    let mut facts = Facts { native, loses, in_code, rest_bits, end_bits, lazy, kind_reps, end_kind, word_kind_of, part_kinds, framed, context, entries: entries.into_iter().collect(), phase, flagged, widths, tag, fetch, classes, unchecked, one: None, sentinel: false, coded: false, sixteen, fn_names, kind_names, token_names, word_names };
+    let mut facts = Facts { native, loses, in_code, rest_bits, end_bits, lazy, kind_reps, end_kind, word_kind_of, part_kinds, framed, context, entries: entries.into_iter().collect(), phase, flagged, widths, tag, fetch, classes, unchecked, one: None, sentinel: false, coded: false, sixteen, fn_names, kind_names, token_names, word_names, asks: Default::default() };
     facts.sentinel = sentinel(&facts);
     // Where tier 2 makes the records, the program is one function, as `walk_document`.
     if facts.fetch.is_some() && !facts.context {
@@ -588,6 +591,9 @@ fn source(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, sixte
     prelude(&mut out, &facts)?;
     for &e in &facts.entries {
         rule(&mut out, &facts, e)?;
+    }
+    for (i, body) in facts.asks.borrow().iter().enumerate() {
+        writeln!(out, "/// A state's question (decision 0497): the first of its marks that holds at the token (its place in the\n/// chain), or the chain's length where none does, as the lean parser's `asi()`.\n#[inline(never)]\nfn ask_{i}(s: &mut S) -> u32 {{\n{body}}}\n").unwrap();
     }
     if facts.sixteen {
         // The writer's ops, the host's own (`f16::Writer`'s), compiled with the run.
@@ -2475,6 +2481,10 @@ fn succ(x: &Facts<'_>, pc: usize) -> Vec<usize> {
             _ => {}
         }
     }
+    if let Some(chain) = mark_chain(x, pc) {
+        let last = *chain.last().expect("a chain");
+        return chain.iter().map(|&q| q + 1).chain(std::iter::once(last + 2)).filter(|&t| t < n).collect();
+    }
     let v = match x.native.structural[pc].operation {
         // A node's field set by the next word, stored with its kind: on past that word.
         Op::Open { .. } | Op::Leaf { .. } if field_after(x, pc).is_some() => vec![pc + 2],
@@ -2486,6 +2496,48 @@ fn succ(x: &Facts<'_>, pc: usize) -> Vec<usize> {
         _ => vec![pc + 1],
     };
     v.into_iter().filter(|&t| t < n).collect()
+}
+
+/// A mark test's condition and what it takes (`Op::Mark`): its bit live at the token, then its own test.
+fn mark_test(x: &Facts<'_>, pc: usize) -> Result<(String, String), String> {
+    let n = x.native;
+    let Op::Mark { mask, order, end, keep, word: mark_word, pattern } = n.structural[pc].operation else { return Err(format!("word {pc}: no mark")) };
+    let k = u32::from(order);
+    // A token mark past the code's (decision 0407): live at every token, its tokens
+    // tested here; at the stream's end, held where the end has it.
+    let here = if (k as usize) < x.in_code || pattern.is_some() {
+        // In the record, folded into `live` at the token (the end's marks too).
+        // A lazy gap mark with a pattern (`before`, decision 0490): its gap, then its token.
+        let lazy = x.lazy.iter().any(|&(m, _)| u32::from(m) == k);
+        match pattern {
+            Some(i) if lazy => format!("(if s.at_end {{ {end} }} else {{ s.lazy_{k}() && s.patterns_{i}() }})"),
+            Some(i) => format!("(if s.at_end {{ {end} }} else {{ s.patterns_{i}() }})"),
+            None if lazy => format!("(s.at_end || s.lazy_{k}())"),
+            None => "true".into(),
+        }
+    } else {
+        let o = mask_output(n, mask)?;
+        let w = mark_word.map_or(String::new(), |s| format!("s.word() == {} && ", x.word(s)));
+        format!("(if s.at_end {{ {end} }} else {{ {w}s.bit({o}, s.start) }})")
+    };
+    let take = if keep { String::new() } else { format!("s.live &= !((2u64 << {k}) - 1);\n") };
+    let here = if here == "true" { String::new() } else { format!(" && {here}") };
+    Ok((format!("s.live >> {k} & 1 != 0{here}"), take))
+}
+
+/// The chain of mark tests from `pc` (decision 0497): `MARK` and its way (`GOTO` or `STOP`), two or more in a row,
+/// `pc` the first (no mark test before it). One question, its answers the marks' ways and the word after.
+fn mark_chain(x: &Facts<'_>, pc: usize) -> Option<Vec<usize>> {
+    let w = &x.native.structural;
+    let pair = |q: usize| matches!(w.get(q).map(|b| b.operation), Some(Op::Mark { .. })) && matches!(w.get(q + 1).map(|b| b.operation), Some(Op::Goto { .. } | Op::Stop));
+    if !pair(pc) || pc >= 2 && pair(pc - 2) || x.fetch.is_some() {
+        return None;
+    }
+    let mut chain = vec![pc];
+    while pair(chain[chain.len() - 1] + 2) {
+        chain.push(chain[chain.len() - 1] + 2);
+    }
+    (chain.len() >= 2 && chain[chain.len() - 1] + 2 < w.len()).then_some(chain)
 }
 
 /// Whether rows carry marks (`head`): where a field is set on a wrap's inner node, or a reread
@@ -2805,28 +2857,43 @@ fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, St
             None => format!("if s.gaps_{pattern}() {{\n    return Err(false);\n}}\n{}", jump(0)?),
         },
         Op::DropLast { pattern } => format!("if s.pending != 0 && !s.at_end && s.gaps_{pattern}() {{ s.pending -= 1; s.nodes -= 1; if s.pending == 0 {{ s.last_end = s.start; }} }}\n{}", jump(0)?),
-        Op::Mark { mask, order, end, keep, word: mark_word, pattern } => {
-            let k = u32::from(order);
-            // A token mark past the code's (decision 0407): live at every token, its tokens
-            // tested here; at the stream's end, held where the end has it.
-            let here = if (k as usize) < x.in_code || pattern.is_some() {
-                // In the record, folded into `live` at the token (the end's marks too).
-                // A lazy gap mark with a pattern (`before`, decision 0490): its gap, then its token.
-                let lazy = x.lazy.iter().any(|&(m, _)| u32::from(m) == k);
-                match pattern {
-                    Some(i) if lazy => format!("(if s.at_end {{ {end} }} else {{ s.lazy_{k}() && s.patterns_{i}() }})"),
-                    Some(i) => format!("(if s.at_end {{ {end} }} else {{ s.patterns_{i}() }})"),
-                    None if lazy => format!("(s.at_end || s.lazy_{k}())"),
-                    None => "true".into(),
+        Op::Mark { .. } if mark_chain(x, pc).is_some() => {
+            let chain = mark_chain(x, pc).expect("a chain");
+            let mut body = String::new();
+            for (i, &q) in chain.iter().enumerate() {
+                let (test, take) = mark_test(x, q)?;
+                writeln!(body, "    if {test} {{\n        {take}return {i};\n    }}").unwrap();
+            }
+            writeln!(body, "    {}", chain.len()).unwrap();
+            let id = {
+                let mut asks = x.asks.borrow_mut();
+                match asks.iter().position(|b| *b == body) {
+                    Some(i) => i,
+                    None => {
+                        asks.push(body);
+                        asks.len() - 1
+                    }
                 }
-            } else {
-                let o = mask_output(n, mask)?;
-                let w = mark_word.map_or(String::new(), |s| format!("s.word() == {} && ", x.word(s)));
-                format!("(if s.at_end {{ {end} }} else {{ {w}s.bit({o}, s.start) }})")
             };
-            let take = if keep { String::new() } else { format!("s.live &= !((2u64 << {k}) - 1);\n") };
-            let here = if here == "true" { String::new() } else { format!(" && {here}") };
-            format!("if s.live >> {k} & 1 != 0{here} {{\n{take}{}\n}}{}", jump(0)?, or_else(&jump(1)?))
+            // The answers that go one way, one arm.
+            let mut ways: Vec<(String, Vec<usize>)> = Vec::new();
+            for i in 0..chain.len() {
+                let j = jump(i)?;
+                match ways.iter_mut().find(|w| w.0 == j) {
+                    Some(w) => w.1.push(i),
+                    None => ways.push((j, vec![i])),
+                }
+            }
+            let mut m = format!("match ask_{id}(s) {{\n");
+            for (j, answers) in ways {
+                writeln!(m, "{} => {{ {j} }}", answers.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(" | ")).unwrap();
+            }
+            writeln!(m, "_ => {{ {} }}\n}}", jump(chain.len())?).unwrap();
+            m
+        }
+        Op::Mark { .. } => {
+            let (test, take) = mark_test(x, pc)?;
+            format!("if {test} {{\n{take}{}\n}}{}", jump(0)?, or_else(&jump(1)?))
         }
         Op::Row { mask } => format!("if s.bit({}, s.start) {{\n{}\n}}{}", mask_output(n, mask)?, jump(0)?, or_else(&jump(1)?)),
         Op::Retag { kind, on: On::Here } => format!("s.here_kind({})?;\n{}", x.kind(kind), jump(0)?),
