@@ -493,3 +493,16 @@ sort again).
 - **Open: on Metal a run can lose a whole chunk's findings.** Of 3 runs of this build, 2 lost one (1,358 and 1,487
   findings). Of 4 runs each, alternating at the same load, step 7's build lost one (1,487) and 5d's none. It is older
   than 5b and is not this step's. Being looked into next.
+
+## Built (2026-11-19, step 6a: an input's measured statistics, value counts and key runs in blocks)
+
+- `InRel::measured` (each column's four statistics) is written once, when first asked, in a block near the rows
+  (`BlockVec<[i64; 4]>`).
+- `InRel::counted` (rows per value of a column the rules test by constants) is a sorted array of (value, rows) per
+  column, in a block (`BlockVec<[i64; 2]>`), found by a binary search. It was a map of maps. To count, the rows' ids
+  are sorted by their value read where it lies: no value is copied.
+- `Keyed::runs` (a key column's ascending runs) is an array of `KeyRun { first, start, end }` in a block, shared by
+  every clone of the relation. Only the list of which columns were counted (a handle each) stays on the relation.
+- Test: `an_inputs_value_counts_and_statistics_are_in_a_block`.
+- hogql cold, profiling, format 15: CPU 83.3-84.1 B against 5e's 83.3-84.0 B; Metal 74.6-78.1 B, 1,629 in each of 3
+  runs.

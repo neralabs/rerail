@@ -189,3 +189,22 @@ fn an_order_made_at_a_probe_is_in_the_blocks_directory() {
     assert_eq!(got, vec![(2000 % 7, 2000)]);
     assert_eq!(rel.rows.last_in_block().unwrap().relation().orders().count(), before + 1, "the order is in the directory");
 }
+
+/// Decision 0450 step 6: a derived input's value counts and measured statistics are written once in a block, and
+/// its rows' values are not copied to count them.
+#[test]
+fn an_inputs_value_counts_and_statistics_are_in_a_block() {
+    use crate::code_rule_dsl::facts::vtab::Source;
+    let n = 700;
+    let rel = std::sync::Arc::new(InRel::from_flat(rows(n), n, vec![b'i'; 2]));
+    let src = super::Derived::new(std::sync::Arc::clone(&rel), None);
+    let want = |v: i64| (0..n as i64).filter(|id| id % 7 == v).count() as i64;
+    assert_eq!(src.value_counts(&[(0, 3), (0, 6), (0, 9)]), Some(vec![want(3), want(6), 0]));
+    {
+        let counted = rel.counted.lock().unwrap();
+        assert_eq!(counted.len(), 1, "one column counted");
+        assert!(counted[0].1.facts().is_some() && counted[0].1.len() == 7, "its seven values' counts, in a block");
+    }
+    assert!(src.statistics().is_some());
+    assert!(rel.measured.get().is_some_and(|m| m.facts().is_some() && m.len() == 2), "a column's statistics each, in a block");
+}

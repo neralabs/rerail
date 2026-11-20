@@ -3745,10 +3745,12 @@ pub struct InRel { pub k: usize, n: usize, rows: Rows, pub view: Option<View>, b
                    pub dead: BlockVec<u64>, pub ndead: usize, summaries: scalars::Pool,
                    /// Each column's statistics (`syntax::measured`), measured when first asked: a kept relation's rows
                    /// do not change, so a session's later runs read them, not measure them again (0094 §4).
-                   measured: std::sync::OnceLock<Vec<[i64; 4]>>,
+                   /// In a block (decision 0450 step 6).
+                   measured: std::sync::OnceLock<BlockVec<[i64; 4]>>,
                    /// Rows per value of the columns the rules test by constants (`Source::value_counts`), counted when
                    /// first asked, a column at a time, for the same reason.
-                   counted: Mutex<HashMap<usize, HashMap<i64, i64>>>,
+                   /// Each a column's (value, rows), sorted by value, in a block (decision 0450 step 6).
+                   counted: Mutex<Vec<(usize, BlockVec<[i64; 2]>)>>,
 
                    /// Its count tables by key columns (decision 0098 §1, `table`), built when a count step's walks have
                    /// cost as much, or ahead in a level's device wave; shared by every step that counts it so.
@@ -3777,7 +3779,15 @@ pub struct InRel { pub k: usize, n: usize, rows: Rows, pub view: Option<View>, b
 /// the rows themselves where they are runs ascending in the column that do not overlap (`runs`: each run's first
 /// value and its rows, sorted by that value; a probe finds its run, then its row, by two binary searches).
 #[derive(Clone)]
-pub struct Keyed { col: usize, runs: Vec<(i64, u32, u32)>, src: Option<(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, usize)> }
+pub struct Keyed { col: usize, runs: Arc<BlockVec<KeyRun>>, src: Option<(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, usize)> }
+rerail_blocks::structure! {
+    /// A run of a keyed column (`Keyed`): its first value, and its rows `start..end`, in a block (decision 0450 step 6).
+    pub struct KeyRun {
+        pub first: i64,
+        pub start: u32,
+        pub end: u32,
+    }
+}
 impl Keyed {
     /// Column `c` of `n` rows of `k` values (`flat`) as such runs, if its values are a key in them: each maximal run
     /// that ascends strictly, sorted by first value, and each run's last value under the next one's first. `None`
@@ -3800,7 +3810,12 @@ impl Keyed {
             }
         }
         runs.sort_unstable_by_key(|r| r.0);
-        runs.windows(2).all(|w| at(w[0].2 as usize - 1) < w[1].0).then_some(Keyed { col: c, runs, src: None })
+        if !runs.windows(2).all(|w| at(w[0].2 as usize - 1) < w[1].0) {
+            return None;
+        }
+        // Written once in a block (decision 0450 step 6): its probes read it there.
+        let runs = BlockVec::from_iter_in(None, runs.into_iter().map(|(first, start, end)| KeyRun { first, start, end }));
+        Some(Keyed { col: c, runs: Arc::new(runs), src: None })
     }
 }
 /// A base input read in place: the bound vtab source's columns `cols`, at its rows `ids` (all rows when `None`, the
@@ -4375,7 +4390,7 @@ pub fn hold_view(conn: impl Scoped, table: &str, src: Arc<dyn crate::code_rule_d
 /// repeats a value, a document's, is none).
 fn view_key(src: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: &[usize], flat: &[i64]) -> Option<Keyed> {
     match (0..cols.len()).find(|&c| src.keys_rows(cols[c])) {
-        Some(c) => Some(Keyed { col: c, runs: Vec::new(), src: Some((Arc::clone(src), cols[c])) }),
+        Some(c) => Some(Keyed { col: c, runs: Arc::new(BlockVec::new()), src: Some((Arc::clone(src), cols[c])) }),
         None => (0..cols.len()).find_map(|c| Keyed::of(flat, cols.len(), c)),
     }
 }
@@ -5096,22 +5111,37 @@ impl crate::code_rule_dsl::facts::vtab::Source for Derived {
         if self.2.is_none() && let Some(src) = self.0.held_source() { return src.value_counts(wanted); }
         let mut counted = self.0.counted.lock().unwrap();
         for &(c, _) in wanted {
-            if c < self.0.k && !counted.contains_key(&c) {
-                let mut counts: HashMap<i64, i64> = HashMap::default();
-                for row in 0..self.len() {
-                    *counts.entry(self.value(row, c)).or_default() += 1;
+            if c < self.0.k && !counted.iter().any(|(x, _)| *x == c) {
+                // The rows ordered by their value, read where it lies, then each value's rows: the counts written once
+                // in a block (decision 0450 step 6). No value is copied.
+                let mut ids: Vec<u32> = (0..self.len() as u32).collect();
+                ids.sort_unstable_by_key(|&r| self.value(r as usize, c));
+                let home = self.0.rows.home();
+                let mut counts = BlockVec::with_capacity_in(home.as_ref(), 0);
+                let mut at = 0;
+                while at < ids.len() {
+                    let v = self.value(ids[at] as usize, c);
+                    let end = at + ids[at..].partition_point(|&r| self.value(r as usize, c) == v);
+                    counts.push([v, (end - at) as i64]);
+                    at = end;
                 }
-                counted.insert(c, counts);
+                counted.push((c, counts));
             }
         }
-        Some(wanted.iter().map(|(c, v)| counted.get(c).and_then(|m| m.get(v)).copied().unwrap_or(0)).collect())
+        let count = |c: usize, v: i64| {
+            let m = &counted.iter().find(|(x, _)| *x == c)?.1;
+            m.binary_search_by_key(&v, |e| e[0]).ok().map(|i| m[i][1])
+        };
+        Some(wanted.iter().map(|&(c, v)| count(c, v).unwrap_or(0)).collect())
     }
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         if let Some(src) = self.0.held_source() && let Some(s) = src.statistics() {
             return Some(self.columns().into_iter().zip(s).map(|(n, (_, a, b, c, d))| (n, a, b, c, d)).collect());
         }
         let m = self.0.measured.get_or_init(|| {
-            self.0.posted().unwrap_or_else(|| crate::code_rule_dsl::facts::vtab::syntax::measured(self).into_iter().map(|(_, a, b, c, d)| [a, b, c, d]).collect())
+            let m: Vec<[i64; 4]> = self.0.posted().unwrap_or_else(|| crate::code_rule_dsl::facts::vtab::syntax::measured(self).into_iter().map(|(_, a, b, c, d)| [a, b, c, d]).collect());
+            // Written once in a block (decision 0450 step 6).
+            BlockVec::from_iter_in(self.0.rows.home().as_ref(), m)
         });
         Some(self.columns().into_iter().zip(m).map(|(n, s)| (n, s[0], s[1], s[2], s[3])).collect())
     }
@@ -5686,8 +5716,8 @@ impl InRel {
             return match src.key_row(*sc, v) { Some(r) => r as u32..r as u32 + 1, None => 0..0 };
         }
         let (k, c) = (self.k, ky.col);
-        let i = ky.runs.partition_point(|r| r.0 <= v);
-        let Some(&(_, start, end)) = i.checked_sub(1).map(|i| &ky.runs[i]) else { return 0..0 };
+        let i = ky.runs.partition_point(|r| r.first <= v);
+        let Some((start, end)) = i.checked_sub(1).map(|i| (ky.runs[i].start, ky.runs[i].end)) else { return 0..0 };
         let (mut lo, mut hi) = (start, end);
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
