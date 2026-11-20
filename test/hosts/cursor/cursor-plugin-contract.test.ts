@@ -221,7 +221,7 @@ describe("Cursor plugin contract", () => {
     const daemon = await countingDaemon(home);
     try {
       const common = { conversation_id: "cursor-session", cwd: root, workspace_roots: [root], tool_name: "Shell", tool_input: { command: "ls" } };
-      const dashboard = "http://127.0.0.1:4791/?repository=clone%3Aapp&checkout=%2Fwork%2Fapp";
+      const dashboard = `${daemon.origin}?repository=clone%3Aapp&checkout=%2Fwork%2Fapp`;
       const steer = [delivery("steer", "Remove print.", ["acme:no-print"])];
       await handleCursorEvent({ ...common, tool_use_id: "t1", hook_event_name: "preToolUse" }, answering(scriptedLoop({ call: steer }), { dashboard }), join(root, "sessions"));
       await handleCursorEvent({ ...common, hook_event_name: "beforeSubmitPrompt", prompt: "next" }, answering(scriptedLoop({ "user-prompt": steer }), { dashboard }), join(root, "sessions"));
@@ -245,7 +245,7 @@ describe("Cursor plugin contract", () => {
       const transcript = join(root, "transcript.jsonl");
       await writeFile(transcript, `${JSON.stringify({ role: "assistant", message: { content: [{ type: "text", text: "answer one" }] } })}\n`);
       const common = { conversation_id: "cursor-session", cwd: root, transcript_path: transcript, tool_use_id: "t1", tool_name: "Shell", tool_input: { command: "ls" } };
-      const dashboard = "http://127.0.0.1:4791/?repository=clone%3Aapp&checkout=%2Fwork%2Fapp";
+      const dashboard = `${daemon.origin}?repository=clone%3Aapp&checkout=%2Fwork%2Fapp`;
       const steer = [delivery("steer", "Remove print.", ["acme:no-print"])];
       await handleCursorEvent({ ...common, hook_event_name: "preToolUse" }, answering(scriptedLoop({ "assistant-message": steer }), { dashboard }), join(root, "sessions"));
 
