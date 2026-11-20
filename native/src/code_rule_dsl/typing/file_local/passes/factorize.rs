@@ -348,11 +348,48 @@ fn round_of<'v>(v: &'v Version, f: Fields<'v>, s: &Survey<'v>, scope: Scope<'_>)
     let mut program: Vec<Made<'_>> = rules.iter().map(|&r| Made { src: r, head: None, body: r.body().map(BodyItem::Orig).collect(), kept: true }).collect();
     // A reused product of two parts, each of whose readers reads no other relation handed on, may keep its pairs
     // too (an intermediate's, `cache_reused`): split a reader at most once.
+    // A cached relation's readers read its guard, which is the cross-file part's: they, and every rule over them, are
+    // made there. Where one of those reads an answer only its node's document gives (`ON_REQUEST`'s functions:
+    // `value`, `str`, `node_text`), that answer is drawn into the cross-file part, which has no documents to answer it
+    // from. Such a relation is not cached, decided from the program, so a run never prepares again to find it
+    // (`Deferral::after_placement`, decision 0506: on corpus0 that replan ran the sources' phase 1 twice, 23 G
+    // instructions, and turned every cache off for one).
+    let documents_answer: BTreeSet<&str> = crate::code_rule_dsl::logic::rr::lower::ON_REQUEST
+        .iter()
+        .flat_map(|r| r.iter())
+        .filter(|a| matches!(a.answer, crate::code_rule_dsl::logic::rr::lower::Answer::Function(_)))
+        .map(|a| a.rel)
+        .collect();
+    let mut readers_of: BTreeMap<&str, Vec<RuleRef<'v>>> = BTreeMap::new();
+    for r in rules {
+        for l in r.body() {
+            if let L::Atom(a) = l.view() {
+                readers_of.entry(v.rel_name(a.rel())).or_default().push(*r);
+            }
+        }
+    }
+    let drawn_across = |rel: &str| {
+        let mut seen: BTreeSet<&str> = BTreeSet::new();
+        let mut todo = vec![rel];
+        while let Some(r) = todo.pop() {
+            if !seen.insert(r) {
+                continue;
+            }
+            for reader in readers_of.get(r).into_iter().flatten() {
+                if reader.body().any(|l| matches!(l.view(), L::Atom(a) if documents_answer.contains(v.rel_name(a.rel())))) {
+                    return true;
+                }
+                todo.push(head_of(*reader));
+            }
+        }
+        false
+    };
     let cacheable: BTreeSet<&String> = match scope {
         Scope::Intermediates { cache_reused: true, .. } => chosen
             .iter()
             .filter(|(rel, plan)| {
-                plan.len() == 1
+                !drawn_across(rel)
+                    && plan.len() == 1
                     && plan[0].1.len() == 2
                     && reads[rel.as_str()].len() > 1
                     && reads[rel.as_str()].iter().all(|&(ri, _)| rules[ri].body().filter(|l| matches!(l.view(), L::Atom(a) if chosen.contains_key(v.rel_name(a.rel())))).count() == 1)

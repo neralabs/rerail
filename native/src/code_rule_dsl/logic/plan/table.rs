@@ -383,14 +383,28 @@ pub struct HeavyCol {
     /// The sums of counts squared and cubed (the column's second and third moments).
     pub sq: f64,
     pub cube: f64,
-    /// Every value the column holds, as a Bloom filter (`logic::bloom`, `STAT_WORDS` words, decision 0506): whether
-    /// a value outside `top` is held at all, and how many values two columns share. A merge adds the values it adds
-    /// and keeps those it removes, so a value it refuses is never held. `None` where it was not made.
-    pub keys: Option<std::sync::Arc<crate::code_rule_dsl::logic::bloom::Filter>>,
 }
 
-/// The words of a column's filter (`HeavyCol::keys`): 16 KiB, one size, so any two columns' filters compare.
-pub const STAT_WORDS: usize = crate::code_rule_dsl::logic::bloom::MAX_WORDS;
+/// A column as `heavy_fan` prices it: its heavy values, and its keys where the engine keeps them (decision 0506: the
+/// relation's column's own filter or few values, `logic::bloom::Keys`, read where it lies; no filter is made for the
+/// statistics). The keys say whether a value outside `top` is held at all, and how many values two columns share.
+#[derive(Clone, Copy, Debug)]
+pub struct PricedCol<'a> {
+    pub heavy: &'a HeavyCol,
+    pub keys: Option<&'a crate::code_rule_dsl::logic::bloom::Keys>,
+}
+
+impl<'a> PricedCol<'a> {
+    pub fn new(heavy: &'a HeavyCol, keys: Option<&'a crate::code_rule_dsl::logic::bloom::Keys>) -> PricedCol<'a> {
+        PricedCol { heavy, keys }
+    }
+
+    /// A value's rows: its own where it is heavy, none where the column's keys refuse it, else the tail's mean.
+    #[inline]
+    pub fn rows_of(&self, v: i64) -> f64 {
+        self.heavy.count(v).unwrap_or_else(|| if self.keys.is_some_and(|k| !k.may_hold(v)) { 0.0 } else { self.heavy.tail_mean() })
+    }
+}
 
 impl HeavyCol {
     /// From a column's exact counts.
@@ -404,10 +418,6 @@ impl HeavyCol {
             cube += n * n * n;
         }
         let ndv = all.len() as f64;
-        let mut keys = crate::code_rule_dsl::logic::bloom::Filter::new(STAT_WORDS);
-        for &(v, _) in &all {
-            keys.add(v);
-        }
         if all.len() > KEPT {
             all.select_nth_unstable_by(KEPT - 1, |a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
             all.truncate(KEPT);
@@ -415,7 +425,7 @@ impl HeavyCol {
         let mut top: Vec<(i64, f64)> = all.into_iter().map(|(v, n)| (v, n as f64)).collect();
         top.sort_unstable_by_key(|t| t.0);
         let held: f64 = top.iter().map(|t| t.1).sum();
-        HeavyCol { tail_rows: rows - held, tail_ndv: ndv - top.len() as f64, top, err: 0.0, rows, ndv, sq, cube, keys: Some(std::sync::Arc::new(keys)) }
+        HeavyCol { tail_rows: rows - held, tail_ndv: ndv - top.len() as f64, top, err: 0.0, rows, ndv, sq, cube }
     }
     /// Decision 0209 §4's merge (O172): the column after a change of `added` and `removed` rows a value, its
     /// distinct values now `ndv` (the sketch's). A kept value's count moves by its change, exact if it was. A value
@@ -457,15 +467,7 @@ impl HeavyCol {
         let held: f64 = all.iter().map(|t| t.1).sum();
         let ndv = ndv.max(all.len() as f64);
         let _ = tail_rows;
-        // The values added are added to the filter; those removed stay in it (a filter only grows).
-        let keys = self.keys.as_ref().map(|k| {
-            let mut k = (**k).clone();
-            for &v in added.keys() {
-                k.add(v);
-            }
-            std::sync::Arc::new(k)
-        });
-        HeavyCol { tail_rows: (rows - held).max(0.0), tail_ndv: ndv - all.len() as f64, top: all, err, rows, ndv, sq: sq.max(rows), cube: cube.max(rows), keys }
+        HeavyCol { tail_rows: (rows - held).max(0.0), tail_ndv: ndv - all.len() as f64, top: all, err, rows, ndv, sq: sq.max(rows), cube: cube.max(rows) }
     }
     /// Value `v`'s rows, where it is heavy.
     #[inline]
@@ -477,18 +479,6 @@ impl HeavyCol {
     pub fn tail_mean(&self) -> f64 {
         if self.tail_ndv >= 1.0 { self.tail_rows / self.tail_ndv } else { 0.0 }
     }
-    /// A value's rows: its own where it is heavy, none where the column's filter refuses it, else the tail's mean.
-    #[inline]
-    pub fn rows_of(&self, v: i64) -> f64 {
-        self.count(v).unwrap_or_else(|| if self.keys.as_ref().is_some_and(|k| !k.may_hold(v)) { 0.0 } else { self.tail_mean() })
-    }
-
-    /// The column's filter where it can tell values apart: `None` past `FULL` of its bits set, where most values
-    /// would pass and the counts it gives mean little.
-    fn telling(&self) -> Option<&crate::code_rule_dsl::logic::bloom::Filter> {
-        const FULL: f64 = 0.9;
-        self.keys.as_deref().filter(|k| (k.ones() as f64) < FULL * (k.words.len() * 64) as f64)
-    }
 }
 
 /// Decision 0209 §4's price of a probe: the rows column `here` holds per binding of its variable, where the binding
@@ -496,8 +486,8 @@ impl HeavyCol {
 /// rows in each of `by`, so a value common in all is drawn more often: value by value over the heavy values of any,
 /// a value heavy in one only taken at the others' tail mean (none where a column's filter refuses it), and the tails'
 /// values at their means: those `by` share drawn, those `here` shares too met. `None` where no value is drawn.
-pub fn heavy_fan(here: &HeavyCol, by: &[&HeavyCol]) -> Option<f64> {
-    let mut vals: Vec<i64> = here.top.iter().map(|t| t.0).chain(by.iter().flat_map(|h| h.top.iter().map(|t| t.0))).collect();
+pub fn heavy_fan(here: PricedCol<'_>, by: &[PricedCol<'_>]) -> Option<f64> {
+    let mut vals: Vec<i64> = here.heavy.top.iter().map(|t| t.0).chain(by.iter().flat_map(|h| h.heavy.top.iter().map(|t| t.0))).collect();
     vals.sort_unstable();
     vals.dedup();
     let (mut num, mut den) = (0.0f64, 0.0f64);
@@ -511,32 +501,32 @@ pub fn heavy_fan(here: &HeavyCol, by: &[&HeavyCol]) -> Option<f64> {
     // drawn value `here` lacks is a binding of no rows. Both are counted by containment (as many as the fewest any
     // has left) or, where two columns' filters tell values apart (decision 0506), as many as those two share, less
     // the heavy values both hold.
-    let left = |h: &HeavyCol| (h.tail_ndv - (vals.len() - h.top.len()) as f64).max(0.0);
-    let shared = |x: &HeavyCol, y: &HeavyCol| -> Option<f64> {
-        let (a, b) = (x.telling()?, y.telling()?);
-        // The same bits (a self-join, or one key set): containment's count is exact there, the estimate not.
-        if std::ptr::eq(a, b) || a.words == b.words {
+    let left = |h: &PricedCol<'_>| (h.heavy.tail_ndv - (vals.len() - h.heavy.top.len()) as f64).max(0.0);
+    let shared = |x: &PricedCol<'_>, y: &PricedCol<'_>| -> Option<f64> {
+        let (a, b) = (x.keys?, y.keys?);
+        // The same keys (a self-join, or one key set): containment's count is exact there, the estimate not.
+        if a.same(b) {
             return None;
         }
         let both = a.shared(b)?;
         let heavy_both = vals.iter().filter(|&&v| x.rows_of(v) > 0.0 && y.rows_of(v) > 0.0).count() as f64;
         Some((both - heavy_both).max(0.0))
     };
-    let mut drawn = by.iter().map(|h| left(h)).fold(f64::INFINITY, f64::min);
+    let mut drawn = by.iter().map(&left).fold(f64::INFINITY, f64::min);
     for (i, x) in by.iter().enumerate() {
         for y in &by[i + 1..] {
             drawn = shared(x, y).map_or(drawn, |s| drawn.min(s));
         }
     }
     if !drawn.is_finite() {
-        drawn = left(here);
+        drawn = left(&here);
     }
-    let mut met = drawn.min(left(here));
+    let mut met = drawn.min(left(&here));
     for h in by {
-        met = shared(here, h).map_or(met, |s| met.min(s));
+        met = shared(&here, h).map_or(met, |s| met.min(s));
     }
-    let w: f64 = by.iter().map(|h| h.tail_mean()).product();
-    num += met * w * here.tail_mean();
+    let w: f64 = by.iter().map(|h| h.heavy.tail_mean()).product();
+    num += met * w * here.heavy.tail_mean();
     den += drawn * w;
     (den > 0.0).then(|| num / den)
 }
@@ -617,15 +607,14 @@ fn gpu_pays(rows: usize) -> bool {
 /// Columns' heavy values made on the registered device (`SolverDevice::column_stats`), exact; `None` without one.
 /// The columns read in place are counted (`in_place`).
 pub fn heavy_of_device(cols: &[crate::code_rule_dsl::logic::device::StatColumn<'_>]) -> Option<Vec<HeavyCol>> {
-    let (made, read) = crate::code_rule_dsl::logic::device::solver()?.column_stats(cols, KEPT, STAT_WORDS).ok()?;
+    let (made, read) = crate::code_rule_dsl::logic::device::solver()?.column_stats(cols, KEPT).ok()?;
     rerail_prof::code_rule_dsl::logic::profile::local::<InPlace>().0.fetch_add(read as u64, std::sync::atomic::Ordering::Relaxed);
     Some(made.into_iter().map(|m| {
         let mut top: Vec<(i64, f64)> = m.top.iter().map(|&(v, n)| (v, n as f64)).collect();
         top.sort_unstable_by_key(|t| t.0);
         let held: f64 = top.iter().map(|t| t.1).sum();
         let (rows, ndv) = (m.rows as f64, m.ndv as f64);
-        let keys = (m.keys.len() == STAT_WORDS).then(|| std::sync::Arc::new(crate::code_rule_dsl::logic::bloom::Filter { words: m.keys.into_boxed_slice() }));
-        HeavyCol { tail_rows: rows - held, tail_ndv: ndv - top.len() as f64, top, err: 0.0, rows, ndv, sq: m.sq as f64, cube: m.cube as f64, keys }
+        HeavyCol { tail_rows: rows - held, tail_ndv: ndv - top.len() as f64, top, err: 0.0, rows, ndv, sq: m.sq as f64, cube: m.cube as f64 }
     }).collect())
 }
 
@@ -682,8 +671,8 @@ mod tests {
         let h = HeavyCol::of_counts(counts.clone());
         assert_eq!((h.rows, h.ndv, h.top.len(), h.count(1000), h.tail_ndv), (500.0, 201.0, KEPT, Some(300.0), 73.0));
         // The second atom's rows a binding are sq / rows; the third's, cube / sq.
-        assert!((heavy_fan(&h, &[&h]).unwrap() - true2 / 500.0).abs() < 1e-9);
-        assert!((heavy_fan(&h, &[&h, &h]).unwrap() - true3 / true2).abs() < 1e-9);
+        assert!((heavy_fan(PricedCol::new(&h, None), &[PricedCol::new(&h, None)]).unwrap() - true2 / 500.0).abs() < 1e-9);
+        assert!((heavy_fan(PricedCol::new(&h, None), &[PricedCol::new(&h, None), PricedCol::new(&h, None)]).unwrap() - true3 / true2).abs() < 1e-9);
         assert_eq!((h.sq, h.cube), (true2, true3));
     }
     /// Two columns whose tails share 50 of 2,000 keys (decision 0506): containment would price a probe as if all
@@ -693,17 +682,17 @@ mod tests {
         let a: Vec<(i64, u64)> = (0..2000).map(|v| (v, 2)).chain([(1_000_000, 500)]).collect();
         let b: Vec<(i64, u64)> = (1950..3950).map(|v| (v, 3)).chain([(1_000_000, 400)]).collect();
         let (ha, hb) = (HeavyCol::of_counts(a.clone()), HeavyCol::of_counts(b.clone()));
-        assert!(ha.telling().is_some() && hb.telling().is_some(), "a 2,000-key column's filter tells keys apart");
+        // Each column's keys as the engine keeps them: a filter (past a few values) and its sample.
+        use crate::code_rule_dsl::logic::bloom::Keys;
+        let (ka, kb) = (Keys::of(a.iter().map(|t| t.0)), Keys::of(b.iter().map(|t| t.0)));
+        assert!(matches!((&ka, &kb), (Keys::Filter(_), Keys::Filter(_))), "2,000 keys are kept in a filter");
         // The exact fan: rows of b per row of a, a row of a meeting none a binding of no rows.
         let bm: FxHashMap<i64, u64> = b.iter().copied().collect();
         let num: f64 = a.iter().map(|&(v, n)| n as f64 * bm.get(&v).map_or(0.0, |&m| m as f64)).sum();
         let exact = num / a.iter().map(|&(_, n)| n as f64).sum::<f64>();
-        let est = heavy_fan(&hb, &[&ha]).unwrap();
-        // Without the filters: every tail key a has left met as if b held it.
-        let mut blind = (ha.clone(), hb.clone());
-        blind.0.keys = None;
-        blind.1.keys = None;
-        let without = heavy_fan(&blind.1, &[&blind.0]).unwrap();
+        let est = heavy_fan(PricedCol::new(&hb, Some(&kb)), &[PricedCol::new(&ha, Some(&ka))]).unwrap();
+        // Without the keys: every tail key a has left met as if b held it.
+        let without = heavy_fan(PricedCol::new(&hb, None), &[PricedCol::new(&ha, None)]).unwrap();
         assert!((est / exact - 1.0).abs() < 0.15, "with the filters {est}, exact {exact}");
         assert!((without / exact - 1.0).abs() > (est / exact - 1.0).abs(), "the filters closer than containment: {without} against {est}, exact {exact}");
     }
@@ -724,7 +713,7 @@ mod tests {
         // The heavy value and the new one are counted exactly; the rows, exactly.
         assert_eq!((merged.count(9_999), merged.count(77_777), merged.rows, merged.ndv), (Some(140.0), Some(40.0), full.rows, full.ndv));
         // Its price of a three-way self-join is the full count's within 2%.
-        let (m3, f3) = (heavy_fan(&merged, &[&merged, &merged]).unwrap(), heavy_fan(&full, &[&full, &full]).unwrap());
+        let (m3, f3) = (heavy_fan(PricedCol::new(&merged, None), &[PricedCol::new(&merged, None); 2]).unwrap(), heavy_fan(PricedCol::new(&full, None), &[PricedCol::new(&full, None); 2]).unwrap());
         assert!((m3 / f3 - 1.0).abs() < 0.02, "{m3} against {f3}");
         assert!(merged.err <= 2.0 + 30.0, "a value left out held at most its rows: {}", merged.err);
     }

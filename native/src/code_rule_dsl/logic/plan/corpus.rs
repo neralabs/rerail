@@ -4135,6 +4135,7 @@ fn run_observed_within(
                     if let Some(next) = deferral.after_placement(a.rel, &cached)
                         && let Some(replans) = crate::code_rule_dsl::logic::profile::bound::<preparation::Replans>().0
                     {
+                        super::joins::log(|| format!("replan: `{}` drawn into the cross-file part by the deferred joins; pair caches {cached:?}; from {deferral:?} to {next:?}", a.rel));
                         replans.lock().insert(prepared_key, next);
                         return Err(Error::Plan(format!("{REPLAN}`{}` drawn into the cross-file part by the deferred joins", a.rel)));
                     }

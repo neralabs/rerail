@@ -206,9 +206,10 @@ fn the_corpus_reads_the_same_or_is_refused() {
     let (mut same_n, mut refused, mut differ) = (0, 0, Vec::new());
     // The other backends', against Cranelift's: files whose rows differ (the device's on macOS alone, as it runs).
     let mut interp = Vec::new();
-    #[cfg(target_os = "macos")]
+    // The device's verdicts that differ (a device on macOS and Linux; none elsewhere).
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     let mut metal = Vec::new();
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let metal: Vec<String> = Vec::new();
     for (dir, cpp) in [("c", false), ("cpp", true)] {
         let Ok(entries) = std::fs::read_dir(root.join(dir)) else { continue };

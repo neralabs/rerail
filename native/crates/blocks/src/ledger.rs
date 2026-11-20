@@ -719,6 +719,8 @@ mod tests {
         assert!(fails(|| { b.ledger().give_back(big, 2 * PAGE); }), "a retiring chunk is live");
         f.complete();
         assert_eq!(unsafe { *b.ptr::<u64>(after) }, 9);
+        // macOS's `mincore` tells a page given back by its modified bit; elsewhere the kept value says it.
+        #[cfg(target_vendor = "apple")]
         assert!(crate::mem::tests::modified(b.ptr::<u8>(after)), "its neighbour's page kept");
     }
 

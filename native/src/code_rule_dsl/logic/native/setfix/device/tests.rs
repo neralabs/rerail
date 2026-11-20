@@ -1005,11 +1005,11 @@
         assert_eq!((dev.rows, dev.cols), (n, 3));
         assert_eq!(place, [0, 1, 2], "each column at its own place");
         let cols = [StatColumn::Rel(&rel, 1), StatColumn::Rel(&rel, 2)];
-        let (read, in_place) = super::column_stats(&cols, 8, 0).expect("the device");
+        let (read, in_place) = super::column_stats(&cols, 8).expect("the device");
         assert_eq!(in_place, 2);
         for (c, got) in [1, 2].into_iter().zip(&read) {
             let values: Vec<i64> = (0..n).map(|i| src.value(i, c)).collect();
-            let (host, _) = super::column_stats(&[StatColumn::Values(&values)], 8, 0).expect("the device");
+            let (host, _) = super::column_stats(&[StatColumn::Values(&values)], 8).expect("the device");
             assert_eq!(*got, host[0], "column {c}");
         }
     }
@@ -1036,22 +1036,15 @@
         assert!(rel.in_block().is_some(), "a flat relation's rows lie in a block");
         let cols = [StatColumn::Rel(&rel, 0), StatColumn::Rel(&rel, 1)];
         // Decision 0478 step 1: a relation in its block is read where it lies, with nothing made resident first.
-        let (read, in_place) = super::column_stats(&cols, 16, 64).expect("the device");
+        let (read, in_place) = super::column_stats(&cols, 16).expect("the device");
         assert_eq!(in_place, 2);
         assert_eq!(std::sync::Arc::strong_count(&rel), 1, "the read keeps no handle to the relation (decision 0478 R1)");
         // The same statistics as the columns' values gathered on the host.
         let (c0, c1): (Vec<i64>, Vec<i64>) = (rows.iter().step_by(2).copied().collect(), rows.iter().skip(1).step_by(2).copied().collect());
-        let (of_values, in_place) = super::column_stats(&[StatColumn::Values(&c0), StatColumn::Values(&c1)], 16, 64).expect("the device");
+        let (of_values, in_place) = super::column_stats(&[StatColumn::Values(&c0), StatColumn::Values(&c1)], 16).expect("the device");
         assert_eq!(in_place, 0);
         assert_eq!(read, of_values);
         assert_eq!(read[1].ndv, 18);
-        // Each column's filter (decision 0506), the second's base the span's on the device, 64 bits wide: the
-        // host's filter of the same values, word for word.
-        for (c, got) in read.iter().enumerate() {
-            let mut cpu = crate::code_rule_dsl::logic::bloom::Filter::new(64);
-            rows.iter().skip(c).step_by(2).for_each(|&v| cpu.add(v));
-            assert_eq!(*got.keys, *cpu.words, "column {c}'s filter");
-        }
     }
 
     /// Decision 0221 §4, through the device interface: the device's batch makes the CPU's heavy values.
@@ -1075,9 +1068,8 @@
             // The same top counts (ties may take other values of the same count).
             let counts_of = |h: &table::HeavyCol| { let mut c: Vec<u64> = h.top.iter().map(|t| t.1 as u64).collect(); c.sort_unstable(); c };
             assert_eq!(counts_of(&g), counts_of(&cpu));
-            assert!((table::heavy_fan(&g, &[&g, &g]).unwrap() / table::heavy_fan(&cpu, &[&cpu, &cpu]).unwrap() - 1.0).abs() < 1e-6);
-            // The device's filter is the host's, word for word (decision 0506).
-            assert_eq!(g.keys, cpu.keys, "the column's filter");
+            let fan = |h: &table::HeavyCol| table::heavy_fan(table::PricedCol::new(h, None), &[table::PricedCol::new(h, None); 2]).unwrap();
+            assert!((fan(&g) / fan(&cpu) - 1.0).abs() < 1e-6);
         }
     }
     /// The CPU's and the GPU's batch on columns of 1 M and 8 M rows, warm (a measure: `--ignored`).

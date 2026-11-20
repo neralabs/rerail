@@ -713,7 +713,8 @@ pub const OVER_LEAST_LEAD: f64 = 64.0;
 /// order; `ran`: each step's bindings in and rows out so far), or `None`. Both are taken per row the lead step made,
 /// so a line part way through its rows is judged as fairly as a finished one. Past `slow_factor` either way:
 ///
-/// - **Wide:** the widest step made more than that times the widest priced, and more than a search's work. The
+/// - **Wide:** the widest step made more than that times the widest priced, and more than a search's work; under
+///   `OVER_LEAST_LEAD` lead rows, more than that times the whole order's widest step too. The
 ///   expansion is the cost a wrong estimate makes; the work check (`check`) sees it only once it is the whole
 ///   line's, and only against a price from the same statistics.
 /// - **Over:** a step priced at that times a search's work or more made rows a binding under its price's share. That
@@ -734,7 +735,12 @@ pub fn step_miss(est: &[f64], ran: &[(u64, u64)], search_work: f64) -> Option<Mi
     let priced: Vec<f64> = est.iter().map(|e| e * scale).collect();
     let widest_est = priced.iter().copied().fold(0.0, f64::max);
     let widest_ran = ran.iter().map(|r| r.1 as f64).fold(0.0, f64::max);
-    if widest_ran > f * widest_est.max(search_work) {
+    // A few lead rows are not a sample of the lead: a walk reads its rows in key order, and those that meet the rest
+    // may come first (corpus0's `xd_..._rr_diagnostic` lines: 15 to 21 of 3,265 lead rows, every one a document of the
+    // probed chunk, against 0.012 of them over all; their exact pairs priced the whole line within 15%). Under
+    // `OVER_LEAST_LEAD` of them, a line is blown up only past what its whole order was priced to make.
+    let whole = est.iter().copied().fold(0.0, f64::max);
+    if widest_ran > f * widest_est.max(search_work) && (lead >= OVER_LEAST_LEAD || widest_ran > f * whole.max(search_work)) {
         return Some(Miss::Wide { est: widest_est, ran: widest_ran });
     }
     for at in 1..priced.len() {
@@ -854,6 +860,9 @@ pub struct BloomProbeInput {
     pub distinct_overlap: Option<f64>,
     pub sampled: usize,
     pub rejected: usize,
+    /// Whether the filter is the probe side's own (kept with its column, decision 0506): nothing was built for it,
+    /// and a walk backs off where it stops paying, so an eighth of the samples refused is enough.
+    pub kept: bool,
 }
 
 /// A batch prediction of the candidates' work (decision 0203 §2): one call per round, a price per candidate. The
@@ -882,7 +891,7 @@ pub(crate) fn use_bloom(input: BloomProbeInput) -> bool {
         let pricer = pricer().0.read().clone();
         if let Some(choice) = pricer.and_then(|p| p.use_bloom(input)) { return choice; }
     }
-    input.rejected * 2 >= input.sampled
+    if input.kept { input.rejected * 8 >= input.sampled } else { input.rejected * 2 >= input.sampled }
 }
 
 pub fn set_pricer(p: Option<Arc<dyn Pricer>>) {

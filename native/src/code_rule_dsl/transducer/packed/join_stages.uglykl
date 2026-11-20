@@ -42,8 +42,15 @@ typedef struct Stage {
     UKL_GLOBAL const ViewDir* v_dir;
     uint32_t r_view;
     uint32_t v_parent;
+    // The probed relation's screen (decision 0506): its key `screen - 1`'s column's kept filter, a
+    // `rerail_blocks::bloom::Bloom` at byte `screen_at` of the screen's buffer `F` (the filter's block, bound where it
+    // lies); 0 for none.
+    uint32_t screen;
+    uint32_t screen_at;
+    uint32_t screen_pad[2];
 } Stage;
-UKL_STATIC_ASSERT(sizeof(Stage) == 2320, "Stage: size");
+UKL_STATIC_ASSERT(sizeof(Stage) == 2336, "Stage: size");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Stage, screen) == 2320, "Stage.screen");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(Stage, ops) == 208, "Stage.ops");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(Stage, arith) == 2176, "Stage.arith");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(Stage, v_dir) == 2304, "Stage.v_dir");
@@ -268,12 +275,15 @@ UKL_INLINE void probe(StageP s, Longs R, UKL_PRIVATE const int64_t* kv, UKL_PRIV
     group_of(R, s->r_at, s->r_index, kv, s->nkeys, lo, hi);
 }
 
-// A binding's candidates (`probe`), and its key values.
-UKL_INLINE void candidates(StageP s, Longs L, uint32_t t, Longs R, UKL_PRIVATE int64_t* kv, UKL_PRIVATE uint32_t* lo,
-                           UKL_PRIVATE uint32_t* hi, UKL_PRIVATE uint32_t* how) {
+// A binding's candidates (`probe`), and its key values. A key the probed relation's screen refuses (`Stage::screen`,
+// a column's kept filter: decision 0506) has none, and its index group is not read. `F` is the screen's buffer.
+UKL_INLINE void candidates(StageP s, Longs L, uint32_t t, Longs R, UKL_GLOBAL const uint8_t* F, UKL_PRIVATE int64_t* kv,
+                           UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi, UKL_PRIVATE uint32_t* how) {
     *how = 0u;
     if (s->mode == 3) { *lo = 0; *hi = 1; return; }
     for (uint32_t i = 0; i < s->nkeys && i < 8; i++) kv[i] = s->key_kind[i] == 1 ? L[(uint64_t)s->key_slot[i] * s->cap_in + t] : s->key_const[i];
+    if (s->screen != 0u && s->screen <= s->nkeys
+        && clif_bloom_may(F, (uint64_t)s->screen_at, clif_bloom_hash(F, 0ul, (uint64_t)kv[s->screen - 1])) == 0u) { *lo = 0; *hi = 0; return; }
     probe(s, R, kv, lo, hi, how);
 }
 
@@ -467,6 +477,7 @@ DEFINE_KERNEL2(join, stage_count,
                RWBUFFER, uint32_t, counts,   "[cap_in + 1]",
                RWBUFFER, uint32_t, A,        "[arena]",
                ROBUFFER, uint8_t,  D,        "[atoms directory]",
+               ROBUFFER, uint8_t,  F,        "[the screen's block]",
                ROBUFFER, Stage,    s,        "[1]",
                GID0,     uint32_t, t,        )
 {
@@ -484,7 +495,7 @@ DEFINE_KERNEL2(join, stage_count,
         if (s->counter != NONE && (unheld || host)) ukl_atomic_or(&counters[s->counter], (unheld ? 4u : 0u) | (host ? 2u : 0u));
         return;
     }
-    candidates(s, L, t, R, kv, &lo, &hi, &how);
+    candidates(s, L, t, R, F, kv, &lo, &hi, &how);
     if (s->mode == 4) {
         int64_t v = 0;
         uint32_t st = aggregate(s, L, t, R, lo, hi, how, kv, &v);
@@ -537,6 +548,7 @@ DEFINE_KERNEL2(join, stage_scatter,
                RWBUFFER, uint32_t, A,        "[arena]",
                RWBUFFER, uint32_t, counters, "[counters]",
                ROBUFFER, uint8_t,  D,        "[atoms directory]",
+               ROBUFFER, uint8_t,  F,        "[the screen's block]",
                ROBUFFER, Stage,    s,        "[1]",
                GID0,     uint32_t, t,        )
 {
@@ -562,7 +574,7 @@ DEFINE_KERNEL2(join, stage_scatter,
     }
     if (s->mode == 4) {
         if (offsets[t + 1] <= at) return;
-        candidates(s, L, t, R, kv, &lo, &hi, &how);
+        candidates(s, L, t, R, F, kv, &lo, &hi, &how);
         int64_t v = 0;
         aggregate(s, L, t, R, lo, hi, how, kv, &v);
         write_row(s, L, t, R, 0, O, at);
@@ -574,7 +586,7 @@ DEFINE_KERNEL2(join, stage_scatter,
         if (offsets[t + 1] > at) write_row(s, L, t, R, 0, O, at);
         return;
     }
-    candidates(s, L, t, R, kv, &lo, &hi, &how);
+    candidates(s, L, t, R, F, kv, &lo, &hi, &how);
     for (uint32_t q = lo; q < hi && at < s->cap_out; q = cand_next(s, how, q)) {
         uint32_t r = cand_row(s, R, how, q);
         if (s->mode == 3 ? !row_live(s, R, r) : !matches(s, R, r, kv)) continue;
@@ -617,6 +629,7 @@ DEFINE_KERNEL2(join, witness_count,
                ROBUFFER, int64_t,  R0,     "[rows]",
                ROBUFFER, int64_t,  R1,     "[rows]",
                ROBUFFER, int64_t,  R2,     "[rows]",
+               ROBUFFER, uint8_t,  F,      "[the screen's block]",
                ROBUFFER, Stage,    s,      "[1]",
                GID0,     uint32_t, t,      )
 {
@@ -625,7 +638,7 @@ DEFINE_KERNEL2(join, witness_count,
     if (t >= n) { counts[t] = 0; return; }
     int64_t kv[8];
     uint32_t lo, hi, how;
-    candidates(s, L, t, R, kv, &lo, &hi, &how);
+    candidates(s, L, t, R, F, kv, &lo, &hi, &how);
     uint32_t nb = ukl_min(s->agg[0], 3u);
     uint32_t found = 0;
     for (uint32_t q = lo; q < hi; q = cand_next(s, how, q)) {

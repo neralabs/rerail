@@ -344,8 +344,8 @@ fn column_statistics_of_resident_columns_are_read_in_place() {
     let all: Vec<i64> = key.iter().chain(&wide).copied().collect();
     let held = join::Held::of(all.into_iter()).expect("the device");
     let cols = [join::StatCol::Device { buffer: &held.buffer, at: 0, rows: n, col: None }, join::StatCol::Device { buffer: &held.buffer, at: n, rows: n, col: None }];
-    let got = join::column_stats_of(&cols, 16, 0).expect("the device");
-    let want = join::column_stats(&[&key, &wide], 16, 0).expect("the device");
+    let got = join::column_stats_of(&cols, 16).expect("the device");
+    let want = join::column_stats(&[&key, &wide], 16).expect("the device");
     assert_eq!(got, want);
     assert_eq!(got[1].ndv, 60);
 }
@@ -360,7 +360,7 @@ fn column_statistics_on_the_device_are_the_exact_counts() {
     let one: Vec<i64> = vec![42; 300];
     let none: Vec<i64> = Vec::new();
     let cols: Vec<&[i64]> = vec![&skewed, &narrow, &one, &none];
-    let got = join::column_stats(&cols, 16, 0).expect("the device");
+    let got = join::column_stats(&cols, 16).expect("the device");
     for (col, g) in cols.iter().zip(&got) {
         let mut counts: HashMap<i64, u64> = HashMap::new();
         for &v in col.iter() { *counts.entry(v).or_default() += 1; }

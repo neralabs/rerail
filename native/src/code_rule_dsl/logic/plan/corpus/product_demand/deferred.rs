@@ -26,6 +26,8 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) struct Plans {
     pub one_sided: Vec<String>,
     pub factors: Vec<String>,
     pub shared: Vec<String>,
+    /// The joins left as written: the chunks make them, and a cross-file reader would state their requests.
+    pub cross: Vec<String>,
     pub cached: bool,
     pub author: Vec<Join>,
 }
@@ -250,6 +252,21 @@ fn rewrite(p: &mut Program<'_>, input: &Arc<Version>, adaptive: bool, cache_pair
         } else if positive {
             broad.insert(name);
         }
+    }
+    // A producer the chunks make (the file-local split) restricted by a request a cross-file reader states: the
+    // request's rows are the chunk's own, so a reader joining another file's rows asks nothing of this one
+    // (`remark(x, ..) :- noted(c, x), defined(_, x), ..`: b.py's comment names a.py's function, and a.py's chunk,
+    // asked only by its own comments, made no `defined` row). Such a join is left as written.
+    if !pairs.is_empty() {
+        let split = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(input)?;
+        let (local, _) = split.found();
+        pairs.retain(|(name, _, _)| {
+            let cross = local.contains(name.as_str()) && readers[name].iter().any(|read| !local.contains(head_of(rules[read.rule]).as_str()));
+            if cross {
+                plans.cross.push(name.clone());
+            }
+            !cross
+        });
     }
     // Every read is classified before any rule changes.
     let mut inline_off = BTreeSet::new();
@@ -568,6 +585,65 @@ mod tests {
             assert_eq!(rows["lefts"].iter().cloned().collect::<BTreeSet<_>>(), expected(size));
             assert_eq!(rows["rights"].iter().cloned().collect::<BTreeSet<_>>(), expected(64));
         }
+    }
+
+    /// A reused product whose readers, or the rules over them, read an answer only a node's document gives (`value`)
+    /// is factorized but not cached: a cache's readers are the cross-file part's, which has no documents to answer
+    /// it from. Decided from the program, so a run is never prepared again to find it (decision 0506).
+    #[test]
+    fn a_product_read_with_a_documents_answer_is_not_cached() {
+        let src = |reader: &str| format!("
+            .decl lhs(a: number, k: number)
+            .decl rhs(b: number, k: number)
+            .decl wide(a: number, b: number)
+            .decl value(n: number, v: symbol)
+            .decl lefts(a: number)
+            .decl rights(b: number)
+            .decl over(a: number)
+            .output rights, over
+            wide(a,b) :- lhs(a,k), rhs(b,k).
+            {reader}
+            rights(b) :- wide(_,b).
+            over(a) :- lefts(a).
+        ");
+        let cached = |reader: &str| {
+            let v = parse_version(&src(reader)).unwrap();
+            let (made, plan) = defer(&v, true, true).unwrap();
+            assert_eq!(plan.factors.len(), 1, "{reader}: factorized");
+            made.nullary().into_iter().any(|r| r.starts_with("rr_pair_cache_"))
+        };
+        assert!(cached("lefts(a) :- wide(a,_)."), "a plain reader keeps its cache");
+        assert!(!cached("lefts(a) :- wide(a,_), value(a, _)."), "a reader of `value`");
+        assert!(!cached("lefts(a) :- wide(a,_).\n over(a) :- lefts(a), value(a, _)."), "a rule over a reader reads `value`");
+    }
+
+    /// A producer the chunks make is not restricted by a cross-file reader's requests: its rows are another file's
+    /// (b.py's comment names a.py's function), and a chunk's request holds only its own. A reader within one
+    /// document (its comment in the function's body) still drives it.
+    #[test]
+    fn a_cross_file_reader_does_not_restrict_a_file_local_producer() {
+        let deferred = |reader: &str| {
+            let v = parse_version(&format!(r#"
+.decl kind(n: node, k: symbol)
+.decl field(n: node, f: symbol, c: node)
+.decl text(n: node, x: symbol)
+.decl comment(c: node, x: symbol)
+.decl line(n: node, l: number)
+.decl col(n: node, k: number)
+.input kind, field, text, comment, line, col
+.decl defined(d: node, x: symbol)
+defined(d, x) :- kind(d, "function_definition"), field(d, "name", n), text(n, x).
+.decl noted(c: node, x: symbol)
+noted(c, x) :- comment(c, x).
+.decl remark(x: symbol, l: number, k: number)
+{reader}
+.output remark
+"#)).unwrap();
+            let (made, plan) = defer(&v, true, true).unwrap();
+            (declared(&made, |r| r.starts_with(DEFERRED_PAIRS)).is_some(), plan.cross)
+        };
+        assert_eq!(deferred("remark(x, l, k) :- noted(c, x), defined(_, x), line(c, l), col(c, k)."), (false, vec!["defined".to_owned()]), "across files");
+        assert_eq!(deferred("remark(x, l, k) :- noted(c, x), defined(d, x), field(d, \"body\", c), line(c, l), col(c, k)."), (true, Vec::new()), "within one document");
     }
 
     #[test]

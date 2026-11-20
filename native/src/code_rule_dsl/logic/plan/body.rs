@@ -271,7 +271,9 @@ impl<'v> Body<'v> {
                     || rel.strip_prefix("rr_pair_cache_").and_then(|s| s.strip_suffix("_small")).is_some_and(|base|
                         head.strip_prefix("rr_pair_cache_")
                             .and_then(|s| s.strip_suffix("_pairs")) == Some(base))
-                    || ["demand_", super::corpus::product_demand::PREFIX].iter().any(|&p| rel.strip_prefix(p) == Some(head))
+                    // A demanded relation's own demand (`demand_x`) is not one: its rule may be led by an atom a
+                    // constant restricts (Q59, `demand_bounds_lead`, which `plan_inner` keeps).
+                    || rel.strip_prefix(super::corpus::product_demand::PREFIX) == Some(head)
                     // A deferred join's producer is driven by its readers' requested pairs (decision 0506).
                     || rel.strip_prefix(super::corpus::product_demand::DEFERRED_PAIRS)
                         .is_some_and(|producer| producer == head))

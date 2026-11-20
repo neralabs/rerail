@@ -8205,11 +8205,13 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   run-state tests. corpus0 x B-now cold, profiled: completes, 463 findings, the same digest; unprofiled 1,143.9 G
   instructions, against 1,146-1,155 G before (0442, "Every job carries its maker's run").
 
-### Q390. (Q301 on Typing-support until 2026-11-20; Q190 on cost-classifier-metal-rf) The deferred joins are priced (0477)
+### Q390. (Q301 on Typing-support until 2026-11-20; Q190 on cost-classifier-metal-rf) The deferred joins are priced (0506)
 
 - **Found** (2026-11-19, 0506): `RERAIL_DEFERRED_JOINS=auto` took 7-12% more instructions on corpus0 x B-now for the
   same findings, so it is off by default. It rewrote pair demand into many rules (`c4_elt`, `c4_comp`, `exc_call`,
   ...), each a few more strata, where the joins were cheap as written.
+- **On by default** (2026-11-20, 0506 "On by default"): a replan that ran the sources program twice (23.5 G) and a
+  view's heavy values counted at every stratum removed; `auto` 961.8 G against `off` 952.7 G on corpus0 (one thread, +1.0%).
 - **Next**: offer each rewrite as an alternative the pricer scores against the join as written, from the readers'
   distinct requests and the factors' sizes (the lab's design, `scripts/profiling/deferred_joins/README.md`, "Where
   the classifier belongs"), and keep it only where it wins.
@@ -8217,6 +8219,13 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   SLF001 on PostHog bounded as Release-debugging measured.
 - **State** (2026-11-20, the merge into Typing-support): the rewrite is a step on the version there (0506, item 1):
   the tree forms are gone, so it was ported, its five tests with it. Its pricing is as open as before.
+- **State** (2026-11-20, cost-classifier-metal-rf merged into Typing-support): `auto` is the default here too, with
+  that branch's fixes ported to the version's passes: the cross-file guard (`Plans::cross`, read from the version's
+  file-local split), no pair cache whose readers' cone reads a document's answer (`passes/factorize.rs`), a view's
+  change since its mark, the made step's request record. The kept filters, join-size counters and screens came with
+  it; the device's screens (the sort's `screen_bloom`, the probes', the fused probe's and the stages') were MSL there
+  and are UKL here, compiled but not yet run on a device: the Metal hold of 2026-11-20, and no OpenCL host usable.
+  Open as before: the pricer of the rewrite against the join as written, and its done-when.
 
 ### Q391. Done: (Q389 on Typing-support until 2026-11-20) `cpython::syntax`'s line and message where Ruff recovers otherwise than CPython
 

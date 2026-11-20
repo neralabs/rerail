@@ -414,7 +414,171 @@ return v6;
 }
 
 #[inline(always)]
-unsafe fn f58(len: u64, a0: u64, a1: u32) -> u32 {
+unsafe fn f33(len: u64, a0: u64, a1: u64) -> u64 {
+    let mut v0: u64 = 0;
+    let mut v1: u64 = 0;
+    let mut v2: u32 = 0;
+    let mut v3: u64 = 0;
+    let mut v4: u32 = 0;
+    let mut v5: u32 = 0;
+    let mut v6: u32 = 0;
+    let mut v7: u32 = 0;
+    let mut v8: u32 = 0;
+    let mut v9: u32 = 0;
+    let mut v10: u32 = 0;
+    let mut v11: u32 = 0;
+    let mut v12: u32 = 0;
+    let mut v13: u32 = 0;
+    let mut v14: u32 = 0;
+    let mut v15: u32 = 0;
+    let mut v16: u32 = 0;
+    let mut v17: u32 = 0;
+    let mut v18: u64 = 0;
+    let mut v19: u64 = 0;
+    let mut v20: u64 = 0;
+    let mut v21: u64 = 0;
+    v0 = a0;
+    v1 = a1;
+    let mut d: u32 = 0;
+v2 = v1 as u32;
+v3 = v1.wrapping_shr(32);
+v4 = v3 as u32;
+v5 = v4.wrapping_mul(-1640531535i64 as u32);
+v6 = v2 ^ v5;
+v7 = v6.wrapping_shr(16);
+v8 = v6 ^ v7;
+v9 = v8.wrapping_mul(-2048144789i64 as u32);
+v10 = v9.wrapping_shr(13);
+v11 = v9 ^ v10;
+v12 = v11.wrapping_mul(-1028477387i64 as u32);
+v13 = v12.wrapping_shr(16);
+v14 = v12 ^ v13;
+v15 = v14.wrapping_mul(668265263i64 as u32);
+v16 = v15.wrapping_shr(15);
+v17 = v15 ^ v16;
+v18 = v14 as u64;
+v19 = v17 as u64;
+v20 = v19.wrapping_shl(32);
+v21 = v20 | v18;
+return v21;
+}
+
+#[inline(always)]
+unsafe fn f34(len: u64, a0: u64, a1: u64) -> u64 {
+    let mut v0: u64 = 0;
+    let mut v1: u64 = 0;
+    let mut v2: u64 = 0;
+    let mut v3: u64 = 0;
+    let mut v4: u64 = 0;
+    let mut v5: u64 = 0;
+    let mut v6: u64 = 0;
+    let mut v7: u64 = 0;
+    let mut v8: u64 = 0;
+    let mut v9: u64 = 0;
+    let mut v10: u64 = 0;
+    let mut v11: u64 = 0;
+    let mut v12: u64 = 0;
+    let mut v13: u64 = 0;
+    let mut v14: u64 = 0;
+    let mut v15: u64 = 0;
+    let mut v16: u64 = 0;
+    let mut v17: u64 = 0;
+    let mut v18: u64 = 0;
+    let mut v19: u64 = 0;
+    let mut v20: u64 = 0;
+    let mut v21: u64 = 0;
+    let mut v22: u64 = 0;
+    let mut v23: u64 = 0;
+    let mut v24: u64 = 0;
+    let mut v25: u64 = 0;
+    let mut v26: u64 = 0;
+    let mut v27: u64 = 0;
+    v0 = a0;
+    v1 = a1;
+    let mut d: u32 = 0;
+v2 = 0i64 as u64;
+v3 = v1.wrapping_shr(0);
+v4 = v3 & (63i64 as u64);
+v5 = 1i64 as u64;
+v6 = v5.wrapping_shl(v4 as u32);
+v7 = v2 | v6;
+v8 = v1.wrapping_shr(6);
+v9 = v8 & (63i64 as u64);
+v10 = 1i64 as u64;
+v11 = v10.wrapping_shl(v9 as u32);
+v12 = v7 | v11;
+v13 = v1.wrapping_shr(12);
+v14 = v13 & (63i64 as u64);
+v15 = 1i64 as u64;
+v16 = v15.wrapping_shl(v14 as u32);
+v17 = v12 | v16;
+v18 = v1.wrapping_shr(18);
+v19 = v18 & (63i64 as u64);
+v20 = 1i64 as u64;
+v21 = v20.wrapping_shl(v19 as u32);
+v22 = v17 | v21;
+v23 = v1.wrapping_shr(24);
+v24 = v23 & (63i64 as u64);
+v25 = 1i64 as u64;
+v26 = v25.wrapping_shl(v24 as u32);
+v27 = v22 | v26;
+return v27;
+}
+
+#[inline(always)]
+unsafe fn f35(len: u64, a0: u64, a1: u64) -> u32 {
+    let mut v0: u64 = 0;
+    let mut v1: u64 = 0;
+    let mut v2: u64 = 0;
+    let mut v3: u8 = 0;
+    let mut v4: u32 = 0;
+    let mut v5: u32 = 0;
+    let mut v6: u64 = 0;
+    let mut v7: u64 = 0;
+    let mut v8: u64 = 0;
+    let mut v9: u64 = 0;
+    let mut v10: u64 = 0;
+    let mut v11: u64 = 0;
+    let mut v12: u64 = 0;
+    let mut v13: u64 = 0;
+    let mut v14: u64 = 0;
+    let mut v15: u64 = 0;
+    let mut v16: u64 = 0;
+    let mut v17: u8 = 0;
+    let mut v18: u32 = 0;
+    let mut v19: u32 = 0;
+    let mut v20: u32 = 0;
+    v0 = a0;
+    v1 = a1;
+    let mut d: u32 = 0;
+'m3: {
+v2 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(8isize as usize)) as *const u64) };
+v3 = ((v2 as u64) == ((0i64 as u64) as u64)) as u8;
+if v3 != 0 { v5 = 1i64 as u32;
+{ v4 = v5; break 'm3; }
+ } else { v6 = v1.wrapping_shr(32);
+v7 = v2.wrapping_add(-1i64 as u64);
+v8 = v6 & v7;
+v9 = unsafe { core::ptr::read_unaligned((v0 as usize) as *const u64) };
+v10 = v0.wrapping_add(0i64 as u64);
+v11 = v10.wrapping_add(v9);
+v12 = v8.wrapping_shl(3);
+v13 = v11.wrapping_add(v12);
+v14 = unsafe { core::ptr::read_unaligned((v13 as usize) as *const u64) };
+v15 = unsafe { f34(len, v0, v1) };
+v16 = v14 & v15;
+v17 = ((v16 as u64) == (v15 as u64)) as u8;
+v18 = 1i64 as u32;
+v19 = 0i64 as u32;
+v20 = if v17 != 0 { v18 } else { v19 };
+{ v4 = v20; break 'm3; }
+ }
+}
+return v4;
+}
+
+#[inline(always)]
+unsafe fn f61(len: u64, a0: u64, a1: u32) -> u32 {
     let mut v0: u64 = 0;
     let mut v1: u32 = 0;
     let mut v2: u8 = 0;
@@ -540,7 +704,7 @@ return v3;
 }
 
 #[inline(always)]
-unsafe fn f59(len: u64, a0: u64, a1: u32) -> u64 {
+unsafe fn f62(len: u64, a0: u64, a1: u32) -> u64 {
     let mut v0: u64 = 0;
     let mut v1: u32 = 0;
     let mut v2: u8 = 0;
@@ -666,7 +830,7 @@ return v3;
 }
 
 #[inline(never)]
-unsafe fn f60(len: u64, a0: u64, a1: u32, a2: u32) -> u32 {
+unsafe fn f63(len: u64, a0: u64, a1: u32, a2: u32) -> u32 {
     let mut v0: u64 = 0;
     let mut v1: u32 = 0;
     let mut v2: u32 = 0;
@@ -1939,7 +2103,7 @@ return v506;
 }
 
 #[inline(never)]
-unsafe fn f61(len: u64, a0: u64, a1: u32, a2: u32, a3: u32) -> u32 {
+unsafe fn f64(len: u64, a0: u64, a1: u32, a2: u32, a3: u32) -> u32 {
     let mut v0: u64 = 0;
     let mut v1: u32 = 0;
     let mut v2: u32 = 0;
@@ -3202,7 +3366,7 @@ return v507;
 }
 
 #[inline(never)]
-unsafe fn f62(len: u64, a0: u64, a1: u32, a2: u32) -> u64 {
+unsafe fn f65(len: u64, a0: u64, a1: u32, a2: u32) -> u64 {
     let mut v0: u64 = 0;
     let mut v1: u32 = 0;
     let mut v2: u32 = 0;
@@ -4346,7 +4510,7 @@ return v31;
 }
 
 #[inline(never)]
-unsafe fn f63(len: u64, a0: u64, a1: u32, a2: u32, a3: u32) -> u64 {
+unsafe fn f66(len: u64, a0: u64, a1: u32, a2: u32, a3: u32) -> u64 {
     let mut v0: u64 = 0;
     let mut v1: u32 = 0;
     let mut v2: u32 = 0;
@@ -5492,7 +5656,7 @@ return v32;
 }
 
 #[inline(never)]
-unsafe fn f64(len: u64, a0: u64, a1: u64) -> u32 {
+unsafe fn f67(len: u64, a0: u64, a1: u64) -> u32 {
     let mut v0: u64 = 0;
     let mut v1: u64 = 0;
     let mut v2: u64 = 0;
@@ -5650,6 +5814,36 @@ pub unsafe fn rel_key_mix(desc: *const u8, a1: u64, a2: u64) -> u64 {
     unsafe { f32(u64::MAX, desc as u64, a1, a2) }
 }
 
+/// The read `bloom_hash` of the relation (or rows) whose descriptor is at `desc`.
+///
+/// # Safety
+/// `desc` is a live descriptor of its kind in a block, and the read's arguments are in its bounds.
+#[inline(always)]
+pub unsafe fn bloom_hash(desc: *const u8, a1: u64) -> u64 {
+    // SAFETY: the caller's.
+    unsafe { f33(u64::MAX, desc as u64, a1) }
+}
+
+/// The read `bloom_mask` of the relation (or rows) whose descriptor is at `desc`.
+///
+/// # Safety
+/// `desc` is a live descriptor of its kind in a block, and the read's arguments are in its bounds.
+#[inline(always)]
+pub unsafe fn bloom_mask(desc: *const u8, a1: u64) -> u64 {
+    // SAFETY: the caller's.
+    unsafe { f34(u64::MAX, desc as u64, a1) }
+}
+
+/// The read `bloom_may` of the relation (or rows) whose descriptor is at `desc`.
+///
+/// # Safety
+/// `desc` is a live descriptor of its kind in a block, and the read's arguments are in its bounds.
+#[inline(always)]
+pub unsafe fn bloom_may(desc: *const u8, a1: u64) -> u32 {
+    // SAFETY: the caller's.
+    unsafe { f35(u64::MAX, desc as u64, a1) }
+}
+
 /// The read `atoms_len` of the relation (or rows) whose descriptor is at `desc`.
 ///
 /// # Safety
@@ -5657,7 +5851,7 @@ pub unsafe fn rel_key_mix(desc: *const u8, a1: u64, a2: u64) -> u64 {
 #[inline(always)]
 pub unsafe fn atoms_len(desc: *const u8, a1: u32) -> u32 {
     // SAFETY: the caller's.
-    unsafe { f58(u64::MAX, desc as u64, a1) }
+    unsafe { f61(u64::MAX, desc as u64, a1) }
 }
 
 /// The read `atoms_at` of the relation (or rows) whose descriptor is at `desc`.
@@ -5667,7 +5861,7 @@ pub unsafe fn atoms_len(desc: *const u8, a1: u32) -> u32 {
 #[inline(always)]
 pub unsafe fn atoms_at(desc: *const u8, a1: u32) -> u64 {
     // SAFETY: the caller's.
-    unsafe { f59(u64::MAX, desc as u64, a1) }
+    unsafe { f62(u64::MAX, desc as u64, a1) }
 }
 
 /// The read `verdict_get` of the relation (or rows) whose descriptor is at `desc`.
@@ -5677,7 +5871,7 @@ pub unsafe fn atoms_at(desc: *const u8, a1: u32) -> u64 {
 #[inline(always)]
 pub unsafe fn verdict_get(desc: *const u8, a1: u32, a2: u32) -> u32 {
     // SAFETY: the caller's.
-    unsafe { f60(u64::MAX, desc as u64, a1, a2) }
+    unsafe { f63(u64::MAX, desc as u64, a1, a2) }
 }
 
 /// The read `verdict_put` of the relation (or rows) whose descriptor is at `desc`.
@@ -5687,7 +5881,7 @@ pub unsafe fn verdict_get(desc: *const u8, a1: u32, a2: u32) -> u32 {
 #[inline(always)]
 pub unsafe fn verdict_put(desc: *const u8, a1: u32, a2: u32, a3: u32) -> u32 {
     // SAFETY: the caller's.
-    unsafe { f61(u64::MAX, desc as u64, a1, a2, a3) }
+    unsafe { f64(u64::MAX, desc as u64, a1, a2, a3) }
 }
 
 /// The read `text_find` of the relation (or rows) whose descriptor is at `desc`.
@@ -5697,7 +5891,7 @@ pub unsafe fn verdict_put(desc: *const u8, a1: u32, a2: u32, a3: u32) -> u32 {
 #[inline(always)]
 pub unsafe fn text_find(desc: *const u8, a1: u32, a2: u32) -> u64 {
     // SAFETY: the caller's.
-    unsafe { f62(u64::MAX, desc as u64, a1, a2) }
+    unsafe { f65(u64::MAX, desc as u64, a1, a2) }
 }
 
 /// The read `text_open` of the relation (or rows) whose descriptor is at `desc`.
@@ -5707,7 +5901,7 @@ pub unsafe fn text_find(desc: *const u8, a1: u32, a2: u32) -> u64 {
 #[inline(always)]
 pub unsafe fn text_open(desc: *const u8, a1: u32, a2: u32, a3: u32) -> u64 {
     // SAFETY: the caller's.
-    unsafe { f63(u64::MAX, desc as u64, a1, a2, a3) }
+    unsafe { f66(u64::MAX, desc as u64, a1, a2, a3) }
 }
 
 /// The read `cache_done` of the relation (or rows) whose descriptor is at `desc`.
@@ -5717,9 +5911,9 @@ pub unsafe fn text_open(desc: *const u8, a1: u32, a2: u32, a3: u32) -> u64 {
 #[inline(always)]
 pub unsafe fn cache_done(desc: *const u8, a1: u64) -> u32 {
     // SAFETY: the caller's.
-    unsafe { f64(u64::MAX, desc as u64, a1) }
+    unsafe { f67(u64::MAX, desc as u64, a1) }
 }
 
 
 /// This source's fingerprint (`rust::fingerprint` of what comes before).
-pub const SOURCE: u64 = 0x82456d8c9d3b5873;
+pub const SOURCE: u64 = 0x44de0f13cc5afe13;

@@ -248,9 +248,15 @@ pub(in crate::code_rule_dsl) struct Stage {
     pub(in crate::code_rule_dsl) r_view: u32,
     /// 1 when the probed view is `child` probed by its parent, off the tape (`DevIndex::by_parent`).
     pub(in crate::code_rule_dsl) v_parent: u32,
+    /// The probed relation's screen (decision 0506): its key `screen - 1`'s column's kept filter, a
+    /// `rerail_blocks::bloom::Bloom` at byte `screen_at` of the screen's buffer (the filter's block, bound where it
+    /// lies); 0 for none. A binding whose key the filter refuses has no candidates, and reads no index group.
+    pub(in crate::code_rule_dsl) screen: u32,
+    pub(in crate::code_rule_dsl) screen_at: u32,
+    pub(in crate::code_rule_dsl) screen_pad: [u32; 2],
 }
 
-const _: () = assert!(std::mem::size_of::<Stage>() == 2320 && std::mem::size_of::<Stage>() % 16 == 0);
+const _: () = assert!(std::mem::size_of::<Stage>() == 2336 && std::mem::size_of::<Stage>() % 16 == 0);
 
 impl Default for Stage {
     fn default() -> Self {
@@ -756,6 +762,15 @@ fn bound(home: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>) -> Res
     Ok(Held::kept(home.block.device_buffer(device)?, Box::new(home.clone())))
 }
 
+/// A stage's screen (decision 0506, `Stage::screen`): the probed relation's key `key`'s column's kept filter, a
+/// `rerail_blocks::bloom::Bloom` at byte `at` of `held` (the filter's block, bound where it lies: nothing copied).
+#[derive(Clone)]
+pub(in crate::code_rule_dsl) struct Screen {
+    pub(in crate::code_rule_dsl) held: std::rc::Rc<Held>,
+    pub(in crate::code_rule_dsl) at: u32,
+    pub(in crate::code_rule_dsl) key: u32,
+}
+
 /// A stage's probed relation `rel` (and its index, read by keys) into its fields.
 fn bind_right(stage: &mut Stage, rel: &DevRel, index: Option<&DevIndex>) {
     stage.nr = rel.rows as u32;
@@ -1009,6 +1024,8 @@ pub(in crate::code_rule_dsl) struct Done {
     pub(in crate::code_rule_dsl) gpu_seconds: f64,
     /// Stages whose grids were sized on the device (`Scan::size`).
     pub(in crate::code_rule_dsl) sized: u32,
+    /// Stages screened by their relation's kept filter (`Stage::screen`, decision 0506).
+    pub(in crate::code_rule_dsl) screened: u32,
 }
 
 /// Work encoded into one submission at a time, committed when the launch budget of one is near and at `finish`;
@@ -1115,6 +1132,21 @@ impl Batch {
                 })
             })
             .collect()
+    }
+
+    /// `stage` screened by `screen` (decision 0506), its buffer kept until the batch is done: the buffer to bind as
+    /// the stage's `F` (the batch's dummy for none).
+    fn screen(&mut self, stage: &mut Stage, screen: Option<&Screen>) -> Buffer {
+        match screen {
+            Some(f) if (f.key as usize) < stage.nkeys as usize => {
+                stage.screen = f.key + 1;
+                stage.screen_at = f.at;
+                self.held.push(Box::new(f.held.clone()));
+                self.done.screened += 1;
+                f.held.buffer.clone()
+            }
+            _ => self.dummy.buffer.clone(),
+        }
     }
 
     /// Keeps `what` (encoded work's buffers, given up by its maker) until the batch is done.
@@ -1351,7 +1383,8 @@ impl Batch {
     /// A stage from `left` into `out`, over `right` (its relation and, read by keys, its index): count, scan,
     /// scatter. `stage`'s sizes are set here.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::code_rule_dsl) fn stage(&mut self, mut stage: Stage, left: &Table, right: Option<(&DevRel, Option<&DevIndex>)>, in_slot: usize, out_slot: usize,
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::code_rule_dsl) fn stage(&mut self, mut stage: Stage, left: &Table, right: Option<(&DevRel, Option<&DevIndex>)>, screen: Option<&Screen>, in_slot: usize, out_slot: usize,
                                           totals: &Words, counters: &Words, counter: Option<usize>, out: &Table) -> Result<(), Error> {
         let count = pipeline("join", "stage_count", || SOURCE.to_owned())?;
         let scatter = pipeline("join", "stage_scatter", || SOURCE.to_owned())?;
@@ -1370,6 +1403,7 @@ impl Batch {
             }
             None => self.dummy.buffer.clone(),
         };
+        let fbuf = self.screen(&mut stage, screen);
         if left.cap == 1 && stage.mode == JOIN && right.is_some() {
             // From one binding: a thread per candidate row (`scan_count`), its rows in the relation's order.
             let scount = pipeline("join", "scan_count", || SOURCE.to_owned())?;
@@ -1416,9 +1450,9 @@ impl Batch {
             }
             None => (&dummy, 0),
         };
-        let count_bufs: [(&Buffer, u64); 8] = [(lbuf, 0), (&rbuf, 0), (&totals.buffer.buffer, 0), (&counters.buffer.buffer, 0), (&counts, 0), (&arena, 0), (d, d_at), (&sb, 0)];
-        let scatter_bufs: [(&Buffer, u64); 9] =
-            [(lbuf, 0), (&rbuf, 0), (&totals.buffer.buffer, 0), (&counts, 0), (&out.buffer.buffer, 0), (&arena, 0), (&counters.buffer.buffer, 0), (d, d_at), (&sb, 0)];
+        let count_bufs: [(&Buffer, u64); 9] = [(lbuf, 0), (&rbuf, 0), (&totals.buffer.buffer, 0), (&counters.buffer.buffer, 0), (&counts, 0), (&arena, 0), (d, d_at), (&fbuf, 0), (&sb, 0)];
+        let scatter_bufs: [(&Buffer, u64); 10] =
+            [(lbuf, 0), (&rbuf, 0), (&totals.buffer.buffer, 0), (&counts, 0), (&out.buffer.buffer, 0), (&arena, 0), (&counters.buffer.buffer, 0), (d, d_at), (&fbuf, 0), (&sb, 0)];
         if n > sized_min() {
             // The table's space is the host's guess: the grids are sized on the device, from the rows the stage
             // before made (decision 0113's GPU-sized work); at most the table's.
@@ -1440,7 +1474,7 @@ impl Batch {
     /// order until one that each of `rest`'s probes (semi- or anti-joins, at most `WITNESS_PROBES`) passes; then the
     /// bindings that have one, as a semi-join writes them. `stage`'s sizes, and the probes', are set here.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::code_rule_dsl) fn witness(&mut self, mut stage: Stage, left: &Table, right: (&DevRel, Option<&DevIndex>), rest: &[(Stage, &DevRel, Option<&DevIndex>)],
+    pub(in crate::code_rule_dsl) fn witness(&mut self, mut stage: Stage, left: &Table, right: (&DevRel, Option<&DevIndex>), screen: Option<&Screen>, rest: &[(Stage, &DevRel, Option<&DevIndex>)],
                                             in_slot: usize, out_slot: usize, totals: &Words, out: &Table) -> Result<(), Error> {
         assert!(rest.len() <= WITNESS_PROBES, "a witness of more probes than it takes");
         let count = pipeline("join", "witness_count", || SOURCE.to_owned())?;
@@ -1456,6 +1490,7 @@ impl Batch {
         let rel = right.1.map_or(right.0, |ix| ix.of(right.0));
         bind_right(&mut stage, rel, right.1);
         let a = right.1.map_or(&rel.buffer.buffer, |ix| ix.bound()).clone();
+        let fbuf = self.screen(&mut stage, screen);
         let mut probes = [Stage::default(); WITNESS_PROBES];
         let mut bufs: Vec<Buffer> = Vec::new();
         for (k, (b, rel, ix)) in rest.iter().enumerate() {
@@ -1486,10 +1521,11 @@ impl Batch {
         let lbuf: &Buffer = &left.buffer.buffer;
         let mut count_bufs: Vec<&Buffer> = vec![lbuf, &a, &totals.buffer.buffer, &counts, &held.buffer];
         count_bufs.extend(bufs.iter());
+        count_bufs.push(&fbuf);
         count_bufs.push(&sb);
         pass.run_bytes(&count, &count_bufs, &[], groups(n));
         scan.encode(pass, &counts)?;
-        let scatter_bufs: [&Buffer; 9] = [lbuf, &a, &totals.buffer.buffer, &counts, &out.buffer.buffer, &dummy, &dummy, &dummy, &wb];
+        let scatter_bufs: [&Buffer; 10] = [lbuf, &a, &totals.buffer.buffer, &counts, &out.buffer.buffer, &dummy, &dummy, &dummy, &dummy, &wb];
         pass.run_bytes(&scatter, &scatter_bufs, &[], groups(n));
         self.keep.push(held);
         Ok(())
@@ -1744,7 +1780,7 @@ pub mod tests {
         scan.bind_slot[..2].copy_from_slice(&[0, 1]);
         scan.bind_kind[..2].copy_from_slice(&[BIND_RIGHT, BIND_RIGHT]);
         scan.bind_idx[..2].copy_from_slice(&[0, 1]);
-        batch.stage(scan, &t0, Some((&ra, None)), 0, 1, &totals, &counters, None, &t1).unwrap();
+        batch.stage(scan, &t0, Some((&ra, None)), None, 0, 1, &totals, &counters, None, &t1).unwrap();
         // Too small on purpose: the stage reports its true count.
         let t2 = Table::new(slots, 1000).unwrap();
         let mut join = Stage { mode: JOIN, nkeys: 1, nbinds: 1, nops: 1, ncols: 1, nparams: 1, noutputs: 1, last: 0, npassed: 1, ..Stage::default() };
@@ -1761,7 +1797,7 @@ pub mod tests {
         join.ops[0] = [OP_CMP, 0, RHS_PARAM, 2 | (64 << 8)];
         join.outputs[0] = 0;
         join.passed[0] = 0;
-        batch.stage(join, &t1, Some((&rb, Some(&ib))), 1, 2, &totals, &counters, Some(0), &t2).unwrap();
+        batch.stage(join, &t1, Some((&rb, Some(&ib))), None, 1, 2, &totals, &counters, Some(0), &t2).unwrap();
         batch.finish().unwrap();
         // The nested loops.
         let mut want2: Vec<[i64; 3]> = Vec::new();
@@ -1782,18 +1818,18 @@ pub mod tests {
         assert!(want2.len() > 1000, "the test overflows the first table: {}", want2.len());
         // Again with room for every row; then the anti-join and the semi-join.
         let t2 = Table::new(slots, want2.len()).unwrap();
-        batch.stage(join, &t1, Some((&rb, Some(&ib))), 1, 2, &totals, &counters, None, &t2).unwrap();
+        batch.stage(join, &t1, Some((&rb, Some(&ib))), None, 1, 2, &totals, &counters, None, &t2).unwrap();
         let t3 = Table::new(slots, want2.len()).unwrap();
         let mut anti = Stage { mode: ANTI, nkeys: 1, ..Stage::default() };
         anti.key_kind[0] = SLOT;
         anti.key_slot[0] = 2;
-        batch.stage(anti, &t2, Some((&rc, Some(&ic))), 2, 3, &totals, &counters, None, &t3).unwrap();
+        batch.stage(anti, &t2, Some((&rc, Some(&ic))), None, 2, 3, &totals, &counters, None, &t3).unwrap();
         let t4 = Table::new(slots, want2.len()).unwrap();
         let mut semi = Stage { mode: SEMI, nkeys: 1, ..Stage::default() };
         semi.key_kind[0] = SLOT;
         semi.key_slot[0] = 0;
         semi.key_rcol[0] = 1;
-        batch.stage(semi, &t3, Some((&rb, Some(&ib1))), 3, 4, &totals, &counters, None, &t4).unwrap();
+        batch.stage(semi, &t3, Some((&rb, Some(&ib1))), None, 3, 4, &totals, &counters, None, &t4).unwrap();
         batch.finish().unwrap();
         let got = |t: &Table, n: usize| (0..n).map(|r| [t.column(0, n)[r], t.column(1, n)[r], t.column(2, n)[r]]).collect::<Vec<_>>();
         assert_eq!(got(&t2, totals.get(2) as usize), want2, "the join's rows, in the bindings' order");
@@ -1804,6 +1840,90 @@ pub mod tests {
         assert_eq!(got(&t3, totals.get(3) as usize), want3);
         assert_eq!(got(&t4, totals.get(4) as usize), want4);
         assert!(!want4.is_empty() && want4.len() < want3.len() && want3.len() < want2.len());
+    }
+
+    /// Decision 0506: a stage screened by its relation's kept filter (a `bloom::Bloom` in a block of the run's
+    /// relations, bound where it lies) makes the rows it makes unscreened: a join, an anti-join and a semi-join, each
+    /// keyed by a column whose filter holds every key of it. A filter of none of the keys refuses every binding: the
+    /// join and the semi-join make no rows, the anti-join keeps them all (the kernels test it).
+    #[test]
+    fn a_screened_stage_makes_the_unscreened_rows() {
+        let Ok(device) = rerail_accel::gpu::join::device() else { return };
+        let (na, nb, nc) = (3000, 5000, 700);
+        let (a0, a1) = (rows(na, 1, 4000), rows(na, 2, 3000));
+        let (b0, b1) = (rows(nb, 3, 300), rows(nb, 4, 4000));
+        let c0 = rows(nc, 5, 4000);
+        let up = |cols: &[&Vec<i64>]| {
+            let n = cols[0].len();
+            // copy: not block data (a test's literal rows)
+            DevRel::upload(cols.len(), n, |v| for (k, c) in cols.iter().enumerate() { v[k * n..(k + 1) * n].copy_from_slice(c) }).unwrap()
+        };
+        let screen = |keys: &[i64], key: u32| {
+            let f = crate::code_rule_dsl::facts::rows::FactsBloom::new(crate::code_rule_dsl::logic::bloom::kept_words_for(keys.len()));
+            for &k in keys {
+                f.add_hashed(rerail_blocks::bloom::hash(k));
+            }
+            let at = f.at() as u32;
+            let buffer = f.facts().block.device_buffer(device).unwrap();
+            Screen { held: std::rc::Rc::new(Held::kept(buffer, Box::new(f))), at, key }
+        };
+        let (ra, rb, rc) = (up(&[&a0, &a1]), up(&[&b0, &b1]), up(&[&c0]));
+        let (sb0, sb1, sc0, none) = (screen(&b0, 0), screen(&b1, 0), screen(&c0, 0), screen(&[], 0));
+        let run = |join_screen: Option<&Screen>, anti_screen: Option<&Screen>, semi_screen: Option<&Screen>| {
+            let mut batch = Batch::new().unwrap();
+            let ib = batch.index(&rb, &[0]).unwrap();
+            let ic = batch.index(&rc, &[0]).unwrap();
+            let ib1 = batch.index(&rb, &[1]).unwrap();
+            let slots = 3;
+            let totals = Words::zeroed(5).unwrap();
+            totals.set(0, 1);
+            let counters = Words::zeroed(8).unwrap();
+            let t0 = Table::one(slots, &[]).unwrap();
+            let t1 = Table::new(slots, na).unwrap();
+            let mut scan = Stage { mode: JOIN, nbinds: 2, ..Stage::default() };
+            // copy: not block data (a test's literal stage)
+            scan.bind_slot[..2].copy_from_slice(&[0, 1]);
+            scan.bind_kind[..2].copy_from_slice(&[BIND_RIGHT, BIND_RIGHT]);
+            scan.bind_idx[..2].copy_from_slice(&[0, 1]);
+            batch.stage(scan, &t0, Some((&ra, None)), None, 0, 1, &totals, &counters, None, &t1).unwrap();
+            let cap = 4 * na;
+            let t2 = Table::new(slots, cap).unwrap();
+            let mut join = Stage { mode: JOIN, nkeys: 1, nbinds: 1, ..Stage::default() };
+            join.key_kind[0] = SLOT;
+            join.key_slot[0] = 1;
+            join.key_rcol[0] = 0;
+            join.bind_slot[0] = 2;
+            join.bind_kind[0] = BIND_RIGHT;
+            join.bind_idx[0] = 1;
+            batch.stage(join, &t1, Some((&rb, Some(&ib))), join_screen, 1, 2, &totals, &counters, None, &t2).unwrap();
+            let t3 = Table::new(slots, cap).unwrap();
+            let mut anti = Stage { mode: ANTI, nkeys: 1, ..Stage::default() };
+            anti.key_kind[0] = SLOT;
+            anti.key_slot[0] = 2;
+            batch.stage(anti, &t2, Some((&rc, Some(&ic))), anti_screen, 2, 3, &totals, &counters, None, &t3).unwrap();
+            let t4 = Table::new(slots, cap).unwrap();
+            let mut semi = Stage { mode: SEMI, nkeys: 1, ..Stage::default() };
+            semi.key_kind[0] = SLOT;
+            semi.key_slot[0] = 0;
+            semi.key_rcol[0] = 1;
+            batch.stage(semi, &t3, Some((&rb, Some(&ib1))), semi_screen, 3, 4, &totals, &counters, None, &t4).unwrap();
+            let done = batch.finish().unwrap();
+            let got = |t: &Table, n: usize| (0..n).map(|r| [t.column(0, n)[r], t.column(1, n)[r], t.column(2, n)[r]]).collect::<Vec<_>>();
+            assert!((2..5).all(|s| (totals.get(s) as usize) <= cap), "the tables held the rows");
+            (got(&t2, totals.get(2) as usize), got(&t3, totals.get(3) as usize), got(&t4, totals.get(4) as usize), done.screened)
+        };
+        let plain = run(None, None, None);
+        assert!(!plain.2.is_empty() && plain.2.len() < plain.1.len() && plain.1.len() < plain.0.len(), "every stage keeps some rows and drops some");
+        let screened = run(Some(&sb0), Some(&sc0), Some(&sb1));
+        assert_eq!((&screened.0, &screened.1, &screened.2), (&plain.0, &plain.1, &plain.2), "the screened stages' rows");
+        assert_eq!((plain.3, screened.3), (0, 3), "three stages screened");
+        // A filter of no keys: the join makes nothing; over the plain join's rows, the anti-join keeps them all and
+        // the semi-join none.
+        let refused = run(Some(&none), None, None);
+        assert!(refused.0.is_empty(), "a join whose screen refuses every key");
+        let all = run(None, Some(&none), Some(&none));
+        assert_eq!(all.1, plain.0, "an anti-join whose screen refuses every key keeps every binding");
+        assert!(all.2.is_empty(), "a semi-join whose screen refuses every key keeps none");
     }
 
     /// A relation's index built on the device (decision 0325 step 5) is the host's (`Relation::build_index`): the same
@@ -1973,7 +2093,7 @@ pub mod tests {
         scan.bind_slot[..2].copy_from_slice(&[0, 1]);
         scan.bind_kind[..2].copy_from_slice(&[BIND_RIGHT, BIND_RIGHT]);
         scan.bind_idx[..2].copy_from_slice(&[0, 1]);
-        batch.stage(scan, &t0, Some((&ra, None)), 0, 1, &totals, &counters, None, &t1).unwrap();
+        batch.stage(scan, &t0, Some((&ra, None)), None, 0, 1, &totals, &counters, None, &t1).unwrap();
         batch.finish().unwrap();
         let live_a: Vec<usize> = (0..na).filter(|&i| !is_dead(&da, i)).collect();
         assert_eq!(totals.get(1) as usize, live_a.len(), "the scan's rows are the live ones");
@@ -1993,12 +2113,12 @@ pub mod tests {
         join.bind_slot[0] = 2;
         join.bind_kind[0] = BIND_RIGHT;
         join.bind_idx[0] = 1;
-        batch.stage(join, &t1, Some((&rb, Some(&ib))), 1, 2, &totals, &counters, None, &t2).unwrap();
+        batch.stage(join, &t1, Some((&rb, Some(&ib))), None, 1, 2, &totals, &counters, None, &t2).unwrap();
         let t3 = Table::new(slots, want2.len().max(1)).unwrap();
         let mut anti = Stage { mode: ANTI, nkeys: 1, ..Stage::default() };
         anti.key_kind[0] = SLOT;
         anti.key_slot[0] = 2;
-        batch.stage(anti, &t2, Some((&rc, Some(&ic))), 2, 3, &totals, &counters, None, &t3).unwrap();
+        batch.stage(anti, &t2, Some((&rc, Some(&ic))), None, 2, 3, &totals, &counters, None, &t3).unwrap();
         batch.finish().unwrap();
         let got = |t: &Table, n: usize| (0..n).map(|r| [t.column(0, n)[r], t.column(1, n)[r], t.column(2, n)[r]]).collect::<Vec<_>>();
         assert_eq!(got(&t2, totals.get(2) as usize), want2, "the join's rows: live rows of both");
