@@ -4730,18 +4730,24 @@ tags(t, l) :- kind(s, "string"), parsed(s, "html", p), within(e, p), kind(e, "ta
     assert_eq!(tags, [["b", "4"], ["i", "1"], ["p", "4"]].iter().map(|r| r.iter().map(|v| (*v).to_owned()).collect()).collect(), "{tags:?}");
 }
 
-/// Decision 0470 R5, an HTML run: a Python file's HTML program is code to it, at the file's lines.
+/// Decision 0470 R5, R7: a run reads the files that hold its language's programs only where the program says
+/// `.embedded on` (the user: "possible but not happen by default"). With it, an HTML run sees a Python file's Markup
+/// program and a JavaScript run an HTML file's script, at their files' lines, and none of the host files' own nodes;
+/// without it, neither.
 #[test]
-#[ignore = "Q270 step 2: a run reads only its own language's files (`CorpusFiles::of`), so no run sees a program another language's file holds (an HTML file's scripts in a JavaScript run neither)"]
-fn an_html_run_reads_a_python_files_html_program() {
+fn a_run_reads_the_files_holding_its_programs_only_when_asked() {
     let py = "from markupsafe import Markup\n\nx = Markup(\n    \"<p><b>a</b></p>\"\n)\ny = \"<i>not</i>\"\n";
-    let rule = r#"
-.language html
-.decl tags(t: symbol, l: number)
-tags(t, l) :- kind(e, "tag_name"), text(e, t), line(e, l).
-.output tags
-"#;
-    let [tags] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("place-program-html", &[("a.py", py)], rule, &["tags"])).unwrap();
-    let tags: BTreeSet<Vec<String>> = tags.into_iter().collect();
-    assert_eq!(tags, [["b", "4"], ["p", "4"]].iter().map(|r| r.iter().map(|v| (*v).to_owned()).collect()).collect(), "an HTML run: {tags:?}");
+    let html = "<p>x</p>\n<script>f(1)</script>\n";
+    let set = |rows: Vec<Vec<String>>| rows.into_iter().collect::<BTreeSet<Vec<String>>>();
+    let want = |rows: &[&[&str]]| rows.iter().map(|r| r.iter().map(|v| (*v).to_owned()).collect()).collect::<BTreeSet<Vec<String>>>();
+    let tags = |embedded: &str| format!(".language html\n{embedded}\n.decl tags(t: symbol, p: symbol, l: number)\ntags(t, p, l) :- kind(e, \"tag_name\"), text(e, t), docof(e, d), doc(d, p, _), line(e, l).\n.output tags\n");
+    let [on] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("embedded-on-html", &[("a.py", py), ("b.html", html)], &tags(".embedded on"), &["tags"])).unwrap();
+    assert_eq!(set(on), want(&[&["b", "a.py", "4"], &["p", "a.py", "4"], &["p", "b.html", "1"], &["script", "b.html", "2"]]), "an HTML run asked to");
+    let [off] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("embedded-off-html", &[("a.py", py), ("b.html", html)], &tags(""), &["tags"])).unwrap();
+    assert_eq!(set(off), want(&[&["p", "b.html", "1"], &["script", "b.html", "2"]]), "by default: its own files alone");
+    let calls = |embedded: &str| format!(".language javascript\n{embedded}\n.decl calls(x: symbol, p: symbol, l: number)\ncalls(x, p, l) :- kind(c, \"call_expression\"), text(c, x), docof(c, d), doc(d, p, _), line(c, l).\n.output calls\n");
+    let [on] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("embedded-on-js", &[("b.html", html)], &calls(".embedded on"), &["calls"])).unwrap();
+    assert_eq!(set(on), want(&[&["f(1)", "b.html", "2"]]), "a JavaScript run asked to");
+    let [off] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("embedded-off-js", &[("b.html", html)], &calls(""), &["calls"])).unwrap();
+    assert!(off.is_empty(), "by default: {off:?}");
 }

@@ -5597,4 +5597,7 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
 - **Step 1 done** (2026-11-19): R1–R4, R5 for a Python rule, R6 (PostHog unchanged, 29,747). Open, step 2: a run of
   the embedded language reads the files holding its programs (0470 "Steps"); an HTML run sees no Python file's
   program, nor a JavaScript run an HTML file's `<script>`.
+- **Step 2 done** (2026-11-19, the user: "possible but not happen by default"): `.embedded on` makes a run read the
+  files that hold its language's programs, their own nodes hidden (0470 "Steps", 2; R7). Also fixed: a cross-file
+  part's base relation with no rows anywhere (`rr_program` in a run holding no program) is bound empty.
 

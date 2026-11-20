@@ -194,6 +194,13 @@ fn first_key(parts: &[&[u8]], range: Range) -> (u32, u32, u32, [u8; 32]) {
     (base, span, u32::from_le_bytes(hash[..4].try_into().expect("4 bytes")) % span, identity)
 }
 
+/// The key of a file of another grammar that a run reads for its programs (decision 0470 step 2): a hidden one, by
+/// its path, claimed as a guest's is, so no guest takes it.
+pub(super) fn hidden_file_key(keys: &GuestKeys, path: &str) -> u32 {
+    let (base, span, first, identity) = first_key(&[b"host-file", path.as_bytes()], Range::Hidden);
+    keys.key(identity, base, span, first, path)
+}
+
 /// Which keys a document takes (`key`).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Range {

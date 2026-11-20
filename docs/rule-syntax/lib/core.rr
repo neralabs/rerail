@@ -707,6 +707,10 @@
 // .guests on | off                            whether the run language's guests are shown to rules that do not
 //                                              reach them through a guest relation (on by default); embeds are
 //                                              made either way (decision 0058).
+// .embedded on | off                          on: the run also reads the files of other languages that hold
+//                                              programs in its own (an HTML page's scripts for a JavaScript run, a
+//                                              Python string at a declared place for an HTML run), seeing only those
+//                                              programs, at their files' lines. Off by default (decision 0470).
 // .on guest_error [GRAMMAR] skip | partial [warn | report CODE]
 //                                              a guest that does not parse: skip (the default) has no nodes;
 //                                              partial keeps the tree the parser recovered. warn or report also
