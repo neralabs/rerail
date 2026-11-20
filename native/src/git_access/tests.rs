@@ -382,6 +382,35 @@ fn another_owners_repository_gets_no_answer_outside_safe_directory() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// A Git ignore matcher's check of its sources opens the repository through the opener, so once
+/// the repository reads as another user's that `safe.directory` does not name, the check says its
+/// sources changed: a host then opens again and meets Git's refusal, as an open at that time does.
+#[test]
+fn a_matchers_sources_check_meets_the_refusal_of_another_owners_repository() {
+    const NAME: &str = "a_matchers_sources_check_meets_the_refusal_of_another_owners_repository";
+    if in_child(NAME) {
+        let work = fixture().join("work");
+        let mut ignore = GitIgnore::open(&work).unwrap().expect("a Git worktree");
+        assert!(ignore.sources_unchanged(), "nothing changed");
+        opener::ASSUME_ANOTHER_OWNER.store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(!ignore.sources_unchanged(), "another user's");
+        assert!(GitIgnore::open(&work).is_err(), "an open now is refused");
+        return;
+    }
+    let root = temporary("owner-check");
+    repository_at(&root.join("work"), &[(".gitignore", b"*.log\n")]);
+    let global = root.join("global-gitconfig");
+    std::fs::write(&global, "").unwrap();
+    let mut env = clean_env();
+    env.extend([
+        ("GIT_CONFIG_GLOBAL", Some(global.into())),
+        ("GIT_CONFIG_NOSYSTEM", Some("1".into())),
+        (FIXTURE, Some(root.clone().into())),
+    ]);
+    run_child(NAME, &env);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 /// What the matcher answers for `path` against what `git check-ignore -v -n` answers: `None` for
 /// a path neither ignores, else the source file (absolute), the line and the pattern.
 type IgnoreAnswer = Option<(PathBuf, u32, String)>;

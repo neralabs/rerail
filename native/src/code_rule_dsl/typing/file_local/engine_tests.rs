@@ -7,7 +7,7 @@ use super::*;
 fn t_programs_split_into_file_local_and_cross_file() {
     use crate::code_rule_dsl::logic::rr::parse;
     for name in ["calls.rerail", "calls_rust.rerail", "workload.rerail"] {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/typing/programs").join(name);
+        let path = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/typing/programs").join(name);
         let prog = parse(&crate::code_rule_dsl::logic::settings::program_text(&path).unwrap()).unwrap();
         let local = split(&prog);
         let derived: std::collections::BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
