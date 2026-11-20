@@ -180,7 +180,7 @@ outermost call becomes the queue's first items.
 | R7 | A call past its list's end, with rollback: `f(2)(9)`, DEFER/EMPTY/OBSTRUCT, the spike's merges. | `calls_past_an_end_are_the_serial_passes` |
 | R8 | A unit past its rung's room refuses (`room`), and at the next rung gives the serial pass's tokens. | `a_unit_past_its_room_runs_again_larger` |
 | R9 | No host read between passes or rounds. | a guard over the encoder |
-| R10 | On the corpus, every unit not refused gives the serial pass's tokens; refusals are counted by reason. | `the_corpus_expands_on_the_device` (ignored) |
+| R10 | On the corpus, every unit not refused gives the serial pass's tokens; refusals are counted by reason. | `the_corpus_preprocesses_on_the_device` (ignored) |
 
 ## Built
 
@@ -334,7 +334,7 @@ outermost call becomes the queue's first items.
   splices left out. `#` and `##` of such a token are refused (`X_SPLICE`), since their spelling
   is the CPU's for now. The tests spell the device's tape tokens through `phase2` too.
 - **R10, the corpus.** Every file of both corpora is expanded on the device as its own unit,
-  with empty stubs for its headers (`the_corpus_expands_on_the_device`, run in slices). 3,099
+  with empty stubs for its headers (`the_corpus_preprocesses_on_the_device`, run in slices). 3,099
   units give the serial pass's tokens, 7.4 M in all. Refused: 33 by built-ins (`X_BUILTIN`), one
   by a call across a stretch's end (`X_ACROSS`), and 2 by the spike's P1 (`#line`). No unit runs
   out of room at the last rung. When a unit runs out of room, the test names the store

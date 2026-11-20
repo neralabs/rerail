@@ -155,7 +155,7 @@ with the unit, because each primitive's number of levels was chosen by its capac
 | R5 | Each persistent-grid primitive equals a host reference from 1 to 10^6 elements, at G = 1, 8 and the device's G | the library's tests, on Metal and UKL's CPU backend |
 | R6 | The grid barrier: 10,000 in a row, each seeing every group's writes before it; past residency, `barrier` and no hang | the library's tests |
 | R7 | An evaluation is the same fixed handful of launches for the smallest and the largest unit | `an_evaluation_is_a_fixed_handful_of_launches` |
-| R8 | The corpus's units still give the serial pass's tokens: 3,132, the same 3 refused | `the_corpus_expands_on_the_device` (ignored) |
+| R8 | The corpus's units still give the serial pass's tokens: 3,132, the same 3 refused | `the_corpus_preprocesses_on_the_device` (ignored) |
 
 ## Steps
 

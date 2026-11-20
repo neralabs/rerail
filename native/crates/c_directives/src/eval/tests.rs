@@ -297,11 +297,18 @@ struct OnDevice {
 }
 
 /// The unit whose main file is `path` on the device, in rounds, and the spike's P1 of it (the
-/// cross-check; `Err` with its reason where the spike refuses it); or why the device refuses it.
+/// cross-check of the passes' arrays; `Err` with its reason where the spike refuses it); or why
+/// the device refuses it.
 fn unit_of(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, path: &str, cpp: bool) -> Result<(OnDevice, Result<rerail_c_pp::stream::parallel::P1, &'static str>), &'static str> {
+    let p1 = rerail_c_pp::stream::parallel::p1_of(cfg.clone(), io, path);
+    Ok((on_device(cfg, io, path, cpp)?, p1))
+}
+
+/// The unit whose main file is `path` on the device, in rounds, the spike not run; or why the
+/// device refuses it.
+fn on_device(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, path: &str, cpp: bool) -> Result<OnDevice, &'static str> {
     use super::rounds::Refused;
     use rerail_metal::pp_expand::*;
-    let p1 = rerail_c_pp::stream::parallel::p1_of(cfg.clone(), io, path);
     let r = super::rounds::run(&cfg, io, path, cpp, |u, l| lookups(u, l).map(|(_, _, o)| (o.requests, o.flags, o.refused))).map_err(|e| match e {
         Refused::NoMain => "the main file is not read",
         Refused::P1(f) if f & P1_IF_DEFINED != 0 => "defined made by a macro in an #if",
@@ -325,7 +332,7 @@ fn unit_of(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, pat
         return Err("an #if's expansion");
     }
     let tapes = r.loaded.files.iter().map(|s| image(s, crate::pp::options(cpp))).collect();
-    Ok((OnDevice { unit: r.unit, lay: r.lay, tapes, files: r.loaded.files, paths: r.loaded.paths, rounds: r.rounds }, p1))
+    Ok(OnDevice { unit: r.unit, lay: r.lay, tapes, files: r.loaded.files, paths: r.loaded.paths, rounds: r.rounds })
 }
 
 /// One unit of R4: its main file read by the spike's P1, then its layout's lookups on the device
@@ -615,7 +622,7 @@ fn the_refused_cases_are_the_serial_passes() {
         let m: std::collections::HashMap<String, Vec<u8>> = [("main.c".to_string(), main.as_bytes().to_vec())].into_iter().collect();
         let mut io = rerail_c_pp::files::Search::new(Vec::new(), move |p: &str| m.get(p).cloned());
         let cfg = rerail_c_pp::Config::new(crate::pp::options(false));
-        same(unit_of(cfg, &mut io, "main.c", false).err(), Some(why), format!("{main:?}"));
+        same(on_device(cfg, &mut io, "main.c", false).err(), Some(why), format!("{main:?}"));
     }
     // A `_Pragma` that makes a row would need the text expanded inside P1's iterations: the
     // text's expansion refuses it by name.
@@ -770,7 +777,7 @@ fn expanded_in(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str, 
     assert!(pp.run("main.c"));
     drop(pp);
     let mut io = Search::new(dirs, move |p: &str| m.get(p).cloned());
-    let (d, _) = unit_of(cfg, &mut io, "main.c", cpp).unwrap();
+    let d = on_device(cfg, &mut io, "main.c", cpp).unwrap();
     let (unit, lay, tapes) = (&d.unit, &d.lay, &d.tapes);
     let x = rerail_metal::pp_expand::expand_from(unit, lay, rung).unwrap();
     if x.refused != 0 {
@@ -818,7 +825,7 @@ fn an_evaluation_is_a_fixed_handful_of_launches() {
     use rerail_c_pp::files::Search;
     let m: std::collections::HashMap<String, Vec<u8>> = [("main.c".to_string(), big.into_bytes())].into_iter().collect();
     let mut io = Search::new(vec![], move |p: &str| m.get(p).cloned());
-    let (d, _) = unit_of(rerail_c_pp::Config::new(crate::pp::options(false)), &mut io, "main.c", false).unwrap();
+    let d = on_device(rerail_c_pp::Config::new(crate::pp::options(false)), &mut io, "main.c", false).unwrap();
     let (unit, lay) = (&d.unit, &d.lay);
     let wide = rerail_metal::pp_expand::expand_at(&unit, &lay, 0, 4096).unwrap();
     let narrow = rerail_metal::pp_expand::expand_from(&unit, &lay, 0).unwrap();
@@ -879,7 +886,7 @@ fn a_batch_is_its_units() {
         pp.run("main.c");
         drop(pp);
         let mut io = Search::new(vec![], move |p: &str| m.get(p).cloned());
-        let (d, _) = unit_of(cfg, &mut io, "main.c", false).unwrap();
+        let d = on_device(cfg, &mut io, "main.c", false).unwrap();
         entries.push((serial.0, d));
     }
     let units: Vec<_> = entries.iter().map(|e| (&e.1.unit, &e.1.lay)).collect();
@@ -1071,13 +1078,15 @@ fn batch_stages(units: &[(&rerail_metal::pp_eval::Unit, &rerail_metal::pp_expand
     eprintln!("  stopped before phase 1: {:.0} us; phase k's cost: {}", at[0], steps.join(" "));
 }
 
-/// R10 of decision 0448: the corpus expanded on the device, each file its own unit with empty
-/// stubs for its headers, against the serial pass; every unit the device does not refuse gives
-/// the serial pass's tokens, and the refusals are counted by reason. `RERAIL_PP_FIRST` and
+/// R8 of decision 0467 (and R10 of 0448): the corpus preprocessed on the device, each file its
+/// own unit from its main file alone (empty stubs for the headers it does not have), against the
+/// serial pass. The spike is not run: the rounds decide every directive and resolve every
+/// include. Every unit gives the serial pass's tokens, none is refused (a refusal is counted by
+/// reason, then fails the test), and every round is 4 launches. `RERAIL_PP_FIRST` and
 /// `RERAIL_PP_COUNT` choose the files of each language; `RERAIL_PP_STAGES` measures a batch.
 #[test]
 #[ignore = "the corpus (~/orca/rerail-shared/lean-corpus); run in slices"]
-fn the_corpus_expands_on_the_device() {
+fn the_corpus_preprocesses_on_the_device() {
     use rerail_c_pp::Config;
     use rerail_c_pp::files::{DirKind, Search};
     use rerail_metal::pp_expand::*;
@@ -1127,7 +1136,7 @@ fn the_corpus_expands_on_the_device() {
             pp.run(&path);
             drop(pp);
             let mut io = Search::new(vec![("<stub>".into(), DirKind::After)], stub);
-            let (d, p1) = match unit_of(cfg, &mut io, &path, cpp) {
+            let d = match on_device(cfg, &mut io, &path, cpp) {
                 Ok(u) => u,
                 Err(why) => {
                     *refused.entry(why).or_default() += 1;
@@ -1135,7 +1144,6 @@ fn the_corpus_expands_on_the_device() {
                 }
             };
             rounds = rounds.max(d.rounds);
-            let _ = p1;
             entries.push(Entry { path, serial: serial.0, d });
         }
         let units: Vec<_> = entries.iter().map(|e| (&e.d.unit, &e.d.lay)).collect();
@@ -1197,6 +1205,8 @@ fn the_corpus_expands_on_the_device() {
         eprintln!("GPU time: {:.1} ms in all over {} runs (units a run: {batches:?}), median {:.3} ms, most {:.3} ms a run", all * 1e3, gpu.len(), gpu[gpu.len() / 2] * 1e3, most * 1e3);
     }
     eprintln!("the built-ins in units refused for them: {named:?}");
+    same(refused, std::collections::BTreeMap::new(), "the units refused");
+    assert!(same_units == 0 || launches == 4, "{launches} launches a round, not 4");
 }
 
 /// R7 of decision 0448: calls whose `(` or `)` is past their list's end. The call reads the
@@ -1288,7 +1298,7 @@ fn where_an_evaluations_gpu_time_goes() {
     for (what, src) in [("small", "#define A 1\nint x = A;\n".to_string()), ("large", big)] {
         let m: std::collections::HashMap<String, Vec<u8>> = [("main.c".to_string(), src.into_bytes())].into_iter().collect();
         let mut io = Search::new(vec![], move |p: &str| m.get(p).cloned());
-        let (d, _) = unit_of(rerail_c_pp::Config::new(crate::pp::options(false)), &mut io, "main.c", false).unwrap();
+        let d = on_device(rerail_c_pp::Config::new(crate::pp::options(false)), &mut io, "main.c", false).unwrap();
         let (unit, lay) = (&d.unit, &d.lay);
         for g in [1u64, 32] {
             let t: Vec<String> = [("front", TO_FRONT), ("defs", TO_DEFS), ("vis", TO_VIS), ("setup", TO_ALL + 1), ("all", TO_ALL)]

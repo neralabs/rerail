@@ -366,3 +366,17 @@ row.
   - All 25 evaluator tests pass; the Metal gates pass. The corpus, from main files: **3,135 units
     equal, none refused**, at most 2 rounds of 4 launches. GPU time 245 ms over the three slices,
     at a load average of 18–22.
+- **Step 8: the corpus from its main files (R8).** `the_corpus_preprocesses_on_the_device`
+  (was 0448's `the_corpus_expands_on_the_device`) builds each unit from its main file alone,
+  through `on_device`: the rounds, with no spike run. It fails on any refusal, and on a round
+  other than 4 launches.
+  - The spike's P1 is now a cross-check only: `unit_of` runs it beside `on_device`, for the tests
+    that compare the passes' arrays (`lookups_agree`, the tree's, the groups', the names'). Every
+    other test, and the corpus, builds through `on_device`.
+  - The corpus, in its three slices (0/500, 500/600, 1100/all): **3,135 units equal the serial
+    pass (7,610,374 tokens), none refused**, at most 2 rounds of 4 launches. GPU time 271 ms over
+    34 runs, at a load average of 22–52.
+  - **Open, from step 7:** the `_Pragma` rows (`once`, `push_macro`, `pop_macro`, or a macro
+    operand), `__COUNTER__` in a directive's line, and a call into an included file or past its
+    file's end stay refused by name (`X_PRAGMA`, `X_COUNTER`, `X_ACROSS`). The corpus has none of
+    them.

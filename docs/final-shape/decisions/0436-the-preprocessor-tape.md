@@ -227,7 +227,7 @@ passes' arrays (user, 2026-11-18). The serial pass is the reference for the outp
   tree of lists on a persistent work queue (0448 §1–§3). On every file of both corpora as its
   own unit, 3,132 give the serial pass's tokens (7.56 M). Three are refused: two by the spike's
   P1 (`#line`), and one for a call whose arguments run across a directive
-  (`the_corpus_expands_on_the_device`).
+  (`the_corpus_preprocesses_on_the_device`).
   - **Next: P1's rounds** on the device: the instances' layout (sizes bottom-up, bases top-down,
     a scan a depth), the definitions' table (rows sorted by key and position, a search per use,
     `push_macro`/`pop_macro` matched by depth), the tests, the chains' first true arm and the
