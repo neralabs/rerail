@@ -108,8 +108,11 @@ describe("waiting for the write lock", () => {
       const answered = waitForWriteLock(path, undefined, since).then(now);
       // 5 ms after one of the tries SQLite's busy handler makes from `since`, 95 ms before the next.
       const released = await releaseAt(holder, since + sqliteTryAtMs(15) + 5, true);
-      // Well before that next try, which the busy handler's times alone would wait for.
-      expect(await answered).toBeLessThan(nextSqliteTry(since, released) - 20);
+      // Well before that next try, which the busy handler's times alone would wait for. Windows reports an open file's
+      // growth only once it is flushed, and this holder flushes nothing: there the wait keeps SQLite's times, with room
+      // for its timers' steps of about 16 ms.
+      const next = nextSqliteTry(since, released);
+      expect(await answered).toBeLessThan(process.platform === "win32" ? next + 35 : next - 20);
     } finally {
       holder.close();
     }
