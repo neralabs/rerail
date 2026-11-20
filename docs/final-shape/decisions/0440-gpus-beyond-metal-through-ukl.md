@@ -1596,10 +1596,11 @@ old suffix, `gpu/src/library_tests.ukl`, is renamed.
 - **On the devices, at 32 lanes:** Metal, Apple's OpenCL and the Arc's as before, and CUDA on the GB10 (the
   library's 19, the device layer's 6, the lane suite's 58).
 
-- **Open:** `rerail-device-metal`'s tests register Python's and `.rr`'s packs (`test_languages`) only where two tests
-  call it, while its corpus runs read `.rr` documents (`lines::of`) in tests that do not: a CPU worker panics
-  ("no language registered for Rr"), now and then by which test runs first, caught and run again. Every test passes
-  through it, on the Mac as on Linux. The crate's tests need the engine's load-time registration.
+- **Fixed (was open):** `rerail-device-metal`'s tests registered Python's and `.rr`'s packs (`test_languages`) only in
+  the two tests that called it, while its corpus runs read `.rr` documents (`lines::of`) in tests that did not. A CPU
+  worker then panicked ("no language registered for Rr"), now and then, by which test ran first; the panic was caught
+  and the work run again. The packs are now registered as the test binary loads, beside Metal (`test_load`), as the
+  engine registers them as it loads. The lane suite passes with no such panic on Metal (59) and on CUDA (58).
 
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's

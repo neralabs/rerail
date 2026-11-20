@@ -960,7 +960,6 @@
         if !mj::available() {
             return;
         }
-        crate::test_languages();
         // Tapes held in vectors of their own, not where the device reads them (a parse not placed): the batch's views
         // are made, not read in place (decision 0353 step 4d).
         let lang = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
@@ -1012,7 +1011,6 @@
         if !mj::available() {
             return;
         }
-        crate::test_languages();
         let texts = ["import os\nx = f(1, y=2)\n", "class C(B):\n    def m(self, a, *b):\n        return [a for a in b if a]\n", "def f(a, b:\n    return [a for\n", "", "@d\ndef g():\n    try:\n        pass\n    except E as e:\n        raise\n"];
         let make = || -> Vec<Document> { texts.iter().enumerate().map(|(at, source)| {
             let path = format!("d{at}.py");

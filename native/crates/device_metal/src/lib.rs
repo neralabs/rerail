@@ -648,21 +648,17 @@ pub use rerail_w::panic_boundary;
 pub use rerail_logic::threads;
 // cratify: mounts end
 
-/// The language packs this crate's tests read through the load-time registry (`language::base`), registered once:
-/// the engine registers them as it loads (`install_languages`), and a test of this crate runs without it (work
-/// queue Q23). The first registration holds, so a test may call it at any point. `.rr` text is read too (the parity
-/// cases' programs, on the CPU pool's workers): without its pack a worker panicked, intermittently, by which test ran
-/// first.
+/// The language packs this crate's tests read through the load-time registry (`language::base`), registered as the
+/// test binary loads (`device_metal::test_load`), as the engine registers them as it loads (`install_languages`).
+/// `.rr` text is read too (the parity cases' programs, on the CPU pool's workers): registered by the first test that
+/// asked, a worker of another test panicked, now and then, by which test ran first (work queue Q23).
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 pub(crate) fn test_languages() {
     use crate::code_rule_dsl::language::{self, Family, adapter::pack::{Pack, register}};
     use crate::code_rule_dsl::language::adapter::rr::Rr;
     use rerail_lang_python::code_rule_dsl::language::adapter::python::Python;
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| {
-        register(Family::Python, &Pack::<Python>::NEW);
-        language::register_base(Family::Python, &Pack::<Python>::NEW);
-        register(Family::Rr, &Pack::<Rr>::NEW);
-        language::register_base(Family::Rr, &Pack::<Rr>::NEW);
-    });
+    register(Family::Python, &Pack::<Python>::NEW);
+    language::register_base(Family::Python, &Pack::<Python>::NEW);
+    register(Family::Rr, &Pack::<Rr>::NEW);
+    language::register_base(Family::Rr, &Pack::<Rr>::NEW);
 }
