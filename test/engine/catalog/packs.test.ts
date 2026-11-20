@@ -974,7 +974,7 @@ describe("ruleKeyRangeFailure", () => {
   it.each([
     ["a core before the release that reads stored passes the old range", ">=0.1.0-0", ["stored"], "0.1.5", false],
     ["the release that reads it fails a range admitting older cores", ">=0.1.0-0", ["stored"], since, true],
-    ["a prerelease of it fails it too", ">=0.1.0-0", ["filePath"], `${since}-next.0`, true],
+    ["a prerelease of the release that reads filePath fails it too", ">=0.1.0-0", ["filePath"], `${RULE_KEY_SINCE.get("filePath")}-next.0`, true],
     ["a later release fails it too", ">=0.1.0-0", ["stored"], "1.0.0", true],
     ["a range starting at its prereleases passes", `>=${since}-0`, ["stored"], since, false],
     ["a range starting at the release passes", `>=${since}`, ["stored"], since, false],

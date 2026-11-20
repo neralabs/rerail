@@ -311,31 +311,45 @@ export function shippedLanguages(directory) {
   return [...named].sort();
 }
 
+/** Whether `value` is an object or an array of a rule document, which a walk goes into. */
+const isObject = (value) => typeof value === "object" && value !== null;
+
+/** Whether `condition` is a text condition: `regex`, `notRegex` or both. An array's keys are indexes, so it is none. */
+function isTextCondition(condition) {
+  const keys = isObject(condition) ? Object.keys(condition) : [];
+  return keys.length > 0 && keys.every((key) => key === "regex" || key === "notRegex");
+}
+
 /**
  * The keys of RULE_KEY_SINCE that `rule`, an object of a rule document, uses as the engine reads them: `stored`, a
- * string beside the `regex` it is about, and `filePath`, a text condition (`regex`, `notRegex` or both).
+ * string beside the `regex` it is about, and `filePath`, a text condition.
  */
 function ruleKeysOf(rule) {
-  const condition = rule.filePath;
-  const keys = typeof condition === "object" && condition !== null && !Array.isArray(condition) ? Object.keys(condition) : [];
-  const textCondition = keys.length > 0 && keys.every((key) => key === "regex" || key === "notRegex");
-  return [...(textCondition ? ["filePath"] : []), ...(typeof rule.stored === "string" && Object.hasOwn(rule, "regex") ? ["stored"] : [])];
+  return [...(isTextCondition(rule.filePath) ? ["filePath"] : []), ...(typeof rule.stored === "string" && Object.hasOwn(rule, "regex") ? ["stored"] : [])];
 }
 
 /**
  * Every key of RULE_KEY_SINCE that the ast rules of the rule documents under `<directory>/rules` use, sorted. A
  * utility's name is no rule key (`"utils": { "stored": { … } }` uses no `stored`); a metavariable's name is upper case
  * (transform.rs `is_name`) and never one. A document that is not JSON uses none: check 1 reports it.
+ *
+ * The walk reads every object of a document, not only its ast rules, so an object outside them in the same shape can
+ * only raise a range further than it needs (packs.test.ts pins the packs raised). Walking only the positions the
+ * engine reads an ast rule at would copy its schema here, and a position it missed would leave a range admitting a
+ * core that drops the pack.
  */
 export function shippedRuleKeys(directory) {
   const used = new Set();
-  // `names` is an object of `utils`: its keys are names and only its values are walked as rules.
-  const collect = (value, names) => {
-    if (typeof value !== "object" || value === null) return;
-    if (!names && !Array.isArray(value)) ruleKeysOf(value).forEach((key) => used.add(key));
-    for (const [key, child] of Object.entries(value)) collect(child, !names && !Array.isArray(value) && key === "utils");
+  const collect = (value) => {
+    if (!isObject(value)) return;
+    ruleKeysOf(value).forEach((key) => used.add(key));
+    for (const [key, child] of Object.entries(value)) {
+      // The keys of `utils` are names: only its values are rules.
+      if (key === "utils" && isObject(child)) Object.values(child).forEach(collect);
+      else collect(child);
+    }
   };
-  for (const document of ruleDocuments(directory)) collect(document, false);
+  ruleDocuments(directory).forEach(collect);
   return [...used].sort();
 }
 
