@@ -12,28 +12,28 @@ files and 30 library files changed. (After the rrlab b402cbfa8 follow-ups below,
 
 | Concept | Copies | Survivor | Owner | Rules changed |
 |---|---|---|---|---|
-| Parentheses off, comments inside skipped | ast `unparen` (read child 0), ruff `ruff_bare`, bugbear `bb_unparen`, exceptions `exc_unparen`, compare `same_bare` | `unparen` (fixed: the one non-comment child) | ast.rr | 45 rules and 17 libraries renamed |
-| Python's builtins | names `builtin` (subset), pyflakes `builtin_name`/`builtin_more`, exceptions `exc_more_builtin` | `builtin`, now Python 3.13's full list plus `WindowsError` and the module attributes | names.rr | F405, F822, F823 (`builtin_name` → `builtin`); UP024 (WindowsError through `builtin_at`) |
-| Expression sameness (ComparableExpr) | compare `cmp_same`, pytest `pytest_same` (+ `pytest_atom`, `_kid`, `_pair`, `_differ`), comprehensions `c4_same` (+ `c4_tuple_pair`, `_part`, `_width`) | `cmp_same` / `cmp_same_ask`, with pytest_same's extras (floats by value, f-string prefixes without quotes, complex) and tuple spellings as one kind | compare.rr | PT014, C420; comprehensions' `c4_passthrough` |
-| str literal with its value | pyflakes `plain_str`, pytest `pytest_str`, docstrings `plain_doc` | `plain_str` | ast.rr (moved from pyflakes.rr, so `docstring` can use it) | PT003, PT007, PT019 |
-| Docstring | ast `docstring` (on `str_const`, no rows in rrlab, parentheses not taken off), typing `py_docstring` / `doc_stmt`, docstrings `doc_expr`, upgrade `docstring_stmt` | `docstring(o, e)` and `doc_stmt(s, e)` (Ruff's is_docstring_stmt: parentheses off, adjacent literals, not bytes or f-strings) | ast.rr | PYI021, RUF001, RUF002; docstrings.rr and upgrade.rr read it |
-| Stub file | typing `stub_file`, docstrings `doc_stub`, upgrade `up_stub` | `stub_file(d)` | ast.rr | D418, UP025, UP043, TC006; 5 libraries |
-| Hard keywords | bugbear `bb_keyword`, upgrade `py_keyword` | `py_keyword` | names.rr | none |
-| typing modules | typing `typing_mod`, upgrade `up_typing_module` | `typing_mod` | names.rr | none (libraries only) |
-| Identifier test | bugbear `bb_identifier` (non-ASCII approximated by `\x80-\xff`), upgrade `identifier` (ASCII only) | `identifier(x)`: `[_\p{XID_Start}]\p{XID_Continue}*`, not a keyword, as Ruff's is_identifier | pyflakes.rr (needs plain_str) | B009, B010, PIE804 (and UP013/UP014 through upgrade.rr) |
-| Argument counts, keywords, splats | bugbear `bb_npos`, `bb_nkw`, `bb_kw`, `bb_star`, `bb_kwsplat`; upgrade `up_npos`, `nkw`, `up_kw`, `kwsplat`, `up_splat`; pyflakes-format `call_star`, `call_kwsplat`, `call_kw` | ruff's `call_nargs`, `call_nkwargs`, `call_splat`, and new `call_kw` (value unparenthesised), `call_star`, `call_kwsplat` | ruff.rr | 18 rules: B004, B005, B009, B010, B022, B028, B034, B039, B905, C408, PIE796, PIE810, UP013, UP014, UP015, UP018, UP022, UP032 (pyflakes-format's keyword node: `call_kwarg`); bugbear.rr, upgrade.rr and pyflakes-format.rr now include ruff.rr |
-| Truthiness | ruff-classes `truth_of`, simplify `bare_truth`/`sim_truth`, PT015's `always_false`/`falsy_atom`/`empty_piece` | `truth_of(m, t)` (Ruff's Truthiness::from_expr, with simplify's f-string rules: non-empty f-strings are true, t-strings always true); `sim_truth` is a one-line view of it | ruff.rr (moved from ruff-classes.rr) | PT015 (rewritten on it), SIM222, SIM223 through sim_truth; LOG007, LOG014 unchanged |
-| t-string literal | simplify `sim_tstring`, ruff `string_form(m, "tstr")` inline | `tstring_lit(m)` | ruff.rr | SIM905 |
-| Side effects (contains_effect) | ruff `side_effect`, simplify `sim_effect` (+ `effect_node`, `safe_operand`, `iterable_init`), TRY300's private `may_effect` | `side_effect` | ruff.rr | SIM222, SIM223, TRY300 |
-| Ruff's seen_module | misc-seen `seen_module`, simplify `sim_os_seen` | `seen_module(d, "os")` | misc-seen.rr | SIM112 |
-| Own-line comment | ERA001's `era_own_line`, misc2-noqa `own_line_comment` | `own_line_comment` | misc2-noqa.rr | ERA001 |
+| Parentheses off, comments inside skipped | ast `unparen` (read child 0), ruff `ruff_bare`, bugbear `bb_unparen`, exceptions `exc_unparen`, compare `same_bare` | `unparen` (fixed: the one non-comment child) | ast.rerail | 45 rules and 17 libraries renamed |
+| Python's builtins | names `builtin` (subset), pyflakes `builtin_name`/`builtin_more`, exceptions `exc_more_builtin` | `builtin`, now Python 3.13's full list plus `WindowsError` and the module attributes | names.rerail | F405, F822, F823 (`builtin_name` → `builtin`); UP024 (WindowsError through `builtin_at`) |
+| Expression sameness (ComparableExpr) | compare `cmp_same`, pytest `pytest_same` (+ `pytest_atom`, `_kid`, `_pair`, `_differ`), comprehensions `c4_same` (+ `c4_tuple_pair`, `_part`, `_width`) | `cmp_same` / `cmp_same_ask`, with pytest_same's extras (floats by value, f-string prefixes without quotes, complex) and tuple spellings as one kind | compare.rerail | PT014, C420; comprehensions' `c4_passthrough` |
+| str literal with its value | pyflakes `plain_str`, pytest `pytest_str`, docstrings `plain_doc` | `plain_str` | ast.rerail (moved from pyflakes.rerail, so `docstring` can use it) | PT003, PT007, PT019 |
+| Docstring | ast `docstring` (on `str_const`, no rows in rrlab, parentheses not taken off), typing `py_docstring` / `doc_stmt`, docstrings `doc_expr`, upgrade `docstring_stmt` | `docstring(o, e)` and `doc_stmt(s, e)` (Ruff's is_docstring_stmt: parentheses off, adjacent literals, not bytes or f-strings) | ast.rerail | PYI021, RUF001, RUF002; docstrings.rerail and upgrade.rerail read it |
+| Stub file | typing `stub_file`, docstrings `doc_stub`, upgrade `up_stub` | `stub_file(d)` | ast.rerail | D418, UP025, UP043, TC006; 5 libraries |
+| Hard keywords | bugbear `bb_keyword`, upgrade `py_keyword` | `py_keyword` | names.rerail | none |
+| typing modules | typing `typing_mod`, upgrade `up_typing_module` | `typing_mod` | names.rerail | none (libraries only) |
+| Identifier test | bugbear `bb_identifier` (non-ASCII approximated by `\x80-\xff`), upgrade `identifier` (ASCII only) | `identifier(x)`: `[_\p{XID_Start}]\p{XID_Continue}*`, not a keyword, as Ruff's is_identifier | pyflakes.rerail (needs plain_str) | B009, B010, PIE804 (and UP013/UP014 through upgrade.rerail) |
+| Argument counts, keywords, splats | bugbear `bb_npos`, `bb_nkw`, `bb_kw`, `bb_star`, `bb_kwsplat`; upgrade `up_npos`, `nkw`, `up_kw`, `kwsplat`, `up_splat`; pyflakes-format `call_star`, `call_kwsplat`, `call_kw` | ruff's `call_nargs`, `call_nkwargs`, `call_splat`, and new `call_kw` (value unparenthesised), `call_star`, `call_kwsplat` | ruff.rerail | 18 rules: B004, B005, B009, B010, B022, B028, B034, B039, B905, C408, PIE796, PIE810, UP013, UP014, UP015, UP018, UP022, UP032 (pyflakes-format's keyword node: `call_kwarg`); bugbear.rerail, upgrade.rerail and pyflakes-format.rerail now include ruff.rerail |
+| Truthiness | ruff-classes `truth_of`, simplify `bare_truth`/`sim_truth`, PT015's `always_false`/`falsy_atom`/`empty_piece` | `truth_of(m, t)` (Ruff's Truthiness::from_expr, with simplify's f-string rules: non-empty f-strings are true, t-strings always true); `sim_truth` is a one-line view of it | ruff.rerail (moved from ruff-classes.rerail) | PT015 (rewritten on it), SIM222, SIM223 through sim_truth; LOG007, LOG014 unchanged |
+| t-string literal | simplify `sim_tstring`, ruff `string_form(m, "tstr")` inline | `tstring_lit(m)` | ruff.rerail | SIM905 |
+| Side effects (contains_effect) | ruff `side_effect`, simplify `sim_effect` (+ `effect_node`, `safe_operand`, `iterable_init`), TRY300's private `may_effect` | `side_effect` | ruff.rerail | SIM222, SIM223, TRY300 |
+| Ruff's seen_module | misc-seen `seen_module`, simplify `sim_os_seen` | `seen_module(d, "os")` | misc-seen.rerail | SIM112 |
+| Own-line comment | ERA001's `era_own_line`, misc2-noqa `own_line_comment` | `own_line_comment` | misc2-noqa.rerail | ERA001 |
 
 Where two copies differed, the survivor takes the more correct one, and the rescore below shows each difference:
 
 - `unparen`: ast's read child 0, which is a comment in `(  # why` + newline + `x)`. The four copies all skipped
   comments; that is now ast's own rule, so the copies are identical to it and go.
 - `cmp_same` vs `pytest_same`: pytest's compared floats by value (`1.0` = `1.00`) and f-strings without their
-  quotes; compare's compared floats by text. compare.rr now does both, plus complex literals. The tuple spellings
+  quotes; compare's compared floats by text. compare.rerail now does both, plus complex literals. The tuple spellings
   (c-sim change 5) are one kind there too, so `c4_same`'s one-level bridge is gone and nested tuple targets
   compare as well.
 - `truth_of` vs `bare_truth` vs `always_false`: three partial copies of one Ruff function. truth_of lacked
@@ -42,15 +42,15 @@ Where two copies differed, the survivor takes the more correct one, and the resc
 - `identifier`: bugbear's `\x80-\xff` meant bytes under the old matcher and Latin-1 code points under the Rust
   one, so `"ſ"` stopped being an identifier; the XID classes are exact (B009/B010 gain their FN).
 - `docstring`: ast's version read `str_const`, which needs `str_part` (no rows in rrlab), and did not take
-  parentheses off; Ruff does. Only upgrade.rr used it.
+  parentheses off; Ruff does. Only upgrade.rerail used it.
 
 ### Kept apart (different semantics, or a semantic change that needs its own pass)
 
 | Pair | Why it stays |
 |---|---|
-| `ruff_qual` (ruff.rr), `sym_of` (names), `sym_at` / `up_qual` (upgrade), `exc_qual` (exceptions) | Three resolution engines: names' file-wide may-resolution, upgrade's visit-order lookup, ruff's latest-binding with rebinding checks. Ruff has one (resolve_qualified_name). Merging them changes what dozens of rules resolve; it is the next pass, not a rename. The same holds for `typing_sym` / `typing_ref` / `typing_name` / `annt_typing` and `exc_call` / `call_q`, which are each engine's "callee is q". |
+| `ruff_qual` (ruff.rerail), `sym_of` (names), `sym_at` / `up_qual` (upgrade), `exc_qual` (exceptions) | Three resolution engines: names' file-wide may-resolution, upgrade's visit-order lookup, ruff's latest-binding with rebinding checks. Ruff has one (resolve_qualified_name). Merging them changes what dozens of rules resolve; it is the next pass, not a rename. The same holds for `typing_sym` / `typing_ref` / `typing_name` / `annt_typing` and `exc_call` / `call_q`, which are each engine's "callee is q". |
 | `bb_pos` (bugbear), `up_arg` (upgrade), `ruff_arg` (ruff), `call_pos` / `arg_pos` (pyflakes-format), `exc_arg` (exceptions) | Different views of "the i-th positional": `*xs` counted as one, skipped, or ending the list. Ruff uses each in different rules. They could share one relation with a "how" column; not done here. |
-| `ruff_int(e, v)` and typing's `pyi_int(e)` | Same idea; typing.rr does not include ruff.rr and PYI003/PYI051 only need the kind. Left. |
+| `ruff_int(e, v)` and typing's `pyi_int(e)` | Same idea; typing.rerail does not include ruff.rerail and PYI003/PYI051 only need the kind. Left. |
 | `doc_exports` / `all_entry` (docstrings vs pyflakes) | F822 counts `__all__.extend`/`append`, visibility does not (d-n). Different. |
 | `typing_dec` (naming) and `typing_sym` (typing) | typing_dec is on a decorator, through a call. |
 | `fixme_tag` (misc-comments) and `todo_tag` (misc2-todo) | Same tag regex, different columns; FIX00x and TD00x both score clean. A follow-up can make fixme_tag read todo_tag. |
@@ -65,25 +65,25 @@ Where two copies differed, the survivor takes the more correct one, and the resc
 | ast `bool_operand` ignores comments (ruf L2) | Applied (`bool_part`). RUF019 keeps its count, which is now redundant but harmless. |
 | names `builtin` complete (f-e C1, pt-try 1, ruf L4, up WindowsError) | Applied: 47 names added (the 3.13 exceptions, `True`/`False`/`None`, `exit`, `quit`, `copyright`, `credits`, `license`, `__build_class__`, `__loader__`, `__package__`, `__annotations__`, `__builtins__`, `__cached__`, `WindowsError`). `builtin_name` and `builtin_more` dropped; `exc_more_builtin` and exceptions' second `exc_qual` rule dropped. Not version-gated (Ruff gates ExceptionGroup on 3.11, etc.). |
 | names `not_name` for `__future__` imports (up) | Applied; UP010's workaround removed. |
-| names: export `bound_in`, `walk`, `miss` (f-e C2) | Applied in names' header (they were already used). `bound_before` (a visit-order lookup) not added: pyflakes.rr's `unbound_ref` does it, and only F405/F633/F821 would share it. |
+| names: export `bound_in`, `walk`, `miss` (f-e C2) | Applied in names' header (they were already used). `bound_before` (a visit-order lookup) not added: pyflakes.rerail's `unbound_ref` does it, and only F405/F633/F821 would share it. |
 | typing-context `deferred_ann` scope test only on variable annotations (misc2 request 5) | Already done: the scope rule has `kind(a, "assignment")`. No change. |
-| compare.rr treats tuple targets as tuples (c-sim 5) | Applied (`same_kind`); `c4_same` reduced to `cmp_same` and removed. |
+| compare.rerail treats tuple targets as tuples (c-sim 5) | Applied (`same_kind`); `c4_same` reduced to `cmp_same` and removed. |
 | `docstring` falls back to plain_str (pyi 1) | Applied: docstring is now doc_stmt-based (see the table). |
 | names: bind `type X = …` (pyi 2) | Not done. It needs a binding kind for type aliases and a rescore of every scope rule. PYI047's text-based `type_alias_read` stays. |
-| names `class_base` through `Base[T]` (pyi 3) | Not done, same reason: class_base feeds subclass/mro for many rules. typing.rr's `class_base_sym` stays. |
+| names `class_base` through `Base[T]` (pyi 3) | Not done, same reason: class_base feeds subclass/mro for many rules. typing.rerail's `class_base_sym` stays. |
 | names: `ruff_latest_site` (misc2 request 4) | Not done; misc2-perf's `perf_latest_site` stays. It belongs with the resolution merge above. |
-| `truth` clash (c-sim 4) | Moot: truth_of is the one Truthiness, in ruff.rr. |
-| `capture_parent` (pyi 4), `security.rr` vocabulary (pyi 7), `str_const` (bandit 3), `star_arg` removal (c-sim 6) | Observations; no change needed. |
+| `truth` clash (c-sim 4) | Moot: truth_of is the one Truthiness, in ruff.rerail. |
+| `capture_parent` (pyi 4), `security.rerail` vocabulary (pyi 7), `str_const` (bandit 3), `star_arg` removal (c-sim 6) | Observations; no change needed. |
 | Core, functor, check_rr and rrlab items (all batches) | Queued with exact text in CORE-QUEUE-python.md, or marked there as answered by rrlab 08d977aa5 or b402cbfa8. |
 
 Coordinator items (during this merge):
 
-- **RUF001 confusables:** lines 18 and 21 of the generated `.confusables.rr` (and the generator,
+- **RUF001 confusables:** lines 18 and 21 of the generated `.confusables.rerail` (and the generator,
   gen-ruff-ruf001-…py) used `glob` where they meant a regex. Now `match`; the round-trip check passes. RUF001
   finds all 15 Ruff findings (was 6 TP / 9 FN).
 - **TD001–TD007 at the tag:** every TD rule reports at `todo_at`'s span (Ruff's column; TD006 checked on
   TD006.py: 5:3, 6:3, 7:9 as the snapshot), and TD006's fix replaces only the tag (`replace(t, `TODO`)`).
-  misc2-todo-span.rr is kept; its comment is updated and its regex now matches todo_tag's exactly.
+  misc2-todo-span.rerail is kept; its comment is updated and its regex now matches todo_tag's exactly.
 - **Direct regex forms:** python/pyflakes' `identifier` uses `\p{XID_…}`; FAST003 uses `match_all` with span
   captures instead of a recursive `match`, and reports at the `{…}` as Ruff does (score unchanged). No other python
   rule still had an ASCII copy or a counting workaround for a missing regex feature: D404 already used `\p{…}`,
@@ -99,7 +99,7 @@ Coordinator items (during this merge):
 
 ## Scores
 
-Every one of the 537 rules was rescored, since ast.rr and names.rr are under all of them. "Before" is HEAD's lib/
+Every one of the 537 rules was rescored, since ast.rerail and names.rerail are under all of them. "Before" is HEAD's lib/
 and packs/python (b402cbfa8; scratchpad/merge-py/brepo, read through `RRLAB_RR`), scored back to back with "after"
 (the live tree) by the same rrlab, rule by rule (scratchpad/merge-py/rrpair.sh; results in rrscores.tsv).
 
@@ -142,4 +142,4 @@ difference came from rrlab changing between the runs, not from the merge.
 
 ## To delete
 
-- Nothing. lib/python/misc2-todo-span.rr is used again (by TD001–TD007), so it is no longer to delete.
+- Nothing. lib/python/misc2-todo-span.rerail is used again (by TD001–TD007), so it is no longer to delete.

@@ -15,16 +15,19 @@
 //! A block no device wrapped (the host's writes alone) is written back in place: one `MS_SYNC`, the truncation and
 //! the state, and its mapping and readers stay.
 //!
+//! Each `MS_SYNC` of the host's pages waits only with `Flush::Synced` (decision 0481); by default the OS writes them
+//! back at its own pace. A kernel's pages on macOS are written back in every mode, since the OS never writes them.
+//!
 //! Nothing else writes a kernel's pages back: not `sync`, not the OS's flush, not the process's exit (0295 §7). So
 //! the state written last is what makes them safe.
 
-use crate::block::{Backing, Block, FROZEN, Frozen, Header};
+use crate::block::{Backing, Block, FROZEN, Flush, Frozen, Header};
 use std::fs::OpenOptions;
 use std::io;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::sync::Mutex;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -36,8 +39,8 @@ struct Mapping {
     /// Wrapped for a device: a kernel may have written it, so its write-back unmaps it first (module doc).
     wrapped: bool,
     /// The no-copy wrap the GPU binds the block through, made once with the mapping; let go at the seal.
-    #[cfg(target_os = "macos")]
-    gpu: Mutex<Option<metal::Buffer>>,
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    gpu: Mutex<Option<rerail_device::device::Buffer>>,
 }
 
 unsafe impl Send for Mapping {}
@@ -61,8 +64,8 @@ impl Backing for Shared {
         self.0.len
     }
 
-    #[cfg(target_os = "macos")]
-    fn buffer(&self) -> Option<metal::Buffer> {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn buffer(&self) -> Option<rerail_device::device::Buffer> {
         self.0.gpu.lock().unwrap().clone()
     }
 }
@@ -95,7 +98,7 @@ impl Deferrable {
         kind: u32,
         len: usize,
         fresh: bool,
-        #[cfg(target_os = "macos")] device: Option<&metal::DeviceRef>,
+        #[cfg(any(target_os = "macos", target_os = "linux"))] device: Option<&rerail_device::device::Device>,
     ) -> io::Result<Deferrable> {
         let len = len.max(crate::block::PAGE).div_ceil(crate::block::PAGE) * crate::block::PAGE;
         let f = OpenOptions::new().read(true).write(true).create(true).truncate(fresh).open(path)?;
@@ -104,19 +107,24 @@ impl Deferrable {
         if p == libc::MAP_FAILED {
             return Err(io::Error::last_os_error());
         }
-        #[cfg(target_os = "macos")]
-        let gpu = device.map(|d| {
-            d.new_buffer_with_bytes_no_copy(p as *const std::ffi::c_void, len as u64, metal::MTLResourceOptions::StorageModeShared, None)
-        });
-        #[cfg(target_os = "macos")]
+        // SAFETY: the mapping outlives the wrap, which it holds and lets go at the seal, before it is unmapped.
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        let gpu = match device.map(|d| unsafe { rerail_device::device::wrap_host_memory(d, p.cast(), len) }).transpose() {
+            Ok(g) => g,
+            Err(e) => {
+                unsafe { libc::munmap(p, len) };
+                return Err(io::Error::other(e));
+            }
+        };
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         let wrapped = gpu.is_some();
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         let wrapped = false;
         let mapping = Arc::new(Mapping {
             base: p.cast(),
             len,
             wrapped,
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             gpu: Mutex::new(gpu),
         });
         let block = Block::over_with(kind, Box::new(Shared(mapping.clone())), !fresh);
@@ -146,9 +154,9 @@ impl Deferrable {
     pub fn seal(mut self) -> Sealed {
         let block = self.block.take().expect("an open deferrable block");
         let (mapping, path, kind) = (self.mapping.clone(), std::mem::take(&mut self.path), self.kind);
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
-            block.release_gpu_buffer();
+            block.release_device_buffer();
             mapping.gpu.lock().unwrap().take();
         }
         let length = block.used();
@@ -188,13 +196,18 @@ impl Sealed {
         self.mapping.len
     }
 
-    /// The writer's half (module doc). Returns the block mapped again read-only, frozen, every page written back.
-    pub fn write_back(self) -> io::Result<Frozen> {
+    /// The writer's half (module doc). Returns the block mapped again read-only and frozen, its pages written back as
+    /// `flush` says (decision 0481): with `Synced` on the disk; otherwise the OS's to write, at its own pace. A
+    /// kernel's pages on macOS are written back whatever `flush` says: the OS never writes back a page the GPU wired,
+    /// so that is what makes them the file's at all.
+    pub fn write_back(self, flush: Flush) -> io::Result<Frozen> {
         let Sealed { frozen, mapping, path, kind, length } = self;
         // Written by the host alone: no page is wired, so one `MS_SYNC` writes every one, and the mapping stays,
         // its readers reading on (the block a queued write's readers hold).
         if !mapping.wrapped {
-            msync(mapping.base, length, libc::MS_SYNC)?;
+            if flush.waits() {
+                msync(mapping.base, length, libc::MS_SYNC)?;
+            }
             let f = OpenOptions::new().read(true).write(true).open(&path)?;
             f.set_len(length as u64)?;
             f.write_all_at(&FROZEN.to_ne_bytes(), std::mem::offset_of!(Header, state) as u64)?;
@@ -222,7 +235,7 @@ impl Sealed {
             if p == libc::MAP_FAILED {
                 return Err(io::Error::last_os_error());
             }
-            let r = written_back(p.cast(), length);
+            let r = written_back(p.cast(), length, flush);
             unsafe { libc::munmap(p, length) };
             r?;
         }
@@ -237,17 +250,10 @@ impl Sealed {
 #[cfg(target_os = "macos")]
 const LET_GO: Duration = Duration::from_secs(10);
 
-/// `msync`s the range with `MS_SYNC`: elsewhere than macOS no page is wired for a GPU, and one `msync` writes the
-/// range back (Linux's `mincore` reports no dirty pages to wait on).
-#[cfg(not(target_os = "macos"))]
-fn written_back(base: *mut u8, len: usize) -> io::Result<()> {
-    msync(base, len, libc::MS_SYNC)
-}
-
 /// `msync`s the range with `MS_SYNC` until no page of it is dirty (`mincore`): a page still wired for the GPU is
 /// skipped by each `msync` until the driver lets go of it.
 #[cfg(target_os = "macos")]
-fn written_back(base: *mut u8, len: usize) -> io::Result<()> {
+fn written_back(base: *mut u8, len: usize, _: Flush) -> io::Result<()> {
     let pages = len.div_ceil(crate::block::PAGE);
     let mut v = vec![0 as libc::c_char; pages];
     let start = std::time::Instant::now();
@@ -267,6 +273,17 @@ fn written_back(base: *mut u8, len: usize) -> io::Result<()> {
         std::thread::sleep(wait);
         wait = (wait * 2).min(Duration::from_millis(20));
     }
+}
+
+/// With `Synced`, `msync`s the range with `MS_SYNC`; otherwise the OS writes it (decision 0481). Off macOS no device
+/// wraps a slab's pages (no Metal), so none is wired and one `msync` writes every dirty page back; and Linux's
+/// `mincore` reports a page's residency only, never whether it is dirty.
+#[cfg(not(target_os = "macos"))]
+fn written_back(base: *mut u8, len: usize, flush: Flush) -> io::Result<()> {
+    if !flush.waits() {
+        return Ok(());
+    }
+    msync(base, len, libc::MS_SYNC)
 }
 
 fn msync(base: *mut u8, len: usize, flags: i32) -> io::Result<()> {
@@ -301,7 +318,7 @@ mod tests {
             kind::JOURNAL,
             len,
             fresh,
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             None,
         )
         .unwrap()
@@ -328,10 +345,30 @@ mod tests {
         drop(r);
         assert!(Block::open_file(&path, kind::JOURNAL).is_err(), "not frozen before the writer has written it back");
         let length = sealed.length();
-        let back = sealed.write_back().unwrap();
+        let back = sealed.write_back(Flush::Synced).unwrap();
         assert_eq!(back.used(), length);
         assert_eq!(unsafe { *back.ptr::<u32>(off).add(1000) }, 1000 ^ 0x5a5a);
         assert!(on_disk(&path) >= (1 << 20), "written back: {} bytes on disk", on_disk(&path));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Written back with the OS's flush (decision 0481, the default), a host-written slab waits for no disk, yet is
+    /// frozen and holds its bytes when opened again from its file: the pages are the OS's to write.
+    #[test]
+    fn a_slab_written_back_by_the_os_opens_frozen_with_its_bytes() {
+        let d = dir("os-flush");
+        let path = d.join("seg-1");
+        let slab = create(&path, 1 << 20, true);
+        let off = slab.block().alloc(64 << 10, 64);
+        for i in 0..(16u32 << 10) {
+            unsafe { *slab.block().ptr::<u32>(off).add(i as usize) = i ^ 0x5a5a };
+        }
+        let sealed = slab.seal();
+        let length = sealed.length();
+        drop(sealed.write_back(Flush::Os).unwrap());
+        let again = Block::open_file(&path, kind::JOURNAL).expect("frozen");
+        assert_eq!(again.used(), length);
+        assert_eq!(unsafe { *again.ptr::<u32>(off).add(1000) }, 1000 ^ 0x5a5a);
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -343,7 +380,7 @@ mod tests {
         let slab = create(&path, 1 << 20, true);
         let off = slab.block().alloc(64 << 10, 64);
         unsafe { std::ptr::write_bytes(slab.block().ptr::<u8>(off), 0xff, 64 << 10) };
-        slab.seal().write_back().unwrap();
+        slab.seal().write_back(Flush::Synced).unwrap();
         let again = create(&path, 1 << 20, false);
         let off = again.block().alloc(64 << 10, 64);
         let bytes = again.block().bytes(off, off + (64 << 10));
@@ -352,33 +389,46 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
-    /// A kernel's writes through the wrap reach the disk (0295 §7: without the unmap, none did).
-    #[cfg(target_os = "macos")]
+    /// A kernel's writes through the wrap reach the disk (0295 §7: without the unmap, none did). The kernel is UKL,
+    /// on the process's device (decision 0440 step C).
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn a_kernels_writes_are_written_back() {
-        use metal::*;
-        let Some(device) = Device::system_default() else { return };
+        use rerail_gpu::device::ComputeQueue;
+        use rerail_gpu::kernels::launch;
+        let Some(shared) = rerail_gpu::shared::get() else { return };
         let d = dir("gpu");
         let path = d.join("seg-1");
         let len = 16usize << 20;
-        let slab = Deferrable::create(&path, kind::JOURNAL, len + (1 << 16), true, Some(&device)).unwrap();
+        let slab = Deferrable::create(&path, kind::JOURNAL, len + (1 << 16), true, Some(&shared.device)).unwrap();
         let off = slab.block().alloc(len, crate::block::PAGE);
-        const SRC: &str = "kernel void fill(device uint *p [[buffer(0)]], uint i [[thread_position_in_grid]]) { p[i] = i * 2654435761u; }";
-        metal::objc::rc::autoreleasepool(|| {
-            let lib = device.new_library_with_source(SRC, &CompileOptions::new()).unwrap();
-            let pipe = device.new_compute_pipeline_state_with_function(&lib.get_function("fill", None).unwrap()).unwrap();
-            let queue = device.new_command_queue();
-            let buf = slab.block().gpu_buffer(&device);
-            let cmd = queue.new_command_buffer();
-            let enc = cmd.new_compute_command_encoder();
-            enc.set_compute_pipeline_state(&pipe);
-            enc.set_buffer(0, Some(&buf), off as u64);
-            enc.dispatch_threads(MTLSize::new((len / 4) as u64, 1, 1), MTLSize::new(256, 1, 1));
-            enc.end_encoding();
-            cmd.commit();
-            cmd.wait_until_completed();
-        });
-        let back = slab.seal().write_back().unwrap();
+        /// The fill's parameters: its first word in the block, its words.
+        #[repr(C)]
+        #[derive(Clone, Copy)]
+        struct FillP {
+            at: u32,
+            n: u32,
+        }
+        unsafe impl rerail_gpu::Pod for FillP {}
+        const SRC: &str = r#"
+#include <ukl/backend.h>
+typedef struct FillP { uint32_t at; uint32_t n; } FillP;
+UKL_REFLECT_STRUCT(FillP, at, n)
+DEFINE_KERNEL2(blocks_tests, fill, RWBUFFER, uint32_t, p, "[block]", ARGS, FillP, a, , GID0, uint32_t, i, )
+{
+    if (i < a.n) p[a.at + i] = i * 2654435761u;
+}
+"#;
+        let fill = rerail_gpu::kernels::program("fill.uglykl", SRC).unwrap_or_else(|e| panic!("{e}")).function("fill").unwrap();
+        let words = (len / 4) as u32;
+        let mut q = ComputeQueue::new(&shared.queue);
+        launch(&q, fill)
+            .buffer("p", &slab.block().device_buffer(&shared.device).unwrap())
+            .value("a", &FillP { at: (off / 4) as u32, n: words })
+            .run(&[u64::from(words).div_ceil(256)], &[256])
+            .unwrap_or_else(|e| panic!("{e}"));
+        q.flush().await_().unwrap();
+        let back = slab.seal().write_back(Flush::Synced).unwrap();
         let p = back.ptr::<u32>(off);
         assert!((0..(len / 4) as u32).all(|i| unsafe { *p.add(i as usize) } == i.wrapping_mul(2654435761)), "the kernel's words");
         assert!(on_disk(&path) >= len as u64, "a kernel's pages on disk: {} of {len} bytes", on_disk(&path));

@@ -28,7 +28,7 @@
 //! A lowering records which rewrites applied and which production fired (`Lowered`), for
 //! diagnostics and counters (`text.production.<name>`).
 
-/// The device's automata in one block (decision 0450 step 2c).
+/// The device's automata in one block (decision 0478 step 2c).
 pub mod automata;
 pub mod canon;
 pub mod plan;
@@ -96,15 +96,17 @@ impl Lowered {
 
 /// `source` over text of `domain`, lowered once per process and shared.
 pub fn lower(source: &Source, domain: Domain) -> Result<Arc<Lowered>, Error> {
-    static LOWERED: LazyLock<Mutex<HashMap<(Source, Domain), Result<Arc<Lowered>, Error>>>> = LazyLock::new(Default::default);
-    if let Some(found) = LOWERED.lock().expect("text lowerings").get(&(source.clone(), domain)) {
+    #[derive(Default)]
+    struct LoweredTexts(Mutex<HashMap<(Source, Domain), Result<Arc<Lowered>, Error>>>);
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<LoweredTexts>();
+    if let Some(found) = held_.0.lock().expect("text lowerings").get(&(source.clone(), domain)) {
         return found.clone();
     }
     let lowered = lower_uncached(source, domain).map(Arc::new);
     if let Ok(lowered) = &lowered {
         crate::code_rule_dsl::prof::count(counter(lowered.production), 1);
     }
-    LOWERED.lock().expect("text lowerings").insert((source.clone(), domain), lowered.clone());
+    crate::code_rule_dsl::logic::profile::shared::<LoweredTexts>().0.lock().expect("text lowerings").insert((source.clone(), domain), lowered.clone());
     lowered
 }
 

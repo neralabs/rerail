@@ -17,30 +17,26 @@
         "ast": {
           "language": "python",
           "rule": {
-            "kind": "except_clause",
-            "not": {
-              "has": {
-                "field": "value",
-                "not": {
-                  "kind": "comment"
-                }
-              }
-            },
-            "all": [
-              {
-                "not": {
+            "regex": "^except$",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "except_clause",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "block",
                   "has": {
                     "stopBy": "neighbor",
-                    "kind": "block",
-                    "has": {
-                      "stopBy": "neighbor",
-                      "kind": "raise_statement",
-                      "regex": "^raise$"
-                    }
+                    "kind": "raise_statement",
+                    "regex": "^raise$"
                   }
                 }
               }
-            ]
+            },
+            "precedes": {
+              "stopBy": "neighbor",
+              "regex": "^:$"
+            }
           }
         }
       },

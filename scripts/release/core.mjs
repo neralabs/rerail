@@ -3,7 +3,7 @@
 // changed since its last release (core-paths.mjs), the pull request bumps its patch version and writes the root
 // CHANGELOG.md's section for it from the entries pending in .changelog/, by change type, below the lead written under
 // the unreleased heading. Each released core version is marked by the git tag `v<version>`, which release.yml publishes.
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import semver from "semver";
 import { CHANGE_TYPES, changeType, changeTypeRefusal, changeTypeSections, releaseNoteEntry } from "./release-notes.mjs";
@@ -243,3 +243,92 @@ export function coreTagRefusal(version, tags) {
   const later = released.filter((tagged) => semver.gte(tagged, version)).sort(semver.rcompare);
   return later.length === 0 ? null : `${version} is not later than the released ${later[0]}`;
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// The core range a pack must carry for what it ships (docs/pack-format.md, "package.json"). A core that cannot read
+// something in a pack drops the whole pack, so once the first core that reads it is released the pack leaves every
+// older core out of its core range (`peerDependencies["@neralabs/rerail"]`). The pack validation's check 5 fails a
+// pack that does not (conformance/pack-validation.ts), and the Release pull request raises the range of each pack it
+// releases (release-version.mjs). Both read the releases and the rule from here, so they cannot disagree. It is here
+// and not in packs.mjs because it needs semver, and release jobs run packs.mjs without the repository's packages.
+
+/** The first core release that reads a rule's `heldOff` in `pack.json`: an older core refuses a `pack.json` naming it. */
+export const HELD_OFF_SINCE = "0.1.5";
+
+/**
+ * The first core release that reads each language added after 0.1.0: an older core refuses a rule document naming it.
+ * Java shipped in 0.1.5; the rest come with the final-shape engine, which no release reads before 0.1.6.
+ */
+export const LANGUAGE_SINCE = new Map([
+  ["java", "0.1.5"],
+  ...["c", "cpp", "csharp", "css", "eslint-directive", "go", "html", "json", "markdown", "python-format", "rr"].map((id) => [id, "0.1.6"]),
+]);
+
+/** The ids of the rules a parsed `pack.json` holds off. */
+export function heldOffRules(packJson) {
+  return (packJson?.rules ?? []).filter((rule) => rule.heldOff !== undefined).map((rule) => rule.id);
+}
+
+/**
+ * Every language the rule documents under `<directory>/rules` name (a query's, a define's or a transform's
+ * `language`), sorted. A document that is not JSON names none: the pack validation's check 1 reports it.
+ */
+export function shippedLanguages(directory) {
+  const rules = join(directory, "rules");
+  const named = new Set();
+  // An array's entries are its values too, so one walk over Object.entries covers arrays and objects.
+  const collect = (value) => {
+    if (typeof value !== "object" || value === null) return;
+    for (const [key, child] of Object.entries(value)) {
+      if (key === "language" && typeof child === "string") named.add(child);
+      else collect(child);
+    }
+  };
+  if (existsSync(rules)) {
+    for (const entry of readdirSync(rules, { recursive: true, withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+      try {
+        collect(JSON.parse(readFileSync(join(entry.parentPath, entry.name), "utf8")));
+      } catch {
+        // Not JSON: check 1's to report.
+      }
+    }
+  }
+  return [...named].sort();
+}
+
+/**
+ * The oldest core release that loads a pack holding the rules `heldOff` off and shipping rules in `languages`: the
+ * newest of the releases that first read each. Undefined when every core loads it.
+ */
+export function coreFloor(heldOff, languages) {
+  const since = [...(heldOff.length > 0 ? [HELD_OFF_SINCE] : []), ...languages.flatMap((language) => LANGUAGE_SINCE.get(language) ?? [])];
+  return since.sort(semver.rcompare)[0];
+}
+
+/**
+ * Whether `range` must be raised: core is at `floor` (its prereleases count), the release that first loads the pack,
+ * and `range` still admits an older core. Before that release the range stays, so the checkout's own core, which is
+ * older, still loads the pack.
+ */
+export function admitsRefusingCore(range, floor, coreVersion) {
+  return floor !== undefined && !coreBeforeFloor(coreVersion, floor) && semver.intersects(range, `<${floor}-0`, { includePrerelease: true });
+}
+
+/** Whether core at `coreVersion` is older than `floor`, the release that first loads a pack; its prereleases are not. */
+export function coreBeforeFloor(coreVersion, floor) {
+  return floor !== undefined && semver.lt(coreVersion, `${floor}-0`);
+}
+
+/**
+ * Whether `range` is one open lower bound, `>=<version>`: the only kind the Release pull request rewrites, since a
+ * raise replaces the whole range and any upper bound or alternative (`||`) in it would be lost. Read as semver parses
+ * it, so `>=0.1.0-0||>=2.0.0`, which has no space to tell by, is two alternatives and not open.
+ */
+export function isOpenRange(range) {
+  const alternatives = new semver.Range(range, { includePrerelease: true }).set;
+  return alternatives.length === 1 && alternatives[0].length === 1 && alternatives[0][0].operator === ">=";
+}
+
+/** The core range that leaves out every core older than `floor`: what the Release pull request writes. */
+export const raisedCoreRange = (floor) => `>=${floor}-0`;

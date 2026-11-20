@@ -829,7 +829,8 @@ with nothing left that wants their trees.
 
 Every making of one program from another in a dl1 run was traced, with both programs (`RERAIL_VERSION_TRACE=<dir>`,
 `logic/version_trace.rs`, hooked at the survey's sites E1 to E6). The trace was then replayed through each form a
-program could take, by `crates/logic/examples/versions.rs`. Each form is given the same delta for each making (which
+program could take, by `crates/logic/examples/versions.rs` (removed with the tree under decision 0276 step 6; the
+last commit that has it is a0320b907). Each form is given the same delta for each making (which
 of `from`'s items are kept, and which of `to`'s are new), and the replay measures three things:
 
 - **make:** making `to` from `from`;

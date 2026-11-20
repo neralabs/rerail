@@ -250,7 +250,7 @@ impl DatasetFeatureSpace {
     /// parallel; a column's index is its place in the list (upstream: the dataset's columns that were asked for).
     pub fn from_columns(columns: &[(String, Vec<crate::bucket::CellValue>)], label_info: FeatureType) -> Result<Self, String> {
         use rayon::prelude::*;
-        let infos: Vec<ColumnInfo> = columns.par_iter().map(|(name, values)| ColumnInfo::from_values(name, values, 255)).collect::<Result<_, _>>()?;
+        let infos: Vec<ColumnInfo> = rerail_context::on_cores(|| columns.par_iter().map(|(name, values)| ColumnInfo::from_values(name, values, 255)).collect::<Result<_, _>>())?;
         let mut fs = DatasetFeatureSpace { label_info, ..Default::default() };
         for (i, mut info) in infos.into_iter().enumerate() {
             info.index = i as i32;
@@ -349,19 +349,19 @@ impl ColumnInfo {
     /// points over the distinct values, and one copy of the packed words.
     pub fn from_column_device(column_name: &str, data: &ColumnData, max_num_buckets: i32) -> Result<ColumnInfo, String> {
         use crate::compute_kernel_grid::ComputeKernelArgument::{Buffer as B, Int};
-        use crate::compute_kernel_metal::{alloc_uninitialized_array_sync, transfer_to_device_immutable, transfer_to_host_sync, MetalComputeQueue};
+        use crate::device::{alloc_uninitialized_array_sync, transfer_to_device_immutable, transfer_to_host_sync, ComputeQueue};
         use crate::randomforest_kernels_grid::kernel;
         let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
         let device = &shared.device;
         let n = data.len();
-        let run = |queue: &MetalComputeQueue, name: &str, args: &[(&str, crate::compute_kernel_grid::ComputeKernelArgument)], grid: u32| -> Result<(), String> {
+        let run = |queue: &ComputeQueue, name: &str, args: &[(&str, crate::compute_kernel_grid::ComputeKernelArgument)], grid: u32| -> Result<(), String> {
             let k = kernel(name)?;
             let mut ctx = queue.new_bind_context(k.function);
             k.enqueue(args, &[grid], &mut ctx)
         };
         let mut descriptions = BucketDescriptions::default();
         let buckets = alloc_uninitialized_array_sync::<u32>(device, n);
-        let mut queue = MetalComputeQueue::new(&shared.queue);
+        let mut queue = ComputeQueue::new(&shared.queue);
         match data {
             ColumnData::Numeric(values) => {
                 let mut has_nulls = false;
@@ -431,7 +431,7 @@ impl DatasetFeatureSpace {
     /// `from_columns` on the device (`ColumnInfo::from_column_device`, 255 buckets), the columns in parallel.
     pub fn from_columns_device(columns: &[(String, ColumnData)], label_info: FeatureType) -> Result<Self, String> {
         use rayon::prelude::*;
-        let infos: Vec<ColumnInfo> = columns.par_iter().map(|(name, data)| ColumnInfo::from_column_device(name, data, 255)).collect::<Result<_, _>>()?;
+        let infos: Vec<ColumnInfo> = rerail_context::on_cores(|| columns.par_iter().map(|(name, data)| ColumnInfo::from_column_device(name, data, 255)).collect::<Result<_, _>>())?;
         let mut fs = DatasetFeatureSpace { label_info, ..Default::default() };
         for (i, mut info) in infos.into_iter().enumerate() {
             info.index = i as i32;

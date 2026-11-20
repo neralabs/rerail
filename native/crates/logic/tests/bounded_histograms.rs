@@ -1,6 +1,8 @@
+// The sketch alone: what its relation reads of it (`small`) is not this binary's.
+#[allow(dead_code)]
 #[path = "../../../src/code_rule_dsl/logic/native/setfix/sketch.rs"]
 mod sketch;
-/// The block arrays a sketch keeps (decision 0450 step 6c).
+/// The block arrays a sketch keeps (decision 0478 step 6c).
 mod rows {
     pub use rerail_facts::code_rule_dsl::facts::rows::BlockVec;
 }

@@ -138,8 +138,7 @@ fn slot_rels(prog: &mut Program, sig: &[String], slot: &str, syntactic: bool) ->
     let pre = || vec!["kind(n, \"call\")".to_owned(), "field(n, \"arguments\", l)".to_owned()];
     let qn = q(&name);
     let gen0 = || rs(&format!("{val}(n, v)"), vec!["kind(n, \"call\")".into(), "field(n, \"arguments\", v)".into(), "kind(v, \"generator_expression\")".into()]);
-    let mode;
-    if syntactic {
+    let mode = if syntactic {
         if kwok {
             let mut l = pre();
             l.push(format!("args_kwp(l, {qn}, v)"));
@@ -169,7 +168,7 @@ fn slot_rels(prog: &mut Program, sig: &[String], slot: &str, syntactic: bool) ->
         let mut l = pre();
         l.extend(neg);
         rules_a.push(rs(&format!("{absent}(n)"), l));
-        mode = "syntactic: Ruff's find_argument";
+        "syntactic: Ruff's find_argument"
     } else {
         if let Some(pos) = pos {
             let mut l = pre();
@@ -206,8 +205,8 @@ fn slot_rels(prog: &mut Program, sig: &[String], slot: &str, syntactic: bool) ->
         let mut l = pre();
         l.extend(neg);
         rules_a.push(rs(&format!("{absent}(n)"), l));
-        mode = "as Python binds the call";
-    }
+        "as Python binds the call"
+    };
     lib(prog, &val, "(n: node, v: node)", &[&format!("call n passes v for slot `{slot}` of ({shown}), {mode}")], rules_v);
     lib(prog, &absent, "(n: node)", &[&format!("call n does not pass slot `{slot}` of ({shown}), {mode}")], rules_a);
     prog.arg_rels.push((key, (val.clone(), absent.clone())));

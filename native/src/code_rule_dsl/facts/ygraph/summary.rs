@@ -134,22 +134,24 @@ pub fn load(file: &Path, it: &mut Interner, out: &mut Summaries, want: Option<&(
     }
     let mut loaded = 0;
     for chunk in lines.chunks(4096) {
-        let parsed: Vec<Parsed> = chunk
-            .par_iter()
-            .filter(|l| !l.is_empty())
-            .filter(|l| match want {
-                None => true,
-                Some(f) => {
-                    // keys are at the end of the line: …,"hash":"<64>","path":"…"}
-                    let s = std::str::from_utf8(l).unwrap();
-                    let h = s.rfind("\"hash\":\"").map(|i| &s[i + 8..i + 72]).unwrap();
-                    let p = s.rfind("\"path\":").map(|i| &s[i + 7..s.len() - 1]).unwrap();
-                    let p: String = serde_json::from_str(p).unwrap();
-                    f(&p, h)
-                }
-            })
-            .map(|l| parse_line(l))
-            .collect();
+        let parsed: Vec<Parsed> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+            chunk
+                .par_iter()
+                .filter(|l| !l.is_empty())
+                .filter(|l| match want {
+                    None => true,
+                    Some(f) => {
+                        // keys are at the end of the line: …,"hash":"<64>","path":"…"}
+                        let s = std::str::from_utf8(l).unwrap();
+                        let h = s.rfind("\"hash\":\"").map(|i| &s[i + 8..i + 72]).unwrap();
+                        let p = s.rfind("\"path\":").map(|i| &s[i + 7..s.len() - 1]).unwrap();
+                        let p: String = serde_json::from_str(p).unwrap();
+                        f(&p, h)
+                    }
+                })
+                .map(|l| parse_line(l))
+                .collect()
+        });
         for p in parsed {
             let path = it.intern(&p.path);
             let hash = it.intern(&p.hash);

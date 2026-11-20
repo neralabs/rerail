@@ -416,7 +416,7 @@
         assert_eq!(got[1].1, got[0].1, "the device's counts per step are the CPU's");
     }
 
-    /// Decision 0450 R3: a text test on the device reads and keeps its verdicts in the store's one rolling cache, the
+    /// Decision 0478 R3: a text test on the device reads and keeps its verdicts in the store's one rolling cache, the
     /// CPU's too. A verdict the CPU put there before the run (that `zzz` passes `@prefix(_, "foo")`) is the one the
     /// device takes; each other symbol's verdict the device made is there for the CPU after, a long name's (past a
     /// chunk of 32 bytes) among them.
@@ -457,7 +457,7 @@
     }
 
     /// A text function of a symbol keeps its text in the one rolling cache by (functions, symbol), a chain of them by
-    /// its source symbol (decision 0450 step 2e): after a run every name's text is there, the CPU's own, and a run
+    /// its source symbol (decision 0478 step 2e): after a run every name's text is there, the CPU's own, and a run
     /// again reads them back with the same rows.
     #[test]
     fn text_functions_keep_their_texts_in_the_one_cache() {
@@ -528,7 +528,7 @@
         assert_eq!(run(true), cpu, "the kept texts read back are the CPU's");
     }
 
-    /// A literal test of a bound pattern, its symbols read in place (decision 0450 step 2e): a pattern holding the set
+    /// A literal test of a bound pattern, its symbols read in place (decision 0478 step 2e): a pattern holding the set
     /// separator is no set, so the stratum runs on the host, named, and its rows are the CPU's.
     #[test]
     fn a_bound_pattern_holding_the_set_separator_runs_on_the_host() {
@@ -682,7 +682,7 @@
                     assert!(report.refused.is_none() && report.waved == 1, "{report:?}");
                     in_place += report.in_place;
                 }
-                assert_eq!(super::waves_kept(), 0, "the wave's completion goes with its last stratum (Q261: kept for ever, before)");
+                assert_eq!(super::waves_kept(), 0, "the wave's completion goes with its last stratum (Q314: kept for ever, before)");
             } else {
                 for (name, _, _) in &strata {
                     super::super::run(&db, name, 0).unwrap();
@@ -953,7 +953,7 @@
                     assert_eq!(r.refused.is_none(), on_device, "{case}: {r:?}");
                     if on_device {
                         assert!(r.made > 2000 && r.arena_reruns >= 1, "{case}: texts made in an arena that filled once: {r:?}");
-                        // Symbols' texts read in place through the atoms directory (decision 0450 step 2e): no names
+                        // Symbols' texts read in place through the atoms directory (decision 0478 step 2e): no names
                         // uploaded, no per-symbol table made.
                         assert_eq!((r.per_symbol, r.upload_by[super::profile::UPLOAD_NAMES].0), (0, 0), "{case}: symbols read in place: {r:?}");
                     }
@@ -1014,7 +1014,7 @@
         }
     }
 
-    /// Decision 0261, with 0450 step 1: the device's column statistics read a relation in its block where it lies,
+    /// Decision 0261, with 0478 step 1: the device's column statistics read a relation in its block where it lies,
     /// keeping nothing of it, and are the same as over the values gathered on the host.
     #[test]
     fn column_statistics_read_a_relation_in_its_block_in_place() {
@@ -1035,10 +1035,10 @@
         let rel = InRel::from_flat(rows.clone(), n, vec![b'i'; 2]);
         assert!(rel.in_block().is_some(), "a flat relation's rows lie in a block");
         let cols = [StatColumn::Rel(&rel, 0), StatColumn::Rel(&rel, 1)];
-        // Decision 0450 step 1: a relation in its block is read where it lies, with nothing made resident first.
+        // Decision 0478 step 1: a relation in its block is read where it lies, with nothing made resident first.
         let (read, in_place) = super::column_stats(&cols, 16).expect("the device");
         assert_eq!(in_place, 2);
-        assert_eq!(std::sync::Arc::strong_count(&rel), 1, "the read keeps no handle to the relation (decision 0450 R1)");
+        assert_eq!(std::sync::Arc::strong_count(&rel), 1, "the read keeps no handle to the relation (decision 0478 R1)");
         // The same statistics as the columns' values gathered on the host.
         let (c0, c1): (Vec<i64>, Vec<i64>) = (rows.iter().step_by(2).copied().collect(), rows.iter().skip(1).step_by(2).copied().collect());
         let (of_values, in_place) = super::column_stats(&[StatColumn::Values(&c0), StatColumn::Values(&c1)], 16).expect("the device");
@@ -1201,7 +1201,7 @@
         let src = Arc::clone(&all.iter().find(|(n, s)| *n == "node" && s.python_batch().is_some()).expect("node").1);
         assert!(src.device_view().is_some_and(|d| d.in_place.is_none()), "made on the device");
         let rel = InRel::over_source(Arc::clone(&src), vec![b'i'; src.columns().len()]);
-        // Encoded into a batch a refusal drops uncommitted: nothing ran it, and nothing of it is kept (decision 0450
+        // Encoded into a batch a refusal drops uncommitted: nothing ran it, and nothing of it is kept (decision 0478
         // step 3: a copy is made at each stratum, never cached).
         let mut refused = mj::Batch::new().expect("the device");
         let mut rep = super::Report::default();
@@ -1221,7 +1221,7 @@
         let _ = std::fs::remove_file(&store_path);
     }
 
-    /// Decision 0450 step 3 (R4): a view read in place keeps its indexes in a block of its own, which the view's
+    /// Decision 0478 step 3 (R4): a view read in place keeps its indexes in a block of its own, which the view's
     /// source holds (its chunk's life), not in a thread's cache: a stratum on another thread, in another batch, finds
     /// the index the first built, and builds none.
     #[test]
@@ -1306,7 +1306,7 @@
                 if d.in_place.is_none() {
                     let out = mj::DevRel::empty(cols.len(), n).unwrap();
                     let mut batch = mj::Batch::new().expect("the device");
-                    batch.expand_view(&d.block.gpu_buffer(device), d.root, d.view, &cols, &out).unwrap();
+                    batch.expand_view(&d.block.device_buffer(device).unwrap(), d.root, d.view, &cols, &out).unwrap();
                     batch.finish().unwrap();
                     for (j, &c) in cols.iter().enumerate() {
                         let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
@@ -1333,8 +1333,13 @@
             }
         }
         assert_eq!(seen, 10);
-        assert_eq!(in_place, 10, "node, child, field, core_node and line read in place");
-        // core.rr's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
+        // Read in place where the device's buffers have addresses, which the views' directory is of (Metal's, the
+        // CPU's); made elsewhere (decision 0440 step C: OpenCL 1.2's buffers have none), which the made branch above
+        // checked.
+        let addresses = rerail_device::device::alloc_uninitialized_array_sync::<u8>(device, 1).device_address().is_some();
+        let read_in_place = if addresses { 10 } else { 0 };
+        assert_eq!(in_place, read_in_place, "node, child, field, core_node and line read in place");
+        // core.rerail's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
         {
             use crate::code_rule_dsl::facts::vtab::syntax::{Guest, Made, Placement, Projection, shaped};
             // With a guest (decision 0055): its places are its host's lines, through its placement, found on the
@@ -1346,32 +1351,44 @@
             // At the host's second line (byte 10 of "import os\nx = f(1, y=2)\n"): the guest's two lines are the
             // host's line 2.
             let place = Placement::Copied { delta: 10, within: [10, 24] };
-            let guest = Guest { host: 7, at: 7 << 32, grammar: "python".to_owned(), role: "program".to_owned(), root: 0, place: place.clone(), in_file: place, made: Made::Host };
+            let guest = Guest { host: 7, file: 7, at: 7 << 32, grammar: "python".to_owned(), role: "program".to_owned(), root: 0, place: place.clone(), in_file: place, made: Made::Host };
             docs.push(Document { key: 100, core: "/w#core:d0.py#guest:python:0".to_owned(), digest: core::digest(&facts), path: "d0.py".to_owned(), facts, tape: None, guest: Some(Arc::new(guest)), module: None });
             let core_views = shaped(&store, docs, &Projection::core()).unwrap();
             {
                 let view = |name: &str| core_views.iter().find(|(n, _)| *n == name).unwrap().1.clone();
                 let (docof, line) = (view("docof"), view("line"));
-                let guest: Vec<usize> = (0..docof.len()).filter(|&r| docof.value(r, 1) == 100).collect();
+                // `docof` is a place's file (decision 0431 §4): the guest's is its host's, 7. Its rows are those of
+                // file 7 that the batch without it does not have.
+                let without = shaped(&store, make(), &Projection::core()).unwrap();
+                let host = without.iter().find(|(n, _)| *n == "docof").unwrap().1.clone();
+                let host: std::collections::HashSet<i64> = (0..host.len()).filter(|&r| host.value(r, 1) == 7).map(|r| host.value(r, 0)).collect();
+                let guest: Vec<usize> = (0..docof.len()).filter(|&r| docof.value(r, 1) == 7 && !host.contains(&docof.value(r, 0))).collect();
                 assert!(!guest.is_empty(), "the guest's places are rows");
                 assert!(guest.iter().all(|&r| line.value(r, 1) == 2), "the guest's places are its host's lines");
             }
             // Each document's places read in place (decision 0353 step 4d): the views' reads over the batch's
-            // directory, its tapes and core.rr's lines in the batch's block; a guest's (a copied stretch) through its
-            // host's lines and its placement. With the guest and without.
+            // directory, its tapes and core.rerail's lines in the batch's block; a guest's (a copied stretch) through its
+            // host's lines and its placement. With the guest and without. Made where the device is not Metal (the
+            // directory's addresses are Metal's, decision 0440 step C).
             let own_views = shaped(&store, make(), &Projection::core()).unwrap();
             for views in [&core_views, &own_views] {
                 for name in ["line", "end_line", "col", "docof"] {
                     let src = &views.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name}")).1;
-                    let v = src.device_view().and_then(|d| d.in_place.clone()).unwrap_or_else(|| panic!("{name}: read in place"));
+                    let d = src.device_view().unwrap_or_else(|| panic!("{name}: on the device"));
+                    assert_eq!(d.in_place.is_some(), device.metal().is_some(), "{name}: read in place on Metal alone");
                     let n = src.len();
                     assert!(n > 0, "{name}: rows");
                     for cols in [vec![0, 1], vec![1]] {
-                        let view = mj::DevRel::view(2, n, v.clone()).unwrap();
                         let out = mj::DevRel::empty(cols.len(), n).unwrap();
                         let mut batch = mj::Batch::new().expect("the device");
-                        let from: Vec<mj::Col> = cols.iter().map(|&c| mj::Col::From(c)).collect();
-                        batch.copy_rows(mj::Rows::Rel(&view), n, &from, mj::Rows::Rel(&out), 0).unwrap();
+                        match &d.in_place {
+                            Some(v) => {
+                                let view = mj::DevRel::view(2, n, v.clone()).unwrap();
+                                let from: Vec<mj::Col> = cols.iter().map(|&c| mj::Col::From(c)).collect();
+                                batch.copy_rows(mj::Rows::Rel(&view), n, &from, mj::Rows::Rel(&out), 0).unwrap();
+                            }
+                            None => batch.expand_view(&d.block.device_buffer(device).unwrap(), d.root, d.view, &cols, &out).unwrap(),
+                        }
                         batch.finish().unwrap();
                         for (j, &c) in cols.iter().enumerate() {
                             let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
@@ -1436,8 +1453,8 @@
         // the same rows on a second solve.
         let chunk = batch.chunk();
         let read = |c: &crate::code_rule_dsl::facts::nearest::InChunk| -> Vec<(i64, i64)> { (0..c.rows.len()).map(|r| (c.rows.get(r, 0), c.rows.get(r, 1))).collect() };
-        let once = mj::axis_in_chunk(chunk, None, true).unwrap();
-        let again = mj::axis_in_chunk(chunk, None, true).unwrap();
+        let once = mj::axis_in_chunk(&[chunk], None, true).unwrap();
+        let again = mj::axis_in_chunk(&[chunk], None, true).unwrap();
         assert!(once.rows.len() > 0);
         assert_eq!(once.rows.len() as usize, Within::new(Arc::clone(&batch), Mode::Tree).len());
         // Room for its rows, rounded up to whole chunks: not a bound sized before the count.
@@ -1446,4 +1463,37 @@
         // `has` is made per looked-up node, not by the batch's solve: no relation of it, uploaded as before.
         assert!(Within::axis(Arc::clone(&batch), Axis::Has, &kinds, Binding::Cpu).in_block().is_none());
         let _ = std::fs::remove_file(&store_path);
+    }
+
+    /// Q203: a stage's table before it runs is the planner's estimate of its rows with a margin, not its input
+    /// doubled: rr_token_req's tables were 730,304 rows for 7,453 made, and refused past the device's budget. The
+    /// growth a stage was seen to have still sizes it first, a scan holds its relation's rows at most, and a rule the
+    /// planner did not price keeps doubling.
+    #[test]
+    fn a_stages_table_is_sized_by_the_plans_estimate_before_it_runs() {
+        use super::{EST_MARGIN, table_rows};
+        // A keyed join, cold: the estimate with its margin, not twice the input.
+        assert_eq!(table_rows(7_453, 2_800, false, None, Some(1_515.0)), (1_515.0 * EST_MARGIN) as usize);
+        assert_eq!(table_rows(7_453, 2_800, false, None, None), 2 * 7_453, "unpriced: twice the input, as before");
+        // Seen: the growth measured wins over the estimate.
+        assert_eq!(table_rows(1_000, 2_800, false, Some(0.5), Some(90_000.0)), 625);
+        // A scan by a constant over a 730,304-row relation the plan expects 2,848 of: the estimate's room.
+        assert_eq!(table_rows(1, 730_304, true, None, Some(2_848.0)), (2_848.0 * EST_MARGIN) as usize);
+        assert_eq!(table_rows(1, 730_304, true, None, None), 730_304, "unpriced: the whole relation, as before");
+        assert_eq!(table_rows(1, 100, true, None, Some(2_848.0)), 100, "never more than the relation holds");
+        // Never past every pairing, never empty.
+        assert_eq!(table_rows(10, 3, false, None, Some(1e9)), 30);
+        assert_eq!(table_rows(10, 3, false, None, Some(0.0)), 16.min(30));
+    }
+
+    /// A spec's estimates are not the rule: two specs that differ in them alone are one rule (the same digest, under
+    /// which the stages' growth is kept), and the rule takes them.
+    #[test]
+    fn a_specs_estimates_leave_its_identity() {
+        use super::super::spec::{Est, JoinSpec};
+        let text = format!("pos t:x:{}:{}:ii v0 v1\nhead v0 v1", hex("temp.a"), hex("c0, c1"));
+        let plain = JoinSpec::parse(&text).unwrap();
+        let priced = JoinSpec { est: Est(vec![12.0, 3.0]), ..plain.clone() };
+        assert_eq!(plain, priced);
+        assert_eq!(super::super::level::digest(&plain), super::super::level::digest(&priced));
     }

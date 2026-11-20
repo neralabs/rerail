@@ -57,7 +57,7 @@ impl SolverDevice for Metal {
     }
 
     fn compile_join(&self, join: &JoinRule, spec: &str, own_texts: &[(usize, usize)]) -> Result<JoinPlan, String> {
-        joins::own_texts(own_texts.to_vec(), || joins::compile(join, spec)).map(|plan| JoinPlan(std::sync::Arc::new(plan)))
+        joins::compile(join, spec, own_texts).map(|plan| JoinPlan(std::sync::Arc::new(plan)))
     }
 
     fn refuse(&self, why: String) {
@@ -183,6 +183,10 @@ pub mod matcher {
 
         fn wave_pattern_sources(&self, wave: &LoweredWave, format: u32) -> Result<Vec<String>, Error> {
             matcher_metal::wave_pattern_sources(wave, format)
+        }
+
+        fn pattern_variant(&self, format: u32) -> usize {
+            crate::code_rule_dsl::transducer::packed::metal_program_backend::label_passes::pattern_variant(format)
         }
 
         fn patterns_ready(&self, sources: &[String], format: u32) -> bool {

@@ -23,11 +23,15 @@ if [ -n "$installed" ] && [ "$installed" -gt "$mine" ] && [ -z "$force" ]; then
   exit 1
 fi
 mkdir -p "$share/bin" "$config"
-for f in farm.py mirror.py rustc-wrapper farm-rustc farm-cc farm-agent status diagnose; do
+for f in farm.py mirror.py rustc-wrapper farm-rustc farm-cc farm-agent status diagnose free-local dashboard sampler; do
   install -m 0755 "$here/$f" "$share/$f.tmp" && mv "$share/$f.tmp" "$share/$f"
 done
 install -m 0755 "$here/../../dev/clean-target" "$share/clean-target.tmp" && mv "$share/clean-target.tmp" "$share/clean-target"
 install -m 0755 "$here/../../dev/quiet-run" "$share/quiet-run.tmp" && mv "$share/quiet-run.tmp" "$share/quiet-run"
+# Every checkout's test-remote and live-test-remote are handed to these (farm.py): one version for all.
+for f in test-remote live-test-remote; do
+  install -m 0755 "$here/../../dev/$f" "$share/$f.tmp" && mv "$share/$f.tmp" "$share/$f"
+done
 ln -sf farm-cc "$share/farm-c++"
 # What an earlier version installed and this one has not: copy and NFS modes.
 for f in remote-rustc shared-volume; do [ -e "$share/$f" ] && mv "$share/$f" "${TMPDIR:-/tmp}/rerail-farm-old-$f.$$"; done

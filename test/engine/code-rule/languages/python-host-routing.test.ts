@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -11,9 +11,10 @@ import { bundledCodeRuleDslDirectory } from "../../../../src/engine/code-rule/co
 import { codeRuleDialectForPath } from "../../../../src/engine/code-rule/code-rule-languages.js";
 import { codeRuleSchema } from "../../../../src/engine/code-rule/code-rule-schema.js";
 import { testCodeRuleCatalog } from "../../../support/repository-rules.js";
+import { removeFolder } from "../../../support/platform/remove-folder.js";
 
 const roots: string[] = [];
-afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+afterEach(async () => { await Promise.all(roots.splice(0).map(root => removeFolder(root))); });
 
 async function directory(prefix: string): Promise<string> {
   const root = await realpath(await mkdtemp(join(tmpdir(), prefix)));

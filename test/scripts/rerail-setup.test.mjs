@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { constants as osConstants, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,6 +19,7 @@ import {
   validateRegistry,
   validateTag,
 } from "../../scripts/dev/rerail-setup.mjs";
+import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
 const SCRIPT = fileURLToPath(new URL("../../scripts/dev/rerail-setup.mjs", import.meta.url));
 
@@ -27,7 +28,7 @@ function withTempDir(body) {
   try {
     return body(dir);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    removeFolderSync(dir);
   }
 }
 

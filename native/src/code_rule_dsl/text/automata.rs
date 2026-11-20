@@ -1,16 +1,17 @@
-//! The device's automata in one block (decision 0450 step 2c): each text test's table (`table::Table`) and each
+//! The device's automata in one block (decision 0478 step 2c): each text test's table (`table::Table`) and each
 //! regex's replacement automata (`table::Replacer`), written once where they are made, with an index from a key's
 //! hash to its slot in the same block. The kernels bind the block's no-copy wrap at an automaton's offset: no upload,
 //! no thread's map of device buffers. A refusal (a plan the device has no table for) is kept too, with why.
 //!
 //! The index is open addressing over `SLOTS` slots of 64 bytes, made once (its pages taken as slots are written).
 //! A slot is published by its state, written last (Release); a reader probes with no lock. Writers take `write`.
-//! The automata come from the rules' patterns, not from relations: the block is the process's, as the maps it
-//! replaces were.
+//! The automata come from the rules' patterns, not from relations: the block is the shared object's (decision 0442),
+//! as the maps it replaces were, and so are the ids it names (a store's rolling caches, on the same object, key by
+//! them).
 
 use rerail_blocks::block::{Block, kind};
 use std::sync::atomic::{AtomicU32, Ordering::{Acquire, Release}};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, Mutex};
 
 /// The slots of the index: more automata than a run's rules make. Past them an automaton is refused (the test runs
 /// on the CPU).
@@ -23,7 +24,7 @@ pub const ALIGN: usize = 256;
 const EMPTY: u32 = 0;
 const MADE: u32 = 1;
 const REFUSED: u32 = 2;
-/// A key named only: its slot is an id (a text test's, for its verdicts: decision 0450 step 2d).
+/// A key named only: its slot is an id (a text test's, for its verdicts: decision 0478 step 2d).
 const NAMED: u32 = 3;
 
 /// A slot: its key's hash, its key (bytes in the block), its value (an automaton's bytes, or a refusal's message),
@@ -50,9 +51,23 @@ pub struct Automaton {
 }
 
 impl Automaton {
-    /// Its bytes, where the block holds them.
-    pub fn bytes(&self) -> &'static [u8] {
-        AUTOMATA.block.bytes(self.at, self.at + self.len)
+    /// Its bytes, where the block holds them (the block held while they are).
+    pub fn bytes(&self) -> Bytes {
+        Bytes { of: automata(), at: self.at, len: self.len }
+    }
+}
+
+/// An automaton's bytes in the block, which they keep.
+pub struct Bytes {
+    of: Arc<Automata>,
+    at: usize,
+    len: usize,
+}
+
+impl std::ops::Deref for Bytes {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        self.of.block.bytes(self.at, self.at + self.len)
     }
 }
 
@@ -67,15 +82,25 @@ pub struct Automata {
 unsafe impl Send for Automata {}
 unsafe impl Sync for Automata {}
 
-static AUTOMATA: LazyLock<Automata> = LazyLock::new(|| {
-    let block = Block::anon(kind::SCRATCH, RESERVE);
-    let slots = block.alloc(SLOTS * std::mem::size_of::<Slot>(), ALIGN);
-    Automata { block, slots, write: Mutex::new(()) }
-});
+impl Default for Automata {
+    fn default() -> Automata {
+        let block = Block::anon(kind::SCRATCH, RESERVE);
+        let slots = block.alloc(SLOTS * std::mem::size_of::<Slot>(), ALIGN);
+        Automata { block, slots, write: Mutex::new(()) }
+    }
+}
 
-/// The block the automata are in (a kernel binds its wrap at an automaton's `at`).
-pub fn block() -> &'static Block {
-    &AUTOMATA.block
+/// The caller's automata (the shared object's, decision 0442): a kernel binds their block's wrap at an automaton's
+/// `at`, and holds them while it may read it.
+pub fn automata() -> Arc<Automata> {
+    crate::code_rule_dsl::logic::profile::shared::<Automata>()
+}
+
+impl Automata {
+    /// The block the automata are in.
+    pub fn block(&self) -> &Block {
+        &self.block
+    }
 }
 
 fn hash(key: &str) -> u64 {
@@ -128,7 +153,7 @@ impl Automata {
 /// The automaton kept under `key`, made by `make` (its bytes and numbers, or why it has none) the first time any
 /// thread asks. An automaton past the block's room or index is refused, with why.
 pub fn get_or_make(key: &str, make: impl FnOnce() -> Result<(Vec<u8>, [u32; 4]), String>) -> Result<Automaton, String> {
-    let a = &*AUTOMATA;
+    let a = automata();
     let h = hash(key);
     match a.probe(key, h) {
         Some((k, state)) if state != EMPTY => return a.read(k, state),
@@ -163,17 +188,17 @@ pub fn get_or_make(key: &str, make: impl FnOnce() -> Result<(Vec<u8>, [u32; 4]),
     a.read(k, state)
 }
 
-/// The id a chain of text functions keeps its texts by in a store's rolling cache (decision 0450 step 2e): a chain is
+/// The id a chain of text functions keeps its texts by in a store's rolling cache (decision 0478 step 2e): a chain is
 /// its steps from a symbol, each `/{function}{constants:?}` (the rule's function name, its other arguments' constants:
 /// symbols' ids, numbers), the CPU's and the device's named alike.
 pub fn text_functions(chain: &str) -> Option<u32> {
     id(&format!("text functions {chain}"))
 }
 
-/// The id of `key`: its slot in the index, named the first time any thread asks. The same key gives the same id in
-/// the process, whoever asks, the CPU's text tests and the device's alike. `None` when the index is full.
+/// The id of `key`: its slot in the index, named the first time any thread asks. The same key gives the same id on
+/// the shared object, whoever asks, the CPU's text tests and the device's alike. `None` when the index is full.
 pub fn id(key: &str) -> Option<u32> {
-    let a = &*AUTOMATA;
+    let a = automata();
     let h = hash(key);
     match a.probe(key, h)? {
         (k, state) if state != EMPTY => return Some(k as u32),
@@ -200,7 +225,7 @@ pub fn id(key: &str) -> Option<u32> {
 mod tests {
     use super::*;
 
-    /// Decision 0450 step 2c: an automaton is written once into the block, where every later ask finds it, from any
+    /// Decision 0478 step 2c: an automaton is written once into the block, where every later ask finds it, from any
     /// thread; a refusal is kept with why.
     #[test]
     fn an_automaton_is_made_once_into_the_block_and_found_there() {
@@ -214,16 +239,29 @@ mod tests {
         assert_eq!(made, 1);
         assert_eq!((a.len, a.words, a.at % ALIGN), (300, [1, 2, 3, 4], 0));
         assert!(a.bytes().iter().all(|&b| b == 7));
-        let r = block().base_ptr() as usize;
-        assert!((r..r + block().reserved()).contains(&(a.bytes().as_ptr() as usize)), "its bytes in the block");
-        let again = std::thread::spawn(move || get_or_make(&key, || panic!("made again")).unwrap()).join().unwrap();
+        let held = automata();
+        let r = held.block().base_ptr() as usize;
+        assert!((r..r + held.block().reserved()).contains(&(a.bytes().as_ptr() as usize)), "its bytes in the block");
+        // Another thread of the same shared object (`within`) finds it.
+        let shared = crate::code_rule_dsl::logic::profile::shared_here();
+        let again = std::thread::spawn(move || {
+            let _within = crate::code_rule_dsl::logic::profile::within(shared);
+            get_or_make(&key, || panic!("made again")).unwrap()
+        })
+        .join()
+        .unwrap();
         assert_eq!(again, a);
         let no = format!("refused:{:p}", &SLOTS);
         assert_eq!(get_or_make(&no, || Err("a backtracking pattern".into())), Err("a backtracking pattern".into()));
         assert_eq!(get_or_make(&no, || panic!("made again")), Err("a backtracking pattern".into()));
         let named = format!("named:{:p}", &SLOTS);
         let i = id(&named).unwrap();
-        assert_eq!(std::thread::spawn(move || id(&named)).join().unwrap(), Some(i), "one id for a key, from any thread");
+        let shared = crate::code_rule_dsl::logic::profile::shared_here();
+        let other = std::thread::spawn(move || {
+            let _within = crate::code_rule_dsl::logic::profile::within(shared);
+            id(&named)
+        });
+        assert_eq!(other.join().unwrap(), Some(i), "one id for a key, from any thread");
         assert_ne!(id(&format!("other:{:p}", &SLOTS)), Some(i));
     }
 }

@@ -1,6 +1,6 @@
 # 0487. One ledger owns a block's memory, for the CPU and the GPU
 
-Date: 2026-11-20. Status: decided (the user, 2026-11-20, on Q262: "We need to understand live and queued readers and
+Date: 2026-11-20. Status: decided (the user, 2026-11-20, on Q337: "We need to understand live and queued readers and
 writers and reference counts over blocks, what is borrowed, etc on the CPU and the GPU, of each and every block, and
 have the memory management be accurate and taken care of by the system in a single place, not by each part of our
 code doing cowboy memory management. We need tight invariants where any attempt to do something that won't work
@@ -9,7 +9,7 @@ fails."). Step 1 built; step 2 built for accel's `Pass`.
 ## Intro
 
 The engine's rows, indexes and tapes live in blocks: large mappings, cut into chunks. The CPU and the GPU both read and
-write those chunks in place (0353, 0450). A chunk can be in use in four ways at once:
+write those chunks in place (0353, 0478). A chunk can be in use in four ways at once:
 
 - a CPU owner writes it, or CPU code reads it;
 - a GPU command buffer that has been encoded or committed, but has not completed, reads it or writes it.
@@ -19,14 +19,14 @@ Until now nothing knew all four. Each part of the code kept its own piece:
 | Where | What it kept by hand |
 |---|---|
 | `Block::free_chunk`, `free_chunk_fit`, `free_chunk_resident` (rows, relation, BlockVec) | gave a chunk back to the free list at once, whatever the GPU still had queued on it |
-| `Block::freeze` → `mem::free_pages` | gave pages back to the OS; reached live neighbours' pages (Q262's first cause, fixed in 4c349a3e68) |
+| `Block::freeze` → `mem::free_pages` | gave pages back to the OS; reached live neighbours' pages (Q337's first cause, fixed in 4c349a3e68) |
 | `Block` drop, `Pooled` drop | unmapped the memory, or put the slab back in the pool, at once; `Pooled::after(cmd)` only where a caller remembered |
 | `Batch::keep`, `read`, `held`, the old atoms directory, `Held::kept` | five lists, each a caller's promise to keep something alive until its work completes |
 | `Block::relocate`, `grow_block` | "no command may be reading the block", in a comment |
 | `Scratch` reset, the residency slabs' `retire` (`strong_count == 1`) | each its own guess at whether the GPU is done |
 
 A free that forgets one of these lists does not fail. Its chunk goes back on the free list, the next relation writes
-it, and a kernel that was still queued reads the new rows. Nothing reports it; a run loses a chunk's findings (Q262).
+it, and a kernel that was still queued reads the new rows. Nothing reports it; a run loses a chunk's findings (Q337).
 
 ## Decision
 

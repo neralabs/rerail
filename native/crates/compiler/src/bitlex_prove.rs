@@ -907,17 +907,13 @@ impl Induction {
             let window = {
                 let (_, plain) = cone(ops, v);
                 let reach = plain.keys().copied().max().unwrap_or(0).max(u32::from(d)) + self.horizon;
-                let (mut readers, mut far) = unrolled_readers(ops, nexts, v, reach);
-                // Its values are made at every lag of the window: their bytes' groups too.
-                for &(at, l, _) in whole.into_iter().flatten().filter(|&&(at, _, _)| at != STREAM) {
-                    let (theirs, f) = unrolled_readers(ops, nexts, at, reach);
-                    for lag in 1..=reach {
-                        for (k, set) in &theirs {
-                            readers.entry(k + lag + l).or_default().extend(set.iter().copied());
-                        }
-                        far = far.max(f + lag + l);
-                    }
+                // The root at its lag, and the hypothesis' values at every lag of the window where they are made there
+                // (`whole`): their readers too, so each byte `op` reads has its groups; one walk from every root.
+                let mut roots = vec![(v, 0u32)];
+                for lag in 1..=reach {
+                    roots.extend(whole.into_iter().flatten().filter(|&&(at, _, _)| at != STREAM).map(|&(at, l, _)| (at, lag + l)));
                 }
+                let (readers, far) = unrolled_readers(ops, nexts, &roots, reach);
                 let mut u = Unrolled { ops, tables, nexts, d: u32::from(d), reach, clauses: Clauses::default(), vars: 1, memo: HashMap::default(), before: HashMap::default(), past: HashMap::default(), groups: HashMap::default(), readers: HashMap::default() };
                 // A literal that is true.
                 u.clauses.push(&[1]);
@@ -1102,11 +1098,11 @@ fn carried(ops: &[BlockOp], nexts: &HashMap<u16, u16>, at: u16) -> bool {
 
 /// The readers of each lag's byte, as `Unrolled::op` reads them.
 /// And the farthest lag any operation is read at (a `within` at its byte's).
-fn unrolled_readers(ops: &[BlockOp], nexts: &HashMap<u16, u16>, v: u16, reach: u32) -> (HashMap<u32, HashSet<Reader>>, u32) {
+fn unrolled_readers(ops: &[BlockOp], nexts: &HashMap<u16, u16>, roots: &[(u16, u32)], reach: u32) -> (HashMap<u32, HashSet<Reader>>, u32) {
     let mut far = 0;
     let mut readers: HashMap<u32, HashSet<Reader>> = HashMap::default();
     let mut seen = HashSet::default();
-    let mut work = vec![(v, 0u32)];
+    let mut work = roots.to_vec();
     while let Some((at, lag)) = work.pop() {
         if !seen.insert((at, lag)) {
             continue;

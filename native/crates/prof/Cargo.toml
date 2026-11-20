@@ -37,7 +37,7 @@ system-allocator = []
 code-rule-profile = []
 p-anchor-corpus = []
 metal-tests = []
-test-hooks = ["rerail-rr-syntax/test-hooks"]
+test-hooks = ["rerail-context/test-hooks", "rerail-rr-syntax/test-hooks"]
 
 [target.'cfg(unix)'.dependencies]
 mimalloc = { version = "=0.1.52", default-features = false }
@@ -48,6 +48,7 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_
 
 [dependencies]
 rerail-accel = { path = "../../../accel" }
+rerail-context = { path = "../context" }
 base64 = "=0.22.1"
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
 ast-grep-core = "=0.51.0"
@@ -110,5 +111,6 @@ block = "0.1.6"
 metal = "0.33.0"
 
 [dev-dependencies]
+rerail-context = { path = "../context", features = ["test-hooks"] }
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-prof = { path = ".", features = ["test-hooks"] }

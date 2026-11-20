@@ -12,7 +12,7 @@
 //!
 //! Such a relation has one value for the whole run. Left in the program, a rule that reads it reads a relation the
 //! file-local part cannot make (a file read is a request, answered in the cross-file part), so the rule, and every
-//! rule after it, runs in the cross-file part over every document's base rows: `struct.rr`'s definitions were all
+//! rule after it, runs in the cross-file part over every document's base rows: `struct.rerail`'s definitions were all
 //! cross-file for `py_version` alone, and a warm run measured 2.3 M base rows to plan them.
 //!
 //! So these relations are derived first, by a run of the same engine over no documents with the requests answered
@@ -31,7 +31,7 @@ use std::path::Path;
 
 use super::super::Result;
 use super::{Report, Typing};
-use crate::code_rule_dsl::logic::front::{Program, Value};
+use crate::code_rule_dsl::logic::front::Value;
 use crate::code_rule_dsl::logic::program_image::Version;
 use crate::code_rule_dsl::typing::file_local::option_input;
 
@@ -107,11 +107,11 @@ pub(super) fn as_outputs_of(v: &std::sync::Arc<Version>, wanted: &[String]) -> R
         let names: Vec<String> = (0..cols.len()).map(|i| format!("c{i}")).collect();
         let args: Vec<T<'_>> = names.iter().map(|n| T::Var(n.as_str())).collect();
         let pairs: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
-        b.declare(&copy(rel), &pairs);
+        b.fields().declare(&copy(rel), &pairs);
         b.rule().head(copy(rel).as_str(), &args).atom(rel.as_str(), &args).finish().map_err(super::super::Error::Plan)?;
         outputs.push(copy(rel));
     }
-    b.set_outputs(&outputs);
+    b.fields().set_outputs(&outputs);
     b.finish().map(|(v, _)| v).map_err(super::super::Error::Plan)
 }
 
@@ -183,7 +183,7 @@ pub(super) fn fold(
     // The version: the rows as facts, the relations' rules dropped.
     let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(v);
     for (rel, rows) in &folded {
-        b.set_facts(rel, rows);
+        b.fields().set_facts(rel, rows);
     }
     b.retain(|r| !wanted.contains(v.rel_name(r.head().rel())));
     *v = b.finish().map(|(v, _)| v).map_err(super::super::Error::Plan)?;
@@ -247,7 +247,7 @@ fn key(programs: &[&str], added: &super::added::Added, root: &Path, options: &se
     }
     h.update(options.to_string().as_bytes());
     h.update([0]);
-    h.update(std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
+    h.update(dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
     h.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }

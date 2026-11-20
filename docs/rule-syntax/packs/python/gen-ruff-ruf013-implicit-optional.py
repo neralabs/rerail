@@ -1,4 +1,4 @@
-"""Writes ruff-ruf013-implicit-optional.stdlib.rr: the standard-library modules Ruff's RUF013 treats as known types
+"""Writes ruff-ruf013-implicit-optional.stdlib.rerail: the standard-library modules Ruff's RUF013 treats as known types
 (is_known_type: typing_extensions, and is_known_standard_library for the target version), from Ruff's own table
 (known_stdlib.rs). The JSON's `known-name` list is that table at Python 3.10; check-…py compares them.
     python3 docs/rule-syntax/packs/python/gen-ruff-ruf013-implicit-optional.py
@@ -8,7 +8,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 JSON = os.path.join(HERE, "..", "..", "..", "..", "packs", "python", "rules", "ruff-ruf013-implicit-optional.json")
 RS = ("/Users/jeremy/orca/workspaces/rerail/wolfeel/.rerail/port-readiness/upstream/ruff/"
       "0be08a206f9c3180afd3e93bcc792ed5cb1f4db1/crates/ruff_python_stdlib/src/sys/known_stdlib.rs")
-OUT = os.path.join(HERE, "ruff-ruf013-implicit-optional.stdlib.rr")
+OUT = os.path.join(HERE, "ruff-ruf013-implicit-optional.stdlib.rerail")
 MINORS = range(7, 16)  # the minor versions known_stdlib.rs lists
 
 

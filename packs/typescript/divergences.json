@@ -176,38 +176,6 @@
     "evidence": "This file is the rename variant of consistent-indexed-object-style/089.ts, whose divergence is declared above, and it misses for the same reason. The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) does not parse a mapped type without a type (`type Cyh = { [q in string]; };`): on this file the engine reports source-partial (\"file has syntax errors\") and the rule misses the finding upstream reports on the type alias. typescript-eslint 8.70.1 parses it, and TypeScript's parser reads it with no parse diagnostics; TypeScript reports no diagnostic for it at all. Rerail cannot decide it until the grammar reads the construct."
   },
   {
-    "rule": "typescript-eslint-no-unused-vars",
-    "source": "fixtures",
-    "path": "no-unused-vars/234.ts",
-    "line": 2,
-    "kind": "rerail-unknown",
-    "evidence": "The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) has no `using_declaration` (native/grammars/tree-sitter-typescript/PATCHES.md): it reads `using resource = getResource();` as an `assignment_expression` with a leading `using`, so no binding is declared, the name reads as a write to an undeclared global, and the rule misses the finding upstream reports on the unused declaration. typescript-eslint 8.70.1 parses it as a VariableDeclaration of kind `using` and reports the unused name. The file is one of no-unused-vars's upstream tests; Rerail cannot decide it until the grammar reads `using` declarations."
-  },
-  {
-    "rule": "typescript-eslint-no-unused-vars",
-    "source": "fixtures",
-    "path": "renamed/no-unused-vars/234.ts",
-    "line": 2,
-    "kind": "rerail-unknown",
-    "evidence": "This file is the rename variant of no-unused-vars/234.ts, whose divergence is declared above, and it misses for the same reason. The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) has no `using_declaration` (native/grammars/tree-sitter-typescript/PATCHES.md): it reads `using qboneefa = fkrJjdnxoka();` as an `assignment_expression` with a leading `using`, so no binding is declared, the name reads as a write to an undeclared global, and the rule misses the finding upstream reports on the unused declaration. typescript-eslint 8.70.1 parses it as a VariableDeclaration of kind `using` and reports the unused name. Rerail cannot decide it until the grammar reads `using` declarations."
-  },
-  {
-    "rule": "typescript-eslint-no-unused-vars",
-    "source": "fixtures",
-    "path": "no-unused-vars/235.ts",
-    "line": 2,
-    "kind": "rerail-unknown",
-    "evidence": "The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) has no `using_declaration` (native/grammars/tree-sitter-typescript/PATCHES.md): it reads `await using resource = getResource();` as an `assignment_expression` with a leading `using`, so no binding is declared, the name reads as a write to an undeclared global, and the rule misses the finding upstream reports on the unused declaration. typescript-eslint 8.70.1 parses it as a VariableDeclaration of kind `await using` and reports the unused name. The file is one of no-unused-vars's upstream tests; Rerail cannot decide it until the grammar reads `using` declarations."
-  },
-  {
-    "rule": "typescript-eslint-no-unused-vars",
-    "source": "fixtures",
-    "path": "renamed/no-unused-vars/235.ts",
-    "line": 2,
-    "kind": "rerail-unknown",
-    "evidence": "This file is the rename variant of no-unused-vars/235.ts, whose divergence is declared above, and it misses for the same reason. The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) has no `using_declaration` (native/grammars/tree-sitter-typescript/PATCHES.md): it reads `await using ykpukbqu = dslWmxvdepl();` as an `assignment_expression` with a leading `using`, so no binding is declared, the name reads as a write to an undeclared global, and the rule misses the finding upstream reports on the unused declaration. typescript-eslint 8.70.1 parses it as a VariableDeclaration of kind `await using` and reports the unused name. Rerail cannot decide it until the grammar reads `using` declarations."
-  },
-  {
     "rule": "vitest-no-focused-tests",
     "source": "samples",
     "path": "jest-packages-jest-worker-src-workers-__tests__-workeredgecases.test.ts-3f887bed5b13/packages/jest-worker/src/workers/__tests__/WorkerEdgeCases.test.ts",

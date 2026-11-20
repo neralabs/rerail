@@ -27,7 +27,7 @@ const LEVELS: usize = 32;
 const FORMAT: u8 = 2;
 const _: () = assert!(W == 64 && M == 64 && D == 3, "`add` takes 6 bits a counter and 7 an AMS row, of three");
 
-/// One column's sketches, in a block (decision 0450 R5, Q263): `words` holds the AMS counters (`D` rows of `W`), then
+/// One column's sketches, in a block (decision 0478 R5, Q338): `words` holds the AMS counters (`D` rows of `W`), then
 /// a page of `M` counters for each level a value reached, in the order they were first reached. `page[level]` is that
 /// level's page (one past it; 0 for none), and `open` the levels holding a count now: a level whose counters all
 /// went back to zero keeps its page, zeroed, but is not open.
@@ -272,13 +272,12 @@ pub fn shadowing() -> bool {
     shadow_file().is_some()
 }
 
-fn shadow_file() -> Option<&'static std::sync::Mutex<std::fs::File>> {
-    static FILE: std::sync::OnceLock<Option<std::sync::Mutex<std::fs::File>>> = std::sync::OnceLock::new();
-    FILE.get_or_init(|| {
+/// The run's own (opened once a run, decision 0442).
+fn shadow_file() -> Option<std::sync::Arc<std::sync::Mutex<std::fs::File>>> {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| {
         let path = std::env::var_os("RERAIL_STATS_SHADOW")?;
-        std::fs::OpenOptions::new().create(true).append(true).open(path).ok().map(std::sync::Mutex::new)
+        std::fs::OpenOptions::new().create(true).append(true).open(path).ok().map(|f| std::sync::Arc::new(std::sync::Mutex::new(f)))
     })
-    .as_ref()
 }
 
 /// One shadowed column's line (`shadowing`).
@@ -293,7 +292,7 @@ pub fn shadow(at: &str, col: &str, rows: i64, ndv: i64, sq: i64, sketch: &Sketch
 pub mod tests {
     use super::{Moments, Sketch};
 
-    /// Decision 0450 R5 (Q263): a sketch's counters are one block array, a level's page made where a value first
+    /// Decision 0478 R5 (Q338): a sketch's counters are one block array, a level's page made where a value first
     /// reaches it; a level counted out again is closed, so the sketch equals one that never held those rows.
     #[test]
     fn a_planner_sketchs_counters_are_one_block_array() {

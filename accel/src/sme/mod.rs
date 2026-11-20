@@ -111,7 +111,7 @@ fn pack(b: &Bits) -> Packed {
         // One job: on this thread, without a trip through the pool.
         job(0, &mut panels, &mut pop);
     } else {
-        panels.par_chunks_mut(per * 32 * k32).zip(pop.par_chunks_mut(per * 32)).enumerate().for_each(|(c, (p, q))| job(c, p, q));
+        rerail_context::on_cores(|| panels.par_chunks_mut(per * 32 * k32).zip(pop.par_chunks_mut(per * 32)).enumerate().for_each(|(c, (p, q))| job(c, p, q)));
     }
     let base = (32 * k32) as u32;
     let popm = pop.iter().map(|&x| x.wrapping_sub(base)).collect();

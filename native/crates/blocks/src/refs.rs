@@ -1,7 +1,7 @@
 //! References inside a block: each one relative to its own address (Boost's `offset_ptr`, MLDB's `MappedPtr`).
 //! A range that holds both a reference and its target can be moved by `memcpy` with nothing to fix up.
 
-use crate::{MslField, Pod};
+use crate::{KernelField, Pod};
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering::Relaxed};
 
@@ -36,13 +36,13 @@ impl<T> Ptr<T> {
     }
 }
 
-impl<T: MslField> MslField for Ptr<T> {
+impl<T: KernelField> KernelField for Ptr<T> {
     fn ty() -> String {
         "Ptr".into()
     }
     fn deps(out: &mut Vec<String>) {
         T::deps(out);
-        let s = "struct Ptr {\n    long off;\n};\nstatic_assert(sizeof(Ptr) == 8, \"Ptr: size\");\n".to_string();
+        let s = "typedef struct Ptr {\n    int64_t off;\n} Ptr;\nUKL_STATIC_ASSERT(sizeof(Ptr) == 8, \"Ptr: size\");\n".to_string();
         if !out.contains(&s) {
             out.push(s);
         }
@@ -108,13 +108,13 @@ impl<T> Span<T> {
     }
 }
 
-impl<T: MslField> MslField for Span<T> {
+impl<T: KernelField> KernelField for Span<T> {
     fn ty() -> String {
         "Span".into()
     }
     fn deps(out: &mut Vec<String>) {
         T::deps(out);
-        let s = "struct Span {\n    long off;\n    ulong len;\n};\nstatic_assert(sizeof(Span) == 16, \"Span: size\");\n".to_string();
+        let s = "typedef struct Span {\n    int64_t off;\n    uint64_t len;\n} Span;\nUKL_STATIC_ASSERT(sizeof(Span) == 16, \"Span: size\");\n".to_string();
         if !out.contains(&s) {
             out.push(s);
         }

@@ -7,7 +7,7 @@
 //! by name pay one lookup of the name, not a string built per key.
 
 use rustc_hash::FxHashMap;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 /// A relation's number in this process.
 pub type RelId = u32;
@@ -19,33 +19,46 @@ struct Names {
 }
 
 /// Read on every lookup of a relation by name, on every thread of the pool, and written only for a new name: sharded
-/// by reader, so lookups on different threads write no shared lock word (decision 0279 §7).
-static NAMES: LazyLock<rerail_accel::sharded::Sharded<Names>> = LazyLock::new(|| rerail_accel::sharded::Sharded::new(Names::default()));
+/// by reader, so lookups on different threads write no shared lock word (decision 0279 §7), and lent (`with_shared`),
+/// so they count no reference either. The shared object's (decision 0442): a number is its own object's.
+struct RelNames(rerail_accel::sharded::Sharded<Names>);
+
+impl Default for RelNames {
+    fn default() -> Self {
+        RelNames(rerail_accel::sharded::Sharded::new(Names::default()))
+    }
+}
+
+fn with_names<R>(f: impl FnOnce(&rerail_accel::sharded::Sharded<Names>) -> R) -> R {
+    crate::code_rule_dsl::logic::profile::with_shared::<RelNames, _>(|n| f(&n.0))
+}
 
 /// `name`'s number, given it on first sight.
 pub fn rel_id(name: &str) -> RelId {
-    if let Some(&id) = NAMES.read().ids.get(name) {
-        return id;
-    }
-    let mut n = NAMES.write();
-    if let Some(&id) = n.ids.get(name) {
-        return id;
-    }
-    let id = n.names.len() as RelId;
-    let name: Arc<str> = name.into();
-    n.names.push(Arc::clone(&name));
-    n.ids.insert(name, id);
-    id
+    with_names(|names| {
+        if let Some(&id) = names.read().ids.get(name) {
+            return id;
+        }
+        let mut n = names.write();
+        if let Some(&id) = n.ids.get(name) {
+            return id;
+        }
+        let id = n.names.len() as RelId;
+        let name: Arc<str> = name.into();
+        n.names.push(Arc::clone(&name));
+        n.ids.insert(name, id);
+        id
+    })
 }
 
 /// `name`'s number, where it has one.
 pub fn find(name: &str) -> Option<RelId> {
-    NAMES.read().ids.get(name).copied()
+    with_names(|names| names.read().ids.get(name).copied())
 }
 
 /// The name numbered `id`.
 pub fn rel_name(id: RelId) -> Arc<str> {
-    Arc::clone(&NAMES.read().names[id as usize])
+    with_names(|names| Arc::clone(&names.read().names[id as usize]))
 }
 
 /// A statistic of relations: a value per relation number.
@@ -487,13 +500,15 @@ pub fn heavy_batch(reqs: Vec<HeavyReq>) -> Vec<Option<Vec<HeavyCol>>> {
     let rows: usize = reqs.iter().map(|(s, _, cols)| s.as_ref().map_or(0, |s| s.len() * cols.len())).sum();
     if gpu_pays(rows) {
         // Values gathered only for a source the engine does not hold as a relation.
-        let values: Vec<Option<Vec<Vec<i64>>>> = reqs
-            .par_iter()
-            .map(|(src, rel, cols)| match (src, rel) {
-                (Some(src), None) => Some(cols.iter().map(|&c| (0..src.len()).map(|row| src.value(row, c)).collect()).collect()),
-                _ => None,
-            })
-            .collect();
+        let values: Vec<Option<Vec<Vec<i64>>>> = rerail_prof::code_rule_dsl::logic::profile::on_cores(|| {
+            reqs
+                .par_iter()
+                .map(|(src, rel, cols)| match (src, rel) {
+                    (Some(src), None) => Some(cols.iter().map(|&c| (0..src.len()).map(|row| src.value(row, c)).collect()).collect()),
+                    _ => None,
+                })
+                .collect()
+        });
         let mut cols: Vec<StatColumn<'_>> = Vec::new();
         for ((src, rel, cs), v) in reqs.iter().zip(&values) {
             match (src, rel, v) {
@@ -503,53 +518,55 @@ pub fn heavy_batch(reqs: Vec<HeavyReq>) -> Vec<Option<Vec<HeavyCol>>> {
             }
         }
         if let Some(mut made) = heavy_of_device(&cols) {
-            BATCHES[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            rerail_prof::code_rule_dsl::logic::profile::local::<Batches>().0[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let mut made = made.drain(..);
             return reqs.iter().map(|(src, _, cs)| src.as_ref().map(|_| cs.iter().map(|_| made.next().expect("one a column")).collect())).collect();
         }
     }
-    BATCHES[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    reqs.into_par_iter()
-        .map(|(src, _, cols)| {
-            let src = src?;
-            let mut counts: Vec<FxHashMap<i64, u64>> = cols.iter().map(|_| FxHashMap::default()).collect();
-            for row in 0..src.len() {
-                for (k, &c) in cols.iter().enumerate() {
-                    *counts[k].entry(src.value(row, c)).or_default() += 1;
+    rerail_prof::code_rule_dsl::logic::profile::local::<Batches>().0[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    rerail_prof::code_rule_dsl::logic::profile::on_cores(|| {
+        reqs.into_par_iter()
+            .map(|(src, _, cols)| {
+                let src = src?;
+                let mut counts: Vec<FxHashMap<i64, u64>> = cols.iter().map(|_| FxHashMap::default()).collect();
+                for row in 0..src.len() {
+                    for (k, &c) in cols.iter().enumerate() {
+                        *counts[k].entry(src.value(row, c)).or_default() += 1;
+                    }
                 }
-            }
-            Some(counts.into_iter().map(HeavyCol::of_counts).collect())
-        })
-        .collect()
+                Some(counts.into_iter().map(HeavyCol::of_counts).collect())
+            })
+            .collect()
+    })
 }
 
 /// A request of `heavy_batch`: a relation's source, the engine's relation where it holds one, and the columns.
 pub type HeavyReq = (Option<std::sync::Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>, Option<std::sync::Arc<crate::code_rule_dsl::logic::native::component::InRel>>, Vec<usize>);
 
 /// The batches made, on the CPU and on the GPU.
-static BATCHES: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+#[derive(Default)]
+struct Batches([std::sync::atomic::AtomicU64; 2]);
 
 pub fn batches() -> [u64; 2] {
-    BATCHES.each_ref().map(|b| b.load(std::sync::atomic::Ordering::Relaxed))
+    rerail_prof::code_rule_dsl::logic::profile::local::<Batches>().0.each_ref().map(|b| b.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// Whether a round of `rows` rows (each column's rows, summed) is made on the GPU: `RERAIL_STATS_GPU` on or off,
 /// else from `GPU_ROWS`, where one launch and the columns' upload cost less than the CPU's hashing.
 fn gpu_pays(rows: usize) -> bool {
     const GPU_ROWS: usize = 1 << 20;
-    static MODE: std::sync::LazyLock<Option<bool>> = std::sync::LazyLock::new(|| match std::env::var("RERAIL_STATS_GPU").as_deref() {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| match std::env::var("RERAIL_STATS_GPU").as_deref() {
         Ok("on") => Some(true),
         Ok("off") => Some(false),
         _ => None,
-    });
-    MODE.unwrap_or(rows >= GPU_ROWS)
+    }).unwrap_or(rows >= GPU_ROWS)
 }
 
 /// Columns' heavy values made on the registered device (`SolverDevice::column_stats`), exact; `None` without one.
 /// The columns read in place are counted (`in_place`).
 pub fn heavy_of_device(cols: &[crate::code_rule_dsl::logic::device::StatColumn<'_>]) -> Option<Vec<HeavyCol>> {
     let (made, read) = crate::code_rule_dsl::logic::device::solver()?.column_stats(cols, KEPT).ok()?;
-    IN_PLACE.fetch_add(read as u64, std::sync::atomic::Ordering::Relaxed);
+    rerail_prof::code_rule_dsl::logic::profile::local::<InPlace>().0.fetch_add(read as u64, std::sync::atomic::Ordering::Relaxed);
     Some(made.into_iter().map(|m| {
         let mut top: Vec<(i64, f64)> = m.top.iter().map(|&(v, n)| (v, n as f64)).collect();
         top.sort_unstable_by_key(|t| t.0);
@@ -560,10 +577,11 @@ pub fn heavy_of_device(cols: &[crate::code_rule_dsl::logic::device::StatColumn<'
 }
 
 /// Columns the device read in place (`heavy_of_device`).
-static IN_PLACE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[derive(Default)]
+struct InPlace(std::sync::atomic::AtomicU64);
 
 pub fn read_in_place() -> u64 {
-    IN_PLACE.load(std::sync::atomic::Ordering::Relaxed)
+    rerail_prof::code_rule_dsl::logic::profile::local::<InPlace>().0.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Columns' heavy values made on the device, from host values (`heavy_of_device`).

@@ -90,6 +90,48 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2018 Toru Nagashima", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT"
 
+# The upstream presets and rule metadata set-up mirrors a repository's lint config with, as written by
+# scripts/generate/lint-config/ (scripts/generate/README.md names each generator's pinned source).
+[[annotations]]
+path = "src/engine/catalog/lint-config/generated/eslint-presets.generated.ts"
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "OpenJS Foundation and other contributors, <www.openjsf.org>",
+  "2019 typescript-eslint and other contributors",
+  "2014 Yannick Croissant",
+  "Meta Platforms, Inc. and affiliates.",
+  "Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)",
+  "2015 Toru Nagashima",
+  "2025 Vercel, Inc.",
+  "2017 Toru Nagashima",
+  "2022 - PRESENT Verité Mugabo Makuza",
+]
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "src/engine/catalog/lint-config/generated/oxlint-rules.generated.ts"
+precedence = "override"
+SPDX-FileCopyrightText = ["2024-present VoidZero Inc. & Contributors", "2023 Boshen"]
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "src/engine/catalog/lint-config/generated/ruff-rules.generated.ts"
+precedence = "override"
+SPDX-FileCopyrightText = "2022 Charles Marsh"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "src/engine/catalog/lint-config/generated/biome-rules.generated.ts"
+precedence = "override"
+SPDX-FileCopyrightText = ["2023-present Biome Developers and Contributors", "2020-2023 Rome Tools, Inc. and its affiliates"]
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "src/engine/catalog/lint-config/generated/phpcs-standards.generated.ts"
+precedence = "override"
+SPDX-FileCopyrightText = ["2012, Squiz Pty Ltd (ABN 77 084 670 600)", "2023, PHPCSStandards and contributors"]
+SPDX-License-Identifier = "BSD-3-Clause"
+
 # fortephp/forte 1.1.0, ported to Rust method by method (docs/blade-parser.md); the directive registry's
 # JSON under directives/resources/ is upstream's, byte-identical.
 [[annotations]]
@@ -238,6 +280,13 @@ SPDX-License-Identifier = "MIT"
 path = "native/vendor/block-0.1.6/**"
 precedence = "override"
 SPDX-FileCopyrightText = ["Steven Sheldon", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT"
+
+# ast-grep-core 0.51.0 from crates.io, vendored with Rerail's patch (native/vendor/ast-grep-core-0.51.0/PATCHES.md).
+[[annotations]]
+path = "native/vendor/ast-grep-core-0.51.0/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["2022 Herrington Darkholme", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT"
 
 # node-semver 7.8.5, ported to Rust (semver/mod.rs, provenance in semver/UPSTREAM.md); its subset() and new Range() answers recorded by
@@ -883,95 +932,100 @@ SPDX-License-Identifier = "Apache-2.0"
 
 # MLDB (mldbai/mldb, branch opencl-random-forests at e3caed6fa447): the Metal random forest trainer, the UKL kernel
 # shims and the compute-kernel runtime, copied verbatim under forest/src/mldb/ at their upstream paths, then
-# adapted in place. Upstream's LICENSE is beside them.
+# adapted in place; the compute-kernel runtime has since moved to gpu/device/src/mldb/ (decision 0440: the device
+# layer's crate), at the same upstream paths. Upstream's LICENSE is beside each.
 [[annotations]]
-path = "forest/src/mldb/**"
+path = ["forest/src/mldb/**", "gpu/device/src/mldb/**"]
 precedence = "override"
 SPDX-FileCopyrightText = ["2015-2022 mldb.ai inc.", "2021-2022 Jeremy Barnes", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0"
-# docs/rule-syntax/packs/<pack>/: the .rr ports of the upstream tools' rules, with the tables generated beside them
-# (and under lib/) from the packs' rule documents, annotated as their pack's rule documents above. The rest of
+# docs/rule-syntax/packs/<pack>/: the .rerail ports of the upstream tools' rules, with the tables generated beside them
+# (and under lib/) from the packs' rule documents, annotated as their pack's rule documents above; python-main's are
+# main's Python rule documents (source/rules/) and their translations, annotated likewise. The rest of
 # docs/rule-syntax/ (the complexity and rr rules, the libraries, the scripts, the notes) is Rerail's own and stays
-# under the catch-all. Override, as ruff-era001-commented-out-code.rr quotes `SPDX-License-Identifier:` in Ruff's
-# pragma regex, which REUSE would read as the file's tag.
+# under the catch-all. Override, as ruff-era001-commented-out-code.rerail (and python-main's .json and .rerail of it) quotes
+# `SPDX-License-Identifier:` in Ruff's pragma regex, which REUSE would read as the file's tag.
 [[annotations]]
 path = [
-  "docs/rule-syntax/packs/python/bandit-*.rr",
-  "docs/rule-syntax/packs/python/ruff-*.rr",
-  "docs/rule-syntax/lib/python/security-blacklist.rr",
+  "docs/rule-syntax/packs/python/bandit-*.rerail",
+  "docs/rule-syntax/packs/python/ruff-*.rerail",
+  "docs/rule-syntax/packs/python-main/bandit-*.rerail",
+  "docs/rule-syntax/packs/python-main/ruff-*.rerail",
+  "docs/rule-syntax/packs/python-main/source/rules/**",
+  "docs/rule-syntax/lib/python/security-blacklist.rerail",
 ]
 precedence = "override"
 SPDX-FileCopyrightText = ["2014 Hewlett-Packard Development Company, L.P.", "2022 Charles Marsh", "2005-2011 Divmod, Inc.", "2013-2014 Florent Xicluna", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"
 
 [[annotations]]
-path = ["docs/rule-syntax/packs/vue/eslint-plugin-vue-*.rr", "docs/rule-syntax/lib/vue/elements.rr"]
+path = ["docs/rule-syntax/packs/vue/eslint-plugin-vue-*.rerail", "docs/rule-syntax/lib/vue/elements.rerail"]
 precedence = "override"
 SPDX-FileCopyrightText = ["2017 Toru Nagashima", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"
 
 [[annotations]]
-path = "docs/rule-syntax/packs/rust/clippy-*.rr"
+path = "docs/rule-syntax/packs/rust/clippy-*.rerail"
 precedence = "override"
 SPDX-FileCopyrightText = ["The Rust Project Contributors", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"
 
 [[annotations]]
-path = ["docs/rule-syntax/packs/php/phpcs-*.rr", "docs/rule-syntax/packs/php/phpstan-*.rr", "docs/rule-syntax/packs/php/psalm-*.rr"]
+path = ["docs/rule-syntax/packs/php/phpcs-*.rerail", "docs/rule-syntax/packs/php/phpstan-*.rerail", "docs/rule-syntax/packs/php/psalm-*.rerail"]
 precedence = "override"
 SPDX-FileCopyrightText = ["2012 Squiz Pty Ltd (ABN 77 084 670 600)", "2023 PHPCSStandards and contributors", "2016 Ondřej Mirtes", "2025 PHPStan s.r.o.", "2016 Vimeo", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND BSD-3-Clause AND MIT"
 
 [[annotations]]
-path = "docs/rule-syntax/packs/sql/sqlfluff-*.rr"
+path = "docs/rule-syntax/packs/sql/sqlfluff-*.rerail"
 precedence = "override"
 SPDX-FileCopyrightText = ["2018-2026 Alan Cruickshank", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"
 
 [[annotations]]
-path = ["docs/rule-syntax/packs/blade/blade-parser-*.rr", "docs/rule-syntax/packs/blade/bladestan-*.rr", "docs/rule-syntax/packs/blade/tlint-*.rr"]
+path = ["docs/rule-syntax/packs/blade/blade-parser-*.rerail", "docs/rule-syntax/packs/blade/bladestan-*.rerail", "docs/rule-syntax/packs/blade/tlint-*.rerail"]
 precedence = "override"
 SPDX-FileCopyrightText = ["Johnathon Koster", "2023-present Tomas Votruba", "Tighten Co. <hello@tighten.co>", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"
 
 [[annotations]]
-path = "docs/rule-syntax/packs/typescript/typescript-eslint-*.rr"
+path = "docs/rule-syntax/packs/typescript/typescript-eslint-*.rerail"
 precedence = "override"
 SPDX-FileCopyrightText = ["2019 typescript-eslint and other contributors", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"
 
 [[annotations]]
-path = "docs/rule-syntax/packs/typescript/vitest-*.rr"
+path = "docs/rule-syntax/packs/typescript/vitest-*.rerail"
 precedence = "override"
 SPDX-FileCopyrightText = ["2022 - PRESENT Verité Mugabo Makuza", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"
 
 [[annotations]]
-path = "docs/rule-syntax/packs/javascript/eslint-*.rr"
+path = "docs/rule-syntax/packs/javascript/eslint-*.rerail"
 precedence = "override"
 SPDX-FileCopyrightText = ["OpenJS Foundation and other contributors, <www.openjsf.org>", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"
 
 [[annotations]]
-path = "docs/rule-syntax/packs/javascript/unicorn-*.rr"
+path = "docs/rule-syntax/packs/javascript/unicorn-*.rerail"
 precedence = "override"
 SPDX-FileCopyrightText = ["Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"
 
 [[annotations]]
-path = "docs/rule-syntax/packs/react/react-*.rr"
+path = "docs/rule-syntax/packs/react/react-*.rerail"
 precedence = "override"
 SPDX-FileCopyrightText = ["2014 Yannick Croissant", "Meta Platforms, Inc. and affiliates.", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"
 
 [[annotations]]
-path = "docs/rule-syntax/packs/node/n-*.rr"
+path = "docs/rule-syntax/packs/node/n-*.rerail"
 precedence = "override"
 SPDX-FileCopyrightText = ["2015 Toru Nagashima", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"
 
 [[annotations]]
-path = "docs/rule-syntax/packs/next/next-*.rr"
+path = "docs/rule-syntax/packs/next/next-*.rerail"
 precedence = "override"
 SPDX-FileCopyrightText = ["2025 Vercel, Inc.", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"

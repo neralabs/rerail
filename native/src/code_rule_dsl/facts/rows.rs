@@ -18,7 +18,7 @@
 //! reads through a no-copy wrap of its used extent (decision 0435 §1). A block never moves, and reserves address space
 //! enough that a tail grows in it in place (decision 0445): its pages are taken as rows are written, and a dead
 //! relation's go back to the OS. Where a reservation is memory (WASI), a block is sized, and a tail whose block is full
-//! moves to another, one copy of its rows (as a vector's growth copies them; `MOVED` counts them). Every row
+//! moves to another, one copy of its rows (as a vector's growth copies them; `moved` counts them). Every row
 //! lies whole in one segment. Segments past `MAX_SEGMENTS` are merged from the newest (the small ones a session's
 //! edits add), so a row's segment is found among a few.
 
@@ -53,13 +53,21 @@ impl Life {
     }
 }
 
-/// Relations moved out of a full block (`Part::grow`, `Part::moved_room`), and the bytes of their rows copied: none
-/// where a block reserves address space (decision 0445), read by the profile.
-pub static MOVED: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+/// Relations moved out of a full block (`Part::moved_whole`), and the bytes of their rows copied: none where a block
+/// reserves address space (decision 0445), read by the profile. On the shared object (decision 0442), as `Merged` is.
+#[derive(Default)]
+struct Moved([std::sync::atomic::AtomicU64; 2]);
 
 fn count_move(rows: u32, k: usize) {
-    MOVED[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    MOVED[1].fetch_add(u64::from(rows) * k as u64 * 8, std::sync::atomic::Ordering::Relaxed);
+    let m = crate::code_rule_dsl::logic::profile::shared::<Moved>();
+    m.0[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    m.0[1].fetch_add(u64::from(rows) * k as u64 * 8, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The relations moved out of a full block so far, and their rows' bytes copied (`count_move`), for a profile.
+pub fn moved() -> (u64, u64) {
+    let m = crate::code_rule_dsl::logic::profile::shared::<Moved>();
+    (m.0[0].load(std::sync::atomic::Ordering::Relaxed), m.0[1].load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// Room a block keeps past a new relation's: what its other relations' tails may take meanwhile.
@@ -70,6 +78,9 @@ pub struct Facts {
     pub block: Block,
     /// Held while an index is added to one of its relations (`Relation::try_reserve_index`, decision 0325 step 5).
     pub ix: Mutex<()>,
+    /// The count of bytes given back of the run that leased it (`given_back`): a relation's last holder may drop it
+    /// on any thread.
+    given: Arc<GivenBack>,
     /// The chunk's tally it adds its bytes written to when given back (`in_chunk_measured`), when a chunk made it.
     tally: Option<Arc<std::sync::atomic::AtomicUsize>>,
     /// How long its relations live.
@@ -77,10 +88,10 @@ pub struct Facts {
 }
 
 impl Facts {
-    /// A block of relations of `life`: the chunk's evaluating on this thread, if one is, counted in its tally.
+    /// A block of relations of `life`: the chunk's the run is evaluating, if one is, counted in its tally.
     fn new(block: Block, life: Life) -> Facts {
-        let tally = CHUNK.with(|c| c.borrow().as_ref().map(|c| Arc::clone(&c.tally)));
-        Facts { block, ix: Mutex::new(()), tally, life }
+        let tally = current_chunk().map(|c| Arc::clone(&c.tally));
+        Facts { block, ix: Mutex::new(()), given: crate::code_rule_dsl::logic::profile::local::<GivenBack>(), tally, life }
     }
 }
 
@@ -92,14 +103,27 @@ impl Drop for Facts {
     }
 }
 
-/// What a chunk's evaluation wrote in blocks of relations (decision 0435 §4, Q261): every block it made, at its
+/// What a chunk's evaluation wrote in blocks of relations (decision 0435 §4, Q314): every block it made, at its
 /// most (a block's used bytes never fall), and of the blocks still held when it ended (rows it handed on), the bytes
 /// past their free lists (decision 0445). A
 /// function of the chunk and its plans, not of the threads' timing, as the process's count is not.
+///
+/// `heap` is its scopes' heap at their most (decision 0469): each scope of the chunk on a thread (its evaluation, a
+/// job carried into it) from the allocator's per-thread peak, reset at the scope's entry, so a scope's is its own
+/// allocation, whatever ran on other threads meanwhile. Their sum bounds what they held at once, and a scope's peak
+/// is a function of its work, not of the threads' timing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Written {
     pub bytes: usize,
     pub held: usize,
+    pub heap: usize,
+}
+
+impl Written {
+    /// What sizes the chunks after it (decision 0469): its blocks' bytes and its scopes' heap at their most.
+    pub fn measure(&self) -> usize {
+        self.bytes + self.heap
+    }
 }
 
 /// How long a relation's rows live, which picks the blocks they go in: a block is given back with its last part,
@@ -122,16 +146,21 @@ pub enum Life {
     Device,
 }
 
-/// The blocks new relations go in outside a chunk, while they have room: one a `Life`.
-static OPEN: [Mutex<Option<Arc<Facts>>>; 4] = [Mutex::new(None), Mutex::new(None), Mutex::new(None), Mutex::new(None)];
+/// The blocks a run's new relations go in outside a chunk, while they have room: one a `Life` (decision 0442: the
+/// run's, so no two runs' relations share a block).
+#[derive(Default)]
+struct Open([Mutex<Option<Arc<Facts>>>; 4]);
 
-/// Every block leased, by `Life`, while it lives: what a profile reads (`held`).
-static LIVE: Mutex<[Vec<std::sync::Weak<Facts>>; 3]> = Mutex::new([Vec::new(), Vec::new(), Vec::new()]);
+/// Every block leased on this machine, by `Life`, while it lives: what a profile reads (`held`; decision 0442: the
+/// machine's, as the memory it counts is).
+#[derive(Default)]
+struct Live(Mutex<[Vec<std::sync::Weak<Facts>>; 3]>);
 
 /// Per `Life`, the blocks held now, their bytes written and their bytes reserved: a profile's account of the rows
 /// outside the heap.
 pub fn held() -> [(usize, usize, usize); 3] {
-    let live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+    let live_blocks = crate::code_rule_dsl::logic::profile::machine::<Live>();
+    let live = live_blocks.0.lock().unwrap_or_else(|e| e.into_inner());
     std::array::from_fn(|l| {
         live[l].iter().filter_map(std::sync::Weak::upgrade).fold((0, 0, 0), |(n, u, r), f| (n + 1, u + f.block.used(), r + f.block.reserved()))
     })
@@ -141,6 +170,11 @@ pub fn held() -> [(usize, usize, usize); 3] {
 /// made, to count those that outlive it. A block lives while any relation in it does, so one shared by every chunk
 /// at once was kept whole by a few rows of each, and the run's footprint (the line its chunk sizes are cut by)
 /// counted it whole.
+///
+/// It also keeps what its work holds (Q203 item 3), the measure its chunks are sized by: the bytes of its blocks that
+/// live, plus what its jobs allocated and did not free (`enter_chunk`), at their most so far (`held_most`). The
+/// process's footprint is not a chunk's: the run's one-time allocations and the other chunks' in flight are in it,
+/// and pages freed before a chunk hid its growth; the same 29,000-node chunks so measured 1 to 1,471 MB.
 #[derive(Default)]
 pub struct Chunk {
     open: [Mutex<Option<Arc<Facts>>>; 4],
@@ -150,12 +184,137 @@ pub struct Chunk {
     /// Of its blocks held when it ended, their used bytes, and those past their free lists (`Written::held`).
     live: std::sync::atomic::AtomicUsize,
     held: std::sync::atomic::AtomicUsize,
+    /// What its jobs allocated less what they freed, so far (bytes; another chunk's frees can make it negative).
+    heap: std::sync::atomic::AtomicI64,
+    /// The most its live blocks and its jobs' heap held at once, seen at a block made or a job's end.
+    most: std::sync::atomic::AtomicUsize,
+    /// Its scopes' heap at their most, summed (`Written::heap`): each scope's own (`enter_chunk`), whatever ran
+    /// beside it.
+    peaks: std::sync::atomic::AtomicUsize,
+}
+
+impl Chunk {
+    /// Notes what it holds now (`most`).
+    fn note(&self) {
+        let blocks: usize = self.made.lock().unwrap_or_else(|e| e.into_inner()).iter().filter_map(std::sync::Weak::upgrade).map(|f| f.block.used()).sum();
+        let heap = self.heap.load(std::sync::atomic::Ordering::Relaxed).max(0) as usize;
+        self.most.fetch_max(blocks + heap, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The most its work held at once so far (bytes): its live blocks and its jobs' heap.
+    pub fn held_most(&self) -> usize {
+        self.note();
+        self.most.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+/// This thread's bytes allocated less those freed, from the allocator's own counters (installed by the engine, which
+/// links the allocator: `install_heap_net`); 0 without one.
+static HEAP_NET: std::sync::OnceLock<fn() -> i64> = std::sync::OnceLock::new();
+
+/// Installs the allocator's per-thread counter of bytes allocated less freed; the first one stays.
+pub fn install_heap_net(net: fn() -> i64) {
+    let _ = HEAP_NET.set(net);
+}
+
+fn heap_net() -> i64 {
+    HEAP_NET.get().map_or(0, |f| f())
+}
+
+/// This thread's most allocated less freed since its last reset, above what it was at the reset, and the reset, from
+/// the allocator's own counters (jemalloc's `thread.peak`; installed by the engine: `install_heap_peak`); 0 without.
+static HEAP_PEAK: std::sync::OnceLock<(fn() -> i64, fn())> = std::sync::OnceLock::new();
+
+/// Installs the allocator's per-thread peak (`read`, since the last `reset`) and its reset; the first one stays.
+pub fn install_heap_peak(read: fn() -> i64, reset: fn()) {
+    let _ = HEAP_PEAK.set((read, reset));
+}
+
+fn peak_reset() {
+    if let Some((_, reset)) = HEAP_PEAK.get() {
+        reset();
+    }
+}
+
+/// The innermost scope's own allocation at its most so far: its most before the last reset, or what it held at the
+/// reset and the most since.
+fn scope_peak() -> i64 {
+    let (most, at) = PEAK.with(std::cell::Cell::get);
+    most.max(at + HEAP_PEAK.get().map_or(0, |(read, _)| read()))
 }
 
 thread_local! {
-    /// The chunk this thread's run is evaluating (`in_chunk`): carried to its jobs (`setfix::carried`).
-    pub static CHUNK: std::cell::RefCell<Option<Arc<Chunk>>> = const { std::cell::RefCell::new(None) };
+    /// The bytes this thread's chunk scopes (`enter_chunk`) gave their chunks so far: a scope's own are its thread's
+    /// net less what the scopes inside it gave theirs (a job of another chunk run while it waited).
+    static GIVEN: std::cell::Cell<i64> = const { std::cell::Cell::new(0) };
+    /// The innermost scope's thread net and `GIVEN` at its entry: its allocation so far, for `chunk_held_most`.
+    static TOP: std::cell::Cell<(i64, i64)> = const { std::cell::Cell::new((0, 0)) };
+    /// The innermost scope's own allocation at its most before the allocator's peak was last reset, and its own
+    /// allocation at that reset (`scope_peak`).
+    static PEAK: std::cell::Cell<(i64, i64)> = const { std::cell::Cell::new((0, 0)) };
 }
+
+/// A chunk scope entered on this thread (`enter_chunk`): when it drops, what this thread allocated less freed meanwhile
+/// (less the scopes inside) is the chunk's. The chunk itself is the run's context's (`InChunk`), which a job carries.
+pub struct ChunkScope {
+    chunk: Option<Arc<Chunk>>,
+    net: i64,
+    given: i64,
+    top: (i64, i64),
+    /// The scope it is inside: its own allocation at its most so far (`scope_peak`), held while this one runs.
+    outer_peak: i64,
+}
+
+/// Enters a scope of `chunk` on this thread, for a job carried into it (`setfix::carried`) or its own evaluation
+/// (`in_chunk`).
+pub fn enter_chunk(chunk: Option<Arc<Chunk>>) -> ChunkScope {
+    // The scope it is inside stops at its most so far; this one's peak counts from here (decision 0469).
+    let outer_peak = scope_peak();
+    PEAK.with(|p| p.set((0, 0)));
+    peak_reset();
+    let (net, given) = (heap_net(), GIVEN.with(std::cell::Cell::get));
+    ChunkScope { chunk, net, given, top: TOP.with(|t| t.replace((net, given))), outer_peak }
+}
+
+impl Drop for ChunkScope {
+    fn drop(&mut self) {
+        let own = (heap_net() - self.net) - (GIVEN.with(std::cell::Cell::get) - self.given);
+        let most = scope_peak().max(0) as usize;
+        GIVEN.with(|g| g.set(g.get() + own));
+        TOP.with(|t| t.set(self.top));
+        // The scope it was inside goes on from its own allocation now, its most so far kept.
+        let (net, given) = self.top;
+        let outer_now = (heap_net() - net) - (GIVEN.with(std::cell::Cell::get) - given);
+        PEAK.with(|p| p.set((self.outer_peak, outer_now)));
+        peak_reset();
+        if let Some(c) = &self.chunk {
+            c.heap.fetch_add(own, std::sync::atomic::Ordering::Relaxed);
+            c.peaks.fetch_add(most, std::sync::atomic::Ordering::Relaxed);
+            c.note();
+        }
+    }
+}
+
+/// The chunk the run is evaluating (`InChunk`), for a job to enter a scope of (`setfix::carried`).
+pub fn current_chunk() -> Option<Arc<Chunk>> {
+    crate::code_rule_dsl::logic::profile::bound::<InChunk>().0
+}
+
+/// What the chunk this thread evaluates has held at its most so far (`Chunk::held_most`); `None` outside one.
+pub fn chunk_held_most() -> Option<usize> {
+    let chunk = current_chunk()?;
+    // The scope this thread is in, its allocation so far: its chunk's, not given yet.
+    let (net, given) = TOP.with(std::cell::Cell::get);
+    let open = (heap_net() - net) - (GIVEN.with(std::cell::Cell::get) - given);
+    chunk.heap.fetch_add(open, std::sync::atomic::Ordering::Relaxed);
+    let most = chunk.held_most();
+    chunk.heap.fetch_sub(open, std::sync::atomic::Ordering::Relaxed);
+    Some(most)
+}
+
+/// The chunk the run is evaluating (`in_chunk`), in the run's context: its jobs' relations go in its blocks too.
+#[derive(Clone, Default)]
+struct InChunk(Option<Arc<Chunk>>);
 
 /// Runs `f` as a chunk's evaluation: the relations it and its jobs make go in blocks of the chunk's own, given back
 /// with the last of its rows (decision 0289: a chunk is a block). What outlives the chunk keeps only its own block;
@@ -170,12 +329,12 @@ fn held_of(live: &[(Life, usize, usize)]) -> usize {
     live.iter().filter(|l| l.0 != Life::Device).map(|l| l.2).sum()
 }
 
-/// `in_chunk`, and what the chunk's blocks wrote (`Written`).
+/// `in_chunk`, and what the chunk's blocks wrote and its scopes' heap at their most (`Written`).
 pub fn in_chunk_measured<R>(f: impl FnOnce() -> R) -> (R, Written) {
-    struct Leave(Option<Arc<Chunk>>, Arc<Chunk>);
+    struct Leave(Option<(ChunkScope, crate::code_rule_dsl::logic::profile::Bound)>, Arc<Chunk>);
     impl Drop for Leave {
         fn drop(&mut self) {
-            CHUNK.with(|c| *c.borrow_mut() = self.0.take());
+            drop(self.0.take());
             for open in &self.1.open {
                 open.lock().unwrap_or_else(|e| e.into_inner()).take();
             }
@@ -184,7 +343,7 @@ pub fn in_chunk_measured<R>(f: impl FnOnce() -> R) -> (R, Written) {
             // it holds (decision 0445: a block one kept relation holds lives, its dead relations' pages given back).
             // A device run's own relations (views, totals, deltas) are handed on to nothing: a block of theirs outlives
             // the chunk only while device work still in flight holds it, so it is the device's timing, not rows held
-            // (Q261: on Metal 15-30 of a chunk's blocks outlived it, a different number every run).
+            // (Q314: on Metal 15-30 of a chunk's blocks outlived it, a different number every run).
             let (n, live) = (made.len(), made.iter().filter_map(std::sync::Weak::upgrade).map(|f| (f.life, f.block.used(), f.block.used().saturating_sub(f.block.free_bytes()))).collect::<Vec<_>>());
             self.1.live.store(live.iter().map(|l| l.1).sum(), std::sync::atomic::Ordering::Relaxed);
             self.1.held.store(held_of(&live), std::sync::atomic::Ordering::Relaxed);
@@ -205,12 +364,15 @@ pub fn in_chunk_measured<R>(f: impl FnOnce() -> R) -> (R, Written) {
         }
     }
     let chunk = Arc::new(Chunk::default());
-    let leave = Leave(CHUNK.with(|c| c.borrow_mut().replace(chunk.clone())), chunk.clone());
+    // The chunk is the run's context's (its jobs' too); its scope here counts this thread's allocation into it.
+    let bound = crate::code_rule_dsl::logic::profile::bind(InChunk(Some(chunk.clone())));
+    let leave = Leave(Some((enter_chunk(Some(chunk.clone())), bound)), chunk.clone());
     let r = f();
     // Its open blocks are let go here: a block none of its relations holds is given back, and tallied.
     drop(leave);
     let held = chunk.held.load(std::sync::atomic::Ordering::Relaxed);
-    (r, Written { bytes: chunk.tally.load(std::sync::atomic::Ordering::Relaxed) + chunk.live.load(std::sync::atomic::Ordering::Relaxed), held })
+    let heap = chunk.peaks.load(std::sync::atomic::Ordering::Relaxed);
+    (r, Written { bytes: chunk.tally.load(std::sync::atomic::Ordering::Relaxed) + chunk.live.load(std::sync::atomic::Ordering::Relaxed), held, heap })
 }
 
 /// A block of at least `bytes` for relations, from the one block policy (decision 0342): a run bound to the device
@@ -237,26 +399,33 @@ fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<F
     let f = Arc::new(Facts::new(lease(2 * need + MARGIN, life)?, life));
     if let Some(c) = chunk {
         c.made.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::downgrade(&f));
+        c.note();
     }
-    let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+    let live_blocks = crate::code_rule_dsl::logic::profile::machine::<Live>();
+    let mut live = live_blocks.0.lock().unwrap_or_else(|e| e.into_inner());
     live[life as usize].retain(|w| w.strong_count() > 0);
     live[life as usize].push(Arc::downgrade(&f));
     Ok(f)
 }
 
-/// The open block of `life`'s relations (the chunk's, if a chunk's evaluation runs) with room for `need` bytes past
-/// its others' margin, a new one made when it has none.
-fn open_with_room(life: Life, need: usize) -> Result<Arc<Facts>, String> {
-    let chunk = CHUNK.with(|c| c.borrow().clone());
-    let mut open = chunk.as_ref().map_or(&OPEN[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
-    match &*open {
-        Some(f) if f.block.reserved().saturating_sub(f.block.used()) >= need + MARGIN => Ok(f.clone()),
-        _ => {
-            let f = new_open(&chunk, life, need)?;
-            *open = Some(f.clone());
-            Ok(f)
-        }
+/// A chunk of `need` bytes (aligned to `align`) in the open block of `life`'s relations (the chunk's, if a chunk's
+/// evaluation runs), past its others' margin, taken under the block's lock. Checked for room under the lock and taken
+/// after it, the room could be another thread's by then, or not in one piece (a free list's), and the chunk failed
+/// (an index's 2.5 MB, the data layer's 50 policies on 901 files). A new open block when that one has no such chunk.
+fn open_chunk(life: Life, need: usize, align: usize) -> Result<(Arc<Facts>, (usize, usize)), String> {
+    let chunk = current_chunk();
+    let runs = crate::code_rule_dsl::logic::profile::local::<Open>();
+    let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(f) = &*open
+        && f.block.reserved().saturating_sub(f.block.used()) >= need + MARGIN
+        && let Some(c) = f.block.try_alloc_chunk_fit(need, align)
+    {
+        return Ok((f.clone(), c));
     }
+    let f = new_open(&chunk, life, need)?;
+    *open = Some(f.clone());
+    let c = f.block.try_alloc_chunk_fit(need, align).ok_or_else(|| format!("a new open block holds no chunk of {need} bytes"))?;
+    Ok((f, c))
 }
 
 /// Where the structures derived from a relation's rows go (its indexes' arrays, `BlockVec`, decision 0384 step 4):
@@ -291,7 +460,7 @@ pub struct BlockVec<T: rerail_blocks::Pod> {
     cap: usize,
     /// The bytes its chunk keeps (what `Block::free_chunk_fit` takes back); 0 for a borrowed one (`shared`).
     kept: usize,
-    /// A borrowed one's relation, whose directory owns its chunk (decision 0450 step 5b): kept while it lives.
+    /// A borrowed one's relation, whose directory owns its chunk (decision 0478 step 5b): kept while it lives.
     owner: Option<Part>,
     _t: std::marker::PhantomData<T>,
 }
@@ -306,16 +475,13 @@ impl<T: rerail_blocks::Pod> Default for BlockVec<T> {
     }
 }
 
-/// `BlockVec`'s chunks taken, by where: its relation's block, or the open block of its life.
-pub static BLOCK_VEC_CHUNKS: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
-
 impl<T: rerail_blocks::Pod> BlockVec<T> {
     /// Empty, with no chunk.
     pub const fn new() -> Self {
         BlockVec { facts: None, ptr: std::ptr::NonNull::dangling(), life: Life::Run, at: 0, len: 0, cap: 0, kept: 0, owner: None, _t: std::marker::PhantomData }
     }
 
-    /// The `len` `T`s at `at` of `owner`'s block, which `owner`'s relation keeps (its directory's: decision 0450 step
+    /// The `len` `T`s at `at` of `owner`'s block, which `owner`'s relation keeps (its directory's: decision 0478 step
     /// 5b), read where they lie: borrowed, never given back by this, and never written (a write moves them first).
     ///
     /// # Safety
@@ -420,16 +586,13 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
         let bytes = (n * size_of::<T>()).max(1);
         let align = align_of::<T>().max(8);
         let room = |&(f, grow): &(&Arc<Facts>, usize)| f.block.reserved().saturating_sub(f.block.used()) >= bytes + MARGIN + grow;
-        let (facts, (at, size), which) = match near.filter(room).and_then(|(f, _)| f.block.try_alloc_chunk_fit(bytes, align).map(|c| (f.clone(), c))) {
-            Some((f, c)) => (f, c, 0),
+        let (facts, (at, size)) = match near.filter(room).and_then(|(f, _)| f.block.try_alloc_chunk_fit(bytes, align).map(|c| (f.clone(), c))) {
+            Some(found) => found,
             None => {
                 let life = if self.life == Life::Device { Life::Run } else { self.life };
-                let f = open_with_room(life, bytes).unwrap_or_else(|e| panic!("a block for {bytes} bytes of an index: {e}"));
-                let c = f.block.try_alloc_chunk_fit(bytes, align).unwrap_or_else(|| panic!("an open block with room holds {bytes} bytes"));
-                (f, c, 1)
+                open_chunk(life, bytes, align).unwrap_or_else(|e| panic!("a block for {bytes} bytes of an index: {e}"))
             }
         };
-        BLOCK_VEC_CHUNKS[which].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if self.len > 0 {
             // SAFETY: the old chunk holds `len` written `T`s; the new one is this vector's alone, apart from it.
             // copy: growth: an array that outgrew its chunk, moved once, as a vector's growth moves it
@@ -642,7 +805,7 @@ fn lease_exact(bytes: usize, life: Life) -> Result<Block, String> {
 
 /// A relation of `k` columns holding `vals` (row by row), alone in a block of anonymous memory, as a run's block is
 /// when the device's spare budget refuses it a slab: bound on the device by a wrap of its used extent
-/// (`Block::gpu_buffer`), which what is added to the block after that wrap lies past.
+/// (`Block::device_buffer`), which what is added to the block after that wrap lies past.
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn anon_in_block(k: usize, vals: &[i64]) -> InBlock {
     let rows = vals.len() / k;
@@ -659,7 +822,7 @@ pub fn anon_in_block(k: usize, vals: &[i64]) -> InBlock {
         }
     }
     let at = facts.block.offset_of(rel);
-    InBlock { facts, at, rows: rows as u32, dead: 0, part: None }
+    InBlock { facts, at, rows: rows as u32, dead: 0, kills: None, part: None }
 }
 
 /// A relation of `k` values a row, 8 bytes each, read in their order.
@@ -691,6 +854,12 @@ pub struct Held {
     /// Its rows' count while its writer is free for a relation started from its frozen rows to take (`Rows::freeze`,
     /// `Rows::shared`, decision 0384 step 2); `u32::MAX` while it has a writer (or none may write past its rows).
     free_at: std::sync::atomic::AtomicU32,
+    /// The relation it continues (a fork's tail, decision 0384 step 7, `Part::continuing`), kept while it is: its ids
+    /// below the base's rows read there.
+    base: Option<Part>,
+    /// Rows of a continuation's base it took when it moved (`grow`, `moved_room`): its rows start at id 0 then, and the
+    /// `Rows` holding it drops the base's segment (`Rows::absorbed`).
+    absorbed: u32,
 }
 
 /// Room past a relation's rows lent to another writer (the device, `Part::room`): rows `at..` of it, which the writer
@@ -738,19 +907,27 @@ impl Drop for Lent {
 
 /// The relations of many parts merged into one for a reader that binds one (`Rows::one`), and their bytes: copies the
 /// device's reads of a relation of many parts would not make.
-static MERGED: [std::sync::atomic::AtomicUsize; 2] = [const { std::sync::atomic::AtomicUsize::new(0) }; 2];
+/// On the shared object (decision 0442): a profile's count over the runs that share it.
+#[derive(Default)]
+struct Merged([std::sync::atomic::AtomicUsize; 2]);
+
+fn merged_counts() -> std::sync::Arc<Merged> {
+    crate::code_rule_dsl::logic::profile::shared::<Merged>()
+}
 
 /// The relations merged into one so far (`Rows::one`), and their bytes, for a profile.
 pub fn merged() -> (usize, usize) {
-    (MERGED[0].load(std::sync::atomic::Ordering::Relaxed), MERGED[1].load(std::sync::atomic::Ordering::Relaxed))
+    let m = merged_counts();
+    (m.0[0].load(std::sync::atomic::Ordering::Relaxed), m.0[1].load(std::sync::atomic::Ordering::Relaxed))
 }
 
-/// The bytes of dead relations' chunks given back to the OS so far (`Held`'s drop), for a profile.
-static GIVEN_BACK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// The bytes of a run's dead relations' chunks given back to the OS so far (`Held`'s drop), for a profile: the run's.
+#[derive(Default)]
+struct GivenBack(std::sync::atomic::AtomicUsize);
 
-/// The bytes of dead relations' chunks given back to the OS so far.
+/// The bytes of the run's dead relations' chunks given back to the OS so far.
 pub fn given_back() -> usize {
-    GIVEN_BACK.load(std::sync::atomic::Ordering::Relaxed)
+    crate::code_rule_dsl::logic::profile::local::<GivenBack>().0.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 impl Drop for Held {
@@ -759,8 +936,12 @@ impl Drop for Held {
         // free list, their whole pages past the list's link back to the OS (Q76: a block lives while any relation in
         // it does, so a chunk's dead relations otherwise kept their pages resident; about 500 MB of a 300-file cold
         // run's footprint, Q76).
+        // A read-only block is never written: nothing is given back to it.
+        if !self.facts.block.is_writable() {
+            return;
+        }
         let given = unsafe { (*self.rel).release(&self.facts.block) };
-        GIVEN_BACK.fetch_add(given, std::sync::atomic::Ordering::Relaxed);
+        self.facts.given.0.fetch_add(given, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -799,8 +980,9 @@ impl Part {
         // A relation given room past its rows (`extra`: its indexes', `Rows::with_index_room`) is alone in its block
         // too, so its indexes lie with it.
         let alone = life == Life::Device || extra > 0;
-        let chunk = CHUNK.with(|c| c.borrow().clone());
-        let mut open = chunk.as_ref().map_or(&OPEN[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
+        let chunk = crate::code_rule_dsl::logic::profile::bound::<InChunk>().0;
+        let (runs, live_blocks) = (crate::code_rule_dsl::logic::profile::local::<Open>(), crate::code_rule_dsl::logic::profile::machine::<Live>());
+        let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
         for fresh in [false, true] {
             let facts = match &*open {
                 _ if alone => {
@@ -810,7 +992,7 @@ impl Part {
                         c.made.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::downgrade(&f));
                     }
                     if life != Life::Device {
-                        let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+                        let mut live = live_blocks.0.lock().unwrap_or_else(|e| e.into_inner());
                         live[life as usize].retain(|w| w.strong_count() > 0);
                         live[life as usize].push(Arc::downgrade(&f));
                     }
@@ -831,7 +1013,7 @@ impl Part {
                 }
                 let cols = (0..k).map(|c| rel.rows.reader(c)).collect();
                 let rel = std::ptr::from_ref(rel);
-                return Ok(Part { held: Arc::new(Held { facts, life, rel, cols, lent: std::sync::atomic::AtomicU32::new(0), free_at: std::sync::atomic::AtomicU32::new(u32::MAX) }), cap: u32::MAX });
+                return Ok(Part { held: Arc::new(Held { facts, life, rel, cols, lent: std::sync::atomic::AtomicU32::new(0), free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: None, absorbed: 0 }), cap: u32::MAX });
             }
         }
         unreachable!("a new block of {} bytes holds a relation of {need}", 2 * need + MARGIN)
@@ -851,16 +1033,6 @@ impl Part {
         // SAFETY: rows `0..rows` are reserved; the caller's device work writes every one before a read.
         unsafe { part.rel().rows.claim_reserved(rows as u32) };
         Ok(part)
-    }
-
-    /// Stores row `id`'s value `v` in column `c`.
-    ///
-    /// # Safety
-    /// Row `id` is within the rows reserved, and no reader reads it until it is claimed (`written`).
-    #[inline]
-    pub unsafe fn put(&self, id: u32, c: usize, v: i64) {
-        // SAFETY: as the caller says.
-        unsafe { self.rel().rows.put(id, c, v) }
     }
 
     /// How long its rows live: the blocks it is in.
@@ -920,12 +1092,13 @@ impl Part {
     /// A relation of `k` columns living `life` long, room for `rows` rows alone in a block, and past them for
     /// `indexes` indexes of its own over its rows, one for each key its readers probe it by (`Rows::with_index_room`'s
     /// part; an axis's, by `n` and by `a`, decision 0353 step 5): a key past them copies the relation
-    /// (`DevIndex::moved`). The room is the block's address space: its pages are taken as an index is written.
+    /// (`DevIndex::moved`). The room is the block's address space: its pages are taken as an index is written. Not
+    /// leased from the device's budget.
     pub fn with_index_room(life: Life, k: usize, rows: usize, indexes: usize) -> Part {
         let cap = rows.next_power_of_two().max(1);
-        let index = 4 * (cap + 1) + 4 * rows.max(1) + 64;
-        let extra = indexes.max(1) * index + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64;
-        Part::try_new_with(life, k, rows, extra, false).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"))
+        let one = 4 * (cap + 1) + 4 * rows.max(1) + 3 * 64;
+        let room = indexes.clamp(1, rerail_blocks::relation::ADDED_INDEXES) * one + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>();
+        Part::try_new_with(life, k, rows, room, false).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"))
     }
 
     /// `for_writes` alone in a block with `room` bytes past its rows' (decision 0384 step 5): a relation the device
@@ -972,7 +1145,18 @@ impl Part {
     /// This relation where it lies, `rows` of it, for a reader or writer that binds its block (the device): it keeps
     /// the relation's chunks as the part does.
     pub fn in_block(&self, rows: u32) -> InBlock {
-        InBlock { facts: self.facts.clone(), at: self.rel_at(), rows, dead: 0, part: Some(self.clone()) }
+        InBlock { facts: self.facts.clone(), at: self.rel_at(), rows, dead: 0, kills: None, part: Some(self.clone()) }
+    }
+
+    /// Row `i`'s value in column `c` written where it lies: a derived value put in its place (a device fold's text
+    /// made its symbol, an axis's ids as the host writes them).
+    ///
+    /// # Safety
+    /// Row `i` is reserved, and no reader or other writer touches it meanwhile.
+    pub unsafe fn put(&self, i: u32, c: usize, v: i64) {
+        debug_assert!(!self.capped(), "a capped part is never written");
+        // SAFETY: the caller's.
+        unsafe { self.rel().rows.put(i, c, v) };
     }
 
     /// Its rows' descriptor's offset in its block: what a writer's `rows_at` takes.
@@ -1001,15 +1185,11 @@ impl Part {
     /// (`Rows::claim_tail`), as a push past a full block moves it (`grow`). The rows are written once more, as a
     /// vector's growth writes them.
     pub fn moved_room(&self, rows: u32, n: usize) -> Lent {
-        let k = self.rel().rows.ncols as usize;
-        let need = rows as usize + n;
-        let mut moved = Part::new(self.life, k, need.max(2 * rows as usize));
-        count_move(rows, k);
-        // copy: growth: a relation moved out of a full block, once, as a vector's growth moves it.
-        moved.copy_from(self, 0, rows);
-        assert!(moved.rel().rows.try_reserve(&moved.facts.block, need as u64), "a new relation's room for its rows");
+        let moved = self.moved_whole(rows, (rows as usize + n).max(2 * rows as usize));
+        let at = moved.len();
+        assert!(moved.rel().rows.try_reserve(&moved.facts.block, u64::from(at) + n as u64), "a new relation's room for its rows");
         moved.lent.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-        Lent { tail: moved, at: rows, from: Some(self.clone()) }
+        Lent { tail: moved, at, from: Some(self.clone()) }
     }
 
     /// Rows `0..n` written by the writer it was made for (`for_writes`), now its rows.
@@ -1048,12 +1228,82 @@ impl Part {
         if self.rel().rows.try_reserve(&self.facts.block, n) {
             return;
         }
-        let k = self.rel().rows.ncols as usize;
-        let mut moved = Part::new(self.life, k, 2 * n as usize);
-        count_move(self.len(), k);
-        // copy: growth: a relation moved out of a full block, once, as a vector's growth moves it.
-        moved.copy_from(self, 0, self.len());
+        let moved = self.moved_whole(self.len(), 2 * n as usize);
         *self = moved;
+    }
+
+    /// Its first `rows` rows moved into a new relation of its life with room for `room` rows of its own more: a
+    /// continuation's base's rows first (it absorbs them: `Held::absorbed`, its ids then from 0), as a relation moves
+    /// out of a full block (a vector's growth).
+    fn moved_whole(&self, rows: u32, room: usize) -> Part {
+        let k = self.rel().rows.ncols as usize;
+        let pre = self.base.as_ref().map_or(0, |_| self.rel().base_rows);
+        let mut moved = Part::new(self.life, k, room.max(rows as usize) + pre as usize);
+        count_move(rows + pre, k);
+        if let Some(base) = &self.base {
+            // copy: growth: a continuation moved out of a full block takes the rows of its chain with it, once.
+            moved.copy_reads(base, pre);
+        }
+        // copy: growth: a relation moved out of a full block, once, as a vector's growth moves it.
+        moved.copy_from(self, 0, rows);
+        Arc::get_mut(&mut moved.held).expect("a new relation's one holder").absorbed = pre;
+        moved
+    }
+
+    /// Appends the first `upto` rows `from` reads, down its chain of bases (a continuation's: its bases' first).
+    fn copy_reads(&mut self, from: &Part, upto: u32) {
+        let own_from = match &from.base {
+            Some(base) => {
+                let b = from.rel().base_rows.min(upto);
+                self.copy_reads(base, b);
+                from.rel().base_rows
+            }
+            None => 0,
+        };
+        if upto > own_from {
+            self.copy_from(from, 0, upto - own_from);
+        }
+    }
+
+    /// The rows it reads by id, from 0: a continuation's base's first (`Relation::len_all`), then its own.
+    pub fn reads(&self) -> u32 {
+        self.base.as_ref().map_or(0, |_| self.rel().base_rows) + self.len()
+    }
+
+    /// Whether it continues another relation's rows (`continuing`).
+    pub fn is_continuation(&self) -> bool {
+        self.base.is_some()
+    }
+
+    /// A relation continuing the rows `base` reads (decision 0384 steps 7 and 8, `Relation::try_continue`): its ids
+    /// below them read in `base` (and down `base`'s own chain, when it continues another), its own after, in
+    /// `base`'s block, `base` kept while it is. A relation started from frozen rows whose writer another took
+    /// (`Rows::shared`), or a copy's first row past them (`Rows::clone`), goes on in it: one relation a reader binds
+    /// whole. `None` when `base`'s block has no room for it.
+    fn continuing(base: &Part) -> Option<Part> {
+        let k = base.rel().rows.ncols as usize;
+        let rel = Relation::try_continue(&base.facts.block, &spec(k), base.rel(), base.reads())?;
+        let cols = (0..k).map(|c| rel.rows.reader(c)).collect();
+        let held = Held { facts: base.facts.clone(), life: base.life, rel: std::ptr::from_ref(rel), cols, lent: std::sync::atomic::AtomicU32::new(0),
+                          free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: Some(base.prefix()), absorbed: 0 };
+        Some(Part { held: Arc::new(held), cap: u32::MAX })
+    }
+
+    /// Whether it continues `base`'s rows, all it reads (`continuing`).
+    fn continues_of(&self, base: &Part) -> bool {
+        self.base.as_ref().is_some_and(|b| Arc::ptr_eq(&b.held, &base.held) && b.len() == base.len()) && self.rel().base_rows == base.reads()
+    }
+
+    /// A relation of its own with `room` rows more holding every row it reads (its chain's absorbed, `moved_whole`):
+    /// where a continuation cannot be made in its block. It absorbed every row it reads, its own too, so a `Rows`
+    /// opening it as the tail past it (`Rows::opened`) drops every segment (`Rows::absorbed`): with only its base's
+    /// counted, a relation of its own (no base: a kept relation bound over its read-only mapping, or one whose block is
+    /// full) kept its segment as well, the tail's first rows a second copy of its rows read at the ids past them, and
+    /// the rows pushed after read at no id (an edit's maintained `kind` lost the new nodes').
+    fn moved_all(&self, room: usize) -> Part {
+        let mut moved = self.moved_whole(self.len(), room);
+        Arc::get_mut(&mut moved.held).expect("a new relation's one holder").absorbed = self.reads();
+        moved
     }
 
     /// Appends rows `lo..hi` of `from` (as many columns).
@@ -1098,9 +1348,8 @@ pub struct Rows {
 // (decision 0353).
     /// Every part merged into one, made once for a reader that binds one relation (`in_block`).
     merged: std::sync::OnceLock<Part>,
-    /// The dead rows' delta of that one relation (`in_block_dead`), its descriptor's offset: kept while its dead bits
-    /// are the relation's.
-    kills: Mutex<Option<usize>>,
+    /// The dead rows' delta of that one relation (`in_block_dead`): kept while its dead bits are the relation's.
+    kills: Mutex<Option<Arc<Kills>>>,
     /// The rows its tail held when it was taken as the writer of a frozen relation's (`shared`): given back free at
     /// them when these rows are dropped with none written past them (a run abandoned, its relation not kept).
     took: Option<Took>,
@@ -1122,6 +1371,32 @@ impl Drop for Took {
     }
 }
 
+/// A relation's dead rows' delta in its block (`Rows::in_block_dead`, `Relation::try_kills`): given back to the
+/// block's free list when its last holder drops it, the rows that made it or a reader bound to it (`InBlock::kills`).
+/// A relation whose dead rows change with no row added (`setfix::Levels`) makes a delta each time; before, each one
+/// stayed in the block as long as the block did (Q178).
+pub struct Kills {
+    /// Its descriptor's offset in its base's block.
+    at: usize,
+    /// The relation it is a delta of, and its block: kept while it is.
+    base: Part,
+    /// Its dead bits are its base's own (`try_kills_own`, decision 0478 step 5d), which its base gives back: only
+    /// its descriptor is its own.
+    own_dead: bool,
+}
+
+impl Drop for Kills {
+    fn drop(&mut self) {
+        let block = &self.base.facts().block;
+        // SAFETY: `try_kills` (or `try_kills_own`) made it in `block`, which `base` keeps, and this was its last holder.
+        let given = unsafe {
+            let rel = &*block.ptr::<Relation>(self.at);
+            if self.own_dead { rel.release(block) } else { rel.release_kills(block) }
+        };
+        self.base.facts().given.0.fetch_add(given, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// Where a relation's rows lie for a reader that binds its block (the device, decision 0325): the block, kept while
 /// this lives, and the relation's descriptor's offset in it.
 #[derive(Clone)]
@@ -1131,6 +1406,8 @@ pub struct InBlock {
     pub rows: u32,
     /// The offset of a delta of it whose dead bits mark its dead rows (`Relation::try_kills`); 0 when none is.
     pub dead: usize,
+    /// That delta, held while this lives (a device's read of it, `DevRel::in_block`): not given back meanwhile.
+    pub kills: Option<Arc<Kills>>,
     /// The relation read, held while this lives: its chunks are not given back meanwhile (decision 0342). `None`
     /// for one no `Part` holds (`anon_in_block`'s).
     pub part: Option<Part>,
@@ -1162,7 +1439,7 @@ impl InBlock {
     }
 
     /// An index on `cols` of a relation of no columns whose key values are read elsewhere (a view's home: decision
-    /// 0450 step 5e), each row's key hash `hash(i)`: found, or built now. `key` names the view's key columns, by which
+    /// 0478 step 5e), each row's key hash `hash(i)`: found, or built now. `key` names the view's key columns, by which
     /// it is found again.
     pub fn own_index_hashed(&self, key: &[u16], hash: &dyn Fn(u32) -> u64) -> Option<usize> {
         let r = self.relation();
@@ -1184,7 +1461,7 @@ impl InBlock {
 
     fn own_index_if(&self, cols: &[u16], keys: usize, build: bool) -> Option<usize> {
         let r = self.relation();
-        if self.dead != 0 || r.base_rows != 0 || cols.is_empty() || cols.len() > rerail_blocks::relation::MAX_KEY {
+        if self.dead != 0 || (r.base_rows != 0 && !r.continues()) || cols.is_empty() || cols.len() > rerail_blocks::relation::MAX_KEY {
             return None;
         }
         let _g = self.facts.ix.lock().unwrap_or_else(|e| e.into_inner());
@@ -1279,7 +1556,58 @@ impl Rows {
         }
         match &mut self.tail {
             Some(t) => t.grow(u64::from(t.len()) + (values / self.k) as u64),
-            None => self.tail = Some(Part::new(self.life, self.k, values / self.k)),
+            None => {
+                let t = self.opened(values / self.k);
+                self.tail = Some(t);
+            }
+        }
+        self.absorbed();
+    }
+
+    /// A tail for rows past these (decision 0384 steps 7 and 8): with no rows before it, a relation of its own; past
+    /// segments that read as one relation (`chain`), a continuation of it in its block, so the rows stay one
+    /// relation however many relations went on from the same rows (forks, copies); where that block has no room, a
+    /// relation of its own holding every row (a growth move, `Part::moved_all`), which `absorbed` makes the only part.
+    fn opened(&self, rows: usize) -> Part {
+        if self.segs.is_empty() {
+            return Part::new(self.life, self.k, rows);
+        }
+        let Some(end) = self.chain() else {
+            crate::code_rule_dsl::logic::profile::decision("tails opened past rows of many relations (merged when bound)", || format!("{} segments", self.segs.len()));
+            return Part::new(self.life, self.k, rows);
+        };
+        // Past a kept relation bound over its read-only mapping (decision 0401 F3): nothing is written in its block,
+        // and its rows are not moved out of it (0353), so the tail is a relation of its own past them.
+        if !end.facts.block.is_writable() {
+            crate::code_rule_dsl::logic::profile::decision("tails opened past kept rows read where they lie (merged when bound)", || format!("{} rows", self.from));
+            return Part::new(self.life, self.k, rows);
+        }
+        match Part::continuing(end) {
+            Some(t) => {
+                crate::code_rule_dsl::logic::profile::decision("relations continued from rows another writer went on from (forks)", || format!("{} rows, {} segments", self.from, self.segs.len()));
+                t
+            }
+            None => end.moved_all(rows),
+        }
+    }
+
+    /// The last segment, when the segments read as one relation: each a continuation of the one before (decision
+    /// 0384 steps 7 and 8), the first a relation of its own, so the last reads every row by id. `None` otherwise.
+    fn chain(&self) -> Option<&Part> {
+        let end = chain_of(self.segs.iter().map(|(f, p)| (*f, p)))?;
+        (end.reads() == self.from).then_some(end)
+    }
+
+    /// A continuation tail that moved took its base's rows (`Held::absorbed`): its ids are from 0 now, so the base's
+    /// segment goes, and it is one relation of its own.
+    fn absorbed(&mut self) {
+        if let Some(t) = &self.tail
+            && t.absorbed > 0
+            && self.from == t.absorbed
+        {
+            debug_assert_eq!(self.segs.iter().map(|(_, p)| p.len()).sum::<u32>(), t.absorbed, "a continuation's chain of segments");
+            self.segs.clear();
+            self.from = 0;
         }
     }
 
@@ -1294,13 +1622,18 @@ impl Rows {
         self.merged.take();
         *self.kills.get_mut().unwrap_or_else(|e| e.into_inner()) = None;
         let n = rows.len() / self.k;
-        let tail = self.tail.get_or_insert_with(|| Part::new(self.life, self.k, self.hint.max(n).max(16)));
+        if self.tail.is_none() {
+            let t = self.opened(self.hint.max(n).max(16));
+            self.tail = Some(t);
+        }
+        let tail = self.tail.as_mut().expect("opened");
         if n > 1 {
             tail.grow(u64::from(tail.len()) + n as u64);
         }
         for row in rows.chunks_exact(self.k) {
             tail.push(row);
         }
+        self.absorbed();
     }
 
     /// The values of rows `lo..hi`, copied into one vector.
@@ -1325,13 +1658,25 @@ impl Rows {
         }
         self.from = n as u32;
         while self.segs.len() > MAX_SEGMENTS {
-            // The newest two, merged: a session's edits add small segments after one large one.
+            // The newest two, merged: a session's edits add small segments after one large one. Segments that read as
+            // one relation (a chain of continuations, decision 0384 step 8) stay one: the two go on in one continuation
+            // of the one before them, so a read goes down at most `MAX_SEGMENTS` relations (`rel_get`).
+            let chained = self.chain().is_some();
             let (_, b) = self.segs.pop().expect("two segments");
             let (first, a) = self.segs.pop().expect("two segments");
-            let mut both = Part::new(self.life, self.k, (a.len() + b.len()) as usize);
+            let made = if chained { self.segs.last().and_then(|(_, base)| Part::continuing(base)) } else { None };
+            let mut both = made.unwrap_or_else(|| Part::new(self.life, self.k, (a.len() + b.len()) as usize));
+            // copy (0353 step 6): a chain's newest two segments written into one, bounding its length: the small ones a
+            // session's edits add, once per `MAX_SEGMENTS` forks of forks. It goes with the merged part (0353).
             both.copy_from(&a, 0, a.len());
             both.copy_from(&b, 0, b.len());
-            self.segs.push((first, both));
+            if both.absorbed > 0 {
+                // Moved out of a full block: it holds every row.
+                self.segs.clear();
+                self.segs.push((0, both.prefix()));
+            } else {
+                self.segs.push((first, both.prefix()));
+            }
         }
         // The last segment's writer, free for a relation started from these rows, at its rows: a prefix of its relation,
         // which a writer goes on past.
@@ -1367,6 +1712,8 @@ impl Rows {
                 let took = Some(Took { writer: writer.clone(), at: writer.len() });
                 Rows { segs, from: first, tail: Some(writer), k: self.k, hint: 0, life: self.life, took, ..Rows::default() }
             }
+            // A fork (decision 0384 steps 7 and 8): the writer is another's, so this one's first row opens a tail that
+            // continues the rows' relation (`opened`): a reader binds the rows as one (`one`), each where it lies.
             _ => Rows { segs, from: n as u32, tail: None, k: self.k, hint: 0, life: self.life, ..Rows::default() },
         }
     }
@@ -1374,15 +1721,16 @@ impl Rows {
     /// The rows as one relation in one block, ids from 0: the one part, or every part merged into one (made once,
     /// and kept while these rows are). `None` for no rows.
     pub fn in_block(&self) -> Option<InBlock> {
-        let one = self.one()?;
-        Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows: one.len(), dead: 0, part: Some(one.clone()) })
+        let (one, rows) = self.one()?;
+        Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows, dead: 0, kills: None, part: Some(one.clone()) })
     }
 
     /// `in_block`, with the rows `dead` marks (bit `id`, as setfix keeps them) dead in it: a delta of the one
     /// relation in its block, no rows of its own, whose dead bits are these (kept, and made again when the dead rows
-    /// are others). `None` for no rows, or when the block cannot hold the delta.
+    /// are others: the one before goes back to the block once no reader holds it). `None` for no rows, or when the
+    /// block cannot hold the delta.
     pub fn in_block_dead(&self, dead: &[u64]) -> Option<InBlock> {
-        let one = self.one()?;
+        let (one, rows) = self.one()?;
         let block = &one.facts.block;
         let mut kills = self.kills.lock().unwrap_or_else(|e| e.into_inner());
         // A relation's dead rows change with no row added (a level's rows killed, then brought back as their levels
@@ -1393,55 +1741,77 @@ impl Rows {
             let d = (*block.ptr::<Relation>(at)).dead.as_slice();
             std::ptr::eq(d, dead) || d == dead
         };
-        // Its own dead bits, kept in its block (decision 0450 step 5d): the delta reads them there.
+        // Its own dead bits, kept in its block (decision 0478 step 5d): the delta reads them there.
         let own = one.rel().own_dead();
         let own = !own.is_empty() && std::ptr::eq(own, dead);
-        let at = match *kills {
-            Some(at) if fresh(at) => at,
+        let k = match &*kills {
+            Some(k) if fresh(k.at) => k.clone(),
             _ => {
                 let rel = if own { Relation::try_kills_own(block, &spec(self.k), one.rel())? } else { Relation::try_kills(block, &spec(self.k), one.rel(), dead)? };
                 let at = block.offset_of(rel);
-                *kills = Some(at);
-                at
+                let k = Arc::new(Kills { at, base: one.clone(), own_dead: own });
+                // (the one before goes here, unless a reader still holds it)
+                *kills = Some(k.clone());
+                k
             }
         };
-        Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows: one.len(), dead: at, part: Some(one.clone()) })
+        Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows, dead: k.at, kills: Some(k), part: Some(one.clone()) })
     }
 
     /// `in_block`, never merging parts: `None` where the rows are in several parts not merged yet. A reader that can
     /// do without the block (the CPU's probes) asks for this, so it makes no copy.
     pub fn in_one_block(&self) -> Option<InBlock> {
-        let one = match (&self.segs[..], &self.tail) {
-            ([], Some(t)) if self.from == 0 => t,
-            ([(0, p)], None) => p,
-            ([], None) => return None,
-            _ => self.merged.get()?,
-        };
-        Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows: one.len(), dead: 0, part: Some(one.clone()) })
+        let (one, rows) = self.one_unmerged().or_else(|| self.merged.get().map(|m| (m, self.rows() as u32)))?;
+        Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows, dead: 0, kills: None, part: Some(one.clone()) })
     }
 
     /// The relation that holds its last rows, in its block, whatever its parts: where its sorted orders' directory
-    /// is (decision 0450 step 5b). Its rows are that part's own, not the relation's.
+    /// is (decision 0478 step 5b). Its rows are that part's own, not the relation's.
     pub fn last_in_block(&self) -> Option<InBlock> {
         let p = self.parts().last()?;
         Some(p.in_block(p.len()))
     }
 
-    /// The rows as one relation: the one part, or every part merged into one (made once and kept).
-    fn one(&self) -> Option<&Part> {
-        Some(match (&self.segs[..], &self.tail) {
-            ([], None) => return None,
-            ([], Some(t)) if self.from == 0 => t,
-            // A prefix too (a frozen relation's rows, its writer handed on): every reader of a bound relation reads
-            // the rows it is bound with (`InBlock::rows`), and its indexes are of them (`find_index`'s rows).
-            ([(0, p)], None) => p,
-            (segs, tail) => self.merged.get_or_init(|| {
-                static MERGED_SITE: rerail_prof::copies::Site = rerail_prof::copies::Site::new(9, "6", "a relation's parts merged into one for the device (Rows::in_block)");
-                MERGED_SITE.time(|| {
+    /// The rows as one relation without a copy, and how many rows a reader binding it reads (ids from 0): the one
+    /// part, or a continuation of the one segment (a fork, decision 0384 step 7: its base's rows read through it).
+    fn one_unmerged(&self) -> Option<(&Part, u32)> {
+        let tail = self.tail.as_ref().filter(|t| t.len() > 0);
+        if self.segs.is_empty() {
+            // One part (or an empty tail from row 0).
+            return match (tail, &self.tail) {
+                (Some(t), _) => Some((t, t.len())),
+                (None, Some(t)) if self.from == 0 => Some((t, 0)),
+                _ => None,
+            };
+        }
+        // Segments and the tail that read as one relation (decision 0384 steps 7 and 8: each a continuation of the
+        // one before, the first a relation of its own, as a fork's and a fork of a fork's are): the last, read down its
+        // chain. A frozen relation's prefix too: every reader of a bound relation reads the rows it is bound with
+        // (`InBlock::rows`), and its indexes are of them (`find_index`'s rows).
+        chain_of(self.segs.iter().map(|(f, p)| (*f, p)).chain(tail.map(|t| (self.from, t))))
+            .filter(|end| end.reads() as usize == self.rows())
+            .map(|end| (end, end.reads()))
+    }
+
+    /// The rows as one relation, and how many rows a reader binding it reads: `one_unmerged`, or every part merged
+    /// into one (made once and kept).
+    fn one(&self) -> Option<(&Part, u32)> {
+        if let Some(one) = self.one_unmerged() {
+            return Some(one);
+        }
+        if self.segs.is_empty() {
+            return None;
+        }
+        let (segs, tail) = (&self.segs[..], &self.tail);
+        // Parts that do not: merged (a part appended after rows of another relation, `append_part`, counted there).
+        Some((self.merged.get_or_init(|| {
+                const COPIED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(9, "6", "a relation's parts merged into one for the device (Rows::in_block)");
+                COPIED.time(|| {
                     let parts: Vec<&Part> = segs.iter().map(|(_, p)| p).chain(tail.iter()).collect();
                     let rows: usize = parts.iter().map(|p| p.len() as usize).sum();
-                    MERGED[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    MERGED[1].fetch_add(rows * self.k * 8, std::sync::atomic::Ordering::Relaxed);
+                    let m = merged_counts();
+                    m.0[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    m.0[1].fetch_add(rows * self.k * 8, std::sync::atomic::Ordering::Relaxed);
                     crate::code_rule_dsl::logic::profile::decision("rows of many parts merged into one", || format!("{} parts, {rows} rows of {} columns ({} KB copied)", parts.len(), self.k, rows * self.k * 8 >> 10));
                     let mut one = Part::new(self.life, self.k, rows);
                     for p in parts {
@@ -1449,8 +1819,7 @@ impl Rows {
                     }
                     (one, 8 * self.k * rows)
                 })
-            }),
-        })
+            }), self.rows() as u32))
     }
 
     /// `part`'s rows after these, not copied (decision 0325 step 4, a head's rows the device wrote in place): it
@@ -1467,6 +1836,11 @@ impl Rows {
         self.k = k;
         self.merged.take();
         *self.kills.get_mut().unwrap_or_else(|e| e.into_inner()) = None;
+        // The device writes past rows in their tail (`tail_room`, which opens one past segments), so a relation of its
+        // own comes only after none.
+        if self.rows() > 0 {
+            crate::code_rule_dsl::logic::profile::decision("parts appended after rows of another relation (merged when bound)", || format!("{n} rows after {}", self.rows()));
+        }
         if let Some(t) = self.tail.take().filter(|t| t.len() > 0) {
             let next = self.from + t.len();
             self.segs.push((self.from, t));
@@ -1481,13 +1855,23 @@ impl Rows {
     /// has no room for them (the tail is never moved for a writer that is not its own), or its room is lent already
     /// (it would be the same rows).
     pub fn tail_room(&self, n: usize) -> Option<Lent> {
-        self.tail.as_ref()?.room(n)
+        match &self.tail {
+            Some(t) => t.room(n),
+            // Past segments and no tail yet (a relation started from frozen rows another goes on from, decision 0384
+            // steps 7 and 8): a tail opened for them, a continuation of the segments' relation (or, where its block has
+            // no room, a relation holding every row), which the claim makes the tail.
+            None if !self.segs.is_empty() => {
+                let t = self.opened(n);
+                t.room(n).or_else(|| Some(t.moved_room(t.len(), n)))
+            }
+            None => None,
+        }
     }
 
     /// `tail_room`, when the tail's block has no room: the tail moved into a relation with room for them
     /// (`Part::moved_room`), which the claim makes the tail. `None` with no tail that has rows, or one lent already.
     pub fn tail_moved(&self, n: usize) -> Option<Lent> {
-        let t = self.tail.as_ref().filter(|t| t.len() > 0 && t.lent.load(std::sync::atomic::Ordering::Acquire) == 0)?;
+        let t = self.tail.as_ref().filter(|t| (t.len() > 0 || t.is_continuation()) && t.lent.load(std::sync::atomic::Ordering::Acquire) == 0)?;
         Some(t.moved_room(t.len(), n))
     }
 
@@ -1496,13 +1880,22 @@ impl Rows {
     /// # Safety
     /// The writer has finished, and wrote every value of those rows.
     pub unsafe fn claim_tail(&mut self, lent: &Lent, n: u32) {
+        // A tail opened for the writer (`tail_room` past segments): it is the tail now.
+        if self.tail.is_none() {
+            let t = &lent.tail;
+            let end = self.chain();
+            assert!(end.is_some_and(|e| t.continues_of(e)) || (t.absorbed == self.from && t.len() == lent.at), "rows written into a tail opened past other rows");
+            self.tail = Some(t.clone());
+            self.absorbed();
+        }
         let t = self.tail.as_ref().expect("the tail written in place");
         // Rows lent in a relation the tail was moved into (its block had no room): that relation is the tail now, its
         // rows the tail's (moved when the room was lent, none pushed since: asserted below).
         if let Some(from) = &lent.from && !Arc::ptr_eq(&t.held, &lent.tail.held) {
             assert!(Arc::ptr_eq(&t.held, &from.held), "rows written into a relation moved from another tail");
-            assert_eq!(t.len(), lent.at, "rows pushed into a tail after it was moved for another writer");
+            assert_eq!(t.len() + lent.tail.absorbed, lent.at, "rows pushed into a tail after it was moved for another writer");
             self.tail = Some(lent.tail.clone());
+            self.absorbed();
         }
         let t = self.tail.as_ref().expect("the tail written in place");
         let at = lent.at;
@@ -1614,6 +2007,24 @@ impl Rows {
 
 }
 
+/// The last of `parts` (each its first row's id and the part), when they read as one relation (decision 0384 steps
+/// 7 and 8): the last a continuation of the one before, down to the first, a relation of its own from row 0, each
+/// part's first id its own rows' first. The last then reads every row by id, down its chain (`rel_get`).
+fn chain_of<'a>(parts: impl DoubleEndedIterator<Item = (u32, &'a Part)>) -> Option<&'a Part> {
+    let mut parts = parts.rev().peekable();
+    let &(_, last) = parts.peek()?;
+    let mut want = Some(last);
+    for (first, p) in parts {
+        let w = want?;
+        let start = if w.is_continuation() { w.rel().base_rows } else { 0 };
+        if !Arc::ptr_eq(&w.held, &p.held) || w.len() != p.len() || first != start {
+            return None;
+        }
+        want = w.base.as_ref();
+    }
+    want.is_none().then_some(last)
+}
+
 /// The columns a row holds on the stack; a wider row's values are on the heap.
 const INLINE: usize = 16;
 
@@ -1688,6 +2099,86 @@ impl std::fmt::Debug for Row {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    thread_local! {
+        /// The allocator's net counter, for these tests: a test moves it as its "work" allocates.
+        static NET: std::cell::Cell<i64> = const { std::cell::Cell::new(0) };
+    }
+    thread_local! {
+        /// The allocator's peak, for these tests: the net at its last reset, and the most above it since.
+        static PEAK_AT: std::cell::Cell<(i64, i64)> = const { std::cell::Cell::new((0, 0)) };
+    }
+    fn net() -> i64 {
+        NET.with(std::cell::Cell::get)
+    }
+    fn alloc(bytes: i64) {
+        NET.with(|n| n.set(n.get() + bytes));
+        PEAK_AT.with(|p| {
+            let (base, most) = p.get();
+            p.set((base, most.max(net() - base)));
+        });
+    }
+    fn peak() -> i64 {
+        PEAK_AT.with(std::cell::Cell::get).1
+    }
+    fn reset() {
+        PEAK_AT.with(|p| p.set((net(), 0)));
+    }
+
+    /// Decision 0469: a chunk's heap is its scopes' own allocation at their most: what it freed before its end counts
+    /// at its most, a job of another chunk run inside it is that chunk's, and the same work measures the same.
+    #[test]
+    fn a_chunks_heap_is_its_scopes_own_peaks() {
+        install_heap_net(net);
+        install_heap_peak(peak, reset);
+        let other = Arc::new(Chunk::default());
+        let run = || {
+            in_chunk_measured(|| {
+                alloc(100 << 20);
+                alloc(-60 << 20);
+                {
+                    // Another chunk's job, run while this one waited: 50 MB at its most, all freed.
+                    let _job = enter_chunk(Some(other.clone()));
+                    alloc(50 << 20);
+                    alloc(-50 << 20);
+                }
+                // From its 40 MB, to 120 MB: its most, past the 100 MB before the job.
+                alloc(80 << 20);
+                alloc(-120 << 20);
+            })
+            .1
+        };
+        let (w, again) = (run(), run());
+        assert_eq!(w.heap, 120 << 20, "{} MB", w.heap >> 20);
+        assert_eq!(w, again, "the same work measures the same");
+        assert_eq!(w.measure(), w.bytes + w.heap);
+        assert_eq!(other.peaks.load(std::sync::atomic::Ordering::Relaxed), 2 * (50 << 20), "the job's peak is its own chunk's");
+    }
+
+    /// Q203 item 3: a chunk is sized by what its own work held, not the process's footprint: what its scope
+    /// allocated and kept is its, a job of another chunk run on its thread meanwhile is that chunk's, and what the
+    /// thread allocates outside any chunk (a run's one-time allocations) is no chunk's.
+    #[test]
+    fn a_chunk_holds_what_its_own_work_allocated() {
+        install_heap_net(net);
+        alloc(500 << 20);
+        let other = Arc::new(Chunk::default());
+        let held = in_chunk(|| {
+            alloc(100 << 20);
+            {
+                // Another chunk's job, run while this one waited.
+                let _job = enter_chunk(Some(other.clone()));
+                alloc(50 << 20);
+            }
+            alloc(30 << 20);
+            alloc(-10 << 20);
+            chunk_held_most().expect("in a chunk")
+        });
+        // Its most when asked: its own 100 + 30 - 10 MB, the other chunk's 50 MB not, the 500 MB before it not.
+        assert_eq!(held, 120 << 20, "{} MB", held >> 20);
+        assert_eq!(other.held_most(), 50 << 20, "the other chunk's job is its own");
+        assert!(current_chunk().is_none(), "the run's chunk is back");
+    }
 
     /// An empty kept relation keeps its width: one started from it holds the rows pushed to it (it dropped them when
     /// the width came from the rows, none for no rows).
@@ -1786,6 +2277,24 @@ mod tests {
         assert_eq!(bits(&all), [0b1111], "every row killed");
         let back = rows.in_block_dead(&[0b0010]).expect("a delta");
         assert_eq!(bits(&back), [0b0010], "rows brought back");
+        assert_eq!(bits(&first), [0b0101], "a delta a reader holds is kept as it was");
+    }
+
+    /// Q178: a delta whose dead bits are no longer the relation's goes back to its block once no reader holds it, so a
+    /// relation whose dead rows keep changing takes the room of two deltas, not one a change.
+    #[test]
+    fn a_dead_rows_delta_replaced_goes_back_to_its_block() {
+        let mut rows = Rows::new(1);
+        rows.extend_from_slice(&(0..256).collect::<Vec<i64>>());
+        let words = |i: u64| [i, !i, i << 1, i >> 1];
+        let mut at = std::collections::BTreeSet::new();
+        for i in 1..200 {
+            let b = rows.in_block_dead(&words(i)).expect("a delta");
+            assert_eq!(unsafe { (*b.facts.block.ptr::<Relation>(b.dead)).dead.as_slice() }, words(i));
+            at.insert(b.dead);
+        }
+        // (a few, not two: the block is shared, and another test's relation may take a chunk given back)
+        assert!(at.len() <= 10, "{} deltas' room taken for 199 changes: the ones replaced were not given back", at.len());
     }
 
     /// Decision 0384 step 4: a relation's derived array lies in its relation's block, grows and is cloned there, and
@@ -1813,6 +2322,159 @@ mod tests {
         assert!(BlockVec::<u8>::new().facts().is_none(), "empty holds no chunk");
     }
 
+    /// A tail opened past a relation of its own that cannot be continued in its block (a full one) holds every row it
+    /// reads (`Part::moved_all`): it absorbed them all, so the segment goes and its ids are from 0. With only a
+    /// continuation's base counted as absorbed, a relation of its own kept its segment too, and the rows pushed after
+    /// were read at no id (a second copy of the old rows at theirs).
+    #[test]
+    fn a_tail_moved_past_its_rows_holds_every_row_once() {
+        let k = 2;
+        let mut rows = Rows::new(k);
+        // copy: not block data: a test's rows
+        rows.extend_from_slice(&[1, 2, 3, 4, 5, 6]);
+        let rows = rows.sealed();
+        let end = rows.chain().expect("one relation").clone();
+        let mut next = Rows { segs: rows.segs.clone(), from: rows.from, tail: Some(end.moved_all(4)), k, life: rows.life, ..Rows::default() };
+        next.absorbed();
+        assert_eq!((next.parts().count(), next.from), (1, 0), "the segment absorbed");
+        // copy: not block data: a test's rows
+        next.extend_from_slice(&[7, 8]);
+        for (i, want) in [[1i64, 2], [3, 4], [5, 6], [7, 8]].iter().enumerate() {
+            assert_eq!(&*next.row(i as u32, k), &want[..], "row {i}, read where it lies");
+        }
+    }
+
+    /// Decision 0384 step 7: a fork (a second relation started from frozen rows whose writer the first took) goes on
+    /// in a continuation of their relation, in its block: bound as one relation (nothing merged), its base's rows read
+    /// through it, frozen and started from again; moved out of a full block it takes its base's rows and is a relation
+    /// of its own.
+    #[test]
+    fn a_fork_goes_on_in_a_continuation_of_its_rows() {
+        let k = 2;
+        let mut rows = Rows::new(k);
+        // copy: not block data: a test's rows
+        rows.extend_from_slice(&[1, 2, 3, 4]);
+        let kept = rows.freeze(2);
+        let mut first = kept.shared(2);
+        let mut fork = kept.shared(2);
+        // copy: not block data: a test's rows
+        first.extend_from_slice(&[5, 6]);
+        // copy: not block data: a test's rows
+        fork.extend_from_slice(&[7, 8, 9, 10]);
+        assert!(fork.tail.as_ref().is_some_and(|t| t.rel().continues()), "the second goes on in a continuation");
+        let merged = super::merged().0;
+        let b = fork.in_block().expect("bound");
+        assert_eq!(b.rows, 4, "the base's 2 and its own 2");
+        let rel = b.relation();
+        let got: Vec<i64> = (0..4).flat_map(|id| [rel.get(id, 0), rel.get(id, 1)]).collect();
+        assert_eq!(got, [1, 2, 3, 4, 7, 8, 9, 10], "each row where it lies, by the read written once");
+        assert_eq!(super::merged().0, merged, "nothing merged");
+        assert_eq!(first.in_block().expect("bound").rows, 3);
+        // Frozen, then started from again: its writer the next one's, still one relation.
+        let kept2 = fork.freeze(4);
+        assert_eq!(kept2.in_block().expect("bound").rows, 4);
+        let mut next = kept2.shared(4);
+        // copy: not block data: a test's rows
+        next.extend_from_slice(&[11, 12]);
+        let b = next.in_block().expect("bound");
+        assert_eq!((b.rows, b.relation().get(4, 1), b.relation().get(1, 0)), (5, 12, 3));
+        assert_eq!(super::merged().0, merged, "nothing merged");
+        // Moved for another writer (as from a full block): its base's rows go with it, and it is one relation.
+        let lent = next.tail.as_ref().expect("a tail").moved_room(next.tail.as_ref().expect("a tail").len(), 1);
+        assert_eq!(lent.at, 5, "every row it reads, then the room");
+        // SAFETY: row 5 is the loan's, reserved, and nothing else writes it.
+        unsafe {
+            lent.tail().rel().rows.put(5, 0, 13);
+            lent.tail().rel().rows.put(5, 1, 14);
+            next.claim_tail(&lent, 1);
+        }
+        drop(lent);
+        assert_eq!((next.parts().count(), next.from), (1, 0), "the base's segment absorbed");
+        // copy: not block data: a test's rows
+        let all: Vec<Vec<i64>> = (0..6).map(|i| next.row(i, k).to_vec()).collect();
+        assert_eq!(all, [[1, 2], [3, 4], [7, 8], [9, 10], [11, 12], [13, 14]].map(|r| r.to_vec()));
+        assert!(!next.in_block().expect("bound").relation().continues());
+    }
+
+    /// Decision 0384 step 8: forks of forks stay one relation. A fork frozen and forked again (while another holds its
+    /// writer) goes on in a continuation of the continuation, read down the chain; so does a copy's first row past
+    /// the rows it shares (`clone`), and the device's rows written past a fork that has no tail yet (`tail_room`).
+    /// Past `MAX_SEGMENTS` levels the newest two go on in one continuation; moved out of a full block, the chain's
+    /// rows go with it. Nothing is merged when bound.
+    #[test]
+    fn forks_of_forks_stay_one_relation() {
+        let k = 1;
+        let merged = || super::merged().0;
+        let before = merged();
+        let read = |r: &Rows| -> Vec<i64> {
+            let b = r.in_block().expect("bound");
+            assert_eq!(b.rows as usize, r.rows(), "bound whole");
+            (0..b.rows).map(|id| b.relation().get(id, 0)).collect()
+        };
+        let mut start = Rows::new(k);
+        // copy: not block data: a test's rows
+        start.extend_from_slice(&[0, 1]);
+        let mut kept = start.freeze(2);
+        let mut want = vec![0, 1];
+        // Ten levels: at each, one run takes the writer and writes a row nobody else reads; a fork goes on.
+        for level in 0..10 {
+            let n = kept.rows();
+            let mut taker = kept.shared(n);
+            // copy: not block data: a test's rows
+            taker.extend_from_slice(&[-1]);
+            let mut fork = kept.shared(n);
+            // copy: not block data: a test's rows
+            fork.extend_from_slice(&[10 * level + 2, 10 * level + 3]);
+            want.extend([10 * level + 2, 10 * level + 3]);
+            assert!(fork.tail.as_ref().is_some_and(|t| t.rel().continues()), "level {level}: a continuation");
+            assert_eq!(read(&fork), want, "level {level}: read down the chain");
+            assert_eq!(read(&taker)[n], -1, "the taker's row its own");
+            kept = fork.freeze(want.len());
+            assert!(kept.segs.len() <= MAX_SEGMENTS, "level {level}: a chain of at most MAX_SEGMENTS");
+            assert_eq!(read(&kept), want);
+        }
+        // A copy's first row past the rows it shares: a continuation too.
+        let mut copy = kept.clone();
+        let taker = kept.shared(kept.rows());
+        // copy: not block data: a test's rows
+        copy.extend_from_slice(&[99]);
+        assert!(copy.tail.as_ref().is_some_and(|t| t.rel().continues()));
+        assert_eq!(read(&copy).last(), Some(&99));
+        drop(taker);
+        // The device's rows past a fork with no tail yet: a tail opened for them, claimed.
+        let mut fork = kept.shared(kept.rows());
+        let _first = kept.shared(kept.rows());
+        let mut fork2 = kept.shared(kept.rows());
+        assert!(fork.tail.is_none() || fork2.tail.is_none());
+        if fork.tail.is_some() {
+            std::mem::swap(&mut fork, &mut fork2);
+        }
+        let lent = fork.tail_room(2).expect("room past the fork");
+        // SAFETY: rows `at..at + 2` are the loan's, reserved, and nothing else writes them.
+        unsafe {
+            lent.tail().rel().rows.put(lent.at, 0, 500);
+            lent.tail().rel().rows.put(lent.at + 1, 0, 501);
+            fork.claim_tail(&lent, 2);
+        }
+        drop(lent);
+        let mut w = want.clone();
+        w.extend([500, 501]);
+        assert_eq!(read(&fork), w);
+        // Moved for another writer, as from a full block: the whole chain's rows go with it, one relation.
+        let t = fork.tail.as_ref().expect("a tail");
+        let lent = t.moved_room(t.len(), 1);
+        // SAFETY: as above.
+        unsafe {
+            lent.tail().rel().rows.put(lent.at, 0, 502);
+            fork.claim_tail(&lent, 1);
+        }
+        drop(lent);
+        w.push(502);
+        assert_eq!((fork.parts().count(), fork.from), (1, 0), "the chain absorbed");
+        assert_eq!(read(&fork), w);
+        assert_eq!(merged(), before, "nothing merged");
+    }
+
     /// Decision 0384: a tail whose block has no room for the device's rows is moved into a relation with room
     /// (`tail_moved`, and `Lent::moved` for a next lot), and the claims make that its tail: one relation, nothing
     /// merged, every row by its id.
@@ -1831,7 +2493,7 @@ mod tests {
                 }
             }
         };
-        let merged = MERGED[0].load(std::sync::atomic::Ordering::Relaxed);
+        let merged = super::merged().0;
         let old = rows.tail.as_ref().expect("a tail").clone();
         // As if its block were full: moved.
         let lent = rows.tail_moved(2).expect("a tail with rows");
@@ -1851,7 +2513,7 @@ mod tests {
         drop((lent, next, old));
         assert_eq!(rows.parts().count(), 1, "one relation");
         assert_eq!(rows.in_block().expect("bound whole").rows, 5);
-        assert_eq!(MERGED[0].load(std::sync::atomic::Ordering::Relaxed), merged, "nothing merged");
+        assert_eq!(super::merged().0, merged, "nothing merged");
         // copy: not block data: a test's rows
         let all: Vec<Vec<i64>> = (0..5).map(|i| rows.row(i, k).to_vec()).collect();
         assert_eq!(all, [[1, 2], [3, 4], [10, 20], [11, 21], [12, 22]].map(|r| r.to_vec()));
@@ -1911,7 +2573,7 @@ mod tests {
                 }
             }
         };
-        let merged = MERGED[0].load(std::sync::atomic::Ordering::Relaxed);
+        let merged = super::merged().0;
         let lent = rows.tail_room(3).expect("room in the tail's block");
         assert_eq!(lent.at, 2);
         assert!(rows.tail_room(1).is_none(), "one loan a tail at a time");
@@ -1929,7 +2591,7 @@ mod tests {
         assert_eq!(rows.parts().count(), 1, "one relation");
         let b = rows.in_block().expect("bound whole");
         assert_eq!(b.rows, 5);
-        assert_eq!(MERGED[0].load(std::sync::atomic::Ordering::Relaxed), merged, "nothing merged");
+        assert_eq!(super::merged().0, merged, "nothing merged");
         // copy: not block data: a test's rows
         let all: Vec<Vec<i64>> = (0..5).map(|i| rows.row(i, k).to_vec()).collect();
         assert_eq!(all, [[1, 2], [3, 4], [10, 20], [11, 21], [12, 22]].map(|r| r.to_vec()));
@@ -1946,7 +2608,8 @@ mod tests {
 
     /// Decision 0384 step 2: a relation started from frozen rows takes their relation's writer and goes on in it, one
     /// relation (bound with nothing merged), while the frozen rows read only their own. A second started from them while
-    /// the first holds the writer starts a tail of its own; a taker dropped with nothing written gives the writer back.
+    /// the first holds the writer goes on in a continuation of their relation (step 7); a taker dropped with nothing
+    /// written gives the writer back.
     #[test]
     fn a_relation_started_from_frozen_rows_goes_on_in_their_relation() {
         let k = 1;
@@ -1960,13 +2623,16 @@ mod tests {
         next.extend_from_slice(&[4]);
         assert_eq!((kept.rows(), next.rows()), (3, 4), "the frozen rows read their own");
         assert!(next.shares(&kept));
-        let merged = MERGED[0].load(std::sync::atomic::Ordering::Relaxed);
+        let merged = super::merged().0;
         assert_eq!(next.in_block().expect("bound").rows, 4);
         assert_eq!(kept.in_block().expect("bound").rows, 3, "a prefix bound as its rows");
-        assert_eq!(MERGED[0].load(std::sync::atomic::Ordering::Relaxed), merged, "nothing merged");
-        // The writer is the first's: a second goes on in a tail of its own.
-        let other = kept.shared(3);
-        assert!(other.tail.is_none() && other.segs.len() == 1);
+        assert_eq!(super::merged().0, merged, "nothing merged");
+        // The writer is the first's: a second's first row opens a continuation of the kept rows' relation (step 7).
+        let mut other = kept.shared(3);
+        assert!(other.segs.len() == 1 && other.tail.is_none());
+        // copy: not block data: a test's rows
+        other.extend_from_slice(&[9]);
+        assert!(other.tail.as_ref().is_some_and(|t| t.rel().continues()));
         drop(other);
         // Frozen with a row written, its relation's writer is free at its 4 rows, not the kept 3.
         let kept2 = next.freeze(4);
@@ -2058,8 +2724,10 @@ mod tests {
         if !RESERVES_ADDRESS_SPACE {
             return;
         }
+        // Its own shared object (decision 0442): the moves counted are this test's, none of a test beside it.
+        let _own = crate::code_rule_dsl::logic::profile::within(crate::code_rule_dsl::logic::profile::Shared::new());
         in_chunk(|| {
-            let moved = MOVED[0].load(std::sync::atomic::Ordering::Relaxed);
+            let before = moved().0;
             let mut r = Rows::new(1);
             // copy: not block data (a test's literal rows)
             let lot: Vec<i64> = (0..1 << 20).collect();
@@ -2070,13 +2738,13 @@ mod tests {
             }
             assert!(Arc::ptr_eq(&facts, &block_of(&r)), "the same block");
             assert!(facts.block.used() > 64 << 20, "past the old size: {} bytes", facts.block.used());
-            assert_eq!(MOVED[0].load(std::sync::atomic::Ordering::Relaxed), moved, "no relation moved");
+            assert_eq!(moved().0, before, "no relation moved");
             assert_eq!(r.get(9 << 20 | 5, 0), 5);
         });
     }
 
     /// A chunk holds the rows it handed on, never a device run's own relations, which outlive it only while device
-    /// work in flight holds them (Q261: on Metal, a different number of them every run).
+    /// work in flight holds them (Q314: on Metal, a different number of them every run).
     #[test]
     fn a_chunk_holds_what_it_handed_on_not_a_device_runs_own() {
         let live = [(Life::Run, 10 << 20, 4 << 20), (Life::Kept, 2 << 20, 2 << 20), (Life::Device, 64 << 20, 64 << 20), (Life::Source, 1 << 20, 0)];

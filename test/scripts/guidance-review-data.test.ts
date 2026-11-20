@@ -7,6 +7,7 @@ describe("guidance review data", () => {
     const [pack] = data.packs;
     expect(pack?.rules.map(rule => rule.id).sort()).toEqual([
       "complexity-cyclomatic-blade",
+      "complexity-cyclomatic-java",
       "complexity-cyclomatic-javascript",
       "complexity-cyclomatic-php",
       "complexity-cyclomatic-python",

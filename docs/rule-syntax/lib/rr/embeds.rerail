@@ -1,0 +1,5 @@
+// The code inside a `.rerail` file (decision 0061 §5): its patterns, in the program's `.language`, with metavariables;
+// its JSON objects (an `ast` matcher, a policy, a violation's options); the regex a `match` names. A file's programs
+// are its language's declaration (decision 0431 §4), as HTML's, Vue's, Blade's and Markdown's are; the rule-file
+// language declares none yet (work queue Q325): the pattern and regex grammars are not registered, and no embedder
+// reads a JSON object. A rule that parses a `match`'s regex string reads it as any string, `parsed(s, "regex", r)`.

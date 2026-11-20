@@ -84,6 +84,22 @@ fn a_relation_naming_no_document_moves_to_the_cross_file_part() {
     assert_eq!(moved(&v), ["aware"]);
 }
 
+/// An earlier phase's export is a run constant, but not placeless (decision 0083 §2.3): a rule that joins it is
+/// cross-file, maintained there by the export's delta, so that an edit's delta of it (a function added) does not
+/// miss every file's memo entry. The run's options stay placeless: a rule that joins them stays file-local.
+#[test]
+fn a_rule_joining_a_phase_export_is_cross_file_and_one_joining_an_option_is_not() {
+    let text = ".decl kind(n: node, k: symbol)\n.input kind\n.decl types__sig(f: symbol, t: symbol)\n.input types__sig\n\
+                .decl option(k: symbol, v: symbol)\n.input option\n\
+                .decl typed(n: node, t: symbol)\ntyped(n, t) :- kind(n, k), types__sig(k, t).\n.output typed\n\
+                .decl opted(n: node)\nopted(n) :- kind(n, k), option(\"x\", k).\n.output opted\n";
+    let v = read(text);
+    let parts = split_of(&v);
+    assert!(parts.local.contains("opted"), "an option is placeless: {:?}", parts.local);
+    assert!(!parts.local.contains("typed"), "a phase's export is every file's rows: {:?}", parts.local);
+    assert_eq!(parts.causes["typed"], "reads types__sig with no location");
+}
+
 /// Two trees in one chunk (kinds 1 = module, 2 = function, 3 = other):
 ///
 /// ```text
@@ -179,6 +195,8 @@ fn nearest_costs(cap: usize) {
     let t = std::time::Instant::now();
     let cpu = solve_cpu(&sys);
     let cpu_worklist = t.elapsed();
+    // Read by Metal's comparisons below (macOS); kept elsewhere so the worklist's time is the solve's.
+    std::hint::black_box(&cpu);
     // One pass in preorder.
     let t = std::time::Instant::now();
     let mut one = vec![NONE; n];
@@ -189,7 +207,8 @@ fn nearest_costs(cap: usize) {
         }
     }
     let one_pass = t.elapsed();
-    std::hint::black_box(&one);
+    // Both timed results held (the device's runs, macOS only, are compared with `cpu`).
+    std::hint::black_box((&cpu, &one));
     println!("NEAREST {n} nodes, max depth {depth}, {} copies; CPU worklist {:.2} ms, one preorder pass {:.3} ms", sys.copies.len(), cpu_worklist.as_secs_f64() * 1e3, one_pass.as_secs_f64() * 1e3);
     #[cfg(target_os = "macos")]
     use crate::code_rule_dsl::transducer::packed::metal_nearest;
@@ -395,7 +414,7 @@ fn a_climb_over_the_tapes_parent_column_is_file_local() {
     assert!(split.locations["up"].contains(&0), "{:?}", split.locations);
 }
 
-/// `boot-python.rr`'s `deco_word`: a disjunction's branch `(e0 = d ; …)` leaves `e0 = d` between two per-file pieces.
+/// `boot-python.rerail`'s `deco_word`: a disjunction's branch `(e0 = d ; …)` leaves `e0 = d` between two per-file pieces.
 /// The equality names one value, so the pieces are one join, pushed into the chunks whole; apart, the split pushed each
 /// and left their join to the cross-file part (decision 0093 §4, O140).
 #[test]
@@ -581,12 +600,12 @@ fn a_located_rule_keeps_its_branded_atoms() {
     use crate::code_rule_dsl::logic::program_image::T;
     let kind = Branded { class: Class::Kind, atom: 7 };
     let mut b = Builder::base();
-    b.declare("node", &[("d", "number"), ("n", "node"), ("kind", "symbol"), ("start", "number"), ("end", "number")]);
-    b.declare("text", &[("n", "node"), ("s", "symbol")]);
-    b.declare("named", &[("s", "symbol")]);
-    b.declare("all", &[("s", "symbol")]);
-    b.set_inputs(&["node", "text"]);
-    b.set_outputs(&["all"]);
+    b.fields().declare("node", &[("d", "number"), ("n", "node"), ("kind", "symbol"), ("start", "number"), ("end", "number")]);
+    b.fields().declare("text", &[("n", "node"), ("s", "symbol")]);
+    b.fields().declare("named", &[("s", "symbol")]);
+    b.fields().declare("all", &[("s", "symbol")]);
+    b.fields().set_inputs(&["node", "text"]);
+    b.fields().set_outputs(&["all"]);
     b.rule().head("named", &[T::Var("s")]).atom("node", &[T::Wild, T::Var("n"), T::Branded(kind), T::Wild, T::Wild]).atom("text", &[T::Var("n"), T::Var("s")]).finish().unwrap();
     b.rule().head("all", &[T::Var("s")]).atom("named", &[T::Var("s")]).finish().unwrap();
     let (v, _) = b.finish().unwrap();
@@ -705,7 +724,6 @@ at(f, l) :- uses(f, _), docof(f, d), line(f, l), d > 0.
 
 #[test]
 fn a_local_join_can_export_a_node_bound_by_equality() {
-    use crate::code_rule_dsl::logic::program_image::{Builder, manager::Pipeline};
     let text = r#"
         .decl node(d: number, n: node, k: symbol, start: number, end: number)
         .decl child(p: node, c: node, i: number)
@@ -717,15 +735,15 @@ fn a_local_join_can_export_a_node_bound_by_equality() {
         .output observed
         observed(answer) :- node(_, p, "some-kind", _, _), child(p, g, 0), mid = g, answer = mid, !excluded(g).
     "#;
-    // The version's pass is the only split (0276 step 6): no tree form to compare it with.
-    let program = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
-    let (image, _) = Builder::of_program(&program).unwrap().finish().unwrap();
-    let mut pass = PushLocalJoins::default();
-    let mut pipeline = Pipeline::new("test", image);
-    pipeline.program(&mut pass);
-    let (result, _) = pipeline.finish().unwrap();
-    let helpers: Vec<_> = pass.made.iter().filter(|name| name.ends_with("_observed")).collect();
-    assert_eq!(helpers.len(), usize::from(push_equal_columns()), "{}", result.show());
+    // The version pass alone (0276 step 6: the tree twin it was compared with is gone). `push_equal_columns`'s
+    // switch, read as it reads it (the test is compiled in crates that see only `rerail-logic`'s public items).
+    let (result, made) = pushed(read(text));
+    let equal_columns = std::env::var("RERAIL_PUSH_EQUAL_COLUMNS").map_or(true, |value| value != "off");
+    for m in &made {
+        assert!(result.rules().any(|r| reads(&result, r).contains(m)), "{m} is read:\n{}", result.show());
+    }
+    let helpers: Vec<_> = made.iter().filter(|name| name.ends_with("_observed")).collect();
+    assert_eq!(helpers.len(), usize::from(equal_columns), "{}", result.show());
     if let [helper] = helpers.as_slice() {
         assert!(result.show().contains(&format!("observed($answer) :- {helper}(")));
     }
@@ -775,7 +793,7 @@ fn the_split_of_a_version_reads_an_undeclared_axis() {
     assert!(!axes.is_empty(), "the program reads an axis:\n{}", v.show());
     let mut b = Builder::on(&v);
     for a in &axes {
-        b.undeclare(a);
+        b.fields().undeclare(a);
     }
     let (v, _) = b.finish().unwrap();
     let split = split_of(&v);

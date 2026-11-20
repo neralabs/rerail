@@ -78,7 +78,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--repo", type=Path, required=True)
-    parser.add_argument("--inputs", type=Path, default=Path("fixtures/host/data-layer-port/batch-02-probes.json"))
+    parser.add_argument("--inputs", type=Path, default=Path("packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port/batch-02-probes.json"))
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     source_root = args.source.resolve()

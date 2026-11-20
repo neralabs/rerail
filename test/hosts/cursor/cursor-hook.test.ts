@@ -1,14 +1,15 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const HOOK = resolve(import.meta.dirname, "../../../src/hosts/cursor/cursor-hook.ts");
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 /** Runs the Cursor hook as Cursor does, `node <hook>` with the event on stdin, against its own empty Rerail home. */

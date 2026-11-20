@@ -27,7 +27,7 @@ Use trials 1 and 2 for the other layout orders.
 Each trial reads normal production SQL after duplicate-expression removal.
 It checks exact candidate rows and writes its results beside the capture.
 The host compares temporary tables, retained postings, and retained shared sets.
-The [profiling guide](../../../docs/sql-workload-profiling.md#candidate-preparation-captures) describes capture creation and interpretation.
+The profiling guide (`docs/sql-workload-profiling.md`, removed; at 7efcac9c67) describes capture creation and interpretation.
 
 The CPU totals include replay setup and cache construction.
 They exclude parsing, initial publication, earlier structural preparation, and final matcher evaluation.
@@ -89,7 +89,7 @@ Use a closed candidate capture with complete `decoded_properties` for the reques
 The host checks complete contiguous preorder trees and one vocabulary before each kernel.
 Input captures remain unchanged.
 File IDs belong to each capture. The recorded source digests identify the measured files.
-The [profiling guide](../../../docs/sql-workload-profiling.md#candidate-preparation-captures) describes capture creation.
+The profiling guide (`docs/sql-workload-profiling.md`, removed; at 7efcac9c67) describes capture creation.
 
 | Experiment | Alternatives | Measured selection |
 | --- | --- | --- |
@@ -120,7 +120,7 @@ cargo test --release --locked --manifest-path scripts/profiling/preparation/Carg
 python3 test/scripts/test_sql_composition.py
 ```
 
-The [design](../../../docs/sql-composition-opportunities.md) and [journal](../../../docs/data-layer-performance-journal.md) record decisions and integration limits.
+The design (`docs/sql-composition-opportunities.md`) and journal (`docs/data-layer-performance-journal.md`) record decisions and integration limits (both removed; at 7efcac9c67).
 
 
 ## FTS publication boundaries
@@ -141,7 +141,7 @@ python3 scripts/profiling/run.py --trace off --deadline 115 \
 
 Use new controller and result paths. The executable refuses to overwrite a result.
 This binary has no production execution switch.
-The [recorded experiment](../../../fixtures/host/data-layer-port/profiling/fts-bulk-publication-20261023.json) preserves raw trials and build identity.
+The [recorded experiment](../../../packs/data-layer/upstream/benchmarks/authored/profiling/fts-bulk-publication-20261023.json) preserves raw trials and build identity.
 The result motivates broad publication across ingestion packets. It does not establish a complete-pipeline speedup.
 
 ## Private owner projection replay
@@ -167,7 +167,7 @@ Compare the original and rewritten row multisets, VM counters, compilation peaks
 The copied packet IDs permit an exact intermediate comparison across the two programs.
 Allocation-accounted replay timings are diagnostic. Run complete-process CPU controls separately with tracing disabled.
 This rewrite removes VM materialization work; it does not reduce engine-submitted statement counts.
-The [journal](../../../docs/data-layer-performance-journal.md#selector-sql-owners-2026-10-24) records the accepted cleanup and rejected family-packing experiments.
+The journal (`docs/data-layer-performance-journal.md`, "Selector SQL owners, 2026-10-24"; removed; at 7efcac9c67) records the accepted cleanup and rejected family-packing experiments.
 
 ## Shared candidate ownership replay
 

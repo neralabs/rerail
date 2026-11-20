@@ -73,9 +73,8 @@ pub trait Sink {
     /// A skipped group: `file`'s bytes from `start` to `end`.
     fn skipped(&mut self, file: u32, start: u32, end: u32) {}
 
-    /// Expansion `id` of macro `name` (defined in `def_file` at `def_at`), called at `at` in `file`
-    /// (or from expansion `parent`).
-    fn expansion(&mut self, id: u32, name: &[u8], def_file: u32, def_at: u32, file: u32, at: u32, parent: u32) {}
+    /// A macro's expansion (`Expansion`).
+    fn expansion(&mut self, e: Expansion<'_>) {}
 
     /// A pragma (a `#pragma` line's text after `pragma`, or `_Pragma`'s string).
     fn pragma(&mut self, file: u32, at: u32, text: &[u8]) {}
@@ -120,9 +119,9 @@ impl Sink for Tee<'_> {
         self.0.skipped(file, start, end);
         self.1.skipped(file, start, end);
     }
-    fn expansion(&mut self, id: u32, name: &[u8], def_file: u32, def_at: u32, file: u32, at: u32, parent: u32) {
-        self.0.expansion(id, name, def_file, def_at, file, at, parent);
-        self.1.expansion(id, name, def_file, def_at, file, at, parent);
+    fn expansion(&mut self, e: Expansion<'_>) {
+        self.0.expansion(e);
+        self.1.expansion(e);
     }
     fn pragma(&mut self, file: u32, at: u32, text: &[u8]) {
         self.0.pragma(file, at, text);
@@ -226,6 +225,27 @@ impl Sink for TextSink {
     }
 }
 
+/// Expansion `id` of macro `name`: where the macro is defined and where it is called (file, position), and the
+/// expansion it was called from (`parent`, 0 for none).
+#[derive(Clone, Copy, Debug)]
+pub struct Expansion<'a> {
+    pub id: u32,
+    pub name: &'a [u8],
+    pub defined: (u32, u32),
+    pub called: (u32, u32),
+    pub parent: u32,
+}
+
+/// An `Expansion` kept (`FactSink`), its name owned.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExpansionRow {
+    pub id: u32,
+    pub name: Vec<u8>,
+    pub defined: (u32, u32),
+    pub called: (u32, u32),
+    pub parent: u32,
+}
+
 /// Rows (mode (b)'s relations of 0327), by file id; the paths are `paths`.
 #[derive(Default, Debug)]
 pub struct FactSink {
@@ -238,8 +258,8 @@ pub struct FactSink {
     pub conds: Vec<(u32, u32, bool)>,
     /// The skipped ranges (`c_pp_active` is each entered file's bytes less these).
     pub skipped: Vec<(u32, u32, u32)>,
-    /// `c_pp_expansion`: id, name, defined at (file, position), called at (file, position), parent.
-    pub expansions: Vec<(u32, Vec<u8>, u32, u32, u32, u32, u32)>,
+    /// `c_pp_expansion`: each expansion, its name owned.
+    pub expansions: Vec<ExpansionRow>,
     pub pragmas: Vec<(u32, u32, Vec<u8>)>,
     pub diags: Vec<(u32, u32, Diag, Vec<u8>)>,
     /// How many tokens were output.
@@ -268,8 +288,8 @@ impl Sink for FactSink {
     fn skipped(&mut self, file: u32, start: u32, end: u32) {
         self.skipped.push((file, start, end));
     }
-    fn expansion(&mut self, id: u32, name: &[u8], def_file: u32, def_at: u32, file: u32, at: u32, parent: u32) {
-        self.expansions.push((id, name.to_vec(), def_file, def_at, file, at, parent));
+    fn expansion(&mut self, e: Expansion<'_>) {
+        self.expansions.push(ExpansionRow { id: e.id, name: e.name.to_vec(), defined: e.defined, called: e.called, parent: e.parent });
     }
     fn pragma(&mut self, file: u32, at: u32, text: &[u8]) {
         self.pragmas.push((file, at, text.to_vec()));

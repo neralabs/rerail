@@ -12,7 +12,7 @@
 //! The order of an append makes a reader that sees a slot see its atom: the string, its end and its hash are written,
 //! then the slot (a release store), then the count. A reader loads a slot with acquire.
 
-use crate::block::{Block, FROZEN, PAGE, kind};
+use crate::block::{Block, FROZEN, Flush, PAGE, kind};
 use crate::refs::Span;
 use crate::structure;
 use std::io;
@@ -143,7 +143,7 @@ fn slots(cap: u64) -> u64 {
 }
 
 /// An open atoms block: its one writer. In a file, the store's atoms lease holder's; in anonymous memory, a process's
-/// pending atoms (decision 0450 step 2a), never written to a file.
+/// pending atoms (decision 0478 step 2a), never written to a file.
 pub struct AtomsW {
     block: std::sync::Arc<Block>,
     raw: Raw,
@@ -151,6 +151,8 @@ pub struct AtomsW {
     /// anonymous memory.
     #[cfg(not(unix))]
     file: Option<std::fs::File>,
+    /// How its write-backs reach the disk (`sync`, decision 0481).
+    flush: Flush,
 }
 
 // SAFETY: one writer appends, through `&mut self`; reads through `&self` are of what it wrote.
@@ -159,7 +161,7 @@ unsafe impl Sync for AtomsW {}
 
 impl AtomsW {
     /// A new block at `path` for ids from `first`, with room for `cap` atoms and `bytes_cap` bytes of strings.
-    pub fn create(path: &Path, first: u32, tag: u64, cap: u32, bytes_cap: u64) -> io::Result<AtomsW> {
+    pub fn create(path: &Path, first: u32, tag: u64, cap: u32, bytes_cap: u64, flush: Flush) -> io::Result<AtomsW> {
         let need = Self::need(cap, bytes_cap);
         #[cfg(unix)]
         let block = Block::file(path, kind::ATOMS, need)?;
@@ -170,13 +172,14 @@ impl AtomsW {
             block: std::sync::Arc::new(block),
             #[cfg(not(unix))]
             file: Some(std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path)?),
+            flush,
         };
         w.sync()?;
         Ok(w)
     }
 
     /// A new block in anonymous memory for ids from `first`, with room for `cap` atoms and `bytes_cap` bytes of
-    /// strings: a process's pending atoms (decision 0450 step 2a). Its pages are taken as atoms are appended.
+    /// strings: a process's pending atoms (decision 0478 step 2a). Its pages are taken as atoms are appended.
     pub fn anon(first: u32, cap: u32, bytes_cap: u64) -> AtomsW {
         let block = Block::anon(kind::ATOMS, Self::need(cap, bytes_cap));
         AtomsW {
@@ -184,6 +187,8 @@ impl AtomsW {
             block: std::sync::Arc::new(block),
             #[cfg(not(unix))]
             file: None,
+            // Never written to a file: nothing to wait for.
+            flush: Flush::None,
         }
     }
 
@@ -222,7 +227,7 @@ impl AtomsW {
 
     /// The open block at `path`, for its next writer, which continues from `end` (the end the store's last commit
     /// reached, `resume`).
-    pub fn reopen(path: &Path, end: u32) -> io::Result<AtomsW> {
+    pub fn reopen(path: &Path, end: u32, flush: Flush) -> io::Result<AtomsW> {
         let block = Block::map_file(path, kind::ATOMS, true)?;
         if block.header().state == FROZEN {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("{}: frozen, not appended to", path.display())));
@@ -233,6 +238,7 @@ impl AtomsW {
             raw,
             #[cfg(not(unix))]
             file: Some(std::fs::OpenOptions::new().read(true).write(true).open(path)?),
+            flush,
         };
         w.resume(end)?;
         Ok(w)
@@ -346,19 +352,19 @@ impl AtomsW {
         self.raw.first + self.block.root::<AtomsRoot>().count.load(Acquire) as u32
     }
 
-    /// Every append so far on the disk, before the commit that names them: the dirty pages written back, then the
-    /// file flushed (a barrier on macOS, `fdatasync` elsewhere). Without shared mappings, the block's bytes are
-    /// written to its file.
+    /// Every append so far written back for the commit that names them, as its `Flush` says (decision 0481): with
+    /// `Synced`, on the disk (the dirty pages written back, then the file flushed: a barrier on macOS, `fdatasync`
+    /// elsewhere); otherwise the OS's to write. Without shared mappings, the block's bytes are written to its file.
     pub fn sync(&self) -> io::Result<()> {
         #[cfg(unix)]
-        return self.block.sync_mapped();
+        return self.block.sync_mapped(self.flush);
         #[cfg(not(unix))]
         {
             use std::io::{Seek, Write};
             let Some(mut f) = self.file.as_ref() else { return Ok(()) };
             f.seek(io::SeekFrom::Start(0))?;
             f.write_all(self.block.bytes(0, self.block.used()))?;
-            f.sync_data()
+            if self.flush.waits() { f.sync_data() } else { Ok(()) }
         }
     }
 
@@ -471,7 +477,7 @@ impl AtomRead for AtomsV {
     }
 }
 
-/// A run of atoms where a block holds it, as a directory lists it (decision 0450 step 2b): ids `first..end` are read
+/// A run of atoms where a block holds it, as a directory lists it (decision 0478 step 2b): ids `first..end` are read
 /// in it; its atom `id`'s string ends at `ends[id - from]`, and begins where the one before ends (`0` for `from`'s).
 #[derive(Clone, Copy, Debug)]
 pub struct Run {
@@ -515,7 +521,7 @@ impl AtomsV {
 }
 
 structure! {
-    /// A directory's entry (decision 0450 step 2b): a run of atoms, `first..end`, its block's first id (`from`), and
+    /// A directory's entry (decision 0478 step 2b): a run of atoms, `first..end`, its block's first id (`from`), and
     /// spans to the block's `ends` and `strings` whose offsets are in the reader's address space: the host's, or the
     /// device's (its buffers' GPU addresses).
     pub struct DirEntry {
@@ -529,7 +535,7 @@ structure! {
 }
 
 structure! {
-    /// A directory of runs of atoms (decision 0450 step 2b), sorted by first id and not overlapping: the store's chain
+    /// A directory of runs of atoms (decision 0478 step 2b), sorted by first id and not overlapping: the store's chain
     /// below the process's pending atoms, then theirs. The atoms reads (`atoms_at`, `atoms_len`, in CLIF) take its
     /// address and find an id's run by a binary search.
     pub struct AtomsDirRoot {
@@ -538,7 +544,7 @@ structure! {
     }
 }
 
-/// A directory of runs of atoms in a block of its own (decision 0450 step 2b), its spans written for one address
+/// A directory of runs of atoms in a block of its own (decision 0478 step 2b), its spans written for one address
 /// space.
 pub struct AtomsDir {
     block: Block,
@@ -627,7 +633,7 @@ pub unsafe fn str_in<'a>(dir: *const u8, id: u32) -> Option<&'a [u8]> {
 
 #[cfg(test)]
 mod tests {
-    /// Decision 0450 step 2b: an id's string read through the directory, by the reads written once in CLIF (their
+    /// Decision 0478 step 2b: an id's string read through the directory, by the reads written once in CLIF (their
     /// generated Rust), is the block's own, in every run: a run that begins past its block's first id (a pending
     /// block whose first atoms were stored since) too. Id 0 is the empty string; an id no run holds has none.
     #[test]
@@ -681,7 +687,7 @@ mod tests {
     #[test]
     fn an_atoms_block_finds_what_it_holds() {
         let d = dir("finds");
-        let mut w = AtomsW::create(&d.join("d0.blk"), 10, 7, 1000, 1 << 16).unwrap();
+        let mut w = AtomsW::create(&d.join("d0.blk"), 10, 7, 1000, 1 << 16, Flush::Synced).unwrap();
         let words: Vec<String> = (0..1000).map(|i| format!("word-{i}")).chain(["".to_owned()]).collect();
         for (i, s) in words[..1000].iter().enumerate() {
             assert_eq!(w.append(s, h(s)), Some(10 + i as u32));
@@ -698,11 +704,11 @@ mod tests {
         assert_eq!(w.str(9), None);
         assert_eq!(w.str(1010), None);
         // Two strings of one hash (a collision): each found by comparing the string at the slot.
-        let mut c = AtomsW::create(&d.join("d2.blk"), 0, 7, 16, 1024).unwrap();
+        let mut c = AtomsW::create(&d.join("d2.blk"), 0, 7, 16, 1024, Flush::Synced).unwrap();
         assert_eq!((c.append("x", 42), c.append("y", 42)), (Some(0), Some(1)));
         assert_eq!((c.find("y", 42), c.find("x", 42), c.find("z", 42)), (Some(1), Some(0), None));
         // Room for bytes runs out too.
-        let mut small = AtomsW::create(&d.join("d1.blk"), 0, 7, 100, 8).unwrap();
+        let mut small = AtomsW::create(&d.join("d1.blk"), 0, 7, 100, 8, Flush::Synced).unwrap();
         assert_eq!(small.append("12345678", h("12345678")), Some(0));
         assert_eq!(small.append("9", h("9")), None, "full at its bytes");
         let _ = std::fs::remove_dir_all(&d);
@@ -714,7 +720,7 @@ mod tests {
     fn a_reader_reads_only_the_committed_end() {
         let d = dir("end");
         let path = d.join("d0.blk");
-        let mut w = AtomsW::create(&path, 0, 7, 64, 4096).unwrap();
+        let mut w = AtomsW::create(&path, 0, 7, 64, 4096, Flush::Synced).unwrap();
         for s in ["a", "b", "c"] {
             w.append(s, h(s));
         }
@@ -729,7 +735,7 @@ mod tests {
         // A writer that crashed after appending "d": the store's end is 3.
         w.append("d", h("d"));
         drop(w);
-        let mut again = AtomsW::reopen(&path, 3).unwrap();
+        let mut again = AtomsW::reopen(&path, 3, Flush::Synced).unwrap();
         assert_eq!(again.end(), 3);
         assert_eq!(again.find("d", h("d")), None, "an append past the committed end is taken back");
         assert_eq!(again.append("e", h("e")), Some(3), "its id is the next writer's");
@@ -749,7 +755,7 @@ mod tests {
         let frozen = AtomsV::open(&path, 4).unwrap();
         assert_eq!(frozen.find("e", h("e")), Some(3));
         assert_eq!(frozen.str(0), Some("a"));
-        assert!(AtomsW::reopen(&path, 4).is_err(), "a frozen block takes no appends");
+        assert!(AtomsW::reopen(&path, 4, Flush::Synced).is_err(), "a frozen block takes no appends");
         let _ = std::fs::remove_dir_all(&d);
     }
 }

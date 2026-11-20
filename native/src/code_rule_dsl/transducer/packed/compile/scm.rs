@@ -1026,7 +1026,7 @@ impl<'a> Compiler<'a> {
                     }
                 }
                 eprintln!(
-                    "Tempo ignored SCM property predicate {} for ast-index-spike compatibility; exact host semantics are tracked in NER-1690 (https://linear.app/nera/issue/NER-1690)",
+                    "Tempo ignored SCM property predicate {} for ast-index-spike compatibility; exact host semantics are not implemented",
                     predicate.name
                 );
                 continue;

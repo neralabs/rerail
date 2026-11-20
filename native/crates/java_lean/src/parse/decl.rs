@@ -651,7 +651,7 @@ impl<'a> P<'a> {
         let bare_comma = self.kind_at(1) == T::Comma;
         self.gap_tk(K::EnumBody, K::TLBrace, bare_comma)?;
         let mut constants = false;
-        while self.peek() != T::Semi && self.peek() != T::RBrace && !(self.peek() == T::Comma && !constants) {
+        while self.peek() != T::Semi && self.peek() != T::RBrace && (constants || self.peek() != T::Comma) {
             self.enum_constant()?;
             constants = true;
             if self.peek() != T::Comma {

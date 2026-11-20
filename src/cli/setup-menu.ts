@@ -1,11 +1,14 @@
-import { setImmediate as nextTurn } from "node:timers/promises";
+import { setImmediate as nextTurn, setTimeout as sleep } from "node:timers/promises";
 import type { ChoiceMenu } from "../runtime/repository-start.js";
 
 /**
  * Set-up's input at a real terminal: whole lines for the folder and pack prompts, single keys for a question's menu.
  * One reader owns stdin for the whole run, so switching between the two never leaves a second reader on it. A
- * question takes only what is typed once it is on screen: what was typed while set-up was busy (the terminal holds
- * it while stdin is paused) is dropped when the next question opens, so an Enter pressed early answers nothing.
+ * question takes only what is typed once it is on screen. stdin reads from the start of the run to its end, and what
+ * arrives while no question waits (an Enter pressed during the download or the scan) is dropped as it comes: a
+ * terminal holds keys while stdin is paused, and a Windows console hands them over too late after reading starts for
+ * a drop at the question to catch them. Ctrl-C while set-up is busy still interrupts it, as the terminal is not in raw
+ * mode then.
  */
 
 /** A key the menu acts on; `other` is ignored. */
@@ -105,22 +108,49 @@ function frameRows(frame: string, columns: number | undefined): number {
   return lines.reduce((rows, line) => rows + Math.max(1, Math.ceil(displayWidth(line) / columns)), 0);
 }
 
+/**
+ * How long stdin must bring nothing before a question is drawn. A Windows console hands over keys held in it about a
+ * millisecond after raw mode starts, through a thread of its own, later than turns of the event loop that bring nothing.
+ */
+const QUIET_MS = 50;
+
+/**
+ * The most quiet waits the drop takes. A key held down repeats faster than one, so without a cap the question would not
+ * be drawn until it is let go; after these it is drawn anyway.
+ */
+const QUIET_WAITS = 10;
+
 export class TerminalInput {
   private buffer = "";
   private ended = false;
-  private listening = false;
+  /** A question is on screen: what stdin reads is its answer. Otherwise it was typed before one was and is dropped. */
+  private asking = false;
+  /** stdin read something during the drop's last quiet wait. */
+  private heard = false;
+  /** The drop is running, in raw mode: Ctrl-C reaches stdin as a byte rather than a signal. */
+  private dropping = false;
+  /** Ctrl-C was read during the drop. */
+  private interrupted = false;
   private wake: (() => void) | undefined;
   /** The last line or key ended on a lone CR: an LF that comes next is the rest of that Enter (CRLF split across reads). */
   private afterCr = false;
 
+  /** Starts reading stdin, until `close`. */
   constructor(
     private readonly input: TerminalInputStream,
     private readonly write: (text: string) => void,
-    /** Ctrl-C in the menu, after the terminal is put back: what the terminal's own Ctrl-C does. */
+    /** Ctrl-C in the menu or before a question is drawn, after the terminal is put back: what the terminal's own Ctrl-C does. */
     private readonly interrupt: () => void = () => process.kill(process.pid, "SIGINT"),
     /** The terminal's width, to count the rows a menu's wrapped lines take; undefined when unknown. */
     private readonly columns: () => number | undefined = () => undefined,
-  ) {}
+    /** The drop's wait for stdin to bring nothing more. */
+    private readonly quiet: () => Promise<unknown> = () => sleep(QUIET_MS),
+  ) {
+    input.setEncoding("utf8");
+    input.on("data", this.onData);
+    input.on("end", this.onEnd);
+    input.resume();
+  }
 
   /** Take `length` characters off the buffer. */
   private consume(length: number): void {
@@ -136,31 +166,43 @@ export class TerminalInput {
   }
 
   /**
-   * Drops everything typed before a question is on screen: what is left of the last read, and what the terminal holds.
-   * The terminal hands over what it holds as soon as stdin reads, so stdin reads until a turn of the event loop brings
-   * nothing more. Reading through the stream never waits on a terminal that holds nothing, as a blocking read of a
-   * stdin libuv could not reopen would. Raw mode makes a line typed without Enter readable too.
+   * Drops everything typed before a question is on screen. What came while no question waited is already dropped, and
+   * what is left of the last read goes here. A line typed without Enter, or keys typed while set-up held the event
+   * loop, stay in the terminal until raw mode makes them readable, so the drop turns raw mode on and lets stdin read
+   * until a quiet wait brings nothing more, or {@link QUIET_WAITS} have passed. True when Ctrl-C was read meanwhile: the
+   * caller interrupts set-up, as the terminal's own Ctrl-C would have outside raw mode.
    */
-  private async dropTypedAhead(raw: boolean): Promise<void> {
-    this.listen();
+  private async dropTypedAhead(raw: boolean): Promise<boolean> {
+    this.buffer = "";
+    this.interrupted = false;
     if (!raw) this.input.setRawMode(true);
+    this.dropping = true;
     try {
-      this.input.resume();
-      // The read starts on the next tick. Begun from an I/O callback, this turn ends before the terminal is polled.
-      await nextTurn();
-      do {
-        this.buffer = "";
-        await nextTurn();
-      } while (this.buffer !== "");
-    } finally {
+      // macOS tells a reader already waiting nothing when raw mode makes such a line readable, so stdin stops reading
+      // for a turn (it stops a tick after the pause) and starts again, which finds it.
       this.input.pause();
+      await nextTurn();
+      this.input.resume();
+      for (let wait = 0; wait < QUIET_WAITS && !this.interrupted; wait++) {
+        this.heard = false;
+        await this.quiet();
+        if (!this.heard) break;
+      }
+      return this.interrupted;
+    } finally {
+      this.dropping = false;
       if (!raw) this.input.setRawMode(false);
     }
   }
 
   private readonly onData = (chunk: string): void => {
-    this.buffer += chunk;
-    this.wake?.();
+    this.heard = true;
+    if (this.asking) {
+      this.buffer += chunk;
+      this.wake?.();
+    } else if (this.dropping && chunk.includes("\u0003")) {
+      this.interrupted = true;
+    }
   };
 
   private readonly onEnd = (): void => {
@@ -168,23 +210,12 @@ export class TerminalInput {
     this.wake?.();
   };
 
-  private listen(): void {
-    if (this.listening) return;
-    this.input.setEncoding("utf8");
-    this.input.on("data", this.onData);
-    this.input.on("end", this.onEnd);
-    this.listening = true;
-  }
-
-  /** Waits for more input, reading stdin only meanwhile. */
+  /** Waits for more input. */
   private async more(): Promise<void> {
-    this.listen();
-    await new Promise<void>(resolve => {
-      this.wake = resolve;
-      this.input.resume();
-    });
+    const { promise, resolve } = Promise.withResolvers<void>();
+    this.wake = resolve;
+    await promise;
     this.wake = undefined;
-    this.input.pause();
   }
 
   /**
@@ -192,8 +223,20 @@ export class TerminalInput {
    * undefined.
    */
   async line(prompt: string): Promise<string | undefined> {
-    await this.dropTypedAhead(false);
+    if (await this.dropTypedAhead(false)) {
+      this.interrupt();
+      return undefined;
+    }
     this.write(prompt);
+    this.asking = true;
+    try {
+      return await this.readLine();
+    } finally {
+      this.asking = false;
+    }
+  }
+
+  private async readLine(): Promise<string | undefined> {
     for (;;) {
       this.settle();
       const end = this.buffer.search(/[\r\n]/u);
@@ -211,7 +254,7 @@ export class TerminalInput {
     }
   }
 
-  /** The menu, in raw mode until an answer is taken: its index, or undefined on Ctrl-D or end of input. */
+  /** The menu, in raw mode until an answer is taken: its index, or undefined on Ctrl-D, end of input or Ctrl-C. */
   async choose(menu: ChoiceMenu): Promise<number | undefined> {
     const restore = (): void => {
       this.input.setRawMode(false);
@@ -219,9 +262,14 @@ export class TerminalInput {
     this.input.setRawMode(true);
     process.once("exit", restore);
     try {
-      await this.dropTypedAhead(true);
+      if (await this.dropTypedAhead(true)) {
+        restore();
+        this.interrupt();
+        return undefined;
+      }
       return await this.answer(menu, restore);
     } finally {
+      this.asking = false;
       restore();
       process.removeListener("exit", restore);
     }
@@ -232,6 +280,7 @@ export class TerminalInput {
     let highlight = 0;
     let frame = menu.frame(highlight);
     this.write(frame);
+    this.asking = true;
     for (;;) {
       const key = await this.nextKey();
       const action: MenuAction = key === undefined ? { type: "cancel" } : menuAction(key, highlight, menu.count);
@@ -275,6 +324,7 @@ export class TerminalInput {
     return undefined;
   }
 
+  /** Stops reading stdin, which lets the process exit. */
   close(): void {
     this.input.removeListener("data", this.onData);
     this.input.removeListener("end", this.onEnd);

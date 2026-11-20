@@ -37,6 +37,14 @@ pub struct Pressure {
     /// The integer values live at the hot loop's first point of peak integer pressure, with
     /// what made each.
     pub at_peak: Vec<(Option<u32>, String)>,
+    /// The vector values live at the hot loop's first point of peak vector pressure.
+    pub vec_at_peak: Vec<(Option<u32>, String)>,
+    /// The instruction at that point, and its block.
+    pub vec_peak_at: String,
+    /// The hot loop's vector peak in its blocks that are not cold, and where.
+    pub warm_vec_peak: usize,
+    pub warm_vec_peak_at: String,
+    pub warm_vec_set: Vec<String>,
     /// Each value's blame, most first: the hot loop's points over the registers (integer for an
     /// integer value, vector for a vector one) where it is live; its live points there;
     /// whether a vector.
@@ -75,6 +83,27 @@ pub fn measure(func: &Function, origins: &[u32], hot: &[Block]) -> Pressure {
             .map(|i| dfg.insts[i].branch_destination(&dfg.jump_tables, &dfg.exception_tables).iter().map(|c| c.block(&dfg.value_lists)).collect())
             .unwrap_or_default()
     };
+    // The instructions the backend keeps: one with an effect, or one whose result such an
+    // instruction reads, transitively. The lowering drops the rest, so they hold no register.
+    let effect = |i: cranelift_codegen::ir::Inst| {
+        let op = dfg.insts[i].opcode();
+        op.is_branch() || op.is_terminator() || op.is_call() || op.can_store() || op.can_trap() || op.other_side_effects() || dfg.inst_results(i).is_empty()
+    };
+    let mut kept: std::collections::HashSet<cranelift_codegen::ir::Inst> = std::collections::HashSet::new();
+    let mut work: Vec<cranelift_codegen::ir::Inst> = blocks.iter().flat_map(|&b| func.layout.block_insts(b)).filter(|&i| effect(i)).collect();
+    while let Some(i) = work.pop() {
+        if !kept.insert(i) {
+            continue;
+        }
+        for v in dfg.inst_values(i) {
+            if let ValueDef::Result(d, _) = dfg.value_def(v) {
+                work.push(d);
+            }
+        }
+    }
+    // Branch arguments to a block's parameters keep what they pass only where the parameter is
+    // read: an over-approximation here (every argument kept), as Cranelift keeps them too.
+    let kept = |i: cranelift_codegen::ir::Inst| kept.contains(&i);
     // Live-in sets, to a fixed point (backward dataflow; a block's parameters are defined at
     // its head, a branch's arguments used at the branch).
     let index: HashMap<Block, usize> = blocks.iter().enumerate().map(|(k, &b)| (b, k)).collect();
@@ -86,7 +115,7 @@ pub fn measure(func: &Function, origins: &[u32], hot: &[Block]) -> Pressure {
         let mut changed = false;
         for (k, &b) in blocks.iter().enumerate().rev() {
             let mut live = live_out(&live_in, b);
-            for inst in func.layout.block_insts(b).collect::<Vec<_>>().into_iter().rev() {
+            for inst in func.layout.block_insts(b).collect::<Vec<_>>().into_iter().rev().filter(|&i| kept(i)) {
                 for &r in dfg.inst_results(inst) {
                     live.remove(&r);
                 }
@@ -126,6 +155,7 @@ pub fn measure(func: &Function, origins: &[u32], hot: &[Block]) -> Pressure {
     let mut blame: HashMap<Value, (usize, usize)> = HashMap::new();
     let mut peak_set: Vec<Value> = Vec::new();
     let mut peak_ints = 0;
+    let (mut peak_vecs, mut peak_vec_set): (usize, Vec<Value>) = (0, Vec::new());
     let hot_blocks: Vec<Block> = blocks.iter().copied().filter(|b| hot.contains(b)).collect();
     let (mut hot_first, mut hot_last): (Vec<Value>, Vec<Value>) = Default::default();
     let mut hot_int: Vec<Vec<usize>> = vec![Vec::new(); hot_blocks.len()];
@@ -134,7 +164,7 @@ pub fn measure(func: &Function, origins: &[u32], hot: &[Block]) -> Pressure {
         let mut live = live_out(&live_in, b);
         let h = hot_blocks.iter().position(|&x| x == b);
         let mut first_point = true;
-        for inst in func.layout.block_insts(b).collect::<Vec<_>>().into_iter().rev() {
+        for inst in func.layout.block_insts(b).collect::<Vec<_>>().into_iter().rev().filter(|&i| kept(i)) {
             for &r in dfg.inst_results(inst) {
                 live.remove(&r);
             }
@@ -164,6 +194,20 @@ pub fn measure(func: &Function, origins: &[u32], hot: &[Block]) -> Pressure {
             if h.is_none() && !hot_blocks.is_empty() {
                 continue;
             }
+            if h.is_some() && !func.layout.is_cold(b) && vecs > p.warm_vec_peak {
+                p.warm_vec_peak = vecs;
+                p.warm_vec_peak_at = format!("{b}: {}", func.dfg.display_inst(inst));
+                p.warm_vec_set = live.iter().filter(|&&v| vector(v)).map(|&v| match dfg.value_def(v) {
+                    ValueDef::Result(i, _) => format!("{v} = {}", dfg.display_inst(i)),
+                    ValueDef::Param(b, _) => format!("{v} param of {b}"),
+                    ValueDef::Union(..) => "union".into(),
+                }).collect();
+            }
+            if vecs > peak_vecs {
+                peak_vecs = vecs;
+                peak_vec_set = live.iter().copied().filter(|&v| vector(v)).collect();
+                p.vec_peak_at = format!("{b}: {}", func.dfg.display_inst(inst));
+            }
             if ints > peak_ints {
                 peak_ints = ints;
                 peak_set = live.iter().copied().filter(|&v| !vector(v)).collect();
@@ -187,6 +231,7 @@ pub fn measure(func: &Function, origins: &[u32], hot: &[Block]) -> Pressure {
     }
     p.hot_through = hot_first.iter().filter(|v| hot_last.contains(v)).count();
     p.at_peak = peak_set.iter().map(|&v| (origin(v), made(v))).collect();
+    p.vec_at_peak = peak_vec_set.iter().map(|&v| (origin(v), made(v))).collect();
     let mut blame: Vec<Blame> = blame.into_iter().filter(|(_, (o, _))| *o > 0).map(|(v, (over, live))| Blame { origin: origin(v), made: made(v), over, live, vector: vector(v) }).collect();
     blame.sort_by_key(|b| std::cmp::Reverse(b.over));
     p.blame = blame;

@@ -1,5 +1,5 @@
 //! The file system a program reads and the documents it loads (t21 E1, E2): the generic half of typing against
-//! libraries. No rule here knows a language; a language's `env.rr` and `modules.rr` say what to read.
+//! libraries. No rule here knows a language; a language's `env.rerail` and `modules.rerail` say what to read.
 //!
 //! A program may read, as relations:
 //! - `dir_entry(dir, name, is_dir)`: the entries of a directory;
@@ -82,7 +82,7 @@ pub(super) struct World {
     refused: BTreeSet<String>,
     budget: usize,
     /// The documents loaded from beyond the corpus root (the libraries'), which the budget bounds. A source file of
-    /// the run's own tree is always loaded (phase 1, `sources.rr`).
+    /// the run's own tree is always loaded (phase 1, `sources.rerail`).
     beyond: usize,
     /// Loads past the budget, or in another grammar than the run's, not taken.
     pub(super) dropped: usize,
@@ -430,22 +430,24 @@ pub(in crate::code_rule_dsl::logic::plan) fn bytes_digests_held(paths: &[PathBuf
     use crate::content_store::observe::{DigestRead, DigestStep};
     use rayon::prelude::*;
     let steps: Vec<DigestStep> = super::observe(|o| paths.iter().map(|p| o.digest_step(p)).collect());
-    let hashed: Vec<Option<(u64, [u8; 32])>> = steps
-        .par_iter()
-        .zip(paths.par_iter())
-        .map(|(s, path)| match s {
-            DigestStep::Read(r) => {
-                let bytes = r.read()?;
-                let hashed = DigestRead::hashed(&bytes);
-                if let Some(hold) = hold {
-                    let s = r.stat();
-                    hold.keep(path, crate::content_store::FileStat { size: s.size, mtime_ns: s.mtime_ns, inode: s.ino }, bytes);
+    let hashed: Vec<Option<(u64, [u8; 32])>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+        steps
+            .par_iter()
+            .zip(paths.par_iter())
+            .map(|(s, path)| match s {
+                DigestStep::Read(r) => {
+                    let bytes = r.read()?;
+                    let hashed = DigestRead::hashed(&bytes);
+                    if let Some(hold) = hold {
+                        let s = r.stat();
+                        hold.keep(path, crate::content_store::FileStat { size: s.size, mtime_ns: s.mtime_ns, inode: s.ino }, bytes);
+                    }
+                    Some(hashed)
                 }
-                Some(hashed)
-            }
-            DigestStep::Answered(_) => None,
-        })
-        .collect();
+                DigestStep::Answered(_) => None,
+            })
+            .collect()
+    });
     super::observe(|o| {
         steps
             .into_iter()

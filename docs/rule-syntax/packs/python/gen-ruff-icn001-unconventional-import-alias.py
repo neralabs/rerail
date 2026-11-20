@@ -1,11 +1,11 @@
-"""Writes ruff-icn001-unconventional-import-alias.aliases.rr: Ruff's default import conventions (ICN001), from the
+"""Writes ruff-icn001-unconventional-import-alias.aliases.rerail: Ruff's default import conventions (ICN001), from the
 JSON's chain of `replace` transforms (module regex -> alias).
     python3 docs/rule-syntax/packs/python/gen-ruff-icn001-unconventional-import-alias.py
 """
 import json, os, re
 HERE = os.path.dirname(os.path.abspath(__file__))
 JSON = os.path.join(HERE, "..", "..", "..", "..", "packs", "python", "rules", "ruff-icn001-unconventional-import-alias.json")
-OUT = os.path.join(HERE, "ruff-icn001-unconventional-import-alias.aliases.rr")
+OUT = os.path.join(HERE, "ruff-icn001-unconventional-import-alias.aliases.rerail")
 DOT = r"[\s\\]*\.[\s\\]*"
 
 

@@ -10,7 +10,7 @@
 //! a chunk of 16,384 nodes wrote 160 MB, from 400 MB            ->  ~72,000 nodes (what the room holds)
 //! ```
 //!
-//! **The same cut on every run** (Q261). Chunk `n`'s size is decided from chunks filed before it, in their order,
+//! **The same cut on every run** (Q314). Chunk `n`'s size is decided from chunks filed before it, in their order,
 //! never from what is filed when the builder reaches it: the builder cut the documents by the size last stored while
 //! it worked ahead, so two runs cut different chunks, and the plans made from them (Q88) differed (1 relation inlined
 //! in one hogql run, 11 in the next; 83-92 B). While chunks grow, chunk `n + 1` is sized by chunk `n` (one evaluates
@@ -21,7 +21,7 @@
 //! moves. The run's start is the count when the chunks begin, in steps of `BASE_STEP`.
 
 /// The first chunk's nodes (at most the caller's most). At 4,096 nodes hogql's CPU runs retired 92.5-93.7 B against
-/// 88.8-92.0 B at 65,536, measured before the cut was the same on every run (Q261).
+/// 88.8-92.0 B at 65,536, measured before the cut was the same on every run (Q314).
 pub const FIRST_NODES: usize = 65_536;
 
 /// The most a chunk grows past the last, when the room holds it: from the first to 262,144 nodes in one or two steps.

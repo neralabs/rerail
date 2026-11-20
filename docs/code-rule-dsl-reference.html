@@ -416,7 +416,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <ul>
 <li><code>format</code>: always <code>"rerail.policy/v1"</code>;</li>
 <li><code>id</code> and a positive integer <code>revision</code>;</li>
-<li>optional <code>description</code> and <code>scope</code> (path globs);</li>
+<li>optional <code>title</code>, <code>description</code> and <code>scope</code> (path globs);</li>
 <li>a non-empty list of <b>clauses</b>.</li>
 </ul>
 <p>The catalog stores one document per row of <code>~/.rerail/rerail.sqlite</code>; each top-level field is a column, so everything else lives in <code>clauses</code>. A <b>clause</b> has an <code>id</code> unique in its document and exactly one <b>form</b>:</p>
@@ -441,7 +441,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <p>Languages come from the registry (<code>languages/*.json</code>, see <code>docs/language-packs.md</code>):</p>
 <ul>
 <li><b>Planned</b> language: stored, but refused at compile time with <code>language-not-supported</code>; the catalog keeps the rule inactive until the engine reads it.</li>
-<li><b><code>not-supported-yet</code></b> capability: its predicates are refused likewise.</li>
+<li><b><code>not-supported-yet</code></b> capability: its predicates are refused likewise, and so is a <a href="#transform"><code>transform</code></a> step reading a value (<code>toPrecision</code>, a <code>value</code> source) where values are not read yet.</li>
 <li><b><code>refused</code></b> capability: its predicates are invalid.</li>
 </ul>
 
@@ -504,19 +504,34 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <tr><td><span class="b">rust</span></td><td>rust</td><td><code>rust</code>: <code>.rs</code></td><td>rust</td></tr>
 <tr><td><span class="b">vue</span></td><td>vue</td><td><code>vue</code>: <code>.vue</code></td><td>vue</td></tr>
 <tr><td><span class="b">sql</span></td><td>sql</td><td><code>sql</code>: <code>.sql</code></td><td>sql</td></tr>
-<tr><td><span class="b">rr</span></td><td>rr</td><td><code>rr</code>: <code>.rr</code></td><td>rr</td></tr>
+<tr><td><span class="b">rr</span></td><td>rr</td><td><code>rr</code>: <code>.rerail</code></td><td>rr</td></tr>
+<tr><td><span class="b">java</span></td><td>java</td><td><code>java</code>: <code>.java</code></td><td>java</td></tr>
+<tr><td><span class="b">json</span></td><td>json</td><td><code>json</code>: <code>.json</code></td><td>json</td></tr>
+<tr><td><span class="b">csharp</span></td><td>csharp</td><td><code>csharp</code>: <code>.cs</code></td><td>csharp</td></tr>
+<tr><td><span class="b">html</span></td><td>html</td><td><code>html</code>: <code>.html</code>, <code>.htm</code></td><td>html</td></tr>
+<tr><td><span class="b">css</span></td><td>css</td><td><code>css</code>: <code>.css</code></td><td>css</td></tr>
+<tr><td><span class="b">markdown</span></td><td>markdown, markdown-inline</td><td><code>markdown</code>: <code>.md</code>, <code>.markdown</code>; <code>markdown-inline</code>: none (the content of a block's <code>inline</code> nodes)</td><td>markdown</td></tr>
+<tr><td><span class="b">go</span></td><td>go</td><td><code>go</code>: <code>.go</code></td><td>go</td></tr>
+<tr><td><span class="b">c</span></td><td>c</td><td><code>c</code>: <code>.c</code></td><td>c</td></tr>
+<tr><td><span class="b">cpp</span></td><td>cpp</td><td><code>cpp</code>: <code>.cc</code>, <code>.cpp</code>, <code>.cxx</code>, <code>.c++</code>, <code>.hpp</code>, <code>.hxx</code>, <code>.hh</code>, <code>.h++</code>, <code>.h</code></td><td>c</td></tr>
 </tbody></table></div>
 <div class="table-wrap"><table>
-<thead><tr><th>Capability</th><th>Predicates</th><th>python</th><th>ecma</th><th>php</th><th>blade</th><th>rust</th><th>vue</th><th>sql</th><th>rr</th></tr></thead>
+<thead><tr><th>Capability</th><th>Predicates</th><th>python</th><th>ecma</th><th>php</th><th>blade</th><th>rust</th><th>vue</th><th>sql</th><th>rr</th><th>java</th><th>json</th><th>csharp</th><th>html</th><th>css</th><th>markdown</th><th>go</th><th>c</th></tr></thead>
 <tbody>
-<tr><td>Scope</td><td><code>resolves</code>, <code>binds</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>no</td></tr>
-<tr><td>Value</td><td><code>value</code>, <code>compare</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>no</td></tr>
-<tr><td>Arguments</td><td><code>arguments</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>no</td></tr>
-<tr><td>Calls</td><td><code>calls</code></td><td>yes</td><td>no</td><td>yes</td><td>yes</td><td>yes</td><td>no</td><td>no</td><td>no</td></tr>
-<tr><td>Format arguments</td><td><code>formatArgs</code></td><td>yes</td><td>no</td><td>yes</td><td>yes</td><td>yes</td><td>no</td><td>no</td><td>no</td></tr>
-<tr><td>Suppression</td><td><code>suppress</code></td><td><code>noqa</code>, <code>nosec</code></td><td><code>eslint</code>, <code>oxlint</code>, <code>biome</code></td><td><code>phpstan</code>, <code>psalm</code>, <code>phpcs</code></td><td>none</td><td><code>clippy</code></td><td><code>eslint</code></td><td><code>sqlfluff</code></td><td>none</td></tr>
+<tr><td>Scope</td><td><code>resolves</code>, <code>binds</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>no</td><td>not yet</td><td>no</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td></tr>
+<tr><td>Value</td><td><code>value</code>, <code>compare</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>no</td><td>not yet</td><td>no</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td></tr>
+<tr><td>Arguments</td><td><code>arguments</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>no</td><td>not yet</td><td>no</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td></tr>
+<tr><td>Calls</td><td><code>calls</code></td><td>yes</td><td>no</td><td>yes</td><td>yes</td><td>yes</td><td>no</td><td>no</td><td>no</td><td>not yet</td><td>no</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td></tr>
+<tr><td>Format arguments</td><td><code>formatArgs</code></td><td>yes</td><td>no</td><td>yes</td><td>yes</td><td>yes</td><td>no</td><td>no</td><td>no</td><td>not yet</td><td>no</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td></tr>
+<tr><td>Suppression</td><td><code>suppress</code></td><td><code>noqa</code>, <code>nosec</code></td><td><code>eslint</code>, <code>oxlint</code>, <code>biome</code></td><td><code>phpstan</code>, <code>psalm</code>, <code>phpcs</code></td><td>none</td><td><code>clippy</code></td><td><code>eslint</code></td><td><code>sqlfluff</code></td><td>none</td><td>none</td><td>none</td><td>none</td><td>none</td><td>none</td><td>none</td><td>none</td><td>none</td></tr>
 </tbody></table></div>
 <p>TypeScript rules also run on JavaScript with the JavaScript grammar; kinds unique to another dialect are <code>Never</code> there.</p>
+
+<p><b>Java.</b> Structural terms only, over tree-sitter-java 0.23.5: its files parse and <code>kind</code>, <code>pattern</code>, <code>regex</code>, the relations, <code>field</code>, <code>nthChild</code>, <code>count</code>, <code>layout</code> and <code>matches</code> run. Every semantic capability is <i>not yet</i> supported: a rule naming <code>resolves</code>, <code>binds</code>, <code>value</code>, <code>compare</code> (in every text mode), <code>arguments</code>, <code>calls</code> or <code>formatArgs</code>, or whose <code>transform</code> reads a value (<code>toPrecision</code>, a <code>value</code> source), is stored but refused with <code>language-not-supported</code>, and stays inactive until the engine reads it. <code>languageOptions</code>, <code>parse</code> and <code>suppress</code> are refused. The grammar does not parse a type-use annotation on an array or varargs type (<code>@Nullable Object @Nullable ... args</code>), nor Java 25&#39;s flexible constructor bodies and module imports: such a file is read around the syntax error.</p>
+
+<p><b>C#, HTML, CSS, Markdown, Go, C and C++.</b> Structural terms only, as Java, over tree-sitter-c-sharp 0.23.5, tree-sitter-html 0.23.2, tree-sitter-css 0.25.0, tree-sitter-md 0.5.4, tree-sitter-go 0.25.0, tree-sitter-c 0.24.2 and tree-sitter-cpp 0.23.4. Every semantic capability is <i>not yet</i> supported: a rule naming one, or whose <code>transform</code> reads a value, is stored but refused with <code>language-not-supported</code>, and stays inactive until the engine reads it. <code>languageOptions</code>, <code>parse</code> and <code>suppress</code> are refused. C and C++ are one family, <code>c</code>, with a dialect each; <code>.h</code> is read as C++, since tree-sitter-cpp reads C headers and tree-sitter-c does not read C++ ones. Markdown's <code>markdown-inline</code> dialect is no file's: it reads the content of the block grammar's <code>inline</code> nodes.</p>
+
+<p><b>JSON.</b> Every semantic capability is refused, as for rr: a rule naming one is invalid. Rules read its tree, in tree-sitter-json 0.24.8's kinds, with structural terms; <code>languageOptions</code>, <code>parse</code> and <code>suppress</code> are refused.</p>
 
 <p><b>PHP.</b> PHP-only files; <code>.blade.php</code> templates use Blade.</p>
 <ul>
@@ -715,6 +730,9 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <li><b>TypeScript, TSX, JavaScript</b> add <code>html_comment</code> (<code>&lt;!--</code> and <code>--&gt;</code> lines).</li>
 <li><b>Blade, Vue</b>: the template's comments; under <a href="#embedded"><code>ast.embedded</code></a>, the program's (<a href="#blade">Blade</a>, <a href="#vue">Vue</a>).</li>
 <li><b>Rust</b>: <code>line_comment</code> and <code>block_comment</code>; a doc comment has an <code>outer_doc_comment_marker</code> or <code>inner_doc_comment_marker</code> child and a <code>doc_comment</code> text child.</li>
+<li><b>Java</b>: <code>line_comment</code> and <code>block_comment</code>; a Javadoc comment is a <code>block_comment</code>, told apart by its opening (below).</li>
+<li><b>CSS</b>: <code>comment</code> (<code>/* */</code>) and <code>js_comment</code>, a <code>//</code> line, which tree-sitter-css reads too.</li>
+<li><b>Markdown</b>: none; an HTML comment is an <code>html_block</code>.</li>
 </ul>
 <p>Elsewhere, tell line, block and doc comments apart by their opening, with <code>regex</code>:</p>
 <div class="table-wrap"><table>
@@ -727,6 +745,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <tr><td><span class="b">rust</span></td><td><code>kind: "line_comment"</code> (<code>^//</code>), not doc</td><td><code>kind: "block_comment"</code> (<code>^/\*</code>), not doc</td><td><code>has: { kind: "outer_doc_comment_marker" }</code> (<code>///</code>, <code>/**</code>) or <code>has: { kind: "inner_doc_comment_marker" }</code> (<code>//!</code>, <code>/*!</code>); <code>////</code> and <code>/***</code> are no doc comments</td></tr>
 <tr><td><span class="b">vue</span></td><td>TypeScript's, under <code>ast.embedded</code></td><td><code>^&lt;!--</code> (the template's HTML); TypeScript's under <code>ast.embedded</code></td><td>TypeScript's, under <code>ast.embedded</code></td></tr>
 <tr><td><span class="b">sql</span></td><td><code>^--</code></td><td><code>^/\*</code> (nested, as PostgreSQL reads them)</td><td>none</td></tr>
+<tr><td><span class="b">java</span></td><td><code>kind: "line_comment"</code> (<code>^//</code>)</td><td><code>kind: "block_comment"</code> (<code>^/\*</code>), not doc</td><td><code>kind: "block_comment"</code> with <code>regex: "^/\\*\\*[^/]"</code> (Javadoc; <code>/**/</code> is an empty block comment, no doc)</td></tr>
 </tbody></table></div>
 <p><b>Position.</b> A comment is a tree-sitter <i>extra</i>: a child of the node whose span holds it, in source order. A comment before a declaration is its preceding <b>sibling</b>, so use sibling relations, not <code>inside</code> or <code>has</code>:</p>
 <ul>
@@ -818,6 +837,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <li><span class="key"><a class="kl" href="#document"><b class="k">id</b></a></span><span class="t">Str</span><span class="d">The code rule's id, which rerail-ignore comments name</span></li>
 <li><span class="key"><a class="kl" href="#document"><b class="k">revision</b></a></span><span class="t">Int≥1</span><span class="d">The document's revision number, starting at 1</span></li>
 <li><span class="key"><a class="kl" href="#document"><b class="k">mode</b></a></span><span class="t"><span class="lit">"log"</span> | <span class="lit">"steer"</span> | <span class="lit">"block"</span></span><span class="d">What Rerail does with a violation: log it, steer the agent, or block</span></li>
+<li><span class="key"><a class="kl" href="#document"><b class="k">title</b></a><span class="q">?</span></span><span class="t">String</span><span class="d">The code rule in a person's own words, which the dashboard lists it by; rules add requires it</span></li>
 <li><span class="key"><a class="kl" href="#document"><b class="k">description</b></a><span class="q">?</span></span><span class="t">String</span><span class="d">What the code rule asks for, in plain words</span></li>
 <li><span class="key"><a class="kl" href="#scope"><b class="k">scope</b></a><span class="q">?</span></span><span class="t"><a class="nt" href="#g-Scope">Scope</a></span><span class="d">The files the code rule reads; every file when omitted</span></li>
 <li><span class="key"><a class="kl" href="#clause-forms"><b class="k">clauses</b></a></span><span class="t">list of <a class="nt" href="#g-Clause">Clause</a>, at least 1</span><span class="d">The clauses that report violations or define shared utilities and options</span></li>
@@ -948,7 +968,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 </details>
 <details class="prod" id="g-Define" data-zod="codeRuleDefineSchema"><summary><span class="nt">Define</span><span class="about">A clause that reports nothing and holds shared utilities, options and config</span></summary>
 <ul class="keys" style="--kw:11ch">
-<li><span class="key"><a class="kl" href="#define"><b class="k">language</b></a><span class="q">?</span></span><span class="t"><span class="lit">"python"</span> | <span class="lit">"typescript"</span> | <span class="lit">"javascript"</span> | <span class="lit">"php"</span> | <span class="lit">"blade"</span> | <span class="lit">"rust"</span> | <span class="lit">"sql"</span> | <span class="lit">"vue"</span> | <span class="lit">"rr"</span></span><span class="d">The language whose queries see the shared utilities; required with utils</span></li>
+<li><span class="key"><a class="kl" href="#define"><b class="k">language</b></a><span class="q">?</span></span><span class="t"><span class="lit">"python"</span> | <span class="lit">"typescript"</span> | <span class="lit">"javascript"</span> | <span class="lit">"php"</span> | <span class="lit">"blade"</span> | <span class="lit">"rust"</span> | <span class="lit">"sql"</span> | <span class="lit">"vue"</span> | <span class="lit">"rr"</span> | <span class="lit">"json"</span> | <span class="lit">"python-format"</span> | <span class="lit">"eslint-directive"</span> | <span class="lit">"java"</span> | <span class="lit">"csharp"</span> | <span class="lit">"html"</span> | <span class="lit">"css"</span> | <span class="lit">"markdown"</span> | <span class="lit">"go"</span> | <span class="lit">"c"</span> | <span class="lit">"cpp"</span> | <span class="lit">"kotlin"</span> | <span class="lit">"swift"</span> | <span class="lit">"scala"</span></span><span class="d">The language whose queries see the shared utilities; required with utils</span></li>
 <li><span class="key"><a class="kl" href="#define"><b class="k">utils</b></a><span class="q">?</span></span><span class="t">map of <a class="nt" href="#g-UtilId">UtilId</a> to <a class="nt" href="#g-Utility">Utility</a></span><span class="d">Named rules every query of the define's language can call with matches</span></li>
 <li><span class="key"><a class="kl" href="#options"><b class="k">options</b></a><span class="q">?</span></span><span class="t">map of OptionName to <a class="nt" href="#g-OptionDecl">OptionDecl</a></span><span class="d">Typed options declared once for the whole document</span></li>
 <li><span class="key"><a class="kl" href="#config"><b class="k">config</b></a><span class="q">?</span></span><span class="t">map of OptionName to Json</span><span class="d">Values set for declared options; an unset option takes its default</span></li>
@@ -1089,7 +1109,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 </details>
 <details class="prod" id="g-AstQuery" data-zod="codeRuleQuerySchema.ast"><summary><span class="nt">AstQuery</span><span class="about">A rule object matched on a language's syntax tree, with the options around it</span></summary>
 <ul class="keys" style="--kw:18ch">
-<li><span class="key"><a class="kl" href="#ast-query"><b class="k">language</b></a></span><span class="t"><span class="lit">"python"</span> | <span class="lit">"typescript"</span> | <span class="lit">"javascript"</span> | <span class="lit">"php"</span> | <span class="lit">"blade"</span> | <span class="lit">"rust"</span> | <span class="lit">"sql"</span> | <span class="lit">"vue"</span> | <span class="lit">"rr"</span></span><span class="d">The language whose files the query reads and parses</span></li>
+<li><span class="key"><a class="kl" href="#ast-query"><b class="k">language</b></a></span><span class="t"><span class="lit">"python"</span> | <span class="lit">"typescript"</span> | <span class="lit">"javascript"</span> | <span class="lit">"php"</span> | <span class="lit">"blade"</span> | <span class="lit">"rust"</span> | <span class="lit">"sql"</span> | <span class="lit">"vue"</span> | <span class="lit">"rr"</span> | <span class="lit">"json"</span> | <span class="lit">"python-format"</span> | <span class="lit">"eslint-directive"</span> | <span class="lit">"java"</span> | <span class="lit">"csharp"</span> | <span class="lit">"html"</span> | <span class="lit">"css"</span> | <span class="lit">"markdown"</span> | <span class="lit">"go"</span> | <span class="lit">"c"</span> | <span class="lit">"cpp"</span> | <span class="lit">"kotlin"</span> | <span class="lit">"swift"</span> | <span class="lit">"scala"</span></span><span class="d">The language whose files the query reads and parses</span></li>
 <li><span class="key"><a class="kl" href="#ast-embedded"><b class="k">embedded</b></a><span class="q">?</span></span><span class="t"><a class="nt" href="#g-Via">Via</a></span><span class="d">Runs the query on the program a Blade or Vue file embeds</span></li>
 <li><span class="key"><a class="kl" href="#ast-syntax"><b class="k">syntax</b></a><span class="q">?</span></span><span class="t"><span class="lit">"valid"</span> | <span class="lit">"invalid"</span></span><span class="d">Reads only files that parse without errors, or only files with errors</span></li>
 <li><span class="key"><a class="kl" href="#rule-objects"><b class="k">rule</b></a></span><span class="t"><a class="nt" href="#g-AstRule">AstRule</a></span><span class="d">The rule object matched on every candidate node</span></li>
@@ -1113,6 +1133,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 </ul></li>
 <li><span class="key"><a class="kl" href="#kind"><b class="k">kind</b></a><span class="q">?</span></span><span class="t">Kind</span><span class="d">The node's tree-sitter kind</span></li>
 <li><span class="key"><a class="kl" href="#regex"><b class="k">regex</b></a><span class="q">?</span></span><span class="t">Str</span><span class="d">A Rust regex the node's source text must match</span></li>
+<li><span class="key"><a class="kl" href="#regex"><b class="k">stored</b></a><span class="q">?</span></span><span class="t">Str <span class="c">beside regex</span></span><span class="d">Why the token regex tests is stored where the rule looks</span></li>
 <li><span class="key"><a class="kl" href="#nthChild"><b class="k">nthChild</b></a><span class="q">?</span></span><span class="t"><a class="nt" href="#g-NthChild">NthChild</a></span><span class="d">The node's 1-based position among its parent's named children</span></li>
 <li><span class="key"><a class="kl" href="#capture"><b class="k">capture</b></a><span class="q">?</span></span><span class="t">NAME <span class="c">inside parse only</span></span><span class="d">Inside parse only: binds the parsed node under a name for the host rule</span></li>
 <li class="grp">composite</li>
@@ -1163,7 +1184,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <ul class="keys" style="--kw:9ch">
 <li><span class="key"><a class="kl" href="#stopBy"><b class="k">stopBy</b></a><span class="q">?</span></span><span class="t"><span class="lit">"neighbor"</span> | <span class="lit">"end"</span> | <a class="nt" href="#g-AstRule">AstRule</a></span><span class="d">How far the walk goes: the nearest node, every node, or up to a stop rule</span></li>
 <li><span class="key"><a class="kl" href="#field"><b class="k">field</b></a><span class="q">?</span></span><span class="t">Str <span class="c">inside and has only</span></span><span class="d">Restricts has and inside to one grammar field</span></li>
-<li class="inline"><a class="kl" href="#relations"><span class="grp">and every <a class="nt" href="#g-AstRule">AstRule</a> key:</span></a> <b class="k">pattern</b><span class="q">?</span>, <b class="k">kind</b><span class="q">?</span>, <b class="k">regex</b><span class="q">?</span>, <b class="k">nthChild</b><span class="q">?</span>, <b class="k">all</b><span class="q">?</span>, <b class="k">any</b><span class="q">?</span>, <b class="k">not</b><span class="q">?</span>, <b class="k">matches</b><span class="q">?</span>, <b class="k">inside</b><span class="q">?</span>, <b class="k">has</b><span class="q">?</span>, <b class="k">precedes</b><span class="q">?</span>, <b class="k">follows</b><span class="q">?</span>, <b class="k">compare</b><span class="q">?</span>, <b class="k">count</b><span class="q">?</span>, <b class="k">resolves</b><span class="q">?</span>, <b class="k">value</b><span class="q">?</span>, <b class="k">arguments</b><span class="q">?</span>, <b class="k">binds</b><span class="q">?</span>, <b class="k">parse</b><span class="q">?</span>, <b class="k">capture</b><span class="q">?</span>, <b class="k">formatArgs</b><span class="q">?</span>, <b class="k">layout</b><span class="q">?</span>, <b class="k">filePath</b><span class="q">?</span>, <b class="k">host</b><span class="q">?</span>, <b class="k">embedded</b><span class="q">?</span>, <b class="k">calls</b><span class="q">?</span>, <b class="k">importTarget</b><span class="q">?</span> <span class="d">Any AstRule key, applied to the related node</span></li>
+<li class="inline"><a class="kl" href="#relations"><span class="grp">and every <a class="nt" href="#g-AstRule">AstRule</a> key:</span></a> <b class="k">pattern</b><span class="q">?</span>, <b class="k">kind</b><span class="q">?</span>, <b class="k">regex</b><span class="q">?</span>, <b class="k">stored</b><span class="q">?</span>, <b class="k">nthChild</b><span class="q">?</span>, <b class="k">all</b><span class="q">?</span>, <b class="k">any</b><span class="q">?</span>, <b class="k">not</b><span class="q">?</span>, <b class="k">matches</b><span class="q">?</span>, <b class="k">inside</b><span class="q">?</span>, <b class="k">has</b><span class="q">?</span>, <b class="k">precedes</b><span class="q">?</span>, <b class="k">follows</b><span class="q">?</span>, <b class="k">compare</b><span class="q">?</span>, <b class="k">count</b><span class="q">?</span>, <b class="k">resolves</b><span class="q">?</span>, <b class="k">value</b><span class="q">?</span>, <b class="k">arguments</b><span class="q">?</span>, <b class="k">binds</b><span class="q">?</span>, <b class="k">parse</b><span class="q">?</span>, <b class="k">capture</b><span class="q">?</span>, <b class="k">formatArgs</b><span class="q">?</span>, <b class="k">layout</b><span class="q">?</span>, <b class="k">filePath</b><span class="q">?</span>, <b class="k">host</b><span class="q">?</span>, <b class="k">embedded</b><span class="q">?</span>, <b class="k">calls</b><span class="q">?</span>, <b class="k">importTarget</b><span class="q">?</span> <span class="d">Any AstRule key, applied to the related node</span></li>
 </ul>
 </details>
 <details class="prod" id="g-NthChild" data-zod="codeRuleNthChildSchema"><summary><span class="nt">NthChild</span><span class="about">A node's position among its parent's named children, optionally counted over a rule</span></summary>
@@ -1302,7 +1323,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <ul class="keys" style="--kw:14ch">
 <li><span class="key"><a class="kl" href="#parse"><b class="k">grammar</b></a></span><span class="t"><span class="lit">"percentFormat"</span> | <span class="lit">"braceFormat"</span> | <span class="lit">"annotation"</span> | <span class="lit">"eslintDirective"</span> | <span class="lit">"printfFormat"</span> | <span class="lit">"scanfFormat"</span> | <span class="lit">"phpDoc"</span> | <span class="lit">"rustFormat"</span> | <span class="lit">"identifierWords"</span> | <span class="lit">"pythonFString"</span></span><span class="d">The sub-grammar that parses the literal or comment</span></li>
 <li><span class="key"><a class="kl" href="#pythonFString"><b class="k">interpolation</b></a><span class="q">?</span></span><span class="t">Str, up to 1024 bytes <span class="c">pythonFString only</span></span><span class="d">The marker each interpolation stands as in the template's value; {} when omitted</span></li>
-<li class="inline"><a class="kl" href="#parse"><span class="grp">and a rule over the parsed tree, with the <a class="nt" href="#g-AstRule">AstRule</a> keys:</span></a> <b class="k">pattern</b><span class="q">?</span>, <b class="k">kind</b><span class="q">?</span>, <b class="k">regex</b><span class="q">?</span>, <b class="k">nthChild</b><span class="q">?</span>, <b class="k">all</b><span class="q">?</span>, <b class="k">any</b><span class="q">?</span>, <b class="k">not</b><span class="q">?</span>, <b class="k">matches</b><span class="q">?</span>, <b class="k">inside</b><span class="q">?</span>, <b class="k">has</b><span class="q">?</span>, <b class="k">precedes</b><span class="q">?</span>, <b class="k">follows</b><span class="q">?</span>, <b class="k">compare</b><span class="q">?</span>, <b class="k">count</b><span class="q">?</span>, <b class="k">resolves</b><span class="q">?</span>, <b class="k">value</b><span class="q">?</span>, <b class="k">arguments</b><span class="q">?</span>, <b class="k">binds</b><span class="q">?</span>, <b class="k">parse</b><span class="q">?</span>, <b class="k">capture</b><span class="q">?</span>, <b class="k">formatArgs</b><span class="q">?</span>, <b class="k">layout</b><span class="q">?</span>, <b class="k">host</b><span class="q">?</span>, <b class="k">embedded</b><span class="q">?</span>, <b class="k">calls</b><span class="q">?</span>, <b class="k">importTarget</b><span class="q">?</span> <span class="d">A rule matched on the parsed tree's root; each grammar admits some keys</span></li>
+<li class="inline"><a class="kl" href="#parse"><span class="grp">and a rule over the parsed tree, with the <a class="nt" href="#g-AstRule">AstRule</a> keys:</span></a> <b class="k">pattern</b><span class="q">?</span>, <b class="k">kind</b><span class="q">?</span>, <b class="k">regex</b><span class="q">?</span>, <b class="k">stored</b><span class="q">?</span>, <b class="k">nthChild</b><span class="q">?</span>, <b class="k">all</b><span class="q">?</span>, <b class="k">any</b><span class="q">?</span>, <b class="k">not</b><span class="q">?</span>, <b class="k">matches</b><span class="q">?</span>, <b class="k">inside</b><span class="q">?</span>, <b class="k">has</b><span class="q">?</span>, <b class="k">precedes</b><span class="q">?</span>, <b class="k">follows</b><span class="q">?</span>, <b class="k">compare</b><span class="q">?</span>, <b class="k">count</b><span class="q">?</span>, <b class="k">resolves</b><span class="q">?</span>, <b class="k">value</b><span class="q">?</span>, <b class="k">arguments</b><span class="q">?</span>, <b class="k">binds</b><span class="q">?</span>, <b class="k">parse</b><span class="q">?</span>, <b class="k">capture</b><span class="q">?</span>, <b class="k">formatArgs</b><span class="q">?</span>, <b class="k">layout</b><span class="q">?</span>, <b class="k">filePath</b><span class="q">?</span>, <b class="k">host</b><span class="q">?</span>, <b class="k">embedded</b><span class="q">?</span>, <b class="k">calls</b><span class="q">?</span>, <b class="k">importTarget</b><span class="q">?</span> <span class="d">A rule matched on the parsed tree's root; each grammar admits some keys</span></li>
 </ul>
 <p class="gnote">Each grammar admits only some keys and kinds (see parse); none admits embedded or importTarget.</p>
 </details>
@@ -1513,10 +1534,10 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <h3 id="g-document" style="margin-top:1.4em">Document and queries</h3>
 
 <section class="card" id="document">
-<h3><span class="keys">format · id · revision · mode · description · scope · clauses</span> <a class="anchor" href="#document">#</a></h3>
+<h3><span class="keys">format · id · revision · mode · title · description · scope · clauses</span> <a class="anchor" href="#document">#</a></h3>
 <p>The document's envelope: identity, mode, file scope and clauses.</p>
 <p class="card-grammar">In the grammar: <a class="nt" href="#g-Document">Document</a>, <a class="nt" href="#g-Scope">Scope</a>, <a class="nt" href="#g-Evidence">Evidence</a></p><div class="semantics"><ul><li><code>mode</code>: <code>log</code> records violations without guidance; <code>steer</code> sends them to the agent; <code>block</code> is reserved and acts like <code>steer</code> for now.</li><li><span id="scope"></span><code>scope</code>: repository-relative globs (<code>globset</code>). <code>include</code> is non-empty; <code>exclude</code> applies after. Without a <code>scope</code> the code rule reads every file (<code>include: ["**"]</code>) its queries can read: see <a href="#files-read">which files each query reads</a>.</li><li>Clause ids are unique. At least one clause is not a <code>define</code>.</li><li><code>$option</code> references resolve before validation, except in <code>format</code>, <code>id</code>, <code>revision</code> and the defines' <code>options</code>/<code>config</code> (<a href="#options">options</a>).</li><li>A repeated object key in raw JSON or YAML fails with "duplicate key" and its JSON pointer.</li></ul></div><details class="facets-more"><summary>Details: notes, shape, syntax errors, languages, limits</summary>
-<dl class="facets"><dt>Notes</dt><dd>The catalog stores the resolved document. <code>CompiledCodeRuleDsl.inScope(path)</code> uses evaluation's matcher, so a host passes only the files the rule reads.</dd><dt>Shape</dt><dd><div class="shape">{ "format": "rerail.policy/v1", "id": Str, "revision": Int≥1, "mode": "log" | "steer" | "block", "description"?: String,
+<dl class="facets"><dt>Notes</dt><dd>The catalog stores the resolved document. <code>CompiledCodeRuleDsl.inScope(path)</code> uses evaluation's matcher, so a host passes only the files the rule reads. <code>title</code> and <code>description</code> are for people and change no match; <code>rules add</code> and <code>PUT /api/library-rules</code> refuse a rule without a <code>title</code>, and a stored or shipped document may lack one.</dd><dt>Shape</dt><dd><div class="shape">{ "format": "rerail.policy/v1", "id": Str, "revision": Int≥1, "mode": "log" | "steer" | "block", "title"?: String, "description"?: String,
   "scope"?: { "include": [Glob]⁺, "exclude": [Glob] }, "clauses": [Clause]⁺ }</div></dd><dt>Syntax errors</dt><dd>n/a: the envelope reads no source.</dd><dt>Languages</dt><dd>any; clauses of both languages and regex clauses may mix.</dd><dt>Limits</dt><dd>An older Rerail sharing <code>~/.rerail/rerail.sqlite</code> can't read a document with a newer key (<code>codeRuleSchema</code> is strict).</dd></dl>
 </details>
 <figure class="ex-fig" data-kind="document"><figcaption>Example <code>example:select-one</code>: a <code>scope</code> that includes the API package and excludes tests and migrations.</figcaption><div class="src"><span class="src-path">example document</span> <span class="src-at"><code>(whole document)</code></span></div><pre class="ex" data-kind="document">{
@@ -1600,15 +1621,31 @@ Stage = { "name": Str, "query": Str, "indexes"?: [[Str]], "deferred"?: Map⟨Col
 <figure class="ex-fig" data-kind="clause"><figcaption>A function <code>run</code> with no <code>run_async</code> companion anywhere in the repository: one evidence input, one indexed stage, and a <code>NOT EXISTS</code> join.</figcaption><pre class="ex" data-kind="clause">{
   "id": "missing-companion",
   "relational": {
-    "inputs": { "functions": { "evidence": {
-      "as": "function", "query": { "ast": { "language": "python", "rule": {
-        "kind": "function_definition", "has": { "field": "name", "pattern": "$NAME" }
-      }}}, "project": { "name": "capture.NAME" }
-    }}},
+    "inputs": {
+      "functions": {
+        "evidence": {
+          "as": "function",
+          "query": {
+            "ast": {
+              "language": "python",
+              "rule": {
+                "kind": "function_definition",
+                "has": { "field": "name", "pattern": "$NAME" }
+              }
+            }
+          },
+          "project": { "name": "capture.NAME" }
+        }
+      }
+    },
     "stages": [{ "name": "names", "query": "SELECT * FROM functions", "indexes": [["name"]] }],
     "query": "SELECT f.__path AS path, f.__start AS start_byte, f.__end AS end_byte FROM names f WHERE f.name = 'run' AND NOT EXISTS (SELECT 1 FROM names g WHERE g.name = f.name || '_async')"
   },
-  "violation": { "code": "missing-companion", "message": "Missing companion", "anchor": "witness.span" }
+  "violation": {
+    "code": "missing-companion",
+    "message": "Missing companion",
+    "anchor": "witness.span"
+  }
 }</pre></figure>
 </section>
 
@@ -1767,8 +1804,9 @@ No query sees:
 <p class="card-grammar">In the grammar: <a class="nt" href="#g-AstRule">AstRule</a></p><div class="semantics"><ul>
 <li>Matches the node's whole source text; for a parsed tree's node, its decoded text.</li>
 <li>Named groups of a regex on the witness itself (not under a relation or negation) feed the violation: <code>capture.NAME</code> anchors, <code>$NAME</code> in messages, <code>fix.range</code>, <code>each</code>, <a href="#transform">transform</a> sources.</li>
+<li>A kindless token test (a <code>regex</code> with no <code>kind</code> or <code>pattern</code>) must read a token the syntax tree keeps where the rule looks. A token its node implies (a statement's keyword) is left out, so the rule must ask the named node (<code>kind</code>), or reach the token through a gap (<code>has</code>, <code>follows</code> or <code>precedes</code> to it), or say beside the <code>regex</code>, in <code>stored</code>, why the token is stored there (an optional or alternative token: an array hole's comma, a trailing comma, a modifier). Otherwise the rule does not compile.</li>
 </ul></div><details class="facets-more"><summary>Details: shape, composition, captures, unknown, syntax errors, languages, limits</summary>
-<dl class="facets"><dt>Shape</dt><dd><div class="shape">"regex": Str</div></dd><dt>Composition</dt><dd>Atomic. Usually beside <code>kind</code>, or alone on a kindless rule to reach an anonymous token (<code>{ "regex": "^==$" }</code>).</dd><dt>Captures</dt><dd>Named groups, as above; no metavariables.</dd><dt>Unknown</dt><dd>never unknown.</dd><dt>Syntax errors</dt><dd><span class="b ok">sound</span></dd><dt>Languages</dt><dd><span class="b py">python</span> <span class="b ts">typescript</span></dd><dt>Limits</dt><dd><code>regex</code> crate syntax: no look-around or backreferences (<a href="#value"><code>value.regex</code></a> has backreferences).</dd></dl>
+<dl class="facets"><dt>Shape</dt><dd><div class="shape">"regex": Str, "stored"?: Str</div></dd><dt>Composition</dt><dd>Atomic. Usually beside <code>kind</code>, or alone on a kindless rule to reach an anonymous token the tree keeps (<code>{ "regex": "^==$" }</code>); <code>stored</code> only beside <code>regex</code>.</dd><dt>Captures</dt><dd>Named groups, as above; no metavariables.</dd><dt>Unknown</dt><dd>never unknown.</dd><dt>Syntax errors</dt><dd><span class="b ok">sound</span></dd><dt>Languages</dt><dd><span class="b py">python</span> <span class="b ts">typescript</span></dd><dt>Limits</dt><dd><code>regex</code> crate syntax: no look-around or backreferences (<a href="#value"><code>value.regex</code></a> has backreferences).</dd></dl>
 </details>
 <figure class="ex-fig" data-kind="clause"><figcaption>Ruff's <code>E742</code>: a named group <code>NAME</code> read by the message.</figcaption><div class="src"><span class="src-path">ruff/E742.json</span> <span class="src-at"><code>/checks/0</code> · Ruff conformance port</span></div><pre class="ex" data-kind="clause">{
   "id": "ambiguous-class-name",
@@ -2389,18 +2427,30 @@ ModuleType = "unknown" | "relative" | "absolute" | "node" | "npm" | "http" | "da
 }</pre></figure>
 
 
-<figure class="ex-fig" data-kind="clause"><figcaption>ESLint's <code>no-with</code>: a kindless token rule <code>inside</code> a statement.</figcaption><div class="src"><span class="src-path">eslint/eslint/no-with.json</span> <span class="src-at"><code>/checks/0</code> · ESLint conformance port</span></div><pre class="ex" data-kind="clause">{
-  "id": "with-statement",
+<figure class="ex-fig" data-src="repo:packs/sql/rules/sqlfluff-am01-ambiguous-distinct.json#/clauses/0" data-kind="clause"><figcaption>SQLFluff's <code>AM01</code>: <code>DISTINCT</code> <code>inside</code> a <code>SELECT</code> that <code>precedes</code> a <code>FROM</code> with a <code>GROUP BY</code>.</figcaption><div class="src"><span class="src-path">packs/sql/rules/sqlfluff-am01-ambiguous-distinct.json</span> <span class="src-at"><code>/clauses/0</code> · this repository</span></div><pre class="ex" data-kind="clause">{
+  "id": "distinct-with-group-by",
   "forbid": {
     "ast": {
-      "language": "typescript",
-      "rule": { "regex": "^with$", "inside": { "kind": "with_statement" } }
+      "language": "sql",
+      "rule": {
+        "kind": "keyword_distinct",
+        "inside": {
+          "kind": "select",
+          "stopBy": "neighbor",
+          "precedes": { "kind": "from", "has": { "kind": "group_by" } }
+        }
+      }
     }
   },
   "violation": {
-    "anchor": "witness.span",
-    "code": "NO_WITH",
-    "message": "Unexpected use of 'with' statement."
+    "anchor": "witness.start",
+    "code": "AM01",
+    "message": "Remove DISTINCT from this SELECT; its GROUP BY already makes the rows unique.",
+    "suppress": {
+      "sqlfluff": {
+        "rules": ["AM01", "L021", "all", "ambiguous", "ambiguous.distinct", "core"]
+      }
+    }
   }
 }</pre></figure>
 
@@ -2445,6 +2495,7 @@ ModuleType = "unknown" | "relative" | "absolute" | "node" | "npm" | "http" | "da
       "language": "typescript",
       "rule": {
         "regex": "^,$",
+        "stored": "a comma after `[` or a comma: a hole, stored",
         "inside": { "kind": "array" },
         "follows": { "regex": "^[\\[,]$", "stopBy": { "not": { "kind": "comment" } } }
       }
@@ -5517,7 +5568,7 @@ ModuleType = "unknown" | "relative" | "absolute" | "node" | "npm" | "http" | "da
 <li>A witness regex group's text is known only once the rule matched.</li>
 <li><code>toPrecision</code> reads a numeric literal as written (<code>0x</code>, <code>0o</code>, <code>0b</code>, legacy octal and <code>_</code> separators included) or a <code>value</code>'s text. <code>digits</code> is a number, or the text of another capture or variable read as an integer.</li>
 <li>ESLint's <code>no-loss-of-precision</code> compares a literal with <code>value.toPrecision(n)</code> for its <code>n</code> significant digits: <code>9223372036854775808</code> is exact at 19 digits though <code>String</code> gives <code>9223372036854776000</code>.</li>
-<li><code>toPrecision</code> gives the empty text where the source is no number (a BigInt, a name) or the digits no integer from 1 to 100, and <code>String(x)</code> for an infinite or NaN number. Other families' numbers are not laid out as ECMAScript's, so compiling it there is refused.</li>
+<li><code>toPrecision</code> gives the empty text where the source is no number (a BigInt, a name) or the digits no integer from 1 to 100, and <code>String(x)</code> for an infinite or NaN number. Other families' numbers are not laid out as ECMAScript's, so compiling it there is refused; in a language whose values are not read yet (Java, C#, HTML, CSS, Markdown, Go, C, C++), it is <code>language-not-supported</code> instead.</li>
 <li><code>line</code> uses the linter's terminators. <code>count</code> skips comments and Python line continuations.</li>
 <li><code>default: ""</code> with <code>replace: "^$"</code> supplies a fallback. Without <code>default</code>, an unbound source gives the empty text and runs no operation, as upstream.</li>
 <li><code>value: true</code> conversions: JavaScript <code>String(v)</code> (<code>'\x61'</code> is <code>a</code>, <code>1e2</code> is <code>100</code>); Python <code>str(v)</code> (<code>1e2</code> is <code>100.0</code>).</li>

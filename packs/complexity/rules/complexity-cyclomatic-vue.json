@@ -3,7 +3,7 @@
   "id": "complexity-cyclomatic-vue",
   "revision": 1,
   "mode": "steer",
-  "description": "Keep the functions of a Vue component's scripts at cyclomatic complexity 6 or below, counting each if, loop, catch, switch, ternary and && or ||; branch-heavy functions are hard to follow and test.",
+  "description": "Keep the functions of a Vue component's scripts to 6 or fewer paths (cyclomatic complexity), counting each if, loop, catch, switch, ternary and && or ||, so they stay easy to read and test.",
   "scope": {
     "include": [
       "**/*.vue"
@@ -27,6 +27,13 @@
     {
       "id": "complexity",
       "define": {
+        "options": {
+          "ceiling": {
+            "type": "integer",
+            "default": 6,
+            "description": "The highest cyclomatic complexity a function may have: a function over it is flagged. At least 1."
+          }
+        },
         "language": "vue",
         "utils": {
           "tpl-block": {
@@ -124,7 +131,9 @@
                   "matches": "boundary"
                 }
               },
-              "min": 6,
+              "min": {
+                "$option": "ceiling"
+              },
               "as": "CCN",
               "offset": 1
             }
@@ -190,7 +199,10 @@
       "violation": {
         "anchor": "witness.span",
         "code": "CYCLOMATIC_COMPLEXITY",
-        "message": "`$NAME` has cyclomatic complexity $CCN, over the ceiling of 6. Decompose it into smaller functions."
+        "message": {
+          "$option": "ceiling",
+          "template": "`$NAME` has cyclomatic complexity $CCN, over the ceiling of {}. Decompose it into smaller functions."
+        }
       }
     },
     {
@@ -216,7 +228,10 @@
       "violation": {
         "anchor": "witness.span",
         "code": "CYCLOMATIC_COMPLEXITY",
-        "message": "This function has cyclomatic complexity $CCN, over the ceiling of 6. Decompose it into smaller functions."
+        "message": {
+          "$option": "ceiling",
+          "template": "This function has cyclomatic complexity $CCN, over the ceiling of {}. Decompose it into smaller functions."
+        }
       }
     }
   ]

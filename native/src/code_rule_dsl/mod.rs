@@ -255,6 +255,11 @@ mod compile {
         #[allow(unused_imports)]
         use std::sync::{Arc, Weak};
     }
+    pub mod shared {
+        pub use rerail_w::code_rule_dsl::compile::shared::*;
+        #[cfg(all(test, not(windows)))]
+        pub mod tests;
+    }
     pub mod order {
         pub use rerail_w::code_rule_dsl::compile::order::*;
         #[cfg(test)]
@@ -777,6 +782,7 @@ mod embed {
     pub use rerail_lang::code_rule_dsl::embed::*;
     pub use rerail_lang_php::code_rule_dsl::embed::compiled_view;
     pub use rerail_lang_ecma::code_rule_dsl::embed::script_block;
+    pub use rerail_lang_python::code_rule_dsl::embed::call_argument;
     #[allow(unused_imports)]
     #[cfg(test)]
     pub(crate) use crate::code_rule_dsl::embed::test_script::TestScript;
@@ -1578,7 +1584,7 @@ mod literal {
 #[path = "logic"]
 pub(crate) mod logic {
     pub use rerail_logic::code_rule_dsl::logic::*;
-    // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+    // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
     pub mod program_image {
         // Its items, beside its tests here; the engine reads it through `logic`'s own re-export.
         #[allow(unused_imports)]
@@ -1593,7 +1599,7 @@ pub(crate) mod logic {
         #[cfg(test)]
         pub mod tests;
     }
-    // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+    // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
     pub mod liveness {
         #[cfg(test)]
         pub use rerail_logic::code_rule_dsl::logic::liveness::*;
@@ -1615,14 +1621,14 @@ pub(crate) mod logic {
         pub use rerail_rr::code_rule_dsl::logic::front::*;
         pub mod caches {
             #[allow(unused_imports)]
-            use crate::code_rule_dsl::logic::front::{Error, Literal, Program, Term};
+            use crate::code_rule_dsl::logic::front::Error;
             #[allow(unused_imports)]
             use std::collections::BTreeSet;
         }
         pub mod yaml {
             pub use rerail_rr::code_rule_dsl::logic::front::yaml::*;
             #[allow(unused_imports)]
-            use crate::code_rule_dsl::logic::front::{Atom, Error, Literal, Program, Rule, Term};
+            use crate::code_rule_dsl::logic::front::Error;
             #[allow(unused_imports)]
             use serde_json::Value;
         }
@@ -1633,18 +1639,9 @@ pub(crate) mod logic {
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::name::Name;
         #[allow(unused_imports)]
-        pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{AXIS, AggOp, Atom, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, OPTION_GLOB, Program, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
+        pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{AXIS, AggOp, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, NEAREST, Native, OPTION_GLOB, QUALIFIERS, RESERVED, SCOPE_NOT, SpanIn, Value, axis, globals, is_axis, is_transduced};
         #[allow(unused_imports)]
         pub(crate) use crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS;
-    }
-    pub mod magic {
-        pub use rerail_rr::code_rule_dsl::logic::magic::*;
-        #[allow(unused_imports)]
-        use crate::code_rule_dsl::logic::front::{AggOp, Atom, Error, Literal, Program, Rule, Term, Value, cmp_binds, join, strata, tarjan};
-        #[allow(unused_imports)]
-        use std::collections::{BTreeMap, BTreeSet};
-        #[allow(unused_imports)]
-        pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{Gate, Report};
     }
     #[cfg_attr(test, path = "native")]
     pub mod native {
@@ -1705,9 +1702,6 @@ pub(crate) mod logic {
         #[cfg(test)]
         pub mod tests;
         #[allow(unused_imports)]
-        #[cfg(test)]
-        pub(crate) use crate::code_rule_dsl::logic::native::setfix::DERIVATIONS;
-        #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::native::setfix::{forget_engine, forget_scope};
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::native::setfix::{flush_symbols, forget_inputs, intern_batch, keep_inputs, register_symbols, sym_text_of};
@@ -1737,14 +1731,12 @@ pub(crate) mod logic {
     #[path = "plan"]
     pub mod plan {
         pub use rerail_logic::code_rule_dsl::logic::plan::*;
-        // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+        // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
         pub mod compose {
-            #[cfg(test)]
-            pub use rerail_logic::code_rule_dsl::logic::plan::compose::*;
             #[cfg(test)]
             pub mod engine_tests;
         }
-        // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+        // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
         pub mod native_demand {
             #[cfg(test)]
             pub mod engine_tests;
@@ -1761,21 +1753,24 @@ pub(crate) mod logic {
             // Decision 0364's required shape (R1–R10): what a session's edit does, one test per requirement.
             #[cfg(test)]
             pub mod maintain_tests;
+            // Decision 0458 (R1–R5): the cross part reads the base relations off every file's tape.
+            #[cfg(test)]
+            pub mod cross_views_tests;
             #[cfg(test)]
             pub mod cache_tests;
-            // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+            // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
             pub mod phase0 {
                 pub use rerail_logic::code_rule_dsl::logic::plan::corpus::phase0::*;
                 #[cfg(test)]
                 pub mod tests;
             }
-            // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+            // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
             pub mod phases {
                 pub use rerail_logic::code_rule_dsl::logic::plan::corpus::phases::*;
                 #[cfg(test)]
                 pub mod tests;
             }
-            // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+            // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
             pub mod prepared {
                 #[cfg(test)]
                 pub use rerail_logic::code_rule_dsl::logic::plan::corpus::prepared::*;
@@ -1784,14 +1779,14 @@ pub(crate) mod logic {
                 #[cfg(test)]
                 pub mod identity_tests;
             }
-            // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+            // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
             pub mod reuse {
                 #[cfg(test)]
                 pub use rerail_logic::code_rule_dsl::logic::plan::corpus::reuse::*;
                 #[cfg(test)]
                 pub mod tests;
             }
-            // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+            // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
             pub mod session {
                 pub use rerail_logic::code_rule_dsl::logic::plan::corpus::session::*;
                 #[cfg(test)]
@@ -1848,7 +1843,7 @@ pub(crate) mod logic {
         #[cfg(test)]
         pub mod coverage;
         #[allow(unused_imports)]
-        use crate::code_rule_dsl::logic::front::{AggOp, Atom, Literal, Program, Rule, Term, Value, cmp_binds, strata};
+        use crate::code_rule_dsl::logic::front::{AggOp, Value};
         #[allow(unused_imports)]
         use crate::code_rule_dsl::logic::native::TOP;
         #[allow(unused_imports)]
@@ -1880,7 +1875,7 @@ pub(crate) mod logic {
         // The profile's account of every thread's CPU, under its spans and between them (3af4e92a3, 2f9181e59).
         #[cfg(test)]
         mod threads_tests;
-        // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+        // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
         pub mod report {
             pub use rerail_logic::code_rule_dsl::logic::profile::report::*;
             #[cfg(test)]
@@ -1903,20 +1898,11 @@ pub(crate) mod logic {
     #[path = "rr"]
     pub mod rr {
         pub use rerail_logic::code_rule_dsl::logic::rr::*;
-        pub mod aggregate_demand {
-            pub use rerail_rr::code_rule_dsl::logic::rr::aggregate_demand::*;
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::logic::front::{self, AggOp, Atom, Literal, Program, Rule, Term};
-            #[allow(unused_imports)]
-            use std::collections::{BTreeMap, BTreeSet};
-        }
         #[cfg(test)]
         pub mod tape_tests;
         pub mod tape_type {
             #[allow(unused_imports)]
             use std::collections::{BTreeMap, BTreeSet};
-            #[allow(unused_imports)]
-            use rerail_rr_syntax::syntax::{Head, Item, Lit, Statement, Term};
             #[allow(unused_imports)]
             use crate::code_rule_dsl::logic::front::Error;
         }
@@ -1934,18 +1920,12 @@ pub(crate) mod logic {
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::Error;
         #[allow(unused_imports)]
-        use crate::code_rule_dsl::logic::front::Program;
-        #[allow(unused_imports)]
         #[cfg(test)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::rr::lower::drop_unread_core;
-        #[allow(unused_imports)]
-        pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::rr::aggregate_demand::retype_helpers;
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::rr::lower::is_core;
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::rr::lower::WORLD;
-        #[allow(unused_imports)]
-        pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::rr::print::print;
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use syntax::quote;
         #[allow(unused_imports)]
@@ -1967,8 +1947,6 @@ pub(crate) mod logic {
         use crate::code_rule_dsl::text::{Domain, Lowered, Source, Spelling, lower};
         #[allow(unused_imports)]
         use rusqlite::Connection;
-        #[allow(unused_imports)]
-        use crate::code_rule_dsl::logic::front::ast::{Atom, Literal, Program, Term};
     }
 }
 /// The profile's SQL hazards, which the content store's connections and writer report (`content_store::hazards`, set as
@@ -3459,6 +3437,13 @@ mod scope {
     #[allow(unused_imports)]
     use crate::code_rule_dsl::identifier::{name_in};
 }
+pub mod regexes {
+    pub use rerail_lang::code_rule_dsl::regexes::*;
+    #[cfg(test)]
+    pub mod tests;
+    #[allow(unused_imports)]
+    use std::sync::Arc;
+}
 pub use rerail_lang::code_rule_dsl::semver;
 // The first slice's entry points (06 S6), called by hosts through `slice::napi::CodeRuleSlice`.
 mod slice;
@@ -3669,16 +3654,6 @@ pub mod tree {
     use std::ops::Range;
 }
 
-/// The language tag a stored tape image names (`tape::stored_tape_tag`): the store picks a
-/// frame's dictionary by it.
-pub(crate) fn stored_tape_tag(bytes: &[u8]) -> Option<u8> {
-    tape::stored_tape_tag(bytes)
-}
-
-/// The language tag of the dialect a file at `path` is parsed as.
-pub(crate) fn path_tape_tag(path: &str) -> Option<u8> {
-    language::tape_tag(language::dialect_by_label(language::label_of_path(path)?)?)
-}
 pub use rerail_facts::code_rule_dsl::text;
 #[cfg(test)]
 mod test_support;
@@ -3702,6 +3677,8 @@ mod transducer {
         #[cfg_attr(test, path = ".")]
         pub mod rir {
             pub use rerail_transducer::code_rule_dsl::transducer::packed::rir::*;
+            // The grammar's names; the compiler's `program::Names` comes in by `super::*` too.
+            pub use rerail_transducer::code_rule_dsl::transducer::packed::rir::Names;
             #[cfg(test)]
             #[path = "rir_tests.rs"]
             pub mod tests;
@@ -3954,7 +3931,7 @@ mod transducer {
 mod typing {
     #[allow(unused_imports)]
     pub use rerail_logic::code_rule_dsl::typing::*;
-    // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+    // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
     #[cfg(test)]
     pub mod phase_tests;
     #[cfg_attr(test, path = "file_local")]
@@ -4365,13 +4342,28 @@ impl CodeRuleDslRuntime {
         serde_json::to_string(&response).map_err(json_error)
     }
 
-    /// The tests the `.rr` files under `paths_json` (a JSON array of files and directories) carry, each run (decision
+    /// The tests the `.rerail` files under `paths_json` (a JSON array of files and directories) carry, each run (decision
     /// 0130, `rerail-engine test-rr`): `[{file, test, line, status, failures, findings}]` as JSON. `rerail rules test`
-    /// calls it for a `.rr` file.
+    /// calls it for a `.rerail` file. The runs read the engine's own `.rerail` programs (`typing/programs`) and the rule
+    /// library (`logic::rr::library`) from a checkout (`source_tree`), which the package does not ship: without them,
+    /// an error that says so.
     #[napi(catch_unwind)]
     pub fn test_rr(paths_json: String, filter: Option<String>) -> Result<String> {
-        let paths: Vec<std::path::PathBuf> = serde_json::from_str(&paths_json).map_err(json::json_error)?;
-        let report = logic::rr::testing::report(&paths, filter.as_deref()).map_err(json::invalid)?;
+        let paths: Vec<std::path::PathBuf> =
+            serde_json::from_str(&paths_json).map_err(json::json_error)?;
+        let programs =
+            rerail_store::source_tree::native().join("src/code_rule_dsl/typing/programs");
+        if !programs.join("sources.rerail").is_file() || !logic::rr::library().join("core.rerail").is_file()
+        {
+            return Err(json::invalid(
+                "a .rerail file's tests read the engine's .rerail programs and rule library from a Rerail checkout \
+                 (native/src/code_rule_dsl/typing/programs, docs/rule-syntax/lib), which Rerail's package does not \
+                 ship: run them from a Rerail checkout, or set RERAIL_SOURCE_ROOT to one"
+                    .to_owned(),
+            ));
+        }
+        let report =
+            logic::rr::testing::report(&paths, filter.as_deref()).map_err(json::invalid)?;
         serde_json::to_string(&report).map_err(json::json_error)
     }
 
@@ -4386,6 +4378,8 @@ impl CodeRuleDslRuntime {
         let canonical_value = canonicalize_value(document);
         let canonical = serde_json::to_string(&canonical_value).map_err(json_error)?;
         let digest = format!("sha256:{}", hex_digest(canonical.as_bytes()));
+        // The regexes only validation took, or a rejected document's, go as this ends (`regexes`).
+        let _compiling = regexes::compiling();
         let (id, rule_mode, scope, clauses, required, report_count_gt) =
             compile_document(&canonical_value, &capabilities)?;
         Ok(CompiledCodeRuleDsl {
@@ -4691,6 +4685,12 @@ pub(crate) fn install_languages() {
     embed::install_embedders(vec![
         #[cfg(feature = "lang-blade")]
         (language::Via::CompiledView, &embed::compiled_view::CompiledView),
+        #[cfg(feature = "lang-html")]
+        (language::Via::RawText, &embed::raw_text::RawText),
+        #[cfg(all(feature = "lang-html", feature = "lang-python"))]
+        (language::Via::CallArgument, &embed::call_argument::CallArgument),
+        #[cfg(feature = "lang-markdown")]
+        (language::Via::InlineContent, &embed::inline_content::InlineContent),
         #[cfg(feature = "lang-vue")]
         (language::Via::ScriptBlock, &embed::script_block::ScriptBlock),
         #[cfg(any(test, feature = "test-hooks"))]
@@ -4714,7 +4714,7 @@ pub(crate) fn install_languages() {
     facts::vtab::install_node_tables(vec![facts::vtab::python::register]);
     // The semantic facts a program's native steps demand (Python's).
     facts::vtab::syntax::install_semantic_producer(&facts::vtab::syntax::python_demand::Semantic);
-    // What each family reads of its own core.rr facts.
+    // What each family reads of its own core.rerail facts.
     {
         use crate::code_rule_dsl::facts::vtab::syntax::core_rr::{self, Family};
         use crate::code_rule_dsl::facts::vtab::syntax::{ecma_core, python_core, rr_core};
@@ -4758,11 +4758,17 @@ pub(crate) fn install_languages() {
     facts::nearest::install_nearest(typing::file_local::nearest);
     // What a block of relations asks about the device: the run's binding's (decision 0342, Q58).
     facts::rows::install_block_device(logic::plan::placement::block_device);
-    // `core.rr`'s names, as the rule language reads them.
+    // What a chunk's jobs allocated less freed (Q203 item 3): the allocator's own per-thread counters.
+    #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+    facts::rows::install_heap_net(heap_net);
+    // And each chunk scope's heap at its most (decision 0469): jemalloc's per-thread peak.
+    #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+    facts::rows::install_heap_peak(heap_peak, heap_peak_reset);
+    // `core.rerail`'s names, as the rule language reads them.
     facts::core::install_core_names(logic::rr::core_shape);
     // What the evaluator keeps per connection, dropped with it.
     facts::vtab::install_forget(facts::vtab::Forget { scope: logic::native::forget_scope, engine: logic::native::forget_engine });
-    // core.rr's functors whose meaning is W's or a language's.
+    // core.rerail's functors whose meaning is W's or a language's.
     logic::strings::install_functors(functors::register_functors);
     // The run's executors, by binding.
     facts::core::install_executors(logic::lanes::executor_for);
@@ -4923,4 +4929,44 @@ pub(crate) fn install_languages() {
 pub(crate) fn install_devices() {
     #[cfg(target_os = "macos")]
     device_metal::register();
+}
+
+/// This thread's bytes allocated less freed, from jemalloc's per-thread counters (`facts::rows::install_heap_net`).
+#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+fn heap_net() -> i64 {
+    thread_local! {
+        static COUNTERS: Option<(tikv_jemalloc_ctl::thread::ThreadLocal<u64>, tikv_jemalloc_ctl::thread::ThreadLocal<u64>)> =
+            tikv_jemalloc_ctl::thread::allocatedp::read().ok().zip(tikv_jemalloc_ctl::thread::deallocatedp::read().ok());
+    }
+    COUNTERS.with(|c| (*c).map_or(0, |(a, d)| a.get() as i64 - d.get() as i64))
+}
+
+/// jemalloc's `thread.peak.read` and `thread.peak.reset`, by their MIBs (looked up once; `None` where the allocator
+/// has no such control).
+#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+fn peak_mibs() -> Option<([usize; 3], [usize; 3])> {
+    static MIBS: std::sync::OnceLock<Option<([usize; 3], [usize; 3])>> = std::sync::OnceLock::new();
+    *MIBS.get_or_init(|| {
+        let (mut read, mut reset) = ([0; 3], [0; 3]);
+        tikv_jemalloc_ctl::raw::name_to_mib(b"thread.peak.read\0", &mut read).ok()?;
+        tikv_jemalloc_ctl::raw::name_to_mib(b"thread.peak.reset\0", &mut reset).ok()?;
+        Some((read, reset))
+    })
+}
+
+/// This thread's most allocated less freed since its last `heap_peak_reset`, above what it was then
+/// (`facts::rows::install_heap_peak`).
+#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+fn heap_peak() -> i64 {
+    // SAFETY: `thread.peak.read` is a `uint64_t`.
+    peak_mibs().and_then(|(read, _)| unsafe { tikv_jemalloc_ctl::raw::read_mib::<u64>(&read) }.ok()).map_or(0, |v| v as i64)
+}
+
+/// Resets this thread's peak (`heap_peak`) to what it holds now.
+#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+fn heap_peak_reset() {
+    if let Some((_, reset)) = peak_mibs() {
+        // SAFETY: `thread.peak.reset` reads and writes nothing: no old or new value is passed.
+        unsafe { tikv_jemalloc_sys::mallctlbymib(reset.as_ptr(), reset.len(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), 0) };
+    }
 }

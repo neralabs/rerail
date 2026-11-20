@@ -4,8 +4,8 @@
 //! `truncate_identifier`) and SQLite's tokenizer are deliberately conservative here:
 //! a value is returned only when their readings agree.
 
-use crate::code_rule_dsl::tree::Tree;
 use super::{Value, int_float_order};
+use crate::code_rule_dsl::tree::Tree;
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
 use std::borrow::Cow;
@@ -525,9 +525,7 @@ pub fn decode<D: ast_grep_core::Doc>(node: &ast_grep_core::Node<'_, D>) -> Value
     }
 }
 
-pub fn node_name<D: ast_grep_core::Doc>(
-    node: &ast_grep_core::Node<'_, D>,
-) -> Option<String> {
+pub fn node_name<D: ast_grep_core::Doc>(node: &ast_grep_core::Node<'_, D>) -> Option<String> {
     (node.kind() == "identifier")
         .then(|| name(&node.text()))
         .flatten()

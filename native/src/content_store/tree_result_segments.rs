@@ -3,7 +3,7 @@
 //! G's schema 9 and 10 tables are created on first use (`IF NOT EXISTS`); the end of
 //! `complete_snapshot_trees` (8fe9ffed4 l.3072-3080, recording the workspace revision), which
 //! the fragment copy left out, is G's; the collection fragment is `collect_tree_result_segments`.
-// COPY: Tempo ner-1562-scale-test-the-re-railer@8fe9ffed4:tempo/native/src/content_store.rs, fragments verbatim:
+// COPY: Tempo scale-test-the-re-railer@8fe9ffed4:tempo/native/src/content_store.rs, fragments verbatim:
 // l.265-279 (SCHEMA_V10), l.523-542 (segment structs), l.2962-3071 (complete_snapshot_trees),
 // l.3161-3252 (tree_result_segments), l.3439-3446 (collection).
 #[allow(unused_imports)]

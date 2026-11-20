@@ -1,8 +1,10 @@
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { once } from "node:events";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { createInterface } from "node:readline";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
@@ -11,11 +13,12 @@ import { loadPackRuleDocuments } from "../../../src/engine/catalog/rule-document
 import { RERAIL_SCHEMA_VERSION } from "../../../src/engine/storage/migrations.js";
 import { exportRulesDump, importRulesDump, type RulesDump } from "../../../src/engine/catalog/rule-bootstrap.js";
 import { testBundle } from "../../support/rule-configuration-builders.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 async function temporaryDatabase(): Promise<string> {
@@ -92,34 +95,57 @@ describe("database schema", () => {
 
   // contract: any number of processes may create the same database at once; every one succeeds and the file
   // ends stamped and in WAL. The WAL switch races (SQLite skips the busy handler on the deadlock-avoidance
-  // path), so this runs enough openers that a missing wait cannot slip through by luck: roughly one opener in
-  // seven fails without it, so 48 openers leave well under a 0.1% chance of a false pass.
+  // path), so this runs enough rounds that a missing wait cannot slip through by luck. Eight processes each load Rerail
+  // once, then open a new file each round, all at once, on the round's path written to their stdin: the opens start
+  // together, not as each process happens to finish loading, and loading eight processes instead of one per open keeps
+  // the test short. Without the wait, 17 to 43 rounds in a hundred have an open fail, so 48 rounds leave about a 0.01%
+  // chance of a false pass at the lowest of those rates.
   it("creates one database when many processes open it at the same time", async () => {
     const opener = `
+      import { createInterface } from "node:readline";
       import { openRerailDatabase } from ${JSON.stringify(pathToFileURL(resolve("dist/engine/storage/database.js")).href)};
-      openRerailDatabase(process.argv[1]).$client.close();
+      process.stdout.write("ready\\n");
+      for await (const path of createInterface({ input: process.stdin })) {
+        try {
+          openRerailDatabase(path).$client.close();
+          process.stdout.write("opened\\n");
+        } catch (error) {
+          process.stdout.write(JSON.stringify(error instanceof Error ? error.stack : String(error)) + "\\n");
+        }
+      }
     `;
-    for (let round = 0; round < 6; round += 1) {
-      const path = await temporaryDatabase();
-      await mkdir(dirname(path), { recursive: true });
-      const results = await Promise.all(
-        Array.from({ length: 8 }, () => {
-          const done = Promise.withResolvers<{ code: number | null; stderr: string }>();
-          const child = spawn(process.execPath, ["--input-type=module", "-e", opener, path], { stdio: ["ignore", "ignore", "pipe"] });
-          let stderr = "";
-          child.stderr.on("data", chunk => { stderr += String(chunk); });
-          child.once("close", code => done.resolve({ code, stderr }));
-          return done.promise;
-        }),
-      );
-      expect(results.map(result => result.stderr).join("")).toBe("");
-      expect(results.map(result => result.code)).toEqual(Array.from({ length: 8 }, () => 0));
-      const created = new Database(path, { readonly: true });
-      expect(created.pragma("journal_mode", { simple: true })).toBe("wal");
-      expect(created.pragma("user_version", { simple: true })).toBe(RERAIL_SCHEMA_VERSION);
-      expect(created.prepare("SELECT count(*) AS tables FROM sqlite_master WHERE type = 'table' AND name = 'library_rules'").get()).toEqual({ tables: 1 });
-      created.close();
+    const openers = Array.from({ length: 8 }, () => {
+      const child = spawn(process.execPath, ["--input-type=module", "-e", opener], { stdio: ["pipe", "pipe", "pipe"] });
+      let stderr = "";
+      child.stderr.on("data", chunk => { stderr += String(chunk); });
+      const exited = once(child, "close").then(([code]) => ({ code: code as number | null, stderr }));
+      const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+      const next = async (): Promise<string> => {
+        const line = await lines.next();
+        if (line.done === true) throw new Error(`an opener exited: ${(await exited).stderr}`);
+        return line.value;
+      };
+      return { child, exited, next };
+    });
+    try {
+      expect(await Promise.all(openers.map(async ({ next }) => await next()))).toEqual(Array.from({ length: 8 }, () => "ready"));
+      for (let round = 0; round < 48; round += 1) {
+        const path = await temporaryDatabase();
+        await mkdir(dirname(path), { recursive: true });
+        for (const { child } of openers) child.stdin.write(`${path}\n`);
+        expect(await Promise.all(openers.map(async ({ next }) => await next()))).toEqual(Array.from({ length: 8 }, () => "opened"));
+        const created = new Database(path, { readonly: true });
+        expect(created.pragma("journal_mode", { simple: true })).toBe("wal");
+        expect(created.pragma("user_version", { simple: true })).toBe(RERAIL_SCHEMA_VERSION);
+        expect(created.prepare("SELECT count(*) AS tables FROM sqlite_master WHERE type = 'table' AND name = 'library_rules'").get()).toEqual({ tables: 1 });
+        created.close();
+      }
+    } finally {
+      for (const { child } of openers) child.stdin.end();
     }
+    const ended = await Promise.all(openers.map(async ({ exited }) => await exited));
+    expect(ended.map(result => result.stderr).join("")).toBe("");
+    expect(ended.map(result => result.code)).toEqual(Array.from({ length: 8 }, () => 0));
   }, 60_000);
 });
 
@@ -150,6 +176,29 @@ describe("rules dump", () => {
     try {
       expect(importRulesDump(target, testBundle(), dump)).toEqual({ library: 0, repositories: 1, onBlock: [], approved: [], waiting: [] });
       expect(exportRulesDump(target).repositories[0]?.settings).toEqual([{ folder: "", targetKind: "pack", targetId: "lint", on: false, mode: null }]);
+    } finally {
+      target.$client.close();
+    }
+  });
+
+  it("keeps a setting the lint config gave as the lint config's through export and import, and a person's as theirs", async () => {
+    const source = openRerailDatabase(await temporaryDatabase());
+    let dump: unknown;
+    try {
+      source.$client.exec("INSERT INTO repositories (repository_key, display_name, created_at, updated_at) VALUES ('repo', 'repo', 0, 0)");
+      source.$client.exec(`INSERT INTO rule_settings (owner_kind, owner_id, folder, target_kind, target_id, "on", origin, updated_at) VALUES
+        ('repository', 'repo', '', 'rule', 'calibrated', 0, 'lint-config', 0), ('repository', 'repo', '', 'rule', 'mine', 1, NULL, 0)`);
+      dump = JSON.parse(JSON.stringify(exportRulesDump(source)));
+    } finally {
+      source.$client.close();
+    }
+    const target = openRerailDatabase(await temporaryDatabase());
+    try {
+      importRulesDump(target, testBundle(), dump);
+      expect(target.$client.prepare("SELECT target_id, origin FROM rule_settings ORDER BY target_id").all()).toEqual([
+        { target_id: "calibrated", origin: "lint-config" },
+        { target_id: "mine", origin: null },
+      ]);
     } finally {
       target.$client.close();
     }

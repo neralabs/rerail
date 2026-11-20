@@ -70,7 +70,7 @@ const SCHEMA = "rerail.policy.v1.schema.json";
 
 /**
  * The paths under `docs/` the site leaves out, a trailing `/` naming a directory: maintainers' engine design notes,
- * spikes and measurement journals, and the rule-syntax workbench (the engine compiles docs/rule-syntax/lib/core.rr, so
+ * spikes and measurement journals, and the rule-syntax workbench (the engine compiles docs/rule-syntax/lib/core.rerail, so
  * it stays where it is). Each must exist, so the list cannot outlive what it names.
  */
 const UNPUBLISHED = [
@@ -78,46 +78,7 @@ const UNPUBLISHED = [
   "parser-generators/",
   "rule-engine-direction/",
   "rule-syntax/",
-  "batched-sql-performance.md",
-  "code-rule-profiling.md",
-  "data-layer-batch-five.md",
-  "data-layer-batch-four-root-causes.md",
-  "data-layer-batch-four.md",
-  "data-layer-batch-six.md",
-  "data-layer-batch-three.md",
-  "data-layer-batch-two.md",
-  "data-layer-engine-gaps.md",
-  "data-layer-performance-journal.md",
-  "data-layer-port-execution-plan.md",
-  "data-layer-rule-port.md",
-  "gpu-producer-execution-contract.md",
-  "native-relations-implementation.md",
-  "native-relations-spikes.md",
-  "reachability-spikes.md",
-  "relational-execution-design.md",
-  "rule-syntax-options.md",
-  "shared-producer-contracts.md",
-  "shared-producer-workplan.md",
-  "shared-sql-performance.md",
-  "shared-syntax-implementation.md",
-  "shared-syntax-requirement.md",
-  "sql-composition-implementation.md",
-  "sql-composition-opportunities.md",
-  "sql-execution-chunk-c.md",
-  "sql-execution-opportunities.md",
-  "sql-execution-owner-spike.md",
-  "sql-execution-stages.md",
-  "sql-executor-recovery-plan.md",
   "sql-executor.md",
-  "sql-materialization-shape.md",
-  "sql-performance-recovery-workplan.md",
-  "sql-performance-spikes.md",
-  "sql-post-c-spikes.md",
-  "sql-preparation-architecture.md",
-  "sql-preparation-spikes.md",
-  "sql-shape-spikes.md",
-  "sql-unification-and-updates-plan.md",
-  "sql-workload-profiling.md",
 ];
 
 /** Whether docs path `path` (relative to `docs/`, `/`-separated) is one the site leaves out. */

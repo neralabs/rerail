@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 
 use super::super::tape::TapeDoc;
 use ast_grep_core::MatchStrictness;
@@ -34,7 +33,6 @@ pub mod capture_run;
 // cratify: `metal_backend` is rerail-device-metal's (it mounts it)
 // cratify: a re-export of rerail-device-metal's, which its facades of this module make
 pub mod metal_batch_abi;
-// cratify: `metal_parallel` is rerail-device-metal's (it mounts it)
 // Row programs on Metal: scan, count and scatter over the 16-bit layout (decision 0095).
 // cratify: `metal_rows` is rerail-device-metal's (it mounts it)
 // Relations sorted by a key on the device, and the joins that probe them (decision 0095).
@@ -134,7 +132,7 @@ pub mod regex_block;
 // cratify: `block_rows_tests` is rerail-device-metal's (it mounts it)
 #[cfg(test)]
 pub mod block_digest_tests;
-// The `.rr` parser (`rerail_rr_parser`): the Bitlex grammar compiled, the engine's parser for
+// The `.rerail` parser (`rerail_rr_parser`): the Bitlex grammar compiled, the engine's parser for
 // what it refuses. Nothing in the engine parses with it yet; named here for the engine's callers.
 #[allow(unused_imports)]
 pub use rerail_rr_parser as rr_parser;
@@ -1651,7 +1649,7 @@ impl Slotted {
                     return PatternVerdict::NoMatch;
                 }
                 let candidates = tape.transducer_children(node).collect::<Vec<_>>();
-                if Self::children(children, &candidates, tape, bindings) {
+                if Self::children(children, node, &candidates, tape, bindings) {
                     PatternVerdict::Matched
                 } else {
                     PatternVerdict::NoMatch
@@ -1662,6 +1660,7 @@ impl Slotted {
 
     fn children(
         goals: &[Self],
+        parent: u32,
         candidates: &[u32],
         tape: &TapeDoc,
         bindings: &mut AstBindings,
@@ -1674,6 +1673,8 @@ impl Slotted {
             });
         }
         let (mut goal, mut candidate) = (0_usize, 0_usize);
+        // The candidate the last goal matched, for the end of children (RER-131).
+        let mut last_matched: Option<usize> = None;
         while goal < goals.len() {
             if let Self::Ellipsis(name) = &goals[goal] {
                 let name = *name;
@@ -1684,15 +1685,26 @@ impl Slotted {
                     });
                 }
                 let mut skipped_anonymous = 0_usize;
+                let mut end_word: Option<&str> = None;
                 while goal < goals.len() && goals[goal].is_trivial() {
+                    // The end-of-children goal stands for the implied tokens after the pattern's
+                    // last child; a candidate keeps them only where its gap is not that word, and
+                    // those it keeps are the goal's (`ast_grep_core`'s `may_match_ellipsis_impl`).
+                    match &goals[goal] {
+                        Self::Terminal { text, .. } if goals[goal].is_children_end() => end_word = Some(text),
+                        _ => skipped_anonymous += 1,
+                    }
                     goal += 1;
-                    skipped_anonymous += 1;
                 }
                 if goal == goals.len() {
-                    let end = candidates
-                        .len()
-                        .saturating_sub(skipped_anonymous)
-                        .max(candidate);
+                    let mut rest = candidates.len();
+                    for token in end_word.into_iter().flat_map(|word| word.split('\u{1f}').filter(|token| !token.is_empty())).collect::<Vec<_>>().into_iter().rev() {
+                        match rest.checked_sub(1).map(|last| candidates[last]) {
+                            Some(last) if rest > candidate && !tape.transducer_is_named(last) && tape.transducer_text(last) == token.as_bytes() => rest -= 1,
+                            _ => break,
+                        }
+                    }
+                    let end = rest.saturating_sub(skipped_anonymous).max(candidate);
                     return name.is_none_or(|name| {
                         bindings.bind_multi(name, &candidates[candidate..end], tape)
                     });
@@ -1755,9 +1767,20 @@ impl Slotted {
                         }
                     }
                     PatternVerdict::SkipCandidate => candidate += 1,
-                    PatternVerdict::NoMatch => return false,
+                    // The end of children refused a named candidate: where the tokens the
+                    // candidate leaves out after the last matched child begin with the goal's,
+                    // those are the goal's and the rest trails (`ast_grep_core`'s
+                    // `match_nodes_impl_recursive`, RER-131).
+                    PatternVerdict::NoMatch => {
+                        let Self::Terminal { text, .. } = &goals[goal] else { return false };
+                        let word: Vec<&str> = text.split('\u{1f}').filter(|token| !token.is_empty()).collect();
+                        return goals[goal].is_children_end()
+                            && !word.is_empty()
+                            && last_matched.is_some_and(|last| tape.transducer_implied_after(parent, last, &word));
+                    }
                 }
             }
+            last_matched = Some(candidate);
             goal += 1;
             candidate += 1;
             if goal == goals.len() {
@@ -1914,6 +1937,19 @@ impl Program {
             vec![1, 2],
             Vec::new(),
         )
+    }
+
+    /// Whether `pattern` is a bare metavariable (`$X`, `$_`, `$$X`), and if so whether it wants a named node. At its
+    /// root such a pattern holds at every node (a named one for `$X`), its one capture the node itself: a node test,
+    /// not a pattern to match (t45 §3).
+    pub fn bare_metavariable(pattern: &Pattern) -> Option<bool> {
+        if !matches!(pattern.strictness, MatchStrictness::Smart) {
+            return None;
+        }
+        match &pattern.node {
+            PatternNode::MetaVar { meta_var: MetaVariable::Capture(_, named) | MetaVariable::Dropped(named) } => Some(*named),
+            _ => None,
+        }
     }
 
     pub fn compile_ast_grep_pattern(pattern: &Pattern) -> Result<Self, Error> {

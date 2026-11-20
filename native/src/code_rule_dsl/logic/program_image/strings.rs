@@ -180,7 +180,8 @@ impl Strings {
     pub fn table(&self) -> &Table {
         &self.table
     }
-    pub fn into_parts(self) -> (Vec<u8>, Vec<u32>, Table) {
-        (self.bytes, self.ends, self.table)
+    /// Its bytes, ends and table, as an image's regions hold them (`Encoder::finish`).
+    pub fn parts(&self) -> (&[u8], &[u32], &Table) {
+        (&self.bytes, &self.ends, &self.table)
     }
 }

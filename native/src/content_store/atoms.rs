@@ -28,12 +28,13 @@ use std::fs::{File, TryLockError};
 use std::hash::BuildHasher;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, LazyLock, Weak};
+use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 mod map;
 pub(crate) mod stored;
 pub use stored::{atoms_dir, copy_blocks, freeze_blocks};
+pub(crate) use stored::clone_file;
 mod vtab;
 pub use map::{ProcessIds, StoreIds, map_columns, mapped};
 
@@ -56,7 +57,7 @@ pub struct Interner {
     stored: stored::Stored,
     base: Sym,
     /// The pending atoms (`base` on), in atoms blocks of the stored chain's format in anonymous memory, each twice
-    /// the last (decision 0450 step 2a): every string, its end, its hash and the table from hash to id inside its
+    /// the last (decision 0478 step 2a): every string, its end, its hash and the table from hash to id inside its
     /// block, where any reader reads it. A block may begin below `base`: its atoms stored since are read in the
     /// store's chain, and a block wholly stored is let go.
     pending: Vec<rerail_blocks::atoms::AtomsW>,
@@ -93,7 +94,7 @@ impl Interner {
         self.pending.iter().map(rerail_blocks::atoms::AtomsW::region).collect()
     }
 
-    /// Every atom this process holds as runs where their blocks hold them, with the blocks (decision 0450 step 2b):
+    /// Every atom this process holds as runs where their blocks hold them, with the blocks (decision 0478 step 2b):
     /// the store's chain below `base`, then the pending blocks. A directory of them (`AtomsDir`) is read by the atoms
     /// reads written once in CLIF (`atoms_at`, `atoms_len`), on the host and the device alike. The runs hold the ids
     /// held now: a reader that keeps the blocks reads them while atoms are interned and stored after.
@@ -291,7 +292,9 @@ pub struct Atoms {
     state: rerail_accel::sharded::Sharded<State>,
     /// The store's guest keys as this process holds them (decision 0391), shared as the atoms are.
     guest_keys: Arc<super::guest_keys::GuestKeys>,
-    /// What these atoms keep of their texts (decision 0450 steps 2d, 2e): verdicts and texts, shared as the atoms are.
+    /// Its atoms reserved by components not yet retired (`reserving`).
+    reserved: ReservedSet,
+    /// What these atoms keep of their texts (decision 0478 steps 2d, 2e): verdicts and texts, shared as the atoms are.
     kept: std::sync::OnceLock<Kept>,
     /// Held (the lock file, exclusively locked) while this process may give out pending ids.
     /// Lock order: `lease`, then `reader`, then `state`.
@@ -327,21 +330,22 @@ pub struct Atoms {
 
 /// The identity read of each database file, by its path and (device, inode, creation time): `Atoms::identity`. A file
 /// made again at a path may have the inode the deleted one had; it was not made at the same time.
-static IDENTITIES: LazyLock<Mutex<HashMap<String, ((u64, u64, u128), Option<i64>)>>> = LazyLock::new(Default::default);
+#[derive(Default)]
+struct Identities(Mutex<HashMap<String, ((u64, u64, u128), Option<i64>)>>);
 
 /// The database at `path` was made a store (`schema::initialize`): the identity read of it before (none) is gone.
 pub(crate) fn forget_identity(path: &str) {
-    IDENTITIES.lock().remove(path);
+    rerail_prof::code_rule_dsl::logic::profile::shared::<Identities>().0.lock().remove(path);
 }
 
 thread_local! {
     /// The atoms this thread made while reserving (`reserving`), by arena.
-    static RESERVING: std::cell::RefCell<Option<(usize, Vec<(usize, Vec<Sym>)>)>> = const { std::cell::RefCell::new(None) };
+    static RESERVING: std::cell::RefCell<Option<(usize, Vec<(ReservedSet, Vec<Sym>)>)>> = const { std::cell::RefCell::new(None) };
 }
 
-/// Atoms reserved by components not yet retired, by arena (its address): pending, but no row a commit writes holds
-/// them yet (decision 0114 §4).
-static RESERVED: LazyLock<parking_lot::Mutex<HashMap<usize, std::collections::BTreeSet<Sym>>>> = LazyLock::new(Default::default);
+/// An arena's atoms reserved by components not yet retired (`Atoms::reserved`): pending, but no row a commit writes
+/// holds them yet (decision 0114 §4). The arena's own (decision 0442), held by each reservation of its atoms.
+type ReservedSet = Arc<parking_lot::Mutex<std::collections::BTreeSet<Sym>>>;
 
 /// Atoms made ahead of the run's order, by a component of strata (decision 0114 §4: the atoms' publication model).
 ///
@@ -361,7 +365,7 @@ static RESERVED: LazyLock<parking_lot::Mutex<HashMap<usize, std::collections::BT
 /// Reservations nest: a component this thread runs while its own waits (a job the wait runs, such as another
 /// component's, while a join's morsels finish) reserves its atoms as its own, and the waiting one's reservation
 /// goes on when it ends.
-/// What a store's atoms keep of their texts (decision 0450 steps 2d and 2e): the one rolling cache of
+/// What a store's atoms keep of their texts (decision 0478 steps 2d and 2e): the one rolling cache of
 /// `rerail_clif::view::cache`, in a block of its own, read and written through the reads written once in CLIF by the
 /// CPU and the kernels alike. It holds the text tests' verdicts (`verdict_get`, `verdict_put`: an entry 64 symbols of
 /// one test) and the text functions' texts (`text_find`, `text_open`: an entry a text, by its functions and its
@@ -375,7 +379,7 @@ pub struct Kept {
 /// A generation's entries (verdicts' and texts'), and its arena's bytes: its pages taken as entries are written.
 pub const KEPT_ENTRIES: u32 = 1 << 16;
 pub const KEPT_ARENA: usize = 16 << 20;
-/// The longest text kept (decision 0450 step 2e): a longer one is made each time it is read.
+/// The longest text kept (decision 0478 step 2e): a longer one is made each time it is read.
 pub const TEXT_MOST: usize = 4096;
 // The entry layout the kernels read a kept text by (`metal_join`'s `row_text`: its bytes at 12, its payload at 16),
 // and the most they keep.
@@ -444,7 +448,7 @@ impl Kept {
         // SAFETY: as `get`'s; an entry taken is this thread's to write, `text.len()` bytes at its payload.
         unsafe {
             let r = rerail_blocks::generated_reads::text_open(self.cache(), fns, sym, text.len() as u32);
-            if r & 3 != rerail_clif::reads::TAKEN as u64 {
+            if r & 3 != rerail_clif::view::cache::TAKEN as u64 {
                 return false;
             }
             let e = (r & !3) as *mut u8;
@@ -467,7 +471,7 @@ pub fn reserving(arena: &Arc<Atoms>) -> Reservation {
 
 /// A thread's reservation in progress (`reserving`): `end` gives what it made. It holds the reservation it was
 /// made inside, which goes on when it ends.
-pub struct Reservation(Option<(usize, Vec<(usize, Vec<Sym>)>)>);
+pub struct Reservation(Option<(usize, Vec<(ReservedSet, Vec<Sym>)>)>);
 
 impl Reservation {
     pub fn end(mut self) -> Reserved {
@@ -487,7 +491,7 @@ impl Drop for Reservation {
 
 /// The atoms a component reserved: published (counted as pending) when dropped, as the component retires.
 #[derive(Default)]
-pub struct Reserved(Vec<(usize, Vec<Sym>)>);
+pub struct Reserved(Vec<(ReservedSet, Vec<Sym>)>);
 
 impl Reserved {
     /// Takes in what a later reservation of the same component made (its members resumed after their wave).
@@ -505,14 +509,9 @@ impl Drop for Reserved {
         if self.0.is_empty() {
             return;
         }
-        let mut all = RESERVED.lock();
-        for (at, ids) in self.0.drain(..) {
-            if let Some(set) = all.get_mut(&at) {
-                ids.iter().for_each(|id| { set.remove(id); });
-                if set.is_empty() {
-                    all.remove(&at);
-                }
-            }
+        for (set, ids) in self.0.drain(..) {
+            let mut set = set.lock();
+            ids.iter().for_each(|id| { set.remove(id); });
         }
     }
 }
@@ -520,28 +519,41 @@ impl Drop for Reserved {
 /// Decision 0160's trial (`RERAIL_ATOMS_PROVISIONAL=1`): ids are provisional and the lease is never taken. Off, the
 /// lease is taken as before (decision 0049).
 fn lease_free() -> bool {
-    static FREE: LazyLock<bool> = LazyLock::new(|| std::env::var("RERAIL_ATOMS_PROVISIONAL").is_ok_and(|v| v == "1"));
-    *FREE
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_ATOMS_PROVISIONAL").is_ok_and(|v| v == "1"))
 }
 
 /// The error of a write refused after a fork (decisions 0160, 0170): its rows may name this process's ids, not the
 /// store's. A write behind the run that meets it is dropped, as a cache's miss.
 pub const DIVERGED_TEXT: &str = "this process's atoms forked from the store's and this write's are not mapped (decision 0170)";
 
-static REGISTRY: LazyLock<Mutex<HashMap<PathBuf, Weak<Atoms>>>> = LazyLock::new(Default::default);
-/// The atoms of in-memory databases: one set for the process, as the planner's symbols had.
-static MEMORY: LazyLock<Arc<Atoms>> = LazyLock::new(|| Arc::new(Atoms::new(None, None)));
+#[derive(Default)]
+struct AtomsByFile(Mutex<HashMap<PathBuf, Weak<Atoms>>>);
+/// The atoms of in-memory databases: one set for the shared object (decision 0442), as the planner's symbols had:
+/// another object's in-memory databases have their own, and read none of these texts.
+struct MemoryAtoms(Arc<Atoms>);
+
+impl Default for MemoryAtoms {
+    fn default() -> Self {
+        MemoryAtoms(Arc::new(Atoms::new(None, None)))
+    }
+}
+
+fn memory() -> Arc<Atoms> {
+    rerail_prof::code_rule_dsl::logic::profile::with_shared::<MemoryAtoms, _>(|m| Arc::clone(&m.0))
+}
 
 /// A path's registry key: its canonical form, resolved once per path (a `realpath` per stratum was 2.5% of a corpus
 /// run's main thread). A path that does not resolve yet is not remembered.
 pub(super) fn key(path: &Path) -> PathBuf {
-    static CANONICAL: LazyLock<Mutex<HashMap<PathBuf, PathBuf>>> = LazyLock::new(Default::default);
-    if let Some(key) = CANONICAL.lock().get(path) {
+    #[derive(Default)]
+    struct CanonicalPaths(Mutex<HashMap<PathBuf, PathBuf>>);
+    let held_ = rerail_prof::code_rule_dsl::logic::profile::shared::<CanonicalPaths>();
+    if let Some(key) = held_.0.lock().get(path) {
         return key.clone();
     }
     match std::fs::canonicalize(path) {
         Ok(key) => {
-            CANONICAL.lock().insert(path.to_path_buf(), key.clone());
+            rerail_prof::code_rule_dsl::logic::profile::shared::<CanonicalPaths>().0.lock().insert(path.to_path_buf(), key.clone());
             key
         }
         Err(_) => path.to_path_buf(),
@@ -580,6 +592,7 @@ impl Atoms {
             // Atom 0, the empty string, is every store's.
             state: rerail_accel::sharded::Sharded::new(State { atoms, since: None, map: None }),
             guest_keys: Arc::default(),
+            reserved: ReservedSet::default(),
             kept: std::sync::OnceLock::new(),
             lease: Mutex::new(None),
             leased: AtomicBool::new(false),
@@ -600,7 +613,8 @@ impl Atoms {
     /// This process's atoms of the database at `path`, as it holds them (`install` checks they are the database's).
     fn for_path(path: &Path) -> Arc<Atoms> {
         let key = key(path);
-        let mut registry = REGISTRY.lock();
+        let held_ = rerail_prof::code_rule_dsl::logic::profile::shared::<AtomsByFile>();
+        let mut registry = held_.0.lock();
         if let Some(atoms) = registry.get(&key).and_then(Weak::upgrade) {
             return atoms;
         }
@@ -630,7 +644,8 @@ impl Atoms {
 
     pub(crate) fn for_database(path: &Path, identity: Option<i64>) -> Arc<Atoms> {
         let key = key(path);
-        let mut registry = REGISTRY.lock();
+        let held_ = rerail_prof::code_rule_dsl::logic::profile::shared::<AtomsByFile>();
+        let mut registry = held_.0.lock();
         if let Some(atoms) = registry.get(&key).and_then(Weak::upgrade) {
             let held = if atoms.path.as_ref() == Some(&key) { atoms.identity == identity } else { identity.is_none() };
             if held {
@@ -656,14 +671,14 @@ impl Atoms {
         #[cfg(not(unix))]
         let file: Option<(String, (u64, u64, u128))> = None;
         if let Some((path, at)) = &file
-            && let Some((held, id)) = IDENTITIES.lock().get(path)
+            && let Some((held, id)) = rerail_prof::code_rule_dsl::logic::profile::shared::<Identities>().0.lock().get(path)
             && held == at
         {
             return Ok(*id);
         }
         let id = Self::identity_read(connection)?;
         if let Some((path, at)) = file {
-            IDENTITIES.lock().insert(path, (at, id));
+            rerail_prof::code_rule_dsl::logic::profile::shared::<Identities>().0.lock().insert(path, (at, id));
         }
         Ok(id)
     }
@@ -683,14 +698,14 @@ impl Atoms {
     /// Makes `path`'s database read and write these atoms in this process: a run's working database
     /// (its SQL's scratch) whose symbols are the store's (decision 0052).
     pub fn share(self: &Arc<Self>, path: &Path) {
-        REGISTRY.lock().insert(key(path), Arc::downgrade(self));
+        rerail_prof::code_rule_dsl::logic::profile::shared::<AtomsByFile>().0.lock().insert(key(path), Arc::downgrade(self));
     }
 
     /// This process's atoms of `connection`'s main database.
     pub fn for_connection(connection: &Connection) -> Arc<Atoms> {
         match connection.path().filter(|path| !path.is_empty()) {
             Some(path) => Atoms::for_path(Path::new(path)),
-            None => Arc::clone(&MEMORY),
+            None => memory(),
         }
     }
 
@@ -746,9 +761,13 @@ impl Atoms {
     pub fn attach(connection: &Connection) -> rusqlite::Result<Arc<Atoms>> {
         let atoms = match connection.path().filter(|path| !path.is_empty()) {
             Some(path) => Atoms::for_database(Path::new(path), Atoms::identity(connection)?),
-            None => Arc::clone(&MEMORY),
+            None => memory(),
         };
         vtab::install(connection, &atoms)?;
+        // The kept facts beside them (decisions 0456 K8, 0439), on a store's connection.
+        if let Some(path) = connection.path().filter(|path| !path.is_empty()) {
+            super::kept_facts::vtab::install(connection, Path::new(path))?;
+        }
         Ok(atoms)
     }
 
@@ -806,7 +825,7 @@ impl Atoms {
         }
         // Atoms a component reserves (`reserving`) are no row's that a commit may write yet: not counted.
         let base = state.atoms.base() as Sym;
-        let reserved = RESERVED.lock().get(&(self as *const Atoms as usize)).map_or(0, |r| r.range(base..).count());
+        let reserved = self.reserved.lock().range(base..).count();
         n > reserved
     }
 
@@ -1008,8 +1027,8 @@ impl Atoms {
             {
                 let new: Vec<Sym> = ids.iter().copied().filter(|&id| id >= before).collect();
                 if !new.is_empty() {
-                    RESERVED.lock().entry(self as *const Atoms as usize).or_default().extend(new.iter().copied());
-                    r.push((self as *const Atoms as usize, new));
+                    self.reserved.lock().extend(new.iter().copied());
+                    r.push((Arc::clone(&self.reserved), new));
                 }
             }
         });
@@ -1366,6 +1385,18 @@ impl Atoms {
             }
         }
         Ok(())
+    }
+
+    /// Whether stored rows whose symbols are at most `max` (as the store numbers them) read as this process numbers
+    /// them, held as `hold_named` holds them: a kept block's rows, read where they lie (decision 0401 F3), which no
+    /// reader maps. Not past a fork (decision 0170), where the store's ids are another numbering's.
+    pub fn reads_in_place(&self, max: i64) -> StoreResult<bool> {
+        self.hold_named(&[max])?;
+        if !self.forked() {
+            return Ok(true);
+        }
+        let state = self.state.read();
+        Ok(state.map.as_ref().is_some_and(|m| Sym::try_from(max).is_ok_and(|v| v < m.fork)))
     }
 
     /// A run's end: the lease is given back with its next commit, as before the run; at once when nothing is pending.

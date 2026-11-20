@@ -7,10 +7,10 @@ use super::names::Name;
 // cratify: a re-export of rerail-lang-php's, which its facades of this module make
 use super::summary::{BASE, CLASS, DECORATED, METACLASS, OPEN, Summary, UNKNOWN_BASE};
 use crate::code_rule_dsl::language::Family;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Terms of one dense closure: bit `i` is the `i`th term.
 #[cfg(any(test, feature = "test-hooks"))]
@@ -146,12 +146,16 @@ impl Contribution {
         };
         for (local, def) in summary.defs.iter().enumerate() {
             let name = summary.interned(def.name);
-            { let pack = language_pack::pack(name.family()); language_pack::calls_definition_keys(pack, 
-                name,
-                def.flags,
-                names,
-                |key| contribution.defs.entry(key).or_default().push((local as u32, def.flags)),
-            ) };
+            {
+                let pack = language_pack::pack(name.family());
+                language_pack::calls_definition_keys(pack, name, def.flags, names, |key| {
+                    contribution
+                        .defs
+                        .entry(key)
+                        .or_default()
+                        .push((local as u32, def.flags))
+                })
+            };
         }
         for (key, target, kind) in &summary.supers {
             let target = summary.interned(*target);
@@ -246,7 +250,7 @@ fn parallel<I: Sync, R: Send>(items: &[I], work: impl Fn(&I) -> R + Sync + Send)
     if items.len() < 256 {
         items.iter().map(work).collect()
     } else {
-        items.par_iter().map(work).collect()
+        crate::code_rule_dsl::logic::profile::on_cores(|| items.par_iter().map(work).collect())
     }
 }
 
@@ -533,14 +537,24 @@ pub struct ReferenceRows {
 /// subclass), `super().x` (`super`), a late-bound name (`late`: `C.m^`), and any other qualified name (`name`: a
 /// definition, an import or re-export of one, a module or class member).
 pub(crate) fn reference_via(name: &str) -> &'static str {
-    let marked = |marker: &str, rest: char| name.split_once(marker).is_some_and(|(_, tail)| tail.contains(rest));
+    let marked = |marker: &str, rest: char| {
+        name.split_once(marker)
+            .is_some_and(|(_, tail)| tail.contains(rest))
+    };
     if marked(".<type>.", '.') {
         "param_type"
     } else if marked(".<field>.", '.') {
         "field"
-    } else if !name.contains(".<unqualified>.") && name.split_once(".<bare>.").is_some_and(|(_, tail)| tail.contains("=>")) {
+    } else if !name.contains(".<unqualified>.")
+        && name
+            .split_once(".<bare>.")
+            .is_some_and(|(_, tail)| tail.contains("=>"))
+    {
         "bare"
-    } else if name.split_once(".<unqualified>.").is_some_and(|(_, tail)| tail.contains("=>")) {
+    } else if name
+        .split_once(".<unqualified>.")
+        .is_some_and(|(_, tail)| tail.contains("=>"))
+    {
         "unqualified"
     } else if name.contains(".<self>.") {
         "self"
@@ -583,8 +597,13 @@ impl Graph {
                 .chunk_by(|left, right| left.0 == right.0)
                 .filter_map(|group| {
                     let owner = group[0].0;
-                    let decorators = group.iter().map(|(_, name)| summary.name(*name)).collect::<Vec<_>>();
-                    contracts.sibling(summary.name(summary.defs[owner as usize].name), &decorators).map(|target| (owner, target))
+                    let decorators = group
+                        .iter()
+                        .map(|(_, name)| summary.name(*name))
+                        .collect::<Vec<_>>();
+                    contracts
+                        .sibling(summary.name(summary.defs[owner as usize].name), &decorators)
+                        .map(|target| (owner, target))
                 })
                 .collect();
             let referenced: HashSet<(u32, u32)> = summary.references.iter().copied().collect();
@@ -592,8 +611,12 @@ impl Graph {
             for &(owner, name) in &summary.edges {
                 let text = summary.name(name);
                 let vias = [
-                    referenced.contains(&(owner, name)).then(|| reference_via(text)),
-                    siblings.contains(&(owner, text.to_owned())).then_some("sibling"),
+                    referenced
+                        .contains(&(owner, name))
+                        .then(|| reference_via(text)),
+                    siblings
+                        .contains(&(owner, text.to_owned()))
+                        .then_some("sibling"),
                 ];
                 for to in self.links[summary.interned(name)].defs.iter() {
                     labelled.extend(vias.iter().flatten().map(|via| (owner, *to, *via)));
@@ -601,7 +624,11 @@ impl Graph {
             }
             labelled.sort_unstable();
             labelled.dedup();
-            rows.extend(labelled.into_iter().map(|(owner, to, via)| (self.reference_edge(file, owner, to), via)));
+            rows.extend(
+                labelled
+                    .into_iter()
+                    .map(|(owner, to, via)| (self.reference_edge(file, owner, to), via)),
+            );
         }
         rows
     }
@@ -615,7 +642,12 @@ impl Graph {
                     .names
                     .first()
                     .is_some_and(|name| name.family() == Family::Python)
-                    .then(|| (Arc::clone(&file.path), file.summary.defs[def.local as usize]))
+                    .then(|| {
+                        (
+                            Arc::clone(&file.path),
+                            file.summary.defs[def.local as usize],
+                        )
+                    })
             })
             .collect()
     }
@@ -1035,7 +1067,7 @@ impl Graph {
                 relay_callers(file, first, changes);
             }
         } else {
-            jobs.par_iter_mut().for_each(|(_, file, changes)| relay_callers(file, first, changes));
+            crate::code_rule_dsl::logic::profile::on_cores(|| jobs.par_iter_mut().for_each(|(_, file, changes)| relay_callers(file, first, changes)));
         }
         for (slot, file, _) in jobs {
             self.slots[slot as usize] = Some(file);
@@ -1385,7 +1417,10 @@ impl Graph {
             .summary_of(def.file)
             .expect("a reached definition is linked");
         let name = summary.interned(summary.defs[def.local as usize].name);
-        { let pack = language_pack::pack(name.family()); pack.calls_label(name) }
+        {
+            let pack = language_pack::pack(name.family());
+            pack.calls_label(name)
+        }
     }
 
     /// What a call of `name` links to, in number order, and whether it may be a module member no
@@ -1516,9 +1551,10 @@ impl Graph {
                 open: true,
             };
         }
-        { let pack = language_pack::pack(name.family()); pack.calls_link(
-            self, name, hops, followed,
-        ) }
+        {
+            let pack = language_pack::pack(name.family());
+            pack.calls_link(self, name, hops, followed)
+        }
     }
 
     /// A linked definition's flags.
@@ -1862,8 +1898,10 @@ impl Graph {
     fn python_class(&self, class: &Name) -> Option<ClassMemo> {
         let entries = self.supers.get(class)?;
         // A class is keyed by its module's name and by its path's: index it once.
-        if !{ let pack = language_pack::pack(class.family()); pack.calls_subclasses() }
-            || self.own_name(class).as_ref() != Some(class)
+        if !{
+            let pack = language_pack::pack(class.family());
+            pack.calls_subclasses()
+        } || self.own_name(class).as_ref() != Some(class)
         {
             return None;
         }
@@ -1979,12 +2017,7 @@ impl Graph {
     /// `through` gives, per definition flags, the terms a chain may pass through it for. Each
     /// reaching (definition, term) keeps the successor it first reached through, which chains
     /// follow.
-    pub fn close(
-        &self,
-        seeds: &[Seed],
-        through: impl Fn(u8) -> Bits,
-        terms: usize,
-    ) -> Closure {
+    pub fn close(&self, seeds: &[Seed], through: impl Fn(u8) -> Bits, terms: usize) -> Closure {
         let dense = self.dense();
         let count = dense.defs.len();
         debug_assert_eq!(seeds.len(), count);

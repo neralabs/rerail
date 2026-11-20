@@ -29,11 +29,10 @@
 
 // cratify: `adapter` is rerail-w's (it mounts it)
 
-#[cfg(any(test, feature = "test-hooks"))]
-use crate::code_rule_dsl::tree::Tree;
-use rerail_rr_syntax::tape as rr_tree;
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::semver::Range;
+#[cfg(any(test, feature = "test-hooks"))]
+use crate::code_rule_dsl::tree::Tree;
 use ast_grep_core::{
     AstGrep,
     language::Language,
@@ -41,6 +40,7 @@ use ast_grep_core::{
     tree_sitter::{StrDoc, TSLanguage},
 };
 use ast_grep_language::{LanguageExt, SupportLang};
+use rerail_rr_syntax::tape as rr_tree;
 use std::borrow::Cow;
 use std::sync::LazyLock;
 
@@ -48,6 +48,20 @@ impl std::fmt::Display for GrammarDialect {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(formatter, "{self:?}")
     }
+}
+
+/// How a dialect's patterns write a metavariable (`GrammarDialect::pattern_syntax`, generated).
+#[derive(Clone, Copy)]
+enum PatternSyntax {
+    /// The syntax of the ast-grep language whose grammar parses the dialect.
+    AstGrep(SupportLang),
+    /// `$` as it stands: an identifier character in the language, as in ast-grep's own JavaScript
+    /// and TypeScript (the vendored ECMAScript grammars).
+    Dollar,
+    /// `$X`, `$_`, `$$X` and `$$$` written with `µ` for `$` (`own_metavariables`), as ast-grep writes
+    /// them for its Python: the vendored grammars but ECMAScript's, the dialects Rerail parses itself
+    /// (Blade's Forte, `.rr`, the format strings, ESLint's directives), and a language left out of the build.
+    Micro,
 }
 
 impl Language for GrammarDialect {
@@ -60,16 +74,18 @@ impl Language for GrammarDialect {
     }
 
     fn expando_char(&self) -> char {
-        match self.support() {
-            Some(lang) => lang.expando_char(),
-            None => OWN_EXPANDO,
+        match self.pattern_syntax() {
+            PatternSyntax::AstGrep(language) => language.expando_char(),
+            PatternSyntax::Dollar => '$',
+            PatternSyntax::Micro => OWN_EXPANDO,
         }
     }
 
     fn pre_process_pattern<'q>(&self, query: &'q str) -> Cow<'q, str> {
-        match self.support() {
-            Some(language) => language.pre_process_pattern(query),
-            None => own_metavariables(query),
+        match self.pattern_syntax() {
+            PatternSyntax::AstGrep(language) => language.pre_process_pattern(query),
+            PatternSyntax::Dollar => Cow::Borrowed(query),
+            PatternSyntax::Micro => own_metavariables(query),
         }
     }
 
@@ -77,13 +93,22 @@ impl Language for GrammarDialect {
     /// (`tape::TreeParser::build_pattern`); every other dialect's are tapes of tree-sitter trees, written as
     /// documents are: no token the grammar implies (`tape::pattern_doc`, RER-131).
     fn build_pattern(&self, builder: &PatternBuilder) -> Result<Pattern, PatternError> {
-        match crate::code_rule_dsl::tape::tree_parser(*self).and_then(|parser| parser.build_pattern(builder)) {
+        match crate::code_rule_dsl::tape::tree_parser(*self)
+            .and_then(|parser| parser.build_pattern(builder))
+        {
             Some(pattern) => pattern,
             None => {
-                let (doc, shape) = crate::code_rule_dsl::tape::pattern_doc(*self, builder.source()).map_err(PatternError::Parse)?;
-                let ends = |node: usize| shape.ends.get(node).copied().unwrap_or(false);
+                let (doc, shape) = crate::code_rule_dsl::tape::pattern_doc(*self, builder.source())
+                    .map_err(PatternError::Parse)?;
+                let ends = |node: usize| shape.ends.get(node).cloned().flatten();
                 let single = |node: usize| shape.single.get(node).copied().unwrap_or(false);
-                builder.build_doc(doc, &ast_grep_core::matcher::PatternShape { ends: Some(&ends), single: Some(&single) })
+                builder.build_doc(
+                    doc,
+                    &ast_grep_core::matcher::PatternShape {
+                        ends: Some(&ends),
+                        single: Some(&single),
+                    },
+                )
             }
         }
     }
@@ -109,7 +134,10 @@ impl GrammarDialect {
         if !self.built() {
             return None;
         }
-        registry_grammar(self).or_else(|| self.support().map(|lang| lang.get_ts_language()))
+        registry_grammar(self).or_else(|| match self.pattern_syntax() {
+            PatternSyntax::AstGrep(language) => Some(language.get_ts_language()),
+            PatternSyntax::Dollar | PatternSyntax::Micro => None,
+        })
     }
 }
 
@@ -127,23 +155,32 @@ pub fn own_metavariables(query: &str) -> Cow<'_, str> {
             continue;
         }
         let expando = matches!(character, 'A'..='Z' | '_') || dollars == 3;
-        processed.extend(std::iter::repeat_n(if expando { OWN_EXPANDO } else { '$' }, dollars));
+        processed.extend(std::iter::repeat_n(
+            if expando { OWN_EXPANDO } else { '$' },
+            dollars,
+        ));
         dollars = 0;
         processed.push(character);
     }
-    processed.extend(std::iter::repeat_n(if dollars == 3 { OWN_EXPANDO } else { '$' }, dollars));
+    processed.extend(std::iter::repeat_n(
+        if dollars == 3 { OWN_EXPANDO } else { '$' },
+        dollars,
+    ));
     Cow::Owned(processed)
 }
 
 /// Where a dialect's kinds come from: a tree-sitter grammar's symbol table, or the kinds of a tree Rerail
-/// builds itself: `.rr` files' (`rerail_rr_syntax::tape`, decision 0061), or a registered parser's
+/// builds itself: `.rerail` files' (`rerail_rr_syntax::tape`, decision 0061), or a registered parser's
 /// (`tape::TreeParser`, Blade's Forte).
 #[derive(Clone, Copy)]
 enum OwnKinds {
     Grammar(&'static TSLanguage),
     /// Its kind names by id, its first anonymous id and its field names by id; the parser, where one
     /// names more kinds by one (`TreeParser::kind_names`).
-    Own(crate::code_rule_dsl::tape::OwnTable, Option<&'static dyn crate::code_rule_dsl::tape::TreeParser>),
+    Own(
+        crate::code_rule_dsl::tape::OwnTable,
+        Option<&'static dyn crate::code_rule_dsl::tape::TreeParser>,
+    ),
 }
 
 impl OwnKinds {
@@ -216,7 +253,10 @@ impl KindCatalog {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.node_kind_for_id(id),
             _ if id == ERROR_ID => Some("ERROR"),
-            own => own.table().expect("own kinds").0
+            own => own
+                .table()
+                .expect("own kinds")
+                .0
                 .get(usize::from(id))
                 .copied()
                 .filter(|name| !name.is_empty()),
@@ -248,7 +288,9 @@ impl KindCatalog {
     /// it can have (a node's own memberships are a subset; decision 0025).
     pub(crate) fn supertype_kinds(self, id: u16) -> std::collections::BTreeSet<u16> {
         let mut kinds = std::collections::BTreeSet::new();
-        let OwnKinds::Grammar(grammar) = self.own else { return kinds };
+        let OwnKinds::Grammar(grammar) = self.own else {
+            return kinds;
+        };
         let (mut pending, mut seen) = (vec![id], std::collections::BTreeSet::from([id]));
         while let Some(supertype) = pending.pop() {
             for &kind in grammar.subtypes_for_supertype(supertype) {
@@ -275,7 +317,10 @@ impl KindCatalog {
     pub fn field_id(self, name: &str) -> Option<u16> {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.field_id_for_name(name).map(|id| id.get()),
-            own => own.table().expect("own kinds").2
+            own => own
+                .table()
+                .expect("own kinds")
+                .2
                 .iter()
                 .skip(1)
                 .position(|field| *field == name)
@@ -287,7 +332,13 @@ impl KindCatalog {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.field_name_for_id(id),
             own => (id != 0)
-                .then(|| own.table().expect("own kinds").2.get(usize::from(id)).copied())
+                .then(|| {
+                    own.table()
+                        .expect("own kinds")
+                        .2
+                        .get(usize::from(id))
+                        .copied()
+                })
                 .flatten(),
         }
     }
@@ -313,12 +364,19 @@ impl GrammarDialect {
         KindCatalog {
             own: match self.grammar() {
                 Some(grammar) => OwnKinds::Grammar(grammar),
-                None if self == GrammarDialect::Rr => {
-                    OwnKinds::Own((rr_tree::KIND_NAMES, rr_tree::FIRST_ANONYMOUS, rr_tree::FIELD_NAMES), None)
-                }
+                None if self == GrammarDialect::Rr => OwnKinds::Own(
+                    (
+                        rr_tree::KIND_NAMES,
+                        rr_tree::FIRST_ANONYMOUS,
+                        rr_tree::FIELD_NAMES,
+                    ),
+                    None,
+                ),
                 // A dialect its language parses itself, else one this build leaves out (no kinds).
                 None => match crate::code_rule_dsl::tape::tree_parser(self) {
-                    Some(parser) => OwnKinds::Own(parser.kinds().unwrap_or((&[""], 1, &[""])), Some(parser)),
+                    Some(parser) => {
+                        OwnKinds::Own(parser.kinds().unwrap_or((&[""], 1, &[""])), Some(parser))
+                    }
                     None => OwnKinds::Own((&[""], 1, &[""]), None),
                 },
             },
@@ -393,6 +451,34 @@ pub fn rule_pattern(
     }
 }
 
+/// The patterns one compilation of a query has compiled, by language and text (`pattern_key`). A pattern's tree is
+/// tree-sitter's parse of its text written as a tape (`tape::pattern_doc`, RER-131): a parse, an encode and a
+/// restore. A query asks for the same pattern several times (the comparisons' captures for each of its dialects,
+/// its declared captures, the matcher), so its compilation compiles each once and hands out copies. The table is
+/// the compilation's and goes with it: nothing outlives the query (no process-wide memo, decision 0104). One that
+/// does not compile is compiled again when asked, for its error.
+#[derive(Default)]
+pub struct Patterns(std::cell::RefCell<std::collections::HashMap<(GrammarDialect, String), Pattern>>);
+
+impl Patterns {
+    /// `rule_pattern`, compiled once for this compilation.
+    pub fn get(&self, source: PatternSource<'_>, language: GrammarDialect) -> Result<Pattern, PatternError> {
+        let key = (
+            language,
+            match source {
+                PatternSource::Plain(text) => pattern_key(text, None),
+                PatternSource::Contextual { context, selector } => pattern_key(context, Some(selector)),
+            },
+        );
+        if let Some(pattern) = self.0.borrow().get(&key) {
+            return Ok(pattern.clone());
+        }
+        let pattern = rule_pattern(source, language)?;
+        self.0.borrow_mut().insert(key, pattern.clone());
+        Ok(pattern)
+    }
+}
+
 /// One grammar dialect: the file label hosts and the store use, its file suffixes (the host's
 /// routing, `label_of_path`) and its persisted tape tag (never reused). The rows are the
 /// registry's supported dialects (`DIALECTS`, generated).
@@ -460,24 +546,55 @@ fn dialect(lang: GrammarDialect) -> Option<&'static Dialect> {
 }
 
 /// The dialect a file label names (`FileInput.language`, the store's file language).
-/// A fragment grammar the registry declares (decision 0082): its dialect, and its start symbol (`expression`: the
-/// text inside a written `( … )`).
+/// A fragment grammar the registry declares (decisions 0082, 0466): its dialect, and the node kind its parse starts
+/// at (Python's `annotation`: a `type`).
 pub fn fragment(name: &str) -> Option<(GrammarDialect, &'static str)> {
-    FRAGMENTS.iter().find(|(n, _, _)| *n == name).map(|(_, dialect, start)| (*dialect, *start))
+    FRAGMENTS.iter().find(|(n, ..)| *n == name).map(|(_, dialect, start, _)| (*dialect, *start))
+}
+
+/// A fragment's tape tag (decision 0466): its tapes are stored under it, never under its dialect's.
+pub fn fragment_tag(name: &str) -> Option<u8> {
+    FRAGMENTS.iter().find(|(n, ..)| *n == name).map(|(.., tag)| *tag)
+}
+
+/// Every fragment the registry declares: name, dialect, start kind, tape tag.
+pub fn fragments() -> &'static [(&'static str, GrammarDialect, &'static str, u8)] {
+    FRAGMENTS
+}
+
+/// The grammar a guest's kinds are named in: a fragment's dialect's label, else the grammar itself (a dialect's
+/// label).
+pub fn kinds_label(grammar: &str) -> &str {
+    fragment(grammar).and_then(|(dialect, _)| label(dialect)).unwrap_or(grammar)
 }
 
 /// Whether `name` is a grammar a rule may name in `embed`, `sub_tape` or `parsed`: a supported dialect's label, a
 /// fragment (decision 0082), or an embedding's id (`script-block`: the program its embedder writes, decision 0222).
 /// A dialect this build leaves out is still a name.
 pub fn is_grammar(name: &str) -> bool {
-    fragment(name).is_some() || dialect_by_label(name).is_some() || GrammarDialect::ALL.iter().any(|d| d.embeds().iter().any(|(via, _)| via.id() == name))
+    fragment(name).is_some()
+        || dialect_by_label(name).is_some()
+        || GrammarDialect::ALL
+            .iter()
+            .any(|d| d.embeds().iter().any(|(via, _)| via.id() == name))
 }
 
 /// A dialect by its label. A grammar named as main's rules name theirs, in camel case (`percentFormat`), is the
 /// dialect whose label is its dashed form (`percent-format`, decision 0176): a label is lowercase and dashes.
 pub fn dialect_by_label(label: &str) -> Option<GrammarDialect> {
     let dashed: Cow<'_, str> = if label.chars().any(|c| c.is_ascii_uppercase()) {
-        Cow::Owned(label.chars().flat_map(|c| if c.is_ascii_uppercase() { vec!['-', c.to_ascii_lowercase()] } else { vec![c] }).collect())
+        Cow::Owned(
+            label
+                .chars()
+                .flat_map(|c| {
+                    if c.is_ascii_uppercase() {
+                        vec!['-', c.to_ascii_lowercase()]
+                    } else {
+                        vec![c]
+                    }
+                })
+                .collect(),
+        )
     } else {
         Cow::Borrowed(label)
     };
@@ -509,7 +626,10 @@ pub fn label_of_path(path: &str) -> Option<&'static str> {
 /// The label of the dialect `name` names, when this build parses it (`GrammarDialect::built`): a program's
 /// `.language`.
 pub fn label_named(name: &str) -> Option<&'static str> {
-    DIALECTS.iter().find(|dialect| dialect.label == name && dialect.lang.built()).map(|dialect| dialect.label)
+    DIALECTS
+        .iter()
+        .find(|dialect| dialect.label == name && dialect.lang.built())
+        .map(|dialect| dialect.label)
 }
 
 /// A dialect's persisted tape tag.
@@ -525,12 +645,14 @@ pub fn tape_tag(lang: GrammarDialect) -> Option<u8> {
     tag
 }
 
-/// The dialect a persisted tape tag names.
+/// The dialect a persisted tape tag names: a dialect's, or a fragment's (whose tapes are its dialect's kinds,
+/// decision 0466).
 pub fn from_tape_tag(tag: u8) -> Option<GrammarDialect> {
     let lang = DIALECTS
         .iter()
         .find(|dialect| dialect.tape_tag == tag)
-        .map(|dialect| dialect.lang);
+        .map(|dialect| dialect.lang)
+        .or_else(|| FRAGMENTS.iter().find(|(.., t)| *t == tag).map(|(_, dialect, ..)| *dialect));
     #[cfg(any(test, feature = "test-hooks"))]
     let lang = lang.or_else(|| {
         TEST_TAPE_TAGS
@@ -710,7 +832,10 @@ pub fn ast_grep(dialect: GrammarDialect, source: &str) -> AstGrep<StrDoc<Grammar
 
 /// Whether `kind` is a comment kind of any registered family (`LanguageBase::comment_kinds`).
 pub fn is_comment_kind(kind: &str) -> bool {
-    Family::ALL.iter().filter_map(|&family| BASES[family as usize].get()).any(|base| base.comment_kinds().contains(&kind))
+    Family::ALL
+        .iter()
+        .filter_map(|&family| BASES[family as usize].get())
+        .any(|base| base.comment_kinds().contains(&kind))
 }
 
 static BASES: [std::sync::OnceLock<&'static dyn LanguageBase>; Family::ALL.len()] =
@@ -723,7 +848,10 @@ pub fn register_base(family: Family, base: &'static dyn LanguageBase) {
 
 /// `family`'s base (`LanguageBase`).
 pub fn base(family: Family) -> &'static dyn LanguageBase {
-    BASES[family as usize].get().copied().unwrap_or_else(|| panic!("no language registered for {family:?}"))
+    BASES[family as usize]
+        .get()
+        .copied()
+        .unwrap_or_else(|| panic!("no language registered for {family:?}"))
 }
 
 // A language's answers to a request, made inside the fixpoint (decisions 0065 §2a, 0104, 0327).
@@ -1189,7 +1317,9 @@ pub fn set_manifest_reader(reader: ManifestReader) {
 pub fn read_manifest(value: &serde_json::Value, at: &str) -> napi::Result<FileManifest> {
     match MANIFEST_READER.get() {
         Some(read) => read(value, at),
-        None => Err(super::json::invalid(format!("{at}/package is read by no language this build has"))),
+        None => Err(super::json::invalid(format!(
+            "{at}/package is read by no language this build has"
+        ))),
     }
 }
 
@@ -1198,7 +1328,9 @@ pub fn deserialize_manifest<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> std::result::Result<Option<FileManifest>, D::Error> {
     let value = <serde_json::Value as serde::Deserialize>::deserialize(deserializer)?;
-    read_manifest(&value, "files").map(Some).map_err(|error| serde::de::Error::custom(error.reason))
+    read_manifest(&value, "files")
+        .map(Some)
+        .map_err(|error| serde::de::Error::custom(error.reason))
 }
 
 /// Two manifests are equal where they are the same (`ProjectManifest::same`).
@@ -1354,15 +1486,14 @@ pub fn is_stub_file(path: &str) -> bool {
         .is_some_and(|extension| extension == "pyi")
 }
 
-/// Native symbol ids of every named kind called one of `names`.
-pub fn kind_ids(
-    language: GrammarDialect,
-    names: &[&str],
-) -> std::collections::BTreeSet<u16> {
-    (0..language.kind_count() as u16)
+/// Native symbol ids of every named kind called one of `names`: the dialect's catalog looked up once, not once a
+/// kind (`GrammarDialect::kinds` finds the grammar in a map).
+pub fn kind_ids(language: GrammarDialect, names: &[&str]) -> std::collections::BTreeSet<u16> {
+    let kinds = language.kinds();
+    (0..kinds.kind_count() as u16)
         .filter(|&id| {
-            language.kind_is_named(id)
-                && language
+            kinds.kind_is_named(id)
+                && kinds
                     .kind_name(id)
                     .is_some_and(|name| names.contains(&name))
         })
@@ -2155,6 +2286,39 @@ pub mod tests {
                 ],
                 "{dialect:?}"
             );
+        }
+    }
+
+    /// A template takes a `\x` or `\u` that no hex digits follow, as a tagged template does since
+    /// ES2018: ``String.raw`C:\x\users` `` is a Windows path. A longer escape stays whole, and a
+    /// string literal still refuses one (Patch 17 in `grammars/tree-sitter-javascript/PATCHES.md`,
+    /// Patch 29 in `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn a_template_takes_an_escape_without_hex_digits() {
+        let source =
+            "String.raw`C:\\x\\users\\u`;\nf`\\x4g\\u{` + `\\x41\\u0041\\u{41}\\n${a}\\x`;\n";
+        for dialect in [
+            GrammarDialect::JavaScript,
+            GrammarDialect::TypeScript,
+            GrammarDialect::Tsx,
+        ] {
+            let root = dialect.ast_grep(source);
+            assert!(!root.root().get_inner_node().has_error(), "{dialect:?}");
+            let escapes = root
+                .root()
+                .dfs()
+                .filter(|node| node.kind() == "escape_sequence")
+                .map(|node| node.text().into_owned())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                escapes,
+                [
+                    "\\x", "\\u", "\\u", "\\x", "\\u", "\\x41", "\\u0041", "\\u{41}", "\\n", "\\x"
+                ],
+                "{dialect:?}"
+            );
+            let string = dialect.ast_grep("x = 'C:\\x';\n");
+            assert!(string.root().get_inner_node().has_error(), "{dialect:?}");
         }
     }
 
@@ -3362,6 +3526,79 @@ pub mod tests {
                     .dfs()
                     .any(|node| node.kind() == "binary_expression")
             );
+        }
+    }
+
+    /// `using` is a name wherever no `using` declaration parses, as ECMAScript and TypeScript read
+    /// it: `f(using)`, `using.push(2)`, `using = [2]`, `using[0] = 1`, a parameter named `using`,
+    /// and `using` before a line break. `using x = f()`, `await using x = f()` and the `for` heads
+    /// stay `using` declarations, and in TypeScript a declaration takes a type (Patch 18 in
+    /// `grammars/tree-sitter-javascript/PATCHES.md`, Patch 30 in
+    /// `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn using_is_a_name_where_no_using_declaration_parses() {
+        let names = "let using = [1];\nfunction f(x) { return x; }\nf(using);\nconst n = using.length;\n\
+                     using.push(2);\nfunction g() { return using; }\nconst y = using;\nusing = [2];\n\
+                     const z = 1 + using;\n(using);\nfunction h(using) { return 1; }\nusing[0] = 1;\n\
+                     async function q() { await using; }\nfor (using of xs) {}\nusing\nx = 1;\n";
+        let declarations = "using a = f();\nawait using b = f();\nfor (using c = f(); ;) {}\n\
+                            for (using d of ds) {}\nfor (await using e of es) {}\n";
+        for dialect in [
+            GrammarDialect::JavaScript,
+            GrammarDialect::TypeScript,
+            GrammarDialect::Tsx,
+        ] {
+            let root = dialect.ast_grep(names);
+            assert!(!root.root().get_inner_node().has_error(), "{dialect:?}");
+            // Every `using` leaf is a name: a `using` declaration's keyword would be a `using` token.
+            let kinds = root
+                .root()
+                .dfs()
+                .filter(|node| node.text() == "using" && node.is_leaf())
+                .map(|node| node.kind().into_owned())
+                .collect::<Vec<_>>();
+            assert_eq!(kinds, ["identifier"; 14], "{dialect:?}");
+
+            let root = dialect.ast_grep(declarations);
+            assert!(!root.root().get_inner_node().has_error(), "{dialect:?}");
+            let declared = root
+                .root()
+                .dfs()
+                .filter_map(|node| match node.kind().as_ref() {
+                    "using_declaration" => Some(node.text().into_owned()),
+                    "for_in_statement" => {
+                        let left = node.field("left").expect("a for-of head has a left side");
+                        let kind = node
+                            .field_children("kind")
+                            .map(|token| token.text().into_owned())
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        Some(format!("{kind} {}", left.text()))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                declared,
+                [
+                    "using a = f();",
+                    "await using b = f();",
+                    "using c = f();",
+                    "using d",
+                    "await using e",
+                ],
+                "{dialect:?}"
+            );
+        }
+
+        for root in typescript_and_tsx("using t: T = f();\nawait using u: U = f();\n") {
+            let declared = root
+                .root()
+                .dfs()
+                .filter(|node| node.kind() == "using_declaration")
+                .map(|node| node.text().into_owned())
+                .collect::<Vec<_>>();
+            assert_eq!(declared, ["using t: T = f();", "await using u: U = f();"]);
         }
     }
 }

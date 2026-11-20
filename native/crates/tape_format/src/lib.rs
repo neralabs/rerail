@@ -23,6 +23,13 @@ pub mod home;
 pub mod newlines;
 /// The tape's reads as Rust, written from their CLIF (decision 0310; `rerail_clif::reads::rust_source`).
 mod generated_reads;
+/// The tape's writer's ops as Rust, from CLIF (decision 0434 §6): `rerail_clif::writer::rust_source`.
+mod generated_writer;
+
+
+/// The writer's ops as Rust source (`generated_writer`, the host's own): a tier 2 generated ahead of time that writes
+/// format 16 holds it as a module of its own and calls the ops at its node words (`rerail_compiler::rust_stream`).
+pub const WRITER_RUST: &str = include_str!("generated_writer.rs");
 
 pub const MAGIC: &[u8; 8] = b"TMPTAP9N";
 /// 10: supertype memberships folded into the codes; 11: columns aligned (`COLUMN_ALIGN`); 12:
@@ -67,7 +74,7 @@ pub const FIELD_LIMIT: usize = 64;
 pub const SENTINEL: u16 = u16::MAX;
 /// ERROR's `kf`.
 pub const ERROR_CODE: u16 = 0;
-/// The `.rr` dialect's language tag (`languages/rr.json`'s `tapeTag`).
+/// The `.rerail` dialect's language tag (`languages/rr.json`'s `tapeTag`).
 pub const RR_TAG: u8 = 13;
 
 /// A kind's bits in a code's `kf`: the field is above them.
@@ -144,7 +151,7 @@ pub struct Widths {
 
 impl Widths {
     /// The guess for a source of `len` bytes (decision 0140). An offset and a tail are at most
-    /// the source's length, and a `.rr` file has fewer nodes than bytes: below 64 KiB every
+    /// the source's length, and a `.rerail` file has fewer nodes than bytes: below 64 KiB every
     /// column fits 2 bytes, so nearly every file is written once. Above it, offsets and tails
     /// stay 2 (they are short distances), and sizes take 4 from `SIZE_GUESS_BYTES` on.
     pub fn guess(len: usize) -> Self {
@@ -186,7 +193,7 @@ impl Layout for Widths {
 }
 
 /// From this many source bytes on, `Widths::guess` writes sizes at 4 bytes. Calibrated on the
-/// repository's 1,362 `.rr` files (`rr_syntax`'s `widths_guess_calibration`, 2026-11-13): the
+/// repository's 1,362 `.rerail` files (`rr_syntax`'s `widths_guess_calibration`, 2026-11-13): the
 /// densest has 0.334 nodes a byte, the densest of 64 KiB or more 0.205 (42,081 nodes in
 /// 205,423 bytes); none needs 4. At 0.205 a file has 65,535 nodes at about 320,000 bytes. With
 /// this bound no file is parsed twice; at 160,000, six were.
@@ -201,15 +208,6 @@ const ID_SLOTS: usize = 1 << 19;
 pub const CLASS_SHIFT: u32 = 19;
 /// The most supertype classes a writer's keys name.
 pub const MAX_CLASSES: usize = 4;
-
-/// A tape written as a parser parses: each node's columns at their final widths, at its place,
-/// as it is made. The parser gives each node in preorder (`push`), its end and so its size at
-/// its close (`close`), and edits only the nodes it made last: a code changed (`set_key`), a
-/// node put before the ones from a place on (`insert`), the nodes from a place on taken back
-/// (`truncate`). Each edit rewrites only the nodes from its place on. At the end (`finish`) the
-/// columns are moved into place after the code column, and the header and code table written.
-///
-/// A node's key is its code: `kf | flags << 16`, and a bit for each supertype class it is in
 
 /// `v[from..to]` moved up by `by` cells (an insert's room). A span that fits a fixed window of
 /// `W` cells, with room for the window past it, moves as one fixed-size copy: a vector load and
@@ -227,6 +225,14 @@ fn shift_up<T: Copy + Default, const W: usize>(v: &mut [T], from: usize, to: usi
     }
 }
 
+/// A tape written as a parser parses: each node's columns at their final widths, at its place,
+/// as it is made. The parser gives each node in preorder (`push`), its end and so its size at
+/// its close (`close`), and edits only the nodes it made last: a code changed (`set_key`), a
+/// node put before the ones from a place on (`insert`), the nodes from a place on taken back
+/// (`truncate`). Each edit rewrites only the nodes from its place on. At the end (`finish`) the
+/// columns are moved into place after the code column, and the header and code table written.
+///
+/// A node's key is its code: `kf | flags << 16`, and a bit for each supertype class it is in
 /// (`classes`, from `CLASS_SHIFT`).
 pub struct Writer<L: Layout = Widths> {
     /// The header, then the code column: the image's start, as it will be. Reserved for the
@@ -269,17 +275,17 @@ pub struct Writer<L: Layout = Widths> {
     held: Vec<Held>,
     tag: u8,
     /// Where the run writes format 16 or 16z (`to`): the nodes before `passed` are given to its ops, and an edit
-    /// reaches before them only to retag a node or set an open node's start (decision 0426 §2). 0 for format 15.
+    /// reaches before them only to retag a node or set an open node's start (decision 0434 §2). 0 for format 15.
     sixteen: Option<Box<Passing>>,
     passed: usize,
     /// The node the columns' first cells are: the nodes before it were passed to format 16's ops, and their cells
-    /// given back (the window, decision 0426 §2). 0 for format 15.
+    /// given back (the window, decision 0434 §2). 0 for format 15.
     base: usize,
     /// The most nodes the window has held at a commit: the sizes its cells held.
     widest: usize,
 }
 
-/// Where a lean parser's writer writes (decision 0426 §2): format 15's columns, finished at the end, or format 16
+/// Where a lean parser's writer writes (decision 0434 §2): format 15's columns, finished at the end, or format 16
 /// or 16z, each node given to `f16::Writer`'s ops as it is committed. The writer's columns are then the edit window.
 #[derive(Clone, Default)]
 pub enum Target {
@@ -322,7 +328,7 @@ impl<Out, F: FnMut(Writer) -> Result<Out, Redo>> Sink<Out> for F {
 
 /// The format 16 writer the nodes are passed to as they are committed (`Writer::pass`).
 struct Passing {
-    w: f16::Writer<'static>,
+    w: f16::Writer,
     number: std::sync::Arc<dyn Fn(u32) -> Option<u32> + Send + Sync>,
     /// Each code id's number, as far as resolved.
     numbers: Vec<u32>,
@@ -478,7 +484,7 @@ impl<L: Layout> Writer<L> {
     }
 
     /// The writer writing to `target` for the source `src`: format 16's nodes passed to its ops as they are
-    /// committed (decision 0426 §2). Before the first push.
+    /// committed (decision 0434 §2). Before the first push.
     pub fn to(mut self, target: Target, src: &[u8]) -> Self {
         assert_eq!(self.n, 0, "a target before the first node");
         if let Target::F16(t) = target {
@@ -1220,7 +1226,7 @@ impl<L: Layout> Writer<L> {
         self.codes.iter().map(|&(key, _)| key).collect()
     }
 
-    /// The tape in format 16 or 16z and its presence, where the writer writes it (`to`; decision 0426 §2): the nodes
+    /// The tape in format 16 or 16z and its presence, where the writer writes it (`to`; decision 0434 §2): the nodes
     /// not yet passed on given to the ops, then their `finish`. Format 15's columns are not made. `Redo` where the
     /// writer's widths did not keep every size and end exactly (format 15's offsets do not matter here); `Ok(Err)`
     /// where the nodes are not a format 16 tape (a code the language's table lacks, an edit before a commit, a node
@@ -1448,14 +1454,59 @@ pub struct View<'a> {
     tail: &'a [u8],
     widths: [u8; 3],
     from_start: bool,
-    /// Each code's key, by id.
-    keys: Vec<u32>,
+    /// Each code's key, by id: read from the code table, or a holder's (`with_keys`).
+    keys: std::borrow::Cow<'a, [u32]>,
+    /// Where the code table starts, and how many codes it holds.
+    table: usize,
+    codes: usize,
 }
 
 impl<'a> View<'a> {
     /// The image `bytes`, checked as `decode` checks it: the header, the columns' lengths, the code table, and
     /// each code id and size in range.
     pub fn new(bytes: &'a [u8]) -> Result<Self, String> {
+        let view = Self::columns(bytes)?;
+        for i in 0..view.n {
+            if usize::from(u16::from_le_bytes([view.code[2 * i], view.code[2 * i + 1]])) >= view.keys.len() {
+                return Err("a node's code is not in the table".into());
+            }
+            if i + view.size(i).max(1) > view.n {
+                return Err("a node's size runs past the tape".into());
+            }
+        }
+        Ok(view)
+    }
+
+    /// An image `new` checked before, `keys` its code table's keys as `keys` gave them then (its holder keeps both,
+    /// unchanged): its header and columns read again, the nodes not checked again and the code table not read.
+    pub fn with_keys(bytes: &'a [u8], keys: &'a [u32]) -> Self {
+        let mut v = Self::columns_only(bytes).expect("an image checked before");
+        debug_assert_eq!(keys.len(), v.codes, "the image's own keys");
+        v.keys = std::borrow::Cow::Borrowed(keys);
+        v
+    }
+
+    /// Each code's key, by id, for a holder to keep (`with_keys`): those `new` read, not copied again.
+    pub fn into_keys(self) -> Box<[u32]> {
+        self.keys.into_owned().into_boxed_slice()
+    }
+
+    /// The header, the columns and the code table.
+    fn columns(bytes: &'a [u8]) -> Result<Self, String> {
+        let mut v = Self::columns_only(bytes)?;
+        let (code_count, mut c) = (v.codes, v.table);
+        let mut keys = Vec::with_capacity(code_count);
+        for _ in 0..code_count {
+            let entry = bytes.get(c..c + 6).ok_or("a short code table")?;
+            keys.push(u32::from(u16::from_le_bytes([entry[0], entry[1]])) | u32::from(entry[2]) << 16);
+            c += 6 + 2 * usize::from(entry[5]);
+        }
+        v.keys = std::borrow::Cow::Owned(keys);
+        Ok(v)
+    }
+
+    /// The header and the columns, and where the code table starts; no key read.
+    fn columns_only(bytes: &'a [u8]) -> Result<Self, String> {
         let u64_at = |at: usize| -> Result<usize, String> {
             let b = bytes.get(at..at + 8).ok_or("a short tape header")?;
             usize::try_from(u64::from_le_bytes(b.try_into().expect("8 bytes"))).map_err(|_| "a tape length overflows".to_owned())
@@ -1480,23 +1531,7 @@ impl<'a> View<'a> {
         };
         let w = widths.map(usize::from);
         let (code, size, base, off, tail) = (column(2, n)?, column(w[0], n)?, column(4, n.div_ceil(CHECKPOINT_STRIDE))?, column(w[1], n)?, column(w[2], n)?);
-        let mut keys = Vec::with_capacity(code_count);
-        let mut c = at;
-        for _ in 0..code_count {
-            let entry = bytes.get(c..c + 6).ok_or("a short code table")?;
-            keys.push(u32::from(u16::from_le_bytes([entry[0], entry[1]])) | u32::from(entry[2]) << 16);
-            c += 6 + 2 * usize::from(entry[5]);
-        }
-        let view = View { n, code, size, base, off, tail, widths, from_start, keys };
-        for i in 0..n {
-            if usize::from(u16::from_le_bytes([code[2 * i], code[2 * i + 1]])) >= code_count {
-                return Err("a node's code is not in the table".into());
-            }
-            if i + view.size(i).max(1) > n {
-                return Err("a node's size runs past the tape".into());
-            }
-        }
-        Ok(view)
+        Ok(View { n, code, size, base, off, tail, widths, from_start, keys: std::borrow::Cow::Borrowed(&[]), table: at, codes: code_count })
     }
 
     #[inline(always)]
@@ -1688,7 +1723,7 @@ mod tests {
     /// A parser's writer writing format 16 or 16z (`to`, `finish_16`) gives the tree it finishes in format 15, after
     /// the edits a parse makes: a rewind, a node put before its first child, a key changed. Committed as it goes, the
     /// nodes are passed to the format 16 writer's ops before the edits that reach them: a close, a retag (decision
-    /// 0426 §2).
+    /// 0434 §2).
     #[test]
     fn a_parsers_writer_finishes_in_format_16_as_in_format_15() {
         use crate::tape::{CodeTable, Entry, F15, Tape, f15_columns};
@@ -1738,11 +1773,11 @@ mod tests {
             };
             match written {
                 f16::Written::F16(t) => {
-                    let r = t.reader(&lang).unwrap();
+                    let r = t.reader(lang).unwrap();
                     check(&|i| (r.code(i), r.subtree_end(i), r.parent(i), r.start(i), r.end(i)), r.len());
                 }
                 f16::Written::F16Z(t) => {
-                    let r = t.reader(&lang).unwrap();
+                    let r = t.reader(lang).unwrap();
                     check(&|i| (r.code(i), r.subtree_end(i), r.parent(i), r.start(i), r.end(i)), r.len());
                 }
             }
@@ -1752,7 +1787,7 @@ mod tests {
     /// A format 16 writer's columns hold the window, the nodes since the last commit: a file of many statements
     /// keeps them at `WINDOW` cells, and its tape is format 15's tree. The parse reads its open ancestors after a
     /// commit; a read of a node given back, or an edit before the window, says the tape is not format 16's
-    /// (`finish_16`'s reason), and `holds_all` says the parse must run again for format 15 (decision 0426 §2).
+    /// (`finish_16`'s reason), and `holds_all` says the parse must run again for format 15 (decision 0434 §2).
     #[test]
     fn a_format_16_writers_columns_are_the_window() {
         use crate::tape::{CodeTable, F15, Tape, f15_columns};

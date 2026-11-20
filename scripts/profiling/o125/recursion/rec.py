@@ -1,4 +1,4 @@
-# rec.py [steps]: recursion in calls.rr's real edits, from the engine's derivations (drv_i) at each replay step.
+# rec.py [steps]: recursion in calls.rerail's real edits, from the engine's derivations (drv_i) at each replay step.
 # Reads $REC_DIR (default tmp/rec): meta.json (prov.py) and rel-NN/ (dump.sh). Decision 0328's measurements.
 # Per state: rows of recursive relations, and those on a cycle of the derivation graph. Per edit: what recheck alone
 # (no overdelete, no state) keeps wrongly; DRed's overdelete; and yes/no/maybe from the deltas, checked exact.

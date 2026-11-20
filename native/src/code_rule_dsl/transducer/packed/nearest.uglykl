@@ -1,0 +1,41 @@
+// Nearest ancestors in a set, in one dispatch (decisions 0038, 0040). A cell is (set, node) and
+// holds a state: a target node and whether the target is final (bit 31).
+//
+// - Final: the target is the answer, the nearest strict ancestor in the set, or NONE.
+// - Not final: the target is a strict ancestor not in the set, so the cell's answer is the
+//   target's answer.
+//
+// A thread takes its target's current state. If that state is final, its target is the cell's
+// answer. Otherwise the cell takes the target's target, still not final. Every state any thread
+// writes keeps this meaning, so a thread may read another's state at any moment, before or
+// after that one moves. Each step moves the target strictly up the tree, so a thread is done
+// within its depth's steps, and it never waits on another thread. Threads that read cells
+// already moved up skip ahead, which is the pointer jumping.
+
+#include <ukl/backend.h>
+
+#define NONE 0xFFFFFFFFu
+#define FINAL 0x80000000u
+
+typedef struct NearestArgs { uint32_t nodes, cells, pad0, pad1; } NearestArgs;
+UKL_REFLECT_STRUCT(NearestArgs, nodes, cells, pad0, pad1)
+
+DEFINE_KERNEL2(nearest, nearest_jump,
+               RWBUFFER, uint32_t,    state, "[args.cells]",
+               RWBUFFER, uint32_t,    stats, "[1]",
+               ARGS,     NearestArgs, args,  ,
+               GID0,     uint32_t,    cell,  )
+{
+  if(cell>=args.cells)return;
+  uint32_t v=ukl_atomic_load(&state[cell]);
+  // The target is a node of the same set's block.
+  uint32_t base=(cell/args.nodes)*args.nodes;
+  uint32_t steps=0u;
+  while((v&FINAL)==0u&&steps<args.nodes){
+    uint32_t w=ukl_atomic_load(&state[base+v]);
+    v=w;
+    steps++;
+    ukl_atomic_store(&state[cell],v);
+  }
+  if(steps>0u)ukl_atomic_max(&stats[0],steps);
+}

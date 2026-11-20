@@ -1,4 +1,4 @@
-//! A text test's verdicts in the one rolling cache (decision 0450 step 2d), written once in CLIF for the host (the
+//! A text test's verdicts in the one rolling cache (decision 0478 step 2d), written once in CLIF for the host (the
 //! blocks crate's `generated_reads.rs`), the kernels (`relation_reads.metal`) and the JIT.
 //!
 //! An entry holds 64 symbols of one test (the user's choice, 2026-11-19): its key is `(test + 1) << 32 | symbol >> 6`,
@@ -117,7 +117,7 @@ fn text_key(b: &mut B<'_, '_>, fns: Value, sym: Value) -> Value {
 }
 
 /// The text of functions `fns` of symbol `sym` kept in the cache (the descriptor): its entry (its bytes `LEN` less
-/// `PAYLOAD`, at `PAYLOAD`), with what was found in the low bits (`reads::FOUND`, `NOT_KEPT`, `PENDING`).
+/// `PAYLOAD`, at `PAYLOAD`), with what was found in the low bits (`view::cache::FOUND`, `NOT_KEPT`, `PENDING`).
 pub fn text_find(b: &mut B<'_, '_>) -> Value {
     let (fns, sym) = (b.arg(0), b.arg(1));
     let key = text_key(b, fns, sym);
@@ -126,7 +126,7 @@ pub fn text_find(b: &mut B<'_, '_>) -> Value {
     crate::reads::cache_lookup(b, cache, key, none, None)
 }
 
-/// `text_find`, or on a miss an entry taken for a text of `len` bytes (`reads::TAKEN`): its caller writes the text
+/// `text_find`, or on a miss an entry taken for a text of `len` bytes (`view::cache::TAKEN`): its caller writes the text
 /// at `PAYLOAD`, then `cache_done`. A text past the cache's most is not kept (`NOT_KEPT`).
 pub fn text_open(b: &mut B<'_, '_>) -> Value {
     let (fns, sym, len) = (b.arg(0), b.arg(1), b.arg(2));
@@ -152,7 +152,7 @@ mod tests {
     use rerail_blocks::block::{Block, kind};
     use rerail_blocks::generated_reads::{verdict_get, verdict_put};
 
-    /// Decision 0450 R3 (its host half): a verdict kept is found, by its test and symbol only; the cache stays within
+    /// Decision 0478 R3 (its host half): a verdict kept is found, by its test and symbol only; the cache stays within
     /// its generations, and a group read as others come is kept while those not read are let go (LRU).
     #[test]
     fn a_verdict_kept_is_found_and_the_cache_keeps_what_is_read() {
@@ -182,14 +182,14 @@ mod tests {
         Spec::check(buf).unwrap();
     }
 
-    /// Decision 0450 step 2e: entries of any size up to the cache's most, from each generation's bump arena. A text
+    /// Decision 0478 step 2e: entries of any size up to the cache's most, from each generation's bump arena. A text
     /// is found, or taken for its length, written and completed; texts of different lengths lie apart; one past the
     /// most is not kept and turns no generation; a text being written is pending to others; a generation full by
     /// its bytes turns, and a text read as others come is kept while one not read goes; a generation with a writer
     /// still in it is not cleared under it, and is cleared once its writer is done.
     #[test]
     fn texts_of_any_length_are_kept_in_the_arenas_by_bytes() {
-        use crate::reads::{FOUND, NOT_KEPT, PENDING, TAKEN};
+        use crate::view::cache::{FOUND, NOT_KEPT, PENDING, TAKEN};
         use crate::view::cache::{Counts, LEN, PAYLOAD};
         use rerail_blocks::generated_reads::{cache_done, text_find, text_open};
         let spec = Spec::arena(3, 16, 1024, 256);

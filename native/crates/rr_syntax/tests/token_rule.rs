@@ -1,4 +1,4 @@
-//! The named-only tape's rule (RER-131's) on every `.rr` file of the repository. A token is a
+//! The named-only tape's rule (RER-131's) on every `.rerail` file of the repository. A token is a
 //! **delimiter** (a bracket, `,`, `;`, `|`, `<`, `>`, a quote) or not. A delimiter is left out
 //! where its gap is implied. Any other token (a keyword, an operator, `:`, `.`, `=>`) is left out
 //! only where its parent's kind implies it in every gap it can stand in: under one parent kind,
@@ -22,7 +22,7 @@ fn corpus() -> Vec<(String, String)> {
             let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
             if p.is_dir() && !skip {
                 work.push(p);
-            } else if p.extension().is_some_and(|x| x == "rr") {
+            } else if p.extension().is_some_and(|x| x == "rerail") {
                 files.extend(std::fs::read_to_string(&p).ok().map(|t| (p.display().to_string(), t)));
             }
         }
@@ -73,11 +73,10 @@ fn gaps() -> Vec<Gap> {
         let mut named: Vec<Vec<(u32, String)>> = vec![Vec::new(); t.len()];
         let mut toks: Vec<Vec<Tok>> = (0..t.len()).map(|_| Vec::new()).collect();
         for (i, n) in t.iter().enumerate() {
-            if let Some(p) = n.parent {
-                if !n.extra && n.kind < FIRST_ANONYMOUS {
+            if let Some(p) = n.parent
+                && !n.extra && n.kind < FIRST_ANONYMOUS {
                     named[p as usize].push((n.start, label(n)));
                 }
-            }
             let _ = i;
         }
         // The nodes on the path from the root to the last node started, by preorder.
@@ -137,7 +136,7 @@ fn gaps() -> Vec<Gap> {
     out
 }
 
-/// What the corpus cannot show, from the grammar (`21-named-only.bitlex`): a setting's arguments
+/// What the corpus cannot show, from the grammar (`22-test-blocks.bitlex`): a setting's arguments
 /// and a declaration's or a functor's modifiers may be any punctuation (`punctuation`,
 /// `setting_punctuation`), or none. So the gaps around them imply the empty word, and every
 /// punctuation but a delimiter is kept under those kinds.

@@ -41,8 +41,8 @@ The host strips the prefix before the passes, as simdjson does (`CompiledBlock::
 **The `prefix` op.** The ladder's JSON files now spell the mark `prefix 0xef 0xbb 0xbf`. Bitlex
 compiles that to one leaf, `BlockOp::Prefix(n, word)`, in place of a mask per byte. The
 interpreter keeps the mark's meaning from it, and a program the host cannot strip computes it
-once a file from the first word (`prefix_start`). Metal refuses it, as it already refused any
-program with a prefix (`starts_late`).
+once a file from the first word (`prefix_start`). Metal computes it in the body the
+same way (0335, since 2026-11-18); the host's strip is the CPU's.
 
 ## What changed
 

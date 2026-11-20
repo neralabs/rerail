@@ -12,7 +12,6 @@ import { RULE_PACK_RULE_ID } from "../engine/catalog/rule-packs.js";
 import {
   AUDIT_MAX_FILES,
   AUDIT_MAX_SOURCE_BYTES,
-  IGNORED_DIRECTORIES,
   MAX_SOURCE_BYTES,
   languageFor,
   sourceFactsCache,
@@ -20,6 +19,7 @@ import {
   type SourceFactsCache,
   type SourceFileFacts,
 } from "../engine/code-rule/code-rule-enforcer.js";
+import { IGNORED_DIRECTORIES } from "../engine/code-rule/ignored-directories.js";
 import {
   encodeCodeRuleWorkspaceRequest,
   loadNativeBinding,
@@ -29,6 +29,7 @@ import {
   type NativeCompiledCodeRuleDsl,
   type NativeGitIgnoreMatcher,
 } from "../engine/native/native.js";
+import { nativeGitAccess } from "../engine/native/git-access.js";
 import { bundledCodeRuleDslDirectory, CodeRuleCompileError, EngineUnavailableError } from "../engine/code-rule/code-rule-compile.js";
 import { CODE_RULE_FORMAT, codeRuleSchema, type CodeRule } from "../engine/code-rule/code-rule-schema.js";
 import { ConversationRuleRegistry } from "../engine/catalog/registry.js";
@@ -36,6 +37,7 @@ import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/re
 import { folderContains, normalizeFolder, type CheckoutContext, type EffectiveRule, type LibraryRule, type RuleCatalog } from "../engine/catalog/repository-model.js";
 import type { RuleDocument } from "../engine/catalog/rule-store.js";
 import { BLOCK_STEERS_NOTE, type RuleMode } from "../engine/catalog/rule-mode.js";
+import { blockModeEnabled, conversationRulesEnabled, experimentOffMessage } from "../engine/experimental-features.js";
 import { checkoutStatus, followsGitignore, lookupCheckout, recordCheckout } from "../engine/catalog/repository-registry.js";
 import { addAttachment, listRepositoryRules, setUpRepository } from "../engine/catalog/rule-configuration.js";
 import {
@@ -50,7 +52,7 @@ import {
   type CopiedRule,
 } from "../engine/catalog/rule-library.js";
 import { isApproved, ruleSubject } from "../engine/catalog/rule-approval.js";
-import { parseConversationRule, sampleSourceSchema, SAMPLE_BOUNDARIES, type ConversationRule } from "../engine/catalog/rule-schema.js";
+import { parseConversationRule, ruleTitleSchema, sampleSourceSchema, SAMPLE_BOUNDARIES, untitledRuleRefusal, type ConversationRule } from "../engine/catalog/rule-schema.js";
 import { readRulesDashboard } from "../presentation/session-presentation.js";
 import { deniedByPathBoundary } from "../engine/path-boundary.js";
 import { stableJsonText } from "../engine/stable-json.js";
@@ -84,11 +86,13 @@ type Expectation = "caught" | "passed";
 /**
  * A draft rule, the folder of its repository it is added at, and its cases. `folder` is undefined when the draft names
  * none: a new rule is added to the whole repository, and one already added stays where it is. `""` is the whole
- * repository.
+ * repository. `bare` marks a rule document read on its own (a worktree's `.rerail/rules/<name>.json`), which loads as it
+ * is and is not held to what `rules add` requires of a draft.
  */
-export type RuleDraft =
+export type RuleDraft = (
   | { kind: "code"; rule: CodeRule; folder: string | undefined; cases: ReadonlyArray<{ expected: Expectation; sample: CodeRuleCase }> }
-  | { kind: "conversation"; rule: ConversationRule; folder: string | undefined; cases: ReadonlyArray<{ expected: Expectation; sample: ConversationCase }> };
+  | { kind: "conversation"; rule: ConversationRule; folder: string | undefined; cases: ReadonlyArray<{ expected: Expectation; sample: ConversationCase }> }
+) & { readonly bare?: true };
 
 /** The draft's `folder`, normalized; undefined when it names none. */
 function draftFolder(folder: string | undefined): string | undefined {
@@ -235,7 +239,25 @@ function asDraft(value: unknown): unknown {
   return { kind: "format" in value && value.format === CODE_RULE_FORMAT ? "code" : "conversation", rule: value };
 }
 
-/** The draft in `file`; with `bareRule`, a rule document on its own is read as a draft with no cases (`asDraft`). */
+/**
+ * Internal testing: `rules test` and `rules add` take a conversation rule, or a rule on Block, only while its experiment
+ * is on in this process. A rule of yours already on Block keeps it, so a draft that edits one may stay on Block. Tools
+ * that check a pack's own rules parse drafts without this.
+ */
+function refuseExperimentsOff(draft: RuleDraft): RuleDraft {
+  if (draft.kind === "conversation" && !conversationRulesEnabled()) throw new RuleDraftError(experimentOffMessage("CONVERSATION_RULES"));
+  if (draft.rule.mode === "block" && !blockModeEnabled() && storedLibraryMode(draft.rule.id) !== "block") {
+    throw new RuleDraftError(`${experimentOffMessage("BLOCK_MODE")} ${BLOCK_STEERS_NOTE} Set its mode to steer.`);
+  }
+  return draft;
+}
+
+/** The mode of the library rule stored as `id`, read without recording anything; undefined where none is. */
+function storedLibraryMode(id: string): RuleMode | undefined {
+  return readRecorded(database => getLibraryRule(database, id)?.document.rule.mode, () => undefined);
+}
+
+/** The draft in `file`; with `bareRule`, a rule document on its own is read as a draft with no cases (`asDraft`), marked `bare`. */
 export function readRuleDraft(file: string, options: { readonly bareRule?: boolean } = {}): RuleDraft {
   const text = readFileSync(resolve(file), "utf8");
   let value: unknown;
@@ -244,7 +266,10 @@ export function readRuleDraft(file: string, options: { readonly bareRule?: boole
   } catch (error) {
     throw new RuleDraftError(`${file} is not JSON: ${errorMessage(error)}`);
   }
-  return parseRuleDraft(options.bareRule === true ? asDraft(value) : value);
+  if (options.bareRule !== true) return parseRuleDraft(value);
+  const wrapped = asDraft(value);
+  const draft = parseRuleDraft(wrapped);
+  return wrapped === value ? draft : { ...draft, bare: true };
 }
 
 function errorMessage(error: unknown): string {
@@ -491,7 +516,7 @@ function repositoryBoundary(binding: NativeBinding, root: string): (path: string
   if (repositoryFollowsGitignore(root)) {
     let matcher: NativeGitIgnoreMatcher | null;
     try {
-      matcher = binding.openGitIgnoreMatcher(root);
+      matcher = nativeGitAccess(binding).openGitIgnoreMatcher(root);
     } catch (error) {
       throw new RuleDraftError(`Git's ignore rules for ${root} could not be read, so the repository pass was not run: ${errorMessage(error)}`);
     }
@@ -651,14 +676,17 @@ export async function testRuleDraftCases(draft: RuleDraft, root: string): Promis
  * it ({@link draftPlacement}). Nothing is written to the catalog or the content store.
  */
 export async function testRuleDraft(draft: RuleDraft, repo: string): Promise<RuleDraftReport> {
+  const untitled = draft.bare === true ? undefined : untitledRuleRefusal(draft.rule);
   if (draft.kind === "conversation") {
     const cases = conversationCaseResults(draft.rule, draft.cases);
-    return { ok: cases.every(result => result.ok), valid: true, cases, repository: null };
+    return { ok: cases.every(result => result.ok), valid: true, ...(untitled === undefined ? {} : { refusal: untitled }), cases, repository: null };
   }
   const { binding, compiled } = compileCodeRule(draft.rule);
   const root = repositoryIdentityLocation(repo).workspaceRoot;
   const cases = await policyCaseResults(binding, compiled, root, draft.cases);
-  const { folders, refusal, unread } = draftPlacement(draft, root);
+  const placement = draftPlacement(draft, root);
+  const { folders, unread } = placement;
+  const refusal = untitled ?? placement.refusal;
   const pass = await repositoryPass(binding, compiled, root, passFolders(folders));
   const repository = unread === undefined ? pass : { ...pass, notNarrowed: unread };
   return { ok: cases.every(result => result.ok), valid: true, ...(refusal === undefined ? {} : { refusal }), cases, repository };
@@ -670,7 +698,7 @@ export async function testRuleDraft(draft: RuleDraft, repo: string): Promise<Rul
  */
 export async function testRuleDraftFile(file: string, repo: string): Promise<RuleDraftReport> {
   try {
-    return await testRuleDraft(readRuleDraft(file, { bareRule: true }), repo);
+    return await testRuleDraft(refuseExperimentsOff(readRuleDraft(file, { bareRule: true })), repo);
   } catch (error) {
     if (!(error instanceof RuleDraftError)) throw error;
     return { ok: false, valid: false, error: error.message, cases: [], repository: null };
@@ -784,6 +812,8 @@ function attachLibraryRule(database: RerailDatabase, checkout: CheckoutContext, 
  * as your copy ({@link addRerailRuleCopy}).
  */
 export function addRuleDraft(draft: RuleDraft, repo: string, databasePath = defaultRerailDatabasePath()): AddedRule {
+  const untitled = untitledRuleRefusal(draft.rule);
+  if (untitled !== undefined) throw new RuleDraftError(untitled);
   const database = openRerailDatabase(databasePath);
   try {
     const checkout = recordCheckout(database, repo);
@@ -865,6 +895,25 @@ function rerailRuleShown(database: RerailDatabase, ruleCatalog: RuleCatalog, bun
 }
 
 /**
+ * `document` with its pack's title for the By Rerail rule, from the pack's manifest, where the document has none: a
+ * copy keeps the name the dashboard shows, and `rules add` takes it. A manifest title a rule may not carry (over 200
+ * characters) is left out, and `rules show` says the draft needs one.
+ */
+function withPackTitle(document: RuleDocument, ruleCatalog: RuleCatalog): RuleDocument {
+  if (document.rule.title !== undefined) return document;
+  const id = document.rule.id;
+  const packId = ruleCatalog.packOf.get(id);
+  const title = packId === undefined ? undefined : ruleCatalog.packs.get(packId)?.rules.find(rule => rule.id === id)?.title;
+  if (title === undefined || !ruleTitleSchema.safeParse(title).success) return document;
+  return { ...document, rule: { ...document.rule, title } } as RuleDocument;
+}
+
+/** The note `rules show` adds for a draft with no title, which `rules add` refuses. */
+function untitledNotes(document: RuleDocument): string[] {
+  return document.rule.title === undefined ? [`${document.rule.id} has no title, and rules add needs one: add rule.title, the rule in plain words.`] : [];
+}
+
+/**
  * The rule `id` as a draft for `rules test` and `rules add`: one of yours, or a By Rerail rule as it runs in `repo`'s
  * repository, which `rules add` stores as your copy. Reading records nothing.
  */
@@ -874,7 +923,8 @@ export function showRule(id: string, repo: string, databasePath = defaultRerailD
     const own = getLibraryRule(database, id);
     if (own !== undefined) {
       const checkout = lookupCheckout(database, repo);
-      return { draft: own.document, notes: [ownRuleNote(database, own, repositoryName(checkout?.checkoutPath ?? repo), checkout?.repositoryKey)] };
+      const note = ownRuleNote(database, own, repositoryName(checkout?.checkoutPath ?? repo), checkout?.repositoryKey);
+      return { draft: own.document, notes: [note, ...untitledNotes(own.document)] };
     }
     if (libraryHoldsId(database, id)) throw new RuleDraftError(`your rule ${id} could not be read; the dashboard shows why`);
     const ruleCatalog = loadRuleCatalog();
@@ -882,7 +932,9 @@ export function showRule(id: string, repo: string, databasePath = defaultRerailD
     if (bundled === undefined) {
       throw new RuleDraftError(`there is no rule ${id}: it is neither yours nor in an installed pack. A worktree's own rules are files in its .rerail/rules/`);
     }
-    return rerailRuleShown(database, ruleCatalog, bundled, repo, id);
+    const shown = rerailRuleShown(database, ruleCatalog, bundled, repo, id);
+    const draft = withPackTitle(shown.draft, ruleCatalog);
+    return { draft, notes: [...shown.notes, ...untitledNotes(draft)] };
   } finally {
     database.$client.close();
   }
@@ -975,6 +1027,7 @@ const EXAMPLE_DRAFT = {
     id: "acme:no-console-log",
     revision: 1,
     mode: "steer",
+    title: "No console.log in src",
     description: "Use the logger, not console.log.",
     scope: { include: ["src/**/*.ts"], exclude: [] },
     clauses: [{
@@ -994,16 +1047,17 @@ function ruleDraftHelp(): string {
   return [
     "Usage:",
     "  rerail rules show <rule id> [--repo <dir>]",
-    "  rerail rules test <draft.json | rule.json | rule.rr> [--repo <dir>] [--json]",
+    "  rerail rules test <draft.json | rule.json | rule.rerail> [--repo <dir>] [--json]",
     "  rerail rules add <draft.json> [--repo <dir>]",
     "",
     "rules show prints a rule as a draft: one of yours, or a By Rerail rule from an installed pack.",
     "rules test checks a draft without storing it: it validates the rule, runs its cases, and for a code rule lists the",
     "places it matches in the repository, in the folders rules add would add it at, and says where rules add would",
     "refuse the draft. It also takes a rule document on its own (a worktree's .rerail/rules/<name>.json), which has no",
-    "cases, and a .rr rule file, whose own tests (.test ... .end) it runs. rules add stores the rule in your library",
-    "and adds it to the repository. A draft that keeps a By Rerail rule's id is stored as your copy of it, added where",
-    "the original is; approving the copy turns the original off there.",
+    "cases, and a .rerail rule file, whose own tests (.test ... .end) it runs from a Rerail checkout, which holds the .rerail",
+    "programs they read (or with RERAIL_SOURCE_ROOT naming one). rules add stores the rule in your library and adds",
+    "it to the repository. A draft that keeps a By Rerail rule's id is stored as your copy of it, added where the",
+    "original is; approving the copy turns the original off there.",
     "",
     "A draft is one JSON file:",
     "  {",
@@ -1017,7 +1071,8 @@ function ruleDraftHelp(): string {
     "  }",
     "",
     "  kind    code for a code rule (a rerail.policy/v1 document), conversation for a conversation rule.",
-    "  rule    the rule, as your library stores it.",
+    "  rule    the rule, as your library stores it. rules add needs its title: the rule in plain words, which the",
+    "          dashboard shows. The agent never reads it.",
     "  folder  optional: the repository folder the rule is added at, \"\" for the whole repository. Absent, a new rule is",
     "          added to the whole repository and one already added stays where it is. A copy of a By Rerail rule",
     "          takes none: it is added where the original is.",
@@ -1091,7 +1146,7 @@ function addedLines(added: AddedRule): string[] {
 async function runAdd(file: string, repo: string, stdout: CommandOutput, stderr: CommandOutput): Promise<number> {
   let added: AddedRule;
   try {
-    added = addRuleDraft(readRuleDraft(file), repo);
+    added = addRuleDraft(refuseExperimentsOff(readRuleDraft(file)), repo);
   } catch (error) {
     if (!(error instanceof RuleDraftError)) throw error;
     stderr.write(`● The rule was not added: ${error.message}\n`);
@@ -1109,7 +1164,7 @@ async function runAdd(file: string, repo: string, stdout: CommandOutput, stderr:
 }
 
 /**
- * The tests a `.rr` rule file carries (`.test` … `.end`), each run by the Engine as `rerail-engine test-rr` runs them:
+ * The tests a `.rerail` rule file carries (`.test` … `.end`), each run by the Engine as `rerail-engine test-rr` runs them:
  * one line a test, and each failed expectation under it.
  */
 export function testRrFile(file: string): NativeRrTestResult[] {
@@ -1129,7 +1184,7 @@ export function formatRrTestReport(results: readonly NativeRrTestResult[]): stri
 }
 
 async function runTest(file: string, repo: string, json: boolean, stdout: CommandOutput): Promise<number> {
-  if (file.endsWith(".rr")) {
+  if (file.endsWith(".rerail")) {
     const results = testRrFile(file);
     stdout.write(`${json ? JSON.stringify(results) : formatRrTestReport(results)}\n`);
     return results.every(result => result.status === "pass") ? 0 : 1;
@@ -1140,8 +1195,8 @@ async function runTest(file: string, repo: string, json: boolean, stdout: Comman
 }
 
 /**
- * `rerail rules show <id>`, `rerail rules test <draft.json | rule.json>` and `rerail rules add <draft.json>`; with
- * `--help`, the draft format.
+ * `rerail rules show <id>`, `rerail rules test <draft.json | rule.json | rule.rerail>` and `rerail rules add <draft.json>`;
+ * with `--help`, the draft format.
  */
 export async function runRuleDraftCommand(
   action: RuleDraftAction,

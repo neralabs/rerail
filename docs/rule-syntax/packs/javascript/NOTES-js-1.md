@@ -1,24 +1,24 @@
 # Notes: batch js-1 (ESLint core rules, accessor-pairs to no-new)
 
-59 ESLint core rules of the javascript pack, written by hand as .rr in four topical groups. Each group's
+59 ESLint core rules of the javascript pack, written by hand as .rerail in four topical groups. Each group's
 vocabulary is its own new library, over one shared library of the ESTree view they all need:
 
 | Library | Lines | Group |
 |---|---|---|
-| `lib/tsx/eslint-a-common.rr` | 156 | all: parentheses, ESTree parents, static names, arguments, tokens, `this` |
-| `lib/tsx/eslint-a-functions.rr` | 258 | A: functions, classes, accessors |
-| `lib/tsx/eslint-a-control.rr` | 98 | B: statements, switch, loops, labels |
-| `lib/tsx/eslint-a-expressions.rr` | 210 | C: literals, operators, members |
-| `lib/tsx/eslint-a-globals.rr` | 186 | D: globals, shadowing, `this` |
-| `lib/tsx/eslint-a-text.rr` | 92 | D: comments |
+| `lib/tsx/eslint-a-common.rerail` | 156 | all: parentheses, ESTree parents, static names, arguments, tokens, `this` |
+| `lib/tsx/eslint-a-functions.rerail` | 258 | A: functions, classes, accessors |
+| `lib/tsx/eslint-a-control.rerail` | 98 | B: statements, switch, loops, labels |
+| `lib/tsx/eslint-a-expressions.rerail` | 210 | C: literals, operators, members |
+| `lib/tsx/eslint-a-globals.rerail` | 186 | D: globals, shadowing, `this` |
+| `lib/tsx/eslint-a-text.rerail` | 92 | D: comments |
 
 All six can be included together with statements, modules, values and names (checked by lowering a rule that
 includes them all and runs under rrlab). No relation name of an eslint-a library is declared in another library.
 
-The common library (`lib/tsx/eslint-a-common.rr`):
+The common library (`lib/tsx/eslint-a-common.rerail`):
 - `deparen(e, x)`, `deparen_count(e, x, k)`: e without the parentheses ESTree does not have.
   `estree_parent(x, p)`: the ESTree parent.
-- `function_node(f)`: modules.rr's function_kind, as a node test.
+- `function_node(f)`: modules.rerail's function_kind, as a node test.
 - `static_string(s, v)` (getStaticStringValue), `key_static(k, x)` (a key's getStaticPropertyName),
   `static_prop(n, o, x)` (a member access's, o without parentheses).
 - `call_arg(c, a, i)`, `call_arg_count(c, k)`: arguments of a call or `new`, comments skipped.
@@ -65,7 +65,7 @@ the same for every rule. Every rule was also diffed at line:column against ESLin
 | eslint-no-empty-static-block | 22 | 6/0/0 | none |
 | eslint-no-extra-bind | 43 | 35/0/0 | follows the recording (ESLint 10.11): field initialisers and static blocks have their own `this` |
 
-Library: `lib/tsx/eslint-a-functions.rr`, 315 lines.
+Library: `lib/tsx/eslint-a-functions.rerail`, 315 lines.
 
 Options checked against ESLint 9.39 beyond the defaults: max-params, max-statements and max-nested-callbacks with a
 small max; max-statements ignoreTopLevelFunctions; no-empty-function allow lists; class-methods-use-this
@@ -80,8 +80,8 @@ except where noted below. The messages are ESLint's, with the JSON's advice appe
 
 **accessor-pairs, 1 FP (fixture 067.js).** `/* globals Object:off */ Object.defineProperty(foo, 'bar', { set(v) {} })`.
 ESLint 10.11 checks that `Object` and `Reflect` are the globals, and a `globals … :off` comment turns `Object` off,
-so it does not report. The rule checks for a local declaration (names.rr `ref_site`), so
-`function f(Object) { Object.defineProperty(…) }` is fine, but names.rr's `directive_global` has no `:off` form and
+so it does not report. The rule checks for a local declaration (names.rerail `ref_site`), so
+`function f(Object) { Object.defineProperty(…) }` is fine, but names.rerail's `directive_global` has no `:off` form and
 rrlab has no rows for it. ESLint 9.39 reports all three descriptor fixtures (063, 064, 067); the rule follows the
 recorded 10.11.
 
@@ -140,16 +140,16 @@ only that a. Worth a line in the language guide.
 
 None needed for these rules. Two proposals:
 
-- names.rr: `directive_global(d, x)` has no way to say `/* globals x:off */`. Proposed:
+- names.rerail: `directive_global(d, x)` has no way to say `/* globals x:off */`. Proposed:
   ```
   // directive_global_off(d, "Object"): a `/* global Object:off */` comment removes a global (ESLint's "off").
   .decl directive_global_off(d: number, x: symbol)
   ```
   and `global_ref` (and rules that ask "is this the global") would exclude those names.
-- modules.rr's `unparen(e, l)` only unwraps to strings. eslint-a-common's `deparen(e, x)` (any expression,
+- modules.rerail's `unparen(e, l)` only unwraps to strings. eslint-a-common's `deparen(e, x)` (any expression,
   comments skipped) is the general form: `unparen(e, l) :- deparen(e, l), kind(l, "string").`
 
-### 4. Library interface (lib/tsx/eslint-a-functions.rr)
+### 4. Library interface (lib/tsx/eslint-a-functions.rerail)
 
 Functions and parameters: `fn`, `fn_param(f, p, i)`, `default_param`, `rest_param`, `optional_param`,
 `this_param(p, void)`, `param_count`, `fn_block`, `empty_block`, `before_close`.
@@ -165,7 +165,7 @@ Nesting: `own_fn`, `callback`. Calls: `method_call(c, o, x)` (isSpecificMemberAc
 From eslint-a-common: `function_node`, `deparen`, `key_static`, `static_prop`, `call_arg`, `this_owner`,
 `upper_first`, `limit`.
 
-## Group B: control flow (19 rules, library `lib/tsx/eslint-a-control.rr`, 126 lines)
+## Group B: control flow (19 rules, library `lib/tsx/eslint-a-control.rerail`, 126 lines)
 
 Scores are rrlab on each rule's own fixtures, matched on (path, line, code). The column-level score is the
 same for all 19. Every rule was also run beside ESLint 9.39.3 (`Linter`, ecmaVersion latest, sourceType
@@ -217,13 +217,13 @@ row noted under no-delete-var.
   given. `[\s\S]` dates from rrlab's std::regex, which lacked `(?s)`; with Rust regex `(?s:.)` would do as well,
   and `[\s\S]` is kept (equal, and the engine's dialect reads both). The default is
   `(?i)no default`, a whole-text match.
-- **no-await-in-loop: methods.** The climb stops at a function's own code (modules.rr's `fn_code`): for a method
+- **no-await-in-loop: methods.** The climb stops at a function's own code (modules.rerail's `fn_code`): for a method
   that is its parameters and body. A computed key runs in the surrounding code, so
   `for (;;) { class A { [await k]() {} } }` is reported, as ESLint does (checked with 9.39).
 - **no-await-in-loop.** `for (await using x of xs)`: tree-sitter-javascript parses it (an `await` and a
   `using` token on the for_in_statement), and the rule reports it, as ESLint does (037.js). tree-sitter-typescript
   does not parse it: the file becomes an empty program, so in a .ts file nothing is reported. This is a grammar
-  gap. TypeScript's `await using x = f()` statement is read through statements.rr's `var_decl(d, "await using")`,
+  gap. TypeScript's `await using x = f()` statement is read through statements.rerail's `var_decl(d, "await using")`,
   and the inner await_expression the TS tree puts on its first assignment is not reported a second time.
 - **no-delete-var.** ESLint 9.39 with sourceType module rejects `delete x` as a parse error (strict mode), so
   it has no finding there. The 10.11 recording has one, presumably from a script-mode run. The rule reports
@@ -246,13 +246,13 @@ row noted under no-delete-var.
 
 ### Library and core change requests
 
-None needed. One suggestion for integration: common's `deparen(e, x)` is generic, and `lib/tsx/modules.rr`'s
-`unparen` covers only strings. Consider moving `deparen` to `tsx/statements.rr` or `tsx/modules.rr`, with
+None needed. One suggestion for integration: common's `deparen(e, x)` is generic, and `lib/tsx/modules.rerail`'s
+`unparen` covers only strings. Consider moving `deparen` to `tsx/statements.rerail` or `tsx/modules.rerail`, with
 `unparen(e, l) :- deparen(e, l), kind(l, "string").`
 
-### Library interface (`lib/tsx/eslint-a-control.rr`)
+### Library interface (`lib/tsx/eslint-a-control.rerail`)
 
-Includes `tsx/eslint-a-common.rr` and `tsx/statements.rr`.
+Includes `tsx/eslint-a-common.rerail` and `tsx/statements.rerail`.
 
 - **Statements:**
   - `first_stmt(b, x)`: x is the first statement of block b;
@@ -271,7 +271,7 @@ Includes `tsx/eslint-a-common.rr` and `tsx/statements.rr`.
 
 ## Group C (expressions and literals)
 
-Library: `lib/tsx/eslint-a-expressions.rr` (247 lines). Scores are `rrlab score javascript <id>` on each rule's own
+Library: `lib/tsx/eslint-a-expressions.rerail` (247 lines). Scores are `rrlab score javascript <id>` on each rule's own
 fixtures (ESLint 10.11 recording, default options), matched on (path, line, code). Options were also checked
 against ESLint 9.39 on ad-hoc files (eqeqeq, dot-notation, no-bitwise, no-empty-pattern, no-magic-numbers):
 the findings were the same.
@@ -350,15 +350,15 @@ the findings were the same.
   .decl ident(n: node, x: symbol)
   ```
   no-iterator, no-caller, dot-notation and no-dupe-keys would then compare names as ESLint does.
-- **Core, documentation only:** say in core.rr that a token is its own `first_token` / `last_token` (if the
+- **Core, documentation only:** say in core.rerail that a token is its own `first_token` / `last_token` (if the
   engine does the same), so rules do not write `!last_token(_, t)` expecting "no node ends here".
 - **Shared vocabulary that belongs in an existing library at integration:** common's `deparen` (a general form
-  of modules.rr's `unparen`, which accepts only strings), and `stmt_start` / `semi_needed`, which other ESLint
-  rules with fixes need (no-object-constructor, prefer-* rules). values.rr's `member` / `key_name` /
+  of modules.rerail's `unparen`, which accepts only strings), and `stmt_start` / `semi_needed`, which other ESLint
+  rules with fixes need (no-object-constructor, prefer-* rules). values.rerail's `member` / `key_name` /
   `const_str` are narrower than common's `static_prop` / `key_static` / `static_string` (no number, boolean,
   null or regex keys; member also reads patterns), so they were not reused.
 
-### (4) Library interface (lib/tsx/eslint-a-expressions.rr)
+### (4) Library interface (lib/tsx/eslint-a-expressions.rerail)
 
 ESTree as tree-sitter shows it: parentheses removed and Literal types classified.
 - From eslint-a-common: `deparen`, `estree_parent`, `static_string`, `key_static`, `static_prop`.
@@ -373,7 +373,7 @@ ESTree as tree-sitter shows it: parentheses removed and Literal types classified
 
 ## Group D: globals, comments, names, imports
 
-Ten ESLint core rules, on two new libraries, `lib/tsx/eslint-a-globals.rr` and `lib/tsx/eslint-a-text.rr`, and one
+Ten ESLint core rules, on two new libraries, `lib/tsx/eslint-a-globals.rerail` and `lib/tsx/eslint-a-text.rerail`, and one
 generated data table (no-irregular-whitespace's characters).
 
 ### How the rules were checked
@@ -428,7 +428,7 @@ eval, Array, …). The browser's (window, setTimeout) and Node's (global) come o
 So in rrlab, `window.eval(x)` and `setTimeout("x")` are not reported, as in ESLint at its defaults. The engine's
 `es_global` will probably include browser and Node globals, so there it will report them, as ESLint does with
 those environments. Which environment a policy means is an engine question. See "Library and core changes".
-Shadowing: a name with no declaration in the file is `free_ref` (rule: names.rr's `ref` with no `ref_site`). In a
+Shadowing: a name with no declaration in the file is `free_ref` (rule: names.rerail's `ref` with no `ref_site`). In a
 script, a top-level `var eval` is the global variable itself (`script_global`).
 
 **Recording artefacts, by rule.**
@@ -481,7 +481,7 @@ Also:
   one, the line numbers differ. Counterexample 181 is `var a = 'b', c = 'd',\ne = 'f' `: ESLint reports
   lines 2 and 3, and this rule reports line 2, the engine's line 2, for both. Also 211–214. Keys follow the engine's
   line numbers, as suppression comments do.
-- The 24 characters are a generated table (`eslint-no-irregular-whitespace.chars.rr`, from the JSON's two character
+- The 24 characters are a generated table (`eslint-no-irregular-whitespace.chars.rerail`, from the JSON's two character
   classes), written by `gen-eslint-no-irregular-whitespace.py`. The regex must hold its group name literally, so the
   rule writes the classes out with `\x{…}` escapes; `check-eslint-no-irregular-whitespace.py` checks the table
   against the JSON and the rule's regex against the table.
@@ -525,11 +525,11 @@ The JSON's message texts are kept, and the earlier import's line is added.
    // @graphemes("葛󠄀") = 1: user-perceived characters (Unicode extended grapheme clusters).
    .functor graphemes(s: symbol): number
    ```
-3. **Environment for es_global.** names.rr says es_global is "generated from ESLint's and TypeScript's lib
+3. **Environment for es_global.** names.rerail says es_global is "generated from ESLint's and TypeScript's lib
    tables". For ESLint parity, the browser and Node sets (window, setTimeout, global) should be a policy setting,
    not always on. ESLint's defaults declare only the ECMAScript built-ins. Proposal: `es_global` holds the ES
    built-ins only, and `env_global(x)` holds an environment's names, set by `option("globals", "browser,node")`.
-   Until then, `eslint-a-globals.rr`'s `es_builtin` duplicates the ES part.
+   Until then, `eslint-a-globals.rerail`'s `es_builtin` duplicates the ES part.
 4. **rrlab (not mine, noted for its owner).**
    - `has(a, n, "kind")` filters a by the kind, as core says. Easy to misread as "a has a descendant of kind";
      this cost a debug round. No change needed.
@@ -539,14 +539,14 @@ The JSON's message texts are kept, and the earlier import's line is added.
    - A regex capture used as a span (`match_all("(?<W>…)", sp)`, then `col(W, c)`) is not modelled, and neither is
      a capture in a regex built with `cat`: no-irregular-whitespace cannot run under rrlab at all. (Since done:
      rrlab runs `match_all` with captures and capture spans; no-irregular-whitespace scores 186 / 5 / 5.)
-5. **names.rr: `fn_scope` lacks `generator_function`** (a `function*` expression). Its parameters and vars are given
-   to the enclosing function. `eslint-a-globals.rr`'s `any_scope` adds it locally.
-6. **names.rr / values.rr:** `const_str` covers strings and plain templates. getStaticPropertyName also takes
+5. **names.rerail: `fn_scope` lacks `generator_function`** (a `function*` expression). Its parameters and vars are given
+   to the enclosing function. `eslint-a-globals.rerail`'s `any_scope` adds it locally.
+6. **names.rerail / values.rerail:** `const_str` covers strings and plain templates. getStaticPropertyName also takes
    number keys (`o[0]`) and `${}`-free templates; no rule here needed numbers.
 
 ### Library interfaces
 
-`lib/tsx/eslint-a-globals.rr` (186 lines; includes tsx/eslint-a-common):
+`lib/tsx/eslint-a-globals.rerail` (186 lines; includes tsx/eslint-a-common):
 - `es_builtin(x)`, `global_var(d, x)`: the ECMAScript globals; a document's global variables.
 - `free_ref(r, x)`: an unshadowed name.
 - `global_ref_to(r, x)`: a reference to the global variable x.
@@ -558,7 +558,7 @@ The JSON's message texts are kept, and the earlier import's line is added.
   `global_this(t)`, over common's `this_owner(t, s)`.
 - `in_global_scope(n)`.
 
-`lib/tsx/eslint-a-text.rr` (92 lines; core only):
+`lib/tsx/eslint-a-text.rerail` (92 lines; core only):
 - `js_comment(c, "Line" | "Block", v)`.
 - `end_col(n, c)`: the byte column past a node's end.
 - `code_before(c)` / `code_after(c)` and `pre_text` / `post_text`: line text around a comment.

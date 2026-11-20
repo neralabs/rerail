@@ -1,8 +1,9 @@
 use super::*;
-use crate::code_rule_dsl::logic::rr::parse;
+use crate::code_rule_dsl::logic::program_image::{Lit, Version};
+use crate::code_rule_dsl::logic::rr::parse_version;
 
 fn packs() -> Vec<(String, Value)> {
-    let root = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../packs");
+    let root = rerail_store::source_tree::native().join("../packs");
     let mut out = Vec::new();
     for pack in std::fs::read_dir(root).unwrap() {
         let rules = pack.unwrap().path().join("rules");
@@ -21,7 +22,7 @@ fn packs() -> Vec<(String, Value)> {
     out
 }
 
-/// Every pack's policy round-trips: document → AST → `.rr` text → AST → the same document, its matchers as `ast`
+/// Every pack's policy round-trips: document → AST → `.rerail` text → AST → the same document, its matchers as `ast`
 /// atoms of `violation` rules.
 #[test]
 fn pack_policies_round_trip_through_datalog_text() {
@@ -29,22 +30,22 @@ fn pack_policies_round_trip_through_datalog_text() {
     assert!(docs.len() > 300, "{} documents", docs.len());
     let mut rules = 0;
     for (path, doc) in &docs {
-        let mut prog = Program::default();
         // A forbid clause of another form (main's packs hold `regex` ones) is no matcher: the front refuses
         // the whole policy, as the wave path does (`waves::policies`).
         let ast_only = doc["clauses"].as_array().into_iter().flatten().all(|clause| {
             clause.get("forbid").is_none_or(|forbid| forbid.as_object().is_some_and(|f| f.len() == 1 && f.contains_key(MARK)))
         });
         if !ast_only {
-            assert!(add(&mut prog, doc).is_err(), "{path}: a non-ast forbid clause is refused");
+            assert!(program(std::slice::from_ref(doc)).is_err(), "{path}: a non-ast forbid clause is refused");
             continue;
         }
-        add(&mut prog, doc).unwrap_or_else(|e| panic!("{path}: {e}"));
-        rules += prog.rules.len();
+        let prog = program(std::slice::from_ref(doc)).unwrap_or_else(|e| panic!("{path}: {e}"));
+        rules += prog.rules().count();
         let text = text(&prog);
-        let back = parse(&text).unwrap_or_else(|e| panic!("{path}: {e}\n{text}"));
-        assert_eq!(back.rules, prog.rules, "{path}");
-        assert_eq!(documents(&back).unwrap(), [doc.clone()], "{path}");
+        let back = parse_version(&text).unwrap_or_else(|e| panic!("{path}: {e}\n{text}"));
+        let shown = |v: &Version| v.rules().map(|r| v.show_rule(r)).collect::<Vec<_>>();
+        assert_eq!(shown(&back), shown(&prog), "{path}");
+        assert_eq!(documents(&back).unwrap(), std::slice::from_ref(doc), "{path}");
     }
     assert!(rules >= 500, "{rules} matcher rules");
 }
@@ -53,14 +54,11 @@ fn pack_policies_round_trip_through_datalog_text() {
 #[test]
 fn documents_share_a_program_and_yaml_reads_like_json() {
     let docs: Vec<Value> = packs().into_iter().take(3).map(|(_, d)| d).collect();
-    let mut prog = Program::default();
-    for d in &docs {
-        add(&mut prog, d).unwrap();
-    }
-    assert_eq!(documents(&parse(&text(&prog)).unwrap()).unwrap(), docs);
+    let prog = program(&docs).unwrap();
+    assert_eq!(documents(&parse_version(&text(&prog)).unwrap()).unwrap(), docs);
     let yaml = serde_yaml_ng::to_string(&docs[0]).unwrap();
     assert_eq!(read(&yaml).unwrap(), docs[0]);
-    let first = &prog.rules[0];
-    assert!(matches!(first.body.as_slice(), [Literal::Ast { document, node, .. }] if document == "D" && node == "N"));
-    assert_eq!(first.head.rel, "violation");
+    let first = prog.rules().next().unwrap();
+    assert!(matches!(first.body().map(|l| l.view()).collect::<Vec<_>>().as_slice(), [Lit::Ast { document, node, .. }] if prog.text(first.var(*document)) == "D" && prog.text(first.var(*node)) == "N"));
+    assert_eq!(prog.rel_name(first.head().rel()), "violation");
 }

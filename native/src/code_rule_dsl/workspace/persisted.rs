@@ -24,7 +24,7 @@ use crate::code_rule_dsl::{language, tape};
 use crate::content_store::{
     BusyRetries, CandidateCatalogIdentity, CandidateClause, DocumentPayload, HashKey,
     LocalResultPublication, OverlayFilePublication, PublicationResult, StoreError, StoredFile,
-    TapePayload, compress,
+    TapePayload,
 };
 use napi::Result;
 use rayon::prelude::*;
@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, LazyLock, Weak};
+use std::sync::{Arc, Weak};
 
 #[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
@@ -370,7 +370,9 @@ pub(super) fn restore_persisted_file(
             })
         })
         .collect::<Option<Vec<_>>>();
-    file.selector_skipped = lookups.is_some_and(|lookups| {
+    // The presence stored with the file's tape decides where it can (decision 0434 step 6), else the search index.
+    let by_presence = presence_selects(store, source_id, grammar_id, file, code_rules);
+    file.selector_skipped = by_presence.unwrap_or_else(|| lookups.is_some_and(|lookups| {
         !lookups.is_empty()
             && store
                 .get_search_kind_presence_bulk(&lookups)
@@ -379,7 +381,7 @@ pub(super) fn restore_persisted_file(
                         matches!(selection, crate::content_store::StoredKindPresence::Absent)
                     })
                 })
-    });
+    }));
     if file.selector_skipped {
         for &id in &file.candidates.ast {
             file.witnesses.insert(id, Vec::new());
@@ -388,6 +390,37 @@ pub(super) fn restore_persisted_file(
     }
     documents::attach_stored_tape(store, tape_id, derived, file, &grammar);
     Ok(())
+}
+
+/// Whether the presence stored after the file's tape (decision 0434 §4, step 6), read in place in the tape's stored
+/// frame by the tape's read (`tape_has_kind`, the kernels' too), rules out every candidate clause: none of a clause's
+/// root kinds is in the tape, as the search index's `Absent` says. A tape with an error node (its kind `ERROR_CODE`'s
+/// bit) rules out none, as the index's syntax errors do not. `None` where the presence cannot tell and the search index
+/// is asked: a tape that holds none (format 15's, or a store's from before layout 5), a clause over a derived
+/// document, a clause with project evidence, or one with no root kinds.
+fn presence_selects(store: &crate::content_store::ContentStore, source: crate::content_store::SourceId, grammar_id: i64, file: &FileState, code_rules: &[Arc<CompiledCodeRule>]) -> Option<bool> {
+    let frames = store.tape_frames_for(&[source], grammar_id, grammar_version(), i64::from(tape::formats::stored_version())).ok()?;
+    let frame = frames.into_iter().next()??;
+    let presence = tape::stored_presence(frame.in_place(), u8::try_from(grammar_id).ok()?)?;
+    let has = |kind: u16| presence.has_kind(u32::MAX, kind);
+    if has(tape::ERROR_CODE) {
+        return Some(false);
+    }
+    for &id in &file.candidates.ast {
+        let clause = &code_rules[id.0].clauses[id.1];
+        if !clause.violation.project.is_empty() {
+            return None;
+        }
+        let matcher = candidate_grammar(&code_rules[id.0], id.1, &file.input);
+        if matcher.document.is_some() {
+            return None;
+        }
+        // An ERROR root's kind is `ERROR_CODE` in the presence (`presence_kind`).
+        if matcher.anchors.root_kinds()?.iter().any(|&kind| has(tape::presence_kind(kind))) {
+            return Some(false);
+        }
+    }
+    Some(!file.candidates.ast.is_empty())
 }
 
 /// The tape whose selector index tells whether a clause over `via`'s program has a witness root
@@ -552,7 +585,8 @@ type CatalogMemo = (
     Vec<Weak<CompiledCodeRule>>,
     CandidateCatalogIdentity,
 );
-static CATALOGS: LazyLock<parking_lot::Mutex<Vec<CatalogMemo>>> = LazyLock::new(Default::default);
+#[derive(Default)]
+struct Catalogs(parking_lot::Mutex<Vec<CatalogMemo>>);
 
 /// The result catalog of `code_rules`: every apply reads it, so it is hashed once per code-rule set.
 pub fn candidate_catalog(
@@ -568,11 +602,13 @@ pub fn candidate_catalog(
                 .all(|(known, code_rule)| std::ptr::eq(known.as_ptr(), Arc::as_ptr(code_rule)))
             && known.iter().all(|known| known.strong_count() > 0)
     };
-    if let Some((_, _, catalog)) = CATALOGS.lock().iter().find(|memo| same(memo)) {
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<Catalogs>();
+    if let Some((_, _, catalog)) = held_.0.lock().iter().find(|memo| same(memo)) {
         return Ok(*catalog);
     }
     let catalog = hash_candidate_catalog(engine, code_rules)?;
-    let mut catalogs = CATALOGS.lock();
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<Catalogs>();
+    let mut catalogs = held_.0.lock();
     catalogs.retain(|(_, known, _)| known.iter().all(|known| known.strong_count() > 0));
     if catalogs.len() >= 16 {
         catalogs.remove(0);
@@ -652,9 +688,9 @@ pub(super) fn persist_files(
             clause_index,
         )
     };
-    // Each file's payloads (tape bytes, encoded and compressed local results, blob alias) are
+    // Each file's payloads (tape bytes, encoded local results, blob alias) are
     // independent of every other file's, so they are built on the worker pool.
-    let prepared = (|| {
+    let prepared = crate::code_rule_dsl::logic::profile::on_cores(|| {
         paths
             .par_iter()
             .map(|path| {
@@ -718,14 +754,7 @@ pub(super) fn persist_files(
                             file.failures.get(id).copied(),
                             file.syntax.as_deref(),
                         )?;
-                        let frame =
-                            compress(&bytes, 3).map_err(|error| invalid(error.to_string()))?;
-                        Ok(LocalResultPublication {
-                            candidate: candidate(id),
-                            context,
-                            raw_length: bytes.len(),
-                            frame,
-                        })
+                        Ok(LocalResultPublication { candidate: candidate(id), context, bytes })
                     })
                     .collect::<Result<Vec<_>>>()?;
                 if !file.transient_failure {
@@ -745,7 +774,7 @@ pub(super) fn persist_files(
                 ))
             })
             .collect::<Result<Vec<_>>>()
-    })()?;
+    })?;
     // Each file's derived documents, borrowing the bytes built above and the texts its image holds.
     let documents = prepared
         .iter()

@@ -27,7 +27,7 @@ use super::sketch::Sketch;
 /// Values a column's exact map holds at most; past it the map is dropped for the sketch (0096 §1).
 const EXACT: usize = 256;
 
-/// A column's exact counts, value → count, in a block (decision 0450 R5, Q263): open addressing, each slot
+/// A column's exact counts, value → count, in a block (decision 0478 R5, Q338): open addressing, each slot
 /// `[value, count]`. A count is never 0 (a value whose count goes back to 0 is taken out, the slots after it shifted
 /// back), so a count of 0 is an empty slot. It starts at 16 slots and doubles past half full.
 #[derive(Clone, Default)]
@@ -654,7 +654,7 @@ impl RelStats {
 mod exact_tests {
     use super::Exact;
 
-    /// Decision 0450 R5 (Q263): a column's exact counts are slots in a block, and stay a value → count map under
+    /// Decision 0478 R5 (Q338): a column's exact counts are slots in a block, and stay a value → count map under
     /// adds and takes-out in any order, whatever the growth and the shifts after a value taken out.
     #[test]
     fn a_columns_exact_counts_are_slots_in_a_block() {
@@ -698,7 +698,7 @@ pub mod tests {
     fn measured(docs: &[Vec<i64>]) -> Vec<(String, i64, i64, i64, i64)> {
         let mut cols = vec![Vec::new(); 3];
         for d in docs {
-            for row in d.chunks_exact(3) {
+            for row in d.as_chunks::<3>().0 {
                 for (c, v) in row.iter().enumerate() {
                     cols[c].push(*v);
                 }
@@ -853,8 +853,8 @@ pub mod tests {
             flat.extend([first, i % 4, other]);
         }
         // One document's rows alone, in order (no sort), and its rows reversed (sorted).
-        let one: Vec<i64> = flat.chunks_exact(3).filter(|r| r[0] == 3 || r[0] >> 32 == 3).flatten().copied().collect();
-        let reversed: Vec<i64> = one.chunks_exact(3).rev().flatten().copied().collect();
+        let one: Vec<i64> = flat.as_chunks::<3>().0.iter().filter(|r| r[0] == 3 || r[0] >> 32 == 3).flatten().copied().collect();
+        let reversed: Vec<i64> = one.as_chunks::<3>().0.iter().rev().flatten().copied().collect();
         // Many values in one column: past the exact map's bound.
         let wide: Vec<i64> = (0..700i64).flat_map(|i| [5 << 32 | i, i % 3, i]).collect();
         let names = || vec!["x".to_owned(), "k".into(), "y".into()];

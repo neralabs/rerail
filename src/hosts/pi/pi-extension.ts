@@ -21,11 +21,13 @@ import { linkDeliveries } from "../../presentation/session-presentation.js";
 import { PiNativeSession } from "./pi-native-session.js";
 import { registerPiHostAdapter } from "./pi-host-adapter.js";
 import { registerPiFixTool } from "./pi-fix-tool.js";
+import { registerPiConflictRenderer } from "./pi-conflict-renderer.js";
 import { ConversationRuleRegistry, type RuleMatch } from "../../engine/catalog/registry.js";
 import { openCheckoutConversationRules } from "../../engine/code-rule/code-rule-dsl-catalog.js";
 import { defaultRerailDatabasePath } from "../../engine/storage/database.js";
 import { RerailRuntime } from "../../runtime/runtime.js";
 import { messageSteer } from "../../engine/code-rule/rerail-steer.js";
+import { MERGE_ASSIST_NOTE_LEAD } from "../../engine/merge-assist/conflict-note.js";
 import { MATCH_ENTRY_TYPE, replaySessionState, TURN_ENTRY_TYPE } from "../../runtime/session-state.js";
 
 export interface PiConversationRulesOptions extends SessionDatabaseOptions {
@@ -73,6 +75,8 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
     const pendingBackgroundDeliveries = new Map<RerailRuntime, AdapterDelivery[]>();
     let semantic: NativeSemanticRuntime | undefined;
     const presentation = createOmpPresentation("pi");
+    // A Merge Assist note shows the person its conflict's line rather than Pi's card of the agent's note.
+    registerPiConflictRenderer(pi);
 
     const activeRegistry = (): ConversationRuleRegistry => {
       if (registry === undefined) throw new Error("cosine-rules extension received an event before session_start");
@@ -171,9 +175,13 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
         fixToolRegistered = true;
         registerPiFixTool(pi);
       }
-      // Pi hands the model an extension's message as the user's, so a steer sent as one says it is Rerail's.
+      // Pi hands the model an extension's message as the user's, so a steer sent as one says it is Rerail's; a Merge
+      // Assist note says so already.
       await sendNativeDeliveries(await linkDeliveries(deliveries, (native.context() ?? currentContext)?.cwd),
-        (message, options_) => pi.sendMessage(message.content.trim() === "" ? message : { ...message, content: messageSteer(message.content) }, options_),
+        (message, options_) => pi.sendMessage(
+          message.content.trim() === "" || message.content.startsWith(MERGE_ASSIST_NOTE_LEAD) ? message : { ...message, content: messageSteer(message.content) },
+          options_,
+        ),
         (sessionId, receiptId, ruleIds) => current.recordSteer(sessionId, receiptId, ruleIds),
         (toolCallId, delivery) => {
           const placed = openResults.get(toolCallId);

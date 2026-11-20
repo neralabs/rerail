@@ -1,5 +1,5 @@
 //! The tape's primitive reads as CLIF functions, written once (decision 0310): the reads
-//! `rerail_tape_format::f16::View` and format 15's columns make, as `metal_tape.metal` ports them.
+//! `rerail_tape_format::f16::View` and format 15's columns make, as `device_tape.h` ports them.
 //!
 //! A read takes the tape's base (the bytes its view's offsets count from), its view
 //! (`view::TapeView`) and a document-local node, and returns a u32 (`NONE` for no node). Format 16's
@@ -10,6 +10,7 @@
 //! Every load here reads the tape or its view, which no code writes while it is read (`readonly`).
 //! Format 16's arrays have 8 bytes of room past their last value, so a value is one word's load.
 
+use crate::view::cache::{NOT_KEPT, PENDING, TAKEN};
 use crate::view::{F15_STRIDE_SHIFT, F15_TAIL_FROM_START, F16_BLOCK, F16_K, F16_PART, F16_SUB, F16Z_BLOCK, F16Z_FORMAT, F16Z_PIECES, at, z};
 use cranelift_codegen::ir::{
     self, AbiParam, Function, InstBuilder, MemFlags, Signature, UserFuncName, Value,
@@ -87,6 +88,7 @@ pub const READS: &[Read] = &[
     Read { family: Family::Tape, name: "tape_line_select", params: &[I32, I32], ret: I32, hot: false, body: line_select },
     Read { family: Family::Tape, name: "tape_line", params: &[I32], ret: I32, hot: true, body: line },
     Read { family: Family::Tape, name: "tape_line_start", params: &[I32], ret: I32, hot: true, body: line_start },
+    Read { family: Family::Tape, name: "tape_has_kind", params: &[I32, I32], ret: I32, hot: true, body: has_kind },
     Read { family: Family::Relation, name: "rows_col", params: &[I32], ret: I64, hot: true, body: crate::relation::rows_col },
     Read { family: Family::Relation, name: "col_at", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::col_at },
     Read { family: Family::Relation, name: "col_get", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::col_get },
@@ -116,7 +118,7 @@ pub const READS: &[Read] = &[
     Read { family: Family::View, name: "view_field", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::field },
     Read { family: Family::View, name: "view_core", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::core },
     Read { family: Family::View, name: "view_line", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::line },
-    // core.rr's lines' (`core_rr::Lines`' words, in the batch's block): a relation's family, its base the entry's run.
+    // core.rerail's lines' (`core_rr::Lines`' words, in the batch's block): a relation's family, its base the entry's run.
     Read { family: Family::Relation, name: "loc_line", params: &[I32], ret: I32, hot: true, body: crate::view_reads::lines_line },
     Read { family: Family::View, name: "view_loc_line", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::loc_line },
     Read { family: Family::View, name: "view_loc_end", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::loc_end },
@@ -124,26 +126,32 @@ pub const READS: &[Read] = &[
     Read { family: Family::View, name: "view_loc_docof", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::loc_docof },
     // A 16z tape's block in the reader's slot (decision 0353 step 4b): last, so no other read's number moves.
     Read { family: Family::Tape, name: "tape_z_block", params: &[I32], ret: I64, hot: false, body: z_block },
+    // LZ4's block decoder alone (`z_lz4`, which `tape_z_block` decodes with): the tape crate's `Tape16Z` decodes with
+    // it, so every reader of a 16z tape has the one decoder (decision 0353 step 4b).
+    Read { family: Family::Tape, name: "tape_lz4", params: &[I32, I32, I64, I64], ret: I64, hot: false, body: lz4_block },
     // `child` probed by its parent, off the tape (decision 0353 step 4c): no index of the view.
     Read { family: Family::View, name: "view_child_first", params: &[I32], ret: I32, hot: false, body: crate::view_reads::child_first },
     Read { family: Family::View, name: "view_child_next", params: &[I32], ret: I32, hot: false, body: crate::view_reads::child_next },
     Read { family: Family::View, name: "view_number", params: &[I32], ret: I32, hot: false, body: crate::view_reads::number },
-    // An atom's string in a directory of runs of atoms (decision 0450 step 2b): the descriptor is an `AtomsDirRoot`.
+    // An atom's string in a directory of runs of atoms (decision 0478 step 2b): the descriptor is an `AtomsDirRoot`.
     Read { family: Family::Relation, name: "atoms_len", params: &[I32], ret: I32, hot: true, body: crate::atoms_reads::atoms_len },
     Read { family: Family::Relation, name: "atoms_at", params: &[I32], ret: I64, hot: true, body: crate::atoms_reads::atoms_at },
-    // A text test's verdict for a symbol in the one rolling cache (decision 0450 step 2d): the descriptor is the cache.
+    // A text test's verdict for a symbol in the one rolling cache (decision 0478 step 2d): the descriptor is the cache.
     Read { family: Family::Relation, name: "verdict_get", params: &[I32, I32], ret: I32, hot: false, body: crate::verdict_reads::verdict_get },
     Read { family: Family::Relation, name: "verdict_put", params: &[I32, I32, I32], ret: I32, hot: false, body: crate::verdict_reads::verdict_put },
-    // A text function's text of a symbol in the same cache (decision 0450 step 2e): found, or taken for its length
+    // A text function's text of a symbol in the same cache (decision 0478 step 2e): found, or taken for its length
     // and written by its caller, then completed.
     Read { family: Family::Relation, name: "text_find", params: &[I32, I32], ret: I64, hot: false, body: crate::verdict_reads::text_find },
     Read { family: Family::Relation, name: "text_open", params: &[I32, I32, I32], ret: I64, hot: false, body: crate::verdict_reads::text_open },
     Read { family: Family::Relation, name: "cache_done", params: &[I64], ret: I32, hot: false, body: crate::verdict_reads::cache_done },
 ];
 
+/// The reads the kernels do not include: they decode a 16z block through `tape_z_block`, which inlines the decoder.
+const HOST_ONLY: &[&str] = &["tape_lz4"];
+
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by
 /// block).
-pub const F16_ONLY: &[&str] = &["tape_f16_side", "tape_slot", "tape_line_select"];
+pub const F16_ONLY: &[&str] = &["tape_f16_side", "tape_slot", "tape_line_select", "tape_lz4"];
 
 /// The reads a reader of the tape crate calls (the rest are the reads' own: a side list's value takes a list's
 /// number, which is the reads' to give).
@@ -191,7 +199,7 @@ pub fn build_formats(read: &Read, call_conv: CallConv, name: UserFuncName, calle
 }
 
 /// A 16z body's id in a source that calls it apart (`build_split`): past every read's.
-const Z_APART: u32 = 1 << 16;
+pub(crate) const Z_APART: u32 = 1 << 16;
 
 /// `build_formats`, and with `split` a 16z tape's body called apart (`<read>_z`, the read built for
 /// `F16Z_FORMAT`), not inlined: with whether the read called it. The kernels' source (decision 0353 step 4b): a
@@ -258,25 +266,37 @@ pub fn rust_source() -> Result<String, String> {
     Ok(out)
 }
 
-/// The reads as MSL (decision 0310's Metal backend): each read built for either format, as its view says (a batch
-/// holds documents of both), `clif_` before its name, for `metal_tape.metal`'s readers to call. Made again by
-/// `the_kernels_reads_are_these`.
-pub fn msl_source() -> Result<String, String> {
-    tape_msl(false)
+/// The reads as UKL (decisions 0310, 0440 §3.3), for every GPU's kernels: each read built for either format, as its
+/// view says (a batch holds documents of both), `clif_` before its name. The library's `<ukl/reads/tape.h>`, which
+/// `device_tape.h`'s readers call; made again by `the_kernels_reads_are_these`.
+pub fn tape_ukl_source() -> Result<String, String> {
+    tape_ukl(false)
 }
 
-/// The reads as MSL that read a 16z tape too (decision 0353 step 4b): a block decoded into the cache the view names
-/// (`view::cache`) where a read falls, the same functions as `msl_source`'s, for the kernels that read a 16z batch's
-/// views in place to include in its stead. Made again by `the_16z_kernels_reads_are_these`.
-pub fn msl_z_source() -> Result<String, String> {
-    tape_msl(true)
+/// The reads as UKL that read a 16z tape too (decision 0353 step 4b): a block decoded into the cache the view names
+/// (`view::cache`) where a read falls, the same functions as `tape_ukl_source`'s, for the kernels that read a 16z
+/// batch's views in place to include in its stead: `<ukl/reads/tape_z.h>`, made again by
+/// `the_16z_kernels_reads_are_these`.
+pub fn tape_z_ukl_source() -> Result<String, String> {
+    tape_ukl(true)
 }
 
-fn tape_msl(z: bool) -> Result<String, String> {
+/// Where the reads' UKL is held: the library's `ukl/reads/`, which every kernel includes them from.
+pub const UKL_READS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../ukl/lib/ukl/reads");
+
+/// A generated header's first lines: what made it, and how to make it again.
+fn generated(function: &str, decision: &str, test: &str) -> String {
+    format!(
+        "// Generated by rerail_clif::reads::{function} from {decision}. Do not edit:\n\
+         // `RERAIL_WRITE_READS=1 cargo test -p rerail-clif {test}` writes it again.\n"
+    )
+}
+
+fn tape_ukl(z: bool) -> Result<String, String> {
     let built: Vec<(u32, Function, bool)> = READS
         .iter()
         .enumerate()
-        .filter(|(_, read)| read.family == Family::Tape && (z || read.name != "tape_z_block"))
+        .filter(|(_, read)| read.family == Family::Tape && !HOST_ONLY.contains(&read.name) && (z || read.name != "tape_z_block"))
         .map(|(k, read)| {
             let (f, apart) = build_split(read, CallConv::SystemV, UserFuncName::user(0, k as u32), &mut ByIndex, None, z, z);
             (k as u32, f, apart)
@@ -297,29 +317,35 @@ fn tape_msl(z: bool) -> Result<String, String> {
         .map(|(k, f, n)| (k, f, &*Box::leak(n.into_boxed_str())))
         .chain(built.into_iter().map(|(k, f, _)| (k, f, READS[k as usize].name)))
         .collect();
-    let body = crate::msl::translate_reads(&funcs, "clif_", Family::Tape)?;
-    let (function, test) = if z { ("msl_z_source", "the_16z_kernels_reads_are_these") } else { ("msl_source", "the_kernels_reads_are_these") };
+    let body = crate::ukl::translate_reads(&funcs, "clif_", Family::Tape)?;
+    let (function, test) = if z { ("tape_z_ukl_source", "the_16z_kernels_reads_are_these") } else { ("tape_ukl_source", "the_kernels_reads_are_these") };
+    // The two are one set of functions: a kernel includes one of them.
+    let other = if z { "TAPE" } else { "TAPE_Z" };
+    let this = if z { "TAPE_Z" } else { "TAPE" };
+    let (head, rest) = body.split_at(crate::ukl::HELPERS.len());
     Ok(format!(
-        "// Generated by rerail_clif::reads::{function} from the tape's reads in CLIF (decision 0310). Do not edit:\n\
-         // `RERAIL_WRITE_READS=1 cargo test -p rerail-clif {test}` writes it again.\n{body}"
+        "{}{head}#ifdef CLIF_READS_{other}\n#error \"the tape's reads twice: <ukl/reads/tape.h> and <ukl/reads/tape_z.h> are one set\"\n#endif\n#define CLIF_READS_{this} 1\n{rest}",
+        generated(function, "the tape's reads in CLIF (decision 0310)", test)
     ))
 }
 
-/// The views' reads as MSL (decision 0353 step 4c), after their entry's declaration (`view_reads::msl`):
-/// `view_reads.metal`, which a kernel includes after the tape's and the numbering's reads (whose functions they
-/// call), made again by `the_view_kernels_reads_are_these`.
-pub fn view_msl_source() -> Result<String, String> {
+/// The views' reads as UKL (decision 0353 step 4c), after their entry's declaration (`view_reads::ukl`):
+/// `<ukl/reads/view.h>`, over the tape's reads that read 16z too and the numbering's (whose functions they call),
+/// made again by `the_view_kernels_reads_are_these`.
+pub fn view_ukl_source() -> Result<String, String> {
     let funcs: Vec<(u32, Function, &str)> = READS
         .iter()
         .enumerate()
         .filter(|(_, read)| matches!(read.family, Family::View | Family::Lines) || read.name == "loc_line")
-        .map(|(k, read)| (k as u32, build_for(read, CallConv::SystemV, UserFuncName::user(0, k as u32), &mut ByIndex, None), read.name))
+        .map(|(k, read)| (k as u32, build_for(read, CallConv::SystemV, UserFuncName::user(0, k as u32), &mut ByIndex, None)))
+        .map(|(k, f)| (k, f, READS[k as usize].name))
         .collect();
-    let body = crate::msl::translate_reads(&funcs, "clif_", Family::View)?;
+    let body = crate::ukl::translate_reads(&funcs, "clif_", Family::View)?;
+    let (head, rest) = body.split_at(crate::ukl::HELPERS.len());
     Ok(format!(
-        "// Generated by rerail_clif::reads::view_msl_source from the views' reads in CLIF (decision 0353 step 4c). Do\n\
-         // not edit: `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_view_kernels_reads_are_these` writes it again.\n{}{body}",
-        crate::view_reads::msl()
+        "{}{head}#include <ukl/reads/tape_z.h>\n#include <ukl/reads/ids.h>\n{}{rest}",
+        generated("view_ukl_source", "the views' reads in CLIF (decision 0353 step 4c)", "the_view_kernels_reads_are_these"),
+        crate::view_reads::ukl()
     ))
 }
 
@@ -346,7 +372,7 @@ fn numbering(read: &Read) -> bool {
 
 /// The relation's reads (decision 0325), each built and named by its place in `READS`, with whether it is hot.
 fn relation_funcs() -> Vec<(u32, Function, &'static Read)> {
-    // `loc_line` is the view reads' (`view_msl_source`): over core.rr's lines, not a relation.
+    // `loc_line` is the view reads' (`view_ukl_source`): over core.rerail's lines, not a relation.
     family_funcs(|read| !numbering(read) && read.name != "loc_line")
 }
 
@@ -363,7 +389,7 @@ fn family_funcs(keep: impl Fn(&Read) -> bool) -> Vec<(u32, Function, &'static Re
 /// A relation's reads as Rust (decision 0325): `rerail_blocks`' `generated_reads.rs`, which its `Rows` and
 /// `Relation` read through, made again by `the_blocks_reads_are_these`.
 pub fn relation_rust_source() -> Result<String, String> {
-    // `rows_put` is the device's writer (decision 0427): the host writes rows through `Rows::put`, which checks them.
+    // `rows_put` is the device's writer (decision 0463): the host writes rows through `Rows::put`, which checks them.
     let funcs: Vec<_> = relation_funcs().into_iter().filter(|(_, _, read)| read.name != "rows_put").collect();
     let entries: Vec<(u32, &str)> = funcs.iter().map(|(k, _, read)| (*k, read.name)).collect();
     let funcs: Vec<(u32, Function, bool)> = funcs.into_iter().map(|(k, f, read)| (k, f, read.hot)).collect();
@@ -379,15 +405,12 @@ pub fn relation_rust_source() -> Result<String, String> {
     Ok(out)
 }
 
-/// A relation's reads as MSL (decision 0325): `rerail_blocks`' `relation_reads.metal`, which every kernel that
-/// reads a relation in place includes, made again by `the_blocks_kernels_reads_are_these`.
-pub fn relation_msl_source() -> Result<String, String> {
+/// A relation's reads as UKL (decision 0325): `<ukl/reads/relation.h>`, which every kernel that reads a relation in
+/// place includes, made again by `the_blocks_kernels_reads_are_these`.
+pub fn relation_ukl_source() -> Result<String, String> {
     let funcs: Vec<(u32, Function, &str)> = relation_funcs().into_iter().map(|(k, f, read)| (k, f, read.name)).collect();
-    let body = crate::msl::translate_reads(&funcs, "clif_", Family::Relation)?;
-    Ok(format!(
-        "// Generated by rerail_clif::reads::relation_msl_source from a relation's reads in CLIF (decision 0325). Do not\n\
-         // edit: `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_kernels_reads_are_these` writes it again.\n{body}"
-    ))
+    let body = crate::ukl::translate_reads(&funcs, "clif_", Family::Relation)?;
+    Ok(format!("{}{body}", generated("relation_ukl_source", "a relation's reads in CLIF (decision 0325)", "the_blocks_kernels_reads_are_these")))
 }
 
 /// A projection's numbering's reads as Rust (decision 0353 step 2): the facts crate's `id_reads.rs`, which its
@@ -411,16 +434,16 @@ pub fn ids_rust_source() -> Result<String, String> {
     Ok(out)
 }
 
-/// A projection's numbering's reads as MSL, after its descriptor's declaration (`ids::msl`): `id_reads.metal`, which
-/// a kernel that reads node ids in place includes, made again by `the_facts_id_kernels_reads_are_these`.
-pub fn ids_msl_source() -> Result<String, String> {
+/// A projection's numbering's reads as UKL, after its descriptor's declaration (`ids::ukl`): `<ukl/reads/ids.h>`,
+/// which a kernel that reads node ids in place includes, made again by `the_facts_id_kernels_reads_are_these`.
+pub fn ids_ukl_source() -> Result<String, String> {
     let funcs: Vec<(u32, Function, &str)> = family_funcs(numbering).into_iter().map(|(k, f, read)| (k, f, read.name)).collect();
-    let body = crate::msl::translate_reads(&funcs, "clif_", Family::Relation)?;
+    let body = crate::ukl::translate_reads(&funcs, "clif_", Family::Relation)?;
+    let (head, rest) = body.split_at(crate::ukl::HELPERS.len());
     Ok(format!(
-        "// Generated by rerail_clif::reads::ids_msl_source from a projection's numbering's reads in CLIF (decision 0353\n\
-         // step 2). Do not edit: `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_facts_id_kernels_reads_are_these`\n\
-         // writes it again.\n{}{body}",
-        crate::ids::msl()
+        "{}{head}{}{rest}",
+        generated("ids_ukl_source", "a projection's numbering's reads in CLIF (decision 0353 step 2)", "the_facts_id_kernels_reads_are_these"),
+        crate::ids::ukl()
     ))
 }
 
@@ -576,7 +599,7 @@ impl B<'_, '_> {
         )
     }
     /// `by_format` for a read of the tape's whole, not of a node (its newline index): a 16z tape holds it raw, where
-    /// its view names it, so a 16z tape's body is format 16's, read in place of the stored bytes (decision 0426).
+    /// its view names it, so a 16z tape's body is format 16's, read in place of the stored bytes (decision 0434).
     fn by_format_whole(&mut self, ty: ir::Type, sixteen: impl Fn(&mut Self) -> Value, fifteen: impl FnOnce(&mut Self) -> Value) -> Value {
         let sixteen = &sixteen;
         self.by_formats(ty, |b| sixteen(b), |b| sixteen(b), fifteen)
@@ -683,7 +706,7 @@ impl B<'_, '_> {
         let ok = self.f.ins().band(ok, some);
         // Tries spent: the dead entry is read, a failure counted (another thread holds the block). Never the entry
         // as it is, which may hold two blocks' bytes: a kernel that went on with such a value (an index, a span)
-        // would reach anywhere before its run is refused (decision 0427); the dead entry's reads are its zeros.
+        // would reach anywhere before its run is refused (decision 0463); the dead entry's reads are its zeros.
         let (gave_up, give_up) = (self.f.create_block(), self.f.create_block());
         let yes = self.c32(1);
         self.f.ins().brif(ok, read, &[entry.into(), yes.into()], gave_up, &[]);
@@ -794,7 +817,7 @@ impl B<'_, '_> {
     pub(crate) fn call_tape(&mut self, name: &str, args: &[Value]) -> Value {
         let (base, view) = self.doc_tape.expect("a view read");
         let tape = std::mem::replace(&mut self.tape, base);
-        let held = std::mem::replace(&mut self.view, Some(view));
+        let held = self.view.replace(view);
         let value = self.call(name, args);
         self.tape = tape;
         self.view = held;
@@ -813,7 +836,7 @@ impl B<'_, '_> {
     /// Format 16's column `r` (0 codes, 1 slots, 2 gaps, 3 lengths, 4 checkpoints) in block `b`: where it
     /// starts. Blocks are `F16_PART` nodes at the view's stride from block 0's start, each its columns end to
     /// end at its rows (the last block's are fewer: `nodes - b * F16_PART`), column `r` at `rows *
-    /// columns[r]` (decision 0426).
+    /// columns[r]` (decision 0434).
     fn block_column(&mut self, r: i32, b: Value) -> Value {
         let blocks = self.column(0);
         let stride = self.view(at::STRIDE);
@@ -900,7 +923,7 @@ fn f16_side_of(b: &mut B<'_, '_>, k: Value, i: Value) -> Value {
     let p4 = b.f.ins().imul_imm(p, 4);
     let start = b.u32(parts, p4);
     // The part's end (the next one's start, the last the list's length: both checked where the tape is placed):
-    // every offset into the part is held to it, whatever its bytes state (decision 0427).
+    // every offset into the part is held to it, whatever its bytes state (decision 0463).
     let next4 = b.f.ins().iadd_imm(p4, 4);
     let limit = b.u32(parts, next4);
     let nodes = b.view(at::NODES);
@@ -984,7 +1007,7 @@ fn size(b: &mut B<'_, '_>) -> Value {
             let inner = b.f.ins().ushr_imm(v, 1);
             let inner = b.f.ins().ireduce(I32, inner);
             let one = b.c32(1);
-            // At least 1 (a subtree holds its root), whatever the slot holds: every hop by sizes moves on (0427).
+            // At least 1 (a subtree holds its root), whatever the slot holds: every hop by sizes moves on (0463).
             let inner = b.f.ins().umax(inner, one);
             b.f.ins().select(leaf, one, inner)
         },
@@ -1036,14 +1059,14 @@ fn number(b: &mut B<'_, '_>) -> Value {
 /// The node's start (a document-local byte).
 fn start(b: &mut B<'_, '_>) -> Value {
     // Held to the source (the view's `source_len`, the source its reader reads): a span from the tape reads no
-    // byte past it, whatever the tape's gaps hold (decision 0427).
+    // byte past it, whatever the tape's gaps hold (decision 0463).
     let i = b.arg(0);
     let start = b.call("tape_start_stated", &[i]);
     let source = b.view(at::SOURCE_LEN);
     b.f.ins().umin(start, source)
 }
 
-/// The node's end, held between its start and the source's end (decision 0427): a reader's span is never
+/// The node's end, held between its start and the source's end (decision 0463): a reader's span is never
 /// reversed and never past the source.
 fn end(b: &mut B<'_, '_>) -> Value {
     let i = b.arg(0);
@@ -1209,7 +1232,7 @@ fn parent16(b: &mut B<'_, '_>, i: Value, z: bool) -> Value {
     b.f.switch_to_block(sibling);
     let step = b.f.ins().ushr_imm(v, 2);
     let step = b.f.ins().ireduce(I32, step);
-    // A step of 1 to `j` back: else the slot is no tape's, and the walk ends (each step moves back, decision 0427).
+    // A step of 1 to `j` back: else the slot is no tape's, and the walk ends (each step moves back, decision 0463).
     let less = b.f.ins().iadd_imm(step, -1);
     let moves = b.f.ins().icmp(IntCC::UnsignedLessThan, less, j);
     let stepped = b.f.create_block();
@@ -1344,7 +1367,7 @@ fn z_block(b: &mut B<'_, '_>) -> Value {
     let size = b.column(3);
     let size = b.f.ins().uextend(I64, size);
     // A block past the tape's last (a node read that is no node of it): the dead entry, a failure counted, so the
-    // read stays in the cache and its run is refused (decision 0427). The block index is read only below its end.
+    // read stays in the cache and its run is refused (decision 0463). The block index is read only below its end.
     let nodes = b.view(at::NODES);
     let blocks = b.f.ins().iadd_imm(nodes, i64::from(F16Z_BLOCK - 1));
     let blocks = b.f.ins().ushr_imm(blocks, i64::from(F16Z_BLOCK.trailing_zeros()));
@@ -1411,15 +1434,6 @@ fn cache_count(b: &mut B<'_, '_>, cache: Value, offset: i32) {
 pub(crate) fn cache_get(b: &mut B<'_, '_>, cache: Value, key: Value, size: Value, fill: &dyn Fn(&mut B<'_, '_>, Value) -> Value) -> Value {
     cache_lookup(b, cache, key, size, Some(fill))
 }
-
-/// What an open lookup (`cache_lookup` with no fill) found, in its result's low bits (an entry is `ALIGN`-aligned).
-pub const FOUND: i64 = 0;
-/// An entry of the size asked taken, being written: the caller writes its payload, then `cache_done`.
-pub const TAKEN: i64 = 1;
-/// None kept, none taken (a size of 0 asked, past the most, or no room): the dead entry.
-pub const NOT_KEPT: i64 = 2;
-/// Another thread writes the key's entry: the dead entry; read again after that writer's pass.
-pub const PENDING: i64 = 3;
 
 /// `cache_get`, or with no `fill` an open lookup: it waits for no writer, and on a miss takes an entry of `size`
 /// bytes (none for 0) that its caller writes and completes (`cache_done`); its result an entry and what it found
@@ -1942,7 +1956,7 @@ fn cache_clear(b: &mut B<'_, '_>, generation: Value, stamp: Value, slot_mask: Va
 }
 
 /// Block `block` of the reader's 16z tape decoded into the cache entry `slot` (`size` bytes), as a format 16 tape
-/// of one block (decision 0426 §3's stored form read through 0353 step 4b's cache): each of its `F16Z_PIECES`
+/// of one block (decision 0434 §3's stored form read through 0353 step 4b's cache): each of its `F16Z_PIECES`
 /// pieces (codes, slots, gaps, lengths) decoded where its view places it, the array's column then its side list's
 /// part (an LZ4 piece by `z_lz4`, a raw one copied, a repeat as the piece it names), its checkpoints copied, each
 /// side list's one part's starts after them, and its view. Column `q` lies at `nb * C[q]` (`nb` its nodes), `C[q]`
@@ -1972,7 +1986,7 @@ fn z_decode(b: &mut B<'_, '_>, block: Value, slot: Value, size: Value) -> Value 
             let from = b.u32(parts, at);
             let next = b.f.ins().iadd_imm(at, 4);
             let to = b.u32(parts, next);
-            // Held to its list's order (checked where the tape is read in, decision 0427): never past it.
+            // Held to its list's order (checked where the tape is read in, decision 0463): never past it.
             let to = b.f.ins().umax(to, from);
             b.f.ins().isub(to, from)
         })
@@ -2040,7 +2054,7 @@ fn z_decode(b: &mut B<'_, '_>, block: Value, slot: Value, size: Value) -> Value 
     let ckpt_at64 = b.f.ins().uextend(I64, ckpt_at);
     let to = b.f.ins().iadd(dst, ckpt_at64);
     let len = b.f.ins().uextend(I64, ckpt_len);
-    z_copy_exact(b, src, to, len);
+    z_copy_exact(b, src, to, len, memory());
     // Its pieces, one a turn: the piece index's start, length and kind (a repeat's, the piece it names).
     let pieces = b.f.ins().imul_imm(blocks, i64::from(F16Z_PIECES));
     let starts = b.column(0);
@@ -2099,7 +2113,7 @@ fn z_decode(b: &mut B<'_, '_>, block: Value, slot: Value, size: Value) -> Value 
     b.f.switch_to_block(raw);
     let want = b.f.ins().isub(to_end, to);
     let n = b.f.ins().umin(len, want);
-    z_copy_exact(b, src, to, n);
+    z_copy_exact(b, src, to, n, memory());
     b.f.ins().jump(next, &[]);
     b.f.switch_to_block(next);
     let q = b.f.ins().iadd_imm(q, 1);
@@ -2116,17 +2130,19 @@ fn z_decode(b: &mut B<'_, '_>, block: Value, slot: Value, size: Value) -> Value 
 /// LZ4's reference decoder widens it (its copies may run 8 bytes past `dst_end`, into the slot's room). A length's
 /// extension bytes are read one a step, each 255 bytes of the length. A sequence that would write past `dst_end`
 /// or read before `dst` (a corrupt block) ends the decode.
-fn z_lz4(b: &mut B<'_, '_>, src: Value, src_end: Value, dst: Value, dst_end: Value) {
+fn z_lz4(b: &mut B<'_, '_>, src: Value, src_end: Value, dst: Value, dst_end: Value) -> Value {
     let rw = MemFlags::new().with_notrap();
     let tape = memory();
     let (head, token, literals, after, matched, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
     b.f.append_block_param(head, I64);
     b.f.append_block_param(head, I64);
+    // Where the decode ended in the destination.
+    b.f.append_block_param(done, I64);
     b.f.ins().jump(head, &[src.into(), dst.into()]);
     b.f.switch_to_block(head);
     let (s, d) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
     let more = b.f.ins().icmp(IntCC::UnsignedLessThan, s, src_end);
-    b.f.ins().brif(more, token, &[], done, &[]);
+    b.f.ins().brif(more, token, &[], done, &[d.into()]);
     b.f.switch_to_block(token);
     let t = b.f.ins().uload8(I32, tape, s, 0);
     let s = b.f.ins().iadd_imm(s, 1);
@@ -2135,19 +2151,19 @@ fn z_lz4(b: &mut B<'_, '_>, src: Value, src_end: Value, dst: Value, dst_end: Val
     let lit = b.f.ins().uextend(I64, lit);
     let d_lit = b.f.ins().iadd(d, lit);
     // The literals within the destination and the source both: a length the block states past its own bytes
-    // reads nothing after them (decision 0427).
+    // reads nothing after them (decision 0463).
     let fits = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, d_lit, dst_end);
     let s_lit = b.f.ins().iadd(s, lit);
     let held = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, s_lit, src_end);
     let fits = b.f.ins().band(fits, held);
-    b.f.ins().brif(fits, literals, &[], done, &[]);
+    b.f.ins().brif(fits, literals, &[], done, &[d.into()]);
     b.f.switch_to_block(literals);
-    z_copy_exact(b, s, d, lit);
+    z_copy_exact(b, s, d, lit, memory());
     let s = b.f.ins().iadd(s, lit);
     // A match's two offset bytes within the source, else the block's last literals ended it.
     let s2 = b.f.ins().iadd_imm(s, 2);
     let more = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, s2, src_end);
-    b.f.ins().brif(more, after, &[], done, &[]);
+    b.f.ins().brif(more, after, &[], done, &[d_lit.into()]);
     // The match: its offset back, its length (4 more than its own).
     b.f.switch_to_block(after);
     let off = b.f.ins().uload16(I32, tape, s, 0);
@@ -2164,7 +2180,7 @@ fn z_lz4(b: &mut B<'_, '_>, src: Value, src_end: Value, dst: Value, dst_end: Val
     let fits = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, d_end, dst_end);
     let ok = b.f.ins().band(some, within);
     let ok = b.f.ins().band(ok, fits);
-    b.f.ins().brif(ok, matched, &[], done, &[]);
+    b.f.ins().brif(ok, matched, &[], done, &[d_lit.into()]);
     b.f.switch_to_block(matched);
     let from = b.f.ins().isub(d_lit, off);
     // An offset under 8: its first 8 bytes a byte at a time and a word, and the source moved on to a multiple of
@@ -2215,6 +2231,22 @@ fn z_lz4(b: &mut B<'_, '_>, src: Value, src_end: Value, dst: Value, dst_end: Val
     let from = b.f.ins().iadd_imm(from, 8);
     b.f.ins().jump(wild, &[to.into(), from.into()]);
     b.f.switch_to_block(done);
+    b.f.block_params(done)[0]
+}
+
+/// `tape_lz4(from, to, dst, len)`: the tape's bytes `from..to`, an LZ4 block, decoded into `dst` (`len` bytes, and
+/// at least 8 of room after them, which a match's copies may write) by `z_lz4`; the bytes it decoded (`len` for a
+/// whole block). The tape crate's `Tape16Z` decodes a piece with it (decision 0353 step 4b: one decoder).
+fn lz4_block(b: &mut B<'_, '_>) -> Value {
+    let (from, to) = (b.arg(0), b.arg(1));
+    let (dst, len) = (b.args[2], b.args[3]);
+    let from = b.f.ins().uextend(I64, from);
+    let to = b.f.ins().uextend(I64, to);
+    let src = b.f.ins().iadd(b.tape, from);
+    let src_end = b.f.ins().iadd(b.tape, to);
+    let dst_end = b.f.ins().iadd(dst, len);
+    let end = z_lz4(b, src, src_end, dst, dst_end);
+    b.f.ins().isub(end, dst)
 }
 
 /// An LZ4 length of `nibble` (a u32): 15 is followed by bytes added to it, the last under 255. Returns the length and
@@ -2243,7 +2275,7 @@ fn z_length(b: &mut B<'_, '_>, nibble: Value, s: Value, src_end: Value) -> (Valu
 
 /// `n` bytes from `s` to `d`: 8 a copy, then 4, 2 and 1, so no load passes `s + n` (the last block's literals end
 /// the tape).
-fn z_copy_exact(b: &mut B<'_, '_>, s: Value, d: Value, n: Value) {
+fn z_copy_exact(b: &mut B<'_, '_>, s: Value, d: Value, n: Value, load: MemFlags) {
     let rw = MemFlags::new().with_notrap();
     let (head, step, tail) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
     b.f.append_block_param(head, I64);
@@ -2256,7 +2288,7 @@ fn z_copy_exact(b: &mut B<'_, '_>, s: Value, d: Value, n: Value) {
     b.f.ins().brif(more, step, &[], tail, &[]);
     b.f.switch_to_block(step);
     let from = b.f.ins().iadd(s, k);
-    let word = b.f.ins().load(I64, memory(), from, 0);
+    let word = b.f.ins().load(I64, load, from, 0);
     let to = b.f.ins().iadd(d, k);
     b.f.ins().store(rw, word, to, 0);
     let k = b.f.ins().iadd_imm(k, 8);
@@ -2270,7 +2302,7 @@ fn z_copy_exact(b: &mut B<'_, '_>, s: Value, d: Value, n: Value) {
         b.f.switch_to_block(copy);
         let from = b.f.ins().iadd(s, k);
         let to = b.f.ins().iadd(d, k);
-        let value = b.f.ins().load(ty, memory(), from, 0);
+        let value = b.f.ins().load(ty, load, from, 0);
         b.f.ins().store(rw, value, to, 0);
         b.f.ins().jump(next, &[]);
         b.f.switch_to_block(next);
@@ -2287,7 +2319,7 @@ fn end_of(b: &mut B<'_, '_>) -> Value {
 }
 
 /// `c + size`, past `c` however `size` wraps, and no further than the tape's nodes: a walk by sizes ends whatever
-/// the tape holds, and every node it gives is one of the tape's (decision 0427).
+/// the tape holds, and every node it gives is one of the tape's (decision 0463).
 fn hop(b: &mut B<'_, '_>, c: Value, size: Value) -> Value {
     let to = b.f.ins().iadd(c, size);
     let past = b.f.ins().iadd_imm(c, 1);
@@ -2584,6 +2616,53 @@ fn line(b: &mut B<'_, '_>) -> Value {
     )
 }
 
+/// Whether the tape's block `block` (its nodes `F16_PART * block ..`; `NONE`: the whole document) has a node of kind
+/// `kind`, by its presence (the view's `presence`, decision 0434 §4, step 6): 1 where the tape has none to tell by
+/// (format 15, or one stored without it), and the document's answer where its blocks' presences are not held. The
+/// host's planners and the kernels ask this one read.
+fn has_kind(b: &mut B<'_, '_>) -> Value {
+    let (block, kind) = (b.arg(0), b.arg(1));
+    let at = b.view(at::PRESENCE);
+    let none = b.f.ins().icmp_imm(IntCC::Equal, at, 0);
+    b.either(
+        I32,
+        none,
+        |b| b.c32(1),
+        |b| {
+            let zero = b.c32(0);
+            let kinds = b.u32(at, zero);
+            let word = b.f.ins().ushr_imm(kind, 6);
+            let outside = b.f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, word, kinds);
+            b.either(
+                I32,
+                outside,
+                |b| b.c32(0),
+                |b| {
+                    let four = b.c32(4);
+                    let fields = b.u32(at, four);
+                    let eight = b.c32(8);
+                    let count = b.u32(at, eight);
+                    // The block's presence follows the document's; `NONE` + 1 is the document's (0).
+                    let next = b.f.ins().iadd_imm(block, 1);
+                    let held = b.f.ins().icmp(IntCC::UnsignedLessThan, next, count);
+                    let index = b.f.ins().select(held, next, zero);
+                    let words = b.f.ins().iadd(kinds, fields);
+                    let k = b.f.ins().imul(index, words);
+                    let k = b.f.ins().iadd(k, word);
+                    let k = b.f.ins().ishl_imm(k, 3);
+                    let k = b.f.ins().iadd_imm(k, 16);
+                    let w = b.word(at, k);
+                    let shift = b.f.ins().band_imm(kind, 63);
+                    let shift = b.f.ins().uextend(I64, shift);
+                    let bit = b.f.ins().ushr(w, shift);
+                    let bit = b.f.ins().band_imm(bit, 1);
+                    b.f.ins().ireduce(I32, bit)
+                },
+            )
+        },
+    )
+}
+
 /// Line `k`'s first byte: 0 for the first; else one past newline `k - 1` (format 16: its bucket, from its one's
 /// position, and its low part); format 15's line start.
 fn line_start(b: &mut B<'_, '_>) -> Value {
@@ -2632,16 +2711,16 @@ mod tests {
         assert!(held == source, "{path} is not the reads' Rust: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_facts_id_reads_are_these");
     }
 
-    /// The numbering's kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
+    /// The numbering's kernels' reads are these, as UKL (`<ukl/reads/ids.h>`): written again with `RERAIL_WRITE_READS=1`.
     #[test]
     fn the_facts_id_kernels_reads_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/code_rule_dsl/facts/vtab/syntax/id_reads.metal");
-        let source = super::ids_msl_source().unwrap();
+        let path = format!("{}/ids.h", super::UKL_READS);
+        let source = super::ids_ukl_source().unwrap();
         if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(path, &source).unwrap();
+            std::fs::write(&path, &source).unwrap();
         }
-        let held = std::fs::read_to_string(path).unwrap_or_default();
-        assert!(held == source, "{path} is not the reads' MSL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_facts_id_kernels_reads_are_these");
+        let held = std::fs::read_to_string(&path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' UKL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_facts_id_kernels_reads_are_these");
     }
 
     /// The blocks crate's reads are these, as Rust: written again with `RERAIL_WRITE_READS=1`.
@@ -2656,28 +2735,28 @@ mod tests {
         assert!(held == source, "{path} is not the reads' Rust: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_reads_are_these");
     }
 
-    /// The blocks crate's kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
+    /// The relation's kernels' reads are these, as UKL (`<ukl/reads/relation.h>`): written again with `RERAIL_WRITE_READS=1`.
     #[test]
     fn the_blocks_kernels_reads_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../blocks/src/relation_reads.metal");
-        let source = super::relation_msl_source().unwrap();
+        let path = format!("{}/relation.h", super::UKL_READS);
+        let source = super::relation_ukl_source().unwrap();
         if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(path, &source).unwrap();
+            std::fs::write(&path, &source).unwrap();
         }
-        let held = std::fs::read_to_string(path).unwrap_or_default();
-        assert!(held == source, "{path} is not the reads' MSL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_kernels_reads_are_these");
+        let held = std::fs::read_to_string(&path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' UKL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_kernels_reads_are_these");
     }
 
-    /// The kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
+    /// The kernels' reads are these, as UKL (`<ukl/reads/tape.h>`): written again with `RERAIL_WRITE_READS=1`.
     #[test]
     fn the_kernels_reads_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/code_rule_dsl/transducer/packed/metal_tape_reads.metal");
-        let source = super::msl_source().unwrap();
+        let path = format!("{}/tape.h", super::UKL_READS);
+        let source = super::tape_ukl_source().unwrap();
         if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(path, &source).unwrap();
+            std::fs::write(&path, &source).unwrap();
         }
-        let held = std::fs::read_to_string(path).unwrap_or_default();
-        assert!(held == source, "{path} is not the reads' MSL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_kernels_reads_are_these");
+        let held = std::fs::read_to_string(&path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' UKL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_kernels_reads_are_these");
     }
 
     /// The tape crate's reads are these, as Rust: written again with `RERAIL_WRITE_READS=1`.
@@ -2692,27 +2771,27 @@ mod tests {
         assert!(held == source, "{path} is not the reads' Rust: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_tape_crates_reads_are_these");
     }
 
-    /// The views' kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
+    /// The views' kernels' reads are these, as UKL (`<ukl/reads/view.h>`): written again with `RERAIL_WRITE_READS=1`.
     #[test]
     fn the_view_kernels_reads_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/code_rule_dsl/facts/vtab/syntax/view_reads.metal");
-        let source = super::view_msl_source().unwrap();
+        let path = format!("{}/view.h", super::UKL_READS);
+        let source = super::view_ukl_source().unwrap();
         if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(path, &source).unwrap();
+            std::fs::write(&path, &source).unwrap();
         }
-        let held = std::fs::read_to_string(path).unwrap_or_default();
-        assert!(held == source, "{path} is not the reads' MSL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_view_kernels_reads_are_these");
+        let held = std::fs::read_to_string(&path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' UKL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_view_kernels_reads_are_these");
     }
 
-    /// The 16z kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
+    /// The 16z kernels' reads are these, as UKL (`<ukl/reads/tape_z.h>`): written again with `RERAIL_WRITE_READS=1`.
     #[test]
     fn the_16z_kernels_reads_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/code_rule_dsl/transducer/packed/metal_tape_reads_z.metal");
-        let source = super::msl_z_source().unwrap();
+        let path = format!("{}/tape_z.h", super::UKL_READS);
+        let source = super::tape_z_ukl_source().unwrap();
         if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(path, &source).unwrap();
+            std::fs::write(&path, &source).unwrap();
         }
-        let held = std::fs::read_to_string(path).unwrap_or_default();
-        assert!(held == source, "{path} is not the reads' MSL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_16z_kernels_reads_are_these");
+        let held = std::fs::read_to_string(&path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' UKL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_16z_kernels_reads_are_these");
     }
 }

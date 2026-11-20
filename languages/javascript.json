@@ -20,5 +20,6 @@
     "calls": "refused",
     "formatArgs": "refused"
   },
-  "suppressions": ["eslint", "oxlint", "biome"]
+  "suppressions": ["eslint", "oxlint", "biome"],
+  "fragments": [{ "name": "jsx", "dialect": "javascript", "start": "jsx_element", "tapeTag": 31 }]
 }

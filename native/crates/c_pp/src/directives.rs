@@ -342,7 +342,7 @@ struct Scanner<'t> {
 impl<'t> Scanner<'t> {
     fn run(&mut self, d: &mut Directives) {
         loop {
-            let t = self.lx.next();
+            let t = self.lx.next_token();
             if t.kind == P::Eof {
                 if t.flags & rerail_c_lean::pp::UNCLOSED_COMMENT != 0 {
                     d.problems.push(Problem::UnclosedComment);
@@ -373,7 +373,7 @@ impl<'t> Scanner<'t> {
         let i = d.all.len() as u32;
         let parent = self.stack.last().map(|o| o.last);
         let line = self.line.of(self.src, d.p2.orig(hash.start as usize));
-        let name = if self.lx.at_line_end() { None } else { Some(self.lx.next()) };
+        let name = if self.lx.at_line_end() { None } else { Some(self.lx.next_token()) };
         let kind = match name {
             None => Kind::Null,
             Some(n) if n.kind == P::Ident => match DIRECTIVE_WORDS.find(self.text, n.start as usize, n.end as usize) {
@@ -411,7 +411,7 @@ impl<'t> Scanner<'t> {
             if lx.at_line_end() {
                 return None;
             }
-            let t = lx.next();
+            let t = lx.next_token();
             *end = t.end;
             Some(t)
         };
@@ -458,10 +458,10 @@ impl<'t> Scanner<'t> {
                         Some(f) => {
                             let mut s = Span::of(&f);
                             // `#embed`'s parameters (`limit(…)`, `prefix(…)`) are not the header's.
-                            let embed = kind == Kind::Embed;
-                            while !embed {
-                                let Some(t) = toks(&mut self.lx, &mut end) else { break };
-                                s = s.to(&t);
+                            if kind != Kind::Embed {
+                                while let Some(t) = toks(&mut self.lx, &mut end) {
+                                    s = s.to(&t);
+                                }
                             }
                             d.includes.push(Include { i, kind, form: Form::Macro, spelled: s });
                         }
@@ -556,7 +556,7 @@ impl<'t> Scanner<'t> {
             if self.lx.at_line_end() {
                 return false;
             }
-            let t = self.lx.next();
+            let t = self.lx.next_token();
             *end = t.end;
             if t.is(T::RParen) {
                 // `()`, or a list that does not end in a `,`.
@@ -571,7 +571,7 @@ impl<'t> Scanner<'t> {
                 // GNU's named variadic: `name...`.
                 if !self.lx.at_line_end() {
                     let save = self.lx.pos;
-                    let n = self.lx.next();
+                    let n = self.lx.next_token();
                     if n.is(T::DotDotDot) {
                         *end = n.end;
                         def.variadic = Variadic::Named;

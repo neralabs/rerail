@@ -58,5 +58,5 @@ the same inline choices as 0444's runs in every one, no relation moved:
 
 - On Metal, the refusals were most of 0444's spread. They are the device's room refused at run time
   (`BackendFailure: an index of N rows`): the stratum then ran on the host.
-- Still open (Q261): on Metal a chunk's held bytes differ between runs (14-36 MB for one chunk; the CPU's are the
+- Still open (Q314): on Metal a chunk's held bytes differ between runs (14-36 MB for one chunk; the CPU's are the
   same in every run), so the chunks at once differ. The cuts and plans do not.

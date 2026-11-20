@@ -169,7 +169,7 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
         return None;
     }
     let rest = JoinRule {
-        steps: rest.iter().map(|s| s.clone()).collect(),
+        steps: rest.to_vec(),
         out: vec![Term::Slot(z)],
         nslots: j.nslots,
         multi: Vec::new(),
@@ -182,6 +182,9 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
         step_ns: (0..=rest.len()).map(|_| Default::default()).collect(),
         from: (0..rest.len()).collect(),
         plan_steps: rest.len(),
+        // The steps' ranges as they were: their ends are slots bound before them, the removed first step's too.
+        ranges: j.ranges[1..].to_vec(),
+        est: Vec::new(),
     };
     let rest = JoinRule { probes: super::probes(&rest.steps, &rest.out), ..rest };
     Some(Closure { col, rest, y })
@@ -467,7 +470,6 @@ pub(super) fn finish(cl: &Closure, p: Prepared, outs: Vec<Output>, store: &mut S
             rows += rel.push(&row) as usize;
         }
     }
-    drop(reach);
     prof::count("closure", "rows made", rows as u64);
     let how: Vec<&str> = [(dense, "bit rows"), (chain, "chains"), (host, "host walks past the limits")].iter().filter(|w| w.0).map(|w| w.1).collect();
     Some(Ran { nodes: n, rows, how: if how.is_empty() { "chains".into() } else { how.join(" and ") } })

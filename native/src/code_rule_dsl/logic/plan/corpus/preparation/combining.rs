@@ -386,12 +386,12 @@ impl Guards<'_> {
         // A check of a bound document, never a relation to start from: the documents out of the scope, negated.
         let at = |d: &str| Made::Atom { rel: outside.to_owned(), args: vec![Tm::Var(d.to_owned())], neg: true, gated: false };
         let of_node = |n: &str, fresh: &mut usize| -> Vec<Made> {
-            let g = format!("{}{}", crate::code_rule_dsl::logic::simplify::GUARD_VAR, *fresh);
+            let g = format!("{}{}", super::simplify::GUARD_VAR, *fresh);
             *fresh += 1;
             vec![Made::Cmp { l: Tm::Var(g.clone()), op: CmpOp::Eq, r: Tm::Call("doc".into(), vec![Tm::Var(n.to_owned())]) }, at(&g)]
         };
         let of_span = |n: &str, fresh: &mut usize| -> Vec<Made> {
-            let g = format!("{}{}", crate::code_rule_dsl::logic::simplify::GUARD_VAR, *fresh);
+            let g = format!("{}{}", super::simplify::GUARD_VAR, *fresh);
             *fresh += 1;
             vec![Made::Atom { rel: "docof".into(), args: vec![Tm::Var(n.to_owned()), Tm::Var(g.clone())], neg: false, gated: false }, at(&g)]
         };
@@ -484,7 +484,7 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) fn same_relations(p: &mut crat
 }
 
 /// The copies of `label`'s own guests folded into their originals (`FoldOwn`), and then the rules that repeat another
-/// dropped and the relations that are one merged, as `merge_and_drop_repeats` (decision 0058): the run's edit, once
+/// dropped and the relations that are one merged, as `preparation::run` merges (decision 0058): the run's edit, once
 /// its language is known.
 pub(in crate::code_rule_dsl::logic::plan::corpus) fn fold_own_guests(v: std::sync::Arc<Version>, label: &str) -> Result<std::sync::Arc<Version>> {
     let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("fold own guests", v);
@@ -532,7 +532,8 @@ impl ProgramPass for FoldOwn<'_> {
         }
         let dialect = crate::code_rule_dsl::logic::plan::corpus::hiding::dialect_label;
         // `rr_in_<g>_<c>_…<orig>`, every `<g>` the run's own (as `Hide` names them: `g` with non-alphanumerics as `_`).
-        let grammars: Vec<&str> = ["annotation", label].into_iter().filter(|g| dialect(g) == label).collect();
+        // The run's language and its fragments (decision 0466).
+        let grammars: Vec<&str> = crate::code_rule_dsl::language::fragments().iter().map(|(n, ..)| *n).chain([label]).filter(|g| dialect(g) == label).collect();
         let own_mid = |mut mid: &str| -> bool {
             if mid.is_empty() {
                 return false;
@@ -563,6 +564,19 @@ impl ProgramPass for FoldOwn<'_> {
                 grammars.iter().find_map(|g| tail.strip_prefix(*g).and_then(|r| r.strip_prefix('_'))).filter(|set| set_names.contains(*set)).map(|set| ((*k).to_owned(), set.to_owned()))
             })
             .collect();
+        // A tree axis over a copied set (`Hide`'s `rr_inside_rr_in_<g>_<set>`, `rr_has_…`) reads the original set's
+        // axis: the copied set goes, and an axis left on it names no set, so the transducer made it with no rows and
+        // its negation held for every node (`!inside(t, _, S)` and `within_stop` in a clone over an annotation's node;
+        // main's #862, ported from the tree's `fold_own`).
+        let axes: BTreeMap<String, String> = declared
+            .iter()
+            .copied()
+            .chain(f.inputs())
+            .filter_map(|rel| {
+                let (set, has) = front::axis(rel)?;
+                sets.get(set).map(|orig| (rel.to_owned(), format!("{}{orig}", if has { front::DESCENDANTS } else { front::AXIS })))
+            })
+            .collect();
         if folded.is_empty() && sets.is_empty() {
             return Ok(());
         }
@@ -571,36 +585,59 @@ impl ProgramPass for FoldOwn<'_> {
         let originals: BTreeSet<String> = folded.values().cloned().collect();
         let (narrow, wide) = (i64::from(ANNOTATION_KEYS), i64::from(HIDDEN_KEYS));
         let plain = format!("{label}:");
-        let mut rules = Folding { folded: &folded, sets: &sets, originals: &originals, narrow, wide, plain: &plain };
+        let mut rules = Folding { folded: &folded, axes: &axes, sets: &sets, originals: &originals, narrow, wide, plain: &plain };
         w.derive()?;
         w.apply(cx, &mut rules, &crate::code_rule_dsl::logic::program_image::manager::Select::All)?;
         // The fields edited in the same derivation.
         let b = w.derive()?;
         for rel in folded.keys() {
-            b.undeclare(rel);
+            b.fields().undeclare(rel);
+        }
+        // Each axis copy is declared as its original, where its original was not.
+        for (copy, orig) in &axes {
+            if let Some(cols) = v.columns_of(copy) {
+                if !v.declares(orig) {
+                    let pairs: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
+                    b.fields().declare(orig, &pairs);
+                }
+                b.fields().undeclare(copy);
+            }
         }
         let named = |b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, c: Cell, gone: &dyn Fn(&str) -> bool| matches!(c, Cell::Str(a) if gone(b.text(a)));
         let qualifiers: Vec<Vec<Cell>> = b.about_rows("qualifier").into_iter().filter(|r| !named(b, r[1], &|x| folded.contains_key(x))).collect();
-        b.set_about_rows("qualifier", qualifiers);
+        b.fields().set_about_rows("qualifier", qualifiers);
         // The request record's readers (`hiding::fold_own`'s `rename_readers`, decision 0331).
         b.rename_asked_readers(&|r| folded.get(r).cloned());
         for about in ["kindset", "kindset_kind"] {
             let rows: Vec<Vec<Cell>> = b.about_rows(about).into_iter().filter(|r| !named(b, r[1], &|x| sets.contains_key(x))).collect();
-            b.set_about_rows(about, rows);
+            b.fields().set_about_rows(about, rows);
         }
-        let renamed = |list: Vec<String>| -> Vec<String> { list.into_iter().map(|r| folded.get(&r).cloned().unwrap_or(r)).collect() };
+        // A list names the originals; an axis copy's place is its original's, unless the original is listed already.
+        let renamed = |list: Vec<String>| -> Vec<String> {
+            let mut list: Vec<String> = list.into_iter().map(|r| folded.get(&r).cloned().unwrap_or(r)).collect();
+            for (copy, orig) in &axes {
+                let Some(i) = list.iter().position(|r| r == copy) else { continue };
+                if list.contains(orig) {
+                    list.remove(i);
+                } else {
+                    list[i] = orig.clone();
+                }
+            }
+            list
+        };
+        let moved = |r: &str| folded.contains_key(r) || axes.contains_key(r);
         let inputs = renamed(f.inputs().map(str::to_owned).collect());
         let outputs = renamed(f.outputs().map(str::to_owned).collect());
-        if f.inputs().any(|r| folded.contains_key(r)) {
-            b.set_inputs(&inputs);
+        if f.inputs().any(moved) {
+            b.fields().set_inputs(&inputs);
         }
-        if f.outputs().any(|r| folded.contains_key(r)) {
-            b.set_outputs(&outputs);
+        if f.outputs().any(moved) {
+            b.fields().set_outputs(&outputs);
         }
-        if f.demand().any(|r| folded.contains_key(r)) {
+        if f.demand().any(moved) {
             let p = super::demand::about_p(b);
             let rows: Vec<Vec<Cell>> = renamed(f.demand().map(str::to_owned).collect()).iter().enumerate().map(|(k, r)| vec![p, Cell::Int(k as i64), Cell::Str(b.atom(r))]).collect();
-            b.set_about_rows("demand", rows);
+            b.fields().set_about_rows("demand", rows);
         }
         // The request record's readers renamed as the reads are (`Program::rename_readers`): a request of a folded
         // copy serves its original (decision 0331).
@@ -612,7 +649,7 @@ impl ProgramPass for FoldOwn<'_> {
             }
         }
         if asked != was {
-            b.set_asked(&asked);
+            b.fields().set_asked(&asked);
         }
         self.folded += folded.len() + sets.len();
         Ok(())
@@ -622,6 +659,8 @@ impl ProgramPass for FoldOwn<'_> {
 /// `FoldOwn`'s edit of each rule.
 struct Folding<'a> {
     folded: &'a HashMap<String, String>,
+    /// Each tree axis over a copied kind set, and the original set's axis.
+    axes: &'a BTreeMap<String, String>,
     sets: &'a HashMap<String, String>,
     originals: &'a BTreeSet<String>,
     narrow: i64,
@@ -692,7 +731,7 @@ impl Fold<'_, '_> {
     }
     fn look(&mut self, a: AtomRef<'_>) {
         let rel = self.v.rel_name(a.rel());
-        if self.at.folded.contains_key(rel) {
+        if self.at.folded.contains_key(rel) || self.at.axes.contains_key(rel) {
             self.changed = true;
         }
         for (c, t) in a.args().enumerate() {
@@ -718,7 +757,8 @@ impl Fold<'_, '_> {
 
 impl Rewrite for Fold<'_, '_> {
     fn atom_as(&mut self, a: AtomRef<'_>) -> Option<(String, bool, bool)> {
-        self.at.folded.get(self.v.rel_name(a.rel())).map(|o| (o.clone(), a.neg(), a.gated()))
+        let rel = self.v.rel_name(a.rel());
+        self.at.folded.get(rel).or_else(|| self.at.axes.get(rel)).map(|o| (o.clone(), a.neg(), a.gated()))
     }
     fn arg(&mut self, a: AtomRef<'_>, c: usize, t: TermRef<'_>) -> Option<T<'static>> {
         let TermRef::Str(s) = t else { return None };

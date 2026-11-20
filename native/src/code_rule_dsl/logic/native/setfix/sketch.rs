@@ -10,7 +10,7 @@ const REGISTERS: usize = 256;
 const DENSE_WIDTH: usize = 4096;
 use super::rows::BlockVec;
 
-/// `n` zeros in a block (decision 0450 step 6c: a sketch's arrays are block arrays, not the heap's).
+/// `n` zeros in a block (decision 0478 step 6c: a sketch's arrays are block arrays, not the heap's).
 fn zeros<T: rerail_blocks::Pod + Copy + Default>(n: usize) -> BlockVec<T> {
     let mut v = BlockVec::new();
     v.resize(n, T::default());
@@ -204,7 +204,7 @@ impl Sketch {
 pub mod tests {
     use super::*;
 
-    /// Decision 0450 step 6c: a sketch's arrays (registers, counters, exact counts in each form) are block arrays.
+    /// Decision 0478 step 6c: a sketch's arrays (registers, counters, exact counts in each form) are block arrays.
     #[test]
     fn a_sketchs_arrays_are_in_blocks() {
         let mut s = Sketch::default();

@@ -30,14 +30,16 @@ struct State {
     index: Option<Option<(gix::index::File, String)>>,
 }
 
-static STATE: Mutex<Option<State>> = Mutex::new(None);
+#[derive(Default)]
+struct GitState(Mutex<Option<State>>);
 
 /// The root of a run, for the run's length: calls answer from the repository that holds it. A run inside another
-/// (phase 0's `bootstrap.rr` run, a phase) sets its own and puts the outer run's back when it ends.
+/// (phase 0's `bootstrap.rerail` run, a phase) sets its own and puts the outer run's back when it ends.
 pub struct Scope(Option<PathBuf>);
 
 pub fn scope(root: &Path) -> Scope {
-    let previous = STATE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|s| s.root.clone());
+    let held_ = crate::code_rule_dsl::logic::profile::local::<GitState>();
+    let previous = held_.0.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|s| s.root.clone());
     set_root(root);
     Scope(previous)
 }
@@ -45,7 +47,8 @@ pub fn scope(root: &Path) -> Scope {
 impl Drop for Scope {
     fn drop(&mut self) {
         if let Some(previous) = self.0.take() {
-            let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
+            let held_ = crate::code_rule_dsl::logic::profile::local::<GitState>();
+            let mut state = held_.0.lock().unwrap_or_else(|e| e.into_inner());
             let state = state.get_or_insert_with(State::default);
             if state.root.as_deref() != Some(previous.as_path()) {
                 *state = State { root: Some(previous), ..State::default() };
@@ -56,7 +59,8 @@ impl Drop for Scope {
 
 /// The run's root: later calls answer from the repository that holds it, opened on the first call.
 pub(in crate::code_rule_dsl) fn set_root(root: &Path) {
-    let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    let held_ = crate::code_rule_dsl::logic::profile::local::<GitState>();
+    let mut state = held_.0.lock().unwrap_or_else(|e| e.into_inner());
     let state = state.get_or_insert_with(State::default);
     if state.root.as_deref() != Some(root) {
         *state = State { root: Some(root.to_owned()), ..State::default() };
@@ -88,8 +92,8 @@ fn tracked(state: &mut State, path: &str) -> Option<bool> {
 
 fn open(root: &Path) -> Option<Repo> {
     let repo = gix::discover(root).ok()?;
-    let workdir = repo.workdir()?.canonicalize().ok()?;
-    let prefix = root.canonicalize().ok()?.strip_prefix(&workdir).ok()?.to_path_buf();
+    let workdir = dunce::canonicalize(repo.workdir()?).ok()?;
+    let prefix = dunce::canonicalize(root).ok()?.strip_prefix(&workdir).ok()?.to_path_buf();
     Some(Repo { repo, prefix })
 }
 
@@ -121,7 +125,8 @@ fn has(repo: &Repo, sha: &str, path: &str) -> Option<bool> {
 }
 
 fn answer(name: &'static str, sha: &str, path: &str) -> Value {
-    let mut guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    let held_ = crate::code_rule_dsl::logic::profile::local::<GitState>();
+    let mut guard = held_.0.lock().unwrap_or_else(|e| e.into_inner());
     let state = guard.get_or_insert_with(State::default);
     let key = (name, sha.to_owned(), path.to_owned());
     if let Some(known) = state.answers.get(&key) {
@@ -155,10 +160,11 @@ pub(super) fn git_tracked(path: &str) -> Value {
 }
 
 /// What the run over `root` read that moves: `("git_index", root, digest)` when `@git_tracked` read the index. For
-/// the whole-run cutoff's record (`Report::consulted`). The state is the process's, one root at a time: a run over
+/// the whole-run cutoff's record (`Report::consulted`). The state is the run's, one root at a time: a run over
 /// another root since gives nothing, so it is never recorded against this one.
 pub fn consulted(root: &Path) -> Vec<(String, String, String)> {
-    let guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    let held_ = crate::code_rule_dsl::logic::profile::local::<GitState>();
+    let guard = held_.0.lock().unwrap_or_else(|e| e.into_inner());
     let Some(state) = guard.as_ref() else { return Vec::new() };
     match (&state.root, &state.index) {
         (Some(r), Some(index)) if r == root => vec![("git_index".to_owned(), r.to_string_lossy().into_owned(), index.as_ref().map(|i| i.1.clone()).unwrap_or_default())],
@@ -208,6 +214,8 @@ pub mod tests {
 
     #[test]
     fn commits_and_paths_are_answered_from_the_object_store() {
+        // A run of its own (decision 0442): the root is the run's (`GitState`), and outside a run each read is fresh.
+        let _run = crate::code_rule_dsl::logic::profile::test_run();
         let dir = std::env::temp_dir().join(format!("rerail-git-fn-{}", std::process::id()));
         let root = dir.join("sub");
         std::fs::create_dir_all(root.join("docs")).unwrap();

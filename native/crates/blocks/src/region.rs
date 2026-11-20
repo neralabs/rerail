@@ -300,9 +300,9 @@ impl Region {
     }
 
     /// The device buffer to bind it with, and its offset in it.
-    #[cfg(target_os = "macos")]
-    fn buffer(&self, device: &metal::DeviceRef) -> (metal::Buffer, u64) {
-        (self.block.gpu_buffer(device), self.at as u64)
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn buffer(&self, device: &rerail_device::device::Device) -> Result<(rerail_device::device::Buffer, u64), String> {
+        Ok((self.block.device_buffer(device)?, self.at as u64))
     }
 
     fn bytes(&self) -> *mut u8 {
@@ -346,8 +346,8 @@ macro_rules! common {
             }
 
             /// `bind_read`, with the buffer to bind and its offset.
-            #[cfg(target_os = "macos")]
-            pub fn buffer_read(&self, fence: &Arc<Fence>, op: &'static str, device: &metal::DeviceRef) -> (metal::Buffer, u64) {
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            pub fn buffer_read(&self, fence: &Arc<Fence>, op: &'static str, device: &rerail_device::device::Device) -> Result<(rerail_device::device::Buffer, u64), String> {
                 self.r.pin(fence, op, false);
                 self.r.buffer(device)
             }
@@ -447,8 +447,8 @@ impl<T: crate::Pod> Mutable<T> {
     }
 
     /// `bind_write`, with the buffer to bind and its offset.
-    #[cfg(target_os = "macos")]
-    pub fn buffer_write(&self, fence: &Arc<Fence>, op: &'static str, device: &metal::DeviceRef) -> (metal::Buffer, u64) {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub fn buffer_write(&self, fence: &Arc<Fence>, op: &'static str, device: &rerail_device::device::Device) -> Result<(rerail_device::device::Buffer, u64), String> {
         self.r.pin(fence, op, true);
         self.r.buffer(device)
     }

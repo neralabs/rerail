@@ -43,6 +43,48 @@ pub use crate::code_rule_dsl::logic::device::{Report};
 
 /// The most rows a table is given before its stage has run once (a guess; an overflow runs it again exactly).
 const GUESS_MAX: usize = 1 << 21;
+impl Plan {
+    /// The bytes its tables are expected to take and the rows its stages are expected to make (its planned work),
+    /// from the planner's estimates (`est`, sized as `table_rows` sizes them): what its stratum reserves before it
+    /// encodes (`admit`). A stage without an estimate counts none.
+    fn expected(&self) -> (usize, f64) {
+        let row = 8 * self.nslots.max(1);
+        let most = table_max() / row;
+        self.est.iter().flatten().fold((0, 0.0), |(bytes, work), &e| (bytes + row * (((e * EST_MARGIN).ceil() as usize).max(16)).min(most), work + e))
+    }
+}
+
+/// The reservation for `rules`' tables (`admit`), waited for while waiting is worth what the CPU would take over
+/// them (`placement::worth_waiting`); its wait counted in `rep`.
+fn admitted(rules: &[(&Plan, &JoinRule, usize)], rep: &mut Report) -> Result<rerail_accel::gpu::shared::Admitted, String> {
+    let (bytes, work) = rules.iter().map(|r| r.0.expected()).fold((0, 0.0), |(b, w), (pb, pw)| (b + pb, w + pw));
+    let patience = crate::code_rule_dsl::logic::plan::placement::admission_patience(work);
+    let got = rerail_accel::gpu::shared::admit(bytes, patience)?;
+    if got.waited > 0.0 {
+        rep.admit_waits += 1;
+        rep.admit_seconds += got.waited;
+        crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "strata that waited for the device's memory", 1);
+    }
+    Ok(got)
+}
+
+/// A join stage's table, in rows, before it runs: the growth the stage was seen to have (`seen`, rows out a row in);
+/// else the planner's estimate of its rows (`est`, `JoinRule::est`) with a margin; else twice its input (`cap_in`).
+/// Q203: doubling each stage's input compounded down a plan, and a cold run's tables were a hundred times their rows,
+/// refused past the device's budget. A `scan` (no keys, one binding in) holds its relation's rows (`nr`) at most. An
+/// overflow runs the stage again exactly.
+fn table_rows(cap_in: usize, nr: usize, scan: bool, seen: Option<f64>, est: Option<f64>) -> usize {
+    let seen = seen.map(|r| ((cap_in as f64 * r * 1.25).ceil() as usize).max(16));
+    let est = est.filter(|_| !rerail_accel::gpu::shared::q180_off("est")).map(|e| ((e * EST_MARGIN).ceil() as usize).max(16));
+    if scan {
+        return seen.or(est).map_or(nr, |e| e.min(nr)).max(1);
+    }
+    seen.or(est).unwrap_or(cap_in.saturating_mul(2)).min(cap_in.saturating_mul(nr.max(1))).clamp(1, GUESS_MAX.max(cap_in))
+}
+
+/// A table sized by the planner's estimate holds this many times it: the estimates miss by about that (rr_token_req's
+/// first step: 2,848 expected, 7,453 made), and an overflow runs the stage again exactly.
+const EST_MARGIN: f64 = 2.0;
 /// The device's buffers share the Metal budget (`metal_buffer_limit`, 512 MB by default; decision 0126) with the
 /// buffer pool and the other lanes. The device joins keep within about a quarter of it at the default (their sizes
 /// below are those at 512 MB, scaled with the budget, `metal_share`):
@@ -70,13 +112,13 @@ enum Kind {
     /// An atom over the component's own relation `rel` (recursion, `fixpoint`): its last round's new rows
     /// (`delta`) or all of them, kept on the device by the rounds (`Own`).
     Own { rel: usize, delta: bool, cols: Vec<usize> },
-    /// A text test of a symbol by its table, its verdicts in the store's one rolling cache (decision 0450 step 2d).
+    /// A text test of a symbol by its table, its verdicts in the store's one rolling cache (decision 0478 step 2d).
     Verdict { table: Arc<crate::code_rule_dsl::text::table::Table>, test: u32 },
     /// A stage that reads names (`str_cmp`, a cat compared): its symbols' bytes read in place through the batch's
-    /// atoms directory (decision 0450 step 2e).
+    /// atoms directory (decision 0478 step 2e).
     Names,
     /// A made text per row (`mj::ROWTEXT`: a cat, a regex's replacement, a text function, a text test of one), a SIMD
-    /// group a row, its symbols' bytes read in place (decision 0450 step 2e), with its automaton; `kept`, the id its
+    /// group a row, its symbols' bytes read in place (decision 0478 step 2e), with its automaton; `kept`, the id its
     /// text is kept by in the one rolling cache (`mj::ROW_KEPT`), with the source symbol (0 when it keeps none).
     RowText { auto: RowAuto, kept: u32 },
     /// The rule's steps past the one that binds the head (`setfix::tail`): an atom over `rel` (by its key columns
@@ -100,7 +142,7 @@ fn makes_text(mode: u32) -> bool {
     mode == mj::ROWTEXT
 }
 
-/// Whether a stage of `mode` reads symbols' texts (through the batch's atoms directory, decision 0450 step 2e): a made
+/// Whether a stage of `mode` reads symbols' texts (through the batch's atoms directory, decision 0478 step 2e): a made
 /// text, a text op, `str_cmp`. Each has a counter word for what it finds the host's.
 fn reads_names(mode: u32) -> bool {
     matches!(mode, mj::ROWTEXT | mj::TEXTOP | mj::STRCMP)
@@ -132,7 +174,7 @@ pub(in crate::code_rule_dsl) fn text_fns_id(chain: &str) -> Option<u32> {
     crate::code_rule_dsl::text::automata::text_functions(chain)
 }
 
-/// What a text function stage `d` of `x` keeps its text by (decision 0450 step 2e): when `x` is an input column's
+/// What a text function stage `d` of `x` keeps its text by (decision 0478 step 2e): when `x` is an input column's
 /// symbol, or a kept text of one (`kept`'s, by its slot), and every other argument a constant, the chain of functions
 /// from that symbol (`step` the last, its constants in it) and its id. The stage then looks its text up by (id,
 /// source symbol, key 7) in the one rolling cache, and keeps what it makes (`mj::ROW_KEPT`).
@@ -157,22 +199,6 @@ thread_local! {
     static BINDER: std::cell::RefCell<Vec<&'static str>> = const { std::cell::RefCell::new(Vec::new()) };
     /// The slots of the rule being compiled whose values are arena texts (`mj::ROWTEXT`'s).
     static ARENA: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
-    /// The component's own columns whose values are arena texts (decision 0307: a `shortlex_min` relation's value,
-    /// made by its rules' rounds into one arena), as (relation, column): set while its plans compile (`own_texts`).
-    static OWN_TEXTS: std::cell::RefCell<Vec<(usize, usize)>> = const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// Runs `f` (a component's plans compiled) with `cols` its own columns of arena texts (decision 0307).
-pub(in crate::code_rule_dsl) fn own_texts<T>(cols: Vec<(usize, usize)>, f: impl FnOnce() -> T) -> T {
-    let was = OWN_TEXTS.with_borrow_mut(|o| std::mem::replace(o, cols));
-    let out = f();
-    OWN_TEXTS.with_borrow_mut(|o| *o = was);
-    out
-}
-
-/// Whether column `c` of own relation `rel` holds arena texts (`own_texts`).
-fn own_text(rel: usize, c: usize) -> bool {
-    OWN_TEXTS.with_borrow(|o| o.contains(&(rel, c)))
 }
 
 /// Whether slot `x` of the rule being compiled holds an arena text (a text function's value).
@@ -262,6 +288,9 @@ pub(in crate::code_rule_dsl) struct Plan {
     nsteps: usize,
     /// The rule's spec, hashed: its stages' observed fanouts are kept by it (`GROWTH`), for the next chunk's guesses.
     key: u64,
+    /// Per stage, the rows the planner expects out of it (its last step's, `JoinRule::est`): its table's size before
+    /// a growth has been seen.
+    est: Vec<Option<f64>>,
 }
 
 fn step_name(s: &Step) -> &'static str {
@@ -437,8 +466,10 @@ fn witness_stage(j: &JoinRule, i: usize, bound: &[bool]) -> Option<PStage> {
     Some(PStage { first: i, span: j.steps.len() - i, kind: Kind::Witness { rel: rel.clone(), cols, rest: probes }, desc: d, npassed: 0 })
 }
 
-/// `j`'s device plan, or the step the device cannot run.
-pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
+/// `j`'s device plan, or the step the device cannot run. `own_texts`: the component's own columns whose values are
+/// arena texts (decision 0307: a `shortlex_min` relation's value, made by its rules' rounds into one arena), as
+/// (relation, column).
+pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(usize, usize)]) -> Result<Plan, String> {
     let mut bound = vec![false; j.nslots];
     // Where each slot's value came from: a column of an input relation (a text test's terms are its symbols).
     let mut origin: Vec<Option<(Arc<InRel>, usize)>> = vec![None; j.nslots];
@@ -498,8 +529,8 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                 }
                 // An own column of arena texts (decision 0307) is read as the binding's text, never matched by value:
                 // one text made in two rounds has two values.
-                if let Some((rel, _)) = own && OWN_TEXTS.with_borrow(|o| o.iter().any(|&(r, _)| r == rel)) {
-                    let text = |c: usize| own_text(rel, c);
+                if let Some((rel, _)) = own && own_texts.iter().any(|&(r, _)| r == rel) {
+                    let text = |c: usize| own_texts.contains(&(rel, c));
                     if keys.iter().any(|&(c, _)| text(c)) || tests.iter().any(|&(a, b)| text(a) || text(b)) || j.fused[i].is_some() || *neg {
                         return Err("a made text across rounds matched, tested or negated (decision 0307: read only as a text)".into());
                     }
@@ -612,8 +643,10 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                 if literal_test(op).is_some() && (matches!(p, Key::Slot(_)) || [s, p].iter().any(|k| matches!(k, Key::Slot(x) if deferred.contains_key(x) || is_arena(*x)))) =>
             {
                 // A literal test whose pattern is bound (or a cat's text): the two texts compared on the device a
-                // word at a time, pairwise, as `strings::test` does (a pattern holding the set separator refused).
-                let op = literal_test(op).expect("a literal test") | mj::TEXT_SPLIT;
+                // word at a time, pairwise, as `strings::test` does: a constant set split into its members, a bound
+                // pattern holding the set separator refused (`TEXT_BOUND`: no set).
+                let bound = if matches!(p, Key::Slot(_)) { mj::TEXT_BOUND } else { 0 };
+                let op = literal_test(op).expect("a literal test") | mj::TEXT_SPLIT | bound;
                 stages.push(textop(i, op, *want, *p, *s, &deferred, &origin, &known)?);
                 i += 1;
             }
@@ -629,7 +662,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
             Step::Test { op, s, matcher, want, .. } => {
                 // A text test with constant patterns, of a slot an input relation's column bound (a symbol): its
                 // verdict read from the store's one rolling cache, else made by the test's automaton over the symbol's
-                // bytes where the atoms blocks hold them, and kept there (decision 0450 step 2d).
+                // bytes where the atoms blocks hold them, and kept there (decision 0478 step 2d).
                 let Some(m) = matcher else { return Err(format!("the text test @{op} of a pattern that is not a constant has no device form")) };
                 let Key::Slot(x) = *s else { return Err(format!("the text test @{op} of a constant has no device form")) };
                 if origin.get(x).cloned().flatten().is_none() {
@@ -795,7 +828,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                 i += 1;
             }
             Step::Func { name: name @ ("replace_all" | "rx_replace"), args, out, bind: true, .. } if args.len() == 3 && matches!(args[0], Key::Slot(_)) => {
-                // A regex's replacement in a symbol's text (read in place, decision 0450 step 2e) or a made text (an
+                // A regex's replacement in a symbol's text (read in place, decision 0478 step 2e) or a made text (an
                 // arena text, a held cat's): per row, a SIMD group a row, 32 bytes at a time (`ROWTEXT`), into the
                 // arena.
                 let konst = |k: Key| match k {
@@ -993,7 +1026,8 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
         spec.hash(&mut h);
         h.finish()
     };
-    Ok(Plan { stages, head, head_slots, arena, nslots, nsteps: j.steps.len(), key })
+    let est = stages.iter().map(|s| j.from.get(s.first + s.span.max(1) - 1).and_then(|&p| j.est.get(p)).copied().filter(|e| e.is_finite() && *e >= 0.0)).collect();
+    Ok(Plan { stages, head, head_slots, arena, nslots, nsteps: j.steps.len(), key, est })
 }
 
 /// Whether `step` binds slot `x`.
@@ -1184,14 +1218,16 @@ struct Run<'p> {
 /// dead rows' delta, `InBlock::dead`, which the kernels skip), or a whole view's source's (the vtab's `Relation`).
 fn placed(rel: &Arc<InRel>) -> Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)> {
     match &rel.view {
-        Some(view) if view.whole() && rel.ndead == 0 => view.src.in_block().filter(|b| b.rows as usize == rel.len()).map(|b| (b, view.src.columns().len())),
+        // A source made on lookup numbers only the rows looked up so far; the relation it is bound by holds every pair
+        // (a layered axis's, its tape values' too, decision 0431 §8).
+        Some(view) if view.whole() && rel.ndead == 0 => view.src.in_block().filter(|b| b.rows as usize == rel.len() || view.src.made_on_lookup()).map(|b| (b, view.src.columns().len())),
         _ => rel.in_block().map(|b| (b, rel.k)),
     }
 }
 
 /// The device's handle to `rel`'s columns `need` and `cols`, its index by `cols` (none when it has no keys), and
 /// where each of its columns lies in the handle (`mj::NONE`: not held). Nothing is kept of it between strata
-/// (decision 0450 steps 1 and 3): rows in a block, and a view read in place, are read where they lie, their indexes
+/// (decision 0478 steps 1 and 3): rows in a block, and a view read in place, are read where they lie, their indexes
 /// found in their blocks (or built there by `batch`); a copy (rows uploaded, a view made on the device) is made for
 /// this stratum, holding only the columns it reads, and its index built with it. A stratum in flight holds its own.
 #[allow(clippy::type_complexity)]
@@ -1223,7 +1259,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
     };
     let (dev, held): (mj::DevRel, Vec<usize>) = match made.as_ref().and_then(|d| Some((d.view, d.in_place.clone()?, d.home.clone()?))) {
         // A view the views' reads answer is read in place (decision 0353 step 4d): its relation of no columns, which
-        // the view's source holds, keeps its indexes (decision 0450 step 3); every column is the view's own.
+        // the view's source holds, keeps its indexes (decision 0478 step 3); every column is the view's own.
         Some((view, v, home)) => {
             let ncols = rel.view.as_ref().map_or(0, |view| view.src.columns().len());
             let dev = mj::DevRel::view_in(home, ncols, n, v).map_err(|e| format!("{e:?}: a view of {n} rows read in place"))?;
@@ -1245,7 +1281,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
             let dev = if let Some(d) = made {
 // copy (0353 step 4): a view made on the device for a stratum (decision 0353).
                 let device = rerail_accel::gpu::join::device()?;
-                let block = d.block.gpu_buffer(device);
+                let block = d.block.device_buffer(device)?;
                 let dev = mj::DevRel::empty(k, n).map_err(|e| format!("{e:?}: a view of {n} rows, {k} columns"))?;
                 batch.expand_view(&block, d.root, d.view, &want, &dev).map_err(|e| format!("{e:?}: a view made on the device"))?;
                 rep.uploads += 1;
@@ -1329,7 +1365,7 @@ pub fn column_stats(cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStat
         .iter()
         .map(|c| {
             let StatColumn::Rel(rel, col) = c else { return None };
-            // A relation in its block: its column where it lies (decision 0450 step 1). Any other's is gathered.
+            // A relation in its block: its column where it lies (decision 0478 step 1). Any other's is gathered.
             let (b, ncols) = placed(rel)?;
             let at = owner_col(rel, *col);
             (at < ncols).then(|| mj::DevRel::in_block(&b, ncols).ok().map(|d| (Rc::new(d), at))).flatten()
@@ -1371,7 +1407,7 @@ fn column_values(rel: &InRel, col: usize) -> Vec<i64> {
 }
 
 /// Regex `regex`'s automata for its replacements on the device (`text::table::Replacer`), where the automata block
-/// holds them (decision 0450 step 2c), and their states. Refused for a regex the device has no automata for.
+/// holds them (decision 0478 step 2c), and their states. Refused for a regex the device has no automata for.
 fn automata(regex: &str) -> Result<(Rc<mj::DevBytes>, u32), String> {
     let r = crate::code_rule_dsl::text::table::replacer(regex).map_err(|e| format!("replace_all has no device form: {e}"))?;
     Ok((Rc::new(mj::DevBytes::of(&r.automaton).map_err(|e| format!("{e:?}"))?), r.states))
@@ -1462,14 +1498,9 @@ impl<'p> Run<'p> {
         let s = &self.plan.stages[k];
         match &s.kind {
             Kind::Atom { .. } | Kind::Own { .. } if s.desc.mode == mj::JOIN => {
-                let most = cap_in.saturating_mul(nr.max(1));
-                if s.desc.nkeys == 0 && cap_in == 1 {
-                    return nr.max(1);
-                }
-                // The component's own rounds' growth, else the stage's as filed before its chunk (decision 0450 step 7).
+                // The component's own rounds' growth, else the stage's as filed before its chunk (decision 0478 step 7).
                 let seen = own.get(&(self.plan.key, k)).copied().or_else(|| crate::code_rule_dsl::logic::plan::joins::growth(self.plan.key, k));
-                let want = seen.map_or(cap_in.saturating_mul(2), |r| ((cap_in as f64 * r * 1.25).ceil() as usize).max(16));
-                want.min(most).clamp(1, GUESS_MAX.max(cap_in))
+                table_rows(cap_in, nr, s.desc.nkeys == 0 && cap_in == 1, seen, self.plan.est.get(k).copied().flatten())
             }
             _ => cap_in,
         }
@@ -1782,6 +1813,8 @@ fn submit_(rules: &[(&Plan, &JoinRule, usize)], names: &Interner) -> Result<Opti
     let rules = &some[..];
     let c0 = thread_cpu();
     let mut rep = Report { rules: rules.len() as u32, stages: rules.iter().map(|r| r.0.stages.len() as u32).sum(), ..Report::default() };
+    // Its tables' room, reserved whole before anything is encoded: a wait for it holds no command buffer (0386).
+    let _room = admitted(rules, &mut rep)?;
     use crate::code_rule_dsl::logic::lanes::wave::with_open;
     // A process that did not make the pool (`threads::configure`: a test's) gets the job scopes at its first wave.
     crate::code_rule_dsl::logic::lanes::wave::install_job_scope();
@@ -1868,8 +1901,10 @@ fn resume_(ticket: u64, rules: &[(&Plan, &JoinRule, usize)], store: &Store, name
 
 /// The first rules of `rules` that fit one submission's space, run: their head rows as `run`'s.
 fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh], rep: &mut Report) -> Result<Vec<u64>, String> {
+    let room = admitted(rules, rep)?;
     let mut batch = direct_batch(None)?;
     let runs = encode_runs(rules, &mut batch, rep, names)?;
+    drop(room);
     finish_timed(&mut batch, rep)?;
     complete(runs, &rules[..], store, names, fresh, rep)
 }
@@ -2223,7 +2258,7 @@ struct Own {
     delta: HashMap<usize, Rc<mj::DevRel>>,
     sorts: HashMap<(usize, bool, Vec<usize>), Rc<mj::DevIndex>>,
     /// The growths its rounds saw (`counted`), by rule and stage: a round's next is guessed from them, in the
-    /// component's own order, before the run's memo as filed (decision 0450 step 7).
+    /// component's own order, before the run's memo as filed (decision 0478 step 7).
     growth: HashMap<(u64, usize), f64>,
 }
 
@@ -2637,6 +2672,10 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             Some(b) => b,
             None => batch.insert(direct_batch(None)?),
         };
+// copy (0353 step 6): the fixpoint's total copied into a run's block. It goes: the total lives in a block
+// of the run's life from its start (decision 0353).
+        const TOTAL: rerail_prof::copies::Site = rerail_prof::copies::Site::new(10, "6", "a device fixpoint's total copied into a run's block");
+        TOTAL.copied(8 * k * total.rows);
         let (room, dst, at) = head_room(&store.rels[h], &fresh[h], k, total.rows)?;
         let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
         b.place_rows(mj::Rows::Rel(total), total.rows, None, &no_counts, &ident, dst, at).map_err(|e| format!("{e:?}: a component's rows placed"))?;

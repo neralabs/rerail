@@ -447,17 +447,18 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     } else {
         let _ = writeln!(
             r,
-            "{:<40} {:>7} {:>7} {:>7} {:>10} {:>10} {:>10} {:>6} {:>10} {:>10} {:>10}  longest job run",
-            "wait", "waits", "helped", "jobs", "wait ms", "jobs ms", "jobs cpu", "late", "late ms<=", "late max", "late exact"
+            "{:<40} {:>7} {:>7} {:>7} {:>8} {:>10} {:>10} {:>10} {:>6} {:>10} {:>10} {:>10}  longest job run",
+            "wait", "waits", "helped", "jobs", "declined", "wait ms", "jobs ms", "jobs cpu", "late", "late ms<=", "late max", "late exact"
         );
         for (site, w) in &waits {
             let _ = writeln!(
                 r,
-                "{:<40} {:>7} {:>7} {:>7} {:>10.1} {:>10.1} {:>10.1} {:>6} {:>10.2} {:>10.2} {:>10.2}  {:.2} ms {}",
+                "{:<40} {:>7} {:>7} {:>7} {:>8} {:>10.1} {:>10.1} {:>10.1} {:>6} {:>10.2} {:>10.2} {:>10.2}  {:.2} ms {}",
                 short(site, 40),
                 w.waits,
                 w.helping,
                 w.jobs,
+                w.declined,
                 w.wall * 1e3,
                 w.jobs_wall * 1e3,
                 w.jobs_cpu * 1e3,
@@ -572,7 +573,7 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
             warned += 1;
         }
     }
-    for ((topic, text), _) in &state.decisions {
+    for (topic, text) in state.decisions.keys() {
         if topic == "fallback" {
             let _ = writeln!(r, "- fallback: {text}");
             warned += 1;
@@ -618,12 +619,12 @@ fn stages(r: &mut String) {
     }
     // Timed stages by CPU, then the counts by name.
     let mut timed: Vec<_> = stages.iter().filter(|(_, (d, _))| !d.is_zero()).collect();
-    timed.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+    timed.sort_by_key(|b| std::cmp::Reverse(b.1.0));
     for (name, (d, calls)) in timed {
         let _ = writeln!(r, "{:>12.1} ms {calls:>9}  {name}", d.as_secs_f64() * 1e3);
     }
     let mut kernels: Vec<_> = stages.iter().filter(|(n, _)| n.starts_with("kernel_us.")).collect();
-    kernels.sort_by(|a, b| b.1.1.cmp(&a.1.1));
+    kernels.sort_by_key(|b| std::cmp::Reverse(b.1.1));
     for (name, (_, us)) in &kernels {
         let k = &name["kernel_us.".len()..];
         let n = stages.get(&format!("kernel_n.{k}")).map_or(0, |e| e.1);
@@ -633,7 +634,7 @@ fn stages(r: &mut String) {
     // their walks and longest walk: a long walk is a dispatch's critical path.
     let mut walks: Vec<_> = stages.iter().filter_map(|(n, e)| n.strip_prefix("walk_steps.").map(|w| (w, e.1))).collect();
     if !walks.is_empty() {
-        walks.sort_by(|a, b| b.1.cmp(&a.1));
+        walks.sort_by_key(|b| std::cmp::Reverse(b.1));
         let total: usize = walks.iter().map(|w| w.1).sum();
         let _ = writeln!(r, "\n  micro walks by steps ({total} steps in all; t0 = 8 frames, t2 = the loop tier):");
         // Each tier's walks and steps over every pass, not the 30 listed: two runs walked the same starts where these
@@ -656,28 +657,6 @@ fn stages(r: &mut String) {
         if d.is_zero() && !name.starts_with("kernel_") && !name.starts_with("walk_") {
             let _ = writeln!(r, "{:>12} {count:>12}  {name}", "count");
         }
-    }
-}
-
-// Its tests (the report over what a run recorded, and the projection's provenance over a parsed program) run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the
-// engine registers as it loads (the languages, their `.rr` libraries).
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The span tree: each span under its recorded parent, children by CPU; a span whose parent was not recorded is
-    /// a root (`x/y`), and a span under 0.1% of the run below the roots is left out (`a/tiny`).
-    #[test]
-    fn the_span_tree_nests_children_by_cpu() {
-        let mut spans = BTreeMap::new();
-        for (path, cpu) in [("a", 10.0), ("a/b", 6.0), ("a/b/c", 5.0), ("a/d", 3.0), ("a/tiny", 0.001), ("x/y", 2.0), ("z", 1.0), ("z/e", 0.5)] {
-            spans.insert(path.to_owned(), SpanTotal { calls: 1, total: cpu, ..Default::default() });
-        }
-        let mut r = String::new();
-        super::span_tree(&mut r, &spans, 20.0);
-        let names: Vec<&str> = r.lines().map(|l| &l[38..]).collect();
-        assert_eq!(names, ["a", "  b", "    c", "  d", "y", "z", "  e"], "{r}");
     }
 }
 
@@ -763,5 +742,27 @@ fn metal_summary(r: &mut String, state: &State) {
     let cut: u64 = state.decisions.iter().filter(|((t, _), _)| t == "chunk cut by the run's memory line").map(|(_, n)| n).sum();
     if sized > 0 {
         let _ = writeln!(r, "Grain: {cut} of {sized} chunk sizings (every phase's) cut by the run's memory line; each stratum and matcher wave runs once a chunk (== Warnings)");
+    }
+}
+
+// Its tests (the report over what a run recorded, and the projection's provenance over a parsed program) run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the
+// engine registers as it loads (the languages, their `.rerail` libraries).
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The span tree: each span under its recorded parent, children by CPU; a span whose parent was not recorded is
+    /// a root (`x/y`), and a span under 0.1% of the run below the roots is left out (`a/tiny`).
+    #[test]
+    fn the_span_tree_nests_children_by_cpu() {
+        let mut spans = BTreeMap::new();
+        for (path, cpu) in [("a", 10.0), ("a/b", 6.0), ("a/b/c", 5.0), ("a/d", 3.0), ("a/tiny", 0.001), ("x/y", 2.0), ("z", 1.0), ("z/e", 0.5)] {
+            spans.insert(path.to_owned(), SpanTotal { calls: 1, total: cpu, ..Default::default() });
+        }
+        let mut r = String::new();
+        super::span_tree(&mut r, &spans, 20.0);
+        let names: Vec<&str> = r.lines().map(|l| &l[38..]).collect();
+        assert_eq!(names, ["a", "  b", "    c", "  d", "y", "z", "  e"], "{r}");
     }
 }

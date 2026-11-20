@@ -1,4 +1,4 @@
-// rrlab's Soufflé functors: core.rr's @functors, plus the rr_* helpers the lowering emits for text tests and
+// rrlab's Soufflé functors: core.rerail's @functors, plus the rr_* helpers the lowering emits for text tests and
 // captures. Built by rrlab.py (c++ -shared) and loaded with souffle -l rrlabfn. Symbols in, symbol or number out;
 // every returned string is interned here so the pointer outlives the call.
 //
@@ -30,7 +30,7 @@ static const char* intern(const string& s) {
 
 // Regexes, globs, word and lower are in src/rx.rs (the regex crate), linked into this library.
 // rr_cap(re, s, i): group i of re's whole match of s; rr_capok: 1 when that group took part.
-// ---- globs (core.rr, text tests) ---------------------------------------------------------------------------------
+// ---- globs (core.rerail, text tests) ---------------------------------------------------------------------------------
 static string lower_s(const string& s);
 extern "C" int32_t rr_prefix(const char* p, const char* s) { return strncmp(p, s, strlen(p)) == 0; }
 extern "C" int32_t rr_suffix(const char* p, const char* s) {

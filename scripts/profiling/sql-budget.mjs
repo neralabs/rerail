@@ -28,7 +28,8 @@ const events = tests.map(test => {
 });
 if (!events[0].findings.length || events[1].findings.length) throw new Error("The acceptance workload requires positive and clean observations");
 const input = join(directory, "recording.json");
-writeFileSync(input, JSON.stringify({ ...original, checks: ["serverplan_state_tripwires"], events }, null, 2) + "\n");
+// The cut predates the recordings' `uncaptured_tests` (the replay's schema requires it): none of its tests went uncaptured.
+writeFileSync(input, JSON.stringify({ uncaptured_tests: [], ...original, checks: ["serverplan_state_tripwires"], events }, null, 2) + "\n");
 writeFileSync(join(directory, "provenance.json"), JSON.stringify({ source, sourceSha256: createHash("sha256").update(bytes).digest("hex"),
   commit: original.commit, tests, note: "Unchanged original observations. One cold process includes snapshot and workspace parity for both cases." }, null, 2) + "\n");
 const child = spawnSync("python3", ["scripts/profiling/run.py", "--trace", "off", "--sql-profile", "--deadline", "115",

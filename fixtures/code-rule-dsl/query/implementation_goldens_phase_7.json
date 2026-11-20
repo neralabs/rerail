@@ -12,14 +12,14 @@
     {
       "name": "capture-anchor",
       "terminal_catalog": [
-        {"ordinal":0,"kind":"pattern","dialect":"python","producer_kind":"pattern","program_digest":"dd2eff587d4f8661a93251ad3268817b52ab365ee5dcd9df9bb5826d6cb08f96","result_schema":["producer_status","terminal_match","capture"],"owning_clause_ids":["sql-contract-capture-anchor/contract"],"result_limit":10000,"completion_required":true}
+        {"ordinal":0,"kind":"pattern","dialect":"python","producer_kind":"pattern","program_digest":"7e6ccc7aec014d3f3064a9c5cf69c8ce7acdd455a5346044db02b10dbd680c2e","result_schema":["producer_status","terminal_match","capture"],"owning_clause_ids":["sql-contract-capture-anchor/contract"],"result_limit":10000,"completion_required":true}
       ]
     },
     {
       "name": "capture-anchor-fallback",
       "terminal_catalog": [
-        {"ordinal":0,"kind":"pattern","dialect":"python","producer_kind":"pattern","program_digest":"dd2eff587d4f8661a93251ad3268817b52ab365ee5dcd9df9bb5826d6cb08f96","result_schema":["producer_status","terminal_match","capture"],"owning_clause_ids":["sql-contract-capture-anchor-fallback/contract"],"result_limit":10000,"completion_required":true},
-        {"ordinal":1,"kind":"pattern","dialect":"python","producer_kind":"pattern","program_digest":"dacde0441a006d04ecc32c71aa3eec8ca1a1924992c2f86cec92b9f6529e7b0a","result_schema":["producer_status","terminal_match","capture"],"owning_clause_ids":["sql-contract-capture-anchor-fallback/contract"],"result_limit":10000,"completion_required":true}
+        {"ordinal":0,"kind":"pattern","dialect":"python","producer_kind":"pattern","program_digest":"7e6ccc7aec014d3f3064a9c5cf69c8ce7acdd455a5346044db02b10dbd680c2e","result_schema":["producer_status","terminal_match","capture"],"owning_clause_ids":["sql-contract-capture-anchor-fallback/contract"],"result_limit":10000,"completion_required":true},
+        {"ordinal":1,"kind":"pattern","dialect":"python","producer_kind":"pattern","program_digest":"e87149db81b58f4b5d34864fa5c08db5f15bb64fde33cbd2548bb3d9af54cd41","result_schema":["producer_status","terminal_match","capture"],"owning_clause_ids":["sql-contract-capture-anchor-fallback/contract"],"result_limit":10000,"completion_required":true}
       ]
     },
     {
@@ -31,19 +31,19 @@
     {
       "name": "capture-message-template",
       "terminal_catalog": [
-        {"ordinal":0,"kind":"pattern","dialect":"python","producer_kind":"pattern","program_digest":"dd2eff587d4f8661a93251ad3268817b52ab365ee5dcd9df9bb5826d6cb08f96","result_schema":["producer_status","terminal_match","capture"],"owning_clause_ids":["sql-contract-capture-message-template/contract"],"result_limit":10000,"completion_required":true}
+        {"ordinal":0,"kind":"pattern","dialect":"python","producer_kind":"pattern","program_digest":"7e6ccc7aec014d3f3064a9c5cf69c8ce7acdd455a5346044db02b10dbd680c2e","result_schema":["producer_status","terminal_match","capture"],"owning_clause_ids":["sql-contract-capture-message-template/contract"],"result_limit":10000,"completion_required":true}
       ]
     },
     {
       "name": "capture-fix-range",
       "terminal_catalog": [
-        {"ordinal":0,"kind":"pattern","dialect":"python","producer_kind":"pattern","program_digest":"7923c1b36f50348f3c77c1957d3111adb6e2bed956040d3a828fb79deba3e4b8","result_schema":["producer_status","terminal_match","capture"],"owning_clause_ids":["sql-contract-capture-fix-range/contract"],"result_limit":10000,"completion_required":true}
+        {"ordinal":0,"kind":"pattern","dialect":"python","producer_kind":"pattern","program_digest":"238f291c710c41503ad2d85cd1c7c3a3af1331ad1716eaa1a61a34b8b97bfda0","result_schema":["producer_status","terminal_match","capture"],"owning_clause_ids":["sql-contract-capture-fix-range/contract"],"result_limit":10000,"completion_required":true}
       ]
     },
     {
       "name": "output-fix-and-suppression",
       "terminal_catalog": [
-        {"ordinal":0,"kind":"pattern","dialect":"python","producer_kind":"pattern","program_digest":"5f5f2c7349bbdbedc314eb9a387931dc031c0122cd0a06d54173001d3201346f","result_schema":["producer_status","terminal_match","capture"],"owning_clause_ids":["sql-contract-output-fix-and-suppression/contract"],"result_limit":10000,"completion_required":true}
+        {"ordinal":0,"kind":"pattern","dialect":"python","producer_kind":"pattern","program_digest":"ec4ff8e47110ea656ea6f123f9c7c0709a0c60cbf4708400997fce1e50ba2cb4","result_schema":["producer_status","terminal_match","capture"],"owning_clause_ids":["sql-contract-output-fix-and-suppression/contract"],"result_limit":10000,"completion_required":true}
       ]
     },
     {

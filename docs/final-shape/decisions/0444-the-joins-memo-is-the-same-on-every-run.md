@@ -1,6 +1,6 @@
 # 0444. The joins' memo and the planning choices are the same on every run
 
-Date: 2026-11-19. Status: decided (user, 2026-11-19, on Q261: "Make it deterministic"). Amends 0203 and 0208.
+Date: 2026-11-19. Status: decided (user, 2026-11-19, on Q314: "Make it deterministic"). Amends 0203 and 0208.
 
 ## Intro
 
@@ -85,4 +85,4 @@ each), fresh store and costs a run; 1,629 findings in every run:
   load: 75.2-77.9 B (the 70.9-72.1 B of 0435 was measured at another time).
 - Still not the same on Metal: the device's room at run time. 14-49 stratum runs a run were refused on the device
   (`BackendFailure: an index of N rows`) and ran on the host, by what the chunks beside them held at that moment
-  (d8b6e3b3a: 34-43). That is t49 item 2's subject (Q261, open).
+  (d8b6e3b3a: 34-43). That is t49 item 2's subject (Q314, open).

@@ -18,17 +18,43 @@ pub fn retired() -> (u64, u64) {
     (0, 0)
 }
 
-/// Cranelift's optimizer (`opt_level = speed`) for tier 1 and the rows' code, to measure it.
-/// Off by default: decision 0069 keeps tier 1's constants in its loop, and the mid-end's code
-/// motion hoists them. Tier 2 has its own switch (`native_cpu_clusters::Cut::speed`).
-pub static OPTIMIZE_TIER1: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// What a caller asks of the compiles its run makes (decision 0442: the run's own, `options`).
+pub struct Options {
+    /// Cranelift's optimizer (`opt_level = speed`) for tier 1 and the rows' code, to measure it.
+    /// Off by default: decision 0069 keeps tier 1's constants in its loop, and the mid-end's code
+    /// motion hoists them. Tier 2 has its own switch (`native_cpu_clusters::Cut::speed`).
+    pub optimize_tier1: std::sync::atomic::AtomicBool,
+    /// The same for tier 2's default `compile` (one function).
+    pub optimize_tier2: std::sync::atomic::AtomicBool,
+    /// A class's lane is the bit test itself, not its complement (`native_cpu_lanes`).
+    pub bit_test: std::sync::atomic::AtomicBool,
+    /// Keep each tier 2 function's IR (`CompiledStream::ir`), for an ahead-of-time build of the same code
+    /// (`clif_rust`).
+    pub keep_ir: std::sync::atomic::AtomicBool,
+    /// Runs again on the bound's tape (`CompiledStream::call`), for the profile.
+    pub room_retries: std::sync::atomic::AtomicU64,
+}
 
-/// The same for tier 2's default `compile` (one function).
-pub static OPTIMIZE_TIER2: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+impl Default for Options {
+    fn default() -> Options {
+        Options {
+            optimize_tier1: Default::default(),
+            optimize_tier2: Default::default(),
+            bit_test: std::sync::atomic::AtomicBool::new(crate::native_cpu_lanes::BIT_TEST_DEFAULT),
+            keep_ir: Default::default(),
+            room_retries: Default::default(),
+        }
+    }
+}
 
-/// The JIT builder for tier 1 and the rows: the JIT's defaults, with `OPTIMIZE_TIER1`.
+/// The run's compile options.
+pub fn options() -> std::sync::Arc<Options> {
+    rerail_context::local::<Options>()
+}
+
+/// The JIT builder for tier 1 and the rows: the JIT's defaults, with `optimize_tier1`.
 pub fn tier1_builder() -> Result<cranelift_jit::JITBuilder, Box<ModuleError>> {
-    let flags: &[(&str, &str)] = if OPTIMIZE_TIER1.load(std::sync::atomic::Ordering::Relaxed) { &[("opt_level", "speed")] } else { &[] };
+    let flags: &[(&str, &str)] = if options().optimize_tier1.load(std::sync::atomic::Ordering::Relaxed) { &[("opt_level", "speed")] } else { &[] };
     cranelift_jit::JITBuilder::with_flags(flags, cranelift_module::default_libcall_names()).map_err(Box::new)
 }
 
@@ -134,7 +160,9 @@ pub fn define_function(
 }
 
 /// The tape's cold reads (decision 0310), defined once in `module` as every function is
-/// (`define_function`): what a call the pass leaves calls.
+/// (`define_function`): what a call the pass leaves calls. The closure hands `define_cold` Cranelift's own
+/// `ModuleError`, as its signature asks.
+#[allow(clippy::result_large_err)]
 pub fn define_reads(module: &mut JITModule) -> Result<(), Box<ModuleError>> {
     rerail_clif::inline::define_cold(module, &mut |module, id, context| define_function(module, id, context).map_err(|error| *error))?;
     Ok(())
@@ -164,8 +192,8 @@ pub fn define_functions(module: &mut JITModule, items: Vec<(FuncId, Context)>, n
             function.colocated = near && matches!(function.name, cranelift_codegen::ir::ExternalName::User(_));
         }
     }
-    // On the one pool (decision 0100 §2), a share a thread of it.
-    let threads = rayon::current_num_threads().min(items.len()).max(1);
+    // On the machine's pool (decisions 0100 §2, 0442), a share a thread of it.
+    let threads = rerail_context::cores_threads().min(items.len()).max(1);
     let isa = module.isa();
     // The largest first, dealt round the threads.
     let mut order: Vec<usize> = (0..items.len()).collect();
@@ -176,22 +204,26 @@ pub fn define_functions(module: &mut JITModule, items: Vec<(FuncId, Context)>, n
         let (id, c) = slots[i].take().expect("each once");
         shares[k % threads].push((i, id, c));
     }
+    // The run's pass times, taken here: the loop's items run on pool threads, which hold no run.
+    let times = rerail_context::local::<ParallelTimes>();
     let done: Vec<Result<Vec<(usize, FuncId, Context)>, String>> = {
         use rayon::prelude::*;
-        shares
-            .into_par_iter()
-            .map(|share| {
-                let mut out = Vec::with_capacity(share.len());
-                for (i, id, mut c) in share {
-                    c.compile(isa, &mut Default::default()).map_err(|e| format!("{:?}", e.inner))?;
-                    out.push((i, id, c));
-                }
-                if let Ok(mut t) = PARALLEL_TIMES.lock() {
-                    t.add(&cranelift_codegen::timing::take_current());
-                }
-                Ok(out)
-            })
-            .collect()
+        rerail_context::on_cores(|| {
+            shares
+                .into_par_iter()
+                .map(|share| {
+                    let mut out = Vec::with_capacity(share.len());
+                    for (i, id, mut c) in share {
+                        c.compile(isa, &mut Default::default()).map_err(|e| format!("{:?}", e.inner))?;
+                        out.push((i, id, c));
+                    }
+                    if let Ok(mut t) = times.0.lock() {
+                        t.add(&cranelift_codegen::timing::take_current());
+                    }
+                    Ok(out)
+                })
+                .collect()
+        })
     };
     let mut compiled: Vec<Option<(FuncId, Context)>> = (0..order.len()).map(|_| None).collect();
     for share in done {
@@ -216,11 +248,13 @@ fn anyhow_free(e: String) -> cranelift_module::ModuleError {
     cranelift_module::ModuleError::Compilation(cranelift_codegen::CodegenError::Unsupported(e))
 }
 
-static PARALLEL_TIMES: std::sync::LazyLock<std::sync::Mutex<cranelift_codegen::timing::PassTimes>> = std::sync::LazyLock::new(Default::default);
+/// The run's pass times of `define_functions`' threads (a measurement, decision 0442).
+#[derive(Default)]
+struct ParallelTimes(std::sync::Mutex<cranelift_codegen::timing::PassTimes>);
 
 /// The pass times of `define_functions`' threads since the last call, added.
 pub fn parallel_pass_times() -> cranelift_codegen::timing::PassTimes {
-    PARALLEL_TIMES.lock().map(|mut t| std::mem::take(&mut *t)).unwrap_or_default()
+    rerail_context::local::<ParallelTimes>().0.lock().map(|mut t| std::mem::take(&mut *t)).unwrap_or_default()
 }
 
 /// The relocations' checks: every call of a generated function reaches its callee however far

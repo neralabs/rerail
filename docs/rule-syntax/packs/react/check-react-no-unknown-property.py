@@ -1,4 +1,4 @@
-"""Check that react-no-unknown-property.props.rr says what the JSON says: rebuild each of the JSON's name sets from
+"""Check that react-no-unknown-property.props.rerail says what the JSON says: rebuild each of the JSON's name sets from
 the facts and diff them. Prints `ok`, or the differences. Run: python3 check-react-no-unknown-property.py"""
 import json, os, re, sys, collections
 sys.dont_write_bytecode = True
@@ -8,7 +8,7 @@ sys.path.insert(0, HERE)
 gen = __import__("gen-react-no-unknown-property")
 
 facts = collections.defaultdict(list)
-for rel, args in re.findall(r'(\w+)\(((?:"(?:[^"\\]|\\.)*"(?:, )?)+)\)\.', open(os.path.join(HERE, "react-no-unknown-property.props.rr")).read()):
+for rel, args in re.findall(r'(\w+)\(((?:"(?:[^"\\]|\\.)*"(?:, )?)+)\)\.', open(os.path.join(HERE, "react-no-unknown-property.props.rerail")).read()):
     facts[rel].append(tuple(re.findall(r'"((?:[^"\\]|\\.)*)"', args)))
 
 d = json.load(open(gen.JSON))

@@ -272,6 +272,139 @@ fn a_fold_makes_the_open_nodes_two_leaves_one() {
     }
 }
 
+/// `FOLDED` with `a` and `b` each opened and closed: each close is a commit point (a child of the root closed),
+/// and the fold reaches before the second, to `a`.
+const FOLDED_CLOSED: &str = "program -
+  mode set=0 query=0
+  block 0 %0 = eq 0x61
+  block 0 %1 = const 0x0000000000000000
+  block 0 output %0
+  block 0 output %1
+  block 0 extract %0
+  block 0 extract %0
+  block 0 total %1
+  block 0 records 0 1 kinds=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff
+  switch 0 at 0 end refuse
+  switch 0 0x61-0x61 @0002
+  switch 1 at 0 end refuse
+  switch 1 0x62-0x62 @0008
+  switch 2 at 0 end refuse
+  switch 2 0x28-0x28 @0013
+  switch 3 at 0 end @0019
+  0000 TOKEN 0
+  0001 SWITCH T0
+  0002 OPEN #1
+  0003 SPAN 1
+  0004 OPEN #2
+  0005 CLOSE m=1 0
+  0006 TOKEN 0
+  0007 SWITCH T1
+  0008 SPAN 1
+  0009 OPEN #3
+  0010 CLOSE m=1 0
+  0011 TOKEN 0
+  0012 SWITCH T2
+  0013 SPAN 1
+  0014 MERGE m=1 #4
+  0015 LEAF #6
+  0016 TOKEN 0
+  0017 SWITCH T3
+  0018 STOP 0
+  0019 ACCEPT 0
+";
+
+/// `abc`: the root's three children each opened and closed (each close a commit point), then the root retagged
+/// (`RETAG #7`, the innermost open node's kind) at the end: after a format 16 run passed it to the ops.
+const ROOT_RETAGGED: &str = "program -
+  mode set=0 query=0
+  block 0 %0 = eq 0x61
+  block 0 %1 = const 0x0000000000000000
+  block 0 output %0
+  block 0 output %1
+  block 0 extract %0
+  block 0 extract %0
+  block 0 total %1
+  block 0 records 0 1 kinds=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff
+  switch 0 at 0 end refuse
+  switch 0 0x61-0x61 @0002
+  switch 1 at 0 end refuse
+  switch 1 0x62-0x62 @0008
+  switch 2 at 0 end refuse
+  switch 2 0x63-0x63 @0013
+  switch 3 at 0 end @0019
+  0000 TOKEN 0
+  0001 SWITCH T0
+  0002 OPEN #1
+  0003 SPAN 1
+  0004 OPEN #2
+  0005 CLOSE m=1 0
+  0006 TOKEN 0
+  0007 SWITCH T1
+  0008 SPAN 1
+  0009 OPEN #3
+  0010 CLOSE m=1 0
+  0011 TOKEN 0
+  0012 SWITCH T2
+  0013 SPAN 1
+  0014 OPEN #5
+  0015 CLOSE m=1 0
+  0016 TOKEN 0
+  0017 SWITCH T3
+  0018 STOP 0
+  0019 RETAG #7
+  0020 ACCEPT 0
+";
+
+/// A format 16 run (decision 0434 §6, R17) of a program that edits nodes it passed to the ops: `FOLDED_CLOSED`
+/// folds a leaf before the commit point, which the ops take a commit point behind; `ROOT_RETAGGED` retags the
+/// root, which the ops hold open, after they took it. Each tape is the one the writer makes of tier 2's format 15
+/// image, which is the interpreter's nodes' (the folded leaf's code taken back and numbered again), in 16 and 16z.
+#[test]
+fn edits_of_nodes_passed_reach_the_ops() {
+    use rerail_tape_format::f16::{self, Lang, Written};
+    use rerail_tape_format::tape::{F15, f15_columns};
+    let bytes_of = |w: &Written| match w {
+        Written::F16(t) => t.as_bytes().to_vec(),
+        Written::F16Z(t) => t.as_bytes().to_vec(),
+    };
+    // Each program, its source, and its nodes' kinds, fields, starts, ends and sizes.
+    type Case<'a> = (&'a str, &'a [u8], &'a [(u16, u16, u32, u32, u32)]);
+    let cases: [Case<'_>; 2] = [
+        (FOLDED_CLOSED, b"ab(", &[(1, 0, 0, 3, 3), (4, 0, 0, 2, 1), (6, 0, 2, 3, 1)]),
+        (ROOT_RETAGGED, b"abc", &[(7, 0, 0, 3, 4), (2, 0, 0, 1, 1), (3, 0, 1, 2, 1), (5, 0, 2, 3, 1)]),
+    ];
+    for (program, src, spans) in cases {
+        let p = crate::rir_asm::assemble(program).unwrap_or_else(|e| panic!("{e}"));
+        let t1 = tier1(src, &[0, 1, 2], &[]);
+        let nodes = run(&p, src, &t1).expect("parses");
+        let got: Vec<(u16, u16, u32, u32, u32)> = nodes.iter().map(|n| (n.kind, n.field, n.start, n.end, n.size)).collect();
+        assert_eq!(got, spans);
+        let native = crate::native_ir::lower(&p, 0, 0).expect("lowers");
+        let compiled = crate::native_cpu_stream::compile(&native).expect("compiles");
+        let image = compiled.image_on(src, &t1).expect("an image");
+        assert_eq!(image, crate::stream::image(&nodes, &p.readings.extras, native.tag, src), "each code its node's key's");
+        let widths = rerail_tape_format::Widths { size: 4, ..rerail_tape_format::Narrow::WIDTHS };
+        let sixteen = crate::native_cpu_stream::compile_with(&native, &crate::native_cpu_stream::one_cut(&native), widths, native.tag, true).expect("compiles for format 16");
+        let (columns, table) = f15_columns(&image).expect("a format 15 tape");
+        let t = F15::new(&image, columns, &table).expect("reads");
+        // The language: the image's codes, and the program's other kinds (the root's before its retag).
+        let mut entries = table.entries().to_vec();
+        for kind in 1..8 {
+            if !entries.iter().any(|e| e.kind == kind) {
+                entries.push(rerail_tape_format::tape::Entry { kind, field: 0, flags: 0, alias: None, classes: Vec::new() });
+            }
+        }
+        let lang = Lang::new(rerail_tape_format::tape::CodeTable::new(entries), [1, 1, 1], 1).expect("a language");
+        let number = f16::numbers(&lang, &table).expect("numbers");
+        let numbers = sixteen.numbers(&lang);
+        for z in [false, true] {
+            let want = f16::write_from(&lang, &t, &number, src, native.tag, z).expect("the writer's tape");
+            let got = sixteen.image16_on(src, &t1, &lang, &numbers, z).unwrap_or_else(|e| panic!("{src:?} 16z {z}: {e}"));
+            assert!(bytes_of(&got) == bytes_of(&want), "{src:?} 16z {z}: the writer's tape of the image");
+        }
+    }
+}
+
 /// `a(b`: a wrap around `a` at `(`, closed at `b`; then `b` relabels it (`RETAG m=2`) and the
 /// node it holds first (`NODE_FIELD m=3`): an atom whose word turns out a call's.
 const RELABELLED_INNER: &str = "program -

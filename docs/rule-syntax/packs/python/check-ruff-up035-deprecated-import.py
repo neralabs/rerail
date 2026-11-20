@@ -1,4 +1,4 @@
-"""Checks that ruff-up035-deprecated-import.moves.rr says what the JSON says: every clause's names, versions and
+"""Checks that ruff-up035-deprecated-import.moves.rerail says what the JSON says: every clause's names, versions and
 message are in the table, and the table holds nothing else.
     python3 docs/rule-syntax/packs/python/check-ruff-up035-deprecated-import.py     (prints ok, or the differences)"""
 import json, os, re, sys

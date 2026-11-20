@@ -61,18 +61,20 @@ pub trait Backing: Send + Sync {
     fn base(&self) -> *mut u8;
     fn len(&self) -> usize;
     /// The device buffer over the whole of it, made once by its owner.
-    #[cfg(target_os = "macos")]
-    fn buffer(&self) -> Option<metal::Buffer> {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn buffer(&self) -> Option<rerail_device::device::Buffer> {
         None
     }
 }
 
 /// The bytes zeroed as blocks' memory was handed out again (a free list's chunk, a dirty block's allocation).
 pub fn zeroed_bytes() -> u64 {
-    ZEROED.load(Relaxed)
+    rerail_context::with_local::<Zeroed, _>(|z| z.0.load(Relaxed))
 }
 
-static ZEROED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// The run's count (decision 0442: a measurement of the run's).
+#[derive(Default)]
+struct Zeroed(std::sync::atomic::AtomicU64);
 
 /// Zeroes `len` bytes at `p`, counted (`zeroed_bytes`).
 ///
@@ -80,7 +82,7 @@ static ZEROED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(
 /// `p..p + len` is writable memory of a block.
 unsafe fn zero(p: *mut u8, len: usize) {
     unsafe { std::ptr::write_bytes(p, 0, len) };
-    ZEROED.fetch_add(len as u64, Relaxed);
+    rerail_context::with_local::<Zeroed, _>(|z| z.0.fetch_add(len as u64, Relaxed));
 }
 
 /// What a block has used, and holds free (its free list's bytes): shared with a ledger that counts live blocks
@@ -110,8 +112,8 @@ pub struct Block {
     was_free_listed: bool,
     /// The device buffer this block is read through, kept: a buffer's first use maps it into the GPU's address
     /// space at about 20 ms a GiB (0266 §12), so it is made once and remade only when the block outgrows it.
-    #[cfg(target_os = "macos")]
-    gpu: std::sync::Mutex<Option<(metal::Buffer, usize)>>,
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    gpu: std::sync::Mutex<Option<(rerail_device::device::Buffer, usize)>>,
     /// Its ledger (decision 0487): its live chunks, the GPU's queued uses, and when chunks and memory may go.
     ledger: Arc<crate::ledger::Ledger>,
 }
@@ -121,6 +123,41 @@ unsafe impl Sync for Block {}
 
 fn round_up(n: usize, to: usize) -> usize {
     n.div_ceil(to) * to
+}
+
+
+/// How a file-backed block's writes reach the disk (decision 0481).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Flush {
+    /// Each write-back waits until the pages are on the disk (`msync` with `MS_SYNC`, then a barrier on macOS,
+    /// `fdatasync` elsewhere) before the store commits what names them: the store survives a power loss.
+    Synced,
+    /// The default: nothing waits, and the OS writes the pages back at its own pace. The store survives the
+    /// process's end (the pages are the OS's), not a power loss or a crash of the OS before they are written.
+    #[default]
+    Os,
+    /// Nothing is flushed, and the store's SQLite syncs nothing either: tests, whose stores are thrown away.
+    None,
+}
+
+impl Flush {
+    /// Whether a write-back waits for the disk.
+    pub fn waits(self) -> bool {
+        self == Flush::Synced
+    }
+
+    /// The mode `RERAIL_FLUSH` names (`synced`, `os`, `none`), else `default`. An unknown value is refused.
+    pub fn from_env_or(default: Flush) -> Result<Flush, String> {
+        match std::env::var("RERAIL_FLUSH") {
+            Err(_) => Ok(default),
+            Ok(v) => match v.as_str() {
+                "synced" => Ok(Flush::Synced),
+                "os" => Ok(Flush::Os),
+                "none" => Ok(Flush::None),
+                other => Err(format!("RERAIL_FLUSH={other}: not synced, os or none")),
+            },
+        }
+    }
 }
 
 impl Block {
@@ -174,7 +211,7 @@ impl Block {
             dirty,
             free: 0,
             was_free_listed: false,
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             gpu: std::sync::Mutex::new(None),
         }
     }
@@ -385,37 +422,38 @@ impl Block {
         b
     }
 
-    /// Lets go of the no-copy wrap `gpu_buffer` kept; the device must be done with it. It does not let the OS write
+    /// Lets go of the no-copy wrap `device_buffer` kept; the device must be done with it. It does not let the OS write
     /// back a file block's pages a kernel wrote: the driver holds them wired until the range is unmapped (decision
     /// 0295 §1 and §7, measured by `examples/deferrable`).
-    #[cfg(target_os = "macos")]
-    pub fn release_gpu_buffer(&self) {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub fn release_device_buffer(&self) {
         self.gpu.lock().unwrap().take();
     }
 
-    /// The device buffer to bind this block with: its slab's own, or a no-copy wrap of its used extent made once
-    /// and kept (remade, twice as long, only when the block has outgrown it).
-    #[cfg(target_os = "macos")]
-    pub fn gpu_buffer(&self, device: &metal::DeviceRef) -> metal::Buffer {
+    /// The device buffer to bind this block with: its slab's own, or a wrap of its used extent in place
+    /// (`rerail_device::device::wrap_host_memory`: no copy, decision 0353) made once and kept (remade, twice as long,
+    /// only when the block has outgrown it).
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub fn device_buffer(&self, device: &rerail_device::device::Device) -> Result<rerail_device::device::Buffer, String> {
         if let Some(b) = self.backing.as_ref().and_then(|b| b.buffer()) {
-            return b;
+            return Ok(b);
         }
         let mut kept = self.gpu.lock().unwrap();
         let used = self.used();
         if let Some((b, len)) = kept.as_ref()
             && *len >= used
         {
-            return b.clone();
+            return Ok(b.clone());
         }
         let len = kept.as_ref().map_or(1 << 20, |k| k.1 * 2).max(used.div_ceil(1 << 20) << 20).min(self.reserved);
-        let b = device.new_buffer_with_bytes_no_copy(
-            self.base as *const std::ffi::c_void,
-            len as u64,
-            metal::MTLResourceOptions::StorageModeShared,
-            None,
-        );
+        // A measurement aid: `RERAIL_DEVICE_TRACE` prints where a block of 4 MB or more is wrapped for the device.
+        if len >= 4 << 20 && std::env::var_os("RERAIL_DEVICE_TRACE").is_some() {
+            eprintln!("RERAIL_DEVICE_TRACE a block wrapped, {} MB:\n{}", len >> 20, std::backtrace::Backtrace::force_capture());
+        }
+        // SAFETY: the block's pages outlive the wrap: it is kept by the block, and let go before they are unmapped.
+        let b = unsafe { rerail_device::device::wrap_host_memory(device, self.base, len)? };
         *kept = Some((b.clone(), len));
-        b
+        Ok(b)
     }
 
     fn init(&self, kind: u32) {
@@ -457,7 +495,10 @@ impl Block {
 
     /// `try_alloc`; a dirty block's memory is zeroed only when `zeroed` asks it.
     fn alloc_filled(&self, size: usize, align: usize, zeroed: bool) -> Option<usize> {
-        assert!(self.writable, "alloc in a frozen block");
+        // A read-only block (a frozen file's mapping, `share`) has no room: an index a reader would add goes elsewhere.
+        if !self.writable {
+            return None;
+        }
         let mut cur = self.ext.top.load(Relaxed);
         loop {
             let start = round_up(cur, align);
@@ -506,6 +547,11 @@ impl Block {
         unsafe { self.base.add(off) as *mut T }
     }
 
+    /// Whether `p` lies in this block's reserved range.
+    pub fn holds<T>(&self, p: *const T) -> bool {
+        (p as usize).wrapping_sub(self.base as usize) < self.reserved
+    }
+
     pub fn offset_of<T>(&self, p: *const T) -> usize {
         let o = p as usize - self.base as usize;
         assert!(o < self.reserved);
@@ -514,6 +560,11 @@ impl Block {
 
     pub fn base_ptr(&self) -> *mut u8 {
         self.base
+    }
+
+    /// Whether it may be written: an open block's, not a frozen file's mapping or a shared handle (`share`).
+    pub fn is_writable(&self) -> bool {
+        self.writable
     }
 
     pub fn reserved(&self) -> usize {
@@ -567,10 +618,10 @@ impl Block {
             f.set_len(len as u64).expect("truncate a journal block");
         } else if self.backing.is_none() {
             // A free-listed block's reservation past its length goes back: nothing is written there now.
-            // Whole MBs, and never under a device buffer made over it (`gpu_buffer`'s extent).
+            // Whole MBs, and never under a device buffer made over it (`device_buffer`'s extent).
             #[allow(unused_mut)]
             let mut keep = round_up(len.max(1 << 20), 1 << 20);
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             if let Some((_, l)) = self.gpu.lock().unwrap().as_ref() {
                 keep = keep.max(*l);
             }
@@ -665,12 +716,19 @@ impl Block {
         Ok(b)
     }
 
-    /// What is written in a block mapped from its file on the disk: its dirty pages written back, then the file
-    /// flushed (a barrier on macOS, `fdatasync` elsewhere). Nothing to do for a block with no file.
+    /// What is written in a block mapped from its file on the disk, with `Flush::Synced`: its dirty pages written
+    /// back, then the file flushed (a barrier on macOS, `fdatasync` elsewhere). Otherwise nothing: the OS writes the
+    /// pages back at its own pace (decision 0481). Nothing to do for a block with no file.
     #[cfg(unix)]
-    pub fn sync_mapped(&self) -> io::Result<()> {
-        // SAFETY: the block's own mapping, its whole length.
-        if unsafe { libc::msync(self.base.cast(), self.reserved, libc::MS_SYNC) } != 0 {
+    pub fn sync_mapped(&self, flush: Flush) -> io::Result<()> {
+        if !flush.waits() {
+            return Ok(());
+        }
+        // The pages written: nothing past `used` is (a kept file's reservation is hundreds of MB, its facts a few;
+        // asked of the whole, the kernel walked every page of it, Q361).
+        let written = self.used().next_multiple_of(PAGE).min(self.reserved);
+        // SAFETY: the block's own mapping, its first `written` bytes.
+        if unsafe { libc::msync(self.base.cast(), written, libc::MS_SYNC) } != 0 {
             return Err(io::Error::last_os_error());
         }
         let Some(f) = &self.file else { return Ok(()) };
@@ -726,10 +784,10 @@ impl Drop for Block {
     fn drop(&mut self) {
         let backing = self.backing.take();
         let (base, reserved, mapped) = (self.base as usize, self.reserved, self.mapped);
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         let wrap = self.gpu.get_mut().unwrap_or_else(|e| e.into_inner()).take();
         self.ledger.let_go(Box::new(move || {
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             drop(wrap);
             match backing {
                 Some(slab) => drop(slab),

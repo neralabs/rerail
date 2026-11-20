@@ -28,6 +28,7 @@ pub mod words;
 ///
 /// Each operation uses the backend's CPU instructions: call them only where the CPU runs the
 /// backend (`Backend::runs`), as `dispatch!` does.
+#[allow(clippy::missing_safety_doc, reason = "every operation's contract is the trait's, under `# Safety` above")]
 pub unsafe trait Simd8x64 {
     /// 64 bytes.
     type V: Copy;
@@ -35,35 +36,77 @@ pub unsafe trait Simd8x64 {
     const BACKEND: Backend;
 
     /// 64 bytes from `b`.
+    ///
+    /// # Safety
+    /// The CPU runs `Self::BACKEND`'s instructions (the backend `best` names, or one the target has).
     unsafe fn load(b: &[u8; 64]) -> Self::V;
     /// Each byte is `x`.
+    ///
+    /// # Safety
+    /// The CPU runs `Self::BACKEND`'s instructions (the backend `best` names, or one the target has).
     unsafe fn splat(x: u8) -> Self::V;
     /// Byte by byte, `a == b`: `0xff` or `0`.
+    ///
+    /// # Safety
+    /// The CPU runs `Self::BACKEND`'s instructions (the backend `best` names, or one the target has).
     unsafe fn eq(a: Self::V, b: Self::V) -> Self::V;
     /// Byte by byte, `a & b`.
+    ///
+    /// # Safety
+    /// The CPU runs `Self::BACKEND`'s instructions (the backend `best` names, or one the target has).
     unsafe fn and(a: Self::V, b: Self::V) -> Self::V;
     /// Byte by byte, `a | b`.
+    ///
+    /// # Safety
+    /// The CPU runs `Self::BACKEND`'s instructions (the backend `best` names, or one the target has).
     unsafe fn or(a: Self::V, b: Self::V) -> Self::V;
     /// Each byte's high nibble (`b >> 4`).
+    ///
+    /// # Safety
+    /// The CPU runs `Self::BACKEND`'s instructions (the backend `best` names, or one the target has).
     unsafe fn high_nibbles(a: Self::V) -> Self::V;
     /// Each byte's low nibble (`b & 15`).
+    ///
+    /// # Safety
+    /// The CPU runs `Self::BACKEND`'s instructions (the backend `best` names, or one the target has).
     unsafe fn low_nibbles(a: Self::V) -> Self::V;
     /// Byte by byte, `table[i]` for each nibble `i` of `idx` (`vqtbl1q_u8`, `pshufb`).
+    ///
+    /// # Safety
+    /// The CPU runs `Self::BACKEND`'s instructions (the backend `best` names, or one the target has).
     unsafe fn lookup_16(idx: Self::V, table: &[u8; 16]) -> Self::V;
     /// Bit `i`: byte `i` is not 0.
+    ///
+    /// # Safety
+    /// The CPU runs `Self::BACKEND`'s instructions (the backend `best` names, or one the target has).
     unsafe fn nonzero(a: Self::V) -> u64;
     /// Bit `i`: byte `i`'s high bit (of a compare's result: it is true).
+    ///
+    /// # Safety
+    /// The CPU runs `Self::BACKEND`'s instructions (the backend `best` names, or one the target has).
     unsafe fn to_bitmask(a: Self::V) -> u64;
     /// True where `a & b` is not zero (NEON's `vtst`): a class test kept as a vector, so tests
     /// are combined before one `to_bitmask`.
+    ///
+    /// # Safety
+    /// The CPU runs `Self::BACKEND`'s instructions (the backend `best` names, or one the target has).
     unsafe fn test(a: Self::V, b: Self::V) -> Self::V;
     /// True where a byte is `x` or above, unsigned.
+    ///
+    /// # Safety
+    /// The CPU runs `Self::BACKEND`'s instructions (the backend `best` names, or one the target has).
     unsafe fn ge(a: Self::V, x: u8) -> Self::V;
     /// Bytes 1 to 63 of `a`, then `next`: each byte's next one (simdjson's `prev`, the other way),
     /// for a pair of bytes tested at once.
+    ///
+    /// # Safety
+    /// The CPU runs `Self::BACKEND`'s instructions (the backend `best` names, or one the target has).
     unsafe fn shift_in(a: Self::V, next: u8) -> Self::V;
 
     /// Bit `i`: byte `i` is `x`.
+    ///
+    /// # Safety
+    /// The CPU runs `Self::BACKEND`'s instructions (the backend `best` names, or one the target has).
     #[inline(always)]
     unsafe fn eq_mask(a: Self::V, x: u8) -> u64 {
         unsafe { Self::to_bitmask(Self::eq(a, Self::splat(x))) }
@@ -71,6 +114,9 @@ pub unsafe trait Simd8x64 {
 
     /// Each byte's classes by simdjson's nibble tables: `lo[b & 15] & hi[b >> 4]`. A class is a bit
     /// set in both tables: the low nibbles and the high nibbles it holds.
+    ///
+    /// # Safety
+    /// The CPU runs `Self::BACKEND`'s instructions (the backend `best` names, or one the target has).
     #[inline(always)]
     unsafe fn classify(a: Self::V, lo: &[u8; 16], hi: &[u8; 16]) -> Self::V {
         unsafe { Self::and(Self::lookup_16(Self::low_nibbles(a), lo), Self::lookup_16(Self::high_nibbles(a), hi)) }

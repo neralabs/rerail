@@ -15,7 +15,7 @@
 //! may hold buffers while it waits on another thread that needs some), and after it the
 //! reservation goes ahead: the bound is on memory, never on correctness.
 use std::sync::atomic::AtomicUsize;
-use std::sync::{Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 /// What the tests' Metal buffers may hold at once: the engine's 1 GB RAM budget.
@@ -23,36 +23,57 @@ const TEST_DEVICE_BYTES: usize = 1 << 30;
 /// The longest a reservation waits for room.
 const ADMISSION_WAIT: Duration = Duration::from_secs(30);
 
+#[derive(Default)]
 struct Ledgers {
-    pool: &'static AtomicUsize,
-    peak: &'static AtomicUsize,
+    pool: Arc<AtomicUsize>,
+    peak: Arc<AtomicUsize>,
 }
 
 thread_local! {
-    // Leaked: a reservation can outlive its thread (a cached buffer, or one dropped elsewhere),
-    // and it releases into the ledger it was charged to. Two words per test thread.
-    static LEDGERS: Ledgers = Ledgers {
-        pool: Box::leak(Box::new(AtomicUsize::new(0))),
-        peak: Box::leak(Box::new(AtomicUsize::new(0))),
-    };
+    // A reservation can outlive its thread (a cached buffer, or one dropped elsewhere): it holds the ledger it was
+    // charged to, and releases into it.
+    static LEDGERS: Ledgers = Ledgers::default();
 }
 
 static HELD: Mutex<usize> = Mutex::new(0);
 static RELEASED: Condvar = Condvar::new();
 
-/// This thread's pool ledger.
-pub fn pool() -> &'static AtomicUsize {
-    LEDGERS.with(|ledgers| ledgers.pool)
+/// This thread's pool ledger; on a thread whose locals are being torn down (a lease dropped by another local's
+/// drop as the thread exits), an empty one: the thread holds nothing more to count.
+pub fn pool() -> Arc<AtomicUsize> {
+    LEDGERS.try_with(|ledgers| Arc::clone(&ledgers.pool)).unwrap_or_default()
 }
 
 /// The most this thread's pool ledger has held.
-pub fn pool_peak() -> &'static AtomicUsize {
-    LEDGERS.with(|ledgers| ledgers.peak)
+pub fn pool_peak() -> Arc<AtomicUsize> {
+    LEDGERS.try_with(|ledgers| Arc::clone(&ledgers.peak)).unwrap_or_default()
 }
 
-/// Left out in a test build: the driver's figure is the process's, every test's buffers.
-pub fn driver_bytes(_device: &metal::DeviceRef) -> u64 {
-    0
+thread_local! {
+    /// A test of the driver's figure itself (`measure_driver`): this thread reads the device's.
+    static MEASURED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// A test's working set for the device (`set_working_set`).
+    static WORKING_SET: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+/// Left out in a test build: the driver's figure is the process's, every test's buffers. A test of what the driver's
+/// figure decides reads it (`measure_driver`).
+pub fn driver_bytes(device: &metal::DeviceRef) -> u64 {
+    if MEASURED.get() { device.current_allocated_size() } else { 0 }
+}
+
+/// This thread reads the driver's figure (`driver_bytes`), as a production build does.
+pub fn measure_driver() {
+    MEASURED.set(true);
+}
+
+/// This thread's working set for the device, in place of the OS's (`runtime::working_set`).
+pub fn set_working_set(bytes: Option<u64>) {
+    WORKING_SET.set(bytes);
+}
+
+pub fn working_set() -> Option<u64> {
+    WORKING_SET.get()
 }
 
 /// Waits (bounded) until `bytes` fit beside what the other tests hold, then counts them.
@@ -81,8 +102,8 @@ mod tests {
 
     #[test]
     fn each_thread_has_its_own_pool_ledger() {
-        let here = pool() as *const AtomicUsize as usize;
-        let there = std::thread::spawn(|| pool() as *const AtomicUsize as usize).join().unwrap();
+        let here = Arc::as_ptr(&pool()) as usize;
+        let there = std::thread::spawn(|| Arc::as_ptr(&pool()) as usize).join().unwrap();
         assert_ne!(here, there);
         assert_eq!(pool().load(Ordering::Acquire), 0, "a fresh test thread starts empty");
     }

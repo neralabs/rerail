@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Checks lib/vue/elements.rr: its rows rebuild the JSON's lists exactly (order included), and, given the plugin's
+"""Checks lib/vue/elements.rerail: its rows rebuild the JSON's lists exactly (order included), and, given the plugin's
 checkout (--plugin DIR or $ESLINT_PLUGIN_VUE), equal the plugin's own lists as sets."""
 import importlib.util, json, os, re, sys
 

@@ -630,8 +630,8 @@ impl<'a> P<'a> {
                     }
                 }
                 // A generic type's constructor: `Name<…>(`.
-                if self.kind_at(1) == T::Lt && self.adjacent(0) {
-                    if let Some(close) = self.type_args_end(1) {
+                if self.kind_at(1) == T::Lt && self.adjacent(0)
+                    && let Some(close) = self.type_args_end(1) {
                         if self.kind_at(close + 1) == T::Dot && self.adjacent(close) && self.generic_member_is_type(1, close + 2) {
                             // `Name<…>.member`: the type a navigation's target.
                             self.u_end = self.peek_at(close + 2).end;
@@ -663,7 +663,6 @@ impl<'a> P<'a> {
                             return Ok(());
                         }
                     }
-                }
                 self.simple_identifier()?;
                 Ok(())
             }
@@ -1373,9 +1372,8 @@ impl<'a> P<'a> {
                 self.tk(K::TSelf)?;
                 self.close(s);
             } else {
-                if matches!(self.word(), w::WEAK | w::UNOWNED) && self.kind_at(1) == T::Name {
-                    self.ownership_modifier()?;
-                } else if self.is_word(w::UNOWNED) && self.kind_at(1) == T::LParen {
+                // `weak x`, `unowned x`, `unowned(safe) x`.
+                if (matches!(self.word(), w::WEAK | w::UNOWNED) && self.kind_at(1) == T::Name) || (self.is_word(w::UNOWNED) && self.kind_at(1) == T::LParen) {
                     self.ownership_modifier()?;
                 }
                 self.simple_identifier_f(f::NAME)?;

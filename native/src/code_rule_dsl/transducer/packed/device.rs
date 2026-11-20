@@ -51,8 +51,11 @@ pub trait MatcherDevice: Send + Sync {
     fn wave_roots(&self, wave: &LoweredWave, tapes: &[TapeDoc], roots: ClauseRoots<'_>) -> Result<(Vec<Vec<BTreeSet<u32>>>, Outcome), Error>;
     /// Every clause's labels over the batch, as views of its tapes the root programs read, with `roots`' records.
     fn wave_labelled(&self, wave: &LoweredWave, tapes: &[TapeDoc], active: &[Vec<bool>], roots: Option<&RootJobs<'_>>) -> Result<(Vec<TapeDoc>, Outcome), Error>;
-    /// The sources of the wave's generated kernels (its patterns'), in the plan's order, for tapes of `format`.
+    /// The sources of the wave's generated kernels (its patterns'), in the plan's order, for a batch of tapes of
+    /// `format` (0: mixed): a source reads the tape through the format's view (decision 0353 step 4b).
     fn wave_pattern_sources(&self, wave: &LoweredWave, format: u32) -> Result<Vec<String>, Error>;
+    /// Which of the kernels' tape views a batch of `format` reads (0 or 1): the sources differ by it alone.
+    fn pattern_variant(&self, format: u32) -> usize;
     /// Whether the kernels of `sources` are at hand without a compile (decision 0395); each missing one is
     /// recorded, and compiled as the mode says.
     fn patterns_ready(&self, sources: &[String], format: u32) -> bool;

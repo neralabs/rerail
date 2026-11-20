@@ -69,10 +69,11 @@ impl CodeRuleSqlExecutor {
             })
             .collect();
         for run in &self.executions {
-            for (name, columns) in &run.program.decls {
-                types
-                    .entry(name.to_string())
-                    .or_insert_with(|| columns.iter().map(|(_, t)| t.clone()).map(String::from).collect());
+            for name in run.program.declared_names() {
+                if !types.contains_key(&name) {
+                    let columns = run.program.columns_of(&name).unwrap_or_default();
+                    types.insert(name, columns.into_iter().map(|(_, t)| t).collect());
+                }
             }
         }
         for (name, (_, bound)) in &self.input_shapes {
@@ -118,36 +119,34 @@ impl CodeRuleSqlExecutor {
         loop {
             let before = domains.len();
             for run in &self.executions {
+                use crate::code_rule_dsl::logic::program_image::TermRef;
                 let program = &run.program;
                 let heads = program
-                    .rules
-                    .iter()
-                    .map(|r| r.head.rel.to_string())
+                    .rules()
+                    .map(|r| program.rel_name(r.head().rel()).to_owned())
                     .collect::<BTreeSet<_>>();
                 for rel in heads {
-                    if program.facts.get(rel.as_str()).is_some_and(|r| !r.is_empty()) {
+                    if program.has_fact_rows(&rel) {
                         continue;
                     }
                     let rules = program
-                        .rules
-                        .iter()
-                        .filter(|r| r.head.rel == rel)
+                        .rules()
+                        .filter(|r| program.rel_name(r.head().rel()) == rel)
                         .collect::<Vec<_>>();
-                    for column in 0..rules[0].head.args.len() {
+                    for column in 0..rules[0].head().arity() {
                         let copied = rules
                             .iter()
                             .map(|r| {
-                                let front::Term::Var(head) = &r.head.args[column] else {
+                                let Some(TermRef::Var(head)) = r.head().args().nth(column) else {
                                     return None;
                                 };
-                                r.body
-                                    .iter()
-                                    .filter_map(front::Literal::atom)
-                                    .filter(|a| !a.neg)
+                                r.body()
+                                    .filter_map(|l| l.atom())
+                                    .filter(|a| !a.neg())
                                     .find_map(|a| {
-                                        a.args.iter().enumerate().find_map(|(i, t)| {
-                                            matches!(t,front::Term::Var(v) if v==head)
-                                                .then(|| domains.get(&(a.rel.to_string(), i)).copied())
+                                        a.args().enumerate().find_map(|(i, t)| {
+                                            matches!(t, TermRef::Var(v) if v == head)
+                                                .then(|| domains.get(&(program.rel_name(a.rel()).to_owned(), i)).copied())
                                                 .flatten()
                                         })
                                     })
@@ -188,8 +187,7 @@ impl CodeRuleSqlExecutor {
                             })
                             .or_else(|| {
                                 program
-                                    .decls
-                                    .get(source)
+                                    .columns_of(source)
                                     .and_then(|c| c.iter().position(|(n, _)| n == field))
                             });
                         if let Some(domain) =
@@ -217,8 +215,7 @@ impl CodeRuleSqlExecutor {
                     .lattice_operations
                     .get(rel)
                     .is_some_and(|o| o.after.is_some() && o.widen.is_some())
-                {
-                    if let Some(columns) = types.get(rel) {
+                    && let Some(columns) = types.get(rel) {
                         let columns = columns
                             .iter()
                             .take(*keys)
@@ -227,7 +224,6 @@ impl CodeRuleSqlExecutor {
                             .collect();
                         types.insert(format!("__sql_changes_{rel}"), columns);
                     }
-                }
             }
         }
         types
