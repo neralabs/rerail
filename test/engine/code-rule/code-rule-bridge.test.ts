@@ -36,6 +36,8 @@ const discovery = vi.hoisted(() => ({
   opens: new Map<string, Array<() => Promise<void>>>(),
   /** The modified and change time `lstat` gives a file, as a copy that keeps its source's times leaves where no change time is kept. */
   stamps: new Map<string, number>(),
+  /** An entry about to be looked at there by `lstat`, before it is. */
+  looks: new Map<string, Array<() => Promise<void>>>(),
 }));
 /**
  * The arguments of every Git process Rerail started without blocking, for the tests that pin what a pass costs, a Git
@@ -138,6 +140,7 @@ vi.mock("node:fs/promises", async importOriginal => {
     // would leave `mtime` and `ctime` disagreeing with them. No case sets both: each case sets one map, and the
     // clean-up after each case empties both.
     lstat: async (...args: Parameters<typeof actual.lstat>) => {
+      await discovery.looks.get(String(args[0]))?.shift()?.();
       const info = await actual.lstat(...args);
       const at = discovery.stamps.get(String(args[0]));
       const times = heldTimes.get(String(args[0])) ?? (at === undefined ? undefined : { mtimeMs: at, ctimeMs: at });
@@ -335,6 +338,7 @@ afterEach(async () => {
   discovery.directories.clear();
   discovery.opens.clear();
   discovery.stamps.clear();
+  discovery.looks.clear();
   heldGit.reads = 0;
   asyncGitCalls.before = undefined;
   readBuffers.watching = false;
@@ -4381,6 +4385,34 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits.map(edit => edit.path), batch.mode])).toEqual([
       [[repositoryPath(root, join(worktree, "deep", "new.py"))], "log"],
     ]);
+  });
+
+  // A walk that drops a worktree being removed recovers the preimage of each write it keeps from the Git of that write's
+  // checkout. The removed worktree's writes are no edits, so no Git starts there to recover theirs.
+  it("starts no Git in a worktree whose `.git` entry went once Git answered, recovering another worktree's preimage", async () => {
+    const root = await twoBranches();
+    const { worktree: stays, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const place = join(await workspace(), "w");
+    git(root, "worktree", "add", "--quiet", "--detach", place, "other");
+    const removed = await realpath(place);
+    roots.push(removed);
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    await writeFile(join(stays, "src", "a.py"), "old\nviolation\nmine\n");
+    await writeFile(join(removed, "src", "a.py"), "old\nviolation\ntheirs\n");
+    // A file gone has the walk look for the worktree's `.git` entry once Git has answered there; the removal takes it then.
+    await rm(join(removed, "src", "new.py"));
+    let looked: number | undefined;
+    discovery.looks.set(join(removed, ".git"), [async () => {
+      await rm(join(removed, ".git"));
+      looked = asyncGitCalls.args.length;
+    }]);
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    const startedThere = asyncGitCalls.args.slice(looked).filter(args => args[args.indexOf("-C") + 1] === removed);
+    expect({ looked: looked !== undefined, startedThere }).toEqual({ looked: true, startedThere: [] });
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([[[{
+      path: repositoryPath(root, join(stays, "src", "a.py")), language: "python", previousText: "old\nviolation\n", generatedText: "old\nviolation\nmine\n",
+    }], "log"]]);
   });
 
   it("reports no deletions for a worktree removed while its own walk ran, with no other walk between", async () => {
