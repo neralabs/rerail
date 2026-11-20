@@ -57,6 +57,12 @@ function now(): number {
 /** The pauses of SQLite's default busy handler (`sqliteDefaultBusyCallback`), in ms; the last one repeats. */
 const SQLITE_BUSY_PAUSES_MS = [1, 2, 5, 10, 15, 20, 25, 25, 25, 50, 50, 100];
 
+/**
+ * The room past one of SQLite's tries a wait may answer in: the answer's way back to this thread and the timers' steps,
+ * which on Windows are about 16 ms each, the release's timer here and the wait's, and a busy machine wakes a thread later.
+ */
+const ROOM_MS = process.platform === "win32" ? 60 : 35;
+
 /** When SQLite's busy handler makes try `tries` (0, the first, at once), in ms from the first. */
 function sqliteTryAtMs(tries: number): number {
   const pauses = Array.from({ length: tries }, (_, index) => SQLITE_BUSY_PAUSES_MS[index] ?? 100);
@@ -109,10 +115,10 @@ describe("waiting for the write lock", () => {
       // 5 ms after one of the tries SQLite's busy handler makes from `since`, 95 ms before the next.
       const released = await releaseAt(holder, since + sqliteTryAtMs(15) + 5, true);
       // Well before that next try, which the busy handler's times alone would wait for. Windows reports an open file's
-      // growth only once it is flushed, and this holder flushes nothing: there the wait keeps SQLite's times, with room
-      // for its timers' steps of about 16 ms.
+      // growth only once it is flushed, and this holder flushes nothing: there the wait keeps SQLite's times, within
+      // `ROOM_MS`.
       const next = nextSqliteTry(since, released);
-      expect(await answered).toBeLessThan(process.platform === "win32" ? next + 35 : next - 20);
+      expect(await answered).toBeLessThan(process.platform === "win32" ? next + ROOM_MS : next - 20);
     } finally {
       holder.close();
     }
@@ -139,8 +145,8 @@ describe("waiting for the write lock", () => {
         const since = release + 10 - sqliteTryAtMs(18);
         const answered = waitForWriteLock(path, undefined, since).then(now);
         const released = await releaseAt(holder, release, false);
-        // Up to 35 ms for the answer's way back and the timers' steps, which are about 16 ms on Windows.
-        expect(await answered).toBeLessThanOrEqual(nextSqliteTry(since, released) + 35);
+        // Within the room for the answer's way back and the timers' steps.
+        expect(await answered).toBeLessThanOrEqual(nextSqliteTry(since, released) + ROOM_MS);
       } finally {
         holder.close();
       }
