@@ -6772,6 +6772,9 @@ Open:
   The hub's a85f74caf passes all five. The four corpus tests are ignored with this item.
 - **Do**: rr-align's owners fix them where they arise; the hub takes the fixes at the next roll-up.
 - **Done when**: all four pass, unignored.
+- **Done** (2026-11-20, Native-and-GPU-strata after the merge of phased-facts 002bc11ff0): the four pass here
+  (macOS, M-series, `RERAIL_GPU=cpu`) three runs in a row, with phased-facts' tape-values twin; their ignores are gone,
+  as the hub's 490760b164 did on Linux.
 
 ### Q293. (Q262 on benchmarks-on-integration) The settle-window test's first leg can no longer miss an edit
 
