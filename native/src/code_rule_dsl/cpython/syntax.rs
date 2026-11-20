@@ -237,7 +237,7 @@ pub(crate) fn syntax_error(source: &str) -> Result<Option<SyntaxError>, Raised> 
     for e in parsed.unsupported_syntax_errors() {
         found.push(Found { at: e.range.start(), end: e.range.end(), what: What::Unsupported(e.kind) });
     }
-    let brackets = Brackets::scan(tokens);
+    let brackets = Brackets::scan(tokens, &lines);
     for &(at, ref msg) in &brackets.errors {
         found.push(Found { at, end: at, what: What::Tokenizer(msg.clone()) });
     }
@@ -272,7 +272,7 @@ pub(crate) fn syntax_error(source: &str) -> Result<Option<SyntaxError>, Raised> 
     // `SyntaxError` of either pass): the first tokenizer error there that raises replaces it (`raises_in_scan`; one that
     // raises nothing ends the scan), and so does a bracket still open where the scan stops that opened on a line before
     // the error's. An `INDENT` or `DEDENT` the first pass failed at raises "unexpected indent" with no scan.
-    let indent = matches!(first.what, What::Parse(ParseErrorType::UnexpectedIndentation)) && second.is_none();
+    let indent = matches!(chosen.msg.as_str(), "unexpected indent" | "unexpected unindent") && second.is_none();
     let stop = found.iter().skip(1).filter(|f| f.at > first.at).find(|f| f.is_tokenizer());
     if indent || first.is_tokenizer() {
     } else if let Some(later) = stop.filter(|f| f.raises_in_scan()) {
@@ -344,7 +344,7 @@ struct Brackets {
 }
 
 impl Brackets {
-    fn scan(tokens: &Tokens) -> Self {
+    fn scan(tokens: &Tokens, lines: &Lines) -> Self {
         let mut errors: Vec<(TextSize, String)> = Vec::new();
         let mut open: Vec<(TextSize, TokenKind)> = Vec::new();
         for t in tokens.iter() {
@@ -352,8 +352,11 @@ impl Brackets {
                 TokenKind::Lpar | TokenKind::Lsqb | TokenKind::Lbrace => open.push((t.start(), t.kind())),
                 k @ (TokenKind::Rpar | TokenKind::Rsqb | TokenKind::Rbrace) => match open.last() {
                     None => errors.push((t.start(), format!("unmatched '{}'", bracket_char(k)))),
-                    Some(&(_, o)) if closing(o) != k => {
-                        errors.push((t.start(), format!("closing parenthesis '{}' does not match opening parenthesis '{}'", bracket_char(k), bracket_char(o))));
+                    Some(&(at, o)) if closing(o) != k => {
+                        // The opening's line where it is another (the tokenizer's `parenlinenostack`).
+                        let (here, there) = (lines.line(t.start()), lines.line(at));
+                        let on = if here == there { String::new() } else { format!(" on line {there}") };
+                        errors.push((t.start(), format!("closing parenthesis '{}' does not match opening parenthesis '{}'{on}", bracket_char(k), bracket_char(o))));
                         // CPython stops at the first; the rest of the scan is never read once this is chosen.
                         open.pop();
                     }
@@ -602,6 +605,16 @@ impl Found<'_> {
                         };
                         named(span, format!("expected an indented block after {} on line {header}", clause_name(clause)))
                     }
+                    // A decorator's line followed by an `INDENT` or a `DEDENT`: CPython's first pass fails at that
+                    // token (`_PyPegen_set_syntax_error`'s indentation branch), at no column.
+                    None if msg.starts_with("Expected class, function definition or async function definition after decorator")
+                        && let Some(kind) = tokens.iter().find(|t| t.start() >= self.at).map(|t| t.kind())
+                        && matches!(kind, TokenKind::Indent | TokenKind::Dedent) =>
+                    {
+                        let (body, _) = lines.text(source, line);
+                        let span = Span::NoColumn(line, body.len() - body.trim_start_matches([' ', '\t', '\x0c']).len());
+                        named(span, if kind == TokenKind::Indent { "unexpected indent" } else { "unexpected unindent" }.into())
+                    }
                     None => match other_message(msg) {
                         Some(m) => named(node, m.into()),
                         None => generic(token),
@@ -778,7 +791,7 @@ pub(crate) fn explain(source: &str) -> String {
     let lines = Lines::new(source);
     let mut out: Vec<String> = parsed.errors().iter().map(|e| format!("L{} {:?}", lines.line(e.location.start()), e.error)).collect();
     out.extend(parsed.unsupported_syntax_errors().iter().map(|e| format!("L{} unsupported {:?}", lines.line(e.range.start()), e.kind)));
-    let brackets = Brackets::scan(parsed.tokens());
+    let brackets = Brackets::scan(parsed.tokens(), &lines);
     out.extend(brackets.open.iter().map(|(at, k)| format!("open {k:?} at L{}", lines.line(*at))));
     out.join("; ")
 }
@@ -979,9 +992,12 @@ fn other_message(ruff: &str) -> Option<&'static str> {
 }
 
 /// Whether the token before `at` is a function's name: `def NAME` (`async def` too).
+/// Whether the tokens before `at` end with a function's name, `def NAME` (`async def` too); a line's end between them
+/// and `at` is passed over (Ruff reports a token missing there past the line's `Newline`).
 fn after_def_name(tokens: &Tokens, at: TextSize) -> bool {
-    let mut before = tokens.iter().take_while(|t| t.end() <= at).filter(|t| !t.kind().is_trivia()).map(|t| t.kind()).collect::<Vec<_>>().into_iter().rev();
-    matches!((before.next(), before.next()), (Some(TokenKind::Name), Some(TokenKind::Def)))
+    let kinds: Vec<TokenKind> =
+        tokens.iter().take_while(|t| t.start() < at).map(|t| t.kind()).filter(|k| !k.is_trivia() && !k.is_any_newline()).collect();
+    kinds.ends_with(&[TokenKind::Def, TokenKind::Name])
 }
 
 /// The bracket depth at `at`, as CPython's tokenizer counts it.
