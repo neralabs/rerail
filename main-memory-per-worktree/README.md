@@ -1,6 +1,6 @@
 # A first session's walk of many worktrees takes about half the memory
 
-For [pull request #812](https://github.com/neralabs/rerail/pull/812), head da345bfc3. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #812](https://github.com/neralabs/rerail/pull/812), head 4f814b43b. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -10,7 +10,7 @@ For [pull request #812](https://github.com/neralabs/rerail/pull/812), head da345
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 3,166 lines in 15 files: 1,232 ship, 1,934 are tests and text | Careful. It changes which engine answers a walk's questions. | Nothing. No CI result at this head yet. | 4 |
+| 3,322 lines in 15 files: 1,246 ship, 2,076 are tests and text | Careful. It changes which engine answers a walk's questions. | Nothing. No CI result at this head yet. | 4 |
 
 ## 2. Intent, and the gap
 
@@ -34,7 +34,7 @@ Found in November 2026 on Linux x64 and Windows 11 machines, measuring #726's st
 
 ## 3. Where to look
 
-<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Walk answered without new engines, medium risk, 219 lines; B, One Git ignore reader per checkout, medium risk, 1,013 lines. Read first: checkout-code-rule-router.ts, git_ignore.rs, git-ignore-matchers.ts. To skim: 1,932 lines of tests and 2 lines of half the memory; same-step force-adds checked..">
+<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Walk answered without new engines, medium risk, 219 lines; B, One Git ignore reader per checkout, medium risk, 1,027 lines. Read first: checkout-code-rule-router.ts, git_ignore.rs, git-ignore-matchers.ts. To skim: 2,074 lines of tests and 2 lines of half the memory; same-step force-adds checked..">
 
 1. **Read first**, 8 min: `checkout-code-rule-router.ts`: `#accepts`, `#readsIn`, `#laneWithRulesOf`, `#refreshAnsweredCatalogs`. Can a worktree be answered by an engine whose rules read paths its own would not?
 2. **Read first**, 10 min: `git_ignore.rs`: `sources_unchanged`, `Sources`, `refresh`, `FileStamp`. Which ignore change or index write would a new reader see that this one misses?
@@ -111,11 +111,11 @@ Start at change A: it decides which engine answers. Change B decides what a late
 
 <details><summary><b>7. How it fits</b></summary>
 
-Nothing has to merge first: it stands on `main` at a81b07ac3, with the 0.2.0 engine; `main` cccb25a8d edits none of its files.
+Nothing has to merge first: it stands on `main` at 6b3990ba8, with the 0.2.0 engine.
 
-This pull request is based on main at a81b07ac3, with the 0.2.0 engine, and needs no other change.
+This pull request is based on main at 6b3990ba8, with the 0.2.0 engine, and needs no other change.
 
-**Open pull requests that share a file.** #884 also edits `engine-service.ts`; a trial merge with this head has no conflict.
+**Open pull requests that share a file.** #884 also edits `engine-service.ts` and #894 `runtime.ts`; trial merges with this head have no conflict.
 
 </details>
 
@@ -129,7 +129,7 @@ This pull request is based on main at a81b07ac3, with the 0.2.0 engine, and need
 **Limits that stay**
 
 - An engine that has opened keeps the ignore rules it read for the rest of the session, as at `main`.
-- Where no stamp is kept (a read within its file's clock step, an index time ahead of the clock, a share), a question reads the index's 20-byte checksum, or under `index.skipHash` the whole index.
+- Where no stamp is kept (a read within its file's clock step, an index time ahead of the clock, an index on a share), a question reads the index's 20-byte checksum, or under `index.skipHash` the whole index.
 - The volume is found once per reader by its file system's name: a driver that reports NTFS, APFS or HFS+ while giving a new file an earlier one's identity would keep a stamp that cannot tell them.
 
 </details>
