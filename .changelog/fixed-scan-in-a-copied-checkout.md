@@ -1,1 +1,0 @@
-`rerail scan` (internal testing) in a copy of a checkout where Rerail is started, made with its `.git`, runs the Rerail home's rules there, as a session started in it would. Before, it ran no rules and failed.
