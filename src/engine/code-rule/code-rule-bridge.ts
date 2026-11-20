@@ -3323,6 +3323,8 @@ export class CodeRuleBridge {
   /**
    * Leaves `path` to the next walk: the session keeps what it saw of it before, and a record for the repository the walk
    * handed this session waits with it (`WorktreeDiscovery.unrecorded`), as the shared walk hands each change over once.
+   * The next take records the file as it then is: when another session's call wrote it again meanwhile, that write is
+   * that session's own and in this record too. Dropping the record instead would lose the change no session made.
    */
   #leaveToNextWalk(discovery: SourceDiscovery, walk: WalkStart, path: string): void {
     this.#keepToolView(path, walk.previous.get(path));
@@ -4194,14 +4196,7 @@ export class CodeRuleBridge {
   ): Promise<CodeRuleResponse> {
     const sessionId = this.#requireSession();
     const edits = await this.#recoverPreimages(discovery, captured, uncaptured);
-    for (const edit of edits) {
-      // The evaluator keeps the text it held of a file it could not read, so the session keeps it too: another
-      // program's later write there is then audited for it (`#sortUnownedWrite`).
-      if (edit.readError !== undefined) continue;
-      this.#forgetText(edit.path);
-      // The repository's record is no edit of the session's: its text is kept to measure the next change from.
-      if (edit.generatedText !== undefined) this.#rememberText(edit.path, edit.generatedText, owner === "repository" ? "other-writer" : "edit");
-    }
+    this.#keepAuditedTexts(edits, owner);
     const paths = edits.map(edit => edit.path).sort(compareDeterministicStrings);
     this.#revision += 1;
     this.#onRevision?.(sessionId, this.#revision, paths);
@@ -4209,6 +4204,21 @@ export class CodeRuleBridge {
       revision: this.#revision, checkpoints, edits, ...(mode === undefined ? {} : { mode }), ...(owner === undefined ? {} : { owner }),
     });
     return this.#lastResponse;
+  }
+
+  /**
+   * Keeps the text each edit about to be audited leaves, as the evaluator will hold it: the session's edit, or for the
+   * repository's record another writer's text, which is no edit of the session's but measures its next change. The
+   * evaluator keeps the text it held of a file it could not read, so the session keeps it too: another program's later
+   * write there is then audited for it (`#sortUnownedWrite`).
+   */
+  #keepAuditedTexts(edits: CodeRuleEditBatch["edits"], owner: AuditOwner | undefined): void {
+    const origin = owner === "repository" ? "other-writer" : "edit";
+    for (const edit of edits) {
+      if (edit.readError !== undefined) continue;
+      this.#forgetText(edit.path);
+      if (edit.generatedText !== undefined) this.#rememberText(edit.path, edit.generatedText, origin);
+    }
   }
 
   /**
