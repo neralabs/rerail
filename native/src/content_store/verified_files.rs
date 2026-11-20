@@ -12,8 +12,8 @@
 //! parts, so two saves of two worktrees, from one process or two, keep each other's. It forgets
 //! the parts of worktrees no restore wrote for 30 days, found among the parts the store holds,
 //! each only while its `verified_worktree` frame is the one the save read: a save of that
-//! worktree landing first keeps them. It forgets too the frames this space's earlier relations
-//! (other columns, so other identities) left in the store.
+//! worktree landing first keeps them. A frame of this space under another identity (another
+//! release's columns) is left alone: a binary never forgets another release's frames.
 
 use super::frames::{Admitted, GoneIf, Put, Rel, Rows};
 use super::{ContentStore, HashKey, MAX_COLLECTION_BATCH, StoreResult};
@@ -95,10 +95,8 @@ impl ContentStore {
     /// Remembers `files` of the worktree whose root is `worktree`, verified at `now` (Unix
     /// seconds), each replacing the row of its path. The worktree's rows older than
     /// `VERIFIED_FILE_SECONDS` are forgotten, and so are the parts of at most
-    /// `MAX_COLLECTION_BATCH` worktrees not written for that long and at most
-    /// `MAX_COLLECTION_BATCH` frames of earlier relations: a save's write stays small, and an
-    /// earlier relation left one frame a worktree (and one list), so a store's are gone after a
-    /// few saves. Handed to the store's writer: the restore does not wait for the write.
+    /// `MAX_COLLECTION_BATCH` worktrees not written for that long, so a save's write stays small.
+    /// Handed to the store's writer: the restore does not wait for the write.
     pub fn remember_verified_worktree_files(
         &self,
         worktree: &str,
@@ -114,10 +112,8 @@ impl ContentStore {
             put(&FILES, part, files_rows.collect()),
             put(&WORKTREES, part, vec![now]),
         ];
-        let relations = [rel(&FILES), rel(&WORKTREES)];
-        let earlier = self.stored_frames_not_of(&space(), &relations, MAX_COLLECTION_BATCH)?;
         let old = self.old_worktrees(part, since)?;
-        self.queue_frames_guarded(space(), puts, earlier, old);
+        self.queue_frames_guarded(space(), puts, old);
         Ok(())
     }
 
@@ -169,7 +165,8 @@ impl ContentStore {
 }
 
 /// The frames of the worktree at part `part`, each gone only while its `verified_worktree` frame
-/// has `digest`.
+/// has `digest`. The files' frame comes before its guard: the forgetting reads each guard after
+/// the deletes before it in one transaction, so a guard forgotten first would keep the files.
 fn worktree_frames(part: i64, digest: u64) -> [GoneIf; 2] {
     [&FILES, &WORKTREES].map(|relation| GoneIf {
         rel: rel(relation),
@@ -185,6 +182,12 @@ fn written_at(frame: Option<&Arc<Admitted>>) -> i64 {
     let rows = frame.and_then(|frame| frame.rows().ok());
     let first = rows.and_then(|rows| rows.rows.first().copied());
     first.unwrap_or(i64::MIN)
+}
+
+/// This space and its files' relation, as the store's cases read them.
+#[cfg(test)]
+pub(super) fn files_relation() -> ([u8; 32], Rel) {
+    (space(), rel(&FILES))
 }
 
 /// The space of the store's verified worktree files.

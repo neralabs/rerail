@@ -2951,11 +2951,7 @@ fn verified_worktree_files_are_kept_by_worktree_and_path_and_forgotten_when_old(
 #[test]
 fn two_saves_in_one_wave_keep_each_others_worktree() {
     let (path, store) = store("verified-files-race");
-    // Another process's handle: the same file by another name, so a writer of its own.
-    let another = path.parent().unwrap().join("another");
-    fs::create_dir_all(&another).unwrap();
-    let other_path = another.join("..").join(path.file_name().unwrap());
-    let other = ContentStore::open(&other_path).unwrap();
+    let (other_path, other) = other_store(&path);
     let file = [remembered_file("x.py", 1)];
     {
         let _waves = write_back::run_waves();
@@ -2978,9 +2974,7 @@ fn two_saves_in_one_wave_keep_each_others_worktree() {
         1,
         "both worktrees no restore wrote for 31 days are forgotten, and /c's stays"
     );
-    // The other name's connections closed, so its folder can go with the database's.
-    drop(other);
-    connection::release_all_at(&other_path);
+    release_other_store(&other_path, other);
 }
 
 /// A worktree whose frames' bytes cannot be read (their segment gone) proves no file, and its
@@ -3169,55 +3163,6 @@ fn a_worktree_saved_again_after_30_days_keeps_what_its_save_writes() {
     );
 }
 
-/// The frames this space's earlier relations (other columns, so other identities) left go at a
-/// save, at most `MAX_COLLECTION_BATCH` a save: nothing else reads or forgets them.
-#[test]
-fn a_save_forgets_the_frames_of_earlier_relations_a_batch_at_a_time() {
-    use sha2::Digest as _;
-    let (path, store) = store("verified-files-earlier");
-    let space: [u8; 32] =
-        sha2::Sha256::digest(b"rerail.space/v1\0verified worktree files\0").into();
-    // The files' relation as the space's first form named it: its columns in one string.
-    let mut ident = sha2::Sha256::new();
-    ident.update(b"rerail.relation/v1\0verified_worktree_file\0");
-    ident.update(
-        b"path key, volume, file id (2), change time, blob algorithm, blob lanes (4), verified at",
-    );
-    let earlier = frames::Rel {
-        name: "verified_worktree_file".to_owned(),
-        ident: ident.finalize().into(),
-    };
-    let frame = |part: i64| frames::Put {
-        rel: earlier.clone(),
-        part,
-        digest: 1,
-        reads: Vec::new(),
-        rows: frames::Rows {
-            types: vec![b'i'],
-            rows: vec![part],
-            n: 1,
-        },
-    };
-    let batch = i64::try_from(MAX_COLLECTION_BATCH).unwrap();
-    let earlier_frames = (1..=batch + 1).map(frame).collect();
-    store.queue_frames(space, earlier_frames, Vec::new(), None);
-    store.written().unwrap();
-    store
-        .remember_verified_worktree_files("/a", &[], 100 * DAY)
-        .unwrap();
-    store.written().unwrap();
-    assert_eq!(
-        verified_worktrees_stored(&path),
-        2,
-        "one earlier frame is left for the next save, beside /a's"
-    );
-    store
-        .remember_verified_worktree_files("/a", &[], 100 * DAY)
-        .unwrap();
-    store.written().unwrap();
-    assert_eq!(verified_worktrees_stored(&path), 1);
-}
-
 /// A worktree whose files' frame is there but does not decode proves no file, and its next save
 /// writes its part again.
 #[test]
@@ -3254,4 +3199,112 @@ fn a_worktree_whose_files_frame_does_not_decode_is_written_again_at_its_save() {
         store.verified_worktree_files("/a", 101 * DAY).unwrap(),
         file.to_vec()
     );
+}
+
+/// A save keeps the frames of this space under another identity: another release's columns, as
+/// its binary writes them while it and this one share a store. Neither forgets the other's.
+#[test]
+fn a_save_keeps_the_frames_of_another_release() {
+    let (path, store) = store("verified-files-other-release");
+    let (space, files) = verified_files::files_relation();
+    let frame = frames::Put {
+        rel: frames::Rel {
+            name: files.name,
+            ident: [1; 32],
+        },
+        part: 1,
+        digest: 1,
+        reads: Vec::new(),
+        rows: frames::Rows {
+            types: vec![b'i'],
+            rows: vec![1],
+            n: 1,
+        },
+    };
+    store.queue_frames(space, vec![frame], Vec::new(), None);
+    store.written().unwrap();
+    store
+        .remember_verified_worktree_files("/a", &[], 100 * DAY)
+        .unwrap();
+    store.written().unwrap();
+    assert_eq!(
+        verified_worktrees_stored(&path),
+        2,
+        "the other release's frame stays beside /a's"
+    );
+}
+
+/// A save's forgetting of old worktrees takes their frames out of this process's memory of the
+/// store too, and keeps there a worktree this process saved again before the forgetting landed.
+#[test]
+fn a_forgotten_worktree_leaves_the_memory_of_the_store() {
+    let (_path, store) = store("verified-files-memory");
+    let (space, files) = verified_files::files_relation();
+    let file = [remembered_file("x.py", 1)];
+    for worktree in ["/a", "/b"] {
+        store
+            .remember_verified_worktree_files(worktree, &file, 100 * DAY)
+            .unwrap();
+    }
+    store.written().unwrap();
+    // This process's memory of the store's frames, as a scan's first run reads it.
+    store.preload_frames().unwrap();
+    {
+        // /c's save reads /a and /b as old; /a is saved again before that forgetting lands.
+        let _waves = write_back::run_waves();
+        store
+            .remember_verified_worktree_files("/c", &[], 131 * DAY)
+            .unwrap();
+        store
+            .remember_verified_worktree_files("/a", &file, 131 * DAY)
+            .unwrap();
+    }
+    store.written().unwrap();
+    assert_eq!(
+        store.admit_all_parts(&space, &files).unwrap().len(),
+        2,
+        "the memory holds /a's and /c's files, and /b's are gone"
+    );
+    assert_eq!(
+        store.verified_worktree_files("/a", 131 * DAY).unwrap(),
+        file.to_vec()
+    );
+}
+
+/// A forgetting of an old worktree that the store refuses fails no caller's `written`, as a
+/// refused write of frames does: the worktree's frames stay, and a later save forgets them.
+#[test]
+fn a_refused_forgetting_fails_no_caller() {
+    let (path, store) = store("verified-files-refused");
+    store
+        .remember_verified_worktree_files("/b", &[remembered_file("x.py", 1)], 100 * DAY)
+        .unwrap();
+    store.written().unwrap();
+    let refusing = Connection::open(&path).unwrap();
+    refusing
+        .execute(
+            "CREATE TRIGGER refuse_forgetting BEFORE DELETE ON frames \
+             WHEN OLD.rel = 'verified_worktree_file' BEGIN SELECT RAISE(ABORT, 'refused'); END",
+            [],
+        )
+        .unwrap();
+    store
+        .remember_verified_worktree_files("/c", &[], 131 * DAY)
+        .unwrap();
+    // Another caller of the store, which shares its writer.
+    let caller = ContentStore::open(&path).unwrap();
+    caller.written().unwrap();
+    assert_eq!(
+        verified_worktrees_stored(&path),
+        2,
+        "/b's files stay beside /c's"
+    );
+    refusing
+        .execute("DROP TRIGGER refuse_forgetting", [])
+        .unwrap();
+    store
+        .remember_verified_worktree_files("/c", &[], 131 * DAY)
+        .unwrap();
+    store.written().unwrap();
+    assert_eq!(verified_worktrees_stored(&path), 1);
 }

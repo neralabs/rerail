@@ -512,7 +512,11 @@ pub(super) struct GuardedGone {
 
 impl GuardedGone {
     pub(super) fn run(&mut self, store: &ContentStore) -> StoreResult<()> {
-        store.forget_guarded(&self.space, &self.gone)
+        // Attempted once, as `FramesWrite::run`: what a failed forgetting keeps goes at a later save.
+        if let Ok(forgot) = store.forget_guarded(&self.space, &self.gone) {
+            store.forget_held(&self.space, &forgot);
+        }
+        Ok(())
     }
 }
 
@@ -531,23 +535,6 @@ fn forget_frame(t: &Connection, space: &[u8; 32], frame: &GoneIf) -> rusqlite::R
     t.execute_cached("DELETE FROM frames WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4", params![&space[..], rel.name, &rel.ident[..], part])?;
     t.execute_cached("DELETE FROM frame_part_used WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4", params![&space[..], rel.name, &rel.ident[..], part])?;
     Ok(())
-}
-
-/// The query of `stored_frames_not_of` and its values.
-fn frames_not_of(space: &[u8; 32], rels: &[Rel], limit: usize) -> (String, Vec<rusqlite::types::Value>) {
-    let values = (0..rels.len()).map(|i| format!("(?{}, ?{})", 3 + 2 * i, 4 + 2 * i)).collect::<Vec<_>>().join(", ");
-    let sql = format!("SELECT rel, ident, part FROM frames WHERE space = ?1 AND (rel, ident) NOT IN (VALUES {values}) LIMIT ?2");
-    let mut args: Vec<rusqlite::types::Value> = vec![space.to_vec().into(), (limit as i64).into()];
-    for rel in rels {
-        args.extend([rel.name.clone().into(), rel.ident.to_vec().into()]);
-    }
-    (sql, args)
-}
-
-/// A frame's relation and part, from a row of its `rel`, `ident` and `part`.
-fn stored_rel_part(row: &rusqlite::Row<'_>) -> rusqlite::Result<(Rel, i64)> {
-    let ident: [u8; 32] = row.get::<_, Vec<u8>>(1)?.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
-    Ok((Rel { name: row.get(0)?, ident }, row.get::<_, i64>(2)?))
 }
 
 impl ContentStore {
@@ -937,27 +924,32 @@ impl ContentStore {
         Ok(parts.collect::<Result<_, _>>()?)
     }
 
-    /// At most `limit` frames of `space` the store's file holds whose relation, by name and identity, is none of
-    /// `rels` (one or more), past the snapshot: what relations the space no longer has left there.
-    pub fn stored_frames_not_of(&self, space: &[u8; 32], rels: &[Rel], limit: usize) -> StoreResult<Vec<(Rel, i64)>> {
-        let (sql, args) = frames_not_of(space, rels, limit);
-        let connection = self.connection.lock().expect("content store mutex poisoned");
-        let mut st = connection.prepare_cached(&sql)?;
-        let frames = st.query_map(rusqlite::params_from_iter(args), stored_rel_part)?;
-        Ok(frames.collect::<Result<_, _>>()?)
-    }
-
     /// Forgets each of `gone` whose guard holds (`guard_holds`), in one transaction: the guard is read where the frame
-    /// is deleted, so no other writer's write lands between them.
-    fn forget_guarded(&self, space: &[u8; 32], gone: &[GoneIf]) -> StoreResult<()> {
+    /// is deleted, so no other writer's write lands between them. Returns those it forgot.
+    fn forget_guarded<'a>(&self, space: &[u8; 32], gone: &'a [GoneIf]) -> StoreResult<Vec<&'a GoneIf>> {
         self.immediate_transaction_once(|t| {
+            let mut forgot = Vec::new();
             for frame in gone {
                 if guard_holds(t, space, frame)? {
                     forget_frame(t, space, frame)?;
+                    forgot.push(frame);
                 }
             }
-            Ok(())
+            Ok(forgot)
         })
+    }
+
+    /// Takes `forgot`, forgotten in the store's file, out of this process's snapshot, each while the snapshot's frame of
+    /// its guard has the digest the forgetting read: a frame this process wrote again since stays.
+    fn forget_held(&self, space: &[u8; 32], forgot: &[&GoneIf]) {
+        let Some(snapshot) = self.snapshot() else { return };
+        let mut snapshot = snapshot.lock().expect("the frames' snapshot");
+        let Some(held) = snapshot.frames.get_mut(space) else { return };
+        let read = |frame: &GoneIf| held.get(&(frame.guard.clone(), frame.part)).is_some_and(|guard| guard.stored.digest == frame.digest);
+        let keys: Vec<(Rel, i64)> = forgot.iter().filter(|frame| read(frame)).map(|frame| (frame.rel.clone(), frame.part)).collect();
+        for key in &keys {
+            held.remove(key);
+        }
     }
 
     /// Forgets every frame of `space` and its count of runs: the space of a program no run will run again.
@@ -982,10 +974,9 @@ impl ContentStore {
     }
 
     /// `queue_frames`, then `gone_if` forgotten in the store's file by a write of its own behind it, each only while its
-    /// guard holds (`GoneIf`). This process's memory of the guarded frames (its snapshot, its queued writes) is left as
-    /// it is: their reader reads them past the snapshot (`admit_parts_stored`).
-    pub fn queue_frames_guarded(&self, space: [u8; 32], puts: Vec<Put>, gone: Vec<(Rel, i64)>, gone_if: Vec<GoneIf>) {
-        self.queue_frames(space, puts, gone, None);
+    /// guard holds (`GoneIf`), and then in this process's snapshot (`forget_held`).
+    pub fn queue_frames_guarded(&self, space: [u8; 32], puts: Vec<Put>, gone_if: Vec<GoneIf>) {
+        self.queue_frames(space, puts, Vec::new(), None);
         if gone_if.is_empty() {
             return;
         }
