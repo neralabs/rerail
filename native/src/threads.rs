@@ -16,27 +16,27 @@ pub fn max() -> usize {
 
 /// Makes the one pool, sized to `max`: called before anything uses it (the engine's `main`; Node's registration of
 /// the addon, `lib.rs`, never its constructor). On the process's main thread it is called with `this_thread`, so that
-/// thread is one of the pool's (its own work and its waits are the pool's). A pool already made is left as it is.
+/// thread is one of the pool's (its own work and its waits are the pool's), and it is recorded as the main thread
+/// ([`waits_on_bell`]). A pool already made is left as it is.
 pub fn configure(this_thread: bool) {
+    if this_thread {
+        let _ = MAIN.set(std::thread::current().id());
+    }
     rerail_accel::exec::configure(this_thread);
 }
 
-/// Whether this is the process's main thread.
-pub fn is_main_thread() -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        // SAFETY: no arguments.
-        unsafe { libc::pthread_main_np() == 1 }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        // SAFETY: no arguments. The system call, not glibc's `gettid` (2.30): the Linux engine links against 2.17.
-        unsafe { libc::syscall(libc::SYS_gettid) == libc::c_long::from(libc::getpid()) }
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        false
-    }
+/// The process's main thread: the one [`configure`] was called on with `this_thread`. Recorded, not asked of the
+/// system: Windows has no call that says which thread is a process's main one.
+static MAIN: std::sync::OnceLock<std::thread::ThreadId> = std::sync::OnceLock::new();
+
+/// Whether a wait on this thread may sleep on a bell, running no job, while the pool's other threads take the jobs:
+/// the pool has other threads, and this thread is not one of them (a library's caller, a test's) or is the main
+/// thread the pool took in ([`configure`]). On the pool's other threads the wait is a job's (the typing run
+/// `bridge::facts` starts), and it runs the pool's jobs itself: a job that waited running none would hold its pool
+/// thread for the whole nested run, and with 2 threads the main thread and the typing run's both waited for chunks no
+/// thread was left to build. With one thread, the waiter runs them itself.
+pub fn waits_on_bell() -> bool {
+    max() >= 2 && (!rerail_accel::exec::on_pool() || MAIN.get() == Some(&std::thread::current().id()))
 }
 
 /// Jobs on the one pool that borrow the caller's data, within [`scope`]: every one has ended when it returns. Each is
@@ -98,17 +98,27 @@ pub(crate) fn drop_behind<T: Send + 'static>(value: T) {
     rayon::spawn(move || drop(value));
 }
 
-/// Starts `f` beside the caller ([`Beside`]).
+/// Starts `f` beside the caller ([`Beside`]), on a stack the size of a pool thread's.
 pub(crate) fn beside<T: Send + 'static>(name: &'static str, f: impl FnOnce() -> T + Send + 'static) -> Beside<T> {
+    beside_on(name, rerail_accel::exec::POOL_STACK, f)
+}
+
+/// [`beside`], on a thread with `stack` bytes of stack. A thread that cannot be started is the job's result, an `Err`
+/// that names it, so [`Beside::join`] reports it: nothing else would ever end its wait. It is not run on the caller's
+/// thread instead: it waits for the caller, so there it would never end.
+fn beside_on<T: Send + 'static>(name: &'static str, stack: usize, f: impl FnOnce() -> T + Send + 'static) -> Beside<T> {
     let slot = std::sync::Arc::new(parking_lot::Mutex::new(None));
     let held = std::sync::Arc::clone(&slot);
     let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
-    let _ = rerail_accel::exec::service(name, Some(rerail_accel::exec::POOL_STACK), move || {
+    let started = rerail_accel::exec::service(name, Some(stack), move || {
         let _in = carry.enter();
         let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || format!("{name} (job)"));
         let r = rerail_accel::exec::as_job(name, || std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
         *held.lock() = Some(r);
     });
+    if let Err(e) = started {
+        *slot.lock() = Some(Err(Box::new(format!("cannot start {name}: {e}"))));
+    }
     Beside { name, slot }
 }
 
@@ -172,5 +182,15 @@ pub mod tests {
             answer.send(i * 2).unwrap();
         }
         assert_eq!(job.join().unwrap(), (0..20).map(|i| i * 2).sum::<u32>());
+    }
+
+    /// A job whose thread cannot be started (a stack larger than the address space) ends at once, as an `Err` that
+    /// names it: its caller's wait for it ends.
+    #[test]
+    fn a_job_beside_that_cannot_start_is_an_error() {
+        let job = super::beside_on("a test's unstartable job", 1 << 60, || ());
+        assert!(job.slot.lock().is_some(), "the failed start is the job's result");
+        let e = job.join().expect_err("a job that never started");
+        assert!(e.downcast_ref::<String>().is_some_and(|m| m.starts_with("cannot start a test's unstartable job: ")));
     }
 }

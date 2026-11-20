@@ -33,7 +33,7 @@ use crate::code_rule_dsl::language::{KindCatalog, from_tape_tag};
 use crate::content_store::{ContentStore, StoreError, StoreResult};
 use rusqlite::Connection;
 use crate::code_rule_dsl::logic::front::ast::Value;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, OnceLock};
 use cells::{Block, Cells};
 
@@ -283,7 +283,7 @@ impl TextNodes {
 /// What the rules read of `text` (`text_kind_demand`).
 pub struct TextDemand {
     /// The kinds whose text is read at any length.
-    long: BTreeSet<String>,
+    pub long: BTreeSet<String>,
     /// The positive text atoms (rule, body position) of a node of any kind, no twin reading its long text.
     pub any: Vec<(usize, usize)>,
     /// The negated text atoms of a node of any kind that is not compared with a constant within the bound: no twin

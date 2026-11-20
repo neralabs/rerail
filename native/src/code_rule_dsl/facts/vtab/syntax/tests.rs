@@ -1259,6 +1259,28 @@ fn text_only_for_the_nodes_read() {
     }
 }
 
+/// A negated `text` read narrows the nodes given `text` as a positive one does: by the field the node is in
+/// (PYI025's `field(a, "alias", al), !text(al, "AbstractSet")`), the constant it is compared with, or its fixed kind.
+/// Of a constant within the bound it needs no text past the bound, even of a fixed kind; compared with a variable, its
+/// fixed kind's text is made at any length.
+#[test]
+fn a_negated_text_read_narrows_the_nodes_it_tests() {
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
+    let set = |names: &[&str]| names.iter().map(|k| k.to_string()).collect::<BTreeSet<_>>();
+    for (body, read, long) in [
+        ("out(\"AbstractSet\") :- field(_, \"alias\", n), !text(n, \"AbstractSet\").", TextNodes { fields: set(&["alias"]), ..TextNodes::default() }, set(&[])),
+        ("out(\"self\") :- node(_, n, _, _, _), !text(n, \"self\").", TextNodes { values: set(&["self"]), ..TextNodes::default() }, set(&[])),
+        ("out(\"self\") :- kind(n, \"identifier\"), !text(n, \"self\").", TextNodes { kinds: set(&["identifier"]), ..TextNodes::default() }, set(&[])),
+        ("out(t) :- kind(n, \"identifier\"), kind(s, \"string\"), text(s, t), !text(n, t).", TextNodes { kinds: set(&["identifier", "string"]), ..TextNodes::default() }, set(&["identifier", "string"])),
+    ] {
+        let program = crate::code_rule_dsl::logic::rr::parse(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
+        let demand = text_kind_demand(&program, &[]);
+        assert_eq!(demand.read, Some(read), "{body}: the nodes given text");
+        assert_eq!(demand.long, long, "{body}: the kinds whose text is made at any length");
+        assert_eq!((demand.any.len(), demand.negated_any), (0, 0), "{body}: no node of any kind");
+    }
+}
+
 /// A base relation's name (`kind`, `field`, `child`) the program gives rules of its own is a relation like any
 /// other: it narrows the nodes whose text is read only by what its rules give. Here they give nothing narrower than
 /// `edge`, so every node's text is read. `node`'s projection `kind(n, k) :- node(_, n, k, _, _)` is `kind` itself.
