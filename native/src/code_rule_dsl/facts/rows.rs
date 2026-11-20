@@ -320,20 +320,24 @@ fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<F
     Ok(f)
 }
 
-/// The open block of `life`'s relations (the chunk's, if a chunk's evaluation runs) with room for `need` bytes past
-/// its others' margin, a new one made when it has none.
-fn open_with_room(life: Life, need: usize) -> Result<Arc<Facts>, String> {
+/// A chunk of `need` bytes (aligned to `align`) in the open block of `life`'s relations (the chunk's, if a chunk's
+/// evaluation runs), past its others' margin, taken under the block's lock. Checked for room under the lock and taken
+/// after it, the room could be another thread's by then, or not in one piece (a free list's), and the chunk failed
+/// (an index's 2.5 MB, the data layer's 50 policies on 901 files). A new open block when that one has no such chunk.
+fn open_chunk(life: Life, need: usize, align: usize) -> Result<(Arc<Facts>, (usize, usize)), String> {
     let chunk = CHUNK.with(|c| c.borrow().clone());
     let runs = crate::code_rule_dsl::logic::profile::local::<Open>();
     let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
-    match &*open {
-        Some(f) if f.block.reserved().saturating_sub(f.block.used()) >= need + MARGIN => Ok(f.clone()),
-        _ => {
-            let f = new_open(&chunk, life, need)?;
-            *open = Some(f.clone());
-            Ok(f)
-        }
+    if let Some(f) = &*open
+        && f.block.reserved().saturating_sub(f.block.used()) >= need + MARGIN
+        && let Some(c) = f.block.try_alloc_chunk_fit(need, align)
+    {
+        return Ok((f.clone(), c));
     }
+    let f = new_open(&chunk, life, need)?;
+    *open = Some(f.clone());
+    let c = f.block.try_alloc_chunk_fit(need, align).ok_or_else(|| format!("a new open block holds no chunk of {need} bytes"))?;
+    Ok((f, c))
 }
 
 /// Where the structures derived from a relation's rows go (its indexes' arrays, `BlockVec`, decision 0384 step 4):
@@ -417,8 +421,7 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
             Some(found) => found,
             None => {
                 let life = if self.life == Life::Device { Life::Run } else { self.life };
-                let f = open_with_room(life, bytes).unwrap_or_else(|e| panic!("a block for {bytes} bytes of an index: {e}"));
-                let c = f.block.try_alloc_chunk_fit(bytes, align).unwrap_or_else(|| panic!("an open block with room holds {bytes} bytes"));
+                let (f, c) = open_chunk(life, bytes, align).unwrap_or_else(|e| panic!("a block for {bytes} bytes of an index: {e}"));
                 (f, c)
             }
         };

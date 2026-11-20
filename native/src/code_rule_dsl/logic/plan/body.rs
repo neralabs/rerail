@@ -124,32 +124,49 @@ pub struct Body<'v> {
     /// The version the rule's source (`RuleRef::source`) is a rule of: the run's version 0, for a rule of a
     /// maintained form (`Versions::at`); `None` for every other rule.
     sources: Option<&'v Version>,
-    /// Its head's plain variables bound before its first step (`with_head_bound`): a recheck's, run once per
-    /// candidate row (decision 0364 stage 3, Q208).
-    head_bound: bool,
+    /// What is bound before its first step: its head's plain variables (`with_head_bound`), a recheck's, run once
+    /// per candidate row (decision 0364 stage 3, Q208); or given variables (`with_bound`), a maintain line's led by a
+    /// delta that binds them (a negated changed read's, an aggregate's group key: 0364 R4). `None`: nothing.
+    pre: Option<Pre>,
+}
+
+/// What a body has bound before its first step (`Body::pre`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Pre {
+    Head,
+    Vars(VarSet),
 }
 
 impl<'v> Body<'v> {
     pub fn of(v: &'v Version, rule: RuleRef<'v>) -> Body<'v> {
-        Body { v, rule, lits: rule.body().collect(), vars: OnceCell::new(), args: OnceCell::new(), key: OnceCell::new(), sources: None, head_bound: false }
+        Body { v, rule, lits: rule.body().collect(), vars: OnceCell::new(), args: OnceCell::new(), key: OnceCell::new(), sources: None, pre: None }
     }
     /// The rule with its head's plain variables bound before its first step: a recheck of one candidate row
     /// (decision 0364 stage 3). The planner prices and keeps its order apart from the rule's own (`key` names it):
     /// each step starts from those variables bound and one row (Q208).
     pub fn with_head_bound(&self) -> Body<'v> {
-        Body { v: self.v, rule: self.rule, lits: self.lits.clone(), vars: OnceCell::new(), args: OnceCell::new(), key: OnceCell::new(), sources: self.sources, head_bound: true }
+        self.with_pre(Pre::Head)
+    }
+    /// The rule with `vars` bound before its first step, by one row: a maintain line led by a delta whose rows bind
+    /// them, the rest of the body planned from there (0364 R4). Kept apart from the rule's own order, as a recheck's.
+    pub fn with_bound(&self, vars: VarSet) -> Body<'v> {
+        self.with_pre(Pre::Vars(vars))
+    }
+    fn with_pre(&self, pre: Pre) -> Body<'v> {
+        Body { v: self.v, rule: self.rule, lits: self.lits.clone(), vars: OnceCell::new(), args: OnceCell::new(), key: OnceCell::new(), sources: self.sources, pre: Some(pre) }
     }
     /// Whether its head's plain variables are bound before its first step (a recheck, `with_head_bound`).
     pub fn head_bound(&self) -> bool {
-        self.head_bound
+        matches!(self.pre, Some(Pre::Head))
     }
-    /// The variables bound before its first step: its head's plain ones for a recheck (`with_head_bound`), else none.
-    /// A computed term's variables are not bound by the candidate.
+    /// The variables bound before its first step: its head's plain ones for a recheck (`with_head_bound`), the given
+    /// ones (`with_bound`), else none. A computed term's variables are not bound by the candidate.
     pub fn bound_before(&self) -> VarSet {
-        if !self.head_bound {
-            return VarSet::new();
+        match &self.pre {
+            None => VarSet::new(),
+            Some(Pre::Head) => VarSet::of(self.head().args().filter_map(|t| t.var())),
+            Some(Pre::Vars(v)) => v.clone(),
         }
-        VarSet::of(self.head().args().filter_map(|t| t.var()))
     }
     /// The rule this one was written from (decision 0258): for a maintenance rule of a session's form (`h__del`,
     /// `h__ins`, `h__redo`, …), its source rule `h :- …` of the run's version. `None` for a rule not written from one.
@@ -453,14 +470,27 @@ impl<'v> Body<'v> {
     /// The rule written into a derived value's inputs (`logic::derived`), field by field: its head and body, the same
     /// pieces in the same order as its text, without making the text.
     pub(in crate::code_rule_dsl) fn digest(&self, d: &mut super::super::derived::Inputs) {
-        // A recheck's order is not the rule's: kept apart (Q208).
-        if self.head_bound {
-            d.str("head bound");
-        }
+        self.digest_pre(d);
         self.digest_atom(d, self.head());
         d.u64(self.lits.len() as u64);
         for &l in &self.lits {
             self.digest_lit(d, l);
+        }
+    }
+
+    /// What is bound before its first step, written into a derived value's inputs: a recheck's order is not the
+    /// rule's, kept apart (Q208); nor a line's planned from given variables bound (0364 R4).
+    pub(in crate::code_rule_dsl) fn digest_pre(&self, d: &mut super::super::derived::Inputs) {
+        match &self.pre {
+            None => {}
+            Some(Pre::Head) => d.str("head bound"),
+            Some(Pre::Vars(v)) => {
+                d.str("bound");
+                d.u64(v.0.len() as u64);
+                for w in &v.0 {
+                    d.u64(*w);
+                }
+            }
         }
     }
     /// The rule's digest (`digest`), made once: what every key of the rule writes (`plan_key`, `line_key`,
@@ -676,9 +706,16 @@ impl Placed {
         if !self.whole || self.ids.is_some() {
             return Err(Error::Plan("the program has no image: its run reads it from its version".into()));
         }
-        let (v, sentinels) = passes::normalize(&self.v).map_err(Error::Plan)?;
-        let sentinels = sentinels.iter().map(|&r| v.rel_name(r).to_owned()).collect();
-        let (v, stated) = if apart { passes::stated_apart(&v).map_err(Error::Plan)? } else { (v, Vec::new()) };
+        // Each held by the version it is of: made once however many runs (a corpus run's chunks) read it.
+        use super::super::program_image::manager::analysis;
+        let normal = analysis::<passes::NormalForm>(&self.v).map_err(Error::Plan)?;
+        let sentinels = normal.sentinels.iter().map(|&r| normal.v.rel_name(r).to_owned()).collect();
+        let (v, stated) = if apart {
+            let a = analysis::<passes::ApartForm>(&normal.v).map_err(Error::Plan)?;
+            (a.v.clone(), a.stated.clone())
+        } else {
+            (normal.v.clone(), Vec::new())
+        };
         let stated = stated.iter().map(|&(r, s)| (v.rel_name(r).to_owned(), v.rel_name(s).to_owned())).collect();
         Ok(Normalized { placed: Placed { v, ids: None, whole: true, fields: Default::default(), positions: Default::default() }, sentinels, stated })
     }

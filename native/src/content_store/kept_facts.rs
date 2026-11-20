@@ -297,9 +297,11 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
             }
         }
     }
+    let finishing = rerail_prof::code_rule_dsl::logic::profile::span(|| "kept facts: the file finished and synced".into());
     w.finish().map_err(io)?;
     std::fs::rename(&making, dir.join(&name)).map_err(io)?;
     sync_dir(&dir).map_err(io)?;
+    drop(finishing);
     if from < rows.len() {
         t.prepare_cached("DELETE FROM main.facts_chain WHERE space = ?1 AND seq >= ?2")?.execute(rusqlite::params![&space[..], rows[from].0])?;
     }

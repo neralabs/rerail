@@ -338,3 +338,31 @@ fn chain_bytes_by_relation() {
         eprintln!("{b:>11} {:5.1}%  {what:7} {n:6} entries {r:10} rows  {rel}", *b as f64 * 100.0 / total.max(1) as f64);
     }
 }
+
+/// A wave's kept puts queued through the store inside a run's waves (`ContentStore::queue_kept`, `run_waves`) are one
+/// file a space when the wave is sealed, a key put again in the wave keeping its last put: queued as a job each,
+/// every input's puts wrote a file of its own (O125 step 05: 112 a run). Bend's 5649467a58 (t43 step 16), on 0456's
+/// chain, where the gather replaces a key's earlier put: one file, where its batches in order wrote two.
+#[test]
+fn a_waves_kept_puts_through_the_store_are_one_file_a_space() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.sqlite");
+    let store = crate::content_store::ContentStore::open(&path).unwrap();
+    store.queue_kept(SPACE, vec![put("base", 0, 1, flat(&(0..40_000).collect::<Vec<i64>>()))]);
+    store.written().unwrap();
+    let before = files(&path);
+    {
+        let _waves = crate::content_store::write_back::run_waves();
+        for (i, rel) in ["a", "b", "c", "d"].into_iter().enumerate() {
+            store.queue_kept(SPACE, vec![put(rel, 0, 10 + i as u64, flat(&[i as i64, 1]))]);
+        }
+        store.queue_kept(SPACE, vec![put("a", 0, 20, flat(&[7, 7]))]);
+    }
+    store.written().unwrap();
+    let c = Connection::open(&path).unwrap();
+    let mut got: Vec<(String, u64, Vec<Vec<i64>>)> = read(&path, &c).into_iter().map(|(r, _, d, rows)| (r, d, rows)).filter(|(r, _, _)| r != "base").collect();
+    got.sort();
+    assert_eq!(got, [("a".into(), 20, vec![vec![7, 7]]), ("b".into(), 11, vec![vec![1, 1]]), ("c".into(), 12, vec![vec![2, 1]]), ("d".into(), 13, vec![vec![3, 1]])]);
+    let made = files(&path).into_iter().filter(|f| !before.contains(f)).count();
+    assert_eq!(made, 1, "one file made in the wave: {:?} after {before:?}", files(&path));
+}

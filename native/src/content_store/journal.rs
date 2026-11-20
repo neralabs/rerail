@@ -393,6 +393,11 @@ mod fsevents {
                 seen.cookie_at = Some(Instant::now());
                 continue;
             }
+            // `RERAIL_JOURNAL_TRACE`: each event's flags as delivered, to tell a metadata-only change from a write
+            // (Q359).
+            if std::env::var_os("RERAIL_JOURNAL_TRACE").is_some() {
+                eprintln!("journal flags {id} {flag:#x} {path}");
+            }
             if flag & META != 0 && flag & CONTENT == 0 {
                 continue;
             }

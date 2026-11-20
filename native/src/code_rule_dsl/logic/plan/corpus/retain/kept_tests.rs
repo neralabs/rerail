@@ -290,7 +290,7 @@ fn a_relation_past_the_retain_budget_is_written_to_the_frames_and_let_go() {
     let cut = cut(None, KEY, &pl(&prog), &st(&prog), &now).unwrap();
     let rows = |base: i64| component::InRel::flat(&(0..4).map(|i| vec![base + i]).collect::<Vec<_>>(), vec![b'i']);
     let derived = vec![("result0".to_owned(), 1, rows(100)), ("result1".to_owned(), 1, rows(200))];
-    let mut next = after(None, KEY, now.clone(), &cut, derived, &BTreeMap::new(), &[], HashMap::new(), HashMap::new(), HashMap::new(), Default::default(), HashMap::new(), 0, false);
+    let mut next = after(None, KEY, now.clone(), &cut, derived, &BTreeMap::new(), &[], HashMap::new(), HashMap::new(), Default::default(), 0, false);
     assert_eq!(next.bytes(), 0, "nothing past the budget is held for the next run");
     assert_eq!(next.parts().1.len(), 2, "both are this run's to write");
     let written = next.write_kept(&store, &was, &pl(&prog),&Default::default(), &Locations::new(), &st(&prog), &cut, &[], &now, &BTreeSet::new(), &HashMap::new(),HashMap::new(),None,&HashMap::new(), &BTreeSet::new()).unwrap();
@@ -302,7 +302,7 @@ fn a_relation_past_the_retain_budget_is_written_to_the_frames_and_let_go() {
 /// Smoking gun 9 (t34, 2026-11-13), red until fixed. A kept relation's statistics are a part of its frame under its
 /// rows' digest (decision 0120 §3), admitted with its rows by `load`. Rows read where the walk reaches them (`admit`,
 /// decision 0117 step 4) took the rows and their levels, not the statistics, so every `__old` the edit planned with
-/// was counted from its rows ("count run_scope__old from its rows", dozens an edit).
+/// was counted from its rows ("count run_scope from its rows", dozens an edit).
 #[test]
 fn rows_read_where_reached_come_with_their_kept_statistics() {
     let dir = tempfile::tempdir().unwrap();
@@ -311,7 +311,7 @@ fn rows_read_where_reached_come_with_their_kept_statistics() {
     let stored = Retained::bind_kept(&store, SPACE, KEY,KEY, &pl(&prog), &st(&prog), &HashMap::new()).unwrap();
     let digest = stored.frames.as_ref().unwrap().derived["result0"].digest;
     let mut all = kept_stats::ByDigest::new();
-    all.insert(("result0".to_owned(), digest), kept_stats::KeptStat::Measured((vec![("result0_c0".to_owned(), 3, 3, 3, 3)], vec![], BTreeSet::new())));
+    all.insert(("result0".to_owned(), digest), (vec![("result0_c0".to_owned(), 3, 3, 3, 3)], vec![], BTreeSet::new()));
     let words = kept_stats::to_words(&kept_stats::encode(&all));
     store.queue_kept(SPACE, vec![put(&frames.names["result0"], kept_stats::PART, digest, vec![], vec![b'i'], words)]);
     let kept = Retained::bind_kept(&store, SPACE, KEY,KEY, &pl(&prog), &st(&prog), &HashMap::new()).unwrap();

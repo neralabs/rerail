@@ -2,7 +2,7 @@
 //! handles (decision 0173, t36 item 4): the rule's `Body` and its steps, in plan order, each step a `JoinItem` over
 //! numbered slots, then the head. A literal with no native step (an aggregate other than `count`, `sum`, `min`, `max`
 //! and `join`, a descent, a document range, top) has no spec: that rule stays SQL.
-use super::body::Body;
+use super::body::{Body, VarSet};
 use super::{Mode, Run, Step, sym_char};
 use super::super::native::component::spec::{Arg, Extreme, HeadTok, InputKey, JoinItem, JoinSpec, Source as JoinSource, Tok};
 use super::super::program_image::{AggRef, CmpOp, Lit, Slot, TermRef};
@@ -222,8 +222,9 @@ impl<'a> Run<'a, '_> {
     ) -> Option<Arc<JoinSpec>> {
         let pf = self.fields();
         let inputs = |d: &mut super::super::derived::Inputs| {
-            // A recheck's spec starts from its head's variables bound (`Body::with_head_bound`): another spec.
-            d.u64(u64::from(b.head_bound()));
+            // A recheck's spec starts from its head's variables bound (`Body::with_head_bound`), a mode line's from
+            // the variables its delta binds (`Body::with_bound`): another spec each.
+            b.digest_pre(d);
             if bare {
                 // A head of no terms, as `Body::digest_atom` writes it.
                 d.str(b.rel(b.head()));
@@ -232,8 +233,6 @@ impl<'a> Run<'a, '_> {
             } else {
                 b.digest_atom(d, b.head());
             }
-            // A recheck's spec binds its head first: not the spec of the same rule run from no binding.
-            d.u64(u64::from(b.head_bound()));
             d.u64(at.map_or(u64::MAX, |a| a as u64));
             match self.model.inputs.atoms {
                 Some(ops) => ops.iter().for_each(|&o| d.u64(o as u64)),
@@ -307,14 +306,15 @@ impl<'a> Run<'a, '_> {
         let pf = self.fields();
         let atoms = self.model.inputs.atoms;
         let mut slots = Slots::default();
-        // A recheck's head variables are bound by its candidate before the first step (the executor's `pre`, the
-        // head's slots): their slots first, so a step reads them as bound. An aggregate whose group only the head
-        // binds (`fanout(f, n) :- def(f, _), n = count : { uses(_, f) }`, priced from the aggregate) had no spec, and
-        // the recheck fell back to the rule's own order, unpriced (0364 R7).
-        if b.head_bound() && !bare {
-            for v in b.head().args().filter_map(|t| t.var()) {
-                slots.slot(Key::Var(v));
-            }
+        // What the body has bound before its first step (a recheck's head, `Body::with_head_bound`; a mode line's
+        // delta, `Body::with_bound`): slots before any item, which the engine fills from the candidate or the delta's
+        // row (`Line::Recheck`). A step reads them as bound, and a test of them can come first, as the planner orders
+        // it (Q208). Unregistered, such a test met an unbound variable and no spec was made, and an aggregate whose
+        // group only the head binds (`fanout(f, n) :- def(f, _), n = count : { uses(_, f) }`) fell back to the rule's
+        // own order, unpriced (0364 R7). A bare prefix has no head: a recheck's head binds nothing there.
+        let bound = if bare && b.head_bound() { VarSet::new() } else { b.bound_before() };
+        for v in bound.iter() {
+            slots.slot(Key::Var(v));
         }
         // A variable's type: its column's in a positive atom; a count's, a sum's or a number function's value is a
         // number. A variable equal to another (`$m = $a`, a capture's alias) has the other's type.

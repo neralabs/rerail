@@ -69,14 +69,16 @@ library_key(q, f, c, parser, format, "tape-2") :-
     py_resolves(q, f, _), file_digest(f, c), source_tape_version(parser, format).
 
 // The result: the tape of the document its load gave (python/modules.rerail asks for it: `load(f, q, "python")`).
+// `loaded` names that document by its canonical path, not by `f` as the resolution reached it (a setting's
+// directory, `../ts`, is relative to the root): it is joined by its module.
 .decl library_tape(q: symbol, f: symbol, t: tape)
-library_tape(q, f, t) :- library_key(q, f, _, _, _, _), loaded(f, q, "python"), doc(d, f, q), tape_of(d, t).
+library_tape(q, f, t) :- library_key(q, f, _, _, _, _), loaded(l, q, "python"), doc(d, l, q), tape_of(d, t).
 .cache library_tape by library_key
 
 // What a later phase that reads the libraries takes as its documents: each library document, by its canonical path,
 // with its module, grammar and content.
 .decl library(p: symbol, m: symbol, g: symbol, c: symbol)
-library(f, q, "python", c) :- library_key(q, f, c, _, _, _), library_tape(q, f, _).
+library(l, q, "python", c) :- library_key(q, f, c, _, _, _), library_tape(q, f, _), loaded(l, q, "python").
 
 // ---- C's and C++'s headers (decision 0327) ---------------------------------------------------------------------
 // The files the run's translation units include, to the closure's fixed point (c/includes.rerail: every branch taken,

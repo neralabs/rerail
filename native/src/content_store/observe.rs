@@ -2786,9 +2786,10 @@ mod tests {
     }
 
     /// A path's canonical form is resolved once: under a root the journal says is unchanged, the next run answers it
-    /// with no `realpath`, and a symlink retargeted under the root is resolved again.
-    #[cfg(any(unix, windows))]
+    /// with no `realpath`, and a symlink retargeted under the root is resolved again. The journal's (FSEvents), as
+    /// the other journal tests: with none (Linux, no Watchman), nothing is trusted by it.
     #[test]
+    #[cfg(target_os = "macos")]
     fn a_canonical_path_is_resolved_again_only_where_the_journal_names_a_change() {
         #[cfg(unix)]
         use std::os::unix::fs::symlink as symlink_file;

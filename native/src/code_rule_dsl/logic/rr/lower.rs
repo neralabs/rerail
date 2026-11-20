@@ -819,7 +819,7 @@ pub fn lower_module_seeded_written(statements: Vec<Stmt>, seeds: &Seeds) -> Resu
 /// Each `.shape`'s rules, read in `version`, read its relation (and what it waits after), and have each variable it
 /// waits for: else the directive's line and why.
 fn shapes_hold(version: &crate::code_rule_dsl::logic::program_image::Version, shapes: &[(crate::code_rule_dsl::logic::front::Shape, usize)]) -> Result<(), Error> {
-    use crate::code_rule_dsl::logic::front::{ShapeWait, shape_base};
+    use crate::code_rule_dsl::logic::front::ShapeWait;
     use crate::code_rule_dsl::logic::program_image::{RuleRef, Slot, kind};
     // A variable of a rule's body: a variable leaf after its head, or an aggregate's result.
     let in_body = |r: &RuleRef<'_>, v: &str| {
@@ -832,7 +832,7 @@ fn shapes_hold(version: &crate::code_rule_dsl::logic::program_image::Version, sh
     };
     for (shape, line) in shapes {
         let rules: Vec<RuleRef<'_>> = version.rules().filter(|r| version.rel_name(r.head().rel()) == shape.head).collect();
-        let reads = |rel: &str| rules.iter().any(|r| r.body().filter_map(|l| l.atom()).any(|a| shape_base(version.rel_name(a.rel())) == rel));
+        let reads = |rel: &str| rules.iter().any(|r| r.body().filter_map(|l| l.atom()).any(|a| version.rel_name(a.rel()) == rel));
         let missing = match &shape.wait {
             _ if !reads(&shape.lit) => Some(format!("no rule of `{}` reads `{}`", shape.head, shape.lit)),
             ShapeWait::After(a) if !reads(a) => Some(format!("no rule of `{}` reads `{a}`", shape.head)),
@@ -4949,6 +4949,12 @@ impl Lowerer {
             let asked: BTreeSet<String> = cols.iter().cloned().collect();
             let decided = self.decide_conjunction(&lits, &asked)?;
             self.helper_of(&rel, "cover", &cols, decided, &lits, &asked)?;
+            // Stored (decision 0099's `no_inline`): the cover is the groups the context reaches, made once. Unfolded
+            // into its reader (an aggregate's witnesses), its join runs again for every witness: `p49_rr_cover5`'s
+            // `need` and `reset` of each name in a document, 45 s of one stratum over 91 files of the data layer.
+            self.prog.edit(|b| b.qualifiers(), |q| Field::Qualifiers(q), |all| {
+                all.entry(rel.clone()).or_default().insert("no_inline".to_owned());
+            });
             out.push(LitAt::Made(rel, cols));
         }
         Ok(out)

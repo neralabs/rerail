@@ -2383,14 +2383,14 @@ fn a_gate_is_joined_once_its_key_is_bound() {
     assert_eq!(atoms, ["dir", "k", "done_n_b"], "{:?}", order.iter().map(|s| lit_at(&p, r, s.at)).collect::<Vec<_>>());
 }
 
-/// Maintenance must drive from measured changed scopes, including when the recursive delta is walk.
+/// A kept plan notices an exact constant frequency: zero postings of the constant make it start from them.
 #[test]
 fn changed_scope_demands_precede_walk_and_seed_caches_notice_constant_frequencies() {
-    let p = parse_version(".decl walk(n:number,x:number,s:number)\n.decl bound(s:number,x:number)\n.decl changed__plus(s:number,k:number)\n.decl out(n:number,x:number,s:number)\nout(n,x,s) :- walk(n,x,s), !bound(s,x), changed__plus(s,1).\n.output out\n").unwrap();
+    let p = parse_version(".decl walk(n:number,x:number,s:number)\n.decl bound(s:number,x:number)\n.decl changed(s:number,k:number)\n.decl out(n:number,x:number,s:number)\nout(n,x,s) :- walk(n,x,s), !bound(s,x), changed(s,1).\n.output out\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
     let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
-    for (rel, rows, ndv) in [("walk",71976.0,vec![50000.0,10000.0,1000.0]),("bound",40000.0,vec![1000.0,10000.0]),("changed__plus",7000.0,vec![7000.0,20.0])] {
+    for (rel, rows, ndv) in [("walk",71976.0,vec![50000.0,10000.0,1000.0]),("bound",40000.0,vec![1000.0,10000.0]),("changed",7000.0,vec![7000.0,20.0])] {
         model.stats.card.insert(rel,rows);
         for (c,n) in ndv.into_iter().enumerate() {
             model.ndv.insert((rel,c),n);
@@ -2403,22 +2403,17 @@ fn changed_scope_demands_precede_walk_and_seed_caches_notice_constant_frequencie
     let r = 0usize;
     let _plans=KeepPlans::start(None);
     // Unknown delta distribution first, then an exact zero for the constant, at identical row counts.
-    let _ = model.plan_rule_reused(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r),None).unwrap();
-    model.stats.memo.insert("changed__plus".into(),HashMap::from([(("c1".into(),Constant::Int(1)),0)]));
+    let ((_,before,_),_) = model.plan_rule_reused(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r),None).unwrap();
+    model.stats.memo.insert("changed".into(),HashMap::from([((super::sql_col("changed",1),Constant::Int(1)),0)]));
     let ((order,work,_),_)=model.plan_rule_reused(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r),None).unwrap();
-    assert_eq!(rel_at(&p, r, order[0].at).unwrap(),"changed__plus", "the seed must not retain the old full-walk scan");
-    assert!(work < 10.0, "zero constant postings precede all walk/binding work: {work}");
-    model.stats.solve(["walk","out"].into_iter().map(str::to_owned).collect());
-    model.stats.memo.get_mut("changed__plus").unwrap().insert(("c1".into(),Constant::Int(1)),12);
-    let ((order,work,_),_)=model.plan_rule_live(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r),Some(0)).unwrap();
-    assert_eq!(rel_at(&p, r, order[0].at).unwrap(),"changed__plus", "a changed-input demand can precede a delta read");
-    assert!(order.iter().position(|s|s.at==0).unwrap()>0);
-    assert!(work<5000.0,"probe walk by the demanded scopes: {work}");
-    // The same rule later has one new walk row. Rescanning the full changed-input demand each wave is worse.
-    model.stats.delta_rows.insert("walk",1.0);
-    let ((small,_,_),_)=model.plan_rule_live(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r),Some(0)).unwrap();
-    assert_eq!(small[0].at,0,"a one-row delta drives its own probe");
-
+    assert_eq!(rel_at(&p, r, order[0].at).unwrap(),"changed", "the seed must not retain the old full-walk scan");
+    // Zero postings make the plan cheaper than the one made before they were known. (It was under 10 when a
+    // relation named `__plus` was priced as a delta by its distinct demand; that pricing went with the forms, 0364
+    // R1, and `changed` is priced as the input it is, probed by its constant.)
+    assert!(work < before, "zero constant postings precede all walk/binding work: {work} against {before}");
+    // Its second half, a changed-input demand (`changed__plus`) led before the run's delta (`walk`), went with the
+    // planner's maintenance names (0364 R1: `reads_change`, `changes_with_the_delta`): no relation is a changed
+    // input by its name, and a delta leads its own rule.
 }
 
 /// Smoking gun 2 (t34, 2026-11-13): a relation empty when its rule is planned (annotation demand's `rel_base`
@@ -2943,10 +2938,10 @@ fn kept_distributions_are_near_in_proportion_to_the_nodes() {
 
 /// O-join-shape-directives: `pv__ins`'s shape at O125 in small. With `retparam` tiny, the planner crosses `pv` with
 /// it (no shared variable) before `posarg`; `.shape retparam bound f` holds it back until `cfn` binds `f`, in the rule
-/// as written and in a delta's form of it (`pv__ins`). With `posarg` sized by no statistic of its own, the guard takes
+/// as written. With `posarg` sized by no statistic of its own, the guard takes
 /// no cross product against it.
 #[test]
-fn a_join_shape_directive_holds_a_join_back_in_the_rule_and_its_forms() {
+fn a_join_shape_directive_holds_a_join_back_in_its_rule() {
     let rule = ".decl pv(a:number,k:number,v:number)\n.decl posarg(c:number,i:number,a:number)\n.decl cfn(c:number,e:number,f:number)\n\
         .decl retparam(f:number,i:number,x:number)\n.input pv, posarg, cfn, retparam\n.decl out(c:number,k:number,v:number)\n.output out\n\
         out(c, k, v) :- pv(a, k, v), posarg(c, i, a), cfn(c, _, f), retparam(f, i, _).\n";
@@ -2981,10 +2976,9 @@ fn a_join_shape_directive_holds_a_join_back_in_the_rule_and_its_forms() {
     let free = order_of(rule, &sizes, None, None);
     assert!(at(&free, "retparam") < at(&free, "cfn"), "without the directive the planner crosses retparam in early: {free:?}");
     let shaped = format!("{rule}.shape retparam bound f\n");
-    for head in [None, Some("out__ins")] {
-        let o = order_of(&shaped, &sizes, head, None);
-        assert!(at(&o, "retparam") > at(&o, "cfn"), "retparam waits for f ({head:?}): {o:?}");
-    }
+    // (A delta's form of the rule, `out__ins`, was held back by the same directive; the forms are gone, 0364.)
+    let o = order_of(&shaped, &sizes, None, None);
+    assert!(at(&o, "retparam") > at(&o, "cfn"), "retparam waits for f: {o:?}");
     // Profiled, a directive the planner's own order already keeps is reported as no longer needed; one that changed
     // the order is reported with both estimates.
     {
@@ -3000,10 +2994,9 @@ fn a_join_shape_directive_holds_a_join_back_in_the_rule_and_its_forms() {
         let _off = Off;
         crate::code_rule_dsl::logic::profile::set(true);
         crate::code_rule_dsl::logic::profile::reset();
-        // EXPLAIN says which directive shaped the delta form's plan.
+        // EXPLAIN says which directive shaped the rule's plan.
         {
-            let mut p = parse_version(&shaped).unwrap();
-            p = renamed_head(&p, "out__ins");
+            let p = parse_version(&shaped).unwrap();
             let model = model_for(&p, &sizes);
             let _plans = KeepPlans::start(None);
             let r = 0usize;
@@ -3484,4 +3477,36 @@ fn a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it() {
     assert!(!prep.0.contains_key(&line("w", 0, None)), "`u` is not sized: one of its rules is not planned");
     assert!(prep.0.contains_key(&line("anc", 1, None)) && prep.0.contains_key(&line("anc", 1, Some(0))), "the recursion, sized by its base rule");
     assert!(prep.0.contains_key(&line("z", 0, None)), "`anc` sized: `z` is prepared");
+}
+
+/// A probe whose new variable later comparisons bound reads a range (`setfix::ranges`), and past the head's variables
+/// a step passes on one witness a binding (`setfix::tail`). A zero count's helper, `h(a, b, p) :- ctx(a, b, p),
+/// line(p, l, _), !at(p, l), l > a, l < b` (`bounded-composed-graph-paths`' `rr_agg15`; 91 files: 25,425 pairs, 6,027
+/// lines of 9 files), was searched from `line` (46.7 M work), each line probing its file's pairs; from `ctx`, each
+/// pair reads its lines between its ends and stops at the first.
+#[test]
+fn a_probe_bounded_by_comparisons_reads_a_range() {
+    let p = parse_version(".decl ctx(a:number,b:number,p:number)\n.decl src(p:number,l:number,s:number)\n.decl at(p:number,l:number)\n.input ctx, src, at\n.decl line(p:number,l:number,s:number)\nline(p,l,s) :- src(p,l,s).\n.decl h(a:number,b:number,p:number)\nh(a,b,p) :- ctx(a,b,p), line(p,l,_), !at(p,l), l > a, l < b.\n.output h\n").unwrap();
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    for (rel, rows, ndv) in [
+        ("ctx", 25_425.0, vec![212.0, 330.0, 2.0]),
+        ("line", 6_027.0, vec![9.0, 3_535.0, 6_027.0]),
+        ("at", 700.0, vec![9.0, 700.0]),
+    ] {
+        model.stats.card.insert(rel, rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel, c), n);
+            model.stats.fan.insert((rel, c), rows / n);
+        }
+    }
+    model.stats.solve(["h"].into_iter().map(str::to_owned).collect());
+    let r = p.rules().position(|r| p.rel_name(r.head().rel()) == "h").unwrap();
+    let ((order, work, _), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), None).unwrap();
+    let b = body::nth(&p, r);
+    let order: Vec<_> = order.iter().filter_map(|s| b.atom(s.at)).filter(|a| !a.neg()).map(|a| b.rel(a)).collect();
+    assert_eq!(order, ["ctx", "line"], "{order:?}, work={work}");
+    // A pair's lines between its ends, a ninth of its file's as the comparisons are priced (a third each).
+    assert!(work < 5e6, "a range a pair: {work}");
 }
