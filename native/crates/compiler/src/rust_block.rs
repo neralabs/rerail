@@ -604,8 +604,8 @@ impl<'a> Gen<'a> {
         // The loop's state.
         out.push_str(
             "/// The token loop's state: the records so far, the refusals, and what the gap marks carry\n\
-             /// from token to token (`records::gap_marks`).\nstruct Tokens {\n    starts: Vec<u32>,\n    lasts: Vec<u32>,\n    codes: Vec<u32>,\n    /// The byte after the last token's.\n    after: usize,\n    untaken: bool,\n    read: bool,\n    checked: bool,\n    bad: bool,\n    /// The byte after the last grammar token's first, its word, and the marks' tests' hits\n    /// carried to the next grammar token.\n    from: usize,\n    word_before: u32,\n    pending: u32,\n    /// A region's tokens, read before they are written.\n    parts: Vec<(usize, usize)>,\n}\n\n\
-             impl Tokens {\n    fn new(n: usize) -> Self {\n        let room = n / 4 + 16;\n        Tokens { starts: Vec::with_capacity(room), lasts: Vec::with_capacity(room), codes: Vec::with_capacity(room), after: 0, untaken: false, read: false, checked: false, bad: false, from: 0, word_before: 0, pending: 0, parts: Vec::new() }\n    }\n\n",
+             /// from token to token (`records::gap_marks`).\nstruct Tokens {\n    starts: Vec<u32>,\n    lasts: Vec<u32>,\n    codes: Vec<u32>,\n    /// The byte after the last token's.\n    after: usize,\n    untaken: bool,\n    read: bool,\n    checked: bool,\n    bad: bool,\n    /// The byte after the last grammar token's first, its word, and the marks' tests' hits\n    /// carried to the next grammar token.\n    from: usize,\n    word_before: u32,\n    pending: u32,\n    /// The byte after the last record's first: an extra's own gap starts there.\n    from_record: usize,\n    /// A region's tokens, read before they are written.\n    parts: Vec<(usize, usize)>,\n}\n\n\
+             impl Tokens {\n    fn new(n: usize) -> Self {\n        let room = n / 4 + 16;\n        Tokens { starts: Vec::with_capacity(room), lasts: Vec::with_capacity(room), codes: Vec::with_capacity(room), after: 0, untaken: false, read: false, checked: false, bad: false, from: 0, word_before: 0, pending: 0, from_record: 0, parts: Vec::new() }\n    }\n\n",
         );
         // The loop.
         let _ = writeln!(out, "    /// The tokens, as the lean lexer's loop: each at the first byte past the blanks, to its last\n    /// by its first byte's end rule (`records::walk`). A token the file is refused at ends the\n    /// loop before its record, as a lexer's error does (the CPU's tier 1 stops there too).\n    fn run(&mut self, src: &[u8], m: &Masks) {{\n        let n = src.len();\n        let mut at = 0usize;\n        while at < n && !self.stops() {{\n            let Some(s) = next_clear(&{}, at, n) else {{ break }};\n            let rule = END[usize::from(src[s])];\n            let l = match rule {{", self.mask(r.skip.expect("checked")));
@@ -670,7 +670,14 @@ impl<'a> Gen<'a> {
             let low = (1u32 << crate::records::AFTER_SHIFT) - 1;
             let hits = if r.checks.is_empty() { "0".to_owned() } else { "hits(m, END[usize::from(src[s])], s, l)".to_owned() };
             let extra = r.extra.map_or("false".to_owned(), |e| format!("code >> {} & 1 == 1", 16 + u32::from(e)));
-            let _ = writeln!(out, "        let h: u32 = {hits};\n        if {extra} {{\n            // An extra's token: no gap mark; its hits go on to the next grammar token.\n            code &= !(0x{gaps:x} << 16);\n            self.pending |= h & 0x{low:x} | h >> 16;\n        }} else {{\n            let mut gap = 0u32;");
+            // An extra keeps the blank marks of its own gap (`Records::extra`).
+            let own: String = r
+                .blanks
+                .iter()
+                .filter(|&&(k, _)| gaps >> k & 1 == 1 && r.tested_only >> k & 1 == 0)
+                .map(|&(k, _)| format!("\n            if any_in(&{}, self.from_record, s) {{\n                code |= 1 << {};\n            }}", self.mask(r.marks[usize::from(k)].0), 16 + u32::from(k)))
+                .collect();
+            let _ = writeln!(out, "        let h: u32 = {hits};\n        if {extra} {{\n            // An extra's token: no gap mark but the blank marks of its own gap; its hits go on\n            // to the next grammar token.\n            code &= !(0x{gaps:x} << 16);{own}\n            self.pending |= h & 0x{low:x} | h >> 16;\n        }} else {{\n            let mut gap = 0u32;");
             for (k, &(o, _)) in r.marks.iter().enumerate().filter(|&(k, _)| gaps >> k & 1 == 1) {
                 let unless: Vec<String> = r.unless.iter().filter(|&&(u, _)| usize::from(u) == k).map(|&(_, w)| format!("self.word_before == {w}")).collect();
                 let none = if unless.is_empty() { String::new() } else { format!("!({}) && ", unless.join(" || ")) };
@@ -679,7 +686,8 @@ impl<'a> Gen<'a> {
             }
             let _ = writeln!(out, "            code = code & !(0x{gaps:x} << 16) | gap << 16;\n            self.from = s + 1;\n            self.word_before = code >> 8 & 0xff;\n            self.pending = h >> 16;\n        }}");
         }
-        let _ = writeln!(out, "        self.starts.push(s as u32);\n        self.lasts.push(l as u32);\n        // The gap marks tier 2 tests itself.\n        self.codes.push(code & !(0x{lazy:x} << 16));\n    }}\n");
+        let from_record = if gaps != 0 && r.extra.is_some() && !r.blanks.is_empty() { "        self.from_record = s + 1;\n" } else { "" };
+        let _ = writeln!(out, "{from_record}        self.starts.push(s as u32);\n        self.lasts.push(l as u32);\n        // The gap marks tier 2 tests itself.\n        self.codes.push(code & !(0x{lazy:x} << 16));\n    }}\n");
         // Unplaced.
         out.push_str("    /// Whether a bit of an `else escape` gap mark has no grammar token after it to hold it.\n    fn unplaced(&self, m: &Masks, n: usize) -> bool {\n        let _ = (m, n);\n");
         let unplaced: Vec<String> = r

@@ -946,6 +946,17 @@ fn tier1_records() {
         let cpu = c.parser.tier1.extract(&src);
         let same = run.positions == cpu.positions && run.codes == cpu.codes && run.totals == cpu.totals;
         eprintln!("== {p}: {}", if same { "the same" } else { "DIFFERS" });
+        // `RERAIL_KOTLIN_RECORDS`: the CPU's records, each start, last, code and text, and the
+        // records' marks (`Records::marks`) and blank marks (`Records::blanks`).
+        if std::env::var_os("RERAIL_KOTLIN_RECORDS").is_some() {
+            if let Some(r) = &c.program.block_programs[0].records {
+                eprintln!("marks {:?} blanks {:?} names {:?}", r.marks, r.blanks, c.program.names.marks);
+            }
+            for (i, &code) in cpu.codes.iter().enumerate() {
+                let (s, l) = (cpu.positions[0][i] as usize, cpu.positions[1][i] as usize);
+                eprintln!("record {i}: {s}..={l} code {code:#x} marks {:#x} {:?}", code >> rerail_compiler::records::MARK_SHIFT, String::from_utf8_lossy(&src[s..=l.min(src.len() - 1)]));
+            }
+        }
         if !same {
             // The first record where they part, with the ones around it: start, last, code.
             let rec = |r: &rerail_compiler::block::BlockRun, i: usize| (r.positions[0].get(i).copied(), r.positions.get(1).and_then(|l| l.get(i)).copied(), r.codes.get(i).map(|c| format!("{c:#x}")));

@@ -320,45 +320,7 @@ tree t {
 /// included.
 #[test]
 fn a_gap_mark_read_from_the_blanks() {
-    let source = r#"lexer t
-class ws        = ' ' '\n'
-class lf        = '\n'
-class slash     = '/'
-class star      = '*'
-class dq        = '"'
-class word      = 'a'..'z'
-class punct     = '(' ')' ';'
-mask line_open  = slash & next(slash)
-mask block_open = slash & next(star)
-mask block_end  = slash & prev(star)
-regions hidden {
-  line  = line_open .. lf outside
-  block = block_open .. block_end
-  str   = dq .. dq
-}
-mask code       = ~hidden & ~o_line & ~o_block & ~o_str
-mask last_byte  = ~next(~empty)
-error "a comment or a string open at the end of the file" by tokens when (f_block | f_str) & last_byte
-mask w          = code & word
-mask name       = fill(w, ~w)
-error "a byte no token takes" by tokens when code & ~ws & ~name & ~punct
-token line_comment = start slash & o_line read line
-token multiline_comment = start slash & o_block read block
-token string    = start o_str read str
-token simple_identifier = start name & ~prev(name) run word
-token punct     = start code & punct
-keywords simple_identifier { "k" }
-keywords punct { "(" ")" ";" } required
-skip ws
-mark semi       = lf & code unless after ";", end, ends
-tree t {
-  node source_file whole = (statement (semi | ';'))*
-  choice statement nested = call | simple_identifier | string
-  node call             = 'k' '(' [simple_identifier | string] ')'
-  hidden semi
-  extra line_comment multiline_comment
-}
-"#;
+    let source = BLANKS_STEP;
     let c = compile_step("blanks", source);
     let r = c.program.block_programs[0].records.as_ref().expect("records");
     assert_eq!(r.blanks.iter().map(|b| b.0).collect::<Vec<_>>(), vec![0], "semi is read from the blanks");
@@ -369,6 +331,16 @@ tree t {
     assert_eq!(crate::native_cpu_block::blank_bits(r, &|o| bw.can(o)), 1);
     let samples: [(&str, &[&str]); 2] = [("line_comment", &["// x", "//", "// \"y", "// /* z"]), ("multiline_comment", &["/* x */", "/*\n*/", "/* \" \n */", "/**/"])];
     assert_eq!(check_documents("blanks", &c, b"abk(); \n/*\"x", &samples, &fixed, &|_, _, _, _| None), None);
+    // An extra keeps the blank marks of its own gap (`Records::extra`), as the lean lexer's
+    // `skip` knows a line end before each comment: the comments after a line break, one after
+    // another too, have semi's bit; one on its token's line has none. The interpreter's and
+    // the CPU's records alike.
+    let text = BLANKS_TEXT;
+    let run = c.program.block_programs[0].run(text);
+    let cpu = c.parser.tier1.extract(text);
+    let semi = |codes: &[u32]| codes.iter().map(|&k| k >> crate::records::MARK_SHIFT & 1).collect::<Vec<_>>();
+    assert_eq!(semi(&run.codes), [0, 0, 1, 1, 0, 1]);
+    assert_eq!(semi(&cpu.codes), semi(&run.codes));
 }
 
 /// A gap mark the token loop sets from the bytes, where the extra's mark is set after the

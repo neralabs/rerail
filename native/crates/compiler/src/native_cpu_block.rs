@@ -6717,7 +6717,11 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             // The next start, the first of the block's left (`cand`); none left, the cursor's
             // block loaded (`refill`): its starts from the cursor, its runs.
             let refill_limit = if rd.bytewise(o) && outs.iter().all(|&k| rd.bytewise(k)) { None } else { limit };
-            folded = !lift.is_empty() && refill_limit.is_none();
+            // An extra keeps the blank marks of its own gap (`Records::extra`): a lifted one's
+            // bits folded past blocks would go to the grammar token after it alone, so a blank
+            // mark among the lifted ones, with extras, folds none.
+            let blank_lifted = r.extra.is_some() && r.blanks.iter().any(|&(m, _)| lift.iter().any(|&(k, _)| k == m));
+            folded = !lift.is_empty() && refill_limit.is_none() && !blank_lifted;
             skips = (folded || lift.is_empty()) && refill_limit.is_none() && lean.is_some();
             // Two loops, as the lean lexer's: over blocks (`head`, its refill), and over a
             // block's starts (`from_word`). The block's words are the refill's, which the
@@ -7514,7 +7518,8 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     // The marks' tests' bits and the gap marks' (`records::gap_marks`): a grammar token has its
     // own `At` bits, those the tokens before left, and the gap marks' bits from the byte after
     // the grammar token before's first to its own, but where the word before says none
-    // (`unless after`); an extra's token leaves all of its own to the next.
+    // (`unless after`); an extra's token leaves all of its own to the next, and keeps the
+    // blank marks of its own gap (`Records::extra`).
     let tests = r.checks.iter().any(|c| c.then != crate::records::CheckThen::Escape);
     if tests || !lift.is_empty() || !blanks.is_empty() {
         let h = cv[STATE_WORDS + 1];
@@ -7574,6 +7579,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         if let Some(b) = blank {
             mine = f.ins().bor(mine, b);
         }
+        let mut lifted = None;
         if gapped {
             // Folded, the bits not yet taken start past the token before's first byte, in the
             // token's block (the refill took those before it).
@@ -7585,6 +7591,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             };
             let bits = marks_in(f, &rd, c, &lift, from_eff, s, in_regs, folded, heads);
             mine = f.ins().bor(mine, bits);
+            lifted = Some(bits);
         }
         let held = if kept_word {
             let mut none = zero;
@@ -7608,7 +7615,18 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                 let is_extra = f.ins().ushr_imm(code, i64::from(crate::records::MARK_SHIFT) + i64::from(e));
                 let is_extra = f.ins().band_imm(is_extra, 1);
                 let left = f.ins().bor(mine, after_bits_kept);
-                code = f.ins().select(is_extra, code, marked);
+                // An extra keeps the blank marks of its own gap (`Records::extra`): the loop's
+                // from its blank run, or the lifted ones' bits from the record before (not
+                // folded: `blank_lift_exact`).
+                let blank_lift: u32 = r.blanks.iter().filter(|&&(m, _)| lift.iter().any(|&(k, _)| k == m)).fold(0, |a, &(m, _)| a | 1 << m);
+                let mut own_bits = blank.unwrap_or(zero);
+                if let Some(bits) = lifted.filter(|_| blank_lift != 0) {
+                    let b = f.ins().band_imm(bits, i64::from(blank_lift));
+                    own_bits = f.ins().bor(own_bits, b);
+                }
+                let own_bits = f.ins().ishl_imm(own_bits, i64::from(crate::records::MARK_SHIFT));
+                let own = f.ins().bor(code, own_bits);
+                code = f.ins().select(is_extra, own, marked);
                 pending = f.ins().select(is_extra, left, after_bits_kept);
             }
             None => {
@@ -7945,6 +7963,38 @@ fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts
         }
         heads.push((over, Step::Token));
         let _ = (sv, place, k);
+        // The first record at or after the bit, an extra: it keeps the blank marks' bits there,
+        // of its own gap (`Records::extra`).
+        let blank_late: Vec<(usize, u16)> = late.iter().copied().filter(|&(m, _)| r.extra.is_some() && r.blanks.iter().any(|&(k, _)| usize::from(k) == m)).collect();
+        if !blank_late.is_empty() {
+            let (own, on) = (f.create_block(), f.create_block());
+            f.ins().brif(inside, own, &[], on, &[]);
+            f.switch_to_block(own);
+            let (ca, co) = c.field(f, crate::records::FIELD_CODE, q[3]);
+            let code = f.ins().uload32(fl, ca, co);
+            let e = i64::from(crate::records::MARK_SHIFT) + i64::from(r.extra.unwrap_or(0));
+            let is_extra = f.ins().ushr_imm(code, e);
+            let is_extra = f.ins().band_imm(is_extra, 1);
+            let off = f.ins().imul_imm(q[0], 8 * outputs as i64);
+            let at = f.ins().iadd(c.out, off);
+            let b = f.ins().ctz(q[2]);
+            let mut bits = zero;
+            for &(m, o) in &blank_late {
+                let w = f.ins().load(types::I64, fl, at, 8 * i32::from(o));
+                let x = f.ins().ushr(w, b);
+                let x = f.ins().band(x, is_extra);
+                let x = f.ins().band_imm(x, 1);
+                let x = f.ins().ishl_imm(x, i64::from(crate::records::MARK_SHIFT) + m as i64);
+                bits = f.ins().bor(bits, x);
+            }
+            let code = f.ins().bor(code, bits);
+            f.ins().istore32(stores, code, ca, co);
+            f.ins().jump(on, &[]);
+            f.switch_to_block(on);
+        }
+        // The cursor at the record found: the next bit's first record is it or one after (an
+        // extra's own gap, past an extra before it).
+        let qa: Vec<BlockArg> = if blank_late.is_empty() { qa } else { vec![q[0].into(), q[3].into(), q[2].into(), q[3].into()] };
         f.ins().jump(over, &qa);
         f.switch_to_block(over);
         let q = f.block_params(over).to_vec();
@@ -8051,12 +8101,15 @@ fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts
     f.ins().istore32(stores, code, ca, co);
     f.ins().jump(next, &[q[0].into(), q[1].into(), q[2].into(), q[3].into()]);
 
-    // The bit done: the next, from this token on.
+    // The bit done: the next, from this token on (from the record found, where an extra keeps
+    // its own blank marks: the cursor the search left).
     f.switch_to_block(next);
     let q = f.block_params(next).to_vec();
     let less = f.ins().iadd_imm(q[2], -1);
     let rest = f.ins().band(q[2], less);
-    f.ins().jump(bits, &[q[0].into(), q[3].into(), rest.into()]);
+    let own_kept = lift && r.extra.is_some() && late.iter().any(|&(m, _)| r.blanks.iter().any(|&(k, _)| usize::from(k) == m));
+    let cursor = if own_kept { q[1] } else { q[3] };
+    f.ins().jump(bits, &[q[0].into(), cursor.into(), rest.into()]);
 }
 
 /// A backward pass (`native_ir::Pass::Back`): per file, its blocks last to first, each

@@ -45,6 +45,29 @@ fn every_step_on_metal_equals_the_interpreter() {
     assert!(differ.is_empty(), "{} files differ:\n{}", differ.len(), differ.join("\n"));
 }
 
+/// An extra's record on Metal keeps the blank marks of its own gap, as the interpreter's
+/// (`Records::extra`): `BLANKS_STEP`'s comments after a line break, one after another too, have
+/// semi's bit, and the codes and positions equal the interpreter's over texts of line breaks between and inside its comments.
+#[test]
+fn an_extra_keeps_its_blank_marks_on_metal() {
+    use block_program::serial::{Segments, run_serial_split};
+    let c = compile_step("blanks", BLANKS_STEP);
+    let texts: [&[u8]; 8] = [b"a\nb\n", b"a /* x\ny */ b\n", b"a // x\nb\n", b"k(\"x\ny\")\nb", b"a /* x */\n/* y */ b\n", b"a\n\n// x\n\nb", b"k /* \n */ (b)\n", BLANKS_TEXT];
+    let docs: Vec<Vec<u8>> = texts.iter().map(|t| t.to_vec()).collect();
+    let p = &c.native.block_programs[0];
+    let files: Vec<block::BatchFile<'_>> = docs.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
+    // The forward carry in segments of three blocks: a region's state carried across them.
+    let run = run_serial_split(&[p], &files, Segments { blocks: 3, warm: 1 }).unwrap_or_else(|e| panic!("metal: {e:?}")).run;
+    let differ: Vec<String> = files.iter().zip(&run.files).filter(|(f, got)| {
+        let want = c.program.block_programs[0].run_files(&[f.bytes]).remove(0);
+        got.positions != want.positions || got.codes != want.codes
+    }).map(|(f, _)| format!("{:?}", String::from_utf8_lossy(f.bytes))).collect();
+    assert!(differ.is_empty(), "{} files differ:\n{}", differ.len(), differ.join("\n"));
+    let last = run.files.last().expect("the text's run");
+    let semi: Vec<u32> = last.codes.iter().map(|&k| k >> rerail_compiler::records::MARK_SHIFT & 1).collect();
+    assert_eq!(semi, [0, 0, 1, 1, 0, 1]);
+}
+
 /// Tier 1 on Metal in segments (`block_program::serial`), over the corpus as one batch: GPU
 /// seconds (the fastest of `RERAIL_ITERS` runs, default 5), segments run again and checks, for
 /// `RERAIL_SEG` blocks a segment (default 29) and `RERAIL_SEG_WARM` warm-up blocks (default 1); the

@@ -444,3 +444,37 @@ The block program with every escape taken out (`token_level_probe`, which now re
 
 The comments' escapes are two thirds of the cost. Each is a question the lean lexer's `asi` asks
 at the token after a line break, as `semi` already is (0430). They come next.
+
+## Item 4, comments, step 1: an extra keeps the line breaks of its own gap (2026-11-19)
+
+The lean lexer's `skip` knows, for each comment it passes, whether a line break came before it.
+`asi` reads that: a block comment first on its line, after a line break, then the token after it.
+Tier 2 can only ask the same question at the token if a comment's record carries it. Until now,
+a gap mark's bits went to the next grammar token alone, and an extra's code held none.
+
+Now an extra's code holds the blank marks (`Records::blanks`, Kotlin's `semi` and `head_ctor`)
+of its own gap: the bytes from the record before it to its start. The grammar token after the
+comments still holds the gap's marks from the grammar token before, as it did. The plan for the
+rest of the comments follows from this:
+1. drops and loses as token patterns over the raw records, comments included, as `asi`'s cases;
+2. Kotlin's `semi` written so, and `swallow_at`, `lost_at`, `asked_blk` and `after_asked` gone;
+3. settles by the comment's own bit;
+4. the comment escapes as refusals over those patterns.
+
+Every executor writes the bits:
+- the interpreter (`records::gap_marks`);
+- Cranelift's token tail, from the blank run and the lifted bits;
+- its `late_marks`, whose cursor now stops at the first record at or after a bit, so that a
+  second comment in a row gets its own;
+- `rust_block`'s `token()`, from `from_record`;
+- Metal's record pass.
+
+Cranelift folds no lifted bits past blocks where a blank mark is lifted and there are extras,
+because a folded bit can't be told to its comment.
+
+**Tests.** `a_gap_mark_read_from_the_blanks` checks the interpreter's and the CPU's codes on
+`ladder::BLANKS_TEXT`. `an_extra_keeps_its_blank_marks_on_metal` checks Metal's forward carry
+against the interpreter, and fails on the old Metal code.
+
+**Result:** Tapes unchanged. The compiler's tests (131), Kotlin's (52) and `kotlin_aot`'s (4)
+pass. The corpus is 450 the same, 41 refused, 0 differ.

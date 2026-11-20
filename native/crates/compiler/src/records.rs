@@ -107,10 +107,13 @@ pub struct Records {
     pub skip: Option<u16>,
     /// The marks (bits of `marks`) a grammar token has from the bytes before it (decision 0177):
     /// mark `k`'s bit at a token is whether its output holds anywhere after the grammar token
-    /// before (an extra's are not) up to its first byte. The other marks are their outputs' bits
+    /// before up to its first byte (an extra's bits are only the blank marks of its own gap,
+    /// from the record before, `extra`). The other marks are their outputs' bits
     /// at the token's first byte.
     pub gaps: u32,
-    /// The mark whose bit tells an extra's token (a comment), if any: an extra has no gap mark.
+    /// The mark whose bit tells an extra's token (a comment), if any. An extra has no gap mark
+    /// but the blank marks (`blanks`) of the gap before it, as the lean lexer's `skip` knows a
+    /// line end before each comment it passes (tier 2 reads them where it places comments).
     pub extra: Option<u8>,
     /// The outputs of the errors the token loop checks (`error … by tokens`): a byte it starts a
     /// token at that no token begins with refuses the file. The CPU makes none of them.
@@ -897,14 +900,21 @@ pub fn gap_marks(records: &Records, bytes: &[u8], starts: &[u32], lasts: &[u32],
     // The word of the grammar token before (0: none, or the file's first).
     let mut word_before = 0u32;
     let mut pending = 0u32;
+    // The record before's first byte, past it: an extra's own gap starts there.
+    let mut from_record = 0usize;
     for (k, &s) in starts.iter().enumerate().take(codes.len()) {
         let s = s as usize;
         let h = hits(k);
         if extra(codes[k]) {
-            codes[k] &= !(records.gaps << MARK_SHIFT);
+            // An extra's own: the blank marks of the gap before it (`Records::blanks`), as the
+            // lean lexer's `skip` knows a line end before each comment it passes.
+            let own = records.blanks.iter().filter(|&&(m, _)| records.gaps >> m & 1 == 1).fold(0u32, |a, &(m, _)| if any_in(outputs, records.marks[usize::from(m)].0, from_record, s) { a | 1 << m } else { a });
+            codes[k] = codes[k] & !(records.gaps << MARK_SHIFT) | own << MARK_SHIFT;
             pending |= h & low | h >> AFTER_SHIFT;
+            from_record = s + 1;
             continue;
         }
+        from_record = s + 1;
         let mut gap = 0u32;
         for (m, &(o, _)) in records.marks.iter().enumerate().filter(|&(m, _)| records.gaps >> m & 1 == 1) {
             let none = records.unless.iter().any(|&(u, w)| usize::from(u) == m && u32::from(w) == word_before);
