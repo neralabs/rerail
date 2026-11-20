@@ -593,6 +593,42 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 34, measured: the simdjson form end to end against simdjson (order item 4)
+
+`json_tests::simdjson_form_against_simdjson` times both on simdjson's own inputs:
+- ours: tier 1 on Cranelift, then tier 2 as the generated Rust (rustc, `-C opt-level=3`), writing
+  format 16 (`image16`);
+- simdjson's: its DOM parser, stage 1 and stage 2 to its tape (`rerail_simdjson_native::structurals`).
+
+Measured with `--profile profiling` (debug gives the same counts), arm64, one thread, load about 20,
+the median of 50 runs:
+
+| File | Ours, instr/byte | simdjson, instr/byte | Instructions | Time |
+|---|---:|---:|---:|---:|
+| `twitter.json` (631 KB) | 60.6 | 5.8 | 10.4× | 13.5× |
+| `numbers.json` (150 KB) | 56.9 | 14.2 | 4.0× | 4.1× |
+
+Tier 1 alone is 4.35 instructions a byte on `twitter.json` (0.20 ns a byte). The rest is 55, about
+640 instructions per simdjson structural.
+
+Where the rest goes (`RERAIL_SPIN` and `sample`, `twitter.json`, about 4,300 samples):
+
+| Where | Share |
+|---|---:|
+| zeroing the format 16 writer's room (`Writer::reserve_run`, `reserve_final`, `Writer::new`) | ~30% |
+| the writer's ops, in the generated Rust (`w::f…`) | ~45% |
+| the walk, `r0` (`walk_document`'s counterpart) | ~11% |
+| format 16's newline index of the source (`newlines::index`, in `Writer::new`) | ~9% |
+| tier 1 | ~5% |
+
+So the walk is not the gap. The gap is around it, in format 16's writer:
+- **A writer per document.** `write16` makes a new `Writer` for each file. Its room is reserved for
+  the worst case, every block made final at once: `LAID_MAX`, about 37 KB a block. `Vec::resize`
+  zeroes it all, about 3 MB for `twitter.json`. simdjson allocates its tape once per parser and
+  reuses it.
+- **The newline index is a pass of its own** over the source. Tier 1 already reads every byte.
+- **The writer's ops cost four times the walk.** simdjson writes a tape word per value.
+
 ## Step 33, done: Kotlin's steps compile in seconds, not minutes (decision 0479)
 
 Step 29 ran Kotlin's ladder, but each step took 5 to 7 minutes to compile, almost all of it in

@@ -402,6 +402,84 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     eprintln!("{written} files in format 16 and 16z, the Rust's bytes the JIT's");
 }
 
+/// Page 40, order item 4: the simdjson form end to end against simdjson, on simdjson's own inputs (`RERAIL_JSON_FILES`,
+/// `:`-separated; `twitter.json` and `numbers.json`). Ours: tier 1 on Cranelift, tier 2 the generated Rust (rustc,
+/// `-C opt-level=3`) writing format 16 (`image16`), the tape's home and presence. simdjson's: its DOM parser, stage 1
+/// and stage 2 to its tape, from a padded copy of the bytes (`structurals`). Per file: the instructions retired a byte
+/// and the time a byte (each the median of `RERAIL_ITERS` runs), single-threaded.
+#[cfg(target_arch = "aarch64")]
+#[test]
+#[ignore = "a measurement: run by name with RERAIL_JSON_FILES and --nocapture"]
+fn simdjson_form_against_simdjson() {
+    let files: Vec<(String, Vec<u8>)> = std::env::var("RERAIL_JSON_FILES")
+        .expect("RERAIL_JSON_FILES")
+        .split(':')
+        .map(|p| (base(Path::new(p)), std::fs::read(p).expect("reads")))
+        .collect();
+    let iters: usize = std::env::var("RERAIL_ITERS").ok().and_then(|v| v.parse().ok()).unwrap_or(50);
+    let (jit, mut aot) = (simdjson_form(), simdjson_form());
+    let native = rerail_compiler::native_ir::lower(&aot.program, 0, 0).expect("lowers");
+    let (widths16, tag16) = jit.parser.sixteen().expect("a format 16 tier 2").widths_tag();
+    let src16 = rerail_compiler::rust_stream::rust_source_16(&native, widths16, tag16).expect("tier 2 writing format 16, as Rust");
+    // SAFETY: the Rust of this program's tier 2 in format 16, on the format 16 run's harness.
+    unsafe { aot.parser.sixteen_mut().expect("a format 16 tier 2").set_entry(aot_entry(&src16), 4) };
+    let retired = || {
+        let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
+        // SAFETY: `info` is a `rusage_info_v4`, as the flavor says.
+        unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
+        info.ri_instructions as f64
+    };
+    // The median of each run's instructions and time.
+    let measure = |run: &mut dyn FnMut()| {
+        run();
+        let (mut ins, mut ns) = (Vec::new(), Vec::new());
+        for _ in 0..iters {
+            let (i, t) = (retired(), thread_ns());
+            run();
+            ns.push(thread_ns() - t);
+            ins.push(retired() - i);
+        }
+        (median(ins), median(ns))
+    };
+    println!("simdjson's implementation: {}", rerail_simdjson_native::implementation());
+    println!("file\tbytes\tours_ins_per_byte\tsimdjson_ins_per_byte\tours_GB_s\tsimdjson_GB_s\tins_ratio\ttime_ratio");
+    for (name, f) in &files {
+        let image = jit.parser.image(f).unwrap_or_else(|e| panic!("{name}: the simdjson form refuses it: {e:?}"));
+        let (_, table) = rerail_tape_format::tape::f15_columns(&image).expect("a format 15 tape");
+        let lang = rerail_tape_format::f16::Lang::new(table, [1, 1, 1], 1).expect("a language");
+        let numbers = aot.parser.sixteen().expect("a format 16 tier 2").numbers(&lang);
+        let want = jit.parser.image16(f, &lang, &numbers, false).map(|w| w.extent().to_vec()).expect("the JIT's format 16 run");
+        assert_eq!(aot.parser.image16(f, &lang, &numbers, false).map(|w| w.extent().to_vec()).ok(), Some(want), "{name}: the Rust's tape is the JIT's");
+        // `RERAIL_SPIN`: ours alone, for that many seconds, for a profiler (the process's id printed first).
+        if let Some(secs) = std::env::var("RERAIL_SPIN").ok().and_then(|v| v.parse::<u64>().ok()) {
+            eprintln!("pid {}", std::process::id());
+            let until = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+            while std::time::Instant::now() < until {
+                std::hint::black_box(aot.parser.image16(f, &lang, &numbers, false).expect("parses"));
+            }
+            return;
+        }
+        let (oi, on) = measure(&mut || {
+            std::hint::black_box(aot.parser.image16(f, &lang, &numbers, false).expect("parses"));
+        });
+        let (si, sn) = measure(&mut || {
+            std::hint::black_box(rerail_simdjson_native::structurals(f, |i| i.len()).expect("simdjson parses it"));
+        });
+        // Of ours, tier 1 alone, on a batch made once (its padded copy of the bytes outside the count), and with the
+        // batch made each run.
+        let mut batch = native_cpu_block::Batch::new(&aot.parser.tier1, &[f]);
+        let (t1i, t1n) = measure(&mut || batch.call(&aot.parser.tier1));
+        let (bi, bn) = measure(&mut || {
+            let mut b = native_cpu_block::Batch::new(&aot.parser.tier1, &[f]);
+            b.call(&aot.parser.tier1);
+            std::hint::black_box(&b);
+        });
+        let b = f.len() as f64;
+        println!("{name}\t{}\t{:.2}\t{:.2}\t{:.2}\t{:.2}\t{:.2}\t{:.2}", f.len(), oi / b, si / b, b / on, b / sn, oi / si, on / sn);
+        println!("  of ours, ins a byte: tier 1 {:.2} ({:.2} ns), the batch made and tier 1 {:.2} ({:.2} ns), the rest {:.2} ({:.2} ns)", t1i / b, t1n / b, bi / b, bn / b, (oi - bi) / b, (on - bn) / b);
+    }
+}
+
 /// `src`, tier 2's Rust, built by rustc (optimized, as the ahead-of-time build) into a library
 /// and loaded: its entry.
 #[cfg(target_arch = "aarch64")]
@@ -414,7 +492,8 @@ fn aot_entry(src: &str) -> rerail_compiler::native_cpu_stream::Entry {
     std::fs::create_dir_all(&dir).expect("a directory");
     let (rs, lib) = (dir.join("tier2.rs"), dir.join("libtier2.dylib"));
     std::fs::write(&rs, format!("{src}\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn rerail_tier2_entry(ctx: u64) -> u64 {{\n    unsafe {{ tier2_entry(ctx) }}\n}}\n")).expect("writes");
-    let out = std::process::Command::new("rustc").args(["--edition", "2024", "--crate-type", "cdylib", "-C", "opt-level=3", "-o"]).arg(&lib).arg(&rs).output().expect("runs rustc");
+    let keep = std::env::var_os("RERAIL_KEEP_AOT").is_some();
+    let out = std::process::Command::new("rustc").args(["--edition", "2024", "--crate-type", "cdylib", "-C", "opt-level=3"]).args(if keep { &["-g"][..] } else { &[][..] }).arg("-o").arg(&lib).arg(&rs).output().expect("runs rustc");
     assert!(out.status.success(), "rustc: {}", String::from_utf8_lossy(&out.stderr));
     let path = std::ffi::CString::new(lib.to_str().expect("a path")).expect("a path");
     // SAFETY: a library rustc just built from the source above; kept loaded for the process.
@@ -425,8 +504,10 @@ fn aot_entry(src: &str) -> rerail_compiler::native_cpu_stream::Entry {
         assert!(!f.is_null(), "dlsym");
         std::mem::transmute::<*mut libc::c_void, rerail_compiler::native_cpu_stream::Entry>(f)
     };
-    // Loaded: the files are no longer needed.
-    let _ = std::fs::remove_dir_all(&dir);
+    // Loaded: the files are no longer needed (`RERAIL_KEEP_AOT`: kept, for a profiler to name the functions).
+    if !keep {
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     f
 }
 
