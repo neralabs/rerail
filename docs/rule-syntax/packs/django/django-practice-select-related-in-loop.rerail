@@ -1,0 +1,103 @@
+.policy "django-practice-select-related-in-loop" revision 1
+.description "Load the relations a loop reads with select_related() or prefetch_related() on the queryset it iterates."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. A loop (a for statement or a comprehension) over a queryset written inline, or over
+// its `.iterator(...)`, that reads a relation of each row runs one query per row. Two shapes are matched:
+//   - the body reads a related manager of the row as prefetch_related() would cache it: `x.<rel>.all()` used as it is
+//     (iterated, listed, indexed), `x.<rel>.count()` or `x.<rel>.exists()`, and the chain has no prefetch_related():
+//     prefetch_related('<rel>') loads them all in one query. `x.<rel>.filter(...)`, `.all().update(...)` and other
+//     calls on the manager query each time even after a prefetch, so they are left alone (a query per row, but not
+//     the one this fix removes). When the iterated model is a class of the run, <rel> must be one of its
+//     many-to-many fields or a name it does not define (a reverse relation): a method or property it defines
+//     (`@property def active_tags(self): return self.tags.filter(...)`) cannot be prefetched by that name. Over
+//     `.iterator()` without `chunk_size`, which cannot prefetch (Django 5.0 raises), this shape is left alone;
+//   - the body reads `x.<fk>.<attr>` where <fk> is a ForeignKey or OneToOneField of the iterated model (a model class
+//     of the run, `Book.objects...`), and the chain has no select_related() or prefetch_related(): select_related.
+//   for b in Book.objects.filter(x=1): b.tags.all()             reported
+//   for b in Book.objects.all(): print(b.author.name)           reported
+//   for b in Book.objects.all().iterator(): b.author.name       reported
+//   for b in Book.objects.select_related("author"): b.author    not reported
+//   for b in Book.objects.all(): b.author_id, b.author.pk       not reported: the key is on the row
+//   for b in Book.objects.all(): b.active_tags.count()          not reported: a property of Book, not a relation
+//   for b in books: b.tags.all()                                not reported: books may be prefetched where built
+// Gap: when the iterated model is not a class of the run (`model.objects.all()`, a model of another package), a
+// property returning a queryset cannot be told from a related manager, and is reported as one.
+
+#include "python/django.rerail"
+
+.violation SelectRelatedInLoop(at: node, var: symbol, rel: symbol, fix: symbol) "The loop reads {var}.{rel} for every row of this queryset, one query per row; add .{fix}('{rel}') to the queryset so they load in one query (leave it when the loop stops after a row or two)."
+
+// srl_rows(q): q yields model instances: no values(), values_list() or raw() in its chain (python/django's dj_qs_has).
+.decl srl_rows(q: node)
+srl_rows(q) :- dj_qs(q), kind(q, "call"), !dj_qs_has(q, "values"), !dj_qs_has(q, "values_list"),
+    !dj_qs_has(q, "raw").
+// srl_m2m(mc, x): model mc has x as a many-to-many field, declared in its body or in a base class of the run.
+.decl srl_m2m(mc: node, x: symbol)
+srl_m2m(mc, x) :- dj_has_field(mc, x, _, t), (t = "ManyToManyField" ; t = "ParentalManyToManyField").
+// srl_loop(q, x, b): a loop over queryset q (or over `q.iterator(...)`) binds each row to name x, and b holds the
+// code that runs per row: a for statement's body, or a comprehension (whose iterable, q, is excluded where uses are
+// read).
+.decl srl_loop(q: node, x: symbol, b: node)
+srl_loop(q, x, b) :- kind(s, "for_statement"), field(s, "left", l), kind(l, "identifier"), text(l, x),
+    field(s, "right", r), srl_source(r, q), field(s, "body", b).
+srl_loop(q, x, c) :- kind(fc, "for_in_clause"), field(fc, "left", l), kind(l, "identifier"), text(l, x),
+    field(fc, "right", r), srl_source(r, q), child(c, fc, _),
+    (kind(c, "list_comprehension") ; kind(c, "set_comprehension") ; kind(c, "dictionary_comprehension") ;
+     kind(c, "generator_expression")).
+// srl_source(r, q): loop iterable r is the row queryset q, or `q.iterator(...)` (q may be the manager itself there).
+.decl srl_source(r: node, q: node)
+srl_source(r, q) :- unparen(r, q), srl_rows(q).
+srl_source(r, q) :- unparen(r, c), kind(c, "call"), field(c, "function", f), attr_of(f, q, "iterator"),
+    (srl_rows(q) ; dj_manager(q)).
+// srl_unchunked(q): q is iterated through `.iterator()` without a chunk_size, which prefetches nothing.
+.decl srl_unchunked(q: node)
+srl_unchunked(q) :- kind(c, "call"), field(c, "function", f), attr_of(f, q, "iterator"), !posarg(c, 0, _),
+    !call_arg(c, _, "chunk_size", _).
+// srl_use(q, x, u, rel): u is `x.rel` read per row of q's loop, outside nested defs, lambdas and classes.
+.decl srl_use(q: node, x: symbol, u: node, rel: symbol)
+srl_use(q, x, u, rel) :- srl_loop(q, x, b), attr_of(u, o, rel), kind(o, "identifier"), text(o, x),
+    within_stop(u, b, dj_region_stop), !within(u, q).
+// srl_cached(c, u): call c on manager u is answered from a prefetch_related cache: `<manager>.all()` with nothing chained after it,
+// `<manager>.count()`, `<manager>.exists()`.
+.decl srl_cached(c: node, u: node)
+srl_cached(c, u) :- kind(c, "call"), field(c, "function", f), attr_of(f, u, "all"), !attr_of(_, c, _).
+srl_cached(c, u) :- kind(c, "call"), field(c, "function", f), attr_of(f, u, m), (m = "count" ; m = "exists"),
+    py_no_args(c).
+
+SelectRelatedInLoop(q, x, rel, "prefetch_related") :- srl_use(q, x, u, rel), srl_cached(_, u),
+    !dj_qs_has(q, "prefetch_related"), !srl_not_manager(q, rel), !srl_unchunked(q), docof(q, d), !dj_test_doc(d).
+SelectRelatedInLoop(q, x, rel, "select_related") :- srl_use(q, x, u, rel), attr_of(_, u, a), a != "id", a != "pk",
+    dj_qs_model(q, mc), dj_has_field(mc, rel, _, t), dj_fk_class(t), !dj_qs_has(q, "select_related"),
+    !dj_qs_has(q, "prefetch_related"), docof(q, d), !dj_test_doc(d).
+// srl_not_manager(q, rel): the iterated model is known and rel is not one of its many-to-many fields, but a field
+// of another kind or a method or property it (or a base class of the run) defines.
+.decl srl_not_manager(q: node, rel: symbol)
+srl_not_manager(q, rel) :- dj_qs_model(q, mc), dj_has_field(mc, rel, _, _), !srl_m2m(mc, rel).
+srl_not_manager(q, rel) :- dj_qs_model(q, mc), srl_defines(mc, rel), !srl_m2m(mc, rel).
+// srl_defines(mc, x): model mc's body, or the body of a class of the run among its bases, defines method x
+// (`@property` and `@cached_property` included).
+.decl srl_defines(mc: node, x: symbol)
+srl_defines(mc, x) :- dj_model_method(mc, _, x).
+srl_defines(mc, x) :- dj_model_super(mc, b), kind(f, "function_definition"), nearest(f, b, scope), def_name(f, x).
+
+// The cases, `cases/django-practice-select-related-in-loop/`, read as one repository: each line ending in `# caught` is
+// reported, and no other line.
+.test cases exactly
+    .fixture "shop/base.py" from "cases/django-practice-select-related-in-loop/shop/base.py"
+    .fixture "shop/models.py" from "cases/django-practice-select-related-in-loop/shop/models.py"
+    .fixture "shop/tests/test_views.py" from "cases/django-practice-select-related-in-loop/shop/tests/test_views.py"
+    .fixture "shop/views.py" from "cases/django-practice-select-related-in-loop/shop/views.py"
+    .expect _ at "shop/views.py":6
+    .expect _ at "shop/views.py":8
+    .expect _ at "shop/views.py":10
+    .expect _ at "shop/views.py":14
+    .expect _ at "shop/views.py":23
+    .expect _ at "shop/views.py":25
+    .expect _ at "shop/views.py":27
+    .expect _ at "shop/views.py":68
+    .expect _ at "shop/views.py":75
+    .expect _ at "shop/views.py":77
+    .expect _ at "shop/views.py":79
+.end
