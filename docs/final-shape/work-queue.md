@@ -5419,7 +5419,7 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   good run's), then the cause; a test that hits it; the fix.
 - **Done when:** 20 Metal runs of hogql give 1,629 each.
 
-### Q263. A relation's statistics kept by delta are on the heap (0450 R5)
+### Q263. A relation's statistics kept by delta are on the heap (0450 R5) — done (0450 step 6f)
 
 - **Seen** (2026-11-19, closing 0450 step 6): `InRel::stats` and `Rel::stats` (`KeptStats`, decision 0096,
   `plan::statkeep::RelStats`) keep, per column, an exact map of value to count (`FxHashMap`, at most 256 values) and

@@ -560,3 +560,20 @@ sort again).
   value to count (`FxHashMap`, up to 256 values) and `plan::sketch::Sketch`s, all on the heap. Work queue Q263.
 - What stays on `InRel` and is not relation data: its column types, the key sets each order serves (`serves`), its
   name, its uid, the probe plans (`idx`), the handles to block arrays and orders, and the versions' handles.
+
+## Built (2026-11-19, step 6f: the statistics kept by delta in blocks; Q263)
+
+- A column's kept statistics (`plan::statkeep`, decision 0096) held an exact map of value to count (`FxHashMap`)
+  and the planner's sketches, whose levels were a vector of boxed pages. Now:
+  - The exact counts are open addressing in a block (`statkeep::Exact`): `[value, count]` slots, a count of 0 empty.
+    A value counted back to 0 is taken out, and the slots after it shift back (no tombstones). It starts at 16 slots
+    and doubles past half full.
+  - A planner sketch (`plan::sketch::Sketch`) is one block array: the AMS counters, then a page per level a value
+    reached. Each level's page is recorded inline (`page`), and `open` marks the levels holding a count. A level
+    counted back to zero keeps its page but is closed, so equality, `bytes` and the stored format (`encode`, format 2)
+    are as before.
+- Not changed: the corpus totals' `Moments` (HyperLogLog registers), which are a chunk's totals, not a relation's.
+- Tests: `a_columns_exact_counts_are_slots_in_a_block` and `a_planner_sketchs_counters_are_one_block_array`. The
+  statkeep and sketch tests pass unchanged.
+- hogql cold, four pairs against 6e at load 25-37: CPU 83.5-84.1 B against 83.6-83.9 B; Metal 75.6-77.7 B, 1,629 in
+  each of 3 runs.
