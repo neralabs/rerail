@@ -73,7 +73,9 @@ describe("the dashboard against a running daemon", () => {
         return realFetch(input, init);
       });
       const page = openPage(daemon);
-      await page.rendered(() => data.loaded);
+      // The page reads as it opens, before its stream's first message: the write waits for that message, so the
+      // stream follows the database before the write's notice comes.
+      await page.rendered(() => data.loaded && data.heardAt > 0);
 
       const committed = writer.commit("remote:github.com/acme/web");
       folder.report(root, "rerail.sqlite-wal");
