@@ -5,7 +5,7 @@
 //!   eviction order makes room); an exact block in a join's budget is a pooled buffer of its size, leased as the
 //!   join's buffers are (`gpu::shared::lease_block_for_join`: a device run's own relation, decision 0325 step 5).
 //! - `Device::May`: host memory, resident only where written, which the device reads in place through a no-copy
-//!   wrap of its used extent (`Block::gpu_buffer`). Never a pool slab: a slab's whole length held the Metal budget
+//!   wrap of its used extent (`Block::device_buffer`). Never a pool slab: a slab's whole length held the Metal budget
 //!   while a few MB of it were written (decision 0435 §1).
 //! - `Device::No`: host memory: anonymous, resident only where written.
 //!

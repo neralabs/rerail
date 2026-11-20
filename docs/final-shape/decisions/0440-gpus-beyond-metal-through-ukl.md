@@ -1266,6 +1266,14 @@ offers that lane (`can`): the gate on Metal's `Shared` is gone, since the progra
 the matcher wave) run their kernels through the lane on the process's device. The span prefilter's and the wave's
 tests pass on Metal, the CPU and OpenCL, and accel's 85 on all three (the CPU's in 399 s cold: its compiles).
 
+**C: the blocks crate's labs in UKL (2026-11-19).** `pinning`, `deferrable` and `encodings` launch UKL kernels on the
+process's device. `encodings`' two function constants are defines (`BITS`, `PB`: a program each), its kernels'
+`simd_is_first` lane 0, its 1,024-thread scan a threadgroup of 256; every check against the CPU's encoder holds word
+for word on Metal and OpenCL at full size and on the CPU at 1/64 (`ENCODINGS_GPU_SHIFT`, for a slow device).
+`deferrable`'s `DEALLOC` and `POOL` switches stay Metal's: they ask about Metal's own wraps (a deallocator, an
+autorelease pool), so the crate's `metal` is a macOS dev-dependency now, not a dependency. `Block::gpu_buffer` went
+with its last caller; `release_gpu_buffer` is `release_device_buffer`.
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.

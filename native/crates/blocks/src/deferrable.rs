@@ -153,7 +153,7 @@ impl Deferrable {
         let (mapping, path, kind) = (self.mapping.clone(), std::mem::take(&mut self.path), self.kind);
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
-            block.release_gpu_buffer();
+            block.release_device_buffer();
             mapping.gpu.lock().unwrap().take();
         }
         let length = block.used();

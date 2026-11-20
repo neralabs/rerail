@@ -472,7 +472,7 @@ fn lease_exact(bytes: usize, life: Life) -> Result<Block, String> {
 
 /// A relation of `k` columns holding `vals` (row by row), alone in a block of anonymous memory, as a run's block is
 /// when the device's spare budget refuses it a slab: bound on the device by a wrap of its used extent
-/// (`Block::gpu_buffer`), which what is added to the block after that wrap lies past.
+/// (`Block::device_buffer`), which what is added to the block after that wrap lies past.
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn anon_in_block(k: usize, vals: &[i64]) -> InBlock {
     let rows = vals.len() / k;

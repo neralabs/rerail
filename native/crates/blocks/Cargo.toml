@@ -9,17 +9,16 @@ description = "Spike for decision 0266: blocks holding nested, self-relative str
 libc = "0.2.189"
 rayon = "=1.12.0"
 
-[target.'cfg(target_os = "macos")'.dependencies]
-metal = "0.33.0"
-
 [target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
 # A block's device buffer (`Block::device_buffer`, `Backing::buffer`): the device layer's, on every backend
 # (decision 0440 step B).
 rerail-device = { path = "../../../gpu/device" }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
-# The deallocator of a no-copy Metal buffer (examples/deferrable).
+# The deallocator of a no-copy Metal buffer, and its autorelease pool (examples/deferrable's DEALLOC and POOL: questions
+# about Metal's own wraps).
 block = "0.1.6"
+metal = "0.33.0"
 
 [target.'cfg(any(target_os = "macos", target_os = "linux"))'.dev-dependencies]
 # The kernels' launcher (the join of examples/paces, the reads' test): the device layer's programs, which preprocess

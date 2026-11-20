@@ -14,8 +14,8 @@
 
 #[cfg(target_os = "macos")]
 fn main() {
-    use metal::*;
     use rerail_blocks::block::{Block, kind};
+    use rerail_device::device::Buffer;
     // What the OS charges the process (`phys_footprint`) and what it has resident, in bytes.
     let footprint = || unsafe {
         let mut info: libc::rusage_info_v4 = std::mem::zeroed();
@@ -24,8 +24,27 @@ fn main() {
     };
     use std::time::Instant;
 
-    const SRC: &str = "kernel void fill(device uint *p [[buffer(0)]], constant uint &seed [[buffer(1)]], \
-                       uint i [[thread_position_in_grid]]) { p[i] = (i * 2654435761u) ^ seed; }";
+    // The kernel in UKL, on the process's device (`RERAIL_GPU`; decision 0440 step C). It writes `n` words from word
+    // `at` of the block's buffer.
+    const SRC: &str = r#"
+#include <ukl/backend.h>
+typedef struct FillP { uint32_t at; uint32_t n; uint32_t seed; uint32_t pad; } FillP;
+UKL_REFLECT_STRUCT(FillP, at, n, seed, pad)
+DEFINE_KERNEL2(deferrable, fill, RWBUFFER, uint32_t, p, "[block]", ARGS, FillP, a, , GID0, uint32_t, i, )
+{
+    if (i < a.n) p[a.at + i] = (i * 2654435761u) ^ a.seed;
+}
+"#;
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct FillP {
+        at: u32,
+        n: u32,
+        seed: u32,
+        pad: u32,
+    }
+    // SAFETY: `#[repr(C)]` u32s.
+    unsafe impl rerail_gpu::Pod for FillP {}
     let dir = std::path::PathBuf::from(std::env::args().nth(1).expect("a directory for the slabs' files"));
     std::fs::create_dir_all(&dir).unwrap();
     // MSYNC=0: no msync, the OS writes back alone; RELEASE=0: the wrap is kept until the block is unmapped.
@@ -41,10 +60,18 @@ fn main() {
     let wait_s: u64 = std::env::var("WAIT").ok().and_then(|v| v.parse().ok()).unwrap_or(20);
     let pool = std::env::var("POOL").map_or(true, |v| v != "0");
     println!("msync {msync}, wrap released before freeze {release}, dispatch in an autorelease pool {pool}, pages touched by the host {touch}");
-    let device = Device::system_default().expect("a Metal device");
-    let lib = device.new_library_with_source(SRC, &CompileOptions::new()).unwrap();
-    let pipe = device.new_compute_pipeline_state_with_function(&lib.get_function("fill", None).unwrap()).unwrap();
-    let queue = device.new_command_queue();
+    let shared = rerail_gpu::shared::get().expect("a device");
+    let fill = rerail_gpu::kernels::program("deferrable.uglykl", SRC).unwrap_or_else(|e| panic!("{e}")).function("fill").unwrap();
+    // One dispatch of `n` words from byte `off` of `buf`, waited for.
+    let dispatch = |buf: &Buffer, off: usize, n: u64, seed: u32| {
+        let mut q = rerail_gpu::device::ComputeQueue::new(&shared.queue);
+        rerail_gpu::kernels::launch(&q, fill)
+            .buffer("p", buf)
+            .value("a", &FillP { at: (off / 4) as u32, n: n as u32, seed, pad: 0 })
+            .run(&[n.div_ceil(256)], &[256])
+            .unwrap_or_else(|e| panic!("{e}"));
+        q.flush().await_().unwrap();
+    };
     let ms = |t: Instant| t.elapsed().as_secs_f64() * 1e3;
     let mb = |a: (u64, u64), b: (u64, u64)| {
         let d = |x: u64, y: u64| (x as i64 - y as i64) as f64 / (1 << 20) as f64;
@@ -61,17 +88,7 @@ fn main() {
     {
         let w = Block::anon(kind::JOURNAL, 1 << 20);
         w.alloc(1 << 16, 64);
-        let buf = w.gpu_buffer(&device);
-        let cmd = queue.new_command_buffer();
-        let enc = cmd.new_compute_command_encoder();
-        enc.set_compute_pipeline_state(&pipe);
-        enc.set_buffer(0, Some(&buf), 0);
-        let seed = 0u32;
-        enc.set_bytes(1, 4, (&raw const seed).cast());
-        enc.dispatch_threads(MTLSize::new(1 << 14, 1, 1), MTLSize::new(256, 1, 1));
-        enc.end_encoding();
-        cmd.commit();
-        cmd.wait_until_completed();
+        dispatch(&w.device_buffer(&shared.device).unwrap(), 0, 1 << 14, 0);
     }
     for &mib in &[64usize, 256, 1024] {
         for (file, gpu) in if pwrite { vec![(false, true), (false, false)] } else { vec![(true, true), (true, false)] } {
@@ -90,43 +107,27 @@ fn main() {
                 }
             }
             // The wrap covers the used extent, so allocate first, then bind at the range's offset. DEALLOC=1: the wrap is
-            // made here with a deallocator, which Metal calls once it is done with the memory.
+            // made here with a deallocator, which Metal calls once it is done with the memory: a question about Metal's
+            // own wraps, so Metal's alone.
             let freed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             let buf = if dealloc {
+                let device = shared.device.metal().expect("DEALLOC=1: a wrap with Metal's deallocator, on Metal");
                 let f = freed.clone();
                 let d = block::ConcreteBlock::new(move |_p: *const std::ffi::c_void, _n: u64| {
                     f.store(true, std::sync::atomic::Ordering::Release);
                 })
                 .copy();
                 let wrap_len = b.used().div_ceil(16384) * 16384;
-                device.new_buffer_with_bytes_no_copy(b.base_ptr().cast(), wrap_len as u64, MTLResourceOptions::StorageModeShared, Some(&d))
+                Buffer::Native(device.new_buffer_with_bytes_no_copy(b.base_ptr().cast(), wrap_len as u64, metal::MTLResourceOptions::StorageModeShared, Some(&d)))
             } else {
-                b.gpu_buffer(&device)
+                b.device_buffer(&shared.device).unwrap()
             };
             // The command buffer is autoreleased, and it retains the buffers it binds: without a pool around it, the
             // wrap (and the pages it holds) outlives every handle the block lets go of.
             if gpu && pool {
-                metal::objc::rc::autoreleasepool(|| {
-                    let cmd = queue.new_command_buffer();
-                    let enc = cmd.new_compute_command_encoder();
-                    enc.set_compute_pipeline_state(&pipe);
-                    enc.set_buffer(0, Some(&buf), off as u64);
-                    enc.set_bytes(1, 4, (&raw const seed).cast());
-                    enc.dispatch_threads(MTLSize::new(n, 1, 1), MTLSize::new(256, 1, 1));
-                    enc.end_encoding();
-                    cmd.commit();
-                    cmd.wait_until_completed();
-                });
+                metal::objc::rc::autoreleasepool(|| dispatch(&buf, off, n, seed));
             } else if gpu {
-            let cmd = queue.new_command_buffer();
-            let enc = cmd.new_compute_command_encoder();
-            enc.set_compute_pipeline_state(&pipe);
-            enc.set_buffer(0, Some(&buf), off as u64);
-            enc.set_bytes(1, 4, (&raw const seed).cast());
-            enc.dispatch_threads(MTLSize::new(n, 1, 1), MTLSize::new(256, 1, 1));
-            enc.end_encoding();
-            cmd.commit();
-            cmd.wait_until_completed();
+                dispatch(&buf, off, n, seed);
             }
             // TOUCH=1: the host writes one word of each page back to itself after the kernel, so the VM marks the page
             // dirty (the device's writes through the wrap do not).
@@ -153,7 +154,7 @@ fn main() {
             };
 
             if release {
-                b.release_gpu_buffer();
+                b.release_device_buffer();
             }
             // With a deallocator: wait (5 s at most) until Metal has let go of the memory.
             let mut freed_ms = String::from("-");
