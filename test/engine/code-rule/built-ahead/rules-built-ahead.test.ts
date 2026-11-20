@@ -92,8 +92,9 @@ describe("rules a session builds ahead", () => {
     const first = open();
     const second = open();
     await first.openWorkspace("first");
-    await second.openWorkspace("second");
     await first.rulesBuiltAhead();
+    // Opened once the first session's are built: it asks ahead for the catalogs the first one holds.
+    await second.openWorkspace("second");
     await second.rulesBuiltAhead();
 
     await first.close();
