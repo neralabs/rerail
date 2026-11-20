@@ -2934,6 +2934,10 @@ submitted" now hold device memory at once.
   The fix is the residency's home: one residency for a chunk's strata (its entries are a run's relations, by
   `Weak`), bounded as a whole and retired by `make_room` like the tape residency; then `Device::May` rows counted
   in what admission waits for.
+  Then read against 0353 (2026-11-19): the 142 MB is the residency's made views (`resident` → `DevRel::empty`, the
+  `expand_view` branch; a view read in place leases nothing), and 0353 step 4 left only the axis's made, which step 5
+  writes once into the chunk block (its "the residency cache's view entries go"); step 6 deletes `DevRel::upload`.
+  A shared residency would be a home built for a copy 0353 removes: the fix of (c)'s largest holder is 0353 step 5.
   (d) a derived relation's frame is still
   encoded into the segments while it is in the chain (`held_placed`, 0.05 s on 300 files), as item 4 was.
 - **Record**: —
