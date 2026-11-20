@@ -124,14 +124,21 @@ export const UNKNOWN_FOLDER = "?";
  * just removed); `""` when none is there. One made within a tick of the file system's clock (4 ms at Linux's 250 Hz)
  * after the folder removed there was made takes its birth time too, and reads as that folder. Read through Node's
  * thread pool, so a path that does not answer (a hung network share) holds no walk of another worktree and no event in
- * the daemon's thread.
+ * the daemon's thread. Rejects when the path could not be read (EACCES, EIO), which says nothing of what stands there.
  */
 export async function folderAt(root: string): Promise<string> {
   try {
     return folderIdentity(await lstat(root, { bigint: true }));
-  } catch {
-    return "";
+  } catch (error) {
+    if (nothingAt(error)) return "";
+    throw error;
   }
+}
+
+/** Whether a read of a path failed because nothing stands there: ENOENT, or ENOTDIR where a part of it is a file. */
+function nothingAt(error: unknown): boolean {
+  const code = error instanceof Error && "code" in error ? error.code : undefined;
+  return code === "ENOENT" || code === "ENOTDIR";
 }
 
 /** `folderAt` of the entry `info` describes: `""` for no folder, `UNKNOWN_FOLDER` for one with no birth time. */
@@ -191,7 +198,10 @@ export class WorktreeNotices {
   /** The worktrees the last `retain` kept; undefined before the first. */
   #retained: ReadonlySet<string> | undefined;
 
-  /** `folderAt`: the folder at a worktree's path (`folderAt` by default), which tells a worktree made again there. */
+  /**
+   * `folderAt`: the folder at a worktree's path (`folderAt` by default), which tells a worktree made again there; it
+   * rejects for a path it could not read.
+   */
   constructor(options: {
     treeWatch?: TreeWatch | undefined;
     platform?: NodeJS.Platform;
@@ -302,13 +312,14 @@ export class WorktreeNotices {
    */
   async #open(root: string): Promise<Watched | undefined> {
     if (this.#watch === undefined || this.#waits(root)) return undefined;
-    const folder = await this.#folderAt(root);
+    // A path that could not be read tells no folder from another, as one with no folder.
+    const folder = await this.#folderAt(root).catch(() => "");
     if (this.#waitsFor(root, folder) || this.#letGo(root)) return undefined;
     this.#failed.delete(root);
     this.#ended.delete(root);
     // Up before the read: a change made while it runs is a notice.
     if (!this.#watch.watch(root, [""])) {
-      this.#refused(root, folder);
+      await this.#refused(root);
       return undefined;
     }
     const watched: Watched = { folders: new Set([""]), seen: undefined, changed: true, folder };
@@ -317,12 +328,14 @@ export class WorktreeNotices {
   }
 
   /**
-   * The engine refused to watch `root`, with `folder` at its path: it is tried again after `WATCH_RETRY_MS`. No folder
-   * there (it went after the walk listed it) is no failed watch: the walk Git's registry asks for once the worktree is
-   * made again watches it.
+   * The engine refused to watch `root`: it is tried again after `WATCH_RETRY_MS`. Its path is read again after the
+   * refusal, and nothing there (it went after the walk listed it, or as its watch began) is no failed watch: the walk
+   * Git's registry asks for once the worktree is made again watches it. A path that could not be read is a failed watch.
+   * A `retain` that let go of `root` meanwhile forgot it, so nothing is recorded.
    */
-  #refused(root: string, folder: string): void {
-    if (folder !== "") this.#failed.set(root, this.#now());
+  async #refused(root: string): Promise<void> {
+    const gone = await this.#folderAt(root).then(folder => folder === "", () => false);
+    if (!gone && !this.#letGo(root)) this.#failed.set(root, this.#now());
   }
 
   /** Watches the registry `folder`, spare, with the folders it follows now (`registryFolders` on Linux); one the watch refuses is let go. */

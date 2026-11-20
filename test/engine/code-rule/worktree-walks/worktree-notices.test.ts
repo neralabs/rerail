@@ -1,5 +1,5 @@
 import { lstatSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { mkdir, mkdtemp, rename, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -384,6 +384,37 @@ describe("WorktreeNotices", () => {
     expect(await states(subject, ["/w"])).toEqual([[true, true]]);
   });
 
+  it("tries to watch at the next walk a worktree whose folder went after its read and before its watch, not after the retry", async () => {
+    const watch = new ScriptedWatch();
+    // Read as `a`, gone as the engine is asked, then made again as `b`.
+    const reads = ["a", ""];
+    const subject = new WorktreeNotices({ treeWatch: watch, platform: "darwin", now: () => 0, folderAt: async () => reads.shift() ?? "b" });
+    watch.refused.add("/w");
+    expect(await states(subject, ["/w"])).toEqual([[true, false]]);
+    watch.refused.delete("/w");
+    expect(await states(subject, ["/w"])).toEqual([[true, true]]);
+  });
+
+  it.skipIf(process.platform === "win32")("asks the engine once per retry, not on every walk, to watch a worktree whose folder is there and cannot be read", async context => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-unreadable-"));
+    const parent = join(root, "parent");
+    const w = join(parent, "w");
+    try {
+      await mkdir(w, { recursive: true });
+      await chmod(parent, 0o000);
+      if (await lstat(w).then(() => true, () => false)) context.skip("this process reads past mode 000");
+      const watch = new ScriptedWatch();
+      // The engine cannot read it either.
+      watch.refused.add(w);
+      const subject = new WorktreeNotices({ treeWatch: watch, now: () => 0 });
+      expect(await states(subject, [w, w, w])).toEqual([[true, false], [true, false], [true, false]]);
+      expect(watch.calls).toEqual([`watch ${w} []`]);
+    } finally {
+      await chmod(parent, 0o755);
+      await removeFolder(root);
+    }
+  });
+
   it("hands on the folder where Git registers the worktrees once an entry there came or went, or its gitdir or locked file did, and not for Git's work in an entry", () => {
     const watch = new ScriptedWatch();
     const { notices: subject } = notices(watch);
@@ -461,7 +492,7 @@ describe("folderAt", () => {
       expect([made === "", made === first]).toEqual([false, false]);
       await removeFolder(path);
       await writeFile(path, "");
-      expect(await folderAt(path)).toBe("");
+      expect([await folderAt(path), await folderAt(join(path, "w"))]).toEqual(["", ""]);
     } finally {
       await removeFolder(root);
     }
