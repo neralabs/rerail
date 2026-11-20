@@ -26,7 +26,6 @@
 // - then each directive's slot, `base + d + text_before + shift[d]`, and each stretch's,
 //   `base + k + first + shift[k]` (`first` the text tokens before its directive `k - 1`).
 
-typedef struct PpNode { uint32_t file, parent, pdir, depth, unit; } PpNode;
 
 // The instance word `w` (a directive's, by `dir_first`; a stretch's, by `gap_first`) is in.
 UKL_INLINE uint32_t p1_inst_of(UKL_GLOBAL const PpInst* insts, uint32_t n, uint32_t w, bool gaps) {

@@ -36,13 +36,14 @@
 // `#if`, `#elif` or macro-form include, nor an include past the depth's bound).
 UKL_INLINE void p1_if_count(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, UKL_GLOBAL const uint32_t* bases, UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32_t* n_nodes,
                             UKL_GLOBAL const PpNode* nodes, uint32_t max_depth, UKL_GLOBAL const uint32_t* n_dirs, UKL_GLOBAL const uint32_t* dir_bases, UKL_GLOBAL const PpDir* rows,
-                            UKL_GLOBAL const uint32_t* dactive, UKL_GLOBAL uint32_t* count, UKL_GLOBAL uint32_t* first, UKL_GLOBAL uint32_t* kind, uint32_t w) {
+                            UKL_GLOBAL const uint32_t* dactive, UKL_GLOBAL uint32_t* count, UKL_GLOBAL uint32_t* first, UKL_GLOBAL uint32_t* kind, UKL_GLOBAL uint32_t* inst, uint32_t w) {
     if (w >= n_dirs[0]) return;
     count[w] = 0u;
     first[w] = PP_NONE;
     kind[w] = 0u;
     if (dactive[w] == 0u) return;
     uint32_t i, r = p1_row_of(insts, n_nodes[0], dir_bases, w, &i);
+    inst[w] = i;
     PpDir d = rows[r];
     uint32_t f = insts[i].file;
     Tape t = tape_at(data, files, f);

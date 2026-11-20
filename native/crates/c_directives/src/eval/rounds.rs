@@ -150,6 +150,7 @@ pub fn run<T>(cfg: &Config, io: &mut dyn Files, main: &str, cpp: bool, mut eval:
             builtins: builtins.iter().map(|n| name_key(n)).collect(),
             relex_options: relex_options(o.cpp, o.colons, o.digit_separators, o.raw_strings),
             file_literals: loaded.paths.iter().chain([&cfg.date, &cfg.time, &cfg.timestamp]).map(|p| literal(p)).collect(),
+            name_literals: loaded.paths.iter().map(|p| literal(p.rsplit('/').next().unwrap_or(""))).collect(),
         };
         let (requests, flags, answer) = eval(&unit, &lay).map_err(|e| Refused::Device(format!("{e:?}")))?;
         if flags != 0 {

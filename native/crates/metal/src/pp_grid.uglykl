@@ -41,6 +41,9 @@
 // and their count's store, their first nodes' places, and its tokens' count's store. The text's
 // (its active stretches in the unit's order), and the tests' lines' (decision 0467 §4).
 #define TEXT_TOP AT(const uint32_t, TEXT_NODES), AT(const uint32_t, GAT), AT(const uint32_t, N_GAPS), AT(const uint32_t, GFIRSTS), AT(const uint32_t, GTOTAL)
+// Each top stretch's instance.
+#define TEXT_INST AT(const uint32_t, SINST)
+#define IF_INST AT(const uint32_t, IF_INST)
 #define IF_TOP AT(const uint32_t, IF_NODES), AT(const uint32_t, IF_AT), AT(const uint32_t, N_DIRS), AT(const uint32_t, IF_AT), AT(const uint32_t, IF_TOTAL)
 // The same without the tokens' count.
 #define TEXT_STRETCHES AT(const uint32_t, TEXT_NODES), AT(const uint32_t, GAT), AT(const uint32_t, N_GAPS), AT(const uint32_t, GFIRSTS)
@@ -50,7 +53,7 @@
 #define PX_WORK_ON(T, CLOSES)                                                                        \
     px_worker(files, data, AT(const uint32_t, BASES), AT(const uint64_t, KEYS), AT(const PpDef, DEFS), AT(const uint32_t, ITEMS), \
               AT(const uint64_t, SORT_KEYS), AT(const uint32_t, SORT_VA), AT(const uint32_t, N_ROWS), AT(const uint64_t, NAME_KEYS), \
-              AT(const uint32_t, VALUES), T##_TOP, AT(const uint32_t, DEPTH), AT(PxList, LISTS),                                      \
+              AT(const uint32_t, VALUES), T##_TOP, T##_INST, AT(const PpNode, P1_NODES), AT(const uint32_t, P1_UFILE), AT(const uint32_t, DEPTH), AT(PxList, LISTS),                                      \
               AT(uint32_t, TOKENS), AT(PxArg, ARGS), AT(uint32_t, OUT), AT(uint32_t, SLOTS), AT(uint32_t, QCTL),                  \
               AT(uint32_t, CTL), AT(const uint32_t, WORDS), AT(PxScratch, SCRATCH), CLOSES, AT(const uint32_t, CLOSE_TOTAL), AT(const uint32_t, FLOORS), W(N_UNITS), lane __UKL_ARGS)
 
@@ -115,7 +118,8 @@
     u.va_opt = 0ul; u.stoks = AT(const PxScratch, SCRATCH);                                                                   \
     u.sbytes = (UKL_GLOBAL const uint8_t*)(AT(const PxScratch, SCRATCH) + AT(const uint32_t, WORDS)[9]);                      \
     u.relex_options = 0u; u.closes = AT(const uint64_t, CLOSE_KEYS); u.n_close = 0u;                                          \
-    u.floors = AT(const uint32_t, FLOORS); u.n_units = W(N_UNITS)
+    u.floors = AT(const uint32_t, FLOORS); u.n_units = W(N_UNITS); u.tinst = AT(const uint32_t, IF_INST); u.nodes = AT(const PpNode, P1_NODES); \
+    u.unit_file = AT(const uint32_t, P1_UFILE)
 
 // A group's threadgroup memory: the barrier's flag, the scans' scratch, and the sorts' counts or
 // a sorted tile (the segmented scans' two rows alias them: no phase runs two of them).
@@ -304,7 +308,7 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
         // The `#if`s' and `#elif`s' values (§4): their lines a top of their own, expanded by the
         // text's passes and queue, then evaluated a thread a test.
         EACH(w, nd) p1_if_count(files, data, AT(const uint32_t, BASES), AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), nodes, W(P1_MAXDEPTH), AT(const uint32_t, N_DIRS), AT(const uint32_t, DIR_BASES), AT(const PpDir, ROWS),
-                                AT(const uint32_t, DACTIVE), AT(uint32_t, IF_COUNT), AT(uint32_t, IF_FIRST), AT(uint32_t, IF_KIND), w);
+                                AT(const uint32_t, DACTIVE), AT(uint32_t, IF_COUNT), AT(uint32_t, IF_FIRST), AT(uint32_t, IF_KIND), AT(uint32_t, IF_INST), w);
         BARRIER();
         SCAN(nd, IF_COUNT, IF_AT, IF_TOTAL);
         if (N(IF_TOTAL) > W(TC)) { ONE(x) ukl_atomic_or(AT(uint32_t, P1_FLAGS), P1_ROOM); break; }
@@ -405,7 +409,7 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
     EACH(j, W(GC)) pe_gap_keys(AT(const uint32_t, GSLOT), AT(const uint32_t, N_GAPS), AT(uint64_t, GKEYS), j);
     BARRIER();
     SORT(N(N_GAPS), 32u, GKEYS, GSORT_VA, GSORT_KB, GSORT_VB, GSORT_HIST);
-    EACH(p, N(N_GAPS)) pe_gap_counts(AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), AT(const uint32_t, GACTIVE), AT(const uint32_t, N_GAPS), AT(const uint32_t, DIR_BASES), AT(const uint32_t, DIR_TOTAL), AT(const PpDir, ROWS), AT(const uint32_t, BASES), AT(const uint32_t, TOTAL), AT(const uint32_t, TRANK), AT(const uint32_t, TTOTAL), AT(uint32_t, GCOUNTS), AT(uint32_t, GFIRSTS), AT(const uint32_t, GSORT_VA), AT(const uint64_t, GKEYS), AT(uint32_t, SSLOT), nf, p);
+    EACH(p, N(N_GAPS)) pe_gap_counts(AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), AT(const uint32_t, GACTIVE), AT(const uint32_t, N_GAPS), AT(const uint32_t, DIR_BASES), AT(const uint32_t, DIR_TOTAL), AT(const PpDir, ROWS), AT(const uint32_t, BASES), AT(const uint32_t, TOTAL), AT(const uint32_t, TRANK), AT(const uint32_t, TTOTAL), AT(uint32_t, GCOUNTS), AT(uint32_t, GFIRSTS), AT(const uint32_t, GSORT_VA), AT(const uint64_t, GKEYS), AT(uint32_t, SSLOT), AT(uint32_t, SINST), nf, p);
     TICK();
     BARRIER();
     SCAN(N(N_GAPS), GCOUNTS, GAT, GTOTAL);

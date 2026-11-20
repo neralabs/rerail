@@ -327,7 +327,7 @@ fn unit_of(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, pat
 /// against `Vis::at`'s. `None` where P1 refuses it (the reason counted).
 fn lookups_agree(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, path: &str, cpp: bool, what: &str) -> Result<[usize; 3], &'static str> {
     use rerail_c_pp::stream::parallel::Lookup;
-    use rerail_metal::pp_expand::{L_BUILTIN, L_DATE, L_FILE, L_IDENT, L_LINE, L_NONE, L_NOT_NAME, L_TIME, L_TIMESTAMP, lookups};
+    use rerail_metal::pp_expand::{L_BASE_FILE, L_BUILTIN, L_DATE, L_FILE, L_FILE_NAME, L_IDENT, L_INCLUDE_LEVEL, L_LINE, L_NONE, L_NOT_NAME, L_TIME, L_TIMESTAMP, lookups};
     let (d, p1) = unit_of(cfg, io, path, cpp)?;
     let p1 = p1?;
     let (ev, got, out) = lookups(&d.unit, &d.lay).unwrap();
@@ -371,7 +371,7 @@ fn lookups_agree(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::File
         let g = match g {
             L_NOT_NAME => Lookup::NotName,
             L_NONE => Lookup::None,
-            L_BUILTIN | L_LINE | L_FILE | L_DATE | L_TIME | L_TIMESTAMP | L_IDENT => Lookup::Builtin,
+            L_BUILTIN | L_LINE | L_FILE | L_DATE | L_TIME | L_TIMESTAMP | L_FILE_NAME | L_BASE_FILE | L_INCLUDE_LEVEL | L_IDENT => Lookup::Builtin,
             r => {
                 let f = ev.dir_bases.partition_point(|&b| b <= r) - 1;
                 // By path: the device's files are in its rounds' order, the spike's in its own.
@@ -500,6 +500,34 @@ fn expanded_include_names_are_the_spikes() {
             let m: std::collections::HashMap<String, Vec<u8>> = files.iter().map(|(p, s)| (p.to_string(), s.as_bytes().to_vec())).collect();
             let mut io = Search::new(vec![("inc".into(), DirKind::Angle), ("sys".into(), DirKind::System)], move |p: &str| m.get(p).cloned());
             lookups_agree(Config::new(crate::pp::options(cpp)), &mut io, "main.c", cpp, &format!("shape {k}")).unwrap();
+        }
+    }
+}
+
+/// R7 of decision 0467: each case §6 lists, refused until step 7, gives the serial pass's
+/// tokens on the device, in C and C++, a round of 4 launches. Built so far: `__INCLUDE_LEVEL__`
+/// (in the main file, a header, a header's header, a macro's body expanded in a header, an
+/// `#if`), `__FILE_NAME__` and `__BASE_FILE__` (in the main file and in nested headers in
+/// directories, through a macro, stringized and pasted).
+#[test]
+fn the_refused_cases_are_the_serial_passes() {
+    use rerail_c_pp::files::DirKind;
+    let shapes: &[(&str, &[(&str, &str)])] = &[
+        (
+            "the built-ins of the instance",
+            &[
+                ("main.c", "#define LV __INCLUDE_LEVEL__\n__INCLUDE_LEVEL__ __FILE_NAME__ __BASE_FILE__\n#include \"sub/a.h\"\nLV\n#if __INCLUDE_LEVEL__ == 0\nmain_level\n#endif\n"),
+                ("sub/a.h", "a: __INCLUDE_LEVEL__ __FILE_NAME__ __BASE_FILE__ LV\n#include <deep/b.h>\n#define S(x) #x\n#define CAT(a, b) a ## b\nS(__FILE_NAME__) CAT(x, __INCLUDE_LEVEL__)\n"),
+                ("inc/deep/b.h", "b: __INCLUDE_LEVEL__ __FILE_NAME__ __BASE_FILE__ __FILE__ LV\n#if __INCLUDE_LEVEL__ == 2\nlevel_two\n#endif\n"),
+            ],
+        ),
+    ];
+    for (what, files) in shapes {
+        for cpp in [false, true] {
+            let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
+            let (got, want, rung, launches) = expanded_in(files, cfg, &[("inc", DirKind::Angle)], 0);
+            same(got.map(|g| show(&g)), Ok(show(&want)), format!("{what}, C++ {cpp}"));
+            same(launches, 4, format!("{what}: launches (rung {rung})"));
         }
     }
 }

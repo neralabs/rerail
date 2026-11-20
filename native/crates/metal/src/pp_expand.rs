@@ -260,6 +260,8 @@ pub struct Layout {
     /// Each file's `__FILE__`: the string literal of its presumed path (its `"` and `\` escaped),
     /// by the unit's file index; then `__DATE__`'s, `__TIME__`'s and `__TIMESTAMP__`'s.
     pub file_literals: Vec<Vec<u8>>,
+    /// Each file's `__FILE_NAME__`: its presumed path's last component's literal.
+    pub name_literals: Vec<Vec<u8>>,
 }
 
 impl Layout {
@@ -279,6 +281,7 @@ impl Layout {
             builtins: first.builtins.clone(),
             relex_options: first.relex_options,
             file_literals: Vec::new(),
+            name_literals: Vec::new(),
         };
         let mut files = 0u32;
         for (u, &(l, n_files)) in parts.iter().enumerate() {
@@ -292,6 +295,7 @@ impl Layout {
             // copy: not block data (the files' search entries, configuration input, joined on the host)
             lay.found_by.extend_from_slice(&l.found_by[..n_files]);
             lay.file_literals.extend(l.file_literals[..n_files].iter().cloned());
+            lay.name_literals.extend(l.name_literals[..n_files].iter().cloned());
             files += n_files as u32;
         }
         lay.file_literals.extend(first.file_literals[first.file_literals.len() - 3..].iter().cloned());
@@ -344,16 +348,22 @@ pub const L_LINE: u32 = 0xffff_fffb;
 pub const L_DATE: u32 = 0xffff_fffa;
 pub const L_TIME: u32 = 0xffff_fff9;
 pub const L_TIMESTAMP: u32 = 0xffff_fff8;
-pub const L_IDENT: u32 = 0xffff_fff7;
+pub const L_FILE_NAME: u32 = 0xffff_fff7;
+pub const L_BASE_FILE: u32 = 0xffff_fff6;
+pub const L_INCLUDE_LEVEL: u32 = 0xffff_fff5;
+pub const L_IDENT: u32 = 0xffff_fff4;
 
 /// A built-in's lookup value, by its name.
 fn builtin_value(key: u64) -> u32 {
-    let named: [(&[u8], u32); 8] = [
+    let named: [(&[u8], u32); 11] = [
         (b"__LINE__", L_LINE),
         (b"__FILE__", L_FILE),
         (b"__DATE__", L_DATE),
         (b"__TIME__", L_TIME),
         (b"__TIMESTAMP__", L_TIMESTAMP),
+        (b"__FILE_NAME__", L_FILE_NAME),
+        (b"__BASE_FILE__", L_BASE_FILE),
+        (b"__INCLUDE_LEVEL__", L_INCLUDE_LEVEL),
         (b"__has_include", L_IDENT),
         (b"__has_include_next", L_IDENT),
         (b"__has_embed", L_IDENT),
@@ -385,6 +395,7 @@ pub struct Vis {
     if_count: Buf,
     if_first: Buf,
     if_kind: Buf,
+    if_inst: Buf,
     // The requests' names: the device's bytes, their top and room.
     rnames: Buf,
     rntop: Buf,
@@ -481,6 +492,7 @@ pub struct Vis {
     gkeys: Buf,
     gsort: Sort,
     pub(crate) sslot: Buf,
+    sinst: Buf,
     pub(crate) gat: Buf,
     pub(crate) gscan: Scan,
     pub lookups: Buf,
@@ -544,6 +556,7 @@ impl Vis {
             if_count: zeroed(nd)?,
             if_first: zeroed(nd)?,
             if_kind: zeroed(nd)?,
+            if_inst: zeroed(nd)?,
             rnames: arena.zeroed::<u8>(nd * 64 + 4096)?,
             rntop: zeroed(1)?,
             rn_cap: (nd * 64 + 4096) as u32,
@@ -627,6 +640,7 @@ impl Vis {
             gkeys: arena.zeroed::<u64>(ng.max(1))?,
             gsort: Sort::new(arena, ng)?,
             sslot: zeroed(ng)?,
+            sinst: zeroed(ng)?,
             gat: zeroed(ng)?,
             gscan: Scan::new(arena)?,
             lookups: zeroed(top)?,
@@ -645,7 +659,7 @@ impl Vis {
         l.at("P1_NODES", &self.nodes).at("P1_DEPTHN", &self.depth).at("P1_NDIRS", &self.p1_ndirs).at("P1_NGAPS", &self.p1_ngaps);
         l.word("N_FT", self.n_ft).at("P1_FTKEYS", &self.ft_keys).at("P1_FTFILES", &self.ft_files).at("P1_FOUNDBY", &self.found_by).at("P1_UFILE", &self.unit_file).word("P1_MAXDEPTH", self.max_depth);
         l.at("P1_LIVE", &self.live);
-        l.at("IF_COUNT", &self.if_count).at("IF_FIRST", &self.if_first).at("IF_KIND", &self.if_kind).at("P1_RNAMES", &self.rnames).at("P1_RNTOP", &self.rntop).word("RNC", self.rn_cap).at("IF_AT", &self.if_at).at("IF_TOTAL", &self.if_scan.total).at("IF_NODES", &self.if_nodes);
+        l.at("IF_COUNT", &self.if_count).at("IF_FIRST", &self.if_first).at("IF_KIND", &self.if_kind).at("IF_INST", &self.if_inst).at("P1_RNAMES", &self.rnames).at("P1_RNTOP", &self.rntop).word("RNC", self.rn_cap).at("IF_AT", &self.if_at).at("IF_TOTAL", &self.if_scan.total).at("IF_NODES", &self.if_nodes);
         l.at("IF_OPS", &self.if_ops).at("IF_VAL", &self.if_val).at("IF_KEYS", &self.if_keys).word("IF_TRUE", self.true_is_one).word("N_IFOP", self.n_ifop);
         l.at("IF_OPKEYS", &self.op_keys).at("IF_OPKINDS", &self.op_kinds).word("N_FEAT", self.n_feat).at("IF_FEATKEYS", &self.feat_keys).at("IF_FEATVALS", &self.feat_vals);
         l.at("P1_MADE", &self.made).at("P1_MADEF", &self.made_file).at("P1_ENTER", &self.enter).at("P1_CAND", &self.cand).at("P1_ONCE", &self.once);
@@ -665,7 +679,7 @@ impl Vis {
         l.at("SORT_KB", &self.sort.keys_b).at("SORT_VA", &self.sort.vals_a).at("SORT_VB", &self.sort.vals_b).at("SORT_HIST", &self.sort.hist);
         l.at("GCOUNTS", &self.gcounts).at("GFIRSTS", &self.gfirsts).at("GKEYS", &self.gkeys);
         l.at("GSORT_KB", &self.gsort.keys_b).at("GSORT_VA", &self.gsort.vals_a).at("GSORT_VB", &self.gsort.vals_b).at("GSORT_HIST", &self.gsort.hist);
-        l.at("SSLOT", &self.sslot).at("GAT", &self.gat).at("GTOTAL", &self.gscan.total).at("LOOKUPS", &self.lookups).at("VBAD", &self.bad);
+        l.at("SSLOT", &self.sslot).at("SINST", &self.sinst).at("GAT", &self.gat).at("GTOTAL", &self.gscan.total).at("LOOKUPS", &self.lookups).at("VBAD", &self.bad);
     }
 
     /// The layout P1 made on the device (decision 0467 §2), read back for tests: each directive's
@@ -827,14 +841,19 @@ impl Exp {
         let va_opt = name_key(b"__VA_OPT__");
         // The scratch: bytes (64 KB at rung 0, doubling) and tokens, in one buffer: the tokens (an
         // even number, so the bytes after them are 8-byte aligned), then the bytes. The first of
-        // each are the files' `__FILE__` literals, placed here.
-        let nf = unit.len() + 3;
-        let lit_bytes: usize = (0..nf).map(|f| lay.file_literals.get(f).map_or(2, Vec::len)).sum();
+        // each are the files' `__FILE__` literals, the configuration's three, then the files'
+        // `__FILE_NAME__` literals, placed here.
+        let nf = 2 * unit.len() + 3;
+        let lit = |f: usize| -> &[u8] {
+            let l = if f < unit.len() + 3 { lay.file_literals.get(f) } else { lay.name_literals.get(f - unit.len() - 3) };
+            l.map_or(b"\"\"", Vec::as_slice)
+        };
+        let lit_bytes: usize = (0..nf).map(|f| lit(f).len()).sum();
         let (sb, st) = (((64usize << 10) << rung) + lit_bytes, (tok / 4 + 256 + nf).next_multiple_of(2));
         let mut scratch = vec![0u8; st * 12 + sb + 16];
         let mut at = 0usize;
         for f in 0..nf {
-            let lit: &[u8] = lay.file_literals.get(f).map_or(b"\"\"", Vec::as_slice);
+            let lit = lit(f);
             scratch[st * 12 + at..st * 12 + at + lit.len()].copy_from_slice(lit);
             let tok3 = [at as u32, (at + lit.len()) as u32, K_LITERAL];
             for (k, w) in tok3.iter().enumerate() {
