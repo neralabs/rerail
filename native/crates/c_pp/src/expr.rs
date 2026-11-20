@@ -365,7 +365,7 @@ mod tests {
         let mut lx = PpLexer::new(src.as_bytes(), Options::c(23, false));
         let mut items = Vec::new();
         loop {
-            let t = lx.next();
+            let t = lx.next_token();
             if t.kind == P::Eof {
                 break;
             }

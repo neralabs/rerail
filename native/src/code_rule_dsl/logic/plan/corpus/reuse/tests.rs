@@ -119,7 +119,7 @@
         let kept=run();
         assert!(kept.phases.iter().any(|p|p.0.starts_with("unchanged")),"{:?}",kept.phases);
         assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out,"pairs").unwrap(),original);
-        assert_eq!(kept.cross,(0,0)); assert_eq!(kept.chunks,0);
+        assert_eq!(kept.chunks,0);
         std::fs::write(src.join("c.py"),"z = 3\n").unwrap();
         {
             // An older program's output, written over the stack: an image of it alone, over the one there.

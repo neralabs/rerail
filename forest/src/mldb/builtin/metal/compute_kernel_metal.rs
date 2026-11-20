@@ -311,6 +311,10 @@ pub struct MetalComputeFunctionLibrary {
 impl MetalComputeFunctionLibrary {
     /// Compiles (preprocessed) source on the device.
     pub fn compile_from_source(device: &DeviceRef, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
+        // A measurement aid: `RERAIL_DEVICE_TRACE` prints where each library is compiled.
+        if std::env::var_os("RERAIL_DEVICE_TRACE").is_some() {
+            eprintln!("RERAIL_DEVICE_TRACE a library compiled, {file_name_to_appear_in_error_messages} (driver {} MB):\n{}", device.current_allocated_size() >> 20, std::backtrace::Backtrace::force_capture());
+        }
         let lib = objc::rc::autoreleasepool(|| device.new_library_with_source(preprocessed_source, &metal::CompileOptions::new()));
         let mtl_library = lib.map_err(|e| format!("Error compiling Metal library from source ({file_name_to_appear_in_error_messages}): {e}"))?;
         Ok(MetalComputeFunctionLibrary { mtl_library })
@@ -497,6 +501,9 @@ impl MetalComputeQueue {
 /// `allocUninitializedArraySync`: device memory for `length` elements (shared storage, so the host reads it back
 /// after the work completes; at least 16 bytes, as Metal will not bind an empty buffer).
 pub fn alloc_uninitialized_array_sync<T>(device: &DeviceRef, length: usize) -> metal::Buffer {
+    if length * std::mem::size_of::<T>() >= 4 << 20 && std::env::var_os("RERAIL_DEVICE_TRACE").is_some() {
+        eprintln!("RERAIL_DEVICE_TRACE an array of {} MB (driver {} MB):\n{}", (length * std::mem::size_of::<T>()) >> 20, device.current_allocated_size() >> 20, std::backtrace::Backtrace::force_capture());
+    }
     pooled(|| device.new_buffer((length * std::mem::size_of::<T>()).max(16) as u64, metal::MTLResourceOptions::StorageModeShared))
 }
 

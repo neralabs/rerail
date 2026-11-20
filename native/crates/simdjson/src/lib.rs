@@ -163,23 +163,7 @@ fn run_as(kernel: Kernel, src: &[u8], kinds: &Kinds, read: Read) -> Result<Tape,
         return Err(Refusal::TooLarge);
     }
     let mut columns: [Vec<u8>; 5] = Default::default();
-    let k = kinds;
-    let mut sink = Sink {
-        col: [std::ptr::null_mut(); 5],
-        len: [0; 5],
-        cap: [0; 5],
-        width: [2; 3],
-        ctx: (&raw mut columns).cast(),
-        grow,
-        kind: [k.document, k.pair, k.string_content, k.escape_sequence, k.object, k.array, k.string, k.number, k.true_, k.false_, k.null, k.comment],
-        key_field: k.key_field,
-        value_field: k.value_field,
-        codes: 0,
-        code_kind: [0; 36],
-        code_field: [0; 36],
-        code_value: [0; 36],
-        digest: [0; 32],
-    };
+    let mut sink = sink(kinds, (&raw mut columns).cast());
     // SAFETY: the sink's buffers are `columns`, which `grow` grows; the shim writes them only within
     // what `grow` gave.
     let code = unsafe {
@@ -208,6 +192,99 @@ fn run_as(kernel: Kernel, src: &[u8], kinds: &Kinds, read: Read) -> Result<Tape,
             let [code, size, off, tail, base] = columns;
             Ok(Tape { code, codes, size, base, off, tail, widths: sink.width, digest: Some(sink.digest) })
         }
+        error => Err(Refusal::Simdjson(Error(error))),
+    }
+}
+
+/// A sink for `kinds` whose `ctx` is `ctx`: the columns grown by `grow`, no events.
+fn sink(k: &Kinds, ctx: *mut std::ffi::c_void) -> Sink {
+    Sink {
+        col: [std::ptr::null_mut(); 5],
+        len: [0; 5],
+        cap: [0; 5],
+        width: [2; 3],
+        ctx,
+        grow,
+        kind: [k.document, k.pair, k.string_content, k.escape_sequence, k.object, k.array, k.string, k.number, k.true_, k.false_, k.null, k.comment],
+        key_field: k.key_field,
+        value_field: k.value_field,
+        codes: 0,
+        code_kind: [0; 36],
+        code_field: [0; 36],
+        code_value: [0; 36],
+        digest: [0; 32],
+        ev: std::ptr::null_mut(),
+        ev_len: 0,
+        ev_cap: 0,
+        flush: flush_events,
+    }
+}
+
+/// A format 16 walk's events (`events_with`), the low byte of an event's first word; the code id above it.
+pub const EV_OPEN: u32 = 0;
+pub const EV_LEAF: u32 = 1;
+pub const EV_CLOSE: u32 = 2;
+
+/// The events a walk holds before it passes them on: 4,096 nodes'.
+const EVENT_WORDS: usize = 3 * 4096;
+
+/// The codes a walk has numbered so far, by id (`events_with`): kind, field, and whether in a value's place.
+pub struct Codes<'a>(&'a Sink);
+
+impl Codes<'_> {
+    pub fn len(&self) -> usize {
+        self.0.codes as usize
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.codes == 0
+    }
+
+    pub fn get(&self, id: usize) -> (u16, u16, bool) {
+        (self.0.code_kind[id], self.0.code_field[id], self.0.code_value[id] != 0)
+    }
+}
+
+/// What `flush_events` passes the events to: the caller's.
+type OnEvents<'a> = &'a mut dyn FnMut(&Codes, &[u32]);
+
+/// `flush`: the window's events given to the caller's `on`, which `ctx` points to.
+unsafe extern "C" fn flush_events(sink: *mut Sink) {
+    // SAFETY: the shim passes the sink `events_with` made, whose `ctx` is its `OnEvents` and whose `ev` holds
+    // `ev_len` words it wrote; `on` is apart from the sink and its buffer.
+    unsafe {
+        let sink: &Sink = &*sink;
+        if sink.ctx.is_null() {
+            return;
+        }
+        let on = &mut *sink.ctx.cast::<OnEvents>();
+        let words = std::slice::from_raw_parts(sink.ev, sink.ev_len as usize);
+        on(&Codes(sink), words);
+    }
+}
+
+/// `src` walked by `kernel` for format 16 (decision 0434): no column is written; each node's event (`EV_OPEN`, its
+/// code id and start; `EV_LEAF`, its code id, start and end; `EV_CLOSE` and its end; three words each) is given to
+/// `on` in preorder, a window of them at a time, with the codes numbered so far. The walk never edits a node it
+/// gave. `jsonc` reads the file as JSONC (`tape_jsonc_with`). The source's SHA-256, or why it has no tape: then `on`
+/// may have had some of its events.
+pub fn events_with(kernel: Kernel, src: &[u8], kinds: &Kinds, jsonc: bool, mut on: impl FnMut(&Codes, &[u32])) -> Result<[u8; 32], Refusal> {
+    if src.len() >= u32::MAX as usize / 2 {
+        return Err(Refusal::TooLarge);
+    }
+    let mut on: OnEvents = &mut on;
+    let mut buf = vec![0u32; EVENT_WORDS];
+    let mut sink = sink(kinds, (&raw mut on).cast());
+    sink.ev = buf.as_mut_ptr();
+    sink.ev_cap = EVENT_WORDS as u32;
+    // SAFETY: the sink writes no column; its events go to `buf`, `ev_cap` words, and `flush_events` gives them to `on`.
+    let code = unsafe { if jsonc { kernel.tape_jsonc(src, &mut sink) } else { kernel.tape(src, &mut sink) } };
+    if src.len() > KEEP {
+        release_above(KEEP);
+    }
+    match code {
+        -1 => Err(Refusal::NotHere),
+        0 => Ok(sink.digest),
         error => Err(Refusal::Simdjson(Error(error))),
     }
 }
@@ -506,10 +583,16 @@ mod tests {
         let kinds = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, comment: 12, key_field: 1, value_field: 2 };
         let run = std::env::var("RERAIL_TAPE_RUN").unwrap_or_default();
         let kernel = kernel_under_test();
-        let retired = || {
-            let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
-            unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
-            info.ri_instructions
+        let retired = || -> u64 {
+            // (macOS's count; 0 on a Linux host, which builds these tests too)
+            #[cfg(target_os = "macos")]
+            {
+                let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
+                unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
+                info.ri_instructions
+            }
+            #[cfg(not(target_os = "macos"))]
+            0
         };
         let mut n = 0usize;
         let mut best = u64::MAX;
@@ -636,10 +719,16 @@ mod tests {
     #[test]
     #[ignore = "a measurement: run by name with --nocapture"]
     fn shape_costs() {
-        let retired = || {
-            let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
-            unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
-            info.ri_instructions
+        let retired = || -> u64 {
+            // (macOS's count; 0 on a Linux host, which builds these tests too)
+            #[cfg(target_os = "macos")]
+            {
+                let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
+                unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
+                info.ri_instructions
+            }
+            #[cfg(not(target_os = "macos"))]
+            0
         };
         let kinds = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, comment: 12, key_field: 1, value_field: 2 };
         let kernel = kernel_under_test();

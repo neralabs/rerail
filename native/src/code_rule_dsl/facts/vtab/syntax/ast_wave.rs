@@ -7,7 +7,8 @@ use std::sync::Mutex;
 
 /// The process's lowered matchers, by their text and their base policy's: lowered once.
 type Lowered = Result<(Arc<crate::code_rule_dsl::transducer::packed::LoweredMatcher>, Vec<crate::code_rule_dsl::matcher::DocumentGate>, Arc<crate::code_rule_dsl::waves::policies::Captor>), String>;
-static LOWERED: std::sync::LazyLock<Mutex<HashMap<(String, String), Lowered>>> = std::sync::LazyLock::new(Default::default);
+#[derive(Default)]
+struct LoweredWaves(Mutex<HashMap<(String, String), Lowered>>);
 
 /// The engine's compiler of `ast` matchers (`waves::policies::lower_matcher`), registered at load.
 pub(crate) struct Compiler;
@@ -15,26 +16,28 @@ pub(crate) struct Compiler;
 impl AstCompiler for Compiler {
     /// Each relation's matcher lowered for the transducer, over the program's first `.policy` (its utils). A matcher
     /// that does not lower fails the run, naming it.
-    fn compile(&self, matchers: &[(String, String, Vec<String>)], policies: &[serde_json::Value]) -> Result<Matchers, String> {
-        compiled(matchers, policies)
+    fn compile(&self, matchers: &[(String, String, Vec<String>)], demand: &[Option<Vec<usize>>], policies: &[serde_json::Value]) -> Result<Matchers, String> {
+        compiled(matchers, demand, policies)
     }
 }
 
-fn compiled(matchers: &[(String, String, Vec<String>)], policies: &[serde_json::Value]) -> Result<crate::code_rule_dsl::facts::vtab::syntax::Matchers, String> {
+fn compiled(matchers: &[(String, String, Vec<String>)], demand: &[Option<Vec<usize>>], policies: &[serde_json::Value]) -> Result<crate::code_rule_dsl::facts::vtab::syntax::Matchers, String> {
     let base = policies.first();
     let base_text = base.map(|b| b.to_string()).unwrap_or_default();
     matchers
         .iter()
-        .map(|(rel, text, captures)| {
+        .enumerate()
+        .map(|(k, (rel, text, captures))| {
             let key = (text.clone(), base_text.clone());
             let got = {
-                let mut kept = LOWERED.lock().unwrap_or_else(|p| p.into_inner());
+                let held_ = crate::code_rule_dsl::logic::profile::shared::<LoweredWaves>();
+                let mut kept = held_.0.lock().unwrap_or_else(|p| p.into_inner());
                 kept.entry(key)
                     .or_insert_with(|| crate::code_rule_dsl::waves::policies::lower_matcher(text, base).map(|(m, g, c)| (Arc::new(m), g, Arc::new(c))))
                     .clone()
             };
             let (lowered, gates, captor) = got.map_err(|why| format!("{rel}: the matcher {text} does not lower: {why}"))?;
-            Ok(Matcher { rel: rel.clone(), lowered, gates, captures: captures.clone(), captor })
+            Ok(Matcher { rel: rel.clone(), lowered, gates, captures: captures.clone(), captor, demanded_by: demand.get(k).cloned().flatten() })
         })
         .collect::<Result<Vec<_>, String>>()
         .and_then(Wave::new)
@@ -51,6 +54,9 @@ pub(crate) struct Matcher {
     /// The metavariables the atom captures, in its relation's column order after `n` (decision 0107).
     pub(crate) captures: Vec<String>,
     pub(in crate::code_rule_dsl) captor: Arc<crate::code_rule_dsl::waves::policies::Captor>,
+    /// The matchers (by place in the wave) whose roots hold every node this one's rows are read at
+    /// (`matchers::demanded_by_roots`, decision 0459): its rows are made only there. `None`: at every root.
+    pub(crate) demanded_by: Option<Vec<usize>>,
 }
 
 /// A program's matchers (decision 0106) and the wave they run as: every matcher's labels and roots in one run per
@@ -152,7 +158,7 @@ impl rerail_accel::kernel::Program for MatcherWave {
         if lane == rerail_accel::Lane::Gpu {
             // A Metal run that fails stops the run (decision 0382 §6): no CPU wave in its place. What does not fit is
             // split, and work past its budget replanned, inside the run (0334).
-            let found = self.on(MatcherBackend::MetalInterpreter).unwrap_or_else(|e| panic!("rerail: the ast matcher wave failed on Metal: {e}"));
+            let found = self.on(MatcherBackend::MetalInterpreter).unwrap_or_else(|e| panic!("rerail: the ast matcher wave failed on Metal: {e} ({} tapes; the device: {})", self.tapes.len(), rerail_accel::gpu::shared::describe()));
             // The wave's GPU form is the Metal interpreter: no generated kernel (decision 0202).
             rerail_accel::forms::missing("metal-jit-form", "ast matcher wave", "ast matcher wave", "the wave runs the Metal interpreter: no generated MSL", 1);
             return Ok(Arc::new(Ok(found) as WaveFound));
@@ -215,7 +221,7 @@ fn matched(
         let program = MatcherWave { wave: Arc::clone(wave), tapes: docs, active, gpu };
         let kernel = rerail_accel::Kernel::Program(rerail_accel::kernel::ProgramKernel(Arc::new(program)));
         let ex = crate::code_rule_dsl::logic::lanes::executor_for(metal);
-        let (mut done, _) = crate::code_rule_dsl::logic::lanes::prof::run_on(ex, "ast matcher wave", rerail_accel::Batch(vec![rerail_accel::Launch::new(kernel)])).map_err(StoreError::Invalid)?;
+        let (mut done, _) = crate::code_rule_dsl::logic::lanes::prof::run_on(&ex, "ast matcher wave", rerail_accel::Batch(vec![rerail_accel::Launch::new(kernel)])).map_err(StoreError::Invalid)?;
         let done = done.remove(0);
         let rerail_accel::kernel::Output::Program(r) = done.out else {
             return Err(StoreError::Invalid("ast matcher wave: not a program's result".into()));
@@ -232,6 +238,27 @@ fn matched(
         (found, run.limited)
     };
     profile::work(profile::Unit::Node, nodes);
+    // A matcher read only where other matchers' roots are (decision 0459): its roots there alone, before any capture.
+    let mut demanded: Vec<Option<Vec<BTreeSet<u32>>>> = matchers
+        .list
+        .iter()
+        .map(|m| {
+            let by = m.demanded_by.as_ref()?;
+            Some((0..held.len()).map(|t| by.iter().flat_map(|&b| found[b].get(t)).flatten().copied().collect::<BTreeSet<u32>>()).collect())
+        })
+        .collect();
+    let found: Vec<Vec<BTreeSet<u32>>> = found
+        .into_iter()
+        .zip(&mut demanded)
+        .map(|(roots, demand)| match demand.take() {
+            Some(demand) => {
+                let kept: Vec<BTreeSet<u32>> = roots.iter().zip(&demand).map(|(roots, demand)| roots.intersection(demand).copied().collect()).collect();
+                crate::code_rule_dsl::prof::count("ast.demanded_dropped", roots.iter().map(BTreeSet::len).sum::<usize>() - kept.iter().map(BTreeSet::len).sum::<usize>());
+                kept
+            }
+            None => roots,
+        })
+        .collect();
     let mut out = Vec::new();
     for (c, (m, found)) in matchers.list.iter().zip(found).enumerate() {
         let columns = crate::code_rule_dsl::logic::plan::corpus::ast_columns(&m.rel);

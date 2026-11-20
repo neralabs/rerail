@@ -175,9 +175,6 @@ fn per_node_relations(rules: &[R<'_>]) -> BTreeSet<String> {
 pub(super) fn candidates<'v>(f: &Fields<'v>, p: &'v Placed, model: &super::super::Model) -> BTreeSet<&'v str> {
     let n = p.len();
     let rules: Vec<R<'v>> = (0..n).map(|k| R::of(p, k)).collect();
-    // Relations a rule derives from a `<rel>__cross` copy: memoised per import component (decision 0076), their
-    // stored rows must be all of a document's, not those a reader outside the closure asked for.
-    let from_cross: BTreeSet<&str> = rules.iter().filter(|r| (0..r.lits.len()).any(|i| r.plain(i).is_some_and(|a| r.rel(a).ends_with("__cross")))).map(R::head).collect();
     let kept = |rel: &str| {
         f.is_output(rel)
             || f.is_input(rel)
@@ -187,7 +184,6 @@ pub(super) fn candidates<'v>(f: &Fields<'v>, p: &'v Placed, model: &super::super
             || f.demanded(rel)
             || f.gate(rel)
             || f.qualified(rel, "no_magic")
-            || from_cross.contains(rel)
     };
     let mut by_rel: BTreeMap<&str, Vec<&R<'v>>> = BTreeMap::new();
     for r in &rules {

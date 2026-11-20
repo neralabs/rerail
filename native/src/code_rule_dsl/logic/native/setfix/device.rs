@@ -43,6 +43,48 @@ pub use crate::code_rule_dsl::logic::device::{Report};
 
 /// The most rows a table is given before its stage has run once (a guess; an overflow runs it again exactly).
 const GUESS_MAX: usize = 1 << 21;
+impl Plan {
+    /// The bytes its tables are expected to take and the rows its stages are expected to make (its planned work),
+    /// from the planner's estimates (`est`, sized as `table_rows` sizes them): what its stratum reserves before it
+    /// encodes (`admit`). A stage without an estimate counts none.
+    fn expected(&self) -> (usize, f64) {
+        let row = 8 * self.nslots.max(1);
+        let most = table_max() / row;
+        self.est.iter().flatten().fold((0, 0.0), |(bytes, work), &e| (bytes + row * (((e * EST_MARGIN).ceil() as usize).max(16)).min(most), work + e))
+    }
+}
+
+/// The reservation for `rules`' tables (`admit`), waited for while waiting is worth what the CPU would take over
+/// them (`placement::worth_waiting`); its wait counted in `rep`.
+fn admitted(rules: &[(&Plan, &JoinRule, usize)], rep: &mut Report) -> Result<rerail_accel::gpu::shared::Admitted, String> {
+    let (bytes, work) = rules.iter().map(|r| r.0.expected()).fold((0, 0.0), |(b, w), (pb, pw)| (b + pb, w + pw));
+    let patience = crate::code_rule_dsl::logic::plan::placement::admission_patience(work);
+    let got = rerail_accel::gpu::shared::admit(bytes, patience)?;
+    if got.waited > 0.0 {
+        rep.admit_waits += 1;
+        rep.admit_seconds += got.waited;
+        crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "strata that waited for the device's memory", 1);
+    }
+    Ok(got)
+}
+
+/// A join stage's table, in rows, before it runs: the growth the stage was seen to have (`seen`, rows out a row in);
+/// else the planner's estimate of its rows (`est`, `JoinRule::est`) with a margin; else twice its input (`cap_in`).
+/// Q203: doubling each stage's input compounded down a plan, and a cold run's tables were a hundred times their rows,
+/// refused past the device's budget. A `scan` (no keys, one binding in) holds its relation's rows (`nr`) at most. An
+/// overflow runs the stage again exactly.
+fn table_rows(cap_in: usize, nr: usize, scan: bool, seen: Option<f64>, est: Option<f64>) -> usize {
+    let seen = seen.map(|r| ((cap_in as f64 * r * 1.25).ceil() as usize).max(16));
+    let est = est.filter(|_| !rerail_accel::gpu::shared::q180_off("est")).map(|e| ((e * EST_MARGIN).ceil() as usize).max(16));
+    if scan {
+        return seen.or(est).map_or(nr, |e| e.min(nr)).max(1);
+    }
+    seen.or(est).unwrap_or(cap_in.saturating_mul(2)).min(cap_in.saturating_mul(nr.max(1))).clamp(1, GUESS_MAX.max(cap_in))
+}
+
+/// A table sized by the planner's estimate holds this many times it: the estimates miss by about that (rr_token_req's
+/// first step: 2,848 expected, 7,453 made), and an overflow runs the stage again exactly.
+const EST_MARGIN: f64 = 2.0;
 /// The device's buffers share the Metal budget (`metal_buffer_limit`, 512 MB by default; decision 0126) with the
 /// buffer pool and the other lanes. The device joins keep within about a quarter of it at the default (their sizes
 /// below are those at 512 MB, scaled with the budget, `metal_share`):
@@ -129,22 +171,6 @@ thread_local! {
     static BINDER: std::cell::RefCell<Vec<&'static str>> = const { std::cell::RefCell::new(Vec::new()) };
     /// The slots of the rule being compiled whose values are arena texts (`mj::ROWTEXT`'s).
     static ARENA: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
-    /// The component's own columns whose values are arena texts (decision 0307: a `shortlex_min` relation's value,
-    /// made by its rules' rounds into one arena), as (relation, column): set while its plans compile (`own_texts`).
-    static OWN_TEXTS: std::cell::RefCell<Vec<(usize, usize)>> = const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// Runs `f` (a component's plans compiled) with `cols` its own columns of arena texts (decision 0307).
-pub(in crate::code_rule_dsl) fn own_texts<T>(cols: Vec<(usize, usize)>, f: impl FnOnce() -> T) -> T {
-    let was = OWN_TEXTS.with_borrow_mut(|o| std::mem::replace(o, cols));
-    let out = f();
-    OWN_TEXTS.with_borrow_mut(|o| *o = was);
-    out
-}
-
-/// Whether column `c` of own relation `rel` holds arena texts (`own_texts`).
-fn own_text(rel: usize, c: usize) -> bool {
-    OWN_TEXTS.with_borrow(|o| o.contains(&(rel, c)))
 }
 
 /// Whether slot `x` of the rule being compiled holds an arena text (a text function's value).
@@ -232,6 +258,9 @@ pub(in crate::code_rule_dsl) struct Plan {
     nsteps: usize,
     /// The rule's spec, hashed: its stages' observed fanouts are kept by it (`GROWTH`), for the next chunk's guesses.
     key: u64,
+    /// Per stage, the rows the planner expects out of it (its last step's, `JoinRule::est`): its table's size before
+    /// a growth has been seen.
+    est: Vec<Option<f64>>,
 }
 
 fn step_name(s: &Step) -> &'static str {
@@ -407,8 +436,10 @@ fn witness_stage(j: &JoinRule, i: usize, bound: &[bool]) -> Option<PStage> {
     Some(PStage { first: i, span: j.steps.len() - i, kind: Kind::Witness { rel: rel.clone(), cols, rest: probes }, desc: d, npassed: 0 })
 }
 
-/// `j`'s device plan, or the step the device cannot run.
-pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
+/// `j`'s device plan, or the step the device cannot run. `own_texts`: the component's own columns whose values are
+/// arena texts (decision 0307: a `shortlex_min` relation's value, made by its rules' rounds into one arena), as
+/// (relation, column).
+pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(usize, usize)]) -> Result<Plan, String> {
     let mut bound = vec![false; j.nslots];
     // Where each slot's value came from: a column of an input relation (a text test's terms are its symbols).
     let mut origin: Vec<Option<(Arc<InRel>, usize)>> = vec![None; j.nslots];
@@ -467,8 +498,8 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                 }
                 // An own column of arena texts (decision 0307) is read as the binding's text, never matched by value:
                 // one text made in two rounds has two values.
-                if let Some((rel, _)) = own && OWN_TEXTS.with_borrow(|o| o.iter().any(|&(r, _)| r == rel)) {
-                    let text = |c: usize| own_text(rel, c);
+                if let Some((rel, _)) = own && own_texts.iter().any(|&(r, _)| r == rel) {
+                    let text = |c: usize| own_texts.contains(&(rel, c));
                     if keys.iter().any(|&(c, _)| text(c)) || tests.iter().any(|&(a, b)| text(a) || text(b)) || j.fused[i].is_some() || *neg {
                         return Err("a made text across rounds matched, tested or negated (decision 0307: read only as a text)".into());
                     }
@@ -977,7 +1008,8 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
         spec.hash(&mut h);
         h.finish()
     };
-    Ok(Plan { stages, head, head_slots, arena, nslots, nsteps: j.steps.len(), key })
+    let est = stages.iter().map(|s| j.from.get(s.first + s.span.max(1) - 1).and_then(|&p| j.est.get(p)).copied().filter(|e| e.is_finite() && *e >= 0.0)).collect();
+    Ok(Plan { stages, head, head_slots, arena, nslots, nsteps: j.steps.len(), key, est })
 }
 
 /// Whether `step` binds slot `x`.
@@ -1759,13 +1791,8 @@ impl<'p> Run<'p> {
         let s = &self.plan.stages[k];
         match &s.kind {
             Kind::Atom { .. } | Kind::Own { .. } if s.desc.mode == mj::JOIN => {
-                let most = cap_in.saturating_mul(nr.max(1));
-                if s.desc.nkeys == 0 && cap_in == 1 {
-                    return nr.max(1);
-                }
                 let seen = GROWTH.with_borrow(|g| g.get(&(self.plan.key, k)).copied());
-                let want = seen.map_or(cap_in.saturating_mul(2), |r| ((cap_in as f64 * r * 1.25).ceil() as usize).max(16));
-                want.min(most).clamp(1, GUESS_MAX.max(cap_in))
+                table_rows(cap_in, nr, s.desc.nkeys == 0 && cap_in == 1, seen, self.plan.est.get(k).copied().flatten())
             }
             _ => cap_in,
         }
@@ -2082,6 +2109,8 @@ fn submit_(rules: &[(&Plan, &JoinRule, usize)], names: &Interner) -> Result<Opti
     let rules = &some[..];
     let c0 = thread_cpu();
     let mut rep = Report { rules: rules.len() as u32, stages: rules.iter().map(|r| r.0.stages.len() as u32).sum(), ..Report::default() };
+    // Its tables' room, reserved whole before anything is encoded: a wait for it holds no command buffer (0386).
+    let _room = admitted(rules, &mut rep)?;
     use crate::code_rule_dsl::logic::lanes::wave::with_open;
     // A process that did not make the pool (`threads::configure`: a test's) gets the job scopes at its first wave.
     crate::code_rule_dsl::logic::lanes::wave::install_job_scope();
@@ -2159,8 +2188,10 @@ fn resume_(ticket: u64, rules: &[(&Plan, &JoinRule, usize)], store: &Store, name
 
 /// The first rules of `rules` that fit one submission's space, run: their head rows as `run`'s.
 fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh], rep: &mut Report) -> Result<Vec<u64>, String> {
+    let room = admitted(rules, rep)?;
     let mut batch = direct_batch(None)?;
     let runs = encode_runs(rules, &mut batch, rep, names)?;
+    drop(room);
     finish_timed(&mut batch, rep)?;
     complete(runs, &rules[..], store, names, fresh, rep)
 }
@@ -2925,6 +2956,8 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         };
 // copy (0353 step 6): the fixpoint's total copied into a run's block. It goes: the total lives in a block
 // of the run's life from its start (decision 0353).
+        const TOTAL: rerail_prof::copies::Site = rerail_prof::copies::Site::new(10, "6", "a device fixpoint's total copied into a run's block");
+        TOTAL.copied(8 * k * total.rows);
         let (room, dst, at) = head_room(&store.rels[h], &fresh[h], k, total.rows)?;
         let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
         b.place_rows(mj::Rows::Rel(total), total.rows, None, &no_counts, &ident, dst, at).map_err(|e| format!("{e:?}: a component's rows placed"))?;

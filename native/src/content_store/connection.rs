@@ -242,26 +242,45 @@ pub(super) fn jittered(backoff: Duration) -> Duration {
 type SharedConnection = Arc<ParkingMutex<Option<Connection>>>;
 
 thread_local! {
-    /// By database path: the store's identity (`store_identity`) and the connection to it.
-    static THREAD_CONNECTIONS: RefCell<HashMap<PathBuf, (i64, SharedConnection)>> =
+    /// By shared object (its `Connections`' number) and database path: the store's identity (`store_identity`) and
+    /// the connection to it.
+    static THREAD_CONNECTIONS: RefCell<HashMap<(u64, PathBuf), (i64, SharedConnection)>> =
         RefCell::new(HashMap::new());
 }
 
 /// Every thread's store connections by database, so an idle store closes them from whichever
 /// thread releases it (Rayon workers and libuv threads both read the store).
 type ConnectionRegistry = Vec<(PathBuf, std::sync::Weak<ParkingMutex<Option<Connection>>>)>;
-static ALL_CONNECTIONS: std::sync::LazyLock<ParkingMutex<ConnectionRegistry>> =
-    std::sync::LazyLock::new(|| ParkingMutex::new(Vec::new()));
 
-/// The store handles open in this process, by database path (`ThreadConnection`).
-static HANDLES: std::sync::LazyLock<ParkingMutex<HashMap<PathBuf, usize>>> =
-    std::sync::LazyLock::new(Default::default);
+/// The shared object's store connections (decision 0442): every thread's, by database, and the store handles open,
+/// by database path (`ThreadConnection`). Another object's handles on the same store have connections of their own,
+/// as another process's would.
+pub(super) struct Connections {
+    all: ParkingMutex<ConnectionRegistry>,
+    handles: ParkingMutex<HashMap<PathBuf, usize>>,
+    /// Its number, unique in the process: a thread's connections are kept by it.
+    number: u64,
+}
+
+impl Default for Connections {
+    fn default() -> Self {
+        /// The registries' numbers, unique in the process.
+        static MADE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        Connections { all: Default::default(), handles: Default::default(), number: MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed) }
+    }
+}
+
+fn connections() -> Arc<Connections> {
+    rerail_prof::code_rule_dsl::logic::profile::shared::<Connections>()
+}
 
 /// A store handle's connections: one per thread, shared by the handles on the store. The last handle on a store
 /// closes every thread's idle connection to it (`close`), so nothing in the process holds the file open once the
 /// store is closed (a run's store is deleted and created again at its path).
 pub(super) struct ThreadConnection {
     database_path: PathBuf,
+    /// The registry of the shared object it was opened in: its connections are that object's.
+    connections: Arc<Connections>,
     /// The store's identity when opened: a thread's connection to a store since created again at the path is not
     /// this store's.
     identity: i64,
@@ -285,8 +304,9 @@ impl std::ops::DerefMut for ConnectionGuard {
 
 impl ThreadConnection {
     pub(super) fn new(database_path: PathBuf, identity: i64) -> Self {
-        *HANDLES.lock().entry(database_path.clone()).or_default() += 1;
-        Self { database_path, identity }
+        let connections = connections();
+        *connections.handles.lock().entry(database_path.clone()).or_default() += 1;
+        Self { database_path, connections, identity }
     }
 
     /// The store's identity when this handle opened it (a sibling handle shares it).
@@ -298,7 +318,7 @@ impl ThreadConnection {
     /// connection to it is closed.
     pub(super) fn close(&self) -> bool {
         let last = {
-            let mut handles = HANDLES.lock();
+            let mut handles = self.connections.handles.lock();
             let open = handles.get_mut(&self.database_path).expect("a handle counted when made");
             *open -= 1;
             let last = *open == 0;
@@ -316,14 +336,16 @@ impl ThreadConnection {
     pub(super) fn lock(&self) -> Result<ConnectionGuard, String> {
         let connection = THREAD_CONNECTIONS.with(|connections| {
             let mut connections = connections.borrow_mut();
-            match connections.get(&self.database_path) {
+            let key = (self.connections.number, self.database_path.clone());
+            match connections.get(&key) {
                 Some((identity, connection)) if *identity == self.identity => Arc::clone(connection),
                 _ => {
                     let connection = SharedConnection::default();
-                    ALL_CONNECTIONS
+                    self.connections
+                        .all
                         .lock()
                         .push((self.database_path.clone(), Arc::downgrade(&connection)));
-                    connections.insert(self.database_path.clone(), (self.identity, Arc::clone(&connection)));
+                    connections.insert(key, (self.identity, Arc::clone(&connection)));
                     connection
                 }
             }
@@ -340,14 +362,19 @@ impl ThreadConnection {
 
     /// Closes every thread's idle connection to this database; one in use stays open.
     pub(super) fn release_all(&self) {
-        release_all_at(&self.database_path);
+        release_in(&self.connections, &self.database_path);
     }
 }
 
 /// Closes every thread's idle connection to the database at `database_path`, whatever store was opened there; one
 /// in use stays open. A test's temporary database (`test_support::TemporaryDatabase`) calls it as it drops.
+#[cfg(test)]
 pub(super) fn release_all_at(database_path: &Path) {
-    ALL_CONNECTIONS.lock().retain(|(path, connection)| {
+    release_in(&connections(), database_path);
+}
+
+fn release_in(connections: &Connections, database_path: &Path) {
+    connections.all.lock().retain(|(path, connection)| {
         let Some(connection) = connection.upgrade() else {
             return false;
         };
@@ -366,8 +393,10 @@ pub(super) fn release_all_at(database_path: &Path) {
 /// that are open (a test checks a closed store's are none).
 #[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn holding(database_path: &Path) -> (usize, usize) {
-    let handles = HANDLES.lock().get(database_path).copied().unwrap_or(0);
-    let open = ALL_CONNECTIONS
+    let connections = connections();
+    let handles = connections.handles.lock().get(database_path).copied().unwrap_or(0);
+    let open = connections
+        .all
         .lock()
         .iter()
         .filter(|(path, _)| path == database_path)
@@ -434,8 +463,7 @@ pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<(
     // Reads through a map of the file (the OS's page cache, shared by every connection and not the process's own
     // memory), not `pread` into the 1 MB cache: with the map off, a one-file edit spent 0.5 s in `pread`, the writer's
     // index descents reading the same pages again. `RERAIL_STORE_MMAP_MB` sets the map's bound (0: off).
-    static MMAP: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
-    let mmap = *MMAP.get_or_init(|| std::env::var("RERAIL_STORE_MMAP_MB").ok().and_then(|v| v.parse::<i64>().ok()).unwrap_or(4096) << 20);
+    let mmap = rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_STORE_MMAP_MB").ok().and_then(|v| v.parse::<i64>().ok()).unwrap_or(4096) << 20);
     connection.pragma_update(None, "mmap_size", mmap)?;
     connection.pragma_update(None, "journal_size_limit", 16_777_216_i64)?;
     // Temporary B-trees (a statement's materialized CTEs and sorts, the prefilter's stages) stay

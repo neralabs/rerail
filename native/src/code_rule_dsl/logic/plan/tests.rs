@@ -123,6 +123,44 @@ fn rules_of_one_body_and_two_heads_both_run_their_whole_plan() {
     }
 }
 
+/// Decision 0462: a derived relation past the width cap stops the run, its error naming the relation and the rule
+/// deriving it; under `RERAIL_WIDEST=cut` the run goes on with the relation cut there, and says so at its end.
+#[test]
+fn a_relation_past_the_width_cap_stops_the_run_or_is_cut() {
+    use super::super::native::width;
+    let facts: String = (1..=100).map(|i| format!("l({i}).\nr({i}).\n")).collect();
+    let p = parse(&format!(".decl l(x:number)\n.decl r(x:number)\n{facts}.decl pairs(x:number,y:number)\npairs(x, y) :- l(x), r(y).\n.output pairs\n")).unwrap();
+    let run = || {
+        let path = crate::code_rule_dsl::fixtures::temp();
+        let store = ContentStore::open(&path).unwrap();
+        let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+        let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let db = Connection::open(&path).unwrap();
+        super::super::native::register(&db).unwrap();
+        super::super::native::register_symbols(&db).unwrap();
+        // The native strata (`program`), as a corpus run's: the SQL strata's inserts are bounded by the memory ceiling.
+        run_atoms_native_over(&lowered, &db, "main", Stats::empty_of_lowered(&lowered).unwrap(), BTreeSet::new(), "program")
+    };
+    // Each run's limits are its own (no process setting): the test holds each run's scope, as a command does.
+    let stopped = {
+        let _run = super::super::run::scope(|| width::Settings { cap: 1_000, cut: false, ceiling: None });
+        run()
+    };
+    let (cut, record) = {
+        let own = super::super::run::scope(|| width::Settings { cap: 1_000, cut: true, ceiling: None });
+        let cut = run();
+        (cut, own.finish().expect("the test's run is the outermost"))
+    };
+    let report = record.width.incomplete();
+    let error = stopped.err().expect("a relation past the cap stops the run").to_string();
+    assert!(error.contains("`pairs` reached 1000 rows") && error.contains("l(") && error.contains("r("), "the error names the relation and its rule: {error}");
+    let out = cut.expect("cut, the run goes on");
+    let kept = out.shown()["pairs"].len();
+    assert!(kept > 0 && kept <= 1_000, "the rows made before the cap are kept, none past it: {kept}");
+    let report = report.expect("a cut is reported at the end");
+    assert!(report.contains("`pairs`") && report.contains("derived by pairs(") && report.contains("l("), "the report names the relation and its rule: {report}");
+}
+
 /// Whether this process numbers nodes in preorder, as T's facts and outputs do (`RERAIL_NODE_IDS=preorder`). The
 /// tests that compare with T run only then: under ids per definition (the default, decision 0094 §2a) a program that
 /// orders nodes reads `node_order`, which T's facts do not have, and outputs show ids as `slot.index`.
@@ -1291,7 +1329,8 @@ found(x, i, a, b, c) :- s(x), match_all("(?<c>x+)", x, i, a, b).
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
         let _scratch = super::corpus::switches::set(&[("RERAIL_CROSS_K4", "off"), ("RERAIL_KEPT_PART", "off")]);
-        // The run holds the profile (`one_run`) and resets it as it starts.
+        // The run resets the profile as it starts; the test's run keeps it after (decision 0442: the run's records).
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         profile::set(true);
         let ran = super::corpus::run(program, &dir, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
         let declined = profile::declined();
@@ -2542,6 +2581,32 @@ fn a_kind_bound_by_counted_values_reads_their_nodes() {
     assert!((work - (2.0 + 2.0 * 20.0)).abs() < 1e-6, "work {work}");
 }
 
+/// Q220: a variable an equality binds to a constant joins nothing. `kind($m, $k)` after `$k = 5` shares only `$k`
+/// with what is joined, so the greedy order takes it only once `$m` is joined, not while `text($n, $s)` joins:
+/// `p299_attempt`'s kept greedy order (planned where its text test matched little) read every node of the kind for
+/// each of 15 k texts (1.16 M rows, none kept), the kind priced at 11 a binding against the text's 45. Sized so the
+/// greedy order prices under a search's work and is taken (`search_rows`: 432 rows for 4 joins).
+#[test]
+fn a_variable_bound_to_a_constant_does_not_connect_a_step() {
+    let p = parse(".decl t(s: number)\n.decl kind(n: number, k: number)\n.decl child(p: number, c: number)\n.decl text(n: number, s: number)\n.decl r(m: number)\nr(m) :- t(s), k = 5, kind(m, k), child(m, n), text(n, s).\n.output r\n").unwrap();
+    let mut model = bare_model(&p);
+    model.stats.kfreq = std::sync::Arc::new([("5".to_owned(), 3), ("6".to_owned(), 9_997)].into_iter().collect());
+    model.stats.nodes = 10_000.0;
+    for (rel, rows, cols) in [("t", 2.0, vec![(2.0, 1.0)]), ("kind", 10_000.0, vec![(10_000.0, 1.0), (2.0, 5_000.0)]),
+                              ("child", 10_000.0, vec![(5_000.0, 2.0), (10_000.0, 1.0)]), ("text", 4_500.0, vec![(4_500.0, 1.0), (1_125.0, 4.0)])] {
+        model.stats.card.insert(rel, rows);
+        for (c, (ndv, fan)) in cols.into_iter().enumerate() {
+            model.ndv.insert((rel, c), ndv);
+            model.stats.fan.insert((rel, c), fan);
+        }
+    }
+    let (order, work) = priced_first_rule(&model, &p);
+    let at = |s: &str| order.iter().position(|o| o == s).unwrap_or_else(|| panic!("{s} in {order:?}"));
+    assert_eq!(order[0], "t($s)", "{order:?}");
+    assert!(at("text($n, $s)") < at("kind($m, $k)") && at("child($m, $n)") < at("kind($m, $k)"),
+            "`kind($m, $k)` waits for `$m`, joined through `$s`: {order:?} (work {work})");
+}
+
 /// Decision 0320: a node bound by a field is of a kind as often as the field's children are, and a field read by a
 /// node of a kind yields that kind's children by it. Every child by field 7 is of kind 5 here, a hundredth of the
 /// nodes: the kind's share of the nodes passed one row in a hundred, where every row passes.
@@ -2844,9 +2909,9 @@ fn a_join_shape_directive_holds_a_join_back_in_its_rule() {
                 crate::code_rule_dsl::logic::profile::set(false);
             }
         }
-        // The profile is the process's: held for this test (`one_run`), so a run in another test cannot reset the
-        // decisions it reads (`no longer needed` went missing when one ran beside it). Dropped after `Off`.
-        let _one = crate::code_rule_dsl::logic::profile::one_run();
+        // The test's own run, whose profile its runs record (decision 0442): a run in another test never reaches the
+        // decisions it reads (`no longer needed` went missing when one ran beside the process's). Dropped after `Off`.
+        let _one = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         let _off = Off;
         crate::code_rule_dsl::logic::profile::set(true);
         crate::code_rule_dsl::logic::profile::reset();
@@ -3040,6 +3105,7 @@ fn explain_lists_each_relations_layout() {
     let mut inputs = Inputs::file();
     inputs.facts.clear();
     inputs.given = Some(Stats::empty(&p));
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     crate::code_rule_dsl::logic::profile::set(true);
     crate::code_rule_dsl::logic::profile::reset();
     let _model = make_plan(&body::Placed::of_program(&p).unwrap(), &db, inputs).unwrap();
@@ -3196,12 +3262,25 @@ fn a_run_takes_a_prepared_plan_without_searching() {
     assert_ne!(odd, planned.0);
     model.stats.nodes = 2_000.0;
     model.stats.prepared = std::sync::Arc::new(prepared::Prepared(
-        [(crate::code_rule_dsl::logic::plan::line_key(&b, None), prepared::PreparedPlan { order: odd.clone(), work_per_node: 3.0, rows_per_node: 0.5 })].into_iter().collect(),
+        [(crate::code_rule_dsl::logic::plan::line_key(&b, None), prepared::PreparedPlan { order: odd.clone(), work_per_node: 3.0, rows_per_node: 0.5, assumed: vec![("child2".to_owned(), 0.5)] })].into_iter().collect(),
     ));
+    // Taken as it is, whatever the run's statistics say of what it assumed (`child2` at 0.5 rows a node).
     let got = model.plan_rule(f, &b, None).unwrap();
-    assert_eq!(got, (odd, 6_000.0, 1_000.0));
+    assert_eq!(got, (odd.clone(), 6_000.0, 1_000.0));
     // Another line (its delta) is not held: searched.
     assert!(model.plan_rule(f, &b, Some(0)).is_ok());
+    // Found heavy on its prepared order, in a run: searched from then on, once (decision 0361 step 5 with 0203).
+    let _plans = KeepPlans::start(None);
+    let line = crate::code_rule_dsl::logic::plan::line_key(&b, None);
+    // Horribly slow past 8 times its prepared price: 3 rows of work a node at 2,000 nodes is 6,000; 48,000 the line.
+    assert!(!model.prepared_horribly_slow(&b, &[None], &odd, 40_000.0));
+    assert!(model.prepared_horribly_slow(&b, &[None], &odd, 50_000.0));
+    assert!(!model.prepared_horribly_slow(&b, &[None], &planned.0, 50_000.0), "not the order it runs");
+    assert_eq!(model.prepared_heavy(&b, &[Some(0), None], &planned.0), None, "not the order it runs");
+    assert_eq!(model.prepared_heavy(&b, &[Some(0), None], &odd), Some(line));
+    assert_eq!(model.prepared_heavy(&b, &[Some(0), None], &odd), None, "once a line");
+    let got = model.plan_rule(f, &b, None).unwrap();
+    assert_ne!(got.0, odd, "searched, not the order prepared");
 }
 
 /// The prepared plans as an image stores them (decision 0333 §4): read back the same.
@@ -3233,9 +3312,11 @@ fn a_policy_run_takes_its_prepared_plans_and_finds_the_same() {
          hit(n) :- kind(n, \"expression_statement\"), child(p, n, _), kind(p, \"module\").\n",
     )
     .unwrap();
-    let before = prepared::TAKEN.load(std::sync::atomic::Ordering::Relaxed);
+    // The test's run holds the policy run (it joins it), so the plans counted taken are this run's alone.
+    let run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     let report = crate::code_rule_dsl::tools::run_policies(&[policy.clone()], &root, &root.join("out"), &serde_json::Value::Null).unwrap();
-    let taken = prepared::TAKEN.load(std::sync::atomic::Ordering::Relaxed) - before;
+    let taken = prepared::run_counts().taken.load(std::sync::atomic::Ordering::Relaxed);
+    drop(run);
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_file(&policy);
     let mut hits: Vec<(String, i64)> = report["diagnostics"]
@@ -3247,6 +3328,15 @@ fn a_policy_run_takes_its_prepared_plans_and_finds_the_same() {
     hits.sort();
     assert_eq!(hits, [("a.py".to_owned(), 1), ("c.py".to_owned(), 1), ("c.py".to_owned(), 2)], "{report:#}");
     assert!(taken > 0, "no line was taken from the prepared plans");
+}
+
+/// A version kept with no prepared plan is read back as one (its id alone): else the next process makes it again, and
+/// writes it, every warm run (`the_run_after_a_cold_one_writes_nothing`).
+#[test]
+fn a_version_with_no_prepared_plan_is_read_back() {
+    let by: prepared::ByVersion = [([7u8; 32], std::sync::Arc::new(prepared::Prepared::default()))].into_iter().collect();
+    let back = prepared::of_store_rows(&prepared::store_rows(&by));
+    assert_eq!(back.get(&[7u8; 32]).map(|p| p.0.len()), Some(0), "kept, with no plan");
 }
 
 /// Q228: the prepared plans a run made of a version are kept for the store by its identity, and a later process's run
@@ -3307,4 +3397,33 @@ fn a_probe_bounded_by_comparisons_reads_a_range() {
     assert_eq!(order, ["ctx", "line"], "{order:?}, work={work}");
     // A pair's lines between its ends, a ninth of its file's as the comparisons are priced (a third each).
     assert!(work < 5e6, "a range a pair: {work}");
+}
+
+/// Decision 0361 step 5, derived relations: one the facts do not size is sized from its rules' plans, in dependency
+/// order, so the rules that read it are prepared too. A union's rows are its rules' summed, and only where every rule
+/// is planned (`u` has a branch over `part`, which has no size: what reads it is not prepared); a recursion's are its
+/// base rules' times a nominal depth (`anc`, with no fact declared).
+#[test]
+fn a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it() {
+    let p = parse(".decl child2(p: node, c: node, i: number)\n.input child2\n.layout child2 key(c) fanout(p -> c, few) order(i dense in p)\n\
+                   .decl kind2(n: node, k: symbol)\n.input kind2\n.layout kind2 key(n) size(per n) values(k, kinds)\n\
+                   .decl part(x: number, y: number)\n.input part\n\
+                   .decl o(c: node, k: symbol)\no(c, k) :- child2(p, c, _), kind2(c, k), kind2(p, \"x\").\n\
+                   .decl r(c: node)\n.output r\nr(c) :- o(c, k), kind2(c, k).\n\
+                   .decl u(c: node)\nu(c) :- o(c, _).\nu(c) :- part(c, _).\n\
+                   .decl w(c: node)\n.output w\nw(c) :- u(c), kind2(c, _).\n\
+                   .decl anc(a: node, b: node)\nanc(a, b) :- child2(a, b, _).\nanc(a, c) :- anc(a, b), child2(b, c, _).\n\
+                   .decl z(a: node)\n.output z\nz(a) :- anc(a, b), kind2(b, \"y\").\n").unwrap();
+    let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
+    let placed = body::Placed::whole(std::sync::Arc::clone(&v));
+    let prep = prepared::Prepared::of_version(&v);
+    let line = |head: &str, nth: usize, first: Option<usize>| {
+        let k = bodies_by_head(&placed).into_iter().filter(|(h, _)| h == head).nth(nth).unwrap().1;
+        crate::code_rule_dsl::logic::plan::line_key(&placed.body(k), first)
+    };
+    assert!(prep.0.contains_key(&line("r", 0, None)), "`o` sized by its rule: `r` is prepared");
+    assert!(prep.0.contains_key(&line("u", 0, None)) && !prep.0.contains_key(&line("u", 1, None)), "`u`'s branch over `part` is not");
+    assert!(!prep.0.contains_key(&line("w", 0, None)), "`u` is not sized: one of its rules is not planned");
+    assert!(prep.0.contains_key(&line("anc", 1, None)) && prep.0.contains_key(&line("anc", 1, Some(0))), "the recursion, sized by its base rule");
+    assert!(prep.0.contains_key(&line("z", 0, None)), "`anc` sized: `z` is prepared");
 }

@@ -59,12 +59,11 @@ fn run(root: &Path, out: &Path) -> (Value, Keys) {
         "flattenCpuNs":flatten_ns,"flattenWallNs":flatten_wall_ns,"cpuNs":cpu,"wallNs":wall_ns,
         "report":{"phases":report.phases,"files":report.files,"nodes":report.nodes,
             "native":report.native,"rows":report.rows,"chunks":report.chunks,"text":report.text,
-            "memo":report.memo,"cross":report.cross,"prepared":report.prepared,
+            "memo":report.memo,"prepared":report.prepared,
             "crossStrata":report.cross_strata,"crossMaintained":report.cross_maintained,
             "crossChanged":report.cross_changed,"crossAgain":report.cross_again,
             "crossDeltaCounts":report.cross_delta_counts,
             "typing":format!("{:?}",report.typing),
-            "typingRunNames":report.typing_runs.iter().map(|(name,_)|name).collect::<Vec<_>>(),
             "phaseRunCount":report.phase_runs.len(),
             "observed":{"stats":report.files_observed.stats,"hashed":report.files_observed.hashed,
                 "bytes":report.files_observed.bytes,"reused":report.files_observed.reused,
@@ -366,34 +365,4 @@ result(t) :- field(_,"right",n), text(n,t).
     for run in runs {
         run.join().unwrap();
     }
-}
-
-#[test]
-fn demanded_component_graph_keeps_cross_file_cache_results() {
-    let base = crate::code_rule_dsl::prefilter::tests::temp().with_extension("component-demand");
-    let root = base.join("src");
-    std::fs::create_dir_all(&root).unwrap();
-    std::fs::write(root.join("a.py"), "def f():\n    pass\n").unwrap();
-    std::fs::write(root.join("b.py"), "from a import f\ndef g():\n    pass\n").unwrap();
-    let src = r#"
-#include "core.rr"
-.pragma "cross-memo" "uses"
-.decl def(n:node,q:symbol)
-def(n,@dot(m,x)) :- kind(n,"function_definition"), field(n,"name",c), text(c,x), docof(n,d), doc(d,_,m).
-.decl imp(n:node,q:symbol)
-imp(n,@dot(m,x)) :- kind(n,"import_from_statement"), field(n,"module_name",mn), text(mn,m), field(n,"name",xn), text(xn,x).
-.decl uses(n:node,f:node)
-uses(n,f) :- imp(n,q), def(f,q).
-.output uses
-"#;
-    let out = base.join("out");
-    let run = || corpus::run_with_options(&[src], &root, None, &out, "program", Binding::Cpu,
-        1 << 18, &corpus::Typing::default(), &json!({"inputFiles":["a.py","b.py"]})).unwrap();
-    let first = run();
-    let rows = crate::code_rule_dsl::logic::plan::output::shown(&out, "uses").unwrap();
-    assert_eq!(first.cross, (0, 2));
-    assert_eq!(rows.len(), 1);
-    assert_eq!(run().cross, (2, 0));
-    assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "uses").unwrap(), rows);
-    std::fs::remove_dir_all(base).unwrap();
 }

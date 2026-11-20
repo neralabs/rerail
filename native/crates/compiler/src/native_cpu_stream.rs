@@ -103,8 +103,14 @@ pub struct Ctx {
     /// Tier 1's records' layout (`records::RecordLayout`): the bytes from a token's start,
     /// last or code to the next token's (4 in columns, 12 in rows).
     record_stride: u64,
+    /// A format 16 run's (decision 0434 §6, R17; `CompiledStream::sixteen`): the writer's state, its ops'
+    /// argument; each slot key's number in the language's table (`Numbers`). Null in a format 15 run.
+    writer: *mut u8,
+    numbers: *const u32,
 }
 
+const WRITER: i32 = std::mem::offset_of!(Ctx, writer) as i32;
+const NUMBERS: i32 = std::mem::offset_of!(Ctx, numbers) as i32;
 const RECORD_STRIDE: i32 = std::mem::offset_of!(Ctx, record_stride) as i32;
 const SIZE_C: i32 = std::mem::offset_of!(Ctx, size_c) as i32;
 const OFF_C: i32 = std::mem::offset_of!(Ctx, off_c) as i32;
@@ -118,8 +124,6 @@ const CODE_FIRST: i32 = std::mem::offset_of!(Ctx, code_first) as i32;
 /// The run stopped for the tape's room: the host runs it again with the bound's room.
 pub const OVERFLOW: u64 = u64::MAX;
 
-/// Runs again on the bound's tape (`CompiledStream::call`), for the profile.
-pub static ROOM_RETRIES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// The field offsets of `Ctx`.
 const BYTES: i32 = 0;
@@ -220,9 +224,6 @@ impl NodeCol {
 /// Tier 2's entry: `ctx`, the run's end.
 pub type Entry = unsafe extern "C" fn(*const Ctx) -> u64;
 
-/// Keep each tier 2 function's IR (`CompiledStream::ir`), for an ahead-of-time build of the same
-/// code (`clif_rust`).
-pub static KEEP_IR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// The most a program writes between two `TOKEN`s: nodes, supertypes and returns pushed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -238,6 +239,11 @@ pub struct Bounds {
     pub pop_nodes: u64,
     pub pop_supers: u64,
 }
+
+/// A language's numbers by tier 2's slot keys (`native_cpu_tape::id_slots`, as `native_cpu_tape::commit` keys a
+/// node): what a format 16 run passes each node's number by (decision 0434 §6, R17). `u32::MAX` where the
+/// language's table has none for the key.
+pub struct Numbers(Vec<u32>);
 
 /// A compiled tier-2 program.
 pub struct CompiledStream {
@@ -260,6 +266,10 @@ pub struct CompiledStream {
     tag: u8,
     /// The supertype classes the codes carry (`supertype_classes`).
     classes: Vec<u16>,
+    /// The kinds that are extras (a code's flag).
+    extras: Vec<u16>,
+    /// The run passes its nodes to the format 16 writer's ops (`compile_with`), and writes no format 15 image.
+    pub sixteen: bool,
     /// The program has context beside each return (`has_context`): two return slots a call.
     context: bool,
     pub clif: String,
@@ -289,7 +299,7 @@ pub struct CompiledStream {
     pub word_bytes: Vec<u32>,
     /// Each word's machine code's ranges in `code_bytes` (its place, start, end), for the shape.
     pub word_ranges: Vec<(u32, u32, u32)>,
-    /// With `KEEP_IR`: each function's IR as Cranelift was given it (its `FuncId`), and the
+    /// With `Options::keep_ir`: each function's IR as Cranelift was given it (its `FuncId`), and the
     /// entry's id.
     pub ir: Vec<(u32, cranelift_codegen::ir::Function)>,
     pub entry_id: u32,
@@ -1890,9 +1900,29 @@ const DROPPED_IN: i64 = 2;
 
 impl Table<'_> {
     /// A kind's change on row `at`: its key's kind (16 bits).
-    fn retag(&self, f: &mut FunctionBuilder<'_>, rows: Value, at: Value, kind: Value) {
+    /// Node `at`'s kind made `kind`. Where it is committed, its codes taken back (`uncode`); in a format 16 run,
+    /// where the ops already took it (the root, which they hold open), retagged there too.
+    fn retag(&self, f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, rows: Value, at: Value, kind: Value) {
         let row = NodeCol::row(f, rows, at);
         f.ins().istore16(MemFlags::trusted(), kind, row, AT_KIND);
+        let Some(s) = &self.fns.sixteen else {
+            self.uncode(f, e, at);
+            return;
+        };
+        let passed = (e.get)(f, Mem::Codes);
+        let before = f.ins().icmp(IntCC::UnsignedLessThan, at, passed);
+        let (again, after, done) = (f.create_block(), f.create_block(), f.create_block());
+        f.ins().brif(before, again, &[], after, &[]);
+        f.switch_to_block(again);
+        f.set_cold_block(again);
+        let (desc, numbers) = ((e.ctx)(f, WRITER), (e.ctx)(f, NUMBERS));
+        let (snode, skind, supers) = ((e.ctx)(f, SUPER_NODE), (e.ctx)(f, SUPER_KIND), (e.get)(f, Mem::Supers));
+        call_own(f, s.retag.0, &s.retag.1, &[desc, numbers, rows, snode, skind, supers, at]);
+        f.ins().jump(done, &[]);
+        f.switch_to_block(after);
+        self.uncode(f, e, at);
+        f.ins().jump(done, &[]);
+        f.switch_to_block(done);
     }
 
     /// Node `node`'s offset, at its push with start `start`: from its block's base, which it sets
@@ -1984,8 +2014,21 @@ impl Table<'_> {
         f.switch_to_block(done);
     }
 
-    /// Nodes `from..to` final: their codes (`native_cpu_tape::commit`).
+    /// Nodes `from..to` final: their codes (`native_cpu_tape::commit`). In a format 16 run (decision 0434 §6,
+    /// R17), `to` is the commit point: the nodes from the last passed up to the commit point before it are passed
+    /// to the ops (`pass`). A commit point is final only where no word reaches before it, and one word does: a
+    /// fold of the root's two leaves retags the first, which is the commit point before the second's
+    /// (`fold_word`). So the ops take nodes one commit point behind. `Mem::Coded` is the commit point and
+    /// `Mem::Codes` the nodes passed.
     fn commit(&self, f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, to: Value) {
+        if self.fns.sixteen.is_some() {
+            let (passed, point) = ((e.get)(f, Mem::Codes), (e.get)(f, Mem::Coded));
+            self.pass(f, e, passed, point, true);
+            let passed = f.ins().umax(passed, point);
+            (e.set)(f, Mem::Codes, passed);
+            (e.set)(f, Mem::Coded, to);
+            return;
+        }
         let from = (e.get)(f, Mem::Coded);
         let (rows, image, id_of, kf, first) = ((e.ctx)(f, ROWS), (e.ctx)(f, IMAGE), (e.ctx)(f, ID_OF), (e.ctx)(f, CODE_KF), (e.ctx)(f, CODE_FIRST));
         let code = f.ins().iadd_imm(image, rerail_tape_format::HEADER_BYTES as i64);
@@ -1997,6 +2040,15 @@ impl Table<'_> {
         (e.set)(f, Mem::Coded, to);
     }
 
+    /// Nodes `from..to` passed to the ops (`native_cpu_tape::pass`); the root kept open where `keep`.
+    fn pass(&self, f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, from: Value, to: Value, keep: bool) {
+        let s = self.fns.sixteen.as_ref().expect("a format 16 run's");
+        let (desc, rows, size_c, numbers) = ((e.ctx)(f, WRITER), (e.ctx)(f, ROWS), (e.ctx)(f, SIZE_C), (e.ctx)(f, NUMBERS));
+        let (snode, skind, supers) = ((e.ctx)(f, SUPER_NODE), (e.ctx)(f, SUPER_KIND), (e.get)(f, Mem::Supers));
+        let keep = f.ins().iconst(types::I64, i64::from(keep));
+        call_own(f, s.pass.0, &s.pass.1, &[desc, rows, size_c, numbers, snode, skind, supers, from, to, keep]);
+    }
+
     /// An edit of node `node`: where it is committed, the codes from it taken back
     /// (`native_cpu_tape::uncode`), numbered again at the next commit.
     fn uncode(&self, f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, node: Value) {
@@ -2006,6 +2058,23 @@ impl Table<'_> {
         f.ins().brif(before, back, &[], done, &[]);
         f.switch_to_block(back);
         f.set_cold_block(back);
+        if let Some(s) = &self.fns.sixteen {
+            // The commit point moved back to the edit; an edit of a node passed is the ops' failure.
+            let passed = (e.get)(f, Mem::Codes);
+            let early = f.ins().icmp(IntCC::UnsignedLessThan, node, passed);
+            let (bad, moved) = (f.create_block(), f.create_block());
+            f.ins().brif(early, bad, &[], moved, &[]);
+            f.switch_to_block(bad);
+            f.set_cold_block(bad);
+            let desc = (e.ctx)(f, WRITER);
+            crate::native_cpu_tape::fail_op(f, &s.ops, desc, rerail_clif::writer::fail::PASSED, node);
+            f.ins().jump(moved, &[]);
+            f.switch_to_block(moved);
+            (e.set)(f, Mem::Coded, node);
+            f.ins().jump(done, &[]);
+            f.switch_to_block(done);
+            return;
+        }
         let (id_of, kf, first) = ((e.ctx)(f, ID_OF), (e.ctx)(f, CODE_KF), (e.ctx)(f, CODE_FIRST));
         let codes = (e.get)(f, Mem::Codes);
         let (id, sig, _) = &self.fns.uncode;
@@ -2238,7 +2307,7 @@ fn made_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, x: Valu
     let r = f.ins().iadd_imm(last, -1);
     let rows = (e.ctx)(f, ROWS);
     if retag {
-        t.retag(f, rows, r, x);
+        t.retag(f, e, rows, r, x);
     } else {
         let col = NodeCol::of(rows, AT_FIELD);
         // A call's field (`On::MadeUnset`): the node's own, where it has one.
@@ -2268,7 +2337,7 @@ fn here_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: V
     let open_c = (e.ctx)(f, OPEN);
     let at = slot_get(f, open_c, top);
     let rows = (e.ctx)(f, ROWS);
-    t.retag(f, rows, at, kind);
+    t.retag(f, e, rows, at, kind);
 }
 
 /// `MERGE m=1`: the innermost open node holds two leaves and nothing else, no extra pending:
@@ -2297,7 +2366,9 @@ fn fold_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: V
     (e.guard)(f, na);
     (e.guard)(f, nb);
     let end = end_c.get_row(f, rb);
-    t.retag(f, rows, a, kind);
+    // The first may be committed (the root's two leaves, each closed at the top level): the retag takes its codes
+    // back.
+    t.retag(f, e, rows, a, kind);
     end_c.put_row(f, ra, end);
     let one = f.ins().iconst(types::I64, 1);
     t.close_cells(f, e, a, one, a, end);
@@ -2334,7 +2405,7 @@ fn merge_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: 
     let bad = f.ins().band(any, inside);
     (e.guard)(f, bad);
     let end = token_end_at(f, e, end_at);
-    t.retag(f, rows, leaf, kind);
+    t.retag(f, e, rows, leaf, kind);
     end_c.put_row(f, leaf_row, end);
     let one = f.ins().iconst(types::I64, 1);
     t.close_cells(f, e, leaf, one, leaf, end);
@@ -2739,7 +2810,7 @@ fn call_word(f: &mut FunctionBuilder<'_>, id: cranelift_module::FuncId, signatur
 }
 
 /// A call of an outlined function (`outline`), from `f`.
-fn call_own(f: &mut FunctionBuilder<'_>, id: cranelift_module::FuncId, signature: &cranelift_codegen::ir::Signature, args: &[Value]) -> Vec<Value> {
+pub(crate) fn call_own(f: &mut FunctionBuilder<'_>, id: cranelift_module::FuncId, signature: &cranelift_codegen::ir::Signature, args: &[Value]) -> Vec<Value> {
     let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, id.as_u32()));
     let signature = f.import_signature(signature.clone());
     let callee = f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
@@ -2763,6 +2834,16 @@ struct TableFns {
     commit: OwnFn,
     uncode: OwnFn,
     finish: OwnFn,
+    /// A format 16 run's (`compile_with`): the writer's ops, defined in the module, and the passes that call them.
+    sixteen: Option<Sixteen>,
+}
+
+/// The format 16 writer's ops in tier 2's module, and the functions of tier 2's own that call them
+/// (`native_cpu_tape::pass`, `native_cpu_tape::retag`).
+struct Sixteen {
+    ops: crate::native_cpu_tape::Ops,
+    pass: OwnFn,
+    retag: OwnFn,
 }
 
 /// The supertypes a program's nodes are put in (`NODE_SUPER`'s kinds), ascending: each a bit of
@@ -2778,7 +2859,7 @@ pub(crate) fn supertype_classes(native: &Structure) -> Result<Vec<u16>, Error> {
 }
 
 impl TableFns {
-    fn make(module: &mut JITModule, words: &[crate::native_ir::StructuralBlock], x: crate::native_cpu_tape::Image<'_>) -> Result<Self, Error> {
+    fn make(module: &mut JITModule, words: &[crate::native_ir::StructuralBlock], x: crate::native_cpu_tape::Image<'_>, sixteen: bool) -> Result<Self, Error> {
         let w = x.widths;
         let inner = words.iter().any(|b| matches!(b.operation, Op::NodeField { on: On::Inner, .. } | Op::Reread { .. }));
         let wraps = words.iter().any(|b| matches!(b.operation, Op::Wrap { .. }));
@@ -2789,16 +2870,37 @@ impl TableFns {
         let commit = outline(module, "tempo_tape_commit", 11, 1, false, &[], |f, p, heads| crate::native_cpu_tape::commit(f, p, x.classes, heads))?;
         let uncode = outline(module, "tempo_tape_uncode", 5, 1, false, &[], crate::native_cpu_tape::uncode)?;
         let finish = outline(module, "tempo_tape_finish", 10, 1, false, &[], |f, p, heads| crate::native_cpu_tape::finish(f, p, x, heads))?;
-        Ok(TableFns { shift, drop, blocks, commit, uncode, finish })
+        let sixteen = if sixteen {
+            let ids = rerail_clif::writer::define_ops(module, cranelift_module::Linkage::Local).map_err(|e| {
+                if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
+                    eprintln!("the writer's ops: {e}");
+                }
+                Error::BackendFailure
+            })?;
+            let ops = crate::native_cpu_tape::Ops::of(&ids);
+            let names = ops.names();
+            let pass = outline(module, "tempo_tape_pass", 10, 0, false, &names, |f, p, heads| crate::native_cpu_tape::pass(f, p, x.classes, w.size, &ops, heads))?;
+            let retag = outline(module, "tempo_tape_retag", 7, 0, false, &names, |f, p, heads| crate::native_cpu_tape::retag(f, p, x.classes, &ops, heads))?;
+            Some(Sixteen { ops, pass, retag })
+        } else {
+            None
+        };
+        Ok(TableFns { shift, drop, blocks, commit, uncode, finish, sixteen })
     }
 
     /// The functions' names: the node words' functions call them.
     fn names(&self) -> Vec<cranelift_codegen::ir::UserExternalName> {
-        self.shift.iter().chain(&self.drop).chain([&self.blocks, &self.commit, &self.uncode, &self.finish]).map(|f| cranelift_codegen::ir::UserExternalName::new(0, f.0.as_u32())).collect()
+        let passes = self.sixteen.iter().flat_map(|s| [&s.pass, &s.retag]);
+        let mut names: Vec<_> = self.shift.iter().chain(&self.drop).chain([&self.blocks, &self.commit, &self.uncode, &self.finish]).chain(passes).map(|f| cranelift_codegen::ir::UserExternalName::new(0, f.0.as_u32())).collect();
+        if let Some(s) = &self.sixteen {
+            names.extend(s.ops.names());
+        }
+        names
     }
 
     fn all(self) -> impl Iterator<Item = OwnFn> {
-        self.shift.into_iter().chain(self.drop).chain([self.blocks, self.commit, self.uncode, self.finish])
+        let passes = self.sixteen.into_iter().flat_map(|s| [s.pass, s.retag]);
+        self.shift.into_iter().chain(self.drop).chain([self.blocks, self.commit, self.uncode, self.finish]).chain(passes)
     }
 }
 
@@ -3216,8 +3318,8 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
 }
 
 /// `compile`'s cut: every word in one cluster, at the configured speed.
-fn one_cut(native: &Structure) -> crate::native_cpu_clusters::Cut {
-    let speed = crate::native_cpu_codegen::OPTIMIZE_TIER2.load(std::sync::atomic::Ordering::Relaxed);
+pub(crate) fn one_cut(native: &Structure) -> crate::native_cpu_clusters::Cut {
+    let speed = crate::native_cpu_codegen::options().optimize_tier2.load(std::sync::atomic::Ordering::Relaxed);
     crate::native_cpu_clusters::Cut { speed, ..crate::native_cpu_clusters::Cut::one(native.structural.len()) }
 }
 
@@ -3245,6 +3347,13 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
 /// `compile_cut`, the tape written at `widths` (constants of the code: docs/parser-generators/37)
 /// with the language's tag `tag`.
 pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, widths: rerail_tape_format::Widths, tag: u8) -> Result<CompiledStream, Error> {
+    compile_with(native, cut, widths, tag, false)
+}
+
+/// `compile_at`; where `sixteen`, the run writes format 16 by the writer's ops (decision 0434 §6, R17): at each
+/// commit point it passes the nodes before the last one to the ops (`native_cpu_tape::pass`), at `ACCEPT` the rest,
+/// and it writes no format 15 image (no codes, no image's end). Its run takes the writer (`Parser::image16`).
+pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, widths: rerail_tape_format::Widths, tag: u8, sixteen: bool) -> Result<CompiledStream, Error> {
     let widths_tag = (widths, tag);
     if cut.of.len() != native.structural.len() || cut.count == 0 || (native.structural.is_empty() && cut.count > 1) {
         return Err(Error::UnsupportedBackend);
@@ -3343,7 +3452,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
     // The node words' rare loops, outlined (`TableFns`).
     let classes = supertype_classes(native)?;
     let image = crate::native_cpu_tape::Image { tag: widths_tag.1, widths: widths_tag.0, extras: &native.readings.extras, classes: &classes };
-    let table_fns = TableFns::make(&mut module, &native.structural, image)?;
+    let table_fns = TableFns::make(&mut module, &native.structural, image, sixteen)?;
     // A region `TOKEN` splits (decision 0323, lowering B).
     let split = split_parts(native)?;
     let table = Table { inner: crate::rust_stream::marks(native), w: widths_tag.0, fns: &table_fns, split: split.as_deref().zip(native.block_programs.first()) };
@@ -4666,7 +4775,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                         let k = if remembered { remembered_kind(g, e) } else { q[0] };
                         let m = (e.get)(g, Mem::Moved);
                         let rows = (e.ctx)(g, ROWS);
-                        table.retag(g, rows, m, k);
+                        table.retag(g, e, rows, m, k);
                     });
                 }
                 Op::Wrap { kind } if wrapping => {
@@ -4790,7 +4899,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                             }
                             m => {
                                 let m = kind_of(&mut f, m, pc);
-                                table.retag(&mut f, rows_here, i, m);
+                                table.retag(&mut f, &env, rows_here, i, m);
                                 f.ins().jump(scan, &[BlockArg::from(i1), BlockArg::from(gone)]);
                             }
                         }
@@ -5085,20 +5194,28 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                         f.switch_to_block(after);
                     }
                     // A value past its width (an offset, a tail, the node count): refused at
-                    // these widths (docs/parser-generators/37: parsed again at wider ones).
-                    let wide = mget(&mut f, Mem::Wide);
-                    guard(&mut f, wide, pc);
-                    if table.w.size == 2 {
-                        let many = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, nodes, 0xffff);
-                        guard(&mut f, many, pc);
-                    }
-                    // The codes of the nodes not yet committed, then the image's end.
-                    table.commit(&mut f, &env, nodes);
-                    let image_p = env_ctx(&mut f, IMAGE);
-                    let cols = [SIZE_C, BASE_C, OFF_C, TAIL_C, CODE_KF, ID_OF].map(|at| env_ctx(&mut f, at));
-                    let codes = mget(&mut f, Mem::Codes);
-                    let (id, sig, _) = &table.fns.finish;
-                    let total = call_own(&mut f, *id, sig, &[image_p, cols[0], cols[1], cols[2], cols[3], cols[4], cols[5], nodes, codes, len])[0];
+                    // these widths (docs/parser-generators/37: parsed again at wider ones). A
+                    // format 16 run reads only its sizes, compiled at 4 bytes: it passes the
+                    // nodes not yet passed, and the root is closed (`native_cpu_tape::pass`).
+                    let total = if table.fns.sixteen.is_some() {
+                        let passed = mget(&mut f, Mem::Codes);
+                        table.pass(&mut f, &env, passed, nodes, false);
+                        f.ins().iconst(types::I64, 0)
+                    } else {
+                        let wide = mget(&mut f, Mem::Wide);
+                        guard(&mut f, wide, pc);
+                        if table.w.size == 2 {
+                            let many = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, nodes, 0xffff);
+                            guard(&mut f, many, pc);
+                        }
+                        // The codes of the nodes not yet committed, then the image's end.
+                        table.commit(&mut f, &env, nodes);
+                        let image_p = env_ctx(&mut f, IMAGE);
+                        let cols = [SIZE_C, BASE_C, OFF_C, TAIL_C, CODE_KF, ID_OF].map(|at| env_ctx(&mut f, at));
+                        let codes = mget(&mut f, Mem::Codes);
+                        let (id, sig, _) = &table.fns.finish;
+                        call_own(&mut f, *id, sig, &[image_p, cols[0], cols[1], cols[2], cols[3], cols[4], cols[5], nodes, codes, len])[0]
+                    };
                     f.ins().store(flags, nodes, counts_c, 0);
                     let supers = mget(&mut f, Mem::Supers);
                     f.ins().store(flags, supers, counts_c, 8);
@@ -5269,8 +5386,10 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
     }
     let mut word_fns: Vec<_> = word_fns.into_values().collect();
     word_fns.sort_by_key(|w| w.0.as_u32());
+    // A format 16 run's word code calls the writer's ops too (a failure, `Table::uncode`).
+    let ops = table_fns.sixteen.as_ref().map(|s| s.ops.names()).unwrap_or_default();
     let own: Vec<_> = table_fns.all().chain(word_fns).collect();
-    let names: Vec<_> = own.iter().map(|(id, _, _)| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())).collect();
+    let names: Vec<_> = own.iter().map(|(id, _, _)| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())).chain(ops).collect();
     let crossings: usize = lowered.iter().map(|l| l.tails).sum();
     if clustered {
         check_across(&lowered)?;
@@ -5370,7 +5489,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
     for (_, c) in &items {
         clif.push_str(&c.func.display().to_string());
     }
-    let ir: Vec<(u32, cranelift_codegen::ir::Function)> = if KEEP_IR.load(std::sync::atomic::Ordering::Relaxed) { items.iter().map(|(fid, c)| (fid.as_u32(), c.func.clone())).collect() } else { Vec::new() };
+    let ir: Vec<(u32, cranelift_codegen::ir::Function)> = if crate::native_cpu_codegen::options().keep_ir.load(std::sync::atomic::Ordering::Relaxed) { items.iter().map(|(fid, c)| (fid.as_u32(), c.func.clone())).collect() } else { Vec::new() };
     let defined = crate::native_cpu_codegen::define_functions(&mut module, items, cut.near).map_err(|e| {
         if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
             eprintln!("tier 2: {e:?}");
@@ -5422,7 +5541,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
     let marks = words.iter().filter_map(|b| if let Op::Mark { order, .. } = b.operation { Some(u64::from(order) + 1) } else { None }).max().unwrap_or(0);
     let wraps = framed(words);
     let two_slots = has_context(words);
-    Ok(CompiledStream { _module: module, _split: split, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, wraps, widths, tag, classes: supertype_classes(native)?, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, table_passes, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
+    Ok(CompiledStream { _module: module, _split: split, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, wraps, widths, tag, classes: supertype_classes(native)?, extras: native.readings.extras.clone(), sixteen, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, table_passes, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
 }
 
 /// What an instruction does to `ctx`'s fields (`state_in_registers`).
@@ -5866,6 +5985,9 @@ pub struct Tape {
     /// A program with `WRAP`'s: frames, chains, places (a drop's stack: two slots a node).
     frames: [Vec<u32>; 3],
     chains: [Vec<u32>; 3],
+    /// A format 16 run's writer state and numbers (`Ctx::writer`, `Ctx::numbers`): null in a format 15 run.
+    writer: *mut u8,
+    numbers: *const u32,
 }
 
 thread_local! {
@@ -5877,7 +5999,8 @@ impl Drop for Tape {
     /// The id table back to the thread. A run that stopped before its end clears what it set.
     fn drop(&mut self) {
         let mut ids = std::mem::take(&mut self.id_of);
-        if self.counts[2] == 0 {
+        // A format 16 run numbers no codes: the table is as it found it.
+        if self.counts[2] == 0 && self.writer.is_null() {
             ids.fill(crate::native_cpu_tape::NO_CODE as u16);
         }
         IDS.with(|t| *t.borrow_mut() = ids);
@@ -5885,6 +6008,26 @@ impl Drop for Tape {
 }
 
 impl CompiledStream {
+    /// `lang`'s numbers by this program's keys (`Numbers`): each entry of its table that a key names (no alias, a
+    /// kind and field within a key's bits, its flags the extra's where its kind is one, its classes among the
+    /// program's), at the key.
+    pub fn numbers(&self, lang: &rerail_tape_format::f16::Lang) -> Numbers {
+        use rerail_tape_format::{CODE_EXTRA, KIND_BITS};
+        let mut by = vec![u32::MAX; crate::native_cpu_tape::id_slots(self.classes.len())];
+        for e in lang.table().entries() {
+            let Some(n) = lang.number(e) else { continue };
+            let extra = if self.extras.contains(&e.kind) { CODE_EXTRA } else { 0 };
+            if e.alias.is_some() || e.kind >= 1 << KIND_BITS || e.field >= 1 << 6 || e.flags != extra {
+                continue;
+            }
+            let bits: Option<u32> = e.classes.iter().map(|c| self.classes.iter().position(|x| x == c).map(|j| 1u32 << j)).sum();
+            let Some(bits) = bits else { continue };
+            let slot = u32::from(e.kind) | u32::from(e.field) << KIND_BITS | bits << 16;
+            by[slot as usize] = n;
+        }
+        Numbers(by)
+    }
+
     /// The widths the tape is written at, and the language's tag.
     pub fn widths_tag(&self) -> (rerail_tape_format::Widths, u8) {
         (self.widths, self.tag)
@@ -5953,6 +6096,8 @@ impl CompiledStream {
             counts: [0; 3],
             frames: std::array::from_fn(|_| room(wraps(nodes + 1))),
             chains: std::array::from_fn(|k| room(wraps(if k == 2 { 2 * nodes + 2 } else { nodes }))),
+            writer: std::ptr::null_mut(),
+            numbers: std::ptr::null(),
         };
         t.clear();
         t
@@ -5978,12 +6123,13 @@ impl CompiledStream {
     pub unsafe fn call(&self, bytes: *const u8, len: usize, tier1: Tier1View, tape: &mut Tape) -> u64 {
         // SAFETY: the caller's contract.
         let r = unsafe { self.call_once(bytes, len, tier1, tape) };
-        if r != OVERFLOW {
+        // A format 16 run's writer took the nodes passed so far: its caller runs it again (`Parser::image16`).
+        if r != OVERFLOW || !tape.writer.is_null() {
             // SAFETY: the code wrote the image and supertypes it counted.
             unsafe { tape.written(r == 0) };
             return r;
         }
-        ROOM_RETRIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        crate::native_cpu_codegen::options().room_retries.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         *tape = self.full_tape(self.tokens(tier1.nstarts, len));
         // SAFETY: as above, on the bound's tape.
         let r = unsafe { self.call_once(bytes, len, tier1, tape) };
@@ -6044,6 +6190,8 @@ impl CompiledStream {
             code_kf: tape.code_kf.as_mut_ptr(),
             code_first: tape.code_first.as_mut_ptr(),
             record_stride: tier1.record_stride as u64,
+            writer: tape.writer,
+            numbers: tape.numbers,
         };
         // SAFETY: the caller's contract; the function writes only the tape's buffers and the
         // state in `ctx`.
@@ -6052,6 +6200,68 @@ impl CompiledStream {
 
     /// The words over tier 1's run of `bytes`, as the interpreter's `stream::run` gives them.
     pub fn run(&self, bytes: &[u8], tier1: &crate::block::BlockRun) -> Result<Vec<Node>, Refused> {
+        let mut tape = self.tape(self.tokens(self.records_of(tier1), bytes.len()));
+        let r = self.run_raw(bytes, tier1, &mut tape);
+        if r != 0 {
+            return Err(Refused { pc: r as usize - 1, why: "the compiled words refuse", at: None });
+        }
+        Ok(tape.nodes())
+    }
+
+    /// The records tier 1's run of a file gives the words.
+    fn records_of(&self, tier1: &crate::block::BlockRun) -> usize {
+        self.starts.map_or(0, |e| tier1.positions[e].len())
+    }
+
+    /// The format 15 image `run` writes (a test's), or the call's result.
+    #[cfg(test)]
+    pub fn image_on(&self, bytes: &[u8], tier1: &crate::block::BlockRun) -> Result<Vec<u8>, u64> {
+        let mut tape = self.tape(self.tokens(self.records_of(tier1), bytes.len()));
+        match self.run_raw(bytes, tier1, &mut tape) {
+            0 => Ok(tape.image()),
+            r => Err(r),
+        }
+    }
+
+    /// `Parser::image16` over tier 1's run `tier1` (a test's), by this tier 2, compiled to write format 16.
+    #[cfg(test)]
+    pub fn image16_on(&self, bytes: &[u8], tier1: &crate::block::BlockRun, lang: &rerail_tape_format::f16::Lang, numbers: &Numbers, z: bool) -> Result<rerail_tape_format::f16::Written, String> {
+        self.write16(self.tokens(self.records_of(tier1), bytes.len()), bytes, lang, numbers, z, |tape| self.run_raw(bytes, tier1, tape))
+    }
+
+    /// A format 16 run of `source` (`Parser::image16`): the writer made and its room reserved for the tape's nodes and
+    /// a guess of the depth, then `call` on the tape that carries it; again with the bound's room where a part was
+    /// full (the open nodes past the guess) or the call overflowed tier 2's own room.
+    fn write16(&self, tokens: usize, source: &[u8], lang: &rerail_tape_format::f16::Lang, numbers: &Numbers, z: bool, mut call: impl FnMut(&mut Tape) -> u64) -> Result<rerail_tape_format::f16::Written, String> {
+        use rerail_clif::writer::{fail, part};
+        if !self.sixteen {
+            return Err("a tier 2 compiled for format 15".into());
+        }
+        let mut tape = self.tape(tokens);
+        let (mut depth, mut full) = (64, false);
+        loop {
+            let nodes = tape.room_nodes();
+            let mut w = rerail_tape_format::f16::Writer::new(lang, source, self.tag, z, false, nodes);
+            w.reserve_run(nodes, depth.min(nodes));
+            tape.writer = w.state_address();
+            tape.numbers = numbers.0.as_ptr();
+            match call(&mut tape) {
+                0 => match w.failure() {
+                    None => return w.finish().map(|f| f.tape),
+                    Some((code, _)) if code == fail::FULL + part::OPEN && depth < nodes => depth = nodes,
+                    Some((code, node)) => return Err(format!("the writer's ops failed: {code:#x} at node {node}")),
+                },
+                OVERFLOW if !full => {
+                    full = true;
+                    tape = self.full_tape(tokens);
+                }
+                r => return Err(format!("tier 2 refuses the file at word {}", r.wrapping_sub(1))),
+            }
+        }
+    }
+
+    /// `run`'s call, on `tape`: 0, one more than the word that refused, or `OVERFLOW` (a format 16 run's).
+    fn run_raw(&self, bytes: &[u8], tier1: &crate::block::BlockRun, tape: &mut Tape) -> u64 {
         let mut padded = vec![0u8; bytes.len() + 65];
         padded[1..=bytes.len()].copy_from_slice(bytes);
         let stream = |e: Option<usize>| -> (Vec<u32>, usize) {
@@ -6073,7 +6283,6 @@ impl CompiledStream {
         let lasts = stream(self.lasts);
         let mut codes = tier1.codes.clone();
         codes.extend([0, 0]);
-        let mut tape = self.tape(self.tokens(starts.1, bytes.len()));
         let totals = if tier1.totals.is_empty() { vec![0] } else { tier1.totals.clone() };
         // SAFETY: `padded` has the byte before and 64 after; each stream two slots past its count;
         // the tape is sized for the stream; every output has `count` words in `all`.
@@ -6090,11 +6299,7 @@ impl CompiledStream {
             totals_stride: 8,
             totals_mask: u64::MAX,
         };
-        let r = unsafe { self.call(padded.as_ptr().wrapping_add(1), bytes.len(), view, &mut tape) };
-        if r != 0 {
-            return Err(Refused { pc: r as usize - 1, why: "the compiled words refuse", at: None });
-        }
-        Ok(tape.nodes())
+        unsafe { self.call(padded.as_ptr().wrapping_add(1), bytes.len(), view, tape) }
     }
 }
 
@@ -6205,11 +6410,13 @@ struct Wide {
     native: Structure,
     cut: crate::native_cpu_clusters::Cut,
     streams: [std::sync::OnceLock<Option<CompiledStream>>; 8],
+    /// Tier 2 writing format 16 (`Parser::sixteen`).
+    sixteen: std::sync::OnceLock<Option<CompiledStream>>,
 }
 
 impl Wide {
     fn new(native: &Structure, cut: crate::native_cpu_clusters::Cut) -> Option<Self> {
-        Some(Wide { native: native.clone(), cut, streams: Default::default() })
+        Some(Wide { native: native.clone(), cut, streams: Default::default(), sixteen: Default::default() })
     }
 
     fn slot(w: rerail_tape_format::Widths) -> usize {
@@ -6348,6 +6555,15 @@ impl Parser {
 
     /// `words`, by tier 2 `t2` (the narrow one or the wide one).
     fn words_with(&self, t2: &CompiledStream, batch: &crate::native_cpu_block::Batch, tape: &mut Tape) -> Result<(), Refused> {
+        let r = self.words_raw(t2, batch, tape);
+        if r != 0 {
+            return Err(Refused { pc: r as usize - 1, why: "the compiled words refuse", at: None });
+        }
+        Ok(())
+    }
+
+    /// `words_with`'s call: 0, one more than the word that refused, or `OVERFLOW` (a format 16 run's).
+    fn words_raw(&self, t2: &CompiledStream, batch: &crate::native_cpu_block::Batch, tape: &mut Tape) -> u64 {
         let row = batch.rows[0];
         let extracts = self.tier1.extracts.len();
         let starts = self.stream(batch, t2.starts);
@@ -6383,11 +6599,28 @@ impl Parser {
             totals_mask: u64::MAX,
             record_stride: layout.stride() as usize,
         };
-        let r = unsafe { t2.call(batch.bytes.as_ptr().wrapping_add(row.bytes as usize), row.len as usize, view, tape) };
-        if r != 0 {
-            return Err(Refused { pc: r as usize - 1, why: "the compiled words refuse", at: None });
-        }
-        Ok(())
+        unsafe { t2.call(batch.bytes.as_ptr().wrapping_add(row.bytes as usize), row.len as usize, view, tape) }
+    }
+
+    /// Tier 2 compiled to write format 16 (`compile_with`), on first use: `None` for a parser made `from_parts`, or a
+    /// structure the compiler refuses so. Its sizes are 4 bytes, the one column its passes read.
+    pub fn sixteen(&self) -> Option<&CompiledStream> {
+        let w = self.wide.as_ref()?;
+        let widths = rerail_tape_format::Widths { size: 4, ..rerail_tape_format::Narrow::WIDTHS };
+        w.sixteen.get_or_init(|| compile_with(&w.native, &w.cut, widths, w.native.tag, true).ok()).as_ref()
+    }
+
+    /// The format 16 tape (16z where `z`) of `bytes` in `lang`, written by tier 2 as it parses, through the
+    /// writer's ops (decision 0434 §6, R17): no format 15 image is made. `numbers`: `lang`'s numbers by the format
+    /// 16 tier 2's keys (`CompiledStream::numbers`). The writer's room is reserved for the bound's nodes and a
+    /// guess of the depth; a run that found a part full (the open nodes past the guess, or tier 2's own room past
+    /// its guess) runs again with the bound's room. `Err` for a file tier 2 refuses, or a failure of the ops.
+    pub fn image16(&self, bytes: &[u8], lang: &rerail_tape_format::f16::Lang, numbers: &Numbers, z: bool) -> Result<rerail_tape_format::f16::Written, String> {
+        let t2 = self.sixteen().ok_or("no format 16 tier 2 for this parser")?;
+        let mut batch = crate::native_cpu_block::Batch::new(&self.tier1, &[bytes]);
+        batch.call(&self.tier1);
+        let tokens = t2.tokens(self.stream(&batch, t2.starts).1, bytes.len());
+        t2.write16(tokens, bytes, lang, numbers, z, |tape| self.words_raw(t2, &batch, tape))
     }
 }
 

@@ -5,7 +5,12 @@ edition = "2024"
 publish = false
 description = "Spike for decision 0266: blocks holding nested, self-relative structures; base + delta; freeze; read and written on CPU and GPU."
 
+[features]
+# The tests' shared object for reads outside a run (decision 0442).
+test-hooks = ["rerail-context/test-hooks"]
+
 [dependencies]
+rerail-context = { path = "../context" }
 libc = "0.2.189"
 rayon = "=1.12.0"
 
@@ -15,3 +20,7 @@ metal = "0.33.0"
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 # The deallocator of a no-copy Metal buffer (examples/deferrable).
 block = "0.1.6"
+
+[dev-dependencies]
+rerail-blocks = { path = ".", features = ["test-hooks"] }
+rerail-context = { path = "../context", features = ["test-hooks"] }

@@ -83,3 +83,30 @@ impl Reads {
         f(tape.as_ptr(), view, i as u32, k)
     }
 }
+
+/// The writer's ops (decision 0434 §6) compiled by the JIT, each its own exported function, calling the others: what
+/// a test runs against their Rust and the reference writer (R15). Each takes the state's address, then its own
+/// parameters, in the platform's C convention.
+pub struct Writer {
+    _module: cranelift_jit::JITModule,
+    fns: std::collections::HashMap<&'static str, *const u8>,
+}
+
+impl Writer {
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
+        let mut builder = cranelift_jit::JITBuilder::new(cranelift_module::default_libcall_names()).unwrap();
+        // One arena, so a call between the ops stays in a `bl`'s reach (as `Reads`).
+        builder.memory_provider(Box::new(cranelift_jit::ArenaMemoryProvider::new_with_size(16 << 20).unwrap()));
+        let mut module = cranelift_jit::JITModule::new(builder);
+        let ids = crate::writer::define_ops(&mut module, cranelift_module::Linkage::Export).unwrap();
+        module.finalize_definitions().unwrap();
+        let fns = ids.into_iter().map(|(name, (id, _))| (name, module.get_finalized_function(id))).collect();
+        Self { _module: module, fns }
+    }
+
+    /// The compiled op `name`, for a caller that types it by its signature (`writer::signature`).
+    pub fn function(&self, name: &str) -> *const u8 {
+        self.fns[name]
+    }
+}

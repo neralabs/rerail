@@ -4571,6 +4571,31 @@ fn layouts_are_carried_with_the_program() {
     assert_eq!(about.layouts.iter().find(|(r, _)| *r == rel).map(|(_, f)| f), Some(child));
     // Combined: each relation keeps its facts under the name it has there.
     let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&policy("a"), &policy("b")]).unwrap();
-    let combined = combined.program(&Default::default()).unwrap();
-    assert_eq!(combined.layouts.get("child"), Some(child), "{:?}", combined.layouts.keys().collect::<Vec<_>>());
+    let layouts = combined.layouts();
+    assert_eq!(layouts.get("child"), Some(child), "{:?}", layouts.keys().collect::<Vec<_>>());
+}
+
+/// A negated conjunction whose parts bind the rule's variables apart (`!(lit(lo, _), lit(hi, _))`) is bound by the
+/// rule's context: alone its helper is every pair of strings in the corpus (eslint-yoda's `yoda_in_order`). One whose
+/// literals tie them (`!(link(lo, hi), lit(hi, _))`) needs none. PR #508's 3fe6f8227 (t47).
+#[test]
+fn a_negated_cross_product_is_bound_by_the_rules_context() {
+    let p = parse(concat!(
+        ".decl want(a: node, b: node)\n.decl lit(e: node, v: symbol)\n.decl link(a: node, b: node)\n.input want, lit, link\n",
+        ".decl apart(a: node, b: node)\n.decl tied(a: node, b: node)\n.output apart, tied\n",
+        "apart(lo, hi) :- want(lo, hi), !(lit(lo, _), lit(hi, _)).\n",
+        "tied(lo, hi) :- want(lo, hi), !(link(lo, hi), lit(hi, _)).\n",
+    ))
+    .unwrap();
+    front::strata(&p).unwrap_or_else(|e| panic!("{e}"));
+    let shown: Vec<String> = p.rules.iter().map(|r| r.to_string()).collect();
+    let helper = |head: &str| -> String {
+        let rule = p.rules.iter().find(|r| r.head.rel == head).unwrap_or_else(|| panic!("{shown:#?}"));
+        let not = rule.body.iter().filter_map(Literal::atom).find(|a| a.neg && a.rel.starts_with("rr_not")).unwrap_or_else(|| panic!("{shown:#?}"));
+        p.rules.iter().filter(|r| r.head.rel == not.rel).map(|r| r.to_string()).collect::<Vec<_>>().join("\n")
+    };
+    let (apart, tied) = (helper("apart"), helper("tied"));
+    let bound = |helper: &str| helper.contains("rr_ctx") || helper.contains("want(");
+    assert!(bound(&apart) && apart.contains("lit($lo") && apart.contains("lit($hi"), "{apart}\n{shown:#?}");
+    assert!(!bound(&tied), "{tied}");
 }

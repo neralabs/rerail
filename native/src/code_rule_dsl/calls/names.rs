@@ -1,5 +1,5 @@
-//! Dotted names, interned per process: every summary and call graph of every workspace holds a
-//! name as a reference to its one entry. A name holds its dotted parent (`a.b` of `a.b.c`), so the
+//! Dotted names, interned per shared object (decision 0442): every summary and call graph of the
+//! object's workspaces holds a name as a reference to its one entry. A name holds its dotted parent (`a.b` of `a.b.c`), so the
 //! graph walks prefixes without building strings. A name nothing else holds is dropped when the
 //! table has doubled since it was last swept.
 
@@ -8,7 +8,7 @@ use foldhash::{HashMap, HashSet};
 use parking_lot::RwLock;
 use std::borrow::Borrow;
 use std::hash::{Hash, Hasher};
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 struct Entry {
     family: Family,
@@ -27,10 +27,11 @@ pub struct Name(Arc<Entry>);
 impl Name {
     /// Interns `text` in `family`'s namespace, along with its dotted prefixes.
     pub fn new(family: Family, text: &str) -> Self {
-        if let Some(name) = TABLE.read().get(family, text) {
+        if let Some(name) = Self::get(family, text) {
             return name;
         }
-        let mut table = TABLE.write();
+        let held = crate::code_rule_dsl::logic::profile::shared::<Names>();
+        let mut table = held.0.write();
         let name = table.insert(family, text);
         if table.len() > 2 * table.swept.max(1 << 16) {
             table.sweep();
@@ -40,7 +41,7 @@ impl Name {
 
     /// `text`'s name in `family`, if something interned it.
     pub fn get(family: Family, text: &str) -> Option<Self> {
-        TABLE.read().get(family, text)
+        crate::code_rule_dsl::logic::profile::with_shared::<Names, _>(|n| n.0.read().get(family, text))
     }
 
     pub fn text(&self) -> &str {
@@ -142,7 +143,9 @@ impl Table {
     }
 }
 
-static TABLE: LazyLock<RwLock<Table>> = LazyLock::new(Default::default);
+/// The shared object's table (decision 0442): its names are its own, and equal only to its own.
+#[derive(Default)]
+struct Names(RwLock<Table>);
 
 impl PartialEq for Name {
     fn eq(&self, other: &Self) -> bool {

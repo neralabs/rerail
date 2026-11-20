@@ -74,6 +74,8 @@ pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run
     c.cloned(&["RUNNING"], &RUNNING);
     c.cloned(&["HANDED_DOWN"], &HANDED_DOWN);
     c.cloned(&["PHASE_ONE"], &PHASE_ONE);
+    c.cloned(&["BATCH"], &BATCH);
+    c.cloned(&["READING"], &READING);
 }
 
 /// Holds phase 1's result for the run until dropped.
@@ -189,7 +191,7 @@ pub(super) fn phase_files(read: &[crate::code_rule_dsl::logic::rr::TextNames], d
         let phases: BTreeSet<&str> = names
             .iter()
             .filter_map(|rel| rel.split_once(SEP))
-            .filter(|(phase, export)| !phase.is_empty() && !export.is_empty() && own.as_deref() != Some(*phase) && !phase.starts_with("typing_") && !phase.starts_with("rr_"))
+            .filter(|(phase, export)| !phase.is_empty() && !export.is_empty() && own.as_deref() != Some(*phase) && !phase.starts_with("rr_"))
             .map(|(phase, _)| phase)
             .collect();
         for name in phases {
@@ -218,7 +220,7 @@ pub(super) fn wanted_in(prog: &(impl ProgramFields + ?Sized), shape: &super::sha
     let mut out: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
     for rel in shape.read.iter().map(String::as_str).filter(|r| !shape.made.contains(*r) && prog.declares(r)) {
         let Some((phase, export)) = rel.split_once(SEP) else { continue };
-        if phase.is_empty() || export.is_empty() || own.as_deref() == Some(phase) || phase.starts_with("typing_") || phase.starts_with("rr_") {
+        if phase.is_empty() || export.is_empty() || own.as_deref() == Some(phase) || phase.starts_with("rr_") {
             continue;
         }
         if source(phase, dir)?.is_some() {
@@ -228,10 +230,10 @@ pub(super) fn wanted_in(prog: &(impl ProgramFields + ?Sized), shape: &super::sha
     Ok(out)
 }
 
-/// Whether `rel` names an earlier phase's export (`<phase>__<export>`): shared by every program of a run, as bridged
-/// relations are (`corpus::combine` does not prefix it).
-pub(crate) fn is_phased(rel: &str) -> bool {
-    rel.split_once(SEP).is_some_and(|(p, e)| !p.is_empty() && !e.is_empty() && !p.starts_with("typing_") && !p.starts_with("rr_") && !e.contains(SEP))
+/// Whether `rel` names an earlier phase's export (`<phase>__<export>`): shared by every program of a run
+/// (`corpus::combine` does not prefix it).
+pub fn is_phased(rel: &str) -> bool {
+    rel.split_once(SEP).is_some_and(|(p, e)| !p.is_empty() && !e.is_empty() && !p.starts_with("rr_") && !e.contains(SEP))
 }
 
 /// A batch of policies run one after another over one tree (`tools::run_policies`): while it is held, phase 1's runs
@@ -242,37 +244,54 @@ pub(crate) fn is_phased(rel: &str) -> bool {
 /// run's nested programs do. Each policy counted as its own run of the root's cross-file space, so a policy's kept
 /// inputs, used once a batch, went unused for 43 of the space's runs and were collected (by recency, before decision 0227) by another
 /// policy's write: the next batch found its kept inputs and its memo entries gone.
-pub struct Batch(#[allow(dead_code)] super::UnderWay, #[allow(dead_code)] Reading);
+///
+/// The batch is its caller's (decision 0442): held by the thread that entered it and carried to its runs' jobs
+/// (`carried`), so two batches at once, on two threads, never see each other's runs.
+pub struct Batch(#[allow(dead_code)] super::UnderWay, #[allow(dead_code)] Reading, Option<std::sync::Arc<BatchState>>);
 
 type BatchRuns = std::collections::HashMap<[u8; 32], (PhaseOne, Vec<(String, usize)>)>;
 
-static BATCH: std::sync::Mutex<Option<BatchRuns>> = std::sync::Mutex::new(None);
+/// A batch's own: its phase runs by their inputs, and its runs' memo plans by root (`batch_plans`).
+#[derive(Default)]
+pub(in crate::code_rule_dsl) struct BatchState {
+    runs: std::sync::Mutex<BatchRuns>,
+    plans: std::sync::Mutex<std::collections::HashMap<String, Vec<[u8; 32]>>>,
+}
+
+thread_local! {
+    /// The batch under way on this thread (`Batch`): its caller's, carried to its runs' jobs.
+    static BATCH: std::cell::RefCell<Option<std::sync::Arc<BatchState>>> = const { std::cell::RefCell::new(None) };
+}
 
 impl Batch {
     pub fn enter() -> Batch {
-        *BATCH.lock().expect("the batch's phase runs") = Some(BatchRuns::new());
-        Batch(super::UnderWay::enter(), Reading::enter())
+        let was = BATCH.with(|b| b.replace(Some(Default::default())));
+        Batch(super::UnderWay::enter(), Reading::enter(), was)
+    }
+
+    fn state() -> Option<std::sync::Arc<BatchState>> {
+        BATCH.with(|b| b.borrow().clone())
     }
 
     fn active() -> bool {
-        BATCH.lock().expect("the batch's phase runs").is_some()
+        BATCH.with(|b| b.borrow().is_some())
     }
 
     fn get(key: &[u8; 32]) -> Option<(PhaseOne, Vec<(String, usize)>)> {
-        BATCH.lock().expect("the batch's phase runs").as_ref().and_then(|runs| runs.get(key).cloned())
+        Self::state()?.runs.lock().expect("the batch's phase runs").get(key).cloned()
     }
 
     fn put(key: [u8; 32], run: (PhaseOne, Vec<(String, usize)>)) {
-        if let Some(runs) = BATCH.lock().expect("the batch's phase runs").as_mut() {
-            runs.insert(key, run);
+        if let Some(state) = Self::state() {
+            state.runs.lock().expect("the batch's phase runs").insert(key, run);
         }
     }
 }
 
 impl Drop for Batch {
     fn drop(&mut self) {
-        *BATCH.lock().expect("the batch's phase runs") = None;
-        *BATCH_PLANS.lock().expect("the batch's plans") = None;
+        let was = self.2.take();
+        BATCH.with(|b| *b.borrow_mut() = was);
     }
 }
 
@@ -280,26 +299,40 @@ impl Drop for Batch {
 /// too until the lean parser read it, decision 0275) share one handle on the tape cache (`reading_store`): each had opened the store and closed it,
 /// and the close of the store's last handle closes every thread's connection to it (`ContentStore`'s drop). A warm
 /// batch spent 514 of 7,850 samples so, a file at a time. A batch holds one; so does a program's reading.
-pub struct Reading(());
+///
+/// The reading is its caller's (decision 0442): held by the thread that entered it first (a nested holder joins it)
+/// and carried to its runs' jobs (`carried`).
+pub struct Reading(bool);
 
-/// The holders under way, and the handle they share: the tape cache's path, and the store there (`None`: none).
-static READING: std::sync::Mutex<(usize, Option<(std::path::PathBuf, Option<std::sync::Arc<crate::content_store::ContentStore>>)>)> = std::sync::Mutex::new((0, None));
+/// A reading's handle: the tape cache's path, and the store there (`None`: none), opened at the first read.
+#[derive(Default)]
+pub(in crate::code_rule_dsl) struct ReadingState(std::sync::Mutex<Option<(std::path::PathBuf, Option<std::sync::Arc<crate::content_store::ContentStore>>)>>);
+
+thread_local! {
+    /// The reading under way on this thread (`Reading`).
+    static READING: std::cell::RefCell<Option<std::sync::Arc<ReadingState>>> = const { std::cell::RefCell::new(None) };
+}
 
 impl Reading {
     pub fn enter() -> Reading {
-        READING.lock().expect("the reading store").0 += 1;
-        Reading(())
+        Reading(READING.with(|r| {
+            let mut r = r.borrow_mut();
+            let outer = r.is_none();
+            if outer {
+                *r = Some(Default::default());
+            }
+            outer
+        }))
     }
 }
 
 impl Drop for Reading {
     fn drop(&mut self) {
-        let held = {
-            let mut r = READING.lock().expect("the reading store");
-            r.0 -= 1;
-            if r.0 == 0 { r.1.take() } else { None }
-        };
-        drop(held);
+        if self.0 {
+            // The outermost holder's: the shared handle closes with it.
+            let held = READING.with(|r| r.borrow_mut().take());
+            drop(held);
+        }
     }
 }
 
@@ -307,24 +340,22 @@ impl Drop for Reading {
 /// none under way, or another tape cache this thread's (a test's own), one opened for the read.
 pub(in crate::code_rule_dsl) fn reading_store() -> Option<std::sync::Arc<crate::content_store::ContentStore>> {
     let path = super::tape_cache_path();
-    let mut r = READING.lock().expect("the reading store");
-    if r.0 > 0 {
-        match (&r.1, &path) {
+    if let Some(reading) = READING.with(|r| r.borrow().clone()) {
+        let mut r = reading.0.lock().expect("the reading store");
+        match (&*r, &path) {
             (Some((held, store)), Some(path)) if held == path => return store.clone(),
             (None, Some(path)) => {
                 let store = crate::content_store::ContentStore::open(path).ok().map(std::sync::Arc::new);
-                r.1 = Some((path.clone(), store.clone()));
+                *r = Some((path.clone(), store.clone()));
                 return store;
             }
             _ => {}
         }
     }
-    drop(r);
     path.and_then(|p| crate::content_store::ContentStore::open(&p).ok()).map(std::sync::Arc::new)
 }
 
-/// The memo plans of the batch's runs so far, by root (O-store-single-program).
-static BATCH_PLANS: std::sync::Mutex<Option<std::collections::HashMap<String, Vec<[u8; 32]>>>> = std::sync::Mutex::new(None);
+// The memo plans of the batch's runs so far, by root (O-store-single-program): `BatchState::plans`.
 
 /// The plans a run's manifest over `root` names besides its own (`plan`) and `also`: under a batch, its earlier runs'
 /// over the root, and this run's are added. Each policy recorded its own manifest, and collection keeps the plans of a
@@ -332,11 +363,9 @@ static BATCH_PLANS: std::sync::Mutex<Option<std::collections::HashMap<String, Ve
 /// dropped, and the next batch found a hit's memo entry gone. The batch is one run of the root. `None` outside a
 /// batch.
 pub(super) fn batch_plans(root: &str, plan: [u8; 32], also: &[[u8; 32]]) -> Option<Vec<[u8; 32]>> {
-    let mut all = BATCH_PLANS.lock().expect("the batch's plans");
-    if !Batch::active() {
-        return None;
-    }
-    let plans = all.get_or_insert_with(Default::default).entry(root.to_owned()).or_default();
+    let state = Batch::state()?;
+    let mut all = state.plans.lock().expect("the batch's plans");
+    let plans = all.entry(root.to_owned()).or_default();
     let earlier: Vec<[u8; 32]> = plans.iter().filter(|p| **p != plan && !also.contains(p)).copied().collect();
     for p in std::iter::once(&plan).chain(also) {
         if !plans.contains(p) {
@@ -377,6 +406,8 @@ pub(crate) fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::
         // Phase 1 ran before any phase, for the run (`PhaseOne`): its exports are handed on as it left them. A run
         // that did not run it (given its files, or with `RERAIL_SOURCES_PHASE=off`) reads none.
         if name == SOURCES {
+            // Its program is there (a builtin), though phase 1 ran it already.
+            let _ = source(&name, dir.as_deref())?.expect("sources.rr, a builtin phase program");
             let rows = PHASE_ONE.with(|p| p.borrow().as_ref().map(|o| o.rows.clone())).unwrap_or_default();
             hand_on(&reads, &rows, &mut facts);
             continue;

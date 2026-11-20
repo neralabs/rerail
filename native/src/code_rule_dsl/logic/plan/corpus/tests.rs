@@ -40,78 +40,82 @@ fn benchmark_phase_0() {
         super::usage().2
     );
 }
-/// Decision 0076: cross-file rows memoised per import component. b imports a; c imports nothing. An edit
-/// re-derives the edited file's component and its importers' only; `verify` derives everything again and
-/// compares; the contract refuses a relation that reads an undeclared cross-file one, and a row naming a node
-/// outside its closure.
+/// Q203 item 3 (ii): a corpus run's chunks read one normalized program, made once, not one each (each chunk's
+/// own version held every analysis of it again); the findings are those of one chunk.
 #[test]
-fn cross_file_rows_are_memoised_per_import_component() {
+fn a_runs_chunks_normalize_the_program_once() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("normal-once");
+    std::fs::create_dir_all(&dir).unwrap();
+    for (i, name) in ["a", "b", "c", "d", "e", "f", "g", "h"].iter().enumerate() {
+        std::fs::write(dir.join(format!("{name}.py")), format!("def f{i}():\n    x = {i}\n    return x\n\ndef g{i}():\n    return f{i}()\n")).unwrap();
+    }
+    let rule = dir.join("calls.rr");
+    std::fs::write(&rule, r#"
+.decl def(n: node, x: symbol)
+def(n, x) :- kind(n, "function_definition"), field(n, "name", c), text(c, x).
+.decl calls(n: node, x: symbol)
+calls(n, x) :- kind(n, "call"), field(n, "function", c), text(c, x), def(_, x).
+.output calls
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    let run = |chunk_nodes: usize, store: &str| {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(format!("store-{store}.sqlite"))));
+        let before = crate::code_rule_dsl::logic::plan::body::NORMALIZED.load(std::sync::atomic::Ordering::Relaxed);
+        let report = super::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, chunk_nodes).unwrap();
+        let normalized = crate::code_rule_dsl::logic::plan::body::NORMALIZED.load(std::sync::atomic::Ordering::Relaxed) - before;
+        (report.chunks, normalized, crate::code_rule_dsl::logic::plan::output::shown(&out, "calls").unwrap())
+    };
+    // The process's first run of the program does more than any later one (its images made): a warm-up, then
+    // each measured run over a store of its own.
+    run(1 << 20, "warm-up");
+    let (one, once, whole) = run(1 << 20, "one");
+    let (few, fewer, chunked) = run(80, "few");
+    let (many, normalized, more_chunked) = run(4, "many");
+    assert_eq!(one, 1);
+    assert!(few >= 2 && many > few, "the chunked runs' chunks: {few}, {many}");
+    assert_eq!(chunked, whole, "the findings of one chunk");
+    assert_eq!(more_chunked, whole, "the findings of one chunk");
+    assert!(whole.len() >= 4, "{whole:?}");
+    // The same at any chunk count (the file-local part's once, the cross part's, ...), none more a chunk; one chunk's
+    // run takes a part of its own besides.
+    assert_eq!(normalized, fewer, "{normalized} normalizations for {many} chunks, {fewer} for {few}");
+    assert!(normalized <= once, "{normalized} normalizations for {many} chunks, {once} for one");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The import closure (`components.rr`, decision 0450 §3): a program that reads `rr_cx_reach` has its rules added. b
+/// imports a; c imports nothing. The cross-file memo's pragma is refused: the memo is removed.
+#[test]
+fn a_program_reading_the_import_closure_has_its_rules() {
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
-    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("cross-memo");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("import-closure");
     std::fs::create_dir_all(&dir).unwrap();
     let write = |file: &str, body: &str| std::fs::write(dir.join(file), format!("{marker}{body}")).unwrap();
     write("a.py", "def f():\n    pass\n");
     write("b.py", "from a import f\ndef g():\n    pass\n");
     write("c.py", "def h():\n    pass\n");
-    let program = |pragma: &str, extra: &str| {
+    let program = |text: &str| {
         let rule = dir.join("uses.rr");
-        std::fs::write(&rule, format!(r#"
-.pragma "cross-memo" "{pragma}"
-.decl def(n: node, q: symbol)
-def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
-.decl imp(n: node, q: symbol)
-imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
-uses(n, f) :- imp(n, q), def(f, q).
-{extra}
-.output uses
-"#)).unwrap();
-        crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap()
+        std::fs::write(&rule, text).unwrap();
+        crate::code_rule_dsl::logic::rr::parse_file(&rule).map(|p| crate::code_rule_dsl::logic::rr::print(&p).unwrap())
     };
     let out = dir.join("out");
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let run = |text: &str| super::run(text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
-    let uses = || crate::code_rule_dsl::logic::plan::output::shown(&out, "uses").unwrap();
-    let text = program("uses", "");
-    let first = run(&text).unwrap();
-    assert_eq!(first.cross, (0, 3), "three components, none stored yet");
-    let derived = uses();
-    assert_eq!(derived.len(), 1, "{derived:?}");
-    let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(&out).unwrap();
-    assert_eq!(outputs.rows("uses")[0].get(0).path(), Some("b.py"), "{derived:?}");
-    drop(outputs);
-    assert_eq!(run(&text).unwrap().cross, (3, 0), "unchanged: every component found");
-    assert_eq!(uses(), derived, "replayed rows are the derived ones");
-    // An edit to c, which nothing imports: c alone is derived.
-    write("c.py", "def h():\n    return 1\n");
-    assert_eq!(run(&text).unwrap().cross, (2, 1));
-    assert_eq!(uses(), derived);
-    // An edit to a: a and b, which imports it, are derived; c is found.
-    write("a.py", "def f():\n    return 2\n");
-    assert_eq!(run(&text).unwrap().cross, (1, 2));
-    assert_eq!(uses(), derived);
-    // Verify: nothing replayed, every found component's stored rows equal to those derived.
-    let switched = super::switches::set(&[("RERAIL_CROSS_MEMO", "verify")]);
-    let verified = run(&text);
-    drop(switched);
-    assert_eq!(verified.unwrap().cross, (3, 0));
-    assert_eq!(uses(), derived);
-    // The contract: a memoised relation reading a cross-file relation the pragma does not name is refused.
-    let reads = program("wide", ".decl wide(n: node)\nwide(n) :- uses(n, _).\n.output wide");
-    let err = run(&reads).err().map(|e| e.to_string()).unwrap_or_default();
-    assert!(err.contains("wide") && err.contains("uses"), "{err}");
-    // A row about a whose other node is in b, which a does not import, is outside a's closure.
-    let back = program("uses back", ".decl back(f: node, n: node)\nback(f, n) :- uses(n, f).\n.output back");
-    let err = run(&back).err().map(|e| e.to_string()).unwrap_or_default();
-    assert!(err.contains("back") && err.contains("outside its import closure"), "{err}");
-    // A memoised relation is stored, though inlining would unfold it into its readers (decision 0099): its derived
-    // rows are read from its table to be recorded ("no such table: near" before).
-    let near = program("uses near", ".decl near(n: node, f: node)\nnear(n, f) :- uses(n, f).\n.decl far(n: node)\nfar(n) :- near(n, _).\n.output far");
-    let switched = super::switches::set(&[("RERAIL_INLINE_ONLY", "near")]);
-    let stored = run(&near);
-    drop(switched);
-    stored.unwrap();
-    assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "far").unwrap().len(), 1);
+    let text = program(
+        r#"
+#include "core.rr"
+.decl seen(p: symbol, q: symbol)
+seen(p, q) :- rr_cx_reach(d, e), d != e, doc(d, p, _), doc(e, q, _).
+.output seen
+"#,
+    )
+    .unwrap();
+    run(&text).unwrap();
+    assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "seen").unwrap(), [["b.py", "a.py"]]);
+    let err = program(".pragma \"cross-memo\" \"seen\"\n.decl seen(p: symbol)\nseen(p) :- doc(_, p, _).\n.output seen\n").err().map(|e| format!("{e:?}")).unwrap_or_default();
+    assert!(err.contains("cross-memo") && err.contains("removed"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -491,6 +495,71 @@ unused(f) :- def(f, _), !used(f).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A `finding` of another shape than the findings form (`finding(key, n)`) is an output like any other: held in the
+/// cross-file part, where no nodes or documents are bound, it is read where it is held, not from a table nothing
+/// wrote ("no such table: finding" on internal_dead_code's `finding(category, symbol, n)`).
+#[test]
+fn a_finding_of_three_columns_held_cross_file_is_read_where_it_is() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("finding3");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "def f():\n    pass\n").unwrap();
+    std::fs::write(dir.join("b.py"), "from a import f\ndef g():\n    pass\n").unwrap();
+    let rule = dir.join("finding.rr");
+    std::fs::write(&rule, r#"
+.decl def(n: node, q: symbol)
+def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
+.decl imp(n: node, q: symbol)
+imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
+.decl used(f: node)
+used(f) :- imp(_, q), def(f, q).
+.decl finding(category: symbol, q: symbol, n: node)
+finding("unused", q, f) :- def(f, q), !used(f).
+.output finding
+"#).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let rows = crate::code_rule_dsl::logic::plan::output::shown(&out, "finding").unwrap();
+    let names: Vec<&str> = rows.iter().map(|row| row[1].as_str()).collect();
+    assert!(rows.iter().all(|row| row.len() == 3 && row[0] == "unused"), "{rows:?}");
+    assert!(names.iter().any(|q| q.ends_with("g")) && !names.iter().any(|q| q.ends_with(".f")), "g is unused, f is imported: {rows:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0434 §4, step 6: a run's parses are stored with their presences after them, each tape's home as one: a
+/// tape read back from the store holds its document's kinds.
+#[test]
+fn a_runs_tapes_are_stored_with_their_presences() {
+    let marker = format!("# {:?}\n", std::time::SystemTime::now());
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("stored-presences");
+    std::fs::create_dir_all(&dir).unwrap();
+    let bodies = [("a.py", "def f():\n    pass\n"), ("b.py", "class B:\n    x = 1\n"), ("c.py", "print(1)\n")];
+    for (file, body) in bodies {
+        std::fs::write(dir.join(file), format!("{marker}{body}")).unwrap();
+    }
+    let rule = ".decl f(n: node)\nf(n) :- kind(n, \"function_definition\").\n.output f\n";
+    let out = dir.join("out");
+    let store = dir.join("stored.sqlite");
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.clone()));
+    super::run(rule, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let cache = crate::content_store::ContentStore::open(&store).unwrap();
+    let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+    let tag = i64::from(crate::code_rule_dsl::language::tape_tag(python).unwrap());
+    let (gv, fv) = (crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()));
+    // The kind of a `function_definition` node.
+    let function = ast_grep_language::LanguageExt::get_ts_language(&python).id_for_node_kind("function_definition", true);
+    for (file, body) in bodies {
+        let source = cache.source_by_hash(crate::content_store::HashKey::sha256(format!("{marker}{body}").as_bytes())).unwrap().expect("the source, stored");
+        let frame = cache.tape_frames_for(&[source], tag, gv, fv).unwrap().remove(0).unwrap_or_else(|| panic!("{file}'s tape, stored"));
+        let bytes = frame.bytes().unwrap();
+        let presence = crate::code_rule_dsl::tape::stored_presence(&bytes, tag as u8).unwrap_or_else(|| panic!("{file}'s presence, stored with its tape"));
+        assert_eq!(presence.has_kind(u32::MAX, function), body.starts_with("def"), "{file}: its document's kinds");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The cone of requests is kept like any relation (t33 K1, K3): its stratum that asks for directories, files and
 /// loads and answers them inside its fixpoint is clean while what it reads and its answers are as they were. An
 /// edit that changes neither evaluates none of the cone; a new import, or a library file whose own imports
@@ -603,6 +672,42 @@ fn the_cone_maintained_by_rounds_loads_what_a_fresh_cone_loads() {
     // back (decision 0145).
     std::fs::write(ws.join("c.py"), "x = 2\n").unwrap();
     both("a library shadowed by the workspace's module", &["a.pyi", "builtins.pyi"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Q224: a run whose loaded document's chunk fails ends with that chunk's error, not waits. Two loads here, one from
+/// a file's lines and one from a directory's entries. The hang needed a second load posted ahead and answered after
+/// the first's error (the full shape on Metal, 3 of 13 runs); this program's cone does not post them so, and the test
+/// passes without `Builder::next`'s stopped check too: it keeps the error's way out, not that order.
+#[test]
+fn a_load_whose_chunk_fails_ends_the_run_with_its_error() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("load-fails");
+    let _ = std::fs::remove_dir_all(&dir);
+    let (ws, lib) = (dir.join("ws"), dir.join("lib"));
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(&lib).unwrap();
+    let (fails, other) = (lib.join(super::FAILS_ITS_CHUNK), lib.join("b.pyi"));
+    std::fs::write(&fails, "def f() -> None: ...\n").unwrap();
+    std::fs::write(&other, "def b() -> None: ...\n").unwrap();
+    std::fs::write(ws.join("rerail.env"), "test.libraries = ../lib\n").unwrap();
+    std::fs::write(ws.join("main.py"), "x = 1\n").unwrap();
+    std::fs::write(ws.join("later.txt"), format!("{}\n", fails.display())).unwrap();
+    let rule = dir.join("p.rr");
+    std::fs::write(&rule, format!(
+        "#include \"core.rr\"\nload(p, \"f\", \"python\") :- file_line(\"later.txt\", 1, p).\nload(p, \"b\", \"python\") :- dir_entry(\"{lib}\", \"b.pyi\", 0), p = cat(\"{lib}\", \"/b.pyi\").\n.decl n_loaded(p: symbol)\nn_loaded(p) :- loaded(p, _, _).\n.output n_loaded\n",
+        lib = lib.display()
+    )).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let (out, store) = (dir.join("out"), dir.join("store.sqlite"));
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store));
+        let r = super::run(&text, &ws, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
+        let _ = tx.send(r.err().map(|e| e.to_string()));
+    });
+    let err = rx.recv_timeout(std::time::Duration::from_secs(120)).expect("the run ends, not waits for ever");
+    let err = err.expect("the run fails");
+    assert!(err.contains(super::FAILS_ITS_CHUNK), "the run ends with the chunk's error: {err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -754,16 +859,15 @@ unused(f) :- def(f, _), !used(f).
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
         let report = super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-        (report.cross_maintained.0, crate::code_rule_dsl::logic::plan::output::shown(&out, "unused").unwrap())
+        let decoded = report.run.expect("the test's run is the outermost").trees_decoded;
+        (report.cross_maintained.0, crate::code_rule_dsl::logic::plan::output::shown(&out, "unused").unwrap(), decoded)
     };
     run("kept.sqlite");
     write("c.py", "def h():\n    pass\n");
-    crate::code_rule_dsl::logic::program_image::forget_trees_decoded();
-    let (maintained, rows) = run("kept.sqlite");
     // The run's program is a version (`lower::Lowered`): no tree to copy or read beside it. A tree is made only by
-    // decoding one (`Version::program`), counted.
-    let decoded = crate::code_rule_dsl::logic::program_image::trees_decoded();
-    let (_, fresh) = run("fresh.sqlite");
+    // decoding one (`Version::program`), counted in the run's record, on any of its threads.
+    let (maintained, rows, decoded) = run("kept.sqlite");
+    let (_, fresh, _) = run("fresh.sqlite");
     assert_eq!(rows, fresh);
     assert!(maintained > 0, "a changed stratum maintained from the kept rows ({maintained})");
     assert_eq!(decoded.0, 0, "the maintained run decoded trees from their versions, the last at {:?}", decoded.1);
@@ -1264,7 +1368,24 @@ fn the_run_after_a_cold_one_writes_nothing() {
     let temp = tempfile::tempdir().unwrap();
     // `RERAIL_TEST_KEEP=<dir>`: the runs' store and outputs left there, to look at.
     let kept = std::env::var_os("RERAIL_TEST_KEEP").map(std::path::PathBuf::from);
-    let base = kept.as_deref().unwrap_or(temp.path());
+    cold_then_warm(kept.as_deref().unwrap_or(temp.path()));
+}
+
+/// The same, over sources reached through a symlink, as every run under macOS's `$TMPDIR` is (`/var` is
+/// `/private/var`): the run reads its files by their canonical paths, so the corpus walk reads the real part of the
+/// root before the waves as well. Reading only the part named, the warm run asked for the real one inside the waves
+/// and faulted "the observer's store not asked inside the waves". PR #508's 0206654a5 (t47).
+#[cfg(unix)]
+#[test]
+fn the_run_after_a_cold_one_through_a_symlink_writes_nothing() {
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::create_dir(temp.path().join("real")).unwrap();
+    std::os::unix::fs::symlink(temp.path().join("real"), temp.path().join("link")).unwrap();
+    cold_then_warm(&temp.path().join("link"));
+}
+
+/// A cold run over a small Python package under `base`, then a warm one under `RERAIL_WARM=list`, which writes nothing.
+fn cold_then_warm(base: &std::path::Path) {
     let src = base.join("src");
     std::fs::create_dir_all(src.join("pkg")).unwrap();
     std::fs::write(src.join("pkg/__init__.py"), "").unwrap();
@@ -1351,7 +1472,7 @@ y = x{i} + 2
         }
         let output = child.output().unwrap();
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let fault: Vec<&str> = stderr.lines().skip_while(|l| !l.starts_with("rerail: RERAIL_SQL_STRICT")).take(2).collect();
+        let fault: Vec<&str> = stderr.lines().skip_while(|l| !l.starts_with("rerail: RERAIL_SQL_STRICT")).take(200).collect();
         assert!(output.status.success(), "the run's process: {}; {}", output.status, fault.join(" "));
     };
     run(&before, false);
@@ -1585,6 +1706,9 @@ fn every_switch_lowering_reads_is_classified() {
         // How the combine's link is made (decision 0373): spliced into the last one, linked whole, or both and compared;
         // the program is the same (`check` asserts it).
         "RERAIL_COMBINE_LINK",
+        // How the combine's tail is run (decision 0393): kept, whole, or both and compared; the program is the same
+        // (`check` asserts it).
+        "RERAIL_COMBINE_TAIL",
         // A measurement aid: the program as the passes before lowering leave it, written to a directory.
         "RERAIL_FRONT_DUMP",
         // A measurement aid (decision 0173): each version a program takes, written to a directory; the program is the same.
@@ -1700,7 +1824,8 @@ fn every_switch_lowering_reads_is_classified() {
     ]);
     combining.push(("corpus.rs, combine_tail".to_owned(), region("\nfn combine_tail(", "\n}\n")));
     combining.push(("corpus.rs, the combine's tail".to_owned(), region("\nenum Tail {", "\n/// The programs `programs` linked into one")));
-    combining.push(("corpus.rs, combine_linked_as".to_owned(), region("\nfn combine_linked_as<", "Ok((all, Tail::Many { hide, policies }))")));
+    // The link: `combine_linked_as`, its modes, `combine_linked_spliced` and the splice (`combine_spliced`).
+    combining.push(("corpus.rs, combine_linked_as".to_owned(), region("\nfn combine_linked_as<", "\npub fn merge_and_drop_repeats(")));
     // Preparing: `run_observed` up to the prepared program, what it calls that reads a switch (`combining::FoldOwn`,
     // memo, session, profile, costs) and the passes. The prepared key holds `PREPARING` and the combined program's
     // key. Not `plan/keeps.rs` and `plan/choices.rs`: what a relation keeps is chosen in `plan::run` and kept under
@@ -1708,7 +1833,7 @@ fn every_switch_lowering_reads_is_classified() {
     // `RERAIL_OBSERVED_STEPS`).
     let mut preparing = sources(&[
         "logic/simplify.rs", "logic/strings.rs", "logic/reach_form.rs", "logic/magic.rs", "logic/magic", "logic/plan/lower.rs",
-        "logic/plan/corpus/cross_memo.rs", "logic/plan/corpus/hiding.rs", "logic/plan/corpus/memo.rs", "logic/plan/corpus/prepared.rs",
+        "logic/plan/corpus/import_closure.rs", "logic/plan/corpus/hiding.rs", "logic/plan/corpus/memo.rs", "logic/plan/corpus/prepared.rs",
         // Its passes, on the version (`preparation`): the front's, the lowering's, `FoldOwn`'s and the merges, and
         // the combine's fact spaces.
         "logic/plan/corpus/preparation.rs", "logic/plan/corpus/preparation",
@@ -1776,4 +1901,151 @@ names(x) :- string_annotation(n), parsed(n, "annotation", r), within(m, r), node
     assert_eq!(again.file_tapes.1, 0, "{:?}", again.file_tapes);
     assert!(again.file_tapes.0 > 0, "{:?}", again.file_tapes);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `first`'s `rel` over the one file `file` (its name and text): run alone, and in a pack with `other`. PR #508's
+/// helper (t47).
+fn alone_and_together(name: &str, file: (&str, &str), first: &str, other: &str, rel: &str) -> (Vec<Vec<String>>, Vec<Vec<String>>) {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(file.0), file.1).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let run = |programs: &[&str], out: &str| {
+        let out = dir.join(out);
+        super::run_all(programs, &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
+        let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
+        let rows = read(&format!("p0_{rel}"));
+        if rows.is_empty() { read(rel) } else { rows }
+    };
+    let alone = run(&[first], "alone");
+    let together = run(&[first, other], "together");
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let _ = std::fs::remove_dir_all(&dir);
+    (alone, together)
+}
+
+/// The relations `head`'s rules read, in a combined program.
+fn reads_of(v: &crate::code_rule_dsl::logic::program_image::Version, head: &str) -> Vec<String> {
+    v.heads_and_reads().into_iter().filter(|(h, _)| h == head).flat_map(|(_, reads)| reads.into_iter().map(|(_, r)| r)).collect()
+}
+
+/// A library's kind set that its own rules read only as a set (`tsx/react-class.rr`'s `inside(c, m, keyed_kind)`) is a
+/// relation of the library held once all the same: a program that reads it as one (`kind(p, k), keyed_kind(k)`, react's
+/// no-access-state-in-setstate) finds its rows in a pack. The library linked alone dropped it, and the react pack
+/// failed on `no such table: main.keyed_kind`. PR #508's 363b91c0b (t47).
+#[test]
+fn a_librarys_kind_set_is_a_relation_its_includers_read_in_a_pack() {
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
+    let reads = ".language typescript\n#include \"tsx/react-class.rr\"\n.decl keyed(p: node)\nkeyed(p) :- kind(p, k), keyed_kind(k).\n.output keyed\n";
+    let other = ".language typescript\n#include \"tsx/react-class.rr\"\n.decl state(c: node)\nstate(c) :- set_state_in(c, _).\n.output state\n";
+    let v = super::combine_texts(&[reads, other]).unwrap_or_else(|e| panic!("{e}"));
+    assert!(reads_of(&v, "p0_keyed").iter().any(|r| r == "keyed_kind"), "{:?}", reads_of(&v, "p0_keyed"));
+    assert!(v.declares("keyed_kind"), "keyed_kind is no relation of the pack");
+    assert_eq!(v.fact_rows("keyed_kind").len(), 5);
+}
+
+/// A value cycle that a library relation bounds (`deparen(e, a)`: a is e or below it) is bounded in a pack too, where
+/// a program is lowered without its library's rules: typescript-eslint's no-duplicate-enum-values (`enum_number`) and
+/// vitest's expect-expect (`name_of`) failed the typescript pack as unbounded value cycles, though each is bounded
+/// alone. PR #508's 363b91c0b (t47).
+#[test]
+fn a_value_cycle_a_library_relation_bounds_is_bounded_in_a_pack() {
+    let cycle = ".language typescript\n#include \"tsx/ts-b.rr\"\n\
+                 .decl ua(x: node, a: node)\nua(x, a) :- kind(x, \"unary_expression\"), field(x, \"argument\", e), deparen(e, a).\n\
+                 .decl num(x: node, f: float)\nnum(x, to_float(v)) :- kind(x, \"number\"), value(x, v).\n\
+                 num(x, 0.0 - f) :- ua(x, a), num(a, f).\n.output num\n";
+    let other = ".language typescript\n#include \"tsx/ts-b.rr\"\n.decl d(e: node, a: node)\nd(e, a) :- deparen(e, a).\n.output d\n";
+    super::combine_texts(&[cycle]).unwrap_or_else(|e| panic!("alone: {e}"));
+    let v = super::combine_texts(&[cycle, other]).unwrap_or_else(|e| panic!("in a pack: {e}"));
+    assert!(v.heads_and_reads().iter().any(|(h, _)| h == "p0_num"));
+}
+
+/// A program that states facts of a library relation (`lit_repr_threshold(16384).`, an `extensible` one) asks of the
+/// library as one that derives it does (decision 0089 §3): its readers in the library (`dec_lit_repr`) are copied into
+/// its request, over its facts. Taken as the library's, they read the library's relation without them, and
+/// clippy-decimal-literal-representation found nothing in a pack. PR #508's 363b91c0b (t47).
+#[test]
+fn a_programs_facts_of_a_library_relation_ask_of_the_library() {
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
+    let stating = ".language rust\n#include \"rust/syntax-literals.rr\"\n.decl hit(n: node)\nhit(n) :- dec_lit_repr(n).\n.output hit\nlit_repr_threshold(16384).\n";
+    let other = ".language rust\n#include \"rust/syntax-literals.rr\"\n.decl lit(n: node, v: number)\nlit(n, v) :- int_lit_value(n, v).\n.output lit\n";
+    let v = super::combine_texts(&[stating, other]).unwrap_or_else(|e| panic!("{e}"));
+    let read = reads_of(&v, "p0_hit");
+    let copy = read.iter().find(|r| r.starts_with('q') && r.ends_with("_dec_lit_repr")).unwrap_or_else(|| panic!("p0_hit reads {read:?}"));
+    assert!(!read.iter().any(|r| r == "dec_lit_repr"), "p0_hit reads the library's dec_lit_repr: {read:?}");
+    let threshold = copy.replace("_dec_lit_repr", "_lit_repr_threshold");
+    assert_eq!(v.fact_rows(&threshold).len(), 1, "{threshold}: {:?}", v.fact_names().into_iter().filter(|k| k.contains("threshold")).collect::<Vec<_>>());
+}
+
+/// A library's kind set that a program reads by `nearest` (ruff-n807's `nearest(f, s, scope)` over python/names.rr's
+/// `scope`) has the library's kinds in a pack, as alone. Lowered in its library's scope, the program was seeded the
+/// set's declaration but not its facts, so it held `scope` empty, and its `nearest` climbed to nothing: ruff-n807,
+/// RUF033, AIR303 and F406 found nothing in the python pack. PR #508's afeb076e5 (t47).
+#[test]
+fn a_programs_nearest_over_a_library_kind_set_finds_in_a_pack_what_it_finds_alone() {
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
+    let near = ".language python\n#include \"python/names.rr\"\n.decl top(x: symbol)\n\
+                top(x) :- kind(f, \"function_definition\"), field(f, \"name\", c), text(c, x), nearest(f, s, scope), kind(s, \"module\").\n.output top\n";
+    let other = ".language python\n#include \"python/names.rr\"\nrotgt(s, \"zz\") :- kind(s, \"module\").\n\
+                 .decl bound(x: symbol)\nbound(x) :- bound_in(_, x).\n.output bound\n";
+    let (alone, together) = alone_and_together("library-kind-set", ("a.py", "def f():\n    def g():\n        pass\nclass C:\n    def m(self):\n        pass\n"), near, other, "top");
+    // Every set a rule climbs to is a set of the combined program, with its kinds.
+    let v = super::combine_texts(&[near, other]).unwrap_or_else(|e| panic!("{e}"));
+    let sets = v.kindsets();
+    for r in v.rules() {
+        let shown = v.show_rule(r);
+        for (_, rest) in shown.match_indices("nearest(").map(|(i, _)| shown.split_at(i)) {
+            let set = rest.split(')').next().and_then(|args| args.rsplit(", ").next()).unwrap_or("");
+            assert!(sets.get(set).is_some_and(|k| !k.is_empty()), "{shown}: {set} is no set of the pack: {:?}", sets.get(set));
+        }
+    }
+    assert_eq!(alone, [["f"]], "f's nearest scope is the module; g's is f, m's is C");
+    assert_eq!(together, alone);
+}
+
+/// A `match_all` over a library relation's node (FAST003's over `route_path`'s `s`, a string by `plain_str`) scans
+/// the spans the library's rules bind it to in a pack, as alone: the program held the library relation declared and
+/// not derived, ran no pattern, and ruff-fast003 found nothing in a pack. PR #508's 4146acbd9 (t47).
+#[test]
+fn a_match_over_a_library_relations_node_finds_in_a_pack_what_it_finds_alone() {
+    let words = ".language python\n#include \"python/ast.rr\"\n.decl word(k: symbol)\n\
+                 word(k) :- plain_str(s, _), match_all(\"(?<K>[a-z]+)\", s), text(K, k).\n.output word\n";
+    let other = ".language python\n#include \"python/ast.rr\"\n.decl inner(e: node)\ninner(m) :- unparen(_, m).\n.output inner\n";
+    let (alone, together) = alone_and_together("library-span", ("a.py", "x = \"ab cd\"\n"), words, other, "word");
+    assert_eq!(alone, [["ab"], ["cd"]]);
+    assert_eq!(together, alone);
+}
+
+/// A library relation of kinds that no library rule climbs to (eslint-a-control.rr's `breakable_kind(k) :-
+/// loop_kind(k)`), and a program's own set over one (`stop(k) :- function_kind(k)`), hold the library's kinds where a
+/// program climbs to them in a pack, as alone: eslint's no-extra-label found nothing in a pack, no-unsafe-finally
+/// climbed past functions. PR #508's 4146acbd9 (t47).
+#[test]
+fn a_programs_nearest_over_a_library_relation_of_kinds_finds_in_a_pack_what_it_finds_alone() {
+    let near = ".language typescript\n#include \"tsx/eslint-a-control.rr\"\n.decl left(k: symbol)\n\
+                left(k) :- kind(j, \"break_statement\"), nearest(j, s, breakable_kind), kind(s, k).\n.output left\n\
+                .decl stop(k: symbol)\nstop(\"program\").\nstop(k) :- function_kind(k).\n\
+                .decl stopped(k: symbol)\nstopped(k) :- kind(j, \"return_statement\"), nearest(j, s, stop), kind(s, k).\n.output stopped\n";
+    let other = ".language typescript\n#include \"tsx/eslint-a-control.rr\"\n.decl j(n: node)\nj(n) :- jump(n, _).\n.output j\n";
+    let ts = "function f() { for (;;) { if (a) { break; } return 1; } }\nswitch (b) { case 1: break; }\n";
+    let (alone, together) = alone_and_together("library-kind-relation", ("a.ts", ts), near, other, "left");
+    assert_eq!(alone, [["for_statement"], ["switch_statement"]]);
+    assert_eq!(together, alone);
+    let (alone, together) = alone_and_together("library-kind-relation-own", ("a.ts", ts), near, other, "stopped");
+    assert_eq!(alone, [["function_declaration"]]);
+    assert_eq!(together, alone);
+}
+
+/// Q203: a chunk is sized by what it added to the host's footprint. The device's slabs and buffers, bounded by the
+/// Metal budget on top of the overall one (decision 0126), are not a chunk's: counted, Metal's chunks were cut at
+/// half to a third of the CPU's.
+#[test]
+fn a_chunks_growth_leaves_out_the_devices_memory() {
+    use super::host_added_mb;
+    // [footprint, lifetime peak, device MB] at the chunk's start and at its end.
+    assert_eq!(host_added_mb([1_000, 1_000, 0], [1_300, 1_300, 0]), 300, "no device: the footprint's growth");
+    assert_eq!(host_added_mb([1_000, 1_000, 100], [1_700, 1_700, 500]), 300, "the device's 400 MB more left out");
+    assert_eq!(host_added_mb([1_000, 2_000, 100], [1_200, 2_000, 150]), 150, "under the old peak: the footprint now");
+    assert_eq!(host_added_mb([1_000, 1_000, 100], [1_900, 2_600, 300]), 1_400, "past the old peak: the peak");
+    assert_eq!(host_added_mb([1_000, 1_000, 400], [900, 900, 300]), 1, "shrunk: at least 1");
 }

@@ -122,6 +122,15 @@ static bool interpret_file(device const uint4* bytes, FileRow f, uint g, uint l,
         v = j < 6u ? M((ulong(s.b) | (ulong(s.imm) << 32u)) >> ulong((gl * W) & 63u)) : M(M(0) - M(((gl * W) >> j) & 1u));
         break;
       }
+      case 17u: v = M(a >> s.imm); break;
+      case 18u: {
+        // `prefix n w`: n in a, w in b and imm; the low n bits of the file's first word where
+        // its first n bytes are w's.
+        const uint4 c = load16(bytes, f, 0u);
+        const ulong first = ulong(c.x) | (ulong(c.y) << 32u), cut = s.a >= 8u ? ~0ul : (1ul << (8u * s.a)) - 1ul;
+        v = (gl == 0u && f.len >= s.a && (first & cut) == (ulong(s.b) | (ulong(s.imm) << 32u))) ? M((1ul << s.a) - 1ul) : M(0);
+        break;
+      }
       default: break;
     }
     slots[at * 32u + l] = v;

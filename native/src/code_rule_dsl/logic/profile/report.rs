@@ -399,6 +399,7 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     }
 
     r.push_str(&crate::code_rule_dsl::logic::lanes::prof::report());
+    copies(&mut r);
     stages(&mut r);
     let _ = writeln!(r, "\n== Device (Metal): per span and kernel; GPU = command buffers' GPU time, wait = host wall time");
     if state.devices.is_empty() {
@@ -447,17 +448,18 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     } else {
         let _ = writeln!(
             r,
-            "{:<40} {:>7} {:>7} {:>7} {:>10} {:>10} {:>10} {:>6} {:>10} {:>10} {:>10}  longest job run",
-            "wait", "waits", "helped", "jobs", "wait ms", "jobs ms", "jobs cpu", "late", "late ms<=", "late max", "late exact"
+            "{:<40} {:>7} {:>7} {:>7} {:>8} {:>10} {:>10} {:>10} {:>6} {:>10} {:>10} {:>10}  longest job run",
+            "wait", "waits", "helped", "jobs", "declined", "wait ms", "jobs ms", "jobs cpu", "late", "late ms<=", "late max", "late exact"
         );
         for (site, w) in &waits {
             let _ = writeln!(
                 r,
-                "{:<40} {:>7} {:>7} {:>7} {:>10.1} {:>10.1} {:>10.1} {:>6} {:>10.2} {:>10.2} {:>10.2}  {:.2} ms {}",
+                "{:<40} {:>7} {:>7} {:>7} {:>8} {:>10.1} {:>10.1} {:>10.1} {:>6} {:>10.2} {:>10.2} {:>10.2}  {:.2} ms {}",
                 short(site, 40),
                 w.waits,
                 w.helping,
                 w.jobs,
+                w.declined,
                 w.wall * 1e3,
                 w.jobs_wall * 1e3,
                 w.jobs_cpu * 1e3,
@@ -587,6 +589,21 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     }
     r.insert_str(header.len(), &super::life::section(&life, &after));
     std::fs::write(dir.join("profile.txt"), r)
+}
+
+/// The copies decision 0353 still lists (`rerail_prof::copies`), by its table's row: the bytes each site copied, its
+/// calls and its CPU. Its steps drive the total to 0; a site not named here copied nothing in the run.
+fn copies(r: &mut String) {
+    use std::fmt::Write as _;
+    let sites = rerail_prof::copies::sites();
+    let (bytes, cpu) = sites.iter().fold((0u64, 0u64), |(b, c), (_, t)| (b + t.bytes, c + t.cpu_ns));
+    let _ = writeln!(r, "\n== copies (decision 0353): {:.1} MB, {:.1} ms CPU in all; by row of its table, the step that removes each", bytes as f64 / 1e6, cpu as f64 / 1e6);
+    if sites.is_empty() {
+        r.push_str("(none)\n");
+    }
+    for (site, t) in sites {
+        let _ = writeln!(r, "  row {:>2}  step {:<3} {:>10.1} MB {:>9} calls {:>9.1} ms  {}", site.row, site.step, t.bytes as f64 / 1e6, t.calls, t.cpu_ns as f64 / 1e6, site.name);
+    }
 }
 
 /// The stage counters (`rerail_prof`): the device runs' host stages (CPU of the thread that ran

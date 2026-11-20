@@ -704,6 +704,12 @@ pub fn finish_checks(prog: &Program) -> Result<(), Error> {
 /// `finish`'s checks, of the program its rewrites made, read on its version: no computed term in a body atom, bounded
 /// lattices, every input declared, bounded value cycles, the caches' form.
 pub fn finish_checks_on(v: &crate::code_rule_dsl::logic::program_image::Version) -> Result<(), Error> {
+    finish_checks_given(v, None)
+}
+
+/// `finish_checks_on` of a program lowered without the rules of the `library` it reads (`rr::Text::lower_in`): its
+/// value cycles are bounded by what the library's relations guarantee there (`cycles::check_given`).
+pub fn finish_checks_given(v: &crate::code_rule_dsl::logic::program_image::Version, library: Option<&crate::code_rule_dsl::logic::program_image::Version>) -> Result<(), Error> {
     use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
     use crate::code_rule_dsl::logic::program_image::handles::{Lit, TermRef};
     for rule in v.rules() {
@@ -726,7 +732,10 @@ pub fn finish_checks_on(v: &crate::code_rule_dsl::logic::program_image::Version)
         return Err(Error::UndeclaredInput { relation });
     }
     let checking = crate::code_rule_dsl::logic::profile::span(|| "check the program's cycles and caches".to_owned());
-    cycles::check(v)?;
+    match library {
+        Some(library) => cycles::check_given(v, library)?,
+        None => cycles::check(v)?,
+    };
     // A cache is two rules (decision 0103): a broken form refuses the program.
     caches::caches(v)?;
     drop(checking);

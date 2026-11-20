@@ -48,9 +48,11 @@ pub enum Mode {
     Defer,
 }
 
-static MODE: OnceLock<Mutex<Option<Mode>>> = OnceLock::new();
+/// The mode its caller set on a machine (`set_mode`; decision 0442: the machine's, as its pipelines are).
+#[derive(Default)]
+struct ModeSet(Mutex<Option<Mode>>);
 
-/// The mode: `RERAIL_METAL_COMPILE`, else what `set_mode` set, else `Wait`.
+/// The mode: `RERAIL_METAL_COMPILE`, else what `set_mode` set on the run's machine, else `Wait`.
 pub fn mode() -> Mode {
     match std::env::var("RERAIL_METAL_COMPILE").as_deref() {
         Ok("wait") => return Mode::Wait,
@@ -58,12 +60,12 @@ pub fn mode() -> Mode {
         Ok("defer") => return Mode::Defer,
         _ => {}
     }
-    MODE.get_or_init(Default::default).lock().unwrap_or_else(|p| p.into_inner()).unwrap_or(Mode::Wait)
+    rerail_context::machine::<ModeSet>().0.lock().unwrap_or_else(|p| p.into_inner()).unwrap_or(Mode::Wait)
 }
 
-/// Sets the mode for this process (the engine's runs: `Defer`); `RERAIL_METAL_COMPILE` still wins.
-pub fn set_mode(mode: Mode) {
-    *MODE.get_or_init(Default::default).lock().unwrap_or_else(|p| p.into_inner()) = Some(mode);
+/// Sets the mode for the runs on `machine` (the engine's command: `Defer`); `RERAIL_METAL_COMPILE` still wins.
+pub fn set_mode(machine: &rerail_context::Machine, mode: Mode) {
+    *machine.get::<ModeSet>().0.lock().unwrap_or_else(|p| p.into_inner()) = Some(mode);
 }
 
 /// A kernel's identity: its library (the source's digest) and its pipeline (the library, the kernel's name and
@@ -105,9 +107,13 @@ struct Places {
     run: String,
 }
 
-fn places() -> &'static Places {
-    static P: OnceLock<Places> = OnceLock::new();
-    P.get_or_init(|| {
+/// The machine's places, found the first time they are asked for (decision 0442: the machine's).
+#[derive(Default)]
+struct PlacesFound(OnceLock<Arc<Places>>);
+
+fn places() -> Arc<Places> {
+    let found = rerail_context::machine::<PlacesFound>();
+    let places = found.0.get_or_init(|| {
         let store = match std::env::var("RERAIL_METAL_KERNELS") {
             Ok(v) if v == "off" => None,
             Ok(v) if !v.is_empty() => Some(PathBuf::from(v)),
@@ -120,18 +126,19 @@ fn places() -> &'static Places {
         };
         let tag = super::shared::get().map(|s| device_tag(&s.device)).unwrap_or_else(|| "no-device".to_owned());
         let started = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
-        Places { store, shipped, tag, run: format!("{started:024}-{}", std::process::id()) }
-    })
+        Arc::new(Places { store, shipped, tag, run: format!("{started:024}-{}", std::process::id()) })
+    });
+    Arc::clone(places)
 }
 
 /// The store's directory, when it is on.
-pub fn store_dir() -> Option<&'static Path> {
-    places().store.as_deref()
+pub fn store_dir() -> Option<PathBuf> {
+    places().store.clone()
 }
 
 /// The shipped kernels' directory, when there is one.
-pub fn shipped_dir() -> Option<&'static Path> {
-    places().shipped.as_deref()
+pub fn shipped_dir() -> Option<PathBuf> {
+    places().shipped.clone()
 }
 
 /// A device's tag: its name. A binary archive is the GPU code of one device and driver; Metal refuses an archive of
@@ -187,14 +194,18 @@ struct Made {
     fixed: std::collections::HashSet<[u8; 32]>,
 }
 
-fn made() -> &'static Mutex<Made> {
-    static M: OnceLock<Mutex<Made>> = OnceLock::new();
-    M.get_or_init(Default::default)
+/// The machine's compiled kernels (decision 0442: the device's pipelines are the machine's).
+#[derive(Default)]
+struct MadeHeld(Mutex<Made>);
+
+fn made() -> Arc<MadeHeld> {
+    rerail_context::machine::<MadeHeld>()
 }
 
 /// Releases every compiled library and pipeline this process holds (the store keeps them).
 pub fn release() {
-    let mut m = made().lock().unwrap_or_else(|p| p.into_inner());
+    let made = made();
+    let mut m = made.0.lock().unwrap_or_else(|p| p.into_inner());
     m.libraries.clear();
     m.pipelines.clear();
 }
@@ -210,7 +221,9 @@ pub struct Counts {
     pub wanted: u64,
 }
 
-static COUNTS: Mutex<Counts> = Mutex::new(Counts { from_memory: 0, from_archive: 0, compiled: 0, front_end_s: 0.0, back_end_s: 0.0, wanted: 0 });
+/// The machine's counts (decision 0442: the machine's, as the kernels they count).
+#[derive(Default)]
+struct CountsHeld(Mutex<Counts>);
 
 thread_local! {
     /// Pipelines this thread made (compiled, or from an archive), not found in the process's memory.
@@ -224,15 +237,15 @@ pub fn made_here() -> u64 {
 
 /// The pipelines the process holds.
 pub fn held() -> usize {
-    made().lock().unwrap_or_else(|p| p.into_inner()).pipelines.values().filter(|s| s.try_lock().is_ok_and(|p| p.is_some())).count()
+    made().0.lock().unwrap_or_else(|p| p.into_inner()).pipelines.values().filter(|s| s.try_lock().is_ok_and(|p| p.is_some())).count()
 }
 
 pub fn counts() -> Counts {
-    *COUNTS.lock().unwrap_or_else(|p| p.into_inner())
+    *rerail_context::machine::<CountsHeld>().0.lock().unwrap_or_else(|p| p.into_inner())
 }
 
 fn count(f: impl FnOnce(&mut Counts)) {
-    f(&mut COUNTS.lock().unwrap_or_else(|p| p.into_inner()));
+    f(&mut rerail_context::machine::<CountsHeld>().0.lock().unwrap_or_else(|p| p.into_inner()));
 }
 
 /// The pipeline `name` (with `constant` at function constant 0) of `source`: from this process, else from an
@@ -240,7 +253,7 @@ fn count(f: impl FnOnce(&mut Counts)) {
 /// no other form of the work. A kernel that does not compile is fatal.
 pub fn pipeline(source: &str, name: &str, constant: Option<u32>) -> ComputePipelineState {
     let key = Key::of(source, name, constant);
-    let slot = Arc::clone(made().lock().unwrap_or_else(|p| p.into_inner()).pipelines.entry(key.pipeline).or_default());
+    let slot = Arc::clone(made().0.lock().unwrap_or_else(|p| p.into_inner()).pipelines.entry(key.pipeline).or_default());
     let mut s = match slot.try_lock() {
         Ok(s) => s,
         Err(std::sync::TryLockError::WouldBlock) => crate::score::phase("pipeline wait", || slot.lock().unwrap_or_else(|p| p.into_inner())),
@@ -266,10 +279,11 @@ pub fn pipeline_fixed(source: &str, name: &str, constant: Option<u32>) -> Comput
 
 fn record_fixed(source: &str, name: &str, constant: Option<u32>) {
     let key = Key::of(source, name, constant);
-    if !made().lock().unwrap_or_else(|p| p.into_inner()).fixed.insert(key.pipeline) {
+    if !made().0.lock().unwrap_or_else(|p| p.into_inner()).fixed.insert(key.pipeline) {
         return;
     }
-    let Some(store) = places().store.as_ref() else { return };
+    let p = places();
+    let Some(store) = p.store.as_ref() else { return };
     let src = store.join("src").join(format!("{}.metal", hex(&key.library)));
     if !src.is_file() {
         let _ = write_whole(&src, source.as_bytes());
@@ -305,7 +319,7 @@ fn ready_in(mode: Mode, source: &str, name: &str, constant: Option<u32>) -> Opti
         return Some(pipeline(source, name, constant));
     }
     let key = Key::of(source, name, constant);
-    let slot = Arc::clone(made().lock().unwrap_or_else(|p| p.into_inner()).pipelines.entry(key.pipeline).or_default());
+    let slot = Arc::clone(made().0.lock().unwrap_or_else(|p| p.into_inner()).pipelines.entry(key.pipeline).or_default());
     // A slot held is a compile in progress (or a load): the other form, now.
     let mut s = slot.try_lock().ok()?;
     if let Some(p) = &*s {
@@ -320,7 +334,7 @@ fn ready_in(mode: Mode, source: &str, name: &str, constant: Option<u32>) -> Opti
     want(key, source, name, constant);
     crate::forms::interpreted("msl-pipeline", &hex(&key.pipeline), name, 1);
     if mode == Mode::Background {
-        let first = made().lock().unwrap_or_else(|p| p.into_inner()).compiling.insert(key.pipeline);
+        let first = made().0.lock().unwrap_or_else(|p| p.into_inner()).compiling.insert(key.pipeline);
         if first {
             let (source, name) = (source.to_owned(), name.to_owned());
             let spawned = crate::exec::service("rerail-msl-compile", None, move || {
@@ -328,10 +342,10 @@ fn ready_in(mode: Mode, source: &str, name: &str, constant: Option<u32>) -> Opti
                 let started = std::time::Instant::now();
                 let _ = pipeline(&source, &name, constant);
                 crate::forms::compiled("msl-pipeline", &hex(&key.pipeline), &name, started.elapsed().as_secs_f64(), true);
-                made().lock().unwrap_or_else(|p| p.into_inner()).compiling.remove(&key.pipeline);
+                made().0.lock().unwrap_or_else(|p| p.into_inner()).compiling.remove(&key.pipeline);
             });
             if spawned.is_err() {
-                made().lock().unwrap_or_else(|p| p.into_inner()).compiling.remove(&key.pipeline);
+                made().0.lock().unwrap_or_else(|p| p.into_inner()).compiling.remove(&key.pipeline);
             }
         }
     }
@@ -439,12 +453,13 @@ fn with_options(device: &Device, descriptor: &metal::ComputePipelineDescriptorRe
 /// The back end's compile, into an archive the store keeps: adding the pipeline to a new archive compiles it, and
 /// the pipeline is then made from that archive (no second compile). Without a store, a plain compile.
 fn compile_archived(device: &Device, descriptor: &metal::ComputePipelineDescriptorRef, key: &Key) -> Result<ComputePipelineState, String> {
-    let Some(store) = places().store.as_ref() else {
+    let p = places();
+    let Some(store) = p.store.as_ref() else {
         return device.new_compute_pipeline_state(descriptor);
     };
     let archive = device.new_binary_archive_with_descriptor(&metal::BinaryArchiveDescriptor::new())?;
     archive.add_compute_pipeline_functions_with_descriptor(descriptor)?;
-    let path = store.join(&places().tag).join(format!("{}.archive", hex(&key.pipeline)));
+    let path = store.join(&p.tag).join(format!("{}.archive", hex(&key.pipeline)));
     let tmp = path.with_extension(format!("tmp{}", std::process::id()));
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
@@ -462,12 +477,16 @@ fn compile_archived(device: &Device, descriptor: &metal::ComputePipelineDescript
 /// The library of `source` (its digest `library`): this process's, else the shipped AIR library, else the front
 /// end's compile.
 fn library(library: [u8; 32], source: &str, name: &str) -> Library {
-    let slot = Arc::clone(made().lock().unwrap_or_else(|p| p.into_inner()).libraries.entry(library).or_default());
+    let slot = Arc::clone(made().0.lock().unwrap_or_else(|p| p.into_inner()).libraries.entry(library).or_default());
     let mut s = slot.lock().unwrap_or_else(|p| p.into_inner());
     if let Some(l) = &*s {
         return l.clone();
     }
     let device = &super::shared::get().expect("a Metal device").device;
+    // A measurement aid: `RERAIL_DEVICE_TRACE` prints where each library is loaded.
+    if std::env::var_os("RERAIL_DEVICE_TRACE").is_some() {
+        eprintln!("RERAIL_DEVICE_TRACE a library loaded, kernel {name} (driver {} MB):\n{}", device.current_allocated_size() >> 20, std::backtrace::Backtrace::force_capture());
+    }
     let shipped = places().shipped.as_ref().map(|d| d.join(format!("{}.metallib", hex(&library)))).filter(|f| f.is_file());
     let started = std::time::Instant::now();
     let l = match shipped {
@@ -496,7 +515,7 @@ fn library(library: [u8; 32], source: &str, name: &str) -> Library {
 
 /// Records `key` as wanted: its source in the store (once), and a line in this run's wanted list.
 fn want(key: Key, source: &str, name: &str, constant: Option<u32>) {
-    if !made().lock().unwrap_or_else(|p| p.into_inner()).wanted.insert(key.pipeline) {
+    if !made().0.lock().unwrap_or_else(|p| p.into_inner()).wanted.insert(key.pipeline) {
         return;
     }
     count(|c| c.wanted += 1);
@@ -649,7 +668,7 @@ pub struct Size {
 pub fn size() -> Size {
     let mut s = Size::default();
     let Some(store) = store_dir() else { return s };
-    for e in walk(store) {
+    for e in walk(&store) {
         let len = e.1;
         match e.0.extension().and_then(|x| x.to_str()) {
             Some("archive") => {
@@ -688,7 +707,7 @@ fn walk(dir: &Path) -> Vec<(PathBuf, u64, std::time::SystemTime)> {
 /// was made from.
 pub fn prune(max_bytes: u64) -> u64 {
     let Some(store) = store_dir() else { return 0 };
-    let mut archives: Vec<_> = walk(store).into_iter().filter(|e| e.0.extension().is_some_and(|x| x == "archive")).collect();
+    let mut archives: Vec<_> = walk(&store).into_iter().filter(|e| e.0.extension().is_some_and(|x| x == "archive")).collect();
     let mut total: u64 = archives.iter().map(|e| e.1).sum();
     archives.sort_by_key(|e| e.2);
     let mut removed = 0;
@@ -874,13 +893,13 @@ mod tests {
             std::fs::remove_file(old).unwrap();
         }
         release();
-        set_mode(Mode::Defer);
+        set_mode(rerail_context::shared_here().machine(), Mode::Defer);
         assert!(ready(&other, name, None).is_none(), "not compiled: the caller runs another form");
-        assert!(made().lock().unwrap().wanted.contains(&key.pipeline), "recorded as wanted");
+        assert!(made().0.lock().unwrap().wanted.contains(&key.pipeline), "recorded as wanted");
         assert!(store_dir().unwrap().join("src").join(format!("{}.metal", hex(&key.library))).is_file(), "its source in the store");
         let _ = make(key, &other, name, None, true);
         release();
         assert!(ready(&other, name, None).is_some(), "compiled, it is ready from its archive");
-        set_mode(Mode::Wait);
+        set_mode(rerail_context::shared_here().machine(), Mode::Wait);
     }
 }

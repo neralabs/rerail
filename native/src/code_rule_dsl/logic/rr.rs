@@ -298,7 +298,7 @@ impl Text {
     /// library is its own version; one that asks has its cone copied on the version (`plan::corpus::cone_on_version`),
     /// the library's tree never decoded.
     fn lowered_in_version(self, library: &Library, scoped: &Scoped) -> Result<Option<std::sync::Arc<super::program_image::Version>>, Error> {
-        let Some(Own { version: own, asked, declared }) = self.lowered_own(scoped)? else { return Ok(None) };
+        let Some(Own { version: own, asked, declared }) = self.lowered_own(scoped, Some(library))? else { return Ok(None) };
         if asked.is_empty() {
             return Ok(Some(own));
         }
@@ -307,7 +307,8 @@ impl Text {
 
     /// The text's own program, lowered and linked in its libraries' scope, and what it asks of the library: the
     /// library relations it adds to (decision 0089 §3), and every relation the library's files declare.
-    fn lowered_own(self, scoped: &Scoped) -> Result<Option<Own>, Error> {
+    /// `library`, the scope's library linked, gives the guarantees of its relations to the value cycles' check.
+    fn lowered_own(self, scoped: &Scoped, library: Option<&Library>) -> Result<Option<Own>, Error> {
         let Read::Modular { files, own } = self.0 else { return Ok(None) };
         let checked: Vec<syntax::Statement> = own.iter().filter(|(item, _)| !matches!(item, syntax::Item::Clause { body, .. } if body.is_empty())).cloned().collect();
         let reads_core = files.first().is_some_and(|(path, _, _)| path.ends_with("core.rr"));
@@ -317,7 +318,7 @@ impl Text {
         // Its rules written as a version in the walk (decision 0377 step 3).
         let linked = lower::link_seeded_parts(lower::lower_module_seeded_written(own, &scoped.seeds)?, &scoped.seeds)?;
         let written = std::sync::Arc::clone(&linked.own);
-        let version = link_seeded_version(linked, written, scoped, core_names())?;
+        let version = link_seeded_version(linked, written, scoped, core_names(), library)?;
         // A text that adds to library relations asks of the library (decision 0089 §3): its request's cone, the library
         // relations that read what it adds, and the helpers they read, are copied from the linked library, made once
         // (decision 0246 §2: a cone is made at link time). The run's `own_part` then holds them as the request.
@@ -325,7 +326,14 @@ impl Text {
             syntax::Item::Decl { name, .. } | syntax::Item::Violation { name, .. } => Some(name.clone()),
             _ => None,
         }).collect();
-        let asked: BTreeSet<String> = version.rules().map(|r| version.rel_name(r.head().rel()).to_owned()).filter(|h| declared.contains(h) && !core_names().contains(h)).collect();
+        // A fact adds as a rule does (`lit_repr_threshold(16384).`): left out, the library's readers read the library's
+        // relation without it, and found nothing in a pack (PR #508's 363b91c0b, t47).
+        let asked: BTreeSet<String> = version
+            .rules()
+            .map(|r| version.rel_name(r.head().rel()).to_owned())
+            .chain(super::program_image::fields::ProgramFields::fact_names(&*version))
+            .filter(|h| declared.contains(h) && !core_names().contains(h))
+            .collect();
         Ok(Some(Own { version, asked, declared }))
     }
 
@@ -445,6 +453,8 @@ pub struct Library {
     pub version: std::sync::Arc<super::program_image::Version>,
     /// Its tree, decoded from `version` when a reader asks (`program`): a request's cone copied from it, a tool.
     tree: std::sync::OnceLock<Program>,
+    /// Its columns' spans (`lower::span_columns`), made when a program lowered in its scope first reads them (`spans`).
+    spans: std::sync::OnceLock<std::sync::Arc<lower::SpanColumns>>,
 }
 
 impl Text {
@@ -488,12 +498,22 @@ impl Library {
         if let Some(tree) = tree {
             let _ = held.set(tree);
         }
-        Library { modules, files, keys, version, tree: held }
+        Library { modules, files, keys, version, tree: held, spans: Default::default() }
     }
 
     /// The linked library as a tree, decoded from its version once.
     pub fn program(&self) -> &Program {
         self.tree.get_or_init(|| self.version.program(&Default::default()).expect("the linked library's image reads as a program"))
+    }
+
+    /// Its columns' spans, which a program lowered in its scope reads of the library relations it does not derive
+    /// (`lowering_tail::SpanPatterns`, PR #508's 4146acbd9). Made once; a library whose rules the analysis refuses
+    /// gives none.
+    pub fn spans(&self) -> std::sync::Arc<lower::SpanColumns> {
+        std::sync::Arc::clone(self.spans.get_or_init(|| {
+            let columns = super::plan::corpus::preparation::lowering_tail::with_span_program(&self.version, None, lower::span_columns);
+            std::sync::Arc::new(columns.ok().and_then(Result::ok).unwrap_or_default())
+        }))
     }
 
     /// The aliases the library's images are kept under: each module's, and the linked library's.
@@ -522,7 +542,8 @@ impl Library {
 pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::ContentStore>) -> Result<std::sync::Arc<Library>, Error> {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex, OnceLock};
-    static LIBRARIES: OnceLock<Mutex<HashMap<Vec<(PathBuf, [u8; 32])>, Arc<Library>>>> = OnceLock::new();
+    #[derive(Default)]
+    struct Libraries(Mutex<HashMap<Vec<(PathBuf, [u8; 32])>, Arc<Library>>>);
     let mut files = Vec::new();
     let mut key = Vec::new();
     for path in paths {
@@ -530,7 +551,8 @@ pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::Con
         key.push((path.clone(), file.sha256.unwrap_or_default()));
         files.push((path.clone(), statements.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect()));
     }
-    let cache = LIBRARIES.get_or_init(Default::default);
+    let cache_held = crate::code_rule_dsl::logic::profile::shared::<Libraries>();
+    let cache = &cache_held.0;
     if let Some(library) = cache.lock().expect("the lowered libraries").get(&key) {
         crate::code_rule_dsl::prof::count("rr.library_reused", 1);
         return Ok(Arc::clone(library));
@@ -554,14 +576,20 @@ pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::Con
             crate::code_rule_dsl::prof::count("rr.linked_library_read", 1);
             Some(version)
         });
+        // Its declared kind sets are relations its includers may read (`lower::keep_declared_kind_sets`), whether
+        // its image was kept before this or not.
         match stored {
-            Some(version) => Library::of(modules, members, keys, version, None),
+            Some(version) => {
+                let version = lower::keep_declared_kind_sets(&version, &modules)?;
+                Library::of(modules, members, keys, version, None)
+            }
             None => {
                 // Linked on versions (decision 0377): the modules' rules are never a tree.
                 let version = link_library_versions(modules.iter().map(lower::Module::clone).collect())?;
                 if keep_image(store, "a linked library's image", key, version.base_bytes().expect("a folded version is a base").to_vec()) {
                     crate::code_rule_dsl::prof::count("rr.linked_library_written", 1);
                 }
+                let version = lower::keep_declared_kind_sets(&version, &modules)?;
                 Library::of(modules, members, keys, version, None)
             }
         }
@@ -967,9 +995,17 @@ pub(crate) fn with_cone_version(program: &std::sync::Arc<super::program_image::V
     if natives.len() != n {
         b.set_field(Field::Natives(&natives));
     }
+    // A relation the program states facts of has the library's too, as the program read whole holds both.
     for rel in library.fact_names().into_iter().filter(|r| take.contains(r)) {
-        if !program.states_facts(&rel) {
-            b.set_facts(&rel, &library.fact_rows(&rel));
+        let mut rows = program.fact_rows(&rel);
+        let n = rows.len();
+        for row in library.fact_rows(&rel) {
+            if !rows.contains(&row) {
+                rows.push(row);
+            }
+        }
+        if rows.len() != n || !program.states_facts(&rel) {
+            b.set_facts(&rel, &rows);
         }
     }
     let mut lattice = ProgramFields::lattice(&**program);
@@ -1004,7 +1040,12 @@ pub fn with_cone(program: &mut Program, library: &Program, asked: &BTreeSet<Stri
         program.natives.entry(rel.clone()).or_insert_with(|| n.clone());
     }
     for (rel, rows) in library.facts.iter().filter(|(r, _)| take.contains(*r)) {
-        program.facts.entry(rel.clone()).or_insert_with(|| rows.clone());
+        let mine = program.facts.entry(rel.clone()).or_default();
+        for row in rows {
+            if !mine.contains(row) {
+                mine.push(row.clone());
+            }
+        }
     }
     for (rel, d) in library.lattice.iter().filter(|(r, _)| take.contains(*r)) {
         program.lattice.entry(rel.clone()).or_insert_with(|| d.clone());
@@ -1013,11 +1054,11 @@ pub fn with_cone(program: &mut Program, library: &Program, asked: &BTreeSet<Stri
 
 /// The module linked in `scoped` (`lower::link_seeded_parts`), its own program `own_v`, appended onto
 /// the scope's version and through the lowering's tail.
-fn link_seeded_version(linked: lower::Linked, own_v: std::sync::Arc<super::program_image::Version>, scoped: &Scoped, core: &BTreeSet<String>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
+fn link_seeded_version(linked: lower::Linked, own_v: std::sync::Arc<super::program_image::Version>, scoped: &Scoped, core: &BTreeSet<String>, library: Option<&Library>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     use super::program_image::Builder;
     let seeds = &scoped.seeds;
     let lower::Linked { lowered, stated, own_stated, .. } = linked;
-    let v = lowering_tail_on(scoped.version()?, vec![(own_v, stated, own_stated)], true, lowered)?;
+    let v = lowering_tail_on(scoped.version()?, vec![(own_v, stated, own_stated)], true, lowered, library)?;
     let mut b = Builder::on(&v);
     lower::unseed(&mut b, seeds, core);
     b.finish().map(|(v, _)| v).map_err(Error::Syntax)
@@ -1045,14 +1086,14 @@ fn link_modules(modules: Vec<lower::Module>) -> Result<Program, Error> {
 /// (`lowering_tail_on`), folded to a base. The program `lower::link` makes of them as a tree, as a version.
 pub fn link_library_versions(modules: Vec<lower::Module>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     let linked = lower::link_versions(modules)?;
-    let version = lowering_tail_on(linked.first, linked.appended, false, linked.lowered)?;
+    let version = lowering_tail_on(linked.first, linked.appended, false, linked.lowered, None)?;
     if version.base_bytes().is_some() { Ok(version) } else { version.fold().map_err(Error::Syntax) }
 }
 
 /// The lowering's whole-program half on versions (`lower::whole` on a tree): the modules `appended` onto `start`
 /// (`lowering_tail::AppendModule`), checked declared where `declared` (a text's link: `link_seeded`), then the passes
 /// `whole` runs, in its order, from what the lowerer knows of the modules (`lowered`).
-fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, appended: Vec<(std::sync::Arc<super::program_image::Version>, usize, usize)>, declared: bool, lowered: lower::Lowered) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
+fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, appended: Vec<(std::sync::Arc<super::program_image::Version>, usize, usize)>, declared: bool, lowered: lower::Lowered, library: Option<&Library>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     use super::program_image::manager::Pipeline;
     let lower::Lowered { sets, rewritten, docof_of_locs, findings, three, modal, .. } = lowered;
     let mut p = Pipeline::new("the lowering's tail", start);
@@ -1067,15 +1108,15 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, append
         }
         p.program(&mut lowering_tail::ThreeValued { three: three.clone(), modal: modal.clone() });
         p.program(&mut lowering_tail::Findings { pending: findings.clone() });
-        p.program(&mut lowering_tail::CoreDecls { docof_of_locs }).program(&mut lowering_tail::SpanPatterns).program(&mut lowering_tail::GrammarNames).program(&mut lowering_tail::BuiltinsOut { rewritten: rewritten.clone() });
-        p.program(&mut lowering_tail::KindSets { sets: sets.clone() }).program(&mut lowering_tail::Unit);
+        p.program(&mut lowering_tail::CoreDecls { docof_of_locs }).program(&mut lowering_tail::SpanPatterns { library: library.map(|l| (l.spans(), l.version.digest())) }).program(&mut lowering_tail::GrammarNames).program(&mut lowering_tail::BuiltinsOut { rewritten: rewritten.clone() });
+        p.program(&mut lowering_tail::KindSets { sets: sets.clone(), library: library.map(|l| std::sync::Arc::clone(&l.version)) }).program(&mut lowering_tail::Unit);
         p.program(&mut lowering_tail::BooleanRelations).program(&mut lowering_tail::ScopeGlobs);
         for round in lower::ON_REQUEST {
             p.program(&mut SourcesOnRequest { round });
         }
         p.program(&mut lowering_tail::OrderNodes).program(&mut lowering_tail::DeclareAxes);
         // `finish`'s checks, on the version.
-        super::front::finish_checks_on(p.current().map_err(Error::Syntax)?)?;
+        super::front::finish_checks_given(p.current().map_err(Error::Syntax)?, library.map(|l| &*l.version))?;
     }
     {
         use super::plan::corpus::preparation::{DropRepeated, lowering_tail};
@@ -1504,10 +1545,13 @@ const ENGINE_FILES: [&str; 1] = ["components.rr"];
 
 pub fn read_file(path: &Path) -> Result<(std::sync::Arc<super::program_image::Version>, Vec<LibraryFile>), Error> {
     use std::collections::HashMap;
-    use std::sync::{Mutex, OnceLock};
-    static PROGRAMS: OnceLock<Mutex<HashMap<PathBuf, (Vec<LibraryFile>, std::sync::Arc<super::program_image::Version>)>>> = OnceLock::new();
+    use std::sync::Mutex;
+    // The shared object's lowered programs (decision 0442).
+    #[derive(Default)]
+    struct Programs(Mutex<HashMap<PathBuf, (Vec<LibraryFile>, std::sync::Arc<super::program_image::Version>)>>);
     let key = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
-    let cache = PROGRAMS.get_or_init(Default::default);
+    let cache_held = crate::code_rule_dsl::logic::profile::shared::<Programs>();
+    let cache = &cache_held.0;
     if let Some((files, program)) = cache.lock().expect("the program cache").get(&key)
         && files.iter().all(|file| LibraryFile::now(&file.path) == *file)
     {
@@ -1674,52 +1718,56 @@ fn asks(name: &str) -> bool {
     WORLD.iter().any(|(r, _)| *r == name) || matches!(name, "parsed" | "sub_tape" | "parse_of" | "splice_of" | "parse" | "splice")
 }
 
-/// `unreached_dropped` of statements held elsewhere (`read_shared`'s): only the kept are copied.
-fn reached_statements(own: &Path, statements: &[(&PathBuf, Vec<&syntax::Statement>)]) -> Files {
-    fn idents(text: &str, out: &mut BTreeSet<String>) {
-        out.extend(text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter(|w| w.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')).map(str::to_owned));
+/// The identifiers of `text`: a relation may be named in a string or a JSON term.
+fn idents(text: &str, out: &mut BTreeSet<String>) {
+    out.extend(text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter(|w| w.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')).map(str::to_owned));
+}
+/// The names term `t` reads: its calls', its aggregates' bodies', its variables', and the identifiers of its texts.
+fn term(t: &syntax::Term, out: &mut BTreeSet<String>) {
+    match t {
+        syntax::Term::Call { name, args, .. } => {
+            out.insert(name.clone());
+            args.iter().for_each(|a| term(a, out));
+        }
+        syntax::Term::Bin { l, r, .. } => {
+            term(l, out);
+            term(r, out);
+        }
+        syntax::Term::Agg { over, by, body, .. } => {
+            over.iter().for_each(|o| term(o, out));
+            by.iter().for_each(|b| term(b, out));
+            lits(body, out);
+        }
+        syntax::Term::Named(_, t) => term(t, out),
+        // A relation may be an argument (`nearest(n, p, block_node)`, a set of nodes): every name in a term may
+        // be one.
+        syntax::Term::Json(text) | syntax::Term::Str(text) | syntax::Term::Tick(text) => idents(text, out),
+        syntax::Term::Var(v) => {
+            out.insert(v.clone());
+        }
+        _ => {}
     }
-    fn term(t: &syntax::Term, out: &mut BTreeSet<String>) {
-        match t {
-            syntax::Term::Call { name, args, .. } => {
-                out.insert(name.clone());
+}
+/// The names a clause body reads (`term`'s, and each atom's relation).
+fn lits(body: &[syntax::Lit], out: &mut BTreeSet<String>) {
+    for l in body {
+        match l {
+            syntax::Lit::Atom { rel, args, .. } => {
+                out.insert(rel.clone());
                 args.iter().for_each(|a| term(a, out));
             }
-            syntax::Term::Bin { l, r, .. } => {
+            syntax::Lit::Cmp { l, r, .. } => {
                 term(l, out);
                 term(r, out);
             }
-            syntax::Term::Agg { over, by, body, .. } => {
-                over.iter().for_each(|o| term(o, out));
-                by.iter().for_each(|b| term(b, out));
-                lits(body, out);
-            }
-            syntax::Term::Named(_, t) => term(t, out),
-            // A relation may be an argument (`nearest(n, p, block_node)`, a set of nodes): every name in a term may
-            // be one.
-            syntax::Term::Json(text) | syntax::Term::Str(text) | syntax::Term::Tick(text) => idents(text, out),
-            syntax::Term::Var(v) => {
-                out.insert(v.clone());
-            }
-            _ => {}
+            syntax::Lit::Pattern { subject, .. } => term(subject, out),
+            syntax::Lit::Group { alts, .. } => alts.iter().for_each(|a| lits(a, out)),
         }
     }
-    fn lits(body: &[syntax::Lit], out: &mut BTreeSet<String>) {
-        for l in body {
-            match l {
-                syntax::Lit::Atom { rel, args, .. } => {
-                    out.insert(rel.clone());
-                    args.iter().for_each(|a| term(a, out));
-                }
-                syntax::Lit::Cmp { l, r, .. } => {
-                    term(l, out);
-                    term(r, out);
-                }
-                syntax::Lit::Pattern { subject, .. } => term(subject, out),
-                syntax::Lit::Group { alts, .. } => alts.iter().for_each(|a| lits(a, out)),
-            }
-        }
-    }
+}
+
+/// `unreached_dropped` of statements held elsewhere (`read_shared`'s): only the kept are copied.
+fn reached_statements(own: &Path, statements: &[(&PathBuf, Vec<&syntax::Statement>)]) -> Files {
     let whole: Vec<PathBuf> = ["core.rr"].iter().chain(ENGINE_FILES.iter()).filter_map(|f| library().join(f).canonicalize().ok()).chain(std::iter::once(own.to_owned())).collect();
     // The relations a library derives for the engine to read (`LIBRARY_DERIVED`: embeds, loads) are reached: no rule
     // reads them, and the corpus run makes them outputs (`corpus::run_observed`'s requests). Dropped, a library's
@@ -1792,6 +1840,80 @@ fn reached_statements(own: &Path, statements: &[(&PathBuf, Vec<&syntax::Statemen
             ((*file).clone(), items)
         })
         .collect()
+}
+
+/// What a program asks guests of when it runs alone (decisions 0055, 0058 §1): a pack's programs make one set of
+/// guests, and a rule that reaches a guest reads every one the run made (an annotation one program's library asked
+/// for was every program's, `C408` in a `Literal["dict()"]`). Programs that ask the same run as one pack
+/// (`tools::policy_groups`); the rest run in packs of their own.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GuestAsks {
+    /// Its `.guests` settings: `guest_policy`'s facts, which a pack's programs share.
+    pub settings: Vec<String>,
+    /// `None` when no rule it reaches reads a guest: alone it makes none (`corpus`'s guest requests are no outputs).
+    /// Else the library files whose clauses ask (`asks`, or an `embed`): an included file's asking clauses are kept
+    /// whatever reads them (`reached_statements`), so these files' clauses are what it asks for.
+    pub files: Option<Vec<PathBuf>>,
+    /// Its own clauses ask too: what it asks for is its own.
+    pub own: bool,
+}
+
+/// `src`'s guest requests (`GuestAsks`), read from its statements and its includes'.
+pub fn guest_asks(src: &str) -> Result<GuestAsks, Error> {
+    use super::plan::corpus::guests::READS;
+    let text = read_text(src)?;
+    let (files, own): (Vec<(&Path, &[syntax::Statement])>, &[syntax::Statement]) = match &text.0 {
+        Read::Plain(statements) => (Vec::new(), statements),
+        Read::Modular { files, own } => (files.iter().map(|(path, _, statements)| (path.as_path(), statements.as_slice())).collect(), own),
+    };
+    let settings: Vec<String> = own.iter().filter_map(|(item, _)| match item {
+        syntax::Item::Setting { key, text } if key == "guests" => Some(text.clone()),
+        _ => None,
+    }).collect();
+    // What a clause reads, and whether it makes a guest request (a read `lower` makes a demand of, or an `embed`).
+    let read = |heads: &[syntax::Head], body: &[syntax::Lit], edits: &[syntax::Term]| -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        heads.iter().for_each(|h| h.args.iter().for_each(|a| term(a, &mut out)));
+        lits(body, &mut out);
+        edits.iter().for_each(|e| term(e, &mut out));
+        out
+    };
+    let asking = |heads: &[syntax::Head], read: &BTreeSet<String>| {
+        read.iter().any(|r| asks(r) && !WORLD.iter().any(|(w, _)| w == r)) || heads.iter().any(|h| LIBRARY_DERIVED[..2].contains(&h.rel.as_str()))
+    };
+    let reads_guest = |read: &BTreeSet<String>| read.iter().any(|r| READS.contains(&r.as_str()) || r == "parse" || r == "splice");
+    let mut by_head: std::collections::HashMap<&str, Vec<BTreeSet<String>>> = std::collections::HashMap::new();
+    let mut asking_files: Vec<PathBuf> = Vec::new();
+    for (path, statements) in &files {
+        for (item, _) in statements.iter() {
+            let syntax::Item::Clause { heads, body, edits } = item else { continue };
+            let r = read(heads, body, edits);
+            if asking(heads, &r) && !asking_files.iter().any(|p| p == path) {
+                asking_files.push(path.to_path_buf());
+            }
+            heads.iter().for_each(|h| by_head.entry(h.rel.as_str()).or_default().push(r.clone()));
+        }
+    }
+    // The program's own clauses read what its findings reach; a guest read among what they reach makes its requests.
+    let (mut own_asks, mut reads) = (false, false);
+    let mut reached: BTreeSet<String> = BTreeSet::new();
+    for (item, _) in own {
+        let syntax::Item::Clause { heads, body, edits } = item else { continue };
+        let r = read(heads, body, edits);
+        own_asks |= asking(heads, &r);
+        reads |= reads_guest(&r);
+        reached.extend(heads.iter().map(|h| h.rel.clone()));
+        reached.extend(r);
+    }
+    let mut todo: Vec<String> = reached.iter().cloned().collect();
+    while let Some(rel) = todo.pop().filter(|_| !reads) {
+        for r in by_head.get(rel.as_str()).into_iter().flatten() {
+            reads |= reads_guest(r);
+            todo.extend(r.iter().filter(|n| reached.insert((*n).clone())).cloned());
+        }
+    }
+    asking_files.sort();
+    Ok(GuestAsks { settings, files: reads.then_some(asking_files), own: reads && own_asks })
 }
 
 /// The names a program's files may not declare or derive: `core.rr`'s, but in `core.rr` (decision 0141), and names
@@ -1905,8 +2027,10 @@ fn read_shared(path: &Path) -> Result<(std::sync::Arc<Vec<syntax::Statement>>, L
     // Each file's statements, kept for the process by its path and bytes' digest: programs that include one library
     // (the Python pack's files) parse it once, not once per program. Phase 0's observer gives the digest by a `stat`
     // while the file is unchanged, so a kept file is not read again. Held shared: a reader copies what it keeps.
-    static PARSED: OnceLock<Mutex<HashMap<PathBuf, ([u8; 32], Arc<Vec<syntax::Statement>>)>>> = OnceLock::new();
-    let cache = PARSED.get_or_init(Default::default);
+    #[derive(Default)]
+    struct ParsedFiles(Mutex<HashMap<PathBuf, ([u8; 32], Arc<Vec<syntax::Statement>>)>>);
+    let cache_held = crate::code_rule_dsl::logic::profile::shared::<ParsedFiles>();
+    let cache = &cache_held.0;
     if let Some(digest) = super::plan::corpus::observe(|o| o.digest(path))
         && let Some((kept, statements)) = cache.lock().expect("the parsed files").get(path)
         && *kept == digest

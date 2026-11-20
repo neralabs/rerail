@@ -131,7 +131,9 @@ pub fn device_view(view: View) -> Option<u32> {
 // copy (0353 step 5): an axis's pairs copied into the chunk. It goes: the solve writes its answer once,
 // as ids, into a relation in the chunk block (decision 0353).
 pub fn put_pairs(chunk: &Chunk, pairs: &[u64]) -> Option<usize> {
+    const PAIRS: rerail_prof::copies::Site = rerail_prof::copies::Site::new(6, "5", "an axis's pairs put into the chunk (put_pairs)");
     let p: *mut u64 = chunk.block.try_alloc_t(pairs.len().max(1))?;
+    PAIRS.copied(8 * pairs.len());
     // SAFETY: `p` holds `pairs.len()` items, just allocated in the block.
     unsafe { std::ptr::copy_nonoverlapping(pairs.as_ptr(), p, pairs.len()) };
     Some(chunk.block.offset_of(p))
@@ -173,37 +175,15 @@ pub struct ViewsInPlace {
     _entries: Vec<super::view_docs::ViewEntry>,
 }
 
-/// A batch's 16z cache's bytes at most (`RERAIL_ZCACHE_MB`, else 48 MB: an eighth of a chunk's budget).
-#[cfg(target_os = "macos")]
-fn zcache_bytes() -> usize {
-    std::env::var("RERAIL_ZCACHE_MB").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(48) << 20
-}
-
-/// The cache of a batch whose 16z tapes have `blocks` blocks, the largest `entry` bytes decoded: a generation holds
-/// four times every block (64 at least) where the budget allows, so a batch's passes decode each once; else as many
-/// as it allows, and the cache turns. The room past the blocks is the head's: a promoted block takes a second entry,
-/// and an entry given back by a writer that lost its index to the same block is not taken again (with one entry a
-/// block, the view test's batch of five blocks turned 25 times in one pass and 8 reads found no room). In the
-/// statistics mode with `RERAIL_ZCACHE_STATS=1`.
-#[cfg(target_os = "macos")]
-fn zcache_spec(blocks: usize, entry: usize) -> rerail_clif::view::cache::Spec {
-    use rerail_clif::view::cache::Spec;
-    let gens = 3;
-    let want = (4 * blocks).max(64);
-    let whole = Spec::new(gens, u32::try_from(want).unwrap_or(u32::MAX), entry);
-    let fits = (zcache_bytes() / gens as usize).saturating_sub(whole.first_entry()) / whole.entry_bytes();
-    let spec = Spec::new(gens, u32::try_from(want.min(fits).max(1)).unwrap_or(u32::MAX), entry);
-    if std::env::var_os("RERAIL_ZCACHE_STATS").is_some_and(|v| v == "1") { spec.with_stats() } else { spec }
-}
 
 /// The batch's cache's counts in the profile when its directory goes (the statistics mode's too, where it is on).
 #[cfg(target_os = "macos")]
 impl Drop for ViewsInPlace {
     fn drop(&mut self) {
         if let Some(cache) = &self.cache {
-            // SAFETY: the cache's header, in its shared buffer; no stage reads the views once the directory goes.
-            let c = unsafe { rerail_clif::view::cache::Counts::read(cache.contents().cast::<u8>()) };
-            for (name, n) in [("zcache.misses", c.misses), ("zcache.promoted", c.promoted), ("zcache.rotated", c.rotated), ("zcache.failed", c.failed), ("zcache.hits", c.hits), ("zcache.waited", c.waited), ("zcache.duplicates", c.duplicates)] {
+            // SAFETY: the cache's shared buffer, all of it; no stage reads the views once the directory goes.
+            let c = rerail_clif::view::cache::Counts::checked(unsafe { std::slice::from_raw_parts(cache.contents().cast::<u8>(), cache.length() as usize) });
+            for (name, n) in c.named() {
                 crate::code_rule_dsl::prof::count(name, n as usize);
             }
         }
@@ -317,7 +297,7 @@ fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
     // The 16z documents' cache, shared by every thread of every stage that reads the views: each one's view names it
     // by its address less its tape's, its entry size the cache's, its reads checked (shared).
     let cache = (!zrows.is_empty()).then(|| {
-        let spec = zcache_spec(zblocks, zentry);
+        let spec = rerail_clif::view::cache::Spec::configured(zblocks, zentry);
         crate::code_rule_dsl::prof::count("zcache.batches", 1);
         crate::code_rule_dsl::prof::count("zcache.blocks", zblocks);
         crate::code_rule_dsl::prof::count("zcache.entries", spec.entries as usize);
@@ -397,6 +377,18 @@ fn made_in_order<T: Copy>(b: &Block, span: *const Span<T>, n: usize, values: imp
 // copy (0353 step 4): the node columns (`core`, `up`, `ord`, `fielded`, `start`, `end`, `kind`, `field`), the canonical codes
 // and the projection's arrays copied or made here. They go: the kernels read the placed tapes (decision 0353).
 pub fn build(batch: &Batch) -> Chunk {
+    const COLUMNS: rerail_prof::copies::Site = rerail_prof::copies::Site::new(3, "4", "the chunk's node columns and codes (device_chunk::build)");
+    COLUMNS.time(|| in_block(&batch.block, || build_in(batch)))
+}
+
+/// What `f` puts into `block`, with the bytes the block grew by (a copy's size, `rerail_prof::copies`).
+fn in_block<T>(block: &Block, f: impl FnOnce() -> T) -> (T, usize) {
+    let before = block.used();
+    let out = f();
+    (out, block.used().saturating_sub(before))
+}
+
+fn build_in(batch: &Batch) -> Chunk {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "a batch's chunk block".into());
     let b = Arc::clone(&batch.block);
     let root: *mut ChunkRoot = b.alloc_t(1);
@@ -484,7 +476,8 @@ pub fn build(batch: &Batch) -> Chunk {
 // copy (0353 step 4): the facts' line starts copied into the chunk, for a batch whose `line` view is made (its tapes
 // not on the device). It goes with the made views: the views' reads read the lines where `LineTable::placed` put them.
 pub fn fill_lines(batch: &Batch, chunk: &Chunk) -> bool {
-    *chunk.lines.get_or_init(|| {
+    const LINES: rerail_prof::copies::Site = rerail_prof::copies::Site::new(14, "4", "the facts' line starts put into the chunk (fill_lines)");
+    *chunk.lines.get_or_init(|| LINES.time(|| in_block(&chunk.block, || {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "the facts' lines in the chunk block".into());
         let b = &chunk.block;
         // SAFETY: the root `build` wrote; its document table.
@@ -502,7 +495,7 @@ pub fn fill_lines(batch: &Batch, chunk: &Chunk) -> bool {
             }
         }
         true
-    })
+    })))
 }
 
 /// Puts the `Loc` views' arrays into `batch`'s chunk, once: each document's first row in them, its spans past its
@@ -511,9 +504,10 @@ pub fn fill_lines(batch: &Batch, chunk: &Chunk) -> bool {
 /// are then made on the host. A batch with a guest was refused, and its views read on the host for an upload (28 MB
 /// on posthog/hogql).
 // copy (0353 step 4): the line starts and the spans past the nodes copied into the chunk for the `Loc` views. It goes:
-// the views' reads read the lines in place, and the spans where they are written once (Q123).
+// the views' reads read the lines in place, and the spans where they are written once (Q216).
 pub fn fill_locs(batch: &Batch, chunk: &Chunk) -> bool {
-    *chunk.locs.get_or_init(|| {
+    const LOCS: rerail_prof::copies::Site = rerail_prof::copies::Site::new(14, "4", "the Loc views' lines and spans put into the chunk (fill_locs)");
+    *chunk.locs.get_or_init(|| LOCS.time(|| in_block(&chunk.block, || {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "core.rr's places in the chunk block".into());
         if batch.docs.iter().any(|p| p.extra.is_none()) {
             return false;
@@ -558,7 +552,7 @@ pub fn fill_locs(batch: &Batch, chunk: &Chunk) -> bool {
             }
         }
         true
-    })
+    })))
 }
 
 /// The MSL of the chunk's structures, as the kernels read them.

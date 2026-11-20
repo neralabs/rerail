@@ -97,6 +97,36 @@ order is forced. A slow line:
    Exact statistics change the rule's plan keys (the rule's epoch is in `plan_key`), so no kept price stands.
 4. **Has a wider search asked for (§5).**
 
+### 3a. A line that misses its step rows (2026-11-18)
+
+The slow flag compares a line's whole work with its order's price, under the run's statistics. It misses two cases:
+- an expansion that blows up while the line's total is still within its price;
+- an estimate far too high, which chose the order. An atom priced to multiply its bindings is read late, after an
+  expansion it would have cut. The orders it ruled out were priced with it, so the running order is not slow
+  against its price.
+
+So a line is checked step by step too (`Model::line_miss`, `joins::step_miss`):
+
+- **The widest step is estimated:** once a line has done 8 searches' work (`slow_factor` x `SEARCH_WORK`), its order
+  is priced step by step once (`order_step_rows`, the search's `STEP_ROWS` pricing, not a search), giving the rows
+  after each step; the widest is their maximum. Priced again only when the order changes.
+- **At each chunk,** the counts against it, per row the lead step made (so a line part way through is judged fairly):
+  - *blown up:* the widest step made over `slow_factor` times the widest priced, and over a search's work;
+  - *over-estimated:* a step priced at `slow_factor` searches' work or more, entered with at least 64 bindings, made
+    under `1/slow_factor` of its priced rows a binding. That is the step's own estimate, apart from the steps
+    before it.
+- **A miss is handled as a slow line is:** flagged once in its order, exact pair statistics taken, a wider search
+  asked for. A probe is planned again next round; a seed now, under the handoff (decisions 0206, 0271), with the old
+  order kept to go back to. A line running its prepared order is searched (decision 0361).
+
+`RERAIL_JOIN_MISSES=off` checks none (a measurement aid); `RERAIL_PLAN_CACHE_COUNTS` counts both kinds.
+
+Measured (corpus0 x B-now, profiling, M3, cold): 7 lines a run blown up and replanned, none over-estimated.
+- A trace of the 1,127 lines checked found every step aligned. Of the steps priced at 8 searches' work or more, the
+  worst was priced at 3.1x what it made a binding; none reached 8x.
+- Off/on: instructions 1,071 / 1,079 billion, joins 41.4 / 39.5 s; four earlier runs 1,082 / 1,083 and 1,080 / 1,083.
+- 463 findings, d067ec2ebf6f, in all.
+
 ### 4. The critical path
 
 **Recording.** Each stratum records each line that did at least a search's work (`SEARCH_WORK`) as it ran:

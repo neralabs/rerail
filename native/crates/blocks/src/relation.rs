@@ -22,7 +22,7 @@ use crate::rows::Rows;
 use crate::{key_hash, structure};
 use std::cmp::Ordering;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering::*};
+use std::sync::atomic::{AtomicI64, AtomicU32, AtomicU64, Ordering::*};
 
 pub const FROZEN: u32 = 1;
 pub const DELTA: u32 = 2;
@@ -34,6 +34,10 @@ pub const ADDED: u32 = 4;
 /// size takes back from the free list. A fitted chunk (every other relation's, `try_alloc_chunk_fit`) goes back as
 /// smaller pieces that a chunk of its size cannot take.
 pub const REWRITTEN: u32 = 8;
+/// A continuation of another relation (decision 0384 step 7): its ids below `base_rows` are its base's rows, which
+/// lies in the same block at `base_off` from it (`try_continue`); every read of a row by its id goes there for them
+/// (`rel_get`), so a reader binds it as one relation of `base_rows + own` rows.
+pub const CONTINUES: u32 = 16;
 /// A key's columns at most: the device's probes' (decision 0325 step 5).
 pub const MAX_KEY: usize = 8;
 /// Indexes a relation can be given after it is made (`try_add_index`): its directory's room.
@@ -81,6 +85,8 @@ structure! {
         /// An open relation's set test (`insert_unique`): slots holding row id + 1.
         pub pending: Span<u32>,
         pub pend_used: AtomicU64,
+        /// A continuation's base (`CONTINUES`): its descriptor's offset from this one's, in the same block; 0 for none.
+        pub base_off: AtomicI64,
     }
 }
 
@@ -127,6 +133,10 @@ impl Relation {
             (*p).arity = spec.widths.len() as u32;
             (*p).flags.store(if base.is_some() { DELTA } else { 0 }, Relaxed);
             (*p).base_rows = base.map_or(0, |b| {
+                // A continuation's delta (its kills, which read no rows through it) counts its base's rows too.
+                if b.continues() {
+                    return b.base_rows + b.rows.len();
+                }
                 assert_eq!(b.base_rows, 0, "a delta's base is a full relation");
                 b.rows.len()
             });
@@ -141,12 +151,69 @@ impl Relation {
         }
     }
 
+    /// A relation that continues the first `base_rows` rows `base` reads (decision 0384 step 7): its ids below them
+    /// are `base`'s, read there, and its own rows come after (a second relation started from rows whose writer
+    /// another took, `Rows::shared`). `base` is a full relation, or a continuation itself (a fork of a fork, step 8),
+    /// whose own rows it then reads past its base's: ids are read down the chain (`rel_get`). It lies in `base`'s
+    /// block, which every reader binding it binds. `None` when the block has no room, or `base` is neither (a delta of
+    /// kills), or `base_rows` is not within the rows `base` reads past its own base's.
+    pub fn try_continue<'b>(block: &'b Block, spec: &Spec, base: &Relation, base_rows: u32) -> Option<&'b Relation> {
+        let full = base.base_rows == 0 && !base.is_delta();
+        let from = if base.continues() { base.base_rows } else { 0 };
+        if !(full || base.continues()) || base_rows < from || base_rows > base.len_all() || !block.holds(std::ptr::from_ref(base)) {
+            return None;
+        }
+        let rel = Relation::try_create(block, spec, None)?;
+        // SAFETY: just made, this caller's alone.
+        unsafe {
+            let me = std::ptr::from_ref(rel).cast_mut();
+            (*me).base_rows = base_rows;
+        }
+        let off = std::ptr::from_ref(base) as i64 - std::ptr::from_ref(rel) as i64;
+        rel.base_off.store(off, Release);
+        rel.flags.fetch_or(DELTA | CONTINUES, Release);
+        Some(rel)
+    }
+
+    /// Whether it continues another relation's rows (`try_continue`).
+    #[inline]
+    pub fn continues(&self) -> bool {
+        self.flags.load(Relaxed) & CONTINUES != 0
+    }
+
+    /// The relation it continues (`try_continue`).
+    pub fn base(&self) -> Option<&Relation> {
+        let off = self.base_off.load(Acquire);
+        // SAFETY: a continuation's base lies in its block at `off`, kept while it is (its holder's).
+        (self.continues() && off != 0).then(|| unsafe { &*(std::ptr::from_ref(self).cast::<u8>().offset(off as isize).cast::<Relation>()) })
+    }
+
+    /// Rows it reads by id: its own, and a continuation's base's first `base_rows` before them.
+    pub fn len_all(&self) -> u32 {
+        if self.continues() { self.base_rows + self.rows.len() } else { self.rows.len() }
+    }
+
+    /// Row `id`'s value in column `c`, by the read written once (`rel_get`): a continuation's id below `base_rows`
+    /// read in its base, its own rows from `base_rows` on (a delta's own ids count from its base's too).
+    #[inline]
+    pub fn get(&self, id: u32, c: usize) -> i64 {
+        // SAFETY: a live descriptor; the read finds the row where it lies.
+        unsafe { crate::generated_reads::rel_get(std::ptr::from_ref(self).cast(), id, c as u32) as i64 }
+    }
+
     /// A delta of `base` with no rows of its own whose dead bits are `words` (row `id` dead when bit `id` of them is
     /// set): a relation's kills of the rows it shares, read beside them where they lie (decision 0325: the device
     /// skips a dead row by its bit, `rel_dead`). `None` when the block cannot hold it.
+    /// Its dead bits are a chunk of their own, so a delta replaced when they change goes back whole
+    /// (`release_kills`).
     pub fn try_kills<'b>(block: &'b Block, spec: &Spec, base: &Relation, words: &[u64]) -> Option<&'b Relation> {
         let rel = Relation::try_create(block, spec, Some(base))?;
-        let w: *mut u64 = block.try_alloc_t(words.len().max(1))?;
+        let Some(at) = block.try_alloc_chunk(Relation::kills_bytes(words.len()), 64) else {
+            // SAFETY: just made in `block`; no one has it.
+            unsafe { rel.release(block) };
+            return None;
+        };
+        let w: *mut u64 = block.ptr(at);
         // SAFETY: `w` holds `words.len()` words, just allocated in `block`, as `rel` is.
         unsafe {
             std::ptr::copy_nonoverlapping(words.as_ptr(), w, words.len());
@@ -155,67 +222,20 @@ impl Relation {
         Some(rel)
     }
 
-    /// A copy of this full relation in open `block`: its descriptor made again, then its rows' and kills' chunks,
-    /// dead bits, indexes and statistics copied whole by `memcpy` (no row decoded or re-sorted, no index rebuilt),
-    /// each reference set to its copy. A reader of the copy reads what a reader of this reads (0401 F2, F6). It is
-    /// frozen or not (a run's part, its rows in any order, with the indexes the run added); nothing writes it
-    /// meanwhile, and an open relation's set test (`pending`) is not copied. `None` when `block` has no room.
-    pub fn try_copy_into<'b>(&self, block: &'b Block) -> Option<&'b Relation> {
-        assert!(!self.is_delta(), "only a full relation is copied");
-        let spec = Spec {
-            widths: (0..self.arity as usize).map(|c| self.rows.col(c).width).collect(),
-            order: self.okey[..self.nokey as usize].to_vec(),
-            indexes: Vec::new(),
-            min_log: self.rows.min_log,
-        };
-        let rel = Relation::try_create(block, &spec, None)?;
-        if !rel.rows.try_copy_from(block, &self.rows) || !rel.killed.try_copy_from(block, &self.killed) {
-            return None;
-        }
-        /// `src`'s items in `block`, `dst` set to them.
-        fn copy_span<T>(block: &Block, dst: &Span<T>, src: &Span<T>) -> Option<()> {
-            if src.is_empty() {
-                return Some(());
-            }
-            let p: *mut T = block.try_alloc_t(src.len())?;
-            // SAFETY: `p` holds `src.len()` items, just allocated in open `block`, where `dst` lies too; the items are
-            // plain data (`Pod`), copied as bytes.
-            unsafe {
-                std::ptr::copy_nonoverlapping(src.as_ptr(), p, src.len());
-                Span::set(dst, p, src.len());
-            }
-            Some(())
-        }
-        copy_span(block, &rel.dead, &self.dead)?;
-        copy_span(block, &rel.stats, &self.stats)?;
-        if !self.indexes.is_empty() {
-            let n = self.indexes.len();
-            let dir: *mut Index = block.try_alloc_t(n)?;
-            // SAFETY: `dir` holds `n` zeroed entries in open `block`, as `rel` is; each index's spans are copied
-            // after its fixed fields.
-            unsafe {
-                Span::set(&rel.indexes, dir, n);
-                for (i, ix) in self.indexes.as_slice().iter().enumerate() {
-                    let to = &*dir.add(i);
-                    let w = dir.add(i);
-                    (*w).ncols = std::ptr::read_volatile(&raw const ix.ncols);
-                    (*w).ordered = ix.ordered;
-                    (*w).key = ix.key;
-                    (*w).mask = ix.mask;
-                    copy_span(block, &to.offs, &ix.offs)?;
-                    copy_span(block, &to.rows, &ix.rows)?;
-                }
-            }
-        }
-        // SAFETY: `rel` is this block's and not yet given to anyone: its counters are ours to set.
-        unsafe {
-            let me = std::ptr::from_ref(rel).cast_mut();
-            (*me).base_rows = 0;
-        }
-        rel.live.store(self.live.load(Acquire), Relaxed);
-        rel.nindex.store(self.nindex.load(Acquire), Relaxed);
-        rel.flags.store(self.flags.load(Acquire), Release);
-        Some(rel)
+    /// The chunk a kills delta's `n` dead words take (`try_kills`).
+    fn kills_bytes(n: usize) -> usize {
+        n.max(1) * size_of::<u64>()
+    }
+
+    /// Gives a kills delta (`try_kills`) back to the block's free list: its dead bits' chunk, then itself
+    /// (`release`). Returns the bytes given to the OS with them.
+    ///
+    /// # Safety
+    /// It is a delta `try_kills` made in `block`, and no one reads it after (its last holder's).
+    pub unsafe fn release_kills(&self, block: &Block) -> usize {
+        let dead = self.dead.as_slice();
+        let given = block.free_chunk(block.offset_of(dead.as_ptr()), Relation::kills_bytes(dead.len()));
+        given + unsafe { self.release(block) }
     }
 
     /// Gives its chunks back to the block's free list (decision 0342), when the block keeps one. Returns the bytes
@@ -381,9 +401,11 @@ impl Relation {
              std::slice::from_raw_parts_mut(ix.rows.as_slice().as_ptr().cast_mut(), ix.rows.len()))
         };
         offs.fill(0);
-        let base = self.base_rows;
+        // A continuation's index is of every row it reads (its base's first, ids from 0); a delta's of its own.
+        let base = if self.continues() { 0 } else { self.base_rows };
         let key = &room.key[..room.ncols];
-        let bucket: Vec<u32> = (0..n as u32).map(|i| (key.iter().fold(crate::SEED, |h, &c| crate::mix(h, self.rows.get(i, c as usize))) & room.mask) as u32).collect();
+        let value = |i: u32, c: u16| if self.continues() { self.get(i, c as usize) } else { self.rows.get(i, c as usize) };
+        let bucket: Vec<u32> = (0..n as u32).map(|i| (key.iter().fold(crate::SEED, |h, &c| crate::mix(h, value(i, c))) & room.mask) as u32).collect();
         for &b in &bucket {
             offs[b as usize + 1] += 1;
         }
@@ -469,11 +491,21 @@ impl Relation {
         cap * width + self.dead.len() * 8 + ix + size_of::<Relation>()
     }
 
-    /// Bytes this relation's values, order, indexes and bits take (what a reader may touch).
+    /// Bytes this relation's values, order, indexes and bits take (what a reader may touch: a continuation's chain's
+    /// rows too, decision 0384 step 7).
     pub fn bytes(&self) -> usize {
         let ix: usize =
             self.indexes.as_slice().iter().map(|i| i.offs.len() * 4 + i.rows.len() * 4).sum();
-        self.rows.value_bytes() + self.dead.len() * 8 + ix
+        self.rows.value_bytes() + self.chain_value_bytes() + self.dead.len() * 8 + ix
+    }
+
+    /// A continuation's chain's values it reads (0 for one that continues none): what a copy of it holds past its own.
+    pub fn chain_value_bytes(&self) -> usize {
+        if !self.continues() {
+            return 0;
+        }
+        let width: usize = (0..self.rows.ncols as usize).map(|c| self.rows.col(c).width as usize).sum();
+        self.base_rows as usize * width
     }
 }
 
@@ -1153,6 +1185,78 @@ mod tests {
     use super::*;
     use crate::block::kind;
     use std::collections::BTreeSet;
+
+    /// Decision 0384 step 7: a continuation reads its ids below `base_rows` in its base (in the same block) and its
+    /// own after, by the read written once (`rel_get`); its index is of every id; a kills delta of it marks any; its
+    /// base's rows written past `base_rows` (the base's own writer going on) are not its.
+    #[test]
+    fn a_continuation_reads_its_bases_rows_where_they_lie() {
+        let block = Block::anon(kind::FACTS, 16 << 20).with_free_list();
+        let spec = Spec { widths: vec![8, 8], order: Vec::new(), indexes: Vec::new(), min_log: crate::rows::MIN_LOG };
+        let put = |r: &Relation, from: u32, n: u32, tag: i64| {
+            assert!(r.rows.try_reserve(&block, u64::from(r.rows.len() + n)));
+            let at = r.rows.len();
+            unsafe {
+                r.rows.claim_reserved(n);
+                for i in 0..n {
+                    r.rows.put(at + i, 0, i64::from((from + i) % 10));
+                    r.rows.put(at + i, 1, tag + i64::from(from + i));
+                }
+            }
+        };
+        let base = Relation::try_create(&block, &spec, None).unwrap();
+        put(base, 0, 100, 1000);
+        let fork = Relation::try_continue(&block, &spec, base, 100).expect("room in the base's block");
+        assert!(fork.continues() && std::ptr::eq(fork.base().unwrap(), base));
+        put(fork, 100, 50, 2000);
+        // The base's writer goes on past the fork's start: rows the fork does not read.
+        put(base, 100, 30, 9000);
+        assert_eq!(fork.len_all(), 150);
+        for id in 0..150 {
+            assert_eq!(fork.get(id, 1), if id < 100 { 1000 } else { 2000 } + i64::from(id), "row {id}");
+        }
+        // An index of every id it reads.
+        let n = fork.len_all();
+        let room = unsafe { fork.try_reserve_index(&block, &[0], n) }.expect("room");
+        unsafe {
+            fork.build_index(&room);
+            fork.index_built(&room);
+        }
+        let i = fork.find_index(&[0], n).expect("built");
+        let key = |v: i64| [v].iter().fold(crate::SEED, |h, &x| crate::mix(h, x));
+        let mut sevens: Vec<u32> = fork.group(i, key(7)).iter().copied().filter(|&id| fork.get(id, 0) == 7).collect();
+        sevens.sort_unstable();
+        assert_eq!(sevens, (0..150).filter(|id| id % 10 == 7).collect::<Vec<u32>>(), "its base's rows and its own");
+        // Kills of any of its ids.
+        let kills = Relation::try_kills(&block, &spec, fork, &[1 << 3, 0, 1 << 4]).expect("a delta");
+        assert!(kills.dead_bit(3) && kills.dead_bit(132) && !kills.dead_bit(4));
+        // A continuation of a continuation (a fork of a fork, step 8): ids read down the chain. Below its base's base
+        // rows, or past what its base reads, it is refused; a kills delta is no base.
+        assert!(Relation::try_continue(&block, &spec, fork, 10).is_none());
+        assert!(Relation::try_continue(&block, &spec, fork, 151).is_none());
+        assert!(Relation::try_continue(&block, &spec, kills, 0).is_none());
+        let fork2 = Relation::try_continue(&block, &spec, fork, 120).expect("a continuation of a continuation");
+        put(fork2, 120, 40, 3000);
+        // The first fork's writer goes on past 120: rows the second does not read.
+        put(fork, 150, 5, 8000);
+        assert_eq!(fork2.len_all(), 160);
+        for id in 0..160 {
+            let want = if id < 100 { 1000 } else if id < 120 { 2000 } else { 3000 } + i64::from(id);
+            assert_eq!(fork2.get(id, 1), want, "row {id} down the chain");
+        }
+        let n = fork2.len_all();
+        let room = unsafe { fork2.try_reserve_index(&block, &[0], n) }.expect("room");
+        unsafe {
+            fork2.build_index(&room);
+            fork2.index_built(&room);
+        }
+        let i = fork2.find_index(&[0], n).expect("built");
+        let mut threes: Vec<u32> = fork2.group(i, key(3)).iter().copied().filter(|&id| fork2.get(id, 0) == 3).collect();
+        threes.sort_unstable();
+        assert_eq!(threes, (0..160).filter(|id| id % 10 == 3).collect::<Vec<u32>>(), "every id down the chain");
+        // Kept, a continuation is packed with every row it reads (decision 0456 K3: `kept_facts::columns`, tested
+        // there as `a_continuation_is_kept_with_every_row_it_reads`).
+    }
 
     /// Decision 0384 step 5: an added index's buckets and rows are chunks of a free-listed block, which forgetting it
     /// (`forget_indexes`, a relation whose rows changed in place) gives back, and the next index takes again: a

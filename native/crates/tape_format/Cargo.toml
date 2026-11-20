@@ -5,6 +5,13 @@ edition = "2024"
 publish = false
 description = "The engine's tape as bytes: format 15 (v9np), its constants and a writer a parser writes it with; format 16 and its fixed blocks; one API over them, read in place (0293)."
 
+[features]
+# The tests' shared object for reads outside a run (decision 0442).
+test-hooks = ["rerail-clif/test-hooks"]
+# The hand-written reference writer of format 16 (`f16::reference`), which the writer's ops are checked against: the
+# tests', and the lab's (decision 0434 §6, R16). No build of the engine turns it on.
+reference = []
+
 [dependencies]
 # The view a tape's reads are told where it lies by (decision 0310), without the reads' IR.
 rerail-clif = { path = "../clif", default-features = false }
@@ -21,5 +28,10 @@ rerail-simd8 = { path = "../simd8" }
 sha2 = { version = "0.10", features = ["asm"] }
 
 [dev-dependencies]
+rerail-tape-format = { path = ".", features = ["test-hooks"] }
 # The reads in Cranelift's IR, JIT-compiled and run against this crate's readers (decision 0310).
 rerail-clif = { path = "../clif" }
+
+# The writer's ops in MSL, run on the device against the reference writer (decision 0434 §6, R15).
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+metal = "0.33.0"

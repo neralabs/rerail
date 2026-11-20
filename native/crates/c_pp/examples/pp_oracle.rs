@@ -126,7 +126,7 @@ fn clang_tokens(text: &[u8], opts: Options) -> Vec<Vec<u8>> {
     let mut lx = PpLexer::new(text, opts);
     let mut v = Vec::new();
     loop {
-        let t = lx.next();
+        let t = lx.next_token();
         if t.kind == P::Eof {
             break;
         }

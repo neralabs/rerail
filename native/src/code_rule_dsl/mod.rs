@@ -1705,9 +1705,6 @@ pub(crate) mod logic {
         #[cfg(test)]
         pub mod tests;
         #[allow(unused_imports)]
-        #[cfg(test)]
-        pub(crate) use crate::code_rule_dsl::logic::native::setfix::DERIVATIONS;
-        #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::native::setfix::{forget_engine, forget_scope};
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::native::setfix::{flush_symbols, forget_inputs, intern_batch, keep_inputs, register_symbols, sym_text_of};
@@ -1761,6 +1758,9 @@ pub(crate) mod logic {
             // Decision 0364's required shape (R1–R10): what a session's edit does, one test per requirement.
             #[cfg(test)]
             pub mod maintain_tests;
+            // Decision 0458 (R1–R5): the cross part reads the base relations off every file's tape.
+            #[cfg(test)]
+            pub mod cross_views_tests;
             #[cfg(test)]
             pub mod cache_tests;
             // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
@@ -3669,16 +3669,6 @@ pub mod tree {
     use std::ops::Range;
 }
 
-/// The language tag a stored tape image names (`tape::stored_tape_tag`): the store picks a
-/// frame's dictionary by it.
-pub(crate) fn stored_tape_tag(bytes: &[u8]) -> Option<u8> {
-    tape::stored_tape_tag(bytes)
-}
-
-/// The language tag of the dialect a file at `path` is parsed as.
-pub(crate) fn path_tape_tag(path: &str) -> Option<u8> {
-    language::tape_tag(language::dialect_by_label(language::label_of_path(path)?)?)
-}
 pub use rerail_facts::code_rule_dsl::text;
 #[cfg(test)]
 mod test_support;
@@ -4758,6 +4748,9 @@ pub(crate) fn install_languages() {
     facts::nearest::install_nearest(typing::file_local::nearest);
     // What a block of relations asks about the device: the run's binding's (decision 0342, Q58).
     facts::rows::install_block_device(logic::plan::placement::block_device);
+    // What a chunk's jobs allocated less freed (Q203 item 3): the allocator's own per-thread counters.
+    #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+    facts::rows::install_heap_net(heap_net);
     // `core.rr`'s names, as the rule language reads them.
     facts::core::install_core_names(logic::rr::core_shape);
     // What the evaluator keeps per connection, dropped with it.
@@ -4923,4 +4916,14 @@ pub(crate) fn install_languages() {
 pub(crate) fn install_devices() {
     #[cfg(target_os = "macos")]
     device_metal::register();
+}
+
+/// This thread's bytes allocated less freed, from jemalloc's per-thread counters (`facts::rows::install_heap_net`).
+#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+fn heap_net() -> i64 {
+    thread_local! {
+        static COUNTERS: Option<(tikv_jemalloc_ctl::thread::ThreadLocal<u64>, tikv_jemalloc_ctl::thread::ThreadLocal<u64>)> =
+            tikv_jemalloc_ctl::thread::allocatedp::read().ok().zip(tikv_jemalloc_ctl::thread::deallocatedp::read().ok());
+    }
+    COUNTERS.with(|c| (*c).map_or(0, |(a, d)| a.get() as i64 - d.get() as i64))
 }

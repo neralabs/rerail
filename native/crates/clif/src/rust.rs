@@ -54,6 +54,19 @@ thread_local! {
     /// The functions' style: `None` the parser's (`translate`), else the reads' (`translate_reads`), each
     /// function's inlining by its id.
     static READS: std::cell::RefCell<Option<Vec<(u32, bool)>>> = const { std::cell::RefCell::new(None) };
+    /// Whether a load of the reads' memory is checked against the tape's bytes (`ld`): not the writer's ops'
+    /// (`translate_ops`).
+    static CHECKED: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+/// The writer's ops (`writer::OPS`) as Rust: `translate_reads` of a relation's family, but each load a plain one.
+/// The ops' loads are of the region's parts, each in its part by the host's reservations before the op (decision
+/// 0434 §6); the parts are buffers of their own, so no one span bounds them as `ld` bounds a tape's.
+pub fn translate_ops(funcs: &[(u32, ir::Function, bool)], entries: &[(u32, &str)]) -> Result<String, String> {
+    CHECKED.with(|c| c.set(false));
+    let out = translate_reads(funcs, entries, crate::reads::Family::Relation);
+    CHECKED.with(|c| c.set(true));
+    out
 }
 
 /// Whether the functions are the reads' (`translate_reads`): no pinned register; and function `id`'s
@@ -782,7 +795,9 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
             set(format!("({} as {} as {s}) as {u}", args[0], from.1))
         }
         // A read's load of the tape: checked against its bytes (`translate_reads`).
-        Opcode::Load | Opcode::Uload8 | Opcode::Uload16 | Opcode::Uload32 if read_style(u32::MAX).is_some() && !data.memflags().is_some_and(|m| m.aligned()) => {
+        Opcode::Load | Opcode::Uload8 | Opcode::Uload16 | Opcode::Uload32
+            if read_style(u32::MAX).is_some() && CHECKED.with(std::cell::Cell::get) && !data.memflags().is_some_and(|m| m.aligned()) =>
+        {
             let base = name(dfg.block_params(f.layout.entry_block().ok_or("no entry block")?)[0]);
             let t = match op {
                 Opcode::Uload8 => "u8",

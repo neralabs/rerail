@@ -231,13 +231,12 @@ pub fn shadowing() -> bool {
     shadow_file().is_some()
 }
 
-fn shadow_file() -> Option<&'static std::sync::Mutex<std::fs::File>> {
-    static FILE: std::sync::OnceLock<Option<std::sync::Mutex<std::fs::File>>> = std::sync::OnceLock::new();
-    FILE.get_or_init(|| {
+/// The run's own (opened once a run, decision 0442).
+fn shadow_file() -> Option<std::sync::Arc<std::sync::Mutex<std::fs::File>>> {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| {
         let path = std::env::var_os("RERAIL_STATS_SHADOW")?;
-        std::fs::OpenOptions::new().create(true).append(true).open(path).ok().map(std::sync::Mutex::new)
+        std::fs::OpenOptions::new().create(true).append(true).open(path).ok().map(|f| std::sync::Arc::new(std::sync::Mutex::new(f)))
     })
-    .as_ref()
 }
 
 /// One shadowed column's line (`shadowing`).

@@ -106,6 +106,14 @@ impl Roots {
             && entry.iter().all(|&(op, arg)| if op == super::super::KIND { kind == arg } else { classes.contains(&arg) })
     }
 
+    /// Whether block `b` of `tape` may hold a root of a rule over codes, by the tape's presence (decision 0434 §4,
+    /// step 6): one of its kinds, and each kind its tests name. The kernels' `rule_may_in`, the same read
+    /// (`tape_has_kind`); a supertype test the presence does not tell.
+    fn may_in(kinds: &Option<Vec<u16>>, entry: &[(u8, u16)], tape: &TapeDoc, b: usize) -> bool {
+        kinds.as_ref().is_none_or(|kinds| kinds.iter().any(|&kind| tape.block_may_have_kind(b, kind)))
+            && entry.iter().all(|&(op, arg)| op != super::super::KIND || tape.block_may_have_kind(b, arg))
+    }
+
     /// This rule as the sweep tests it at a node's code (`sweep_admits`): {kind count or NONE,
     /// kinds, test count, tests (op << 16 | argument)}. A sweep's passes have rules over codes.
     fn device_rule(&self) -> Result<Vec<u32>, Error> {
@@ -128,7 +136,7 @@ impl Roots {
                     return Box::new(std::iter::empty());
                 }
                 let mut nodes = Vec::new();
-                tape.transducer_nodes_where(|kind, classes| Self::admits(kinds, entry, kind, classes), &mut nodes);
+                tape.transducer_nodes_where_in(|kind, classes| Self::admits(kinds, entry, kind, classes), &|b| Self::may_in(kinds, entry, tape, b as usize), &mut nodes);
                 Box::new(nodes.into_iter())
             }
         }
@@ -324,9 +332,16 @@ fn formula_leaf(word: u32) -> bool {
 /// where the walk is not a micro walk, or the anchor tests no more than a rule over codes does (`narrowing`).
 ///
 /// A label `unknown` names (a recursive group's own, Q133) is read as every node, as on the CPU (`anchor_bits`).
-pub(in crate::code_rule_dsl) fn device_anchor(program: &Program, unknown: &dyn Fn(u16) -> bool) -> Option<std::sync::Arc<DeviceFormula>> {
+///
+/// A pass that starts within a demand's set (`Domain::Within`, decision 0460) has it in its anchor, as on the CPU.
+pub(in crate::code_rule_dsl) fn device_anchor(program: &Program, demand: Option<&compile_sets::Set>, unknown: &dyn Fn(u16) -> bool) -> Option<std::sync::Arc<DeviceFormula>> {
     let walk = Micro::of(program)?;
-    let mut formula = narrowing(&compile_sets::Set::anchor(&walk.words, &|_| true).labels_unknown(unknown))?;
+    let anchor = compile_sets::Set::anchor(&walk.words, &|_| true);
+    let anchor = match demand {
+        Some(demand) => compile_sets::Set::all_of(vec![anchor, demand.clone()]),
+        None => anchor,
+    };
+    let mut formula = narrowing(&anchor.labels_unknown(unknown))?;
     formula.texts = (0..walk.texts.len()).map(|slot| walk.slot_key(program, slot)).collect();
     Some(std::sync::Arc::new(formula))
 }
@@ -604,8 +619,7 @@ pub(in crate::code_rule_dsl) fn text_slot(
 /// its passes are micro walks (`Runner::group`), else as rounds of levels. The host's sweeps
 /// between the GPU's segments (O26) stay as the reference, `RERAIL_HOST_SWEEPS`.
 pub(in crate::code_rule_dsl) fn host_sweeps() -> bool {
-    static HOST: LazyLock<bool> = LazyLock::new(|| std::env::var_os("RERAIL_HOST_SWEEPS").is_some());
-    *HOST
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_HOST_SWEEPS").is_some())
 }
 
 /// Whether a recursive group runs as sweeps: its passes are programs (or empty), whose results only
@@ -697,8 +711,7 @@ const SPILL_ITEM: usize = 20;
 
 /// Whether long micro walks spill their frames to other threads (`RERAIL_MICRO_SPILL=off`: not).
 fn spill_on() -> bool {
-    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_MICRO_SPILL").map_or(true, |v| v != "off"));
-    *ON
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_MICRO_SPILL").map_or(true, |v| v != "off"))
 }
 
 /// Where a micro kernel binds its walk statistics (`Shape::profile`): below the slabs.
@@ -707,8 +720,7 @@ const WALK_STATS_SLOT: u64 = 26;
 /// Profiling (`RERAIL_GPU_WALK_STEPS`): each micro pass's walks, steps and longest walk, by its
 /// words, in the profile's stages (`walk_steps.`, `walk_items.`, `walk_max.`).
 fn walk_steps_on() -> bool {
-    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_GPU_WALK_STEPS").is_some());
-    *ON
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_GPU_WALK_STEPS").is_some())
 }
 
 /// A micro walk's words as text: what a profile names the walk by.
@@ -875,24 +887,38 @@ fn scratch_rows(plan: &Plan<'_>) -> usize {
 }
 
 /// The device's tape view (decision 0032), which the label and pattern kernels read: the
-/// document table's entry as generated (`slabs::msl`, decisions 0289 §4 and 0310), the reads written once in CLIF
-/// (`metal_tape_reads.metal`), then the readers.
+/// document table's entry as generated (`slabs::msl`, decisions 0289 §4 and 0310), the reads written once in CLIF,
+/// then the readers. The reads are format 15's and 16's (`metal_tape_reads.metal`), or 16z's too, through the
+/// batch's cache (`metal_tape_reads_z.metal`, decision 0353 step 4b) for a batch of 16z or of mixed formats
+/// ([`tape_view`]): a pipeline's 16z bodies are compiled though its format makes them dead, and doubled a format
+/// 15 label kernel's compile.
 ///
 /// The batch's tape format is function constant 0 (`tape_format`, 0 for a mixed batch): each view load of the format
 /// field reads it, so a batch of one format runs reads without the other format's branches (t41: label_micro 388 to
 /// about 300 ms at s1000). Every pipeline of these sources is made with a value ([`pipeline_of`]).
-static TAPE_VIEW: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-    format!(
-        "#include <metal_stdlib>\nusing namespace metal;\n{}constant uint tape_format [[function_constant(0)]];\n#define clif_view(v,a) ((tape_format!=0u&&(a)=={}u)?tape_format:(v)[(a)/4u])\n{}{}",
-        crate::code_rule_dsl::residency::slabs::msl(),
-        std::mem::offset_of!(crate::code_rule_dsl::residency::slabs::DocView, format),
-        include_str!("metal_tape_reads.metal"),
-        include_str!("metal_tape.metal")
-    )
+static TAPE_VIEWS: std::sync::LazyLock<[String; 2]> = std::sync::LazyLock::new(|| {
+    [include_str!("metal_tape_reads.metal"), include_str!("metal_tape_reads_z.metal")].map(|reads| {
+        format!(
+            "#include <metal_stdlib>\nusing namespace metal;\n{}constant uint tape_format [[function_constant(0)]];\n#define clif_view(v,a) ((tape_format!=0u&&(a)=={}u)?tape_format:(v)[(a)/4u])\n{}{}",
+            crate::code_rule_dsl::residency::slabs::msl(),
+            std::mem::offset_of!(crate::code_rule_dsl::residency::slabs::DocView, format),
+            reads,
+            include_str!("metal_tape.metal")
+        )
+    })
 });
-/// The label kernels over the tape view.
-static SOURCE: std::sync::LazyLock<String> =
-    std::sync::LazyLock::new(|| format!("{}{}{}", *TAPE_VIEW, include_str!("metal_work_queue.metal"), include_str!("metal_label_passes.metal")));
+/// Whether a batch of tapes in `format` (0: mixed) reads 16z ([`TAPE_VIEWS`]).
+fn reads_z(format: u32) -> bool {
+    format != 15 && format != 16
+}
+/// The tape view for a batch of tapes in `format` (0: mixed).
+fn tape_view(format: u32) -> &'static str {
+    &TAPE_VIEWS[usize::from(reads_z(format))]
+}
+/// The label kernels over the tape view, for a batch of either kind ([`tape_view`]).
+static SOURCES: std::sync::LazyLock<[String; 2]> = std::sync::LazyLock::new(|| {
+    [15, 0].map(|format| format!("{}{}{}", tape_view(format), include_str!("metal_work_queue.metal"), include_str!("metal_label_passes.metal")))
+});
 /// Where a label kernel binds the batch's chunk block (`DocView`'s `at`): past every other buffer.
 const SLAB_SLOT: u64 = 27;
 /// A walk's stack tiers are one kernel each (`label_micro`, `label_group`, `root_records`), their frames the dispatch's
@@ -993,11 +1019,16 @@ const SEGMENT_BYTES: usize = 64 << 20;
 /// a job on the pool, once a process: each is compiled from source, 0.6 s together, and a pass that
 /// needs one before it is ready waits for the rest of its compile (they are cached behind locks).
 pub(in crate::code_rule_dsl) fn warm() {
-    static STARTED: std::sync::Once = std::sync::Once::new();
-    STARTED.call_once(|| {
+    // Once a machine (decision 0442): its pipelines are the machine's.
+    #[derive(Default)]
+    struct Warmed(std::sync::OnceLock<()>);
+    crate::code_rule_dsl::logic::profile::machine::<Warmed>().0.get_or_init(|| {
+        // The job compiles on this thread's machine: a pool thread holds no run.
+        let shared = crate::code_rule_dsl::logic::profile::shared_here();
         // A panic leaves the kernels to be compiled where they are needed (a job's panic would end
         // the process).
-        rayon::spawn(|| rerail_accel::exec::as_job("the label kernels' warm-up", || {
+        rayon::spawn(move || rerail_accel::exec::as_job("the label kernels' warm-up", || {
+            let _in_run = crate::code_rule_dsl::logic::profile::within(shared);
             let _ = std::panic::catch_unwind(|| {
                 // The set program's kernels first: it runs first in a wave (its candidates). The shared
                 // device is not opened here: on S7 a wave waiting on this job's open waited longer (to
@@ -1016,37 +1047,47 @@ pub(in crate::code_rule_dsl) fn warm() {
 }
 
 /// The label kernels, compiled once per tape format (until the residency's drop).
-static PIPELINES: LazyLock<Mutex<HashMap<u32, Vec<ComputePipelineState>>>> = LazyLock::new(Default::default);
+#[derive(Default)]
+struct LabelPipelines(Mutex<HashMap<u32, Vec<ComputePipelineState>>>);
 /// The clauses' pattern kernels, by source and tape format (until the residency's drop).
-static PATTERN_PIPELINES: LazyLock<Mutex<HashMap<(String, u32), ComputePipelineState>>> = LazyLock::new(Default::default);
+#[derive(Default)]
+struct PatternPipelines(Mutex<HashMap<(String, u32), ComputePipelineState>>);
 
-/// A pipeline of a source over [`TAPE_VIEW`] for a batch of tapes in `format` (0: mixed).
+/// A pipeline of a source over [`tape_view`] for a batch of tapes in `format` (0: mixed).
 fn pipeline_of(source: &str, name: &str, format: u32) -> Result<ComputePipelineState, Error> {
     rerail_metal::runtime::pipeline_named_fixed(source, name, Some(format))
 }
 
 /// Releases the compiled label and pattern kernels (the residency's drop).
 pub(in crate::code_rule_dsl) fn drop_pipelines() {
-    if let Ok(mut pipelines) = PIPELINES.lock() {
+    let held_ = crate::code_rule_dsl::logic::profile::machine::<LabelPipelines>();
+    if let Ok(mut pipelines) = held_.0.lock() {
         pipelines.clear();
     }
-    if let Ok(mut pipelines) = PATTERN_PIPELINES.lock() {
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<PatternPipelines>();
+    if let Ok(mut pipelines) = held_.0.lock() {
         pipelines.clear();
     }
 }
 
 fn pipelines(format: u32) -> Result<Vec<ComputePipelineState>, Error> {
-    let mut cached = PIPELINES.lock().map_err(|_| Error::BackendFailure)?;
+    let held_ = crate::code_rule_dsl::logic::profile::machine::<LabelPipelines>();
+    let mut cached = held_.0.lock().map_err(|_| Error::BackendFailure)?;
     if let Some(pipelines) = cached.get(&format) {
         return Ok(pipelines.clone());
     }
     // The library once (its front end, with the first kernel), then the others side by side: each pipeline is a
     // back-end compile of its own, and Metal's compiler service runs them at once (work queue Q181: format 16's took 67
     // s one after another, 23 s together, on a loaded M3 Max). A kernel that fails to compile panics on its thread,
-    // and the panic goes on here (decision 0382).
-    let first = pipeline_of(&SOURCE, KERNELS[0], format)?;
-    let rest = std::thread::scope(|scope| {
-        let compiles = KERNELS[1..].iter().map(|name| scope.spawn(move || pipeline_of(&SOURCE, name, format))).collect::<Vec<_>>();
+    // and the panic goes on here (decision 0382). Each compile waits on the device's compiler, so its thread is a
+    // device's worker, scoped as the executor's are (`exec::scoped`, decision 0100 §12). A batch of 16z tapes compiles
+    // the reads with 16z's bodies (`reads_z`); the others without them. Both sources are fixed, so their pipelines are
+    // the ones the engine ships (`pipeline_named_fixed`, decision 0395).
+    let source = &SOURCES[usize::from(reads_z(format))];
+    let fixed = |name: &str| rerail_metal::runtime::pipeline_named_fixed(source, name, Some(format));
+    let first = fixed(KERNELS[0])?;
+    let rest = rerail_accel::exec::scoped(|scope| {
+        let compiles = KERNELS[1..].iter().map(|name| scope.spawn(move || fixed(name))).collect::<Vec<_>>();
         compiles.into_iter().map(|compile| compile.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))).collect::<Result<Vec<_>, _>>()
     })?;
     let pipelines = std::iter::once(first).chain(rest).collect::<Vec<_>>();
@@ -1054,10 +1095,10 @@ fn pipelines(format: u32) -> Result<Vec<ComputePipelineState>, Error> {
     Ok(pipelines)
 }
 
-/// The label kernels' source and names (`SOURCE`, `KERNELS`), for the compile probe (work queue Q181).
+/// The label kernels' source and names (`SOURCES`' without 16z's reads, `KERNELS`), for the compile probe (work queue Q181).
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn label_source() -> (&'static str, &'static [&'static str]) {
-    (&SOURCE, &KERNELS)
+    (&SOURCES[0], &KERNELS)
 }
 
 /// Compiles every label kernel and the fact-only pattern kernel for a batch of `format` (0: mixed): how many of each.
@@ -1084,14 +1125,15 @@ fn pattern_pipelines(patterns: &[&PackedPattern], facts: bool, format: u32) -> R
     Ok(Some((pipelines, names)))
 }
 
-/// The sources of the pattern kernels a plan of `patterns` compiles (`pattern_pipelines`), in its order.
-pub(in crate::code_rule_dsl) fn pattern_sources(patterns: &[&PackedPattern], facts: bool) -> Vec<String> {
+/// The sources of the pattern kernels a plan of `patterns` compiles for a batch of `format` (`pattern_pipelines`),
+/// in its order: each reads the format's tapes (`tape_view`).
+pub(in crate::code_rule_dsl) fn pattern_sources(patterns: &[&PackedPattern], facts: bool, format: u32) -> Vec<String> {
     if patterns.is_empty() && !facts {
         return Vec::new();
     }
     let groups = patterns.chunks(patterns::GROUP).collect::<Vec<_>>();
     let groups = if groups.is_empty() { vec![&[][..]] } else { groups };
-    groups.into_iter().enumerate().map(|(group, members)| patterns::source(members, group * patterns::GROUP).0).collect()
+    groups.into_iter().enumerate().map(|(group, members)| patterns::source(members, group * patterns::GROUP, format).0).collect()
 }
 
 /// Whether the pattern kernels of `sources` (`pattern_sources`) are at hand without a compile (decision 0395):
@@ -1105,7 +1147,7 @@ pub(in crate::code_rule_dsl) fn patterns_ready(sources: &[String], format: u32) 
 
 /// One group's pattern kernel, compiled once per distinct source.
 fn pattern_pipeline(patterns: &[&PackedPattern], first: usize, format: u32) -> Result<(ComputePipelineState, Vec<Vec<String>>), Error> {
-    let (source, names) = patterns::source(patterns, first);
+    let (source, names) = patterns::source(patterns, first, format);
     // `RERAIL_DIAG_PATTERNS=<dir>`: each pattern kernel's source, for measuring it alone.
     if let Some(dir) = std::env::var_os("RERAIL_DIAG_PATTERNS") {
         use std::hash::{Hash, Hasher};
@@ -1113,7 +1155,8 @@ fn pattern_pipeline(patterns: &[&PackedPattern], first: usize, format: u32) -> R
         source.hash(&mut hasher);
         let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{:016x}.metal", hasher.finish())), &source);
     }
-    let mut cached = PATTERN_PIPELINES.lock().map_err(|_| Error::BackendFailure)?;
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<PatternPipelines>();
+    let mut cached = held_.0.lock().map_err(|_| Error::BackendFailure)?;
     let key = (source, format);
     if let Some(pipeline) = cached.get(&key) {
         return Ok((pipeline.clone(), names));
@@ -1240,6 +1283,11 @@ struct Runner<'a> {
     /// The anchors' leaf tests for the whole run (`size`), and their rows once read (`formulas`).
     run_leaves: Vec<u32>,
     run_leaf_rows: Option<MappedBuffer>,
+    /// `label_formula`'s scratch, one for the run: each level's formulas run after the last level's in the command
+    /// buffer, so they reuse it, and it grows where a level needs more, to `FORMULA_SCRATCH_BYTES` at most. A new one
+    /// each level counted toward the segment as an upload, so two levels of formulas ended the command buffer
+    /// (`SEGMENT_BYTES`; `the_wave_is_one_evaluation_on_metal`: 3 of them, 50 s against 0.9 s).
+    formula_scratch: Option<MappedBuffer>,
     /// The loop tier's stacks (`MICRO_POOL` of them), committed only as walks use them.
     stacks: Option<MappedBuffer>,
     /// The deep fused groups' stacks, one buffer for all of them: the groups run one after
@@ -1492,11 +1540,12 @@ fn mark(at: &str) {
             super::super::metal_backend::reserved_mb(),
             tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20
         );
-        static SEEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        #[derive(Default)]
+        struct HoldSeen(std::sync::atomic::AtomicUsize);
         let wanted = std::env::var("RERAIL_HOLD_AT").ok();
         let nth = wanted.as_deref().and_then(|wanted| wanted.split_once('#')).map_or(Some(1), |(_, n)| n.parse().ok());
         let here = wanted.as_deref().is_some_and(|wanted| wanted.split('#').next() == Some(at))
-            && Some(SEEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1) == nth;
+            && Some(rerail_prof::code_rule_dsl::logic::profile::local::<HoldSeen>().0.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1) == nth;
         if let Some(path) = std::env::var_os("RERAIL_HOLD").filter(|_| here) {
             eprintln!("FLUSH holding, pid {}", std::process::id());
             while !std::path::Path::new(&path).exists() {
@@ -1579,7 +1628,7 @@ fn encode(
     let command = queue.new_command_buffer().to_owned();
     command.set_label("Rerail label passes");
     let tapes = crate::code_rule_dsl::prof::time("gpu.tapes", || tapes(device, files, plan, words, rows.as_ref(), [scratch_rows(plan) * words, tally_rows(plan) * nodes]))?;
-    // The batch's one format, or 0 for a mixed batch: the kernels are made for it (`TAPE_VIEW`).
+    // The batch's one format, or 0 for a mixed batch: the kernels are made for it (`tape_view`).
     let format = tapes.table.format().unwrap_or(0);
     if crate::code_rule_dsl::prof::on() {
         crate::code_rule_dsl::prof::count_named(format!("gpu.tape_format={format}"), 1);
@@ -1620,6 +1669,7 @@ fn encode(
         formula_stats: Vec::new(),
         run_leaves: Vec::new(),
         run_leaf_rows: None,
+        formula_scratch: None,
         stacks: kept.as_mut().and_then(|kept| kept.stacks.as_ref().map(|stacks| MappedBuffer::wrap(stacks.buffer.clone()))),
         group_stacks: [None, None, None, None, None],
         encoded: false,
@@ -1703,6 +1753,17 @@ fn encode(
         crate::code_rule_dsl::prof::count("formula.groups", words[18] as usize);
         crate::code_rule_dsl::prof::count("formula.within_down", words[19] as usize);
         crate::code_rule_dsl::prof::count("formula.within_climb", words[20] as usize);
+    }
+    // A node past the batch's, which a pass would have marked or counted (decision 0463): not written, and the
+    // passes again on the interpreter. Said once a run: it is a tape's walk or a capture that left its tape.
+    if runner.flag(0) & 256 != 0 {
+        crate::code_rule_dsl::prof::count("gpu.node_past_batch", 1);
+        /// Whether the run said so already (the run's own, decision 0442).
+        #[derive(Default)]
+        struct Said(std::sync::atomic::AtomicBool);
+        if !rerail_prof::code_rule_dsl::logic::profile::with_local::<Said, _>(|said| said.0.swap(true, std::sync::atomic::Ordering::Relaxed)) {
+            eprintln!("rerail: a label pass took a node past its batch's {} (decision 0463, Q265): not written; the passes on the interpreter", runner.nodes);
+        }
     }
     // A micro walk that outgrew its frames: the passes again on the interpreter.
     if runner.flag(0) & 2 != 0 {
@@ -1860,6 +1921,10 @@ impl Runner<'_> {
 
     fn bind_slabs(&self, encoder: &metal::ComputeCommandEncoderRef) {
         encoder.set_buffer(SLAB_SLOT, Some(self.block()), 0);
+        // The 16z documents' cache, which their reads reach from the block by the views' offsets, and write.
+        if let Some(cache) = &self.tapes.table.cache {
+            encoder.use_resource(cache, metal::MTLResourceUsage::Read | metal::MTLResourceUsage::Write);
+        }
     }
 
     fn flag(&self, index: usize) -> u32 {
@@ -1874,6 +1939,13 @@ impl Runner<'_> {
         commit_checked(&self.command)?;
         wait_checked(&self.command)?;
         crate::code_rule_dsl::prof::count("gpu.commits", 1);
+        // A 16z block that found no room in the batch's cache read its dead entry: the batch goes back to the wave,
+        // to be split, before any of its results is read.
+        if let Some(cache) = &self.tapes.table.cache
+            && rerail_metal::slabs::zcache_failed(cache) > 0
+        {
+            return Err(capacity());
+        }
         {
             // The command buffer's time on the GPU (`GPUStartTime` to `GPUEndTime`).
             unsafe extern "C" {
@@ -1913,8 +1985,7 @@ impl Runner<'_> {
     /// its GPU time added to `kernel_us.<label>` and `kernel_n.<label>`, and a new one begun.
     /// Kernels then run one buffer each, in the same order on the same queue.
     fn split(&mut self, label: &str) {
-        static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_GPU_KERNEL_TIMES").is_some());
-        if !*ON {
+        if !rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_GPU_KERNEL_TIMES").is_some()) {
             return;
         }
         // Refused (the launch ledger is spent): the flush reports it.
@@ -2387,8 +2458,33 @@ impl Runner<'_> {
         }
         if let Some((totals, scheduler_bytes, output_bytes, tasks)) = widest_seen {
             // Lanes times states is the arena: one over the buffer budget runs again with fewer states.
-            let mut lease = crate::code_rule_dsl::prof::time("size.lease", || MetalWorkspaceLease::acquire(self.device, totals, scheduler_bytes, output_bytes, tasks))
-                .map_err(|error| if error == Error::BackendCapacity { Error::BackendBudget } else { error })?;
+            let acquire = || crate::code_rule_dsl::prof::time("size.lease", || MetalWorkspaceLease::acquire(self.device, totals, scheduler_bytes, output_bytes, tasks));
+            let mut lease = match acquire() {
+                // Not room now: admitted as a stratum's tables are (Q203, Q203), its need in bytes, waiting for what
+                // threads that go on hold to come back while waiting is worth it; its buffers are then drawn from the
+                // reservation. Refused, the run goes on with fewer states (`run_batch`), then the wave splits.
+                Err(Error::BackendCapacity) => {
+                    let bytes = MetalWorkspace::bytes_for(totals, scheduler_bytes, output_bytes, tasks);
+                    match rerail_accel::gpu::shared::admit(bytes, crate::code_rule_dsl::logic::plan::placement::admission_patience(self.nodes as f64)) {
+                        Ok(admitted) => {
+                            crate::code_rule_dsl::prof::count("wave.admitted", 1);
+                            if admitted.waited > 0.0 {
+                                crate::code_rule_dsl::prof::count("wave.admission_waits", 1);
+                            }
+                            let lease = acquire();
+                            drop(admitted);
+                            lease
+                        }
+                        Err(why) => {
+                            crate::code_rule_dsl::prof::count("wave.admission_refused", 1);
+                            crate::code_rule_dsl::logic::profile::decision("a matcher wave's workspace not admitted (Q203)", || format!("{} MB: {why}", bytes >> 20));
+                            Err(Error::BackendCapacity)
+                        }
+                    }
+                }
+                got => got,
+            }
+            .map_err(|error| if error == Error::BackendCapacity { Error::BackendBudget } else { error })?;
             crate::code_rule_dsl::prof::count("size.lease_mb", lease.bytes() >> 20);
             // Each encoded level advances the generation itself.
             lease.generation_span = 0;
@@ -2582,7 +2678,15 @@ impl Runner<'_> {
         let leaves = leaves.cloned().unwrap_or_else(|| own.as_ref().expect("the group's leaves").buffer.clone());
         let stride = depth as usize * region;
         let per = (FORMULA_SCRATCH_BYTES / 4 / stride).clamp(1, count);
-        let scratch = MappedBuffer::untouched::<u32>(self.device, stride * per)?;
+        if self.formula_scratch.as_ref().is_none_or(|scratch| (scratch.buffer.length() as usize) < 4 * stride * per) {
+            // Not an upload: one buffer for the run, at most `FORMULA_SCRATCH_BYTES`, as the stacks are.
+            let grown = MappedBuffer::untouched::<u32>(self.device, stride * per)?;
+            // The smaller one may still be read by the levels encoded before: it is kept with the command buffer.
+            if let Some(old) = self.formula_scratch.replace(grown) {
+                self.retained.push(old);
+            }
+        }
+        let scratch = self.formula_scratch.as_ref().expect("the formulas' scratch").buffer.clone();
         let docs = self.tapes.docs.buffer.clone();
         let head = self.tapes.supertypes.buffer.clone();
         let base = Shape { round: depth, recursive: region as u32, ..self.shape() };
@@ -2598,7 +2702,7 @@ impl Runner<'_> {
             encoder.set_label(KERNELS[FORMULA_KERNEL]);
             crate::code_rule_dsl::prof::count_named(format!("kernel.{}", KERNELS[FORMULA_KERNEL]), 1);
             encoder.set_compute_pipeline_state(&state);
-            for (index, buffer) in [&docs, &head, &headers, &words, rows, &scratch.buffer].into_iter().enumerate() {
+            for (index, buffer) in [&docs, &head, &headers, &words, rows, &scratch].into_iter().enumerate() {
                 encoder.set_buffer(index as u64, Some(buffer), 0);
             }
             encoder.set_bytes(6, std::mem::size_of::<Shape>() as u64, std::ptr::from_ref(&shape).cast());
@@ -2615,8 +2719,6 @@ impl Runner<'_> {
             self.outcome.dispatches += 1;
             self.split(KERNELS[FORMULA_KERNEL]);
         }
-        self.segment_bytes += scratch.buffer.length() as usize;
-        self.retained.push(scratch);
         if let Some(own) = own {
             self.segment_bytes += own.buffer.length() as usize;
             self.retained.push(own);
@@ -2717,12 +2819,16 @@ impl Runner<'_> {
         let labels = self.tapes.supertypes.buffer.clone();
         let (state, flags) = (self.tapes.supertypes.buffer.clone(), self.flags.buffer.clone());
         let (scratch, counts) = ((&state, self.tapes.scratch_at), (&state, self.tapes.counts_at));
+        // The facts' constraints, once for the level's pattern kernels (each group's binds them; only the first's
+        // tasks read them). copy (0353 step 4): the fact's rows, Q289.
+        let constraints = if matches.iter().any(|matches| !matches.is_empty()) { Some(self.upload(&constraints)?) } else { None };
         for (group, (matches, pattern_threads)) in matches.iter().zip(pattern_threads).enumerate() {
             if matches.is_empty() {
                 continue;
             }
             let task_count = (matches.len() / 6) as u32;
-            let (items, constraints) = (self.upload(matches)?, self.upload(&constraints)?);
+            // copy: not block data (the group's task list).
+            let (items, constraints) = (self.upload(matches)?, constraints.clone().ok_or(Error::BackendFailure)?);
             let docs = self.tapes.docs.buffer.clone();
             let root_words = self.root_words.as_ref().ok_or(Error::BackendFailure)?.buffer.clone();
             let shape = Shape {
@@ -3145,7 +3251,7 @@ impl Runner<'_> {
                 slot_rows.insert(walk.slot_key(program, slot), text_start + slot as u32);
             }
             // The fourth word: set mode with one label, so the walk ends at its first emit.
-            let anchor = anchor_of(device_anchor(program, &|_| false));
+            let anchor = anchor_of(device_anchor(program, None, &|_| false));
             passes.push([words.len() as u32, walk.words.len() as u32, text_start, u32::from(walk.key_stop()), anchor]);
             longest = longest.max(walk.words.len());
             match &self.label_rows {
@@ -3428,7 +3534,7 @@ impl Runner<'_> {
 /// buffers made after sizing (program buffers, walk and root records).
 const LANE_SHARE: (usize, usize) = (3, 4);
 
-/// The most lanes, up to `wanted`, whose workspace fits `LANE_SHARE` of the free buffer budget,
+/// The most lanes, up to `wanted`, whose workspace fits `LANE_SHARE` of the buffer room left (`buffer_room`),
 /// each lane with its states (decision 0033, O38): lanes are sized from the space, not states
 /// halved until a fixed lane count fits. `BackendBudget` where not even one lane fits.
 fn fit_lanes(batch: &mut PackedBatch, programs: &[Program], specs: &[[u32; 5]], wanted: usize) -> Result<usize, Error> {
@@ -3437,13 +3543,39 @@ fn fit_lanes(batch: &mut PackedBatch, programs: &[Program], specs: &[[u32; 5]], 
         Ok(MetalWorkspace::bytes_for(totals, batch.header.scheduler_byte_count, batch.header.workspace_byte_count, batch.evaluation_lanes.len().max(1)))
     };
     let (one, two) = (bytes(1)?, bytes(2)?);
+    // Of the room a reservation can have now, not of the budget less the ledger alone (Q203).
+    lanes_in(one, two, metal_backend::buffer_room(), wanted)
+}
+
+/// The lanes, up to `wanted`, whose workspace fits `LANE_SHARE` of `room`, a workspace being `one` bytes at one lane
+/// and `two` at two (a fixed part and a part per lane): a level larger than the room runs in fewer lanes, its tasks
+/// in turn, rather than off the device. `BackendBudget` where not even one lane fits.
+fn lanes_in(one: usize, two: usize, room: usize, wanted: usize) -> Result<usize, Error> {
     let per_lane = two.saturating_sub(one).max(1);
     let fixed = one.saturating_sub(per_lane);
-    let share = metal_backend::buffer_free() / LANE_SHARE.1 * LANE_SHARE.0;
+    let share = room / LANE_SHARE.1 * LANE_SHARE.0;
     if fixed + per_lane > share {
         return Err(Error::BackendBudget);
     }
     Ok(((share - fixed) / per_lane).clamp(1, wanted.max(1)))
+}
+
+#[cfg(test)]
+mod lanes_tests {
+    use super::*;
+
+    /// A level whose lanes outgrow the room runs in as many as fit (its tasks in turn), down to one; only a fixed part
+    /// past the room is refused.
+    #[test]
+    fn a_level_larger_than_the_room_runs_in_the_lanes_that_fit() {
+        // 10 MB fixed, 1 MB a lane: 4/3 of 40 MB is 30 MB of room, 20 lanes.
+        let (one, two) = (11 << 20, 12 << 20);
+        assert_eq!(lanes_in(one, two, 40 << 20, 1024).unwrap(), 20);
+        assert_eq!(lanes_in(one, two, 40 << 20, 8).unwrap(), 8, "no more than wanted");
+        // Room for the fixed part and one lane: one lane.
+        assert_eq!(lanes_in(one, two, (11 << 20) * 4 / 3 + 4, 1024).unwrap(), 1);
+        assert_eq!(lanes_in(one, two, 12 << 20, 1024), Err(Error::BackendBudget), "not even one lane");
+    }
 }
 
 /// A level's programs: (program, roots per file, sink mode, scratch label or count slot).

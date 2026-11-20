@@ -69,10 +69,12 @@ pub trait Backing: Send + Sync {
 
 /// The bytes zeroed as blocks' memory was handed out again (a free list's chunk, a dirty block's allocation).
 pub fn zeroed_bytes() -> u64 {
-    ZEROED.load(Relaxed)
+    rerail_context::with_local::<Zeroed, _>(|z| z.0.load(Relaxed))
 }
 
-static ZEROED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// The run's count (decision 0442: a measurement of the run's).
+#[derive(Default)]
+struct Zeroed(std::sync::atomic::AtomicU64);
 
 /// Zeroes `len` bytes at `p`, counted (`zeroed_bytes`).
 ///
@@ -80,7 +82,7 @@ static ZEROED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(
 /// `p..p + len` is writable memory of a block.
 unsafe fn zero(p: *mut u8, len: usize) {
     unsafe { std::ptr::write_bytes(p, 0, len) };
-    ZEROED.fetch_add(len as u64, Relaxed);
+    rerail_context::with_local::<Zeroed, _>(|z| z.0.fetch_add(len as u64, Relaxed));
 }
 
 /// What a block has used, and holds free (its free list's bytes): shared with a ledger that counts live blocks
@@ -399,6 +401,10 @@ impl Block {
             return b.clone();
         }
         let len = kept.as_ref().map_or(1 << 20, |k| k.1 * 2).max(used.div_ceil(1 << 20) << 20).min(self.reserved);
+        // A measurement aid: `RERAIL_DEVICE_TRACE` prints where a block of 4 MB or more is wrapped for the device.
+        if len >= 4 << 20 && std::env::var_os("RERAIL_DEVICE_TRACE").is_some() {
+            eprintln!("RERAIL_DEVICE_TRACE a block wrapped, {} MB (driver {} MB):\n{}", len >> 20, device.current_allocated_size() >> 20, std::backtrace::Backtrace::force_capture());
+        }
         let b = device.new_buffer_with_bytes_no_copy(
             self.base as *const std::ffi::c_void,
             len as u64,
@@ -448,7 +454,10 @@ impl Block {
 
     /// `try_alloc`; a dirty block's memory is zeroed only when `zeroed` asks it.
     fn alloc_filled(&self, size: usize, align: usize, zeroed: bool) -> Option<usize> {
-        assert!(self.writable, "alloc in a frozen block");
+        // A read-only block (a frozen file's mapping, `share`) has no room: an index a reader would add goes elsewhere.
+        if !self.writable {
+            return None;
+        }
         let mut cur = self.ext.top.load(Relaxed);
         loop {
             let start = round_up(cur, align);
@@ -490,6 +499,11 @@ impl Block {
         unsafe { self.base.add(off) as *mut T }
     }
 
+    /// Whether `p` lies in this block's reserved range.
+    pub fn holds<T>(&self, p: *const T) -> bool {
+        (p as usize).wrapping_sub(self.base as usize) < self.reserved
+    }
+
     pub fn offset_of<T>(&self, p: *const T) -> usize {
         let o = p as usize - self.base as usize;
         assert!(o < self.reserved);
@@ -498,6 +512,11 @@ impl Block {
 
     pub fn base_ptr(&self) -> *mut u8 {
         self.base
+    }
+
+    /// Whether it may be written: an open block's, not a frozen file's mapping or a shared handle (`share`).
+    pub fn is_writable(&self) -> bool {
+        self.writable
     }
 
     pub fn reserved(&self) -> usize {

@@ -8,12 +8,6 @@
 //! (`tape_number`, `tape_start`, `tape_end`); a kind is its code's, by the derived table of the tape's codes.
 
 use crate::ids::Run;
-use crate::reads::B;
-use cranelift_codegen::ir::{
-    InstBuilder, Value,
-    condcodes::IntCC,
-    types::{I32, I64},
-};
 
 /// A document's entry for its views' reads (`ViewDoc` in the kernels).
 #[repr(C)]
@@ -72,7 +66,7 @@ pub struct ViewRow {
     pub rows: [u32; VIEWS.len()],
     pub view: crate::view::TapeView,
 }
-const _: () = assert!(std::mem::size_of::<ViewRow>() == 8 + 8 + 8 + 36 + 116);
+const _: () = assert!(std::mem::size_of::<ViewRow>() == (8 + 8 + 8 + 36 + std::mem::size_of::<crate::view::TapeView>()).next_multiple_of(8));
 
 /// A batch's documents as its views' reads find them: the batch's block's GPU address (the entries' base), its
 /// documents' rows (their GPU address), how many.
@@ -147,9 +141,11 @@ pub fn msl() -> String {
         ("uint", "within_lo", offset_of!(ViewDoc, within_lo)),
         ("uint", "within_hi", offset_of!(ViewDoc, within_hi)),
     ];
-    let mut s = String::from(
-        "struct ViewRow {\n    ulong entry;\n    device const uchar* tape;\n    device const uchar* lines;\n    uint rows[9];\n    uint view[29];\n};\n\
-         struct ViewDir {\n    device const uchar* chunk;\n    uint ndocs;\n    uint pad;\n    device const ViewRow* rows;\n};\n",
+    let mut s = format!(
+        "struct ViewRow {{\n    ulong entry;\n    device const uchar* tape;\n    device const uchar* lines;\n    uint rows[{}];\n    uint view[{}];\n}};\n\
+         struct ViewDir {{\n    device const uchar* chunk;\n    uint ndocs;\n    uint pad;\n    device const ViewRow* rows;\n}};\n",
+        VIEWS.len(),
+        std::mem::size_of::<crate::view::TapeView>() / 4,
     );
     s += &format!("static_assert(sizeof(ViewRow) == {}, \"ViewRow: size\");\n", std::mem::size_of::<ViewRow>());
     s += &format!("static_assert(__builtin_offsetof(ViewRow, view) == {}, \"ViewRow.view\");\n", std::mem::offset_of!(ViewRow, view));
@@ -166,7 +162,22 @@ pub fn msl() -> String {
     }
     s
 }
+// The reads themselves, in CLIF: with the IR (`ir`) alone. The entry's layout above is the view's too, which the
+// tape crate reads without the IR.
+#[cfg(feature = "ir")]
+pub use reads_ir::*;
 
+#[cfg(feature = "ir")]
+mod reads_ir {
+use super::*;
+use crate::reads::B;
+use cranelift_codegen::ir::{
+    InstBuilder, Value,
+    condcodes::IntCC,
+    types::{I32, I64},
+};
+
+#[cfg(feature = "ir")]
 impl B<'_, '_> {
     /// The entry's u32 at `offset`, widened.
     fn entry_u32(&mut self, offset: i32) -> Value {
@@ -222,6 +233,7 @@ impl B<'_, '_> {
 
 /// `view_node(l, col)`: column `col` of the `node` view's row of numbered node `l`: the document, the id, the kind
 /// atom, the start, the end (`Viewed::value_of`).
+#[cfg(feature = "ir")]
 pub fn node(b: &mut B<'_, '_>) -> Value {
     let (l, col) = (b.arg(0), b.arg(1));
     let is = |b: &mut B<'_, '_>, k: i64| b.f.ins().icmp_imm(IntCC::Equal, col, k);
@@ -245,6 +257,7 @@ pub fn node(b: &mut B<'_, '_>) -> Value {
 
 /// `view_child(i, col)`: column `col` of the document's `child` row `i`, of numbered node `i + 1` (every node but the
 /// root): the parent's id, the child's id, its place among the parent's children.
+#[cfg(feature = "ir")]
 pub fn child(b: &mut B<'_, '_>) -> Value {
     let (i, col) = (b.arg(0), b.arg(1));
     let l = b.f.ins().iadd_imm(i, 1);
@@ -260,6 +273,7 @@ pub fn child(b: &mut B<'_, '_>) -> Value {
 
 /// `view_field(i, col)`: column `col` of the document's `field` row `i`, of its `i`-th node under a field
 /// (`num_select` of the fielded nodes): the parent's id, the field atom, the child's id.
+#[cfg(feature = "ir")]
 pub fn field(b: &mut B<'_, '_>) -> Value {
     let (i, col) = (b.arg(0), b.arg(1));
     let numbering = b.follow(b.tape, at::NUMBERING);
@@ -279,6 +293,7 @@ pub fn field(b: &mut B<'_, '_>) -> Value {
 }
 
 /// `view_core(l, col)`: column `col` of `core_node`'s row of numbered node `l`: the document, its tape node, its id.
+#[cfg(feature = "ir")]
 pub fn core(b: &mut B<'_, '_>) -> Value {
     let (l, col) = (b.arg(0), b.arg(1));
     let c = b.f.ins().icmp_imm(IntCC::Equal, col, 0);
@@ -293,6 +308,7 @@ pub fn core(b: &mut B<'_, '_>) -> Value {
 
 /// `lines_line(at)`: the lines starting at or before byte `at` (`Facts::start_line`: `LineTable::line` + 1), by
 /// bisection of the starts.
+#[cfg(feature = "ir")]
 pub fn lines_line(b: &mut B<'_, '_>) -> Value {
     let at_ = b.arg(0);
     let n = b.word_at(I32, b.tape, 0);
@@ -306,6 +322,7 @@ pub fn lines_line(b: &mut B<'_, '_>) -> Value {
 
 /// `view_line(l, col)`: column `col` of the `line` view's row of numbered node `l`: its id, the line its start is
 /// on.
+#[cfg(feature = "ir")]
 pub fn line(b: &mut B<'_, '_>) -> Value {
     let (l, col) = (b.arg(0), b.arg(1));
     let c = b.f.ins().icmp_imm(IntCC::Equal, col, 0);
@@ -318,6 +335,7 @@ pub fn line(b: &mut B<'_, '_>) -> Value {
 }
 
 /// Which place a `Loc` view's second column holds (`view_loc_*`).
+#[cfg(feature = "ir")]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Place {
     Line,
@@ -326,6 +344,7 @@ enum Place {
     Docof,
 }
 
+#[cfg(feature = "ir")]
 impl B<'_, '_> {
     /// `Loc` position `l`'s id: a node's or token's by its numbering (`num_low_of`), a span's in the top slots
     /// (`granules::span_low`); `l` itself where ids are local ids (`Projected::global`).
@@ -513,15 +532,20 @@ impl B<'_, '_> {
 
 /// `view_loc_line(l, col)`, `view_loc_end`, `view_loc_col`, `view_loc_docof`: column `col` of core.rr's `line`,
 /// `end_line`, `col` and `docof` rows of position `l` (a node, a token, the whole text, a line, an end point).
+#[cfg(feature = "ir")]
 pub fn loc_line(b: &mut B<'_, '_>) -> Value {
     b.loc(Place::Line)
 }
+#[cfg(feature = "ir")]
 pub fn loc_end(b: &mut B<'_, '_>) -> Value {
     b.loc(Place::EndLine)
 }
+#[cfg(feature = "ir")]
 pub fn loc_col(b: &mut B<'_, '_>) -> Value {
     b.loc(Place::Col)
 }
+#[cfg(feature = "ir")]
 pub fn loc_docof(b: &mut B<'_, '_>) -> Value {
     b.loc(Place::Docof)
+}
 }

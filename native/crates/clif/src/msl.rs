@@ -26,8 +26,9 @@
 //! A GPU computes in 32 bits; a 64-bit add or shift is several instructions. Every offset a read computes from the
 //! tape or the view is below 4 GiB on the device (a document's parts are offsets from its first byte, u32 in its
 //! view), so a 64-bit value whose every use reads only its low 32 bits (`low_words`: an address, a modular step to
-//! another such value) is computed as a `uint`, with the same low bits, and a 64-bit load of it reads 32 bits. A
-//! relation's offsets are a block's, not bounded so: its reads keep 64 bits.
+//! another such value) is computed as a `uint`, with the same low bits, and a 64-bit load of it reads 32 bits. The
+//! other families' offsets (a relation's, a view's entry, the lines') are a block's, not bounded so: their reads
+//! keep 64 bits.
 
 use cranelift_codegen::ir::{self, InstructionData, Opcode, condcodes::IntCC, types};
 use crate::reads::Family;
@@ -102,8 +103,9 @@ pub fn translate_reads(funcs: &[(u32, ir::Function, &str)], prefix: &str, family
     let mut bodies = String::new();
     for (id, f, n) in funcs {
         // Each read in its own family (a view read's source holds the lines' reads it calls too).
-        let family = crate::reads::READS.get(*id as usize).map_or(family, |read| read.family);
-        let signature = signature(f, &format!("{prefix}{n}"), family)?;
+        let read = crate::reads::READS.get(*id as usize);
+        let family = read.map_or(family, |read| read.family);
+        let signature = signature(f, &format!("{prefix}{n}"), family, read.is_none_or(|read| read.hot))?;
         writeln!(out, "{signature};").unwrap();
         writeln!(bodies, "{signature}{{").unwrap();
         body(&mut bodies, f, &named, family).map_err(|e| format!("{n} (u0:{id}): {e}"))?;
@@ -121,7 +123,7 @@ pub fn translate_reads(funcs: &[(u32, ir::Function, &str)], prefix: &str, family
 fn low_words(f: &ir::Function, family: Family) -> std::collections::HashSet<ir::Value> {
     let dfg = &f.dfg;
     let mut low: std::collections::HashSet<ir::Value> = std::collections::HashSet::new();
-    if family == Family::Relation {
+    if family != Family::Tape {
         return low;
     }
     for b in f.layout.blocks() {
@@ -141,7 +143,7 @@ fn low_words(f: &ir::Function, family: Family) -> std::collections::HashSet<ir::
                 // Whether the use of argument `k` reads only its low 32 bits.
                 let reads_low = |k: usize| -> bool {
                     match data.opcode() {
-                        Opcode::Iadd | Opcode::Isub | Opcode::Imul | Opcode::Band | Opcode::Bor | Opcode::Bxor | Opcode::Bnot => result_low,
+                        Opcode::Iadd | Opcode::Isub | Opcode::Imul | Opcode::Band | Opcode::BandNot | Opcode::Bor | Opcode::Bxor | Opcode::Bnot => result_low,
                         Opcode::IaddImm | Opcode::ImulImm | Opcode::IrsubImm | Opcode::BandImm | Opcode::BorImm | Opcode::BxorImm | Opcode::IshlImm => result_low,
                         Opcode::Ishl => k == 1 || result_low,
                         Opcode::Ushr | Opcode::Sshr => k == 1,
@@ -193,12 +195,16 @@ fn pointers(family: Family) -> (&'static str, &'static str) {
     }
 }
 
-fn signature(f: &ir::Function, name: &str, family: Family) -> Result<String, String> {
+/// A read the JIT calls out of line (not `hot`) is a call on the device too (`noinline`): inlined at each use, 16z's
+/// block decoder (3,000 lines) made the node view's read 118,000 lines, and the M3's compiler took 114 s over it
+/// (2.6 s called).
+fn signature(f: &ir::Function, name: &str, family: Family, hot: bool) -> Result<String, String> {
     let [ret] = f.signature.returns.as_slice() else { return Err(format!("{name}: a read returns one value")) };
     let params: Vec<String> =
         f.signature.params.iter().enumerate().skip(family.pointers()).map(|(i, p)| Ok(format!("{} a{i}", ty(p.value_type)?.0))).collect::<Result<_, String>>()?;
     let more = if params.is_empty() { String::new() } else { format!(",{}", params.join(",")) };
-    Ok(format!("inline {} {name}({}{more})", ty(ret.value_type)?.0, pointers(family).0))
+    let inline = if hot { "inline" } else { "__attribute__((noinline))" };
+    Ok(format!("{inline} {} {name}({}{more})", ty(ret.value_type)?.0, pointers(family).0))
 }
 
 fn body(out: &mut String, f: &ir::Function, named: &dyn Fn(u32) -> Result<String, String>, family: Family) -> Result<(), String> {
@@ -241,7 +247,7 @@ fn body(out: &mut String, f: &ir::Function, named: &dyn Fn(u32) -> Result<String
     for (v, t) in &declared {
         writeln!(out, " {t} v{v}=0;").unwrap();
     }
-    // The family's pointers are offsets from `t` (and `v`): a relation's descriptor is its offset from `t`. The
+    // The family's pointers are offsets from `t` (and `v`): a relation's or a view's descriptor is its offset from `t`. The
     // read's own parameters are its arguments.
     for (k, &p) in dfg.block_params(entry).iter().enumerate() {
         if family != Family::Tape && k == 0 {
@@ -620,6 +626,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
             | Opcode::Isub
             | Opcode::Imul
             | Opcode::Band
+            | Opcode::BandNot
             | Opcode::Bor
             | Opcode::Bxor
             | Opcode::Bnot
@@ -685,6 +692,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::Udiv => set(format!("{}/{}", args[0], args[1])),
         Opcode::Urem => set(format!("{}%{}", args[0], args[1])),
         Opcode::Band => set(format!("{}&{}", args[0], args[1])),
+        Opcode::BandNot => set(format!("{}&~{}", args[0], args[1])),
         Opcode::Bor => set(format!("{}|{}", args[0], args[1])),
         Opcode::Bxor => set(format!("{}^{}", args[0], args[1])),
         Opcode::Bnot => set(format!("~{}", args[0])),

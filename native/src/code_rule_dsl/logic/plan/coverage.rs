@@ -291,7 +291,9 @@ fn run_probe(src: &str, rel: &str) -> std::result::Result<Verdict, String> {
     let p = crate::code_rule_dsl::logic::rr::parse_version(src).map_err(|e| format!("unparsed: {e}"))?;
     let lower_run = |modes: &str, binding: placement::Binding| -> std::result::Result<(Vec<Vec<String>>, bool, Vec<(String, placement::Ran)>), String> {
         let (_path, store, db) = fresh();
-        // `shortlex_min<>` orders the run's symbols by their text: the store's atoms, as a run declares it.
+        // `shortlex_min<>` orders the run's symbols by their text: the store's atoms, as a run declares it. The
+        // probe's run holds it (decision 0442).
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         crate::code_rule_dsl::logic::native::declare("shortlex_min", std::sync::Arc::new(crate::code_rule_dsl::logic::native::ShortlexMin(store.atoms_handle())));
         let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
         let lowered = lower::lowered(p.clone(), python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).map_err(|e| format!("unlowered: {e}"))?;

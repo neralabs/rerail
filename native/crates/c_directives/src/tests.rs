@@ -170,7 +170,7 @@ fn directives_read_as_the_lean_scan_reads_them() {
     #[cfg(target_os = "macos")]
     {
         let files: Vec<&[u8]> = cases.iter().map(|s| s.as_bytes()).collect();
-        let metal = c.metal_read(&files).expect("the device runs the batch");
+        let metal = c.metal_read(&files).unwrap_or_else(|e| panic!("the device runs the batch: {e:?}"));
         for (src, m) in cases.iter().zip(metal) {
             assert_eq!(m, c.read(src.as_bytes()), "Metal, {src:?}");
         }
@@ -207,7 +207,7 @@ fn the_corpus_reads_the_same_or_is_refused() {
                 interp.push(p.display().to_string());
             }
             #[cfg(target_os = "macos")]
-            if c.metal_read(&[&src]).is_some_and(|m| m[0] != cl) {
+            if c.metal_read(&[&src]).unwrap_or_else(|e| panic!("the device runs {}: {e:?}", p.display()))[0] != cl {
                 metal.push(p.display().to_string());
             }
             match cl {
@@ -265,7 +265,7 @@ fn a_file_past_64_kib_is_read_at_wide_columns() {
         assert!(same(&got, src.as_bytes(), false));
         assert_eq!(c.interpreter_read(src.as_bytes()), Some(got.clone()), "the interpreter");
         #[cfg(target_os = "macos")]
-        assert_eq!(c.metal_read(&[src.as_bytes()]).expect("the device runs it")[0], Some(got), "Metal");
+        assert_eq!(c.metal_read(&[src.as_bytes()]).unwrap_or_else(|e| panic!("the device runs it: {e:?}"))[0], Some(got), "Metal");
     }
 }
 

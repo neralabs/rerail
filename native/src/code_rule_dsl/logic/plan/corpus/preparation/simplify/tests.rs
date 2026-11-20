@@ -189,8 +189,6 @@ fn a_merged_variable_is_renamed_inside_the_head() {
 /// namespace, with their equal facts; the programs' own rules, which differ, keep their namespaces.
 #[test]
 fn recursive_copies_merge_into_the_shared_namespace() {
-    // Unprofiled: held so no profile test turns the (process-wide) profile on meanwhile.
-    let _run = crate::code_rule_dsl::logic::profile::one_run();
     let (report, v) = simplified(
         r#"
         .decl edge(a: number, b: number)
@@ -243,8 +241,6 @@ fn relations_alike_but_for_their_constants_are_found_only_when_profiled() {
         p1_mine(b) :- edge(3, b), p1_reach(b).
         .output p0_mine, p1_mine
     "#;
-    // Held from the unprofiled run on: no other profile test turns the (process-wide) profile on meanwhile.
-    let _run = crate::code_rule_dsl::logic::profile::one_run();
     let (quiet, _) = simplified(text);
     assert_eq!(quiet.merged, 2);
     assert_eq!((quiet.similar.0, quiet.similar.1), (0, 0));
@@ -679,4 +675,70 @@ fn a_zero_counts_helper_keeps_only_the_columns_read() {
     let helper = text.iter().find(|r| r.starts_with("rr_agg")).unwrap_or_else(|| panic!("{text:?}"));
     let head = &helper[..helper.find(" :-").unwrap()];
     assert_eq!(head.matches('$').count(), 3, "{head}: {:?} {text:?}", report.projected);
+}
+
+/// A request never merges, but its widened copy left with the request's own rules is read as the request: once
+/// pruned, `eslint-yoda`'s `rr_wide_node_text_rr_token_req` held `rr_token_req`'s rules and rows. A copy whose rules
+/// differ stays. PR #508's eb4a92d28 (t47), on the tree's pass there; stated here on the version's.
+#[test]
+fn a_requests_copy_with_its_own_rules_is_read_as_the_request() {
+    let (_, v) = simplified(
+        r#"
+        .decl base(n: number)
+        .input base
+        .decl other(n: number)
+        .input other
+        .decl rr_token_req(n: number)
+        .decl rr_wide_node_text_rr_token_req(n: number)
+        rr_token_req(n) :- base(n).
+        rr_wide_node_text_rr_token_req(n) :- base(n).
+        .decl rr_value_req(n: number)
+        .decl rr_wide_node_text_rr_value_req(n: number)
+        rr_value_req(n) :- base(n).
+        rr_wide_node_text_rr_value_req(n) :- other(n).
+        .decl out(n: number)
+        .output out
+        out(n) :- rr_wide_node_text_rr_token_req(n), rr_token_req(n), rr_wide_node_text_rr_value_req(n), rr_value_req(n).
+        "#,
+    );
+    let text = rules(&v);
+    assert!(!text.iter().any(|r| r.contains("rr_wide_node_text_rr_token_req")), "{text:#?}");
+    assert_eq!(rules_of(&v, "rr_token_req").len(), 1, "{text:#?}");
+    assert_eq!(rules_of(&v, "rr_wide_node_text_rr_value_req").len(), 1, "{text:#?}");
+}
+
+/// A relation whose every rule a stated fact decided against has no rows, so an atom over it is decided too: a
+/// positive one drops its rule (`selected`, then `asked` in turn), a negated one leaves its body (`unselected`). Left
+/// read, `entry_file` was a relation of no rule, fact or input, which the split reads as another file's: `asked` went
+/// to the cross-file part, and the run was refused (decision 0174 §6). PR #508's eb4a92d28 (t47).
+#[test]
+fn reads_of_a_relation_the_stated_facts_emptied_are_decided() {
+    let (_, v) = simplified(
+        r#"
+        .decl node(d: number, n: node, kind: symbol, start: number, end: number)
+        .input node
+        .decl doc(d: number, path: symbol, module: symbol)
+        .input doc
+        .decl option_value(k: symbol, v: symbol)
+        option_value("entryPoint", "one").
+        .decl entry_file(d: number)
+        .decl selected(n: node)
+        .decl asked(n: node)
+        .decl unselected(n: node)
+        .output asked
+        .output unselected
+        entry_file(d) :- doc(d, _, _), option_value("entryPoint", "all").
+        entry_file(d) :- doc(d, _, _), option_value("entryPoint", "two").
+        selected(n) :- node(d, n, "call", _, _), entry_file(d).
+        asked(n) :- selected(n).
+        asked(n) :- node(_, n, "string", _, _).
+        unselected(n) :- node(d, n, "call", _, _), !entry_file(d).
+        "#,
+    );
+    let text = rules(&v);
+    assert!(!text.iter().any(|r| r.contains("entry_file") || r.contains("selected(") && !r.contains("unselected(")), "{text:#?}");
+    assert!(rules_of(&v, "asked").iter().any(|r| r.contains("\"string\"")), "{text:#?}");
+    assert_eq!(rules_of(&v, "unselected").len(), 1, "{text:#?}");
+    let split = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(&v).unwrap();
+    assert!(split.local.contains("asked"), "{:?}\n{text:#?}", split.causes);
 }

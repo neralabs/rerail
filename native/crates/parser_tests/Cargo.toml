@@ -22,5 +22,6 @@ tree-sitter-json = "=0.24.8"
 rerail-metal = { path = "../metal", features = ["test-hooks"] }
 
 [dev-dependencies]
+rerail-context = { path = "../context", features = ["test-hooks"] }
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-parser-tests = { path = ".", features = ["test-hooks"] }

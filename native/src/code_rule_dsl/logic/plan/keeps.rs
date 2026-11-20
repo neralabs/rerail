@@ -20,7 +20,9 @@
 //! chunk or part prices each candidate twice: by the estimates alone, and with the relations' measured columns, each
 //! plan's steps re-priced by observed selectivities (`calibrated`), and the side that ran believed over the one that
 //! did not (`weigh`). The estimates' choice stands unless the observations are evidence against it (`settle`).
-//! `RERAIL_OBSERVED_STEPS=off` prices from estimates alone, for comparison.
+//! `RERAIL_OBSERVED_STEPS=off` prices from estimates alone, for comparison. `RERAIL_KEEPS_TRACE=<text>` prints each
+//! estimated relation whose name holds the text: its rows and work, the rows and distinct values of what its rules
+//! read, and each rule's steps' rows.
 //!
 //! Stored always: outputs, inputs, lattices, relations with facts, natives and what they read,
 //! demanded relations, an aggregate's demand (the keys it enumerates from), gates, answers, recursive relations, relations read inside an aggregate (a count, a sum or a
@@ -965,8 +967,6 @@ pub(in crate::code_rule_dsl) struct ObservedShared {
 /// The jobs' sums handed in before one of them folds them in: the lag of an estimate read in a job.
 const FOLD_EVERY: usize = 256;
 
-/// Folds of the observed sums (decision 0301), for the profile.
-pub(super) static FOLDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 impl ObservedShared {
     fn observing(on: bool) -> Self {
@@ -1007,7 +1007,7 @@ impl ObservedShared {
             next.add(p);
         }
         self.published.store(Some(Arc::new(next)));
-        FOLDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        run_counts().folds.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// `f` on the run's sums, as a thread observing outside a job does: folded and published at once.
@@ -1315,7 +1315,10 @@ fn calibrated_rows(f: Fields<'_>, model: &Model, rule: &Body<'_>) -> Option<(f64
 
 /// `calibrated_rows`, with body literal `first` read first.
 fn calibrated_rows_at(f: Fields<'_>, model: &Model, b: &Body<'_>, first: Option<usize>) -> Option<(f64, f64)> {
-    let ((order, _, out), step_rows) = model.plan_rule_step_rows(f, b, first).ok()?;
+    // The rows are the steps' (this model's statistics, calibrated), as the work is: not the plan's own `out`, which
+    // for a plan taken as prepared (decision 0361 step 5) is the facts-only model's at its nominal scale (`asgstmt`
+    // priced at 0 rows where its steps make 146, and every relation built on it then joined as a product).
+    let ((order, _, _), step_rows) = model.plan_rule_step_rows(f, b, first).ok()?;
     if step_rows.len() != order.len() {
         return None;
     }
@@ -1341,7 +1344,7 @@ fn calibrated_rows_at(f: Fields<'_>, model: &Model, b: &Body<'_>, first: Option<
                 bound.extend(b.vars(s.at));
             }
         }
-        Some((work, out))
+        Some((work, rows))
     })
 }
 
@@ -1500,6 +1503,26 @@ fn estimate(f: Fields<'_>, model: &mut Model, (base, ids_of): (&Placed, &BTreeMa
             let measured = model.stats.card.get(rel).copied().or_else(|| observed_rows(rel, nodes));
             let planned = rows;
             let rows = measured.unwrap_or(rows);
+            if let Ok(t) = std::env::var("RERAIL_KEEPS_TRACE")
+                && rel.contains(t.as_str())
+            {
+                let reads: Vec<String> = ks
+                    .iter()
+                    .flat_map(|&k| base.rule(k).body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel()).to_owned()).collect::<Vec<_>>())
+                    .map(|r| {
+                        let w = v.decl_of(&r).map_or(0, |d| d.cols().len());
+                        let ndv: Vec<String> = (0..w).map(|c| format!("{:?}", model.ndv.at(&r, c))).collect();
+                        format!("{r}={:?} ndv[{}]", model.stats.card.get(&r), ndv.join(","))
+                    })
+                    .collect();
+                eprintln!("KEEPS_TRACE {rel}: rows {rows:.0} work {work:.0} planned {planned:.0} measured {measured:?} nodes {nodes}; reads {}", reads.join(" "));
+                for &k in ks.iter() {
+                    if let Ok(((order, _, _), steps)) = model.plan_rule_step_rows(f, &base.body(k), None) {
+                        let lits: Vec<String> = order.iter().zip(&steps).map(|(s, n)| format!("#{}={n:.1}", s.at)).collect();
+                        eprintln!("KEEPS_TRACE   rule {k}: {}", lits.join(" "));
+                    }
+                }
+            }
             out.insert(rel.clone(), (rows, work, planned));
             if !model.stats.card.contains_key(rel) {
                 model.stats.card.insert(rel.clone(), rows.max(1.0));
@@ -1523,21 +1546,37 @@ fn estimate(f: Fields<'_>, model: &mut Model, (base, ids_of): (&Placed, &BTreeMa
                         inserted.ndv.push((rel.clone(), c));
                         continue;
                     }
-                    let mut ndv = rows.max(1.0);
+                    // The relation's values in column `c` are its rules' together: at most the sum of each rule's,
+                    // and each rule's at most those of the body columns that bind it. A constant is one value; a
+                    // recursive rule that passes the column on from the relation itself adds none. (The minimum
+                    // over every rule's columns took one rule's few values for the relation's: `ast_name`'s 2,068
+                    // from `rr_long_text_node`, `assign_target`'s 1 from an empty base case, and joins on them were
+                    // priced as products.)
+                    let mut sum = 0.0f64;
                     for &k in ks {
                         let r = base.rule(k);
-                        let Some(TermRef::Var(x)) = r.head().args().nth(c) else { continue };
-                        for l in r.body() {
-                            if let Lit::Atom(a) = l.view()
-                                && !a.neg()
-                                && let Some(at) = a.args().position(|t| t.var() == Some(x))
-                            {
-                                if let Some(&d) = model.ndv.at(&v.rel_name(a.rel()), at) {
-                                    ndv = ndv.min(d);
+                        sum += match r.head().args().nth(c) {
+                            Some(TermRef::Var(x)) => {
+                                let (mut bound, mut passed) = (f64::INFINITY, false);
+                                for l in r.body() {
+                                    if let Lit::Atom(a) = l.view()
+                                        && !a.neg()
+                                        && let Some(at) = a.args().position(|t| t.var() == Some(x))
+                                    {
+                                        if a.rel() == r.head().rel() && at == c {
+                                            passed = true;
+                                        } else if let Some(&d) = model.ndv.at(&v.rel_name(a.rel()), at) {
+                                            bound = bound.min(d);
+                                        }
+                                    }
                                 }
+                                if passed { 0.0 } else { bound }
                             }
-                        }
+                            Some(TermRef::Wild) | None => f64::INFINITY,
+                            Some(_) => 1.0,
+                        };
                     }
+                    let ndv = rows.min(sum);
                     model.ndv.insert((rel.clone(), c), ndv.max(1.0));
                     inserted.ndv.push((rel.clone(), c));
                 }
@@ -1963,4 +2002,68 @@ pub mod tests {
         let chosen = choose(&Placed::of_program(&prog).unwrap(), &mut model).unwrap();
         assert!(chosen.is_none(), "r inlined: {:?}", chosen.map(|c| c.0));
     }
+
+    /// The estimate of a relation's column is its rules' values together: `n`'s `x` is `a`'s 5 and `b`'s 1,000 (the
+    /// minimum took `a`'s 5 for both), a constant adds one, and `p`'s recursive rule passes `x` on from `p` itself, so
+    /// `p`'s first column has its base case's 5. Joins on a column priced at one rule's few values came out as
+    /// products: `assign_target`'s first column at 1 value (its chain's base case), and a data-layer write at 985 M rows
+    /// where 1,727 were made.
+    #[test]
+    fn a_columns_values_are_its_rules_together() {
+        let prog = super::super::super::rr::parse(
+            ".decl a(x: number)\n.decl b(x: number, y: number)\n.input a\n.input b\n\
+             .decl n(x: number)\nn(x) :- a(x).\nn(x) :- b(x, _).\nn(7) :- a(_).\n\
+             .decl p(x: number, y: number)\np(x, x) :- a(x).\np(x, y) :- p(x, z), b(z, y).\n\
+             .decl o(x: number)\no(x) :- n(x), p(x, _).\n.output o\n",
+        )
+        .unwrap();
+        let mut model = model_with(&prog, &[("a", 5.0, &[5.0]), ("b", 100_000.0, &[1_000.0, 2_000.0])]);
+        let base = Placed::of_program(&prog).unwrap();
+        let f = Fields::of(&base).unwrap();
+        let mut ids_of: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+        for k in 0..base.len() {
+            ids_of.entry(base.v.rel_name(base.rule(k).head().rel())).or_default().push(k);
+        }
+        let strata = super::super::super::program_image::analyses::strata(&base.v, &f.about).unwrap();
+        let sccs: Vec<BTreeSet<String>> = strata.sccs.iter().map(|s| s.iter().map(|&r| base.v.rel_name(r).to_owned()).collect()).collect();
+        let need: BTreeSet<&str> = ["n", "p", "o"].into_iter().collect();
+        let _ = estimate(f, &mut model, (&base, &ids_of), &sccs, &need, &BTreeSet::new());
+        let n_rows = model.stats.card["n"];
+        assert_eq!(model.ndv.at("n", 0).copied(), Some(n_rows.min(1_006.0)), "n's x: a's 5, b's 1,000 and the constant");
+        assert_eq!(model.ndv.at("p", 0).copied(), Some(5.0), "p's x: its base case's, passed on by the recursion");
+    }
+
+    /// A rule's rows are its steps' under this model, as its work is: a plan taken as prepared (decision 0361 step 5)
+    /// carries the facts-only model's rows at its nominal scale, here none, where the steps make thousands. Its rows
+    /// read as 0, a relation built on it had a column of one value, and every join on it was priced as a product.
+    #[test]
+    fn a_rules_rows_are_its_steps_not_a_prepared_plans() {
+        let prog = super::super::super::rr::parse(".decl b(x: number, y: number)\n.input b\n.decl r(x: number)\nr(x) :- b(x, _).\n.output r\n").unwrap();
+        let mut model = model_with(&prog, &[("b", 100_000.0, &[1_000.0, 2_000.0])]);
+        let made = super::super::body::alone(&prog.rules[0]).unwrap();
+        let body = super::super::body::nth(&made, 0);
+        let f = Placed::of_program(&prog).unwrap();
+        let f = f.fields().unwrap();
+        let (_, planned) = calibrated_rows(f, &model, &body).unwrap();
+        let ((order, _, _), _) = model.plan_rule_step_rows(f, &body, None).unwrap();
+        let mut prepared = super::super::prepared::Prepared::default();
+        prepared.0.insert(super::super::line_key(&body, None), super::super::prepared::PreparedPlan { order, work_per_node: 1e-6, rows_per_node: 0.0, assumed: Vec::new() });
+        model.stats.prepared = Arc::new(prepared);
+        let (_, taken) = calibrated_rows(f, &model, &body).unwrap();
+        assert!(planned >= 1_000.0, "r planned at {planned} rows");
+        assert_eq!(taken, planned, "a prepared plan's rows (0) taken for its steps' ({planned})");
+    }
+}
+
+/// The run's counts of this module's work (decision 0442: a run's own, `run::local`).
+#[derive(Default)]
+pub struct KeepsCounts {
+    /// Folds of the observed sums (decision 0301), for the profile.
+    pub folds: std::sync::atomic::AtomicU64,
+}
+
+/// The run's `KeepsCounts`.
+#[inline]
+pub fn run_counts() -> std::sync::Arc<KeepsCounts> {
+    crate::code_rule_dsl::logic::run::local::<KeepsCounts>()
 }

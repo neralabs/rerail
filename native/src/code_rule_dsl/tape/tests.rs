@@ -5160,13 +5160,18 @@ fn every_tape_format_reads_the_document_as_restored() {
 /// there answers every node question as the same tape read from a buffer of its own, in each format.
 #[test]
 fn a_placed_tape_reads_as_one_held_in_its_own_bytes() {
+    format_15();
     use super::formats::Format;
     use rerail_tape_format::tape::{Tape, children};
     let source: String = (0..400).map(|i| format!("x{i} = f(a, {i})\n")).collect();
-    let (_, doc, _, _) = fixture(&source, GrammarDialect::Python);
+    // The parser's image as a run of format 15 writes it, which each format is written from: a run writes its own
+    // format (16 by default since 2026-11-17), and `in_format` keeps a tape in another format as it is, so "format
+    // 15" read from the run's tape was format 16.
+    let (_, _, image, _) = super::formats::as_run(Format::F15, || fixture(&source, GrammarDialect::Python));
+    assert_eq!(image.format(), Format::F15, "the parser writes format 15");
     let grammar = Arc::new(Grammar::new(GrammarDialect::Python).unwrap());
     for format in Format::ALL {
-        let bytes = doc.doc_tape().image().clone().in_format(format, source.as_bytes()).to_bytes().unwrap();
+        let bytes = image.clone().in_format(format, source.as_bytes()).to_bytes().unwrap();
         let own = TapeImage::from_bytes(&bytes, &grammar).unwrap();
         let home = super::placed::place(bytes.len(), |out| {
             out.copy_from_slice(&bytes);
@@ -5178,8 +5183,7 @@ fn a_placed_tape_reads_as_one_held_in_its_own_bytes() {
         #[cfg(target_os = "macos")]
         assert_eq!(placed.placed(), rerail_metal::METAL_DEVICE.is_some(), "{format:?}: in a slab's room where there is a device");
         assert_eq!(placed.to_bytes().unwrap(), bytes, "{format:?}: the bytes as stored");
-        let text = Arc::new(source.clone());
-        let (own, placed) = (super::formats::DocTape::new(Arc::new(own), Arc::clone(&text)), super::formats::DocTape::new(Arc::new(placed), text));
+        let (own, placed) = (super::formats::DocTape::new(Arc::new(own), Arc::new(source.clone())), super::formats::DocTape::new(Arc::new(placed), Arc::new(source.clone())));
         let (a, b) = (own.tape(), placed.tape());
         rerail_tape_format::with_tape!(a, |a| {
             rerail_tape_format::with_tape!(b, |b| {
@@ -5262,6 +5266,7 @@ fn a_file_stored_in_each_format_reads_back_as_format_15() {
 #[test]
 fn the_lean_parsers_write_each_format_directly() {
     use super::formats::{Format, as_run};
+    use crate::code_rule_dsl::transducer::packed::json_parser::simdjson as json_simdjson;
     use rerail_tape_format::tape::Tape;
     type Encode = fn(&Grammar, &str) -> Result<TapeImage, String>;
     fn lean<R: std::fmt::Debug>(r: Result<Result<TapeImage, String>, R>) -> Result<TapeImage, String> {
@@ -5269,25 +5274,32 @@ fn the_lean_parsers_write_each_format_directly() {
     }
     let python: String = (0..300).map(|i| format!("class C{i}(B):\n    def f(self, x={i}):\n        return [y for y in x if y]\n")).collect();
     let js: String = (0..200).map(|i| format!("const x{i} = (a) => a?.b ?? {i};\nfunction f{i}(y) {{ return y + 1; }}\n")).collect();
+    // Each language's file: a few hundred top-level items, so that the writer commits many times and its window
+    // (decision 0434 §2) holds a small part of the tape. `{i}` is the item's number.
+    let many = |item: &str| -> String { (0..200).map(|i| item.replace("{i}", &i.to_string())).collect() };
     let cases: Vec<(GrammarDialect, String, Encode)> = vec![
         (GrammarDialect::Python, python, |g, s| lean(super::python_lean::encode(g, s, &|| false))),
         (GrammarDialect::JavaScript, js, |g, s| lean(super::ecma_lean::encode(rerail_ecma_lean::Dialect::JavaScript, g, s, &|| false))),
-        (GrammarDialect::TypeScript, "interface A { x?: number }\nconst x: A = {};\n".into(), |g, s| lean(super::ecma_lean::encode(rerail_ecma_lean::Dialect::TypeScript, g, s, &|| false))),
-        (GrammarDialect::Tsx, "const A = () => <div title=\"x\">text</div>;\n".into(), |g, s| lean(super::ecma_lean::encode(rerail_ecma_lean::Dialect::Tsx, g, s, &|| false))),
-        (GrammarDialect::Rust, "fn main() { let x = Some(1); if let Some(y) = x { println!(\"{y}\"); } }\n".into(), |g, s| lean(super::rust_lean::encode(g, s, &|| false))),
-        (GrammarDialect::Php, "<?php function f($x) { return $x + 1; }\n".into(), |g, s| lean(super::php_lean::encode(g, s, &|| false))),
-        (GrammarDialect::Sql, "SELECT a, count(*) FROM t GROUP BY a;\n".into(), |g, s| lean(super::sql_lean::encode(g, s, &|| false))),
-        (GrammarDialect::Vue, "<template><div>{{ value }}</div></template>\n<script>\nlet value = 1;\n</script>\n".into(), |g, s| lean(super::vue_lean::encode(g, s, &|| false))),
-        (GrammarDialect::Css, "a { color: red; }\n.b > c { margin: 0 1px; }\n".into(), |g, s| lean(super::css_lean::encode(g, s, &|| false))),
-        (GrammarDialect::CSharp, "class A { void F() { var x = 1; } }\n".into(), |g, s| lean(super::csharp_lean::encode(g, s, &|| false))),
-        (GrammarDialect::Html, "<div class=\"a\"><p>hi</p></div>\n".into(), |g, s| lean(super::html_lean::encode(g, s, &|| false))),
-        (GrammarDialect::Java, "class A { void f() { int x = 1; } }\n".into(), |g, s| lean(super::java_lean::encode(g, s, &|| false))),
-        (GrammarDialect::Markdown, "# Title\n\nSome *text* here.\n\n- a\n- b\n".into(), |g, s| lean(super::markdown_lean::encode(g, s, &|| false))),
-        (GrammarDialect::MarkdownInline, "Some *text* and `code`".into(), |g, s| lean(super::markdown_inline_lean::encode(g, s, &|| false))),
+        (GrammarDialect::TypeScript, many("interface A{i} { x?: number }\nconst x{i}: A{i} = {};\n"), |g, s| lean(super::ecma_lean::encode(rerail_ecma_lean::Dialect::TypeScript, g, s, &|| false))),
+        (GrammarDialect::Tsx, many("const A{i} = () => <div title=\"x\">text {i}</div>;\n"), |g, s| lean(super::ecma_lean::encode(rerail_ecma_lean::Dialect::Tsx, g, s, &|| false))),
+        (GrammarDialect::Rust, many("// item {i}\n#[inline]\nfn f{i}() { let x = Some({i}); if let Some(y) = x { println!(\"{y}\"); } }\nstruct S{i} { a: u8 }\n"), |g, s| lean(super::rust_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Php, format!("<?php\n{}", many("// f{i}\nfunction f{i}($x) { return $x + {i}; }\n$a{i} = \"v{$x}\";\n")), |g, s| lean(super::php_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Sql, many("-- q{i}\nSELECT a, count(*) FROM t{i} GROUP BY a;\nINSERT INTO t VALUES ({i});\n"), |g, s| lean(super::sql_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Vue, format!("{}<script>\nlet value = 1;\n</script>\n", many("<template><div>{{ value{i} }}</div></template>\n<!-- c{i} -->\n")), |g, s| lean(super::vue_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Css, many("/* r{i} */\na{i} { color: red; }\n.b > c { margin: 0 {i}px; }\n@media screen { d { x: y } }\n"), |g, s| lean(super::css_lean::encode(g, s, &|| false))),
+        (GrammarDialect::CSharp, format!("using System;\n{}", many("// A{i}\nclass A{i} { void F() { var x = {i}; } }\n")), |g, s| lean(super::csharp_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Html, many("<div class=\"a\"><p>hi {i}<p>there</div>\n<!-- c{i} -->\ntext &amp; {i}\n"), |g, s| lean(super::html_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Java, format!("import a.b;\n{}", many("// A{i}\nclass A{i} { void f() { int x = {i}; } }\n")), |g, s| lean(super::java_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Markdown, many("# Title {i}\n\nSome *text* here.\n\nSetext {i}\n---\n\n- a\n- b\n\n    code {i}\n\n"), |g, s| lean(super::markdown_lean::encode(g, s, &|| false))),
+        (GrammarDialect::MarkdownInline, many("Some *text* and `code` {i} [a](b) "), |g, s| lean(super::markdown_inline_lean::encode(g, s, &|| false))),
         (GrammarDialect::Rr, ".decl item(n:number)\nitem(1).\n.output item\n".into(), |g, s| TapeImage::encode_rr(g, s, &|| false)),
+        // simdjson's kernel (decision 0434): strict JSON, and JSONC with its comments and a trailing comma.
+        (GrammarDialect::Json, format!("[{}{{}}]", many("{\"k{i}\": [{i}, \"s\\n{i}\", true, null, {}, []], \"\": \"\"},\n")), |g, s| lean(json_simdjson::encode(g, s, &|| false))),
+        (GrammarDialect::Json, format!("// head\n[{}1,]", many("/* {i} */ {\"k\": {i}, // c\n\"v\": {/* in */}},\n")), |g, s| lean(json_simdjson::encode(g, s, &|| false))),
     ];
     let mut direct = Vec::new();
     for (lang, source, encode) in cases {
+        eprintln!("{lang:?}: {} bytes", source.len());
         let grammar = Grammar::new(lang).unwrap();
         let reference = as_run(Format::F15, || encode(&grammar, &source)).unwrap_or_else(|e| panic!("{lang:?}: {e}"));
         assert_eq!(reference.format(), Format::F15, "{lang:?}");
@@ -5301,8 +5313,12 @@ fn the_lean_parsers_write_each_format_directly() {
             }
             direct.push(at.clone());
             assert_eq!(image.source_digest, reference.source_digest, "{at}");
-            // The bytes format 15's image converts to (`in_format`): one writer, whichever way it is fed.
-            assert_eq!(image.to_bytes().unwrap(), reference.clone().in_format(format, source.as_bytes()).to_bytes().unwrap(), "{at}: bytes");
+            // Format 16: the bytes format 15's image converts to (`in_format`), one writer whichever way it is fed.
+            // 16z's pieces are in the order its blocks were finished, which follows the writer's commits (a parser
+            // commits at its statements, the conversion at each node): the same blocks, read node by node below.
+            if format == Format::F16 {
+                assert_eq!(image.to_bytes().unwrap(), reference.clone().in_format(format, source.as_bytes()).to_bytes().unwrap(), "{at}: bytes");
+            }
             let (a, b) = (reference.tape(), image.tape());
             rerail_tape_format::with_tape!(a, |a| rerail_tape_format::with_tape!(b, |b| {
                 assert_eq!(a.len(), b.len(), "{at}");
@@ -5315,6 +5331,91 @@ fn the_lean_parsers_write_each_format_directly() {
     }
     assert!(direct.iter().any(|d| d.starts_with("Python")), "the tables cover Python: {direct:?}");
     eprintln!("written directly: {direct:?}");
+}
+
+/// Decision 0434 §2 (step 3): tree-sitter's cursor walk, in a run of format 16 or 16z, writes that format by format
+/// 16's ops as it walks (`formats::TreeOps`), never format 15's nodes. The tape is the bytes format 15's image
+/// converts to: supertypes, contextual aliases, extras and error nodes among its codes.
+#[test]
+fn the_cursor_walk_writes_each_format_directly() {
+    use super::formats::{Format, as_run};
+    use ast_grep_language::LanguageExt;
+    let python: String = (0..300).map(|i| format!("@d\nclass C{i}(B):\n    def f(self, x={i}):  # c\n        return [y for y in x if y]\n")).collect();
+    let cases: Vec<(GrammarDialect, String)> = vec![
+        (GrammarDialect::Python, python),
+        (GrammarDialect::Python, "def f(:\n    pass\n".into()),
+        (GrammarDialect::JavaScript, "const x = (a) => a?.b ?? 1; // c\nfunction f(y) { return <div>{y}</div>; }\n".into()),
+        (GrammarDialect::TypeScript, "interface A { x?: number }\nconst x: A = {};\n".into()),
+        (GrammarDialect::Rust, "fn main() { let x = Some(1); if let Some(y) = x { println!(\"{y}\"); } }\n".into()),
+        (GrammarDialect::Go, "package main\nfunc main() { x := 1; _ = x }\n".into()),
+        (GrammarDialect::Java, "class A { void f() { int x = 1; } }\n".into()),
+        (GrammarDialect::Php, "<?php function f($x) { return $x + 1; }\n".into()),
+        (GrammarDialect::Css, "a { color: red; }\n".into()),
+        (GrammarDialect::CSharp, "class A { void F() { var x = 1; } }\n".into()),
+        (GrammarDialect::Ruby, "def f(x)\n  x + 1\nend\n".into()),
+    ];
+    let mut direct = Vec::new();
+    for (lang, source) in cases {
+        let grammar = Grammar::new(lang).unwrap();
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&lang.get_ts_language()).unwrap();
+        let tree = parser.parse(&source, None).unwrap();
+        let encode = || TapeImage::encode_tree_image(tree.root_node(), &grammar, &source, None, &|| false);
+        let reference = as_run(Format::F15, encode).unwrap_or_else(|e| panic!("{lang:?}: {e}"));
+        let has_table = crate::code_rule_dsl::language::tape_tag(lang).and_then(rerail_tape_format::f16::lang).is_some();
+        if !has_table {
+            continue;
+        }
+        for format in [Format::F16, Format::F16Z] {
+            let image = as_run(format, encode).unwrap();
+            let at = format!("{lang:?} in {}", format.name());
+            assert_eq!(image.format(), format, "{at}: written in the run's format");
+            assert_eq!(image.source_digest, reference.source_digest, "{at}");
+            assert_eq!(image.to_bytes().unwrap(), reference.clone().in_format(format, source.as_bytes()).to_bytes().unwrap(), "{at}: bytes");
+            direct.push(at);
+        }
+    }
+    assert!(direct.iter().any(|d| d.starts_with("Python")), "the tables cover Python: {direct:?}");
+    eprintln!("written directly: {direct:?}");
+}
+
+/// Decision 0434, R12: in a run of format 16 or 16z, every parser writes the run's format itself (the lean parsers
+/// through their `Sink`, tree-sitter's cursor walk, Blade's Forte tree, the format strings' trees and the embedded
+/// programs' documents through `TapeImage::walked`): a file's documents are never format 15's first, converted
+/// (`formats::converted`). JSON's simdjson kernels give their walk's events to the ops; tier 2 writes format 15
+/// until its words call them (0434 step 3).
+#[test]
+fn no_intermediate_tape() {
+    use super::formats::{Format, as_run, converted};
+    let cases: Vec<(GrammarDialect, &str)> = vec![
+        (GrammarDialect::Python, "def f(x):\n    return '%s' % x  # c\n"),
+        (GrammarDialect::JavaScript, "const x = (a) => a?.b ?? 1; // eslint-disable-line no-x\n"),
+        (GrammarDialect::TypeScript, "interface A { x?: number }\nconst x: A = {};\n"),
+        (GrammarDialect::Tsx, "const A = () => <div title=\"x\">text</div>;\n"),
+        (GrammarDialect::Rust, "fn main() { println!(\"{}\", 1); }\n"),
+        (GrammarDialect::Php, "<?php function f($x) { return sprintf('%d', $x); }\n"),
+        (GrammarDialect::Blade, "<div>{{ $x }}</div>\n@if($y)\n<p>{!! $z !!}</p>\n@endif\n"),
+        (GrammarDialect::Sql, "SELECT a FROM t;\n"),
+        (GrammarDialect::Vue, "<template><div>{{ value }}</div></template>\n<script>\nlet value = 1;\n</script>\n"),
+        (GrammarDialect::Rr, ".decl item(n:number)\nitem(1).\n"),
+        (GrammarDialect::Json, "{\"a\": [1, \"x\\n\", true, null], \"b\": {}}\n"),
+        (GrammarDialect::Json, "{\"a\": 1, // c\n}\n"),
+    ];
+    for format in [Format::F16, Format::F16Z] {
+        for &(lang, source) in &cases {
+            let grammar = Grammar::new(lang).unwrap();
+            let at = format!("{lang:?} in {}", format.name());
+            eprintln!("{at}");
+            let before = converted();
+            let image = as_run(format, || TapeImage::parse(&grammar, source, &|| false)).unwrap().unwrap();
+            assert_eq!(converted(), before, "{at}: a document made in format 15 and converted");
+            let docs = std::iter::once((&image.primary, lang)).chain(image.derived.iter().map(|d| (&d.tape, d.dialect())));
+            for (tape, dialect) in docs {
+                let has_table = crate::code_rule_dsl::language::tape_tag(dialect).and_then(rerail_tape_format::f16::lang).is_some();
+                assert_eq!(tape.format(), if has_table { format } else { Format::F15 }, "{at}: its {dialect:?} document");
+            }
+        }
+    }
 }
 
 /// The reads written once in CLIF (decision 0310), JIT-compiled whole, read a document's tape where it is held as
@@ -5475,4 +5576,105 @@ fn scala_tapes_from_the_lean_parser_are_tree_sitters() {
         ],
         &["class A {\n", "def f( = 1\n", "val x = (1,\n"],
     );
+}
+
+/// A node reached without its parent (an anchor's, a binary search's: `TapeDoc::node`; a walk's, `dfs`) reads it from
+/// the parents the document keeps once one is asked (`DocTape::parents`), not from a search of the tape a step: every
+/// node's parent and climb are the tree's, and the parents are kept once, 4 bytes a node. Format 15 stores no parent;
+/// its search a step made the shipped Node.js built-in tables slower. On format 16 the test pins the parents and
+/// climbs alone; the bytes kept are the format's.
+/// PR #508's 765ed3f2e (t47).
+#[test]
+fn a_node_reached_without_its_parent_reads_the_kept_parents() {
+    use ast_grep_core::source::SgNode as _;
+    let source = format!(
+        "class C:\n{}",
+        "    def m(self, a):\n        return [a + 1 for b in a if b]\n".repeat(200)
+    );
+    const NONE: u32 = u32::MAX;
+    let (_, tape, _, _) = fixture(&source, GrammarDialect::Python);
+    // The tree's parents, from the subtrees open around each node: a pass that keeps none.
+    let parents: Vec<u32> = tape
+        .transducer_parents()
+        .map(|parent| parent.unwrap_or(NONE))
+        .collect();
+    let id = |node: TapeNode<'_>| node.node_id() as u32;
+    let walked: Vec<TapeNode<'_>> = tape.root_node().dfs().collect();
+    assert_eq!(
+        walked.iter().map(|&node| id(node)).collect::<Vec<_>>(),
+        (0..parents.len() as u32).collect::<Vec<_>>()
+    );
+    for (index, &up) in parents.iter().enumerate() {
+        let index = index as u32;
+        for node in [tape.node(index), walked[index as usize]] {
+            assert_eq!(node.parent().map_or(NONE, id), up, "parent of {index}");
+            let mut climb = Vec::new();
+            let mut at = up;
+            while at != NONE {
+                climb.push(at);
+                at = parents[at as usize];
+            }
+            assert_eq!(
+                node.ancestors(tape.root_node()).map(id).collect::<Vec<_>>(),
+                climb,
+                "ancestors of {index}"
+            );
+        }
+        assert_eq!(
+            tape.transducer_parent(index),
+            (up != NONE).then_some(up),
+            "transducer parent of {index}"
+        );
+    }
+}
+
+/// `using` as a name (#735's grammars, Patch 18 and Patch 30) reads without a syntax error on the product's path:
+/// the lean parser refuses every `using`, and tree-sitter, which once read it as a declaration's keyword and left
+/// every TypeScript clause of such a file source-incomplete (src/cli/rule-draft.ts), reads it as a name.
+/// PR #508's 7410a263b (t47).
+#[test]
+#[ignore = "PR #508 7410a263b not ported: Q245"]
+fn using_as_a_name_reads_without_an_error_on_the_products_path() {
+    use crate::code_rule_dsl::tape::ecma_lean;
+    use rerail_ecma_lean::Dialect;
+    let sources = [
+        "const using = [1]; using.filter(x => x)\n",
+        "function f(using: number[]) { return using.length; }\n",
+    ];
+    for (dialect, gd) in [
+        (Dialect::JavaScript, GrammarDialect::JavaScript),
+        (Dialect::TypeScript, GrammarDialect::TypeScript),
+        (Dialect::Tsx, GrammarDialect::Tsx),
+    ] {
+        let grammar = Grammar::new(gd).unwrap();
+        for source in sources {
+            // A parameter's type is TypeScript's: JavaScript reads the first only.
+            if dialect == Dialect::JavaScript && source.contains(": number") {
+                continue;
+            }
+            let product = TapeImage::parse(&grammar, source, &|| false)
+                .expect("read to its end")
+                .unwrap_or_else(|e| panic!("{gd:?}: {source:?}: {e}"));
+            let doc = TapeDoc::restore(
+                Arc::new(source.to_owned()),
+                Arc::clone(&grammar),
+                &product.primary,
+                &|| false,
+            )
+            .unwrap();
+            assert_eq!(
+                doc.syntax_error_ranges(),
+                Vec::<std::ops::Range<usize>>::new(),
+                "{gd:?}: {source:?}"
+            );
+            // Accepted, the lean parser's tape is the product's.
+            if let Ok(Ok(lean)) = ecma_lean::encode(dialect, &grammar, source, &|| false) {
+                assert_eq!(
+                    product.primary.to_bytes().unwrap(),
+                    lean.to_bytes().unwrap(),
+                    "{gd:?}: {source:?}"
+                );
+            }
+        }
+    }
 }

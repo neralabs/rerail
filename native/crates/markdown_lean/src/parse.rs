@@ -14,7 +14,7 @@
 use crate::kinds::{K, f};
 use crate::scan::{Found, Scanner, Valid, bit, t::*};
 use crate::{Refusal, Tape, key, stores};
-use rerail_tape_format::{Redo, Widths, Writer};
+use rerail_tape_format::{Redo, Sink, Widths, Writer};
 
 type R<T> = Result<T, Refusal>;
 
@@ -145,7 +145,7 @@ pub fn parse(src: &[u8]) -> R<Tape> {
 }
 
 /// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
-pub fn parse_into<Out>(src: &[u8], finish: &mut dyn FnMut(Writer) -> Result<Out, Redo>) -> R<Out> {
+pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
     if let Some(at) = src.iter().position(|&c| c == 0) {
         return Err(Refusal::Lex(at as u32));
     }
@@ -154,15 +154,15 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn FnMut(Writer) -> Result<Out,
     }
     let mut widths = Widths::guess(src.len());
     loop {
-        let mut p = P { src, sc: Scanner::new(src), at: 0, last: 0, w: Writer::new(0, widths, src.len() / 2 + 16), open: Vec::new(), title_at: usize::MAX, gap: Vec::new() };
+        let mut p = P { src, sc: Scanner::new(src), at: 0, last: 0, w: Writer::new(0, widths, src.len() / 2 + 16).to(finish.target(), src), open: Vec::new(), title_at: usize::MAX, gap: Vec::new() };
         p.document()?;
         if p.sc.unsure {
             return Err(Refusal::Parse(0));
         }
-        match finish(p.w) {
+        match finish.finish(p.w) {
             Ok(done) => return Ok(done),
             Err(Redo(w)) => {
-                if w == widths {
+                if w == widths && !finish.again() {
                     return Err(Refusal::TooLarge);
                 }
                 widths = w;
@@ -365,6 +365,11 @@ impl<'a> P<'a> {
         let mut blank_start = if ctx == Ctx::Item { 0 } else { u8::MAX };
         loop {
             let paragraph = after_paragraph.take();
+            // A document's blocks so far are final, unless a setext underline may follow the paragraph just read:
+            // their nodes are committed (passed to format 16's ops; decision 0434 §2).
+            if ctx == Ctx::Document && paragraph.is_none() {
+                self.w.commit();
+            }
             let Some(t) = next else {
                 if self.at >= self.src.len() {
                     if ctx != Ctx::Document {

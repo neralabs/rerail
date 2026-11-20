@@ -124,7 +124,7 @@ None of these settings changes what a run outputs, so all of them are left out o
 | `collect <store>` | urgent past the soft limit; idle when 0053's collection is due (bound 1 h) | corpus passes until the slice is over (0053) |
 | `search-index <store>` | idle while stored tapes lack an index (bound 60 s: the old 30 s wake, about) | the backlog until the slice is over |
 | `sqlite <file>`, for each store and `costs.sqlite` | idle when its WAL is past 64 MB, more than 10% and 16 MB is free, or its tables have no statistics or day-old ones (bounds 1 h for space, 7 days for statistics) | one action: free pages back (`incremental_vacuum`, 4,096 pages), then a checkpoint (`TRUNCATE`); a whole `VACUUM` for a file without incremental vacuum (more than 20% free, at most 1 GB, three times its size free on the disk; it converts the file to incremental vacuum); then `ANALYZE` one table at `analysis_limit` 1000 |
-| `cost-model` | idle when 2,000 samples were written since the last training and 10 minutes passed (bound 1 h) | one training on two threads at upkeep's priority; put in place and saved when it wins |
+| `cost-model` | idle when no model is saved, or 2,000 samples were written since the last training and 10 minutes passed (no bound: idle only, §10) | one training on two threads at upkeep's priority; put in place and saved when it wins |
 
 **Analyze leaves the planner's statistics alone.** The planner writes `sqlite_stat1` for its fact relations from
 `fact_stats`, never from `ANALYZE` over the data (`stats/plans.rs`, docs/final-shape/02 "SQL join order"). So the
@@ -134,7 +134,8 @@ bookkeeping, and the cost statistics.
 **Where the old timers went.**
 - The daemon's store thread now only renews workspace leases. Its collection and indexing are these jobs.
 - The cost statistics' writer no longer retrains. A process with a saved model puts it in place and leaves the
-  retraining to the job. A process with no saved model trains one at once, because the placement wants one.
+  retraining to the job. A process with no saved model prices by the rates until the job trains one (§10; it
+  trained one at once until 2026-11-19).
 - The corpus run's own collection thread (`rerail-collect`, 0053 §5) is unchanged. It belongs to the run.
 
 **`rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]`** runs every due job to the end now,
@@ -306,3 +307,26 @@ The command took 3.0 s in all, most of it the CPU share's pauses.
 5. **A launchd agent** that runs `rerail-engine upkeep` for machines with no daemon running. Open: it needs the
    installer's paths.
 6. **Re-sorting (§5, O160)** after 0164's frames; **join orders (§6, O161)** after the planner's alternatives.
+
+### 10. The cost model trains only on an idle machine (amendment, 2026-11-19)
+
+The user (2026-11-19): training is background maintenance. It happens only when the machine is idle, and not at
+all in an ephemeral run; with no cost model, the prices fall back to the statistics.
+
+Until then a process with no saved model trained one at once, beside its run (§4's "the placement wants one").
+On ep2 that held 345 MB of a warm run's 610 MB peak: the forest's arrays on the device (184 MB) and its kernels
+compiled from source in the process (about 160 MB). A CLI process exits with its run, so the training never
+finished, no model was saved, and every run trained again (Q230).
+
+- A process puts the saved model in place, and nothing more (`costs::place_saved`). Without one, the prices are the
+  rates fitted from the samples (`price::learn_from`).
+- The `cost-model` job is the only training. It is due with no saved model, and as before after 2,000 samples and
+  10 minutes. It is `Due::Idle` with no deadline (`starve: Duration::MAX`): §9's deadline does not apply, so it
+  never runs through a run, and a run that begins stops it between its phases.
+- Idle work waits for two polls 10 s apart with the cores idle, so a process that exits with its run never
+  trains. A long process (the daemon, Relax) and `rerail-engine upkeep` train.
+- What it gives up: a machine never idle gets no model from its runs' processes. `rerail-engine upkeep --jobs
+  cost-model` trains one on demand.
+
+Tests: `the_retraining_is_an_upkeep_job` (due with no saved model, idle only), and ep2's warm runs (Metal driver
+0 MB, no model state of a training in the profile).

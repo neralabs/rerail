@@ -55,6 +55,8 @@ use std::sync::Arc;
 
 pub(super) const SLOT_BITS: u32 = rerail_clif::ids::SLOT_BITS;
 pub const INDEX_BITS: u32 = rerail_clif::ids::INDEX_BITS;
+// A kept column splits a node id at its granule (decision 0456 K2): the bit is this one.
+const _: () = assert!(INDEX_BITS == rerail_blocks::packed::ID_SPLIT, "a kept id column splits at the granule's index bits");
 /// Indexes in one slot.
 pub const INDEX: u32 = 1 << INDEX_BITS;
 const SLOTS: u32 = 1 << SLOT_BITS;

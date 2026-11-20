@@ -1089,9 +1089,11 @@ fn the_tree_text_from_handles_is_the_trees() {
             .chain(prog.lattice.keys().map(|k| k.as_str())).chain(prog.nullary.iter().map(|k| k.as_str()))
             .chain(prog.rules.iter().map(|r| r.head.rel.as_str())).chain(["no_such_relation"]).collect();
         for rel in names {
-            let shape = (prog.decls.get(rel), prog.facts.get(rel), prog.natives.get(rel), prog.lattice.get(rel), prog.nullary.contains(rel));
+            // Facts are a set: their text is of their rows sorted by text, whatever order a program holds them in.
+            let facts = prog.facts.get(rel).map(|rows| tree_text::sorted_facts(rows));
+            let shape = (prog.decls.get(rel), &facts, prog.natives.get(rel), prog.lattice.get(rel), prog.nullary.contains(rel));
             assert_eq!(tree_text::shape(&f, rel), format!("{shape:?}"), "{rel}");
-            assert_eq!(tree_text::leaf(&f, rel), format!("{:?}\n{:?}", prog.decls.get(rel), prog.facts.get(rel)), "{rel}");
+            assert_eq!(tree_text::leaf(&f, rel), format!("{:?}\n{:?}", prog.decls.get(rel), facts), "{rel}");
             rels += 1;
         }
     }
@@ -1809,6 +1811,13 @@ fn a_request_record_over_an_edit_is_a_run_from_scratchs() {
     for (i, (add, ran)) in [(r_of_f(30), Ran::Delta), (r_of_f(31), Ran::Delta), (reads_e("q"), Ran::Whole), (r_of_f(32), Ran::Delta)].into_iter().enumerate() {
         let gone: Vec<RuleId> = if ran == Ran::Delta { vec![prog.rules().filter(|r| prog.rel_name(r.head().rel()) == "r").nth(5).unwrap().id()] } else { Vec::new() };
         prog = fresh(&edited(&prog, &gone, &[add]));
+        if ran == Ran::Whole {
+            // A request's rule added with its entry in the record, which states each rule's readers (decision 0331):
+            // a record of another length than its relation's rules is no record (`AskedByRule::of`, 0276 steps 3-4).
+            let mut b = prog.builder();
+            b.set_asked(&std::collections::BTreeMap::from([("q".to_owned(), vec![std::collections::BTreeSet::from(["p".to_owned()]); 2])]));
+            prog = fresh(&b.finish().unwrap().0);
+        }
         let v = rebase(last.input(), &prog).unwrap().expect("an edit of the last input");
         let mut p = Pipeline::again(last, v);
         p.rules(&mut RenameAll { from: "e", to: "e2", needs: false, seen: 0 });
@@ -1937,6 +1946,38 @@ fn a_request_record_a_step_drops_stays_dropped() {
     assert_eq!(asked.get("s"), Some(&vec![BTreeSet::from(["r3".to_owned()])]));
 }
 
+/// Q226: a step that changes a request relation's rules and does not state the record (here drops `q`'s first
+/// rule) leaves it by place over other rules. The pipeline states it again by rule at once, so the next pass reads it
+/// aligned (`request rules another subsumes` read it misaligned and kept it whole), not only at the pipeline's end.
+#[test]
+fn a_request_record_a_step_misaligns_is_stated_again_at_once() {
+    use std::collections::BTreeSet;
+    struct DropFirstQ;
+    impl super::manager::ProgramPass for DropFirstQ {
+        const NAME: &'static str = "drop q's first rule";
+        fn run(&mut self, cx: &super::manager::Cx<'_>, w: &mut super::manager::ProgramW<'_>) -> Result<(), String> {
+            let v = cx.v();
+            let first = v.heads(v.rel("q").unwrap()).next().unwrap().id();
+            w.keep(|r| r.id() != first)
+        }
+    }
+    let text = ".decl a(x: number)\n.input a\n.decl b(x: number)\n.input b\n.decl c(x: number)\n.input c\n.decl q(x: number)\n.output q\n\
+                q(x) :- a(x).\nq(x) :- b(x).\nq(x) :- c(x).\n";
+    let mut p = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    p.asked_by.insert("q".into(), ["r1", "r2", "r3"].iter().map(|r| BTreeSet::from([(*r).to_owned()])).collect());
+    let v = Builder::of_program(&p).unwrap().finish().unwrap().0;
+    let mut pipe = super::manager::Pipeline::new("test", v);
+    pipe.program(&mut DropFirstQ);
+    let now = pipe.current().unwrap().clone();
+    let by = |r: &str| BTreeSet::from([r.to_owned()]);
+    assert_eq!(now.asked().get("q"), Some(&vec![by("r2"), by("r3")]), "stated by rule after the step");
+    // As the tree states it: the rule dropped, its entry with it.
+    p.rules.remove(0);
+    p.asked_by.insert("q".into(), vec![by("r2"), by("r3")]);
+    let want = Builder::of_program(&p).unwrap().finish().unwrap().0;
+    assert!(super::same_program(&want, &now), "{}", super::differences(&want, &now));
+}
+
 /// Each relation's layout, declared or inferred (`layouts`, decision 0361 step 3).
 mod layouts {
     use crate::code_rule_dsl::logic::program_image::layouts::{Layouts, Origin};
@@ -1958,6 +1999,22 @@ mod layouts {
     }
     fn facts(v: &Version, l: &Layouts, rel: &str) -> Vec<F> {
         l.of(v.rel(rel).unwrap()).cloned().collect()
+    }
+
+    /// An input the transducer makes from a kind set has the engine's facts (decision 0361 step 5): `nearest`'s a key
+    /// on its node, an axis's a fan-out from it; one with facts declared keeps its own.
+    #[test]
+    fn a_relation_made_from_a_kind_set_has_the_engines_facts() {
+        use crate::code_rule_dsl::logic::front::{Fan, LayoutValues};
+        let (v, l) = of(".decl rr_nearest_ks1(n: node, a: node)\n.input rr_nearest_ks1\n\
+                         .decl rr_inside_ks2(n: node, a: node)\n.input rr_inside_ks2\n\
+                         .decl rr_has_ks3(n: node, a: node)\n.input rr_has_ks3\n.layout rr_has_ks3 key(n)\n\
+                         .decl f(n: node)\n.output f\nf(n) :- rr_nearest_ks1(n, _), rr_inside_ks2(n, _), rr_has_ks3(n, _).\n");
+        let ancestors = F::Values { col: 1, values: LayoutValues::OneIn(4) };
+        assert_eq!(facts(&v, &l, "rr_nearest_ks1"), [F::Key(vec![0]), F::Local, ancestors.clone()]);
+        assert_eq!(facts(&v, &l, "rr_inside_ks2"), [F::Fanout { from: vec![0], to: vec![1], fan: Fan::About(2) }, F::Local, ancestors]);
+        assert_eq!(facts(&v, &l, "rr_has_ks3"), [F::Key(vec![0])], "declared: its own");
+        assert!(l.0.get(&v.rel("rr_nearest_ks1").unwrap()).unwrap().iter().all(|(_, o)| *o == Origin::Made));
     }
 
     /// A projection keeps the key its columns hold, the fan-out and the tree; a filter keeps them too, and the order
@@ -2025,4 +2082,25 @@ mod layouts {
         assert!(shown.contains("f: key(c) (by rule #"), "{shown}");
         assert!(shown.contains("tree(p -> c) (by rule #"), "{shown}");
     }
+}
+
+/// A relation's facts are a set (decision 0456 K3): the same facts in another order are the same program, its digest
+/// and each relation's identity unchanged. A phase's export maintained from kept rows comes in their canonical order,
+/// one derived anew in another; the cone's rounds' space is named by the program's digest, and its kept relations by
+/// their identities, so an order-sensitive digest lost every kept round when a library file went.
+#[test]
+fn facts_in_another_order_are_the_same_program() {
+    use crate::code_rule_dsl::logic::plan::{body::{Placed, Versions}, leaf_identity};
+    let prog = every_part();
+    let mut reordered = prog.clone();
+    reordered.facts.get_mut("k").expect("every part has facts k").reverse();
+    assert_ne!(prog.facts["k"], reordered.facts["k"], "the rows in another order");
+    let (a, b) = (Placed::of_program(&prog).unwrap(), Placed::of_program(&reordered).unwrap());
+    assert_eq!(a.digest(), b.digest(), "the program's digest");
+    let (va, vb) = (Versions::with(&prog, a), Versions::with(&reordered, b));
+    assert_eq!(leaf_identity(va.fields(0).unwrap(), "k"), leaf_identity(vb.fields(0).unwrap(), "k"), "the relation's identity");
+    // Other rows are another program.
+    let mut other = prog.clone();
+    other.facts.get_mut("k").unwrap().pop();
+    assert_ne!(Placed::of_program(&prog).unwrap().digest(), Placed::of_program(&other).unwrap().digest());
 }

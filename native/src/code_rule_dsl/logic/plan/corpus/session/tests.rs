@@ -746,6 +746,7 @@ HUB(i) :- impmod(i, m), doc(b, _, m), fan(b, k), k >= 4.
     }
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     crate::code_rule_dsl::logic::profile::set(true);
     let show = |what: &str, report: &super::super::Report| {
         let spans = crate::code_rule_dsl::logic::profile::spans();

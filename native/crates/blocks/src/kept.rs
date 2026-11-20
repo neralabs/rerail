@@ -1,32 +1,31 @@
-//! A space's kept facts (decision 0401 F1–F3): the relations its last runs derived, each with what a run checks
+//! A space's kept facts (decisions 0401, 0456): the relations its last runs derived, each with what a run checks
 //! before it binds one (its rows' digest, the relations it was derived from and their digests, its columns' value
-//! types), in a block in a file beside the store, mapped by every process that opens it.
+//! types), in a chain of frozen files beside the store, mapped by every process that reads the space.
 //!
-//! The root holds a directory of entries sorted by key (`rel`, `ident`, `part`): an entry is found by a binary search
-//! in place, and a relation's entries (its documents' and its granules') are adjacent. Each entry's rows are a frozen
-//! `relation::Relation` in the same block, copied whole from the run's own block (`Relation::try_copy_into`): its
-//! columns' chunks, canonical order, hash indexes and statistics as freeze made them. A reader binds one as a view
-//! over the mapping; no row is decoded or copied.
+//! Each file is a block whose root holds a directory of entries sorted by key (`rel`, `ident`, `part`): an entry is
+//! found by a binary search in place, and a relation's entries (its documents' and its granules') are adjacent. An
+//! entry's rows are a `packed::Packed` (0456 K1): its live rows in canonical order, each column an `IntCol` in the
+//! bits its values need, and its rows' levels. A packed relation is one contiguous range of its file with relative
+//! references only, so a roll-up moves it by `memcpy`.
 //!
-//! A space keeps a base and one cumulative delta. A delta's entries replace the base's of the same key, and a delta
-//! records a relation the base holds and the space no longer keeps as a gone entry. `KeptView` reads the two as one.
-//! A block is written once, by `KeptW`, under a name no reader opens, and frozen before the store's rows name it.
+//! A space's chain is appended to (0456 K4): a commit writes one file of what it puts, never rewriting an older one.
+//! An entry is the relation's rows, or a gone entry (no longer kept), or a reads-only entry (new reads, the rows the
+//! newest older entry's). `KeptChain` reads the files as one, newest first.
 
 use crate::block::{Block, FROZEN, kind};
+use crate::packed::{Packed, Prepared};
 use crate::refs::{Ptr, Span};
-use crate::relation::{Relation, View};
 use crate::structure;
-use std::cmp::Ordering;
+use std::borrow::Borrow;
+use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
 
 structure! {
-    /// A kept block's root.
+    /// A kept file's root.
     pub struct KeptRoot {
-        /// Its maker's tag, which the store's row of it records too: a block not the row's is refused.
+        /// Its maker's tag, which the store's row of it records too: a file not the row's is refused.
         pub tag: u64,
-        /// In a delta, the tag of the base it is read over; 0 in a base.
-        pub base_tag: u64,
         pub entries: Span<KeptEntry>,
         pub reads: Span<ReadDigest>,
         /// The names of relations, and the entries' value types.
@@ -34,8 +33,15 @@ structure! {
     }
 }
 
+/// An entry's rows are its own.
+pub const ROWS: u32 = 0;
+/// The relation is no longer kept.
+pub const GONE: u32 = 1;
+/// The rows are the newest older entry's of the same key; the reads are this entry's.
+pub const SAME: u32 = 2;
+
 structure! {
-    /// One kept relation (or, in a delta, one the space no longer keeps: `gone`).
+    /// One kept relation.
     pub struct KeptEntry {
         pub ident: [u8; 32],
         pub part: i64,
@@ -46,13 +52,13 @@ structure! {
         pub nreads: u32,
         pub types_at: u32,
         pub ntypes: u32,
-        pub gone: u32,
+        /// `ROWS`, `GONE` or `SAME`.
+        pub what: u32,
         pub pad: u32,
-        pub rows: Ptr<Relation>,
-        /// Its dead rows (bit `id`), as the run kept them beside its rows; empty when none is.
-        pub dead: Span<u64>,
-        /// Each row's level (decision 0090), when the run derived them; empty otherwise.
-        pub levels: Span<u32>,
+        pub rows: Ptr<Packed>,
+        /// Its rows' range of the file (`ROWS`): what a roll-up copies.
+        pub rows_at: u64,
+        pub rows_len: u64,
     }
 }
 
@@ -81,13 +87,12 @@ pub struct Kept<'b> {
     pub digest: u64,
     /// Each column's value type.
     pub types: &'b [u8],
-    pub rows: &'b Relation,
-    /// Its dead rows (bit `id`); empty when none is.
-    pub dead: &'b [u64],
-    /// Each row's level; empty when the run derived none.
-    pub levels: &'b [u32],
+    pub rows: &'b Packed,
     reads: &'b [ReadDigest],
     strings: &'b [u8],
+    /// The file its rows lie in, and their range there.
+    file: &'b Block,
+    range: (usize, usize),
 }
 
 impl<'b> Kept<'b> {
@@ -97,13 +102,18 @@ impl<'b> Kept<'b> {
         self.reads.iter().map(move |r| (str_at(strings, r.rel_at, r.rel_len), r.digest))
     }
 
-    /// Its rows, read where they lie.
-    pub fn view(&self) -> View<'b> {
-        View::full(self.rows)
+    /// Its rows' bytes in their file.
+    pub fn bytes(&self) -> usize {
+        self.range.1
+    }
+
+    /// Row `i` (in canonical order).
+    pub fn row(&self, i: usize) -> Vec<i64> {
+        (0..self.rows.arity as usize).map(|c| self.rows.get(i, c)).collect()
     }
 }
 
-/// What reads a space's kept facts: one block, or a base and its delta read as one.
+/// What reads a space's kept facts.
 pub trait KeptRead {
     fn get(&self, key: &FactKey) -> Option<Kept<'_>>;
     /// Every entry for `rel`, in key order (its parts).
@@ -113,69 +123,94 @@ pub trait KeptRead {
 }
 
 fn str_at(strings: &[u8], at: u32, len: u32) -> &str {
-    // Written from `&str`s by the block's maker; a block is checked by its tag before it is read.
+    // Written from `&str`s by the file's maker; a file is checked by its tag before it is read.
     std::str::from_utf8(&strings[at as usize..(at + len) as usize]).unwrap_or("")
 }
 
-/// A frozen kept block, mapped read-only from its file.
-pub struct KeptFacts {
-    block: Block,
+/// A frozen kept file, mapped read-only.
+///
+/// It holds its block as `B`: its own mapping (`Block`, the default), or a holder that owns the mapping for another
+/// reader too.
+pub struct KeptFacts<B: Borrow<Block> = Block> {
+    block: B,
 }
 
 // SAFETY: a frozen block's mapping, read only.
-unsafe impl Send for KeptFacts {}
-unsafe impl Sync for KeptFacts {}
+unsafe impl<B: Borrow<Block>> Send for KeptFacts<B> {}
+unsafe impl<B: Borrow<Block>> Sync for KeptFacts<B> {}
 
-/// An entry as `KeptFacts::find` gives it: kept, or gone (a delta's).
+/// An entry as one file holds it.
+#[derive(Clone, Copy)]
 enum Found<'b> {
     Kept(Kept<'b>),
     Gone,
+    /// A reads-only entry: what it records, its rows an older file's.
+    Same { digest: u64, types: &'b [u8], reads: &'b [ReadDigest], strings: &'b [u8] },
 }
 
 impl KeptFacts {
-    /// The kept block at `path`, which the store's row records under `tag`: its kind, its state (frozen) and its tag
+    /// The kept file at `path`, which the store's row records under `tag`: its kind, its state (frozen) and its tag
     /// checked.
     pub fn open(path: &Path, tag: u64) -> io::Result<KeptFacts> {
         let block = Block::map_file(path, kind::KEPT, false)?;
-        let invalid = |what: String| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {what}", path.display()));
-        if block.header().state != FROZEN {
-            return Err(invalid("not frozen".into()));
+        KeptFacts::over(block, tag).map_err(|what| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {what}", path.display())))
+    }
+}
+
+impl<B: Borrow<Block>> KeptFacts<B> {
+    /// A kept file held as `block` (mapped by `Block::map_file`, kind `KEPT`), checked: frozen, and tagged `tag`.
+    pub fn over(block: B, tag: u64) -> Result<KeptFacts<B>, String> {
+        let b = block.borrow();
+        if b.header().kind != kind::KEPT {
+            return Err(format!("a block of kind {}, not kept facts", b.header().kind));
         }
-        let got = block.root::<KeptRoot>().tag;
+        if b.header().state != FROZEN {
+            return Err("not frozen".into());
+        }
+        let got = b.root::<KeptRoot>().tag;
         if got != tag {
-            return Err(invalid(format!("its tag is {got:016x}, the store's row says {tag:016x}")));
+            return Err(format!("its tag is {got:016x}, the store's row says {tag:016x}"));
         }
         Ok(KeptFacts { block })
     }
 
+    /// Its holder of the block, given back.
+    pub fn into_inner(self) -> B {
+        self.block
+    }
+
+    /// Its block.
+    pub fn block(&self) -> &Block {
+        self.block.borrow()
+    }
+
     fn root(&self) -> &KeptRoot {
-        self.block.root()
+        self.block.borrow().root()
     }
 
     pub fn tag(&self) -> u64 {
         self.root().tag
     }
 
-    /// The tag of the base this delta is read over; `None` for a base.
-    pub fn base_tag(&self) -> Option<u64> {
-        Some(self.root().base_tag).filter(|&t| t != 0)
-    }
-
-    /// The bytes of its file (what a roll-up rule weighs).
+    /// The bytes of its file.
     pub fn bytes(&self) -> usize {
-        self.block.header().length as usize
+        self.block.borrow().header().length as usize
     }
 
-    /// Whether `rows` lie in this block's mapping.
-    pub fn holds(&self, rows: &Relation) -> bool {
+    /// Its entries' count, of every kind.
+    pub fn len(&self) -> usize {
+        self.entries().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries().is_empty()
+    }
+
+    /// Whether `rows` lie in this file's mapping.
+    pub fn holds(&self, rows: &Packed) -> bool {
         let p = std::ptr::from_ref(rows) as usize;
-        let base = self.block.base_ptr() as usize;
-        p >= base && p < base + self.block.reserved()
-    }
-
-    /// The keys this delta records as gone (none in a base).
-    pub fn gone_keys(&self) -> impl Iterator<Item = FactKey<'_>> + '_ {
-        self.entries().iter().filter(|e| e.gone != 0).map(move |e| self.key_of(e))
+        let base = self.block.borrow().base_ptr() as usize;
+        p >= base && p < base + self.block.borrow().reserved()
     }
 
     fn entries(&self) -> &[KeptEntry] {
@@ -191,21 +226,26 @@ impl KeptFacts {
     }
 
     fn entry<'s>(&'s self, e: &'s KeptEntry) -> Found<'s> {
-        if e.gone != 0 {
-            return Found::Gone;
-        }
         let reads = &self.root().reads.as_slice()[e.reads_at as usize..(e.reads_at + e.nreads) as usize];
         let types = &self.strings()[e.types_at as usize..(e.types_at + e.ntypes) as usize];
-        let rows = e.rows.get().expect("a kept entry has rows");
-        Found::Kept(Kept { key: self.key_of(e), digest: e.digest, types, rows, dead: e.dead.as_slice(), levels: e.levels.as_slice(), reads, strings: self.strings() })
+        match e.what {
+            GONE => Found::Gone,
+            SAME => Found::Same { digest: e.digest, types, reads, strings: self.strings() },
+            _ => {
+                let rows = e.rows.get().expect("a kept entry has rows");
+                let range = (e.rows_at as usize, e.rows_len as usize);
+                Found::Kept(Kept { key: self.key_of(e), digest: e.digest, types, rows, reads, strings: self.strings(), file: self.block(), range })
+            }
+        }
     }
 
-    fn find(&self, key: &FactKey) -> Option<Found<'_>> {
+    fn find(&self, key: &FactKey) -> Option<(FactKey<'_>, Found<'_>)> {
         let i = self.entries().binary_search_by(|e| self.key_of(e).cmp(key)).ok()?;
-        Some(self.entry(&self.entries()[i]))
+        let e = &self.entries()[i];
+        Some((self.key_of(e), self.entry(e)))
     }
 
-    /// The entries of `rel`, kept and gone, by a binary search for their range.
+    /// The entries of `rel`, by a binary search for their range.
     fn range(&self, rel: &str) -> impl Iterator<Item = (FactKey<'_>, Found<'_>)> + '_ {
         let es = self.entries();
         let lo = es.partition_point(|e| str_at(self.strings(), e.rel_at, e.rel_len) < rel);
@@ -218,82 +258,139 @@ impl KeptFacts {
     }
 }
 
-fn kept_only<'b>(it: impl Iterator<Item = (FactKey<'b>, Found<'b>)> + 'b) -> impl Iterator<Item = Kept<'b>> + 'b {
-    it.filter_map(|(_, f)| match f {
-        Found::Kept(k) => Some(k),
-        Found::Gone => None,
-    })
+/// A space's chain of kept files, oldest first, read as one: a key's newest entry is its entry; a gone entry hides
+/// it; a reads-only entry reads the rows of the newest older entry with rows.
+pub struct KeptChain<'a, B: Borrow<Block> = Block> {
+    pub files: &'a [KeptFacts<B>],
 }
 
-impl KeptRead for KeptFacts {
-    fn get(&self, key: &FactKey) -> Option<Kept<'_>> {
-        match self.find(key)? {
-            Found::Kept(k) => Some(k),
-            Found::Gone => None,
+/// `found` (a newer file's entry for `key`) with its rows: a reads-only entry's from `older` (the key's older
+/// entries, newest first).
+fn resolve<'b>(key: FactKey<'b>, found: Found<'b>, mut older: impl Iterator<Item = Found<'b>>) -> Option<Kept<'b>> {
+    match found {
+        Found::Kept(k) => Some(k),
+        Found::Gone => None,
+        Found::Same { digest, types, reads, strings } => {
+            let rows = older.find_map(|f| match f {
+                Found::Kept(k) => Some(Some(k)),
+                Found::Gone => Some(None),
+                Found::Same { .. } => None,
+            })??;
+            Some(Kept { key, digest, types, reads, strings, ..rows })
         }
+    }
+}
+
+/// A key's newest entry in a run of a chain's files, as `KeptChain::newest` gives it.
+pub enum Newest<'b> {
+    /// Its rows lie in these files (a reads-only entry's resolved, with its own reads).
+    Kept(Kept<'b>),
+    Gone,
+    /// A reads-only entry whose rows lie in an older file than these.
+    Same(Same<'b>),
+}
+
+/// What a reads-only entry records.
+#[derive(Clone, Copy)]
+pub struct Same<'b> {
+    pub digest: u64,
+    pub types: &'b [u8],
+    reads: &'b [ReadDigest],
+    strings: &'b [u8],
+}
+
+impl<'b> Same<'b> {
+    pub fn reads(&self) -> impl Iterator<Item = (&'b str, u64)> + 'b {
+        let strings = self.strings;
+        self.reads.iter().map(move |r| (str_at(strings, r.rel_at, r.rel_len), r.digest))
+    }
+}
+
+impl<B: Borrow<Block>> KeptChain<'_, B> {
+    /// Each key's newest entry in these files, in key order, a reads-only entry resolved where its rows lie in them:
+    /// what a merge of these files (the newest of a chain, K4) writes.
+    pub fn newest(&self) -> Vec<(FactKey<'_>, Newest<'_>)> {
+        let mut by: BTreeMap<FactKey<'_>, Vec<Found<'_>>> = BTreeMap::new();
+        for f in self.files.iter().rev() {
+            for (k, found) in f.every() {
+                by.entry(k).or_default().push(found);
+            }
+        }
+        by.into_iter()
+            .map(|(k, fs)| {
+                let n = match fs[0] {
+                    Found::Kept(kept) => Newest::Kept(kept),
+                    Found::Gone => Newest::Gone,
+                    Found::Same { digest, types, reads, strings } => match resolve(k, fs[0], fs.into_iter().skip(1)) {
+                        Some(kept) => Newest::Kept(kept),
+                        None => Newest::Same(Same { digest, types, reads, strings }),
+                    },
+                };
+                (k, n)
+            })
+            .collect()
+    }
+
+    /// Every key's entries across the files, `pick`ed per file, each key's newest first, resolved.
+    fn merged<'s, I>(&'s self, pick: impl Fn(&'s KeptFacts<B>) -> I) -> Vec<Kept<'s>>
+    where
+        I: Iterator<Item = (FactKey<'s>, Found<'s>)>,
+    {
+        let mut by: BTreeMap<FactKey<'s>, Vec<Found<'s>>> = BTreeMap::new();
+        for f in self.files.iter().rev() {
+            for (k, found) in pick(f) {
+                by.entry(k).or_default().push(found);
+            }
+        }
+        by.into_iter().filter_map(|(k, fs)| resolve(k, fs[0], fs.into_iter().skip(1))).collect()
+    }
+
+    /// The bytes of rows the chain's files hold that newer entries replaced or hid: what a roll-up would drop.
+    pub fn superseded_bytes(&self) -> usize {
+        let mut seen: std::collections::HashSet<FactKey> = std::collections::HashSet::new();
+        let mut out = 0;
+        for f in self.files.iter().rev() {
+            for (k, found) in f.every() {
+                let newer = !seen.insert(k);
+                match found {
+                    // A reads-only entry reads the next older rows: those are not superseded.
+                    Found::Same { .. } => {
+                        seen.remove(&k);
+                    }
+                    Found::Kept(kept) if newer => out += kept.bytes(),
+                    _ => {}
+                }
+            }
+        }
+        out
+    }
+
+    /// The bytes of the files.
+    pub fn bytes(&self) -> usize {
+        self.files.iter().map(|f| f.bytes()).sum()
+    }
+}
+
+impl<'a, B: Borrow<Block>> KeptChain<'a, B> {
+    /// `key`'s entry, borrowed from the files, not from this chain (`KeptRead::get`, held past the chain).
+    pub fn entry(&self, key: &FactKey) -> Option<Kept<'a>> {
+        let files: &'a [KeptFacts<B>] = self.files;
+        let mut found = files.iter().rev().filter_map(|f| f.find(key));
+        let (own, first) = found.next()?;
+        resolve(own, first, found.map(|(_, f)| f))
+    }
+}
+
+impl<B: Borrow<Block>> KeptRead for KeptChain<'_, B> {
+    fn get(&self, key: &FactKey) -> Option<Kept<'_>> {
+        self.entry(key)
     }
     fn of<'s>(&'s self, rel: &str) -> Box<dyn Iterator<Item = Kept<'s>> + 's> {
         let rel = rel.to_owned();
-        Box::new(kept_only(self.range(&rel).collect::<Vec<_>>().into_iter()))
+        Box::new(self.merged(move |f| f.range(&rel).collect::<Vec<_>>().into_iter()).into_iter())
     }
     fn all(&self) -> Box<dyn Iterator<Item = Kept<'_>> + '_> {
-        Box::new(kept_only(self.every()))
-    }
-}
-
-/// A space's base and its delta, read as one: the delta's entry for a key in place of the base's, and a key the
-/// delta records as gone not kept.
-pub struct KeptView<'a> {
-    pub base: Option<&'a KeptFacts>,
-    pub delta: Option<&'a KeptFacts>,
-}
-
-/// Two key-ordered runs of entries merged, the second's (the delta's) taking a key both hold.
-fn merged<'b>(a: Vec<(FactKey<'b>, Found<'b>)>, b: Vec<(FactKey<'b>, Found<'b>)>) -> Vec<Kept<'b>> {
-    let mut out = Vec::with_capacity(a.len() + b.len());
-    let (mut a, mut b) = (a.into_iter().peekable(), b.into_iter().peekable());
-    loop {
-        let take_b = match (a.peek(), b.peek()) {
-            (None, None) => break,
-            (Some(_), None) => false,
-            (None, Some(_)) => true,
-            (Some((ka, _)), Some((kb, _))) => match ka.cmp(kb) {
-                Ordering::Less => false,
-                Ordering::Greater => true,
-                Ordering::Equal => {
-                    a.next();
-                    true
-                }
-            },
-        };
-        let (_, f) = if take_b { b.next() } else { a.next() }.expect("peeked");
-        if let Found::Kept(k) = f {
-            out.push(k);
-        }
-    }
-    out
-}
-
-impl KeptRead for KeptView<'_> {
-    fn get(&self, key: &FactKey) -> Option<Kept<'_>> {
-        if let Some(d) = self.delta {
-            match d.find(key) {
-                Some(Found::Kept(k)) => return Some(k),
-                Some(Found::Gone) => return None,
-                None => {}
-            }
-        }
-        self.base?.get(key)
-    }
-    fn of<'s>(&'s self, rel: &str) -> Box<dyn Iterator<Item = Kept<'s>> + 's> {
-        let a = self.base.map(|b| b.range(rel).collect()).unwrap_or_default();
-        let b = self.delta.map(|d| d.range(rel).collect()).unwrap_or_default();
-        Box::new(merged(a, b).into_iter())
-    }
-    fn all(&self) -> Box<dyn Iterator<Item = Kept<'_>> + '_> {
-        let a = self.base.map(|b| b.every().collect()).unwrap_or_default();
-        let b = self.delta.map(|d| d.every().collect()).unwrap_or_default();
-        Box::new(merged(a, b).into_iter())
+        Box::new(self.merged(|f| f.every()).into_iter())
     }
 }
 
@@ -305,11 +402,9 @@ struct Pending {
     digest: u64,
     reads: Vec<(String, u64)>,
     types: Vec<u8>,
-    /// Its rows' copy's offset in the block; `None` for a gone entry.
-    rows: Option<usize>,
-    /// Its dead bits' and levels' copies in the block: (offset, count).
-    dead: (usize, usize),
-    levels: (usize, usize),
+    what: u32,
+    /// Its rows' range in the file (`ROWS`).
+    rows: (usize, usize),
 }
 
 /// What an entry records beside its rows.
@@ -319,12 +414,21 @@ pub struct Meta<'a> {
     pub digest: u64,
     pub reads: &'a [(&'a str, u64)],
     pub types: &'a [u8],
-    pub dead: &'a [u64],
-    pub levels: &'a [u32],
 }
 
-/// A kept block being written: a space's next base or delta. Its rows are copied in as they are put; the directory,
-/// sorted, is written by `finish`, which freezes the block and puts it on the disk.
+/// What a put wrote: its rows and bytes, and whether they came in canonical order (no sort).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Put {
+    pub rows: usize,
+    pub bytes: usize,
+    pub in_order: bool,
+}
+
+/// The columns a packed entry records its order on (`Packed::okey`).
+const MAX_ORDER: usize = 8;
+
+/// A kept file being written: the next of a space's chain, or a roll-up of it. Each put's rows are packed into it as
+/// they are put; the directory, sorted, is written by `finish`, which freezes the file and puts it on the disk.
 pub struct KeptW {
     block: Block,
     root: usize,
@@ -337,33 +441,21 @@ pub struct KeptW {
 unsafe impl Send for KeptW {}
 
 fn room() -> io::Error {
-    io::Error::new(io::ErrorKind::StorageFull, "the kept block's room is spent")
-}
-
-fn full(path: &Path) -> io::Error {
-    io::Error::new(io::ErrorKind::StorageFull, format!("{}: the kept block's room is spent", path_name(path)))
-}
-
-fn path_name(path: &Path) -> String {
-    path.display().to_string()
+    io::Error::new(io::ErrorKind::StorageFull, "the kept file's room is spent")
 }
 
 impl KeptW {
-    /// A new block at `path` (a name no reader opens, renamed into place once finished), tagged `tag`, with room for
-    /// `reserve` bytes (its file is sparse: room not written takes no disk). `base_tag` names the base a delta is read
-    /// over; `None` for a base.
-    pub fn create(path: &Path, tag: u64, base_tag: Option<u64>, reserve: usize) -> io::Result<KeptW> {
-        assert_ne!(tag, 0, "a kept block's tag is not 0");
+    /// A new file at `path` (a name no reader opens, renamed into place once finished), tagged `tag`, with room for
+    /// `reserve` bytes (its file is sparse: room not written takes no disk).
+    pub fn create(path: &Path, tag: u64, reserve: usize) -> io::Result<KeptW> {
+        assert_ne!(tag, 0, "a kept file's tag is not 0");
         #[cfg(unix)]
         let block = Block::file(path, kind::KEPT, reserve)?;
         #[cfg(not(unix))]
         let block = Block::anon(kind::KEPT, reserve);
-        let root: *mut KeptRoot = block.try_alloc_t(1).ok_or_else(|| full(path))?;
+        let root: *mut KeptRoot = block.try_alloc_t(1).ok_or_else(room)?;
         // SAFETY: the root just allocated in this open block, which has no other writer.
-        unsafe {
-            (*root).tag = tag;
-            (*root).base_tag = base_tag.unwrap_or(0);
-        }
+        unsafe { (*root).tag = tag };
         block.set_root(root);
         let root = block.offset_of(root);
         Ok(KeptW {
@@ -375,60 +467,55 @@ impl KeptW {
         })
     }
 
-    /// A relation a run derived (frozen, or a part nothing writes now), copied whole into this one, its columns
-    /// `map`ped where they lie in the copy (a forked process's atom ids to the store's, 0401 F6): `None` maps none.
-    /// The copy is returned.
-    pub fn put(&mut self, meta: Meta, rows: &Relation, map: Option<(&[usize], &dyn Fn(i64) -> i64)>) -> io::Result<&Relation> {
-        let copy = rows.try_copy_into(&self.block).ok_or_else(room)?;
-        if let Some((cols, f)) = map {
-            for &c in cols {
-                // SAFETY: the copy is this writer's, in its open block, read by no one before `finish`.
-                unsafe { copy.rows.map_col(c, f) };
-            }
-        }
-        let at = self.block.offset_of(std::ptr::from_ref(copy));
-        self.pend(meta, Some(at))?;
-        // SAFETY: the copy lies in this writer's block, which outlives the borrow of `self`.
-        Ok(unsafe { &*self.block.ptr::<Relation>(at) })
-    }
-
-    /// Rows not held as a relation (an input's granule, read from its sources): `n` rows of `widths.len()` columns,
-    /// flat, pushed into a relation of this block. No index is built.
-    pub fn put_rows(&mut self, meta: Meta, widths: &[u32], rows: &[i64], n: usize) -> io::Result<()> {
-        let spec = crate::relation::Spec { widths: widths.to_vec(), order: Vec::new(), indexes: Vec::new(), min_log: crate::rows::MIN_LOG };
-        let rel = Relation::try_create(&self.block, &spec, None).ok_or_else(room)?;
-        if !rel.rows.try_reserve(&self.block, n as u64) {
+    /// Rows prepared by `packed::prepare` (K3: sorted unless they came in order, deduplicated, each column's
+    /// encoding chosen), packed into this file.
+    pub fn put(&mut self, meta: Meta, rows: &Prepared) -> io::Result<Put> {
+        if self.block.reserved() - self.block.used() < rows.bytes() {
             return Err(room());
         }
-        if !widths.is_empty() {
-            for (c, _) in widths.iter().enumerate() {
-                let col: Vec<i64> = rows.chunks_exact(widths.len()).take(n).map(|r| r[c]).collect();
-                rel.rows.write_col(c, &col);
-            }
-        }
-        rel.rows.len.store(n as u32, std::sync::atomic::Ordering::Release);
-        rel.live.store(n as u32, std::sync::atomic::Ordering::Relaxed);
-        let at = self.block.offset_of(std::ptr::from_ref(rel));
-        self.pend(meta, Some(at))
+        let (packed, stats) = rows.place_in(&self.block);
+        let at = self.block.offset_of(std::ptr::from_ref(packed));
+        self.pend(meta, ROWS, (at, self.block.used() - at));
+        Ok(Put { rows: stats.rows, bytes: stats.bytes, in_order: rows.in_order })
     }
 
-    /// An entry of the previous delta (or base), kept as it is, `reads` in place of its own when given (its rows the
-    /// same, what they were derived from read again): its rows copied whole.
-    pub fn carry(&mut self, kept: &Kept, reads: Option<&[(&str, u64)]>) -> io::Result<()> {
-        let own: Vec<(&str, u64)> = kept.reads().collect();
-        let meta = Meta { key: kept.key, digest: kept.digest, reads: reads.unwrap_or(&own), types: kept.types, dead: kept.dead, levels: kept.levels };
-        self.put(meta, kept.rows, None).map(|_| ())
+    /// `n` rows of `a` columns (`cols`, column-major) with each row's level when they have one, prepared and packed
+    /// (`put`), in the calling thread's scratch. In canonical order (columns 0, 1, … ascending), the order recorded
+    /// on its first `MAX_ORDER` columns, so a probe of a leading column is a range (`Packed::leads`); or as given.
+    pub fn put_cols(&mut self, meta: Meta, cols: &[i64], n: usize, a: usize, levels: Option<&[u32]>, given: crate::packed::Order) -> io::Result<Put> {
+        let order = (0..a.min(MAX_ORDER) as u16).collect();
+        let spec = crate::relation::Spec { widths: vec![8; a], order, indexes: Vec::new(), min_log: 0 };
+        crate::scratch::with(|s| {
+            let prepared = crate::packed::prepare(s, cols, n, a, &spec, levels, given);
+            self.put(meta, &prepared)
+        })
     }
 
-    /// In a delta: the base's entry for `key` is no longer kept.
+    /// An entry of another file of the chain, its rows copied whole (a roll-up, K4: one `memcpy`, nothing
+    /// re-encoded), with `meta` in place of what it records when given (new reads, its rows the same).
+    pub fn copy(&mut self, kept: &Kept, meta: Option<Meta>) -> io::Result<()> {
+        let (from, len) = kept.range;
+        let at = self.block.try_alloc(len, 8).ok_or_else(room)?;
+        // SAFETY: `len` bytes just allocated in this open block; the source is the frozen file's range of the rows,
+        // whose references are relative and all within it (`Prepared::place_in`), both 8-aligned.
+        unsafe { std::ptr::copy_nonoverlapping(kept.file.base_ptr().add(from), self.block.base_ptr().add(at), len) };
+        let reads: Vec<(&str, u64)> = kept.reads().collect();
+        let meta = meta.unwrap_or(Meta { key: kept.key, digest: kept.digest, reads: &reads, types: kept.types });
+        self.pend(meta, ROWS, (at, len));
+        Ok(())
+    }
+
+    /// A reads-only entry: the relation's rows are the chain's as they are, its reads and digest these.
+    pub fn same(&mut self, meta: Meta) {
+        self.pend(meta, SAME, (0, 0));
+    }
+
+    /// The relation is no longer kept.
     pub fn gone(&mut self, key: FactKey) {
-        let none = Meta { key, digest: 0, reads: &[], types: &[], dead: &[], levels: &[] };
-        self.pend(none, None).expect("a gone entry takes no room");
+        self.pend(Meta { key, digest: 0, reads: &[], types: &[] }, GONE, (0, 0));
     }
 
-    fn pend(&mut self, meta: Meta, rows: Option<usize>) -> io::Result<()> {
-        let dead = self.copy_slice(meta.dead)?;
-        let levels = self.copy_slice(meta.levels)?;
+    fn pend(&mut self, meta: Meta, what: u32, rows: (usize, usize)) {
         self.pending.push(Pending {
             rel: meta.key.rel.to_owned(),
             ident: *meta.key.ident,
@@ -436,26 +523,18 @@ impl KeptW {
             digest: meta.digest,
             reads: meta.reads.iter().map(|&(r, d)| (r.to_owned(), d)).collect(),
             types: meta.types.to_vec(),
+            what,
             rows,
-            dead,
-            levels,
         });
-        Ok(())
     }
 
-    /// `items` copied into the block: (offset, count); none for none.
-    fn copy_slice<T: Copy>(&self, items: &[T]) -> io::Result<(usize, usize)> {
-        if items.is_empty() {
-            return Ok((0, 0));
-        }
-        let p: *mut T = self.block.try_alloc_t(items.len()).ok_or_else(room)?;
-        // SAFETY: `p` holds `items.len()` items, just allocated in this open block.
-        unsafe { std::ptr::copy_nonoverlapping(items.as_ptr(), p, items.len()) };
-        Ok((self.block.offset_of(p), items.len()))
+    /// The bytes written so far.
+    pub fn used(&self) -> usize {
+        self.block.used()
     }
 
-    /// The directory written, sorted by key, then the block frozen (its file truncated to what it holds) and put on
-    /// the disk. A key put twice is refused.
+    /// The directory written, sorted by key, then the file frozen (truncated to what it holds) and put on the disk.
+    /// A key put twice is refused.
     pub fn finish(mut self) -> io::Result<()> {
         self.pending.sort_by(|a, b| (a.rel.as_str(), &a.ident, a.part).cmp(&(b.rel.as_str(), &b.ident, b.part)));
         if let Some(w) = self.pending.windows(2).find(|w| (w[0].rel.as_str(), &w[0].ident, w[0].part) == (w[1].rel.as_str(), &w[1].ident, w[1].part)) {
@@ -508,15 +587,11 @@ impl KeptW {
                 (*e).nreads = p.reads.len() as u32;
                 (*e).types_at = types_at;
                 (*e).ntypes = p.types.len() as u32;
-                match p.rows {
-                    Some(at) => Ptr::set(&raw const (*e).rows, self.block.ptr::<Relation>(at)),
-                    None => (*e).gone = 1,
-                }
-                if p.dead.1 > 0 {
-                    Span::set(&raw const (*e).dead, self.block.ptr::<u64>(p.dead.0), p.dead.1);
-                }
-                if p.levels.1 > 0 {
-                    Span::set(&raw const (*e).levels, self.block.ptr::<u32>(p.levels.0), p.levels.1);
+                (*e).what = p.what;
+                if p.what == ROWS {
+                    Ptr::set(&raw const (*e).rows, self.block.ptr::<Packed>(p.rows.0));
+                    (*e).rows_at = p.rows.0 as u64;
+                    (*e).rows_len = p.rows.1 as u64;
                 }
             }
             Span::set(&raw const (*root).entries, es, self.pending.len());
@@ -544,7 +619,6 @@ impl KeptW {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::relation::{Spec, freeze};
 
     fn dir(name: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("rerail-kept-{name}-{}", std::process::id()));
@@ -553,129 +627,115 @@ mod tests {
         d
     }
 
-    /// A frozen relation of two columns in a run's own block, indexed on its first: `rows` of them.
-    fn made<'b>(block: &'b Block, rows: &[(i64, i64)]) -> &'b Relation {
-        let spec = Spec { widths: vec![8, 4], order: vec![0], indexes: vec![vec![1]], min_log: 4 };
-        let rel = Relation::create(block, &spec, None);
-        let lock = std::sync::Mutex::new(());
-        let w = crate::relation::RelW { block, rel, lock: &lock };
-        for &(a, b) in rows {
-            w.push(&[a, b]);
-        }
-        freeze(block, rel, &spec, None);
-        rel
-    }
-
     fn meta(key: FactKey<'_>, digest: u64) -> Meta<'_> {
-        Meta { key, digest, reads: &[], types: &[], dead: &[], levels: &[] }
+        Meta { key, digest, reads: &[], types: &[] }
     }
 
-    fn rows_of(v: &View) -> Vec<Vec<i64>> {
-        v.ordered().into_iter().map(|id| v.row(id)).collect()
+    /// Rows of two columns, as columns.
+    fn put(w: &mut KeptW, m: Meta, rows: &[(i64, i64)], levels: Option<&[u32]>) -> Put {
+        let cols: Vec<i64> = rows.iter().map(|r| r.0).chain(rows.iter().map(|r| r.1)).collect();
+        w.put_cols(m, &cols, rows.len(), 2, levels, crate::packed::Order::Canonical).unwrap()
+    }
+
+    fn rows_of(k: &Kept) -> Vec<Vec<i64>> {
+        (0..k.rows.len()).map(|i| k.row(i)).collect()
     }
 
     const A: [u8; 32] = [1; 32];
     const B: [u8; 32] = [2; 32];
 
-    /// F-R1 at the block: a kept relation reads as the run's did (its rows, canonical order, index probes), from a
-    /// mapping of its file, its columns lying in that mapping.
+    /// A kept relation reads from a mapping of its file, its columns lying in that mapping: its rows in canonical
+    /// order, its levels following them, what a run checks.
     #[test]
     fn a_kept_relation_is_read_where_it_lies() {
         let d = dir("lies");
-        let run = Block::anon(kind::FACTS, 64 << 20);
         let data: Vec<(i64, i64)> = (0..5_000).map(|i| ((i * 7919) % 5_003, i % 13)).collect();
-        let rel = made(&run, &data);
-        let mut w = KeptW::create(&d.join("b1.blk"), 11, None, 64 << 20).unwrap();
+        let levels: Vec<u32> = (0..5_000).map(|i| i % 4).collect();
+        let mut w = KeptW::create(&d.join("c1.blk"), 11, 64 << 20).unwrap();
         let reads = [("defs", 5), ("uses", 6)];
-        w.put(Meta { reads: &reads, types: &[1, 2], ..meta(FactKey { rel: "calls", ident: &A, part: 0 }, 99) }, rel, None).unwrap();
+        let p = put(&mut w, Meta { reads: &reads, types: b"ii", ..meta(FactKey { rel: "calls", ident: &A, part: 0 }, 99) }, &data, Some(&levels));
+        assert!(!p.in_order && p.rows == 5_000);
+        assert!(p.bytes < 5_000 * 16 / 3, "{} bytes for 5,000 rows of two columns", p.bytes);
         w.finish().unwrap();
-        let k = KeptFacts::open(&d.join("b1.blk"), 11).unwrap();
-        let got = k.get(&FactKey { rel: "calls", ident: &A, part: 0 }).unwrap();
-        assert!(k.holds(got.rows), "the rows lie in the kept block's mapping");
-        let col0 = got.rows.rows.col(0) as *const _ as usize;
-        assert!(col0 >= k.block.base_ptr() as usize && col0 < k.block.base_ptr() as usize + k.bytes());
-        assert_eq!((got.digest, got.types), (99, &[1u8, 2][..]));
+        let files = [KeptFacts::open(&d.join("c1.blk"), 11).unwrap()];
+        let chain = KeptChain { files: &files };
+        let got = chain.get(&FactKey { rel: "calls", ident: &A, part: 0 }).unwrap();
+        assert!(files[0].holds(got.rows), "the rows lie in the kept file's mapping");
+        assert_eq!((got.digest, got.types), (99, &b"ii"[..]));
         assert_eq!(got.reads().collect::<Vec<_>>(), [("defs", 5), ("uses", 6)]);
-        let (was, now) = (View::full(rel), got.view());
-        assert_eq!(rows_of(&now), rows_of(&was));
-        let ix = got.rows.find_index(&[1], got.rows.rows.len()).or(Some(0)).unwrap();
-        assert_eq!(now.probe(ix, &[5]), was.probe(ix, &[5]), "an index probe answers as the run's");
-        assert!(k.get(&FactKey { rel: "calls", ident: &B, part: 0 }).is_none());
-        assert!(KeptFacts::open(&d.join("b1.blk"), 12).is_err(), "a block not the row's is refused");
+        let mut want: Vec<Vec<i64>> = data.iter().map(|r| vec![r.0, r.1]).collect();
+        want.sort();
+        assert_eq!(rows_of(&got), want);
+        let lv = got.rows.levels().unwrap();
+        for (i, row) in rows_of(&got).iter().enumerate() {
+            let orig = data.iter().position(|r| (r.0, r.1) == (row[0], row[1])).unwrap();
+            assert_eq!(lv.get(i), levels[orig] as i64);
+        }
+        assert!(chain.get(&FactKey { rel: "calls", ident: &B, part: 0 }).is_none());
+        assert!(KeptFacts::open(&d.join("c1.blk"), 12).is_err(), "a file not the row's is refused");
         let _ = std::fs::remove_dir_all(&d);
     }
 
-    /// A delta read over its base: its entries replace the base's, its gone entries hide them, and the rest of the
-    /// base reads through; a relation's parts come in key order.
+    /// K-R4 (decision 0456): a later file's entry replaces an earlier one's, a gone entry hides it, a reads-only
+    /// entry reads the earlier rows with its own reads; a relation's parts come in key order; a roll-up copies the
+    /// live entries whole and reads the same.
     #[test]
-    fn a_delta_reads_over_its_base() {
-        let d = dir("delta");
-        let run = Block::anon(kind::FACTS, 64 << 20);
-        let (r1, r2, r3) = (made(&run, &[(1, 1)]), made(&run, &[(2, 2)]), made(&run, &[(3, 3)]));
+    fn a_chain_reads_newest_first() {
+        let d = dir("chain");
         let key = |rel, ident, part| FactKey { rel, ident, part };
-        let mut w = KeptW::create(&d.join("b1.blk"), 1, None, 16 << 20).unwrap();
-        w.put(meta(key("p", &A, 0), 1), r1, None).unwrap();
-        w.put(meta(key("p", &A, 7), 2), r2, None).unwrap();
-        w.put(meta(key("q", &B, 0), 3), r3, None).unwrap();
+        let mut w = KeptW::create(&d.join("c1.blk"), 1, 16 << 20).unwrap();
+        put(&mut w, meta(key("p", &A, 0), 1), &[(1, 1)], None);
+        put(&mut w, meta(key("p", &A, 7), 2), &[(2, 2)], None);
+        put(&mut w, meta(key("q", &B, 0), 3), &[(3, 3), (4, 4)], Some(&[5, 6]));
         w.finish().unwrap();
-        let base = KeptFacts::open(&d.join("b1.blk"), 1).unwrap();
-        let mut w = KeptW::create(&d.join("d2.blk"), 2, Some(1), 16 << 20).unwrap();
-        w.put(meta(key("p", &A, 7), 20), r3, None).unwrap();
-        w.gone(key("q", &B, 0));
-        w.put(meta(key("p", &A, 3), 30), r1, None).unwrap();
+        let mut w = KeptW::create(&d.join("c2.blk"), 2, 16 << 20).unwrap();
+        put(&mut w, meta(key("p", &A, 7), 20), &[(3, 3)], None);
+        w.gone(key("p", &A, 0));
+        put(&mut w, meta(key("p", &A, 3), 30), &[(1, 1)], None);
+        w.same(Meta { reads: &[("x", 9)], ..meta(key("q", &B, 0), 33) });
         w.finish().unwrap();
-        let delta = KeptFacts::open(&d.join("d2.blk"), 2).unwrap();
-        assert_eq!(delta.base_tag(), Some(1));
-        let v = KeptView { base: Some(&base), delta: Some(&delta) };
-        assert_eq!(v.of("p").map(|k| (k.key.part, k.digest)).collect::<Vec<_>>(), [(0, 1), (3, 30), (7, 20)]);
-        assert!(v.get(&key("q", &B, 0)).is_none(), "gone in the delta");
-        assert_eq!(rows_of(&v.get(&key("p", &A, 7)).unwrap().view()), [vec![3, 3]]);
+        let files = [KeptFacts::open(&d.join("c1.blk"), 1).unwrap(), KeptFacts::open(&d.join("c2.blk"), 2).unwrap()];
+        let v = KeptChain { files: &files };
+        assert_eq!(v.of("p").map(|k| (k.key.part, k.digest)).collect::<Vec<_>>(), [(3, 30), (7, 20)]);
+        assert!(v.get(&key("p", &A, 0)).is_none(), "gone in the later file");
+        assert_eq!(rows_of(&v.get(&key("p", &A, 7)).unwrap()), [vec![3, 3]]);
+        let q = v.get(&key("q", &B, 0)).unwrap();
+        assert_eq!((q.digest, q.reads().collect::<Vec<_>>(), rows_of(&q)), (33, vec![("x", 9)], vec![vec![3, 3], vec![4, 4]]));
+        assert!(files[0].holds(q.rows), "a reads-only entry's rows are the earlier file's");
         assert_eq!(v.all().count(), 3);
-        assert_eq!(base.all().count(), 3, "the base alone is as it was");
+        assert_eq!(KeptChain { files: &files[..1] }.all().count(), 3, "the first file alone is as it was");
+        assert!(v.superseded_bytes() > 0, "p 0 and p 7 of the first file");
+        // The roll-up: each live entry copied whole.
+        let mut w = KeptW::create(&d.join("c3.blk"), 3, 16 << 20).unwrap();
+        for k in v.all() {
+            w.copy(&k, None).unwrap();
+        }
+        w.finish().unwrap();
+        let rolled = [KeptFacts::open(&d.join("c3.blk"), 3).unwrap()];
+        let r = KeptChain { files: &rolled };
+        type Flat = Vec<(String, i64, u64, Vec<(String, u64)>, Vec<Vec<i64>>, Option<Vec<i64>>)>;
+        let flat = |c: &dyn KeptRead| -> Flat {
+            c.all()
+                .map(|k| {
+                    let reads = k.reads().map(|(a, b)| (a.to_owned(), b)).collect();
+                    let levels = k.rows.levels().map(|l| (0..l.len()).map(|i| l.get(i)).collect());
+                    (k.key.rel.to_owned(), k.key.part, k.digest, reads, rows_of(&k), levels)
+                })
+                .collect()
+        };
+        assert_eq!(flat(&r), flat(&v));
+        assert_eq!(r.superseded_bytes(), 0);
         let _ = std::fs::remove_dir_all(&d);
     }
 
-    /// A key put twice in one block is refused.
+    /// A key put twice in one file is refused.
     #[test]
     fn a_key_put_twice_is_refused() {
         let d = dir("twice");
-        let run = Block::anon(kind::FACTS, 16 << 20);
-        let r = made(&run, &[(1, 1)]);
-        let mut w = KeptW::create(&d.join("b1.blk"), 1, None, 16 << 20).unwrap();
-        w.put(meta(FactKey { rel: "p", ident: &A, part: 0 }, 1), r, None).unwrap();
-        w.put(meta(FactKey { rel: "p", ident: &A, part: 0 }, 1), r, None).unwrap();
+        let mut w = KeptW::create(&d.join("c1.blk"), 1, 16 << 20).unwrap();
+        put(&mut w, meta(FactKey { rel: "p", ident: &A, part: 0 }, 1), &[(1, 1)], None);
+        put(&mut w, meta(FactKey { rel: "p", ident: &A, part: 0 }, 1), &[(1, 1)], None);
         assert!(w.finish().is_err());
-        let _ = std::fs::remove_dir_all(&d);
-    }
-
-    /// F6: an input's granule put from flat rows; a forked process's ids mapped in the copy, the run's left as they
-    /// were; dead bits and levels kept beside; a carry with new reads keeps the rows.
-    #[test]
-    fn the_keep_puts_rows_maps_ids_and_carries() {
-        let d = dir("puts");
-        let run = Block::anon(kind::FACTS, 16 << 20);
-        let r = made(&run, &[(10, 1), (20, 2), (30, 3)]);
-        let mut w = KeptW::create(&d.join("b1.blk"), 1, None, 16 << 20).unwrap();
-        let f = |v: i64| v + 1000;
-        let dead = [0b10u64];
-        let levels = [1u32, 2, 3];
-        w.put(Meta { dead: &dead, levels: &levels, ..meta(FactKey { rel: "m", ident: &A, part: 0 }, 1) }, r, Some((&[0], &f))).unwrap();
-        w.put_rows(meta(FactKey { rel: "g", ident: &B, part: 5 }, 2), &[8, 8], &[1, 2, 3, 4, 5, 6], 3).unwrap();
-        w.finish().unwrap();
-        assert_eq!(rows_of(&View::full(r)), [vec![10, 1], vec![20, 2], vec![30, 3]], "the run's rows as they were");
-        let k = KeptFacts::open(&d.join("b1.blk"), 1).unwrap();
-        let m = k.get(&FactKey { rel: "m", ident: &A, part: 0 }).unwrap();
-        assert_eq!(rows_of(&m.view()), [vec![1010, 1], vec![1020, 2], vec![1030, 3]]);
-        assert_eq!((m.dead, m.levels), (&dead[..], &levels[..]));
-        let g = k.get(&FactKey { rel: "g", ident: &B, part: 5 }).unwrap();
-        assert_eq!((0..3).map(|i| g.view().row(i)).collect::<Vec<_>>(), [vec![1, 2], vec![3, 4], vec![5, 6]]);
-        let mut w = KeptW::create(&d.join("d2.blk"), 2, Some(1), 16 << 20).unwrap();
-        w.carry(&m, Some(&[("x", 9)])).unwrap();
-        w.finish().unwrap();
-        let k2 = KeptFacts::open(&d.join("d2.blk"), 2).unwrap();
-        let c = k2.get(&m.key).unwrap();
-        assert_eq!(c.reads().collect::<Vec<_>>(), [("x", 9)]);
-        assert_eq!((rows_of(&c.view()), c.dead, c.levels), (rows_of(&m.view()), m.dead, m.levels));
         let _ = std::fs::remove_dir_all(&d);
     }
 }

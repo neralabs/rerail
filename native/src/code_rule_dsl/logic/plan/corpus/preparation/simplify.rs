@@ -2528,8 +2528,10 @@ impl ProgramPass for DropUnread {
     }
 }
 
-/// `simplify::location_column`: whether column `c` of derived relation `rel` holds a location.
-fn location_column(v: &Version, f: &Fields<'_>, rel: &str, c: usize) -> bool {
+/// `simplify::location_column`: whether column `c` of derived relation `rel` holds a location. `rules` are `rel`'s, by
+/// its head (`ProjectAll` indexes them once: a scan of every rule for each relation and column was quadratic in the
+/// program).
+fn location_column(v: &Version, f: &Fields<'_>, rel: &str, rules: &[RuleRef<'_>], c: usize) -> bool {
     if f.column_type(rel, c) == Some("node") {
         return true;
     }
@@ -2537,7 +2539,6 @@ fn location_column(v: &Version, f: &Fields<'_>, rel: &str, c: usize) -> bool {
         let name = v.rel_name(a.rel());
         crate::code_rule_dsl::typing::file_local::document_column(name) == Some(i) || (name == "docof" && i == 1) || f.column_type(name, i) == Some("node")
     };
-    let rules: Vec<RuleRef<'_>> = v.rules().filter(|r| v.rel_name(r.head().rel()) == rel).collect();
     !rules.is_empty()
         && rules.iter().all(|r| {
             let Some(TermRef::Var(x)) = r.head().args().nth(c) else { return false };
@@ -2551,11 +2552,13 @@ fn location_column(v: &Version, f: &Fields<'_>, rel: &str, c: usize) -> bool {
 /// location is no file's, and a location kept there only multiplies its rows: `bcgp_decorated`'s zero count read
 /// `!rr_agg15($a, $b, $p, _)`, whose helper over `rr_ctx16($a, $b, $p)` (pairs of a decorator and a later def, no
 /// location) kept each line's span, a row per line between every pair (3.6-10 M rows priced for 25,425 pairs).
-fn file_local_reads(v: &Version, f: &Fields<'_>, heads: &BTreeSet<&str>, rel: &str) -> bool {
-    v.rules().filter(|r| v.rel_name(r.head().rel()) == rel).all(|r| {
+/// `rules` are the relation's, and `by_head` every derived relation's, indexed once (`ProjectAll`).
+fn file_local_reads(v: &Version, f: &Fields<'_>, by_head: &BTreeMap<&str, Vec<RuleRef<'_>>>, rules: &[RuleRef<'_>]) -> bool {
+    rules.iter().all(|r| {
+        let rel = v.rel_name(r.head().rel());
         r.body().filter_map(|l| if let Lit::Atom(a) = l.view() { Some(a) } else { None }).filter(|a| !a.neg()).all(|a| {
             let name = v.rel_name(a.rel());
-            name == rel || !heads.contains(name) || (0..a.args().count()).any(|c| location_column(v, f, name, c))
+            name == rel || by_head.get(name).is_none_or(|of| (0..a.args().count()).any(|c| location_column(v, f, name, of, c)))
         })
     })
 }
@@ -2604,18 +2607,21 @@ impl ProgramPass for ProjectAll {
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<()> {
         let (v, d) = fields(cx)?;
         let f = Fields::over(v, &d);
-        let heads: BTreeSet<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
+        let mut by_head: BTreeMap<&str, Vec<RuleRef<'_>>> = BTreeMap::new();
+        for r in v.rules() {
+            by_head.entry(v.rel_name(r.head().rel())).or_default().push(r);
+        }
         let mut keep_of: HashMap<String, Vec<usize>> = HashMap::new();
-        for &rel in &heads {
+        for (&rel, rules) in &by_head {
             if kept(&f, rel) || f.nullary(rel) || f.answer(rel) {
                 continue;
             }
             let Some(Some(cols)) = self.read.get(rel) else { continue };
             let Some(n) = f.arity(rel) else { continue };
             let mut keep: Vec<usize> = (0..n).filter(|c| cols.contains(c)).collect();
-            if !keep.iter().any(|&c| location_column(v, &f, rel, c))
-                && file_local_reads(v, &f, &heads, rel)
-                && let Some(c) = (0..n).find(|&c| location_column(v, &f, rel, c))
+            if !keep.iter().any(|&c| location_column(v, &f, rel, rules, c))
+                && file_local_reads(v, &f, &by_head, rules)
+                && let Some(c) = (0..n).find(|&c| location_column(v, &f, rel, rules, c))
             {
                 keep.push(c);
                 keep.sort_unstable();

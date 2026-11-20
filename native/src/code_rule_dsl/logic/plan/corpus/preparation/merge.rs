@@ -973,6 +973,28 @@ mod tests {
         assert_eq!(heads.iter().filter(|h| *h == "uses").count(), 1, "uses' two rules are one once their reads merge:\n{}", out.show());
     }
 
+    /// A request relation (decision 0174, `rr_node_text_req`) keeps its own: equal rules do not merge it with another
+    /// relation (`fixed`). PR #508's c80b57f39 (t47): the version's merge took it as any relation, merged 1 where the
+    /// tree's merged none, and a replay sample failed the debug check "the version's merges are the tree's". The
+    /// tree's answer, stated: nothing merged or shared, both relations keep their rules.
+    #[test]
+    fn a_request_relation_keeps_its_own_on_a_version_as_on_the_tree() {
+        let text = ".decl e(x: number, y: number)\n.input e\n\
+                    .decl rr_node_text_req(n: number)\nrr_node_text_req(n) :- e(n, _).\n\
+                    .decl other(n: number)\nother(n) :- e(n, _).\n\
+                    .decl uses(n: number)\nuses(n) :- other(n), rr_node_text_req(n).\n.output uses\n";
+        let tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+        let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+        let mut p = Pipeline::new("test", v);
+        let (mut merge, mut repeats) = (super::MergeIdentical::default(), super::DropRepeated::default());
+        p.program(&mut repeats).program(&mut merge).program(&mut repeats);
+        let (out, _) = p.finish().unwrap();
+        assert_eq!((merge.merged, merge.shared, repeats.0), (0, 0, 0), "{}", out.show());
+        for rel in ["rr_node_text_req", "other", "uses"] {
+            assert_eq!(out.rel(rel).map(|id| out.heads(id).count()), Some(1), "{rel}: {}", out.show());
+        }
+    }
+
     /// A request relation's repeated rule dropped: the rule kept serves both copies' readers, stated by rule as the
     /// tree's `drop_repeated_rules` states it (decision 0331). Left by place over the rules dropped, the merge's
     /// renamed readers after it fell on other rules (the combine's tail on corpus0 x B-now).
@@ -988,11 +1010,12 @@ mod tests {
         assert_eq!(tree.rules.len(), 3);
         tree.asked_by.insert("q".into(), ["r1", "r2", "r3"].iter().map(|r| BTreeSet::from([(*r).to_owned()])).collect());
         let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+        assert_eq!(v.rules().count(), 3, "the repeat built");
         let mut p = Pipeline::new("test", v);
         let mut repeats = super::DropRepeated::default();
         p.program(&mut repeats);
         let out = p.current().unwrap().clone();
-        assert_eq!(repeats.0, 1);
+        assert_eq!((repeats.0, out.rules().count()), (1, 2));
         crate::code_rule_dsl::logic::plan::corpus::drop_repeated_rules(&mut tree);
         let (want, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
         assert_eq!(out.asked().get("q"), Some(&vec![BTreeSet::from(["r1".to_owned(), "r3".to_owned()]), BTreeSet::from(["r2".to_owned()])]), "the step's own record, by rule");

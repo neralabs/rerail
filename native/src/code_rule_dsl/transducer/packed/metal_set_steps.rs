@@ -149,8 +149,10 @@ pub fn run(
 /// The set steps' pipelines, compiled from source once a process (`label_passes::warm` starts
 /// it on a thread when a Metal wave is made, so the wave's set program does not wait for it).
 pub(in crate::code_rule_dsl) fn pipelines() -> Result<Vec<metal::ComputePipelineState>, Error> {
-    static PIPELINES: std::sync::Mutex<Option<Vec<metal::ComputePipelineState>>> = std::sync::Mutex::new(None);
-    let mut cached = PIPELINES.lock().map_err(|_| Error::BackendFailure)?;
+    #[derive(Default)]
+    struct SetStepPipelines(std::sync::Mutex<Option<Vec<metal::ComputePipelineState>>>);
+    let held_ = crate::code_rule_dsl::logic::profile::machine::<SetStepPipelines>();
+    let mut cached = held_.0.lock().map_err(|_| Error::BackendFailure)?;
     if let Some(pipelines) = &*cached {
         return Ok(pipelines.clone());
     }

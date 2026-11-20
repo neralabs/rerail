@@ -168,7 +168,7 @@ pub fn read_all(store: Option<&ContentStore>, keys: &[HashKey]) -> Vec<Option<Fo
     let found: Vec<(usize, SourceId)> = asked.iter().zip(ids).filter_map(|(&i, id)| Some((i, id?))).collect();
     let Ok(mut bytes) = store.get_sources_bulk(&found.iter().map(|(_, id)| *id).collect::<Vec<_>>()) else { return out };
     for (i, id) in found {
-        if let Some((b, _)) = bytes.remove(&id) {
+        if let Some(b) = bytes.remove(&id) {
             out[i] = Some((Cow::Owned(b.to_vec()), Some(id)));
         }
     }

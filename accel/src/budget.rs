@@ -14,8 +14,17 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// The overall budget by default: 1 GB.
 pub const MEMORY_DEFAULT: usize = 1 << 30;
 
-static MEMORY: AtomicUsize = AtomicUsize::new(0);
-static METAL: AtomicUsize = AtomicUsize::new(0);
+/// The budgets set (`set_memory_mb`, `set_metal_mb`; 0: from the environment, or the defaults): the machine's
+/// (decision 0442), which every caller on it shares.
+#[derive(Default)]
+struct Budgets {
+    memory: AtomicUsize,
+    metal: AtomicUsize,
+}
+
+fn budgets() -> std::sync::Arc<Budgets> {
+    rerail_context::machine::<Budgets>()
+}
 
 fn env_mb(name: &str) -> Option<usize> {
     std::env::var(name).ok().and_then(|v| v.trim().parse::<usize>().ok()).filter(|&mb| mb > 0).map(|mb| mb << 20)
@@ -23,10 +32,11 @@ fn env_mb(name: &str) -> Option<usize> {
 
 /// The overall budget, in bytes.
 pub fn memory() -> usize {
-    match MEMORY.load(Ordering::Relaxed) {
+    let budgets = budgets();
+    match budgets.memory.load(Ordering::Relaxed) {
         0 => {
             let bytes = env_mb("RERAIL_MEMORY_MB").unwrap_or(MEMORY_DEFAULT);
-            MEMORY.store(bytes, Ordering::Relaxed);
+            budgets.memory.store(bytes, Ordering::Relaxed);
             bytes
         }
         bytes => bytes,
@@ -45,7 +55,7 @@ pub fn metal() -> usize {
     if let bytes @ 1.. = METAL_TEST.with(std::cell::Cell::get) {
         return bytes;
     }
-    match METAL.load(Ordering::Relaxed) {
+    match budgets().metal.load(Ordering::Relaxed) {
         0 => env_mb("RERAIL_METAL_MB").unwrap_or_else(|| memory() / 2),
         bytes => bytes,
     }
@@ -56,7 +66,7 @@ pub fn set_memory_mb(mb: usize) -> Result<(), String> {
     if mb == 0 {
         return Err("the memory budget must be at least 1 MB".into());
     }
-    MEMORY.store(mb << 20, Ordering::Relaxed);
+    budgets().memory.store(mb << 20, Ordering::Relaxed);
     Ok(())
 }
 
@@ -65,7 +75,7 @@ pub fn set_metal_mb(mb: usize) -> Result<(), String> {
     if mb == 0 {
         return Err("the Metal budget must be at least 1 MB".into());
     }
-    METAL.store(mb << 20, Ordering::Relaxed);
+    budgets().metal.store(mb << 20, Ordering::Relaxed);
     Ok(())
 }
 

@@ -114,6 +114,27 @@ pub struct JoinSpec {
     /// (`JoinRule::from`). Empty (a spec read from text): each item is its own step.
     pub from: Vec<u32>,
     pub plan_steps: u32,
+    /// The rows the planner expects after each plan step, every row walked (`StepPlan::all`, decision 0277), where it
+    /// priced the rule: what the device sizes a stage's table by before the stage has run (`Est`).
+    pub est: Est,
+}
+
+/// A spec's estimates (`JoinSpec::est`): not the rule. Every two are equal and they hash as nothing, so a spec's
+/// identity (`level::digest`), and what is kept by it (the stages' growth seen, compiled forms), stay a chunk's to the
+/// next while its estimates change.
+#[derive(Clone, Debug, Default)]
+pub struct Est(pub Vec<f64>);
+
+impl PartialEq for Est {
+    fn eq(&self, _: &Est) -> bool {
+        true
+    }
+}
+
+impl Eq for Est {}
+
+impl std::hash::Hash for Est {
+    fn hash<H: std::hash::Hasher>(&self, _: &mut H) {}
 }
 
 /// How a relation starts: its table's rows, none, a query's rows, or a kept native relation less another's
@@ -173,6 +194,9 @@ pub enum Line {
     Produced(usize),
     /// The relation's statistics are kept as its rows come (`Rel::stats`): a session keeps it for its next run.
     Stats(usize),
+    /// The relations declared sorted (`.decl … sorted`, decision 0456 K7): laid out in canonical order when done
+    /// (`sorted <rels>`).
+    Sorted(Vec<usize>),
     Seed { head: usize, join: Arc<JoinSpec> },
     Join { head: usize, delta: usize, join: Arc<JoinSpec>, whole: Option<Arc<JoinSpec>> },
     Probe { head: usize, delta: usize, sql: String },
@@ -482,6 +506,7 @@ impl std::fmt::Display for Line {
             Line::Request(r) => write!(f, "request {r}"),
             Line::Produced(r) => write!(f, "produced {r}"),
             Line::Stats(r) => write!(f, "stats {r}"),
+            Line::Sorted(rels) => write!(f, "sorted {}", comma(rels)),
             Line::Seed { head, join } => write!(f, "seed {head} {}", hex(&join.to_text())),
             Line::Remove { head, join } => write!(f, "remove {head} {}", hex(&join.to_text())),
             Line::AddChecked { head, join } => write!(f, "addchecked {head} {}", hex(&join.to_text())),
@@ -585,6 +610,7 @@ impl ComponentSpec {
                 "request" => Line::Request(num(at(1)?)?),
                 "produced" => Line::Produced(num(at(1)?)?),
                 "stats" => Line::Stats(num(at(1)?)?),
+                "sorted" => Line::Sorted(list(at(1)?)?),
                 "seed" => Line::Seed { head: num(at(1)?)?, join: join(at(2)?)? },
                 "remove" => Line::Remove { head: num(at(1)?)?, join: join(at(2)?)? },
                 "addchecked" => Line::AddChecked { head: num(at(1)?)?, join: join(at(2)?)? },

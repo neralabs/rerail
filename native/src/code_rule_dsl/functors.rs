@@ -19,8 +19,10 @@ pub(crate) fn register_functors(db: &Connection) -> rusqlite::Result<()> {
     use rusqlite::functions::FunctionFlags;
     let flags = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
     fn compiled(f: &str, re: &str) -> rusqlite::Result<regex::Regex> {
-        static REGEXES: std::sync::LazyLock<std::sync::Mutex<HashMap<String, Option<regex::Regex>>>> = std::sync::LazyLock::new(Default::default);
-        let regex = REGEXES.lock().expect("the regex cache").entry(re.to_owned()).or_insert_with(|| regex::Regex::new(re).ok()).clone();
+        #[derive(Default)]
+        struct FunctorRegexes(std::sync::Mutex<HashMap<String, Option<regex::Regex>>>);
+        let held_ = crate::code_rule_dsl::logic::profile::shared::<FunctorRegexes>();
+        let regex = held_.0.lock().expect("the regex cache").entry(re.to_owned()).or_insert_with(|| regex::Regex::new(re).ok()).clone();
         regex.ok_or_else(|| rusqlite::Error::UserFunctionError(format!("@{f}: bad regex {re:?}").into()))
     }
     let texts = |ctx: &rusqlite::functions::Context<'_>| -> rusqlite::Result<Option<[String; 3]>> {

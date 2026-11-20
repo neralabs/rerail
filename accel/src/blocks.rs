@@ -13,7 +13,9 @@
 //! both, and a policy that weighs the host's pressure reads the same ledger.
 
 use rerail_blocks::Block;
-use rerail_blocks::alloc::{Budget, Device, Need, Size};
+use rerail_blocks::alloc::{Device, Need};
+#[cfg(target_os = "macos")]
+use rerail_blocks::alloc::{Budget, Size};
 
 /// Installs this policy as the process's (`rerail_blocks::alloc::install`).
 pub fn install() {
@@ -22,6 +24,7 @@ pub fn install() {
 
 /// A block for `need` (module docs).
 pub fn policy(need: &Need) -> Result<Block, String> {
+    #[cfg(target_os = "macos")]
     let shaped = |b| rerail_blocks::alloc::shaped(b, need);
     match need.device {
         #[cfg(target_os = "macos")]
@@ -46,13 +49,16 @@ pub fn policy(need: &Need) -> Result<Block, String> {
     }
 }
 
-/// The host blocks made, while they live (their extents; a dropped block's is gone).
-static HOST: std::sync::Mutex<Vec<std::sync::Weak<rerail_blocks::block::Extent>>> = std::sync::Mutex::new(Vec::new());
+/// The host blocks made, while they live (their extents; a dropped block's is gone): the machine's memory account
+/// (decision 0442).
+#[derive(Default)]
+struct Host(std::sync::Mutex<Vec<std::sync::Weak<rerail_blocks::block::Extent>>>);
 
 /// A host block for `need`, counted.
 fn host(need: &Need) -> Block {
     let b = rerail_blocks::alloc::shaped(Block::anon(need.kind, rerail_blocks::alloc::bytes_of(need)), need);
-    let mut live = HOST.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let host = rerail_context::machine::<Host>();
+    let mut live = host.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     live.retain(|e| e.strong_count() > 0);
     live.push(b.meter());
     b
@@ -65,7 +71,8 @@ pub fn zeroed_bytes() -> u64 {
 
 /// The host blocks live now: bytes used in them, and of those the bytes their free lists hold.
 pub fn host_held() -> (usize, usize) {
-    let mut live = HOST.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let host = rerail_context::machine::<Host>();
+    let mut live = host.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     live.retain(|e| e.strong_count() > 0);
     live.iter().filter_map(std::sync::Weak::upgrade).fold((0, 0), |(u, f), e| {
         (u + e.top.load(std::sync::atomic::Ordering::Relaxed), f + e.free.load(std::sync::atomic::Ordering::Relaxed))
@@ -75,6 +82,8 @@ pub fn host_held() -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(target_os = "macos"))]
+    use rerail_blocks::alloc::{Budget, Size};
     use rerail_blocks::alloc::Writes;
     use rerail_blocks::block::kind;
 

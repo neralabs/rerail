@@ -17,17 +17,28 @@
 use rerail_accel::Executor;
 use rerail_accel::exec::{Backend, CpuBackend};
 use rerail_accel::sql::SqlBackend;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
-/// Whether each executor was made: the profile reports only those.
-static MADE: [std::sync::atomic::AtomicBool; 3] = [const { std::sync::atomic::AtomicBool::new(false) }; 3];
+/// The machine's executors, one a binding, each made the first time a run asks for it (decision 0442: the machine's
+/// lanes, shared by every run on it): the profile reports only those made.
+#[derive(Default)]
+struct Lanes {
+    cpu: std::sync::OnceLock<Arc<Executor>>,
+    all: std::sync::OnceLock<Arc<Executor>>,
+    sql: std::sync::OnceLock<Arc<Executor>>,
+}
 
-static CPU: LazyLock<Executor> = LazyLock::new(|| {
-    MADE[0].store(true, std::sync::atomic::Ordering::Relaxed);
-    // The statistics kept; their stored prices are read when the first job is priced (`costs::ready`).
-    super::costs::start();
-    Executor::with(cpu_lanes())
-});
+fn lanes() -> Arc<Lanes> {
+    super::profile::machine::<Lanes>()
+}
+
+fn cpu() -> Arc<Executor> {
+    Arc::clone(lanes().cpu.get_or_init(|| {
+        // The statistics kept; their stored prices are read when the first job is priced (`costs::ready`).
+        super::costs::start();
+        Arc::new(Executor::with(cpu_lanes()))
+    }))
+}
 
 /// The CPU binding's lanes: the cores, SQL and, where the CPU has one, its matrix unit (`sme::backend` asks the CPU
 /// itself). No device lane is asked for: asking compiles the GPU's kernels and builds the Neural Engine's lane (11 ms
@@ -39,49 +50,42 @@ fn cpu_lanes() -> Vec<Arc<dyn Backend>> {
     lanes.extend(rerail_accel::sme::backend());
     lanes
 }
-static ALL: LazyLock<Executor> = LazyLock::new(|| {
-    MADE[1].store(true, std::sync::atomic::Ordering::Relaxed);
-    // The statistics kept; their stored prices are read when the first job is priced (`costs::ready`).
-    super::costs::start();
-    // Every submission the executor makes is checked against the engine's launch budget (decision 0100 §2).
-    if let Some(dev) = crate::code_rule_dsl::logic::device::solver() {
-        dev.install_launch_guard();
-    }
-    Executor::new()
-});
 
-static SQL: LazyLock<Executor> = LazyLock::new(|| {
-    MADE[2].store(true, std::sync::atomic::Ordering::Relaxed);
-    Executor::sql_only()
-});
+fn all() -> Arc<Executor> {
+    Arc::clone(lanes().all.get_or_init(|| {
+        // The statistics kept; their stored prices are read when the first job is priced (`costs::ready`).
+        super::costs::start();
+        // Every submission the executor makes is checked against the engine's launch budget (decision 0100 §2).
+        if let Some(dev) = crate::code_rule_dsl::logic::device::solver() {
+            dev.install_launch_guard();
+        }
+        Arc::new(Executor::new())
+    }))
+}
 
 /// Every rule job submitted in SQL mode must have a SQL form.
-pub fn sql_executor() -> &'static Executor { &SQL }
+pub fn sql_executor() -> Arc<Executor> {
+    Arc::clone(lanes().sql.get_or_init(|| Arc::new(Executor::sql_only())))
+}
 
 /// The executor for this thread's run.
-pub fn executor() -> &'static Executor {
-    if super::plan::placement::device() { &ALL } else { &CPU }
+pub fn executor() -> Arc<Executor> {
+    executor_for(super::plan::placement::device())
 }
 
 /// The executor of a binding: every lane under the device binding (`device`), the cores' (and SME's) otherwise. For
 /// a job on another thread than the run's (whose binding is the run's thread's, [`executor`]).
-pub fn executor_for(device: bool) -> &'static Executor {
-    if device { &ALL } else { &CPU }
+pub fn executor_for(device: bool) -> Arc<Executor> {
+    if device { all() } else { cpu() }
 }
 
 /// Each executor made so far, by binding, and its scoreboard: for the profile.
 pub fn scores() -> Vec<(&'static str, rerail_accel::score::Score)> {
-    let mut out = Vec::new();
-    if MADE[0].load(std::sync::atomic::Ordering::Relaxed) {
-        out.push(("cpu binding", CPU.score()));
-    }
-    if MADE[1].load(std::sync::atomic::Ordering::Relaxed) {
-        out.push(("metal binding", ALL.score()));
-    }
-    if MADE[2].load(std::sync::atomic::Ordering::Relaxed) {
-        out.push(("sql binding", SQL.score()));
-    }
-    out
+    let lanes = lanes();
+    [("cpu binding", &lanes.cpu), ("metal binding", &lanes.all), ("sql binding", &lanes.sql)]
+        .into_iter()
+        .filter_map(|(name, made)| Some((name, made.get()?.score())))
+        .collect()
 }
 
 /// Device waves (decision 0095 §5, 0098 §6): the launches of strata that do not read each other, run as one batch.
@@ -546,7 +550,8 @@ pub mod prof {
         counts: Vec<(&'static str, u64)>,
     }
 
-    static FORMS: LazyLock<Mutex<BTreeMap<&'static str, Form>>> = LazyLock::new(Default::default);
+    #[derive(Default)]
+    struct RunForms(Mutex<BTreeMap<&'static str, Form>>);
 
     /// Batches and device waves, over the run: launches per batch, batches per dependency level (decision 0095 §5).
     #[derive(Default)]
@@ -566,7 +571,8 @@ pub mod prof {
         wave_strata: u64,
     }
 
-    static BATCHES: LazyLock<Mutex<Batches>> = LazyLock::new(Default::default);
+    #[derive(Default)]
+    struct RunBatches(Mutex<Batches>);
 
     thread_local! {
         /// This thread's level (a run's dependency level), and the batches run in it so far.
@@ -585,7 +591,8 @@ pub mod prof {
         }
         LEVEL.set((l, 0));
         if n > 0 && profile::on() {
-            let mut b = BATCHES.lock().unwrap();
+            let held_ = crate::code_rule_dsl::logic::profile::local::<RunBatches>();
+            let mut b = held_.0.lock().unwrap();
             b.levels += 1;
             b.per_level[bucket(n, &[1, 2, 4, 8])] += 1;
             b.max_per_level = b.max_per_level.max(n);
@@ -595,7 +602,8 @@ pub mod prof {
     /// A wave the stratum driver flushed: its launches and the strata waiting on it.
     pub fn wave(launches: usize, strata: usize) {
         if profile::on() {
-            let mut b = BATCHES.lock().unwrap();
+            let held_ = crate::code_rule_dsl::logic::profile::local::<RunBatches>();
+            let mut b = held_.0.lock().unwrap();
             b.waves += 1;
             b.wave_launches += launches as u64;
             b.wave_strata += strata as u64;
@@ -613,7 +621,8 @@ pub mod prof {
         fn drop(&mut self) {
             let Some((form, phase, t, c)) = self.0.take() else { return };
             let (wall, cpu) = (t.elapsed().as_secs_f64(), thread_cpu() - c);
-            let mut forms = FORMS.lock().unwrap();
+            let held_ = crate::code_rule_dsl::logic::profile::local::<RunForms>();
+            let mut forms = held_.0.lock().unwrap();
             let f = forms.entry(form).or_default();
             match f.host.iter_mut().find(|h| h.0 == phase) {
                 Some(h) => {
@@ -631,7 +640,8 @@ pub mod prof {
         if !profile::on() || n == 0 {
             return;
         }
-        let mut forms = FORMS.lock().unwrap();
+        let held_ = crate::code_rule_dsl::logic::profile::local::<RunForms>();
+        let mut forms = held_.0.lock().unwrap();
         let f = forms.entry(form).or_default();
         match f.counts.iter_mut().find(|c| c.0 == what) {
             Some(c) => c.1 += n,
@@ -641,7 +651,7 @@ pub mod prof {
 
     /// Runs `batch` on this thread's executor, its report added to `form`'s.
     pub fn run(form: &'static str, batch: Batch) -> Result<(Vec<Done>, Report), String> {
-        run_on(super::executor(), form, batch)
+        run_on(&super::executor(), form, batch)
     }
 
     /// [`run`] on `ex` (a job whose binding is not this thread's: [`executor_for`](super::executor_for)).
@@ -652,14 +662,16 @@ pub mod prof {
             {
                 let (l, k) = LEVEL.get();
                 LEVEL.set((l, k + 1));
-                let mut b = BATCHES.lock().unwrap();
+                let held_ = crate::code_rule_dsl::logic::profile::local::<RunBatches>();
+                let mut b = held_.0.lock().unwrap();
                 b.batches += 1;
                 b.launches += n;
                 b.by_size[bucket(n, &[1, 4, 16, 64])] += 1;
                 b.max_launches = b.max_launches.max(n);
             }
             let rep = &r.1;
-            let mut forms = FORMS.lock().unwrap();
+            let held_ = crate::code_rule_dsl::logic::profile::local::<RunForms>();
+            let mut forms = held_.0.lock().unwrap();
             let f = forms.entry(form).or_default();
             f.batches += 1;
             f.total += rep.total;
@@ -689,7 +701,8 @@ pub mod prof {
 
     /// Per form and lane with launches: (form, lane, launches, wall seconds, the lane's job CPU seconds).
     pub fn by_lane() -> Vec<(&'static str, Lane, u64, f64, f64)> {
-        let forms = FORMS.lock().unwrap();
+        let held_ = crate::code_rule_dsl::logic::profile::local::<RunForms>();
+        let forms = held_.0.lock().unwrap();
         let mut out = Vec::new();
         for (name, f) in forms.iter() {
             for l in Lane::ALL {
@@ -705,7 +718,8 @@ pub mod prof {
     /// The section: per form, the host phases, then per lane the launches and where the submission's time went, then
     /// the executor's own time.
     pub fn report() -> String {
-        let forms = FORMS.lock().unwrap();
+        let held_ = crate::code_rule_dsl::logic::profile::local::<RunForms>();
+        let forms = held_.0.lock().unwrap();
         let mut r = String::new();
         if forms.is_empty() {
             return r;
@@ -740,7 +754,8 @@ pub mod prof {
             }
         }
         {
-            let b = BATCHES.lock().unwrap();
+            let held_ = crate::code_rule_dsl::logic::profile::local::<RunBatches>();
+            let b = held_.0.lock().unwrap();
             let _ = writeln!(r, "\nBatches: {} batches of {} launches (at most {} in one); by launches: 1: {}, 2-4: {}, 5-16: {}, 17-64: {}, more: {}",
                 b.batches, b.launches, b.max_launches, b.by_size[0], b.by_size[1], b.by_size[2], b.by_size[3], b.by_size[4]);
             let _ = writeln!(r, "Per dependency level: {} levels ran a batch (at most {} in one level); by batches: 1: {}, 2: {}, 3-4: {}, 5-8: {}, more: {}",
