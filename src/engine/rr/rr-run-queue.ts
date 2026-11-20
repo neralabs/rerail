@@ -9,15 +9,15 @@
  * newer edits made stale: the run reads its owners' edits only when it starts.
  */
 import { resolve } from "node:path";
-import type { RrRun, RrRunOutcome } from "./rr-runner.js";
-import { runInTurn } from "./rr-run-slots.js";
+import type { RrRun } from "./rr-runner.js";
+import { LEFT_RUN, type RrRunEnd, runInTurn } from "./rr-run-slots.js";
 
 /** What an owner hands a run as it starts: the policies its files need, and where the run's outcome goes. */
 export interface RrClaim {
   /** The rule files to run (absolute). */
   readonly policies: readonly string[];
-  /** Called once, with the run's outcome; `killed` for `aborted` when the owner left the run before it ended. */
-  settle(outcome: RrRunOutcome): void;
+  /** Called once, with how the run ended; `left` when the owner left the run before it ended. */
+  settle(end: RrRunEnd): void;
 }
 
 /** A session's checks of the checkout, as the queue sees them. */
@@ -35,19 +35,11 @@ export interface RrRunTiming {
 
 type Running = { readonly claims: Map<RrRunOwner, RrClaim>; readonly controller: AbortController };
 
-/** What a claim its owner left settles with: the run went on without it, or was killed for it. */
-const LEFT: RrRunOutcome = { status: "killed", reason: "aborted", wallMs: 0, peakRssBytes: 0 };
-
-/** Whether `outcome` is that of a run its owner left, or that was stopped on purpose: no outcome of its rules. */
-export function leftRun(outcome: RrRunOutcome): boolean {
-  return outcome.status === "killed" && outcome.reason === "aborted";
-}
-
 /** The queue of the checkout at `root`, running each run with `run`. */
 export class RrRunQueue {
   readonly #root: string;
   readonly #timing: RrRunTiming;
-  readonly #run: (run: RrRun) => Promise<RrRunOutcome>;
+  readonly #run: (run: RrRun) => Promise<RrRunEnd>;
   readonly #waiting = new Set<RrRunOwner>();
   #running: Running | undefined;
   #timer: NodeJS.Timeout | undefined;
@@ -55,15 +47,10 @@ export class RrRunQueue {
   /** Set when the turn ended with work waiting: the next run starts without waiting for quiet. */
   #flushed = false;
 
-  constructor(root: string, timing: RrRunTiming, run: (run: RrRun) => Promise<RrRunOutcome> = runInTurn) {
+  constructor(root: string, timing: RrRunTiming, run: (run: RrRun) => Promise<RrRunEnd> = runInTurn) {
     this.#root = root;
     this.#timing = timing;
     this.#run = run;
-  }
-
-  /** The deadline each run of this queue is given. */
-  get deadlineMs(): number {
-    return this.#timing.deadlineMs;
   }
 
   /** `owner` wrote files it has gathered: it joins the next run, which starts once the checkout is quiet. */
@@ -90,7 +77,7 @@ export class RrRunQueue {
     const claim = running?.claims.get(owner);
     if (running === undefined || claim === undefined) return;
     running.claims.delete(owner);
-    claim.settle(LEFT);
+    claim.settle(LEFT_RUN);
     if (running.claims.size === 0) running.controller.abort();
   }
 
@@ -138,7 +125,7 @@ export class RrRunQueue {
   async #runOnce(running: Running): Promise<void> {
     const policies = [...new Set([...running.claims.values()].flatMap(claim => claim.policies))].sort();
     const run = { root: this.#root, policies, deadlineMs: this.#timing.deadlineMs, signal: running.controller.signal };
-    const outcome = await this.#run(run).catch((error: unknown): RrRunOutcome => ({ status: "failed", message: String(error) }));
+    const outcome = await this.#run(run).catch((error: unknown): RrRunEnd => ({ status: "failed", message: String(error) }));
     // Each claim settles on its own: one that throws leaves the others' audits to finish.
     for (const claim of running.claims.values()) {
       try {

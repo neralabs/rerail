@@ -10,8 +10,7 @@ import { folderContains } from "../catalog/repository-model.js";
 import type { CodeRuleViolation } from "../code-rule/code-rule.js";
 import type { RerailRuleEntry } from "../code-rule/code-rule-dsl-catalog.js";
 import type { RrRun, RrRunOutcome } from "./rr-runner.js";
-import { leftRun } from "./rr-run-queue.js";
-import { runInTurn } from "./rr-run-slots.js";
+import { leftRun, type RrRunEnd, runInTurn } from "./rr-run-slots.js";
 import { unchangedRules } from "./rr-rule-files.js";
 import { insideAny } from "./rr-rule-scope.js";
 import { rrRunFailures, rrStoppedFailures, rrViolations } from "./rr-violations.js";
@@ -49,11 +48,11 @@ export class RrAuditRun {
   readonly #rules: readonly RerailRuleEntry[];
   /** A failure for each rule left out because a file of it changed (`rr-rule-files.ts`). */
   readonly #changed: readonly AuditFailure[];
-  readonly #run: (run: RrRun) => Promise<RrRunOutcome>;
+  readonly #run: (run: RrRun) => Promise<RrRunEnd>;
   readonly #controller = new AbortController();
-  #outcome: Promise<RrRunOutcome> | undefined;
+  #outcome: Promise<RrRunEnd> | undefined;
 
-  constructor(request: RrAuditRequest, run: (run: RrRun) => Promise<RrRunOutcome> = runInTurn) {
+  constructor(request: RrAuditRequest, run: (run: RrRun) => Promise<RrRunEnd> = runInTurn) {
     this.#request = request;
     this.#placed = request.rules.filter(isOn);
     const unchanged = unchangedRules(this.#placed);
@@ -76,7 +75,7 @@ export class RrAuditRun {
   start(): void {
     if (this.#rules.length === 0) this.#outcome ??= Promise.resolve(NOTHING_RUN);
     this.#outcome ??= this.#run({ root: this.#request.root, policies: this.#rules.map(rule => rule.path), signal: this.#controller.signal })
-      .catch((error: unknown): RrRunOutcome => ({ status: "failed", message: String(error) }));
+      .catch((error: unknown): RrRunEnd => ({ status: "failed", message: String(error) }));
   }
 
   /** Kills the run: the audit it belongs to ended without it. */
@@ -93,7 +92,7 @@ export class RrAuditRun {
     this.start();
     const outcome = await this.#outcome!;
     if (leftRun(outcome)) throw new Error("The .rerail run was stopped: its session closed");
-    if (outcome.status !== "completed") return { violations: [], failures: [...this.#changed, ...rrStoppedFailures(outcome, this.#rules, undefined)] };
+    if (outcome.status !== "completed") return { violations: [], failures: [...this.#changed, ...rrStoppedFailures(outcome, this.#rules)] };
     const violations = rrViolations(outcome.findings, this.#rules, path => this.#audits(path));
     return { violations, failures: [...this.#changed, ...rrRunFailures(outcome.failures, this.#rules)] };
   }

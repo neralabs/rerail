@@ -7,8 +7,16 @@
  */
 import { type RrRun, type RrRunOutcome, runRerailPolicies } from "./rr-runner.js";
 
-/** What a run aborted before its turn came gives: no child ran. */
-const ABORTED_WAITING: RrRunOutcome = { status: "killed", reason: "aborted", wallMs: 0, peakRssBytes: 0 };
+/** How a run ended for its owner: the runner's outcome, or `left` when the owner left it before it ended or began. */
+export type RrRunEnd = RrRunOutcome | { status: "left" };
+
+/** A run its owner left: no child ran for it, or the one that did gave it nothing. */
+export const LEFT_RUN: RrRunEnd = { status: "left" };
+
+/** Whether `end` is that of a run its owner left, or whose child was stopped on purpose: no outcome of its rules. */
+export function leftRun(end: RrRunEnd): end is { status: "left" } | Extract<RrRunOutcome, { status: "killed" }> & { reason: "aborted" } {
+  return end.status === "left" || (end.status === "killed" && end.reason === "aborted");
+}
 
 /** Runs one run at a time with `run`, in the order they are asked for. */
 export class RrRunSlots {
@@ -21,13 +29,13 @@ export class RrRunSlots {
   }
 
   /**
-   * `run`, once every run asked for before it has ended. A run aborted while it waits settles at once and starts no
-   * child; the runs behind it still wait for the run ahead of it.
+   * `run`, once every run asked for before it has ended. A run aborted while it waits settles at once as `left` and
+   * starts no child; the runs behind it still wait for the run ahead of it.
    */
-  async run(run: RrRun): Promise<RrRunOutcome> {
-    const { promise: aborted, resolve: abort } = Promise.withResolvers<RrRunOutcome>();
-    run.signal?.addEventListener("abort", () => abort(ABORTED_WAITING), { once: true });
-    const turn = this.#tail.then(() => (run.signal?.aborted === true ? ABORTED_WAITING : this.#run(run)));
+  async run(run: RrRun): Promise<RrRunEnd> {
+    const { promise: aborted, resolve: abort } = Promise.withResolvers<RrRunEnd>();
+    run.signal?.addEventListener("abort", () => abort(LEFT_RUN), { once: true });
+    const turn = this.#tail.then(() => (run.signal?.aborted === true ? LEFT_RUN : this.#run(run)));
     this.#tail = turn.catch(() => undefined);
     return await Promise.race([turn, aborted]);
   }
@@ -36,6 +44,6 @@ export class RrRunSlots {
 const slots = new RrRunSlots();
 
 /** `runRerailPolicies`, one child at a time in this process. */
-export function runInTurn(run: RrRun): Promise<RrRunOutcome> {
+export function runInTurn(run: RrRun): Promise<RrRunEnd> {
   return slots.run(run);
 }

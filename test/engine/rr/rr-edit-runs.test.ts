@@ -10,7 +10,7 @@ import type { RerailRuleEntry } from "../../../src/engine/code-rule/code-rule-ds
 import { RrAuditRun } from "../../../src/engine/rr/rr-audit-run.js";
 import { RerailEditRuns } from "../../../src/engine/rr/rr-edit-runs.js";
 import { RrRunQueue } from "../../../src/engine/rr/rr-run-queue.js";
-import type { RrFinding, RrRun, RrRunOutcome } from "../../../src/engine/rr/rr-runner.js";
+import type { RrBudgets, RrFinding, RrRun, RrRunOutcome } from "../../../src/engine/rr/rr-runner.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const root = realpathSync(mkdtempSync(join(tmpdir(), "rr-edit-runs-")));
@@ -43,6 +43,7 @@ function finding(policy: string, path: string, line: number, startByte: number, 
 }
 
 const completed = (findings: RrFinding[]): RrRunOutcome => ({ status: "completed", findings, failures: [], files: 2, wallMs: 1, peakRssBytes: 1 });
+const BUDGETS: RrBudgets = { deadlineMs: 30_000, threads: 2, memoryBytes: 1024 ** 3, store: false };
 
 /** A session's `.rerail` runs over fakes: a runner whose runs end when the test says, the audits and steers it records. */
 function session(rules: RerailRuleEntry[], scope: AuditScope = "touched-files") {
@@ -50,7 +51,7 @@ function session(rules: RerailRuleEntry[], scope: AuditScope = "touched-files") 
   const runner = (run: RrRun): Promise<RrRunOutcome> => {
     const { promise, resolve } = Promise.withResolvers<RrRunOutcome>();
     runs.push({ run, end: resolve });
-    run.signal?.addEventListener("abort", () => resolve({ status: "killed", reason: "aborted", wallMs: 1, peakRssBytes: 1 }));
+    run.signal?.addEventListener("abort", () => resolve({ status: "killed", reason: "aborted", wallMs: 1, peakRssBytes: 1, budgets: BUDGETS }));
     return promise;
   };
   const started: AuditInput[] = [];
@@ -128,7 +129,7 @@ describe("a session's .rerail runs after its edits", () => {
     const { runs, finished, steers, write } = session([assert]);
     write(1, written("a.py"));
     await vi.waitFor(() => expect(runs).toHaveLength(1));
-    runs[0]!.end({ status: "killed", reason: "deadline", wallMs: 30_000, peakRssBytes: 1 });
+    runs[0]!.end({ status: "killed", reason: "deadline", wallMs: 30_000, peakRssBytes: 1, budgets: BUDGETS });
     await vi.waitFor(() => expect(finished).toHaveLength(1));
     expect(finished[0]).toMatchObject({ status: "failed", violations: [], failures: [{ ruleId: "rr-sample-assert", code: "budget-exceeded" }] });
     expect(finished[0]!.failures?.[0]?.message).toContain("RERAIL_RR_DEADLINE_MS");
@@ -218,7 +219,7 @@ describe("an audit's .rerail run", () => {
     const run = new RrAuditRun({ root, rules: [assert], paths: undefined, nestedCheckouts: [] }, request => {
       signal = request.signal;
       const { promise, resolve } = Promise.withResolvers<RrRunOutcome>();
-      request.signal?.addEventListener("abort", () => resolve({ status: "killed", reason: "aborted", wallMs: 1, peakRssBytes: 1 }));
+      request.signal?.addEventListener("abort", () => resolve({ status: "killed", reason: "aborted", wallMs: 1, peakRssBytes: 1, budgets: BUDGETS }));
       return promise;
     });
     run.start();

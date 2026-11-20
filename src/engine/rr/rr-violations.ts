@@ -7,8 +7,7 @@ import { createHash } from "node:crypto";
 import type { AuditFailure } from "../audit/audit.js";
 import type { CodeRuleViolation } from "../code-rule/code-rule.js";
 import type { RerailRuleEntry } from "../code-rule/code-rule-dsl-catalog.js";
-import { rrBudgets } from "./rr-budgets.js";
-import type { RrFinding, RrRunOutcome } from "./rr-runner.js";
+import type { RrBudgets, RrFinding, RrRunOutcome } from "./rr-runner.js";
 import { modeAt } from "./rr-rule-scope.js";
 
 /** The clause a failure of a whole `.rerail` rule names: the rule did not run, so no clause of it did. */
@@ -71,28 +70,22 @@ export function rrRunFailures(failures: readonly { policy: string | null; messag
     ruleFailure(failure.policy === null ? undefined : byPath.get(failure.policy), "adapter-error", `The .rerail engine could not run this rule: ${failure.message}`, "evaluate"));
 }
 
-/** Why a run that was killed past a budget gave no findings, and how to raise that budget. */
-function killedMessage(reason: "deadline" | "memory", deadlineMs: number | undefined): string {
-  const budgets = rrBudgets(deadlineMs);
+/** Why a run that was killed past a budget (`budgets`, those it was given) gave no findings, and how to raise it. */
+function killedMessage(reason: "deadline" | "memory", budgets: RrBudgets): string {
   if (reason === "deadline")
     return `The .rerail run was stopped: it ran past its deadline of ${budgets.deadlineMs} ms. Set RERAIL_RR_DEADLINE_MS (milliseconds) in the daemon's environment to raise it.`;
   return `The .rerail run was stopped: its memory passed ${Math.round(budgets.memoryBytes / 1024 ** 2)} MiB. Set RERAIL_RR_MEMORY_MB in the daemon's environment to raise it.`;
 }
 
 /**
- * A failure of each rule of `rules` for a run that gave no findings. A run killed past its deadline (`deadlineMs`, the
- * one it was given; undefined for the runner's default) or its memory leaves its rules out of work: a coverage gap of
- * each, which fails no audit by itself, as a native rule out of its own work is. A run that failed fails them. A run
- * stopped on purpose (`aborted`) is no failure of its rules: none.
+ * A failure of each rule of `rules` for a run that gave no findings. A run killed past its deadline or its memory
+ * leaves its rules out of work: a coverage gap of each, which fails no audit by itself, as a native rule out of its
+ * own work is. A run that failed fails them. A run stopped on purpose (`aborted`) is no failure of its rules: none.
  */
-export function rrStoppedFailures(
-  outcome: Exclude<RrRunOutcome, { status: "completed" }>,
-  rules: readonly RerailRuleEntry[],
-  deadlineMs: number | undefined,
-): AuditFailure[] {
+export function rrStoppedFailures(outcome: Exclude<RrRunOutcome, { status: "completed" }>, rules: readonly RerailRuleEntry[]): AuditFailure[] {
   if (outcome.status === "failed")
     return rules.map(rule => ruleFailure(rule, "adapter-error", `The .rerail run failed: ${outcome.message}`, "scan"));
   if (outcome.reason === "aborted") return [];
-  const message = killedMessage(outcome.reason, deadlineMs);
+  const message = killedMessage(outcome.reason, outcome.budgets);
   return rules.map(rule => ruleFailure(rule, "budget-exceeded", message, "evaluate"));
 }

@@ -9,8 +9,9 @@ import type { CodeRuleEdit, CodeRuleViolation } from "../code-rule/code-rule.js"
 import type { RerailRuleEntry } from "../code-rule/code-rule-dsl-catalog.js";
 import { editViolations, type ReportBase } from "../code-rule/edit-findings/generated-lines.js";
 import { deliverSteer, steerSourceOf, type SteerTarget } from "../code-rule/edit-findings/steer-publication.js";
-import { leftRun, type RrClaim, type RrRunOwner, type RrRunQueue, type RrRunTiming } from "./rr-run-queue.js";
+import type { RrClaim, RrRunOwner, RrRunQueue, RrRunTiming } from "./rr-run-queue.js";
 import type { RrRunOutcome } from "./rr-runner.js";
+import { leftRun, type RrRunEnd } from "./rr-run-slots.js";
 import { insideAny, takes } from "./rr-rule-scope.js";
 import { unchangedRules } from "./rr-rule-files.js";
 import { rrRunFailures, rrStoppedFailures, rrViolations } from "./rr-violations.js";
@@ -177,7 +178,7 @@ export class RerailEditRuns implements RrRunOwner {
     this.#gathered.set(file.edit.path, newer === undefined ? file : { ...newer, base: file.base });
   }
 
-  #settle(flight: Flight, outcome: RrRunOutcome): void {
+  #settle(flight: Flight, outcome: RrRunEnd): void {
     if (this.#flight === flight) this.#flight = undefined;
     if (leftRun(outcome)) {
       this.#finish(flight, { status: flight.requeued ? "superseded" : "interrupted" });
@@ -194,7 +195,7 @@ export class RerailEditRuns implements RrRunOwner {
    */
   #results(flight: Flight, outcome: RrRunOutcome): AuditResult & Pick<Required<AuditResult>, "violations" | "failures"> {
     if (outcome.status !== "completed")
-      return { status: "failed", violations: [], failures: [...flight.changed, ...rrStoppedFailures(outcome, flight.rules, this.#host.queue.deadlineMs)] };
+      return { status: "failed", violations: [], failures: [...flight.changed, ...rrStoppedFailures(outcome, flight.rules)] };
     const nested = this.#host.nestedCheckouts();
     const found = rrViolations(outcome.findings, flight.rules, path => !insideAny(nested, path));
     const violations = flight.files.flatMap(file =>

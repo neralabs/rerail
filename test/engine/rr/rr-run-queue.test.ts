@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { editRunTiming } from "../../../src/engine/rr/rr-edit-runs.js";
 import { type RrClaim, type RrRunOwner, RrRunQueue } from "../../../src/engine/rr/rr-run-queue.js";
-import { RrRunSlots } from "../../../src/engine/rr/rr-run-slots.js";
-import type { RrRun, RrRunOutcome } from "../../../src/engine/rr/rr-runner.js";
+import { type RrRunEnd, RrRunSlots } from "../../../src/engine/rr/rr-run-slots.js";
+import type { RrBudgets, RrRun, RrRunOutcome } from "../../../src/engine/rr/rr-runner.js";
 
 const QUIET_MS = 10_000;
 const COMPLETED: RrRunOutcome = { status: "completed", findings: [], failures: [], files: 0, wallMs: 1, peakRssBytes: 1 };
+const BUDGETS: RrBudgets = { deadlineMs: 60_000, threads: 2, memoryBytes: 1024 ** 3, store: false };
 
 /** A runner whose runs end when the test says: each run started, and how to end it. */
 function heldRunner() {
@@ -13,7 +14,7 @@ function heldRunner() {
   const run = (request: RrRun): Promise<RrRunOutcome> => {
     const { promise, resolve } = Promise.withResolvers<RrRunOutcome>();
     runs.push({ run: request, end: resolve });
-    request.signal?.addEventListener("abort", () => resolve({ status: "killed", reason: "aborted", wallMs: 1, peakRssBytes: 1 }));
+    request.signal?.addEventListener("abort", () => resolve({ status: "killed", reason: "aborted", wallMs: 1, peakRssBytes: 1, budgets: BUDGETS }));
     return promise;
   };
   return { runs, run };
@@ -24,7 +25,7 @@ class Owner implements RrRunOwner {
   readonly #policy: string;
   #written: string[] = [];
   readonly claimed: string[][] = [];
-  readonly outcomes: RrRunOutcome[] = [];
+  readonly outcomes: RrRunEnd[] = [];
 
   constructor(policy: string) {
     this.#policy = policy;
@@ -126,7 +127,7 @@ describe("a checkout's queue of .rerail runs after edits", () => {
     await vi.advanceTimersByTimeAsync(0);
     const signal = runner.runs[0]!.run.signal!;
     queue.leave(first);
-    expect(first.outcomes).toEqual([{ status: "killed", reason: "aborted", wallMs: 0, peakRssBytes: 0 }]);
+    expect(first.outcomes).toEqual([{ status: "left" }]);
     expect(signal.aborted).toBe(false);
     queue.leave(second);
     expect(signal.aborted).toBe(true);
@@ -173,7 +174,7 @@ describe("the .rerail runs of one process", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(runner.runs.map(({ run }) => run.root)).toEqual(["/a"]);
     waiting.abort();
-    expect(await dropped).toEqual({ status: "killed", reason: "aborted", wallMs: 0, peakRssBytes: 0 });
+    expect(await dropped).toEqual({ status: "left" });
     runner.runs[0]!.end(COMPLETED);
     expect(await first).toEqual(COMPLETED);
     await vi.advanceTimersByTimeAsync(0);
