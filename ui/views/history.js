@@ -1,8 +1,10 @@
 /**
  * History by rule (`#history`; `#activity` before v8): the rules with violations in the range, most first, and the
  * chosen rule's violations, newest first by day, a page at a time. `?rule=<id>` (a rule's "See all", a steer link)
- * chooses the rule; without one the top rule shows. The All · Steered · Logged chips (`?outcome=`, the Violations
- * steered tile opens Steered) narrow the list to the violations recorded on Steer or Block, or on Log.
+ * chooses the rule; without one the top rule shows. Every violation is logged, and each counts in one outcome: Log only
+ * (recorded on Log, the coding agent not told), Steered (sent to the agent), or Declined (a steer the agent declined with
+ * `rerail feedback`). The All · Log only · Steered · Declined chips (`?outcome=`, the Violations steered tile opens
+ * Steered) rank the list by one outcome's count; each row shows its outcome, and a declined one the agent's reasons.
  */
 import { h, setAttr, setText, setContent, syncChildren, icon } from "../dom.js";
 import { fmt, plural, dayLabel, daysAgo, shortSessionId, whenLabel } from "../format.js";
@@ -11,7 +13,7 @@ import { MODE_LABEL, ruleMode, messageText } from "../derive.js";
 import { loadMoreFindings, refreshNow } from "../poll.js";
 import { invalidate, loadMore } from "../shell.js";
 import { rangeControl, syncRange } from "../render/range.js";
-import { OUTCOME_CHIPS, inRange, rankedRules, filterRanked, historyRuleId, historyTitle, historyOrigin, historyEmpty } from "../history-model.js";
+import { OUTCOME_CHIPS, outcomesOf, rankedRules, filterRanked, historyRuleId, historyTitle, historyOrigin, historyEmpty } from "../history-model.js";
 
 export const needs = ["rules", "packs", "activity", "findings"];
 
@@ -61,9 +63,9 @@ function build() {
     OUTCOME_CHIPS.map(([v, label]) => h("button.chip", { "data-act": "houtcome", "data-i": v, "aria-pressed": "false" }, label)));
   // A chip that leaves the list empty: what the section says instead of a rule.
   const unmatched = h("div.empty", { hidden: true }, h("h3"), h("p"));
-  const detail = h("div.hdetail", null, h("div.l1", null, title, pickWrap), meta, kvs);
+  const open = h("span.acts", null, h("button.btn.sm", { "data-act": "detail" }, "Open rule"));
+  const detail = h("div.hdetail", null, h("div.l1", null, title, pickWrap, open), meta, kvs);
   const scroll = h("div.hscroll", null, nothing, violations, more);
-  const ltrow = h("div.hltrow", null, toggle);
   const aside = h("aside", null,
     h("div.hsearch", null, glyph(SEARCH_PATH, 13), search),
     chips,
@@ -71,13 +73,13 @@ function build() {
   const body = h("div.hist", null, aside,
     h("section", null, h("div.list", null, unmatched, detail, summaryLine, scroll)));
   pane = h("section.group.history", null,
-    h("div.ghead.hh", null, h("h2", null, "History by rule"), lead, h("div.act", null, range)),
-    empty, ltrow, body);
-  pane._a = { lead, range, toggle, search, chips, rows, noMatch, unmatched, detail, scroll, title, pick, pickLabel, pickWrap, meta, kvs, summaryLine, violations, more, nothing, empty, ltrow, body };
+    h("div.ghead.hh", null, h("h2", null, "History by rule"), lead, h("div.act", null, toggle, range)),
+    empty, body);
+  pane._a = { lead, range, toggle, search, chips, rows, noMatch, unmatched, detail, scroll, title, pick, pickLabel, pickWrap, open, meta, kvs, summaryLine, violations, more, nothing, empty, body };
 }
 
 const createListRow = () => h("button.hrow", { "data-act": "hsel" },
-  h("span.l", null, h("span.t"), h("span.m")), h("span.c.num", null, h("b")));
+  h("span.l", null, h("span.t"), h("span.m", null, h("span.o"), h("span.dc"))), h("span.c.num", null, h("b")));
 
 function updateListRow(node, rule, selected) {
   setAttr(node, "data-i", rule.id);
@@ -85,7 +87,8 @@ function updateListRow(node, rule, selected) {
   const t = node.querySelector(".t");
   setText(t, rule.title);
   setAttr(t, "title", rule.title);
-  setText(node.querySelector(".m"), rule.origin);
+  setText(node.querySelector(".m .o"), rule.origin);
+  setText(node.querySelector(".m .dc"), rule.declined === 0 ? "" : `${fmt(rule.declined)} declined`);
   setText(node.querySelector(".c b"), fmt(rule.count));
 }
 
@@ -119,15 +122,16 @@ function toldOf(id) {
   return newest ?? (stored ? messageText(stored) : "");
 }
 
-/** The line under the title (where from · id · On or Off · Open rule), then the mode and what the agent is told. */
+/** Open rule beside the title, the line under it (where from · id · On or Off), then the mode and what the agent is told. */
 function renderMeta(a, id, told) {
   const stored = data.rules.get(id);
   const origin = historyOrigin(id);
   const mode = stored ? ruleMode(stored) : null;
+  setAttr(a.open, "hidden", !stored);
+  setAttr(a.open.firstChild, "data-i", id);
   setContent(a.meta, JSON.stringify([id, stored?.enabled, origin]), () => [
     h("span", null, origin), h("span.mono", null, id),
     stored ? h("span", null, stored.enabled ? "On" : "Off") : h("span", null, "Deleted rule"),
-    stored ? h("span.acts", null, h("button.btn.sm", { "data-act": "detail", "data-i": id }, "Open rule")) : null,
   ]);
   setAttr(a.kvs, "hidden", mode === null && told === "");
   setContent(a.kvs, JSON.stringify([mode, told]), () => [
@@ -143,8 +147,31 @@ function createViolation(item) {
   if (item.day !== undefined) return h("div.day", null, item.day);
   return h("div.ev.hr", null,
     h("span.when.num"),
-    h("div.what", null, h("span.loc.mono"), h("small.diff", { hidden: true })),
+    h("div.what", null, h("div.wl", null, h("span.loc.mono"), h("span.hoc")), h("small.diff", { hidden: true }),
+      h("div.hsaid", { hidden: true }, h("span.k", null, "Agent said"), h("span.v"))),
     h("button.open", { "data-act": "session", title: "Open this session" }));
+}
+
+/** A violation's outcome badge: its text, and what it means on hover. */
+const ROW_OUTCOME = {
+  logged: ["Log only", "Logged. Its rule was on Log, so the coding agent wasn’t told."],
+  steered: ["Steered", "Logged and sent to the coding agent."],
+  declined: ["Declined", "Sent to the coding agent, which didn’t follow it and recorded why with rerail feedback."],
+};
+
+/** Log only, Declined (a note answered its steer), else Steered. */
+const rowOutcome = x => (x.logged ? "logged" : (x.declinedReasons?.length ?? 0) > 0 ? "declined" : "steered");
+
+/** The row's outcome (its dot and label, and a declined row's tint), and under a declined one the agent's reasons. */
+function updateOutcome(node, x) {
+  const outcome = rowOutcome(x), [label, tip] = ROW_OUTCOME[outcome];
+  node.dataset.outcome = outcome;
+  const mark = node.querySelector(".hoc");
+  setText(mark, label);
+  setAttr(mark, "title", tip);
+  const said = node.querySelector(".hsaid");
+  setAttr(said, "hidden", outcome !== "declined");
+  setText(said.lastChild, outcome === "declined" ? x.declinedReasons.join("\n") : "");
 }
 
 /** One violation: when (24-hour), where, its session; its message only where it differs from what the header says. */
@@ -152,6 +179,7 @@ function updateViolation(node, item, told) {
   if (item.day !== undefined) return;
   const x = item.x;
   setText(node.querySelector(".when"), CLOCK.format(x.at));
+  updateOutcome(node, x);
   const loc = node.querySelector(".loc");
   const where = locationOf(x);
   setText(loc, where || "No path recorded");
@@ -188,23 +216,35 @@ function renderNothing(nothing, id) {
   if (earlier > 0) setText(body, `${fmt(earlier)} ${plural(earlier, "violation")} before that, last logged ${whenLabel(activityAllOf(id).lastSeenAt)}.`);
 }
 
-function renderViolations(a, id, count, told) {
-  const slot = data.findings, loaded = slot.owner === id && slot.pages > 0, label = rangeLabel();
-  const total = loaded ? slot.total : count;
+/** "12 violations this week · 3 log only · 7 steered · 2 declined · 4 sessions": each violation in one outcome, zeros left out. */
+function renderSummary(line, id) {
+  const label = rangeLabel(), counts = outcomesOf(id);
   const activity = data.activity[id];
   const sessions = activity === undefined || activity.measured === false ? 0 : activity.sessions;
-  setContent(a.summaryLine.firstChild, JSON.stringify([total, label, sessions]), () => [
-    h("b", null, fmt(total)), ` ${plural(total, "violation")} logged ${label}`,
-    sessions > 0 ? ` · ${fmt(sessions)} ${plural(sessions, "session")}` : null,
+  const part = (n, text, cls = "span") => (n > 0 ? h(cls, null, `${fmt(n)} ${text}`) : null);
+  setContent(line, JSON.stringify([counts, label, sessions]), () => [
+    h("span", null, h("b", null, fmt(counts.all)), ` ${plural(counts.all, "violation")} ${label}`),
+    part(counts.logged, "log only"), part(counts.steered, "steered"), part(counts.declined, "declined", "span.dc"),
+    part(sessions, plural(sessions, "session")),
   ]);
+}
+
+function renderViolations(a, id, told) {
+  const slot = data.findings, loaded = slot.owner === id && slot.pages > 0;
+  renderSummary(a.summaryLine.firstChild, id);
   const none = loaded && slot.rows.length === 0;
   setAttr(a.nothing, "hidden", !none);
   setAttr(a.summaryLine.firstChild, "hidden", none);
   if (none) renderNothing(a.nothing, id);
   syncChildren(a.violations, violationItems(id), i => i.key, createViolation, (node, item) => updateViolation(node, item, told));
-  const left = loaded && slot.next !== null ? slot.total - slot.rows.length : 0;
-  setAttr(a.more, "hidden", left <= 0);
-  if (left > 0) setText(a.more.firstChild, `Load more · ${fmt(left)} left`);
+  renderMore(a.more, loaded ? slot : null);
+}
+
+/** "Load more · N left" while the loaded violations (`slot`, null before its first page) have a page after them. */
+function renderMore(more, slot) {
+  const left = slot === null || slot.next === null ? 0 : slot.total - slot.rows.length;
+  setAttr(more, "hidden", left <= 0);
+  if (left > 0) setText(more.firstChild, `Load more · ${fmt(left)} left`);
 }
 
 const EMPTY_TEXT = {
@@ -214,12 +254,21 @@ const EMPTY_TEXT = {
   nothingInRange: ["Nothing in this range.", () => (ui.range === ALL_TIME ? "" : "Widen the range.")],
 };
 
-/** The line under the title: how many rules the list holds, and under a chip how many violations they count. */
+/** Each chip's outcome as the lead names its violations, and what its empty list says (title, then why). */
+const OUTCOME_TEXT = {
+  logged: ["log-only", label => [`Nothing log only ${label}.`, `Every violation ${label} was sent to the coding agent.`]],
+  steered: ["steered", label => [`Nothing steered ${label}.`,
+    `Every violation ${label} was log only, or a steer the coding agent declined.`]],
+  declined: ["declined", label => [`Nothing declined ${label}.`,
+    `The coding agent recorded no declined steer with rerail feedback ${label}. It can decline one without recording why.`]],
+};
+
+/** The line under the title: how many rules the list holds, and under a chip how many of its violations they count. */
 function leadText(ranked) {
   const label = rangeLabel(), n = ranked.length, rules = `${fmt(n)} ${plural(n, "rule")}`;
   if (ui.histOutcome === "all") return `${rules} with violations ${label}, most first.`;
-  const total = ranked.reduce((sum, r) => sum + r.count, 0), violations = `${fmt(total)} ${plural(total, "violation")}`;
-  return ui.histOutcome === "steered" ? `${rules} · ${violations} steered ${label}, most first.` : `${rules} · ${violations} logged on Log ${label}, most first.`;
+  const total = ranked.reduce((sum, r) => sum + r.count, 0);
+  return `${rules} · ${fmt(total)} ${OUTCOME_TEXT[ui.histOutcome][0]} ${plural(total, "violation")} ${label}, most first.`;
 }
 
 /** A chip whose list is empty, while other violations are in range: what the section says in place of a rule. */
@@ -227,11 +276,9 @@ function renderUnmatched(a, show) {
   setAttr(a.unmatched, "hidden", !show);
   for (const part of [a.detail, a.summaryLine, a.scroll]) setAttr(part, "hidden", show);
   if (!show) return;
-  const steered = ui.histOutcome === "steered";
-  setText(a.unmatched.querySelector("h3"), steered ? `Nothing steered ${rangeLabel()}.` : `Nothing logged on Log ${rangeLabel()}.`);
-  setText(a.unmatched.querySelector("p"), steered
-    ? `Every violation ${rangeLabel()} was logged by a rule on Log, which records without telling the coding agent.`
-    : `Every violation ${rangeLabel()} was steered.`);
+  const [title, why] = OUTCOME_TEXT[ui.histOutcome][1](rangeLabel());
+  setText(a.unmatched.querySelector("h3"), title);
+  setText(a.unmatched.querySelector("p"), why);
 }
 
 /** Until the activity answers are in (the range's, and since install's for the empty states), nothing is known to be empty. */
@@ -260,7 +307,7 @@ function renderHistoryBody(a, ranked, id) {
   renderHeading(a, ranked, id);
   const told = toldOf(id);
   renderMeta(a, id, told);
-  renderViolations(a, id, inRange(id), told);
+  renderViolations(a, id, told);
 }
 
 function renderLeadAndRange(a, ranked, empty, showBody) {
@@ -283,7 +330,7 @@ export function render(root) {
   const showBody = bodyShown(empty, id);
   renderLeadAndRange(a, ranked, empty, showBody);
   renderEmptyState(a, empty, showBody);
-  setAttr(a.ltrow, "hidden", !showBody);
+  setAttr(a.toggle, "hidden", !showBody);
   setAttr(a.body, "hidden", !showBody);
   if (showBody) renderHistoryBody(a, ranked, id);
 }
