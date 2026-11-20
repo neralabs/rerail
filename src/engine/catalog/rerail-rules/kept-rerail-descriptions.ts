@@ -29,7 +29,7 @@ export const keptDescriptionSchema = z.object({
 }) satisfies z.ZodType<RerailDescription>;
 
 /** The SHA-256 of the file at `path` in hex, or undefined when it cannot be read. */
-function sha256Of(path: string): string | undefined {
+export function sha256Of(path: string): string | undefined {
   try {
     return createHash("sha256").update(readFileSync(path)).digest("hex");
   } catch {

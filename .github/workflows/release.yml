@@ -441,8 +441,10 @@ jobs:
         run: node scripts/release/github-release.mjs
 
   # After a promotion or a put-back, the version's GitHub Release, which exists already, is rewritten as the
-  # repository's latest release, with its notes from the checkout's CHANGELOG.md: the tag's on a release run, main's
-  # on a run by hand, which keeps every released version's section.
+  # repository's latest release, with its notes from main's CHANGELOG.md, not the tag's: main keeps every released
+  # version's section, and a note or lead corrected there while the release was tested on `next` is what stable users
+  # read. Promoted over a release candidate that never reached `latest`, its notes run from the last version on
+  # `latest` (previousStable in scripts/release/github-release.mjs).
   promoted-release:
     name: Promoted GitHub Release
     needs: [metadata, promote]
@@ -455,6 +457,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: main
           fetch-depth: 1
           persist-credentials: false
 

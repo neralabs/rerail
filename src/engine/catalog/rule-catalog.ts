@@ -12,6 +12,7 @@ import semver from "semver";
 import { CodeRuleCompileError, EngineUnavailableError, readsLeftOutToken, relationalRulesOff, storableCodeRule } from "../code-rule/code-rule-compile.js";
 import type { CodeRule } from "../code-rule/code-rule-schema.js";
 import { describeRerailRules } from "./rerail-rules/rerail-rule.js";
+import { sha256Of } from "./rerail-rules/kept-rerail-descriptions.js";
 import { PACKAGE_ROOT, RERAIL_PACKAGE_NAME } from "../package-root.js";
 import { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "../stable-json.js";
 import { CURRENT_LINK, defaultRerailHome } from "../storage/rerail-home.js";
@@ -457,6 +458,22 @@ function rerailFilesStamp(catalog: RuleCatalog): string {
   return [...paths].map(path => `${path}\0${fileStamp(path)}`).join("\0");
 }
 
+/** Whether every `.rerail` rule file of `catalog`, and every file it includes, still has the bytes the engine read. */
+function rerailFilesAsRead(catalog: RuleCatalog): boolean {
+  return [...catalog.documents.values()].every(document => document.kind !== "rerail"
+    || [{ path: document.rule.path, sha256: document.rule.sha256 }, ...document.rule.includes].every(file => sha256Of(file.path) === file.sha256));
+}
+
+/**
+ * The `.rerail` files' stamp for a catalog just read: taken first, then the files checked against the bytes the engine
+ * read. A file edited between the engine's read and the stamp would otherwise pin the older reading under the newer
+ * stamp; then no stamp is kept (empty), and the next load reads the packs again.
+ */
+function readRerailFilesStamp(catalog: RuleCatalog): string {
+  const stamp = rerailFilesStamp(catalog);
+  return rerailFilesAsRead(catalog) ? stamp : "";
+}
+
 let installed: { readonly stamp: string; readonly rerailFiles: string; readonly catalog: RuleCatalog } | undefined;
 
 /**
@@ -476,7 +493,7 @@ export function loadRuleCatalog(home: string = defaultRerailHome()): RuleCatalog
     const compileChecks = packCompileChecks(home);
     const catalog = readRuleCatalog(directories, { coreVersion, compile: true, compileChecks, localSources: localSources(home, directories) });
     compileChecks.save();
-    installed = { stamp, rerailFiles: rerailFilesStamp(catalog), catalog: { ...catalog, skipped: [...catalog.skipped, ...unrecordedPacks(home)] } };
+    installed = { stamp, rerailFiles: readRerailFilesStamp(catalog), catalog: { ...catalog, skipped: [...catalog.skipped, ...unrecordedPacks(home)] } };
   }
   return installed.catalog;
 }

@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import type { AuditInput, AuditRecorder, AuditResult, AuditScope } from "../../../src/engine/audit/audit.js";
 import type { CodeRulePlacement } from "../../../src/engine/catalog/repository-model.js";
+import { rulePackFileSchema } from "../../../src/engine/catalog/rule-packs.js";
 import type { CodeRuleEdit, RuleSteerDelivery, SteerMetadata } from "../../../src/engine/code-rule/code-rule.js";
 import type { RerailRuleEntry } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
 import { RrAuditRun } from "../../../src/engine/rr/rr-audit-run.js";
@@ -13,10 +14,13 @@ import { RrRunQueue } from "../../../src/engine/rr/rr-run-queue.js";
 import { RrRunSlots } from "../../../src/engine/rr/rr-run-slots.js";
 import type { RrBudgets, RrFinding, RrRun, RrRunOutcome } from "../../../src/engine/rr/rr-runner.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
+import { installPack, removeInstalledPacks } from "../../support/installed-packs.js";
+import { repositoryPath } from "../../support/oracles.js";
 
 const root = realpathSync(mkdtempSync(join(tmpdir(), "rr-edit-runs-")));
 
 afterAll(async () => {
+  removeInstalledPacks();
   await removeFolder(root);
 });
 
@@ -111,6 +115,21 @@ describe("a session's .rerail runs after its edits", () => {
     ]);
     expect(steers[0]!.metadata).toMatchObject({ revision: 1, background: true, ruleIds: ["rr-legacy-logged"] });
     expect(steers[0]!.metadata?.generatedEdit?.violations.map(violation => violation.path)).toEqual(["app/a.py"]);
+  });
+
+  it("names a pack's .rerail rule in the steer by the title its pack lists", async () => {
+    installPack("django");
+    const manifest = rulePackFileSchema.parse(JSON.parse(readFileSync(repositoryPath("packs", "django", "pack.json"), "utf8")));
+    const listed = manifest.rules.find(entry => entry.id === "django-practice-count-not-len")?.title;
+    expect(listed).toBeDefined();
+    const base = rule("django-practice-count-not-len", [{ folder: "", mode: "steer" }]);
+    const countNotLen: RerailRuleEntry = { ...base, provenance: { ...base.provenance, source: { kind: "pack", id: "django", packId: "django" } } };
+    const { runs, steers, write } = session([countNotLen]);
+    write(1, written("app/a.py"));
+    await vi.waitFor(() => expect(runs).toHaveLength(1));
+    runs[0]!.end(completed([finding("django-practice-count-not-len", "app/a.py", 0, 0, 5)]));
+    await vi.waitFor(() => expect(steers).toHaveLength(1));
+    expect(steers[0]!.metadata?.rules).toEqual([{ id: "django-practice-count-not-len", title: listed, origin: "From the Django rule pack.", state: "steered" }]);
   });
 
   it("in ai-output scope keeps only the findings on the lines the agent wrote since the file's last run", async () => {
