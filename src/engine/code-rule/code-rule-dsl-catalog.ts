@@ -298,9 +298,8 @@ export class CheckoutCodeRuleCatalog implements CodeRuleDslCatalog {
     const outcome = compiledRules.compile(this.#capabilities, id, source.text, source.digest, stableJsonText(rule.config) ?? "");
     if (!outcome.ok) return { quarantined: refusedRule(id, rule, outcome.reason) };
     const checkout = loaded.ruleSet!.checkout;
-    const title = rule.document.kind === "code" ? rule.document.rule.title : undefined;
     return {
-      entry: { id, executable: outcome.executable, placement, crossFile: outcome.crossFile, ...(title === undefined ? {} : { title }) },
+      entry: { id, executable: outcome.executable, placement, crossFile: outcome.crossFile, title: rule.document.rule.title },
       provenance: {
         ruleId: id, revision: rule.revision, payloadHash: rule.payloadHash, source: { ...rule.source },
         repositoryKey: checkout.repositoryKey, checkoutPath: checkout.checkoutPath, placement: decisions,

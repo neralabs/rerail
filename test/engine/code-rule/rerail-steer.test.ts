@@ -279,6 +279,14 @@ describe("Rerail steer text", () => {
     expect(long!.header).toBe(`◆ Rerail · ${"t".repeat(STEER_NAME_CHARS - 1)}…  steered`);
   });
 
+  it("shows a title relayed as markdown as written, so a pack's title can add no link or emphasis to the person's chat", () => {
+    const [headline] = steerHeadlines([{ id: "lint-x", title: "[why?](http://elsewhere) **Approved**", state: "steered", url: `${DASHBOARD}#rule/lint-x` }]);
+    expect(headlineText(headline!, "markdown"))
+      .toBe("◆ Rerail · \\[why?\\]\\(http://elsewhere\\) \\*\\*Approved\\*\\*  steered  ·  [why?](http://127.0.0.1:4791/#rule/lint-x)");
+    // Other styles draw no markdown, so the title stays as written there.
+    expect(headlineText(headline!, "plain")).toContain("· [why?](http://elsewhere) **Approved**  steered");
+  });
+
   it("puts the why? link on the word where the agent can draw one, and prints it after the word where it cannot", () => {
     const headline = { header: "◆ Rerail · a  steered", url: "http://127.0.0.1:4791/#rule/a" };
     expect(headlineText(headline, "hyperlink")).toBe("◆ Rerail · a  steered  ·  \u001b]8;;http://127.0.0.1:4791/#rule/a\u0007why?\u001b]8;;\u0007");

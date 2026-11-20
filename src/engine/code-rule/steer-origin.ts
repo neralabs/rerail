@@ -16,13 +16,12 @@ export interface SteerRuleSource {
 }
 
 /**
- * The words the person's line names the rule by: its document's own title, else the title its rule pack lists for it
- * (looked up by rule id without a recorded source, as `steerOrigin` does); undefined when it has neither, and the id
- * stands in.
+ * The words the person's line names the rule by: its own title (`own`, its document's, as `source` records it), else
+ * the title its rule pack lists for it (looked up by rule id without a recorded source, as `steerOrigin` does);
+ * undefined when it has neither, and the id stands in. A rule of your library is in no pack.
  */
-export function steerTitle(ruleId: string, source?: SteerRuleSource): string | undefined {
-  if (source?.title !== undefined) return source.title;
-  if (source !== undefined && source.kind === "library_rule") return undefined;
+export function steerTitle(ruleId: string, source?: SteerRuleSource, own: string | undefined = source?.title): string | undefined {
+  if (own !== undefined) return own;
   const packs = loadRulePacks();
   const packId = source === undefined || source.kind === "rerail_rule" ? rulePackIdOf(ruleId, packs) : source.packId;
   return packs.find(found => found.id === packId)?.rules.find(rule => rule.id === ruleId)?.title;

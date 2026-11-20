@@ -374,15 +374,16 @@ export interface ConflictNotice {
   readonly url?: string | undefined;
 }
 
+/** The fields of a `SteerRule` that are optional text. */
+const STEER_RULE_TEXT_FIELDS = ["title", "origin", "url"] as const;
+
 /** Whether `value`, read back from a file or a host's transcript, is a `SteerRule`. */
 export function isSteerRule(value: unknown): value is SteerRule {
   if (value === null || typeof value !== "object") return false;
   const rule = value as Partial<SteerRule>;
   return typeof rule.id === "string"
-    && (rule.title === undefined || typeof rule.title === "string")
     && (rule.state === "steered" || rule.state === "logged")
-    && (rule.origin === undefined || typeof rule.origin === "string")
-    && (rule.url === undefined || typeof rule.url === "string");
+    && STEER_RULE_TEXT_FIELDS.every(field => rule[field] === undefined || typeof rule[field] === "string");
 }
 
 /** Whether `value`, read back from a file, is a `ConflictNotice`. */
