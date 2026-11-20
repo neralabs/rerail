@@ -1147,7 +1147,9 @@ impl DefIds {
     /// The ids of `p`'s nodes, and of `tokens` (each token's node, in order), by definition: the granule table.
     fn new(p: &Projected, dialect: &Dialect, tokens: &[u32]) -> Self {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "granules".into());
-        DefIds { table: granules::number(p, dialect, tokens, None) }
+        let table = granules::number(p, dialect, tokens, None);
+        table.describe(p.ranks());
+        DefIds { table }
     }
 }
 

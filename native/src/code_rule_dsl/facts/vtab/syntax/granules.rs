@@ -703,13 +703,13 @@ impl Table {
             rank_ends: [placed(b, &re0), placed(b, &re1)],
             jumps: [placed(b, &jumps[0]), placed(b, &jumps[1])],
         };
-        table.describe(r);
         table
     }
 
     /// Points the projection's descriptor's table runs at these columns (`rerail_clif::ids::Numbering`), so the reads
-    /// written once find them.
-    fn describe(&self, r: &Ranks) {
+    /// written once find them: the table the projection keeps (`DefIds`), as it is built. A table numbered again (a
+    /// reference, a census) is not described: dropped, it would leave the runs at columns that are gone.
+    pub(super) fn describe(&self, r: &Ranks) {
         use rerail_clif::ids::Run;
         let d = r.desc_mut();
         let set = |run: *mut Run, c: &[u32]| unsafe { Run::set(run, c.as_ptr(), c.len()) };
