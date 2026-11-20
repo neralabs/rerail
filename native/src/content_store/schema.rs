@@ -263,23 +263,6 @@ ON completed_directory_reuse(catalog_hash_id, prefix, tree_hash_id, package_hash
 CREATE INDEX IF NOT EXISTS completed_directory_reuse_by_package
 ON completed_directory_reuse(package_hash_id);
 
--- A clean worktree file whose change time moved after its last write (its times set again, a copy
--- or an extraction that kept them) and whose bytes a restore hashed equal to its committed blob:
--- while the file keeps the volume, file id and change time it had then, a restore takes it
--- without a read. Keyed by the worktree's root and the file's repository path; the blob is its
--- id's algorithm and four lanes, 40 bytes. A row older than 30 days goes at a later write.
-CREATE TABLE IF NOT EXISTS verified_worktree_files (
-    worktree TEXT NOT NULL,
-    path TEXT NOT NULL,
-    volume INTEGER NOT NULL,
-    file_id BLOB NOT NULL,
-    change_time INTEGER NOT NULL,
-    blob BLOB NOT NULL,
-    verified_at INTEGER NOT NULL,
-    PRIMARY KEY (worktree, path)
-) STRICT, WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS verified_worktree_files_by_age ON verified_worktree_files(verified_at);
-
 -- A query-independent search index. The kind stream contains one token per preorder node, so an
 -- FTS5 instance offset is the preorder ordinal; terminal transducers confirm its candidates.
 -- Contentless FTS stores no second copy of source. A tape with syntax errors must never be

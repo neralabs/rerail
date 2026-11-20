@@ -783,8 +783,6 @@ pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
     ("vocabulary_pending", &["lang"]),
     ("vocabulary_predicate", &["lang", "ready"]),
     ("vocabulary_term", &["lang"]),
-    // A restore's memory of a hashed worktree file: its volume, file id, change time, blob and when.
-    ("verified_worktree_files", &["volume", "file_id", "change_time", "blob", "verified_at"]),
     ("workspace_overlay", &["workspace_id", "path_id", "state_id", "source_id", "tape_id"]),
     ("workspaces", &["workspace_id", "root_path_id", "repository_string_id", "owner_string_id", "snapshot_id", "generation", "lease_until", "state_id"]),
 ];

@@ -96,7 +96,7 @@ pub use schema::STORE_FILE_NAME;
 pub use segments::{SealedSegments, SegmentBytes, SegmentWriter};
 pub use tree_diff::{TreeChange, TreeDiff};
 pub use tree_pages::{TREE_PAGE_FILES, TreePage, TreePageKey, tree_pages_digest};
-pub use verified_files::VerifiedWorktreeFile;
+pub use verified_files::{VerifiedWorktreeFile, worktree_path_key};
 
 #[cfg(any(test, feature = "test-hooks"))]
 pub use connection::{

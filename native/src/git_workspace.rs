@@ -1600,9 +1600,9 @@ mod tests {
 
     /// A clean file whose change time moved after its last write (its times set again, a copy or
     /// an extraction that kept them) is read once: the hash equal to its blob is remembered in
-    /// the store, and the next restore, in a workspace of its own, takes the file with no read.
-    /// A write that keeps the size and puts the modification time back moves the change time,
-    /// so the restore after it reads the file and finds other bytes.
+    /// the store, and the next restore, in a workspace of its own over the store opened again,
+    /// takes the file with no read. A write that keeps the size and puts the modification time
+    /// back moves the change time, so the restore after it reads the file and finds other bytes.
     #[cfg(windows)]
     #[test]
     fn a_clean_file_whose_change_time_moved_is_read_once_until_a_write() {
@@ -1615,7 +1615,7 @@ mod tests {
         let (root, path, workspace) = committed_long_ago("stat-remembered", b"print(1)\n");
         let hour = std::time::Duration::from_secs(3_600);
         set_change_time(&path, written_long_ago() + hour);
-        let (_database, store) = temporary_store("stat-remembered");
+        let (database, store) = temporary_store("stat-remembered");
         let mut first = workspace.verified_files(&store);
         assert!(workspace.holds_blob_bytes("a.py", 9, &mut first));
         assert_eq!(
@@ -1624,6 +1624,10 @@ mod tests {
             "the first restore reads and hashes the file"
         );
         first.save();
+        // A restart: the store closed, this process's copy of its frames forgotten, and opened again.
+        drop(store);
+        crate::content_store::forget_frames_snapshot(database.to_str().unwrap());
+        let store = ContentStore::open(&database).unwrap();
         let mut second = discover(&root).unwrap().verified_files(&store);
         assert!(workspace.holds_blob_bytes("a.py", 9, &mut second));
         assert_eq!(

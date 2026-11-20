@@ -2860,16 +2860,22 @@ fn a_store_folder_that_is_a_symlink_is_not_followed_when_tightening() {
 }
 
 /// A restore's memory of a worktree's verified files: one row per worktree and path, a later
-/// hash replacing an earlier one, and every row 30 days old forgotten by a later write.
+/// hash replacing an earlier one, kept when the store closes and opens again, a row 30 days old
+/// forgotten at its worktree's next write, and a worktree no restore wrote for 30 days forgotten
+/// at any write.
 #[test]
 fn verified_worktree_files_are_kept_by_worktree_and_path_and_forgotten_when_old() {
-    let (_path, store) = store("verified-files");
+    let (path, store) = store("verified-files");
     let file = |path: &str, changed: i64| VerifiedWorktreeFile {
-        path: path.to_owned(),
+        path: worktree_path_key(path),
         volume: u64::MAX,
         file_id: [9; 16],
         changed,
         blob: HashKey::git_sha1([7; 20]),
+    };
+    let sorted = |mut files: Vec<VerifiedWorktreeFile>| {
+        files.sort_by_key(|file| file.path);
+        files
     };
     let day = 24 * 60 * 60;
     store
@@ -2881,12 +2887,15 @@ fn verified_worktree_files_are_kept_by_worktree_and_path_and_forgotten_when_old(
     store
         .remember_verified_worktree_files("/a", &[file("x.py", 4)], 110 * day)
         .unwrap();
-    let mut kept = store.verified_worktree_files("/a").unwrap();
-    kept.sort_by(|left, right| left.path.cmp(&right.path));
+
+    // A restart: the store closed, this process's copy of its frames forgotten, and opened again.
+    drop(store);
+    forget_frames_snapshot(path.to_str().unwrap());
+    let store = ContentStore::open(&path).unwrap();
     assert_eq!(
-        kept,
-        vec![file("x.py", 4), file("y.py", 2)],
-        "a later hash of a file replaces its row"
+        sorted(store.verified_worktree_files("/a").unwrap()),
+        sorted(vec![file("x.py", 4), file("y.py", 2)]),
+        "a later hash of a file replaces its row, and the rows outlive the store's close"
     );
     assert_eq!(
         store.verified_worktree_files("/b").unwrap(),
@@ -2897,9 +2906,20 @@ fn verified_worktree_files_are_kept_by_worktree_and_path_and_forgotten_when_old(
         .remember_verified_worktree_files("/c", &[], 131 * day)
         .unwrap();
     assert_eq!(
+        sorted(store.verified_worktree_files("/a").unwrap()),
+        sorted(vec![file("x.py", 4), file("y.py", 2)]),
+        "a worktree written 21 days ago keeps its rows"
+    );
+    assert!(
+        store.verified_worktree_files("/b").unwrap().is_empty(),
+        "a worktree no restore wrote for 31 days is forgotten"
+    );
+    store
+        .remember_verified_worktree_files("/a", &[], 131 * day)
+        .unwrap();
+    assert_eq!(
         store.verified_worktree_files("/a").unwrap(),
         vec![file("x.py", 4)],
-        "a row 31 days old is forgotten"
+        "a row 31 days old goes at its worktree's next write"
     );
-    assert!(store.verified_worktree_files("/b").unwrap().is_empty());
 }

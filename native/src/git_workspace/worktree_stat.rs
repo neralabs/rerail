@@ -4,7 +4,7 @@
 //! what restores remember of it in the content store.
 
 use super::RESTORE_STAT;
-use crate::content_store::{ContentStore, HashKey, VerifiedWorktreeFile};
+use crate::content_store::{ContentStore, HashKey, VerifiedWorktreeFile, worktree_path_key};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -124,12 +124,13 @@ pub(super) enum Proof {
 }
 
 /// What restores remember of a worktree's clean files whose change time moved after their last
-/// write: the content store's rows, read when the first such file needs them and written once by
-/// `save`. A restore where no change time moved reads and writes no row.
+/// write: rows of a relation in the content store's frames, read when the first such file needs
+/// them and written once by `save`. A restore where no change time moved reads and writes no row.
 pub struct VerifiedFiles<'a> {
     store: Option<&'a ContentStore>,
     worktree: String,
-    known: Option<HashMap<String, VerifiedWorktreeFile>>,
+    /// The remembered files, by the key of their repository path (`worktree_path_key`).
+    known: Option<HashMap<i64, VerifiedWorktreeFile>>,
     learned: Vec<VerifiedWorktreeFile>,
     /// Whether each volume, by its serial number, keeps a change time to trust: asked once per
     /// volume, since every file on it gives the same answer; under `None`, once for the files
@@ -191,13 +192,13 @@ impl<'a> VerifiedFiles<'a> {
             return;
         };
         let file = VerifiedWorktreeFile {
-            path: path.to_owned(),
+            path: worktree_path_key(path),
             volume: stamp.volume,
             file_id: stamp.file_id,
             changed: stamp.changed,
             blob,
         };
-        self.known().insert(path.to_owned(), file.clone());
+        self.known().insert(file.path, file.clone());
         self.learned.push(file);
     }
 
@@ -207,8 +208,9 @@ impl<'a> VerifiedFiles<'a> {
         self.learned.len()
     }
 
-    /// Writes what this restore learned to the store, in one write that never waits: a busy store
-    /// keeps nothing, which costs the next restore a read of each file.
+    /// Hands what this restore learned to the store's writer, which writes it behind the restore
+    /// as it writes every relation's rows: a write that fails keeps nothing, which costs the next
+    /// restore a read of each file.
     pub fn save(self) {
         let (Some(store), false) = (self.store, self.learned.is_empty()) else {
             return;
@@ -221,20 +223,20 @@ impl<'a> VerifiedFiles<'a> {
 
     fn remembers(&mut self, path: &str, stamp: &ChangeStamp, blob: HashKey) -> bool {
         self.known()
-            .get(path)
+            .get(&worktree_path_key(path))
             .is_some_and(|file| file.blob == blob && ChangeStamp::of(file) == *stamp)
     }
 
     /// The remembered files, read from the store when first needed; a store that cannot be read
     /// remembers none, which costs a read of each file.
-    fn known(&mut self) -> &mut HashMap<String, VerifiedWorktreeFile> {
+    fn known(&mut self) -> &mut HashMap<i64, VerifiedWorktreeFile> {
         let (store, worktree) = (self.store, &self.worktree);
         self.known.get_or_insert_with(|| {
             store
                 .and_then(|store| store.verified_worktree_files(worktree).ok())
                 .unwrap_or_default()
                 .into_iter()
-                .map(|file| (file.path.clone(), file))
+                .map(|file| (file.path, file))
                 .collect()
         })
     }
