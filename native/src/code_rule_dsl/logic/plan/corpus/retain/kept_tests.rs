@@ -14,11 +14,12 @@ fn st(p: &V) -> Vec<BTreeSet<String>> {
     s.sccs.iter().map(|scc| scc.iter().map(|&r| p.rel_name(r).to_owned()).collect()).collect()
 }
 
-/// The text of `count` inputs, each copied to its result.
+/// The text of `count` inputs, each filtered into its result: a relation of rows, not a view of its input (a bare copy
+/// is one, Q37, and is never kept, Q361).
 fn fixture_text(count: usize) -> String {
     let mut text = String::new();
     for i in 0..count {
-        text += &format!(".decl input{i}(x:number)\n.input input{i}\n.decl result{i}(x:number)\nresult{i}(x) :- input{i}(x).\n");
+        text += &format!(".decl input{i}(x:number)\n.input input{i}\n.decl result{i}(x:number)\nresult{i}(x) :- input{i}(x), x >= 0.\n");
     }
     text
 }
@@ -102,7 +103,7 @@ fn k4_clean_outputs_are_admitted_together_without_rerunning_their_producers() {
     let span=profile::span(||"bulk output admission".into());
     let mut kept=Retained::bind_kept(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog),&HashMap::new()).unwrap();
     assert!(prog.output_names().iter().all(|r|kept.holds(r,&pl(&prog))),"raw output facts are sufficient to keep a derivation");
-    let cut=Cut{clean:prog.output_names().into_iter().collect(),strata:(0,130),changed:vec![]};
+    let cut=Cut{clean:prog.output_names().into_iter().collect(),strata:(0,130),changed:vec![],views:Default::default()};
     assert_eq!(kept.load(&store,&cut,&pl(&prog),false).unwrap(),Some((130,390)));
     for i in 0..130 {
         let rel=&kept.rels[&format!("result{i}")];

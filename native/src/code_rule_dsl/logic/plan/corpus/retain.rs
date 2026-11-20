@@ -464,6 +464,9 @@ pub(in crate::code_rule_dsl) struct Cut {
     pub(in crate::code_rule_dsl) strata: (usize, usize),
     /// Inputs whose rows changed since the last run.
     pub(in crate::code_rule_dsl) changed: Vec<String>,
+    /// The relations the program derives as a view of an input's columns (Q37, `input_view_shape`), by its rules:
+    /// never kept as rows, whatever form a run held them in (`after`, Q361).
+    pub(in crate::code_rule_dsl) views: BTreeSet<String>,
 }
 
 /// The relations a `nearest` literal reads.
@@ -549,7 +552,7 @@ pub(in crate::code_rule_dsl) fn cut(kept: Option<&Retained>, key: [u8; 32], prog
             clean.extend(scc.iter().cloned());
         }
     }
-    Ok(Cut { clean, strata: (ran, sccs.len()), changed })
+    Ok(Cut { clean, strata: (ran, sccs.len()), changed, views: views.into_keys().collect() })
 }
 
 impl Cut {
@@ -660,9 +663,12 @@ pub(in crate::code_rule_dsl) fn after(
         // rounds, decision 0331), so its next run's delta is made against it and its readers are maintained. A kept
         // relation read where it lies (decision 0456 step 6b), which a round's maintain mode passes on unchanged, is
         // a relation's rows: kept (dropped, it was neither held nor current, and the next round gave up, "not kept").
-        if (held.view.is_some() || held.viewed) && !held.kept_in_place() && !(indexes && held.held_source().is_some()) {
+        // A view by the program's rules (`Cut::views`) is a view whatever form this run held it in: a run that made
+        // its rows (a maintain mode deriving it from its input's versions) keeps none of them either (Q361, 0353).
+        let by_rules = cut.views.contains(&rel);
+        if (by_rules || held.view.is_some() || held.viewed) && !held.kept_in_place() && !(indexes && held.held_source().is_some()) {
             if std::env::var_os("RERAIL_SHAPE_TRACE").is_some() {
-                eprintln!("RERAIL_SHAPE_TRACE not kept {rel}: a view ({} rows; viewed {}, over a source {})", held.rows(), held.viewed, held.view.is_some());
+                eprintln!("RERAIL_SHAPE_TRACE not kept {rel}: a view ({} rows; viewed {}, over a source {}, by its rules {by_rules})", held.rows(), held.viewed, held.view.is_some());
             }
             continue;
         }

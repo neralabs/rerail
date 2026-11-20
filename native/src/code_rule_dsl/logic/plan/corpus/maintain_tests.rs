@@ -473,3 +473,47 @@ fn r9_each_reached_stratum_is_skipped_maintained_or_derived_again() {
     assert_eq!(r.cross_maintained.2, again, "R9: every stratum derived again has its reason");
     assert_eq!(r.cross_strata.expect("a session's run").0, r.cross_skipped + r.cross_maintained.0 + again, "R9: every reached stratum is skipped, maintained or derived again: {:?}", (r.cross_strata, r.cross_skipped, r.cross_maintained, &r.cross_again));
 }
+
+/// Q361: a view of an input's columns (`kind`, `docof` of `node`) is never kept as rows (0353), cold or after an edit,
+/// on the kept frames' route and in a session: `retain::after` refuses a view by the program's rules
+/// (`Cut::views`) whatever form a run held it in, and the maintain mode holds it as a view.
+#[test]
+fn an_edit_keeps_no_rows_of_an_inputs_view() {
+    const P: &str = r#"
+.decl doc(d: number, path: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.input doc, node, child, field, text
+.decl kind(n: node, k: symbol)
+kind(n, k) :- node(_, n, k, _, _).
+.decl docof(n: node, d: number)
+docof(n, d) :- node(d, n, _, _, _).
+.decl def(n: node, x: symbol)
+def(n, x) :- kind(n, "function_definition"), field(n, "name", c), text(c, x).
+.decl named(x: symbol, d: number)
+named(x, d) :- kind(n, "call"), field(n, "function", f), text(f, x), def(m, x), docof(m, d), kind(m, _).
+.output named
+"#;
+    let mut s = Session::new("q361", P, &["named"], &[("a.py", "def f():\n    pass\n"), ("b.py", "f()\n")]);
+    let views = |s: &Session, f: &str, when: &str| {
+        let kept: Vec<String> = crate::content_store::kept_facts::by_relation(&s.dir.join(f))
+            .unwrap()
+            .into_iter()
+            .filter(|((r, _), _)| r == "kind" || r == "docof")
+            .map(|((r, w), (n, rows, _))| format!("{r}/{w}: {n} entries, {rows} rows"))
+            .collect();
+        assert!(kept.is_empty(), "{when}: {f} keeps rows of a view: {kept:?}");
+    };
+    s.run_kept();
+    views(&s, "kept-frames.sqlite", "cold");
+    s.write("b.py", "f()\nf()\n");
+    s.run_kept();
+    views(&s, "kept-frames.sqlite", "after an edit");
+    s.run();
+    views(&s, "kept.sqlite", "a session's first run");
+    s.write("b.py", "f()\n");
+    s.run();
+    views(&s, "kept.sqlite", "a session's edit");
+}

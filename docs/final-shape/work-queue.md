@@ -5014,7 +5014,27 @@ after the phases went on the run path (0083).
   unchanged file, and ep2's warm edit is back near 19 G and 200 MB.
 - **Record**: open; the phased-facts branch's (0458 Open), measured here.
 
-### Q361. (Q287 on final-rerail-shape-phased-facts until 2026-11-20) An edit keeps the rows of the cross part's `kind`, a view of `node` (open)
+### Q376. Two data-layer rule files together are refused at the gate: `plain_str`'s `join` inside the component that parses (open)
+
+Found 2026-11-20, reproducing Q361 on the 50 data-layer files with the 57 rule files (`tmp/dl/full`).
+- **What.** `logic` on `schema-bootstrap-contracts` and `versioned-table-names` together (each alone passes) stops at
+  the gate (decision 0065 §2a): "plain_str aggregates rr_agg75 inside a component that loads: not supported; rr_agg75
+  reaches plain_str by rr_agg75 -> value -> rr_value_req -> ast_match -> rr_embed_req -> rr_ctx84 -> ann_whole_str ->
+  plain_str, and the component asks rr_embed_req". The gate's message names that path now.
+- **Why.** `rr_value_req` is one relation for every reader of `value` (0291, 0331). VTN003 binds its node by an AST
+  pattern (``n ~ `$O[:-$K]` ``, `value(K, "4")`), so a request rule reads `ast_match`, which the parse answer produces
+  for its guests (`guests::answered`: a taped relation the demand's rules reach). The parse demand reads
+  `ann_whole_str`, which reads `plain_str`, whose `join` (`rr_agg75`) reads `value`: one loading component holding an
+  aggregate. `plain_str`'s own value reads are bound by `child` and `kind`, which nothing produces: the cycle is the
+  shared request's, not a dependency of `plain_str` on the parse. The stratifier (`graph::components`) sees the same
+  edges, so cutting them in the gate alone would only move the refusal.
+- **Not yet known.** Why the phased-facts tree (2a460f611d) ran all 57 files: its profile has `value` asked on request
+  by `py_vtest`'s two readers alone; its build is gone, so it was not run again here.
+- **Next.** Requests by reader where one would close a loading cycle (a reader's ask apart from the shared
+  `rr_value_req`, the fact layer reading both), or the attribute kept eager for the readers the demand reaches
+  (`on_request`'s "no, every node").
+
+### Q361. (Q287 on final-rerail-shape-phased-facts until 2026-11-20) An edit keeps the rows of the cross part's `kind`, a view of `node` (done 2026-11-20)
 
 Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one-file edit).
 - **What.** The data-layer prelude's `kind(n, k) :- node(_, n, k, _, _)` is a view of an input's columns (Q37). The
@@ -5027,6 +5047,16 @@ Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one
 - **Next.** Confirm on the 50 files which run writes the entries (`RERAIL_PROFILE`'s "the kept part" decisions);
   then hold a view of a base relation as a view in the maintain mode too (its `Old`, `Minus` and `Plus` its input's
   versions read through its columns), and a guard in `retain::after` that refuses to keep an input view's rows.
+- **Found (2026-11-20).** Not on this tree. The same 50 data-layer files (`tmp/dl/c50`) with 56 of the 57 rule files
+  (`versioned-table-names` cannot run here, Q376), cold, then the one-file edit: `kind` is held as a view on both runs
+  ("held as a view", "not kept kind: a view", `RERAIL_SHAPE_TRACE`), and the chain (`kept_facts::by_relation`) holds
+  no entry of it; on 10 files likewise, and in a two-file program of the prelude's `kind` and `docof` on both routes
+  (kept frames, a session).
+- **Done.** The guard: `retain::cut` hands on the relations the program derives as a view of an input's columns
+  (`Cut::views`, by `input_view_shape`), and `retain::after` keeps none of their rows whatever form a run held them
+  in (the item's suspected path: a maintain mode deriving the view as a relation). The kept-parts fixture copied each
+  input bare (`result(x) :- input(x)`), a view: it filters now (`x >= 0`), a relation of rows. Test:
+  `maintain_tests::an_edit_keeps_no_rows_of_an_inputs_view` (cold and edited, both routes).
 
 ### Q286. A warm run on a Linux host writes the observer's journal cursor (`the_run_after_a_cold_one_writes_nothing`) (open)
 
