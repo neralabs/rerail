@@ -1,6 +1,6 @@
 # A tool call's checkout reads cost the same at any worktree count
 
-For the pull request of branch `JeanFrancoisGagne/main-lookup-cost`, not opened yet, head 1b8da5638. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #904](https://github.com/neralabs/rerail/pull/904), head 3cf289981. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -10,7 +10,7 @@ For the pull request of branch `JeanFrancoisGagne/main-lookup-cost`, not opened 
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 4,172 lines in 28 files: 2,039 ship, 2,133 are tests and text | Careful. A code owner: two rare states steer later. | Nothing. No pull request needs to merge first. | 5 |
+| 5,589 lines in 36 files: 2,556 ship, 3,033 are tests and text | Careful. A code owner: two rare states steer later. | Nothing. No pull request needs to merge first. | 5 |
 
 ## 2. Intent, and the gap
 
@@ -38,14 +38,15 @@ Found on 11 November 2026 on a Windows 11 laptop with 190 worktrees; counted on 
 
 ## 3. Where to look
 
-<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, One read for a session&#x27;s checkouts, medium risk, 758 lines; B, HEAD read from Git&#x27;s files, medium risk, 561 lines; C, Line endings from Git&#x27;s files, medium risk, 290 lines; D, Tool call&#x27;s edit checked first, low risk, 316 lines; E, Worktree made again watched at once, low risk, 114 lines. Read first: repository-registry.ts, checkout-code-rule-router.ts, git-head-reader.ts. To skim: 2,130 lines of tests and 3 lines of one release note and one docs paragraph.">
+<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, One read for a session&#x27;s checkouts, medium risk, 729 lines; B, HEAD read from Git&#x27;s files, medium risk, 724 lines; C, Line endings from Git&#x27;s files, medium risk, 356 lines; D, Tool call&#x27;s edit checked first, low risk, 633 lines; E, Worktree made again watched at once, low risk, 114 lines. Read first: repository-registry.ts, checkout-code-rule-router.ts, git-head-reader.ts. To skim: 3,030 lines of tests and 3 lines of one release note and one docs paragraph.">
 
 1. **Read first**, 10 min: `repository-registry.ts`: `recordedCheckoutsReader`, `CheckoutsReader.read`, `#question`, `stateOf`. Can a recorded checkout move without the recorded checkouts' version moving?
 2. **Read first**, 8 min: `checkout-code-rule-router.ts`: `refreshCodeRules`, `#rulesChanged`, `#lane`, `#openLane`, `interrupt`. Can a checkout's auditor audit with rules older than its inputs?
 3. **Read first**, 10 min: `git-head-reader.ts`: `gitHeadReader`, `vouchedBy`, `keptAnswer`, `configReader`. Can the files name a commit Git would not name?
 4. 6 min: `git-crlf-reader.ts`, `git.ts`.
-5. 5 min: `code-rule-dsl-catalog.ts`, `rule-configuration.ts`, `stable-json.ts`.
-6. 3 min: `code-rule-bridge.ts`, `worktree-walks.ts`, `runtime.ts`, `code-rule-enforcer.ts`, `code-rule.ts` (`PendingEdits`), `worktree-notices.ts` (`#waits`, `#remade`).
+5. 4 min: `model.rs`: `reads_other_files`, `is_file_local`; `rule_api.rs`, `crossfile.rs`, `ingest.rs`, `native.ts`, `code-rule-schema.ts`.
+6. 5 min: `code-rule-dsl-catalog.ts`, `rule-configuration.ts`, `stable-json.ts`.
+7. 3 min: `code-rule-bridge.ts`, `worktree-walks.ts`, `runtime.ts`, `code-rule-enforcer.ts`, `code-rule.ts` (`PendingEdits`), `worktree-notices.ts` (`#waits`, `#remade`).
 
 **Then skim**, 10 min: Eight test files: the cost case counts statements per tool call, the contract case compares the reader with the per-checkout readers, the reader cases count Git starts.
 
@@ -75,15 +76,15 @@ Start at change A: a stale answer there applies the wrong rules to an edit.
 
 <details><summary><b>5. The changes</b></summary>
 
-**A. One read for a session's checkouts**, medium risk. One tool call at 120 worktrees: 1,542 to 2,125 ms of daemon CPU on `main`, 42 to 186 ms here.
+**A. One read for a session's checkouts**, medium risk. One tool call at 120 worktrees: 1,018 to 2,125 ms of daemon CPU on `main`, 18 to 125 ms here.
 
 - **Problem:** At every hook event the daemon re-read every checkout the session knows, each with every recorded checkout of its repository, so one event cost the worktrees known times the checkouts recorded.
 - **Who meets it:** Everyone with many worktrees, at every hook event of every session there, on `main` with the 0.2.0 engine as before it.
 - **What it does:** `recordedCheckoutsReader` reads every checkout a session asks about, with its parents and start state, in one prepared statement. `refreshCodeRules` has each checkout's auditor read its rules when its inputs moved: the session checkout's at each event, every auditor's when a signature or setting changed, an auditor's at its opening and at the session's end.
 - **Risk:** Medium: a version that misses a change would leave an auditor on old rules until its next input moves.
 - **Check:** Whether any write to `checkouts` or `repositories` leaves the recorded checkouts' version as it was, and whether an auditor can audit before it read its rules after an input moved.
-- **Picture:** Daemon CPU per Bash tool call at 120 worktrees, the median of five runs, on main with the 0.2.0 engine and with this change: Windows 11 2,006 ms against 109 ms; Linux x64 1,626 ms against 88 ms.
-- **Method:** A real daemon from the built CLI and the built Claude Code hooks, one repository of 120 worktrees set up first from a home of its own, 5 runs of 5 Bash tool calls, `main` 7efcac9c6 and the head in one probe per machine.
+- **Picture:** Daemon CPU per Bash tool call at 120 worktrees, the median of five runs, on main and with this change: Windows 11 2,006 ms against 109 ms; Linux x64 1,128 ms against 24 ms.
+- **Method:** A real daemon from the built CLI and the built Claude Code hooks, one repository of 120 worktrees set up first from a home of its own, 5 runs of 5 Bash tool calls, `main` and the change in one probe per machine: Linux x64 at this head beside `main` 6ec384ad9, Windows 11 at bdc4f0057 beside `main` 7efcac9c6.
 
 **B. HEAD read from Git's files**, medium risk. Three walks of the other worktrees: 10 Git starts for their `HEAD` through `gitHead`, 0 through this reader.
 
@@ -111,7 +112,7 @@ Start at change A: a stale answer there applies the wrong rules to an edit.
 - **Who meets it:** A session whose agent writes in a worktree just after a folder of files changed there, now that walks reach a change about a second sooner.
 - **What it does:** Where no rule of the checkout reads other files, the edit that may steer is checked first. Where one does, it is checked with the log edits ahead of it in one engine call. Each revision publishes once its edits are checked, and a tool call's result waits for the edits that may steer.
 - **Risk:** Low: every edit is checked and recorded, and the Log lists audits in the order edits came; where a rule reads other files, a log edit is checked with the batch's texts held.
-- **Check:** Whether a rule the cross-file flag misses reads another file the workspace holds.
+- **Check:** Whether the engine's `readsOtherFiles` misses a clause its workspace evaluates over many files.
 - **Picture:** A Write into a nested checkout just moved inside a worktree, beside another session, through a real daemon and the built Claude Code hooks on the 0.2.0 engine: steered in its own answer 5 of 5 times at main and 4 of 5 here on Linux x64; 5 of 5 and 5 of 5 on Windows 11.
 - **Method:** A probe through a real daemon and the built Claude Code hooks, five fresh worktrees, each with a nested checkout renamed and then a Write into it while a second session is open: `main` beside the head on one Linux x64 machine at once, in turn on one Windows 11 machine.
 
@@ -157,18 +158,18 @@ Start at change A: a stale answer there applies the wrong rules to an edit.
 
 <details><summary><b>7. How it fits</b></summary>
 
-Nothing has to merge first: it holds `main` at 88446abff (#865 and #880 in), the 0.2.0 engine. #812 conflicts in the router and its test, clean with `main` alone; #881 and #894 merge clean; #883 and #884 share no file.
+Nothing has to merge first: it holds `main` 0a3ce014c (#830, #861, #865, #880, #881, #884, #894, #895, #910, #911 and #916 in), the 0.2.0 engine. #812 conflicts in the router and its test, #909 in the walk's notices and their test, each clean with `main` alone; #883 shares none.
 
-This pull request holds main at 88446abff, the 0.2.0 engine, and needs nothing else. #881 and #894 share files with it and merge clean; #883 and #884 share none; #812 conflicts with it in the router and its test, and merges clean with main alone.
+This pull request holds main at 0a3ce014c, the 0.2.0 engine, and needs nothing else. #883 shares no file with it; #812 conflicts with it in the router and its test, #909 in the walk's change notices and their test, and each merges clean with main alone.
 
-**Trial merges with this head.** Read from a local clone on 19 November. `main` 88446abff merged in with no conflict and no edit: #865 keeps the calls of a file the session folder's walk could not read, a walk this change leaves as it was. #812 at da345bfc3: the router, the evaluator, `runtime.ts` and two tests; conflicts in the router and its test. #881 at 78a38570b: the bridge and its test, clean. #894 at 5596af86d: `runtime.ts`, clean. #883 and #884: no shared file.
+**Trial merges with this head.** Read from a local clone on 20 November. `main` bf24c778f, 6ec384ad9, 2221b5ec9 and 0a3ce014c merged in with no conflict and no code edit: #881, #894, #911 and #916 changed other functions, #830, #861, #884 and #910 no file of this change; #895 resolves a `commondir` as this change's `HEAD` reader does. #916's two cases took the readers' look at a `.git` entry for the walk's; they now skip it. #812 and #909 conflict in the router and the notices, each clean with `main` alone. #883: clean.
 
 </details>
 
 <details><summary><b>8. What is not covered</b>: 5 not verified, 4 limits that stay</summary>
 
 1. **A worktree's files changed at once** beside another session, a Write there was on time 19 of 20 times on the 0.2.0 engine, `main` 20 of 20; the late one a call later.
-2. **One session, a worktree removed** late on `main` too: its walk's first sight of the worktree (#907). One probe: 1 of 152 late here, 3 of 152 on `main`.
+2. **One session, a worktree removed** late on `main` too, from its walk's first sight of the worktree (#907), whose checks #911 now drops; before #911, 2 of 152 at each.
 3. **A worktree walked while gone, then added again** a file written there waits for an unrelated walk, here as on `main`.
 4. **The 10-minute load at this head** did not run. At 0.1.5's code against this change's code then: CPU 43% against 96 to 98% of a core.
 5. **macOS** never ran.
@@ -178,7 +179,7 @@ This pull request holds main at 88446abff, the 0.2.0 engine, and needs nothing e
 - A rule file written into a worktree's own `.rerail/rules`, then a Write there, beside another session: on time 19 of 20 here, 20 of 20 on `main`; the late one a call later, its finding logged at once.
 - A rule that another worktree's rules file leaves unrunnable is recorded as skipped at that worktree's next walk or tool call, or at the session's end, where `main` records it at the next event. Every check runs with current rules.
 - Each catalog build still serializes every rule with its mode, as on `main`: each checkout's rule set hands it a copy of its own.
-- After a failed `git var`, the HEAD reader asks Git for 60 s before it tries Git's file list again.
+- Where the rules change while a walk's edits wait behind a tool call's edit, each such edit's first audit ends as superseded, and the next records the rules that checked it.
 
 </details>
 
@@ -192,15 +193,15 @@ The description is the record: "How you tested it" holds the failing cases, the 
 
 | Where | What ran | Result |
 |---|---|---|
-| Linux x64 | 120 worktrees, 5 runs of 5 Bash tool calls through a real daemon, at `main` and here, on the 0.2.0 engine | Daemon CPU per tool call 1,542 to 2,028 ms against 42 to 186 ms; hook median 1,182 ms against 370 ms. |
-| Windows 11 | The same | 1,931 to 2,125 ms against 94 to 125 ms; hook median 1,188 against 283 ms. |
+| Linux x64 | 120 worktrees, 5 runs of 5 Bash tool calls through a real daemon, 21bd993ee beside `main` 2221b5ec9, at a load of 5 to 8 on 32 cores | Daemon CPU per tool call 1,038 to 1,112 ms against 22 to 32 ms; hook median 592 ms against 121 ms. |
+| Windows 11 | The same at bdc4f0057 beside `main` 7efcac9c6 | 1,931 to 2,125 ms against 94 to 125 ms; hook median 1,188 against 283 ms. |
 | Linux x64 | The same at b95422be7 beside `main` 90075faa3, five probes on three machines | 1,072 to 2,422 ms against 24 to 242 ms; rule-breaking Writes steered in their own answer 27 of 28 here, 28 of 28 on `main`. |
-| Linux x64 and Windows 11 | The 78 test files that import a changed module at this head, against the 75 of them at `main` 88446abff | The 78 test files that import a changed module fail on Linux x64 only as `main`'s do, none here only, and on Windows 11 only as `main`'s do once the 7 files that held 23 cases failing on a loaded machine ran again; #865's 16 cases pass at both; CI's lint and type-check pass. |
-| Linux x64 and Windows 11 | The changed cases at the head, and with the fix's lines out | Head: every case passes. Lines out: each of three fails in every run; the partway check's case 20 of 20. |
-| Linux x64 | One session: 75 runs of a worktree added, written to and removed, then a Write in another, beside `main` 88446abff | Late 1 of 152 rule-breaking Writes here, after 96 log checks of the removed worktree's files; 3 of 152 on `main`, two of them after 109 such checks. |
+| Linux x64 and Windows 11 | The test files of the changed modules at this head, beside `main` 0a3ce014c on one machine | At this head beside `main` 0a3ce014c the test files of the changed modules fail only as `main`'s do, on Linux x64 and Windows 11; CI's lint and type-check pass. |
+| Linux x64 | Each case of the last two rounds before its fix, at it and with its line out | Each fails before and passes after; each line taken out fails its own case, the engine's answer row by row. |
+| Linux x64 | One session: 75 runs of a worktree added, written to and removed, then a Write in another, dcefc13d6 beside `main` bf24c778f | Late 2 of 152 rule-breaking Writes at each, each after a batch of log checks of the removed worktree's files. |
 | Linux x64 and Windows 11 | A Write after a worktree's files changed at once, beside another session | On time 19 of 20 here, 20 of 20 on `main`; the late one a tool call later. |
 | Linux x64 and Windows 11 | A Write after a rule file was written into the worktree's own rules, beside another session | On time 19 of 20 here, 20 of 20 on `main`; the late one a tool call later, its finding in Log at once. |
 
-**Sources.** The branch at 1cef26483, read on 19 November 2026; `main` at 88446abff, cccb25a8d, 90075faa3, 7efcac9c6 and ba0545900.
+**Sources.** The branch at 3cf289981, read on 20 November 2026; `main` at 0a3ce014c, 2221b5ec9, 6ec384ad9, bf24c778f, 88446abff, cccb25a8d, 90075faa3, 7efcac9c6 and ba0545900.
 
 </details>
