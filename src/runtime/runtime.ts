@@ -1421,6 +1421,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     }
   }
 
+  /** When a session not yet recorded starts as it opens now: when the event opening it happened (`#asOf`), else now. */
+  #startTime(sessionId: string): number {
+    return this.#startsAt.get(sessionId) ?? Date.now();
+  }
+
   /**
    * The event's own work around the host router's: a call's record, a session end's settling of the calls still waiting
    * (no result comes after it), a result's edit check, a turn end's waits.
@@ -2246,7 +2251,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     // Before the read below, which makes this process's waiting record writes and may wait for the lock to do so.
     this.#failWhileWriteLockedForScan(session.sessionId);
     const recordedSession = this.#sessionStore.session(session.sessionId);
-    const startedAt = recordedSession?.startedAt ?? this.#startsAt.get(session.sessionId) ?? Date.now();
+    const startedAt = recordedSession?.startedAt ?? this.#startTime(session.sessionId);
     const ledger = await this.#openLedger(session, recordedSession === undefined);
     const checkout = this.#startingCheckout(session);
     const restored = await this.#restoreRegistry(session, ledger.entries, checkout);
