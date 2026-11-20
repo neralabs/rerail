@@ -7,7 +7,7 @@ description = "The C and C++ preprocessor (decision 0327): every directive of a 
 
 [features]
 # The tests' shared object for reads outside a run (decision 0442).
-test-hooks = ["rerail-c-lean/test-hooks"]
+test-hooks = ["rerail-c-lean/test-hooks", "rerail-tape-format/test-hooks"]
 
 [dependencies]
 # The shared lexer: the preprocessor's reading (`pp`) and the parser's tokens.

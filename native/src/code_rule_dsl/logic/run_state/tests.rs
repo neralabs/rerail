@@ -139,17 +139,16 @@ fn the_context_not_carried_yet_only_shrinks() {
 
 #[test]
 fn a_job_on_another_thread_enters_its_callers_context_and_leaves_its_own() {
-    use crate::code_rule_dsl::phase_clock::IN_PHASE_0;
-    IN_PHASE_0.with(|c| c.set(true));
+    use crate::code_rule_dsl::phase_clock::{active, in_phase_0};
+    let phase_0 = in_phase_0();
     let carry = Carry::here();
-    IN_PHASE_0.with(|c| c.set(false));
+    drop(phase_0);
     let seen = std::thread::spawn(move || {
-        IN_PHASE_0.with(|c| c.set(false));
         let inside = {
             let _in = carry.enter();
-            IN_PHASE_0.with(|c| c.get())
+            active()
         };
-        (inside, IN_PHASE_0.with(|c| c.get()))
+        (inside, active())
     })
     .join()
     .unwrap();
@@ -158,16 +157,16 @@ fn a_job_on_another_thread_enters_its_callers_context_and_leaves_its_own() {
 
 #[test]
 fn a_pool_job_runs_in_the_context_it_was_started_in() {
-    use crate::code_rule_dsl::phase_clock::IN_PHASE_0;
+    use crate::code_rule_dsl::phase_clock::{active, in_phase_0};
     let seen = std::sync::Mutex::new(Vec::new());
-    IN_PHASE_0.with(|c| c.set(true));
+    let phase_0 = in_phase_0();
     crate::threads::scope(|jobs| {
         for _ in 0..4 {
-            jobs.spawn("run_state test", |_| seen.lock().unwrap().push(IN_PHASE_0.with(|c| c.get())));
+            jobs.spawn("run_state test", |_| seen.lock().unwrap().push(active()));
         }
     });
-    IN_PHASE_0.with(|c| c.set(false));
-    let held = crate::threads::beside("run_state test", || IN_PHASE_0.with(|c| c.get()));
+    drop(phase_0);
+    let held = crate::threads::beside("run_state test", active);
     assert!(!held.join().unwrap(), "started outside phase 0");
     assert_eq!(*seen.lock().unwrap(), vec![true; 4]);
 }

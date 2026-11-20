@@ -3158,6 +3158,7 @@ dependencies = [
  "parking_lot",
  "rayon",
  "rerail-blocks",
+ "rerail-context",
  "rerail-device",
  "rerail-forest",
  "rerail-gpu",
@@ -3174,6 +3175,8 @@ dependencies = [
  "libc",
  "metal",
  "rayon",
+ "rerail-blocks",
+ "rerail-context",
  "rerail-device",
  "rerail-ukl",
 ]
@@ -3198,6 +3201,7 @@ dependencies = [
 name = "rerail-c-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-c-lean",
  "rerail-simd8",
  "rerail-tape-format",
  "unicode-ident",
@@ -3208,6 +3212,7 @@ name = "rerail-c-pp"
 version = "0.1.0"
 dependencies = [
  "rerail-c-lean",
+ "rerail-c-pp",
  "rerail-simd8",
  "rerail-tape-format",
 ]
@@ -3221,6 +3226,7 @@ dependencies = [
  "cranelift-jit",
  "cranelift-module",
  "rerail-blocks",
+ "rerail-clif",
 ]
 
 [[package]]
@@ -3238,7 +3244,19 @@ dependencies = [
  "rayon",
  "rerail-clif",
  "rerail-compiler",
+ "rerail-context",
  "rerail-tape-format",
+ "rustc-hash",
+]
+
+[[package]]
+name = "rerail-context"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "parking_lot",
+ "rayon",
+ "rerail-context",
  "rustc-hash",
 ]
 
@@ -3246,6 +3264,7 @@ dependencies = [
 name = "rerail-csharp-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-csharp-lean",
  "rerail-simd8",
  "rerail-tape-format",
  "unicode-ident",
@@ -3255,6 +3274,7 @@ dependencies = [
 name = "rerail-css-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-css-lean",
  "rerail-simd8",
  "rerail-tape-format",
 ]
@@ -3350,6 +3370,7 @@ dependencies = [
 name = "rerail-ecma-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-ecma-lean",
  "rerail-simd8",
  "rerail-tape-format",
 ]
@@ -3544,6 +3565,7 @@ dependencies = [
  "metal",
  "objc",
  "rayon",
+ "rerail-context",
  "rerail-gpu",
  "rerail-ukl",
  "sha2 0.10.9",
@@ -3553,6 +3575,7 @@ dependencies = [
 name = "rerail-go-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-go-lean",
  "rerail-simd8",
  "rerail-tape-format",
  "unicode-ident",
@@ -3576,6 +3599,7 @@ dependencies = [
 name = "rerail-html-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-html-lean",
  "rerail-simd8",
  "rerail-tape-format",
 ]
@@ -3584,6 +3608,7 @@ dependencies = [
 name = "rerail-java-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-java-lean",
  "rerail-simd8",
  "rerail-tape-format",
  "unicode-ident",
@@ -3614,6 +3639,7 @@ dependencies = [
 name = "rerail-kotlin-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-kotlin-lean",
  "rerail-simd8",
  "rerail-tape-format",
 ]
@@ -4220,6 +4246,7 @@ dependencies = [
 name = "rerail-markdown-inline-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-markdown-inline-lean",
  "rerail-simd8",
  "rerail-tape-format",
 ]
@@ -4228,6 +4255,7 @@ dependencies = [
 name = "rerail-markdown-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-markdown-lean",
  "rerail-simd8",
  "rerail-tape-format",
 ]
@@ -4243,6 +4271,7 @@ dependencies = [
  "rerail-blocks",
  "rerail-clif",
  "rerail-compiler",
+ "rerail-context",
  "rerail-device",
  "rerail-metal",
  "rerail-prof",
@@ -4259,6 +4288,7 @@ dependencies = [
  "bitlex",
  "libc",
  "rerail-compiler",
+ "rerail-context",
  "rerail-metal",
  "rerail-parser-tests",
  "rerail-rr-syntax",
@@ -4271,6 +4301,7 @@ dependencies = [
 name = "rerail-php-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-php-lean",
  "rerail-simd8",
  "rerail-tape-format",
 ]
@@ -4321,6 +4352,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-context",
  "rerail-prof",
  "rerail-rr-syntax",
  "ruff_python_ast",
@@ -4361,6 +4393,7 @@ dependencies = [
 name = "rerail-python-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-python-lean",
  "rerail-simd8",
  "rerail-tape-format",
  "unicode-ident",
@@ -4457,6 +4490,7 @@ dependencies = [
  "cranelift-codegen",
  "libc",
  "rerail-compiler",
+ "rerail-context",
  "rerail-metal",
  "rerail-rr-parser",
  "rerail-rr-syntax",
@@ -4503,6 +4537,7 @@ dependencies = [
  "regex",
  "regex-automata",
  "regex-syntax",
+ "rerail-context",
  "rerail-rr-syntax",
  "rerail-simd8",
  "rerail-tape-format",
@@ -4531,6 +4566,7 @@ dependencies = [
 name = "rerail-rust-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-rust-lean",
  "rerail-simd8",
  "rerail-tape-format",
  "unicode-ident",
@@ -4540,6 +4576,7 @@ dependencies = [
 name = "rerail-scala-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-scala-lean",
  "rerail-simd8",
  "rerail-tape-format",
 ]
@@ -4641,6 +4678,7 @@ name = "rerail-sql-lean"
 version = "0.1.0"
 dependencies = [
  "rerail-simd8",
+ "rerail-sql-lean",
  "rerail-tape-format",
 ]
 
@@ -4674,6 +4712,7 @@ name = "rerail-swift-lean"
 version = "0.1.0"
 dependencies = [
  "rerail-simd8",
+ "rerail-swift-lean",
  "rerail-tape-format",
 ]
 
@@ -4683,10 +4722,10 @@ version = "0.1.0"
 dependencies = [
  "lz4-sys",
  "memchr",
- "metal",
  "rerail-clif",
  "rerail-gpu",
  "rerail-simd8",
+ "rerail-tape-format",
  "sha2 0.10.9",
 ]
 
@@ -4768,6 +4807,7 @@ version = "0.1.0"
 dependencies = [
  "rerail-c-lean",
  "rerail-c-pp",
+ "rerail-ukl",
 ]
 
 [[package]]
@@ -4777,6 +4817,7 @@ dependencies = [
  "rerail-html-lean",
  "rerail-simd8",
  "rerail-tape-format",
+ "rerail-vue-lean",
 ]
 
 [[package]]

@@ -1,6 +1,6 @@
 # 0361. Relations declare their shapes, and plans come from them
 
-Status: decided (2026-11-17), being built: steps 1, 2, 3, 4, 5 and 7 built (2026-11-18). The user: "a directive which allows us to add enough data to the
+Status: decided (2026-11-17), being built: steps 1, 2, 3, 4, 5 and 7 built (2026-11-18), step 6 at the probes (2026-11-19; at the writes: Q346). The user: "a directive which allows us to add enough data to the
 relations in the .rr files that we can provide good default shapes for them (or at least name an algorithm or
 something) so that we don't need to pay for planning, or only in exceptional circumstances."
 
@@ -488,4 +488,55 @@ statistics, which item 5 keeps where no fact answers. Constants on other columns
 prepared. Measured: 2,307 and 2,226 G instructions and 444–447 M join work, against 2,500 G and 555 M with every such rule
 prepared; same findings. Test: `a_rule_over_shaped_relations_is_planned_with_the_program` (`o`, testing
 `kind2(p, "x")`, is not prepared; `s`, the same rule with no constant, is).
+## Step 6: the checks (2026-11-19)
+
+**At the probes.** The executors count each step of a running line's order: the rows into it and the rows it made
+(decision 0203). Where a step probes a relation on columns that hold a key of it, or the source of a fan-out
+(`Shapes::probe_limit`), the fact bounds what a probe returns: one row for a key, the class's bound for a fan-out
+(`one`; `few`, 16; `many` bounds nothing). Past `BROKEN_BY` (8) times that bound, a probe on average, over 64
+probes at least, the fact is broken (`Shapes::broken_at`; "a fan-out class broken by large factors"). The check is
+made where 0203's are, a line at a time at its check (`Model::layout_broken`): a probe's at each chunk, a seed's or
+whole plan's at its cut. It reads the counts the executors keep, and no rows.
+
+**A broken fact.** It is the run's (`shapes::Broken`, a run local), noted once a relation, and named in the profile
+("broken layout facts"), on stderr in a strict run, and on the plan-cache counts line with the probe steps checked.
+For the rest of the run the relation is planned from statistics:
+- The run's shapes leave it out, and every relation whose facts were inferred from it (the relations its rules
+  read, kept with the shapes), in the model that found it and in every later one (`Shapes::for_run`).
+- A prepared plan reading a relation left out, or assuming a size of one, is not taken (`Prepared::take`).
+- A line that ran a prepared order priced by the fact is searched now (`prepared_heavy`).
+- A base relation left out has its columns measured at the next chunk (`sampled_statistics_unanswered`).
+
+**At the writes** (Q346; built on rr-align as 2b9841b58b, joined to these checks at roll-up 19). A key the rules
+infer is proved from the facts of the relations they read, and the base relations are tape views whose rows are never
+written; but a derived relation may declare a key (`.layout under key(a)`), and a reader may probe it by other columns,
+so no probe's counts cover it. The rows' writer (`setfix`'s `key_breaks`) finds a key's second row, and the run breaks
+the fact there as at a probe (`plan::break_fact`: noted in `shapes::Broken`, named in the profile, the model's shapes
+for the run). Roll-up 19 kept these checks and joined rr-align's own probe check to them. That check read the
+native executors' counts at every chunk (`observe`), where `Model::layout_broken` reads a line's counts at its plan's
+checks only, so a fan-out a reader probes without a check (the end-to-end test's `under`) was found by it alone. It
+stays at `observe` as `fanout_broken`, by the same test (`Shapes::broken_at`: `BROKEN_BY` 8 over `LEAST_PROBES` 64);
+its own threshold (`BREAK_FACTOR` 4 over 32 probes) and its own record of what broke (`Stats::broken` and the run's
+plans) are gone. One test, three sites (a plan's checks, the executors' counts, the writes), one record.
+
+**Tests** (Relax, here): `a_fan_out_the_rows_break_leaves_its_relation_to_the_statistics` (within the class, and too
+few probes, break nothing; 200 rows a probe of `few` over 100 probes breaks it, noted once; the relation and those
+inferred from it left out, in a later model too; a prepared plan reading it not taken). End to end:
+`a_run_finds_a_fanout_its_rows_break_and_finds_the_same` and `a_run_finds_a_key_its_rows_break_where_they_are_written`
+(the findings are the rules', and the run notes one fact broken).
+
+**At scale** (corpus0 x B-now, profiling build, an M1 Max at load 10-15): 3,350 probe steps checked, no fact broken,
+463 findings d067ec2ebf6f; 985.8 G instructions in one run and 1,004.9 and 1,017.7 G in two others, against 982.7 and
+1,045.8 G before.
+
+## Derived relations' estimates: off (2026-11-19, Q290)
+
+The "Wider" step sized each derived relation that no fact sizes from its rules' plans. Measured directly (Q290,
+`RERAIL_SIZES_LOG` and `scripts/profiling/derived_sizes.py`), those estimates were within 2x of the rows a run held for
+15% of relations, 4% weighted by the plans that read them: the facts carry no grammar's kind skew and no kind's fields.
+Sizes a run held do transfer, 85% within 2x from corpus0 to hogql, but they do not save the plans. Sized right, and
+even from the same corpus's own run, the run costs more: 1,203 G instructions against 957-969 G with the estimates off,
+because more lines take a plan priced by the facts' distributions, not by the run's statistics. So derived relations
+are sized by an estimate only under `RERAIL_DERIVED_ESTIMATES=on`, a measurement aid. A rule over a derived relation
+that facts do not size is planned at run time. Rules over relations whose facts size them are prepared as before.
 

@@ -133,9 +133,12 @@ mod tests {
     fn chunks_taken_and_given_back_at_once_are_never_handed_out_twice() {
         let b = block();
         let held = std::sync::Mutex::new(std::collections::HashSet::new());
+        // Each thread is the test's (decision 0442: a caller's thread holds its object).
+        let caller = rerail_context::caller();
         std::thread::scope(|s| {
             for _ in 0..8 {
                 s.spawn(|| {
+                    let _caller = caller.enter();
                     for i in 0..2000 {
                         let a = b.try_alloc_chunk(256, 64).unwrap();
                         assert!(held.lock().unwrap().insert(a), "chunk {a} handed out twice");

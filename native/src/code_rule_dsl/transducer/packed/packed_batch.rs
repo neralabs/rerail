@@ -181,15 +181,17 @@ fn contains_rows(needles: &[&[u8]], files: &[&TapeDoc], starts: &[usize], words:
         })
         .collect::<Vec<_>>();
     let literals = scan::Batch::of(plans);
-    let per_file: Vec<Vec<Option<Vec<u64>>>> = files
-        .par_iter()
-        .map(|tape| {
-            let len = tape.transducer_len();
-            let candidates: Vec<u32> = (0..len as u32).collect();
-            let span = |node: u32| tape.transducer_span(node);
-            literals.bits(&scan::Nodes { text: tape.transducer_source(), len, candidates: &candidates, span: &span })
-        })
-        .collect();
+    let per_file: Vec<Vec<Option<Vec<u64>>>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+        files
+            .par_iter()
+            .map(|tape| {
+                let len = tape.transducer_len();
+                let candidates: Vec<u32> = (0..len as u32).collect();
+                let span = |node: u32| tape.transducer_span(node);
+                literals.bits(&scan::Nodes { text: tape.transducer_source(), len, candidates: &candidates, span: &span })
+            })
+            .collect()
+    });
     for (at, needle) in needles.iter().enumerate() {
         let plan = distinct.binary_search(needle).expect("a needle of the batch");
         let row = &mut rows[at * words..(at + 1) * words];

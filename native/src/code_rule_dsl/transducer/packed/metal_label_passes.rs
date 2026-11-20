@@ -540,7 +540,7 @@ pub(in crate::code_rule_dsl) fn text_row(
 ) -> Option<std::sync::Arc<Vec<u32>>> {
     use rayon::prelude::*;
     let _texts = crate::code_rule_dsl::prof::Stage::start("size.texts");
-    let per_file = files.par_iter().map(|tape| walk.slot(program, slot, tape)).collect::<Option<Vec<_>>>()?;
+    let per_file = crate::code_rule_dsl::logic::profile::on_cores(|| files.par_iter().map(|tape| walk.slot(program, slot, tape)).collect::<Option<Vec<_>>>())?;
     let mut bits = vec![0_u32; words];
     for (file, base) in per_file.iter().zip(bases) {
         for (index, &word) in file.iter().enumerate() {
@@ -569,30 +569,34 @@ pub(in crate::code_rule_dsl) fn text_rows(
     crate::code_rule_dsl::prof::count("size.text_slots", slots.len());
     // Each (slot, file)'s bits, `None` where an evaluation failed: one task each, so a large
     // file's slots spread over the threads.
-    let per_pair = (0..slots.len() * files.len())
-        .into_par_iter()
-        .map(|pair| {
-            let (walk, program, slot) = slots[pair / files.len()];
-            walk.slot(program, slot, &files[pair % files.len()])
-        })
-        .collect::<Vec<_>>();
-    (0..slots.len())
-        .into_par_iter()
-        .map(|at| {
-            let mut bits = vec![0_u32; words];
-            for (file, base) in per_pair[at * files.len()..(at + 1) * files.len()].iter().zip(bases) {
-                for (index, &word) in file.as_ref()?.iter().enumerate() {
-                    let mut word = word;
-                    while word != 0 {
-                        let node = *base + (index * 64) as u32 + word.trailing_zeros();
-                        bits[node as usize / 32] |= 1 << (node % 32);
-                        word &= word - 1;
+    let per_pair = crate::code_rule_dsl::logic::profile::on_cores(|| {
+        (0..slots.len() * files.len())
+            .into_par_iter()
+            .map(|pair| {
+                let (walk, program, slot) = slots[pair / files.len()];
+                walk.slot(program, slot, &files[pair % files.len()])
+            })
+            .collect::<Vec<_>>()
+    });
+    crate::code_rule_dsl::logic::profile::on_cores(|| {
+        (0..slots.len())
+            .into_par_iter()
+            .map(|at| {
+                let mut bits = vec![0_u32; words];
+                for (file, base) in per_pair[at * files.len()..(at + 1) * files.len()].iter().zip(bases) {
+                    for (index, &word) in file.as_ref()?.iter().enumerate() {
+                        let mut word = word;
+                        while word != 0 {
+                            let node = *base + (index * 64) as u32 + word.trailing_zeros();
+                            bits[node as usize / 32] |= 1 << (node % 32);
+                            word &= word - 1;
+                        }
                     }
                 }
-            }
-            Some(std::sync::Arc::new(bits))
-        })
-        .collect()
+                Some(std::sync::Arc::new(bits))
+            })
+            .collect()
+    })
 }
 
 /// Slot `slot` of `walk` on the file whose nodes start at global `base`, from `rows` where a run
@@ -1295,8 +1299,10 @@ pub(in crate::code_rule_dsl) fn warm() {
         let shared = crate::code_rule_dsl::logic::profile::shared_here();
         // A panic leaves the kernels to be compiled where they are needed (a job's panic would end
         // the process).
-        rayon::spawn(move || rerail_accel::exec::as_job("the label kernels' warm-up", || {
+        // In the run around the job (`as_job` notes its wall, the machine's, after its closure returns).
+        crate::code_rule_dsl::logic::profile::cores_spawn(move || {
             let _in_run = crate::code_rule_dsl::logic::profile::within(shared);
+            rerail_accel::exec::as_job("the label kernels' warm-up", || {
             let _ = std::panic::catch_unwind(|| {
                 // The set program's kernels first: it runs first in a wave (its candidates). The shared
                 // device is not opened here: on S7 a wave waiting on this job's open waited longer (to
@@ -1310,7 +1316,8 @@ pub(in crate::code_rule_dsl) fn warm() {
                 });
                 let _ = compile_sweep_cached();
             });
-        }));
+            })
+        });
     });
 }
 

@@ -270,6 +270,7 @@ pub fn run_rr(
     if !program.output_names().iter().any(|name| super::logic::rr::is_diagnostic(name)) {
         return Err(format!("{}: no .violation declarations", path.display()));
     }
+    let _sources = rr::profile_join_sources(&[path]);
     run_program(program, &files, root, out, options)
 }
 
@@ -397,7 +398,7 @@ pub fn run_policies(
     let _batch = super::logic::plan::corpus::phases::Batch::enter();
     // The policies of one language run as one pack (decision 0168): libraries read, lowered, hidden and evaluated once
     // (decisions 0051, 0089), each policy's findings split back by its id. The rest run alone.
-    // `RERAIL_BATCH_PACK=off` runs each policy alone, as before, to compare (a measurement's switch).
+    // `RERAIL_BATCH_PACK=off` runs each policy alone. With `strict`, a failed group returns its error.
     let packed = std::env::var("RERAIL_BATCH_PACK").map_or(true, |v| v != "off");
     let texts = if packed { program_texts(&paths.iter().map(|p| p.as_path()).collect::<Vec<_>>()).ok() } else { None };
     let groups = texts.as_deref().map(|texts| policy_groups(texts, root, options)).unwrap_or_default();
@@ -509,10 +510,19 @@ fn run_pack(
     use crate::code_rule_dsl::logic::plan::output;
     let texts: Vec<&str> = group.members.iter().map(|&k| texts[k].as_str()).collect();
     let binding = if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu };
+    let _sources = super::logic::profile::on().then(|| super::logic::rr::profile_join_sources(
+        &group.members.iter().map(|&k| paths[k].as_path()).collect::<Vec<_>>(),
+    ));
     let dir = out.join(format!("pack-{}", group.members[0]));
     crate::code_rule_dsl::logic::profile::decision("a batch's policies as one pack (decision 0168)", || {
         format!("{} policies: {}", texts.len(), group.ids.join(", "))
     });
+    // A pack that cannot run together falls back to its policies alone, or under `RERAIL_BATCH_PACK=strict` fails.
+    let fallback = |reason| {
+        if std::env::var("RERAIL_BATCH_PACK").as_deref() == Ok("strict") {
+            Err(format!("combined run of {} policies failed: {reason}", texts.len()))
+        } else { Ok(None) }
+    };
     // Each dialect's run and its directory, its language the dialect's (the `dialect` option, as `run_program` runs
     // a policy alone): one run as written where the language has one dialect.
     let runs: Vec<(Option<&str>, std::path::PathBuf)> = if group.dialects.is_empty() {
@@ -527,8 +537,9 @@ fn run_pack(
         if let Some(dialect) = dialect {
             options["dialect"] = serde_json::json!(dialect);
         }
-        let Ok(report) = corpus::run_with_options(&texts, root, None, dir, "program", binding, 1 << 18, &Default::default(), &options) else {
-            return Ok(None);
+        let report = match corpus::run_with_options(&texts, root, None, dir, "program", binding, 1 << 18, &Default::default(), &options) {
+            Ok(report) => report,
+            Err(error) => return fallback(error.to_string()),
         };
         files += report.files;
         outputs.push(output::Outputs::open(dir).map_err(|e| e.to_string())?);
@@ -540,7 +551,9 @@ fn run_pack(
     for run in &outputs {
         for rel in run.names().into_iter().filter(|r| super::logic::rr::is_diagnostic(r)) {
             for row in run.rows(rel) {
-                let Some(at) = row.get(0).text().and_then(|id| group.ids.iter().position(|x| x == id)) else { return Ok(None) };
+                let Some(at) = row.get(0).text().and_then(|id| group.ids.iter().position(|x| x == id)) else {
+                    return fallback(format!("{rel} produced a finding with an unknown policy id {:?}", row.get(0).text()));
+                };
                 each[at].push(diagnostic(&row)?);
                 rows[at].entry(rel.to_owned()).or_default().push(row);
             }
@@ -838,8 +851,9 @@ const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine du
 /// it keeps.
 ///
 /// Returns the command's result, and where it cut a relation at the width cap (decision 0462, `RERAIL_WIDEST=cut`) the
-/// message that its results are incomplete: the caller fails the process with it.
-pub fn cli(args: &[String]) -> (Result<String, String>, Option<String>) {
+/// message that its results are incomplete: the caller fails the process with it. So too where the engine read state
+/// outside any run (decision 0442, `rerail_context::misses`): a refused read, which took a value of its own.
+pub fn cli(args: &[String], machine: &std::sync::Arc<crate::threads::Machine>) -> (Result<String, String>, Option<String>) {
     // Decision 0272 (O167): the process ends with its command, before any idle time, so each run serves its waiting
     // join searches at its end, within a share of its CPU (decision 0243). A long-lived caller of `cli_in` leaves
     // them to the idle job.
@@ -848,8 +862,9 @@ pub fn cli(args: &[String]) -> (Result<String, String>, Option<String>) {
     crate::code_rule_dsl::logic::profile::command_begins();
     // Decision 0395: a run never waits on a Metal compile of a kernel it has another form of; the kernels it went
     // without are compiled by maintenance (below, upkeep, `kernels compile`).
-    // The process's command, its own caller: what it shares by design is its own (decision 0442), its machine too.
-    let shared = crate::code_rule_dsl::logic::run::Shared::new();
+    // The process's command, its own caller: what it shares by design is its own, on the machine its program made
+    // (decision 0442).
+    let shared = crate::code_rule_dsl::logic::profile::Shared::on(machine);
     #[cfg(target_os = "macos")]
     if args.first().is_none_or(|c| c != "kernels") {
         rerail_accel::gpu::kernels::set_mode(shared.machine(), rerail_accel::gpu::kernels::Mode::Defer);
@@ -870,6 +885,14 @@ pub fn cli(args: &[String]) -> (Result<String, String>, Option<String>) {
             c.wall, c.own + c.helped, c.off_core(), c.others(), c.no_core()
         );
     }
+    let misses = crate::code_rule_dsl::logic::profile::misses();
+    let refused = (!misses.is_empty()).then(|| {
+        format!("{} read(s) outside any run, refused (decision 0442; each with its backtrace above): {}", misses.len(), misses.join(", "))
+    });
+    let incomplete = match (incomplete, refused) {
+        (Some(a), Some(b)) => Some(format!("{a}\n{b}")),
+        (a, b) => a.or(b),
+    };
     (out, incomplete)
 }
 
@@ -1180,6 +1203,7 @@ fn logic_command(args: &[String]) -> Result<String, String> {
     // A directory: every `.rr` in it, run as one program (each file parsed once for all of them); each file's
     // `#include`s are read in.
     let reading = crate::code_rule_dsl::logic::profile::span(|| "read the rule files".into());
+    let _sources;
     let programs = if Path::new(program.as_str()).is_dir() {
         let mut files: Vec<_> = std::fs::read_dir(program)
             .map_err(|e| format!("{program}: {e}"))?
@@ -1204,10 +1228,14 @@ fn logic_command(args: &[String]) -> Result<String, String> {
         files.retain(|path| !path.file_name().is_some_and(|n| included.contains(n)));
         timeline_mark("the program files listed");
         let texts = crate::tools::program_texts(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>())?;
+        _sources = super::logic::rr::profile_join_sources(&files.iter().map(|p| p.as_path()).collect::<Vec<_>>());
         timeline_mark("the program texts read");
         texts
     } else {
-        vec![crate::tools::program_text(Path::new(program.as_str()))?]
+        let path = Path::new(program.as_str());
+        let text = crate::tools::program_text(path)?;
+        _sources = super::logic::rr::profile_join_sources(&[path]);
+        vec![text]
     };
     drop(reading);
     if programs.is_empty() {

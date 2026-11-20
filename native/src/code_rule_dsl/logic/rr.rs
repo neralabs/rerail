@@ -419,12 +419,14 @@ pub fn modules_of(srcs: &[&str]) -> Vec<Result<Option<Modules>, Error>> {
     }
     // The caller's context on each job's thread (its observer and store, a test's own), as the corpus's reads carry it.
     let carry = super::run_state::Carry::here();
-    srcs.par_iter()
-        .map(|src| {
-            let _in = carry.enter();
-            modules(src)
-        })
-        .collect()
+    super::profile::on_cores(|| {
+        srcs.par_iter()
+            .map(|src| {
+                let _in = carry.enter();
+                modules(src)
+            })
+            .collect()
+    })
 }
 
 /// A run's library (decision 0089): its modules, each with its files (canonical paths), and the program linked from
@@ -1667,7 +1669,7 @@ pub struct GuestAsks {
     /// Its `.guests` settings: `guest_policy`'s facts, which a pack's programs share.
     pub settings: Vec<String>,
     /// `None` when no rule it reaches reads a guest: alone it makes none (`corpus`'s guest requests are no outputs).
-    /// Else the library files whose clauses ask (`asks`, or an `embed`): an included file's asking clauses are kept
+    /// Else the library files whose clauses ask (`asks`): an included file's asking clauses are kept
     /// whatever reads them (`reached_statements`), so these files' clauses are what it asks for.
     pub files: Option<Vec<PathBuf>>,
     /// Its own clauses ask too: what it asks for is its own.
@@ -1686,8 +1688,8 @@ pub fn guest_asks(src: &str) -> Result<GuestAsks, Error> {
         Some(S::Setting { key: "guests", text }) => Some(text.to_owned()),
         _ => None,
     }).collect();
-    // What a clause reads, off its tape, and whether it makes a guest request (a read `lower` makes a demand of, or an
-    // `embed`): its heads' arguments', its body's and its edits' names.
+    // What a clause reads, off its tape, and whether it makes a guest request (a read `lower` makes a demand of): its
+    // heads' arguments', its body's and its edits' names.
     let read = |st: &Stmt| -> BTreeSet<String> {
         let (t, n) = st.tape();
         let mut out = BTreeSet::new();
@@ -1701,16 +1703,14 @@ pub fn guest_asks(src: &str) -> Result<GuestAsks, Error> {
         }
         out
     };
-    let asking = |heads: &[&str], read: &BTreeSet<String>| {
-        read.iter().any(|r| asks(r) && !WORLD.iter().any(|(w, _)| w == r)) || heads.iter().any(|h| LIBRARY_DERIVED[..2].contains(h))
-    };
+    let asking = |read: &BTreeSet<String>| read.iter().any(|r| asks(r) && !WORLD.iter().any(|(w, _)| w == r));
     let reads_guest = |read: &BTreeSet<String>| read.iter().any(|r| READS.contains(&r.as_str()) || r == "parse" || r == "splice");
     let mut by_head: std::collections::HashMap<&str, Vec<BTreeSet<String>>> = std::collections::HashMap::new();
     let mut asking_files: Vec<PathBuf> = Vec::new();
     for (path, statements) in &files {
         for st in statements.iter().filter(|st| matches!(st.what(), Some(S::Clause))) {
             let (heads, r) = (st.heads(), read(st));
-            if asking(&heads, &r) && !asking_files.iter().any(|p| p == path) {
+            if asking(&r) && !asking_files.iter().any(|p| p == path) {
                 asking_files.push(path.to_path_buf());
             }
             heads.iter().for_each(|h| by_head.entry(h).or_default().push(r.clone()));
@@ -1721,7 +1721,7 @@ pub fn guest_asks(src: &str) -> Result<GuestAsks, Error> {
     let mut reached: BTreeSet<String> = BTreeSet::new();
     for st in own.iter().filter(|st| matches!(st.what(), Some(S::Clause))) {
         let (heads, r) = (st.heads(), read(st));
-        own_asks |= asking(&heads, &r);
+        own_asks |= asking(&r);
         reads |= reads_guest(&r);
         reached.extend(heads.iter().map(|h| (*h).to_owned()));
         reached.extend(r);
@@ -1949,6 +1949,39 @@ fn program_order(path: &Path) -> Result<(Vec<PathBuf>, Vec<LibraryFile>), Error>
         trace(&g, &library, &target, &mut files, &mut seen);
     }
     Ok((order, files))
+}
+
+/// Index authored clause heads for the current CLI profile. Shared library names survive
+/// combination; private heads also have the policy prefix assigned by the combiner.
+pub fn profile_join_sources(paths: &[&Path]) -> Option<super::profile::author_joins::Sources> {
+    use super::profile::author_joins::{Locations, Sources};
+    if !super::profile::on() { return None; }
+    let mut locations = Locations::default();
+    let mut indexed = BTreeSet::new();
+    for (i, root) in paths.iter().enumerate() {
+        if root.extension().is_some_and(|e| e == "json") { continue; }
+        let own = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        let files = program_order(&own).map(|(order, _)| order).unwrap_or_else(|_| vec![own.clone()]);
+        for file in files {
+            if file != own && !indexed.insert(file.clone()) { continue; }
+            let Ok((rr_file, _)) = read_shared(&file) else { continue };
+            for s in rr_file.statements() {
+                if s.what() != Some(S::Clause) || !s.has_body() { continue; }
+                let line = s.line();
+                let mut reads = Vec::new();
+                check::clause_reads(&rr_file, &check::clause_body(&rr_file, s.node()), &mut reads);
+                for name in s.heads() {
+                    let name = &name.to_owned();
+                    let key = if file == own && paths.len() > 1 { format!("p{i}_{name}") } else { name.clone() };
+                    for read in &reads {
+                        locations.reads.entry((key.clone(), read.clone())).or_default().insert((file.clone(), line));
+                    }
+                    locations.definitions.entry(key).or_insert_with(|| (name.clone(), BTreeSet::new())).1.insert((file.clone(), line));
+                }
+            }
+        }
+    }
+    Some(Sources::enter(locations))
 }
 
 /// A file and everything it includes, each once, includes first: (path, statements without the

@@ -1539,7 +1539,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
 /// (`rerail_accel::gpu::join::column_stats_of`). A relation this thread holds on the device, as it is now (its live
 /// rows), is read in place: its column of the resident upload. Any other's values are gathered on the host. Also how
 /// many columns were read in place.
-pub fn column_stats(cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), String> {
+pub fn column_stats(cols: &[StatColumn<'_>], k: usize, words: usize) -> Result<(Vec<ColumnStats>, usize), String> {
     use rerail_accel::gpu::join::{StatCol, column_stats_of};
     // Each relation's upload and where the column is in it: a copy holds only the columns stages read, in its
     // owner's numbering (decision 0277), so a column it lacks is gathered on the host.
@@ -1574,9 +1574,9 @@ pub fn column_stats(cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStat
             (_, _, g) => StatCol::Host(g.as_deref().expect("gathered")),
         })
         .collect();
-    let made = column_stats_of(&stat, k)?;
+    let made = column_stats_of(&stat, k, words)?;
     let in_place = devs.iter().filter(|d| d.is_some()).count();
-    Ok((made.into_iter().map(|m| ColumnStats { rows: m.rows, ndv: m.ndv, sq: m.sq, cube: m.cube, top: m.top }).collect(), in_place))
+    Ok((made.into_iter().map(|m| ColumnStats { rows: m.rows, ndv: m.ndv, sq: m.sq, cube: m.cube, top: m.top, keys: m.keys }).collect(), in_place))
 }
 
 /// Column `col` of `rel`'s live rows, in row order (as the resident upload lays them out).

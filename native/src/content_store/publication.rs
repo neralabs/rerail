@@ -113,24 +113,26 @@ impl ContentStore {
             )));
         }
         let identities = (|| {
-            publications
-                .par_iter()
-                .map(|publication| {
-                    validate_relative_path(publication.path)?;
-                    if publication.state_id <= 0 {
-                        return Err(StoreError::Invalid(
-                            "overlay state must be positive".to_owned(),
-                        ));
-                    }
-                    validate_tape_payload(publication.tape)?;
-                    let source = HashKey::sha256(publication.source);
-                    Ok((
-                        publication,
-                        source,
-                        publication.tape.map(|tape| HashKey::tape_identity(source, tape.bytes)),
-                    ))
-                })
-                .collect::<StoreResult<Vec<_>>>()
+            rerail_prof::code_rule_dsl::logic::profile::on_cores(|| {
+                publications
+                    .par_iter()
+                    .map(|publication| {
+                        validate_relative_path(publication.path)?;
+                        if publication.state_id <= 0 {
+                            return Err(StoreError::Invalid(
+                                "overlay state must be positive".to_owned(),
+                            ));
+                        }
+                        validate_tape_payload(publication.tape)?;
+                        let source = HashKey::sha256(publication.source);
+                        Ok((
+                            publication,
+                            source,
+                            publication.tape.map(|tape| HashKey::tape_identity(source, tape.bytes)),
+                        ))
+                    })
+                    .collect::<StoreResult<Vec<_>>>()
+            })
         })()?;
         let candidate_identities = publication_candidate_identities(publications);
         // Path identities are hashed once, before any transaction takes the write lock.

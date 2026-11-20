@@ -285,6 +285,13 @@ fn written_back(base: *mut u8, len: usize, _: Flush) -> io::Result<()> {
     }
 }
 
+/// `msync`s the range with `MS_SYNC`: with no device to wire its pages, the call writes every dirty page back. (Linux's
+/// `mincore` tells only whether a page is resident, not whether it is dirty.)
+#[cfg(not(target_os = "macos"))]
+fn written_back(base: *mut u8, len: usize) -> io::Result<()> {
+    msync(base, len, libc::MS_SYNC)
+}
+
 fn msync(base: *mut u8, len: usize, flags: i32) -> io::Result<()> {
     if len == 0 {
         return Ok(());

@@ -138,10 +138,12 @@ fn set_census() {
         .iter()
         .map(|s| ((*s).to_owned(), kind_atom(tag, catalog.kind_id(s))))
         .collect();
-    let docs: Vec<Doc> = files
-        .par_iter()
-        .filter_map(|p| census(p, &p.strip_prefix(&root).unwrap().to_string_lossy(), &scopes, &names))
-        .collect();
+    let docs: Vec<Doc> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+        files
+            .par_iter()
+            .filter_map(|p| census(p, &p.strip_prefix(&root).unwrap().to_string_lossy(), &scopes, &names))
+            .collect()
+    });
     let total: u64 = docs.iter().map(|d| u64::from(d.nodes)).sum();
     let big = docs.iter().filter(|d| d.nodes > CHUNK).count();
     let max = docs.iter().map(|d| d.nodes).max().unwrap_or(0);
@@ -283,7 +285,7 @@ fn set_operations() {
     }
     let scopes: Vec<(String, u32)> =
         ["function_definition", "class_definition", "except_clause"].iter().map(|s| ((*s).to_owned(), kind_atom(tag, catalog.kind_id(s)))).collect();
-    let docs: Vec<DocSets> = files.par_iter().filter_map(|p| doc_sets(p, &p.strip_prefix(&root).unwrap().to_string_lossy(), &scopes, &names)).collect();
+    let docs: Vec<DocSets> = crate::code_rule_dsl::logic::profile::on_cores(|| files.par_iter().filter_map(|p| doc_sets(p, &p.strip_prefix(&root).unwrap().to_string_lossy(), &scopes, &names)).collect());
     // One space over the repository, and the runner's waves: files in order, up to 2^18 nodes each.
     let mut waves: Vec<std::ops::Range<usize>> = Vec::new();
     let (mut from, mut nodes) = (0, 0u32);
@@ -446,7 +448,7 @@ fn posting_forms() {
             names.insert(kind_atom(tag, code), name.to_owned());
         }
     }
-    let docs: Vec<DocSets> = files.par_iter().filter_map(|p| doc_sets(p, &p.strip_prefix(&root).unwrap().to_string_lossy(), &[], &names)).collect();
+    let docs: Vec<DocSets> = crate::code_rule_dsl::logic::profile::on_cores(|| files.par_iter().filter_map(|p| doc_sets(p, &p.strip_prefix(&root).unwrap().to_string_lossy(), &[], &names)).collect());
     let space = NodeSpace::new(docs.iter().map(|d| d.nodes).collect());
     // Every (document, kind) posting in both forms.
     let mut varint: Vec<(usize, String, Vec<u8>)> = Vec::new();
@@ -581,7 +583,7 @@ fn set_profile() {
     }
     let scopes: Vec<(String, u32)> =
         ["function_definition", "class_definition", "except_clause"].iter().map(|s| ((*s).to_owned(), kind_atom(tag, catalog.kind_id(s)))).collect();
-    let docs: Vec<DocSets> = files.par_iter().filter_map(|p| doc_sets(p, &p.strip_prefix(&root).unwrap().to_string_lossy(), &scopes, &names)).collect();
+    let docs: Vec<DocSets> = crate::code_rule_dsl::logic::profile::on_cores(|| files.par_iter().filter_map(|p| doc_sets(p, &p.strip_prefix(&root).unwrap().to_string_lossy(), &scopes, &names)).collect());
     let space = NodeSpace::new(docs.iter().map(|d| d.nodes).collect());
     let build = |name: &str| -> (DenseSet, NodeSet) {
         let (mut dense, mut chunked) = (DenseSet::empty(&space), NodeSet::empty(&space));

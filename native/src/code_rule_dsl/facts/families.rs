@@ -347,13 +347,15 @@ impl Families {
             let Ok(source) = String::from_utf8(store.get_source(source_id)?) else { continue };
             sources.push((source_id, language, Arc::new(source)));
         }
-        let parsed = sources
-            .into_par_iter()
-            .map(|(source_id, language, source)| {
-                let parse = tape::Grammar::new(language).map_err(StoreError::Invalid).map(|grammar| TapeImage::parse(&grammar, &source, &|| false));
-                parse.map(|parse| (source_id, (source, parse)))
-            })
-            .collect::<StoreResult<Vec<_>>>()?;
+        let parsed = crate::code_rule_dsl::logic::profile::on_cores(|| {
+            sources
+                .into_par_iter()
+                .map(|(source_id, language, source)| {
+                    let parse = tape::Grammar::new(language).map_err(StoreError::Invalid).map(|grammar| TapeImage::parse(&grammar, &source, &|| false));
+                    parse.map(|parse| (source_id, (source, parse)))
+                })
+                .collect::<StoreResult<Vec<_>>>()
+        })?;
         self.parsed.extend(parsed);
         Ok(())
     }

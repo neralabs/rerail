@@ -212,21 +212,20 @@ thread_local! {
     static TOP: std::cell::Cell<(i64, i64)> = const { std::cell::Cell::new((0, 0)) };
 }
 
-/// A chunk entered on this thread (`enter_chunk`): when it drops, the thread's chunk is back, and what this thread
-/// allocated less freed meanwhile (less the scopes inside) is the chunk's.
+/// A chunk's account entered on this thread (`enter_chunk`): when it drops, what this thread allocated less freed
+/// meanwhile (less the scopes inside) is the chunk's. Which chunk the run evaluates is the run's context
+/// (`RunChunk`); this is the thread's share of its work.
 pub struct InChunk {
-    old: Option<Option<Arc<Chunk>>>,
     chunk: Option<Arc<Chunk>>,
     net: i64,
     given: i64,
     top: (i64, i64),
 }
 
-/// Enters `chunk` on this thread, for a job carried into it or its own evaluation (`in_chunk`).
+/// Enters `chunk`'s account on this thread, for a job carried into it (`run_chunk`) or its own evaluation (`in_chunk`).
 pub fn enter_chunk(chunk: Option<Arc<Chunk>>) -> InChunk {
-    let old = CHUNK.with(|c| c.replace(chunk.clone()));
     let (net, given) = (heap_net(), GIVEN.with(std::cell::Cell::get));
-    InChunk { old: Some(old), chunk, net, given, top: TOP.with(|t| t.replace((net, given))) }
+    InChunk { chunk, net, given, top: TOP.with(|t| t.replace((net, given))) }
 }
 
 impl Drop for InChunk {
@@ -238,15 +237,12 @@ impl Drop for InChunk {
             c.heap.fetch_add(own, std::sync::atomic::Ordering::Relaxed);
             c.note();
         }
-        if let Some(old) = self.old.take() {
-            CHUNK.with(|c| *c.borrow_mut() = old);
-        }
     }
 }
 
 /// What the chunk this thread evaluates has held at its most so far (`Chunk::held_most`); `None` outside one.
 pub fn chunk_held_most() -> Option<usize> {
-    let chunk = CHUNK.with(|c| c.borrow().clone())?;
+    let chunk = crate::code_rule_dsl::logic::profile::bound::<RunChunk>().0?;
     // The scope this thread is in, its allocation so far: its chunk's, not given yet.
     let (net, given) = TOP.with(std::cell::Cell::get);
     let open = (heap_net() - net) - (GIVEN.with(std::cell::Cell::get) - given);
@@ -256,19 +252,28 @@ pub fn chunk_held_most() -> Option<usize> {
     Some(most)
 }
 
-thread_local! {
-    /// The chunk this thread's run is evaluating (`in_chunk`): carried to its jobs (`setfix::carried`).
-    pub static CHUNK: std::cell::RefCell<Option<Arc<Chunk>>> = const { std::cell::RefCell::new(None) };
+/// The chunk the run is evaluating (`in_chunk`), in the run's context: its jobs' relations go in its blocks too.
+#[derive(Clone, Default)]
+struct RunChunk(Option<Arc<Chunk>>);
+
+/// The chunk the run is evaluating (`RunChunk`): what a job on another thread enters (`enter_chunk`, the engine's
+/// `run_state`), so what its thread allocates while it runs is the chunk's (Q203 item 3).
+pub fn run_chunk() -> Option<Arc<Chunk>> {
+    crate::code_rule_dsl::logic::profile::bound::<RunChunk>().0
 }
 
 /// Runs `f` as a chunk's evaluation: the relations it and its jobs make go in blocks of the chunk's own, given back
 /// with the last of its rows (decision 0289: a chunk is a block). What outlives the chunk keeps only its own block;
 /// the profile counts those (`a chunk's blocks outlived it`).
 pub fn in_chunk<R>(f: impl FnOnce() -> R) -> R {
-    struct Leave(Option<InChunk>, Arc<Chunk>);
+    // The chunk bound for the run's extent, and this thread's account of it (dropped first: entered last).
+    struct Leave(Option<(crate::code_rule_dsl::logic::profile::Bound, InChunk)>, Arc<Chunk>);
     impl Drop for Leave {
         fn drop(&mut self) {
-            drop(self.0.take());
+            if let Some((bound, account)) = self.0.take() {
+                drop(account);
+                drop(bound);
+            }
             for open in &self.1.open {
                 open.lock().unwrap_or_else(|e| e.into_inner()).take();
             }
@@ -283,7 +288,8 @@ pub fn in_chunk<R>(f: impl FnOnce() -> R) -> R {
         }
     }
     let chunk = Arc::new(Chunk::default());
-    let _leave = Leave(Some(enter_chunk(Some(chunk.clone()))), chunk);
+    let bound = crate::code_rule_dsl::logic::profile::bind(RunChunk(Some(chunk.clone())));
+    let _leave = Leave(Some((bound, enter_chunk(Some(chunk.clone())))), chunk);
     f()
 }
 
@@ -326,7 +332,7 @@ fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<F
 /// still hold no such chunk. And the chunk is taken under the open block's lock, so another thread's cannot take
 /// the room between the check and the chunk (an index's runs are built on the pool).
 fn chunk_in_open(life: Life, need: usize, align: usize) -> Result<(Arc<Facts>, (usize, usize)), String> {
-    let chunk = CHUNK.with(|c| c.borrow().clone());
+    let chunk = crate::code_rule_dsl::logic::profile::bound::<RunChunk>().0;
     let runs = crate::code_rule_dsl::logic::profile::local::<Open>();
     let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
     if let Some(f) = &*open
@@ -798,7 +804,7 @@ impl Part {
         // A relation given room past its rows (`extra`: its indexes', `Rows::with_index_room`) is alone in its block
         // too, so its indexes lie with it.
         let alone = life == Life::Device || extra > 0;
-        let chunk = CHUNK.with(|c| c.borrow().clone());
+        let chunk = crate::code_rule_dsl::logic::profile::bound::<RunChunk>().0;
         let (runs, live_blocks) = (crate::code_rule_dsl::logic::profile::local::<Open>(), crate::code_rule_dsl::logic::profile::machine::<Live>());
         let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
         for fresh in [false, true] {
@@ -1877,7 +1883,7 @@ mod tests {
         // Its most when asked: its own 100 + 30 - 10 MB, the other chunk's 50 MB not, the 500 MB before it not.
         assert_eq!(held, 120 << 20, "{} MB", held >> 20);
         assert_eq!(other.held_most(), 50 << 20, "the other chunk's job is its own");
-        assert!(CHUNK.with(|c| c.borrow().is_none()), "the thread's chunk is back");
+        assert!(crate::code_rule_dsl::logic::profile::bound::<RunChunk>().0.is_none(), "the run's chunk is back");
     }
 
     /// An empty kept relation keeps its width: one started from it holds the rows pushed to it (it dropped them when

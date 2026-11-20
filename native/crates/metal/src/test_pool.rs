@@ -38,14 +38,15 @@ thread_local! {
 static HELD: Mutex<usize> = Mutex::new(0);
 static RELEASED: Condvar = Condvar::new();
 
-/// This thread's pool ledger.
+/// This thread's pool ledger; on a thread whose locals are being torn down (a lease dropped by another local's
+/// drop as the thread exits), an empty one: the thread holds nothing more to count.
 pub fn pool() -> Arc<AtomicUsize> {
-    LEDGERS.with(|ledgers| Arc::clone(&ledgers.pool))
+    LEDGERS.try_with(|ledgers| Arc::clone(&ledgers.pool)).unwrap_or_default()
 }
 
 /// The most this thread's pool ledger has held.
 pub fn pool_peak() -> Arc<AtomicUsize> {
-    LEDGERS.with(|ledgers| Arc::clone(&ledgers.peak))
+    LEDGERS.try_with(|ledgers| Arc::clone(&ledgers.peak)).unwrap_or_default()
 }
 
 thread_local! {

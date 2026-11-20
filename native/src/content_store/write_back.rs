@@ -248,38 +248,41 @@ pub fn seals(boundary: Boundary) -> bool {
     !matches!(boundary, Boundary::ConeRound)
 }
 
-thread_local! {
-    /// The run whose waves this thread's writes join (`run_waves`); 0 outside a run, where each write is a wave of
-    /// its own. Carried to the run's jobs on other threads (`run_state`).
-    pub static WAVES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+/// The run whose waves its writes join (`run_waves`), in the run's context (its jobs' writes join them too); 0 outside
+/// a run, where each write is a wave of its own.
+#[derive(Clone, Copy, Default)]
+struct RunWaves(u64);
+
+/// The run whose waves this caller's writes join (`RunWaves`).
+fn waves() -> u64 {
+    rerail_prof::code_rule_dsl::logic::profile::bound::<RunWaves>().0
 }
 
-/// While it lives, this thread's writes (and its run's jobs') join a run's waves of their own (`WAVES`); dropped, the
-/// run's wave still being written is sealed, in every store's writer, and the thread's run before is back. Its end
+/// While it lives, this caller's writes (and its run's jobs') join a run's waves of their own (`RunWaves`); dropped,
+/// the run's wave still being written is sealed, in every store's writer, and the run before is back. Its end
 /// does not wait for the writer: `written` does.
 pub struct Waves {
     run: u64,
-    before: u64,
+    _bound: rerail_prof::code_rule_dsl::logic::profile::Bound,
 }
 
 /// A run's waves of its own, from here (`Waves`).
 pub fn run_waves() -> Waves {
     static RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let run = RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    Waves { run, before: WAVES.with(|w| w.replace(run)) }
+    Waves { run, _bound: rerail_prof::code_rule_dsl::logic::profile::bind(RunWaves(run)) }
 }
 
 impl Drop for Waves {
     fn drop(&mut self) {
         seal_everywhere(self.run, Seal::Finished);
-        WAVES.with(|w| w.set(self.before));
     }
 }
 
 /// Ends this thread's run's wave at `boundary`, in the writer of every store it wrote to, where `seals` says the
 /// boundary seals one (decision 0259).
 pub fn end_wave(boundary: Boundary) {
-    let run = WAVES.with(std::cell::Cell::get);
+    let run = waves();
     if run != 0 && seals(boundary) {
         seal_everywhere(run, if boundary == Boundary::End { Seal::End } else { Seal::Wave });
     }
@@ -634,7 +637,7 @@ impl ContentStore {
     /// read of it gets meanwhile (`None`: a read waits for the job). The writer's own handle (in a
     /// job) writes at once.
     ///
-    /// The job joins the wave the run is writing (`WAVES`), and the store takes the wave whole, in one transaction
+    /// The job joins the wave the run is writing (`RunWaves`), and the store takes the wave whole, in one transaction
     /// (`ContentStore::in_one_transaction`), each job a savepoint in it, once a boundary seals it (`end_wave`).
     pub fn write_back(&self, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Work) {
         self.queue(what, bytes, keys, guarded(Syms::Unmapped, job.into_job()), Run::InWave, false);
@@ -674,7 +677,7 @@ impl ContentStore {
     /// in the run's wave once it holds [`gather_cap`] bytes, or when the wave is sealed. False, nothing added, outside
     /// a run's waves, with no writer, or with no threads (the browser build): the caller queues the write itself.
     pub fn gather<G: Gather>(&self, what: &'static str, make: impl FnOnce() -> G, add: impl FnOnce(&mut G)) -> bool {
-        let run = WAVES.with(std::cell::Cell::get);
+        let run = waves();
         let Some(w) = self.writer().filter(|_| run != 0 && !cfg!(target_family = "wasm")) else { return false };
         if !super::hazards::warm_write_allowed(what) {
             super::hazards::warm_fault("a write gathered for the store", || what.to_owned());
@@ -711,7 +714,7 @@ impl ContentStore {
             return true;
         };
         let mut job = accounted(what, bytes, job);
-        let wave = WAVES.with(std::cell::Cell::get);
+        let wave = waves();
         {
             let mut s = w.shared.state.lock().expect("the writer's state");
             // Back-pressure: past the cap, wait for the writer while it has sealed waves to take (never for waves
@@ -992,7 +995,7 @@ impl ContentStore {
     /// the manifest, which names what the lease protected, is in the store by then. Outside a run, or with no writer,
     /// let go now (what was queued is written already).
     pub fn keep_until_written(&self, thing: impl Any + Send) {
-        let run = WAVES.with(std::cell::Cell::get);
+        let run = waves();
         let Some(w) = self.writer().filter(|_| run != 0 && !cfg!(target_family = "wasm")) else { return };
         w.shared.state.lock().expect("the writer's state").kept.entry(run).or_default().push(Box::new(thing));
     }
@@ -1044,7 +1047,7 @@ impl ContentStore {
     /// run queued, and every wave sealed before. The first error a job met since the last call.
     pub fn written(&self) -> StoreResult<()> {
         let Some(w) = self.writer() else { return Ok(()) };
-        let run = WAVES.with(std::cell::Cell::get);
+        let run = waves();
         if run != 0 {
             w.seal(run, Seal::End);
         }

@@ -12,7 +12,7 @@ sme = []
 gpu = []
 ane = []
 # The tests' shared object for reads outside a run (decision 0442; `rerail_context::TESTS`).
-test-hooks = ["rerail-context/test-hooks"]
+test-hooks = ["rerail-blocks/test-hooks", "rerail-context/test-hooks"]
 
 [dependencies]
 rerail-context = { path = "../native/crates/context" }

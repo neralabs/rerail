@@ -465,9 +465,11 @@ fn a_deep_file_summarizes_open_on_a_small_stack() {
     let terms = vec!["1"; 3000].join(" + ");
     let parens = format!("{}1{}", "(".repeat(2000), ")".repeat(2000));
     let source = format!("pub fn f() {{ let _ = {terms}; let _ = {parens}; }}\n");
+    let caller = crate::code_rule_dsl::logic::profile::caller();
     std::thread::Builder::new()
         .stack_size(256 << 10)
         .spawn(move || {
+            let _caller = caller.enter();
             let root = GrammarDialect::Rust.ast_grep(&source);
             let summary = summary(&root.root(), "src/lib.rs", None, false);
             assert!(summary.open);

@@ -20,17 +20,17 @@
         for name in &names {
             let text = format!("#include \"{name}\"\n.decl x(s: symbol)\n");
             let graph = order(&text);
-            super::IN_PHASE_0.with(|c| c.set(true));
+            let phase_0 = super::in_phase_0();
             let builtin = order(&text);
-            super::IN_PHASE_0.with(|c| c.set(false));
+            drop(phase_0);
             assert_eq!(graph, builtin, "{name}");
         }
         // Two names, and a text in T's shape (no `core.rr`).
         for text in ["#include \"python/env.rr\"\n#include \"python/imports.rr\"\n", "#include \"python/env.rr\"\n.decl doc(d: number, p: symbol, m: symbol)\n"] {
             let graph = order(text);
-            super::IN_PHASE_0.with(|c| c.set(true));
+            let phase_0 = super::in_phase_0();
             let builtin = order(text);
-            super::IN_PHASE_0.with(|c| c.set(false));
+            drop(phase_0);
             assert_eq!(graph, builtin, "{text}");
         }
         // A text made from a program file keeps the graph a run of `bootstrap.rr` would give it (`keep_text`).

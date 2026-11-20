@@ -9,13 +9,13 @@ use crate::code_rule_dsl::logic::program_facts::Field;
 use crate::code_rule_dsl::logic::program_image::{AggRef, AtomRef, Lit, RuleId, RuleRef, T, TermRef, Version, t_of};
 use std::collections::{BTreeMap, BTreeSet};
 
-const PREFIX: &str = "rr_reader_demand_";
+pub(super) const PREFIX: &str = "rr_reader_demand_";
 
 fn is_demand(rel: &str) -> bool {
     rel.starts_with(PREFIX) || rel.starts_with(PRODUCT)
 }
 
-fn eligible(program: &Program<'_>, rel: &str) -> bool {
+pub(super) fn eligible(program: &Program<'_>, rel: &str) -> bool {
     let f = &program.f;
     program.columns(rel).is_some()
         && !f.outputs.iter().any(|r| r == rel)
@@ -137,7 +137,12 @@ struct Proof {
 }
 
 fn install(program: &mut Program<'_>, rel: &str, cols: &[usize], products: &BTreeSet<String>, require_anchor: bool) -> Result<bool, String> {
-    let name = format!("{PREFIX}{rel}");
+    install_named(program, rel, cols, products, require_anchor, PREFIX)
+}
+
+/// `install` under another prefix: the deferred joins' pair relations (`DEFERRED_PAIRS`, decision 0477).
+pub(super) fn install_named(program: &mut Program<'_>, rel: &str, cols: &[usize], products: &BTreeSet<String>, require_anchor: bool, prefix: &str) -> Result<bool, String> {
+    let name = format!("{prefix}{rel}");
     if program.columns(&name).is_some() {
         return Ok(false);
     }

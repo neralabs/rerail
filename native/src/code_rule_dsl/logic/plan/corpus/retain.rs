@@ -2554,15 +2554,17 @@ impl Retained {
             let atoms = &atoms;
             // In the run and under the span open here, on whichever thread runs it: rayon's loops carry neither.
             let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
-            whole.into_par_iter().filter_map(|(rel, k)| {
-                let _in = carry.enter();
-                let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || "a relation's rows, digested".into());
-                if k.rel.levels_shape().2 {
-                    return None;
-                }
-                let types = frame_types(prog, domains, rel, k.rel.types());
-                held_digest(&Cells::new(atoms, &types), &k.rel).map(|d| (rel, d))
-            }).collect()
+            crate::code_rule_dsl::logic::profile::on_cores(|| {
+                whole.into_par_iter().filter_map(|(rel, k)| {
+                    let _in = carry.enter();
+                    let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || "a relation's rows, digested".into());
+                    if k.rel.levels_shape().2 {
+                        return None;
+                    }
+                    let types = frame_types(prog, domains, rel, k.rel.types());
+                    held_digest(&Cells::new(atoms, &types), &k.rel).map(|d| (rel, d))
+                }).collect()
+            })
         };
         for scc in sccs {
             let reads: Vec<String> = all_reads.of_scc(scc).into_iter().filter(|r| !scc.contains(r) && !literals.contains(r.as_str())).collect();
@@ -2837,10 +2839,12 @@ pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InK
         use rayon::prelude::*;
         // In the run, on whichever thread runs it: its frames' placement reads the machine's device memory.
         let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
-        inputs.par_iter().map(|(rel, source)| {
-            let _in = carry.enter();
-            one_input(rel, source)
-        }).collect()
+        crate::code_rule_dsl::logic::profile::on_cores(|| {
+            inputs.par_iter().map(|(rel, source)| {
+                let _in = carry.enter();
+                one_input(rel, source)
+            }).collect()
+        })
     };
     for ((rel, _), done) in inputs.iter().zip(framed_inputs) {
         let Some((digest, n)) = done else { continue };
