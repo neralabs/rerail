@@ -1318,6 +1318,13 @@ describe("rerail rules add", () => {
       expect(tested.report.refusal).toMatch(new RegExp(`^${id}-copy is your copy of ${id} for another repository, and ${id} runs in rerail-rule-draft-\\w+, so both would steer here\\.`));
       expect(added).toMatchObject({ exit: 1, stderr: `● The rule was not added: ${tested.report.refusal}\n` });
       expect(running(second)).toEqual({ [id]: { on: true, mode: "steer" } });
+
+      // A coding agent's edit of the copy there is refused the same way, and show names the original to change.
+      vi.stubEnv("CLAUDECODE", "1");
+      const edited = writeDraft(second, { kind: "code", rule: { ...edit(id), id: `${id}-copy`, revision: 3 } });
+      expect((await testReport(edited, second)).report.refusal).toBe(tested.report.refusal);
+      expect(await run("add", [edited, "--repo", second])).toMatchObject({ exit: 1, stderr: added.stderr });
+      expect((await run("show", [`${id}-copy`, "--repo", second])).stderr).toBe(shown.stderr);
     });
 
     it("is said by rules show, and a person's own terminal still changes the rule in place", async () => {

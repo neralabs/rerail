@@ -491,11 +491,14 @@ function draftPlacement(draft: RuleDraft, root: string, session: AgentSession | 
         return { folders, refusal: copyRefusal(database, ruleCatalog, checkout, draft), unread: undefined };
       }
     }
+    // In the order `rules add` refuses: a copy made for another repository first, then an agent's edit of an approved rule.
+    const elsewhere = copyFromElsewhereRefusal(database, checkout, id, listedRuleCatalog);
     if (editsApprovedRule(database, draft, session)) {
-      return { folders: libraryRuleFolders(database, checkout.repositoryKey, id), refusal: ownCopyRefusal(database, checkout, id, draft.folder), unread: undefined };
+      const refusal = elsewhere ?? ownCopyRefusal(database, checkout, id, draft.folder);
+      return { folders: libraryRuleFolders(database, checkout.repositoryKey, id), refusal, unread: undefined };
     }
     const folders = [...libraryRuleFolders(database, checkout.repositoryKey, id), ...named];
-    return { folders, refusal: copyFromElsewhereRefusal(database, checkout, id, listedRuleCatalog), unread: undefined };
+    return { folders, refusal: elsewhere, unread: undefined };
   }, error => ({ folders: named, refusal: undefined, unread: error === undefined ? undefined : errorMessage(error) }));
 }
 
@@ -994,10 +997,13 @@ function untitledNotes(document: RuleDocument): string[] {
 
 /**
  * What `rules add` does in a coding agent's session with an edit of your approved rule `own`: saves it as a copy, or,
- * where it would refuse one ({@link ownCopyRefusal}: a copy is already added here, or the rule is not), why.
+ * where it would refuse one ({@link ownCopyRefusal}: a copy is already added here, or the rule is not), why. Nothing
+ * for your copy made for another repository, which `rules add` refuses first ({@link copyFromElsewhereRefusal}) and
+ * {@link ownRuleNote} names already.
  */
-function keptNote(database: RerailDatabase, checkout: CheckoutContext | undefined, own: LibraryRule, session: AgentSession): string {
+function keptNote(database: RerailDatabase, checkout: CheckoutContext | undefined, own: LibraryRule, session: AgentSession): string | undefined {
   const id = own.document.rule.id;
+  if (checkout !== undefined && copyFromElsewhereRefusal(database, checkout, id, listedRuleCatalog) !== undefined) return undefined;
   const refusal = checkout === undefined ? undefined : ownCopyRefusal(database, checkout, id, undefined);
   return refusal ?? `${id} is approved, so in ${session.agent}'s session rules add saves an edit of it as a copy, which runs in Log beside ${id} until a person approves it on its page in the dashboard.`;
 }
@@ -1013,7 +1019,7 @@ export function showRule(id: string, repo: string, databasePath = defaultRerailD
     if (own !== undefined) {
       const checkout = lookupCheckout(database, repo);
       const kept = session !== undefined && isApproved(database, ruleSubject(id, own.payloadHash))
-        ? [keptNote(database, checkout, own, session)]
+        ? [keptNote(database, checkout, own, session)].filter(line => line !== undefined)
         : [];
       const note = ownRuleNote(database, own, repositoryName(checkout?.checkoutPath ?? repo), checkout?.repositoryKey, kept.length > 0);
       return { draft: own.document, notes: [note, ...kept, ...untitledNotes(own.document)] };
