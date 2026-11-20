@@ -24,7 +24,7 @@ function build(tl) {
     start: h("div.bound", null, "Session started"),
     turns: h("div.turns"),
     end: h("div.bound"),
-    places: h("div.places", { hidden: true }, h("p"), h("ul")),
+    places: h("div.tlplaces", { hidden: true }, h("p"), h("ul")),
   };
   tl.replaceChildren(t.empty, t.loading, t.earlier, t.start, t.turns, t.end, t.places);
 }

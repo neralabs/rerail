@@ -133,11 +133,11 @@ body[data-panel="open"] .sess > aside{display:none}
 .tl .turns{display:flex;flex-direction:column;gap:4px}
 .bound{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:.05em;padding:8px 0}
 .bound::after{content:"";flex:1;height:1px;background:var(--border)}
-.places{border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--card);padding:10px 14px;font-size:13px}
-.places p{margin:0 0 6px;color:var(--muted-foreground)}
-.places ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:3px}
-.places li{overflow-wrap:anywhere}
-.places code{font-family:var(--font-mono);font-size:12px}
+.tlplaces{border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--card);padding:10px 14px;font-size:13px}
+.tlplaces p{margin:0 0 6px;color:var(--muted-foreground)}
+.tlplaces ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:3px}
+.tlplaces li{overflow-wrap:anywhere}
+.tlplaces code{font-family:var(--font-mono);font-size:12px}
 .turn{display:block;padding:8px 0}
 /* "You" / "Agent" in a 40px column and an 8px gap: the 48px that calls and cards indent by. */
 .msgrow{display:grid;grid-template-columns:40px minmax(0,1fr) auto;gap:0 8px;align-items:start;padding:3px 0}

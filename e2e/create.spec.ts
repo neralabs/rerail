@@ -26,6 +26,13 @@ for (const scenario of ["mature", "packs-no-session", "no-packs"] satisfies Scen
       await expect(places).toHaveCount(0);
       return;
     }
+    // The section is styled as the Create page's own: no rule of another page's reaches it.
+    const style = await places.evaluate(section => {
+      const own = getComputedStyle(section);
+      const intro = getComputedStyle(section.querySelector("p.pintro")!);
+      return { background: own.backgroundColor, borderLeft: own.borderLeftWidth, paddingLeft: own.paddingLeft, introTop: intro.marginTop };
+    });
+    expect(style).toEqual({ background: "rgba(0, 0, 0, 0)", borderLeft: "0px", paddingLeft: "0px", introTop: "12px" });
     await expect(places.locator('[data-act="addpack"]')).toHaveCount(expected.length);
     const shown = await places.locator('[data-act="addpack"]').evaluateAll(buttons => buttons.map(b => b.getAttribute("data-i") ?? ""));
     expect(shown.sort()).toEqual(expected);
