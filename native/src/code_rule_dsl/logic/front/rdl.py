@@ -990,107 +990,165 @@ def table(prog, rel, which=""):
 def sql_select(prog, head, order, delta_at=None, rec=set(), tables=None):
     """One SELECT for a planned rule body. `delta_at` is the index of the recursive atom that reads its delta table.
     `tables` maps a relation to the (full, delta) tables to read it from instead (the native set fixpoint's vtabs)."""
-    env, frm, where, ctes = {}, [], [], []
-    alias = [0]
-    def a_name():
-        alias[0] += 1; return f"t{alias[0]}"
+    st = SelectState(prog, order, delta_at, tables)
     for idx, (l, mode) in enumerate(order):
-        if isinstance(l, Atom) and not l.neg:
-            al = a_name()
-            src = (tables[l.rel][1 if idx == delta_at else 0] if tables and l.rel in tables
-                   else table(prog, l.rel, "delta_" if idx == delta_at else ""))
-            conds = []
-            if mode == "range":   # docof($v, $d) with $d bound: $v lies in $d's node-id interval
-                d = next(d for d, _ in order if isinstance(d, Atom) and d.rel in prog.docof
-                         and isinstance(d.args[prog.docof[d.rel][0]], Var) and d.args[prog.docof[d.rel][0]].n in l.vars()
-                         and (isinstance(d.args[prog.docof[d.rel][1]], Const) or d.args[prog.docof[d.rel][1]].n in env))
-                v, dv = d.args[prog.docof[d.rel][0]], d.args[prog.docof[d.rel][1]]
-                ra = a_name()
-                frm.append((f"f.stat_docrange {ra}", [f"{ra}.d = {sql_term(dv, env)}"]))
-                rc = next(c for c, t in enumerate(l.args) if isinstance(t, Var) and t.n == v.n)
-                conds.append(f"{al}.{sql_col(l.rel, rc, prog)} BETWEEN {ra}.lo AND {ra}.hi")
-            for col, t in enumerate(l.args):
-                c = f"{al}.{sql_col(l.rel, col, prog)}"
-                if isinstance(t, Var):
-                    if t.n in env: conds.append(f"{c} = {env[t.n]}")
-                    else: env[t.n] = c
-                elif isinstance(t, (Const, TopT)):
-                    conds.append(f"{c} = {sql_term(t, env)}")
-            frm.append((f"{src} {al}", conds))
-        elif isinstance(l, Atom) and l.neg:
-            al = a_name()
-            conds = [f"{al}.{sql_col(l.rel, col, prog)} = {sql_term(t, env)}" for col, t in enumerate(l.args) if not isinstance(t, Wild)]
-            where.append(f"NOT EXISTS (SELECT 1 FROM {table(prog, l.rel)} {al} WHERE {' AND '.join(conds) or '1'})")
-        elif isinstance(l, Cmp):
-            if l.op == "=" and isinstance(l.l, Var) and l.l.n not in env:
-                env[l.l.n] = sql_term(l.r, env)
-            elif l.op == "=" and isinstance(l.l, Var) and is_cat(l.r) and not term_vars(l.r) <= set(env):
-                # A split of the bound whole: at the "." a bound part places, else at every "." (`rdl_int` counts).
-                w, (q, x) = env[l.l.n], l.r.args
-                if q.n in env:
-                    where.append(f"substr({w}, 1, length({env[q.n]}) + 1) = {env[q.n]} || '.'")
-                    env[x.n] = f"substr({w}, length({env[q.n]}) + 2)"
-                elif x.n in env:
-                    where.append(f"substr({w}, -length({env[x.n]}) - 1) = '.' || {env[x.n]} AND length({w}) > length({env[x.n]})")
-                    env[q.n] = f"substr({w}, 1, length({w}) - length({env[x.n]}) - 1)"
-                else:
-                    al = a_name()
-                    frm.append((f"rdl_int {al}", [f"{al}.i <= length({w})", f"substr({w}, {al}.i, 1) = '.'"]))
-                    env[q.n], env[x.n] = f"substr({w}, 1, {al}.i - 1)", f"substr({w}, {al}.i + 1)"
-            else:
-                op = {"=": "=", "!=": "<>"}.get(l.op, l.op)
-                where.append(f"{sql_term(l.l, env)} {op} {sql_term(l.r, env)}")
-        elif isinstance(l, Agg):
-            al = a_name()
-            conds = [f"{al}.{sql_col(l.atom.rel, col, prog)} = {sql_term(t, env)}" for col, t in enumerate(l.atom.args) if not isinstance(t, Wild)]
-            env[l.var] = f"(SELECT count(*) FROM {table(prog, l.atom.rel)} {al} WHERE {' AND '.join(conds) or '1'})"
-        elif isinstance(l, Nearest) and mode == "climb" and "nearest" in NATIVE:
-            # The climb is a native function over the tape: no CTE, and its result is just a column expression.
-            near = f"tape_nearest({env[l.n]}, '{','.join(prog.kindsets[l.kset])}')"
-            if l.a in env: where.append(f"{near} = {env[l.a]}")
-            else: env[l.a] = near; where.append(f"{near} IS NOT NULL")
-        elif isinstance(l, Nearest):
-            ks = ", ".join("'" + k + "'" for k in prog.kindsets[l.kset])
-            # Everything joined so far becomes the seed CTE; the walk is a recursive CTE seeded only from it.
-            k = len(ctes)
-            seed_cols = sorted(env)
-            seed_sel = ", ".join(f"{env[v]} AS {v}" for v in seed_cols)
-            seed_from = " JOIN ".join(f"{f} ON {' AND '.join(c) or '1'}" if i else f for i, (f, c) in enumerate(frm))
-            first_conds = frm[0][1] if frm else []
-            seed_where = " AND ".join(first_conds + where) or "1"
-            # rewrite: first FROM entry's conditions go to WHERE
-            seed_from = frm[0][0] + "".join(f" CROSS JOIN {f}" for f, c in frm[1:]) if frm else ""
-            seed_where = " AND ".join(first_conds + [x for _, c in frm[1:] for x in c] + where) or "1"
-            ctes.append(f"seed{k} AS (SELECT DISTINCT {seed_sel} FROM {seed_from} WHERE {seed_where})")
-            # The seed's columns are threaded through the walk (SQL index prototype S050 `_path_threaded`), so the walk's
-            # output is the extended row and nothing joins back to the seed.
-            cols = ", ".join(seed_cols)
-            wcols = ", ".join(f"w.{v}" for v in seed_cols)
-            scols = ", ".join(f"s.{v}" for v in seed_cols)
-            if mode == "climb":
-                ctes.append(f"walk{k}({cols}, cur) AS (SELECT {scols}, t.par FROM seed{k} s JOIN f.tape t ON t.n = s.{l.n} WHERE t.par >= 0 "
-                            f"UNION ALL SELECT {wcols}, t.par FROM walk{k} w JOIN f.node k ON k.n = w.cur AND k.kind NOT IN ({ks}) "
-                            f"JOIN f.tape t ON t.n = w.cur WHERE t.par >= 0)")
-                cond = f" AND w.cur = w.{l.a}" if l.a in env else ""
-                ctes.append(f"near{k} AS (SELECT {wcols}, w.cur AS near_out FROM walk{k} w CROSS JOIN f.node k WHERE k.n = w.cur AND k.kind IN ({ks}){cond})")
-                out_var = l.a
-            else:
-                ctes.append(f"walk{k}({cols}, cur, stop) AS (SELECT {scols}, s.{l.a} + 1, s.{l.a} + t.size FROM seed{k} s JOIN f.tape t ON t.n = s.{l.a} WHERE t.size > 0 "
-                            f"UNION ALL SELECT {wcols}, CASE WHEN k.kind IN ({ks}) THEN w.cur + t.size + 1 ELSE w.cur + 1 END, w.stop "
-                            f"FROM walk{k} w JOIN f.node k ON k.n = w.cur JOIN f.tape t ON t.n = w.cur WHERE w.cur < w.stop)")
-                cond = f" AND w.cur = w.{l.n}" if l.n in env else ""
-                ctes.append(f"near{k} AS (SELECT {wcols}, w.cur AS near_out FROM walk{k} w WHERE w.cur <= w.stop{cond})")
-                out_var = l.n
-            env = {v: f"near{k}.{v}" for v in seed_cols}
-            if out_var not in env: env[out_var] = f"near{k}.near_out"
-            frm = [(f"near{k}", [])]
-            where = []
-            continue
-    sel = ", ".join(f"{sql_term(t, env)} AS c{i}" for i, t in enumerate(head.args))
+        select_literal(st, idx, l, mode)
+    sel = ", ".join(f"{sql_term(t, st.env)} AS c{i}" for i, t in enumerate(head.args))
+    from_sql, w = from_where(st.frm, st.where)
+    with_sql = ("WITH RECURSIVE " + ", ".join(st.ctes) + " ") if st.ctes else ""
+    return f"{with_sql}SELECT DISTINCT {sel} FROM {from_sql} WHERE {w}"
+
+class SelectState:
+    """What `sql_select` has built so far: each bound variable's SQL (`env`), FROM entries, WHERE conditions, CTEs."""
+    def __init__(s, prog, order, delta_at, tables):
+        s.prog, s.order, s.delta_at, s.tables = prog, order, delta_at, tables
+        s.env, s.frm, s.where, s.ctes = {}, [], [], []
+        s.alias = 0
+    def a_name(s):
+        s.alias += 1; return f"t{s.alias}"
+
+def select_literal(st, idx, l, mode):
+    if isinstance(l, Atom): select_atom(st, idx, l, mode)
+    elif isinstance(l, Cmp): select_cmp(st, l)
+    elif isinstance(l, Agg): select_count(st, l)
+    elif isinstance(l, Nearest): select_nearest(st, l, mode)
+
+def select_atom(st, idx, l, mode):
+    if not l.neg:
+        select_join_atom(st, idx, l, mode)
+    else:
+        al = st.a_name()
+        conds = [f"{al}.{sql_col(l.rel, col, st.prog)} = {sql_term(t, st.env)}" for col, t in enumerate(l.args) if not isinstance(t, Wild)]
+        st.where.append(f"NOT EXISTS (SELECT 1 FROM {table(st.prog, l.rel)} {al} WHERE {' AND '.join(conds) or '1'})")
+
+def select_join_atom(st, idx, l, mode):
+    al = st.a_name()
+    src = (st.tables[l.rel][1 if idx == st.delta_at else 0] if st.tables and l.rel in st.tables
+           else table(st.prog, l.rel, "delta_" if idx == st.delta_at else ""))
+    conds = []
+    if mode == "range":   # docof($v, $d) with $d bound: $v lies in $d's node-id interval
+        select_doc_range(st, l, al, conds)
+    bind_columns(st, l, al, conds)
+    st.frm.append((f"{src} {al}", conds))
+
+def select_doc_range(st, l, al, conds):
+    d = next(d for d, _ in st.order if bound_docof(st, d, l))
+    v, dv = d.args[st.prog.docof[d.rel][0]], d.args[st.prog.docof[d.rel][1]]
+    ra = st.a_name()
+    st.frm.append((f"f.stat_docrange {ra}", [f"{ra}.d = {sql_term(dv, st.env)}"]))
+    rc = next(c for c, t in enumerate(l.args) if isinstance(t, Var) and t.n == v.n)
+    conds.append(f"{al}.{sql_col(l.rel, rc, st.prog)} BETWEEN {ra}.lo AND {ra}.hi")
+
+def bound_docof(st, d, l):
+    """Whether `d` is a docof atom over one of `l`'s variables whose document is a constant or already bound."""
+    prog, env = st.prog, st.env
+    return (isinstance(d, Atom) and d.rel in prog.docof
+            and isinstance(d.args[prog.docof[d.rel][0]], Var) and d.args[prog.docof[d.rel][0]].n in l.vars()
+            and (isinstance(d.args[prog.docof[d.rel][1]], Const) or d.args[prog.docof[d.rel][1]].n in env))
+
+def bind_columns(st, l, al, conds):
+    for col, t in enumerate(l.args):
+        c = f"{al}.{sql_col(l.rel, col, st.prog)}"
+        if isinstance(t, Var):
+            if t.n in st.env: conds.append(f"{c} = {st.env[t.n]}")
+            else: st.env[t.n] = c
+        elif isinstance(t, (Const, TopT)):
+            conds.append(f"{c} = {sql_term(t, st.env)}")
+
+def select_cmp(st, l):
+    env = st.env
+    if l.op == "=" and isinstance(l.l, Var) and l.l.n not in env:
+        env[l.l.n] = sql_term(l.r, env)
+    elif splits_cat(l, env):
+        split_cat(st, l)
+    else:
+        op = {"=": "=", "!=": "<>"}.get(l.op, l.op)
+        st.where.append(f"{sql_term(l.l, env)} {op} {sql_term(l.r, env)}")
+
+def splits_cat(l, env):
+    return l.op == "=" and isinstance(l.l, Var) and is_cat(l.r) and not term_vars(l.r) <= set(env)
+
+def split_cat(st, l):
+    # A split of the bound whole: at the "." a bound part places, else at every "." (`rdl_int` counts).
+    env, where = st.env, st.where
+    w, (q, x) = env[l.l.n], l.r.args
+    if q.n in env:
+        where.append(f"substr({w}, 1, length({env[q.n]}) + 1) = {env[q.n]} || '.'")
+        env[x.n] = f"substr({w}, length({env[q.n]}) + 2)"
+    elif x.n in env:
+        where.append(f"substr({w}, -length({env[x.n]}) - 1) = '.' || {env[x.n]} AND length({w}) > length({env[x.n]})")
+        env[q.n] = f"substr({w}, 1, length({w}) - length({env[x.n]}) - 1)"
+    else:
+        al = st.a_name()
+        st.frm.append((f"rdl_int {al}", [f"{al}.i <= length({w})", f"substr({w}, {al}.i, 1) = '.'"]))
+        env[q.n], env[x.n] = f"substr({w}, 1, {al}.i - 1)", f"substr({w}, {al}.i + 1)"
+
+def select_count(st, l):
+    al = st.a_name()
+    conds = [f"{al}.{sql_col(l.atom.rel, col, st.prog)} = {sql_term(t, st.env)}" for col, t in enumerate(l.atom.args) if not isinstance(t, Wild)]
+    st.env[l.var] = f"(SELECT count(*) FROM {table(st.prog, l.atom.rel)} {al} WHERE {' AND '.join(conds) or '1'})"
+
+def select_nearest(st, l, mode):
+    if mode == "climb" and "nearest" in NATIVE:
+        # The climb is a native function over the tape: no CTE, and its result is just a column expression.
+        near = f"tape_nearest({st.env[l.n]}, '{','.join(st.prog.kindsets[l.kset])}')"
+        if l.a in st.env: st.where.append(f"{near} = {st.env[l.a]}")
+        else: st.env[l.a] = near; st.where.append(f"{near} IS NOT NULL")
+    else:
+        select_walk(st, l, mode)
+
+def select_walk(st, l, mode):
+    ks = ", ".join("'" + k + "'" for k in st.prog.kindsets[l.kset])
+    # Everything joined so far becomes the seed CTE; the walk is a recursive CTE seeded only from it.
+    k = len(st.ctes)
+    seed_cols = sorted(st.env)
+    seed_sel = ", ".join(f"{st.env[v]} AS {v}" for v in seed_cols)
+    st.ctes.append(f"seed{k} AS (SELECT DISTINCT {seed_sel} FROM {seed_from_sql(st.frm)} WHERE {seed_where_sql(st.frm, st.where)})")
+    out_var = walk_ctes(st, l, mode, ks, k, seed_cols)
+    st.env = {v: f"near{k}.{v}" for v in seed_cols}
+    if out_var not in st.env: st.env[out_var] = f"near{k}.near_out"
+    st.frm = [(f"near{k}", [])]
+    st.where = []
+
+def seed_from_sql(frm):
+    seed_from = " JOIN ".join(f"{f} ON {' AND '.join(c) or '1'}" if i else f for i, (f, c) in enumerate(frm))
+    # rewrite: first FROM entry's conditions go to WHERE
+    seed_from = frm[0][0] + "".join(f" CROSS JOIN {f}" for f, c in frm[1:]) if frm else ""
+    return seed_from
+
+def seed_where_sql(frm, where):
+    first_conds = frm[0][1] if frm else []
+    seed_where = " AND ".join(first_conds + where) or "1"
+    seed_where = " AND ".join(first_conds + [x for _, c in frm[1:] for x in c] + where) or "1"
+    return seed_where
+
+def walk_ctes(st, l, mode, ks, k, seed_cols):
+    """Appends the walk's recursive CTE and its `near` CTE; returns the variable the walk binds."""
+    # The seed's columns are threaded through the walk (SQL index prototype S050 `_path_threaded`), so the walk's
+    # output is the extended row and nothing joins back to the seed.
+    cols = ", ".join(seed_cols)
+    wcols = ", ".join(f"w.{v}" for v in seed_cols)
+    scols = ", ".join(f"s.{v}" for v in seed_cols)
+    if mode == "climb":
+        st.ctes.append(f"walk{k}({cols}, cur) AS (SELECT {scols}, t.par FROM seed{k} s JOIN f.tape t ON t.n = s.{l.n} WHERE t.par >= 0 "
+                       f"UNION ALL SELECT {wcols}, t.par FROM walk{k} w JOIN f.node k ON k.n = w.cur AND k.kind NOT IN ({ks}) "
+                       f"JOIN f.tape t ON t.n = w.cur WHERE t.par >= 0)")
+        cond = f" AND w.cur = w.{l.a}" if l.a in st.env else ""
+        st.ctes.append(f"near{k} AS (SELECT {wcols}, w.cur AS near_out FROM walk{k} w CROSS JOIN f.node k WHERE k.n = w.cur AND k.kind IN ({ks}){cond})")
+        out_var = l.a
+    else:
+        st.ctes.append(f"walk{k}({cols}, cur, stop) AS (SELECT {scols}, s.{l.a} + 1, s.{l.a} + t.size FROM seed{k} s JOIN f.tape t ON t.n = s.{l.a} WHERE t.size > 0 "
+                       f"UNION ALL SELECT {wcols}, CASE WHEN k.kind IN ({ks}) THEN w.cur + t.size + 1 ELSE w.cur + 1 END, w.stop "
+                       f"FROM walk{k} w JOIN f.node k ON k.n = w.cur JOIN f.tape t ON t.n = w.cur WHERE w.cur < w.stop)")
+        cond = f" AND w.cur = w.{l.n}" if l.n in st.env else ""
+        st.ctes.append(f"near{k} AS (SELECT {wcols}, w.cur AS near_out FROM walk{k} w WHERE w.cur <= w.stop{cond})")
+        out_var = l.n
+    return out_var
+
+def from_where(frm, where):
     from_sql = frm[0][0] + "".join(f" CROSS JOIN {f}" for f, c in frm[1:])
     w = " AND ".join(frm[0][1] + [x for _, c in frm[1:] for x in c] + where) or "1"
-    with_sql = ("WITH RECURSIVE " + ", ".join(ctes) + " ") if ctes else ""
-    return f"{with_sql}SELECT DISTINCT {sel} FROM {from_sql} WHERE {w}"
+    return from_sql, w
 
 def run_sql(prog, facts, out, plan_path=None):
     db = sqlite3.connect(":memory:")
