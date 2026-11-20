@@ -421,6 +421,48 @@ impl Ledger {
     }
 }
 
+/// A value that owns memory a kernel may bind and that is no block's (a device pool's lease): held as a block's memory
+/// is, by a ledger found at its address. A command buffer that binds its bytes holds it (`Fence::uses_address`), and
+/// when dropped it goes (`T`'s drop: back to its pool) only once that work completes (R5): the next holder's host
+/// writes are never ordered before a queued kernel's reads.
+pub struct Tracked<T: Send + 'static> {
+    value: Option<T>,
+    ledger: Arc<Ledger>,
+}
+
+impl<T: Send + 'static> Tracked<T> {
+    /// `value`, whose memory is the `len` bytes at `base`: found by any address in them while it lives.
+    pub fn new(value: T, base: *mut u8, len: usize) -> Tracked<T> {
+        let ext = Arc::new(crate::block::Extent { top: std::sync::atomic::AtomicUsize::new(0), free: std::sync::atomic::AtomicUsize::new(0) });
+        Tracked { value: Some(value), ledger: Ledger::new(base, len.max(1), false, ext) }
+    }
+
+    /// Its ledger: what a fence's use of its bytes holds.
+    pub fn ledger(&self) -> &Arc<Ledger> {
+        &self.ledger
+    }
+}
+
+impl<T: Send + 'static> std::ops::Deref for Tracked<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        self.value.as_ref().expect("a tracked value lives until dropped")
+    }
+}
+
+impl<T: Send + 'static> std::ops::DerefMut for Tracked<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        self.value.as_mut().expect("a tracked value lives until dropped")
+    }
+}
+
+impl<T: Send + 'static> Drop for Tracked<T> {
+    fn drop(&mut self) {
+        let value = self.value.take();
+        self.ledger.let_go(Box::new(move || drop(value)));
+    }
+}
+
 /// The live blocks' address ranges, the lowest first, each with its ledger: how a buffer bound for a kernel is found
 /// to be a block's (`Fence::uses_address`), whoever made the buffer.
 // state: bookkeeping (the blocks in the process, by address: what is mapped, not what a relation has)
@@ -685,6 +727,33 @@ mod tests {
         (Box::new(Watched { base: crate::mem::reserve(len), len, gone: gone.clone() }), gone)
     }
 
+    /// R5 for memory of no block's (a pool's lease, `Tracked`): a fence that binds its bytes, found by address, holds it;
+    /// dropped meanwhile, it goes only when the fence completes. Unbound, it goes at once.
+    #[test]
+    fn a_tracked_lease_bound_by_address_goes_after_its_fence() {
+        struct Lease(Arc<AtomicBool>);
+        impl Drop for Lease {
+            fn drop(&mut self) {
+                self.0.store(true, SeqCst);
+            }
+        }
+        let mem = vec![0u8; 4096];
+        let base = mem.as_ptr().cast_mut();
+        let gone = Arc::new(AtomicBool::new(false));
+        let t = Tracked::new(Lease(gone.clone()), base, 4096);
+        let f = Fence::new();
+        assert!(f.uses_address(base as usize + 100), "found by an address inside it");
+        drop(t);
+        assert!(!gone.load(SeqCst), "held by the queued work");
+        f.complete();
+        assert!(gone.load(SeqCst), "gone once its work completes");
+        assert!(!Fence::new().uses_address(base as usize + 100), "no longer found once gone");
+        let gone = Arc::new(AtomicBool::new(false));
+        drop(Tracked::new(Lease(gone.clone()), base, 4096));
+        assert!(gone.load(SeqCst), "unbound: at once");
+        drop(mem);
+    }
+
     /// R5: a block dropped while a GPU use of it is queued keeps its memory until the use completes.
     #[test]
     fn a_block_dropped_under_a_queued_gpu_use_keeps_its_memory() {
@@ -719,6 +788,8 @@ mod tests {
         assert!(fails(|| { b.ledger().give_back(big, 2 * PAGE); }), "a retiring chunk is live");
         f.complete();
         assert_eq!(unsafe { *b.ptr::<u64>(after) }, 9);
+        // The page's modified bit is Apple's `mincore`'s; elsewhere the value above says it was kept.
+        #[cfg(target_vendor = "apple")]
         assert!(crate::mem::tests::modified(b.ptr::<u8>(after)), "its neighbour's page kept");
     }
 

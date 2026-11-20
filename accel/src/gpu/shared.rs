@@ -324,6 +324,11 @@ impl Pooled {
         self.keep = false;
     }
 
+    /// `release`, for a lease held in place (a `Tracked` one): it goes to Metal, not the pool, when dropped.
+    pub fn released(&mut self) {
+        self.keep = false;
+    }
+
     /// Whether the buffer was made for this lease, so it reads zero; else it holds an earlier lease's bytes.
     pub fn fresh(&self) -> bool {
         self.fresh

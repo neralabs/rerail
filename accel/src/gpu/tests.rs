@@ -373,3 +373,21 @@ fn column_statistics_on_the_device_are_the_exact_counts() {
         for (v, n) in &g.top { assert_eq!(counts.get(v), Some(n), "value {v}"); }
     }
 }
+
+/// Decision 0491 step 2: a pooled buffer of the join's (`join::Held`) is found by its address as a block's memory
+/// is, so a pass that binds it holds it; dropped meanwhile, it goes back to the pool only once that work completes.
+#[test]
+fn a_pooled_held_buffer_is_found_by_its_address() {
+    if shared::layer().is_none() {
+        return;
+    }
+    let held = join::Held::new(100).expect("a pooled buffer");
+    let at = held.buffer.contents() as usize;
+    let f = rerail_blocks::ledger::Fence::new();
+    assert!(f.uses_address(at), "a bind of a pooled buffer is the ledger's");
+    assert!(f.uses_address(at + 64), "found by any address in it");
+    drop(held);
+    assert!(rerail_blocks::ledger::Fence::new().uses_address(at), "held by the queued work after its drop");
+    f.complete();
+    assert!(!rerail_blocks::ledger::Fence::new().uses_address(at), "back to the pool once the work completed");
+}
