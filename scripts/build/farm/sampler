@@ -301,8 +301,15 @@ def windows_counters():
         env["WSL_INTEROP"] = socks[0]
     ps = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
     try:
-        WINDOWS["mem_total"] = int(subprocess.run([ps, "-NoProfile", "-Command", "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory"],
-                                                  env=env, cwd="/mnt/c", capture_output=True, text=True, timeout=60).stdout.strip())
+        # What Windows may use, what is installed (the rest is the firmware's: an integrated GPU's
+        # share), and the edition.
+        out = subprocess.run([ps, "-NoProfile", "-Command", "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory; "
+                              "(Get-CimInstance Win32_PhysicalMemory | Measure-Object Capacity -Sum).Sum; "
+                              "(Get-CimInstance Win32_OperatingSystem).Caption"],
+                             env=env, cwd="/mnt/c", capture_output=True, text=True, timeout=60).stdout.split("\n")
+        WINDOWS["mem_total"] = int(out[0].strip())
+        WINDOWS["mem_installed"] = int(out[1].strip() or 0) or None
+        WINDOWS["name"] = out[2].strip().replace("Microsoft ", "") or "Windows"
         p = subprocess.Popen(["/mnt/c/Windows/System32/typeperf.exe", r"\Processor(_Total)\% Processor Time",
                               r"\Memory\Available Bytes", "-si", str(int(PERIOD))], env=env, cwd="/mnt/c",
                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
@@ -342,6 +349,31 @@ def cpu_name():
     return run(["sysctl", "-n", "machdep.cpu.brand_string"]).strip()
 
 
+def os_name():
+    """The system's name and version: "macOS 26.4", "Ubuntu 24.04.3 LTS"."""
+    if not LINUX:
+        return "macOS " + run(["sw_vers", "-productVersion"]).strip()
+    try:
+        for line in open("/etc/os-release"):
+            if line.startswith("PRETTY_NAME="):
+                return line.split("=", 1)[1].strip().strip('"')
+    except OSError:
+        pass
+    return "Linux"
+
+
+# The system, its architecture, and what runs it when it is a Linux VM: "wsl2"/"wsl1" (in Windows),
+# else what systemd names ("apple" for a Mac's virtualisation framework, "kvm", ...), or None.
+def system():
+    rel = os.uname().release.lower()
+    virt = None
+    if LINUX:
+        virt = ("wsl2" if "wsl2" in rel else "wsl1") if "microsoft" in rel else (run(["systemd-detect-virt"], 5).strip() or None)
+        if virt == "none":
+            virt = None
+    return {"family": "linux" if LINUX else "macos", "name": os_name(), "arch": os.uname().machine, "virt": virt}
+
+
 def main():
     threading.Thread(target=pings, daemon=True).start()
     if WSL:
@@ -351,7 +383,7 @@ def main():
     prev_ticks, prev_procs, prev_net, prev_t = cpu_ticks(), processes(), net_bytes(), time.time()
     prev_self = self_seconds()
     i, g, imp, idle, xc, fleet = 0, None, None, None, [], []
-    model = cpu_name()
+    model, sysinfo = cpu_name(), system()
     while True:
         time.sleep(PERIOD)
         i += 1
@@ -416,7 +448,7 @@ def main():
         mem = memory()
         mem["farm_rss"] = sum(procs[p][2] for p in farm_pids if p in procs)
         self_cpu = self_seconds()
-        emit({"t": now, "os": "linux" if LINUX else "macos", "cores": cores, "model": model,
+        emit({"t": now, "os": "linux" if LINUX else "macos", "cores": cores, "model": model, "system": sysinfo,
               "cpu": {"busy": round(busy, 4), "farm": round(farm, 4), "fleet": round(fleet_share, 4), "probe": round(probe, 4),
                       "other": round(max(busy - farm - fleet_share - probe, 0), 4)},
               "load": round(load(), 2), "mem": mem, "gpu": g, "disk": disk(imp),

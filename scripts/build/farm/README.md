@@ -612,6 +612,11 @@ scripts/build/farm/dashboard [--port 8740] [--open]      # then http://127.0.0.1
 
 A live page of each enabled host and this Mac, with five minutes of history:
 
+- What the machine is: a chip (macOS, Linux, or Windows + Linux for a Windows PC or VM whose Linux
+  is WSL), and a line with the system's name and version, its architecture, what runs it (WSL, a
+  VM) and the Windows hosts it also takes jobs as. Memory is in GiB, as the systems' settings
+  count it; a Linux VM's is its VM's limit, and a Windows machine's row says what is installed
+  and what the firmware keeps (an integrated GPU's share).
 - CPU, split by who uses it: the farm (the trees under its agents: test commands, Relax
   sessions, the mirror; on a Linux host also the Mac-compile container; on this Mac, Rerail's
   builds), the fleet's jobs (their containers), the machine's own load, and idle. The split
