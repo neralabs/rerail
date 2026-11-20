@@ -614,7 +614,7 @@
         if let Some(actual) = grid(execute_with_backend(ExecutionBackend::MetalJit, &jit_programs, &jit_tapes, &jit_anchors)) {
             assert_eq!(actual[0][0], plain_output);
         }
-        if let Some(iterations) = std::env::var("TEMPO_QUANTIFIER_PROFILE_ITERATIONS")
+        if let Some(iterations) = std::env::var("RERAIL_PACKED_QUANTIFIER_PROFILE_ITERATIONS")
             .ok()
             .and_then(|value| value.parse::<usize>().ok())
         {
@@ -2253,14 +2253,14 @@
     #[ignore = "controlled corpus benchmark"]
     fn benchmark_three_ast_grep_paths() {
         let root = PathBuf::from(
-            std::env::var("TEMPO_TRANSDUCER_CORPUS")
+            std::env::var("RERAIL_PACKED_TRANSDUCER_CORPUS")
                 .unwrap_or_else(|_| "../../data-layer".into()),
         );
-        let limit = std::env::var("TEMPO_TRANSDUCER_FILES")
+        let limit = std::env::var("RERAIL_PACKED_TRANSDUCER_FILES")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(usize::MAX);
-        let iterations = std::env::var("TEMPO_TRANSDUCER_ITERATIONS")
+        let iterations = std::env::var("RERAIL_PACKED_TRANSDUCER_ITERATIONS")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(7usize);
@@ -2400,8 +2400,8 @@
     #[ignore = "full ast-index-spike source corpus indexing benchmark"]
     fn benchmark_full_fts_source_corpus() {
         let corpus = PathBuf::from(
-            std::env::var("TEMPO_SOURCE_CORPUS")
-                .expect("TEMPO_SOURCE_CORPUS must name ast-index-spike bench/corpus/repos"),
+            std::env::var("RERAIL_PACKED_SOURCE_CORPUS")
+                .expect("RERAIL_PACKED_SOURCE_CORPUS must name ast-index-spike bench/corpus/repos"),
         );
         let database = std::env::temp_dir().join(format!(
             "tempo-full-fts-{}-{}.sqlite",
@@ -2451,7 +2451,7 @@
             ("lua", SupportLang::Lua, &["lua"]),
             ("json", SupportLang::Json, &["json"]),
         ];
-        let selected_languages = std::env::var("TEMPO_BENCH_LANGS")
+        let selected_languages = std::env::var("RERAIL_PACKED_BENCH_LANGS")
             .ok()
             .map(|value| value.split(',').map(str::to_owned).collect::<BTreeSet<_>>());
         let started = Instant::now();
@@ -2601,12 +2601,12 @@
         use tree_sitter::StreamingIterator;
 
         let query_root = PathBuf::from(
-            std::env::var("TEMPO_QUERY_CORPUS")
-                .expect("TEMPO_QUERY_CORPUS must name ast-index-spike bench/corpus/queries"),
+            std::env::var("RERAIL_PACKED_QUERY_CORPUS")
+                .expect("RERAIL_PACKED_QUERY_CORPUS must name ast-index-spike bench/corpus/queries"),
         );
         let source_root = PathBuf::from(
-            std::env::var("TEMPO_SOURCE_CORPUS")
-                .expect("TEMPO_SOURCE_CORPUS must name ast-index-spike bench/corpus/repos"),
+            std::env::var("RERAIL_PACKED_SOURCE_CORPUS")
+                .expect("RERAIL_PACKED_SOURCE_CORPUS must name ast-index-spike bench/corpus/repos"),
         );
         let languages: &[(&str, SupportLang, &[&str])] = &[
             ("python", SupportLang::Python, &["py"]),
@@ -2638,19 +2638,19 @@
             ("lua", SupportLang::Lua, &["lua"]),
             ("json", SupportLang::Json, &["json"]),
         ];
-        let selected_languages = std::env::var("TEMPO_QUERY_LANGS")
+        let selected_languages = std::env::var("RERAIL_PACKED_QUERY_LANGS")
             .ok()
             .map(|value| value.split(',').map(str::to_owned).collect::<BTreeSet<_>>());
-        let query_filter = std::env::var("TEMPO_QUERY_FILTER").ok();
-        let source_limit = std::env::var("TEMPO_QUERY_SOURCE_BYTES")
+        let query_filter = std::env::var("RERAIL_PACKED_QUERY_FILTER").ok();
+        let source_limit = std::env::var("RERAIL_PACKED_QUERY_SOURCE_BYTES")
             .ok()
             .map(|value| value.parse::<usize>().unwrap())
             .unwrap_or(1_000_000);
-        let shard_count = std::env::var("TEMPO_QUERY_SHARD_COUNT")
+        let shard_count = std::env::var("RERAIL_PACKED_QUERY_SHARD_COUNT")
             .ok()
             .map(|value| value.parse::<usize>().unwrap())
             .unwrap_or(1);
-        let shard_index = std::env::var("TEMPO_QUERY_SHARD_INDEX")
+        let shard_index = std::env::var("RERAIL_PACKED_QUERY_SHARD_INDEX")
             .ok()
             .map(|value| value.parse::<usize>().unwrap())
             .unwrap_or(0);
@@ -2766,8 +2766,8 @@
     #[ignore = "pinned Python SCM execution-signature profile"]
     fn profile_pinned_python_execution_signatures() {
         let query_root = PathBuf::from(
-            std::env::var("TEMPO_PYTHON_SCM_QUERY_DIR")
-                .expect("TEMPO_PYTHON_SCM_QUERY_DIR must name pinned Python SCM queries"),
+            std::env::var("RERAIL_PACKED_PYTHON_SCM_QUERY_DIR")
+                .expect("RERAIL_PACKED_PYTHON_SCM_QUERY_DIR must name pinned Python SCM queries"),
         );
         let grammar = SupportLang::Python.get_ts_language();
         let mut paths = fs::read_dir(query_root)
@@ -2803,7 +2803,7 @@
         let mut groups = signatures.into_iter().collect::<Vec<_>>();
         groups.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
         println!(
-            "TEMPO_PYTHON_EXECUTION_SIGNATURES {}",
+            "RERAIL_PACKED_PYTHON_EXECUTION_SIGNATURES {}",
             json!({"programs":programs,"signatures":groups.len(),"groups":groups})
         );
         assert_eq!(programs, 335);
@@ -2821,7 +2821,7 @@
                 maxima
             },
         );
-        println!("TEMPO_PYTHON_STRUCTURAL_MAXIMA {structural_maxima:?}");
+        println!("RERAIL_PACKED_PYTHON_STRUCTURAL_MAXIMA {structural_maxima:?}");
         // The spike counted opcode shapes. Resource classes can split those
         // shapes, but must never merge different opcode/ABI contracts.
         assert_eq!(groups.len(), 106);
@@ -2831,8 +2831,8 @@
     #[ignore = "full ast-index-spike tree-sitter query corpus audit"]
     fn audit_tree_sitter_query_corpus() {
         let query_root = PathBuf::from(
-            std::env::var("TEMPO_QUERY_CORPUS")
-                .expect("TEMPO_QUERY_CORPUS must name ast-index-spike bench/corpus/queries"),
+            std::env::var("RERAIL_PACKED_QUERY_CORPUS")
+                .expect("RERAIL_PACKED_QUERY_CORPUS must name ast-index-spike bench/corpus/queries"),
         );
         let languages = [
             ("python", SupportLang::Python),
@@ -2881,7 +2881,7 @@
                         match Program::compile_tree_sitter_query_pattern(pattern, &grammar) {
                             Ok(_) => lowered += 1,
                             Err(error) => {
-                                if std::env::var_os("TEMPO_QUERY_AUDIT_ERRORS").is_some() {
+                                if std::env::var_os("RERAIL_PACKED_QUERY_AUDIT_ERRORS").is_some() {
                                     eprintln!(
                                         "SCM_LOWERING_ERROR lang={name} error={error:?} pattern={pattern:?}"
                                     );
@@ -2957,7 +2957,7 @@
                    "loweringErrors": sql_errors,
                    "grammarSymbols": sql.node_kind_count(), "grammarFields": sql.field_count()}),
         );
-        if let Ok(path) = std::env::var("TEMPO_QUERY_CORPUS_OUTPUT") {
+        if let Ok(path) = std::env::var("RERAIL_PACKED_QUERY_CORPUS_OUTPUT") {
             fs::write(path, serde_json::to_vec_pretty(&corpus).unwrap()).unwrap();
         }
         println!(
@@ -2970,14 +2970,14 @@
     #[ignore = "controlled corpus FTS storage and lookup benchmark"]
     fn benchmark_fts_search_index() {
         let root = PathBuf::from(
-            std::env::var("TEMPO_TRANSDUCER_CORPUS")
+            std::env::var("RERAIL_PACKED_TRANSDUCER_CORPUS")
                 .unwrap_or_else(|_| "../../data-layer".into()),
         );
-        let limit = std::env::var("TEMPO_TRANSDUCER_FILES")
+        let limit = std::env::var("RERAIL_PACKED_TRANSDUCER_FILES")
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(usize::MAX);
-        let iterations = std::env::var("TEMPO_TRANSDUCER_ITERATIONS")
+        let iterations = std::env::var("RERAIL_PACKED_TRANSDUCER_ITERATIONS")
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(7usize);
@@ -3115,14 +3115,14 @@
     #[ignore = "Apple Silicon backend benchmark"]
     fn benchmark_anchored_cpu_and_gpu_anchor_scan() {
         let root = PathBuf::from(
-            std::env::var("TEMPO_TRANSDUCER_CORPUS")
+            std::env::var("RERAIL_PACKED_TRANSDUCER_CORPUS")
                 .unwrap_or_else(|_| "../../data-layer".into()),
         );
-        let limit = std::env::var("TEMPO_TRANSDUCER_FILES")
+        let limit = std::env::var("RERAIL_PACKED_TRANSDUCER_FILES")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(usize::MAX);
-        let iterations = std::env::var("TEMPO_TRANSDUCER_ITERATIONS")
+        let iterations = std::env::var("RERAIL_PACKED_TRANSDUCER_ITERATIONS")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(7usize);

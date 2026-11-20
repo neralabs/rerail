@@ -195,7 +195,7 @@ pub fn run_split(
 /// compile starts on a thread of its own and this is false at once: the caller runs the batch on the interpreter's
 /// pipeline (compiled once for every program) meanwhile, never waiting on the compiler (`runtime::pipeline_ready`).
 pub fn generated_ready(programs: &[&BlockNative], width: LaneWidth) -> bool {
-    crate::runtime::pipeline_ready(&generate_forms(programs, width), "tempo_batch").is_some()
+    crate::runtime::pipeline_ready(&generate_forms(programs, width), "rerail_batch").is_some()
 }
 
 /// The bindings of a batch's slabs (`MAX_SLABS`): 0, then past the interpreter's 12–15.
@@ -366,7 +366,7 @@ pub fn run_batch(
         Executor::Generated(_) => {
             let refs: Vec<&BlockNative> = forms.iter().collect();
             let source = generate_forms(&refs, width);
-            pipeline_named(&source, "tempo_batch").inspect_err(|e| eprintln!("block program: pipeline tempo_batch: {e:?}"))?
+            pipeline_named(&source, "rerail_batch").inspect_err(|e| eprintln!("block program: pipeline rerail_batch: {e:?}"))?
         }
     };
     let pass = Pass { pipeline: &pipeline, buffers, args: vec![(11, bytes_of(&params))], groups: workers, threads: GROUP };
@@ -564,7 +564,7 @@ pub fn generate_with(native: &BlockNative, width: LaneWidth, strategy: ClassStra
     generate_forms(&[&form], width)
 }
 
-/// A group of programs (each already in the form it runs) as one kernel, `tempo_batch`: a function
+/// A group of programs (each already in the form it runs) as one kernel, `rerail_batch`: a function
 /// per program, `program_P`, that computes each instruction once, in order, with a look-back for
 /// each carried one, and writes the file's outputs and extracts; and persistent workers that take
 /// the batch's groups in order and call their file's program (decision 0066).
@@ -597,7 +597,7 @@ fn generate_forms(programs: &[&BlockNative], width: LaneWidth) -> String {
     out.push_str(&format!(
         "// Persistent workers (decision 0027): each takes group numbers in launch order and runs its\n\
          // file's program over the group. `p`: the batch's groups, the polls after the first.\n\
-         kernel void tempo_batch(\n\
+         kernel void rerail_batch(\n\
          \x20   device const uint4* s0 [[buffer(0)]], device {m}* out [[buffer(1)]], device const FileRow* files [[buffer(2)]],\n\
          \x20   device const uint2* group_of [[buffer(3)]], device atomic_uint* states [[buffer(4)]],\n\
          \x20   device atomic_uint* halos [[buffer(5)]], device atomic_uint* ext_states [[buffer(6)]],\n\
@@ -873,7 +873,7 @@ pub fn kernel_report(native: &BlockNative, width: LaneWidth) -> Result<String, E
     let plan = Plan::new(&form).at(&form, width);
     let exchanges: Vec<String> = plan.exchanges().iter().map(|(h, s)| format!("{}h+{}s", h.len(), s.len())).collect();
     let source = generate_forms(&[&form], width);
-    let pipeline = pipeline_named(&source, "tempo_batch")?;
+    let pipeline = pipeline_named(&source, "rerail_batch")?;
     Ok(format!(
         "{} instructions; {} local prevs ({} warm-up lanes a group), {} halos, {} scans; exchanges [{}] + counts {}, totals {}; record {} words a group; MSL {} lines; pipeline: {} threads a threadgroup at most, SIMD width {}, {} bytes of threadgroup memory; launched as {} threadgroups of {GROUP}",
         form.insts.len(),

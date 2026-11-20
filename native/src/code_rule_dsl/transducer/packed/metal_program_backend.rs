@@ -148,14 +148,14 @@ impl MetalWorkspace {
             output_storage: MappedBuffer::untouched::<u8>(device, output_storage_bytes as usize)?,
         };
         for (buffer, label) in [
-            (&workspace.pending, "Tempo pending paths"),
-            (&workspace.results, "Tempo results"),
-            (&workspace.final_captures, "Tempo final captures"),
-            (&workspace.scheduler, "Tempo scheduler"),
-            (&workspace.captures, "Tempo capture links"),
-            (&workspace.cursors, "Tempo cursor links"),
-            (&workspace.repeats, "Tempo repeat links"),
-            (&workspace.output_storage, "Tempo output storage"),
+            (&workspace.pending, "Rerail pending paths"),
+            (&workspace.results, "Rerail results"),
+            (&workspace.final_captures, "Rerail final captures"),
+            (&workspace.scheduler, "Rerail scheduler"),
+            (&workspace.captures, "Rerail capture links"),
+            (&workspace.cursors, "Rerail cursor links"),
+            (&workspace.repeats, "Rerail repeat links"),
+            (&workspace.output_storage, "Rerail output storage"),
         ] {
             buffer.buffer.set_label(label);
         }
@@ -744,8 +744,8 @@ pub fn execute_packed_with_result_limits(
     }
     // The tasks with no node records: the device reads the documents in the slabs (`DocTable`).
     let mut batch = PackedBatch::new_in_place(programs, files, anchors).map_err(|error| {
-        if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
-            eprintln!("TEMPO_PACKED_BATCH_ERROR stage=pack error={error:?}");
+        if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
+            eprintln!("RERAIL_PACKED_BATCH_ERROR stage=pack error={error:?}");
         }
         error
     })?;
@@ -755,14 +755,14 @@ pub fn execute_packed_with_result_limits(
     let totals = batch
         .assign_workspace_with_result_limits_and_lanes(programs, result_limits, EXECUTION_LANES)
         .map_err(|error| {
-            if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
-                eprintln!("TEMPO_PACKED_BATCH_ERROR stage=workspace error={error:?}");
+            if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
+                eprintln!("RERAIL_PACKED_BATCH_ERROR stage=workspace error={error:?}");
             }
             error
         })?;
-    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
         eprintln!(
-            "TEMPO_PACKED_BATCH_PROFILE backend=metal programs={} tasks={} workspaceBytes={} totals={totals:?}",
+            "RERAIL_PACKED_BATCH_PROFILE backend=metal programs={} tasks={} workspaceBytes={} totals={totals:?}",
             programs.len(),
             batch.tasks.len(),
             batch.workspace_allocation_bytes(totals).unwrap_or(u64::MAX),
@@ -837,16 +837,16 @@ pub fn execute_packed_with_result_limits(
     let final_capture_buffer = &workspace.final_captures;
     let output_storage_buffer = &workspace.output_storage;
     let allocation_elapsed = allocation_started.elapsed();
-    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
         eprintln!(
-            "TEMPO_METAL_WORKSPACE reused={} generation={}",
+            "RERAIL_METAL_WORKSPACE reused={} generation={}",
             workspace.reused, workspace.generation,
         );
     }
     let command = queue.new_command_buffer();
-    command.set_label("Tempo packed transducer batch");
+    command.set_label("Rerail packed transducer batch");
     let encoder = command.new_compute_command_encoder();
-    encoder.set_label("Tempo packed transducer kernel");
+    encoder.set_label("Rerail packed transducer kernel");
     encoder.set_compute_pipeline_state(engine.pipeline());
     for (index, buffer) in [
         &task_buffer.buffer,
@@ -897,9 +897,9 @@ pub fn execute_packed_with_result_limits(
     commit_checked(command)?;
     wait_checked(command)?;
     let execution_elapsed = execution_started.elapsed();
-    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
         eprintln!(
-            "TEMPO_PACKED_BATCH_PHASES allocationNanoseconds={} executionNanoseconds={}",
+            "RERAIL_PACKED_BATCH_PHASES allocationNanoseconds={} executionNanoseconds={}",
             allocation_elapsed.as_nanos(),
             execution_elapsed.as_nanos(),
         );
@@ -922,7 +922,7 @@ pub fn execute_packed_with_result_limits(
             batch.tasks.len(),
         )
     };
-    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
         let mut work = BTreeMap::<u32, (u64, u32)>::new();
         for (task, status) in batch.tasks.iter().zip(statuses) {
             let entry = work.entry(task.program).or_default();
@@ -932,7 +932,7 @@ pub fn execute_packed_with_result_limits(
         let mut work = work.into_iter().collect::<Vec<_>>();
         work.sort_by_key(|(_, (total, _))| std::cmp::Reverse(*total));
         eprintln!(
-            "TEMPO_PACKED_TASK_WORK {:?}",
+            "RERAIL_PACKED_TASK_WORK {:?}",
             work.into_iter().take(12).collect::<Vec<_>>()
         );
     }

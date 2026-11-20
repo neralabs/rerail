@@ -31,8 +31,8 @@ pub mod phase_four;
 #[test]
 #[ignore = "pinned corpus differential subset against the independent CPU interpreter"]
 fn pinned_corpus_optional_body_and_injection_differential() {
-    let root = std::env::var("TEMPO_ALL_SCM_REPOSITORY").unwrap();
-    let query_root = std::env::var("TEMPO_PYTHON_SCM_QUERY_DIR").unwrap();
+    let root = std::env::var("RERAIL_PACKED_ALL_SCM_REPOSITORY").unwrap();
+    let query_root = std::env::var("RERAIL_PACKED_PYTHON_SCM_QUERY_DIR").unwrap();
     let mut paths = std::fs::read_dir(query_root)
         .unwrap()
         .map(|entry| entry.unwrap().path())
@@ -2442,7 +2442,7 @@ pub mod retained_grid_runtime {
                 .unwrap()
             })
             .collect::<Vec<_>>();
-        if let Ok(root) = std::env::var("TEMPO_CONTEXT_REPRO_CATALOG") {
+        if let Ok(root) = std::env::var("RERAIL_PACKED_CONTEXT_REPRO_CATALOG") {
             programs.clear();
             let mut paths = std::fs::read_dir(root)
                 .unwrap()
@@ -2472,7 +2472,7 @@ pub mod retained_grid_runtime {
             ),
             tape("re.compile(f'a{b}c' 'd')\nre.match('a' f'{b}c', text)\n"),
         ];
-        if let Ok(root) = std::env::var("TEMPO_CONTEXT_REPRO_REPOSITORY") {
+        if let Ok(root) = std::env::var("RERAIL_PACKED_CONTEXT_REPRO_REPOSITORY") {
             for path in [
                 "Lib/_py_warnings.py",
                 "Lib/_pydatetime.py",
@@ -2483,7 +2483,7 @@ pub mod retained_grid_runtime {
                 ));
             }
         }
-        if let Ok(nodes) = std::env::var("TEMPO_CONTEXT_DUMP_NODES") {
+        if let Ok(nodes) = std::env::var("RERAIL_PACKED_CONTEXT_DUMP_NODES") {
             for node in nodes.split(',').map(|node| node.parse::<u32>().unwrap()) {
                 let mut first = 0;
                 for (index, file) in files.iter().enumerate() {
@@ -2502,7 +2502,7 @@ pub mod retained_grid_runtime {
                             })
                             .collect::<Vec<_>>();
                         eprintln!(
-                            "TEMPO_CONTEXT_NODE global={node} file={index} local={local} span={:?} children={children:?}",
+                            "RERAIL_PACKED_CONTEXT_NODE global={node} file={index} local={local} span={:?} children={children:?}",
                             file.transducer_span(local)
                         );
                     }
@@ -2510,7 +2510,7 @@ pub mod retained_grid_runtime {
                 }
             }
         }
-        let active_programs = std::env::var("TEMPO_CONTEXT_ACTIVE_PROGRAMS")
+        let active_programs = std::env::var("RERAIL_PACKED_CONTEXT_ACTIVE_PROGRAMS")
             .ok()
             .map(|value| {
                 value
@@ -2546,12 +2546,12 @@ pub mod retained_grid_runtime {
         let expected =
             crate::code_rule_dsl::transducer::packed::execute_batch_outcomes(&programs, &files, &anchors)
                 .unwrap();
-        if std::env::var_os("TEMPO_CONTEXT_DUMP_PROGRAMS").is_some() {
+        if std::env::var_os("RERAIL_PACKED_CONTEXT_DUMP_PROGRAMS").is_some() {
             for index in [115, 278] {
                 if let Some(program) = programs.get(index) {
                     for (pc, &word) in program.words.iter().enumerate() {
                         eprintln!(
-                            "TEMPO_CONTEXT_PROGRAM program={index} pc={pc} instruction={:?}",
+                            "RERAIL_PACKED_CONTEXT_PROGRAM program={index} pc={pc} instruction={:?}",
                             crate::code_rule_dsl::transducer::packed::split(word)
                         );
                     }
@@ -2559,7 +2559,7 @@ pub mod retained_grid_runtime {
             }
         }
         assert!(expected.errors.iter().flatten().all(Option::is_none));
-        let repetitions = std::env::var("TEMPO_CONTEXT_REPRO_REPEAT")
+        let repetitions = std::env::var("RERAIL_PACKED_CONTEXT_REPRO_REPEAT")
             .map(|value| value.parse::<usize>().unwrap())
             .unwrap_or(1);
         for _ in 0..repetitions {

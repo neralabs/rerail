@@ -2632,9 +2632,9 @@ pub fn execute_batch_packed_with_work_limit(
     }
     let totals = crate::code_rule_dsl::prof::time("jit.assign", || batch.assign_workspace_with_result_limits(programs, result_limits))?;
     let setup = crate::code_rule_dsl::prof::Stage::start("jit.setup");
-    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
         eprintln!(
-            "TEMPO_PACKED_BATCH_PROFILE backend=cpu programs={} tasks={} workspaceBytes={}",
+            "RERAIL_PACKED_BATCH_PROFILE backend=cpu programs={} tasks={} workspaceBytes={}",
             programs.len(),
             batch.tasks.len(),
             batch.workspace_allocation_bytes(totals).unwrap_or(u64::MAX),
@@ -3021,9 +3021,9 @@ pub fn execute_batch_packed_with_work_limit(
         compact_bytes.extend_from_slice(&output.bytes);
     }
     let execution_elapsed = execution_started.elapsed();
-    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
         eprintln!(
-            "TEMPO_PACKED_BATCH_PHASES allocationNanoseconds={} executionNanoseconds={}",
+            "RERAIL_PACKED_BATCH_PHASES allocationNanoseconds={} executionNanoseconds={}",
             allocation_elapsed.as_nanos(),
             execution_elapsed.as_nanos(),
         );

@@ -167,9 +167,9 @@ impl BufferReservation {
         let previous = take()
             .or_else(|used| if pooled && rerail_accel::gpu::shared::make_room(bytes) { take() } else { Err(used) })
             .map_err(|used| {
-                if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+                if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
                     eprintln!(
-                        "TEMPO_METAL_RESERVATION_REJECT bytes={bytes} used={used} limit={limit}\n{}",
+                        "RERAIL_METAL_RESERVATION_REJECT bytes={bytes} used={used} limit={limit}\n{}",
                         std::backtrace::Backtrace::force_capture()
                     );
                 }
@@ -378,7 +378,7 @@ impl PrivateInputUpload {
         }
         metal::objc::rc::autoreleasepool(|| {
             let command = self.queue.new_command_buffer();
-            command.set_label("Tempo bounded resident input upload");
+            command.set_label("Rerail bounded resident input upload");
             let blit = command.new_blit_command_encoder();
             for (target, source_offset, target_offset, count) in &self.copies {
                 blit.copy_from_buffer(
@@ -446,9 +446,9 @@ impl MappedBuffer {
                 .saturating_add(mapping.length as u64)
                 > metal_buffer_limit() as u64
         {
-            if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+            if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
                 eprintln!(
-                    "TEMPO_METAL_DRIVER_REJECT bytes={} reserved={} driver={} maximumBuffer={}",
+                    "RERAIL_METAL_DRIVER_REJECT bytes={} reserved={} driver={} maximumBuffer={}",
                     mapping.length,
                     pool().load(Ordering::Acquire),
                     device.current_allocated_size(),
@@ -512,9 +512,9 @@ impl MappedBuffer {
                 .saturating_add(length as u64)
                 > metal_buffer_limit() as u64
         {
-            if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+            if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
                 eprintln!(
-                    "TEMPO_METAL_DRIVER_REJECT bytes={length} reserved={} driver={} maximumBuffer={} caller={}",
+                    "RERAIL_METAL_DRIVER_REJECT bytes={length} reserved={} driver={} maximumBuffer={} caller={}",
                     pool().load(Ordering::Acquire),
                     device.current_allocated_size(),
                     device.max_buffer_length(),

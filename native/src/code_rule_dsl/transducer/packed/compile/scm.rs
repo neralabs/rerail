@@ -1026,7 +1026,7 @@ impl<'a> Compiler<'a> {
                     }
                 }
                 eprintln!(
-                    "Tempo ignored SCM property predicate {} for ast-index-spike compatibility; exact host semantics are not implemented",
+                    "ignored SCM property predicate {}: its host semantics are not implemented",
                     predicate.name
                 );
                 continue;
@@ -1272,8 +1272,8 @@ pub mod tests {
     #[test]
     #[ignore = "all pinned Python SCM files"]
     fn parser_accepts_every_pinned_python_query_file() {
-        let root = std::env::var("TEMPO_PYTHON_SCM_QUERY_DIR")
-            .expect("TEMPO_PYTHON_SCM_QUERY_DIR must name the original Python SCM directory");
+        let root = std::env::var("RERAIL_PACKED_PYTHON_SCM_QUERY_DIR")
+            .expect("RERAIL_PACKED_PYTHON_SCM_QUERY_DIR must name the original Python SCM directory");
         let mut paths = std::fs::read_dir(&root)
             .unwrap_or_else(|error| {
                 panic!(
@@ -1294,7 +1294,7 @@ pub mod tests {
         assert_eq!(paths.len(), 15);
         assert_eq!(patterns, 335);
         println!(
-            "TEMPO_PYTHON_SCM_PARSE {{\"files\":{},\"patterns\":{patterns}}}",
+            "RERAIL_PACKED_PYTHON_SCM_PARSE {{\"files\":{},\"patterns\":{patterns}}}",
             paths.len()
         );
     }
@@ -1303,8 +1303,8 @@ pub mod tests {
     #[ignore = "all pinned Python SCM patterns through the Program lowerer"]
     fn lowerer_audits_every_pinned_python_pattern_without_approximation() {
         use ast_grep_language::LanguageExt;
-        let root = std::env::var("TEMPO_PYTHON_SCM_QUERY_DIR")
-            .expect("TEMPO_PYTHON_SCM_QUERY_DIR must name the original Python SCM directory");
+        let root = std::env::var("RERAIL_PACKED_PYTHON_SCM_QUERY_DIR")
+            .expect("RERAIL_PACKED_PYTHON_SCM_QUERY_DIR must name the original Python SCM directory");
         let mut paths = std::fs::read_dir(&root)
             .unwrap_or_else(|error| {
                 panic!(
@@ -1465,7 +1465,7 @@ pub mod tests {
         let native_cpu_millis = native_cpu_started.elapsed().as_secs_f64() * 1_000.0;
         let metal_compile_millis: Option<f64> = None;
         println!(
-            "TEMPO_PYTHON_SCM_COMPILATION {{\"programs\":{},\"nativeIrLowered\":{},\"callbackFreeCpuJitCompiled\":{},\"callbackFreeCpuJitCompileMillis\":{native_cpu_millis},\"metalJitCompiled\":{},\"metalJitCompileMillis\":{},\"structuralOpcodeCounts\":{},\"valueProgramCounts\":{},\"captureProgramCounts\":{},\"outputInstructionCounts\":{}}}",
+            "RERAIL_PACKED_PYTHON_SCM_COMPILATION {{\"programs\":{},\"nativeIrLowered\":{},\"callbackFreeCpuJitCompiled\":{},\"callbackFreeCpuJitCompileMillis\":{native_cpu_millis},\"metalJitCompiled\":{},\"metalJitCompileMillis\":{},\"structuralOpcodeCounts\":{},\"valueProgramCounts\":{},\"captureProgramCounts\":{},\"outputInstructionCounts\":{}}}",
             compiled.len(),
             compiled.len(),
             compiled.len(),
@@ -1481,7 +1481,7 @@ pub mod tests {
             serde_json::to_string(&output_instruction_counts).unwrap(),
         );
         println!(
-            "TEMPO_PYTHON_SCM_LOWERING {{\"compiled\":{},\"grammarIncompatible\":{incompatible_count},\"loweringRejected\":{rejected_count},\"incompatibilities\":{},\"rejections\":{}}}",
+            "RERAIL_PACKED_PYTHON_SCM_LOWERING {{\"compiled\":{},\"grammarIncompatible\":{incompatible_count},\"loweringRejected\":{rejected_count},\"incompatibilities\":{},\"rejections\":{}}}",
             compiled.len(),
             serde_json::to_string(&incompatible).unwrap(),
             serde_json::to_string(&rejected).unwrap()
