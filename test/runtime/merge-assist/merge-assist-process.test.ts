@@ -76,7 +76,7 @@ describe("rerail merge-assist as its own process", () => {
   it("ends once its answer is written, while a stat of gh's hosts file has not answered", async () => {
     const { code, stdout, stderr } = await status({});
     expect({ code, stderr }).toEqual({ code: 0, stderr: "stat of hosts.yml asked\n" });
-    expect(stdout).toContain("  GitHub: gh signed in as tbelanger (acme/app), read ");
+    expect(stdout).toContain("  GitHub: gh signed in as akim (acme/app), read ");
   }, 60_000);
 
   it("ends only once all of a long answer is written", async () => {

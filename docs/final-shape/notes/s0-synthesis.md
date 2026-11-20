@@ -8,7 +8,7 @@ Rules:
 - Where tracks disagree, the disagreement is listed under "Contradictions", not resolved silently.
 - Decisions that belong to the user are listed under "Open decisions". Measurements that settle a question are listed under "Open measurements".
 
-Tracks: t1 PIAT spec, t2 PIAT research core, t3 PIAT costs/ledger, t4 ast-index-spike, t5 Tempo residency, t6 Tempo transducer/Metal, t7 main store/invalidation, t8 PIAT branch docs, t9 Typing-support, t10 Moti facts, t11 DLRE/N1562/SSC since the review.
+Tracks: t1 PIAT spec, t2 PIAT research core, t3 PIAT costs/ledger, t4 SQL index prototype, t5 Tempo residency, t6 Tempo transducer/Metal, t7 main store/invalidation, t8 PIAT branch docs, t9 Typing-support, t10 Facts-engine, t11 DLRE/N1562/SSC since the review.
 
 ---
 
@@ -159,7 +159,7 @@ These come before the nine answers, because every answer depends on them.
 - **Index budget in the spec:** ≤ 4.1 B/node (kind 2.6 + term 1.3 + edge 0.15 + sets 0.01) (t1 spec-indexes §2.14).
   - Tempo's Schema 12 FTS measured 2.998 B/node in total, kind 1.172 B/node (M) (t5 §14 missed-7).
 - **What the disk budget rules out for facts.** These copies must not become a second persisted copy of the tree beside the tape:
-  - Moti's core facts on disk: `RRFACTS` 6.6 B/node, 186.4 MB (M) (t10 Q1);
+  - The facts-engine stream's core facts on disk: `RRFACTS` 6.6 B/node, 186.4 MB (M) (t10 Q1);
   - Typing's exported `facts.sqlite`: 175 MB for 1.2M named nodes, a spike export (M) (t9 §5.2).
   
   Typing's own conclusion: "construction should come from the tape and anchor index"; "tree structure … is never Datalog recursion" (t9 §5.3). The base structural relations are the tape plus postings.
@@ -217,7 +217,7 @@ These come before the nine answers, because every answer depends on them.
   "Shared does not imply SQL."
 - **Admission:** concept-named, ≥ 2 rules, rows per document ≤ node count, no rule seeds (t1 §21.3). This guards against PR 2539's "Process Failure" (t2 derived-facts).
 - **Identity:** `fact_digest = H(lowered def ‖ schema ‖ input digests ‖ compiler version)` (t1 §21.4).
-  - Moti's equivalent: memo keyed by (content hash, plan digest, schema version[, path]), with content-pure clauses path-free (t10 Q2).
+  - The facts-engine stream's equivalent: memo keyed by (content hash, plan digest, schema version[, path]), with content-pure clauses path-free (t10 Q2).
 - **Storage:**
   - narrow typed tables with atoms interned as u32; no EAV and no unions;
   - one physical owner per (doc or snapshot, digest);
@@ -234,13 +234,13 @@ These come before the nine answers, because every answer depends on them.
     - arena store: flat rows, row-id hash dedup, postings as chains through one u32 `next` slot per row, deltas as chain prefixes, CSR for immutable inputs;
     - one global symbol interner;
     - Python 1.48–1.67 s exec / 640 MB; Rust 1.13–1.20 s / 450 MB (M).
-  - **Moti** replaced SQLite because of per-statement and B-tree cost (set-composition ~3× native; 198 s of stage builds in batch 6). SQLite stays as the semantic definition and differential oracle (t10 Q7).
+  - **Facts-engine** replaced SQLite because of per-statement and B-tree cost (set-composition ~3× native; 198 s of stage builds in batch 6). SQLite stays as the semantic definition and differential oracle (t10 Q7).
 - **Interners in the sources:**
   - main's CAS `strings` (domain, content hash, collision ordinal) (t7 CAWS);
   - spec `text_vocab(id, bytes)` with a per-token `tid` sidecar (interning 0.22 s, M) (t1 spec-transducer §5.2; t2 regex);
   - §21 u32 atoms;
   - Typing's global interner (t9 §3.4);
-  - Moti's process-wide kind/field interning (t10 Q1).
+  - The facts-engine stream's process-wide kind/field interning (t10 Q1).
   
   No source relates them (t2 derived-facts "open"; t7 tensions 3). → Open decision D4.
 
@@ -295,7 +295,7 @@ These come before the nine answers, because every answer depends on them.
   - repository facts update by semi-naive Δ, with DRed for recursive components;
   - only rules whose recorded read set intersects a changed (fact, key) re-run.
   - Per-edit target M8: ≤ 1 s p95 (t2 derived-facts B6).
-- **Moti** (t10 Q3, Q5):
+- **Facts-engine** (t10 Q3, Q5):
   - Y1: keyed tables with `Box<[u32]>` read-set memos (probed keys hashed, **absent keys included**), level-order re-run, early cutoff and backdating;
   - **Y2: a level witness beat DRed (max over-deletion 80 vs 388,040; p95 1.5 vs 394 ms, M)**;
   - Y3: exact on 1,151 checks at 0.53 / 3.76 ms per edit, but 1.94–2.09 GB heap against a 250 MB target that no design met.
@@ -307,7 +307,7 @@ These come before the nine answers, because every answer depends on them.
   - "a small edit can cause repository-wide row work".
 - **All of these are one mechanism, with three granularities of read set:**
   - main's stamps (per consumer, over the closure);
-  - Moti's Y1 memos (per reader, over keys including absent ones);
+  - The facts-engine stream's Y1 memos (per reader, over keys including absent ones);
   - Typing's interface digests (per module, over exports).
   
   Each is a derivation keyed by (own inputs, digest of what was read), with early cutoff when that digest is unchanged. → Open decision D3 is the deletion strategy: DRed or a level witness.
@@ -375,7 +375,7 @@ These come before the nine answers, because every answer depends on them.
   - exceeding a pool gives `Unknown(resource)` and never reroutes.
 - **Debugging:** `rir` dumps and an assembler; `explain` over `compiled_plans` decisions; `--trace`; Metal debug mode; repro bundles; `rerail engine replay` (t1 spec-tooling §2.2).
 - **Testing:** differential finding-key sets across interp/JIT/Metal, fused/unfused, vtab/pure-SQL, engine/ast-grep and engine/oracle; proptest/fuzz; v7 ↔ v9np round trip (t1 spec-tooling §2.4).
-  - Moti adds the mutant gate: one mutant per rewrite, and a crash is an error, never a kill (t10 Q6).
+  - Facts-engine adds the mutant gate: one mutant per rewrite, and a crash is an error, never a kill (t10 Q6).
 - **Profiling:** a fixed span taxonomy, always-on counters, one JSONL profile; the gate reads only end-to-end CPU, wall, RSS, device bytes, parity, Unknown rate and compile time (t1 spec-tooling §2.5–2.7).
   - Memory rules: user+sys CPU only; construction separate from execution (`measure-cpu-time`, `anchor-index-mandatory`; t3 §11).
 - **Spike measurement rules** (t4 §30 #64–71): oracle parity on node sets; positive controls; never catch "unsupported"; interleaved A/B; decisions require measurement.
@@ -387,9 +387,9 @@ These come before the nine answers, because every answer depends on them.
 | # | Between | Statement A | Statement B | Proposed reading |
 |---|---|---|---|---|
 | C1 | spec-indexes vs decision 0006 | per-node positions in SQL serve only the fallback; inside a document the transducer scans the kind column (t1 spec-indexes §2.0.5) | the positional anchor index is always built (t1 OPEN CONFLICT; memory `anchor-index-mandatory`) | postings always built, in the one content store, feeding set-stage LEAF and anchor choice; what is retired is DLRE's private copies → **D1** |
-| C2 | spec §21.8 vs Moti Y2 | DRed for recursive components | level witness: 80 vs 388,040 over-deleted (M) (t10 Q3) | **D3** |
-| C3 | spec §21 vs Typing / Moti | derived facts compiled to SQL and run in SQLite (t1 §21.1) | recursive and set strata run natively, with SQLite as the system of record and oracle; Typing's native mode beats Ascent; Moti left SQLite over per-statement cost (t9 §3.3, Synthesis 5; t10 Q7) | **D2** |
-| C4 | CAWS vs Tempo Metal vs Moti Y3 | < 1 GiB steady RSS (t7 CAWS) | Tempo Metal observed 3.09–3.59 GB (t5 contradictions 1); Y3 1.94–2.09 GB (t10 Q5) | resident tapes fit (≈ 0.1–0.2 GB); the overruns are path arenas and maintained cross-file state → **D5** |
+| C2 | spec §21.8 vs facts-engine Y2 | DRed for recursive components | level witness: 80 vs 388,040 over-deleted (M) (t10 Q3) | **D3** |
+| C3 | spec §21 vs Typing / facts-engine | derived facts compiled to SQL and run in SQLite (t1 §21.1) | recursive and set strata run natively, with SQLite as the system of record and oracle; Typing's native mode beats Ascent; facts-engine left SQLite over per-statement cost (t9 §3.3, Synthesis 5; t10 Q7) | **D2** |
+| C4 | CAWS vs Tempo Metal vs facts-engine Y3 | < 1 GiB steady RSS (t7 CAWS) | Tempo Metal observed 3.09–3.59 GB (t5 contradictions 1); Y3 1.94–2.09 GB (t10 Q5) | resident tapes fit (≈ 0.1–0.2 GB); the overruns are path arenas and maintained cross-file state → **D5** |
 | C5 | sql-vs-transducer ext. 9 vs spec-tooling | non-regular programs routed to CPU | every program Metal-capable; no routing (t2 sql-vs-transducer) | spec-tooling wins; resolved |
 | C6 | tape-regularity vs §20 | concatenate the columns of a batch | reference through a document table (t2 tape-regularity) | §20 wins; resolved |
 | C7 | metal-recursion vs v9np | resident `parent` | `par` not stored (t2 metal-recursion) | resident sidecar keyed by tape digest; resolved |
@@ -414,7 +414,7 @@ These come before the nine answers, because every answer depends on them.
   - SQLite holds persisted fact caches, cross-file composition over small outputs, and the oracle.
   
   Basis: C3; t3 §1 (16.4 s table load); t9 §3.3–3.5.
-- **D3. Deletion under maintenance.** Recommendation: a level witness (Y2) for recursive components, and read-set memos with early cutoff generalised from main's stamps / Moti Y1 / Typing digests. Basis: C2; Q6.
+- **D3. Deletion under maintenance.** Recommendation: a level witness (Y2) for recursive components, and read-set memos with early cutoff generalised from main's stamps / facts-engine Y1 / Typing digests. Basis: C2; Q6.
 - **D4. One interner.** Recommendation: a single u32 atom space for token text (`text_vocab`/`tid`), fact atoms and engine symbols, homed in the CAS `strings` table (a new domain) or a sibling append-only table.
   - Basis: t2 regex; t7 tension 3; t9 §3.4.
   - Unresolved: CAS `strings` is machine-wide and collision-ordinal-keyed, while `tid` wants dense, append-only ids. This needs a measured choice.

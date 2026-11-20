@@ -501,8 +501,8 @@ describe("push", () => {
 
 describe("objectTagging", () => {
   it("URL-encodes the four rerail: tags, and refuses a value S3 cannot carry", () => {
-    expect(objectTagging({ commit: "a".repeat(40), pr: "177", runId: "123", uploader: "jeffreysnell" })).toBe(
-      `rerail%3Acommit=${"a".repeat(40)}&rerail%3Apr=177&rerail%3Arun-id=123&rerail%3Auploader=jeffreysnell`,
+    expect(objectTagging({ commit: "a".repeat(40), pr: "177", runId: "123", uploader: "dlee" })).toBe(
+      `rerail%3Acommit=${"a".repeat(40)}&rerail%3Apr=177&rerail%3Arun-id=123&rerail%3Auploader=dlee`,
     );
     expect(() => objectTagging({ commit: "a", pr: "1", runId: "1", uploader: "bot[bot]" })).toThrow('rerail:uploader "bot[bot]"');
   });

@@ -36,7 +36,7 @@ describe("the Merge Assist operations for a repository", () => {
     git(checkout, "commit", "-q", "--allow-empty", "-m", "start");
     // A linked worktree whose path sorts first: the main checkout is the second one asked about.
     const worktree = join(root, "a-export");
-    git(checkout, "worktree", "add", "-q", "-b", "tbelanger/export-api", worktree);
+    git(checkout, "worktree", "add", "-q", "-b", "akim/export-api", worktree);
     const databasePath = join(root, "rerail.sqlite");
     const service = new RecordingMergeAssistService();
     const stores = new DatabaseApiStores(databasePath, {

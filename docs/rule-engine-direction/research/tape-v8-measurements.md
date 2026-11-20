@@ -1,6 +1,6 @@
 # Tape v8 spike: content audit, Blade, measured variants, SQL test
 
-Spike code: `crate/` (v7 encoder and decoder copied from `native/src/code_rule_dsl/tape.rs` and `tape/wire.rs`; v8 and v9 variants beside it). Raw results: `results/*.json`, `results/sql*.txt`, `results/tables.md`. Corpora: CPython 3.13.0 `Lib/` (sparse clone in `corpora/`), the data-layer repository's `impl/` (gruel-main checkout), rerail TS (`src test conformance benchmark scripts`), rerail Rust (`native/src crates`), rerail PHP fixtures (non-Blade `.php` under `fixtures packs`). 24.2M nodes in total. Grammars: the crates.io tree-sitter grammars (python 0.25.0, typescript 0.23.2, rust 0.24.2, php 0.24.2) on tree-sitter 0.27.1, not Rerail's vendored and patched ones (see Caveats).
+Spike code: `crate/` (v7 encoder and decoder copied from `native/src/code_rule_dsl/tape.rs` and `tape/wire.rs`; v8 and v9 variants beside it). Raw results: `results/*.json`, `results/sql*.txt`, `results/tables.md`. Corpora: CPython 3.13.0 `Lib/` (sparse clone in `corpora/`), the data-layer repository's `impl/` (data-layer checkout), rerail TS (`src test conformance benchmark scripts`), rerail Rust (`native/src crates`), rerail PHP fixtures (non-Blade `.php` under `fixtures packs`). 24.2M nodes in total. Grammars: the crates.io tree-sitter grammars (python 0.25.0, typescript 0.23.2, rust 0.24.2, php 0.24.2) on tree-sitter 0.27.1, not Rerail's vendored and patched ones (see Caveats).
 
 ## Recommendation
 
@@ -146,7 +146,7 @@ Observations:
 - **A derived end without a tail column would need an exception table.** `end ≠ end(last descendant)` for 0.09–0.63% of internal nodes, and only 0–2% of those have a special tail (extra, missing, error, zero width). The `tail` column makes the end exact and regular at 2 B/node. Likewise `start ≠ start(first child)` for up to 0.73%, so start is not derived.
 - In documents of 64 KiB or more, `start − start(parent)` fits 16 bits for 99.8% of nodes. That was not used, because a climb is needed to read it.
 
-## Part 4: SQL (ast-index-spike pure-SQL technique, SQLite 3.53.2 bundled)
+## Part 4: SQL (SQL index prototype pure-SQL technique, SQLite 3.53.2 bundled)
 
 Setup:
 - Per-file blobs; a byte is `instr(X'00..FF', substr(col, pos, 1)) - 1` (no registered function); rows come from `generate_series`.
@@ -202,10 +202,10 @@ What the SQL numbers say:
 ## Reproduce
 
 ```
-S=/private/tmp/claude-501/-Users-jeremy-orca-workspaces-rerail-Pulling-it-all-together/3adb237a-22e7-4e0c-9a7a-33e109d2ab63/scratchpad/v8spike
+S=<scratch folder>/v8spike    # the spike's folder, with crate/ and results/ (not kept)
 git clone --depth 1 --branch v3.13.0 --filter=blob:none --sparse https://github.com/python/cpython.git $S/corpora/cpython && (cd $S/corpora/cpython && git sparse-checkout set Lib)
 (cd $S/crate && CARGO_TARGET_DIR=../target cargo build --release)
-B=$S/target/release/v8spike; R=~/orca/workspaces/rerail/Pulling-it-all-together; D=~/orca/projects/data-layer-gruel-main
+B=$S/target/release/v8spike; R=<Pulling-it-all-together worktree>; D=<data-layer checkout>
 $B measure cpython-3.13-Lib python $S/corpora/cpython/Lib > $S/results/cpython.json
 $B measure data-layer-impl python $D/impl > $S/results/ndl-impl.json
 $B measure rerail-ts typescript $R/src $R/test $R/conformance $R/benchmark $R/scripts > $S/results/rerail-ts.json

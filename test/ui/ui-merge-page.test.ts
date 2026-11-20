@@ -63,7 +63,7 @@ describe("the status strip", () => {
     const shown = stripSignature(github({}));
 
     expect(stripSignature(github({ state: "signed-out" }))).not.toBe(shown);
-    expect(stripSignature(github({ login: "jbarnes" }))).not.toBe(shown);
+    expect(stripSignature(github({ login: "jdoe" }))).not.toBe(shown);
     expect(stripSignature(github({ readAt: null }))).not.toBe(shown);
   });
 });

@@ -94,24 +94,24 @@ describe("rerail merge-assist", () => {
       lastScan: { at: "2026-11-03T14:05:00Z", peers: { branches: 1, pullRequests: 2 }, problems: ["Rerail could not list open pull requests: HTTP 502"] },
       conflicts: [
         conflict,
-        sampleConflict({ id: DISMISSED, title: "client.ts", status: "dismissed", dismissal: { name: "Tim Belanger", at: "2026-11-03T14:10:00Z" } }),
+        sampleConflict({ id: DISMISSED, title: "client.ts", status: "dismissed", dismissal: { name: "Alex Kim", at: "2026-11-03T14:10:00Z" } }),
       ],
     });
     expect(await run(["--repo", checkout])).toBe(0);
     expect(stdout).toBe([
-      "● Merge Assist is on in app (tbelanger/export-api, base main).",
-      "  GitHub: gh signed in as tbelanger (acme/app), read 2026-11-03 14:05 UTC",
+      "● Merge Assist is on in app (akim/export-api, base main).",
+      "  GitHub: gh signed in as akim (acme/app), read 2026-11-03 14:05 UTC",
       "  Last scan: 2026-11-03 14:05 UTC, 1 branch and 2 pull requests",
       "    Rerail could not list open pull requests: HTTP 502",
       "  Conflicts (1):",
       `    ${conflict.id}  #a1b2c3  "model.rs · fn compile"`,
-      "      Summary: PR #398 (jbarnes) is changing fn compile",
-      "      Yours:  This branch (Tim Belanger): \"edits native/src/model.rs\" at native/src/model.rs:469",
-      "      Theirs: PR #398 (jbarnes): \"Share compiled matchers\" at native/src/model.rs:470 https://github.com/acme/app/pull/398",
+      "      Summary: PR #398 (jdoe) is changing fn compile",
+      "      Yours:  This branch (Alex Kim): \"edits native/src/model.rs\" at native/src/model.rs:469",
+      "      Theirs: PR #398 (jdoe): \"Share compiled matchers\" at native/src/model.rs:470 https://github.com/acme/app/pull/398",
       "      Both sides change native/src/model.rs within 3 lines of each other.",
       `      Not a conflict? rerail merge-assist dismiss ${conflict.id}`,
       "  Dismissed conflicts (1):",
-      `    ${DISMISSED}  "client.ts": dismissed by Tim Belanger: not a conflict`,
+      `    ${DISMISSED}  "client.ts": dismissed by Alex Kim: not a conflict`,
       `  Merge Assist page: ${PAGE}`,
       "",
     ].join("\n"));
@@ -199,15 +199,15 @@ describe("rerail merge-assist", () => {
     status = path => sampleStatus(path, { conflicts: [conflict] });
     expect(await run(["conflicts", "--repo", checkout], null)).toBe(0);
     expect(stdout).toBe([
-      "● 1 open conflict in app (tbelanger/export-api).",
+      "● 1 open conflict in app (akim/export-api).",
       "  Conflicts (1):",
       `    ${conflict.id}  #a1b2c3  "model.rs · fn compile"  (quiet)`,
-      "      Summary: PR #398 (jbarnes) is changing fn compile",
-      "      Yours:  This branch (Tim Belanger): \"edits native/src/model.rs\" at native/src/model.rs:469",
+      "      Summary: PR #398 (jdoe) is changing fn compile",
+      "      Yours:  This branch (Alex Kim): \"edits native/src/model.rs\" at native/src/model.rs:469",
       "          @@ -469 +469 @@",
       "          -matchers: Vec<GrammarMatcher>,",
       "          +matchers: Vec<GrammarMatcher>, // cloned",
-      "      Theirs: PR #398 (jbarnes): \"Share compiled matchers\" at native/src/model.rs:470 https://github.com/acme/app/pull/398",
+      "      Theirs: PR #398 (jdoe): \"Share compiled matchers\" at native/src/model.rs:470 https://github.com/acme/app/pull/398",
       "          @@ -470 +470 @@",
       "          +matchers: Arc<[GrammarMatcher]>,",
       "      Both sides change native/src/model.rs within 3 lines of each other.",
@@ -220,16 +220,16 @@ describe("rerail merge-assist", () => {
     status = path => sampleStatus(path, { enabled: false, conflicts: [] });
     await run(["conflicts", "--repo", checkout], PAGE);
     expect(stdout).toBe([
-      "● 0 open conflicts in app (tbelanger/export-api).",
+      "● 0 open conflicts in app (akim/export-api).",
       "  Merge Assist is off here, so Rerail finds no conflicts. Turn it on with rerail merge-assist on.",
       `  Merge Assist page: ${PAGE}`,
       "",
     ].join("\n"));
 
     stdout = "";
-    status = path => sampleStatus(path, { conflicts: [{ ...conflict, status: "dismissed", dismissal: { name: "Tim Belanger", at: "2026-11-03T14:10:00Z" } }] });
+    status = path => sampleStatus(path, { conflicts: [{ ...conflict, status: "dismissed", dismissal: { name: "Alex Kim", at: "2026-11-03T14:10:00Z" } }] });
     expect(await run(["dismiss", conflict.id, "--repo", checkout], null)).toBe(0);
-    expect(stdout).toBe("● \"model.rs · fn compile\": dismissed by Tim Belanger: not a conflict.\n");
+    expect(stdout).toBe("● \"model.rs · fn compile\": dismissed by Alex Kim: not a conflict.\n");
     expect(service.calls.slice(-2)).toEqual([{ method: "dismissConflict", checkout, conflictId: conflict.id }, { method: "status", checkout }]);
   });
 
@@ -258,7 +258,7 @@ describe("rerail merge-assist", () => {
     stdout = "";
     status = path => sampleStatus(path, { conflicts: [conflict] });
     onSettled = () => {
-      status = path => sampleStatus(path, { conflicts: [{ ...conflict, status: "dismissed", dismissal: { name: "Tim Belanger", at: "2026-11-03T14:10:00Z" }, hook: { ...failed, event: "closed", ok: true, error: null } }] });
+      status = path => sampleStatus(path, { conflicts: [{ ...conflict, status: "dismissed", dismissal: { name: "Alex Kim", at: "2026-11-03T14:10:00Z" }, hook: { ...failed, event: "closed", ok: true, error: null } }] });
     };
     expect(await run(["dismiss", conflict.id, "--repo", checkout, "--json"])).toBe(0);
     expect(mergeAssistStatusSchema.parse(JSON.parse(stdout)).conflicts[0]?.hook).toMatchObject({ event: "closed", ok: true });

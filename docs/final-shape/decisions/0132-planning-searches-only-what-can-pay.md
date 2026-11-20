@@ -127,7 +127,7 @@ What would make it safe is a bound on actual regret, not estimated: §4.
 
 ## 4. Classifiers and approximations
 
-**What the `cost-classifier` worktree has** (branch `jeremybarnes/cost-classifier-metal-rf`, decision 0100 §14):
+**What the `cost-classifier` worktree has** (branch `cost-classifier-metal-rf`, decision 0100 §14):
 - MLDB's random forest, in Rust and Metal. Two regression forests predict an executor job's wall time and CPU from
   `lane, forms, launches, units, cold, load, threads`. Held out, the model's wall error is ×1.94, against ×3.29 for
   medians and ×6.50 for prices.

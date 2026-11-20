@@ -84,7 +84,7 @@ describe("native steers", () => {
     const steer = (content: string, ruleIds: readonly string[]): AdapterDelivery => ({
       sessionId: "session", requested: "steer", mechanism: "native-queue", content, ruleIds, rules: [],
     });
-    const conflict = { id: "conflict:a", text: "your edit overlaps jbarnes-1: retry.ts" };
+    const conflict = { id: "conflict:a", text: "your edit overlaps jdoe-1: retry.ts" };
     const sent: Array<{ content: string; details: object }> = [];
     const receipts: Array<readonly string[]> = [];
     await sendNativeDeliveries(

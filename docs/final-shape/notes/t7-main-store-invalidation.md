@@ -1,6 +1,6 @@
 # T7 notes: main (wolfeel = main 5cf4246e) store, invalidation, tape, transducer docs
 
-Paths are relative to `/Users/jeremy/orca/workspaces/rerail/wolfeel/`. "CAWS" = `docs/content-addressed-workspace-store.md`.
+Paths are relative to the `wolfeel` worktree. "CAWS" = `docs/content-addressed-workspace-store.md`.
 
 ---
 
@@ -125,7 +125,7 @@ Paths are relative to `/Users/jeremy/orca/workspaces/rerail/wolfeel/`. "CAWS" = 
   - `EXTRACTOR_VERSION = 9`.
   - Summaries are linked by name into one graph. Each `calls` term is a **sparse backward reachability walk from its seed definitions**, cost = region reached; the dense SCC closure is the test oracle; MAX_HOPS 16 for alias/star-import hops.
   - **Stamps** (`workspace/calls_state.rs:1-5`): "the closure is rebuilt from them when either changed, and the clauses that read it (consumers) run after it, on every file whose **stamp (what its calls read of the closure)** changed. A consumer's stored result is kept under its file context and stamp, so any workspace whose closure gives the same stamp reuses it." `result_context = calls_context(file_context, stamp)` (`crossfile.rs:86-97`); `refresh()` returns files whose stamp differs (`calls_state.rs:342-401`).
-  - **This is a shipped read-set memo with early cutoff**: a consumer re-runs only if the part of the closure it reads changed. Conceptually it is the same as Moti's read-set memo and Typing's interface-digest cutoff (to verify against T9/T10 notes).
+  - **This is a shipped read-set memo with early cutoff**: a consumer re-runs only if the part of the closure it reads changed. Conceptually it is the same as the facts-engine stream's read-set memo and Typing's interface-digest cutoff (to verify against T9/T10 notes).
 - Also cached: summaries are stored as local results (`summary_publication`/`restore_summary`, `crossfile.rs:99-105`).
 
 ### Answer so far to Q6 (invalidation on main)

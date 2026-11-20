@@ -20,7 +20,7 @@ What was not carried over is the list of what those rounds found worth doing nex
 stops at round 7, and the open-items ledger has no row for any of it. This note keeps that list.
 
 The measurements are in the spike's `spikes/datalog-engines/rdl/RESULTS.md`, sections "Round 8" and "Round 9".
-That file is on branch `jeremybarnes/Typing-support` (backup ref `jeremybarnes/Typing-support-spike-r9`), not on
+That file is on branch `Typing-support` (backup ref `Typing-support-spike-r9`), not on
 this branch. All times are CPU seconds of execution, without construction, on a loaded machine (load 19–54).
 
 ## Where things stand

@@ -70,12 +70,12 @@ test.describe("Merge Assist", () => {
     await expect(open.locator("h3")).toHaveText("cart.ts · function total");
     await expect(open.locator(".mcage")).toHaveText(/^Open for 3h · Told/u);
     const [mine, theirs] = [open.locator(".mside").nth(0), open.locator(".mside").nth(1)];
-    await expect(mine.locator(".k")).toHaveText("Mine: This branch · tbelanger");
+    await expect(mine.locator(".k")).toHaveText("Mine: This branch · akim");
     await expect(mine.locator("pre.mhunk span")).toHaveClass(["meta", "ctx", "del", "add"]);
-    await expect(theirs.locator(".k")).toHaveText("Theirs: PR #398 · Tim");
+    await expect(theirs.locator(".k")).toHaveText("Theirs: PR #398 · Sam");
     await expect(theirs.locator(".k a")).toHaveAttribute("href", OPEN_PR_URL);
     await expect(open.locator(".mwhy li")).toHaveText(["Both change src/cart/cart.ts lines 1–3."]);
-    await expect(open.locator(".mtalk b.mauthor")).toHaveText("Tim");
+    await expect(open.locator(".mtalk b.mauthor")).toHaveText("Sam");
     await expect(open.locator(".mtalk a")).toHaveAttribute("href", OPEN_PR_URL);
 
     const quiet = cards(page).nth(1);
@@ -96,7 +96,7 @@ test.describe("Merge Assist", () => {
 
     // The quiet card's branch names another repository's pull request: its label shows, as text.
     const quiet = cards(page).nth(1);
-    await expect(quiet.locator(".mtalk .mono")).toHaveText("jbarnes/bump-react");
+    await expect(quiet.locator(".mtalk .mono")).toHaveText("jdoe/bump-react");
     await expect(quiet.locator("a")).toHaveCount(0);
     // The other quiet card's pull request link is a script: its label shows, as text.
     const scripted = cards(page).nth(2);
@@ -188,6 +188,6 @@ test.describe("Merge Assist", () => {
     await dismissedFold(page).locator("summary").click();
     const row = dismissedFold(page).locator("article.mclosed").filter({ hasText: "cart.ts · function total" });
     await expect(row.locator(".mmeta b.mauthor")).toBeVisible();
-    await expect(row.locator(".mmeta")).toContainText("PR #398 · Tim");
+    await expect(row.locator(".mmeta")).toContainText("PR #398 · Sam");
   });
 });

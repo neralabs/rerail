@@ -141,9 +141,9 @@ function nextReadAsked(): Promise<void> {
   return asked.promise;
 }
 
-/** A conflict in the workspace: branch `jbarnes-orders` changes the line `mine` changes. */
+/** A conflict in the workspace: branch `jdoe-orders` changes the line `mine` changes. */
 function overlap(ws: Workspace): void {
-  commit(ws.worktree("jbarnes-orders"), { "src/api/orders.ts": "export const orders = () => client.get(\"/v2/orders\");\n" }, "Version the orders path");
+  commit(ws.worktree("jdoe-orders"), { "src/api/orders.ts": "export const orders = () => client.get(\"/v2/orders\");\n" }, "Version the orders path");
 }
 
 /** Set a hook command on the service's repository that logs each event it hears; returns the log's lines. */
@@ -216,7 +216,7 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     expect(github.starts).toBe(starts + 2);
     github.release();
     await Promise.all([service.settled(), other.settled()]);
-    expect(on.readiness.github).toEqual({ state: "signed-in", login: "tbelanger", repository: "acme/app", readAt: "2026-11-03T14:00:00Z", readAgainInMs: 5 * 60_000 });
+    expect(on.readiness.github).toEqual({ state: "signed-in", login: "akim", repository: "acme/app", readAt: "2026-11-03T14:00:00Z", readAgainInMs: 5 * 60_000 });
     // The same reading each time, with how long until a status reads gh again: 0 once due, while that read runs.
     expect([...within, ...later].map(status => status.readiness.github)).toEqual([1_000, 1_000, 0, 0, 0].map(readAgainInMs => ({ ...on.readiness.github, readAgainInMs })));
   });
@@ -251,7 +251,7 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     const ws = await workspace({ remote: "https://github.com/acme/app.git" });
     let now = Date.parse("2026-11-03T14:00:00Z");
     const daemonGh = new FakeGithub({ signInEnvironment: "the daemon's, no token variable" });
-    const shellGh = new FakeGithub({ signInEnvironment: "a shell with GITHUB_TOKEN", readiness: { state: "signed-in", login: "jbarnes", repository: "acme/app" } });
+    const shellGh = new FakeGithub({ signInEnvironment: "a shell with GITHUB_TOKEN", readiness: { state: "signed-in", login: "jdoe", repository: "acme/app" } });
     const daemon = ws.service({ github: daemonGh, now: () => now });
     const on = await daemon.setEnabled(ws.repo, true);
     // A CLI process for each command, as `rerail merge-assist status` runs.
@@ -265,7 +265,7 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
       shown.push((await daemon.status(ws.repo)).readiness.github, (await cli()).readiness.github);
     }
     expect([daemonGh.readinessReads, shellGh.readinessReads]).toEqual([1, 1]);
-    expect(first.readiness.github).toEqual({ state: "signed-in", login: "jbarnes", repository: "acme/app", readAt: "2026-11-03T14:00:00Z", readAgainInMs: 5 * 60_000 });
+    expect(first.readiness.github).toEqual({ state: "signed-in", login: "jdoe", repository: "acme/app", readAt: "2026-11-03T14:00:00Z", readAgainInMs: 5 * 60_000 });
     expect(shown).toEqual([1, 2, 3].flatMap(minutes => [on, first].map(status => ({ ...status.readiness.github, readAgainInMs: (5 - minutes) * 60_000 }))));
   });
 
@@ -314,13 +314,13 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     const startedInTime = await Promise.race([started.then(() => true), new Promise<boolean>(resolve => setTimeout(resolve, 10_000, false))]);
     if (!startedInTime) github.release();
     expect(startedInTime).toBe(true);
-    github.options.readiness = { state: "signed-in", login: "jbarnes", repository: "acme/app" };
-    github.options.signInStamp = "after gh auth switch to jbarnes";
+    github.options.readiness = { state: "signed-in", login: "jdoe", repository: "acme/app" };
+    github.options.signInStamp = "after gh auth switch to jdoe";
     github.release();
-    expect((await cli).readiness.github.login).toBe("tbelanger");
+    expect((await cli).readiness.github.login).toBe("akim");
     await new Promise(resolve => setImmediate(resolve));
 
-    expect((await service.status(ws.repo)).readiness.github.login).toBe("jbarnes");
+    expect((await service.status(ws.repo)).readiness.github.login).toBe("jdoe");
   });
 
   it("shows a gh auth switch made while a read of gh ran at the status that finds gh's hosts file moved, not that read's answer", async () => {
@@ -337,14 +337,14 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     await service.status(ws.repo);
     await started;
     // `gh auth switch` rewrites the file meanwhile, and the page asks for the status as the stamp moved.
-    github.options.readiness = { state: "signed-in", login: "jbarnes", repository: "acme/app" };
-    github.options.signInStamp = "after gh auth switch to jbarnes";
+    github.options.readiness = { state: "signed-in", login: "jdoe", repository: "acme/app" };
+    github.options.signInStamp = "after gh auth switch to jdoe";
     const asked = nextReadAsked();
     const switched = service.status(ws.repo);
     await asked;
     github.release();
 
-    expect((await switched).readiness.github.login).toBe("jbarnes");
+    expect((await switched).readiness.github.login).toBe("jdoe");
   });
 
   it("lists from what gh says after gh's hosts file moved past a read of gh still running, not from that read", async () => {
@@ -473,7 +473,7 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     const reads = github.readinessReads;
 
     now += 60_000;
-    expect((await service.scan(ws.repo)).readiness.github).toEqual({ state: "signed-in", login: "tbelanger", repository: "acme/app", readAt: "2026-11-03T14:01:00Z", readAgainInMs: 5 * 60_000 });
+    expect((await service.scan(ws.repo)).readiness.github).toEqual({ state: "signed-in", login: "akim", repository: "acme/app", readAt: "2026-11-03T14:01:00Z", readAgainInMs: 5 * 60_000 });
     expect(github.readinessReads).toBe(reads + 1);
     github.options.signInStatStalls = true;
     expect(await ws.service({ github, now: () => now }).detectAfterEdit(ws.repo)).toBe(true);
@@ -533,7 +533,7 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     expect(status.readiness.github).toEqual({ state: "unavailable", login: null, repository: "acme/app", readAt: "2026-11-03T14:00:00Z", readAgainInMs: 60_000 });
     expect(past.map(shown => shown.readiness.github)).toEqual([0, 0].map(readAgainInMs => ({ ...within.readiness.github, readAgainInMs })));
     expect(within.readiness.github).toEqual({ ...status.readiness.github, readAgainInMs: 1_000 });
-    expect(next.readiness.github).toEqual({ state: "signed-in", login: "tbelanger", repository: "acme/app", readAt: "2026-11-03T14:01:00Z", readAgainInMs: 5 * 60_000 });
+    expect(next.readiness.github).toEqual({ state: "signed-in", login: "akim", repository: "acme/app", readAt: "2026-11-03T14:01:00Z", readAgainInMs: 5 * 60_000 });
   });
 
   it("shows a gh auth logout, login or switch made outside Rerail at the next status read, and runs gh only then", async () => {
@@ -550,20 +550,20 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     github.options.signInStamp = "after gh auth logout";
     const loggedOut = await service.status(ws.repo);
     now += 1_000;
-    github.options.readiness = { state: "signed-in", login: "jbarnes", repository: "acme/app" };
-    github.options.signInStamp = "after gh auth login as jbarnes";
+    github.options.readiness = { state: "signed-in", login: "jdoe", repository: "acme/app" };
+    github.options.signInStamp = "after gh auth login as jdoe";
     const loggedIn = await service.status(ws.repo);
     now += 1_000;
     delete github.options.readiness;
-    github.options.signInStamp = "after gh auth switch to tbelanger";
+    github.options.signInStamp = "after gh auth switch to akim";
     const switched = await service.status(ws.repo);
     // The file unchanged, status reads from this process and another one within five minutes run no gh.
     now += 5 * 60_000 - 1_000;
     const later = await Promise.all([service.status(ws.repo), ws.service({ github, now: () => now }).status(ws.repo)]);
     expect(github.readinessReads).toBe(reads + 3);
     expect(loggedOut.readiness.github).toEqual({ state: "signed-out", login: null, repository: "acme/app", readAt: "2026-11-03T14:00:01Z", readAgainInMs: 5 * 60_000 });
-    expect(loggedIn.readiness.github).toEqual({ state: "signed-in", login: "jbarnes", repository: "acme/app", readAt: "2026-11-03T14:00:02Z", readAgainInMs: 5 * 60_000 });
-    expect(switched.readiness.github).toEqual({ state: "signed-in", login: "tbelanger", repository: "acme/app", readAt: "2026-11-03T14:00:03Z", readAgainInMs: 5 * 60_000 });
+    expect(loggedIn.readiness.github).toEqual({ state: "signed-in", login: "jdoe", repository: "acme/app", readAt: "2026-11-03T14:00:02Z", readAgainInMs: 5 * 60_000 });
+    expect(switched.readiness.github).toEqual({ state: "signed-in", login: "akim", repository: "acme/app", readAt: "2026-11-03T14:00:03Z", readAgainInMs: 5 * 60_000 });
     expect(later.map(shown => shown.readiness.github)).toEqual([switched, switched].map(status => ({ ...status.readiness.github, readAgainInMs: 1_000 })));
   });
 
@@ -603,7 +603,7 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     const service = ws.service({ github, now: () => now });
     await service.setEnabled(ws.repo, true);
     const reads = github.readinessReads;
-    const older = { at: now, readiness: { state: "signed-in", login: "tbelanger", repository: "acme/app" } };
+    const older = { at: now, readiness: { state: "signed-in", login: "akim", repository: "acme/app" } };
     ws.database.update(mergeAssistState).set({ valueJson: JSON.stringify(older) }).where(eq(mergeAssistState.key, `github:${ws.repositoryKey}`)).run();
 
     await service.status(ws.repo);
@@ -644,7 +644,7 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
 
     // Two checkouts of the repository scanned at once: both listings ask while one read is out, and it serves both.
     // Each scan finds its checkout through Git first, so the read is let go once both listings have asked for it.
-    const other = ws.worktree("jbarnes-docs");
+    const other = ws.worktree("jdoe-docs");
     const bothAsked = Promise.withResolvers<void>();
     const read = SignInReads.prototype.read;
     let asks = 0;
@@ -726,12 +726,12 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
 
   it("records each scan: when, how many branches and pull requests it compared, and what it could not read", async () => {
     const ws = await workspace({ remote: "https://github.com/acme/app.git" });
-    const theirs = ws.worktree("jbarnes-orders");
+    const theirs = ws.worktree("jdoe-orders");
     const head = commit(theirs, { "src/api/orders.ts": "export const orders = () => client.get(\"/v2/orders\");\n" }, "Version the orders path");
-    commit(ws.worktree("jbarnes-docs"), { "README.md": "app\n" }, "Readme");
+    commit(ws.worktree("jdoe-docs"), { "README.md": "app\n" }, "Readme");
     const pull: PullRequestSummary = {
-      number: 12, title: "Version the API", url: "https://github.com/acme/app/pull/12", headRefName: "jbarnes-orders", headCommit: head,
-      baseRefName: "main", author: "jbarnes", isDraft: false, updatedAt: "2026-11-03T14:00:00Z", crossRepository: false, headOwner: "acme",
+      number: 12, title: "Version the API", url: "https://github.com/acme/app/pull/12", headRefName: "jdoe-orders", headCommit: head,
+      baseRefName: "main", author: "jdoe", isDraft: false, updatedAt: "2026-11-03T14:00:00Z", crossRepository: false, headOwner: "acme",
     };
     const now = Date.parse("2026-11-03T14:00:00Z");
     const service = ws.service({ github: new FakeGithub({ pullRequests: [pull] }), now: () => now });
@@ -740,7 +740,7 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     // A pull request's head counts once, as the pull request: the branch holding it is not counted again.
     const status = await service.scan(ws.repo);
     expect(status.lastScan).toEqual({ at: "2026-11-03T14:00:00Z", peers: { branches: 1, pullRequests: 1 }, problems: [] });
-    expect(status.conflicts).toEqual([expect.objectContaining({ theirs: expect.objectContaining({ label: "PR #12", ref: "refs/pull/12/head", author: "jbarnes" }) })]);
+    expect(status.conflicts).toEqual([expect.objectContaining({ theirs: expect.objectContaining({ label: "PR #12", ref: "refs/pull/12/head", author: "jdoe" }) })]);
 
     // gh failing leaves the worktrees' branches compared (remote-tracking ones too), and says why the pull requests are not.
     const failed = await ws.service({ github: new FakeGithub({ pullsError: true }), now: () => now }).scan(ws.repo);
