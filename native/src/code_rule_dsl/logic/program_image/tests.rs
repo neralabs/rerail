@@ -610,7 +610,7 @@ fn passes_hold(v: &Arc<Version>) {
     use super::fields::ProgramFields;
     use super::passes;
     use std::collections::BTreeSet;
-    let Ok((nv, ns)) = passes::normalize(&v) else { return };
+    let Ok((nv, ns)) = passes::normalize(v) else { return };
     let names: BTreeSet<String> = ns.iter().map(|&r| nv.rel_name(r).to_owned()).collect();
     let lattice = ProgramFields::lattice(&**v);
     let nullary = ProgramFields::nullary(&**v);
@@ -626,7 +626,7 @@ fn passes_hold(v: &Arc<Version>) {
     }
     // Every derived rule came from one of `v`'s; each of `v`'s gave one rule, or a fact (a ground rule). A program
     // normalize leaves as it was is its input (the manager keeps no new base of it).
-    if !Arc::ptr_eq(&nv, &v) {
+    if !Arc::ptr_eq(&nv, v) {
         for r in nv.rules() {
             let s = r.source().expect("a derived rule's source");
             assert_eq!(v.rel_name(v.rule(s).expect("its source is the input's").head().rel()), nv.rel_name(r.head().rel()));
@@ -915,7 +915,9 @@ fn fields_agree(v: &Arc<Version>) {
         assert!(f.request(req) && f.answer(req));
     }
     // Gates, in order.
-    let gates: Vec<(String, Option<String>, String, usize, Vec<String>, Vec<String>)> = f.gates().iter().map(|g| (f.text(g.key).to_owned(), g.src.map(|s| f.text(s).to_owned()), g.rel.map_or("", |r| f.rel_name(r)).to_owned(), g.level, g.quiet.iter().map(|&r| f.rel_name(r).to_owned()).collect(), g.deps.iter().map(|&r| f.rel_name(r).to_owned()).collect())).collect();
+    // A gate's key, source, relation, level, quiet relations and dependencies.
+    type Gate = (String, Option<String>, String, usize, Vec<String>, Vec<String>);
+    let gates: Vec<Gate> = f.gates().iter().map(|g| (f.text(g.key).to_owned(), g.src.map(|s| f.text(s).to_owned()), g.rel.map_or("", |r| f.rel_name(r)).to_owned(), g.level, g.quiet.iter().map(|&r| f.rel_name(r).to_owned()).collect(), g.deps.iter().map(|&r| f.rel_name(r).to_owned()).collect())).collect();
     let want: Vec<_> = pgates.iter().map(|(k, g)| (k.clone(), g.src.clone(), g.rel.clone(), g.level, g.quiet.clone(), g.deps.clone())).collect();
     assert_eq!(gates, want);
     for (k, _) in &pgates {
@@ -1154,7 +1156,7 @@ fn a_pass_that_writes_for_a_kept_rule_fails() {
     }
     let mut p = super::manager::Pipeline::new("test", managed());
     p.rules(&mut Liar);
-    let e = p.finish().err().expect("refused");
+    let e = p.finish().expect_err("refused");
     assert!(e.contains("liar") && e.contains("kept"), "{e}");
 }
 

@@ -25,11 +25,10 @@ pub fn sql(store: &std::path::Path, request: &str) -> Result<String, String> {
     let span = super::logic::profile::span(||"SQL extension request".into());
     let result = sql_request(store,request);
     drop(span);
-    if profiling {
-        if let Some(directory) = super::logic::profile::directory() {
+    if profiling
+        && let Some(directory) = super::logic::profile::directory() {
             super::logic::profile::report::write(&directory,"SQL extension request").map_err(|e|e.to_string())?;
         }
-    }
     result
 }
 
@@ -239,7 +238,7 @@ pub fn check_rr(paths: &[std::path::PathBuf]) -> serde_json::Value {
             Ok((program, _)) if let Err(error) = super::logic::plan::corpus::combine_read_program(&program)
                 .map_err(|e| e.to_string())
                 // Pruned first, as a run is: a library's relation the outputs do not read is not planned.
-                .and_then(|combined| super::logic::plan::corpus::preparation::pruned(combined))
+                .and_then(super::logic::plan::corpus::preparation::pruned)
                 .and_then(|pruned| super::logic::plan::lower::domains_of(&pruned).map(|_| ()).map_err(|e| e.to_string())) =>
             {
                 serde_json::json!({"path": path, "status": "types-failed", "error": error})
@@ -493,6 +492,9 @@ fn policy_groups(texts: &[String], root: &std::path::Path, options: &serde_json:
     groups.into_iter().map(|(_, g)| g).collect()
 }
 
+/// A pack's member's run (`run_pack`): its findings, and its run's record.
+type MemberRun = (Vec<serde_json::Value>, serde_json::Value);
+
 /// One group's policies run as one pack into `out/pack-<first>` (a dialect after the first into its own directory
 /// below it, as `run_program` places a policy's), and each one's findings written to its own `out/<k>` (its
 /// `rr_diagnostic`, in `outputs.rro`): per member, its findings and its run's record. `None` when a pack's run fails
@@ -504,7 +506,7 @@ fn run_pack(
     root: &std::path::Path,
     out: &std::path::Path,
     options: &serde_json::Value,
-) -> Result<Option<Vec<(Vec<serde_json::Value>, serde_json::Value)>>, String> {
+) -> Result<Option<Vec<MemberRun>>, String> {
     use super::{logic::plan::corpus, typing::file_local::Binding};
     use crate::code_rule_dsl::logic::plan::output;
     let texts: Vec<&str> = group.members.iter().map(|&k| texts[k].as_str()).collect();
@@ -624,17 +626,14 @@ pub fn flatten_lowered(path: &std::path::Path) -> Result<String, String> {
     super::logic::rr::print_version(&program).map_err(|e| e.to_string())
 }
 
-/// `programs` (`.rerail` texts) over the corpus T's `t_facts` names under `root` (list step 23): the outputs as T's
-/// `rdl.py sql` writes them, into `out`, and a report of each phase's CPU and the peak RSS. Several programs run as
-/// one (decision 0051): each file is parsed and batched once for all of them, and `violation` holds every one's
-/// findings. T's facts reproduce one program's run only.
-/// `settings` are `--env key=value`s ([`settings`]).
-#[allow(clippy::too_many_arguments)]
+/// A run `logic` makes (`dialect_runs`): its dialect (`None`: as written), and its programs.
+type DialectRun = (Option<&'static str>, Vec<String>);
+
 /// The runs `logic` makes of `programs`: those whose language has one dialect, or one with files in scope, run as
 /// written (the first run); a program of a language of several dialects with files (`run_dialects`) runs in each,
 /// its language set to the dialect by the run (the `dialect` option, `corpus::added`), its text as written. The
 /// corpus is listed once for all of them.
-fn dialect_runs(programs: &[&str], root: &std::path::Path, options: &serde_json::Value) -> Result<Vec<(Option<&'static str>, Vec<String>)>, String> {
+fn dialect_runs(programs: &[&str], root: &std::path::Path, options: &serde_json::Value) -> Result<Vec<DialectRun>, String> {
     use super::language::CodeRuleLanguage;
     use super::logic::plan::corpus;
     let listing: std::cell::OnceCell<corpus::CorpusFiles> = std::cell::OnceCell::new();
@@ -685,7 +684,23 @@ fn dialect_runs(programs: &[&str], root: &std::path::Path, options: &serde_json:
     Ok(runs)
 }
 
-pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, modes: &str, metal: bool, chunk_nodes: usize, settings: &[String]) -> Result<String, String> {
+/// How `logic` runs its programs: the SQL executor's modes, on Metal or the CPU, the chunk's nodes, and the
+/// `--env key=value` settings ([`settings`]).
+#[derive(Clone, Copy)]
+pub struct LogicRun<'a> {
+    pub modes: &'a str,
+    pub metal: bool,
+    pub chunk_nodes: usize,
+    pub settings: &'a [String],
+}
+
+/// `programs` (`.rerail` texts) over the corpus T's `t_facts` names under `root` (list step 23): the outputs as T's
+/// `rdl.py sql` writes them, into `out`, and a report of each phase's CPU and the peak RSS. Several programs run as
+/// one (decision 0051): each file is parsed and batched once for all of them, and `violation` holds every one's
+/// findings. T's facts reproduce one program's run only.
+/// `run`'s settings are `--env key=value`s ([`settings`]).
+pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, run: &LogicRun<'_>) -> Result<String, String> {
+    let LogicRun { modes, metal, chunk_nodes, settings } = *run;
     use super::typing::file_local::Binding;
     let binding = if metal { Binding::Metal } else { Binding::Cpu };
     if programs.len() > 1 && t_facts.is_some() {
@@ -1265,7 +1280,7 @@ fn logic_command(args: &[String]) -> Result<String, String> {
     if programs.is_empty() {
         return Err(format!("{program} has no .rerail programs"));
     }
-    let run = || crate::tools::logic(&programs, Path::new(root), facts, Path::new(out), &modes, metal, chunk, &env);
+    let run = || crate::tools::logic(&programs, Path::new(root), facts, Path::new(out), &crate::tools::LogicRun { modes: &modes, metal, chunk_nodes: chunk, settings: &env });
     if full { crate::code_rule_dsl::logic::plan::corpus::session::full(run) } else { run() }
 }
 

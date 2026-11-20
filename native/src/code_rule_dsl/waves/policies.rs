@@ -812,7 +812,7 @@ pub(in crate::code_rule_dsl) fn lower_with(policies: &[(String, CompiledCodeRule
         let mut demanded = demand.rule().head_from(from, rule, rule.head());
         // The chunk's documents seed each atom's demand.
         for d in &seeds {
-            demanded = demanded.atom(WAVE, &[T::Var(*d)]);
+            demanded = demanded.atom(WAVE, &[T::Var(d)]);
         }
         for l in rule.body() {
             match (l.view(), atoms.get(&l.node())) {

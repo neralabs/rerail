@@ -20,7 +20,7 @@ fn grammar(id: i64) -> Result<Arc<Grammar>, String> {
 
 #[allow(dead_code)]
 fn u32s(document: &Resident, offset: u32, count: usize) -> Vec<u32> {
-    document.bytes_at(offset, 4 * count).chunks_exact(4).map(|word| u32::from_le_bytes(word.try_into().unwrap())).collect()
+    document.bytes_at(offset, 4 * count).as_chunks::<4>().0.iter().map(|word| u32::from_le_bytes(*word)).collect()
 }
 
 use std::sync::Mutex;

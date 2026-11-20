@@ -444,10 +444,13 @@ fn write_fixtures(work: &Path, root: &Path, fixtures: &[(String, Vec<u8>)]) -> R
     Ok(())
 }
 
+/// A test's program, its library files and the relations it declares (`test_program`).
+type TestProgram = (std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Vec<super::LibraryFile>, BTreeSet<String>);
+
 /// The test's program, its library files and the relations it declares: the file's program, each `.given` relation's
 /// rules dropped, wherever they are, and the test's rules spliced in after the file's own statements. The relations
 /// the test's `.expect`s read are outputs of its run.
-fn test_program(path: &Path, test: &Test, id: &str) -> Result<(std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Vec<super::LibraryFile>, BTreeSet<String>), String> {
+fn test_program(path: &Path, test: &Test, id: &str) -> Result<TestProgram, String> {
     let (mut modules, files) = super::program(path).map_err(|e| e.to_string())?;
     check_givens(path, test, &modules)?;
     drop_given_rules(test, &mut modules);

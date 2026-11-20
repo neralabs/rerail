@@ -534,7 +534,9 @@ fn the_backends_find_the_same_keys_on_real_files() {
     // The device's backends where there is one (Metal).
     let device = if cfg!(target_os = "macos") { &[("metal-interpreter", ExecutionBackend::MetalInterpreter), ("metal-jit", ExecutionBackend::MetalJit)][..] } else { &[] };
     let backends = [("interpreter", ExecutionBackend::CpuInterpreter), ("jit", ExecutionBackend::CpuJit)].into_iter().chain(device.iter().copied());
-    let mut reference: Option<(Keys, BTreeMap<(String, String), Coverage>)> = None;
+    // Each (policy, file)'s coverage.
+    type Coverages = BTreeMap<(String, String), Coverage>;
+    let mut reference: Option<(Keys, Coverages)> = None;
     for (name, backend) in backends {
         let path = temp(&format!("phase4-{name}")).with_extension("sqlite");
         stores.push(path.clone());
