@@ -703,13 +703,14 @@ impl Table {
             rank_ends: [placed(b, &re0), placed(b, &re1)],
             jumps: [placed(b, &jumps[0]), placed(b, &jumps[1])],
         };
-        table.describe(r);
         table
     }
 
     /// Points the projection's descriptor's table runs at these columns (`rerail_clif::ids::Numbering`), so the reads
-    /// written once find them.
-    fn describe(&self, r: &Ranks) {
+    /// written once find them. Only by the projection that keeps this table (`DefIds::new`): a table built to compare
+    /// or measure (`Projected::reference`) and dropped would leave its runs pointing at freed columns, which off macOS
+    /// are heap arrays (`cells`), not cells of the block.
+    pub(super) fn describe(&self, r: &Ranks) {
         use rerail_clif::ids::Run;
         let d = r.desc_mut();
         let set = |run: *mut Run, c: &[u32]| unsafe { Run::set(run, c.as_ptr(), c.len()) };
