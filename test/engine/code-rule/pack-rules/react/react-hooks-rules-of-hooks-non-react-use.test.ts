@@ -76,7 +76,7 @@ describe(RULE_ID, () => {
       "function setup() { use(plugin); }",
       "try { use(plugin); } catch {}",
       "class Server { start() { use(router); } }",
-      "function Page() { const App = createApp(); App.use(router); return null; }",
+      "function Page() { const App = createApp(); if (ready) App.use(router); return null; }",
     );
     expect(reported(source)).toEqual([]);
     expect(reported(lines("function use(plugin: unknown) {}", "use(plugin);"))).toEqual([]);
@@ -95,6 +95,7 @@ describe(RULE_ID, () => {
     );
     expect(reported(source)).toEqual(["3:1", "4:1", "5:19", "6:25"]);
     expect(reported(lines("import React from 'react';", "React.use(promise);"))).toEqual(["2:1"]);
+    expect(reported(lines("import * as R from 'react';", "R.use(promise);"))).toEqual(["2:1"]);
     expect(reported(lines("use(promise);", "React.use(promise);", "Ns.use(promise);"))).toEqual(["1:1", "2:1", "3:1"]);
     expect(reported(lines("import * as React from 'react';", "const { use } = React;", "use(promise);"))).toEqual(["3:1"]);
     const required = lines("const { use } = require('react');", "const Re = require('react');", "use(promise);", "Re.use(promise);");
