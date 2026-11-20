@@ -1,0 +1,188 @@
+.policy "rerail-git-no-lazy-fetch" revision 3
+.description "Start Git in Rerail's source only through the engine's Git module, with lazy fetch off; otherwise a partial clone fetches missing objects from its remote."
+.language typescript
+.mode steer
+.scope include "src/**/*.ts"
+.scope exclude "**/*.test.ts", "**/*.spec.ts", "**/__tests__/**", "**/*.d.ts"
+// Git starts only in src/engine/git.ts, whose helpers find a trusted git and turn off hooks, fsmonitor and lazy
+// fetch; a partial clone with lazy fetch on fetches every object it lacks from its remote. Three clauses:
+//   spawn(gitExecutable(), args, { env: { ...process.env } })   GIT_LAZY_FETCH_ON (in git.ts, without
+//                                                                GIT_NO_LAZY_FETCH: "1" in its env)
+//   execFileSync("git", ["status"]) elsewhere                   GIT_OUTSIDE_GIT_MODULE
+//   spawn("sh", ["-c", "git fetch"]) elsewhere                  GIT_OUTSIDE_GIT_MODULE (git through a shell)
+//   runGit(root, ["diff", "--name-only", base])                 GIT_RENAME_DETECTION (a diff or status without
+//                                                                "--no-renames")
+//   runGit(root, ["diff", "--no-renames", base])                not reported
+// A process starter is child_process's spawn, execFile and exec (and their Sync forms) by name or member, or a
+// name bound to promisify(spawn | execFile | exec). The JSON's `regex` tests a node's text as ast-grep's do (a
+// search; `^`/`$` anchor the text); its `nthChild` counts named children, here without comments.
+
+#include "tsx/names.rerail"
+
+// The engine's Git module.
+.decl git_module(n: node)
+git_module(n) :- docof(n, d), doc(d, p, _), match("(?:.*/)?src/engine/git\\.ts", p).
+
+// starter(c): c calls a process starter.
+.decl starter(c: node)
+starter(c) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "identifier"),
+    glob("{spawn,spawnSync,execFile,execFileSync,exec,execSync}", f).
+starter(c) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "member_expression"),
+    match("(?s:.*)\\.(?:spawn|spawnSync|execFile|execFileSync|execSync)", f).
+starter(c) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "member_expression"),
+    match("(?:cp|child_?[pP]rocess)\\.exec", f).
+starter(c) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "identifier"), ref_site(f, s),
+    binding_value(s, v), match("promisify\\(\\s*(?:spawn|execFile|exec)\\s*\\)", v).
+
+// arg(c, a, i): a is call c's i-th argument, from 0, comments not counted.
+.decl arg(c: node, a: node, i: number)
+arg(c, a, i) :- kind(c, "call_expression"), field(c, "arguments", al), child(al, a, _), !kind(a, "comment"),
+    i = count : { child(al, o, _), !kind(o, "comment"), o < a }.
+
+// ---- in git.ts: every process it starts turns lazy fetch off -----------------------------------------------------
+// Reported unless the first argument is a string naming another program, or the options set GIT_NO_LAZY_FETCH: "1",
+// or the env is not one this call builds (a variable, `env` shorthand, or a spread of something but process.env):
+// then the env's keys come from elsewhere, and the clause leaves the call alone.
+.violation GIT_LAZY_FETCH_ON(at: node) "Set this Git process's env to {{ ...process.env, GIT_NO_LAZY_FETCH: \"1\" }}, keeping the keys it adds, so a partial clone never fetches a missing object; leave it if its env already sets that."
+GIT_LAZY_FETCH_ON(c) :- starter(c), git_module(c), arg(c, a, 0), !other_program(a),
+    field(c, "arguments", al), !no_lazy_fetch(al), !env_elsewhere(al).
+.decl other_program(a: node)
+other_program(a) :- (kind(a, "string") ; kind(a, "template_string")),
+    !match("[\"'`](?:[^\"'`]*[/\\\\])?git(?:\\.exe)?(?:[\"'`]|\\s)(?s:.*)", a).
+// no_lazy_fetch(al): a pair in the arguments sets GIT_NO_LAZY_FETCH to "1".
+.decl no_lazy_fetch(al: node)
+no_lazy_fetch(al) :- has(al, p, "pair"), field(p, "key", k), match("[\"']?GIT_NO_LAZY_FETCH[\"']?", k),
+    field(p, "value", v), match("[\"'`]1[\"'`]", v).
+.decl env_elsewhere(al: node)
+env_elsewhere(al) :- env_pair(al, v), !kind(v, "object"), !node_text(v, "process.env").
+env_elsewhere(al) :- env_pair(al, v), child(v, s, _), kind(s, "spread_element"), !match("\\.\\.\\.\\s*process\\.env", s).
+env_elsewhere(al) :- has(al, s, "shorthand_property_identifier"), node_text(s, "env").
+.decl env_pair(al: node, v: node)
+env_pair(al, v) :- has(al, p, "pair"), field(p, "key", k), match("[\"']?env[\"']?", k), field(p, "value", v).
+
+// ---- elsewhere: no process runs git -------------------------------------------------------------------------------
+.violation GIT_OUTSIDE_GIT_MODULE(at: node) "Run Git through runGit, gitText or readGitBlobs in src/engine/git.ts, adding a helper there if none fits: they find Git on a trusted PATH entry or a usual install location and turn off hooks, fsmonitor and lazy fetch."
+// A run/spawn/exec-like call whose first argument is the string "git".
+GIT_OUTSIDE_GIT_MODULE(c) :- kind(c, "call_expression"), !git_module(c), arg(c, a, 0),
+    (kind(a, "string") ; kind(a, "template_string")), match("[\"'`]git(?:\\.exe)?[\"'`]", a),
+    field(c, "function", f), match("(?:|(?s:.*)\\.)(?:spawn|exec|run)(?:[A-Z][A-Za-z0-9]*|a)?", f).
+// A process starter whose program is git: a path to it, a name about it, String.raw`…git`, gitExecutable().
+GIT_OUTSIDE_GIT_MODULE(c) :- starter(c), !git_module(c), arg(c, a, 0), git_program(a).
+// A process starter running a shell whose command line starts with git.
+GIT_OUTSIDE_GIT_MODULE(c) :- starter(c), !git_module(c), arg(c, a, 0), kind(a, "string"),
+    match("(?:[\"']|(?s:.*)[/\\\\])(?:sh|bash|zsh|cmd(?:\\.exe)?)[\"']", a),
+    arg(c, l, 1), kind(l, "array"), child(l, s, _), (kind(s, "string") ; kind(s, "template_string")),
+    match("[\"'`]\\s*(?:[^\"'`\\s]*[/\\\\])?git(?:\\.exe)?\\s(?s:.*)", s).
+.decl git_program(a: node)
+git_program(a) :- (kind(a, "string") ; kind(a, "template_string")),
+    match("[\"'`](?:[^\"'`]*[/\\\\])?git(?:\\.exe)?(?:[\"'`]|\\s)(?s:.*)", a).
+git_program(a) :- kind(a, k), git_name_kind(k),
+    match("(?s:.*)(?:(?:^|[._(])(?:git(?:[A-Z_]|\\b)|GIT(?:_|\\b))|[a-z0-9]Git(?:[A-Z_]|\\b))(?s:.*)", a).
+git_program(a) :- kind(a, "call_expression"), match("String\\.raw`(?:[^`]*[/\\\\])?git(?:\\.exe)?`", a).
+git_program(a) :- kind(a, "call_expression"), match("(?:|(?s:.*)\\.)gitExecutable\\(\\s*\\)", a).
+.decl git_name_kind(k: symbol)
+git_name_kind("identifier"). git_name_kind("member_expression"). git_name_kind("non_null_expression").
+git_name_kind("as_expression"). git_name_kind("parenthesized_expression").
+
+// ---- everywhere: git diff and status run without rename detection -----------------------------------------------
+// An argument list ["diff" | "status", …], flags allowed before the subcommand, without "--no-renames": passed to a
+// git-named function (git, runGit, gitText, …), or written as a list of strings with a flag in it.
+.violation GIT_RENAME_DETECTION(at: node) "Add \"--no-renames\" to this git diff or status: with lazy fetch off, rename detection fails in a partial clone on a source blob it doesn't hold. A rename then lists its new path."
+GIT_RENAME_DETECTION(l) :- git_arguments(l), child(al, l, _), kind(al, "arguments"), child(c, al, _),
+    kind(c, "call_expression"), field(c, "function", f),
+    match("(?:|(?s:.*)\\.)(?:git|[a-z][A-Za-z0-9]*Git)(?:[A-Z][A-Za-z0-9]*)?", f).
+GIT_RENAME_DETECTION(l) :- git_arguments(l), !non_string(l), match("(?s:.*)[\"'`]-(?s:.*)", l).
+.decl git_arguments(l: node)
+git_arguments(l) :- kind(l, "array"),
+    match("\\[\\s*(?:[\"'`]-[^\"'`]*[\"'`]\\s*,\\s*)*[\"'`](?:diff|status)[\"'`]\\s*[,\\]](?s:.*)", l),
+    !match("(?s:.*)[\"'`]--no-renames[\"'`](?s:.*)", l).
+.decl non_string(l: node)
+non_string(l) :- child(l, x, _), !kind(x, "string"), !kind(x, "template_string"), !kind(x, "comment").
+
+// The pack's example (packs/rerail/pack.json).
+.test git_without_lazy_fetch_off_is_reported exactly
+    .fixture "src/engine/git.ts" ```
+        import { spawn } from "node:child_process";
+
+        export function catFile(cwd: string) {
+          return spawn(gitExecutable(), [...SAFE_CONFIG, "-C", cwd, "cat-file", "--batch"], {
+            env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+            stdio: ["pipe", "pipe", "ignore"],
+          });
+        }
+        ```
+    .expect GIT_LAZY_FETCH_ON at "src/engine/git.ts":4
+.end
+
+// The pack's passing example, and the calls whose env comes from elsewhere or that start another program.
+.test lazy_fetch_off_passes exactly
+    .fixture "src/engine/git.ts" ```
+        import { spawn, execFile } from "node:child_process";
+        import { promisify } from "node:util";
+        const run = promisify(execFile);
+
+        export function catFile(cwd: string) {
+          return spawn(gitExecutable(), [...SAFE_CONFIG, "-C", cwd, "cat-file", "--batch"], {
+            env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" },
+            stdio: ["pipe", "pipe", "ignore"],
+          });
+        }
+        export const a = (env: Env) => spawn(gitExecutable(), [], { env });
+        export const b = (base: Env) => spawn(gitExecutable(), [], { env: { ...base } });
+        export const c = () => spawn("ssh", ["host"], {});
+        export const d = (base: Env) => run(gitExecutable(), [], { env: base });
+        ```
+.end
+
+.test other_starts_in_git_ts_are_reported exactly
+    .fixture "src/engine/git.ts" ```
+        import { execFile } from "node:child_process";
+        import { promisify } from "node:util";
+        const run = promisify(execFile);
+        export const a = () => run("/usr/bin/git", ["status"], { env: process.env });
+        export const b = () => child_process.execSync(gitPath, {});
+        ```
+    .expect GIT_LAZY_FETCH_ON at "src/engine/git.ts":4
+    .expect GIT_LAZY_FETCH_ON at "src/engine/git.ts":5
+.end
+
+.test git_outside_the_module_is_reported exactly
+    .fixture "src/cli/sync.ts" ```
+        import { execFileSync, spawn } from "node:child_process";
+        execFileSync("git", ["status"]);
+        await runCommand('git', ["fetch"]);
+        spawn(gitBinary, ["log"]);
+        spawn("sh", ["-c", "git fetch origin"]);
+        cp.exec(String.raw`C:\git\bin\git.exe`);
+        spawn(paths.gitExecutable(), []);
+        spawn("node", ["script.js"]);
+        spawn("sh", ["-c", "npm test"]);
+        ```
+    .expect GIT_OUTSIDE_GIT_MODULE at "src/cli/sync.ts":2
+    .expect GIT_OUTSIDE_GIT_MODULE at "src/cli/sync.ts":3
+    .expect GIT_OUTSIDE_GIT_MODULE at "src/cli/sync.ts":4
+    .expect GIT_OUTSIDE_GIT_MODULE at "src/cli/sync.ts":5
+    .expect GIT_OUTSIDE_GIT_MODULE at "src/cli/sync.ts":6
+    .expect GIT_OUTSIDE_GIT_MODULE at "src/cli/sync.ts":7
+.end
+
+.test rename_detection_is_reported exactly
+    .fixture "src/engine/merge-assist/overlap.ts" ```
+        const changed = await runGit(root, ["diff", "--name-only", base]);
+        const status = await gitText(root, ["--no-pager", "status", "--porcelain"]);
+        const args = ["diff", "--name-status", "HEAD"];
+        const kept = await runGit(root, ["diff", "--no-renames", "--name-only", base]);
+        const other = await runGit(root, ["log", "--oneline"]);
+        const list = ["diff", base];
+        ```
+    .expect GIT_RENAME_DETECTION at "src/engine/merge-assist/overlap.ts":1
+    .expect GIT_RENAME_DETECTION at "src/engine/merge-assist/overlap.ts":2
+    .expect GIT_RENAME_DETECTION at "src/engine/merge-assist/overlap.ts":3
+.end
+
+// The scope leaves out tests.
+.test tests_pass exactly
+    .fixture "src/cli/sync.test.ts" ```
+        execFileSync("git", ["diff"]);
+        ```
+.end
