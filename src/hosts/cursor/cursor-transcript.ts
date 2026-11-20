@@ -1,4 +1,4 @@
-import { mkdir, open, readFile, type FileHandle } from "node:fs/promises";
+import { mkdir, open, readFile, stat, type FileHandle } from "node:fs/promises";
 import { dirname } from "node:path";
 import { z } from "zod";
 import type { AdapterEvent, AdapterSession, RerailEventLoop } from "../../engine/adapter-contract.js";
@@ -192,15 +192,42 @@ async function ingestCompleteLines(
   }
 }
 
+/** The transcript the hook names, or none. */
+function namedTranscript(input: HookInput): string | undefined {
+  return typeof input.transcript_path === "string" && input.transcript_path.trim() !== "" ? input.transcript_path : undefined;
+}
+
 /**
- * Whether the session's text comes from its transcript at this hook (the session sent no `beforeSubmitPrompt`, and the
- * hook names a transcript), read from the sidecar alone: what `ingestCursorTranscript` would answer, with no line read
- * and the sidecar's mark left where it is.
+ * Whether the session sends its own text: at its `beforeSubmitPrompt`, which records so in the sidecar for the
+ * session's later hooks, or since one did.
+ */
+async function sendsOwnText(input: HookInput, statePath: string, state: CursorTranscriptState): Promise<boolean> {
+  if (input.hook_event_name !== "beforeSubmitPrompt") return state.nativeTextMode;
+  if (!state.nativeTextMode) await writeState(statePath, { ...state, nativeTextMode: true });
+  return true;
+}
+
+/** Whether the file at `path` is there: a transcript Cursor has not written yet carries nothing. */
+async function transcriptThere(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if (isErrno(error, "ENOENT")) return false;
+    throw error;
+  }
+}
+
+/**
+ * Whether the session's text comes from its transcript at this hook, what `ingestCursorTranscript` would answer with
+ * no line read and the sidecar's mark left where it is: the session sends no text of its own (a `beforeSubmitPrompt`
+ * here records that it does, as there), and the hook names a transcript that is there.
  */
 export async function transcriptCarriesText(input: HookInput, descriptor: AdapterSession, storageRoot: string): Promise<boolean> {
-  if (input.hook_event_name === "beforeSubmitPrompt") return false;
-  const state = await readState(transcriptStatePath(storageRoot, descriptor.sessionId));
-  return !state.nativeTextMode && typeof input.transcript_path === "string" && input.transcript_path.trim() !== "";
+  const statePath = transcriptStatePath(storageRoot, descriptor.sessionId);
+  if (await sendsOwnText(input, statePath, await readState(statePath))) return false;
+  const path = namedTranscript(input);
+  return path !== undefined && await transcriptThere(path);
 }
 
 /**
@@ -217,16 +244,9 @@ export async function ingestCursorTranscript(
   const statePath = transcriptStatePath(storageRoot, descriptor.sessionId);
   const state = await readState(statePath);
 
-  if (input.hook_event_name === "beforeSubmitPrompt") {
-    if (!state.nativeTextMode) await writeState(statePath, { ...state, nativeTextMode: true });
-    return false;
-  }
-  if (state.nativeTextMode) return false;
+  if (await sendsOwnText(input, statePath, state)) return false;
 
-  const path =
-    typeof input.transcript_path === "string" && input.transcript_path.trim() !== ""
-      ? input.transcript_path
-      : undefined;
+  const path = namedTranscript(input);
   if (path === undefined) return false;
   if (state.path !== path) {
     state.path = path;

@@ -250,7 +250,8 @@ async function answerCursorHook(
 /**
  * The hook's read of the transcript: its unread lines through `eventLoop`, or, while the daemon is not reading
  * (`RerailEventLoop.untaken`), only whether the transcript carries the session's text, so its lines stay unread for the
- * next hook the daemon answers, which sends them through the rules.
+ * next hook the daemon answers, which sends them through the rules. Either records a session's `beforeSubmitPrompt`,
+ * which says the session sends its own text from then on.
  */
 function transcriptStep(input: CursorHookInput, descriptor: AdapterSession, eventLoop: RerailEventLoop, storageRoot: string): () => Promise<boolean> {
   if (eventLoop.untaken === true) return async () => await transcriptCarriesText(input, descriptor, storageRoot);

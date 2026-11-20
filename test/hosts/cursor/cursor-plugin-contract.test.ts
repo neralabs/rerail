@@ -333,4 +333,36 @@ describe("a Cursor hook while the daemon is not reading", () => {
     await handleCursorEvent({ ...common, ...tool, tool_use_id: "shell-2", hook_event_name: "preToolUse" }, live, storage);
     expect(live.events.map(event => event.kind)).toEqual(["user-prompt", "assistant-message", "call"]);
   });
+
+  /** The kinds of event each hook of `inputs` leaves, or the daemon takes, in order, one loop a hook. */
+  async function kindsLeft(inputs: readonly Record<string, unknown>[], storage: string, untaken: boolean): Promise<string[]> {
+    const kinds: string[] = [];
+    for (const input of inputs) {
+      const loop = untaken ? untakenLoop() : scriptedLoop({});
+      await handleCursorEvent(input, loop, storage);
+      kinds.push(...loop.events.map(event => event.kind));
+    }
+    return kinds;
+  }
+
+  it("leaves every event of a turn whose session sends its own text, as the daemon takes them when it reads", async () => {
+    const { storage, common } = await unreadTranscript();
+    const turn = (session: string) => [
+      { ...common, conversation_id: session, hook_event_name: "beforeSubmitPrompt", prompt: "prompt one" },
+      { ...common, conversation_id: session, hook_event_name: "afterAgentResponse", text: "answer one" },
+      { ...common, conversation_id: session, hook_event_name: "stop", status: "completed", loop_count: 0 },
+    ];
+    const taken = await kindsLeft(turn("cursor-taken"), storage, false);
+    expect(taken).toEqual(["user-prompt", "assistant-message", "turn-end"]);
+    expect(await kindsLeft(turn("cursor-left"), storage, true)).toEqual(taken);
+  });
+
+  it("leaves the hook's text event where the transcript it names is not there yet, as the daemon takes it when it reads", async () => {
+    const root = await temporaryDirectory();
+    const storage = join(root, "sessions");
+    const answer = (session: string) => [{ conversation_id: session, generation_id: "g1", cwd: root, transcript_path: join(root, "none.jsonl"), hook_event_name: "afterAgentResponse", text: "answer one" }];
+    const taken = await kindsLeft(answer("cursor-taken"), storage, false);
+    expect(taken).toEqual(["assistant-message"]);
+    expect(await kindsLeft(answer("cursor-left"), storage, true)).toEqual(taken);
+  });
 });
