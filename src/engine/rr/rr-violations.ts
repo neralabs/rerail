@@ -72,7 +72,7 @@ export function rrRunFailures(failures: readonly { policy: string | null; messag
 }
 
 /** Why a run that was killed past a budget gave no findings, and how to raise that budget. */
-function killedMessage(reason: "deadline" | "memory", deadlineMs: number): string {
+function killedMessage(reason: "deadline" | "memory", deadlineMs: number | undefined): string {
   const budgets = rrBudgets(deadlineMs);
   if (reason === "deadline")
     return `The .rerail run was stopped: it ran past its deadline of ${budgets.deadlineMs} ms. Set RERAIL_RR_DEADLINE_MS (milliseconds) in the daemon's environment to raise it.`;
@@ -81,14 +81,14 @@ function killedMessage(reason: "deadline" | "memory", deadlineMs: number): strin
 
 /**
  * A failure of each rule of `rules` for a run that gave no findings. A run killed past its deadline (`deadlineMs`, the
- * one it was given) or its memory leaves its rules out of work: a coverage gap of each, which fails no audit by itself,
- * as a native rule out of its own work is. A run that failed fails them. A run stopped on purpose (`aborted`) is no
- * failure of its rules: none.
+ * one it was given; undefined for the runner's default) or its memory leaves its rules out of work: a coverage gap of
+ * each, which fails no audit by itself, as a native rule out of its own work is. A run that failed fails them. A run
+ * stopped on purpose (`aborted`) is no failure of its rules: none.
  */
 export function rrStoppedFailures(
   outcome: Exclude<RrRunOutcome, { status: "completed" }>,
   rules: readonly RerailRuleEntry[],
-  deadlineMs: number,
+  deadlineMs: number | undefined,
 ): AuditFailure[] {
   if (outcome.status === "failed")
     return rules.map(rule => ruleFailure(rule, "adapter-error", `The .rerail run failed: ${outcome.message}`, "scan"));

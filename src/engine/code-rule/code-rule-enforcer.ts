@@ -805,7 +805,6 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       audits: this.#audits,
       steerTarget: this.#steerTarget(this.#sessionId),
       nestedCheckouts: this.#nestedCheckouts,
-      auditDeadlineMs: AUDIT_MAX_DURATION_MS,
     });
     return this.#rerail;
   }

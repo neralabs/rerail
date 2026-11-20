@@ -180,7 +180,7 @@ describe("an audit's .rerail run", () => {
   it("keeps the findings in the files a touched-files audit was given, outside the checkouts nested in it", async () => {
     const assert = rule("rr-sample-assert", [{ folder: "", mode: "steer" }]);
     const off = rule("rr-off", [{ folder: "", mode: null }]);
-    const run = new RrAuditRun({ root, rules: [assert, off], paths: ["src"], nestedCheckouts: ["src/vendored"], deadlineMs: 60_000 },
+    const run = new RrAuditRun({ root, rules: [assert, off], paths: ["src"], nestedCheckouts: ["src/vendored"] },
       async request => {
         expect(request.policies).toEqual([assert.path]);
         return completed([

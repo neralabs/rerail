@@ -794,8 +794,11 @@ run at different times from JSON rules.
   `.rerail` rules (a rule turned off, a pack updated or removed) stops a session's running run, records it
   `superseded`, and runs its files again with the new rules; a session that ends stops its run and records it
   `interrupted`.
-- **Budgets.** A run after edits may take 5 minutes, a scan's run the scan's own budget; `RERAIL_RR_DEADLINE_MS`
-  replaces both. A run is also bounded by memory (`RERAIL_RR_MEMORY_MB`) and threads (`RERAIL_RR_THREADS`).
+- **Budgets.** A run after edits may take 5 minutes: a steer later than that reaches an agent that has moved on. On
+  a large repository that is not enough on a laptop (the Django pack needs about 2 minutes after a one-file edit of
+  a 1,300-file application on 16 threads), and such edits record each rule's budget gap instead of findings. A scan's
+  run takes the `.rerail` runner's default deadline, since no agent waits for it. `RERAIL_RR_DEADLINE_MS` replaces
+  both. A run is also bounded by memory (`RERAIL_RR_MEMORY_MB`) and threads (`RERAIL_RR_THREADS`).
   `RERAIL_RR_QUIET_MS` replaces the 10-second quiet period. A run stopped at a budget gives each of its rules a
   `budget-exceeded` failure that names the setting to raise; the other rules' results stand.
 - **Which files.** A `.rerail` run reads the files Git lists in the checkout (tracked, and untracked ones Git does

@@ -15,11 +15,12 @@ import { insideAny, takes } from "./rr-rule-scope.js";
 import { rrRunFailures, rrStoppedFailures, rrViolations } from "./rr-violations.js";
 
 /**
- * The deadline of a run after an edit: 5 minutes, an audit's budget (`AUDIT_MAX_DURATION_MS`). An edit runs a pack's
- * rules over the whole checkout again: the 27 Django rules took 76.5 s of wall time (156 s of CPU) after a one-line
- * edit of a 229-file Django application on 16 threads, and a laptop gives a run half its cores (`rr-budgets.ts`),
- * so such an application needs about two to three minutes there. Five minutes keeps that with room to spare; a run
- * past it would steer long after the agent moved on. `RERAIL_RR_DEADLINE_MS` replaces it.
+ * The deadline of a run after an edit: 5 minutes. A steer later than that reaches an agent that has moved on, so a
+ * longer run is not worth its cost. An edit runs a pack's rules over the whole checkout again, with no store kept
+ * between runs: the 27 Django rules took 13 s after a one-file edit of a small application and 123 s (4.7 GB) of
+ * netbox's, on 16 threads. A laptop gives a run 2 to 4 threads, so a netbox-sized application passes 5 minutes there,
+ * and its edits record the rules' budget gaps rather than findings; a scan has the runner's longer default
+ * (`rr-audit-run.ts`). `RERAIL_RR_DEADLINE_MS` replaces both.
  */
 const EDIT_RUN_DEADLINE_MS = 5 * 60_000;
 

@@ -19,8 +19,6 @@ export interface CheckoutRerailHost {
   readonly steerTarget: SteerTarget;
   /** Folders of the checkout that are checkouts of their own, judged in their own lanes. */
   readonly nestedCheckouts: () => readonly string[];
-  /** An audit's budget, which its `.rerail` run has too. */
-  readonly auditDeadlineMs: number;
 }
 
 /** An audit's results as its native evaluation gave them: what the `.rerail` run's are added to. */
@@ -96,7 +94,6 @@ export class CheckoutRerailRuns {
       rules: this.#host.catalog.snapshot().rerailRules,
       paths: scope === "repository" ? undefined : paths,
       nestedCheckouts: this.#host.nestedCheckouts(),
-      deadlineMs: this.#host.auditDeadlineMs,
     });
     const auditId = start(run.provenance);
     if (auditId === undefined || run.empty) return auditId;

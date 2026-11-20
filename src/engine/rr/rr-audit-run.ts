@@ -1,7 +1,9 @@
 /**
  * The `.rerail` part of a repository or touched-files audit: one run of the checkout's active `.rerail` rules over the
  * whole checkout, beside the native evaluation, whose findings and failures join the audit's own record. It has the
- * audit's budget; past it, only its rules fail.
+ * runner's default deadline (`rr-budgets.ts`), not the edit runs' shorter one: no agent waits for a scan, and a
+ * large repository's run takes minutes (the Django rules: 251 s over edx-platform on 16 threads). Past a budget, only
+ * its rules fail.
  */
 import type { AuditFailure, RepositoryAuditRuleProvenance } from "../audit/audit.js";
 import { folderContains } from "../catalog/repository-model.js";
@@ -26,7 +28,6 @@ export interface RrAuditRequest {
   readonly paths: readonly string[] | undefined;
   /** Folders of the checkout that are checkouts of their own, audited in their own lanes. */
   readonly nestedCheckouts: readonly string[];
-  readonly deadlineMs: number;
 }
 
 /** Whether `rule` is on in some folder of the checkout. */
@@ -59,8 +60,7 @@ export class RrAuditRun {
 
   /** Starts the run; once only. */
   start(): void {
-    const { root, deadlineMs } = this.#request;
-    this.#outcome ??= this.#run({ root, policies: this.#rules.map(rule => rule.path), deadlineMs, signal: this.#controller.signal })
+    this.#outcome ??= this.#run({ root: this.#request.root, policies: this.#rules.map(rule => rule.path), signal: this.#controller.signal })
       .catch((error: unknown): RrRunOutcome => ({ status: "failed", message: String(error) }));
   }
 
@@ -73,7 +73,7 @@ export class RrAuditRun {
   async results(): Promise<RrAuditResults> {
     this.start();
     const outcome = await this.#outcome!;
-    if (outcome.status !== "completed") return { violations: [], failures: rrStoppedFailures(outcome, this.#rules, this.#request.deadlineMs) };
+    if (outcome.status !== "completed") return { violations: [], failures: rrStoppedFailures(outcome, this.#rules, undefined) };
     const violations = rrViolations(outcome.findings, this.#rules, path => this.#audits(path));
     return { violations, failures: rrRunFailures(outcome.failures, this.#rules) };
   }
