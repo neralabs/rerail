@@ -30,13 +30,16 @@ fn described(path: &Path) -> Result<Value, String> {
     }))
 }
 
-/// The file read and checked as `check-rr` checks it (its reader, then its types): the error otherwise.
+/// The file read and checked as `check-rr` checks it (its reader, then its types): the error otherwise, naming the
+/// file once (the reader's errors name it already, the type check's do not).
 fn checked(path: &Path) -> Result<(), String> {
     let row = crate::tools::check_rr(&[path.to_path_buf()]).as_array().and_then(|rows| rows.first().cloned()).unwrap_or_default();
-    match row["status"].as_str() {
-        Some("reader-passed") => Ok(()),
-        _ => Err(format!("{}: {}", path.display(), row["error"].as_str().unwrap_or("the file does not check"))),
-    }
+    let error = match row["status"].as_str() {
+        Some("reader-passed") => return Ok(()),
+        _ => row["error"].as_str().unwrap_or("the file does not check"),
+    };
+    let named = path.display().to_string();
+    Err(if error.starts_with(&named) { error.to_owned() } else { format!("{named}: {error}") })
 }
 
 /// The settings a rule states of itself.
