@@ -3669,6 +3669,29 @@ impl Model {
                 });
             }
         }
+        // var → the kind of the node it is a part of: `field($p, f, $c)` or `child($p, $c, i)` with $p's kind known and
+        // $c's not. A part's subtree is at most its parent's, so `within($n, $c)` read from $c is priced at the
+        // parent's size (t50 step 4: a function's body, `field($g, "body", $b)`, was priced as a node with children,
+        // 3 to 5 nodes, and the plan enumerated every function's body from it).
+        let mut part_of: HashMap<VarSlot, String> = HashMap::new();
+        for l in 0..b.len() {
+            if let Some(a) = b.plain_atom(l)
+                && !a.neg()
+            {
+                let args = b.args(l);
+                let (p, c) = match (b.rel(a), args.len()) {
+                    ("field", 3) => (args[0], args[2]),
+                    ("child", 3) => (args[0], args[1]),
+                    _ => continue,
+                };
+                if let (TermRef::Var(p), TermRef::Var(c)) = (p, c)
+                    && !kinds.contains_key(&c)
+                    && let Some(k) = kinds.get(&p)
+                {
+                    part_of.insert(c, k.clone());
+                }
+            }
+        }
         // The same binding domains are used by many candidate prefixes. Read the existing statistics once
         // per search, with no input recount and no additional SQL.
         let binding_domains: Vec<_> = (0..b.len()).filter(|&i| b.plain_atom(i).is_some_and(|a| !a.neg()))
@@ -3880,7 +3903,7 @@ impl Model {
                 && cols == [1]
                 && stats.nodes > 0.0
                 && let Some(size) = match args[1] {
-                    TermRef::Var(v) => kinds.get(&v).and_then(|k| stats.size.get(k)).copied().or_else(|| stats.subtree_fan()),
+                    TermRef::Var(v) => kinds.get(&v).or_else(|| part_of.get(&v)).and_then(|k| stats.size.get(k)).copied().or_else(|| stats.subtree_fan()),
                     _ => stats.subtree_fan(),
                 }
             {

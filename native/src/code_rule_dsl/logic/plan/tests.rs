@@ -2512,6 +2512,25 @@ fn within_read_from_its_container_is_priced_by_subtree_size() {
     assert!((work - (10.0 + 10.0 * 50.0)).abs() < 1e-6, "work {work}");
 }
 
+/// t50 step 4: `within(n, b)` read from a part of a node of known kind (`field($g, "body", $b)` of a function) is
+/// priced at that kind's size: the part's subtree is at most its parent's. As a node with children it was a few nodes,
+/// and `rf_in` enumerated every function's body from it before checking the read's own function.
+#[test]
+fn within_read_from_a_part_is_priced_by_its_parents_size() {
+    let src = ".decl kind(n: number, k: symbol)\n.decl field(p: number, f: symbol, c: number)\n.decl within(n: number, a: number)\n.decl r(n: number)\nr(n) :- kind(g, \"fdef\"), field(g, \"body\", b), within(n, b).\n.output r\n";
+    let p = parse(src).unwrap();
+    let mut model = bare_model(&p);
+    // 10 functions of 400 nodes, 2,000 nodes of 3: a node with children is about 5 nodes.
+    model.stats.size = std::sync::Arc::new(HashMap::from([("fdef".to_owned(), 400.0), ("x".to_owned(), 3.0)]));
+    model.stats.kfreq = std::sync::Arc::new([("fdef".to_owned(), 10), ("x".to_owned(), 2_000)].into_iter().collect());
+    model.stats.nodes = 6_010.0;
+    assert!(model.stats.subtree_fan().is_some_and(|f| f < 6.0));
+    let (order, work) = priced_first_rule(&model, &p);
+    assert_eq!(order.last().map(String::as_str), Some("within($n, $b)"), "{order:?}");
+    // The body's descendants, each function's: 10 × 400, not 10 × 5.
+    assert!(work >= 10.0 * 400.0, "work {work}: {order:?}");
+}
+
 /// Decision 0299: a relation of the program's facts alone has its rows, distinct values and counts before it is
 /// made, not the default size.
 #[test]

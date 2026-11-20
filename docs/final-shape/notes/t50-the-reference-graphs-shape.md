@@ -406,6 +406,20 @@ written: 0.01 s together. Two things were found on the way: `ShortlexMin` joined
 memory to the top, and the device folded 0511's bounded aggregate as a plain one. Both are fixed; the second is not
 yet run on a device.
 
+### Step 4, first half: `within` from a part is priced at its parent's size
+
+`rf_in`'s plan started from `kind(g, "function_definition")`, read each function's body (`field(g, "body", b)`),
+enumerated it with `within(n, b)`, and only then checked `nearest(n, g)` and `rf_site(n)`. A node inside nested
+functions was enumerated once per function around it. The price of `within` read from its container was the mean
+size of a node with children (decision 0299), 3 to 5 nodes, since `b` has no kind atom. A part's subtree is at most
+its parent's, so a container that is a `field` or `child` of a node of known kind is now priced at that kind's size
+(`plan_search`'s `part_of`; test `within_read_from_a_part_is_priced_by_its_parents_size`).
+
+The plan now starts from `rf_site(n)`, and `within(n, b)` is a check with both sides bound. On `all` (same host, rows
+unchanged): `rf_in` 6.52 → 5.65 s, `rf_fn_in` 2.00 → 1.87 s. What is left is linear in the sites (16.6 M rows of
+work in `rf_in`'s main lines, about 160 ns a row and step), and the chain `rf_fn_in`/`rf_top`/`rf_owner`, which the
+chain root (the second half) is for.
+
 ### The rows on `all`: two rules fixed, the rest W's departures from Python
 
 `RERAIL_STAGE_DIFFS=1` listed every differing row. Each kind was cut down to a case of a few lines
