@@ -558,8 +558,10 @@ function steerEvent(session: AdapterSession, receiptId: string, ruleIds: readonl
   return { sessionId: session.sessionId, eventId: `steering-delivered:${receiptId}`, kind: "steering-delivered", payload: { ruleIds: [...ruleIds] } };
 }
 
-/** The row `event` is stored as, its id and time taken now: a write that waits for the lock is made later. */
-/** The row of `event`, observed at its own `observedAt`, else at `happenedAt` (`SessionAttribution.observedAt`), else now. */
+/**
+ * The row of `event`, observed at its own `observedAt`, else at `happenedAt` (`SessionAttribution.observedAt`), else now,
+ * and its id, where it has none, made now: a write that waits for the lock is made later with both.
+ */
 function eventRow(event: SessionEvent, happenedAt?: number): EventRow {
   return {
     sessionId: event.sessionId,
