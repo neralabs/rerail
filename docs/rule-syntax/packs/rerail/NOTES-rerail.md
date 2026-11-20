@@ -102,7 +102,7 @@ directories), and a policy reads a coding agent's tool calls (`.scope tool_calls
 |---|---|
 | `rerail-workflow-script-facts` | No: five regex clauses over workflow and action YAML, read as text. |
 | `rerail-workflow-shared-conditions` | No. The JSON's eleven clauses `release-skip-2` … `release-skip-12` each report the n-th line holding the release pull request skip; here one rule reports each line's first test when 1 to 11 earlier lines hold one, so a 13th repeat is not reported, as in the JSON (a test pins it). |
-| `rerail-pack-data-through-publish` | No: the JSON's five alternatives and two exemptions, its dry-run exemption said once over the two script forms it guards. Both sides agree on its two examples as calls (the suite), and on the tests' 33 calls, each alternative and exemption, run once through the runtime's matcher. Not checked: a command with a non-ASCII letter beside a `\b` (`match` reads `\b` as ASCII, `lib/core.rerail`; the product's regex as Unicode). |
+| `rerail-pack-data-through-publish` | No: the JSON's five alternatives and two exemptions, its dry-run exemption said once over the two script forms it guards. Both sides agree on its two examples and on its tests' 33 calls, each alternative and exemption: the suite runs every one of them through both on each check (the tool-calls corpus). Not checked: a command with a non-ASCII letter beside a `\b` (`match` reads `\b` as ASCII, `lib/core.rerail`; the product's regex as Unicode). |
 
 ### Engine faults met on the way (fixed in the engine, no workaround left)
 

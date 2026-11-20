@@ -430,10 +430,10 @@ function runProblems(ran: readonly string[], unattributed: Readonly<Record<strin
  * its reason, a rule without a translation not listed in `untranslated` (or listed and translated now, or listed in
  * `different`), a rule that failed, an entry naming no rule of the pack. `ran` names the corpora the run compared:
  * counts of others are not checked, except that a pack that gates may list counts only on those (its run compares all
- * its corpora, or fails). A pack that gates fails too on a run that compared no corpus, on a same rule whose original
- * failed on files of a corpus for another reason than their syntax errors (isParseFailure), and on the original's
- * failures of no rule (`unattributed`, per corpus: `code: message`). Only a pack declaring `equivalent: true` fails on
- * them (gates); the rest report them.
+ * its corpora, or fails). A pack that gates fails too on a run that compared no corpus, on a translated rule (same or
+ * different) whose original failed on files of a corpus for another reason than their syntax errors (isParseFailure),
+ * and on the original's failures of no rule (`unattributed`, per corpus: `code: message`). Only a pack declaring
+ * `equivalent: true` fails on them (gates); the rest report them.
  */
 export function gateProblems(declaration: Declaration, results: readonly RuleResult[], ran: readonly string[], pack: readonly string[], unattributed: Readonly<Record<string, readonly string[]>> = {}): string[] {
   const problems = results.flatMap((r) => ruleProblems(declaration, r, ran));
@@ -528,12 +528,12 @@ export function exampleFiles(packJson: { rules?: { id: string; examples?: Record
   return { files, skipped };
 }
 
-/** One tool call made of an example, as `rerail-engine run-policies --tool-calls` reads it. */
+/** One tool call, as `rerail-engine run-policies --tool-calls` reads it. */
 export interface ExampleToolCall {
-  /** The example: `<rule> <kind>`. */
+  /** Where it comes from: `<rule> <example kind>`, or `<rule> <file>:<line>` for a test's call. */
   id: string;
   tool: string;
-  input: { command: string };
+  input: Record<string, unknown>;
 }
 
 /**
@@ -557,6 +557,35 @@ function ruleToolCalls(rule: { id: string; examples?: Record<string, { text?: st
     if (typeof example.text !== "string") out.skipped.push(`${rule.id} ${kind}: no text`);
     else out.calls.push({ id: `${rule.id} ${kind}`, tool, input: { command: example.text } });
   }
+}
+
+/** A test's call in a `.rerail` file: `.tool_call "<tool>" `<input as JSON>``. */
+const TOOL_CALL_LINE = /^\s*\.tool_call\s+"([^"]+)"\s+`(.*)`\s*$/;
+
+/**
+ * The calls a tool-call rule's translation tests with (its `.tool_call` lines, in `file`, named by its line), so the
+ * original is run on each of them too: its tests check the translation against what its author expects, this checks it
+ * against the original. An input that is not a JSON object is skipped with why.
+ */
+export function testToolCalls(rule: string, file: string, text: string): { calls: ExampleToolCall[]; skipped: string[] } {
+  const out: { calls: ExampleToolCall[]; skipped: string[] } = { calls: [], skipped: [] };
+  text.split("\n").forEach((line, i) => {
+    const m = TOOL_CALL_LINE.exec(line);
+    if (m !== null) testToolCall(`${rule} ${file}:${i + 1}`, m[1]!, m[2]!, out);
+  });
+  return out;
+}
+
+/** One test call, its input read as JSON, into `out`. */
+function testToolCall(id: string, tool: string, raw: string, out: { calls: ExampleToolCall[]; skipped: string[] }): void {
+  let input: unknown;
+  try {
+    input = JSON.parse(raw);
+  } catch {
+    input = undefined;
+  }
+  if (isObject(input)) out.calls.push({ id, tool, input });
+  else out.skipped.push(`${id}: its input is not a JSON object`);
 }
 
 /**

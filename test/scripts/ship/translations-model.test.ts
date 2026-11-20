@@ -20,6 +20,7 @@ import {
   type RuleResult,
   ruleResult,
   summarize,
+  testToolCalls,
   writeDifferences,
 } from "../../../scripts/ship/translations-model.js";
 
@@ -251,5 +252,23 @@ describe("a pack's examples", () => {
       { id: "b caught", tool: "Shell", input: { command: "rm -rf /" } },
     ]);
     expect(skipped).toEqual(["b passes: no text"]);
+  });
+
+  it("reads a translation's test calls, each named by its line, an input that is no JSON object skipped", () => {
+    const text = [
+      ".test pushes",
+      '    .tool_call "Bash" `{"command": "git commit -m \\"x; npm run fixtures:push\\""}`',
+      '    .tool_call "Edit" `{"file_path": "notes.md", "new_string": "npm run fixtures:push"}`',
+      '    .tool_call "Bash" `["not", "an object"]`',
+      "    .expect PACK_DATA_PUSHED",
+      ".end",
+    ].join("\n");
+    expect(testToolCalls("a", "a.rerail", text)).toEqual({
+      calls: [
+        { id: "a a.rerail:2", tool: "Bash", input: { command: 'git commit -m "x; npm run fixtures:push"' } },
+        { id: "a a.rerail:3", tool: "Edit", input: { file_path: "notes.md", new_string: "npm run fixtures:push" } },
+      ],
+      skipped: ["a a.rerail:4: its input is not a JSON object"],
+    });
   });
 });
