@@ -1071,7 +1071,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   /**
    * Rules the catalog skipped because their rows fail validation are adapter errors: kept in every response while
    * they last, and recorded as one failed run each time the catalog loads a different set of them. A rule kept
-   * inactive as `language-not-supported` is no failure: it evaluates nothing until the engine reads its language.
+   * inactive with a code is no failure: `language-not-supported` evaluates nothing until the engine reads its language,
+   * and `reads-left-out-token` until its pack's next version.
    */
   #reportQuarantined(): void {
     const quarantined = this.#catalog.quarantined().filter(entry => entry.code === undefined);

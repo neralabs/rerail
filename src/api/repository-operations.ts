@@ -341,7 +341,7 @@ function effectiveRuleRecord(rule: EffectiveRule, dates: RuleDates): z.infer<typ
     ...(rule.approval === undefined ? {} : { approval: { subject: { ...rule.approval.subject }, approved: rule.approval.approved } }),
   };
   return rule.document.kind === "code"
-    ? { kind: "code", rule: rule.document.rule, ...shared, ...inactiveOf("code", rule.document.rule) }
+    ? { kind: "code", rule: rule.document.rule, ...shared, ...inactiveOf("code", rule.document.rule, rule.notRun) }
     : { kind: "conversation", rule: rule.document.rule, ...shared };
 }
 
@@ -754,7 +754,7 @@ export const repositoryOperations: readonly Operation[] = [
         rules: [...ruleCatalog.documents.values()]
           .filter(document => input.kind === undefined || document.kind === input.kind)
           .map(document => document.kind === "code"
-            ? { kind: "code" as const, rule: document.rule, packId: ruleCatalog.packOf.get(document.rule.id) ?? null, ...inactiveOf("code", document.rule) }
+            ? { kind: "code" as const, rule: document.rule, packId: ruleCatalog.packOf.get(document.rule.id) ?? null, ...inactiveOf("code", document.rule, ruleCatalog.notRun.get(document.rule.id)) }
             : { kind: "conversation" as const, rule: document.rule, packId: ruleCatalog.packOf.get(document.rule.id) ?? null }),
       };
     },

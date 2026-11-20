@@ -547,7 +547,7 @@ export const operations: readonly Operation[] = [
             ...rest,
             ...(localSource === undefined ? {} : { installedFrom: localSource.kind }),
             ...(subject === undefined ? {} : { approval: { subject: { ...subject }, approved: approvals.has(approvalKey(subject)) } }),
-            rules: [...rules],
+            rules: rules.map(rule => ({ ...rule, ...inactiveOf(rule.kind, catalog.documents.get(rule.id)?.rule, catalog.notRun.get(rule.id)) })),
           };
         }),
         skipped: [...catalog.skipped],

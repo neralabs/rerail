@@ -110,13 +110,16 @@ declare module "*/ui/poll.js" {
     configSource: Record<string, object>;
     /** Why the configured options don't apply; the rule then runs nowhere. */
     configError: string | null;
+    /** Why Rerail keeps the rule but never evaluates it; the rule then runs nowhere. */
+    inactive: { code: string; reason: string } | null;
   }
   export function toStoredRules(entries: readonly object[]): Map<string, StoredRule>;
 }
 
 declare module "*/ui/derive.js" {
   export function violationOutcome(finding: { mode?: string; logged: boolean }): "logged" | "steered";
-  export function isRunning(stored: { enabled: boolean; configError?: string | null }): boolean;
+  export function isRunning(stored: { enabled: boolean; configError?: string | null; inactive?: { reason: string } | null }): boolean;
+  export function notRunningReason(stored: { enabled: boolean; configError?: string | null; inactive?: { reason: string } | null }): string | null;
   export function packSuppressions(rules: readonly object[], packId: string, owner: "repository" | "checkout", checkoutPath?: string): { text: string; next: "honour" | "ignore" };
   export function inPack(rule: object, packId: string): boolean;
   /** Whether a stored rule came in a rule pack (`origin` "pack"), rather than from the library ("user"). */
@@ -377,7 +380,8 @@ declare module "*/ui/merge-model.js" {
 }
 
 declare module "*/ui/render/enforcement.js" {
-  type Stored = { rule: { mode: string }; approval?: { approved: boolean } | null };
+  type Stored = { rule: { mode: string }; enabled?: boolean; configError?: string | null; inactive?: { reason: string } | null; approval?: { approved: boolean } | null };
   export const MODE_READ_ONLY: string;
-  export function enforcementOf(stored: Stored): { kind: "log" | "steer"; glyph: string; label: string; tip: string };
+  export function enforcementOf(stored: Stored): { kind: "log" | "steer" | "none"; glyph: string | null; label: string; tip: string };
+  export function modeEnforcementOf(stored: Stored): { kind: "log" | "steer"; glyph: string; label: string; tip: string };
 }

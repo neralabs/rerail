@@ -31,6 +31,7 @@ import {
   rulePackPackageName,
   rulePackPackageOf,
   rulePacksThatFit,
+  rulesStartingOn,
   type NoFitExplanation,
   type RulePack,
 } from "../engine/catalog/rule-packs.js";
@@ -490,7 +491,7 @@ export async function discoverPacks(repositoryRoot: string | undefined, store: P
     const { catalog, leftOut } = discoveryCatalog(home, fromNpm);
     const packs = [...catalog.packs.values()];
     const scan = repositoryRoot === undefined ? undefined : scanRepository(repositoryRoot);
-    const matched = new Map((scan === undefined ? [] : rulePacksThatFit(scan, packs)).map(found => [found.pack.id, found]));
+    const matched = new Map((scan === undefined ? [] : rulePacksThatFit(scan, packs, catalog.notRun)).map(found => [found.pack.id, found]));
     const discovered = packs.flatMap((pack): DiscoveredPack[] => {
       if (pack.version === null || pack.packageName === null) return [];
       const found = matched.get(pack.id);
@@ -498,7 +499,7 @@ export async function discoverPacks(repositoryRoot: string | undefined, store: P
         pack,
         packageName: pack.packageName,
         version: pack.version,
-        ruleCount: pack.rules.filter(rule => rule.on).length,
+        ruleCount: rulesStartingOn(pack, catalog.notRun),
         ...(found === undefined ? {} : { match: { reason: found.reason, folder: found.folder } }),
         installed: installedPackVersion(pack.packageName, home),
       }];

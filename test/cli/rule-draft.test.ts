@@ -22,7 +22,8 @@ import {
 } from "../../src/engine/index.js";
 import { runRuleDraftCommand, type RuleDraftReport } from "../../src/cli/rule-draft.js";
 import { BLOCK_STEERS_NOTE } from "../../src/engine/index.js";
-import { installPack } from "../support/installed-packs.js";
+import { installPack, installPackDirectory, withOlderTokenRule } from "../support/installed-packs.js";
+import { repositoryPath } from "../support/oracles.js";
 import { linkFolder, symlinkOrSkip } from "../support/platform/links.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { withExperiments } from "../support/environment/experiments.js";
@@ -1064,6 +1065,21 @@ describe("rerail rules add", () => {
       expect(stdout).toMatch(new RegExp(`^● Added ${id}-copy to rerail-rule-draft-\\w+/api\\.\\n`));
       expect(getLibraryRuleDocument(`${id}-copy`)).toMatchObject({ scope });
       expect(rulesNamed(repo, `${id}-copy`)).toEqual([{ id: `${id}-copy`, kind: "library_rule", folder: "api", on: true }]);
+    });
+
+    it("says first that this Rerail does not run it, when the installed pack writes it in a form it no longer runs", async () => {
+      const repo = await repository();
+      setUpWithComplexity(repo);
+      installPackDirectory(withOlderTokenRule(repositoryPath("packs", "complexity"), join(repo, "older-pack"), SHIPPED), "complexity");
+      try {
+        const { exit, stderr } = await show(repo, SHIPPED);
+
+        expect(exit).toBe(0);
+        expect(stderr.split("\n")[0]).toBe(`● ${SHIPPED} does not run, whether it is on or off. ${loadRuleCatalog().notRun.get(SHIPPED)}`);
+        expect(loadRuleCatalog().notRun.get(SHIPPED)).toMatch(/^This Rerail no longer runs the rule as Function complexity /u);
+      } finally {
+        installPack("complexity");
+      }
     });
 
     it("is shown as the repository runs it, so a copy keeps the mode a person set there", async () => {

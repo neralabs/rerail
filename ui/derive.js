@@ -65,10 +65,19 @@ const CATEGORY_LABEL = { language: "Language", framework: "Framework", repositor
 export const categoryLabel = category => CATEGORY_LABEL[category] ?? "";
 
 /**
- * Whether the rule runs: switched on, and its options apply to its document. A rule whose stored options no longer
- * apply (`configError`) is left out of the compiled set, so it is not counted as on.
+ * Whether the rule runs: switched on, its options apply to its document, and Rerail runs that document. A rule whose
+ * stored options no longer apply (`configError`), or that Rerail keeps but never evaluates (`inactive`: a language not
+ * read yet, or a pack version's form this Rerail no longer runs), is left out of the compiled set, so it is not counted
+ * as on.
  */
-export const isRunning = stored => stored.enabled && !stored.configError;
+export const isRunning = stored => stored.enabled && !stored.configError && !stored.inactive;
+
+/** Why a rule switched on runs nowhere, in a sentence; null when it runs, or is off. */
+export function notRunningReason(stored) {
+  if (!stored.enabled) return null;
+  if (stored.configError) return `Its options don't apply: ${stored.configError}`;
+  return stored.inactive?.reason ?? null;
+}
 
 const titles = new WeakMap();
 /** Sentence the row leads with: the rule's title; else a conversation rule's reference, a file rule's first clause's message, else its id. */
@@ -191,8 +200,8 @@ export function messageText(stored) {
  * One row per rule id, in the renderers' shape: on (`enabled`, the switch) only where it is on in every folder it is
  * added at, the first folder's mode, suppressions and options on the rule, and each folder's own on, mode,
  * suppressions and what decided them (`folderStates`; `mixed` when on or mode differ). `configError` is why the rule's
- * options don't apply, from any folder: the rule then runs nowhere, whatever its switch says. A change from the row is
- * written at every folder.
+ * options don't apply, from any folder, and `inactive` why Rerail never evaluates its document: the rule then runs
+ * nowhere, whatever its switch says. A change from the row is written at every folder.
  */
 export function toStoredRules(entries) {
   const rules = new Map();
@@ -212,6 +221,7 @@ function addFolder(known, entry) {
   known.folderStates.push(folderState(entry));
   known.enabled = known.enabled && entry.on;
   known.configError ??= entry.configError ?? null;
+  known.inactive ??= entry.inactive ?? null;
   known.mixed = known.folderStates.some(state => state.on !== entry.on || state.mode !== entry.mode) || known.mixed;
   known.addedAt = earliest(known.addedAt, entry.addedAt ?? null);
   known.updatedAt = latest(known.updatedAt, entry.updatedAt ?? null);
@@ -235,6 +245,7 @@ function storedRule(entry) {
     config: entry.config,
     configSource: entry.configSource,
     configError: entry.configError ?? null,
+    inactive: entry.inactive ?? null,
     revision: entry.revision,
     addedAt: entry.addedAt ?? null,
     // Present for a rule Rerail did not publish: until `approved`, it runs in Log (`mode` says so).
