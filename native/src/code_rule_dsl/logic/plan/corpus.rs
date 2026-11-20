@@ -2467,10 +2467,22 @@ fn wanted_cone(local: &lower::Lowered, wanted: &BTreeSet<String>) -> lower::Lowe
         // `parsed` holds the request that asks for it, and its context (decision 0431 §8).
         let about = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::program_image::About>(&v).expect("a version's about rows are read");
         let requests: Vec<(String, String)> = about.answers.iter().map(|(req, by)| (v.rel_name(*by).to_owned(), v.rel_name(*req).to_owned())).collect();
+        // A rule whose bound `FoldOwn` widened reads the annotations' documents, which their requests make (`DEMAND`,
+        // answered in the fixpoint): it reads the request too. Without it, `ids(m, x) :- idents(m, x)` over the
+        // widened `idents` had no annotation in a cone of its own, where a full run's `names` asked for them.
+        let demand = v.rel(guests::DEMAND).map(|_| guests::DEMAND.to_owned());
         let cone = closure(&|cone| {
             v.rules()
                 .filter(|r| cone.contains(v.rel_name(r.head().rel())))
-                .flat_map(|r| r.body().filter_map(|l| match l.view() { Lit::Atom(a) | Lit::Agg { atom: a, .. } => Some(v.rel_name(a.rel()).to_owned()), _ => None }).collect::<Vec<_>>())
+                .flat_map(|r| {
+                    r.body()
+                        .filter_map(|l| match l.view() {
+                            Lit::Atom(a) | Lit::Agg { atom: a, .. } => Some(v.rel_name(a.rel()).to_owned()),
+                            Lit::Cmp { l, r, .. } if guests::widened(l) || guests::widened(r) => demand.clone(),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                })
                 .chain(requests.iter().filter(|(by, _)| cone.contains(by)).map(|(_, req)| req.clone()))
                 .collect()
         });
