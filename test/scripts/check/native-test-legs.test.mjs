@@ -2,16 +2,28 @@
 // legs take from the build (cargo's environment for a binary, libtest's lists and summaries).
 
 import { describe, expect, it } from "vitest";
-import { LEGS, coverProblems, envDelta, legArgs, parseList, parseResult } from "../../../scripts/check/ci/native-test-legs.mjs";
+import { LEGS, binaryName, coverProblems, envDelta, legArgs, legRuns, parseList, parseResult } from "../../../scripts/check/ci/native-test-legs.mjs";
 
 /** A map of binary to tests, from an object of binary to an array of tests. */
 const tests = (object) => new Map(Object.entries(object).map(([binary, names]) => [binary, new Set(names)]));
 
 describe("the legs", () => {
-  it("end with a leg that skips every path the others select", () => {
+  it("end with a leg that skips every path and leaves out every binary the others select", () => {
     const rest = LEGS.at(-1);
+    const others = LEGS.slice(0, -1);
     expect(rest.filters).toEqual([]);
-    expect(rest.skip).toEqual(LEGS.slice(0, -1).flatMap((leg) => leg.filters));
+    expect(rest.skip).toEqual(others.filter((leg) => leg.binaries === undefined).flatMap((leg) => leg.filters));
+    expect(rest.exclude).toEqual(others.flatMap((leg) => leg.binaries ?? []));
+  });
+
+  it("run a binary by its name without cargo's hash, in the legs that name it or do not leave it out", () => {
+    expect(binaryName("/r/target/debug/deps/rerail_parser_tests-039514ad76afc7fc")).toBe("rerail_parser_tests");
+    expect(binaryName("D:\\r\\target\\debug\\deps\\token_rule-27f3fcb6239494c1.exe")).toBe("token_rule");
+    const exe = "/r/target/debug/deps/rerail_parser_tests-039514ad76afc7fc";
+    expect(legRuns({ binaries: ["rerail_parser_tests"] }, exe)).toBe(true);
+    expect(legRuns({ binaries: ["rerail_rr_parser"] }, exe)).toBe(false);
+    expect(legRuns({ exclude: ["rerail_parser_tests"] }, exe)).toBe(false);
+    expect(legRuns({}, exe)).toBe(true);
   });
 
   it("have distinct ids", () => {
