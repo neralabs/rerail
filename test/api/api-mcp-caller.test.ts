@@ -1,10 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { type EncodingOption, mkdirSync, type PathLike, realpathSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { eq } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { createRerailApi } from "../../src/api/http.js";
 import { createRerailMcpHandler } from "../../src/api/mcp.js";
 import { operations } from "../../src/api/operations.js";
@@ -486,6 +486,30 @@ describe("MCP callers and the agent guard", () => {
       events: [{ payload: { text: `cat ${nested}/.env` } }, { payload: { input: { command: `cat ${nested}/.env` } } }, { payload: { output: "API_KEY=hunter2" } }, {}],
     });
     expect((await app.request(`/api/repository-audits/${repositoryAuditIds.get("in-lib")}/entries`)).status).toBe(200);
+  });
+
+  it("shows an agent a stored call that names a web URL without looking its host and path up on another machine", async () => {
+    const command = "curl -s https://net/192.0.2.1/api/v1 | jq .";
+    const sessions = stores.sessionStore();
+    sessions.openSession({ host: "codex", sessionId: "in-app", cwd: parent }, 1_000, parentKey);
+    sessions.append({ sessionId: "in-app", eventId: "url-call", kind: "call", observedAt: 2_000, payload: { kind: "call", toolName: "Bash", input: { command } } });
+    // `//net/192.0.2.1/api/v1`, cut from the URL at its `:`, names the share `\\net\192.0.2.1\api\v1` on Windows and a
+    // path under the automount root `/net` on Linux and macOS (192.0.2.1 is a documentation address, RFC 5737). Each
+    // such lookup is recorded and refused here, not made, so the test reaches no host.
+    const lookUp = realpathSync.native;
+    const remote: string[] = [];
+    onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
+    vi.spyOn(realpathSync, "native").mockImplementation((path: PathLike, options?: EncodingOption) => {
+      if (!/^(?:\\\\[^.?\\]|\/net\/)/u.test(String(path))) return lookUp(path, options);
+      remote.push(String(path));
+      throw Object.assign(new Error(`ENOENT: no such file or directory, realpath '${String(path)}'`), { code: "ENOENT" });
+    });
+
+    const view = (await call("session_events", { sessionId: "in-app" }, from(parent))).result as { events: Array<{ payload: Record<string, unknown> }> };
+    expect(view.events.map(event => event.payload.input)).toEqual([{ command }]);
+    expect(remote).toEqual([]);
   });
 
   /**
