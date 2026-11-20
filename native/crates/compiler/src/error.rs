@@ -38,9 +38,6 @@ pub enum Error {
     /// A label run's chain (a targets image's reach, decision 0463) had more levels than its phases hold: the run
     /// again with twice them.
     ChainLevels,
-    /// A persistent dispatch's grid barrier ran out of polls (its groups were not all resident): the run again
-    /// without it.
-    GridBarrier,
     BackendFailure,
     /// A generated function with a call or an unstated loop (`native_cpu_shape`): refused.
     RefusedShape(String),

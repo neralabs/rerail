@@ -5611,3 +5611,19 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   every formula runs on `label_phase`; `label_formula` and 0459's size classes are removed. The SIMD spread was not
   built: the pushes are under 1 ms once a parent is one load. Left: `label_leaves` (7.4–11 ms on s1000), the
   epilogue (2–3 ms), and a descendant scan in one dispatch (decoupled look-back).
+
+### Q284. After 0465: the parse workers, the serial phases, and small label runs
+
+- **Found** (2026-11-19, 0465), on all (3,089 files, 9.6 M nodes; about 20 s on an M1 Max):
+  - the parse workers take 13.4 s of CPU (4.3 ms a file);
+  - the run uses 3.3–3.6 of 10 cores, with 13–48 s of its threads ready and no core;
+  - the run's thread spends 8–10 s in serial phases: cross 2.7–5.1 s, stats 2.1–2.5 s (400,000–800,000
+    involuntary switches), combine 2.2–3.0 s;
+  - the large program's label runs are 283 runs with a median of 6 files, where s1000's were 6 runs with a median of
+    36. Each run pays its fixed costs.
+- **Next**, in order:
+  1. Why the pool oversubscribes its cores, and the parse workers' CPU a file.
+  2. `stats`' switches, `cross`' `public_best_*` waits, `combine`'s fixpoint waits.
+  3. Trace where the small label runs come from, then batch them to a chunk's size.
+  4. A cold first Metal run of all exited 1 (its log was lost). Reproduce it with a fresh binary path.
+
