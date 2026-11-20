@@ -214,11 +214,11 @@ describe("Rerail daemon CLI", () => {
       await mkdir(folder);
       const lockedOut = join(root, "key.pem");
       await writeFile(lockedOut, selfSignedCertificate().key);
-      // A misspelled name and a path through a file; then paths others can read where this account reads no key: a
-      // folder, the certificate (as when --tls-cert and --tls-key are swapped), and a key this account may not read.
+      // A misspelled name and a path through a file; then paths others can read that this account reads as no file: a
+      // folder, and a key this account may not read. A file it reads that holds no key, the certificate say, serves
+      // this computer alone (daemon-tls.test.ts).
       const keys: [string, string][] = [
-        unread(join(root, "keyy.pem")), unread(join(certFile, "key.pem")),
-        [folder, await letOthersRead(folder, 0o755)], [certFile, await letOthersRead(certFile, 0o644)],
+        unread(join(root, "keyy.pem")), unread(join(certFile, "key.pem")), [folder, await letOthersRead(folder, 0o755)],
       ];
       if (process.platform === "win32") keys.push(unread(await keyGetAclCannotRead(root)));
       const lockedOutRefusal = await lockOut(lockedOut);
