@@ -456,7 +456,6 @@ fn lookups_agree(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::File
 /// empty), the configuration's `__has_*` answers, and C++'s alternative tokens; and chains of
 /// `#elif`, nested conditionals, and a test that a header's definition decides.
 #[test]
-#[ignore = "Q367: the device's grid evaluation hangs or fails (BackendFailure) on the M1 Max, as at Go-C-and-C-support's own 3997fd0a25; run with --ignored on an M3 or M5"]
 fn if_values_are_the_serial_passes() {
     use rerail_c_pp::files::DirKind;
     let exprs = [
@@ -513,7 +512,6 @@ fn if_values_are_the_serial_passes() {
 /// `#import`, a header entered twice with no guard, an include under a conditional a later
 /// definition decides, a file not found, and the depth's bound.
 #[test]
-#[ignore = "Q367: the device's grid evaluation hangs or fails (BackendFailure) on the M1 Max, as at Go-C-and-C-support's own 3997fd0a25; run with --ignored on an M3 or M5"]
 fn the_include_tree_is_the_spikes() {
     use rerail_c_pp::Config;
     use rerail_c_pp::files::{DirKind, Search};
@@ -545,7 +543,6 @@ fn the_include_tree_is_the_spikes() {
 /// that spells nothing or no header found, `#include_next` of a macro, and `__has_include` of a
 /// macro; the tree, every name's meaning and the output are the spike's.
 #[test]
-#[ignore = "Q367: the device's grid evaluation hangs or fails (BackendFailure) on the M1 Max, as at Go-C-and-C-support's own 3997fd0a25; run with --ignored on an M3 or M5"]
 fn expanded_include_names_are_the_spikes() {
     use rerail_c_pp::Config;
     use rerail_c_pp::files::{DirKind, Search};
@@ -584,7 +581,6 @@ fn expanded_include_names_are_the_spikes() {
 /// `#if`), `__FILE_NAME__` and `__BASE_FILE__` (in the main file and in nested headers in
 /// directories, through a macro, stringized and pasted).
 #[test]
-#[ignore = "Q367: the device's grid evaluation hangs or fails (BackendFailure) on the M1 Max, as at Go-C-and-C-support's own 3997fd0a25; run with --ignored on an M3 or M5"]
 fn the_refused_cases_are_the_serial_passes() {
     use rerail_c_pp::files::DirKind;
     let shapes: &[(&str, &[(&str, &str)])] = &[
@@ -688,7 +684,6 @@ fn the_host_only_loads_files_between_rounds() {
 /// `#else`, a test that depends on a definition made under an earlier test (a chain of them,
 /// so the iterations are several), guards, a stray `#endif`, built-ins tested.
 #[test]
-#[ignore = "Q367: the device's grid evaluation hangs or fails (BackendFailure) on the M1 Max, as at Go-C-and-C-support's own 3997fd0a25; run with --ignored on an M3 or M5"]
 fn the_groups_are_the_spikes() {
     use rerail_c_pp::Config;
     use rerail_c_pp::files::Search;
@@ -714,7 +709,6 @@ fn the_groups_are_the_spikes() {
 /// name then means on the device what it means in the spike. Nested pushes, a push of a name not
 /// defined, a pop with no push, a push and pop across an include, other names between.
 #[test]
-#[ignore = "Q367: the device's grid evaluation hangs or fails (BackendFailure) on the M1 Max, as at Go-C-and-C-support's own 3997fd0a25; run with --ignored on an M3 or M5"]
 fn push_and_pop_are_the_spikes() {
     use rerail_c_pp::Config;
     use rerail_c_pp::files::Search;
@@ -741,7 +735,6 @@ fn push_and_pop_are_the_spikes() {
 /// search a token. On shapes of includes, conditionals, redefinitions and undefs, then on the
 /// corpus, each file its own unit with empty stubs for the headers it names.
 #[test]
-#[ignore = "Q367: the device's grid evaluation hangs or fails (BackendFailure) on the M1 Max, as at Go-C-and-C-support's own 3997fd0a25; run with --ignored on an M3 or M5"]
 fn every_name_sees_the_spikes_definition() {
     use rerail_c_pp::Config;
     use rerail_c_pp::files::{DirKind, Search};
@@ -827,7 +820,6 @@ fn expanded_in(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str, 
 /// definitions, and one that runs again at a larger rung. A grid past the groups the device holds
 /// at once fails its barrier, never hangs, and runs again at half the groups to the same output.
 #[test]
-#[ignore = "Q367: the device's grid evaluation hangs or fails (BackendFailure) on the M1 Max, as at Go-C-and-C-support's own 3997fd0a25; run with --ignored on an M3 or M5"]
 fn an_evaluation_is_a_fixed_handful_of_launches() {
     let mut big = String::new();
     for k in 0..400usize {
@@ -885,7 +877,6 @@ fn part_tokens(part: &rerail_metal::pp_expand::Part, files: &[Vec<u8>], tapes: &
 /// in a header, in an inactive group, nested with `#pragma push_macro`; a diagnostic pragma and a
 /// malformed one making nothing. Each in C and C++, 2 launches. Then the refusals, by name.
 #[test]
-#[ignore = "Q367: the device's grid evaluation hangs or fails (BackendFailure) on the M1 Max, as at Go-C-and-C-support's own 3997fd0a25; run with --ignored on an M3 or M5"]
 fn pragma_rows_are_the_serial_passes() {
     use rerail_c_pp::files::DirKind;
     let shapes: &[(&str, &[(&str, &str)])] = &[
@@ -942,7 +933,6 @@ fn pragma_rows_are_the_serial_passes() {
 /// an arm not read, the text's uses feeding an `#if`, a call whose arguments run over a
 /// directive that counts, a header's uses. Each in C and C++, 2 launches.
 #[test]
-#[ignore = "Q367: the device's grid evaluation hangs or fails (BackendFailure) on the M1 Max, as at Go-C-and-C-support's own 3997fd0a25; run with --ignored on an M3 or M5"]
 fn counters_in_directives_are_the_serial_passes() {
     use rerail_c_pp::files::DirKind;
     let shapes: &[(&str, &[(&str, &str)])] = &[
@@ -982,7 +972,6 @@ fn counters_in_directives_are_the_serial_passes() {
 /// unit the device refuses (a call past its file's end), so the batch splits and that unit alone
 /// is refused.
 #[test]
-#[ignore = "Q367: the device's grid evaluation hangs or fails (BackendFailure) on the M1 Max, as at Go-C-and-C-support's own 3997fd0a25; run with --ignored on an M3 or M5"]
 fn a_batch_is_its_units() {
     use rerail_c_pp::files::Search;
     let shapes: &[&[(&str, &str)]] = &[
@@ -1036,7 +1025,6 @@ fn show(v: &[Vec<u8>]) -> String {
 /// function-like name with no `(` after it (in its list, or after its list's end in a parent),
 /// redefinitions between stretches, names from an included header, and a doubling chain.
 #[test]
-#[ignore = "Q367: the device's expansion differs from the serial passes on the M1 Max, as at Go-C-and-C-support's own 0cc2adf6d2 and ce2c4019c83; run with --ignored on an M3 or M5"]
 fn object_like_expansion_is_the_serial_passes() {
     let shapes: &[&[(&str, &str)]] = &[
         &[("main.c", "#define A 1\nA B A\n")],
@@ -1101,7 +1089,6 @@ fn shapes_agree(shapes: &[&[(&str, &str)]]) -> (usize, usize) {
 /// variadic part left out, empty, or many), a name painted in an argument, and a function-like
 /// name at an argument's end that its substitution calls.
 #[test]
-#[ignore = "Q367: the device's expansion differs from the serial passes on the M1 Max, as at Go-C-and-C-support's own 0cc2adf6d2 and ce2c4019c83; run with --ignored on an M3 or M5"]
 fn calls_with_arguments_are_the_serial_passes() {
     let shapes: &[&[(&str, &str)]] = &[
         &[("main.c", "#define F(x) x x\nF(1) F((a,b)) F() F( )\n")],
@@ -1128,7 +1115,6 @@ fn calls_with_arguments_are_the_serial_passes() {
 /// token's left out), a literal's `"` and `\` escaped; an empty argument's `""`; spacing kept through
 /// a body (a parameter's space, the call's name's space), and the string rescanned in its list.
 #[test]
-#[ignore = "Q367: the device's expansion differs from the serial passes on the M1 Max, as at Go-C-and-C-support's own 0cc2adf6d2 and ce2c4019c83; run with --ignored on an M3 or M5"]
 fn stringizing_is_the_serial_passes() {
     let shapes: &[&[(&str, &str)]] = &[
         &[("main.c", "#define S(x) #x\nS(a) S(  a  +  b  ) S() S(\"s\\n\" 'c') S(a\n b)\n")],
@@ -1147,7 +1133,6 @@ fn stringizing_is_the_serial_passes() {
 /// it), pastes that make names (rescanned), numbers, punctuators and digraphs, `#` beside `##`,
 /// and GNU's `, ## __VA_ARGS__` (the comma gone with no variadic arguments, kept with some).
 #[test]
-#[ignore = "Q367: the device's expansion differs from the serial passes on the M1 Max, as at Go-C-and-C-support's own 0cc2adf6d2 and ce2c4019c83; run with --ignored on an M3 or M5"]
 fn pasting_is_the_serial_passes() {
     let shapes: &[&[(&str, &str)]] = &[
         &[("main.c", "#define C(a, b) a ## b\nC(x, y) C(1, 2) C(+, =) C(<, :) C(, b) C(a, ) C(,) C(x y, z w)\n")],
@@ -1168,7 +1153,6 @@ fn pasting_is_the_serial_passes() {
 /// placemarker (so `##` beside it pastes with nothing); its content's parameters and pastes, and
 /// its space given to its content's first token.
 #[test]
-#[ignore = "Q367: the device's expansion differs from the serial passes on the M1 Max, as at Go-C-and-C-support's own 0cc2adf6d2 and ce2c4019c83; run with --ignored on an M3 or M5"]
 fn va_opt_is_the_serial_passes() {
     let shapes: &[&[(&str, &str)]] = &[
         &[("main.c", "#define F(a, ...) f(a __VA_OPT__(,) __VA_ARGS__)\nF(1) F(1, 2) F(1, 2, 3) F(1,)\n")],
@@ -1430,7 +1414,6 @@ fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_p
 /// Chains of such calls, exits through two lists, exits inside a macro's list and inside an
 /// argument's, the fence an argument's end makes, C17 §6.10.3.5's example 3, and DEFER/OBSTRUCT.
 #[test]
-#[ignore = "Q367: the device's expansion differs from the serial passes on the M1 Max, as at Go-C-and-C-support's own 0cc2adf6d2 and ce2c4019c83; run with --ignored on an M3 or M5"]
 fn calls_past_an_end_are_the_serial_passes() {
     let example3 = "#define x 3\n#define f(a) f(x * (a))\n#undef x\n#define x 2\n#define g f\n#define z z[0]\n#define h g(~\n#define m(a) a(w)\n#define w 0,1\n#define t(a) a\n#define p() int\n#define q(x) x\n#define r(x,y) x ## y\n#define str(x) # x\nf(y+1) + f(f(z)) % t(t(g)(0) + t)(1);\ng(x+(3,4)-w) | h 5) & m\n(f)^m(m);\np() i[q()] = { q(1), r(2,3), r(4,), r(,5), r(,) };\nchar c[2][6] = { str(hello), str() };\n";
     let shapes: &[&[(&str, &str)]] = &[
@@ -1458,7 +1441,6 @@ fn calls_past_an_end_are_the_serial_passes() {
 /// 64 KB: the device refuses (`X_ROOM`), the unit runs again at the next rung, and it gives the
 /// serial pass's tokens there. So does an `#if` line past its room that decides an include.
 #[test]
-#[ignore = "Q367: the device's expansion differs from the serial passes on the M1 Max, as at Go-C-and-C-support's own 0cc2adf6d2 and ce2c4019c83; run with --ignored on an M3 or M5"]
 fn a_unit_past_its_room_runs_again_larger() {
     let fan = "#define A0 x x x x x x x x\n#define A1 A0 A0 A0 A0 A0 A0 A0 A0\n#define A2 A1 A1 A1 A1 A1 A1 A1 A1\n#define A3 A2 A2 A2 A2 A2 A2 A2 A2\n";
     let tokens = format!("{fan}A3 A3 A3\n");
@@ -1559,7 +1541,6 @@ fn reclaimed_tokens_keep_a_chain_at_rung_0() {
 /// over many lines, in an exit's call, and in an included file; `__DATE__`, `__TIME__` and
 /// `__TIMESTAMP__` (the configuration's), and `__has_include` and its kin as plain names in text.
 #[test]
-#[ignore = "Q367: the device's expansion differs from the serial passes on the M1 Max, as at Go-C-and-C-support's own 0cc2adf6d2 and ce2c4019c83; run with --ignored on an M3 or M5"]
 fn line_and_file_are_the_serial_passes() {
     let shapes: &[&[(&str, &str)]] = &[
         &[("main.c", "__LINE__ __FILE__\n\n  __LINE__\n#define L __LINE__\nL\n#define F __FILE__\nF\n")],

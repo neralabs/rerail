@@ -757,7 +757,7 @@ fn holder() -> u64 {
 /// `p`, counted as this thread's.
 fn held_here(mut p: Pooled) -> Pooled {
     let me = holder();
-    dev().holders.lock().expect("the holders").entry(me).or_default().0 += p.device_buffer().length() as usize;
+    dev().holders.lock().expect("the holders").entry(me).or_default().0 += p.length() as usize;
     p.owner = me;
     p
 }

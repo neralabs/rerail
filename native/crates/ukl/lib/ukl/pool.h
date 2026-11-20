@@ -78,9 +78,9 @@ UKL_INLINE uint32_t ukl_pool_give_range(UklPool p, uint32_t start, uint32_t n)
 // Taking: a block of class `c` (its first unit), or `UKL_POOL_NONE`.
 UKL_INLINE uint32_t ukl_pool_take(UklPool p, uint32_t c)
 {
-    uint32_t head = ukl_atomic_load(&p.heads[c]);
+    uint32_t head = ukl_atomic_poll(&p.heads[c]);
     for (uint32_t turn = 0u; turn < UKL_POOL_TURNS && head != UKL_POOL_NONE; turn++) {
-        uint32_t next = ukl_atomic_load(&p.next[head]);
+        uint32_t next = ukl_atomic_poll(&p.next[head]);
         uint32_t seen = ukl_atomic_cas(&p.heads[c], head, next);
         if (seen == head)
             return head;

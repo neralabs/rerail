@@ -2988,21 +2988,12 @@ impl Runner<'_> {
         }
         let scratch = self.phase_scratch.as_ref().expect("the phases' scratch").buffer().clone();
         let groups = (region as u64).div_ceil(PHASE_WORDS);
-        // A threadgroup a block of `PHASE_WORDS` words, whole: its barriers are every thread's.
-        // Metal says a pipeline's most threads a group; the other backends take the group the launch gives.
-        let whole = |kernel: &LabelKernel, name: &str| {
-            #[cfg(target_os = "macos")]
-            if let Some(metal) = kernel.kernel.metal() {
-                assert!(metal.compute_pipeline_state.max_total_threads_per_threadgroup() >= PHASE_WORDS, "{name} takes {PHASE_WORDS} threads a group");
-            }
-            #[cfg(not(target_os = "macos"))]
-            let _ = (kernel, name);
-        };
+        let wide_enough = |kernel: &LabelKernel| kernel.kernel.max_threads_per_group().is_none_or(|t| t >= PHASE_WORDS);
         if self.phase_parents.is_none() {
             // Not an upload: a derived answer (each node's parent), written once where it is computed (0353).
             let parents = HostMapped::zeroed::<u32>(32 * region)?;
             let kernel = self.kernels[PARENTS_KERNEL].clone();
-            whole(&kernel, KERNELS[PARENTS_KERNEL]);
+            assert!(wide_enough(&kernel), "label_parents takes {PHASE_WORDS} threads a group");
             let shape = Shape { recursive: region as u32, ..self.shape() };
             crate::code_rule_dsl::prof::count_named(format!("kernel.{}", KERNELS[PARENTS_KERNEL]), 1);
             self.launch(&kernel, KERNELS[PARENTS_KERNEL])
@@ -3015,7 +3006,7 @@ impl Runner<'_> {
         }
         let parents = self.phase_parents.as_ref().expect("the batch's parents").buffer().clone();
         let kernel = self.kernels[PHASE_KERNEL].clone();
-        whole(&kernel, KERNELS[PHASE_KERNEL]);
+        assert!(wide_enough(&kernel), "label_phase takes {PHASE_WORDS} threads a group");
         crate::code_rule_dsl::prof::count("gpu.formula_phased", programs.len());
         let (scratch_rows, scratch_at) = (self.tapes.supertypes.buffer().clone(), self.tapes.scratch_at);
         let flags = self.flags.buffer().clone();

@@ -40,7 +40,7 @@ typedef struct UklGrid {
 } UklGrid;
 
 // Whether the grid has failed a barrier (in every thread alike after a barrier).
-UKL_INLINE bool ukl_grid_failed(UklGrid g) { return ukl_atomic_load(&g.ctl[2]) != 0u; }
+UKL_INLINE bool ukl_grid_failed(UklGrid g) { return ukl_atomic_poll(&g.ctl[2]) != 0u; }
 
 // Waits for every group of the grid: true when all arrived, false when the bound was reached (here or in another
 // group) or the grid failed before; the same answer in every group. Every thread of every group calls it, the same
@@ -51,7 +51,7 @@ UKL_INLINE bool ukl_grid_barrier(UklGrid g, UKL_LOCAL uint32_t* flag)
     ukl_tg_barrier_device();
     if (g.lid == 0u) {
         // The generation before this group arrives: it cannot step until every group, this one too, has.
-        uint32_t gen = ukl_atomic_load(&g.ctl[1]);
+        uint32_t gen = ukl_atomic_poll(&g.ctl[1]);
         uint32_t failed = gen & 1u;
         if (failed == 0u) {
             ukl_fence_device();
@@ -63,7 +63,7 @@ UKL_INLINE bool ukl_grid_barrier(UklGrid g, UKL_LOCAL uint32_t* flag)
                 uint32_t now = gen, spins = 0u;
                 while (now == gen && spins < UKL_GRID_SPINS) {
                     ukl_poll_yield();
-                    now = ukl_atomic_load(&g.ctl[1]);
+                    now = ukl_atomic_poll(&g.ctl[1]);
                     spins++;
                 }
                 if (now == gen) {
