@@ -1,0 +1,38 @@
+// The caller supplies the placed sources. The extractor reads one tape and its name context.
+.decl reference_source(path: symbol, content: symbol, module: symbol, stub: number, extractor: number)
+.input reference_source
+
+.decl reference_summary_key(content: symbol, module: symbol, stub: number, parser: symbol, format: number, extractor: number, version: symbol)
+reference_summary_key(c, m, s, p, f, e, "references-v1") :- reference_source(_, c, m, s, e), source_tape_version(p, f).
+
+.decl reference_summary_request(content: symbol, module: symbol, stub: number, parser: symbol, format: number, extractor: number, version: symbol)
+reference_summary_request(c, m, s, p, f, e, v) :- reference_summary_key(c, m, s, p, f, e, v).
+
+.decl reference_summary_of(content: symbol, module: symbol, stub: number, parser: symbol, format: number, extractor: number, version: symbol, bytes: symbol)
+.decl reference_summary(content: symbol, module: symbol, stub: number, extractor: number, bytes: symbol)
+reference_summary(c, m, s, e, b) :- reference_summary_key(c, m, s, p, f, e, v), reference_summary_of(c, m, s, p, f, e, v, b).
+.cache reference_summary by reference_summary_key
+
+.decl reference_source_summary(path: symbol, bytes: symbol)
+reference_source_summary(path, b) :- reference_source(path, c, m, s, e), reference_summary(c, m, s, e, b).
+
+.decl reference_file_settings(settings: symbol)
+.input reference_file_settings
+
+.decl reference_siblings_request(summary: symbol, settings: symbol)
+reference_siblings_request(b, s) :- reference_source_summary(_, b), reference_file_settings(s).
+.decl reference_siblings_of(summary: symbol, settings: symbol, targets: symbol)
+
+.decl reference_file_key(path: symbol, summary: symbol, settings: symbol, version: symbol)
+reference_file_key(p, b, targets, "bindings-v2") :- reference_source_summary(p, b), reference_file_settings(s), reference_siblings_of(b, s, targets).
+
+.decl reference_file_request(path: symbol, summary: symbol, settings: symbol, version: symbol)
+reference_file_request(p, b, s, v) :- reference_file_key(p, b, s, v).
+.decl reference_file_of(path: symbol, summary: symbol, settings: symbol, version: symbol, result: symbol)
+.decl reference_file(path: symbol, summary: symbol, settings: symbol, version: symbol, result: symbol)
+reference_file(p, b, s, v, r) :- reference_file_key(p, b, s, v), reference_file_of(p, b, s, v, r).
+.cache reference_file by reference_file_key
+
+.decl reference_prepared_source(path: symbol, result: symbol)
+reference_prepared_source(p, r) :- reference_file(p, _, _, _, r).
+.output reference_prepared_source

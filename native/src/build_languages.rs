@@ -856,9 +856,14 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
     }
     out.push_str("            #[cfg(any(test, feature = \"test-hooks\"))]\n            _ => &[],\n        }\n    }\n}\n\n");
 
+    let mut source_suffixes = Vec::new();
     out.push_str("const DIALECTS: &[Dialect] = &[\n");
     for entry in &supported {
+        let built = !omitted.contains(&entry.id);
         for dialect in &entry.dialects {
+            for suffix in &dialect.suffixes {
+                source_suffixes.push((&dialect.label, suffix, source_suffixes.len(), built));
+            }
             let _ = writeln!(
                 out,
                 "    Dialect {{ lang: {}, label: {:?}, suffixes: &{:?}, tape_tag: {} }},",
@@ -870,6 +875,11 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
         }
     }
     out.push_str("];\n\n");
+    use sha2::{Digest, Sha256};
+    let registry_bytes = serde_json::to_vec(&source_suffixes).expect("ordered source suffixes");
+    let digest = Sha256::digest(registry_bytes);
+    let version: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    writeln!(out, "pub const SOURCE_GRAMMAR_REGISTRY: &str = {version:?};").unwrap();
 
     out.push_str("/// The registry's fragment grammars (decisions 0082, 0466): name, dialect, start kind, tape tag.\n");
     out.push_str("const FRAGMENTS: &[(&str, GrammarDialect, &str, u8)] = &[\n");

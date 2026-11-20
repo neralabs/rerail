@@ -21,6 +21,7 @@ pub mod ingest;
 pub mod memory;
 pub mod persisted;
 pub mod results;
+mod scan_fingerprints;
 pub mod secret_names;
 pub mod storage;
 
@@ -434,6 +435,7 @@ pub struct WorkspaceState {
     pub dirty_files: BTreeSet<String>,
     pub grammars: BTreeMap<String, Arc<tape::Grammar>>,
     pub storage: Option<StorageContext>,
+    pending_analysis: Option<(crate::content_store::analysis_scope::AnalysisOwner, String)>,
     /// Removed paths whose overlay rows a busy store kept (`ingest::apply_request`): the next
     /// apply that publishes deletes them before it publishes its files.
     pub pending_removals: BTreeSet<String>,
@@ -458,6 +460,7 @@ pub struct WorkspaceState {
     /// Ordered reporting entries, retained for the current revision so result paging does not
     /// repeatedly restore and sort the entire workspace.
     pub result_page_index: Option<ResultPageIndex>,
+    scan_fingerprints: Option<scan_fingerprints::ScanFingerprints>,
     /// Cross-file adapters and their shared derived state.
     crossfile: crossfile::CrossFileScheduler,
     /// The files requests sent, as import target resolution reads them (`import_target::fs`).

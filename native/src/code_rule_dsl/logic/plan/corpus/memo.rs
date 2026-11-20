@@ -20,11 +20,6 @@ mod image;
 /// (they cannot since decision 0053: the plan names the engine build, and dead plans are collected).
 const SCHEMA: u32 = crate::content_store::live_fact_schema(8);
 
-/// The entry's key for a base relation's rows (`rows`), kept for the cross-file part that reads them: a memoised
-/// file hands on its base rows as an evaluated one does.
-pub(super) fn base_key(rel: &str) -> String {
-    format!("base:{rel}")
-}
 
 /// The entry's key for the identities of the relations it holds (decision 0225 §2): two words of each export's and
 /// file-local output's identity (`identities`) it was made under. A relation's rows in an entry are its rows only
@@ -513,25 +508,15 @@ impl Syms {
         Syms(std::sync::Arc::new(domains.iter().map(|(r, cols)| (r.clone(), cols.iter().map(|d| matches!(d, super::super::lower::Domain::Name)).collect())).collect()))
     }
 
-    /// The symbol columns of an entry's rows under `key` (`Entry::rows`), `width` wide: a relation's own, a base
-    /// relation's (`base:`); the `own:` rows hold none. None for a relation the plan does not declare.
+    /// The symbol columns of an entry's rows under `key` (`Entry::rows`), `width` wide: a relation's own; the `own:`
+    /// rows hold none. None for a relation the plan does not declare.
     ///
     /// A posting (`own:postings:rel:col`) is a count of a program's integer constant (`Own::constants`) in a column,
     /// as the column's source encodes it: a kind's or a field's is the grammar's code (`field`'s `f`, 65555), not an
     /// atom, whatever the column is declared. Its value is no symbol, and is not mapped: a forked process's counts for
     /// a constant that is an atom are of its numbering (estimates, as the kept statistics' sketches are). Read as one,
     /// the posting's column was looked up by number, found none, and a forked run refused every entry holding one.
-    /// `columns`, for statistics kept at the columns `names` (a base relation's: some of its columns, by name).
-    pub(super) fn columns_named(&self, key: &str, names: &[String]) -> Option<Vec<bool>> {
-        let Some(rel) = key.strip_prefix("base:") else { return self.columns(key, names.len()) };
-        let (all, syms) = (crate::code_rule_dsl::logic::sql::select::input_columns(rel)?, self.0.get(rel)?);
-        names.iter().map(|n| all.iter().position(|c| c == n).and_then(|i| syms.get(i).copied())).collect()
-    }
-
     pub(super) fn columns(&self, key: &str, width: usize) -> Option<Vec<bool>> {
-        if let Some(rel) = key.strip_prefix("base:") {
-            return self.0.get(rel).cloned();
-        }
         if key.starts_with("own:") {
             return Some(vec![false; width]);
         }
@@ -1304,9 +1289,6 @@ pub mod tests {
         assert_eq!(foreign_symbol(&[&entry], &syms, 5), None, "numbers past the atoms are not symbols");
         entry.rows.insert("named".into(), (2, vec![1, 3, 2, 5]));
         assert_eq!(foreign_symbol(&[&entry], &syms, 5), Some(("named".to_owned(), 5)));
-        entry.rows.insert("base:named".into(), (2, vec![1, -1]));
-        entry.rows.insert("named".into(), (2, vec![1, 3]));
-        assert_eq!(foreign_symbol(&[&entry], &syms, 5), Some(("base:named".to_owned(), -1)));
     }
 
     /// A posting counts a constant as its column's source encodes it (`own:postings:field:f`: a grammar's field code,
@@ -1318,7 +1300,6 @@ pub mod tests {
         let domains: BTreeMap<String, Vec<Domain>> = [("field".to_owned(), vec![Domain::Node, Domain::Field, Domain::Node]), ("named".to_owned(), vec![Domain::Kind, Domain::Name])].into();
         let syms = Syms::of(&domains);
         assert_eq!(syms.columns("own:postings:field:f", 2), Some(vec![false, false]));
-        assert_eq!(syms.columns("base:field", 3), Some(vec![false, false, false]), "a field's code is no atom");
         assert_eq!(syms.columns("named", 2), Some(vec![false, true]), "a kind's neither; a name is");
         let mut entry = Entry { key: 1, ..Entry::default() };
         entry.rows.insert("own:postings:field:f".into(), (2, vec![65_555, 10]));

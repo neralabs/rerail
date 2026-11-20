@@ -124,7 +124,7 @@ impl ObjectFrame {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
-    /// Its bytes, read in place: refused where they are not `raw_length` long, as its row says.
+    /// Its bytes, read in place (at the segment's 64-byte alignment, decision 0464): refused where they are not `raw_length` long, as its row says.
     pub fn bytes(&self, raw_length: usize) -> std::io::Result<ObjectBytes> {
         if self.0.len() != raw_length {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "an object's length"));

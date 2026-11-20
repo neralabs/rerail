@@ -29,12 +29,14 @@
 6	shipped functor @printf/5	not native: sqlite: error: no SQL for @printf($a, $b, $c, $a, $b)	data-layer (engine) 6
 5	function @rx_replace/3	not on the device: no computed term	data-layer (engine) 5
 5	functor @rx_replace/3	not on the device: no computed term	data-layer (engine) 5
+4	function @join/2	not on the device: no computed term	lib 4
 4	shipped functor @cast_int/1	not on the device: no computed term	data-layer (engine) 4
 3	function @ed25519_ok/3	not on the device: no computed term	data-layer 2, lib 1
-3	function @join/2	not on the device: no computed term	lib 3
+3	function @json_str/1	not on the device: no computed term	lib 2, data-layer 1
+3	function @sha256/1	not on the device: no computed term	lib 2, data-layer 1
 3	functor @ed25519_ok/3	not on the device: no computed term	data-layer 2, lib 1
+3	functor @json_str/1	not on the device: no computed term	lib 2, data-layer 1
 2	function @convert/3	not on the device: no computed term	python-main 1, vue 1
-2	function @json_str/1	not on the device: no computed term	data-layer 1, lib 1
 2	function @nfkc/1	not on the device: no computed term	data-layer 1, lib 1
 2	function @semver_valid/1	not on the device: no computed term	lib 1, node 1
 2	functor @json_str/1	not on the device: no computed term	data-layer 1, lib 1
@@ -45,6 +47,7 @@
 2	shipped functor @ltrim/2	not on the device: no computed term	data-layer (engine) 2
 2	text test iprefix: a bound pattern	not on the device: refused: the text test @iprefix of a pattern that is not a constant has no device form	javascript 1, react 1
 1	aggregate product	not native: sqlite: aggregate product (the native engine declined: rule #0000: $c = product $v : { p($a, $v) } has no native step)	lib 1
+1	function @ascii_lower/1	not on the device: no computed term	lib 1
 1	function @glob_sub/3	not on the device: no computed term	lib 1
 1	function @package_of/1	not on the device: no computed term	lib 1
 1	function @sha256/1	not on the device: no computed term	data-layer 1

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,6 +30,33 @@ async function repository(path: string): Promise<string> {
 }
 
 describe("CheckoutOwners", () => {
+  it("drops a forgotten plain root and keeps a second registration in the same resolver", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-plain-owner-")));
+    cleanups.push(() => removeFolder(root));
+    const catalogs = new CheckoutCatalogs(join(root, "rerail.sqlite"));
+    cleanups.push(async () => catalogs.close());
+    const first = join(root, "first"), second = join(root, "second");
+    for (const directory of [first, second]) {
+      await mkdir(directory);
+      recordCheckout(catalogs.database, directory);
+    }
+    const owners = new CheckoutOwners(catalogs.database);
+    const owner = (root: string) => owners.ownerOf(join(root, "src", "a.py"))?.checkoutRoot;
+    expect(owner(first)).toBe(first);
+    expect(owner(second)).toBe(second);
+    await rename(first, join(root, "moved"));
+    // The catalog forgets the root (a pass keeps a plain root whose folder is gone, as it keeps a clone's only
+    // checkout off disk: what forgets it is no part of this test). The owners follow the catalog's change.
+    catalogs.database.$client.prepare("DELETE FROM checkouts WHERE checkout_path = ?").run(first);
+    await mkdir(first);
+    expect(owner(first)).toBeUndefined();
+    expect(owner(second)).toBe(second);
+    await rename(join(root, "moved", ".rerail"), join(first, ".rerail"));
+    expect(owner(first)).toBeUndefined();
+    recordCheckout(catalogs.database, first);
+    expect(owner(first)).toBe(first);
+  });
+
   it("finds a nested checkout recorded after the folder was first resolved", async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-checkout-owner-")));
     cleanups.push(() => removeFolder(root));
@@ -39,7 +66,7 @@ describe("CheckoutOwners", () => {
     const catalogs = new CheckoutCatalogs(join(root, "rerail.sqlite"));
     cleanups.push(async () => catalogs.close());
     recordCheckout(catalogs.database, outer);
-    const owners = new CheckoutOwners(() => catalogs.recordedCheckoutsVersion());
+    const owners = new CheckoutOwners(catalogs.database);
 
     expect(owners.ownerOf(join(outer, "src", "a.py"))).toEqual({ checkoutRoot: outer, path: "src/a.py" });
 
@@ -89,18 +116,18 @@ describe("CheckoutOwners", () => {
     await writeFile(file, "x = 1\n");
     const owners = new CheckoutOwners();
     expect(owners.ownerOf(file)).toBeUndefined();
-    expect(owners.lookAgainAt(file)).toBe(false);
+    expect(owners.lookAgain()).toBe(false);
 
     const later = await repository(join(root, "later"));
 
     // The answers kept from the first lookup name no checkout until something drops them.
     expect(owners.ownerOf(file)).toBeUndefined();
-    expect(owners.lookAgainAt(file)).toBe(true);
+    expect(owners.lookAgain()).toBe(true);
     expect(owners.ownerOf(file)).toEqual({ checkoutRoot: later, path: "src/a.py" });
-    expect(owners.lookAgainAt(file)).toBe(false);
+    expect(owners.lookAgain()).toBe(false);
   });
 
-  it("finds the checkout a folder became after a lookup passed it once a lookup starts at that folder", async () => {
+  it("takes a folder that became a checkout after a lookup passed it only at the next point, at the folder itself too", async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-checkout-owner-")));
     cleanups.push(() => removeFolder(root));
     const file = join(root, "later", "src", "a.py");
@@ -111,7 +138,9 @@ describe("CheckoutOwners", () => {
 
     const later = await repository(join(root, "later"));
 
-    // A walk asks for each folder before the files in it, so the folder's own lookup is where it finds the checkout.
+    // Between two points no change is taken: the folder's own lookup keeps the answer from before.
+    expect(owners.ownerOf(join(root, "later"))).toBeUndefined();
+    expect(owners.lookAgain()).toBe(true);
     expect(owners.ownerOf(join(root, "later"))).toEqual({ checkoutRoot: later, path: "" });
     expect(owners.ownerOf(file)).toEqual({ checkoutRoot: later, path: "src/a.py" });
   });
@@ -128,9 +157,9 @@ describe("CheckoutOwners", () => {
     // A worktree's `.git` file whose Git folder is gone: Git answers that it is no checkout, at a Git process each time.
     await writeFile(join(root, "stray", ".git"), `gitdir: ${join(root, "gone")}\n`);
 
-    expect(owners.lookAgainAt(file)).toBe(true);
+    expect(owners.lookAgain()).toBe(true);
     expect(owners.ownerOf(file)).toBeUndefined();
-    expect(owners.lookAgainAt(file)).toBe(false);
+    expect(owners.lookAgain()).toBe(false);
   });
 
   it("owns a worktree's files once Git finishes it, after a lookup landed between its .git file and its HEAD", async () => {
@@ -148,14 +177,14 @@ describe("CheckoutOwners", () => {
 
     // A walk's lookup of the folder lands in between: Git does not take it for a checkout yet.
     expect(owners.ownerOf(made)).toBeUndefined();
-    expect(owners.lookAgainAt(file)).toBe(false);
+    expect(owners.lookAgain()).toBe(false);
     expect(owners.ownerOf(file)).toBeUndefined();
 
     await writeFile(head, contents);
 
     // The next Write in it looks again and finds the worktree.
-    expect(owners.lookAgainAt(file)).toBe(true);
+    expect(owners.lookAgain()).toBe(true);
     expect(owners.ownerOf(file)).toEqual({ checkoutRoot: made, path: "README.md" });
-    expect(owners.lookAgainAt(file)).toBe(false);
+    expect(owners.lookAgain()).toBe(false);
   });
 });

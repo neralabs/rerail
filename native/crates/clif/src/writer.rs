@@ -3237,7 +3237,7 @@ mod tests {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../ukl/lib/ukl/writer.h");
         let source = super::ukl_source().unwrap();
         if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(path, &source).unwrap();
+            std::fs::write(&path, &source).unwrap();
         }
         let held = std::fs::read_to_string(path).unwrap_or_default();
         assert!(held == source, "{path} is not the writer's UKL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_tape_crates_writer_kernels_are_these");

@@ -2,8 +2,9 @@
 
 Status: accepted (2026-11-18)
 
-Numbered 0399 where it was written (the hub's 0399 is "a `\u` escape's checks run at its token"). Numbered 0426 on
-django-bugs (until roll-up 7) and on CUDA-support (until roll-up 8).
+Numbered 0399 where it was written (the hub's 0399 is "a `\u` escape's checks run at its token"), 0434 on the sync branch and on
+final-rerail-shape-rr-align until 2026-11-19, and 0426 on django-bugs (until roll-up 7) and on CUDA-support (until roll-up 8),
+and 0426 on the sync branch and benchmarks-on-integration from 2026-11-19 until its merge into CUDA-support (2026-11-20).
 
 ## Intro
 
@@ -415,7 +416,7 @@ the device's sweeps, which would read each block's presence words before its 1,0
 what lies in the residency slabs, so the block presence must be laid there beside the tape, not uploaded from the
 image's `Vec` (0353); that is part 3's layout, so the device's block skip comes with it.
 
-**Done (2026-11-18): part 3, the store keeps it.** 0456's branch is merged here (75078a7e7). The presence is an entry
+**Done (2026-11-18): part 3, the store keeps it.** 0456's branch (numbered 0402 there) is merged here (75078a7e7). The presence is an entry
 of a kept-facts space of its own (`content_store::kept_facts::presence`), keyed by the tape's write-back key
 (`core::tape_key`: its source's digest, language, grammar and format versions), its rows the words in their order
 (the document's, then each block's), one column kept as given. A wave's presences are gathered and written as one

@@ -24,6 +24,7 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { pathsOwnedByCurrentUser } from "../../native/native.js";
+import { gitInherits } from "../../git.js";
 import { checkoutRealpath, realpathNamesInTurn, storedForm, storedPath } from "../checkout-control.js";
 
 /** What Git reads to place a folder holding a `.git` entry, as it was when read. */
@@ -70,6 +71,8 @@ export interface LinkedPlacement {
  * The environment variables that move Git's lookup away from the folder's own `.git` entry, or make Git refuse every
  * folder: with any of them set nothing is read from files or kept, and Git is asked each time. `GIT_CEILING_DIRECTORIES`
  * is not one: it stops Git's search above a folder, and Git reads a folder's own `.git` entry before it looks above.
+ * Only those Rerail's Git calls inherit count ({@link gitInherits}): a repository a parent process names (`GIT_DIR`,
+ * `GIT_WORK_TREE`, …) never reaches them, so the folder alone places itself.
  */
 const LOOKUP_VARIABLES = [
   "GIT_DIR",
@@ -81,7 +84,7 @@ const LOOKUP_VARIABLES = [
 ];
 
 function environmentMovesLookup(): boolean {
-  return LOOKUP_VARIABLES.some(name => process.env[name] !== undefined);
+  return LOOKUP_VARIABLES.some(name => gitInherits(name) && process.env[name] !== undefined);
 }
 
 /**
@@ -90,7 +93,7 @@ function environmentMovesLookup(): boolean {
  * with that folder's own inputs.
  */
 export function lookupEnvironment(): string | undefined {
-  const set = LOOKUP_VARIABLES.filter(name => process.env[name] !== undefined);
+  const set = LOOKUP_VARIABLES.filter(name => gitInherits(name) && process.env[name] !== undefined);
   return set.length === 0 ? undefined : set.map(name => `${name}=${process.env[name]}`).join("\n");
 }
 

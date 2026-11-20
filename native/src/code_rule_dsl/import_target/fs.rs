@@ -184,9 +184,7 @@ impl View {
             None => (VIRTUAL_BASE.to_owned(), None),
         };
         Self {
-            canonical_root: root
-                .as_ref()
-                .and_then(|root| dunce::canonicalize(root).ok()),
+            canonical_root: root.as_ref().and_then(|root| crate::git_workspace::snapshot::canonicalize(root).ok()),
             held,
             root,
             base,
@@ -239,6 +237,9 @@ impl View {
             return None;
         }
         let path = root.join(relative);
+        if crate::git_workspace::snapshot::contains(root) {
+            return crate::git_workspace::snapshot::canonicalize(&path).ok();
+        }
         let metadata = std::fs::symlink_metadata(&path).ok()?;
         if metadata.file_type().is_symlink() {
             let canonical = dunce::canonicalize(&path).ok()?;
@@ -263,7 +264,7 @@ impl View {
             .as_ref()
             .zip(self.canonical_root.as_ref())
             .is_some_and(|(root, canonical_root)| {
-                dunce::canonicalize(root.join(relative))
+                crate::git_workspace::snapshot::canonicalize(root.join(relative))
                     .is_ok_and(|canonical| canonical.starts_with(canonical_root))
             });
         let mut cache = self.inside.lock();
@@ -287,10 +288,9 @@ impl View {
             return *kind;
         }
         let kind = self.on_disk(relative).and_then(|path| {
-            let metadata = std::fs::metadata(path).ok()?;
-            if metadata.is_file() {
+            if crate::git_workspace::snapshot::is_file(&path) {
                 Some(Kind::File)
-            } else if metadata.is_dir() {
+            } else if crate::git_workspace::snapshot::is_dir(&path) {
                 Some(Kind::Directory)
             } else {
                 None
@@ -321,11 +321,15 @@ impl View {
         }
         let text = self
             .on_disk(relative)
-            .filter(|path| {
-                std::fs::metadata(path)
+            .and_then(|path| {
+                if crate::git_workspace::snapshot::contains(&path) {
+                    return crate::git_workspace::snapshot::read_bounded(&path, MAX_TEXT_BYTES).ok();
+                }
+                std::fs::metadata(&path)
                     .is_ok_and(|metadata| metadata.is_file() && metadata.len() <= MAX_TEXT_BYTES)
+                    .then(|| std::fs::read(path).ok())
+                    .flatten()
             })
-            .and_then(|path| std::fs::read(path).ok())
             .and_then(|bytes| String::from_utf8(bytes).ok())
             .map(Arc::new);
         let mut cache = self.cache.lock();
@@ -358,15 +362,14 @@ impl View {
             return Arc::clone(names);
         }
         let mut names = self.held.children(relative);
-        if let Some(entries) = self
-            .on_disk(relative)
-            .and_then(|path| std::fs::read_dir(path).ok())
-        {
-            names.extend(
-                entries
-                    .flatten()
-                    .filter_map(|entry| entry.file_name().into_string().ok()),
-            );
+        if let Some(path) = self.on_disk(relative) {
+            if crate::git_workspace::snapshot::contains(&path) {
+                if let Ok(entries) = crate::git_workspace::snapshot::listing(&path) {
+                    names.extend(entries.into_iter().map(|(name, _)| name));
+                }
+            } else if let Ok(entries) = std::fs::read_dir(&path) {
+                names.extend(entries.flatten().filter_map(|entry| entry.file_name().into_string().ok()));
+            }
         }
         let names = Arc::new(names.into_iter().collect::<Vec<_>>());
         let mut cache = self.cache.lock();
@@ -395,7 +398,7 @@ impl View {
             .as_ref()
             .zip(self.canonical_root.as_ref())
             .and_then(|(root, canonical_root)| {
-                let canonical = dunce::canonicalize(root.join(relative)).ok()?;
+                let canonical = crate::git_workspace::snapshot::canonicalize(root.join(relative)).ok()?;
                 // Its names joined by `/`, as every path here is: Windows separates the ones
                 // disk gives by `\`.
                 let inside = canonical

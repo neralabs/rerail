@@ -33,7 +33,8 @@ UKL_INLINE void mark(UKL_GLOBAL uint32_t* bits,uint32_t node){ukl_atomic_or(&bit
 #define MARK(b,n) {uint32_t mark_n=(n);if(NODE_OK(mark_n))mark(b,mark_n);else NODE_PAST}
 #define TALLY(t,n) TALLY_BY(t,n,1u)
 #define TALLY_BY(t,n,k) {uint32_t tally_n=(n);if(NODE_OK(tally_n))ukl_atomic_add(&(t)[tally_n],(k));else NODE_PAST}
-// A window's words of a row (64 nodes from `b`), for a window that starts at a node of the batch.
+// A window's words of a row (64 nodes from `b`), for a window that starts at a node of the batch (Q189: the scans'
+// marks are bounded as the strata's are).
 #define MARK_WINDOW(row,b,out) {uint32_t window_b=(b);uint64_t window_out=(out);if(NODE_OK(window_b)){uint32_t w0=(uint32_t)(window_out),w1=(uint32_t)(window_out>>32u);if(w0!=0u)ukl_atomic_or(&(row)[window_b/32u],w0);if(w1!=0u)ukl_atomic_or(&(row)[window_b/32u+1u],w1);}else NODE_PAST}
 
 DEFINE_KERNEL2(label_passes, label_sink,

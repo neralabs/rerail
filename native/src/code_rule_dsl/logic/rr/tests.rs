@@ -634,6 +634,41 @@ fn a_negated_match_reads_its_named_groups_as_groups() {
     assert!(text.contains("(?:.*)") && !text.contains("(?<z>"), "{text}");
 }
 
+#[test]
+fn bound_family_keeps_its_contract_when_printed_and_rejects_incompatible_keys() {
+    let source = r#"
+.decl selected(r: symbol, k: number)
+.decl ask(r: symbol, k: number) extensible
+.decl complete(r: symbol, k: number)
+.decl member(r: symbol, k: number, value: symbol)
+.pragma "bound-family" "ask complete member"
+.decl empty(r: symbol, k: number)
+empty(r,k) :- selected(r,k), !member(r,k,_).
+.output empty
+"#;
+    // The reader asks for its keys (`ask`, from `selected`), and its negation reads `complete` at them.
+    let check = |p: &Arc<Version>| {
+        let demand = rules_of(p, |h| h == "ask");
+        assert_eq!(demand.len(), 1, "{:?}", shown(p, |h| h == "ask"));
+        let first = demand[0].body().next().and_then(|l| l.atom()).map(|a| p.rel_name(a.rel()).to_owned());
+        assert_eq!(first.as_deref(), Some("selected"), "{:?}", shown(p, |h| h == "ask"));
+        let query = rules_of(p, |h| h == "empty");
+        let complete = query[0].body().filter(|l| matches!(l.view(), Lit::Atom(a) if !a.neg() && p.rel_name(a.rel()) == "complete")).count();
+        assert_eq!(complete, 1, "{:?}", shown(p, |h| h == "empty"));
+    };
+    let program = parse(source).unwrap();
+    check(&program);
+    check(&parse(&print_version(&program).unwrap()).unwrap());
+    for (from, to, why) in [
+        ("ask complete member", "ask complete absent", "undeclared relation absent"),
+        ("complete(r: symbol, k: number)", "complete(r: symbol)", "needs the key columns"),
+        ("member(r: symbol, k: number", "member(r: symbol, k: symbol", "needs the key columns"),
+    ] {
+        let error = parse(&source.replace(from, to)).unwrap_err().to_string();
+        assert!(error.contains(why), "{error}");
+    }
+}
+
 /// What is not lowered yet says so by name. A `must` head needs its relation declared `must, may`; a `.violation`
 /// at a span or loc whose values can be spans the engine does not make lowers (such a row has no `docof`, and so no
 /// finding).

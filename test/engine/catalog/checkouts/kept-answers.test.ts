@@ -16,14 +16,14 @@ import {
   worktreeRegistry,
   type RepositoryIdentityLocation,
 } from "../../../../src/engine/catalog/repository-identity.js";
-import { runGit } from "../../../../src/engine/git.js";
+import { runGit, runGitBytes } from "../../../../src/engine/git.js";
 import { linkFolder } from "../../../support/platform/links.js";
 import { removeFolder } from "../../../support/platform/remove-folder.js";
 import { shortSpelling } from "../../support/short-path.js";
 
 vi.mock("../../../../src/engine/git.js", async importOriginal => {
   const actual = await importOriginal<typeof import("../../../../src/engine/git.js")>();
-  return { ...actual, runGit: vi.fn(actual.runGit) };
+  return { ...actual, runGit: vi.fn(actual.runGit), runGitBytes: vi.fn(actual.runGitBytes) };
 });
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -85,8 +85,13 @@ function keptSince(before: Record<string, number>): Record<string, number> {
 }
 
 /** How many Git processes Rerail started since the `started`th. */
+/** Every Git process Rerail started, of either kind ({@link runGit}, {@link runGitBytes}). */
+function gitProcesses(): number {
+  return vi.mocked(runGit).mock.calls.length + vi.mocked(runGitBytes).mock.calls.length;
+}
+
 function gitProcessesSince(started: number): number {
-  return vi.mocked(runGit).mock.calls.length - started;
+  return gitProcesses() - started;
 }
 
 /**
@@ -142,7 +147,7 @@ describe("what the catalog keeps for a worktree leaves with it", () => {
 
     expect(keptSince(before)).toEqual({ heldTopLevels: 3, gitAcceptances: 3, gitPlacedCommons: 1, configs: 1 + 2 * configsPerCheckout });
     // Each checkout that stays keeps its answers: asked again, none starts a Git process.
-    const started = vi.mocked(runGit).mock.calls.length;
+    const started = gitProcesses();
     askAgain(main, ...stay);
     expect(gitProcessesSince(started)).toBe(0);
   });
@@ -157,7 +162,7 @@ describe("what the catalog keeps for a worktree leaves with it", () => {
     expect(gitsRegistry(main).map(listed => resolve(listed))).toEqual(expect.arrayContaining(worktrees));
     expectGitsRegistries(main);
     expect(keptSince(before)).toEqual({ heldTopLevels: 3, gitAcceptances: 3, gitPlacedCommons: 1, configs: 1 });
-    const started = vi.mocked(runGit).mock.calls.length;
+    const started = gitProcesses();
     askAgain(main, ...worktrees.slice(2));
     expect(gitProcessesSince(started)).toBe(0);
   });
@@ -196,7 +201,7 @@ describe("what the catalog keeps for a worktree leaves with it however the repos
     expectGitsRegistries(asked[0]!);
 
     expect(keptSince(before)).toEqual({ heldTopLevels: -4, gitAcceptances: -4, gitPlacedCommons: 0, configs: -4 });
-    const started = vi.mocked(runGit).mock.calls.length;
+    const started = gitProcesses();
     askAgain(asked[0]!, ...asked.slice(5));
     expect(gitProcessesSince(started)).toBe(0);
   }

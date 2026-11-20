@@ -1,3 +1,4 @@
+import type { DirectoryAnalysisRegistration } from "../native/analysis-scope.js";
 import { type Dirent, type Stats } from "node:fs";
 import { lstat, mkdtemp, opendir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,6 +15,8 @@ import {
   type NativeGitAccess,
   type NativeGitIgnoreMatch,
   type NativeGitIgnoreMatcher,
+  type NativeAnalysisScopeRun,
+  type NativeGitRevisionSource,
   type NativePackageFacts,
   type NativePackageFactsReader,
   type NativeRepositoryIndexOptions,
@@ -162,7 +165,7 @@ const resultPageSchema = z.strictObject({
   revision: z.number().int().nonnegative(),
   cursor: z.number().int().nonnegative(),
   done: z.boolean(),
-  violations: z.array(violationSchema),
+  violations: z.array(violationSchema.extend({ fingerprint: z.string().optional() })),
   failures: z.array(failureSchema),
   coverage: z.array(coverageSchema),
   blindFiles: z.array(blindFileSchema).default([]),
@@ -472,6 +475,10 @@ function failure(
   path?: string,
   stage?: AuditFailure["stage"],
 ): AuditFailure {
+  const cacheErrorPrefix = "WORKSPACE_STORE_UNAVAILABLE\n";
+  if (message.startsWith(cacheErrorPrefix)) {
+    return { clauseId, code: "cache-unavailable", message: message.slice(cacheErrorPrefix.length), stage: "scan" };
+  }
   return { clauseId: clauseId, code, message, ...(path === undefined ? {} : { path }), ...(stage === undefined ? {} : { stage }) };
 }
 function auditBudgetFailure(message: string): AuditFailure {
@@ -608,6 +615,11 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   readonly #timingLog: ((line: string) => void) | undefined;
   readonly #followGitignore: boolean;
   readonly #steerShell: SteerShell | undefined;
+  readonly #revisionSource: NativeGitRevisionSource | undefined;
+  readonly #analysisStore: string | undefined;
+  readonly #analysisRun: NativeAnalysisScopeRun | undefined;
+  readonly #analysisGeneration: ((store: string) => Promise<number | DirectoryAnalysisRegistration>) | undefined;
+  readonly #analysisHome: string | undefined;
   /** Git's exclude stack for this checkout: undefined until first use, null outside Git or where it cannot be opened. */
   #gitIgnore: NativeGitIgnoreMatcher | null | undefined;
   /** The owner `#gitIgnore` was opened with: a new one (Git answered at last) opens it again. */
@@ -698,6 +710,11 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       followGitignore?: boolean;
       /** The shell the session's coding agent runs commands in, which a steer's command is written for (`steerShell`). */
       steerShell?: SteerShell | undefined;
+      revisionSource?: NativeGitRevisionSource;
+      analysisStore?: string;
+      analysisRun?: NativeAnalysisScopeRun;
+      analysisGeneration?: (store: string) => Promise<number | DirectoryAnalysisRegistration>;
+      analysisHome?: string;
     },
   ) {
     this.#catalog = catalog;
@@ -712,6 +729,11 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#timingLog = options.timingLog;
     this.#followGitignore = options.followGitignore ?? false;
     this.#steerShell = options.steerShell;
+    this.#revisionSource = options.revisionSource;
+    this.#analysisStore = options.analysisStore;
+    this.#analysisRun = options.analysisRun;
+    this.#analysisGeneration = options.analysisGeneration;
+    this.#analysisHome = options.analysisHome;
     this.#ownedAudits =
       options.audits === undefined
         ? new SqliteAuditStore(defaultRerailDatabasePath())
@@ -868,6 +890,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#scope = settings.scope;
     this.#mode = settings.mode;
   }
+
   /**
    * Synchronous, so the bridge's next `acceptsPath` already answers with the refreshed scopes: the replacement
    * registers its code rules now and attaches storage off the JS thread before its first apply. Before the workspace
@@ -1096,8 +1119,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   #prepareWorkspace(): PreparedWorkspace {
     const snapshot = this.#catalog.snapshot();
     // This build's own store; only the main daemon may open the machine-wide one.
-    const storePath = contentStorePath();
-    assertContentStoreOwner(storePath);
+    const configuredStore = this.#analysisStore ?? contentStorePath();
+    assertContentStoreOwner(configuredStore);
     const binding = loadNativeBinding();
     // The storage attach discovers the checkout in the engine, which reads the config files Rerail's Git names.
     nativeGitAccess(binding);
@@ -1107,10 +1130,35 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       for (const codeRule of snapshot.codeRules) workspace.addCodeRule(codeRule.executable, JSON.stringify(codeRule.placement));
       // Import targets resolve against the files below the workspace root that the workspace does not hold.
       workspace.setRoot(this.#workspaceRoot);
+      if (this.#analysisStore !== undefined) workspace.setScanFingerprintPrefix(this.#presentPath(""));
       const attachStartedAt = performance.now();
       // The store is a cache every checkout shares, kept on disk: a file named like one holding secrets never goes into it.
       const secretNames = { files: SENSITIVE_FILE_NAMES, folders: SENSITIVE_FOLDER_NAMES };
-      storage = workspace.enableStorageAsync(this.#workspaceRoot, storePath, secretNames).then(({ attached, reason, discoveryMilliseconds, publicationMilliseconds }) => {
+      const source = this.#revisionSource;
+      const attach = async () => {
+        let storePath = configuredStore;
+        let registration: DirectoryAnalysisRegistration | number | undefined;
+        if (this.#analysisStore === undefined && this.#analysisGeneration !== undefined) {
+          try {
+            registration = await this.#analysisGeneration(storePath);
+          } catch (error) {
+            process.stderr.write(`rerail: analysis ownership is unavailable: ${errorMessage(error)}\n`);
+            storePath = ":memory:";
+          }
+        }
+        const result = source === undefined
+          ? await workspace.enableStorageAsync(this.#workspaceRoot, storePath, secretNames, this.#analysisRun,
+            typeof registration === "number" ? registration : registration?.generation, this.#analysisHome, typeof registration === "object" ? registration.identity : undefined)
+          : await workspace.enableRevisionStorageAsync(source, storePath, secretNames, this.#analysisRun);
+        if (!result.cacheUnavailable || storePath === ":memory:" || source === undefined) return result;
+        const warning = result.reason ?? "The durable cache is unavailable";
+        if (this.#analysisRun !== undefined) this.#analysisRun.warn(warning);
+        else process.stderr.write(`rerail: ${warning}\n`);
+        return workspace.enableRevisionStorageAsync(source, ":memory:", secretNames);
+      };
+      storage = attach().then(({ attached, reason, discoveryMilliseconds, publicationMilliseconds }) => {
+        if (!attached && this.#revisionSource !== undefined) throw new Error(reason ?? "Cannot attach Git source");
+        if (!attached) this.#analysisRun?.warn(reason ?? "Repository storage did not attach");
         this.#timingLog?.(
           `rerail: repository storage ${attached ? "attached" : "not attached"} in ${Math.round(performance.now() - attachStartedAt)} ms (discovery ${Math.round(discoveryMilliseconds)} ms, publication ${Math.round(publicationMilliseconds)} ms)\n`,
         );
@@ -1465,10 +1513,12 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   /** Reads `run`'s files, evaluates them and records the result, unless the evaluator closes meanwhile. */
   async #evaluateScopeAudit(run: ScopeAuditRun, prepared: PreparedWorkspace): Promise<void> {
     const { workspace } = prepared;
-    const indexed = run.scope === "repository" && (await prepared.storage);
+    const storage = await prepared.storage;
+    // A revision's sources are its tree's, read from the index the storage holds, for touched files too.
+    const indexed = (run.scope === "repository" || this.#revisionSource !== undefined) && storage;
     const indexStartedAt = performance.now();
     const walked = indexed
-      ? await this.#indexRepository(workspace, run.auditId, run.failures, run.nested)
+      ? await this.#indexRepository(workspace, run.auditId, run.failures, run.nested, run.scope === "touched-files" ? run.paths : undefined)
       : await this.#walkAuditSources(workspace, run.scope, run.auditId, run.paths, run.failures, run.nested);
     const indexMilliseconds = performance.now() - indexStartedAt;
     if (this.#closing) return;
@@ -1524,6 +1574,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     auditId: string | undefined,
     failures: AuditFailure[],
     nested: NestedCheckoutWalk,
+    paths: readonly string[] | undefined,
   ): Promise<ScopeAuditSources> {
     const deadline = Date.now() + AUDIT_MAX_DURATION_MS;
     let files = 0;
@@ -1534,7 +1585,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       }
       await this.#waitForEvaluationIdle();
       if (this.#closing) break;
-      const chunk = repositoryIndexChunkSchema.parse(JSON.parse(await this.#indexChunk(workspace, nested)));
+      const chunk = repositoryIndexChunkSchema.parse(JSON.parse(await this.#indexChunk(workspace, nested, paths)));
       this.#workspaceRevisions.set(workspace, chunk.revision);
       files = chunk.discoveredFiles;
       failures.push(...chunk.failures.map((item) => failure("source", item.code, item.message, item.path, "read")));
@@ -1556,7 +1607,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   }
 
   /** One index chunk, retried while an interactive apply holds the evaluation slot. */
-  async #indexChunk(workspace: NativeCodeRuleDslWorkspace, nested: NestedCheckoutWalk): Promise<string> {
+  async #indexChunk(workspace: NativeCodeRuleDslWorkspace, nested: NestedCheckoutWalk, paths: readonly string[] | undefined): Promise<string> {
     let backoff = 2;
     while (!this.#closing) {
       try {
@@ -1564,6 +1615,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
           ...REPOSITORY_INDEX_OPTIONS,
           nestedCheckouts: [...nested.pruned],
           followGitignore: this.#followGitignore,
+          ...(paths === undefined ? {} : { paths: [...paths] }),
         });
       } catch (error) {
         if (!isWorkspaceBusy(error)) throw error;
@@ -1636,7 +1688,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     const resultPagesStartedAt = performance.now();
     const streamed = await this.#resultPages(workspace, scope, auditId, mode === "log" && !generatedEdit, failures);
     const resultPagesMilliseconds = performance.now() - resultPagesStartedAt;
-    const { result, allFailures, unboundedFailures, status } = this.#recordScopeAuditResult(completion, streamed);
+    const { result, allFailures, unboundedFailures, status } = await this.#recordScopeAuditResult(completion, streamed);
     this.#answerScopeAudit(revision, mode, result, allFailures);
     this.#keepAuditFindings(completion, result.violations);
     await this.#publish(
@@ -1651,7 +1703,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   }
 
   /** Applies a scope audit's last request and keeps its index for reuse; false when the evaluator closes meanwhile. */
-  async #completeScopeAuditRequest({ workspace, stopped, indexed }: ScopeAuditCompletion): Promise<boolean> {
+  async #completeScopeAuditRequest({ workspace, scope, stopped, indexed }: ScopeAuditCompletion): Promise<boolean> {
     await this.#waitForEvaluationIdle();
     if (this.#closing) return false;
     await this.#applyRequest(workspace, {
@@ -1660,7 +1712,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       quiet: true,
       ...(stopped ? { deferGlobal: true } : {}),
     });
-    if (indexed && !stopped)
+    if (indexed && scope === "repository" && !stopped)
       // Reuse is a cache: a failed write (another process holding the store) costs reuse, never these results.
       await workspace.completeStorageRevisionAsync().catch((error: unknown) => {
         process.stderr.write(`rerail: repository reuse was not recorded: ${errorMessage(error)}\n`);
@@ -1668,9 +1720,12 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     return !this.#closing;
   }
 
-  /** A scope audit's result from its pages, recorded as the audit's end. */
-  #recordScopeAuditResult(
-    { auditId, scope, failures }: ScopeAuditCompletion,
+  /**
+   * A scope audit's result from its pages, recorded as the audit's end; a completed audit that was not stopped first
+   * retains its analysis scope.
+   */
+  async #recordScopeAuditResult(
+    { workspace, auditId, scope, failures, stopped }: ScopeAuditCompletion,
     streamed: Pick<Evaluation, "violations" | "failures"> & { paged: boolean },
   ) {
     // Gaps are listed but do not fail the audit; files read only in part are gaps of a repository audit alone.
@@ -1688,6 +1743,12 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     // The paged list is capped by the same rule over the same failures, so it leaves out as many.
     const unlisted = unboundedFailures.length - allFailures.length;
     const status: AuditResult["status"] = failsAudit(unboundedFailures, scope) ? "failed" : "completed";
+    if (status === "completed" && !stopped && this.#analysisStore !== undefined)
+      await workspace.retainAnalysisScopeAsync().catch((error: unknown) => {
+        const message = errorMessage(error);
+        if (this.#analysisRun !== undefined) this.#analysisRun.warn(message);
+        else process.stderr.write(`rerail: analysis scope was not recorded: ${message}\n`);
+      });
     if (streamed.paged && auditId !== undefined) {
       this.#record(() => this.#audits.finishResultPages?.(auditId, status, unlisted));
       this.#runningAudits.delete(auditId);
@@ -1902,7 +1963,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       pageIndex += 1;
     }
     while (true) {
-      const page = resultPageSchema.parse(JSON.parse(await workspace.resultPageAsync(cursor, RESULT_PAGE_BYTES)));
+      const page = resultPageSchema.parse(JSON.parse(await workspace.resultPageAsync(cursor, RESULT_PAGE_BYTES, this.#analysisStore !== undefined)));
       violationCount += page.violations.length;
       const pageFailures = withBlindFiles(page.failures, page.blindFiles).map((item) => ({ ...item, stage: "evaluate" as const }));
       if (paged) {

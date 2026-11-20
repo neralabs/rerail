@@ -148,9 +148,14 @@ pub const READS: &[Read] = &[
     Read { family: Family::Relation, name: "text_find", params: &[I32, I32], ret: I64, hot: false, body: crate::verdict_reads::text_find },
     Read { family: Family::Relation, name: "text_open", params: &[I32, I32, I32], ret: I64, hot: false, body: crate::verdict_reads::text_open },
     Read { family: Family::Relation, name: "cache_done", params: &[I64], ret: I32, hot: false, body: crate::verdict_reads::cache_done },
+    // `has` probed off the tape (decision 0353 step 5): a node's numbered ancestors by a climb, its numbered
+    // descendants as a range of numbers. Last, so no other read's number moves.
+    Read { family: Family::View, name: "view_up", params: &[I32], ret: I32, hot: false, body: crate::view_reads::up },
+    Read { family: Family::View, name: "view_end", params: &[I32], ret: I32, hot: false, body: crate::view_reads::end },
 ];
 
-/// The reads the kernels do not include: they decode a 16z block through `tape_z_block`, which inlines the decoder.
+/// The reads the kernels' UKL leaves out: `tape_lz4` takes its destination's address, a host's (the tape crate's
+/// `Tape16Z`); a kernel decodes a block where `tape_z_block` does.
 const HOST_ONLY: &[&str] = &["tape_lz4"];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by

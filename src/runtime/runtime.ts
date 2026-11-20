@@ -1096,7 +1096,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #evaluatorOpens = new Set<Promise<CodeRuleBridge | undefined>>();
   /** Every checkout this runtime's sessions touch, with its eligibility and compiled rules. */
   readonly #catalogs: CheckoutCatalogs;
-  readonly #owners = new CheckoutOwners(() => this.#catalogs.recordedCheckoutsVersion());
+  readonly #owners: CheckoutOwners;
   readonly #sessions = new Map<string, RuntimeSessionState>();
   /** The sessions `resumeSession` is opening again for a scan, whose open fails rather than wait for a write lock. */
   readonly #resumingForScan = new Set<string>();
@@ -1172,6 +1172,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       audits = new SqliteAuditStore(databasePath);
       controls = new SqliteAuditControlStore(databasePath);
       this.#catalogs = catalogs;
+      this.#owners = new CheckoutOwners(catalogs.database);
       this.#sessionStore = sessionStore;
       this.#audits = audits;
       this.#controls = controls;
@@ -3141,8 +3142,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   #startingCheckout(session: AdapterSession): StartingCheckout {
     // A folder that does not exist fails here (ENOENT), before anything is recorded or created for it.
     const cwd = checkoutRealpath(session.cwd);
-    const known = recordCheckout(this.#catalogs.database, cwd);
-    if (known !== undefined && !known.git) this.#owners.addPlainRoot(known.checkoutPath);
+    recordCheckout(this.#catalogs.database, cwd);
     const start = startingCheckout(this.#owners, cwd);
     this.#catalogs.refresh(start.checkoutRoot);
     return { root: start.checkoutRoot, folder: start.path, cwd };

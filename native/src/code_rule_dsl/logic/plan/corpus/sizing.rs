@@ -21,7 +21,8 @@
 //! moves. The run's start is the count when the chunks begin, in steps of `BASE_STEP`.
 
 /// The first chunk's nodes (at most the caller's most). At 4,096 nodes hogql's CPU runs retired 92.5-93.7 B against
-/// 88.8-92.0 B at 65,536, measured before the cut was the same on every run (Q314).
+/// 88.8-92.0 B at 65,536, with 20-30 distinct negation-split strata (`pre_k`, decision 0048) against 11 and more
+/// stratum runs; why the first chunk's size changes the splits is not yet known (Q314).
 pub const FIRST_NODES: usize = 65_536;
 
 /// The most a chunk grows past the last, when the room holds it: from the first to 262,144 nodes in one or two steps.

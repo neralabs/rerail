@@ -220,7 +220,7 @@ pub fn defer_joins(v: &Arc<Version>, d: &Deferral) -> Result<(Arc<Version>, Vec<
     Ok((out, decided))
 }
 
-/// `version` pruned to the rules its outputs read (`front::prune`), before the run prepares the program.
+/// `version` pruned to the rules its outputs read (`preparation::Prune`), before the run prepares the program.
 pub fn pruned(version: Arc<Version>) -> Result<Arc<Version>, String> {
     let mut p = Pipeline::new("pruned", version);
     p.program(&mut prune::Prune::default());

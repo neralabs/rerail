@@ -3745,3 +3745,33 @@ fn join_counts_price_a_join_of_two_skewed_columns_by_its_rows() {
     assert!((with / joined - 1.0).abs() < 0.25, "priced by the counters: {with} rows against {joined}");
     eprintln!("a join of skewed columns: {with} rows priced by the counters, {without} without, {joined} made");
 }
+
+/// Past a bound head the search passes on one witness a binding only for a step joined by a bound variable, as the
+/// greedy `step` does: a cross product reads its rows until one passes the rest (Q240). A dict's keys and values
+/// unwrapped, `h(t) :- tgt(t), child(t, k0, i), child(t, v0, j), unparen(k0, k), unparen(v0, v)`, was led from the
+/// 233 targets through both `unparen` scans unjoined (69,690 rows each a target), priced at 461 work, and ran past
+/// 100 s on 300 files; probed by `child` first, a target reads a few rows.
+#[test]
+fn a_cross_product_past_a_bound_head_is_not_priced_as_one_witness() {
+    let p = parse_version(".decl tgt(t:number)\n.decl child(p:number,c:number,i:number)\n.decl unparen(e:number,t:number)\n.input tgt, child, unparen\n.decl h(t:number)\nh(t) :- tgt(t), child(t,k0,i), child(t,v0,j), unparen(k0,k), unparen(v0,v).\n.output h\n").unwrap();
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    for (rel, rows, ndv) in [("tgt", 233.0, vec![233.0]), ("child", 69_650.0, vec![23_217.0, 69_650.0, 103.0]), ("unparen", 69_690.0, vec![69_690.0, 69_690.0])] {
+        model.stats.card.insert(rel, rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel, c), n);
+            model.stats.fan.insert((rel, c), rows / n);
+        }
+    }
+    model.stats.solve(["h"].into_iter().map(str::to_owned).collect());
+    let r = p.rules().position(|r| p.rel_name(r.head().rel()) == "h").unwrap();
+    let ((order, work, _), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), None).unwrap();
+    let b = body::nth(&p, r);
+    let order: Vec<_> = order.iter().filter_map(|s| b.atom(s.at)).map(|a| b.rel(a)).collect();
+    // Each `unparen` after the `child` that binds its node: probed, never scanned.
+    let first = |rel: &str| order.iter().position(|r| *r == rel).unwrap();
+    assert_eq!(order[0], "tgt", "{order:?}, work={work}");
+    assert!(first("child") < first("unparen"), "{order:?}, work={work}");
+    assert!(work < 1e4, "{order:?}: {work}");
+}

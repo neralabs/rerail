@@ -19,10 +19,10 @@ UKL_COLD uint64_t clif_tape_slot_z(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE c
 UKL_COLD uint32_t clif_tape_line_z(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2);
 UKL_COLD uint32_t clif_tape_line_start_z(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2);
 UKL_COLD uint64_t clif_tape_f16_side(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2,uint32_t a3);
-UKL_INLINE uint32_t clif_tape_size(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2);
+UKL_COLD uint32_t clif_tape_size(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2);
 UKL_INLINE uint32_t clif_tape_number(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2);
-UKL_INLINE uint32_t clif_tape_start_stated(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2);
-UKL_INLINE uint32_t clif_tape_end_stated(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2);
+UKL_COLD uint32_t clif_tape_start_stated(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2);
+UKL_COLD uint32_t clif_tape_end_stated(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2);
 UKL_INLINE uint32_t clif_tape_start(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2);
 UKL_INLINE uint32_t clif_tape_end(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2);
 UKL_COLD uint32_t clif_tape_parent(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2);
@@ -33,11 +33,11 @@ UKL_INLINE uint32_t clif_tape_first_child(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_
 UKL_INLINE uint32_t clif_tape_child_count(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2);
 UKL_INLINE uint32_t clif_tape_child(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2,uint32_t a3);
 UKL_INLINE uint32_t clif_tape_length(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2);
-UKL_INLINE uint32_t clif_tape_start_next(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2,uint32_t a3);
+UKL_COLD uint32_t clif_tape_start_next(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2,uint32_t a3);
 UKL_INLINE uint64_t clif_tape_slot(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2);
 UKL_COLD uint32_t clif_tape_line_select(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2,uint32_t a3);
-UKL_INLINE uint32_t clif_tape_line(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2);
-UKL_INLINE uint32_t clif_tape_line_start(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2);
+UKL_COLD uint32_t clif_tape_line(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2);
+UKL_COLD uint32_t clif_tape_line_start(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2);
 UKL_INLINE uint32_t clif_tape_has_kind(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2,uint32_t a3);
 UKL_COLD uint64_t clif_tape_z_block(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2);
 UKL_COLD uint64_t clif_tape_f16_side_z(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2,uint32_t a3){
@@ -2185,7 +2185,7 @@ UKL_COLD uint64_t clif_tape_f16_side(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE
  }
  return v6;
 }
-UKL_INLINE uint32_t clif_tape_size(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2){
+UKL_COLD uint32_t clif_tape_size(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2){
  uint32_t v0=0;
  uint32_t v1=0;
  uint32_t v2=0;
@@ -2348,7 +2348,7 @@ UKL_INLINE uint32_t clif_tape_number(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE
  }
  return v5;
 }
-UKL_INLINE uint32_t clif_tape_start_stated(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2){
+UKL_COLD uint32_t clif_tape_start_stated(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2){
  uint32_t v0=0;
  uint32_t v1=0;
  uint32_t v2=0;
@@ -2621,7 +2621,7 @@ UKL_INLINE uint32_t clif_tape_start_stated(UKL_GLOBAL const uint8_t* t,CLIF_VIEW
  }
  return v5;
 }
-UKL_INLINE uint32_t clif_tape_end_stated(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2){
+UKL_COLD uint32_t clif_tape_end_stated(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2){
  uint32_t v0=0;
  uint32_t v1=0;
  uint32_t v2=0;
@@ -3150,7 +3150,7 @@ UKL_INLINE uint32_t clif_tape_length(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE
  }
  return v5;
 }
-UKL_INLINE uint32_t clif_tape_start_next(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2,uint32_t a3){
+UKL_COLD uint32_t clif_tape_start_next(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2,uint32_t a3){
  uint32_t v0=0;
  uint32_t v1=0;
  uint32_t v2=0;
@@ -3467,7 +3467,7 @@ UKL_COLD uint32_t clif_tape_line_select(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SP
  {uint32_t t0=v122;v45=t0;}
  return v45;
 }
-UKL_INLINE uint32_t clif_tape_line(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2){
+UKL_COLD uint32_t clif_tape_line(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2){
  uint32_t v0=0;
  uint32_t v1=0;
  uint32_t v2=0;
@@ -3633,7 +3633,7 @@ UKL_INLINE uint32_t clif_tape_line(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE c
  }
  return v5;
 }
-UKL_INLINE uint32_t clif_tape_line_start(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2){
+UKL_COLD uint32_t clif_tape_line_start(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v,uint32_t a2){
  uint32_t v0=0;
  uint32_t v1=0;
  uint32_t v2=0;

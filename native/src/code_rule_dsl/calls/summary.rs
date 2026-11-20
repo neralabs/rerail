@@ -25,7 +25,7 @@ use ast_grep_core::{Doc, Node};
 use foldhash::{HashMap, HashMapExt};
 
 /// Bumped whenever extraction changes what a summary holds for the same file.
-pub(crate) const EXTRACTOR_VERSION: u32 = 18;
+pub const EXTRACTOR_VERSION: u32 = 18;
 
 pub const ASYNC: u8 = 1;
 pub const CLASS: u8 = 2;
@@ -122,7 +122,27 @@ pub enum Callee {
 }
 
 impl Summary {
+    pub fn sibling_targets(&self, links: super::contracts::Key) -> Vec<(u32, String)> {
+        let contracts = super::contracts::get(links);
+        self
+            .reference_decorators
+            .chunk_by(|left, right| left.0 == right.0)
+        .filter_map(|group| {
+            let owner = group[0].0;
+            let def = &self.defs[owner as usize];
+            let decorators = group
+                .iter()
+                .map(|(_, name)| self.name(*name))
+                .collect::<Vec<_>>();
+            contracts.sibling(self.name(def.name), &decorators).map(|target| (owner, target))
+        }).collect()
+    }
+
     pub fn as_references(&self, links: super::contracts::Key) -> Self {
+        self.as_references_with(self.sibling_targets(links))
+    }
+
+    pub fn as_references_with(&self, siblings: Vec<(u32, String)>) -> Self {
         let mut summary = self.clone();
         summary.edges = self.references.clone();
         summary.targets = self.reference_targets.clone();
@@ -177,22 +197,10 @@ impl Summary {
                 summary.aliases.push((alias, target));
             }
         }
-        let contracts = super::contracts::get(links);
-        for group in self
-            .reference_decorators
-            .chunk_by(|left, right| left.0 == right.0)
-        {
-            let owner = group[0].0;
-            let def = &self.defs[owner as usize];
-            let decorators = group
-                .iter()
-                .map(|(_, name)| self.name(*name))
-                .collect::<Vec<_>>();
-            if let Some(target) = contracts.sibling(self.name(def.name), &decorators) {
-                let id = intern(&target);
-                summary.edges.push((owner, id));
-                summary.targets.push(id);
-            }
+        for (owner, target) in siblings {
+            let id = intern(&target);
+            summary.edges.push((owner, id));
+            summary.targets.push(id);
         }
         summary.edges.sort_unstable();
         summary.edges.dedup();

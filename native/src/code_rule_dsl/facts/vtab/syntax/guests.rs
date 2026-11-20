@@ -2,6 +2,7 @@
 //!
 //! ```text
 //! tape_of(d, t)               document d places tape t (its content key, hex)
+//! doc_grammar(d, g)           document d was parsed as grammar g (a file's language, a program's or value's grammar)
 //! rr_program(d, f, grammar)   d is the document underneath file f's program of `grammar` (decision 0431 §4), for
 //!                             the engine's rules alone (findings, memo components): a rule names a program by its
 //!                             file and place
@@ -22,6 +23,7 @@ use super::{Document, Guest, Made, Placement, Projected, Relation, TapePlace};
 #[derive(Default)]
 pub struct GuestRows {
     program: Vec<[i64; 3]>,
+    grammar: Vec<[i64; 2]>,
     tape: Vec<[i64; 2]>,
     parsed: Vec<[i64; 3]>,
     sub_tape: Vec<[i64; 3]>,
@@ -45,6 +47,12 @@ impl GuestRows {
         let key = i64::from(p.key);
         let tape = string(&hex(&d.digest)) as i64;
         self.tape.push([key, tape]);
+        if let Some(grammar) = guest.map(|g| g.grammar.as_str()).or_else(|| {
+            d.facts.tape.as_ref()?;
+            crate::code_rule_dsl::language::from_tape_tag(d.facts.tag).and_then(crate::code_rule_dsl::language::label)
+        }) {
+            self.grammar.push([key, string(grammar) as i64]);
+        }
         let root = (!withheld && p.len() > 0).then(|| p.global(0));
         let Some(g) = guest else { return };
         if unparse {
@@ -149,6 +157,7 @@ impl GuestRows {
     pub(super) fn relations(&self, atom: &dyn Fn(i64) -> i64, rel: super::Make) -> Vec<(&'static str, Relation)> {
         vec![
             ("rr_program", rel(&["d", "file", "grammar"], &mut self.program.iter().map(|&[d, f, s]| vec![d, f, atom(s)]))),
+            ("doc_grammar", rel(&["d", "g"], &mut self.grammar.iter().map(|&[d, g]| vec![d, atom(g)]))),
             ("tape_of", rel(&["d", "t"], &mut self.tape.iter().map(|&[d, t]| vec![d, atom(t)]))),
             ("parsed", rel(&["s", "grammar", "root"], &mut self.parsed.iter().map(|&[s, g, r]| vec![s, atom(g), r]))),
             ("sub_tape", rel(&["at", "grammar", "t"], &mut self.sub_tape.iter().map(|&[a, g, t]| vec![a, atom(g), atom(t)]))),

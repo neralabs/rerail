@@ -42,6 +42,7 @@ export default defineConfig({
     // Windows starts a process and opens a file several times slower than Linux and macOS: a test that starts git, a
     // session runtime and a daemon takes 2 to 9 s there in a whole run, past the 5 s default, so the limits are wider.
     ...(process.platform === "win32" ? { testTimeout: 30_000, hookTimeout: 60_000 } : {}),
+    globalSetup: process.platform === "win32" ? ["./test/support/windows-store-cleanup.ts"] : [],
     setupFiles: ["./test/support/setup-rerail-home.ts"],
     // CI's shards split the files by how long each takes on CI (test/support/shards/time-balanced-sequencer.ts), and
     // every run starts the longest files first.

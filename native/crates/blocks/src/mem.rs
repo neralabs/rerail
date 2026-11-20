@@ -154,6 +154,7 @@ pub(crate) unsafe fn free_pages(p: *mut u8, len: usize) {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    #[cfg(target_vendor = "apple")]
     use super::PAGE;
 
     /// Whether the page holding `p` holds bytes the process wrote (`mincore`'s modified bit): one given back as

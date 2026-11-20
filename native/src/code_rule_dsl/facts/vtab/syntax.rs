@@ -1941,6 +1941,7 @@ pub enum Place {
     EndLine,
     Col,
     Docof,
+    Report,
 }
 
 /// The relations of core.rerail a batch makes only for a program that reads them (its `reads`), T's exporter having
@@ -3369,6 +3370,7 @@ impl Viewed {
             View::Loc(Place::Line | Place::EndLine) => &["n", "l"],
             View::Loc(Place::Col) => &["n", "c"],
             View::Loc(Place::Docof) => &["n", "d"],
+            View::Loc(Place::Report) => &["n", "line", "column", "end_line", "end_column"],
         }
     }
     /// The column holding the row's own node, which ranges and direct lookups address.
@@ -3961,12 +3963,19 @@ impl Viewed {
         if matches!(place, Place::Docof) {
             return i64::from(p.file);
         }
+        // `rr_report_location(n, line, column, end_line, end_column)`: each end's line and its column from 1.
+        if matches!(place, Place::Report) {
+            let at = span[(column - 1) / 2];
+            let (line, _, col) = p.extra.as_ref().expect("core.rerail's lines").place([at, at]);
+            return i64::from(if column % 2 == 1 { line } else { col + 1 });
+        }
         let (line, last, col) = p.extra.as_ref().expect("core.rerail's lines").place(span);
         match place {
             Place::Line => i64::from(line),
             Place::EndLine => i64::from(last),
             Place::Col => i64::from(col),
             Place::Docof => i64::from(p.file),
+            Place::Report => unreachable!(),
         }
     }
 
@@ -4077,15 +4086,18 @@ pub fn shaped(store: &ContentStore, documents: Vec<Document>, projection: &Proje
 /// The views a batch of `shape` binds by name (`views`).
 fn named_views(shape: Shape) -> Vec<(&'static str, View)> {
     let mut named = vec![("node", View::Node), ("child", View::Child), ("field", View::Field), ("tape", View::Tape), ("core_node", View::Core), ("node_order", View::Order)];
+    // A node's depth is the tape's (`at.depth`) in either shape: the cross part reads it as a measure's key (decision
+    // 0364 R6) whatever the program's shape.
+    named.push(("ast_depth", View::Depth));
     match shape {
         Shape::T => named.push(("line", View::Line)),
         Shape::Core => named.extend([
+            ("rr_report_location", View::Loc(Place::Report)),
             ("line", View::Loc(Place::Line)),
             ("end_line", View::Loc(Place::EndLine)),
             ("col", View::Loc(Place::Col)),
             // `core.rerail`'s `docof(x: loc, d)` is an input (`rr::lower`): nodes' and spans' documents.
             ("docof", View::Loc(Place::Docof)),
-            ("ast_depth", View::Depth),
             ("next_sibling", View::Sibling),
         ]),
     }

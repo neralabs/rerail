@@ -1,6 +1,6 @@
 # 0459. Labels start at their seeds; a matcher's captures are bound only where its readers join
 
-Status: accepted (2026-11-18). Numbered 0396 where it was written, then 0401 on q178 (renumbered in the roll-up).
+Status: accepted (2026-11-18). Numbered 0396 where it was written, then 0401 on this branch and on q178 until the hub merge, 0459 on final-rerail-shape-rr-align until the sync branch's roll-up of it, and 0424 on the sync branch and benchmarks-on-integration until its merge into CUDA-support (2026-11-20).
 
 ## Intro
 

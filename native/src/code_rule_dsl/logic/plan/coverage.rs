@@ -458,15 +458,27 @@ fn every_operation_runs_on_every_executor() {
         return;
     }
     let path = ledger();
+    // The ledger is a Metal host's. A host without a device (a Linux build, CI) checks the native column only: its
+    // device cells all say so, and are neither progress nor a gap to record.
+    let device = metal();
     if std::env::var_os("RERAIL_BLESS_COVERAGE").is_some() {
+        assert!(device, "the coverage ledger is written on a host with a Metal device: here every device cell would say there is none");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, &rows).unwrap();
         packs_ledger(&all, &rows);
         return;
     }
     let had = std::fs::read_to_string(&path).unwrap_or_default();
+    let compared = |ledger: &str| -> String {
+        if device { return ledger.to_owned() }
+        ledger.lines().map(|l| {
+            let c: Vec<&str> = l.splitn(4, '\t').collect();
+            match c.as_slice() { [name, native, _, rule] => format!("{name}\t{native}\t{rule}\n"), _ => format!("{l}\n") }
+        }).collect()
+    };
+    let (had, rows) = (compared(&had), compared(&rows));
     // The gaps by pack follow from the matrix: compared once the matrix is as the ledger says.
-    if had == rows {
+    if had == rows && device {
         packs_ledger(&all, &rows);
     }
     if had != rows {

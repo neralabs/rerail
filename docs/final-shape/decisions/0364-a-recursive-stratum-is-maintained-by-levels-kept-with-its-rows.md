@@ -458,7 +458,9 @@ step 18).
   documents' old rows, decoded from their granules (64 an input) into columns and checked against their digests.
   That is work in proportion to the changed documents' rows (O125 step 05: 14 of 77 documents, 1.1 s), and it
   stays until frames are read in place (0402's packed columns). A semi-join input (`child`), and an input whose
-  unchanged documents' row counts differ, is still read whole.
+  unchanged documents' row counts differ, is still read whole. Superseded since (2026-11-20): the kept facts are
+  read where they lie (0439, 0456), so `OldInput` and the run's documents' frame (`rerail:run_docs`) are gone; the
+  run's documents are 0458's documents' table, which `same_docs` reads.
 - **A dump artifact.** In the data-layer history's first state, the run split into 2 chunks and dumped 210
   `dotted_expr` rows that no `drv` rule derives. It is a file-local relation, and the rows measured are the heads,
   but the cause is not known (`REC_LAX`).

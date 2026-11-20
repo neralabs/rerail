@@ -73,7 +73,7 @@ fn k4_admission_batches_input_digests_derived_rows_and_mixed_granules() {
     let span = profile::span(|| "bulk K4 admission".into());
     let mut kept = Retained::bind_kept(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog), &HashMap::new()).unwrap();
     let cut = cut(Some(&kept),KEY,&pl(&prog),&st(&prog), &changed).unwrap();
-    kept.load(&store,&cut,&pl(&prog),&Locations::new(),false,None).unwrap();
+    kept.load(&store,&cut,&pl(&prog),false).unwrap();
     assert_eq!(kept.input_srcs.len(), 131);
     assert_eq!(kept.rels.len(), 130);
     for i in 0..131 {
@@ -103,7 +103,7 @@ fn k4_clean_outputs_are_admitted_together_without_rerunning_their_producers() {
     let mut kept=Retained::bind_kept(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog),&HashMap::new()).unwrap();
     assert!(prog.output_names().iter().all(|r|kept.holds(r,&pl(&prog))),"raw output facts are sufficient to keep a derivation");
     let cut=Cut{clean:prog.output_names().into_iter().collect(),strata:(0,130),changed:vec![]};
-    assert_eq!(kept.load(&store,&cut,&pl(&prog),&Locations::new(),false,None).unwrap(),Some((130,390)));
+    assert_eq!(kept.load(&store,&cut,&pl(&prog),false).unwrap(),Some((130,390)));
     for i in 0..130 {
         let rel=&kept.rels[&format!("result{i}")];
         let source=rel.source(&format!("result{i}"));
@@ -151,7 +151,7 @@ fn a_derived_entry_replaced_after_the_run_bound_its_space_is_not_seen() {
     let changed=now.iter().map(|(r,d)|(r.clone(),d.wrapping_add(1))).collect();
     let cut=cut(Some(&kept),KEY,&pl(&prog),&st(&prog),&changed).unwrap();
     store.queue_kept(SPACE, vec![put(&frames.names["result0"], DOCS_PART, 99, vec![], vec![b'i'], vec![999])]);
-    assert!(kept.load(&store,&cut,&pl(&prog),&Locations::new(),false,None).unwrap().is_some());
+    assert!(kept.load(&store,&cut,&pl(&prog),false).unwrap().is_some());
     assert_eq!(kept.rels["result0"].rel.live_rows().unwrap(), (1..=3).map(|d| d << 32).collect::<Vec<i64>>(), "the bound commit's rows");
     // The next run reads the new commit.
     let next=Retained::bind_kept(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog), &HashMap::new()).unwrap();
@@ -169,7 +169,7 @@ fn an_input_granule_replaced_after_the_run_bound_its_space_is_not_seen() {
     let changed=now.iter().map(|(r,d)|(r.clone(),d.wrapping_add(1))).collect();
     let cut=cut(Some(&kept),KEY,&pl(&prog),&st(&prog),&changed).unwrap();
     store.queue_kept(SPACE, vec![put(&frames.names["input0"], granule(1, None), 0, vec![], vec![b'i'], vec![(1<<32)|999])]);
-    assert!(kept.load(&store,&cut,&pl(&prog),&Locations::new(),false,None).unwrap().is_some());
+    assert!(kept.load(&store,&cut,&pl(&prog),false).unwrap().is_some());
     let src=&kept.input_srcs["input0"];
     assert_eq!((0..src.len()).map(|r| src.value(r,0)).collect::<Vec<_>>(), (1..=3).map(|d| d << 32).collect::<Vec<i64>>(), "the bound commit's rows");
 }
@@ -203,7 +203,7 @@ fn failed_k4_admission_makes_a_clean_consumer_run_again() {
     let mut kept = Retained::bind_kept(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog), &HashMap::new()).unwrap();
     let changed = now.iter().map(|(r,d)|(r.clone(),d.wrapping_add(1))).collect();
     let cut = cut(Some(&kept),KEY,&pl(&prog),&st(&prog),&changed).unwrap();
-    assert!(kept.load(&store,&cut,&pl(&prog),&Locations::new(),false,None).unwrap().is_none());
+    assert!(kept.load(&store,&cut,&pl(&prog),false).unwrap().is_none());
     assert!(kept.input_srcs.is_empty() && kept.rels.is_empty());
     let rerun = cut_again(&kept, &prog, &now);
     assert!(rerun.clean.is_empty());

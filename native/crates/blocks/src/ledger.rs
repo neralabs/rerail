@@ -718,7 +718,10 @@ mod tests {
         b.free_chunk(big, 2 * PAGE);
         assert!(fails(|| { b.ledger().give_back(big, 2 * PAGE); }), "a retiring chunk is live");
         f.complete();
+        // Its byte is read back everywhere; that its page was not given back is read from the page's modified bit,
+        // which only macOS's `mincore` has (a page given back as reusable has it cleared).
         assert_eq!(unsafe { *b.ptr::<u64>(after) }, 9);
+        #[cfg(target_vendor = "apple")]
         assert!(crate::mem::tests::modified(b.ptr::<u8>(after)), "its neighbour's page kept");
     }
 

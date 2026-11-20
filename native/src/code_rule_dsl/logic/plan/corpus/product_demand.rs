@@ -30,6 +30,7 @@ pub(super) struct Fields {
     pub(super) lattice: BTreeMap<String, LatticeDecl>,
     pub(super) qualifiers: BTreeMap<String, BTreeSet<String>>,
     pub(super) gates: Vec<(String, crate::code_rule_dsl::logic::front::ast::Gate)>,
+    /// Each relation's declared shape (`.layout`, decision 0361): its keys and fan-outs bound a product's side.
     pub(super) layouts: BTreeMap<String, Vec<crate::code_rule_dsl::logic::front::LayoutFact>>,
 }
 
@@ -389,16 +390,16 @@ fn fixed_vars(rule: RuleRef<'_>, program: &Program<'_>) -> BTreeSet<Slot> {
     }).collect();
     let constant = |t: TermRef<'_>| plain(t) && !matches!(t, TermRef::Var(_));
     for a in &positive {
-        let Some(v) = a.args().find_map(|t| match t {
+        let Some(x) = a.args().find_map(|t| match t {
             TermRef::Var(x) => Some(x),
             _ => None,
         }) else {
             continue;
         };
-        let lookup = |a: &AtomRef<'_>| a.args().all(|t| matches!(t, TermRef::Var(x) if x == v) || constant(t)) && a.args().any(constant);
-        let reads = |a: &&AtomRef<'_>| a.args().any(|t| matches!(t, TermRef::Var(x) if x == v));
+        let lookup = |a: &AtomRef<'_>| a.args().all(|t| matches!(t, TermRef::Var(y) if y == x) || constant(t)) && a.args().any(constant);
+        let reads = |a: &&AtomRef<'_>| a.args().any(|t| matches!(t, TermRef::Var(y) if y == x));
         if lookup(a) && positive.iter().filter(reads).all(lookup) {
-            fixed.insert(v);
+            fixed.insert(x);
         }
     }
     // Reached through a declared key or a few-row fan-out, to a fixed point.
@@ -461,6 +462,9 @@ fn disconnected_nodes(rule: RuleRef<'_>, program: &Program<'_>, varies: &BTreeSe
     }
     groups.iter().filter(|group| group.reads_input && group.vars.iter().any(|x| node_vars.contains(&x))).take(2).count() == 2
 }
+
+/// How a refusal says a product's side is bounded (`fixed_vars`): the two ways.
+const BOUNDED: &str = "A side is bounded where its node is fixed by constants (`$c = \"x\"`, or a lookup on constants alone: `named(\"builtins.object\", \"cls\", $c)`) or reached from fixed values through a declared key or few-row fan-out (`.layout named fanout(q, k -> v, few)`)";
 
 /// The refusal of `relation`'s product, named as its author wrote it (`profile::author_joins`, decision 0506).
 fn refusal(relation: &str, reason: impl std::fmt::Display) -> String {
@@ -549,7 +553,7 @@ pub(super) fn rewrite(program: &mut Program<'_>, narrow_readers: bool) -> Result
     let named = |e: String| -> String {
         let v = program.v();
         let rules: Vec<String> = v.rules().filter(|r| products.contains(program.head_rel(*r)) && disconnected_nodes(*r, program, &varies)).map(|r| v.show_rule(r)).collect();
-        format!("{e}; the products: {}", rules.join("; "))
+        format!("{e}; the products: {}. {BOUNDED}", rules.join("; "))
     };
     if narrow_readers && !products.is_empty() {
         let mut strict = program.clone();
@@ -572,10 +576,10 @@ pub(super) fn rewrite(program: &mut Program<'_>, narrow_readers: bool) -> Result
     let named = |e: String| -> String {
         let v = program.v();
         let rules: Vec<String> = v.rules().filter(|r| refused.contains(program.head_rel(*r)) && disconnected_nodes(*r, program, &varies)).map(|r| v.show_rule(r)).collect();
-        format!("{e}; the products: {}", rules.join("; "))
+        format!("{e}; the products: {}. {BOUNDED}", rules.join("; "))
     };
     let mut changed = program.clone();
-    let products = rewrite_products(&mut changed, products).map_err(named)?;
+    let products = rewrite_products(&mut changed, products.clone()).map_err(named)?;
     *program = changed;
     Ok(Rewritten { products, readers: BTreeSet::new(), order_witnesses: 0, present_witnesses: 0 })
 }
@@ -765,7 +769,7 @@ mod tests {
     /// Q249: a node reached from constants through declared few-row fan-outs (a lookup on a fixed variable, not on
     /// constants alone) is no side of a product; without the fan-outs the same rule is one, and its refusal names it.
     #[test]
-    fn a_node_a_few_row_fanout_reaches_from_constants_makes_no_product() {
+    fn a_node_a_few_row_fanout_reaches_from_fixed_values_makes_no_product() {
         let text = |layout: &str| {
             format!(
                 "
@@ -787,6 +791,7 @@ mod tests {
         let v = parse(&text("")).unwrap();
         let error = rewrite(&mut Program::of(&v), true).err().unwrap();
         assert!(error.contains("unbounded node Cartesian product in `out`") && error.contains("the products: out("), "{error}");
+        assert!(error.contains("constants") && error.contains(".layout"), "both ways to bound a side: {error}");
     }
 
     #[test]

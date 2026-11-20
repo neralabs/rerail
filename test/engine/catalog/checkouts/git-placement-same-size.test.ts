@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { repositoryIdentityLocation, worktreeRegistry, type RepositoryIdentityLocation } from "../../../../src/engine/catalog/repository-identity.js";
 import { runGit } from "../../../../src/engine/git.js";
 import { removeFolder } from "../../../support/platform/remove-folder.js";
+import { gitsAnswer } from "../../../support/gits-answer.js";
 
 vi.mock("../../../../src/engine/git.js", async importOriginal => {
   const actual = await importOriginal<typeof import("../../../../src/engine/git.js")>();
@@ -50,13 +51,6 @@ function repository(path: string): string {
   return realpathSync.native(path);
 }
 
-function gitsAnswer(folder: string, env: NodeJS.ProcessEnv = process.env): RepositoryIdentityLocation {
-  const requested = resolve(folder);
-  const result = spawnSync("git", ["-C", requested, "rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir", "--git-dir"], { encoding: "utf8", env });
-  if (result.status !== 0) return { git: false, workspaceRoot: requested, identityPath: join(requested, ".rerail", "repository-id"), main: true };
-  const [top, common, gitDirectory] = result.stdout.trim().split("\n").map(line => resolve(line.trim()));
-  return { git: true, workspaceRoot: top!, identityPath: join(common!, "rerail-repository-id"), main: common === gitDirectory };
-}
 
 /** How many Git processes Rerail started to place `folder`. */
 function placements(folder: string): number {
@@ -140,7 +134,8 @@ describe("a file Git reads to place a folder, rewritten at the same size with it
     lstatKeeps(config, before);
 
     expect(repositoryIdentityLocation(main)).toEqual(gitsAnswer(main));
-    expect(gitsAnswer(main).git).toBe(false);
+    // The config moved Git's answer: the checkout is a bare repository's Git folder now.
+    expect(gitsAnswer(main).workspaceRoot).toBe(join(main, ".git"));
   });
 
   it("keeps a checkout's answer, with no Git process, when its config is rewritten with the same text", async () => {

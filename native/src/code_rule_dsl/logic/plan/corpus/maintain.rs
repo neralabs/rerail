@@ -141,8 +141,6 @@ pub mod shape {
         inputs_hashed: AtomicUsize,
         inputs_from_entries: AtomicUsize,
         inputs_hashed_whole: AtomicUsize,
-        inputs_read_whole: AtomicUsize,
-        rows_decoded: AtomicUsize,
         drivers_unled: AtomicUsize,
     }
 
@@ -178,12 +176,6 @@ pub mod shape {
         /// R2: of `inputs_hashed`, those whose every row was hashed (`retain::document_delta`'s pass), not only the
         /// rows of the documents that changed (`retain::document_delta_except`).
         pub inputs_hashed_whole: usize,
-        /// R2 (0353): a new process's changed inputs whose old rows `retain::Retained::load` read whole from the
-        /// frames (copied into columns, every row hashed), not their changed documents' alone (`retain::OldInput`).
-        pub inputs_read_whole: usize,
-        /// 0353's frames copy: rows a new process decoded from the frames into memory (`retain::Retained::load`), its
-        /// kept relations' and its changed inputs' old rows. Read in place once the kept blocks are bound (0401 step 7).
-        pub rows_decoded: usize,
     }
 
     pub fn now() -> Shape {
@@ -199,8 +191,6 @@ pub mod shape {
             inputs_hashed: c.inputs_hashed.load(Relaxed),
             inputs_from_entries: c.inputs_from_entries.load(Relaxed),
             inputs_hashed_whole: c.inputs_hashed_whole.load(Relaxed),
-            inputs_read_whole: c.inputs_read_whole.load(Relaxed),
-            rows_decoded: c.rows_decoded.load(Relaxed),
         }
     }
 
@@ -218,8 +208,6 @@ pub mod shape {
             inputs_hashed: n.inputs_hashed - before.inputs_hashed,
             inputs_from_entries: n.inputs_from_entries - before.inputs_from_entries,
             inputs_hashed_whole: n.inputs_hashed_whole - before.inputs_hashed_whole,
-            inputs_read_whole: n.inputs_read_whole - before.inputs_read_whole,
-            rows_decoded: n.rows_decoded - before.rows_decoded,
         }
     }
 
@@ -237,12 +225,6 @@ pub mod shape {
     }
     pub fn input_hashed_whole() {
         counts().inputs_hashed_whole.fetch_add(1, Relaxed);
-    }
-    pub fn input_read_whole() {
-        counts().inputs_read_whole.fetch_add(1, Relaxed);
-    }
-    pub fn rows_decoded(n: usize) {
-        counts().rows_decoded.fetch_add(n, Relaxed);
     }
     pub fn input_from_entries() {
         counts().inputs_from_entries.fetch_add(1, Relaxed);

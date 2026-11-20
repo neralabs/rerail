@@ -689,6 +689,15 @@ pub fn forget_file(file: &std::path::Path) {
     drop(gone);
 }
 
+/// Retire jobs for stores that their owner is about to remove. Call after closing
+/// the users of those stores. Wait for a step that already took a job out of the list.
+pub fn retire_files_under(directory: &std::path::Path) {
+    let st_ = upkeep();
+    let _stepping = st_.stepping.lock().unwrap_or_else(|p| p.into_inner());
+    st_.jobs.lock().unwrap_or_else(|p| p.into_inner())
+        .retain(|entry| !entry.job.file().is_some_and(|file| file.starts_with(directory)));
+}
+
 /// Starts the scheduler's thread, once (when the settings have it on).
 pub fn start() {
     upkeep().scheduler.get_or_init(|| {
@@ -808,7 +817,7 @@ fn run_due(s: &Settings, idle: bool, ticks: &mut (u64, u64), pass: Pass) -> bool
             if upkeep().stop.load(Ordering::Acquire) || (!all && Instant::now() >= pass_end) {
                 return ran;
             }
-            // `finish_soon` holds `STEPPING` through its pass.
+            // `finish_soon` holds the stepping lock through its pass.
             let stepped = if pass == Pass::Utility { step_job_held(id, s, false, yields, None) } else { step_job(id, s, true, yields) };
             let Some((step, file)) = stepped else { break };
             ran = true;
@@ -835,7 +844,7 @@ fn step_job(id: u64, s: &Settings, pause: bool, yields: bool) -> Option<(Step, O
     step_job_held(id, s, pause, yields, Some(stepping))
 }
 
-/// `step_job`, `STEPPING` held by the caller (`finish_soon`, through its whole pass) or given to it (`stepping`,
+/// `step_job`, the stepping lock held by the caller (`finish_soon`, through its whole pass) or given to it (`stepping`,
 /// let go before the step's pause).
 fn step_job_held(id: u64, s: &Settings, pause: bool, yields: bool, stepping: Option<std::sync::MutexGuard<'_, ()>>) -> Option<(Step, Option<std::path::PathBuf>)> {
     let mut e = {

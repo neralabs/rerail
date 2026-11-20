@@ -96,7 +96,7 @@ rf_site(i) :- kind(i, "identifier"), !field(_, "function", i), rf_read(i), !rf_o
 rf_object(i) :- kind(a, "attribute"), field(a, "object", i).
 // rf_read(i): identifier i is a read of a name (a load).
 .decl rf_read(i: node)
-rf_read(i) :- nameref(i, _), !bind_only(i), !rf_deleted(i), docof(i, d), doc_role(d, "primary").
+rf_read(i) :- nameref(i, _), !bind_only(i), !rf_deleted(i), docof(i, _).
 // rf_deleted(i): `del x` deletes name i: no load (W's reference reads loads only).
 .decl rf_deleted(i: node)
 rf_deleted(n) :- del_unbinds(_, n).

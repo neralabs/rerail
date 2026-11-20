@@ -287,13 +287,14 @@
 // Guests have no source, src_line or line_count rows.
 .decl parsed(s: node, grammar: symbol, root: node)       // root of string s parsed as `grammar` ("annotation", …)
 .decl sub_tape(at: node, grammar: symbol, t: tape)       // the tape (content key) of the guest at `at`
+.decl doc_grammar(d: number, grammar: symbol)            // the grammar file d was parsed with
 .decl tape_of(d: number, t: tape)                        // document d places tape t; equal texts share a tape
 .decl guest_policy(k: symbol, v: symbol)                 // the program's `.guests` and `.on guest_error` settings
 .decl host_node(n: node, h: node)                        // h is the innermost host node over guest node n
 .decl guest_of(n: node, s: node)                         // n is a node of the code parsed at s (decision 0431); a
                                                          // tape value's node has a row for each string of its text
 .decl guest_place(n: node, s: node, l: number, c: number) // n, parsed at s, stands at line l, column c of s's file
-.input sub_tape, tape_of, host_node, guest_of, guest_place
+.input sub_tape, doc_grammar, tape_of, host_node, guest_of, guest_place
 // What a rule sees (decision 0058): files, and guests in the run's language unless `.guests off`. A rule that
 // reaches a guest through one of the relations above sees it whatever its grammar, and names its kinds in that
 // grammar: parsed(s, "sql", r), within(n, r), kind(n, "object_reference") is SQL's object_reference ("sql:…" also
@@ -585,20 +586,36 @@
 // rule cannot accept an edited list. A list whose signature fails has no rows, and an input_error row instead.
 .decl signed_list(path: symbol, entry: symbol)  // entries of a signed allowlist; refused if the signature fails
 // @git_tracked("docs/a.md") = 1 when the file is in the Git index (as `git ls-files` lists it: a staged addition
-// is, a file only on disk is not), else 0. file() is what is on disk in the scanned tree; a check about committed
+// is, a file only on disk is not), else 0. It reads the current index for both checkout and revision scans.
+// file() is what is on disk in the scanned tree; a check about committed
 // files needs the difference. The index is read once per run; outside a repository there is no value.
 .functor git_tracked(path: symbol): number
 // git_rev("head", sha), git_rev("base", sha): the revision under check, and the one it is compared against: the
-// merge base of HEAD and the run's `--base` reference. Without a repository, or a base that does not resolve, no
-// rows and an input_error("git_rev", …) row.
+// merge base of HEAD (or the selected commit) and the run's `--base` reference.
+// With --revision, git_rev("tree", sha) names the root tree. A raw tree has no "head" row.
+// Without a repository, or a base that does not resolve, no rows and an input_error("git_rev", …) row.
 .decl git_rev(name: symbol, sha: symbol)
 // @git_commit(sha) = 1 when sha (full, or abbreviated to at least 4 digits) names a commit of the repository,
-// else 0, so a check can verify a commit a document cites. @git_has(sha, path) = 1 when that commit's tree has
+// else 0, so a check can verify a commit a document cites. @git_has(sha, path) = 1 when the commit or tree has
 // path (a file or a directory, relative to the scanned root), else 0. Both are asked of the object store in
 // process; an object id names fixed content, so an answer is never stale. Outside a repository they have no
 // value, and a malformed or ambiguous id gives 0.
 .functor git_commit(sha: symbol): number
 .functor git_has(sha: symbol, path: symbol): number
+// Git's invocation inputs and native request answers. Include "git.rerail" for the public views and requests.
+.decl git_root_repo(repo: symbol)
+.decl git_root_view(repo: symbol, view: symbol)
+.decl git_repository(repo: symbol, kind: symbol, object_format: symbol)
+.decl git_source_tree(repo: symbol, tree: symbol)
+.decl git_source_commit(repo: symbol, commit: symbol)
+.decl git_revision_of(repo: symbol, expression: symbol, oid: symbol, status: symbol)
+.decl git_view_revision_of(view: symbol, expression: symbol, oid: symbol, status: symbol)
+.decl git_object_of(repo: symbol, oid: symbol, field: symbol, position: number, first: symbol, second: symbol, value: number, offset: number)
+.decl source_grammar_suffix(grammar: symbol, suffix: symbol, order: number, built: number)
+.decl source_grammar_registry(version: symbol)
+.decl source_tape_version(grammar_build: symbol, tape_format: number)
+.input git_root_repo, git_root_view, git_repository, git_source_tree, git_source_commit
+.input source_grammar_suffix, source_grammar_registry, source_tape_version
 // Python string constants as CPython builds them. str_part(lit, i, v, at, spec): piece i of the str Constant(s)
 // that literal lit becomes: adjacent literals are one constant, joined; an f-string gives one piece per literal
 // run between interpolations, and spec = 1 for a piece inside a format spec. v is decoded (escapes applied).

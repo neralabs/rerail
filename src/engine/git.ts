@@ -5,7 +5,7 @@ import { dirname, join, posix, resolve, win32 } from "node:path";
 import { promisify } from "node:util";
 import { MessageChannel, type MessagePort, receiveMessageOnPort, Worker } from "node:worker_threads";
 import { endProcessTree, execFile, spawnSync } from "./child-process.js";
-import { runGitSync, startGit, type GitProcess } from "./git-start.js";
+import { runGitSyncBytes, startGit, type GitProcess } from "./git-start.js";
 import { fileStamp } from "./file-stamp.js";
 
 /** What Rerail looks for Git with: the system, the account's home, `PATH`, and the folder it runs in. */
@@ -982,7 +982,13 @@ const DEFAULT_TIMEOUT_MS = 10_000;
  * 2.43.4 and 2.44.1; an older Git ignores it and may fetch from the remote.
  */
 function gitEnvironment(executable: string, overrides: RunGitOptions["env"] = {}): NodeJS.ProcessEnv {
-  return { ...processGit.startEnvironment(executable, { ...process.env, ...overrides }), GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1" };
+  // Every caller names the directory to read. A Git hook can export its own checkout, index, object database and refs,
+  // which would override -C, in batch reads too: this process's are left out ({@link repositoryEnvironment}).
+  const inherited: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (gitInherits(key)) inherited[key] = value;
+  }
+  return { ...processGit.startEnvironment(executable, { ...inherited, ...overrides }), GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1" };
 }
 
 /**
@@ -995,6 +1001,18 @@ function timeLeft(limitMs: number): () => number {
   return () => Math.max(0, Math.floor(deadline - performance.now()));
 }
 
+/** The variables through which a Git hook names a repository of its own: never inherited by Rerail's Git calls. */
+const repositoryEnvironment = new Set([
+  "GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE", "GIT_PREFIX", "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_SHALLOW_FILE",
+  "GIT_GRAFT_FILE", "GIT_REPLACE_REF_BASE",
+]);
+
+/** Whether Rerail's Git calls see this process's `name`: every variable but {@link repositoryEnvironment}'s. */
+export function gitInherits(name: string): boolean {
+  return !repositoryEnvironment.has(process.platform === "win32" ? name.toUpperCase() : name);
+}
+
 /**
  * `git -C <cwd> <args>` with fsmonitor and hooks disabled, in {@link gitEnvironment} (no optional locks, no lazy fetch
  * of a partial clone's missing objects), and a 10 s default timeout; throws {@link GitUnavailableError} when Git is
@@ -1004,6 +1022,12 @@ function timeLeft(limitMs: number): () => number {
  * call fails as its start did.
  */
 export function runGit(cwd: string, args: readonly string[], options: RunGitOptions = {}): GitResult {
+  const result = runGitBytes(cwd, args, options);
+  return { ...result, stdout: result.stdout.toString("utf8") };
+}
+
+/** {@link runGit} with stdout as the bytes Git wrote: the raw names of Git's NUL-delimited listings. */
+export function runGitBytes(cwd: string, args: readonly string[], options: RunGitOptions = {}): Omit<GitResult, "stdout"> & { stdout: Buffer } {
   const command = [...SAFE_CONFIG, "-C", cwd, ...args];
   const left = timeLeft(options.timeout ?? DEFAULT_TIMEOUT_MS);
   const executable = gitExecutable();
@@ -1013,11 +1037,11 @@ export function runGit(cwd: string, args: readonly string[], options: RunGitOpti
   return again === undefined || rest === 0 ? result : runGitWith(again, command, { ...options, timeout: rest });
 }
 
-/** One blocking start of the Git at `executable` with `args`, as {@link runGit} makes it. */
-function runGitWith(executable: string, args: readonly string[], options: RunGitOptions): GitResult {
+/** One blocking start of the Git at `executable` with `args`, as {@link runGitBytes} makes it. */
+function runGitWith(executable: string, args: readonly string[], options: RunGitOptions): Omit<GitResult, "stdout"> & { stdout: Buffer } {
   const { env, ...limits } = options;
-  const result = runGitSync(executable, args, gitEnvironment(executable, env), { timeout: DEFAULT_TIMEOUT_MS, ...limits });
-  return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "", ...(result.error === undefined ? {} : { error: result.error }) };
+  const result = runGitSyncBytes(executable, args, gitEnvironment(executable, env), { timeout: DEFAULT_TIMEOUT_MS, ...limits });
+  return { status: result.status, stdout: result.stdout ?? Buffer.alloc(0), stderr: result.stderr ?? "", ...(result.error === undefined ? {} : { error: result.error }) };
 }
 
 /** What {@link runGitAsync} takes: {@link RunGitOptions}, {@link GitReadOptions}, and the text written to Git's stdin. */

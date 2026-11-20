@@ -621,7 +621,7 @@ impl CodeRuleSqlExecutor {
 }
 
 /// A program as a session runs it: its node attributes (`value`, `node_text`, `token`) the inputs the snapshot binds
-/// for every node, not answered on request (decision 0174's rewrite undone, `lower::undo_on_request`). Answered, each
+/// for every node, not answered on request (decision 0174's rewrite undone, `lower::undone_on_request`). Answered, each
 /// is a relation of the program beside the session's input of that name, though no rule reads it ("value: SQL output
 /// already exists"). Then pruned (`producers::prune`).
 fn session_program(program: std::sync::Arc<Version>) -> Result<std::sync::Arc<Version>> {

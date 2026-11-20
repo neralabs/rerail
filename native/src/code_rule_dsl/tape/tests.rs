@@ -7502,7 +7502,6 @@ fn every_tape_format_reads_the_document_as_restored() {
 /// there answers every node question as the same tape read from a buffer of its own, in each format.
 #[test]
 fn a_placed_tape_reads_as_one_held_in_its_own_bytes() {
-    format_15();
     use super::formats::Format;
     use rerail_tape_format::tape::{Tape, children};
     let source: String = (0..400).map(|i| format!("x{i} = f(a, {i})\n")).collect();

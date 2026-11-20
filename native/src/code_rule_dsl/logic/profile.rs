@@ -1513,8 +1513,9 @@ pub fn sql(text: String, ns: u64, vm: u64, scan: u64, sort: u64, autoindex: u64)
     t.autoindex += autoindex;
 }
 
-/// Waves under way on this machine (`waves`): SQL from a wave's thread meanwhile is a hazard. Read only by a thread
-/// with no run's context (decision 0442: the machine's, as every run on it counts in it).
+/// Waves under way on this machine (`waves`): what a run did not read before its first wave it does not read from
+/// SQLite, and under the strict mode SQL meanwhile ends the process. Read only by a thread with no run's context
+/// (decision 0442: the machine's, as every run on it counts in it).
 #[derive(Default)]
 struct WavesUnderWay(std::sync::atomic::AtomicUsize);
 

@@ -61,16 +61,6 @@ pub(super) struct Place {
     pub len: usize,
 }
 
-/// Makes `dir` (a store's segments: facts derived from its sources) private to its owner where it is made, as the
-/// store's own files are (`private_files`).
-fn private_dir(dir: &Path) -> std::io::Result<()> {
-    let mut b = std::fs::DirBuilder::new();
-    b.recursive(true);
-    #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut b, 0o700);
-    b.create(dir)
-}
-
 /// The bytes of the store's segments on disk (the memo's, the tapes' and sources', the atoms', the kept facts'): the directories
 /// beside its file, as the store's disk budget counts them.
 pub(super) fn segment_bytes(database: &Path) -> u64 {
@@ -248,7 +238,7 @@ impl SegmentWriter {
 
     fn lease(&self, bytes: usize) -> StoreResult<Open> {
         static WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        private_dir(&self.dir)?;
+        super::prepare_cache_directory(&self.dir)?;
         let n = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let file = self.dir.join(format!("w-{}-{n}.seg", std::process::id()));
         #[cfg(any(target_os = "macos", target_os = "linux"))]

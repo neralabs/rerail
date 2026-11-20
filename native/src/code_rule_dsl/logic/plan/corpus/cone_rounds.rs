@@ -125,14 +125,14 @@ impl RulePass for Rounds<'_> {
         let mut kept = Vec::new();
         for &(answer, req) in crate::code_rule_dsl::logic::rr::WORLD.iter() {
             let Some(width) = produced.iter().find(|(r, _)| r == answer).map(|(_, w)| *w) else { continue };
-            if !answers.contains_key(req) || f.arity(req) != Some(1) {
+            let Some(keys) = f.arity(req).filter(|&keys| keys > 0 && keys <= width && answers.contains_key(req)) else {
                 continue;
-            }
+            };
             let input = fs_input(answer);
             b.fields().declare(&input, &f.columns(answer).ok_or_else(|| format!("{answer} has no declaration"))?);
             let vars: Vec<String> = (0..width).map(|c| format!("rr_c{c}")).collect();
             let vars: Vec<T<'_>> = vars.iter().map(|x| T::Var(x.as_str())).collect();
-            b.rule().head(answer, &vars).atom(req, &vars[..1]).atom(input.as_str(), &vars).finish()?;
+            b.rule().head(answer, &vars).atom(req, &vars[..keys]).atom(input.as_str(), &vars).finish()?;
             // Read back by the rest of the cross part: kept, not inlined.
             kept.push(((*answer).to_owned(), "no_inline".to_owned()));
             inputs.retain(|r| r != answer);
@@ -370,6 +370,8 @@ pub(in crate::code_rule_dsl) struct On<'a> {
     /// them, written back behind the run.
     pub(in crate::code_rule_dsl) store: &'a crate::content_store::ContentStore,
     pub(in crate::code_rule_dsl) space: [u8; 32],
+    /// A revision's rounds (`corpus`'s `history`): what its own space holds, written there too.
+    pub(super) alternate: Option<&'a retain::InKept>,
     pub(in crate::code_rule_dsl) db: &'a Connection,
     pub(in crate::code_rule_dsl) modules: &'a Modules,
     pub(in crate::code_rule_dsl) lowered: &'a lower::Lowered,
@@ -379,7 +381,7 @@ pub(in crate::code_rule_dsl) struct On<'a> {
     pub(in crate::code_rule_dsl) modes: &'a str,
     /// Whether a carried request of the file system (`rr::WORLD`) still has the answer the last run kept: the
     /// journal names no change at its path since (decision 0105). Such a key is not asked again.
-    pub(in crate::code_rule_dsl) still: Option<&'a dyn Fn(&str, &[i64]) -> bool>,
+    pub(in crate::code_rule_dsl) still: Option<&'a dyn Fn(&str, &[i64], &[&Vec<i64>]) -> bool>,
     /// The run's text tests (`plan::Hooks::texts`).
     pub(in crate::code_rule_dsl) texts: &'a Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
 }
@@ -485,22 +487,41 @@ impl RoundProgram {
                         read_by.insert(a.request(), by);
                     }
                 }
-                let kept_key = |q: &str, k: &[i64]| -> bool {
+                // Any other request keeps its answer as the run's `still` says, given the kept rows of its key (a Git
+                // object's stamp is among them).
+                let kept_key = |q: &str, k: &[i64], rows: &[&Vec<i64>]| -> bool {
                     match read_by.get(q) {
-                        Some(by) => still(q, &k[..1]) && by.get(k).into_iter().flatten().all(|p| still("rr_file_req", std::slice::from_ref(p))),
-                        None => k.len() == 1 && still(q, k),
+                        Some(by) => still(q, &k[..1], &[]) && by.get(k).into_iter().flatten().all(|p| still("rr_file_req", std::slice::from_ref(p), &[])),
+                        None => still(q, k, rows),
                     }
                 };
-                for &(answer, req) in crate::code_rule_dsl::logic::rr::WORLD.iter() {
-                    let produced = self.kept_as(answer);
+                for &(answer_relation, req) in crate::code_rule_dsl::logic::rr::WORLD.iter() {
+                    let produced = self.kept_as(answer_relation);
                     let Some(rows) = provisional.get(&produced) else { continue };
-                    let keys: Vec<&Vec<i64>> = carried.iter().filter(|(q, k)| q == req && !k.is_empty() && kept_key(q, k)).map(|(_, k)| k).collect();
-                    let n = keys.first().map_or(1, |k| k.len());
+                    let width = self.width(req);
                     let mut by: HashMap<&[i64], Vec<&Vec<i64>>> = HashMap::new();
-                    for r in rows.iter().filter(|r| r.len() >= n) {
-                        by.entry(&r[..n]).or_default().push(r);
+                    for row in rows.iter().filter(|row| row.len() >= width) {
+                        by.entry(&row[..width]).or_default().push(row);
                     }
-                    let given: Vec<Vec<i64>> = keys.iter().flat_map(|k| by.get(k.as_slice()).into_iter().flatten().map(|r| (*r).clone())).collect();
+                    let candidates: Vec<_> = carried.iter().filter_map(|(q, key)| {
+                        (q == req && key.len() == width).then_some(key)
+                    }).collect();
+                    let keys: Vec<_> = if req == super::reference_facts::LINK_REQUEST {
+                        // The graph stays on the run's thread. Check its saved observations in one request.
+                        let prior: Vec<_> = candidates.iter().flat_map(|key| {
+                            by.get(key.as_slice()).into_iter().flatten().map(|row| (*row).clone())
+                        }).collect();
+                        let current: HashSet<Vec<i64>> = if prior.is_empty() {
+                            HashSet::new()
+                        } else {
+                            answer(super::reference_facts::LINK_VALIDATE, &prior)?.into_iter()
+                                .flat_map(|(_, rows)| rows).map(|row| row[..width].to_vec()).collect()
+                        };
+                        candidates.into_iter().filter(|key| current.contains(key.as_slice())).collect()
+                    } else {
+                        candidates.into_iter().filter(|key| kept_key(req, key, by.get(key.as_slice()).map_or(&[], Vec::as_slice))).collect()
+                    };
+                    let given: Vec<_> = keys.iter().flat_map(|key| by.get(key.as_slice()).into_iter().flatten().map(|row| (*row).clone())).collect();
                     still_n += keys.len();
                     answers.asked.extend(keys.into_iter().map(|k| ((*req).to_owned(), k.clone())));
                     answers.rows.entry(produced).or_default().extend(given);
@@ -633,7 +654,7 @@ impl RoundProgram {
         for (req, _) in &answers.asked {
             *answered.entry(req.clone()).or_insert(0) += 1;
         }
-        let next = kept.expect("a round ran");
+        let mut next = kept.expect("a round ran");
         // Written back as any kept part is (t33 K4): each relation whose rows or reads differ from its frame, each
         // input's granules whose documents' rows changed. What no round derived again stays as stored.
         let written = match &was {
@@ -643,7 +664,16 @@ impl RoundProgram {
                 let cut = retain::Cut { clean, strata: (0, 0), changed: Vec::new() };
                 let sources: Vec<(String, Arc<dyn Source>)> = bound.iter().map(|(r, (s, _))| (r.clone(), Arc::clone(s))).collect();
                 let digests: std::collections::HashMap<String, u64> = bound.iter().map(|(r, (_, d))| (r.clone(), *d)).collect();
-                next.write_kept(on.store, was, &self.placed, &self.domains, &retain::Locations::new(), &self.sccs, &cut, &sources, &digests, &BTreeSet::new(), &HashMap::new(), HashMap::new(), None, &HashMap::new(), &BTreeSet::new())?
+                // Admit quiet rows before either write if the other fact space (a revision's rounds) needs them.
+                let different = on.alternate.is_some_and(|target| !was.same_rows(target));
+                let copied = !different || next.admit_for_copy(on.store, &self.placed, &cut.clean.iter().cloned().collect::<Vec<_>>())?;
+                let write = |target, cut| next.write_kept(on.store, target, &self.placed, &self.domains, &retain::Locations::new(), &self.sccs, cut, &sources, &digests, &BTreeSet::new(), &HashMap::new(), HashMap::new(), None, &HashMap::new(), &BTreeSet::new());
+                let mut written = write(was, &cut)?;
+                if let Some(target) = on.alternate.filter(|_| copied) {
+                    let complete = retain::Cut { clean: BTreeSet::new(), strata: (0, 0), changed: Vec::new() };
+                    written += write(target, if different { &complete } else { &cut })?;
+                }
+                written
             }
             None => 0,
         };

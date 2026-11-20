@@ -117,7 +117,7 @@ fn domains(name: &str) -> (&'static [usize], &'static [usize]) {
         "guest_of" | "guest_place" => (&[1], &[]),
         "str_part" | "str_part_word" => (&[0, 3], &[]),
         "doc" | "pkg" | "unpackaged" | "path_part" | "file_name" | "source" | "src_line" | "split_line"
-        | "lf_line" | "line_count" | "syntax_error" | "tape_of" => (&[], &[0]),
+        | "lf_line" | "line_count" | "syntax_error" | "doc_grammar" | "tape_of" => (&[], &[0]),
         // A program's document underneath is its file's shard's.
         "rr_program" => (&[], &[1]),
         "name" | "text" | "str" | "strprefix" | "comment" | "value" | "static_value" | "rr_value_lit" | "intval"

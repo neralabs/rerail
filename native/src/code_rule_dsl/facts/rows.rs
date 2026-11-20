@@ -1145,12 +1145,12 @@ impl Part {
         Ok(part)
     }
 
-    /// How long its rows live: the blocks it is in.
     /// Whether nothing else holds its relation (no other part, reader or borrowed array of it).
     pub fn is_unique(&self) -> bool {
         Arc::strong_count(&self.held) == 1
     }
 
+    /// How long its rows live: the blocks it is in.
     pub fn life(&self) -> Life {
         self.life
     }

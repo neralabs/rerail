@@ -217,7 +217,8 @@ mod watchman {
         Since::Changed { paths, cursor: clock }
     }
 
-    #[cfg(test)]
+    // The protocol fixture below starts a POSIX shell executable.
+    #[cfg(all(test, unix))]
     mod tests {
         use super::super::Since;
 
@@ -414,6 +415,11 @@ mod fsevents {
                 seen.cookies.entry(path).or_insert((id, at));
                 seen.cookie_at = Some(Instant::now());
                 continue;
+            }
+            // `RERAIL_JOURNAL_TRACE`: each event's flags as delivered, to tell a metadata-only change from a write
+            // (Q404).
+            if std::env::var_os("RERAIL_JOURNAL_TRACE").is_some() {
+                eprintln!("journal flags {id} {flag:#x} {path}");
             }
             if flag & META != 0 && flag & CONTENT == 0 {
                 continue;
