@@ -257,7 +257,8 @@ a Linux run of the tests, as a `test-remote` one is.
 
 `test-remote` gives a command to a Linux host as readily as to a Mac (farm 48; before, Macs went
 first, and two Macs ran loads of 44 and 88 while the Linux hosts' 150 cores sat idle). Hosts on a
-fast link (25 MB/s through ssh) go first, then slower links, then VMs on this Mac; within those, the
+link of 8 MB/s or more through ssh go first (a slower one, such as a remote site's tunnel, costs
+minutes a send), then slower links, then VMs on this Mac; within those, the
 most free slots, then the most spare cores. Each command gets its share of its host
 (`farm.cpu_share`: twice the cores over the test slots) as CARGO_BUILD_JOBS, NEXTEST_TEST_THREADS
 and RUST_TEST_THREADS. A command that names Metal, sends a `--tree` (a program built here is a macOS

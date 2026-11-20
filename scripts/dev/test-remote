@@ -114,14 +114,16 @@ def stopped_guests(oses):
     return out
 
 
-FAST_MBPS = 25
+# A link this slow costs minutes a send (a remote site's tunnel, about 4 MB/s); the LAN's hosts,
+# reached over this Mac's Wi-Fi or a 100 Mbit hop at 10-40 MB/s, send a checkout's changes in
+# seconds, and count as fast.
+FAST_MBPS = 8
 
 
 def tier(host):
-    """Where `host` stands before its free slots and cores count: 0, a fast link (FAST_MBPS through
-    ssh, measured by the health probe) to another machine; 1, a slower link (a checkout's first
-    send, and a send over the office tunnel, take minutes); 2, a VM on this Mac (a command there
-    loads the machine it was meant to spare)."""
+    """Where `host` stands before its free slots and cores count: 0, a link of FAST_MBPS or more
+    through ssh (the health probe's measure) to another machine; 1, a slower one; 2, a VM on this
+    Mac (a command there loads the machine it was meant to spare)."""
     base = farm.shared_base(host)
     if (base.get("guest") or {}).get("on") == "local":
         return 2
