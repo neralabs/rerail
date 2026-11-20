@@ -136,12 +136,13 @@ describe("the engine service and the other worktrees of a repository", () => {
       const entered = Promise.withResolvers<void>();
       const released = Promise.withResolvers<void>();
       releases.push(released.resolve);
-      // A write in the first repository's worktree: its next walk reads that worktree, and is held there.
-      await writeFile(join(slow.worktrees[0]!, "deep", "d.py"), "d = 1\n");
+      // A write in the first repository's worktree: its next walk reads that worktree, and is held there. The hold is in
+      // place before the write, as the walk its change notice asks for can begin while the write is still being made.
       counted.held.set(join(slow.worktrees[0]!, "deep"), async () => {
         entered.resolve();
         await released.promise;
       });
+      await writeFile(join(slow.worktrees[0]!, "deep", "d.py"), "d = 1\n");
       await slowBridge!.checkpoint("turn");
       await entered.promise;
       await fastBridge!.begin("shell-1", "shell", { command: "./run.sh" });
