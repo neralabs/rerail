@@ -20,7 +20,6 @@ import { fileStamp, stampTime } from "../file-stamp.js";
 import {
   gitBranchTips,
   gitCommitsBetween,
-  gitCrlfPaths,
   gitHead,
   gitModifiedOrUntrackedListing,
   gitModifiedOrUntrackedPaths,
@@ -32,6 +31,8 @@ import {
   type ChangedPathsListing,
   type CrlfRule,
 } from "../git.js";
+import { readGitCrlfPaths } from "../git-crlf-reader.js";
+import { readGitHead } from "../git-head-reader.js";
 import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { removeScratch, renameWithRetry } from "../file-replace.js";
@@ -289,7 +290,7 @@ interface GitView extends GitBlobs {
 }
 async function readGitView(discovery: SourceDiscovery, checkout: string, paths: readonly string[]): Promise<GitBlobs | undefined> {
   const { git } = discovery;
-  const head = await git.run(signal => gitHead(checkout, { signal }));
+  const head = await git.run(signal => readGitHead(checkout, { signal }));
   if (head === undefined) return undefined;
   const from = discovery.heads.get(checkout);
   const unmerged = await readUnmergedView(discovery, checkout);
@@ -299,7 +300,7 @@ async function readGitView(discovery: SourceDiscovery, checkout: string, paths: 
   const [blobs, crlf] = await Promise.all([
     // A blob larger than a source could never match its digest: it is skipped, never read into memory.
     git.run(signal => readGitBlobs(checkout, paths.flatMap(path => gitRevisions(path, before)), { maxBlobBytes: MAX_SOURCE_BYTES, signal })),
-    git.run(signal => gitCrlfPaths(checkout, paths, { signal })),
+    git.run(signal => readGitCrlfPaths(checkout, paths, { signal })),
   ]);
   return { blobs, head, moved, committed, before, crlf, ...unmerged };
 }
@@ -309,6 +310,22 @@ async function readGitView(discovery: SourceDiscovery, checkout: string, paths: 
  */
 function unmergedNow(discovery: SourceDiscovery, checkout: string): Promise<ReadonlyMap<string, string> | undefined> {
   return discovery.git.run(signal => discovery.readUnmerged(checkout, { signal }));
+}
+/** Puts `root`'s unmerged entries now in `unmerged`; a checkout whose entries Git could not list is left out. */
+async function readEntriesInto(discovery: SourceDiscovery, root: string, unmerged: Map<string, ReadonlyMap<string, string>>): Promise<void> {
+  const entries = await unmergedNow(discovery, root);
+  if (entries !== undefined) unmerged.set(root, entries);
+}
+/** `HEAD` of each of `roots` that names a commit, with its unmerged entries put in `unmerged`. */
+async function readHeads(discovery: SourceDiscovery, roots: Iterable<string>, unmerged: Map<string, ReadonlyMap<string, string>>): Promise<Map<string, string>> {
+  const heads = new Map<string, string>();
+  for (const root of roots) {
+    const head = await discovery.git.run(signal => readGitHead(root, { signal }));
+    if (head === undefined) continue;
+    heads.set(root, head);
+    await readEntriesInto(discovery, root, unmerged);
+  }
+  return heads;
 }
 /** A checkout's unmerged entries now and as the last walk saw them (`keepFirstSnapshot` takes the first ones). */
 async function readUnmergedView(discovery: SourceDiscovery, checkout: string): Promise<Pick<GitBlobs, "unmerged" | "unmergedBefore">> {
@@ -363,7 +380,10 @@ const GIT_VERDICT_READS = 3;
 function findsGitWrite(verdicts: ReadonlyMap<string, GitVerdict>): boolean {
   return [...verdicts.values()].some(verdict => verdict.previousText === undefined);
 }
-/** Whether `checkout`'s `HEAD` still names `head`, read through the session's Git reads. */
+/**
+ * Whether `checkout`'s `HEAD` still names `head`, asked of Git itself through the session's Git reads, not of its files
+ * (`readGitHead`): only a reading that takes a change for Git's asks, so a commit made meanwhile is Git's to name.
+ */
 async function headStill(discovery: SourceDiscovery, checkout: string, head: string): Promise<boolean> {
   return await discovery.git.run(signal => gitHead(checkout, { signal })) === head;
 }
@@ -1337,7 +1357,7 @@ async function recoverFromGit(
   const [blobs, crlf] = await Promise.all([
     // A blob larger than a source could never match its digest: it is skipped, never read into memory.
     discovery.git.run(signal => readGitBlobs(checkout, revisions, { maxBlobBytes: MAX_SOURCE_BYTES, signal })),
-    discovery.git.run(signal => gitCrlfPaths(checkout, named.map(({ inCheckout }) => inCheckout), { signal })),
+    discovery.git.run(signal => readGitCrlfPaths(checkout, named.map(({ inCheckout }) => inCheckout), { signal })),
   ]);
   for (const { path, inCheckout } of named) {
     const digest = uncaptured.get(path);
@@ -2004,14 +2024,20 @@ export class CodeRuleBridge {
     this.#assertDiscovery(discovery);
     return this.#revision === revision ? [] : [this.#lastResponse];
   }
-  async settleGeneratedEdits(): Promise<void> {
+  /** The auditor's `settleGeneratedEdits` once the bridge's queued work is done; with `steering`, the edits that may steer. */
+  async settleGeneratedEdits(only?: "steering"): Promise<void> {
     this.#requireSession();
     await this.#queue;
     if (this.#auditor.settleGeneratedEdits !== undefined) {
-      await this.#auditor.settleGeneratedEdits();
+      await this.#auditor.settleGeneratedEdits(only);
     } else {
       await this.#auditor.settle?.();
     }
+  }
+
+  /** Whether its wait for the edits that may steer waits for a walk's `log` edits too (the auditor's `steeringWaitsForLog`). */
+  steeringWaitsForLog(): boolean {
+    return this.#auditor.steeringWaitsForLog?.() === true;
   }
 
   async settle(): Promise<void> {
@@ -2976,23 +3002,13 @@ export class CodeRuleBridge {
    * list is left out of `unmerged`, so the last entries read stay its snapshot.
    */
   async #readCheckouts(discovery: SourceDiscovery): Promise<Pick<WalkStart, "heads" | "unmerged">> {
-    const heads = new Map<string, string>();
     const unmerged = new Map<string, ReadonlyMap<string, string>>();
-    const readEntries = async (root: string): Promise<void> => {
-      const entries = await unmergedNow(discovery, root);
-      if (entries !== undefined) unmerged.set(root, entries);
-    };
     const others = [...discovery.heads.keys()].filter(known => !inWorktrees(discovery, known));
     // When no checkout owns the session folder, no change in it is asked about.
     const session = this.#owningCheckout(discovery.root, "");
     const withHead = new Set(session === undefined ? others : [session, ...others]);
-    for (const root of withHead) {
-      const head = await discovery.git.run(signal => gitHead(root, { signal }));
-      if (head === undefined) continue;
-      heads.set(root, head);
-      await readEntries(root);
-    }
-    for (const root of discovery.passedCheckouts) if (!withHead.has(root) && !inWorktrees(discovery, root)) await readEntries(root);
+    const heads = await readHeads(discovery, withHead, unmerged);
+    for (const root of discovery.passedCheckouts) if (!withHead.has(root) && !inWorktrees(discovery, root)) await readEntriesInto(discovery, root, unmerged);
     return { heads, unmerged };
   }
 

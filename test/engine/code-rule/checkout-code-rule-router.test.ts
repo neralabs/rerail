@@ -7,19 +7,22 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CheckoutOwners } from "../../../src/engine/catalog/checkout-owner.js";
 import { CheckoutCodeRuleRouter } from "../../../src/engine/code-rule/checkout-code-rule-router.js";
 import { CodeRuleBridge } from "../../../src/engine/code-rule/code-rule-bridge.js";
+import { NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { CheckoutCatalogs, startingCheckout } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
 import { SqliteAuditReader } from "../../../src/engine/audit/audit-store.js";
+import { SqliteAuditControlStore } from "../../../src/engine/audit/audit-control.js";
 import type { AuditRecorder, AuditInput, AuditResult } from "../../../src/engine/audit/audit.js";
 import { type CodeRule, codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
 import { recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
-import { setCheckoutStarted, setRepositoryStarted, RerailRuntime } from "../../../src/runtime/index.js";
+import { setCheckoutStarted, setRepositoryStarted, RerailRuntime, SqliteSessionReader } from "../../../src/runtime/index.js";
 import { setRuleSetting } from "../../../src/engine/catalog/rule-configuration.js";
 import { readRuleCatalog } from "../../../src/engine/catalog/rule-catalog.js";
 import type { RuleCatalog } from "../../../src/engine/catalog/repository-model.js";
 import { PACKAGE_ROOT } from "../../../src/engine/package-root.js";
 import type { RuleMode } from "../../../src/engine/catalog/rule-mode.js";
 import { checkouts, repositoryAudits } from "../../../src/engine/storage/schema.js";
+import { testEmbedder } from "../../support/hook-events.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 import { symlinkOrSkip } from "../../support/platform/links.js";
@@ -53,6 +56,19 @@ async function temporaryRoot(): Promise<string> {
   const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-checkout-router-")));
   cleanups.push(() => removeFolder(root));
   return root;
+}
+
+/** The rule count the newest rule coverage of `sessionId` recorded, current or not; null where none was recorded. */
+function recordedRuleCount(databasePath: string, sessionId: string): number | null {
+  const database = openRerailDatabase(databasePath);
+  try {
+    const row = database.$client
+      .prepare("select json_extract(payload_json, '$.activeRuleCount') as count from events where session_id = ? and kind = 'rule-coverage' order by sequence desc limit 1")
+      .get(sessionId) as { count: number | null } | undefined;
+    return row?.count ?? null;
+  } finally {
+    database.$client.close();
+  }
 }
 
 /** A committed Git repository at `path`; returns its physical path. */
@@ -652,6 +668,37 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     expect(requestSteer).toHaveBeenCalledTimes(1);
   });
 
+  it("passes a tool call's wait for the edits that may steer on to each lane's evaluator", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder);
+    await auditor.openWorkspace("steering-wait");
+    const edits = [join(session, "api", "x.py"), join(worktree, "api", "y.py")].map(path => ({ path, language: "python" as const, generatedText: "NEEDLE\n" }));
+    await auditor.auditGeneratedEdits("steering-wait", { revision: 1, checkpoints: ["edit"], edits });
+    // What each lane's evaluator is asked is the subject, not how long its checks take: on a loaded Windows machine the
+    // two lanes' checks outlasted the case's 30 s limit. The router's clean-up ends them after the case.
+    const settle = vi.spyOn(NativeCodeRuleEnforcer.prototype, "settleGeneratedEdits").mockResolvedValue(undefined);
+    try {
+      await auditor.settleGeneratedEdits("steering");
+      // A walk's log edits in a lane steer no one: a lane told to wait for every edit would hold the result for them.
+      expect(settle.mock.calls).toEqual([["steering"], ["steering"]]);
+    } finally {
+      settle.mockRestore();
+    }
+  });
+
+  // In repository scope each lane checks every batch, a walk's `log` batch too, by one audit of the whole repository.
+  it("answers that a wait for the edits that may steer waits for a walk's log edits too only while its scope is the repository", async () => {
+    const { databasePath, session } = await repositoryWithWorktree(outside);
+    const auditor = router(session, databasePath, recordingAudits().recorder);
+    const answers = [auditor.steeringWaitsForLog()];
+    for (const scope of ["repository", "touched-files"] as const) {
+      auditor.updateSettings({ scope, mode: "steer" });
+      answers.push(auditor.steeringWaitsForLog());
+    }
+    expect(answers).toEqual([false, true, false]);
+  });
+
   it("keeps the stopped value a worktree outside the checkout has of its own", async () => {
     const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
     const database = openRerailDatabase(databasePath);
@@ -946,6 +993,113 @@ describe("repository audit through the runtime", () => {
       reader.close();
     }
   }, 60_000);
+});
+
+describe("rules as they are at a scan and at a session's start", () => {
+  it("scans with the rules as they are when a scan starts, though no event came after a rule was turned off elsewhere", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const main = await repository(join(root, "main"));
+    await writeFile(join(main, "api", "a.py"), "NEEDLE\n");
+    const repositoryKey = setUpTestRepository(main, { library: [file(needle("test:main", "MAIN"))] }, databasePath);
+    const runtime = new RerailRuntime({ storageRoot: join(root, "sessions"), databasePath, workspaceRoot: main, embedder: testEmbedder, autostart: false });
+    cleanups.push(() => runtime.dispose());
+    const controls = new SqliteAuditControlStore(databasePath);
+    cleanups.push(async () => { controls.close(); });
+    const reader = new SqliteAuditReader(databasePath);
+    cleanups.push(async () => { reader.close(); });
+    await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "omp", sessionId: "scan", cwd: main } });
+    await runtime.codeRulesOpened("scan");
+    // A scan the runtime's timer picks up, as `rerail scan` asks for one: the violations it records.
+    const scan = async () => {
+      const { id } = controls.requestAudit("scan", { scope: "repository" });
+      const request = () => controls.listAuditRequests("scan").find(item => item.id === id)!;
+      await expect.poll(() => request().status, { timeout: 30_000 }).toBe("completed");
+      return request().auditIds.flatMap(auditId => reader.get(auditId)!.violations.map(violation => `${violation.path} ${violation.code}`));
+    };
+    expect(await scan()).toEqual(["api/a.py MAIN"]);
+    const database = openRerailDatabase(databasePath);
+    try {
+      setRuleSetting(database, { owner: { kind: "repository", repositoryKey }, folder: "", targetKind: "rule", targetId: "test:main", on: false, mode: null });
+    } finally {
+      database.$client.close();
+    }
+    expect(await scan()).toEqual([]);
+  }, 60_000);
+
+  it("reports a worktree's rules as they are when a session starts there, though another session's lane read them before a change", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const main = await repository(join(root, "main"));
+    git(main, "worktree", "add", "--quiet", "--detach", join(root, "w"), "HEAD");
+    const worktree = await realpath(join(root, "w"));
+    const repositoryKey = setUpTestRepository(main, { library: [file(needle("test:main", "MAIN"))] }, databasePath);
+    const runtime = new RerailRuntime({ storageRoot: join(root, "sessions"), databasePath, workspaceRoot: main, embedder: testEmbedder, autostart: false });
+    cleanups.push(() => runtime.dispose());
+    const reader = new SqliteSessionReader(databasePath);
+    cleanups.push(async () => { reader.close(); });
+
+    await runtime.ingest({ kind: "session-start", eventId: "first-start", session: { host: "claude-code", sessionId: "first", cwd: main } });
+    await runtime.codeRulesOpened("first");
+    // Its edit in the worktree opens a lane there, which reads the worktree's one rule.
+    const edited = { sessionId: "first", toolCallId: "write", toolName: "Write" };
+    await runtime.ingest({ kind: "call", eventId: "write", ...edited, input: { file_path: join(worktree, "api", "x.py"), content: "x = 1\n" } });
+    await runtime.ingest({ kind: "result", eventId: "written", ...edited, output: "ok" });
+    // A setting made elsewhere turns that rule off. No walk reads a setting, and no event of the first session follows,
+    // so its lane in the worktree holds the rules as it read them when the second session starts there.
+    const database = openRerailDatabase(databasePath);
+    try {
+      setRuleSetting(database, { owner: { kind: "repository", repositoryKey }, folder: "", targetKind: "rule", targetId: "test:main", on: false, mode: null });
+    } finally {
+      database.$client.close();
+    }
+    await runtime.ingest({ kind: "session-start", eventId: "second-start", session: { host: "claude-code", sessionId: "second", cwd: worktree } });
+
+    // The count the start wrote, which an older read would leave at 1, and the one a person sees, null while stale.
+    expect(recordedRuleCount(databasePath, "second")).toBe(0);
+    expect(reader.hud("second").activeRuleCount).toBe(0);
+  }, 60_000);
+
+  it.runIf(process.platform === "win32")("leaves a nested checkout's files out of the folder around it, recorded under another spelling of that folder", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const stored = join(root, "workspace");
+    await mkdir(join(stored, "packages"), { recursive: true });
+    await writeFile(join(stored, "top.py"), "NEEDLE\n");
+    await writeFile(join(stored, "packages", "outer.py"), "NEEDLE\n");
+    const service = await repository(join(stored, "packages", "service"));
+    await writeFile(join(service, "api", "inner.py"), "NEEDLE\n");
+    // A session in VS Code names the drive in lower case, and a folder outside Git is recorded as named; Git names the
+    // nested checkout as the folder is stored.
+    const drive = stored[0]!;
+    const typed = `${drive === drive.toUpperCase() ? drive.toLowerCase() : drive.toUpperCase()}${stored.slice(1)}`;
+    setUpTestRepository(typed, { library: [file(needle("test:outer", "OUTER"))] }, databasePath);
+    setUpTestRepository(service, { library: [file(needle("test:service", "SERVICE"))] }, databasePath);
+    // As the runtime starts a session in a folder outside Git.
+    const owners = new CheckoutOwners();
+    owners.addPlainRoot(typed);
+    const catalogs = new CheckoutCatalogs(databasePath);
+    const { recorder, audits } = recordingAudits();
+    const auditor = new CheckoutCodeRuleRouter({
+      sessionRoot: typed, startingCheckout: startingCheckout(owners, typed).checkoutRoot, owners, catalogs,
+      steerDelivery: { requestSteer: async () => undefined }, audits: recorder,
+    });
+    cleanups.push(async () => {
+      await auditor.close();
+      catalogs.close();
+    });
+    expect(catalogs.recordedCheckoutsWithin(typed)).toContain(service);
+
+    await auditor.openWorkspace("spelling");
+    await auditor.audit("spelling", { scope: "touched-files", mode: "log", paths: ["packages"] });
+    await auditor.audit("spelling", { scope: "repository", mode: "log" });
+    await auditor.settle();
+
+    // The folder audit, then the repository audit, in the folder around the nested checkout, whichever spelling the
+    // audits name it by: none holds the nested checkout's file.
+    expect(violations(audits).filter(violation => violation.checkout !== service).map(violation => violation.path))
+      .toEqual(["packages/outer.py", "packages/outer.py", "top.py"]);
+  });
 });
 
 describe("CheckoutCodeRuleRouter lanes after review", () => {
