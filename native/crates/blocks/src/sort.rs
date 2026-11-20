@@ -93,10 +93,12 @@ fn split_par(keys: &mut [u64], ids: &mut [u32], bits: u32, tk: &mut [u64], ti: &
     let top = |k: u64| ((k >> low) as usize) & (nb - 1);
     let pieces = n.div_ceil(PIECE);
     let mut hist = vec![0u32; pieces * nb];
-    hist.par_chunks_mut(nb).zip(keys.par_chunks(PIECE)).for_each(|(h, ks)| {
-        for &k in ks {
-            h[top(k)] += 1;
-        }
+    rerail_context::on_cores(|| {
+        hist.par_chunks_mut(nb).zip(keys.par_chunks(PIECE)).for_each(|(h, ks)| {
+            for &k in ks {
+                h[top(k)] += 1;
+            }
+        })
     });
     let mut starts = Vec::with_capacity(nb + 1);
     let mut at = 0u32;
@@ -110,17 +112,19 @@ fn split_par(keys: &mut [u64], ids: &mut [u32], bits: u32, tk: &mut [u64], ti: &
     }
     starts.push(n);
     let (kp, ip) = (Shared(tk.as_mut_ptr()), Shared(ti.as_mut_ptr()));
-    hist.par_chunks_mut(nb).zip(keys.par_chunks(PIECE).zip(ids.par_chunks(PIECE))).for_each(|(h, (ks, is))| {
-        for (&k, &id) in ks.iter().zip(is) {
-            let b = top(k);
-            let to = h[b] as usize;
-            h[b] += 1;
-            // SAFETY: `to` is below `n` and this piece's alone (the offsets above).
-            unsafe {
-                *{ kp }.0.add(to) = k;
-                *{ ip }.0.add(to) = id;
+    rerail_context::on_cores(|| {
+        hist.par_chunks_mut(nb).zip(keys.par_chunks(PIECE).zip(ids.par_chunks(PIECE))).for_each(|(h, (ks, is))| {
+            for (&k, &id) in ks.iter().zip(is) {
+                let b = top(k);
+                let to = h[b] as usize;
+                h[b] += 1;
+                // SAFETY: `to` is below `n` and this piece's alone (the offsets above).
+                unsafe {
+                    *{ kp }.0.add(to) = k;
+                    *{ ip }.0.add(to) = id;
+                }
             }
-        }
+        })
     });
     // Each bucket by its low bits, with its place in `keys` as room, then home.
     type Part<'a> = (&'a mut [u64], &'a mut [u32], &'a mut [u64], &'a mut [u32]);
@@ -135,10 +139,12 @@ fn split_par(keys: &mut [u64], ids: &mut [u32], bits: u32, tk: &mut [u64], ti: &
         parts.push((a, c, e, g));
         (k, i, rk, ri) = (b, d, f, h);
     }
-    parts.into_par_iter().for_each(|(home_k, home_i, sk, si)| {
-        radix_pairs(sk, si, low, home_k, home_i);
-        home_k.copy_from_slice(sk);
-        home_i.copy_from_slice(si);
+    rerail_context::on_cores(|| {
+        parts.into_par_iter().for_each(|(home_k, home_i, sk, si)| {
+            radix_pairs(sk, si, low, home_k, home_i);
+            home_k.copy_from_slice(sk);
+            home_i.copy_from_slice(si);
+        })
     });
 }
 

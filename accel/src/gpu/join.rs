@@ -1225,22 +1225,28 @@ impl Column {
 /// still being compiled waits for it (`pipeline wait`) rather than compiling it again. A panic leaves them to be
 /// compiled where they are needed (a job's panic would end the process).
 pub fn prewarm() {
-    crate::exec::configure(false);
-    rayon::spawn(|| crate::exec::as_job("the GPU's prewarm", || {
-        let _ = std::panic::catch_unwind(|| objc::rc::autoreleasepool(|| {
-            if Fused::can() {
-                let _ = fixed("sort_all");
-                let _ = fixed("probe_all");
-            }
-            let _ = fixed("scan_block");
-            let _ = fixed("scan_add");
-            for w in [Width::W64, Width::W32, Width::W16] {
-                let _ = sort_pipes(w);
-                let _ = gather_pipe(w);
-            }
-            super::tile::prewarm();
-        }));
-    }));
+    crate::exec::configure();
+    // In its caller's run (decision 0442): the pipelines are the caller's machine's, and the job's wall its run's
+    // (`as_job` reads it), so the run is entered first.
+    let run = rerail_context::job_run();
+    rerail_context::cores_spawn(move || {
+        let _run = rerail_context::enter(run);
+        crate::exec::as_job("the GPU's prewarm", || {
+            let _ = std::panic::catch_unwind(|| objc::rc::autoreleasepool(|| {
+                if Fused::can() {
+                    let _ = fixed("sort_all");
+                    let _ = fixed("probe_all");
+                }
+                let _ = fixed("scan_block");
+                let _ = fixed("scan_add");
+                for w in [Width::W64, Width::W32, Width::W16] {
+                    let _ = sort_pipes(w);
+                    let _ = gather_pipe(w);
+                }
+                super::tile::prewarm();
+            }));
+        })
+    });
 }
 
 /// A batch's pairs: one buffer the probes reserve their threadgroups' pairs in with one atomic each, so no probe

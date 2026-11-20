@@ -111,7 +111,7 @@ pub(in crate::code_rule_dsl) fn select(
         .collect::<Vec<_>>();
     // In order per plan (the statement's arms stream unsorted, `lower::batch`).
     use rayon::prelude::*;
-    rows.par_iter_mut().for_each(|rows| rows.sort_unstable());
+    crate::code_rule_dsl::logic::profile::on_cores(|| rows.par_iter_mut().for_each(|rows| rows.sort_unstable()));
     Ok(rows)
 }
 

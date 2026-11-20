@@ -245,8 +245,12 @@ finding(d,l,x) :- split_line(d,l,t), surface(x), contains(x,t).
 #[test]
 fn batches_test_their_strings_at_once_on_one_pool() {
     let (done, wait) = std::sync::mpsc::channel();
+    // The test's threads, its pool's among them, on its object (decision 0442).
+    let caller = rerail_prof::code_rule_dsl::logic::profile::caller();
     std::thread::spawn(move || {
-        let pool = rayon::ThreadPoolBuilder::new().num_threads(8).build().unwrap();
+        let _caller = caller.enter();
+        let starts = caller.clone();
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(8).start_handler(move |_| std::mem::forget(starts.enter())).build().unwrap();
         for round in 0..4u32 {
             let vocabulary = Vocabulary::from_specs(&["strtest_0".to_owned()], vec![("prefix".to_owned(), vec!["item_1".to_owned()])]).unwrap();
             let (passed, expected) = (std::sync::Mutex::new(0usize), std::sync::Mutex::new(0usize));
@@ -257,8 +261,8 @@ fn batches_test_their_strings_at_once_on_one_pool() {
                         // Each batch's strings are new to the vocabulary, and enough that the search splits across the pool.
                         // Made on the pool first, as a batch's facts are: a thread waiting here takes other batches' jobs.
                         use rayon::prelude::*;
-                        let symbols: Vec<u32> = (0..20_000).into_par_iter().map(|i| (round * 96 + batch) * 20_000 + i).collect();
-                        let strings: Vec<String> = symbols.par_iter().map(|s| format!("item_{s}")).collect();
+                        let symbols: Vec<u32> = rerail_prof::code_rule_dsl::logic::profile::on_cores(|| (0..20_000).into_par_iter().map(|i| (round * 96 + batch) * 20_000 + i).collect());
+                        let strings: Vec<String> = rerail_prof::code_rule_dsl::logic::profile::on_cores(|| symbols.par_iter().map(|s| format!("item_{s}")).collect());
                         let rows = vocabulary.rows(&strings, &symbols);
                         *passed.lock().unwrap() += rows[0].len();
                         *expected.lock().unwrap() += strings.iter().filter(|s| s.starts_with("item_1")).count();

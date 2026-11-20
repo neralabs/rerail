@@ -6345,6 +6345,33 @@ Open:
   line's plan taken on a kept-plan miss is kept (`decide`), so its order outlives the run. The diff is not in the
   tree. What the next attempt needs: a plan priced on the run's statistics is what a search gives at 0.1-0.3 s a run
   (search) and 1-2 s (statistics) of about 85 s; a prepared plan has to be priced as well as that to pay.
+- **Measured directly** (2026-11-19). The estimates are now measured on their own, not through a run's time, which
+  moves about 3% between runs of one build. This follows the Release-debugging worktree's deferred-joins lab: capture a
+  run's real outputs once, then judge each strategy against them. `RERAIL_SIZES_LOG=FILE` logs what preparation sized
+  each derived relation at, and, at each prepared plan a run takes, what it assumed of each estimated relation against
+  what the run held then (rows per node). `scripts/profiling/derived_sizes.py` reads one log, or two to compare.
+  `RERAIL_SIZES_FROM=LOG` prepares from the sizes a log's run held: a labelled oracle, a measurement aid only.
+  corpus0 x B-now and hogql (437 files of another project), profiling build, M1 Max at load 5-28, a new store each:
+  - **The estimates from facts:** 15% of the 241 relations a taken plan read were within 2x of what the run held, and
+    4% weighted by plans taken; median held about 400 times assumed. Most hit the 1-row floor. In `attr_of(n, o, a)
+    :- kind(n, "attribute"), field(n, "object", o), field(n, "attribute", at), text(at, a)`, the facts give the kind
+    1/200 of the nodes and each named field 3/50 a node. Python has about 5% attribute nodes, each with both fields
+    once. A grammar's kind skew and its kinds' fields are in no fact.
+  - **What a run held transfers:** per node, corpus0's and hogql's held sizes agree within 2x for 85% of relations,
+    95% weighted by plans.
+  - **Right sizes do not pay:** instructions with derived relations sized by nothing were 957, 969 and 964 G; by their
+    rules' estimates (the default), 1,056, 1,005 and 991 G; by what hogql's run held, 1,128 G (93% within 2x); by what
+    corpus0's own run held, 1,203 G (99% within 2x). The more lines prepared (2,497 off; 5,951-7,935 on), the more the
+    run costs. Findings 463 d067ec2ebf6f in every run. A plan made at the nominal scale from facts is priced by the
+    facts' distributions even where its sizes are right; the run's search, with the run's statistics, plans better
+    for 1-3% of the run.
+- **Done** (2026-11-19): derived relations are no longer sized by an estimate by default (`RERAIL_DERIVED_ESTIMATES`
+  is now off unless `=on`, kept as a measurement aid for the oracle lab). Rules reading a derived relation that facts
+  do not size are planned at run time, as before 0361's "Wider" step. Relations whose facts, declared or inferred,
+  size them are still prepared. The criterion above, refused lines under a tenth, has no subject: no line is refused
+  since prepared plans are taken by default. What it stood for, the joins no worse than with prepared plans off, holds
+  as the default's 957-969 G. Test: `a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it` (on when
+  bound; off by default, the recursion it sized left to run time).
 
 ### Q291. (Q185 on cost-classifier-metal-rf) A lowered program's identity is its store's: kept plans and prepared plans miss across stores
 
@@ -6359,6 +6386,11 @@ Open:
   or hash a branded name by its text (as `relocate` maps names by their strings), helpers' names included.
 - **Done when**: two fresh stores give the same rules one identity, and a test lowers them on two numberings and
   finds the same keys.
+- **Decided** (2026-11-19, decision 0472): plans do not move across stores. The kept and prepared plans are rows in
+  the project's store, so a new store has none to read whatever the identity; sharing them would carry one project's
+  corpus data to another outside 0442's explicit `Shared`; planning is 1-3% of a cold run's CPU; and every hash over a
+  lowered rule would be re-based on text. A seeded store (an explicit export and import keyed by the rules' text) is
+  0472's open item, not built. Closed.
 
 ### Q292. (Q186 on cost-classifier-metal-rf) The node-product rewrite on the version (0461)
 
@@ -6799,3 +6831,28 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
 - **Steps**: each test the old `tests.rs` holds that `logic/device.rs`'s tests lack goes there (or to the device
   crate's); then both files are removed and the two lists' rows cut.
 - **Done when**: no source file is outside every crate's module tree, with a check that says so.
+
+### Q329. (Q187 on cost-classifier-metal-rf) The test binaries' unwind info is past what the compact unwind table can address
+- **Found** (2026-11-19, a tidy-up of 0442's work): every large test binary's link warns `__eh_frame section too
+  large (max 16MB) to encode dwarf unwind offsets in compact unwind table` (the engine's, `rerail-logic`'s and
+  `rerail-device-metal`'s lib tests, dev profile). The engine's on an M1 Max: `__text` 188 MB, `__eh_frame` 41.7 MB,
+  `__unwind_info` 5.8 MB. A function whose unwinding the compact table cannot point to is unwound from its DWARF
+  entry by a search: a panic in such a test is slower to unwind; nothing else changes.
+- **Next**: find why 41.7 MB of DWARF unwind entries are kept. A frame-pointer function on arm64 has a compact
+  encoding, and ld drops the DWARF entry of a function that has one, so the entries kept are of functions it could
+  not encode, or they are kept for all. Count the kept entries against the functions (`dwarfdump --eh-frame` on the
+  binary), and look at what the compiler and linker are told (`-C force-unwind-tables`, ld's
+  `-no_keep_dwarf_unwind`). If the binary is simply this large, the cause is its size at opt-level 0.
+- **Done when**: the link gives no warning, or the cause is shown to be the binary's size and the choice (a smaller
+  test binary, or the warning accepted with its reason) is the user's.
+### Q330. (Q188 on cost-classifier-metal-rf) A key a derived relation declares is checked where its rows are written (0361 step 6)
+- **Found** (2026-11-19, 0361 step 6): the step's checks are built at the probes (`Model::layout_broken`): a key or
+  fan-out a probe is bounded by, against the executors' counts. A key is also to be checked where the rows are
+  written, as the decision says: dedup probes the whole row, and a key needs one more probe. No program has a subject
+  for it: core.rr declares keys only of base relations (tape views, never written), and an inferred key is proved
+  from the facts of what its rules read.
+- **Next**: when a program first declares a key of a derived relation (`.layout r key(...)` where `r` has rules),
+  probe the key's columns in that relation's block index as each row is written, in every executor that writes it
+  (setfix's CPU levels, its closures, the device's): a second row for a key breaks it (`shapes::Broken`).
+- **Done when**: a test declares a key of a derived relation whose rules break it, and the run names it broken and
+  plans the relation from statistics.

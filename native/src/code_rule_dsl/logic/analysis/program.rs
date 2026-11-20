@@ -284,16 +284,18 @@ impl ProgramAnalysis {
         }
         // Each rule's analyses alone, on the pool's threads.
         use rayon::prelude::*;
-        let rules: Vec<RuleAnalysis> = program
-            .rules
-            .par_iter()
-            .map(|r| RuleAnalysis {
-                head: r.head.rel.to_string(),
-                uniqueness: projection(&r.head, &r.body, &relation_keys).unique(),
-                scalars: scalars::analyze(scalar_inputs(&r.body)),
-                contribution_storage: storage::analyze(r),
-            })
-            .collect();
+        let rules: Vec<RuleAnalysis> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+            program
+                .rules
+                .par_iter()
+                .map(|r| RuleAnalysis {
+                    head: r.head.rel.to_string(),
+                    uniqueness: projection(&r.head, &r.body, &relation_keys).unique(),
+                    scalars: scalars::analyze(scalar_inputs(&r.body)),
+                    contribution_storage: storage::analyze(r),
+                })
+                .collect()
+        });
         let scalar_storage = bags::analyze(rules.iter().enumerate().flat_map(|(rule, r)| {
             r.scalars.inputs.iter().cloned().enumerate().map(move |(scalar, input)| {
                 (bags::Site { rule, head: r.head.clone(), scalar }, input)

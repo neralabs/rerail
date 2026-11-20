@@ -938,10 +938,9 @@ pub struct Model {
     pub derived: std::sync::Arc<HashSet<String>>,
 }
 
-thread_local! {
-    /// Set while a rule is searched without its join shape directives (`Model::plan_inner`).
-    static NO_SHAPES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
+/// Bound while a rule is searched without its join shape directives (`Model::plan_inner`).
+#[derive(Clone, Copy, Default)]
+struct NoShapes(bool);
 
 
 #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
@@ -1136,12 +1135,16 @@ const PLAN_CACHE_NAMES: [&str; 12] = ["no cache", "first sight", "kept price", "
 fn plan_fresh() -> bool {
     rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_PLAN_FRESH").is_some())
 }
-thread_local! {
-    /// Where a plan is being made, for the profile's account of the planning budget's misses.
-    static PLAN_SITE: std::cell::Cell<&'static str> = const { std::cell::Cell::new("elsewhere") };
+/// Where a plan is being made, for the profile's account of the planning budget's misses (in the run's context).
+#[derive(Clone, Copy)]
+struct PlanSite(&'static str);
+impl Default for PlanSite {
+    fn default() -> Self {
+        PlanSite("elsewhere")
+    }
 }
 fn plan_site(site: &'static str) {
-    PLAN_SITE.with(|c| c.set(site));
+    rerail_prof::code_rule_dsl::logic::profile::bind_here(PlanSite(site));
 }
 #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
 pub fn lazy_probes_counted() -> (u64, u64) {
@@ -1316,12 +1319,19 @@ pub fn search_rows(b: &Body<'_>, first: Option<usize>) -> f64 {
     SEARCH_FIXED_ROWS + candidates
 }
 
+/// Plans kept across a corpus run's chunks, in the run's context (decision 0442: its jobs plan with them): per rule
+/// (head, body, delta, the component solved), its order and its work per node when planned. `None` outside a corpus
+/// run: every plan is searched. When profiling, the plan as EXPLAIN showed it when searched: a re-pricing reports it
+/// with its own work and rows.
+#[derive(Clone, Default)]
+struct KeptPlans(Option<SharedPlans>);
+
+/// `f` of the run's kept plans (`KeptPlans`).
+fn with_plans<R>(f: impl FnOnce(&Option<SharedPlans>) -> R) -> R {
+    rerail_prof::code_rule_dsl::logic::profile::with_bound(|p: &KeptPlans| f(&p.0))
+}
+
 thread_local! {
-    /// Plans kept across a corpus run's chunks, on the thread that runs them: per rule (head, body, delta, the
-    /// component solved), its order and its work per node when planned. `None` outside a corpus run: every plan is
-    /// searched.
-    /// When profiling, the plan as EXPLAIN showed it when searched: a re-pricing reports it with its own work and rows.
-    static PLANS: std::cell::RefCell<Option<SharedPlans>> = const { std::cell::RefCell::new(None) };
     /// The last priced body's cheapest start: the least work of any one join literal read first, from no binding.
     /// Every order costs at least this, so a kept order's work over it measures how far the order is from the best
     /// any start allows.
@@ -1337,9 +1347,8 @@ thread_local! {
 
 /// The plan kept for `key` (`RunPlans::find`), this thread's job's first: `None` outside a corpus run.
 fn plans_find(key: &PlanKey, len: usize, nodes: f64) -> Option<Option<Kept>> {
-    PLANS.with(|p| {
-        let p = p.borrow();
-        let shared = p.as_ref()?;
+    with_plans(|p| {
+                let shared = p.as_ref()?;
         if let Some(k) = OWN_PLANS.with(|o| o.borrow().as_ref().and_then(|m| m.get(key).cloned())) {
             return Some(Some(k));
         }
@@ -1358,8 +1367,7 @@ fn plans_find(key: &PlanKey, len: usize, nodes: f64) -> Option<Option<Kept>> {
 
 /// The plan kept for `key` as it is, this thread's job's first, else the run's (not looked up in the store).
 fn plans_get(key: &PlanKey) -> Option<Kept> {
-    PLANS.with(|p| {
-        let p = p.borrow();
+    with_plans(|p| {
         let shared = p.as_ref()?;
         OWN_PLANS.with(|o| o.borrow().as_ref().and_then(|m| m.get(key).cloned())).or_else(|| shared.now().get(key).map(|e| e.kept()))
     })
@@ -1401,9 +1409,8 @@ fn plans_put(shared: &SharedPlans, key: PlanKey, kept: Kept) {
 /// Each is a write of its own field, the last writer's: concurrent chunks run the same rules, and one cell for both,
 /// changed by compare-and-swap, retried and copied the entry under that contention (2,774 samples of a cold run).
 fn plans_learnt(key: &PlanKey, learnt: Learnt) {
-    PLANS.with(|p| {
-        let p = p.borrow();
-        let Some(shared) = p.as_ref() else { return };
+    with_plans(|p| {
+                let Some(shared) = p.as_ref() else { return };
         let learnt = OWN_PLANS.with(|o| {
             let mut o = o.borrow_mut();
             let Some(k) = o.as_mut().and_then(|m| m.get_mut(key)) else { return Some(learnt) };
@@ -1608,7 +1615,11 @@ pub fn in_view<R>(view: &Arc<ChunkView>, f: impl FnOnce() -> R) -> (R, ChunkPlan
     let Some(run) = share_plans() else { return (f(), ChunkPlans::default()) };
     let shared = SharedPlans { run: Arc::clone(&run.run), view: Some(Arc::clone(view)) };
     let r = {
+        // The chunk's plans are the run's context's while `f` runs (and its jobs', which carry the context), and
+        // what it plans is put into the view as the job's own end (`enter_plans`), before the binding goes.
+        let _bound = rerail_prof::code_rule_dsl::logic::profile::bind(KeptPlans(Some(shared.clone())));
         let _plans = enter_plans(Some(shared));
+        let _observed_at = view.observed.clone().map(keeps::bind_observed);
         let _observed = view.observed.clone().map(keeps::enter_observed);
         f()
     };
@@ -1760,13 +1771,13 @@ pub fn line_key(b: &Body<'_>, first: Option<usize>) -> u128 {
 
 /// The order last kept for line `line` (`RunPlans::orders`).
 fn orders_get(line: u128) -> Option<Arc<[Step]>> {
-    PLANS.with(|p| p.borrow().as_ref().and_then(|s| s.orders.load().get(&line).cloned()))
+    with_plans(|p| p.as_ref().and_then(|s| s.orders.load().get(&line).cloned()))
 }
 
 /// Keeps `order` as line `line`'s last (`RunPlans::orders`).
 fn orders_put(line: u128, order: &[Step]) {
-    PLANS.with(|p| {
-        if let Some(s) = p.borrow().as_ref() {
+    with_plans(|p| {
+        if let Some(s) = p.as_ref() {
             let order: Arc<[Step]> = order.into();
             s.orders.rcu(|o| {
                 let mut o = rustc_hash::FxHashMap::clone(o);
@@ -1787,7 +1798,7 @@ fn source_orders() -> bool {
 /// Whether `key` was planned in this thread's run (`RunPlans::planned_now`).
 fn planned_now(key: &PlanKey) -> bool {
     OWN_PLANNED.with(|o| o.borrow().as_ref().is_some_and(|o| o.contains(key)))
-        || PLANS.with(|p| p.borrow().as_ref().is_some_and(|s| s.planned_now.lock().contains(key)))
+        || with_plans(|p| p.as_ref().is_some_and(|s| s.planned_now.lock().contains(key)))
 }
 
 /// Notes `key` as planned in this run (`planned_now`): in this thread's job's set, else the run's.
@@ -1800,8 +1811,8 @@ fn note_planned(key: PlanKey) {
         None => Some(key),
     });
     if let Some(key) = key {
-        PLANS.with(|p| {
-            if let Some(s) = p.borrow().as_ref() {
+        with_plans(|p| {
+            if let Some(s) = p.as_ref() {
                 s.planned_now.lock().insert(key);
             }
         });
@@ -2001,28 +2012,28 @@ impl StoredPlan {
 
 /// Gives this thread's run the plans the store kept (`plan::choices`, before the run's first wave).
 pub fn take_stored_plans(stored: Arc<StoredPlans>) {
-    PLANS.with(|p| {
-        if let Some(p) = p.borrow().as_ref() {
+    with_plans(|p| {
+        if let Some(p) = p.as_ref() {
             p.stored.store(stored);
         }
     });
 }
 
-/// Whether this thread runs with kept plans (`PLANS`): only then are prepared plans read from or kept for the store.
+/// Whether this thread runs with kept plans (`KeptPlans`): only then are prepared plans read from or kept for the store.
 #[doc(hidden)]
 /// Whether this thread's run searches line `line` rather than take its prepared plan: it ran heavy (`prepared_heavy`).
 pub fn prepared_searched(line: u128) -> bool {
-    PLANS.with(|p| p.borrow().as_ref().is_some_and(|p| p.prepared_searched.lock().contains(&line)))
+    with_plans(|p| p.as_ref().is_some_and(|p| p.prepared_searched.lock().contains(&line)))
 }
 
 pub fn run_holds_plans() -> bool {
-    PLANS.with(|p| p.borrow().is_some())
+    with_plans(|p| p.is_some())
 }
 
 /// The prepared plans the store kept of the version whose identity is `id` (Q228).
 #[doc(hidden)]
 pub fn prepared_stored(id: &[u8; 32]) -> Option<Arc<prepared::Prepared>> {
-    PLANS.with(|p| p.borrow().as_ref().and_then(|p| p.prepared.load().get(id).cloned()))
+    with_plans(|p| p.as_ref().and_then(|p| p.prepared.load().get(id).cloned()))
 }
 
 /// Keeps `made`, the prepared plans this run made of the version whose identity is `id`, for the store. A version
@@ -2032,8 +2043,8 @@ pub fn prepared_stored(id: &[u8; 32]) -> Option<Arc<prepared::Prepared>> {
 #[doc(hidden)]
 pub fn prepared_made(id: [u8; 32], made: Arc<prepared::Prepared>) {
     let new = !made.0.is_empty();
-    PLANS.with(|p| {
-        if let Some(p) = p.borrow().as_ref() {
+    with_plans(|p| {
+        if let Some(p) = p.as_ref() {
             p.prepared.rcu(|m| {
                 let mut m = prepared::ByVersion::clone(m);
                 m.insert(id, Arc::clone(&made));
@@ -2048,8 +2059,8 @@ pub fn prepared_made(id: [u8; 32], made: Arc<prepared::Prepared>) {
 
 /// Gives this thread's run the prepared plans the store kept (with `take_stored_plans`).
 pub fn take_stored_prepared(stored: prepared::ByVersion) {
-    PLANS.with(|p| {
-        if let Some(p) = p.borrow().as_ref() {
+    with_plans(|p| {
+        if let Some(p) = p.as_ref() {
             p.prepared.store(Arc::new(stored));
         }
     });
@@ -2057,18 +2068,18 @@ pub fn take_stored_prepared(stored: prepared::ByVersion) {
 
 /// This thread's run's prepared plans for the store, the stored with the made: `None` where it made none.
 pub fn prepared_to_store() -> Option<Arc<prepared::ByVersion>> {
-    PLANS.with(|p| p.borrow().as_ref().filter(|p| p.prepared_new.load(std::sync::atomic::Ordering::Relaxed)).map(|p| p.prepared.load_full()))
+    with_plans(|p| p.as_ref().filter(|p| p.prepared_new.load(std::sync::atomic::Ordering::Relaxed)).map(|p| p.prepared.load_full()))
 }
 
 /// The prepared plans held for this thread's run, as read and made.
 pub fn prepared_held() -> Arc<prepared::ByVersion> {
-    PLANS.with(|p| p.borrow().as_ref().map(|p| p.prepared.load_full()).unwrap_or_default())
+    with_plans(|p| p.as_ref().map(|p| p.prepared.load_full()).unwrap_or_default())
 }
 
 /// This thread's run's plans for the store: the stored ones with the run's over them, or `None` where the run
 /// changed none.
 pub fn plans_to_store() -> Option<StoredPlans> {
-    let plans = PLANS.with(|p| p.borrow().clone())?;
+    let plans = with_plans(|p| p.clone())?;
     let (kept, stored) = (plans.kept.load(), plans.stored.load());
     let mut out: Option<StoredPlans> = None;
     for (key, e) in kept.iter() {
@@ -2102,8 +2113,8 @@ fn lines_push(runs: Vec<joins::LineRun>) {
     if runs.is_empty() {
         return;
     }
-    PLANS.with(|p| {
-        if let Some(p) = p.borrow().as_ref() {
+    with_plans(|p| {
+        if let Some(p) = p.as_ref() {
             let _ = p.lines.0.send(runs);
         }
     });
@@ -2111,21 +2122,22 @@ fn lines_push(runs: Vec<joins::LineRun>) {
 
 /// The lines run since the last call.
 fn lines_take() -> Vec<joins::LineRun> {
-    PLANS.with(|p| p.borrow().as_ref().map(|p| p.lines.1.lock().try_iter().flatten().collect()).unwrap_or_default())
+    with_plans(|p| p.as_ref().map(|p| p.lines.1.lock().try_iter().flatten().collect()).unwrap_or_default())
 }
 
 /// The plans the store kept for this thread's run, as read (the join memo's write, where no plan changed).
 pub fn stored_plans() -> Option<StoredPlans> {
-    PLANS.with(|p| p.borrow().as_ref().map(|p| StoredPlans::clone(&p.stored.load())))
+    with_plans(|p| p.as_ref().map(|p| StoredPlans::clone(&p.stored.load())))
 }
 
 /// This thread's kept plans, for a job on another thread to enter.
 fn share_plans() -> Option<SharedPlans> {
-    PLANS.with(|p| p.borrow().clone())
+    with_plans(|p| p.clone())
 }
 
-/// While the guard lives, this thread plans with `plans` (another thread's, `share_plans`), into plans of its own
-/// (`OWN_PLANS`: new keys and new orders) published as it ends, its keys planned handed on then too.
+/// While the guard lives, this thread's job plans into plans of its own (`OWN_PLANS`: new keys and new orders),
+/// published into the run's (`plans`, the job's caller's, `share_plans`) as it ends, its keys planned handed on then
+/// too. The run's plans themselves are in the run's context, which the job's run carries.
 fn enter_plans(plans: Option<SharedPlans>) -> impl Drop {
     type Own = (Option<rustc_hash::FxHashMap<PlanKey, Kept>>, Option<rustc_hash::FxHashSet<PlanKey>>);
     struct Entered(Option<SharedPlans>, Own);
@@ -2133,8 +2145,7 @@ fn enter_plans(plans: Option<SharedPlans>) -> impl Drop {
         fn drop(&mut self) {
             let own = OWN_PLANS.with(|o| std::mem::replace(&mut *o.borrow_mut(), self.1.0.take()));
             let planned = OWN_PLANNED.with(|o| std::mem::replace(&mut *o.borrow_mut(), self.1.1.take()));
-            let entered = PLANS.with(|p| std::mem::replace(&mut *p.borrow_mut(), self.0.take()));
-            let Some(shared) = entered else { return };
+            let Some(shared) = self.0.take() else { return };
             // In a chunk's view (Q88), the job's plans are the chunk's own, its entries.
             if let Some(v) = &shared.view {
                 let mut own: Vec<(PlanKey, Kept)> = own.into_iter().flatten().collect();
@@ -2160,7 +2171,7 @@ fn enter_plans(plans: Option<SharedPlans>) -> impl Drop {
     let own = plans.is_some().then(rustc_hash::FxHashMap::default);
     let planned = plans.is_some().then(rustc_hash::FxHashSet::default);
     Entered(
-        PLANS.with(|p| std::mem::replace(&mut *p.borrow_mut(), plans)),
+        plans,
         (
             OWN_PLANS.with(|o| std::mem::replace(&mut *o.borrow_mut(), own)),
             OWN_PLANNED.with(|o| std::mem::replace(&mut *o.borrow_mut(), planned)),
@@ -2209,7 +2220,7 @@ pub fn near(then: &[f64], now: &[f64]) -> bool {
 
 /// Plans kept across chunks on this thread while held (a corpus run), none kept at the start; for a session's run
 /// (`across`, the session's generation), the plans its earlier runs kept, put back at the end (decision 0090 step 5).
-pub struct KeepPlans(Option<u64>);
+pub struct KeepPlans(Option<u64>, Option<rerail_prof::code_rule_dsl::logic::profile::Bound>);
 
 thread_local! {
     /// A session's plans between its runs, with the session's generation: another session's are not taken.
@@ -2220,9 +2231,9 @@ impl KeepPlans {
     pub fn start(across: Option<u64>) -> Self {
         compose::clear();
         let (kept, orders) = across.and_then(|g| SESSION_PLANS.with(|s| s.borrow_mut().take().filter(|(k, _, _)| *k == g).map(|(_, p, o)| (p, o)))).unwrap_or_default();
-        PLANS.with(|p| *p.borrow_mut() = Some(SharedPlans { run: Arc::new(RunPlans::new(kept, orders, Default::default())), view: None }));
+        let plans = rerail_prof::code_rule_dsl::logic::profile::bind(KeptPlans(Some(SharedPlans { run: Arc::new(RunPlans::new(kept, orders, Default::default())), view: None })));
         keeps::observing(true);
-        KeepPlans(across)
+        KeepPlans(across, Some(plans))
     }
 }
 
@@ -2236,9 +2247,16 @@ impl Drop for KeepPlans {
             let lazy = lazy_probes_counted();
             eprintln!("plan cache: {}; budget missed: {}; statistics: {} batches of {} relations, {} late, {} answered by layouts; {} lines prepared, {} searched once heavy ({} versions' plans read, {} made); mispredicted: {} blown up, {} over-estimated; orders: {} searched, {} greedy (under a search's cost); probes: {} left unplanned at open, {} planned later", counts.join(", "), miss.join(", "), st[0], st[1], st[2], run_counts().shaped.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::run_counts().taken.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::run_counts().searched.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::run_counts().versions[0].swap(0, std::sync::atomic::Ordering::Relaxed), prepared::run_counts().versions[1].swap(0, std::sync::atomic::Ordering::Relaxed), joins::run_counts().misses[0].swap(0, std::sync::atomic::Ordering::Relaxed), joins::run_counts().misses[1].swap(0, std::sync::atomic::Ordering::Relaxed), searches[0], searches[1], lazy.0, lazy.1);
         }
+        // The layout facts the run's rows broke (decision 0361 step 6), each named in the profile as it broke.
+        if std::env::var_os("RERAIL_PLAN_CACHE_COUNTS").is_some() {
+            let b = shapes::run_broken();
+            let broken = b.facts();
+            eprintln!("layout facts: {} probe steps checked; broken: {}", b.1.swap(0, std::sync::atomic::Ordering::Relaxed), if broken.is_empty() { "none".to_owned() } else { broken.iter().map(|(r, f)| format!("{r} {f}")).collect::<Vec<_>>().join(", ") });
+        }
         compose::clear();
         // Every job that entered them has ended: the run's thread holds the last handle.
-        let plans = PLANS.with(|p| p.borrow_mut().take());
+        let plans = with_plans(Option::clone);
+        drop(self.1.take());
         keeps::observing(false);
         let published = run_counts().published.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect::<Vec<_>>();
         let folds = keeps::run_counts().folds.swap(0, std::sync::atomic::Ordering::Relaxed);
@@ -2256,36 +2274,28 @@ impl Drop for KeepPlans {
     }
 }
 
-thread_local! {
-    /// Whether a plan is explained step by step whether or not the run is profiled (`explaining`): the choice of
-    /// what a relation keeps re-prices each step of its plans (decision 0099).
-    static EXPLAIN_ALWAYS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+/// Whether a plan is explained step by step whether or not the run is profiled (`explaining`): the choice of what a
+/// relation keeps re-prices each step of its plans (decision 0099).
+#[derive(Clone, Copy, Default)]
+struct ExplainAlways(bool);
+
+/// Plans explained step by step, `on` or not, while the guard lives.
+pub fn explaining(on: bool) -> rerail_prof::code_rule_dsl::logic::profile::Bound {
+    rerail_prof::code_rule_dsl::logic::profile::bind(ExplainAlways(on))
 }
 
-/// Plans explained step by step while `on` (`EXPLAIN_ALWAYS`), the setting before returned.
-pub fn explaining(on: bool) -> bool {
-    EXPLAIN_ALWAYS.with(|e| e.replace(on))
-}
+/// Bound while a plan's record is made for its steps' rows alone (`Model::plan_rule_step_rows`).
+#[derive(Clone, Copy, Default)]
+struct StepRows(bool);
 
-thread_local! {
-    /// Set while a plan's record is made for its steps' rows alone (`Model::plan_rule_step_rows`).
-    static STEP_ROWS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-thread_local! {
-    /// Whether the planner reads its statistics skewed (`Model::plan_inner`, `RERAIL_STATS_SKEW`).
-    static SKEWING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
+/// Bound while the planner reads its statistics skewed (`Model::plan_inner`, `RERAIL_STATS_SKEW`).
+#[derive(Clone, Copy, Default)]
+struct Skewing(bool);
 
 /// Carries the run's kept plans and the planner's settings to a job on another thread (`run_state`): the plans are
 /// shared (what the job plans is taken into them as it ends, `enter_plans`), the settings copied.
 pub(in crate::code_rule_dsl) fn carried(c: &mut super::run_state::Capture) {
-    c.part(&["PLANS", "OWN_PLANS", "OWN_PLANNED"], super::run_state::Shared(share_plans(), enter_plans));
-    c.copy(&["PLAN_SITE"], &PLAN_SITE);
-    c.copy(&["EXPLAIN_ALWAYS"], &EXPLAIN_ALWAYS);
-    c.copy(&["NO_SHAPES"], &NO_SHAPES);
-    c.copy(&["SKEWING"], &SKEWING);
-    c.copy(&["STEP_ROWS"], &STEP_ROWS);
+    c.part(&["OWN_PLANS", "OWN_PLANNED"], super::run_state::Shared(share_plans(), enter_plans));
 }
 
 /// `RERAIL_STATS_SKEW=f[:seed]`: the largest factor a statistic is skewed by, and the seed of the factors.
@@ -2300,7 +2310,7 @@ fn skew_setting() -> Option<(f64, u64)> {
 /// The factor statistic `what` of column `c` of `rel` is skewed by while skewing: fixed per (seed, rel, c, what),
 /// log-uniform in [1/f, f]; 1 otherwise.
 fn skew(rel: &str, c: usize, what: u64) -> f64 {
-    let Some((f, seed)) = skew_setting().filter(|_| SKEWING.with(std::cell::Cell::get)) else { return 1.0 };
+    let Some((f, seed)) = skew_setting().filter(|_| rerail_prof::code_rule_dsl::logic::profile::bound::<Skewing>().0) else { return 1.0 };
     let mut h = seed ^ (what << 56) ^ (c as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
     for b in rel.bytes() {
         h = (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3);
@@ -2527,10 +2537,11 @@ impl Model {
     /// calibrates them (decision 0099): the record is made without its strings, its steps' bases and the joins each
     /// step passed over, priced again for EXPLAIN.
     pub fn plan_rule_step_rows(&self, pf: Fields<'_>, b: &Body<'_>, first: Option<usize>) -> Result<(Plan, Vec<f64>)> {
-        let (was, rows_was) = (EXPLAIN_ALWAYS.with(|e| e.replace(true)), STEP_ROWS.with(|e| e.replace(true)));
+        let explain = explaining(true);
+        let step_rows = rerail_prof::code_rule_dsl::logic::profile::bind(StepRows(true));
         let got = self.plan_inner(pf, b, first, None, true);
-        EXPLAIN_ALWAYS.with(|e| e.set(was));
-        STEP_ROWS.with(|e| e.set(rows_was));
+        drop(step_rows);
+        drop(explain);
         let (plan, x) = got?;
         let rows = x.map(|x| x.steps.iter().map(|s| s.rows).collect()).unwrap_or_default();
         Ok((plan, rows))
@@ -2774,7 +2785,7 @@ impl Model {
             run_counts().budget_miss[why].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if why == 1 && super::profile::on() {
                 let again = planned_now(&key);
-                super::profile::decision("planning budget missed: never ran (decision 0122)", || format!("planned by {}, {}", PLAN_SITE.with(std::cell::Cell::get), if again { "planned before in this run" } else { "kept from an earlier run" }));
+                super::profile::decision("planning budget missed: never ran (decision 0122)", || format!("planned by {}, {}", rerail_prof::code_rule_dsl::logic::profile::bound::<PlanSite>().0, if again { "planned before in this run" } else { "kept from an earlier run" }));
             }
             // What grew, by kind of size and how far (the profile's decisions).
             if why == 3 && super::profile::on() && let Some(previous) = &k.4 {
@@ -2888,8 +2899,8 @@ impl Model {
         if cx.started && let Some((_, how)) = start {
             plan_cache(10 + how);
             super::profile::decision("plan cache (decision 0038)", || format!("started from {} (decision 0258)", ["its line's order kept under another key", "its source rule's order"][how]));
-            PLANS.with(|p| {
-                if let Some(p) = p.borrow().as_ref() {
+            with_plans(|p| {
+                if let Some(p) = p.as_ref() {
                     plans_put(p, key, (got.0.0.clone().into(), got.0.1 / nodes, None, got.0.1 / SEED.with(|c| c.get()).max(1.0), None, None));
                 }
             });
@@ -2905,8 +2916,8 @@ impl Model {
             super::profile::decision("plan cache (decision 0038)", || "planned (first sight of the rule)".into());
         }
         let got = self.decide(pf, b, first, key, got, cx.runners_up, cx.steps_of, round.take());
-        PLANS.with(|p| {
-            if let Some(p) = p.borrow().as_ref() {
+        with_plans(|p| {
+            if let Some(p) = p.as_ref() {
                 let gap = got.0.1 / SEED.with(|c| c.get()).max(1.0);
                 let ran = if mispriced { None } else { plans_get(&key).and_then(|k| k.5) };
                 plans_put(p, key.clone(), (got.0.0.clone().into(), got.0.1 / nodes, got.1.clone(), gap, None, ran));
@@ -2924,8 +2935,8 @@ impl Model {
     fn keep_choice(&self, pf: Fields<'_>, b: &Body<'_>, first: Option<usize>, key: PlanKey, order: &[Step]) -> Result<(Plan, Option<super::profile::RulePlan>)> {
         let got = self.plan_inner(pf, b, first, Some(order), true)?;
         let nodes = self.stats.nodes.max(1.0);
-        PLANS.with(|p| {
-            if let Some(p) = p.borrow().as_ref() {
+        with_plans(|p| {
+            if let Some(p) = p.as_ref() {
                 let gap = got.0.1 / SEED.with(|c| c.get()).max(1.0);
                 let ran = plans_get(&key).and_then(|k| k.5);
                 plans_put(p, key, (got.0.0.clone().into(), got.0.1 / nodes, got.1.clone(), gap, None, ran));
@@ -2947,7 +2958,7 @@ impl Model {
     /// (its planning failed here: the loop reports it). Without a pricer, or without a kept plans' store, nothing.
     pub(in crate::code_rule_dsl) fn plan_ahead(&mut self, pf: Fields<'_>, lines: &[(&Body<'_>, Option<usize>)]) -> Ahead {
         let mut ahead = Ahead::default();
-        if !joins::pricing() || PLANS.with(|p| p.borrow().is_none()) || lines.is_empty() {
+        if !joins::pricing() || with_plans(|p| p.is_none()) || lines.is_empty() {
             return ahead;
         }
         let _span = super::profile::span(|| "join model: a stratum's plans in one round".into());
@@ -3158,11 +3169,12 @@ impl Model {
         first: Option<usize>,
         round: Option<&mut Vec<joins::Choice>>,
     ) -> Result<(Plan, Option<super::profile::RulePlan>)> {
-        if PLANS.with(|p| p.borrow().is_none()) {
+        if with_plans(|p| p.is_none()) {
             return self.plan_inner(pf, b, first, None, true);
         }
         // A line planned with the program (decision 0361 step 5): no key, no cache, no price.
-        if let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes) {
+        if let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes, b, &self.stats.shapes) {
+            self.log_assumed(line_key(b, first));
             super::profile::decision("prepared plans (decision 0361 step 5)", || "a live plan taken as prepared: not searched or priced".to_owned());
             return Ok((plan, None));
         }
@@ -3177,8 +3189,8 @@ impl Model {
         let kept = plans_find(&key, b.len(), self.stats.nodes.max(1.0)).flatten().and_then(|k| Some((k.4.clone()?, k.1)));
         // Keeps `got` priced at `sizes` under `key`, the state it replaces under `earlier`.
         let keep = |got: &(Plan, Option<super::profile::RulePlan>), sizes: Vec<f64>, searched: Option<f64>| {
-            PLANS.with(|p| {
-                if let Some(p) = p.borrow().as_ref() {
+            with_plans(|p| {
+                if let Some(p) = p.as_ref() {
                     let then = plans_get(&key);
                     // The work its line did when it last ran (decision 0122), kept with the plan.
                     let ran = then.as_ref().and_then(|k| k.5);
@@ -3429,10 +3441,63 @@ impl Model {
         })
     }
 
+    /// Q290's measurement (`prepared::sizes_log`): a prepared plan taken for `line`, each relation it assumed a size of
+    /// against what this model holds of it, rows per node. A relation still being solved is left out (its rows so far).
+    fn log_assumed(&self, line: u128) {
+        let Some(log) = prepared::sizes_log() else { return };
+        use std::io::Write as _;
+        let n = self.stats.nodes.max(1.0);
+        let mut log = log.lock();
+        for (r, per) in self.stats.prepared.assumed(line) {
+            if !self.stats.solving.contains(r) {
+                let _ = writeln!(log, "seen\t{r}\t{per}\t{}\t{n}", self.card(r) / n);
+            }
+        }
+    }
+
+    /// Decision 0361 step 6: a running line's rows step by step (`steps`, the executors' counts, decision 0203) against
+    /// the facts its probes were priced by. A probe returning past `shapes::BROKEN_BY` times the most its relation's key
+    /// or fan-out lets it, a probe on average, breaks that fact: the run notes it (`shapes::Broken`), names it in the
+    /// profile (and on stderr in a strict run), and this model's shapes leave the relation out, as every later model's
+    /// do (`Shapes::for_run`): planned from statistics for the rest of the run. Whether a fact broke here.
+    #[doc(hidden)]
+    pub fn layout_broken(&mut self, b: &Body<'_>, order: &[Step], steps: &[(u64, u64)]) -> bool {
+        if self.stats.shapes.0.is_empty() || order.len() != steps.len() {
+            return false;
+        }
+        let mut bound = VarSet::new();
+        let mut broke = false;
+        for (k, s) in order.iter().enumerate() {
+            if k > 0
+                && s.mode.is_none()
+                && let Some(a) = b.atom(s.at).filter(|a| !a.neg())
+            {
+                let rel = b.rel(a);
+                let cols: Vec<usize> = b.args(s.at).iter().enumerate().filter(|(_, t)| t.var().is_some_and(|v| bound.contains(v)) || b.constant(**t).is_some()).map(|(c, _)| c).collect();
+                let (into, made) = steps[k];
+                if let Some(fact) = self.stats.shapes.broken_at(rel, &cols, into, made) {
+                    if shapes::run_broken().note(rel, fact.clone()) {
+                        let text = format!("{rel}: {fact} broken: {into} probes made {made} rows, in {}; planned from statistics for the rest of the run", b.head_text());
+                        if super::profile::strict() {
+                            eprintln!("rerail: a layout fact broken (decision 0361 step 6): {text}");
+                        }
+                        super::profile::decision("broken layout facts (decision 0361 step 6)", || text);
+                    }
+                    broke = true;
+                }
+            }
+            bound.extend(b.vars(s.at));
+        }
+        if broke {
+            self.stats.shapes = shapes::Shapes::for_run(std::sync::Arc::clone(&self.stats.shapes));
+        }
+        broke
+    }
+
     #[doc(hidden)]
     pub fn prepared_heavy(&self, b: &Body<'_>, firsts: &[Option<usize>], running: &[Step]) -> Option<u128> {
         let (line, p) = firsts.iter().map(|f| line_key(b, *f)).find_map(|k| self.stats.prepared.0.get(&k).filter(|p| same_order(&p.order, running)).map(|p| (k, p)))?;
-        let fresh = PLANS.with(|s| s.borrow().as_ref().is_some_and(|s| s.prepared_searched.lock().insert(line)));
+        let fresh = with_plans(|s| s.as_ref().is_some_and(|s| s.prepared_searched.lock().insert(line)));
         if !fresh {
             return None;
         }
@@ -3445,13 +3510,14 @@ impl Model {
         Some(line)
     }
 
-    /// The rows after each step of `order`, as the search prices it (`STEP_ROWS`): what a running line's counts are
+    /// The rows after each step of `order`, as the search prices it (`StepRows`): what a running line's counts are
     /// checked against (`joins::step_miss`), its widest step among them. A pricing, not a search.
     pub(in crate::code_rule_dsl) fn order_step_rows(&self, pf: Fields<'_>, b: &Body<'_>, first: Option<usize>, order: &[Step]) -> Option<Vec<f64>> {
-        let (was, rows_was) = (EXPLAIN_ALWAYS.with(|e| e.replace(true)), STEP_ROWS.with(|e| e.replace(true)));
+        let explain = explaining(true);
+        let step_rows = rerail_prof::code_rule_dsl::logic::profile::bind(StepRows(true));
         let got = self.plan_inner(pf, b, first, Some(order), true);
-        EXPLAIN_ALWAYS.with(|e| e.set(was));
-        STEP_ROWS.with(|e| e.set(rows_was));
+        drop(step_rows);
+        drop(explain);
         got.ok().and_then(|(_, x)| x).map(|x| x.steps.iter().map(|s| s.rows).collect())
     }
 
@@ -3572,20 +3638,19 @@ impl Model {
     ) -> Result<(Plan, Option<super::profile::RulePlan>)> {
         // A line planned with the program from its layouts (decision 0361 step 5): taken as kept, not searched.
         if fixed.is_none()
-            && let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes)
+            && let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes, b, &self.stats.shapes)
         {
+            self.log_assumed(line_key(b, first));
             super::profile::decision("prepared plans (decision 0361 step 5)", || "a line's plan taken as prepared: not searched".to_owned());
             let explained = if explain { self.explain_order(pf, b, first, &plan.0) } else { None };
             return Ok((plan, explained));
         }
-        if self.shapes_for(b.rel(b.head())).is_empty() || NO_SHAPES.with(std::cell::Cell::get) {
+        if self.shapes_for(b.rel(b.head())).is_empty() || rerail_prof::code_rule_dsl::logic::profile::bound::<NoShapes>().0 {
             return self.plan_unshaped(pf, b, first, fixed, explain, cx);
         }
         let free = |this: &Self, explain: bool, cx: &mut joins::SearchCx| {
-            NO_SHAPES.with(|n| n.set(true));
-            let got = this.plan_unshaped(pf, b, first, None, explain, cx);
-            NO_SHAPES.with(|n| n.set(false));
-            got
+            let _unshaped = rerail_prof::code_rule_dsl::logic::profile::bind(NoShapes(true));
+            this.plan_unshaped(pf, b, first, None, explain, cx)
         };
         match self.plan_unshaped(pf, b, first, fixed, explain, cx) {
             Ok(got) => {
@@ -3646,9 +3711,9 @@ impl Model {
             }
             return Ok(got);
         }
-        SKEWING.with(|s| s.set(true));
+        let skewing = rerail_prof::code_rule_dsl::logic::profile::bind(Skewing(true));
         let got = self.plan_search(pf, b, first, fixed, explain, cx);
-        SKEWING.with(|s| s.set(false));
+        drop(skewing);
         let got = got?;
         if fixed.is_none()
             && std::env::var_os("RERAIL_STATS_SKEW_LOG").is_some()
@@ -4302,7 +4367,7 @@ impl Model {
         if !joins.is_empty() && !joins.iter().any(|&i| matches!(b.view(i), Lit::Atom(_))) {
             return Err(Error::Plan(format!("rule for {head} has no positive atom")));
         }
-        let waits = if NO_SHAPES.with(std::cell::Cell::get) { Vec::new() } else { self.shape_waits(b, first, &joins) };
+        let waits = if rerail_prof::code_rule_dsl::logic::profile::bound::<NoShapes>().0 { Vec::new() } else { self.shape_waits(b, first, &joins) };
         let shaped: Vec<String> = { let mut t: Vec<String> = waits.iter().map(|w| w.3.to_owned()).collect(); t.dedup(); t };
         let shape_waits = |i: usize, placed: u64, bound: &dyn Fn(VarSlot) -> bool| -> bool {
             waits.iter().any(|(k, any, vars, _)| *k == i && ((!any.is_empty() && !any.iter().any(|j| placed & (1 << j) != 0)) || vars.iter().any(|v| !bound(*v))))
@@ -4965,7 +5030,7 @@ impl Model {
         // Also when the run may use the device: placement prices each join step from these (decision 0095); and when
         // the body reads a kind-set axis, which takes its expected lookups from them (decision 0143).
         let axis = || (0..b.len()).any(|l| matches!(b.view(l), Lit::Atom(a) if !a.neg() && super::front::is_transduced(b.rel(a))));
-        let explained = (explain && (super::profile::on() || placement::device_on() || EXPLAIN_ALWAYS.with(std::cell::Cell::get) || axis())).then(|| {
+        let explained = (explain && (super::profile::on() || placement::device_on() || rerail_prof::code_rule_dsl::logic::profile::bound::<ExplainAlways>().0 || axis())).then(|| {
             let _explain = super::profile::span(|| "explain record".into());
             // The chosen order step by step, priced as the search priced it.
             let mut bound = VarSet::new();
@@ -4973,7 +5038,7 @@ impl Model {
             let mut steps = Vec::new();
             let mut placed: BTreeSet<usize> = BTreeSet::new();
             // Each step's rows alone (`plan_rule_step_rows`): as below, with nothing made for EXPLAIN to show.
-            if STEP_ROWS.with(std::cell::Cell::get) {
+            if rerail_prof::code_rule_dsl::logic::profile::bound::<StepRows>().0 {
                 for s in &order {
                     match b.view(s.at) {
                         Lit::Atom(a) if !a.neg() => {
@@ -5243,7 +5308,8 @@ pub fn make_plan(p: &body::Placed, db: &Connection, mut inputs: Inputs) -> Resul
         .chain(f.fact_rels().into_iter().map(|r| f.text(r.name())).filter(|rel| !f.is_input(rel)).map(str::to_owned))
         .collect();
     let mut stats = Stats::new(db, p, &mut inputs)?;
-    stats.shapes = shapes::Shapes::of_version(&p.v);
+    // Without the relations whose facts the run's rows broke (decision 0361 step 6).
+    stats.shapes = shapes::Shapes::for_run(shapes::Shapes::of_version(&p.v));
     stats.prepared = prepared::Prepared::of_version(&p.v);
     let mut ndv = ColMap::default();
     for (rel, (_, rows)) in &inputs.batch {
@@ -9532,7 +9598,10 @@ impl<'a> Run<'a, '_> {
                     let checked = joins::check(key, work, &probes[k].2);
                     // Its rows against its order's step by step: the widest blown up, or a step far under its price.
                     let miss = self.model.line_miss(pf, &vs.at(r), Some(ai), &probes[k].2, key, c, &mut expected[line]);
-                    if (checked || miss.is_some() || self.model.prepared_horribly_slow(&vs.at(r), &[Some(ai)], &probes[k].2, work))
+                    // Its probes' rows against the facts they were priced by (decision 0361 step 6): a fact broken
+                    // leaves its relation to the statistics, and a prepared order priced by it is searched.
+                    let broken = self.model.layout_broken(&vs.at(r), &probes[k].2, c);
+                    if (checked || miss.is_some() || broken || self.model.prepared_horribly_slow(&vs.at(r), &[Some(ai)], &probes[k].2, work))
                         && self.model.prepared_heavy(&vs.at(r), &[Some(ai)], &probes[k].2).is_some()
                     {
                         replanned_at.force(k);
@@ -9800,6 +9869,10 @@ impl<'a> Run<'a, '_> {
                 // A seed or whole plan is checked here, at its cut (a probe was, above).
                 if led && let Some(key) = keys.get(line).copied().flatten() {
                     let running = order_now(&orders, &probes, &wholes);
+                    // Its rows against the facts its order was priced by (decision 0361 step 6).
+                    if let Some(steps) = counted.get(line) {
+                        self.model.layout_broken(&b, &running, steps);
+                    }
                     // Its prepared order, heavy: searched now with the run's statistics, and a better order goes on
                     // under the handoff (decision 0206), which goes back to this one where it runs slower a row.
                     if self.model.prepared_heavy(&b, &[first, None], &running).is_some() {
@@ -10328,7 +10401,7 @@ impl<'a> Run<'a, '_> {
             }
             // Decision 0203 §4: each line's work, its order and its price for the rows it read, for the run's
             // critical path; a line heavy enough is searched wider in the background.
-            if joins::on() && PLANS.with(|p| p.borrow().is_some()) {
+            if joins::on() && with_plans(|p| p.is_some()) {
                 let stratum = scc.iter().next().cloned().unwrap_or_default();
                 let lines: Vec<(RuleKey, Option<usize>, &[Step])> = orders.iter().map(|(r, o)| (*r, None, o.as_slice())).chain(probes.iter().map(|p| (p.0, Some(p.1), p.2.as_slice()))).collect();
                 let mut runs = Vec::new();
@@ -11268,7 +11341,7 @@ impl<'a> Cells<'a> {
         const PART: usize = 1 << 15;
         if rows.len() / w >= 2 * PART {
             use rayon::prelude::*;
-            return rows.par_chunks(PART * w).map(|part| self.sum_one(part)).reduce(|| 0, u64::wrapping_add);
+            return super::profile::on_cores(|| rows.par_chunks(PART * w).map(|part| self.sum_one(part)).reduce(|| 0, u64::wrapping_add));
         }
         self.sum_one(rows)
     }
@@ -11286,7 +11359,7 @@ impl<'a> Cells<'a> {
             0
         } else if ids >= 2 * PART {
             use rayon::prelude::*;
-            (0..ids).into_par_iter().step_by(PART).map(part).reduce(|| 0, u64::wrapping_add)
+            super::profile::on_cores(|| (0..ids).into_par_iter().step_by(PART).map(part).reduce(|| 0, u64::wrapping_add))
         } else {
             part(0)
         };
@@ -11700,7 +11773,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     let setup = super::profile::span(|| "setup".into());
     connection::run(db,4,||super::strings::register(db))?;
     connection::run(db,8,||super::native::aggregation::register_sum(db))?;
-    if inputs.atoms.is_some() && inputs.given.is_some() && PLANS.with(|p|p.borrow().is_some())
+    if inputs.atoms.is_some() && inputs.given.is_some() && with_plans(|p|p.is_some())
         && hooks.answer.is_none()
         && compose::enabled() && compose::accepts(&normal_v)? {
         let p=&normal_v;
@@ -11771,7 +11844,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     if super::profile::on() {
         super::profile::work(super::profile::Unit::Literal, literals(&normal_v));
     }
-    let corpus = PLANS.with(|p| p.borrow().is_some());
+    let corpus = with_plans(|p| p.is_some());
     // Both rewrites below keep the program's meaning and read every rule: a corpus run takes the choices an earlier
     // run or chunk made for the same program at its scale or more (`choices`, decision 0090 §5).
     // A program of no rules (a cross part whose every stratum is kept) has no choice to make, so none is kept for it:
@@ -13920,7 +13993,7 @@ mod search_tests {
         )
         .unwrap();
         let model = model_with(&prog, &[("a", 50.0, &[50.0]), ("b", 100_000.0, &[1_000.0, 5_000.0]), ("c", 20_000.0, &[5_000.0, 300.0]), ("d", 9_000.0, &[300.0, 700.0])]);
-        let was = explaining(true);
+        let explain = explaining(true);
         for r in &prog.rules {
             let made = body::alone(r).unwrap();
             let b = body::nth(&made, 0);
@@ -13932,7 +14005,7 @@ mod search_tests {
                 assert_eq!(rows, recorded, "{r} from {first:?}");
             }
         }
-        explaining(was);
+        drop(explain);
     }
 }
 
@@ -14750,7 +14823,7 @@ mod ordered_tests {
     fn a_chunk_sees_the_plans_filed_before_its_window_never_a_neighbours() {
         let _plans = KeepPlans::start(None);
         let mut ordered = OrderedPlans::begin(2).expect("a corpus run's plans");
-        let put = |key: PlanKey, w: f64| PLANS.with(|p| plans_put(p.borrow().as_ref().unwrap(), key, (Arc::from(Vec::<Step>::new()), w, None, 1.0, None, None)));
+        let put = |key: PlanKey, w: f64| with_plans(|p| plans_put(p.as_ref().unwrap(), key, (Arc::from(Vec::<Step>::new()), w, None, 1.0, None, None)));
         let get = |key: PlanKey| plans_get(&key).map(|k| k.1);
         let (v0, v1) = (ordered.next(), ordered.next());
         let ((), m0) = in_view(&v0, || put(1, 10.0));

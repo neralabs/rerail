@@ -47,6 +47,8 @@ struct Queued<'s> {
     rank: f64,
     job: Box<dyn FnOnce() + Send + 's>,
     ticket: Ticket,
+    /// The run that submitted it: the job runs in it, on whichever thread claims it (decision 0442).
+    run: Option<Arc<dyn rerail_context::RunOwn>>,
 }
 
 struct State<'s> {
@@ -83,6 +85,8 @@ impl<'s> State<'s> {
     }
 
     fn run(&self, mut j: Queued<'s>, caller: bool) {
+        // In its run from its start to its finish: the scoreboard files the job's measures in the run's samples.
+        let in_run = rerail_context::enter(j.run.take());
         self.board.start(&mut j.ticket);
         let now = self.running.fetch_add(1, Ordering::AcqRel) + 1;
         self.peak.fetch_max(now, Ordering::AcqRel);
@@ -91,6 +95,7 @@ impl<'s> State<'s> {
         IN_JOB.set(IN_JOB.get() - 1);
         self.running.fetch_sub(1, Ordering::AcqRel);
         self.board.finish(j.ticket, true);
+        drop(in_run);
         if caller { &self.by_caller } else { &self.by_workers }.fetch_add(1, Ordering::Relaxed);
         *self.ended.lock().unwrap_or_else(|p| p.into_inner()) += 1;
         self.wake.notify_all();
@@ -143,7 +148,7 @@ impl<'s> Stream<'s, '_> {
             *to.lock().unwrap_or_else(|p| p.into_inner()) = Some(r);
         });
         let ticket = st.board.queue(Lane::Cpu, vec![Item { form: st.name, units: 0.0, estimate, host: estimate }]);
-        st.queue.lock().unwrap_or_else(|p| p.into_inner()).push(Queued { id, estimate, rank, job, ticket });
+        st.queue.lock().unwrap_or_else(|p| p.into_inner()).push(Queued { id, estimate, rank, job, ticket, run: rerail_context::job_run() });
         self.start_workers();
         Handle { id, slot }
     }
@@ -253,7 +258,7 @@ impl Executor {
     /// Runs `f` with a host stream named `name` open (a scope: its jobs may borrow what outlives the call). Jobs still
     /// queued when `f` returns (its caller waited for none of them: an error left early) are dropped unrun.
     pub fn stream<'s, R>(&self, name: &'static str, f: impl FnOnce(&Stream<'s, '_>) -> R) -> R {
-        rayon::in_place_scope(|scope: &rayon::Scope<'s>| {
+        rerail_context::cores_scope(|scope: &rayon::Scope<'s>| {
             let state = Arc::new(State {
                 name,
                 queue: Mutex::new(Vec::new()),

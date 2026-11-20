@@ -457,6 +457,7 @@ fn fit(path: &PathBuf, samples: &[rerail_accel::score::Sample], upkeep: bool, st
             .num_threads(TRAINING_THREADS)
             .thread_name(|i| format!("rerail-cost-model-{i}"))
             .start_handler(move |_| {
+                rerail_prof::code_rule_dsl::logic::profile::engine_thread();
                 if upkeep {
                     rerail_accel::upkeep::lower_this_thread();
                 } else {

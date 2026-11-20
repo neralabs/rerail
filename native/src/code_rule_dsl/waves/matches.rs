@@ -538,20 +538,22 @@ impl Wave {
         use rayon::prelude::*;
         // Each clause's starts per file: its set's nodes where its root program starts, ascending
         // (the set's order). Held through the labels and the roots: no growth slack.
-        sets.into_par_iter()
-            .enumerate()
-            .map(|(clause, set)| {
-                let out = (0..tapes.len())
-                    .map(|file| {
-                        let mut nodes = set.file_nodes(&space, file).filter(|&node| self.lowered.starts(clause, &tapes[file].doc, node)).collect::<Vec<_>>();
-                        nodes.shrink_to_fit();
-                        nodes
-                    })
-                    .collect::<Vec<_>>();
-                crate::code_rule_dsl::prof::count("candidates.kept", out.iter().map(Vec::len).sum());
-                Ok(out)
-            })
-            .collect()
+        crate::code_rule_dsl::logic::profile::on_cores(|| {
+            sets.into_par_iter()
+                .enumerate()
+                .map(|(clause, set)| {
+                    let out = (0..tapes.len())
+                        .map(|file| {
+                            let mut nodes = set.file_nodes(&space, file).filter(|&node| self.lowered.starts(clause, &tapes[file].doc, node)).collect::<Vec<_>>();
+                            nodes.shrink_to_fit();
+                            nodes
+                        })
+                        .collect::<Vec<_>>();
+                    crate::code_rule_dsl::prof::count("candidates.kept", out.iter().map(Vec::len).sum());
+                    Ok(out)
+                })
+                .collect()
+        })
     }
 
     /// Each clause family's row estimate in `fact_stats`, and the terminal relation's (their

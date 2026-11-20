@@ -297,9 +297,9 @@ fn run_probe(src: &str, rel: &str) -> std::result::Result<Verdict, String> {
         crate::code_rule_dsl::logic::native::declare("shortlex_min", std::sync::Arc::new(crate::code_rule_dsl::logic::native::ShortlexMin(store.atoms_handle())));
         let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
         let lowered = lower::lowered(p.clone(), python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).map_err(|e| format!("unlowered: {e}"))?;
-        let was = placement::set_binding(binding);
+        let bound = placement::set_binding(binding);
         let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty_of_lowered(&lowered).map_err(|e| format!("stats: {e}"))?, BTreeSet::new(), modes);
-        placement::set_binding(was);
+        drop(bound);
         let got = got.map_err(|e| format!("error: {e}"))?;
         let ran = placement::recorded(rel);
         Ok((sorted(got.outputs.get(rel).map(|r| r.shown()).unwrap_or_default()), got.native.iter().any(|k| k.split('/').any(|r| r == rel)), ran))
@@ -577,16 +577,18 @@ fn census() -> &'static (BTreeMap<String, BTreeSet<String>>, usize, usize) {
     CENSUS.get_or_init(|| {
         use rayon::prelude::*;
         let files = shipped();
-        let read: Vec<Option<BTreeMap<String, String>>> = files
-            .par_iter()
-            .map(|f| {
-                let text = std::fs::read_to_string(f).ok()?;
-                let items = rerail_rr_syntax::syntax::Parser::new(&text).and_then(|mut p| p.statements()).ok()?;
-                let mut used = BTreeMap::new();
-                ops_of(&items, &mut used, &f.display().to_string());
-                Some(used)
-            })
-            .collect();
+        let read: Vec<Option<BTreeMap<String, String>>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+            files
+                .par_iter()
+                .map(|f| {
+                    let text = std::fs::read_to_string(f).ok()?;
+                    let items = rerail_rr_syntax::syntax::Parser::new(&text).and_then(|mut p| p.statements()).ok()?;
+                    let mut used = BTreeMap::new();
+                    ops_of(&items, &mut used, &f.display().to_string());
+                    Some(used)
+                })
+                .collect()
+        });
         let unread = read.iter().filter(|r| r.is_none()).count();
         let mut used: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for one in read.into_iter().flatten() {

@@ -50,3 +50,5 @@ python3 scripts/check/check_dev_features.py
 python3 scripts/check/check_no_block_copies.py
 # No process-global state (decision 0442): a commit that adds a static the list does not hold is refused.
 python3 scripts/check/check_no_global_state.py
+# A job pool per machine (decision 0442): parallel work outside the machine's pool reaches rayon's global one.
+python3 scripts/check/check_machine_pool.py

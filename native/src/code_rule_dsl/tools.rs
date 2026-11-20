@@ -812,8 +812,9 @@ const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine du
 /// it keeps.
 ///
 /// Returns the command's result, and where it cut a relation at the width cap (decision 0462, `RERAIL_WIDEST=cut`) the
-/// message that its results are incomplete: the caller fails the process with it.
-pub fn cli(args: &[String]) -> (Result<String, String>, Option<String>) {
+/// message that its results are incomplete: the caller fails the process with it. So too where the engine read state
+/// outside any run (decision 0442, `rerail_context::misses`): a refused read, which took a value of its own.
+pub fn cli(args: &[String], machine: &std::sync::Arc<crate::threads::Machine>) -> (Result<String, String>, Option<String>) {
     // Decision 0272 (O167): the process ends with its command, before any idle time, so each run serves its waiting
     // join searches at its end, within a share of its CPU (decision 0243). A long-lived caller of `cli_in` leaves
     // them to the idle job.
@@ -822,8 +823,9 @@ pub fn cli(args: &[String]) -> (Result<String, String>, Option<String>) {
     crate::code_rule_dsl::logic::profile::command_begins();
     // Decision 0395: a run never waits on a Metal compile of a kernel it has another form of; the kernels it went
     // without are compiled by maintenance (below, upkeep, `kernels compile`).
-    // The process's command, its own caller: what it shares by design is its own (decision 0442), its machine too.
-    let shared = crate::code_rule_dsl::logic::run::Shared::new();
+    // The process's command, its own caller: what it shares by design is its own, on the machine its program made
+    // (decision 0442).
+    let shared = crate::code_rule_dsl::logic::profile::Shared::on(machine);
     #[cfg(target_os = "macos")]
     if args.first().is_none_or(|c| c != "kernels") {
         rerail_accel::gpu::kernels::set_mode(shared.machine(), rerail_accel::gpu::kernels::Mode::Defer);
@@ -844,6 +846,14 @@ pub fn cli(args: &[String]) -> (Result<String, String>, Option<String>) {
             c.wall, c.own + c.helped, c.off_core(), c.others(), c.no_core()
         );
     }
+    let misses = crate::code_rule_dsl::logic::profile::misses();
+    let refused = (!misses.is_empty()).then(|| {
+        format!("{} read(s) outside any run, refused (decision 0442; each with its backtrace above): {}", misses.len(), misses.join(", "))
+    });
+    let incomplete = match (incomplete, refused) {
+        (Some(a), Some(b)) => Some(format!("{a}\n{b}")),
+        (a, b) => a.or(b),
+    };
     (out, incomplete)
 }
 

@@ -583,12 +583,12 @@ pub mod heap {
         pub(super) fn record(at: usize) {
             let Some(t) = table() else { return };
             let row = &t[at * DEPTH..(at + 1) * DEPTH];
+            // Off macOS on Apple silicon no frame is walked: the row stays empty.
+            #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
             let got = [0usize; DEPTH + SKIP];
-            // The frame walk fills it (Apple silicon only; elsewhere it stays empty).
             #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-            let mut got = got;
-            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-            {
+            let got = {
+                let mut got = [0usize; DEPTH + SKIP];
                 let mut fp: usize;
                 unsafe { std::arch::asm!("mov {}, x29", out(reg) fp) };
                 let start = fp;
@@ -605,7 +605,8 @@ pub mod heap {
                     }
                     fp = next;
                 }
-            }
+                got
+            };
             for (cell, v) in row.iter().zip(got[SKIP..].iter()) {
                 cell.store(*v, Relaxed);
             }

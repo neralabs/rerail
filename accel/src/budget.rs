@@ -17,13 +17,40 @@ pub const MEMORY_DEFAULT: usize = 1 << 30;
 /// The budgets set (`set_memory_mb`, `set_metal_mb`; 0: from the environment, or the defaults): the machine's
 /// (decision 0442), which every caller on it shares.
 #[derive(Default)]
-struct Budgets {
+pub(crate) struct Budgets {
     memory: AtomicUsize,
     metal: AtomicUsize,
 }
 
-fn budgets() -> std::sync::Arc<Budgets> {
+/// The budgets of the caller's machine: what a lease keeps to go back to its own (`gpu::shared::Pooled`).
+pub(crate) fn budgets() -> std::sync::Arc<Budgets> {
     rerail_context::machine::<Budgets>()
+}
+
+impl Budgets {
+    /// This machine's Metal budget, in bytes (`metal`).
+    pub(crate) fn metal(&self) -> usize {
+        #[cfg(test)]
+        if let bytes @ 1.. = METAL_TEST.with(std::cell::Cell::get) {
+            return bytes;
+        }
+        match self.metal.load(Ordering::Relaxed) {
+            0 => env_mb("RERAIL_METAL_MB").unwrap_or_else(|| self.memory() / 2),
+            bytes => bytes,
+        }
+    }
+
+    /// This machine's overall budget, in bytes (`memory`).
+    pub(crate) fn memory(&self) -> usize {
+        match self.memory.load(Ordering::Relaxed) {
+            0 => {
+                let bytes = env_mb("RERAIL_MEMORY_MB").unwrap_or(MEMORY_DEFAULT);
+                self.memory.store(bytes, Ordering::Relaxed);
+                bytes
+            }
+            bytes => bytes,
+        }
+    }
 }
 
 fn env_mb(name: &str) -> Option<usize> {
@@ -32,15 +59,7 @@ fn env_mb(name: &str) -> Option<usize> {
 
 /// The overall budget, in bytes.
 pub fn memory() -> usize {
-    let budgets = budgets();
-    match budgets.memory.load(Ordering::Relaxed) {
-        0 => {
-            let bytes = env_mb("RERAIL_MEMORY_MB").unwrap_or(MEMORY_DEFAULT);
-            budgets.memory.store(bytes, Ordering::Relaxed);
-            bytes
-        }
-        bytes => bytes,
-    }
+    budgets().memory()
 }
 
 #[cfg(test)]
@@ -51,14 +70,7 @@ thread_local! {
 
 /// The Metal budget, in bytes: half the overall budget unless set.
 pub fn metal() -> usize {
-    #[cfg(test)]
-    if let bytes @ 1.. = METAL_TEST.with(std::cell::Cell::get) {
-        return bytes;
-    }
-    match budgets().metal.load(Ordering::Relaxed) {
-        0 => env_mb("RERAIL_METAL_MB").unwrap_or_else(|| memory() / 2),
-        bytes => bytes,
-    }
+    budgets().metal()
 }
 
 /// Sets the overall budget (a command line's `--memory-mb`); 0 is refused.
@@ -109,9 +121,11 @@ fn count() -> std::sync::Arc<Count> {
 pub fn set_heap_reader(f: fn() -> usize) {
     let c = count();
     if c.heap.set(f).is_ok() {
-        // The machine's own thread: it reads its caller's shared and machine values (the pool, the host blocks).
+        // A service of the machine's (decision 0100 §12: a sampler on its clock is no job). It reads its caller's
+        // shared and machine values (the pool, the host blocks): the run's, else those outside a run (`shared_here`),
+        // as it may be started before any run.
         let shared = rerail_context::shared_here();
-        let _ = std::thread::Builder::new().name("rerail-budget-sampler".into()).spawn(move || {
+        let _ = crate::exec::service("rerail-budget-sampler", None, move || {
             let _within = rerail_context::within(shared);
             loop {
                 let _ = c.written();

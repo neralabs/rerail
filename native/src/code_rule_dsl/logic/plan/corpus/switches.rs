@@ -18,7 +18,6 @@
 //! another plan, and recorded two manifests of its own; started while a session test held `RERAIL_CROSS_K4=off`,
 //! `the_run_after_a_cold_one_writes_nothing`'s warm run wrote.
 
-use std::cell::Cell;
 use std::sync::{Condvar, Mutex};
 
 #[derive(Default)]
@@ -34,14 +33,15 @@ struct State {
 static STATE: Mutex<State> = Mutex::new(State { readers: 0, writer: false, waiting: 0 });
 static CHANGED: Condvar = Condvar::new();
 
-thread_local! {
-    /// How deep this thread is in runs (and in `set`): only the outermost takes the switches.
-    static DEPTH: Cell<usize> = const { Cell::new(0) };
-}
+/// How deep the run's context is in runs (and in `set`): only the outermost takes the switches. A job's run is as deep
+/// as its caller's (decision 0442: the context goes with the job), so a run there does not take them again.
+#[derive(Clone, Copy, Default)]
+struct Depth(usize);
 
-/// Carries the depth to a job on another thread (`run_state`): a run there does not take the switches again.
-pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
-    c.copy(&["DEPTH"], &DEPTH);
+/// One level deeper until the guard drops, and whether it is the outermost.
+fn deeper() -> (crate::code_rule_dsl::logic::profile::Bound, bool) {
+    let d = crate::code_rule_dsl::logic::profile::bound::<Depth>().0 + 1;
+    (crate::code_rule_dsl::logic::profile::bind(Depth(d)), d == 1)
 }
 
 fn state() -> std::sync::MutexGuard<'static, State> {
@@ -59,14 +59,12 @@ fn before_taking() {
 /// Held by a run while it reads the switches.
 pub struct Reading {
     outermost: bool,
+    _depth: crate::code_rule_dsl::logic::profile::Bound,
 }
 
 /// The switches held for a run: no test changes them until it drops.
 pub fn reading() -> Reading {
-    let outermost = DEPTH.with(|d| {
-        d.set(d.get() + 1);
-        d.get() == 1
-    });
+    let (depth, outermost) = deeper();
     if outermost {
         before_taking();
         let mut s = state();
@@ -75,12 +73,11 @@ pub fn reading() -> Reading {
         }
         s.readers += 1;
     }
-    Reading { outermost }
+    Reading { outermost, _depth: depth }
 }
 
 impl Drop for Reading {
     fn drop(&mut self) {
-        DEPTH.with(|d| d.set(d.get() - 1));
         if self.outermost {
             state().readers -= 1;
             CHANGED.notify_all();
@@ -99,14 +96,12 @@ pub fn started<T>(start: impl FnOnce() -> T) -> T {
 pub struct Set {
     was: Vec<(String, Option<std::ffi::OsString>)>,
     outermost: bool,
+    _depth: crate::code_rule_dsl::logic::profile::Bound,
 }
 
 /// Sets each `(variable, value)` once no run on another thread reads the switches, and holds them until dropped.
 pub fn set(vars: &[(&str, &str)]) -> Set {
-    let outermost = DEPTH.with(|d| {
-        d.set(d.get() + 1);
-        d.get() == 1
-    });
+    let (depth, outermost) = deeper();
     if outermost {
         before_taking();
         let mut s = state();
@@ -121,7 +116,7 @@ pub fn set(vars: &[(&str, &str)]) -> Set {
     // SAFETY: no run on another thread reads the variables while this is held (`reading`), and the tests that set
     // them hold this.
     unsafe { vars.iter().for_each(|(k, v)| std::env::set_var(k, v)) };
-    Set { was, outermost }
+    Set { was, outermost, _depth: depth }
 }
 
 impl Drop for Set {
@@ -135,7 +130,6 @@ impl Drop for Set {
                 }
             }
         }
-        DEPTH.with(|d| d.set(d.get() - 1));
         if self.outermost {
             state().writer = false;
             CHANGED.notify_all();

@@ -2240,10 +2240,10 @@ flat(x) :- kind(m, "identifier"), text(m, x).
     let q266 = |rows: u64| 8 * 3 * rows;
     let uploaded = || rerail_prof::copies::sites().into_iter().filter(|(site, _)| site.name.contains("DevRel::upload")).map(|(_, t)| t.bytes).sum::<u64>();
     let on_device = |name: &str, files: &[(&str, &str)], program: &str, output: &str| {
-        let was = crate::code_rule_dsl::logic::plan::placement::set_binding(crate::code_rule_dsl::logic::plan::placement::Binding::Always);
+        let bound = crate::code_rule_dsl::logic::plan::placement::set_binding(crate::code_rule_dsl::logic::plan::placement::Binding::Always);
         let before = uploaded();
         let got = batch_run_on(name, files, program, output, Binding::Metal);
-        crate::code_rule_dsl::logic::plan::placement::set_binding(was);
+        drop(bound);
         (got, uploaded() - before)
     };
     let none = [("a.py", "x = []\ndef f(a): pass\n")];

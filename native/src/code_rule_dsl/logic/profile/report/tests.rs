@@ -18,14 +18,20 @@
         };
         assert_eq!(under.as_deref(), Some("xrun/evaluate"));
         // As `Ambient::enter` opens a job: its span at the issuing run's path, the members' spans under it.
+        // The thread is in its starter's run, profiling as it is (`carry`: the run and the switch).
+        let carry = super::super::carry();
         std::thread::spawn(move || {
+            let _carry = carry.enter("job");
             let _issued = super::super::span_at(under.as_deref(), || "issued components (stream job)".into());
             let _job = span(|| "stratum s (in a job)".into());
             assert_eq!(super::super::here().as_deref(), Some("xrun/evaluate/issued components (stream job)/stratum s (in a job)"));
         })
         .join()
         .unwrap();
-        std::thread::spawn(|| {
+        // The thread is in its starter's run, profiling as it is (`carry`: the run and the switch).
+        let carry = super::super::carry();
+        std::thread::spawn(move || {
+            let _carry = carry.enter("job");
             let _job = span(|| "xloose".into());
             assert_eq!(super::super::here().as_deref(), Some("xloose"));
         })

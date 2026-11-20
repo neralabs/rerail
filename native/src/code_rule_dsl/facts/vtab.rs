@@ -232,8 +232,9 @@ pub trait Source: Send + Sync {
         None
     }
     /// Its rows as one relation of `rerail_blocks` in one block, every source column at its own place, which the
-    /// device reads where they lie (decision 0325 step 3) and a probe reads through the relation's own index (on every
-    /// target). `None`: the device copies them (`device_view`, `row_at`).
+    /// device reads where they lie (decision 0325 step 3), a probe reads through the relation's own index, and the CPU's
+    /// index of a whole source finds or builds in its block (setfix), on every target. `None`: the device copies them
+    /// (`device_view`, `row_at`).
     fn in_block(&self) -> Option<super::rows::InBlock> {
         None
     }
