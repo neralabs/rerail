@@ -29,10 +29,15 @@ for (const scenario of ["mature", "packs-no-session", "no-packs"] satisfies Scen
     // The section is styled as the Create page's own: no rule of another page's reaches it.
     const style = await places.evaluate(section => {
       const own = getComputedStyle(section);
-      const intro = getComputedStyle(section.querySelector("p.pintro")!);
-      return { background: own.backgroundColor, borderLeft: own.borderLeftWidth, paddingLeft: own.paddingLeft, introTop: intro.marginTop };
+      const text = (paragraph: Element) => [getComputedStyle(paragraph).color, getComputedStyle(paragraph).marginBottom];
+      return {
+        box: [own.backgroundColor, own.borderLeftWidth, own.paddingLeft],
+        intro: text(section.querySelector("p.pintro")!),
+        page: text(section.parentElement!.querySelector(":scope > p.pintro")!),
+      };
     });
-    expect(style).toEqual({ background: "rgba(0, 0, 0, 0)", borderLeft: "0px", paddingLeft: "0px", introTop: "12px" });
+    expect(style.box).toEqual(["rgba(0, 0, 0, 0)", "0px", "0px"]);
+    expect(style.intro).toEqual(style.page);
     await expect(places.locator('[data-act="addpack"]')).toHaveCount(expected.length);
     const shown = await places.locator('[data-act="addpack"]').evaluateAll(buttons => buttons.map(b => b.getAttribute("data-i") ?? ""));
     expect(shown.sort()).toEqual(expected);
