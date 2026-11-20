@@ -683,3 +683,20 @@ describe("Claude Code one-shot hook", () => {
     )).toEqual({});
   });
 });
+
+describe("a Claude Code hook while the daemon is not reading", () => {
+  it("leaves its event and answers as with nothing to deliver, keeping the steers held for the session for the next hook the daemon answers", async () => {
+    const root = await temporaryDirectory();
+    const storageRoot = join(root, "sessions");
+    const common = { session_id: "claude-session", cwd: root };
+    const stopLoop = scriptedLoop({ "turn-end": [delivery("steer", "Deferred steer.")] });
+    expect(await handleClaudeEvent({ ...common, hook_event_name: "Stop", prompt_id: "p1", stop_hook_active: true }, stopLoop, storageRoot)).toEqual({});
+    const left = { ...scriptedLoop({}), untaken: true as const };
+    // Without its own branch, the hook would route the held steer into its answer and empty the session's file.
+    const call = { ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_input: {} };
+    expect(await handleClaudeEvent({ ...call, tool_use_id: "tool-1" }, left, storageRoot)).toEqual({});
+    expect(left.events.map(event => event.kind)).toEqual(["call"]);
+    expect(await handleClaudeEvent({ ...call, tool_use_id: "tool-2" }, scriptedLoop({}), storageRoot, { NO_COLOR: "1" }))
+      .toEqual({ hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: expect.stringContaining("Deferred steer.") } });
+  });
+});
