@@ -90,5 +90,16 @@ Under 0353 every one of these is a copy, and none was in its list. This decision
 
 ## Measured
 
-Still to do: the dl1 44-policy batch, against 0276 §3's a26e71b5d (cold 81.7 G instructions, warm 5.7 G then 3.3 G,
-48 findings, M3 at load 40–50).
+The dl1 44-policy batch, as 0276 §3 ran it (profiling build, images required, CPU, strict, a fresh store, the M3
+farm host at load 35–53), at a282371e9:
+
+| | a26e71b5d (0276 §3) | a282371e9 (this decision) |
+|---|---|---|
+| findings | 48 | 48, in each of the three runs |
+| cold | 81.7 G instructions | 79.9 G (20.8 s wall at load 53) |
+| warm, first | 5.7 G | 3.7 G |
+| warm, second | 3.3 G | 3.3 G |
+
+So the batch costs no more than before. The two columns are many commits apart, so the difference is not this
+decision's alone. Q294 records the one test that got slower on Linux, which waits on the store's msync, not on an
+image.

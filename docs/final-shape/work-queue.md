@@ -1209,7 +1209,9 @@ pass.
   and strings, not node trees (`Depth::Held`), except for foreign bytes and in debug builds. One fold rule (0456 K4's
   geometric one), kills by range as views, and views stay their own form. The program image, program text, rr,
   store and logic tests pass (Linux: 204 of the engine's; M1 Max: 703 of the three crates').
-- **Left**: the dl1 44-policy batch against a26e71b5d (0276 §3), the "costs no more" half of done.
+- **Done** (2026-11-19, a282371e9, the M3 at load 35–53): dl1's 44-policy batch, images required, gives 48
+  findings cold and warm. It retires 79.9 G instructions cold (a26e71b5d: 81.7 G) and 3.7 G then 3.3 G warm (5.7 G
+  then 3.3 G). Decision 0464, "Measured".
 
 ### Q27. `value_types_are_ws_value_types` reads only the string-typed values
 
