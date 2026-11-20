@@ -578,7 +578,8 @@ UKL_INLINE void pe_gap_keys(UKL_GLOBAL const uint32_t* gslot, UKL_GLOBAL const u
 // The stretch at place `p` in the unit's order (`order`, the sort's): its tokens (0 where it is
 // not active), from the directive before it to the one after it, by the rows' text counts (the
 // file's text after its last directive), its first text token and its slot.
-UKL_INLINE void pe_gap_counts(UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32_t* n_insts, UKL_GLOBAL const uint32_t* gactive, UKL_GLOBAL const uint32_t* n_gaps, UKL_GLOBAL const uint32_t* dir_bases, UKL_GLOBAL const uint32_t* dir_total, UKL_GLOBAL const PpDir* rows, UKL_GLOBAL const uint32_t* bases, UKL_GLOBAL const uint32_t* total, UKL_GLOBAL const uint32_t* text_rank, UKL_GLOBAL const uint32_t* text_total, UKL_GLOBAL uint32_t* counts, UKL_GLOBAL uint32_t* firsts, UKL_GLOBAL const uint32_t* order, UKL_GLOBAL const uint64_t* gkeys, UKL_GLOBAL uint32_t* sslot, UKL_GLOBAL uint32_t* sinst, uint32_t n_files, uint32_t p) {
+UKL_INLINE void pe_gap_counts(UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32_t* n_insts, UKL_GLOBAL const uint32_t* gactive, UKL_GLOBAL const uint32_t* n_gaps, UKL_GLOBAL const uint32_t* dir_bases, UKL_GLOBAL const uint32_t* dir_total, UKL_GLOBAL const PpDir* rows, UKL_GLOBAL const uint32_t* bases, UKL_GLOBAL const uint32_t* total, UKL_GLOBAL const uint32_t* text_rank, UKL_GLOBAL const uint32_t* text_total, UKL_GLOBAL uint32_t* counts, UKL_GLOBAL uint32_t* firsts, UKL_GLOBAL const uint32_t* order, UKL_GLOBAL const uint64_t* gkeys, UKL_GLOBAL uint32_t* sslot, UKL_GLOBAL uint32_t* sinst,
+                              UKL_GLOBAL const uint32_t* latest, UKL_GLOBAL const uint32_t* latestn, UKL_GLOBAL uint32_t* sline, UKL_GLOBAL uint32_t* slinen, uint32_t n_files, uint32_t p) {
     if (p >= n_gaps[0]) return;
     uint32_t j = order[p];
     uint32_t lo = 0u, hi = n_insts[0];
@@ -595,6 +596,9 @@ UKL_INLINE void pe_gap_counts(UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const u
     firsts[p] = t0 + first;
     sslot[p] = ((uint32_t)(gkeys[p]));
     sinst[p] = lo;
+    // The latest `#line` rows before the stretch in its instance: after its directive `k - 1`.
+    sline[p] = k > 0u ? latest[insts[lo].dir_first + k - 1u] : 0u;
+    slinen[p] = k > 0u ? latestn[insts[lo].dir_first + k - 1u] : 0u;
 }
 
 // Each active stretch token's meaning where it stands (R4's test): `L_NOT_NAME` where it is no
@@ -773,6 +777,9 @@ typedef struct Ux {
     // The dialect's operators by their names' keys (their kinds), and the configuration's answers.
     UKL_GLOBAL const uint64_t* op_keys; UKL_GLOBAL const uint32_t* op_kinds; uint32_t n_ops;
     UKL_GLOBAL const uint64_t* feat_keys; UKL_GLOBAL const uint64_t* feat_vals; uint32_t n_feat;
+    // `#line`'s rows: each top stretch's latest before it (its word + 1, 0 none) and latest with a
+    // file, each row's offset, and the rows' first scratch token (two a word: its literals).
+    UKL_GLOBAL const uint32_t* tline; UKL_GLOBAL const uint32_t* tlinen; UKL_GLOBAL const uint32_t* ldelta; uint32_t lt0;
 } Ux;
 
 // Whether `p[0..n)` holds a line splice (`\`, blanks, a newline): its phase-2 spelling differs.
@@ -1918,15 +1925,17 @@ UKL_INLINE void px_builtin(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
     if (L->def == L_DATE || L->def == L_TIME || L->def == L_TIMESTAMP) {
         ref = SCRATCH | (u.n_files + (L_DATE - L->def));
     } else if (L->def != L_LINE) {
-        // The outermost call's top token: its stretch's file and instance.
+        // The outermost call's top token: its stretch's file and instance, and its latest
+        // `#line` row with a file (its presumed path's).
         uint32_t k = l;
         for (uint32_t step = 0u; step < MAX_CHAIN && (a.lists[k].parent & TOP) == 0u; step++) k = a.lists[k].parent;
-        uint32_t s = a.lists[k].lo;
+        uint32_t s = a.lists[k].lo, p = pb_item_of(u.gat, u.n_gaps, s);
         uint32_t f = file_of(u.bases, u.n_files, top_ref(u.text_nodes, u.gat, u.n_gaps, u.firsts, s));
-        PpNode nd = u.nodes[u.tinst[pb_item_of(u.gat, u.n_gaps, s)]];
+        PpNode nd = u.nodes[u.tinst[p]];
+        uint32_t row = u.tlinen[p];
         if (L->def == L_COUNTER) ref = px_counter_use(a, l, lane __UKL_ARGS);
-        else if (L->def == L_FILE) ref = SCRATCH | f;
-        else if (L->def == L_FILE_NAME) ref = SCRATCH | (u.n_files + 3u + f);
+        else if (L->def == L_FILE) ref = SCRATCH | (row != 0u ? u.lt0 + 2u * (row - 1u) : f);
+        else if (L->def == L_FILE_NAME) ref = SCRATCH | (row != 0u ? u.lt0 + 2u * (row - 1u) + 1u : u.n_files + 3u + f);
         // A unit's files: its predefines (`<built-in>`), then its main file.
         else if (L->def == L_BASE_FILE) ref = SCRATCH | (u.unit_file[nd.unit] + 1u);
         else ref = px_number(a, nd.depth, lane __UKL_ARGS);
@@ -1938,7 +1947,12 @@ UKL_INLINE void px_builtin(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
             x = par_exp(a, p, k);
         }
         uint32_t g = par_ref(u, a, p, k);
-        ref = px_number(a, (g & SCRATCH) == 0u ? px_line(u, g) : 0u, lane __UKL_ARGS);
+        // The physical line plus the latest `#line` row's offset before the outermost call.
+        uint32_t c = l;
+        for (uint32_t step = 0u; step < MAX_CHAIN && (a.lists[c].parent & TOP) == 0u; step++) c = a.lists[c].parent;
+        uint32_t row = u.tline[pb_item_of(u.gat, u.n_gaps, a.lists[c].lo)];
+        uint32_t delta = row != 0u ? u.ldelta[row - 1u] : 0u;
+        ref = px_number(a, (g & SCRATCH) == 0u ? px_line(u, g) + delta : 0u, lane __UKL_ARGS);
     }
     if (lane == 0u) {
         uint32_t base = ukl_atomic_add(&a.ctl[0], 1u);
@@ -2165,9 +2179,9 @@ UKL_INLINE void px_place(Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
 }
 
 // The queue's workers: a SIMD group each, lane 0 taking an item and the 32 lanes doing it.
-UKL_INLINE void px_worker(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, UKL_GLOBAL const uint32_t* bases, UKL_GLOBAL const uint64_t* keys, UKL_GLOBAL const PpDef* defs, UKL_GLOBAL const uint32_t* items, UKL_GLOBAL const uint64_t* sorted, UKL_GLOBAL const uint32_t* perm, UKL_GLOBAL const uint32_t* n_rows, UKL_GLOBAL const uint64_t* name_keys, UKL_GLOBAL const uint32_t* values, UKL_GLOBAL const uint32_t* text_nodes, UKL_GLOBAL const uint32_t* gat, UKL_GLOBAL const uint32_t* n_gaps, UKL_GLOBAL const uint32_t* firsts, UKL_GLOBAL const uint32_t* n_toks, UKL_GLOBAL const uint32_t* tinst, UKL_GLOBAL const PpNode* nodes, UKL_GLOBAL const uint32_t* unit_file, UKL_GLOBAL const uint32_t* top_depth, UKL_GLOBAL PxList* lists, UKL_GLOBAL uint32_t* cols, UKL_GLOBAL PxArg* args, UKL_GLOBAL uint32_t* out, UKL_GLOBAL uint32_t* slots, UKL_GLOBAL uint32_t* qctl, UKL_GLOBAL uint32_t* ctl, UKL_GLOBAL const uint32_t* words, UKL_GLOBAL PxScratch* scratch, UKL_GLOBAL const uint64_t* closes, UKL_GLOBAL const uint32_t* n_close, UKL_GLOBAL const uint32_t* floors, uint32_t n_units,
+UKL_INLINE void px_worker(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, UKL_GLOBAL const uint32_t* bases, UKL_GLOBAL const uint64_t* keys, UKL_GLOBAL const PpDef* defs, UKL_GLOBAL const uint32_t* items, UKL_GLOBAL const uint64_t* sorted, UKL_GLOBAL const uint32_t* perm, UKL_GLOBAL const uint32_t* n_rows, UKL_GLOBAL const uint64_t* name_keys, UKL_GLOBAL const uint32_t* values, UKL_GLOBAL const uint32_t* text_nodes, UKL_GLOBAL const uint32_t* gat, UKL_GLOBAL const uint32_t* n_gaps, UKL_GLOBAL const uint32_t* firsts, UKL_GLOBAL const uint32_t* n_toks, UKL_GLOBAL const uint32_t* tinst, UKL_GLOBAL const PpNode* nodes, UKL_GLOBAL const uint32_t* unit_file, UKL_GLOBAL const uint32_t* tline, UKL_GLOBAL const uint32_t* tlinen, UKL_GLOBAL const uint32_t* top_depth, UKL_GLOBAL PxList* lists, UKL_GLOBAL uint32_t* cols, UKL_GLOBAL PxArg* args, UKL_GLOBAL uint32_t* out, UKL_GLOBAL uint32_t* slots, UKL_GLOBAL uint32_t* qctl, UKL_GLOBAL uint32_t* ctl, UKL_GLOBAL const uint32_t* words, UKL_GLOBAL PxScratch* scratch, UKL_GLOBAL const uint64_t* closes, UKL_GLOBAL const uint32_t* n_close, UKL_GLOBAL const uint32_t* floors, uint32_t n_units,
                           UKL_GLOBAL const uint64_t* op_keys, UKL_GLOBAL const uint32_t* op_kinds, uint32_t n_ops, UKL_GLOBAL const uint64_t* feat_keys, UKL_GLOBAL const uint64_t* feat_vals, uint32_t n_feat,
-                          UKL_GLOBAL uint32_t* cnt, uint32_t cnt_cap, uint32_t lane __UKL_PARAMS) {
+                          UKL_GLOBAL uint32_t* cnt, uint32_t cnt_cap, UKL_GLOBAL const uint32_t* ldelta, uint32_t lt0, uint32_t lane __UKL_PARAMS) {
     // words: n_files, tok_cap, list_cap, arg_cap, out_cap, q_cap, va_opt (low, high), the scratch
     // bytes' and tokens' capacities.
     Ux u;
@@ -2183,6 +2197,7 @@ UKL_INLINE void px_worker(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8
     u.floors = floors; u.n_units = n_units;
     u.tinst = tinst; u.nodes = nodes; u.unit_file = unit_file;
     u.op_keys = op_keys; u.op_kinds = op_kinds; u.n_ops = n_ops; u.feat_keys = feat_keys; u.feat_vals = feat_vals; u.n_feat = n_feat;
+    u.tline = tline; u.tlinen = tlinen; u.ldelta = ldelta; u.lt0 = lt0;
     Ar a;
     // The tokens' columns, `tok_cap` words each: the ref, the flags, the child, the depth, the origin.
     uint32_t tc = words[1];

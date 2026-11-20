@@ -306,7 +306,6 @@ fn unit_of(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, pat
         Refused::NoMain => "the main file is not read",
         Refused::P1(f) if f & P1_IF_DEFINED != 0 => "defined made by a macro in an #if",
         Refused::P1(f) if f & P1_IF_BIG != 0 => "an #if past the evaluator's room",
-        Refused::P1(f) if f & P1_LINE != 0 => "#line",
         Refused::P1(f) if f & P1_EMBED != 0 => "#embed",
         Refused::P1(f) if f & P1_ROOM != 0 => "P1's room",
         Refused::P1(_) => "P1's iterations",
@@ -511,7 +510,9 @@ fn expanded_include_names_are_the_spikes() {
 }
 
 /// R7 of decision 0467: each case §6 lists, refused until step 7, gives the serial pass's
-/// tokens on the device, in C and C++, a round of 4 launches. Built so far: `_Pragma` (no
+/// tokens on the device, in C and C++, a round of 4 launches. Built so far: `#line` and line
+/// markers (a line alone, a file, a macro's line and file, in an inactive group, in a header,
+/// read by `#if`, an escaped name, a name ending in `/`, malformed), `_Pragma` (no
 /// tokens: a string, spaced, prefixed, stringized in a macro, named by a macro, malformed, across
 /// lines, in an `#if`), `__COUNTER__` (in
 /// object-like and function-like bodies, arguments expanded once at their first plain use, one
@@ -526,6 +527,20 @@ fn expanded_include_names_are_the_spikes() {
 fn the_refused_cases_are_the_serial_passes() {
     use rerail_c_pp::files::DirKind;
     let shapes: &[(&str, &[(&str, &str)])] = &[
+        (
+            "#line and line markers",
+            &[
+                (
+                    "main.c",
+                    "a __LINE__ __FILE__ __FILE_NAME__\n#line 100\nb __LINE__ __FILE__\n#define LN __LINE__\nLN\n#line 200 \"dir/new.c\"\n\
+                     c __LINE__ __FILE__ __FILE_NAME__ __BASE_FILE__\n#if 0\n#line 1 \"never.c\"\n#endif\nc2 __LINE__ __FILE__\n\
+                     #define L 300\n#define NAME \"other.h\"\n#line L NAME\nd __LINE__ __FILE__\n#include \"h.h\"\ne __LINE__ __FILE__\n\
+                     #if __LINE__ > 250\nbig\n#endif\n# 50 \"marker.c\" 1\nf __LINE__ __FILE__\n#line 7 \"a\\\\b\\\"c.h\"\ng __FILE__ __FILE_NAME__\n\
+                     #line 9 \"x/y/\"\nh __FILE__ __FILE_NAME__ __LINE__\n#line\n#line junk\ni __LINE__\n",
+                ),
+                ("h.h", "h1 __LINE__ __FILE__\n#line 7\nh2 __LINE__ __FILE__ __INCLUDE_LEVEL__\n"),
+            ],
+        ),
         (
             "_Pragma",
             &[(

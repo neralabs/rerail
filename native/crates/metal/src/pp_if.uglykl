@@ -16,6 +16,10 @@
 // A line's kind (`IF_KIND`): none, a test, a macro-form include's name.
 #define IL_TEST (1u)
 #define IL_INCLUDE (2u)
+// A `#line`'s or a line marker's operands (`#line N "file"`, `# N "file" flags`).
+#define IL_LINE (3u)
+#define K_LINE_REST (41u)
+#define K_MARKER_REST (42u)
 // P1's refusals made here (`P1_*`): `defined` made by a macro's expansion or read inside a
 // call's arguments (undefined behaviour in C17 §6.10.1); an expression past the evaluator's stacks,
 // or a number or character constant past its bytes.
@@ -27,14 +31,19 @@
 // `#if`, `#elif` or macro-form include, nor an include past the depth's bound).
 UKL_INLINE void p1_if_count(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, UKL_GLOBAL const uint32_t* bases, UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32_t* n_nodes,
                             UKL_GLOBAL const PpNode* nodes, uint32_t max_depth, UKL_GLOBAL const uint32_t* n_dirs, UKL_GLOBAL const uint32_t* dir_bases, UKL_GLOBAL const PpDir* rows,
-                            UKL_GLOBAL const uint32_t* dactive, UKL_GLOBAL uint32_t* count, UKL_GLOBAL uint32_t* first, UKL_GLOBAL uint32_t* kind, UKL_GLOBAL uint32_t* inst, uint32_t w) {
+                            UKL_GLOBAL const uint32_t* dactive, UKL_GLOBAL uint32_t* count, UKL_GLOBAL uint32_t* first, UKL_GLOBAL uint32_t* kind, UKL_GLOBAL uint32_t* inst,
+                            UKL_GLOBAL const uint32_t* latest, UKL_GLOBAL const uint32_t* latestn, UKL_GLOBAL uint32_t* iline, UKL_GLOBAL uint32_t* ilinen, uint32_t w) {
     if (w >= n_dirs[0]) return;
     count[w] = 0u;
     first[w] = PP_NONE;
     kind[w] = 0u;
-    if (dactive[w] == 0u) return;
     uint32_t i, r = p1_row_of(insts, n_nodes[0], dir_bases, w, &i);
     inst[w] = i;
+    // The latest `#line` rows before the directive in its instance (the last iteration's).
+    bool later = w > insts[i].dir_first;
+    iline[w] = later ? latest[w - 1u] : 0u;
+    ilinen[w] = later ? latestn[w - 1u] : 0u;
+    if (dactive[w] == 0u) return;
     PpDir d = rows[r];
     uint32_t f = insts[i].file;
     Tape t = tape_at(data, files, f);
@@ -47,6 +56,17 @@ UKL_INLINE void p1_if_count(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uin
         kind[w] = IL_INCLUDE;
         first[w] = bases[f] + j + 1u;
         count[w] = node_size(t, j) - 1u;
+    } else if (d.kind == K_LINE || d.kind == K_LINE_MARKER) {
+        // Its rest: after `#line`'s word, or all after a marker's `#`.
+        for (uint32_t k = d.node + 1u; k < end && k < d.node + 5u; k++) {
+            uint32_t nk = node_kind(t, k);
+            if (nk == K_LINE_REST || nk == K_MARKER_REST) {
+                kind[w] = IL_LINE;
+                first[w] = bases[f] + k + 1u;
+                count[w] = node_size(t, k) - 1u;
+                break;
+            }
+        }
     }
 }
 
@@ -695,7 +715,6 @@ UKL_INLINE void p1_inc_find(Ux u, IfFiles x, IfNames nm, UKL_GLOBAL const PpInst
     PpDir d = rows[r];
     uint32_t f = insts[i].file;
     if (d.kind == K_EMBED) { ukl_atomic_or(x.flags, P1_EMBED); return; }
-    if (d.kind == K_LINE || d.kind == K_LINE_MARKER) { ukl_atomic_or(x.flags, P1_LINE); return; }
     if (d.kind == PK_PRAGMA && acts[r] == A_ONCE) { ukl_atomic_min(&once[f], dslot[w]); return; }
     if (d.kind != K_INCLUDE && d.kind != K_INCLUDE_NEXT && d.kind != K_IMPORT) return;
     // Past the depth's bound, nothing is searched nor entered (`Pp::include`).
@@ -839,4 +858,111 @@ UKL_INLINE void p1_if_eval(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, UKL_GL
     }
     if (y.big) { ukl_atomic_or(x.flags, P1_IF_BIG); return; }
     vals[w] = sy_end(&y) ? 1u : 0u;
+}
+
+// --- `#line` (decision 0467 §6) ------------------------------------------------------------------
+
+// The next byte of a string's content destringized (`destringize`: `\"` and `\\` one byte), from
+// `i`: the byte, and the index after it.
+UKL_INLINE uint32_t ds_next(UKL_PRIVATE const uint8_t* p, uint32_t i, uint32_t n, UKL_PRIVATE uint8_t* c) {
+    if (p[i] == ((uint8_t)('\\')) && i + 1u < n && (p[i + 1u] == ((uint8_t)('"')) || p[i + 1u] == ((uint8_t)('\\')))) { *c = p[i + 1u]; return i + 2u; }
+    *c = p[i];
+    return i + 1u;
+}
+
+// The literal of a string's content destringized from `from` (`__FILE__`'s: `"`, the bytes with
+// `"` and `\` escaped, `"`): its length, written at `dst` where it is not null.
+UKL_INLINE uint32_t ds_literal(UKL_PRIVATE const uint8_t* p, uint32_t from, uint32_t n, UKL_GLOBAL uint8_t* dst, bool write) {
+    uint32_t m = 0u;
+    if (write) dst[m] = ((uint8_t)('"'));
+    m++;
+    for (uint32_t i = from; i < n;) {
+        uint8_t c;
+        i = ds_next(p, i, n, &c);
+        if (c == ((uint8_t)('"')) || c == ((uint8_t)('\\'))) { if (write) dst[m] = ((uint8_t)('\\')); m++; }
+        if (write) dst[m] = c;
+        m++;
+    }
+    if (write) dst[m] = ((uint8_t)('"'));
+    return m + 1u;
+}
+
+// Directive word `w`'s `#line` row (`Pp::line_directive`), from its line's output: a number, then
+// a string or not. Its offset (`ldelta`: the line it names less the physical line after it), and
+// its file's literals (its presumed path, and that path's last component) in its two scratch
+// tokens (`lctl[0] + 2w` and the one after), their bytes in the rows' room (`lctl[1]`, its top
+// `lctl[2]`, `lb_cap` bytes). `lval` and `lvaln` the scans' values: `w + 1` for a row, and for
+// a row with a file; `lhead` an instance's first word. A row unlike the last iteration's (its
+// key, `lkey`) is a change: the iterations go on.
+UKL_INLINE void p1_line_row(Ux u, UKL_GLOBAL const uint32_t* kinds, UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32_t* n_nodes, UKL_GLOBAL const uint32_t* dir_bases, UKL_GLOBAL const PpDir* rows,
+                            UKL_GLOBAL const uint32_t* n_dirs, UKL_GLOBAL const uint32_t* count, UKL_GLOBAL const uint32_t* at, UKL_GLOBAL const uint32_t* total,
+                            UKL_GLOBAL const uint32_t* out, UKL_GLOBAL const uint32_t* obase, UKL_GLOBAL const uint32_t* vtotal,
+                            UKL_GLOBAL uint32_t* ldelta, UKL_GLOBAL uint64_t* lkey, UKL_GLOBAL uint32_t* lval, UKL_GLOBAL uint32_t* lvaln, UKL_GLOBAL uint32_t* lhead,
+                            UKL_GLOBAL uint32_t* lctl, uint32_t lb_cap, UKL_GLOBAL PxScratch* stoks, UKL_GLOBAL uint8_t* sbytes, UKL_GLOBAL uint32_t* changed, UKL_GLOBAL uint32_t* flags, uint32_t w) {
+    if (w >= n_dirs[0]) return;
+    uint32_t i, r = p1_row_of(insts, n_nodes[0], dir_bases, w, &i);
+    lhead[w] = w == insts[i].dir_first ? 1u : 0u;
+    bool on = false, named = false;
+    uint32_t delta = 0u;
+    uint64_t nk = 0ul;
+    if (kinds[w] == IL_LINE && count[w] != 0u) {
+        uint32_t s0 = at[w], s1 = s0 + count[w];
+        uint32_t o0 = obase[s0], o1 = s1 < total[0] ? obase[s1] : vtotal[0];
+        uint8_t b[IF_TOKB];
+        if (o0 < o1 && ref_kind(u, out[o0]) == K_NUMBER) {
+            uint32_t n = if_bytes(ref_span(u, out[o0]), b);
+            uint64_t v;
+            uint32_t fl;
+            if (n <= IF_TOKB && if_number(b, n, &v, &fl)) {
+                on = true;
+                // The physical line after the directive's (from 1).
+                PpDir d = rows[r];
+                Tape t = tape_at(u.data, u.files, insts[i].file);
+                uint32_t e = node_end(t, d.node);
+                uint32_t phys = tape_line_of(t, e > 0u ? e - 1u : 0u) + 2u;
+                delta = ((uint32_t)(v)) - phys;
+            }
+        }
+        if (on && o0 + 1u < o1) {
+            Span sr = ref_span(u, out[o0 + 1u]);
+            uint32_t n = if_bytes(sr, b);
+            uint32_t q = 0u;
+            while (q < n && q < 4u && b[q] != ((uint8_t)('"')) && b[q] != ((uint8_t)('\''))) q++;
+            if (n > IF_TOKB) {
+                ukl_atomic_or(flags, P1_IF_BIG);
+            } else if (sr.kind == K_LITERAL && q < n && b[q] == ((uint8_t)('"')) && n >= q + 2u) {
+                named = true;
+                uint32_t c0 = q + 1u, c1 = n - 1u;
+                // The last component: after the last `/` destringized.
+                uint32_t last = c0;
+                for (uint32_t k = c0; k < c1;) {
+                    uint8_t c;
+                    k = ds_next(b, k, c1, &c);
+                    if (c == ((uint8_t)('/'))) last = k;
+                }
+                KeyAcc ka = ka_new(c1 - c0);
+                for (uint32_t k = c0; k < c1; k++) ka_byte(&ka, b[k]);
+                nk = ka_end(ka);
+                uint32_t lf = ds_literal(b, c0, c1, sbytes, false), ln = ds_literal(b, last, c1, sbytes, false);
+                uint32_t base = ukl_atomic_add(&lctl[2], lf + ln);
+                if (base + lf + ln > lb_cap) {
+                    ukl_atomic_or(flags, P1_ROOM);
+                } else {
+                    uint32_t at0 = lctl[1] + base, tk = lctl[0] + 2u * w;
+                    ds_literal(b, c0, c1, sbytes + at0, true);
+                    ds_literal(b, last, c1, sbytes + at0 + lf, true);
+                    stoks[tk].start = at0; stoks[tk].end = at0 + lf; stoks[tk].kind = K_LITERAL;
+                    stoks[tk + 1u].start = at0 + lf; stoks[tk + 1u].end = at0 + lf + ln; stoks[tk + 1u].kind = K_LITERAL;
+                }
+            }
+        }
+    }
+    ldelta[w] = delta;
+    lval[w] = on ? w + 1u : 0u;
+    lvaln[w] = named ? w + 1u : 0u;
+    uint64_t key = key_mix(key_mix(((uint64_t)(on ? 1u : 0u)) | ((uint64_t)(named ? 2u : 0u)), ((uint64_t)(delta))), nk);
+    if (lkey[w] != key) {
+        lkey[w] = key;
+        ukl_atomic_store(changed, 1u);
+    }
 }

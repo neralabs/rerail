@@ -200,7 +200,6 @@ pub struct Request {
 /// P1's refusals (`pp_p1.uglykl`'s `P1_*`): the cases a later step of decision 0467 builds.
 pub const P1_ROOM: u32 = 1;
 pub const P1_EMBED: u32 = 4;
-pub const P1_LINE: u32 = 8;
 pub const P1_ITERATIONS: u32 = 16;
 /// `defined` made by a macro's expansion, or read inside a call's arguments, in an `#if`.
 pub const P1_IF_DEFINED: u32 = 32;
@@ -402,6 +401,20 @@ pub struct Vis {
     if_first: Buf,
     if_kind: Buf,
     if_inst: Buf,
+    // `#line`'s rows (decision 0467 §6): each word's offset, key, scans' values and heads, the
+    // latest rows before each word and each stretch, and the rows' scratch room.
+    ldelta: Buf,
+    lkey: Buf,
+    lval: Buf,
+    lvaln: Buf,
+    lhead: Buf,
+    latest: Buf,
+    latestn: Buf,
+    iline: Buf,
+    ilinen: Buf,
+    sline: Buf,
+    slinen: Buf,
+    lctl: Buf,
     // The requests' names: the device's bytes, their top and room.
     rnames: Buf,
     rntop: Buf,
@@ -565,6 +578,18 @@ impl Vis {
             if_first: zeroed(nd)?,
             if_kind: zeroed(nd)?,
             if_inst: zeroed(nd)?,
+            ldelta: zeroed(nd)?,
+            lkey: arena.zeroed::<u64>(nd.max(1))?,
+            lval: zeroed(nd)?,
+            lvaln: zeroed(nd)?,
+            lhead: zeroed(nd)?,
+            latest: zeroed(nd)?,
+            latestn: zeroed(nd)?,
+            iline: zeroed(nd)?,
+            ilinen: zeroed(nd)?,
+            sline: zeroed(ng)?,
+            slinen: zeroed(ng)?,
+            lctl: zeroed(4)?,
             rnames: arena.zeroed::<u8>(nd * 64 + 4096)?,
             rntop: zeroed(1)?,
             rn_cap: (nd * 64 + 4096) as u32,
@@ -667,7 +692,9 @@ impl Vis {
         l.at("P1_NODES", &self.nodes).at("P1_DEPTHN", &self.depth).at("P1_NDIRS", &self.p1_ndirs).at("P1_NGAPS", &self.p1_ngaps);
         l.word("N_FT", self.n_ft).at("P1_FTKEYS", &self.ft_keys).at("P1_FTFILES", &self.ft_files).at("P1_FOUNDBY", &self.found_by).at("P1_UFILE", &self.unit_file).word("P1_MAXDEPTH", self.max_depth);
         l.at("P1_LIVE", &self.live);
-        l.at("IF_COUNT", &self.if_count).at("IF_FIRST", &self.if_first).at("IF_KIND", &self.if_kind).at("IF_INST", &self.if_inst).at("P1_RNAMES", &self.rnames).at("P1_RNTOP", &self.rntop).word("RNC", self.rn_cap).at("IF_AT", &self.if_at).at("IF_TOTAL", &self.if_scan.total).at("IF_NODES", &self.if_nodes);
+        l.at("IF_COUNT", &self.if_count).at("IF_FIRST", &self.if_first).at("IF_KIND", &self.if_kind).at("IF_INST", &self.if_inst)
+            .at("LDELTA", &self.ldelta).at("LKEY", &self.lkey).at("LVAL", &self.lval).at("LVALN", &self.lvaln).at("LHEAD", &self.lhead).at("LATEST", &self.latest).at("LATESTN", &self.latestn)
+            .at("ILINE", &self.iline).at("ILINEN", &self.ilinen).at("SLINE", &self.sline).at("SLINEN", &self.slinen).at("LCTL", &self.lctl).at("P1_RNAMES", &self.rnames).at("P1_RNTOP", &self.rntop).word("RNC", self.rn_cap).at("IF_AT", &self.if_at).at("IF_TOTAL", &self.if_scan.total).at("IF_NODES", &self.if_nodes);
         l.at("IF_OPS", &self.if_ops).at("IF_VAL", &self.if_val).at("IF_KEYS", &self.if_keys).word("IF_TRUE", self.true_is_one).word("N_IFOP", self.n_ifop);
         l.at("IF_OPKEYS", &self.op_keys).at("IF_OPKINDS", &self.op_kinds).word("N_FEAT", self.n_feat).at("IF_FEATKEYS", &self.feat_keys).at("IF_FEATVALS", &self.feat_vals);
         l.at("P1_MADE", &self.made).at("P1_MADEF", &self.made_file).at("P1_ENTER", &self.enter).at("P1_CAND", &self.cand).at("P1_ONCE", &self.once);
@@ -838,6 +865,7 @@ pub struct Exp {
     // `__COUNTER__`'s uses and their room.
     cnt: Buf,
     cnt_cap: u32,
+    lb_cap: u32,
     pub out: Buf,
 }
 
@@ -865,7 +893,9 @@ impl Exp {
             l.map_or(b"\"\"", Vec::as_slice)
         };
         let lit_bytes: usize = (0..nf).map(|f| lit(f).len()).sum();
-        let (sb, st) = (((64usize << 10) << rung) + lit_bytes, (tok / 4 + 256 + nf).next_multiple_of(2));
+        // Past them, the `#line` rows' room: two tokens a directive word, and their bytes.
+        let (lb_cap, dirs) = ((16usize << 10) << rung, Caps::of(unit, lay, p1_rung).dirs);
+        let (sb, st) = (((64usize << 10) << rung) + lit_bytes + lb_cap, (tok / 4 + 256 + nf + 2 * dirs).next_multiple_of(2));
         let mut scratch = vec![0u8; st * 12 + sb + 16];
         let mut at = 0usize;
         for f in 0..nf {
@@ -922,6 +952,7 @@ impl Exp {
             ctl: arena.from_slice(&ctl)?,
             cnt: zeroed(2 + 2 * cnt_cap)?,
             cnt_cap: cnt_cap as u32,
+            lb_cap: lb_cap as u32,
             // The refs, then each one's space flag.
             out: zeroed(2 * out)?,
         })
@@ -941,7 +972,7 @@ impl Exp {
         l.at("XPOS", &self.xpos).at("XCOVER", &self.xcover).at("V", &self.v).at("OBASE", &self.obase).at("VTOTAL", &self.vscan.total);
         l.at("OUT", &self.out).at("TOKENS", &self.tokens).at("ARGS", &self.args).at("WORDS", &self.words).at("SCRATCH", &self.scratch);
         l.word("LIST_CAP", self.list_cap).word("OUT_CAP", self.out_cap).word("Q_CAP", self.q_cap);
-        l.at("CNT", &self.cnt).word("CNT_CAP", self.cnt_cap);
+        l.at("CNT", &self.cnt).word("CNT_CAP", self.cnt_cap).word("LB_CAP", self.lb_cap);
     }
 
     /// The scratch tokens' bytes and (start, end, kind) (after the command buffer).
