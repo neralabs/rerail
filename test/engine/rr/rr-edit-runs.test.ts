@@ -73,7 +73,8 @@ function session(rules: RerailRuleEntry[], scope: AuditScope = "touched-files") 
       steers.push({ content, metadata });
     },
   };
-  const queue = new RrRunQueue(root, { deadlineMs: 30_000, quietMs: 1 }, new RrRunSlots(runner));
+  const slots = new RrRunSlots(runner);
+  const queue = new RrRunQueue(root, { deadlineMs: 30_000, quietMs: 1 }, slots);
   const edits = new RerailEditRuns({
     sessionId: "session",
     workspaceRoot: root,
@@ -85,7 +86,7 @@ function session(rules: RerailRuleEntry[], scope: AuditScope = "touched-files") 
     queue,
   });
   const write = (revision: number, ...written: CodeRuleEdit[]) => edits.gather(written, revision, scope, "steer");
-  return { runs, started, finished, steers, edits, write };
+  return { runs, started, finished, steers, edits, write, slots };
 }
 
 const written = (path: string, generatedText = "x = 1\n", previousText?: string): CodeRuleEdit =>
@@ -170,6 +171,30 @@ describe("a session's .rerail runs after its edits", () => {
     runs[0]!.end(completed([]));
     await vi.waitFor(() => expect(finished).toHaveLength(1));
     expect(finished[0]).toMatchObject({ status: "failed", failures: [{ ruleId: "rr-changed", message: expect.stringContaining(`${library} changed since Rerail read it`) }] });
+  });
+
+  it("checks a rule's files when its run's turn comes: a file edited while the run waits for the slot leaves that rule out", async () => {
+    const library = join(root, "waiting-lib.rerail");
+    writeFileSync(library, "// as approved\n");
+    const approved = createHash("sha256").update("// as approved\n").digest("hex");
+    const changed = { ...rule("rr-edited-while-waiting", [{ folder: "", mode: "steer" }]), files: [{ path: library, sha256: approved }] };
+    const assert = rule("rr-sample-assert", [{ folder: "", mode: "steer" }]);
+    const { runs, started, finished, write, slots } = session([changed, assert]);
+    // Another run holds the process's slot.
+    const holding = slots.run({ start: () => ({ root, policies: ["/rules/held.rerail"] }) });
+    await vi.waitFor(() => expect(runs).toHaveLength(1));
+    write(1, written("a.py"));
+    // The edit's run is queued with both rules (its audit carries them) and waits for the slot.
+    await vi.waitFor(() => expect(started).toHaveLength(1));
+    expect(started[0]!.ruleProvenance?.map(entry => entry.ruleId)).toEqual(["rr-edited-while-waiting", "rr-sample-assert"]);
+    writeFileSync(library, "// edited while the run waited\n");
+    runs[0]!.end(completed([]));
+    await holding;
+    await vi.waitFor(() => expect(runs).toHaveLength(2));
+    expect(runs[1]!.run.policies).toEqual([assert.path]);
+    runs[1]!.end(completed([]));
+    await vi.waitFor(() => expect(finished).toHaveLength(1));
+    expect(finished[0]).toMatchObject({ status: "failed", failures: [{ ruleId: "rr-edited-while-waiting", message: expect.stringContaining(`${library} changed since Rerail read it`) }] });
   });
 
   it("gathers only the writes some rule takes: in its placement, its scope and its language", async () => {
