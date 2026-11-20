@@ -9,6 +9,9 @@ const WORKTREE_RULE = "storefront-no-legacy-client";
 /** A By Rerail rule, and the coding agent's edited copy of it: approving the copy turns the original off here. */
 const RERAIL_RULE = "typescript-eslint-no-explicit-any";
 const RERAIL_RULE_COPY = `${RERAIL_RULE}-copy`;
+/** Your approved rule, and a coding agent's edited copy of it: approving the copy turns your rule off here. */
+const OWN_RULE = "storefront-no-alert";
+const OWN_RULE_COPY = `${OWN_RULE}-copy`;
 
 const banner = (page: Page) => page.locator("#content .ov .welcome.warn", { hasText: "for approval" });
 const yours = (page: Page) => page.locator("#content .ov .welcome.yours");
@@ -51,8 +54,8 @@ test("rules your coding agent added wait for approval: Overview sends you to the
   // Overview says how many rules the coding agent added. The worktree's own rule, and the edited copy of a By Rerail
   // rule, stay in the banner that sends you to each one's page, which says what approving the copy does.
   await expect(yours(page)).toContainText("Your coding agent added 3 rules. They’re on Log only until you approve them.");
-  await expect(banner(page)).toContainText("2 rules wait for approval");
-  await expect(banner(page)).toContainText("Approving an edited copy of a rule Rerail ships turns the original off in");
+  await expect(banner(page)).toContainText("3 rules wait for approval");
+  await expect(banner(page)).toContainText("Approving an edited copy turns off the rule it was copied from in");
   // A rule that would steer is held in Log by the approval; one written as Log runs in Log by its own default.
   for (const id of [LIBRARY_RULE, "storefront-no-inner-html"]) {
     expect(await modeOf(rerail, id)).toEqual({ mode: "log", by: "awaiting-approval", approved: false });
@@ -94,6 +97,19 @@ test("rules your coding agent added wait for approval: Overview sends you to the
   await expect(page.locator("#toast")).toContainText(`${RERAIL_RULE_COPY} is approved`);
   expect(await modeOf(rerail, RERAIL_RULE_COPY)).toEqual({ mode: "steer", by: "rule-default", approved: true });
   expect(await entryOf(rerail, RERAIL_RULE)).toMatchObject({ on: false });
+  await sheet(page).locator('[data-act="close"]').click();
+
+  // A coding agent's edit of your approved rule: your rule steers until the copy is approved from its page.
+  expect(await entryOf(rerail, OWN_RULE)).toMatchObject({ on: true, mode: "steer" });
+  await banner(page).locator(`[data-act="detail"][data-i="${OWN_RULE_COPY}"]`).click();
+  const ownNotice = sheet(page).locator(".welcome.warn");
+  await expect(ownNotice).toContainText("This is an edited copy of your rule “");
+  await expect(ownNotice).toContainText("Approving it turns the original off in");
+  await ownNotice.locator('[data-act="approve"]').click();
+
+  await expect(page.locator("#toast")).toContainText(`${OWN_RULE_COPY} is approved`);
+  expect(await modeOf(rerail, OWN_RULE_COPY)).toEqual({ mode: "steer", by: "rule-default", approved: true });
+  expect(await entryOf(rerail, OWN_RULE)).toMatchObject({ on: false });
   await sheet(page).locator('[data-act="close"]').click();
   await expect(banner(page)).toHaveCount(0);
 });
