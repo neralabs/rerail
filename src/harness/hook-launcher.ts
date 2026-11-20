@@ -12,9 +12,34 @@
  * Node's built-ins, Rerail's child-process helper and `same-file.ts` aside, so whatever node PATH supplies can run it.
  */
 import { existsSync } from "node:fs";
+import * as nodeModule from "node:module";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawnSync } from "../engine/child-process.js";
 import { sameFile } from "./same-file.js";
+
+/**
+ * Turns on Node's compile cache in this process (`module.enableCompileCache`) in the folder Node takes itself: the one
+ * `NODE_COMPILE_CACHE` names, else `node-compile-cache` in the temporary folder. It gives the environment a hook run as
+ * a child takes: this one with `NODE_COMPILE_CACHE` naming that folder, so the child's Node starts with the cache on and
+ * keeps its code there in a folder for its own version, as this one does. Each hook event starts a Node that loads the
+ * hook's bundle of over 2 MB, which V8 would otherwise parse and compile again in every process. The cache stays off
+ * where `NODE_DISABLE_COMPILE_CACHE` turns it off, and a node without one, or a cache folder that cannot be made, runs
+ * the hook as before.
+ */
+function compileCacheEnv(): NodeJS.ProcessEnv {
+  // A node older than the cache has no such export; the namespace then holds none.
+  const enable = (nodeModule as { enableCompileCache?: typeof nodeModule.enableCompileCache }).enableCompileCache;
+  // Node reads an empty NODE_COMPILE_CACHE as none.
+  const named = process.env.NODE_COMPILE_CACHE;
+  const folder = named === undefined || named === "" ? join(tmpdir(), "node-compile-cache") : named;
+  try {
+    return enable?.(folder).directory === undefined ? process.env : { ...process.env, NODE_COMPILE_CACHE: folder };
+  } catch {
+    return process.env;
+  }
+}
 
 /**
  * A hook that could not run, or failed, answers nothing rather than failing: an agent shows a failed hook as an error
@@ -47,10 +72,11 @@ if (recordedNode === undefined || hookScript === undefined) {
   process.exit(1);
 }
 
+const env = compileCacheEnv();
 if (existsSync(recordedNode) && !sameFile(recordedNode, process.execPath)) {
   // The event JSON on stdin goes straight to the hook; its answer comes back through here, so a hook that wrote none
   // can be answered for.
-  const result = spawnSync(recordedNode, [hookScript], { stdio: ["inherit", "pipe", "inherit"] });
+  const result = spawnSync(recordedNode, [hookScript], { stdio: ["inherit", "pipe", "inherit"], env });
   const answer = result.stdout ?? Buffer.alloc(0);
   process.stdout.write(answer);
   if (result.error !== undefined) quiet(result.error.message, answer.length > 0);

@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { chmod, copyFile, mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
@@ -115,4 +115,50 @@ describe("hook launcher", () => {
     // a file it cannot load as a program, whose code Node reports as UNKNOWN.
     expect(stderr).toMatch(WINDOWS ? /rerail hook: spawnSync .*recorded-node\.exe \w+/u : /rerail hook: .*EACCES/u);
   });
+});
+
+// Reports the folder of Node's compile cache in the process that runs it, or null where the cache is off.
+const CACHE_REPORTING_HOOK = [
+  'import { getCompileCacheDir } from "node:module";',
+  "process.stdout.write(JSON.stringify({ cache: getCompileCacheDir() ?? null }));",
+].join("\n");
+
+/**
+ * The launcher started as Claude Code starts a hook, with the run's own temporary folder (where Node keeps its compile
+ * cache by default) and none of the caller's compile cache settings; `env` adds to that environment.
+ */
+async function launchForCache(recorded: "runs" | "itself", env: NodeJS.ProcessEnv = {}): Promise<{ cache: string | null; base: string; stderr: string }> {
+  const base = await mkdtemp(join(tmpdir(), "rerail-hook-launcher-"));
+  temporaryDirectories.push(base);
+  const hook = join(base, "claude-hook.mjs");
+  await writeFile(hook, CACHE_REPORTING_HOOK);
+  const node = recorded === "itself" ? process.execPath : join(base, RECORDED_NODE);
+  if (recorded === "runs") await recordedNode(node);
+  const temp = join(base, "tmp");
+  await mkdir(temp);
+  const { NODE_COMPILE_CACHE: _cache, NODE_DISABLE_COMPILE_CACHE: _off, ...caller } = process.env;
+  const result = spawnSync(process.execPath, ["--import", "tsx", LAUNCHER, node, hook], {
+    input: "{}",
+    encoding: "utf8",
+    env: { ...caller, TMPDIR: temp, TMP: temp, TEMP: temp, ...env },
+  });
+  const answer = JSON.parse(result.stdout || "{}") as { cache?: string | null };
+  return { cache: answer.cache ?? null, base, stderr: result.stderr };
+}
+
+describe("hook launcher and Node's compile cache", () => {
+  // Every hook event starts a Node that loads the hook's bundle; with the cache on, V8 reads the code it compiled at an
+  // earlier event instead of parsing and compiling the bundle again.
+  // Node keeps each version's code in a folder of its own inside the cache folder, so a child under another node finds
+  // the cache folder itself, never a folder inside this node's.
+  it.each<"runs" | "itself">(["itself", "runs"])("runs the hook with Node's compile cache on, in its default folder (recorded node %s)", async recorded => {
+    const { cache, base, stderr } = await launchForCache(recorded);
+    expect(cache, stderr).not.toBeNull();
+    expect(dirname(await realpath(cache ?? ""))).toBe(await realpath(join(base, "tmp", "node-compile-cache")));
+  }, 30_000);
+
+  it.each<"runs" | "itself">(["itself", "runs"])("leaves the cache off where the person turned it off (recorded node %s)", async recorded => {
+    const { cache, stderr } = await launchForCache(recorded, { NODE_DISABLE_COMPILE_CACHE: "1" });
+    expect(cache, stderr).toBeNull();
+  }, 30_000);
 });

@@ -1,0 +1,1 @@
+On Windows, each Claude Code hook call starts sooner: the hook launcher turns on Node's compile cache, so a hook reuses the code Node compiled for an earlier call instead of compiling its 2 MB script again. `NODE_DISABLE_COMPILE_CACHE=1` keeps the cache off.
