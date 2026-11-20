@@ -3654,8 +3654,7 @@ fn a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it() {
                    .decl w(c: node)\n.output w\nw(c) :- u(c), kind2(c, _).\n\
                    .decl anc(a: node, b: node)\nanc(a, b) :- child2(a, b, _).\nanc(a, c) :- anc(a, b), child2(b, c, _).\n\
                    .decl z(a: node)\n.output z\nz(a) :- anc(a, b), kind2(b, _).\n";
-    let p = parse(text).unwrap();
-    let v = p;
+    let v = parse(text).unwrap();
     let placed = body::Placed::whole(std::sync::Arc::clone(&v));
     let prep = prepared::Prepared::of_version(&v);
     let line = |head: &str, nth: usize, first: Option<usize>| {
@@ -3671,15 +3670,14 @@ fn a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it() {
     // which reads it, is not prepared. `o`'s rule, over the inputs, is; and `r`, as `o`'s facts (inferred from its rule)
     // size it. (Another program: a version of the same digest holds the prepared plans made above.)
     drop(_on);
-    let p = parse(&format!("{text}.decl apart(x: number)\n")).unwrap();
-    let v = p;
+    let v = parse(&format!("{text}.decl apart(x: number)\n")).unwrap();
     let placed = body::Placed::whole(std::sync::Arc::clone(&v));
     let prep = prepared::Prepared::of_version(&v);
     let line = |head: &str, nth: usize, first: Option<usize>| {
         let k = bodies_by_head(&placed).into_iter().filter(|(h, _)| h == head).nth(nth).unwrap().1;
         crate::code_rule_dsl::logic::plan::line_key(&placed.body(k), first)
     };
-    assert!(prep.0.contains_key(&line("o", 0, None)), "`o` reads the inputs alone");
+    assert!(!prep.0.contains_key(&line("o", 0, None)), "`o` tests a constant a `values` fact answers: planned at run time");
     assert!(prep.0.contains_key(&line("r", 0, None)), "`o`'s inferred facts size it");
     assert!(!prep.0.contains_key(&line("z", 0, None)), "`anc` is not sized: `z` is not prepared");
 }

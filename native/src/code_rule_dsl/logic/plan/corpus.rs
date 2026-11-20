@@ -125,6 +125,8 @@ pub const PREPARING: &[&str] = &[
     "RERAIL_PREPARE",
     "RERAIL_TEXT_TESTS",
     "RERAIL_DEMAND",
+    "RERAIL_DEFERRED_JOINS",
+    "RERAIL_JOIN_CACHE_ROWS",
     "RERAIL_PUSH_EQUAL_COLUMNS",
     "RERAIL_AST_PARTS",
     "RERAIL_AST_PART_CAPTURES",
@@ -1879,7 +1881,7 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
                     if let Some(library) = in_scope && let Some(k) = *scope_of {
                         let _in_scope = crate::code_rule_dsl::logic::profile::span(|| "lower the program in its libraries' scope (decision 0246 §2)".to_owned());
                         // Its library's relations are the library's, declared there, not in the program: it is handed the
-                        // run's rows (0249) but not checked for its own declarations (`front::declared`).
+                        // run's rows (0249) but not checked for its own declarations (`lowering_tail::Declared`).
                         return P::lowered_in(read, text, library, &scoped[k], images.as_deref(), found, extra);
                     }
                     return P::of_version(given_version(read.lower_version(!own_only)?)?);
@@ -3084,8 +3086,11 @@ fn run_handed(
     let report = match kept {
         // A profiled run that the cutoff answered writes its profile too: the lifecycle below appends to it.
         Ok(Some(report)) if crate::code_rule_dsl::logic::profile::on() && !phase0::active() && runs_under_way() == 0 => {
+            // A long-lived process may still have observations from its last evaluation.
+            // A cutoff performs no join work on this snapshot.
+            let _sources = crate::code_rule_dsl::logic::profile::author_joins::Sources::enter(Default::default());
             match crate::code_rule_dsl::logic::profile::directory() {
-                Some(dir) => crate::code_rule_dsl::logic::profile::report::write(&dir, "Profile of a corpus run the whole-run cutoff answered: every read as the last run left it, its outputs written again\n")
+                Some(dir) => crate::code_rule_dsl::logic::profile::report::write(&dir, "Profile of a corpus run the whole-run cutoff answered: every read as the last run left it, its outputs written again\nThe engine reused the findings without evaluating joins. This run has no new join measurements.\n")
                     .map_err(|e| Error::Plan(format!("profile: {e}")))
                     .map(|()| report),
                 None => Ok(report),
@@ -3169,12 +3174,10 @@ fn run_handed(
 #[derive(Clone, Copy, Default)]
 struct RunsUnderWay(usize);
 
-
 /// Counts a run under way here until dropped.
 struct UnderWay {
     _count: crate::code_rule_dsl::logic::profile::Bound,
 }
-
 impl UnderWay {
     fn enter() -> UnderWay {
         UnderWay { _count: crate::code_rule_dsl::logic::profile::bind(RunsUnderWay(runs_under_way() + 1)) }
@@ -3252,10 +3255,23 @@ fn run_observed(
     // The run's own state (decision 0441): the caller's run's if one is under way here, else this run's own, returned
     // in its report.
     let own = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
-    let mut report = run_observed_within(given, root, t_facts, out, modes, binding, chunk_nodes, typing, options)?;
+    // A program whose deferred joins put a document-backed answer in the cross-file part is prepared again with the
+    // next deferral (`preparation::Deferral::after_placement`): each try changes one, so the tries are few.
+    let replans = preparation::Replans(Some(Default::default()));
+    let _replans = crate::code_rule_dsl::logic::profile::bind(replans.clone());
+    let mut report = loop {
+        let before = replans.0.as_ref().map(|r| r.lock().clone());
+        match run_observed_within(given, root, t_facts, out, modes, binding, chunk_nodes, typing, options) {
+            Err(Error::Plan(e)) if e.starts_with(REPLAN) && replans.0.as_ref().map(|r| r.lock().clone()) != before => continue,
+            r => break r?,
+        }
+    };
     report.run = own.finish();
     Ok(report)
 }
+
+/// The start of the error a preparation returns to be prepared again (`Replans`).
+const REPLAN: &str = "prepare again: ";
 
 /// `run_observed`, within the run's own state (`run::scope`).
 #[allow(clippy::too_many_arguments)]
@@ -3792,6 +3808,7 @@ fn run_observed_within(
         use sha2::Digest as _;
         let mut hash = sha2::Sha256::new();
         hash.update(b"rerail.prepared/v2\0");
+        hash.update(b"deferred-binary-joins-v1\0");
         // The linked program as the run prepares it (0276 §2): its version's identity, which holds its rules (in
         // order), declarations, facts, inputs and outputs. Its messages are not in it (the combine is kept under the
         // masked texts, decision 0225 §3), so an edit of a message's words finds it prepared.
@@ -4006,13 +4023,15 @@ fn run_observed_within(
             let preparing = crate::code_rule_dsl::logic::profile::span(|| "prune, simplify, reach, demand, text".into());
             // By parts (decision 0345, `RERAIL_PREPARE=parts`): each part prepared alone against its interface, kept
             // under its own key, and the parts linked; no pipeline run is kept (0333's P is the other answer to Q18).
+            // How the deferred joins pass runs for this program: the run's earlier tries may have changed it (`Replans`).
+            let deferral = preparation::Deferral::of(loading_run, &prepared_key);
             let by_parts = preparation::parts::on();
-            let (version, preparation::Front { reaches: (reaches, throughs), demanded, demand, undone, matchers, vocabulary }, front_run) = if by_parts {
+            let (version, preparation::Front { reaches: (reaches, throughs), demanded, demand, undone, matchers, vocabulary, cached }, front_run) = if by_parts {
                 let (v, f, kept) = preparation::parts::front(version, dialect, store, durable.is_some()).map_err(Error::Plan)?;
                 program_sources.extend(kept);
                 (v, f, None)
             } else {
-                let (v, f, run) = preparation::front(version, dialect, last_run(preparation::FRONT)).map_err(Error::Plan)?;
+                let (v, f, run) = preparation::front(version, dialect, &deferral, last_run(preparation::FRONT)).map_err(Error::Plan)?;
                 (v, f, Some(run))
             };
             drop(preparing);
@@ -4107,6 +4126,14 @@ fn run_observed_within(
                 let v = &lowered.version;
                 let answered = |rel: &str| v.rules().any(|r| v.rel_name(r.head().rel()) == rel);
                 if let Some(a) = ON_REQUEST.iter().flat_map(|r| r.iter()).find(|a| matches!(a.answer, Answer::Function(_)) && answered(a.rel) && !split.file_local.contains(a.rel)) {
+                    // The deferred joins can draw it there (a pair cache's guard, a factor read across files): the run
+                    // prepares the program again with the next deferral (`run_observed`), once per change.
+                    if let Some(next) = deferral.after_placement(a.rel, &cached)
+                        && let Some(replans) = crate::code_rule_dsl::logic::profile::bound::<preparation::Replans>().0
+                    {
+                        replans.lock().insert(prepared_key, next);
+                        return Err(Error::Plan(format!("{REPLAN}`{}` drawn into the cross-file part by the deferred joins", a.rel)));
+                    }
                     return Err(Error::Plan(format!("`{}` is answered on request in the cross-file part, which holds no documents to read it from (decision 0174 §6)", a.rel)));
                 }
             }

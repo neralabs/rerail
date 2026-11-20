@@ -27,9 +27,9 @@ rerail-simd8 = { path = "../simd8" }
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-c-directives = { path = ".", features = ["test-hooks"] }
-# A placed document's digest, in the evaluator's tests (`eval::tests::place`).
-sha2 = "0.10"
 
 # The device layer's targets (macOS and Linux): the GPU lane (decision 0440 step E).
 [target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
 rerail-metal = { path = "../metal" }
+# A placed document's digest (`eval::rounds::place`, and the evaluator's tests).
+sha2 = "0.10"

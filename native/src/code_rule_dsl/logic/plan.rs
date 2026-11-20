@@ -1242,7 +1242,7 @@ fn plans_put(shared: &SharedPlans, key: PlanKey, kept: Kept) {
 /// changed by compare-and-swap, retried and copied the entry under that contention (2,774 samples of a cold run).
 fn plans_learnt(key: &PlanKey, learnt: Learnt) {
     with_plans(|p| {
-                let Some(shared) = p.as_ref() else { return };
+        let Some(shared) = p.as_ref() else { return };
         let learnt = OWN_PLANS.with(|o| {
             let mut o = o.borrow_mut();
             let Some(k) = o.as_mut().and_then(|m| m.get_mut(key)) else { return Some(learnt) };
@@ -8436,7 +8436,7 @@ impl<'a> Run<'a, '_> {
         let spec = ComponentSpec { name: name.clone(), lines };
         let fx = Fx { db: self.db, direct: true };
         for r in scc {
-            super::native::component::hold_as(self.db, r, Arc::clone(&olds[r]));
+            super::native::component::hold_maintained(self.db, r, Arc::clone(&olds[r]));
         }
         fx.open(&spec)?;
         fx.run(&name, 0)?;

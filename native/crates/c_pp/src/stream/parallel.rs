@@ -156,6 +156,24 @@ pub fn run(cfg: Config, io: &mut dyn Files, path: &str) -> (Outcome, Stats) {
     (out, stats)
 }
 
+/// A unit's configuration input, as the device's P1 reads it (decision 0501): the predefines'
+/// text (a file of its own, `<built-in>`, before the main one, as `Pp::run` reads it) and the
+/// built-in macros' names (rows at slot 0).
+pub fn predefined(cfg: &Config) -> (Vec<u8>, Vec<Vec<u8>>) {
+    let mut none = crate::files::Search::new(Vec::new(), |_: &str| None);
+    let mut null = Null;
+    let pp = Pp::new(cfg.clone(), &mut none, &mut null);
+    let mut pre = String::new();
+    for (n, b) in &pp.cfg.predefines {
+        match b {
+            Some(b) => pre.push_str(&format!("#define {n} {b}\n")),
+            None => pre.push_str(&format!("#undef {n}\n")),
+        }
+    }
+    let names = pp.macros.iter().enumerate().filter(|&(_, &d)| d != 0).map(|(s, _)| pp.syms.text(s as u32).to_vec()).collect();
+    (pre.into_bytes(), names)
+}
+
 /// What a name in the text means where it stands (decision 0448, R4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lookup {
@@ -177,6 +195,12 @@ pub enum Lookup {
 #[derive(Clone, Debug)]
 pub struct P1Inst {
     pub file: u32,
+    /// Its parent instance (an index of `P1::insts`; `u32::MAX` for a root), the parent's
+    /// directive that entered it (a root's rank: 0 the predefines, 1 the main file), and its
+    /// depth in the include tree (a root's 0).
+    pub parent: u32,
+    pub dir: u32,
+    pub depth: u32,
     pub dir_slots: Vec<u64>,
     pub dir_active: Vec<bool>,
     pub gap_slots: Vec<u64>,
@@ -229,18 +253,32 @@ pub fn p1_of(cfg: Config, io: &mut dyn Files, path: &str) -> Result<P1, &'static
     let vis = pp.vis.as_ref().ok_or("no positional table")?;
     // The active stretches' tokens' meanings, by slot: the unit's order.
     let (mut insts, mut by_slot) = (Vec::new(), Vec::new());
+    // Each instance's parent and directive, by its place in the order.
+    let place: std::collections::HashMap<u32, u32> = lay.order.iter().enumerate().map(|(k, &i)| (i, k as u32)).collect();
+    let mut parent_of: std::collections::HashMap<u32, (u32, u32)> = std::collections::HashMap::new();
+    for &i in &lay.order {
+        for (d, &c) in state.child[i as usize].iter().enumerate() {
+            if c != rounds::NONE {
+                parent_of.insert(c, (i, d as u32));
+            }
+        }
+    }
+    let mut depth_of: Vec<u32> = Vec::new();
     for &i in &lay.order {
         let tab = tu.tab_of(i);
         if !state.events[i as usize].is_empty() {
             return Err("pragmas made in text");
         }
         let n = tab.dirs.len();
-        let mut inst = P1Inst { file: tu.insts[i as usize].file, dir_slots: Vec::new(), dir_active: Vec::new(), gap_slots: Vec::new(), gap_active: Vec::new(), gap_tokens: Vec::new() };
-        for (d, dir) in tab.dirs.iter().enumerate() {
+        let (parent, dir, depth) = match parent_of.get(&i) {
+            Some(&(p, d)) => (place[&p], d, depth_of[place[&p] as usize] + 1),
+            None => (u32::MAX, u32::from(i == tu.roots[1]), 0),
+        };
+        depth_of.push(depth);
+        let mut inst = P1Inst { file: tu.insts[i as usize].file, parent, dir, depth, dir_slots: Vec::new(), dir_active: Vec::new(), gap_slots: Vec::new(), gap_active: Vec::new(), gap_tokens: Vec::new() };
+        // A push or a pop is a row of the device's table (decision 0501 §3), as `vis` reads it.
+        for d in 0..n {
             let active = state.active(tab, i, d);
-            if active && matches!(dir.act, files::Act::Push(_) | files::Act::Pop(_)) {
-                return Err("push and pop");
-            }
             inst.dir_slots.push(lay.dir_pos(tab, i, d) >> SUB);
             inst.dir_active.push(active);
         }

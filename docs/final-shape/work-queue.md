@@ -6896,6 +6896,8 @@ Open:
   local joins.
 - **Done when**: a run with a product decodes no tree (`trees_decoded` 0), and a test compares the pass with the
   tree's rewrite on the module's programs.
+- **On rr-align** (roll-up 19): both rewrites are `ProgramPass`es over the version there (`BoundProducts`,
+  `DeferJoins`) and no tree exists to compare with. What is left is the `trees_decoded` test.
 
 ### Q294. (done; Q265 on benchmarks-on-integration) `ane::tests::exact_random_shapes` failed on the M3: Core ML placed a matmul on the CPU
 
@@ -7491,6 +7493,10 @@ object.
   (setfix's CPU levels, its closures, the device's): a second row for a key breaks it (`shapes::Broken`).
 - **Done when**: a test declares a key of a derived relation whose rules break it, and the run names it broken and
   plans the relation from statistics.
+- **Done** (roll-up 19 on rr-align, Q346 there): rr-align had built it (2b9841b58b): setfix's writer counts a key's
+  second row (`setfix::key_breaks`), and the run breaks the fact (`plan::break_fact`, now noting it in
+  `shapes::Broken`). Test: `a_run_finds_a_key_its_rows_break_where_they_are_written`. Open: the device's writer and
+  setfix's closures do not count it yet.
 
 ### Q333. (Q283 on final-rerail-shape) A level's formulas as phases: the pushes' chains are the time (0474; done in 0475)
 
@@ -7962,6 +7968,14 @@ on an M3 or M5:
   and sort fail at 8 groups: "a barrier failed" (bounded, never hangs). They fail at 1 test thread too.
 - **The AOT words**: `the_aot_words_are_the_interpreters` and `the_words_translate_to_rust` overflow the test
   thread's 2 MB stack in `rust_source`.
+- **The evaluation on one persistent grid (0468 step 5a, roll-up 21)**: at Go-C-and-C-support's own 3997fd0a25,
+  each test run alone, every test that runs the whole grid evaluation hangs (past 25 s) or fails with Metal's
+  `BackendFailure`. Which test does which varies between runs. Here 11 more are ignored with it: `if_values_`,
+  `pragma_rows_`, `counters_in_directives_are_the_serial_passes`, `the_include_tree_`, `expanded_include_names_`,
+  `the_groups_`, `push_and_pop_are_the_spikes`, `every_name_sees_the_spikes_definition`,
+  `the_refused_cases_are_the_serial_passes`, `an_evaluation_is_a_fixed_handful_of_launches` and
+  `a_batch_is_its_units`. The 8 tests that stop short of the grid's evaluation pass there and here. On the CPU
+  backend (`RERAIL_GPU=cpu`) the five grid tests pass, so the primitives hold where every group is resident.
 - **Done when**: each passes on the M1 Max, or a test states what the M1 Max cannot do (a grid's residency), and
   none is ignored.
 
@@ -8210,3 +8224,202 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
 - **Next**: find the holder of that segment's `Frozen` block after the run (a shared cache of tapes or images),
   and either drop it with the store (`ContentStore::forget`) or key it to the store's life.
 - **Done when**: the test passes un-ignored three runs in a row on the m3.
+
+
+### Q386. (Q189 on cost-classifier-metal-rf, Q347 on rr-align) A loop's stolen halves lose their run where two runs share a pool
+
+- **Found** (2026-11-19, porting 0500): a parallel loop inside `on_cores` splits by rayon's `join`, and a half
+  another of the machine's pool threads steals runs with nothing of its caller's: no run and no bindings. With
+  `RERAIL_PROFILE` the first file-stat loop (`profile::work`) is refused at once. Before 0442 step 5 the loops ran on
+  rayon's global pool, whose threads were not marked as the engine's: the same reads silently took values of their
+  own, so a profile lost the stolen halves' work and a binding read there gave its default.
+- **Built so far** (60df62dc48): `on_cores` registers its job in its pool's `Inside`, and a pool thread with no run of
+  its own takes the run there when the jobs inside are one run's (tests in rerail-context). That covers a program
+  with one run. It does not cover two runs' loops in one pool at once: a corpus run's phase 0 and its main program
+  do, and a profiled corpus0 x B-now run is still refused there.
+- **Next**: a stolen job carries its creator's run. Rayon has no hook for it: patch rayon-core (`[patch.crates-io]`)
+  so `StackJob` and `HeapJob` capture a carrier the engine installs (`job_run`) when made and enter it when run.
+  Then `Inside` goes.
+- **Done when**: a test with two runs' loops in one pool at once reads each run's own value in every item, and a
+  profiled corpus0 x B-now run completes.
+
+
+### Q389. (Q350 on rr-align) Roll-up 21 (Go-C-and-C-support onto rr-align): what the merge chose, and what stays open
+
+- **Merged** (2026-11-20): Go-C-and-C-support at 2b778cd5218 (base ce2c4019c83), renumbered on a commit of its own
+  first (3997fd0a25):
+  - its decisions 0467, 0475 and 0478 are 0501, 0502 and 0503 here (0487-0489 on rr-align). Each file and README row notes its old number.
+  - its citations of 0421, 0427, 0459 and 0460 are 0482, 0463, 0473 and 0468 here. Its 0460 is ours' 0468 file.
+  - it brings no Q number.
+- **Taken from theirs**:
+  - 0468 step 5: the evaluator is UKL on one persistent grid, a fixed handful of launches a unit (`pp_arena`,
+    `pp_eval::on_grid`, `fewer`; `pp_eval`, `pp_expand`, `pp_grid`, `pp_if`, `pp_p1`, `pp_search` and
+    `pp_probes.uglykl`). These are gone: `pp_blocks.rs` with its tests, `pp_eval.metal`, `pp_expand.metal` and the
+    metal crate's `work_queue`. This supersedes roll-up 20's interim port of `pp_blocks` onto the lane.
+  - 0468 §4: G is the device's resident count (`Device::resident_groups`). The CPU shim runs that many groups at
+    once, each a coroutine (`Launch::resident`, `resident_groups`).
+  - the grid primitives' `ukl_grid_scans`, the small-n paths, `ukl_grid_sort_u64_from` and its tile sort (`tile`).
+  - 0501–0503: P1 as rounds on the device (`eval::rounds`), the text in P1's iterations, and rooms sized from a
+    refused run.
+- **Kept from ours, ported onto theirs**:
+  - 0471: a unit's documents may lie in several slabs. `Unit::slabs` holds the slabs past the bound one, and every
+    launch of `on_grid` makes them resident (`Enc::over`, `run_timed_over`). In the UKL passes a file's place is
+    64 bits (`pf_at`: `at` and `at_high`), and the tape reader and the name keys read through it. Theirs'
+    `Unit::batch` refuses a batch over several slabs.
+  - 0442: theirs' new statics are machine objects: the kernels by name (`pp_arena::Kernels`) and the grid's groups
+    (`pp_arena::Groups`). `pp_arena::SOURCE` is listed in global-state.txt, as `pp_blocks`' was.
+  - the CPU shim's host-given scheduler storage and TLS slot (macOS's pthread keys). The one-group path uses the
+    host's storage. Groups that run together keep their schedulers on their coroutines' stacks, as in theirs, and
+    no thread-local remains in the shim.
+  - `UklGridSortLocal` keeps ours' `digits` beside theirs' `tile`. Every caller now sets it: the library test and
+    `pp_grid`/`pp_probes`, in one block sized `UKL_GRID_SORT_WORDS`. Before this, ours' library test never set
+    it.
+  - c_directives' device lane on macOS and Linux. `sha2` is now a normal dependency there (`eval::rounds::place`).
+- **Checked** on an M1 Max:
+  - The engine, metal, accel, c_directives, parser_tests, rr_parser, device_metal, facts, compiler, gpu and device
+    libs and tests compile with no warning.
+  - Tests that pass:
+    - metal's pp_arena and pp_eval (6);
+    - c_directives' tests that stop short of the grid's evaluation (8, the same set as at theirs' 3997fd0a25);
+    - device's CPU kernels (2);
+    - gpu's threadgroup and device-wide scans, radix sorts and the work queue (5), on Metal and on the CPU backend;
+    - gpu's five grid tests on the CPU backend, with `--ignored`. The sort took 171 s in a debug build.
+- **Open**:
+  - Q367: on the M1 Max, the grid evaluation hangs or fails, both here and at theirs. It now has 11 more ignored
+    tests.
+  - not run on an M3 or M5 (the M3 was at a load average of 174).
+
+
+### Q388. (Q349 on rr-align) Roll-up 20 (CUDA-support onto rr-align): what the merge chose, and what stays open
+
+- **Merged** (2026-11-20): CUDA-support at b28525e9c3b. It brings no new decision or Q number: only 0440 changed.
+- **Taken from theirs** (0440):
+  - every launch is a lane command (`lane::Command`), and every kernel is UKL. These are gone: Metal's checked
+    encoder, `pipeline_named*`, `MappedBuffer`, `PrivateInputUpload` and the `.metal` block programs.
+  - the device crates build on Linux too: the device paths' `cfg`s are macOS or Linux.
+  - the moved MSL: `chunk_views.uglykl` and `join_stages.uglykl` replace `metal_join.rs`'s inline sources.
+- **Kept from ours, ported onto theirs**:
+  - 0442 objects in place of theirs' new statics: the block interpreter's source, `poll_rmw`, the serial kernels,
+    the join pipes and the pool's hooks are machine objects.
+  - block program ops 14, 17 (early) and 18 (prefix), in `block_program.uglykl` and the generated arms.
+  - 0408 L2: the context's slots are rows of the batch's table (`PpBatch.cs`, `clif_ukl`'s `place`).
+  - 0500 (b): `col_bloom`, in `join_sort.uglykl`.
+  - 0431 §4 and §8 in the chunk views: `docof` and `node`'s file column are the file's key (`d->file`), and an
+    axis over several chunks writes one relation, each chunk from its first row (`p5`).
+  - the device runners' explicit errors (`metal_read`, `metal_images`: `Result`), and the batch of TUs a round
+    (`on_device_batch`, 0408 L3).
+  - Q203's evictor.
+  - the view probe's thread per (local, slot). Theirs unrolled the slots, which the comment says compiled for
+    minutes on an M3.
+- **Made to fit**:
+  - `pp_blocks::Enc` encodes into one `lane::Command`: slots for the MSL buffer indices, `uses` for the unit's
+    slabs. `pp_eval::run_reading` commits that one command, so 0448 R9 holds. The pp passes are MSL, so their
+    modules are macOS only until 0468 §5.
+  - `UklGridSortLocal` has theirs' `digits` scratch. `view.h` keeps ours' layout (192 bytes, `file`), with
+    theirs' `UKL_OFFSETOF`.
+  - 0427 is 0463 here, in theirs' text too.
+  - `rerail-blocks` was listed twice in the facts and device_metal manifests.
+  - the slab test reads `device_address()`.
+- **Fixed on the way**:
+  - a lattice's rows were noted twice as written (`self.writes`).
+  - the device_metal crate's tests had no Python embedder since 0470 step 1 (`test_languages` registers it).
+  - `views_made_on_the_device_are_the_hosts_rows` still expected a guest's `docof` to be its own key: since 0431
+    §4 it is its host file's.
+- **Checked** on an M1 Max:
+  - The engine, metal, accel, c_directives, parser_tests, rr_parser, device_metal, facts and compiler libs and
+    tests compile with no warning.
+  - Tests that pass: clif_ukl (2); metal's pp_blocks, including R9 (5); accel's column statistics (2);
+    c_directives' device words, eval and tokens (8); rr_parser's numbers (1); device_metal's fork, chunk views,
+    in-place stats and in-block rows (4); rerail-engine's view reads, placed tape, supertype backends and slab
+    batch (4); parser_tests' executors, totals and extract (4).
+- **Open**: Q367's device expansion on the M1 Max (still ignored).
+
+
+### Q387. (Q348 on rr-align) Roll-up 19 (cost-classifier-metal-rf onto rr-align): what the merge chose, and what stays open
+
+- **Merged** (2026-11-20): cost-classifier-metal-rf at 6a9a5fb6231, renumbered on a commit of its own first
+  (f82db3d0a94):
+  - its decisions 0393, 0394 and 0472 are 0461, 0462 and 0472 here. Its 0477 is 0500 here.
+  - its Q180, Q182-Q189 are Q226, Q227, Q228, Q290, Q291, Q292, Q329, Q330 and Q386. Its Q190 is Q390 here.
+- **Taken from theirs**:
+  - 0442 step 5: the run's context (`rerail_context::bind`, `bound`, `with_bound`, `job_run`, `on_cores`) in place
+    of the carried thread-locals. Every parallel loop runs inside `on_cores` (check-machine-pool.py): rr.rs's
+    `modules_of` and the packed batch's per-file loop are wrapped here. `Carry` stays for a job's own pieces; the
+    rows' chunk is one of them (`chunk_carried`), for Q203's accounting.
+  - 0361 step 6's mechanism: `shapes::Broken`, `Shapes::for_run`/`broken_at`/`probe_limit`, `Model::layout_broken`.
+  - 0500 (b), the probe screens and the blocked Bloom filter, and the join statistics' filters.
+- **Kept from ours**:
+  - the version path (0277): 0500 (a) is ported onto it, not replayed from the tree (0500's "Onto rr-align").
+  - the write-time key check (Q330, `setfix::key_breaks`), now routed through theirs' `Broken` (`plan::break_fact`; at the hub's merge of rr-align the key check is inline in `plan.rs`'s stratum loop and the fan-out check at the plan's counts, so `break_fact` went).
+  - the executors' fan-out check, at `observe`, by theirs' test (`fanout_broken`, see 0361 "At the writes").
+  - sessions that maintain strata from their deltas: a maintained stratum's kept rows are held without counting
+    them as this run's (`hold_maintained`).
+  - prepared plans skip a line with a constant a `values` fact answers (VERSION 3): theirs' derived-estimates test
+    reads `kind2(b, _)` in `z`, and `o` is planned at run time.
+- **Made to fit**:
+  - the run's nesting count is theirs' binding (`RunsUnderWay`); `RunToken`/`RUNS_STARTED` went unused.
+  - `plan::in_view` binds the chunk's view (`KeptPlans`) for its job's extent, so reads in it see the view.
+  - two warm-up jobs (`gpu::join::prewarm`, the label kernels') entered their run inside `as_job`, which notes the
+    job's wall on the machine after the closure returns: outside the run, refused. The run is entered around it.
+  - rr.rs's guest asks read `LIBRARY_DERIVED[..2]` (the embeds), a panic since 0431 step 3 removed them: gone.
+  - lists: `ZEROED_HERE` (gone from block.rs) cut from `run_state::STATE`; `author_joins::Held` listed as run
+    state; a bound `Option<&'static str>` is a flag (`DeferredJoins`).
+  - test-hooks forwards the dev-features check asked for (c_pp, kotlin_aot, metal, parser_tests, transducer, w,
+    ukl), and the lock's union of both sides.
+- **Checked** on the m1max: the engine's lib and tests compile with no warning; rerail-engine's 0361, derived
+  estimate, session, maintain and prewarm tests (24); rerail-logic's product_demand (deferred included), magic,
+  run_state, facts_only, file_local factorize and chunk tests (35); rerail-context, rerail-blocks, and accel's
+  shared, exec and prewarm tests.
+- **Open**: Q330's device writer and setfix's closures; Q386; Q390; Q292's `trees_decoded` test.
+
+
+### Q390. (Q190 on cost-classifier-metal-rf and rr-align) The deferred joins are priced (0500)
+
+- **Found** (2026-11-19, 0500): `RERAIL_DEFERRED_JOINS=auto` took 7-12% more instructions on corpus0 x B-now for the
+  same findings, so it is off by default. It rewrote pair demand into many rules (`c4_elt`, `c4_comp`, `exc_call`,
+  ...), each a few more strata, where the joins were cheap as written.
+- **Next**: offer each rewrite as an alternative the pricer scores against the join as written, from the readers'
+  distinct requests and the factors' sizes (the lab's design, `scripts/profiling/deferred_joins/README.md`, "Where
+  the classifier belongs"), and keep it only where it wins.
+- **Done when**: the rewrite is on by default and corpus0 x B-now takes no more instructions than with it off, with
+  SLF001 on PostHog bounded as Release-debugging measured.
+
+
+### Q392. The hub's merge of final-rerail-shape-rr-align (roll-ups 19-21): what the merge chose, and what stays open
+
+- **Merged** (2026-11-20): rr-align at its roll-ups 19 (cost-classifier-metal-rf), 20 (CUDA-support b28525e9c3) and
+  21 (Go-C-and-C-support), from 972dc90902. Renumbered past the highest anywhere:
+  - decisions: its 0477 (joins deferred) is 0500; its 0487-0489 (P1 on the device, the text in P1's iterations, the
+    rooms sized from a refused run) are 0501-0503; its 0486 is this hub's 0472 (the same text), so its file went.
+    Its other citations map as at the hub's last rr-align merge (0445→0480, 0464→0473, 0465→0474, 0466→0482,
+    0467→0479, 0472→0477, 0476→0483, 0479→0484, 0480→0464, 0482→0466, 0483→0475, 0484→0465, 0485→0476).
+  - work queue: its Q345/Q346 are Q329/Q330 here (their text was already here; Q346's "Done" went into Q330); its
+    Q347-Q350 and Q190 are Q386-Q389 and Q390. Its Q330 is Q367 here (the ignore reasons in `eval/tests.rs`).
+- **Chose, by invariant**:
+  - The CUDA lane is ours where ours is ahead (f6692c2cdc): the driver's working set (`runtime::driver_refuses`, its
+    test), the per-thread test ledgers, the Linux lane's skips (a Linux host may have no device; a Mac's device error
+    fails the test), `context`'s guard check, the device's in-place column reads (0478).
+  - Theirs' new work kept whole: 0500 (the deferred joins, the Bloom filters, `column_stats`' `words`, ported onto
+    ours' in-place reads), Go-C's P1 on the device (0501-0503, `pp_arena` in place of `pp_blocks`, `grid.h`'s tile),
+    and the pool fix (`rerail_context::Inside`, its `POOL` thread-local listed in `run_state`).
+  - One definition each: `PpBatch` keeps ours' layout (`hb, count, pad, cs`) in the Rust struct and the UKL typedef;
+    the chunk's context type keeps ours' names (`InChunk`, `ChunkScope`, decision 0469's peaks); 0361 step 6's checks
+    stay ours' (the key break inline in the stratum loop, the fan-out at the plan's counts), so theirs'
+    `plan::break_fact` and `fanout_broken`, a second copy of the same test, went.
+  - `factorize` is theirs' (scopes for 0500's intermediates) with ours' chained keys ported in.
+  - `front::shape_base` stays gone (0364 R1): `demand_first` compares the head itself.
+  - The serial path's refusal of a prefix (`starts_late`) stays cut in `run_serial_io` (Q215, 5670277876).
+  - `Body::demand_first` keeps 0500's clauses (a pair cache's guard, a deferred join's pairs) but not its plain
+    `demand_x` clause: with the deferred joins off by default, it made every demanded rule lead with its demand and
+    broke `a_demanded_rule_may_be_led_by_a_constant_restricted_atom`.
+- **Tests** (2026-11-20, on the M1 Max host): the quick tier ran 2,931: 2,907 passed. Of the rest, 10 lack the packs'
+  test data and 3 had a 16 GB mapping refused on the loaded host. Seven also fail at HEAD (9dba4a18fb), the same
+  way: `a_constant_counted_none_when_planned_is_growth_when_it_has_rows` and
+  `the_search_prices_the_steps_past_a_bound_head_as_one_witness` (the planner leads another atom),
+  `no_rule_or_fact_is_read_from_text` (`prepared.rs`'s tab split under `RERAIL_SIZES_FROM`),
+  `r2_a_new_process_hashes_only_the_changed_documents_rows_of_its_inputs` (Q385's area),
+  `a_demand_split_stays_linear_in_the_modules`, `a_patterns_block_program_runs_alike_on_every_executor` (0423's
+  refusal) and `the_backends_find_the_same_keys_on_real_files` (`BackendLaunchLimit`). Three failed only under the
+  tier's load and pass alone. `rule_files_pass_their_own_tests` takes 167 s here and 166 s at HEAD.
+- **Open**: Q367 (the grid evaluation on the M1 Max), Q386, Q390, Q330's device writer and setfix's closures; the
+  seven tests red at HEAD.

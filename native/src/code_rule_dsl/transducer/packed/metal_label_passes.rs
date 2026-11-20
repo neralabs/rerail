@@ -1300,8 +1300,10 @@ pub(in crate::code_rule_dsl) fn warm() {
         let shared = crate::code_rule_dsl::logic::profile::shared_here();
         // A panic leaves the kernels to be compiled where they are needed (a job's panic would end
         // the process).
-        crate::code_rule_dsl::logic::profile::cores_spawn(move || rerail_accel::exec::as_job("the label kernels' warm-up", || {
+        // In the run around the job (`as_job` notes its wall, the machine's, after its closure returns).
+        crate::code_rule_dsl::logic::profile::cores_spawn(move || {
             let _in_run = crate::code_rule_dsl::logic::profile::within(shared);
+            rerail_accel::exec::as_job("the label kernels' warm-up", || {
             let _ = std::panic::catch_unwind(|| {
                 // The set program's kernels first: it runs first in a wave (its candidates). The shared
                 // device is not opened here: on S7 a wave waiting on this job's open waited longer (to
@@ -1315,7 +1317,8 @@ pub(in crate::code_rule_dsl) fn warm() {
                 });
                 let _ = compile_sweep_cached();
             });
-        }));
+            })
+        });
     });
 }
 

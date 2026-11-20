@@ -498,7 +498,7 @@ impl Drop for Pooled {
         let Some(b) = self.buffer.take() else { return };
         self.on.live.fetch_sub(b.length() as usize, std::sync::atomic::Ordering::Relaxed);
         if self.owner != 0 {
-            released(self.owner, b.length() as usize);
+            released(&self.on, self.owner, b.length() as usize);
         }
         if let Some(hook) = LEASE_HOOK.get() {
             hook(b.contents() as usize, 0);
@@ -762,8 +762,8 @@ fn held_here(mut p: Pooled) -> Pooled {
     p
 }
 
-fn released(owner: u64, bytes: usize) {
-    if let Some(e) = dev().holders.lock().expect("the holders").get_mut(&owner) {
+fn released(on: &Memory, owner: u64, bytes: usize) {
+    if let Some(e) = on.holders.lock().expect("the holders").get_mut(&owner) {
         e.0 = e.0.saturating_sub(bytes);
     }
 }

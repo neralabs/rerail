@@ -928,18 +928,6 @@ fn carried_serial(at: usize, inst: &BlockInst, out: &mut String) {
     }
 }
 
-/// The serial kernels for `programs` (each in its planes form): the segments' runs, the check, and
-/// the positions and totals from the finished words.
-/// `generate_serial`'s sources by what they are made from: each program, the pass's stores and
-/// slots, what runs have learned of each, and the switches the generator reads. A batch's
-/// source is made once, not at every run: made in a debug build, a pass of `.rerail`'s took 26 s.
-
-/// A source's kernels by its key (`serial_source`) and name: found without hashing the source
-/// again, as `lane::kernel` does (twelve kernels a pass, its source near a megabyte).
-
-/// Sources generated and kernels compiled by this process's serial runs: a benchmark reads it
-/// around its timed runs, which must make none (`prewarm` makes them first).
-
 /// What the serial programs' runs keep of callers' programs (decision 0442: the caller's, `rerail_context::Shared`):
 /// each program's generated sources, what its runs learned, the sources that learn nothing more, its shapes and passes.
 #[derive(Default)]
@@ -982,7 +970,6 @@ fn kernel(key: u64, source: &str, name: &'static str) -> Result<lane::Kernel, Er
     }
     rerail_context::with_local::<Compiles, _>(|c| c.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
     let made = lane::kernel(source, name, None);
-    let st_ = kernels();
     if let Ok(mut m) = st_.0.lock() {
         m.insert((key, name), made.clone());
     }

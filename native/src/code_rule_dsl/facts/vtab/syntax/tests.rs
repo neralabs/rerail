@@ -1866,7 +1866,7 @@ DEFINE_KERNEL2(syntax_tests, ids_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, I
                     .buffer("b", &block.device_buffer(&shared.device).unwrap())
                     .value("p", &IdsP { d, n, pad: 0 })
                     .buffer("out", &out)
-                    .run(&[u64::from(n).div_ceil(64)], &[64])
+                    .run(&[(u64::from(n) * 16).div_ceil(64)], &[64])
                     .unwrap_or_else(|e| panic!("{e}"));
                 q.flush().await_().unwrap();
                 let got: Vec<u32> = read(&out, n as usize * WIDE);

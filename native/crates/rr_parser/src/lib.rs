@@ -2422,7 +2422,7 @@ pub mod tests {
         }
     }
 
-    /// No GPU lane off macOS and Linux.
+    /// No device lane off macOS and Linux.
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     fn metal_refuses_as_the_cpu(_: &crate::Compiled, _: &[&[u8]], _: &[(String, bool)]) {}
 
