@@ -300,6 +300,17 @@ Linux hosts are. Nothing of the farm runs on Windows itself. Set up once, as an 
   (with its `link`, WSL's `eth0`), and `setup`.
 - A laptop: on AC power, no sleep and no action on closing the lid (`powercfg`).
 
+### A Linux VM on a Mac
+
+A Mac host can run a Linux host beside itself: an Ubuntu 24.04 ARM VM made with Lima (Apple's
+Virtualization framework, no licence; Parallels needs a valid one to start a VM), reached by ssh
+through the Mac (`ProxyJump`, Lima's forwarded ssh port). Its configuration: `cpus`, `memory`,
+`disk` (sparse), no mounts, a provision script with the Linux host's packages and a `farm` user in
+`docker` holding the build machine's key; `limactl start-at-login` starts it with the Mac. Then
+rustup and cargo-nextest as above, its entry in `farm.json`, `setup`. An ARM VM gave
+`test-mac-compiles`' 42 outputs as this Mac's bytes (2026-11-19), so it takes this Mac's compiles
+too. Its CPU is the Mac's when it idles: a VM's vCPUs take nothing while no command runs.
+
 ### Windows hosts
 
 The same PC's Windows side is a host of its own (`"os": "windows"`), for Windows builds and runs
