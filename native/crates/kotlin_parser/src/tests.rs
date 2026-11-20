@@ -231,6 +231,19 @@ fn numbers_are_the_lean_parsers() {
     ]);
 }
 
+/// A number's suffix is the name touching it (`sfx`), as the lean parser's `integer` reads the
+/// token after; elsewhere `L`, `u`, `U`, `uL` and `UL` are names.
+#[test]
+fn suffixes_are_the_names_touching_a_number() {
+    same(&[
+        "val a = 0b1u + 0x1uL + 7U + 7UL + 7uL\n",
+        "val L = 1\nval u = L + U\nfun uL(UL: Int) = UL\n",
+        "val a = L.b + 1L.c\n",
+        "val b = 1L\nval L = 2\n",
+    ]);
+    refused(&["val a = 1x\n", "val a = 0xFFg\n", "val a = 0b1z\n", "val a = 1Lx\n", "val a = 1.5x\n", "val a = 1lu\n"]);
+}
+
 /// Step 10: a class's members.
 #[test]
 fn members_are_the_lean_parsers() {

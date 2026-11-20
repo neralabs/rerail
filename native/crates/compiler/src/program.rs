@@ -48,10 +48,15 @@ pub const ACCEPT: u8 = 0x5b;
 pub const SPAN: u8 = 0x5c;
 /// Refuses unless one of tier 1's totals is zero: the fallback.
 pub const EMPTY: u8 = 0x5d;
-/// A mark (a token of no width) before the token: `m=k` its order, the operand its mask.
+/// A mark (a token of no width) before the token: `m & MARK_ORDER` its order, the operand its
+/// mask.
 pub const MARK: u8 = 0x5e;
+/// `MARK`'s mode bits for the mark's order: 64 marks.
+pub const MARK_ORDER: u8 = 63;
+/// `MARK`'s mode bit: the file's end has the mark.
+pub const MARK_END: u8 = 64;
 /// `MARK`'s mode bit: on the mark, its arm, the mark kept for the callee that arm calls.
-pub const MARK_KEEP: u8 = 64;
+pub const MARK_KEEP: u8 = 128;
 /// `TOKEN`'s mode bit: the extras taken in the token step (`Words::extras`), as the lean parser
 /// places comments where it passes them: a token that is an extra is its leaf, deferred, and
 /// the next token is taken.

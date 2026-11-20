@@ -204,15 +204,13 @@ mask n_last     = nb & ~next(nb)
 mask int_at     = num_start & ~hex_at & ~bin_at
 mask h_last     = hx & ~next(hx)
 mask b_last     = bx & ~next(bx)
-# A suffix: the word right after an integer (`L`, `u`, `uL`), a keyword token of its own. A
-# name of the same text elsewhere is not read, so the grammar takes the word after an integer
-# as its suffix only where it touches it.
+# A suffix (`L`, `u`, `uL`) is the name token after an integer, touching it: the integer's
+# rule asks (`sfx`, below), as the lean parser's `integer` does.
 mask int_last   = n_last & di | h_last | b_last
-mask sfx        = w & alpha & prev(int_last)
+# The suffix's first byte: a name starts there, though it touches the number.
+mask sfx_start  = w & alpha & prev(int_last)
 escape "a digit after a binary number" when w & digit & prev(int_last)
-mask sfx_text   = (text("L") | text("u") | text("U")) & ~next(w) | (text("uL") | text("UL")) & ~next(w, 2)
-escape "a word touching a number, no suffix" when sfx & ~sfx_text | n_last & ~di & next(w)
-escape "a name `L`, `u`, `U`, `uL` or `UL`" when w & alpha & ~prev(w) & sfx_text
+escape "a word touching a real number" when n_last & ~di & next(w)
 escape "a number that ends in `_`" when (n_last | h_last | b_last) & underscore
 mask number     = fill(num_start, ~w) | nb
 error "a byte no token takes" by tokens when code & ~ws & ~word_run & ~number & ~punct
@@ -261,7 +259,7 @@ token multiline_comment = start slash & o_block read block
 # `return@`, `this@`, `as?` and a label's `loop@` are two tokens each, as the lean lexer reads
 # them; tier 2 joins them where its rule takes them (`apart` and the token marks after it).
 mask at_after   = code & at_sign & prev(w)
-mask word_start = word_run & ~prev(word_run) | sfx
+mask word_start = word_run & ~prev(word_run) | sfx_start
 # A name's token ends at its word's last byte.
 mask name_tok   = fill(word_start, ~w)
 # A name runs over its word's bytes after its first, as the lean lexer's word reader. A number
@@ -323,9 +321,9 @@ token punct     = start p_start pair two_start
 keywords simple_identifier {
   "as" "break" "class" "continue" "do" "else" "false" "for" "fun" "if" "in" "interface" "is"
   "null" "object" "return" "super" "this" "throw" "true" "try" "typealias" "val" "var" "when"
-  "while" "vararg" "noinline" "crossinline" "L" "u" "U" "uL" "UL"
+  "while" "vararg" "noinline" "crossinline"
 } soft {
-  "package" "import" "by" "constructor"
+  "package" "import" "by" "constructor" "L" "u" "U" "uL" "UL"
   "expect" "data" "inner" "value" "actual" "set" "get" "override" "suspend" "annotation" "sealed" "lateinit" "tailrec" "operator" "infix" "inline" "external" "public" "private" "internal" "protected" "abstract" "final" "open" "const" "reified" "field" "property" "receiver" "param" "setparam" "delegate" "companion" "init" "dynamic" "where" "catch" "finally" "enum" "file" "out"
 }
 keywords interpolated_identifier { } soft { "expect" "data" "inner" "value" "actual" "set" "get" "override" "suspend" "annotation" "sealed" "lateinit" "tailrec" "operator" "infix" "inline" "external" "public" "private" "internal" "protected" "abstract" "final" "open" "const" "vararg" "noinline" "crossinline" "reified" "field" "property" "receiver" "param" "setparam" "delegate" "companion" "constructor" "init" "dynamic" "where" "catch" "finally" "enum" "out" }
@@ -396,6 +394,9 @@ mark label_at   = tokens simple_identifier "@" without apart
 mark this_at    = tokens "this" "@" without apart
 mark jump_at    = tokens "return" | "break" | "continue" "@" without apart
 mark as_q       = tokens "as" "?" without apart
+# A name touching an integer: its suffix, where the integer's rule takes one (`L`, `u`, `U`,
+# `uL`, `UL`), else refused there, as the lean parser's `integer` reads the token after.
+mark sfx        = tokens integer_literal | hex_literal | bin_literal simple_identifier without apart
 # A `{` after `)`, `else`, `do`, `try` or `finally`: where a control structure's body goes, a
 # block, not a lambda; after a call's arguments, the call's own lambda (the lean parser's
 # `call`), not another call's. Before the lambda's marks, which hold at the same token.
@@ -675,7 +676,8 @@ tree kotlin {
   node character_literal = "'" [character_escape_seq | uni_escape | char_content] "'"
   node uni_escape       = retag character_escape_seq "\\u" uni_digits
   # An integer and its suffix: the suffix's node wraps the integer, and keeps no leaf of it.
-  choice number_literal nested = real integer_literal as real_literal | (integer_literal | hex_literal | bin_literal) [wrap long_literal _ 'L' | wrap unsigned_literal _ ('u' | 'U' | 'uL' | 'UL')] | real_literal
+  choice number_literal nested = real integer_literal as real_literal | sfx (integer_literal | hex_literal | bin_literal) (wrap long_literal _ 'L' | wrap unsigned_literal _ ('u' | 'U' | 'uL' | 'UL'))
+                        | integer_literal | hex_literal | bin_literal | real_literal
   choice interp_id      = interpolated_identifier | soft_interp
   node soft_interp      = retag interpolated_identifier interp_soft
   choice interp_soft    = 'expect' | 'data' | 'inner' | 'value' | 'actual' | 'set' | 'get' | 'override' | 'suspend' | 'annotation' | 'sealed' | 'lateinit' | 'tailrec' | 'operator' | 'infix' | 'inline' | 'external' | 'public' | 'private' | 'internal' | 'protected' | 'abstract' | 'final' | 'open' | 'const' | 'vararg' | 'noinline' | 'crossinline' | 'reified' | 'field' | 'property' | 'receiver' | 'param' | 'setparam' | 'delegate' | 'companion' | 'constructor' | 'init' | 'dynamic' | 'where' | 'catch' | 'finally' | 'enum' | 'out'
@@ -788,6 +790,6 @@ tree kotlin {
   implied when_subject '(' ')' 'val' '='
   implied when_entry ',' 'else'
   implied callable_reference '::' 'class'
-  hidden apart this_at jump_at as_q recv dotted fn_recv semi semi_close head_ctor named cref trail lam_params lam_bare blk use_site file_at real ann_expr
+  hidden apart this_at jump_at as_q sfx recv dotted fn_recv semi semi_close head_ctor named cref trail lam_params lam_bare blk use_site file_at real ann_expr
   extra line_comment multiline_comment
 }

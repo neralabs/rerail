@@ -940,7 +940,7 @@ impl Emit<'_> {
                 _ => {}
             }
             let m = &self.marks[k];
-            self.push("MARK", k as u8 | if m.end { 32 } else { 0 } | if keep { MARK_KEEP } else { 0 }, Arg::Num(m.mask));
+            self.push("MARK", k as u8 | if m.end { crate::program::MARK_END } else { 0 } | if keep { MARK_KEEP } else { 0 }, Arg::Num(m.mask));
             match at {
                 AtMark::Arm(a) => {
                     mark_arms.push((self.pc(), a));

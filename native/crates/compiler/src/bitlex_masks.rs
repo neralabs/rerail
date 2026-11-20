@@ -3870,9 +3870,15 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     let mut classes: HashMap<Vec<u16>, u8> = HashMap::default();
     let mut sigs: Vec<Vec<u16>> = Vec::new();
     // A token mark's kinds (decision 0129): a column each, so a kind of the records is one
-    // kind's tokens or none of them; a byte that starts that kind's tokens and another's can not
-    // tell them apart, and the mark is not compiled.
-    let mut mark_kind_names: Vec<String> = lowered.token_marks.iter().flat_map(|(_, _, _, es)| es.iter().flat_map(|e| e.1.iter().chain(e.6.iter().flat_map(|n| n.2.iter())).chain(e.7.iter().flat_map(|x| x.0.iter())).cloned())).collect();
+    // kind's tokens or none of them. An element's kinds are one set: a byte that starts a kind
+    // of the set and a kind outside it can not tell them apart, and the mark is not compiled
+    // (`integer_literal | hex_literal | bin_literal` share `0`, and the set takes all three).
+    let mut mark_kind_sets: Vec<Vec<String>> = lowered.token_marks.iter().flat_map(|(_, _, _, es)| es.iter().flat_map(|e| std::iter::once(e.1.clone()).chain(e.6.iter().map(|n| n.2.clone())).chain(e.7.iter().map(|x| x.0.clone())))).filter(|set: &Vec<String>| !set.is_empty()).collect();
+    for set in &mut mark_kind_sets {
+        set.sort();
+        set.dedup();
+    }
+    let mut mark_kind_names: Vec<String> = mark_kind_sets.iter().flatten().cloned().collect();
     mark_kind_names.sort();
     mark_kind_names.dedup();
     // The moved rows' own first bytes again, for the token marks' kinds, the end rules and the marks below.
@@ -3884,10 +3890,12 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // inside the region, whose rule takes no mark, so a mark that holds there is skipped (hidden)
     // or refuses the file, and never reads a token otherwise.
     let inside = |r: usize| low.inside.get(r).copied().unwrap_or(false);
-    for name in &mark_kind_names {
-        for b in 0..256 {
-            if starts_kind(name, b) && (0..rows.len()).any(|r| token_rows[r].0 != *name && !inside(r) && !low.extra.contains(&token_rows[r].0) && rows[r].first[b / 64] >> (b % 64) & 1 == 1) {
-                return Err(format!("a token mark's kind `{name}` shares byte {b:#04x} with another token"));
+    for set in &mark_kind_sets {
+        for name in set {
+            for b in 0..256 {
+                if starts_kind(name, b) && (0..rows.len()).any(|r| !set.contains(&token_rows[r].0) && !inside(r) && !low.extra.contains(&token_rows[r].0) && rows[r].first[b / 64] >> (b % 64) & 1 == 1) {
+                    return Err(format!("a token mark's kind `{name}` shares byte {b:#04x} with another token"));
+                }
             }
         }
     }

@@ -51,9 +51,9 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         // name (`Words::word_kinds`).
         LEAF if operand == WORD_KIND => mode == 0 && !program.word_kinds.is_empty() && records.is_some_and(|r| r.words == program.strings),
         LEAF => mode <= 3 && operand != REMEMBERED,
-        // Mark `m % 32` (its order), its bit in mask `operand`; `m & 32`: the file's end has it;
-        // `m & 64`: kept, for the callee its arm calls, which takes it (`MARK_KEEP`).
-        MARK => mode < 128 && usize::from(operand) < masks,
+        // Mark `m & MARK_ORDER` (its order), its bit in mask `operand`; `MARK_END`: the file's
+        // end has it; `MARK_KEEP`: kept, for the callee its arm calls, which takes it.
+        MARK => usize::from(operand) < masks,
         ROW => mode == 0 && usize::from(operand) < masks,
         // `m=1`: the node a wrap moved; `m=2`: the node made last at this level (`relabel`);
         // `m=3` (a field): the node that one, a wrap, holds first. `RETAG m=3`: that node and
@@ -377,7 +377,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
     // them again). `pending`: the deferred extras' leaves at the table's end.
     // `keep`: while leaves are pending, the end of the token before them, where a node closed
     // then ends.
-    let (mut need, mut live, mut pending, mut keep) = (true, 0u32, 0usize, 0u32);
+    let (mut need, mut live, mut pending, mut keep) = (true, 0u64, 0usize, 0u32);
     // A region read in parts that tier 2 splits (`Split::Tier2`, decision 0323): where a record
     // is a whole region (at its opener, past its byte), its tokens (`records::read_parts`) with
     // their codes (`records::pass`), taken one a `TOKEN` before the next record.
@@ -493,7 +493,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 // The marks live: all, or (`m=1+k`) none where no mark holds and the stream
                 // goes on.
                 let m = mode & !TOKEN_EXTRAS;
-                live = if m == 0 || at_end || mask_bit(u16::from(m - 1), start) { u32::MAX } else { 0 };
+                live = if m == 0 || at_end || mask_bit(u16::from(m - 1), start) { u64::MAX } else { 0 };
                 // A token mark that refuses (`TokenMark::refuses`): at a token its bit names,
                 // its tokens following, the file is refused.
                 let extra_bit = program.extras.first().map(|e| u32::from(e.0));
@@ -550,7 +550,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 }
             }
             MARK => {
-                let k = u32::from(mode % 32);
+                let k = u32::from(mode & crate::program::MARK_ORDER);
                 // A mark of one word (`Words::mark_words`): the token's record names it too.
                 let word_ok = || match program.mark_words.iter().find(|&&(x, _)| u32::from(x) == k) {
                     Some(&(_, s)) => crate::records::word_of(code) == u32::from(s) + 1,
@@ -561,7 +561,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 let in_code = (k as usize) < records.map_or(0, |r| r.mark_bits()) && records.is_none_or(|r| r.alone >> k & 1 == 0);
                 let token_mark = program.token_marks.iter().any(|m| u32::from(m.order) == k);
                 let here = if at_end {
-                    mode & 32 != 0
+                    mode & crate::program::MARK_END != 0
                 } else if in_code {
                     code >> (crate::records::MARK_SHIFT + k) & 1 == 1
                 } else if token_mark {
@@ -578,7 +578,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     // Taken: it and the marks before it are done at this token. Kept: its arm
                     // calls the level that takes it.
                     if mode & MARK_KEEP == 0 {
-                        live &= !(u32::MAX >> (31 - k));
+                        live &= !(u64::MAX >> (63 - k));
                     }
                 } else {
                     pc += 1;
@@ -1017,9 +1017,9 @@ pub fn validate_local_checks(program: &Words) -> Result<(), Error> {
 /// (its bit gates it), with extras taken in the token step (they are skipped by their bit);
 /// its elements rising by offset, the mark's own (0) among them, the words the program's.
 pub fn validate_token_marks(program: &Words) -> Result<(), Error> {
-    // A token mark past the code's (decision 0407) is a bit of `live`, which holds 32; one that
+    // A token mark past the code's (decision 0407) is a bit of `live`, which holds 64; one that
     // refuses is tested once a token by its code bit, so in the code.
-    let marks = 32;
+    let marks = 64;
     let bits = program.block_programs.first().and_then(|b| b.records.as_ref()).map_or(0, |r| r.mark_bits());
     for (i, m) in program.token_marks.iter().enumerate() {
         if m.refuses && usize::from(m.order) >= bits {
@@ -1157,11 +1157,11 @@ pub fn validate_extras(program: &Words) -> Result<(), Error> {
 /// token mark that refuses, which `TOKEN` tests) and a string of the records' words.
 pub fn validate_mark_words(program: &Words) -> Result<(), Error> {
     let records = program.block_programs.first().and_then(|b| b.records.as_ref());
-    let tested: Vec<u8> = program.words.iter().map(|&w| split(w)).filter(|w| w.0 == MARK).map(|w| w.1 % 32).collect();
+    let tested: Vec<u8> = program.words.iter().map(|&w| split(w)).filter(|w| w.0 == MARK).map(|w| w.1 & crate::program::MARK_ORDER).collect();
     for (i, &(k, s)) in program.mark_words.iter().enumerate() {
         let rising = i == 0 || program.mark_words[i - 1].0 < k;
         let refusing = program.token_marks.iter().any(|m| m.refuses && m.order == k);
-        let ok = rising && k < 32 && (tested.contains(&k) || refusing) && usize::from(s) < program.strings.len() && records.is_some_and(|r| r.words == program.strings);
+        let ok = rising && k <= crate::program::MARK_ORDER && (tested.contains(&k) || refusing) && usize::from(s) < program.strings.len() && records.is_some_and(|r| r.words == program.strings);
         if !ok {
             return Err(Error::InvalidOperand(i));
         }
