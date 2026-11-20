@@ -86,6 +86,8 @@ const SHARES_AFTER_A_COLON = [
   { form: "a PowerShell parameter", command: "Get-ChildItem -Path:\\\\192.0.2.1\\data\\cfg", share: "\\\\192.0.2.1\\data\\cfg" },
   { form: "a PowerShell parameter's one letter", command: "Get-ChildItem -P:\\\\192.0.2.1\\data\\cfg", share: "\\\\192.0.2.1\\data\\cfg" },
   { form: "a one-letter parameter after an en dash", command: "Get-ChildItem \u2013P:\\\\192.0.2.1\\data\\cfg", share: "\\\\192.0.2.1\\data\\cfg" },
+  { form: "a one-letter parameter after an em dash", command: "Get-ChildItem \u2014P:\\\\192.0.2.1\\data\\cfg", share: "\\\\192.0.2.1\\data\\cfg" },
+  { form: "a one-letter parameter after a horizontal bar", command: "Get-ChildItem \u2015P:\\\\192.0.2.1\\data\\cfg", share: "\\\\192.0.2.1\\data\\cfg" },
   { form: "findstr's one-letter switch", command: "findstr /G:\\\\192.0.2.1\\data\\cfg notes.txt", share: "\\\\192.0.2.1\\data\\cfg" },
   { form: "findstr's switch glued to its name", command: "findstr/G:\\\\192.0.2.1\\data\\cfg notes.txt", share: "\\\\192.0.2.1\\data\\cfg" },
   { form: "an smb: URL", command: "curl -s smb://192.0.2.1/share/cfg", share: "\\\\192.0.2.1\\share\\cfg" },
@@ -191,10 +193,12 @@ const MAIN_TOKEN_BREAK = /[\s"'`|;&<>(),:={}]+/u;
 
 /**
  * One character of each kind a word can hold, since {@link MAIN_TOKEN_BREAK} splits at none of them: an ASCII letter, a
- * digit, every ASCII mark that is no delimiter (both slashes, a dash, a dot, glob, bracket and other marks), an en dash
- * for the dashes PowerShell also takes, and a letter of another script.
+ * digit, every ASCII mark that is no delimiter (both slashes, a dash, a dot, glob, bracket and other marks), the other
+ * dashes PowerShell takes (an en dash, an em dash, a horizontal bar), and a letter of another script.
  */
-const WORD_CHARACTERS = ["a", "1", "/", "\\", "-", "–", ".", "*", "[", "]", "_", "+", "~", "%", "@", "#", "!", "?", "^", "$", "é"] as const;
+const WORD_CHARACTERS = [
+  "a", "1", "/", "\\", "-", "–", "—", "―", ".", "*", "[", "]", "_", "+", "~", "%", "@", "#", "!", "?", "^", "$", "é",
+] as const;
 
 /** Every string of `length` characters from {@link WORD_CHARACTERS}. */
 const stringsOf = (length: number): string[] =>
@@ -626,11 +630,12 @@ describe("the transcript boundary for coding agents", () => {
     }
   });
 
-  it("holds every ASCII character a word can hold, so the table of spellings misses no kind of character", () => {
+  it("holds every ASCII character a word can hold and every dash, so the table of spellings misses no kind of character", () => {
     const printable = Array.from({ length: 95 }, (_, index) => String.fromCharCode(32 + index));
     const kinds = new Set<string>(WORD_CHARACTERS);
     expect(printable.filter(character => !MAIN_TOKEN_BREAK.test(character) && !/[a-z\d]/iu.test(character) && !kinds.has(character)))
       .toEqual([]);
+    expect(DASHES.filter(dash => !kinds.has(dash))).toEqual([]);
     expect(WORD_CHARACTERS.filter(character => MAIN_TOKEN_BREAK.test(character))).toEqual([]);
   });
 
@@ -649,9 +654,9 @@ describe("the transcript boundary for coding agents", () => {
     expect({ broken: tally.broken, byLastTwo: tally.byLastTwo, first: tally.first }).toEqual({ broken: 0, byLastTwo: {}, first: {} });
     // Each change the description names holds the spellings it names; every other spelling is looked up as on `main`.
     expect(tally.changes).toEqual(process.platform === "win32"
-      ? { [AS_ON_MAIN]: 218_514, [DRIVE_PATH]: 29_724, [URL_HOST]: 43_482, [NET_URL]: 0 }
-      : { [AS_ON_MAIN]: 287_097, [DRIVE_PATH]: 0, [URL_HOST]: 0, [NET_URL]: 4_623 });
-    // 291,720 spellings take seconds, more on a loaded machine: the bound leaves room for that.
+      ? { [AS_ON_MAIN]: 287_534, [DRIVE_PATH]: 35_492, [URL_HOST]: 58_574, [NET_URL]: 0 }
+      : { [AS_ON_MAIN]: 375_103, [DRIVE_PATH]: 0, [URL_HOST]: 0, [NET_URL]: 6_497 });
+    // 381,600 spellings take seconds, more on a loaded machine: the bound leaves room for that.
   }, 30_000);
 
   it.runIf(process.platform === "win32")("looks up a device path or a loopback share right after a `:` as `main` does, and skips only a share on another machine there", () => {
