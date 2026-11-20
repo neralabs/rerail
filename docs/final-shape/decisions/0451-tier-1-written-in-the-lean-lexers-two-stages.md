@@ -387,3 +387,60 @@ receiver" all read `decl_run`, a fill from `fun`, `val` or `var` to the declarat
 from the token after the keyword, taken by the declaration's rule. That is one change for the
 three: the receiver becomes the rule's lookahead at its token. Stage 1's marks' cone is now 329
 values, from 512, and 38 of those are `recv`'s own.
+
+## Item 3, the declaration's receiver: tier 2's, as `receiver_end` (2026-11-19)
+
+Stage 1 made the receiver's context at every byte. `decl_run` was a fill from `fun`, `val` or
+`var` to the declaration's stop, with `tp_body`, `rstart` and four more fills under it. `recv`
+(the receiver's first token) and `dotted` (its last `.`) were masks over it. The escape "a
+nullable receiver" was too. `dotted` also held at a delegation's `{` (`del_brace`, over the fills
+`class_decl` and `obj_decl`), where it ended the delegate's expression. The lean parser has none
+of this. `receiver_end` scans forward from the token where the receiver may come. A delegate's
+expression is read with `no_lambda` set, and the postfix loop asks `T::LBrace if !self.no_lambda`.
+Now the grammar does the same:
+- **`recv`** is a hidden token mark: the run of a type's tokens to a `.` (or `?.`) and a name that
+  no `.`, `<`, `>`, `?.` or `,` follows. Hidden, it is asked only where `receiver` may come, after
+  the keyword and the type parameters, so it needs no context. A receiver ending in `?.` holds it
+  too, and the receiver's rule, which reads no `?.`, refuses it. That is the escape's refusal,
+  made where the lean parser reads the token.
+- **The receiver's loop** is its own rule: `recv_type = retag user_type type_name [type_arguments]
+  (dotted '.' type_name [type_arguments])*`. `dotted` is now a hidden token mark, a `.` whose name
+  another `.`, `<`, `>`, `?.` or `,` follows. The loop goes on there, and at the last `.` it ends
+  and `receiver` takes the `.`. This is `user_type`'s `i != type_stop`, asked at the `.`.
+- **`no_lambda`** is a flag, set over a delegate's expression and an object literal's specifiers.
+  It is clear again inside parentheses (`value_arguments`, `parenthesized_expression`). The
+  postfix loops take a trailing lambda alone (`lambda_call`) and a call's lambda after its
+  arguments only where it is clear. The guard sits on the loop's own arm, as in the lean parser.
+  In a choice the loop calls, the guarded arm is in a state that cannot end, so it refused there.
+  The compiler does not carry a guard out to the caller's arm (an open limit: a guard belongs
+  where the level may end).
+
+Gone from stage 1: `decl_kw`, `after_kw`, `first_tok`, `tp_body`, `decl_stop`, `decl_run`,
+`after_tp`, `rstart`, `class_decl`, `head_brace`, `object_w`, `obj_decl`, `del_brace` and one escape.
+The mark orders stay at 32.
+
+A receiver after nested type arguments in the type parameters (`fun <T : Comparable<T>> B.f()`)
+was refused, because `tp_body` ended early there. It is now read as the lean parser reads it, and
+it moved from `what_step_22_does_not_read_is_refused` to `receivers_are_the_lean_parsers`.
+
+**Result:** Kotlin's tests (52) and `kotlin_aot`'s (4) pass. The corpus is 450 the same (from
+448), 41 refused, 0 differ. The block program went from 1,450 operations to 1,380, and the
+marks' cone in stage 1 from 329 values to 270. That leaves the marks' cone with the gap marks
+alone: `semi`, `semi_close`, `head_ctor`, `apart` and `real`. Item 3 is done.
+
+## Item 4 measured: what the escapes cost stage 1 (2026-11-19)
+
+The block program with every escape taken out (`token_level_probe`, which now reads
+`RERAIL_KOTLIN_GRAMMAR`) is 1,076 operations, against 1,450. By family, each taken out alone:
+
+| Escapes | Operations |
+|---|---|
+| Comments the scanner reads with the next line (`asked_blk`, `after_asked`, `else_next`, `ann_ctor`), `;` first on a line, a comment on an annotation's line | 255 |
+| Strings and templates (a `${…}` with a brace, a raw string's quotes, `$` outside a string) | 47 |
+| Numbers (a `0x` with no digit, a suffix, a trailing `_`) | 37 |
+| The receiver's `?.` (now gone, above) | 16 |
+| A character's `\u` | 12 |
+| A byte above 0x7f, a nested block comment | 7 |
+
+The comments' escapes are two thirds of the cost. Each is a question the lean lexer's `asi` asks
+at the token after a line break, as `semi` already is (0430). They come next.

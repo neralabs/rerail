@@ -285,6 +285,8 @@ fn receivers_are_the_lean_parsers() {
     same(&[
         "fun String.faint(): String = this\nfun List<T>.g() {}\nval A.B.c: Int get() = 2\n",
         "class A {\n    val String.x\n        get() = 1\n    fun f() {\n        val y = a.b\n        var z: A.B = c\n    }\n}\n",
+        // Nested type arguments in the type parameters: `receiver_end` reads past them.
+        "fun <T : Comparable<T>> B.f() {}\n",
     ]);
 }
 
@@ -627,7 +629,6 @@ fn what_step_23_does_not_read_is_refused() {
 fn what_step_22_does_not_read_is_refused() {
     refused(&[
         "fun f() {\n    val d = x as java.util.List<Int>\n    g(d)\n}\n",
-        "fun <T : Comparable<T>> B.f() {}\n",
         "val <T : Any> List<T>.second: T get() = this[1]\n",
     ]);
 }
