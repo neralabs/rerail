@@ -1,6 +1,6 @@
 # A daemon start ends in the state it reports, in three cases
 
-For the pull request of branch `JeanFrancoisGagne/daemon-start-three-states`, not opened yet, head 3cf2a025b. [report.html](report.html) is the same report as one page: download it and open it.
+For the pull request of branch `JeanFrancoisGagne/daemon-start-three-states`, not opened yet, head 89fb747c7. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -10,7 +10,7 @@ For the pull request of branch `JeanFrancoisGagne/daemon-start-three-states`, no
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 971 lines in 14 files: 290 ship, 681 are tests and text | Standard. No ruling asked; no high-risk path. | Nothing. CI passed at c1a0c0f2d; the run at this head follows. | 1 |
+| 998 lines in 14 files: 290 ship, 708 are tests and text | Standard. No ruling asked; no high-risk path. | Nothing. CI passed at 3cf2a025b; the run at this head follows. | 1 |
 
 ## 2. Intent, and the gap
 
@@ -34,7 +34,7 @@ Found in November 2026 on Linux x64 and Windows 11 machines, with a real daemon 
 
 ## 3. Where to look
 
-<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Empty TLS key serves locally, low risk, 138 lines; B, Start names a daemon still starting, low risk, 126 lines; C, Fallback pipe beside a capped holder, low risk, 26 lines. Read first: daemon.ts, daemon-control.ts, engine-service.ts. To skim: 672 lines of tests and 9 lines of what each start now does..">
+<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Empty TLS key serves locally, low risk, 138 lines; B, Start names a daemon still starting, low risk, 126 lines; C, Fallback pipe beside a capped holder, low risk, 26 lines. Read first: daemon.ts, daemon-control.ts, engine-service.ts. To skim: 699 lines of tests and 9 lines of what each start now does..">
 
 1. **Read first**, 5 min: `daemon.ts`: `loadDaemonTls`, `refuseUnparsed`, `serveRerailDaemon`. Does an empty key get what a key others can read gets?
 2. **Read first**, 10 min: `daemon-control.ts`: `unansweredLaunch`, `holderNotRecorded`, `readTail`. Does a later start name a daemon that never answers, and how to check it, as `main` does?
@@ -119,11 +119,11 @@ Three changes, one source area each; none gives less than `main`.
 
 <details><summary><b>7. How it fits</b></summary>
 
-It stands on `main` cccb25a8d, merged in; nothing has to merge first. That `main` holds #677, which edits the same lookup: the merge keeps #677's read limit and text.
+It stands on `main` 6b3990ba8, merged in; nothing has to merge first. That `main` holds #677, which edits the same lookup: the merge keeps #677's read limit and text.
 
-This pull request is based on main at cccb25a8d, which holds #677, and needs no other change; nothing waits on it. In trial merges it adds no conflict to three open pull requests that share a file.
+This pull request is based on main at 6b3990ba8, which holds #677, and needs no other change; nothing waits on it. In trial merges it adds no conflict to three open pull requests that share a file.
 
-**Shared files and trial merges.** Trial merges of 3cf2a025b on 20 November 2026, to refresh against GitHub: `main` cccb25a8d, with #677, merged in. #674, #676 and #812 share a file each and add no conflict beyond their own with `main`.
+**Shared files and trial merges.** Trial merges of 89fb747c7 on 20 November 2026, to refresh against GitHub: `main` 6b3990ba8, with #677, merged in. #674, #676 and #812 share a file each and add no conflict beyond their own with `main`.
 
 </details>
 
@@ -156,10 +156,10 @@ The description on GitHub is the record: "How you tested it" holds the runs at `
 | Linux x64 and Windows 11 | The built CLI with a daemon paused right after it took the home, two runs a side | `main` 7efcac9c6: the first start said it did not become ready at 15.3 to 16.7 s and the daemon then served, as at ba0545900. Here: it said the daemon may still be starting, by pid; resumed, `rerail status` showed it running and the next start found it. Kept paused, `rerail status` and the next start gave what `main` gives, in each of three states. |
 | Linux x64 and Windows 11 | The built CLI and the built Claude Code hook with an empty TLS key, two runs a side; at this head, four key files | `main` 7efcac9c6: the start exited 1 after 15.2 to 17.0 s, its port serving nothing. Here: exit 0 in 0.7 s on Linux and 2.7 to 14.0 s on Windows, naming the file, http 200 on loopback, 7 ledger lines a run. An empty key or one of spaces others can read: `main` cccb25a8d stopped the start, named only as open to others; here it serves alone, naming both faults. |
 | Linux x64 and Windows 11 | Each fix's cases at this head; each fix's first line out | Linux 17 passed in each of 3 runs, Windows 21 in each of 2. Lines out: each fails its cases on Linux x64; on Windows 11 a commit with the four first lines out failed 2 of 2 runs, 12 cases each. |
-| Linux x64 and Windows 11 | The test files of this change and of #677, at this head and at c1a0c0f2d | 12 files: here Linux 427 passed and Windows 423, at c1a0c0f2d 424 and 420, none failing at either; the three more are this round's cases. At e30f3ae42 beside `main` d0c10e05e: Windows 420 against 400; Linux, with every importing file (27), 708 against 692. At 16cd83190 the 23 files passed beside `main` 7efcac9c6 on both systems. |
+| Linux x64 and Windows 11 | The test files of this change and of #677, at this head and at c1a0c0f2d | Here the 8 new cases: 20 of 20 on each system. 12 files: at 3cf2a025b Linux 427 passed and Windows 423, at c1a0c0f2d 424 and 420, none failing at either; the three more are that round's cases. At e30f3ae42 beside `main` d0c10e05e: Windows 420 against 400; Linux, with every importing file (27), 708 against 692. At 16cd83190 the 23 files passed beside `main` 7efcac9c6 on both systems. |
 | Linux x64 | CI's integration job, at 1be9a52aa | 91 passed, 4 skipped. |
-| Linux x64 | The automated reviewer's rules at `main` cccb25a8d over the diff | no new finding, with the published 0.1.5 and with Rerail built from `main`; no function this change adds or edits counts over 6. |
+| Linux x64 | The automated reviewer's rules at `main` 6b3990ba8 over the diff | no new finding, with the published 0.1.5 and with Rerail built from `main`; no function this change adds or edits counts over 6. |
 
-**Sources.** The branch at 3cf2a025b, `main` cccb25a8d merged into it, and its diff against that `main`, read on 20 November 2026; runs at 3cf2a025b, 126e0fa6e, c1a0c0f2d, e30f3ae42, 16cd83190, 1be9a52aa, 7efcac9c6 and ba0545900 on Linux x64 machines and Windows 11 virtual machines, each beside other test runs.
+**Sources.** The branch at 89fb747c7, `main` 6b3990ba8 merged into it, and its diff against that `main`, read on 20 November 2026; runs at 89fb747c7, 3cf2a025b, 126e0fa6e, c1a0c0f2d, e30f3ae42, 16cd83190, 1be9a52aa, 7efcac9c6 and ba0545900 on Linux x64 machines and Windows 11 virtual machines, each beside other test runs.
 
 </details>
