@@ -72,7 +72,7 @@ fn layered(rng: &mut Rng, n: usize, deg: u64, layers: usize) -> (Arc<[u32]>, Arc
 }
 
 fn gpu() -> GpuBackend {
-    gpu_backend().expect("this machine has a Metal device")
+    gpu_backend().expect("this machine has a device the GPU lane runs on")
 }
 
 /// Every kernel through one submission, compared with the reference.

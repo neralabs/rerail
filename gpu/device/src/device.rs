@@ -146,9 +146,19 @@ impl Device {
         }
     }
 
-    /// Whether its buffers have a kernels' address (`Buffer::device_address`): every backend's but OpenCL 1.2's.
+    /// Whether every buffer has a kernels' address (`Buffer::device_address`), memory wrapped in place too: every
+    /// backend's but OpenCL's.
     pub fn has_addresses(&self) -> bool {
         !matches!(self, Device::OpenCl(_))
+    }
+
+    /// Whether the buffers it allocates have a kernels' address (not memory wrapped in place): every backend's, and
+    /// OpenCL's where it has Intel's unified shared memory (`ClDevice::allocations_have_addresses`).
+    pub fn allocations_have_addresses(&self) -> bool {
+        match self {
+            Device::OpenCl(d) => d.allocations_have_addresses(),
+            _ => true,
+        }
     }
 
     /// The most threads a threadgroup can have: 1,024 on Metal, CUDA and the CPU; an OpenCL device's own (256 on
@@ -173,6 +183,37 @@ impl Device {
 
     pub fn is_cpu(&self) -> bool {
         matches!(self, Device::Cpu(_))
+    }
+
+    /// The device's GPU cores, when it says: on a Mac, IORegistry's `gpu-core-count` of the device's entry
+    /// (the `MTLDevice`'s registry ID). A persistent grid's resident groups are these times the groups a core
+    /// holds (decision 0468 §4).
+    pub fn gpu_cores(&self) -> Option<u32> {
+        match self {
+            #[cfg(target_os = "macos")]
+            Device::Native(d) => ioreg::gpu_core_count(d.registry_id()),
+            _ => None,
+        }
+    }
+
+    /// The most threadgroup memory a group may have: Metal's `maxThreadgroupMemoryLength`; 32 KB elsewhere.
+    pub fn max_threadgroup_memory(&self) -> u64 {
+        match self {
+            #[cfg(target_os = "macos")]
+            Device::Native(d) => d.max_threadgroup_memory_length(),
+            _ => 32 << 10,
+        }
+    }
+
+    /// The groups of `threads` threads, each using `local` bytes of threadgroup memory, that the device holds at
+    /// once, when it gives its cores (`gpu_cores`): a persistent grid's G (decision 0468 §4). Each core is taken at
+    /// its least: one group of the device's largest (`max_threadgroup`) and the most threadgroup memory a group may
+    /// have (`max_threadgroup_memory`).
+    pub fn resident_groups(&self, threads: u32, local: u64) -> Option<u64> {
+        let cores = self.gpu_cores()? as u64;
+        let by_threads = (self.max_threadgroup() / threads.max(1)).max(1) as u64;
+        let by_memory = if local == 0 { by_threads } else { (self.max_threadgroup_memory() / local).max(1) };
+        Some(cores * by_threads.min(by_memory))
     }
 
     /// The defines a kernel's preprocessing for this device takes (the CPU's knobs, `compute_kernel_cpu::defines`;
@@ -232,13 +273,14 @@ impl Buffer {
     }
 
     /// The kernels' address of the buffer's first byte, for a pointer that a buffer holds (a directory of tapes, a
-    /// view's rows): Metal's GPU address, CUDA's device pointer, the host's on the CPU. `None` on OpenCL 1.2, whose
-    /// kernels follow no pointer a buffer holds (that is SVM's, not written).
+    /// view's rows): Metal's GPU address, CUDA's device pointer, the host's on the CPU, an OpenCL host allocation's
+    /// (Intel's unified shared memory). `None` for other OpenCL buffers: memory wrapped in place, or a device without
+    /// it, whose kernels follow no pointer a buffer holds.
     pub fn device_address(&self) -> Option<u64> {
         match self {
             Buffer::Native(b) => native::device_address(b),
             Buffer::Cpu(b) => Some(b.device_address()),
-            Buffer::OpenCl(_) => None,
+            Buffer::OpenCl(b) => b.address(),
         }
     }
 
@@ -451,6 +493,16 @@ pub enum ComputeFunction {
 }
 
 impl ComputeFunction {
+    /// The threadgroup memory the kernel declares, as its pipeline says (Metal's); 0 where the backend does not
+    /// say.
+    pub fn threadgroup_bytes(&self) -> u64 {
+        match self {
+            #[cfg(target_os = "macos")]
+            ComputeFunction::Native(f) => f.compute_pipeline_state.static_threadgroup_memory_length(),
+            _ => 0,
+        }
+    }
+
     pub fn get_argument_info(&self) -> &[GridComputeFunctionArgument] {
         match self {
             ComputeFunction::Native(f) => f.get_argument_info(),
@@ -593,4 +645,52 @@ pub fn transfer_to_host_sync<T: crate::Pod + Clone>(buffer: &Buffer, length: usi
 /// The device seconds of every event awaited so far in this process.
 pub fn gpu_seconds_awaited() -> f64 {
     native::gpu_seconds_awaited() + cpu::gpu_seconds_awaited() + cl::gpu_seconds_awaited()
+}
+
+/// IORegistry's description of a Mac's GPU: its `gpu-core-count`.
+#[cfg(target_os = "macos")]
+mod ioreg {
+    use std::ffi::c_void;
+
+    type CfRef = *const c_void;
+    const UTF8: u32 = 0x0800_0100;
+    const SINT32: isize = 3;
+
+    #[link(name = "IOKit", kind = "framework")]
+    unsafe extern "C" {
+        fn IORegistryEntryIDMatching(id: u64) -> CfRef;
+        fn IOServiceGetMatchingService(main_port: u32, matching: CfRef) -> u32;
+        fn IORegistryEntryCreateCFProperty(entry: u32, key: CfRef, allocator: CfRef, options: u32) -> CfRef;
+        fn IOObjectRelease(object: u32) -> i32;
+    }
+    #[link(name = "CoreFoundation", kind = "framework")]
+    unsafe extern "C" {
+        fn CFStringCreateWithCString(allocator: CfRef, s: *const u8, encoding: u32) -> CfRef;
+        fn CFGetTypeID(v: CfRef) -> usize;
+        fn CFNumberGetTypeID() -> usize;
+        fn CFNumberGetValue(n: CfRef, kind: isize, out: *mut c_void) -> bool;
+        fn CFRelease(v: CfRef);
+    }
+
+    /// `gpu-core-count` of the IORegistry entry `id`, when it has one.
+    pub fn gpu_core_count(id: u64) -> Option<u32> {
+        // SAFETY: each object made here is released here; the matching dictionary is consumed by the lookup.
+        unsafe {
+            let entry = IOServiceGetMatchingService(0, IORegistryEntryIDMatching(id));
+            if entry == 0 {
+                return None;
+            }
+            let key = CFStringCreateWithCString(std::ptr::null(), c"gpu-core-count".as_ptr().cast(), UTF8);
+            let v = IORegistryEntryCreateCFProperty(entry, key, std::ptr::null(), 0);
+            CFRelease(key);
+            IOObjectRelease(entry);
+            if v.is_null() {
+                return None;
+            }
+            let mut n = 0i32;
+            let ok = CFGetTypeID(v) == CFNumberGetTypeID() && CFNumberGetValue(v, SINT32, (&raw mut n).cast());
+            CFRelease(v);
+            (ok && n > 0).then_some(n as u32)
+        }
+    }
 }

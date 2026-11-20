@@ -7,11 +7,8 @@
 //! writes the offsets straight into the shared buffer (`rows_sort::span`); nothing is sorted or copied twice.
 //!
 //! **A relation sorted by its key** (`Keyed`), all of it on the device (`join_sort.uglykl`):
-//! - `sort_init`, then per 8-bit digit of the key's span `sort_hist`, a scan, and `sort_scatter`: a stable LSD radix
-//!   sort of 1,024-row tiles. A tile's digit histogram is counted in threadgroup memory; a row's place is its digit's
-//!   offset for the tile (the scan of every tile's histogram, digit-major), the rows of its digit in the tile's
-//!   earlier rounds and SIMD groups, and its rank among its SIMD group's earlier lanes of the digit (a bounded loop
-//!   of shuffles). No atomic decides an order.
+//! - `sort_init`, then the UKL library's stable LSD radix sort (`rerail_gpu::library::radix_sort_pairs_in`, decision
+//!   0440 step D), a pass per 8-bit digit of the key's span. No atomic decides an order.
 //! - `run_heads`, a scan, `run_compact`: the key's runs, each its first place and key, and their count.
 //! - `gather`: every other column in the sorted order, so a run's rows are adjacent in every column.
 //!
@@ -22,8 +19,8 @@
 //! the runs' keys, and loops over the run's rows comparing the other keys. Count, scan, scatter: the pairs in left
 //! row order, sized exactly. The work is the left rows' searches and the pairs of key 0.
 //!
-//! Every scan is the same multi-level exclusive scan (`Scan`): 1,024 values a threadgroup, the threadgroups' sums
-//! scanned again, added back. Threadgroup memory: 10 kB at most (the scatter's counts). Every loop is bounded.
+//! Every scan is the UKL library's multi-level exclusive scan (`Scan`): 1,024 values a threadgroup, the threadgroups'
+//! sums scanned again in place into their offsets. Every loop is bounded.
 //!
 //! **Launches** (`Pass`): every kernel runs threadgroups of 256 threads (`GROUP`) over its buffers, bound in the
 //! order the kernel declares them, and one parameter block, its `ARGS` row `a`: a `JoinP` (`join_common.h`) of up
@@ -32,10 +29,11 @@
 use super::shared;
 use crate::rows::{bits, span};
 use rerail_device::compute_kernel::GridComputeFunctionArgumentDisposition;
-use rerail_device::device::{Buffer, ComputeEvent, ComputeFunction, ComputeQueue, SharedEvent};
+use rerail_device::device::{Buffer, BufferRef, ComputeEvent, ComputeFunction, ComputeQueue, SharedEvent};
+use rerail_gpu::library::{radix_sort_pairs_in, scan_exclusive_u32_in, scan_sized, RadixSpace, ScanSpace, SCAN_SIZES};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 /// What every join kernel's source starts with (`join_common.h`): `JoinP`, the threadgroup's prefix sum.
 pub const COMMON: &str = include_str!("join_common.h");
@@ -177,11 +175,22 @@ pub fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> R
     Ok(Arc::clone(pipes().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).entry(key).or_insert(pipe)))
 }
 
-/// The radix sort's kernels of a lead column of `width`, and the gather of a column of `width`.
-fn sort_pipes(width: Width) -> Result<[Arc<Pipe>; 5], String> {
+/// A sort's kernels of a lead column of `width` around the library's radix sort: its keys and rows, and its runs.
+fn sort_pipes(width: Width) -> Result<[Arc<Pipe>; 3], String> {
     let variant = format!("sort {width:?}");
     let pipe = |name: &str| pipeline(&variant, name, || sort_source(width));
-    Ok([pipe("sort_init")?, pipe("sort_hist")?, pipe("sort_scatter")?, pipe("run_heads")?, pipe("run_compact")?])
+    rerail_gpu::library::ready()?;
+    Ok([pipe("sort_init")?, pipe("run_heads")?, pipe("run_compact")?])
+}
+
+/// The library's radix sort of `pair` (sort words of `key`, rows) by `bits` bits, `tmp` the other pair, encoded into
+/// `pass`: the rows end in `pair` after an even number of passes, else in `tmp`.
+fn radix_sort(pass: &Pass, key: Width, pair: [&Buffer; 2], tmp: [&Buffer; 2], n: usize, bits: u32, space: &RadixSpace) {
+    let (pair, tmp): ([&BufferRef; 2], [&BufferRef; 2]) = ([pair[0], pair[1]], [tmp[0], tmp[1]]);
+    pass.library(|q| {
+        let sorted = if key == Width::W64 { radix_sort_pairs_in::<u64>(q, pair, tmp, n as u32, bits, space) } else { radix_sort_pairs_in::<u32>(q, pair, tmp, n as u32, bits, space) };
+        sorted.map(|(_, made)| made)
+    });
 }
 
 fn gather_pipe(width: Width) -> Result<Arc<Pipe>, String> {
@@ -204,9 +213,24 @@ pub struct Submitted {
     committed: f64,
     /// Whether this one only watches (`watch`): it waits only while the owner has not.
     watcher: bool,
+    /// The blocks its work uses (decision 0487), the owner's alone: completed once its work has (`wait_ok`, `drop`).
+    fence: Option<Arc<rerail_blocks::ledger::Fence>>,
+}
+
+impl Drop for Submitted {
+    /// Its blocks are held until its work completes: a submission let go unawaited waits for it here first.
+    fn drop(&mut self) {
+        if let Some(f) = self.fence.take()
+            && !f.is_complete()
+        {
+            let _ = self.event.await_();
+            f.complete();
+        }
+    }
 }
 
 /// The host clock Metal's command buffer times are on (`mach_absolute_time`, in seconds).
+#[cfg(target_os = "macos")]
 pub fn host_clock() -> f64 {
     #[repr(C)]
     struct Timebase {
@@ -217,7 +241,7 @@ pub fn host_clock() -> f64 {
         fn mach_timebase_info(info: *mut Timebase) -> i32;
         fn mach_absolute_time() -> u64;
     }
-    static RATIO: OnceLock<f64> = OnceLock::new();
+    static RATIO: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
     let ratio = *RATIO.get_or_init(|| {
         let mut info = Timebase { numer: 0, denom: 0 };
         // SAFETY: fills the struct.
@@ -228,9 +252,19 @@ pub fn host_clock() -> f64 {
     (unsafe { mach_absolute_time() }) as f64 * ratio
 }
 
+/// The host's monotonic clock in seconds (elsewhere than macOS no device timestamp shares it).
+#[cfg(not(target_os = "macos"))]
+pub fn host_clock() -> f64 {
+    let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: fills the struct.
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut t) };
+    t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+}
+
 /// A completed Metal command buffer's timeline, as wall-only phases of the job (`crate::score`): commit to the
 /// system's scheduling (`kernelStartTime`), to the device's start, the device's run, and its end to the host's wait
 /// returning.
+#[cfg(target_os = "macos")]
 #[allow(unexpected_cfgs)] // `msg_send!` expands to a `cargo-clippy` cfg check.
 pub fn add_timeline(command: &metal::CommandBufferRef, committed: f64, returned: f64) {
     use objc::{msg_send, sel, sel_impl};
@@ -247,7 +281,7 @@ pub fn add_timeline(command: &metal::CommandBufferRef, committed: f64, returned:
 impl Submitted {
     /// Another wait for a committed submission: what a sort encoded into it waits for (`Keyed::settle`).
     pub(super) fn watch(&self) -> Submitted {
-        Submitted { event: Arc::clone(&self.event), reads: Vec::new(), committed: f64::NAN, watcher: true }
+        Submitted { event: Arc::clone(&self.event), reads: Vec::new(), committed: f64::NAN, watcher: true, fence: None }
     }
 
     /// Keeps `columns` (what the submission reads) until it completes.
@@ -268,13 +302,25 @@ impl Submitted {
             return (self.event.gpu_seconds(), true);
         }
         let done = crate::score::phase("gpu wait", || self.event.await_());
+        if let Some(f) = &self.fence {
+            f.complete();
+        }
         if let Err(why) = &done {
             say_failure(why);
         }
-        if !self.committed.is_nan()
-            && let Some(command) = self.event.metal()
-        {
-            add_timeline(command, self.committed, host_clock());
+        if !self.committed.is_nan() {
+            let returned = host_clock();
+            // Metal's command buffers give each part of the timeline.
+            #[cfg(target_os = "macos")]
+            let parts = self.event.metal().map(|command| add_timeline(command, self.committed, returned)).is_some();
+            #[cfg(not(target_os = "macos"))]
+            let parts = false;
+            // Another backend's event gives only the device's seconds: the run, and the rest of the span as the wake.
+            if !parts && done.is_ok() {
+                let run = self.event.gpu_seconds();
+                crate::score::add("gpu run", 0.0, run);
+                crate::score::add("gpu wake", 0.0, (returned - self.committed - run).max(0.0));
+            }
         }
         (self.event.gpu_seconds(), done.is_ok())
     }
@@ -382,12 +428,16 @@ pub struct Pass {
     resident: RefCell<Vec<Buffer>>,
     /// The first launch that could not be made: the commit's error.
     error: RefCell<Option<String>>,
+    /// Its submission's uses of blocks (decision 0487): every buffer it binds or makes resident that lies in a block
+    /// holds that block's chunks and memory until the submission completes (its `Submitted`'s wait, or drop), or the
+    /// pass is dropped uncommitted.
+    fence: Arc<rerail_blocks::ledger::Fence>,
 }
 
 impl Pass {
     pub fn new() -> Result<Pass, String> {
         let layer = shared::layer().ok_or("no device")?;
-        Ok(Pass { queue: ComputeQueue::new(layer.queue), dispatches: Cell::new(0), resident: RefCell::new(Vec::new()), error: RefCell::new(None) })
+        Ok(Pass { queue: ComputeQueue::new(layer.queue), dispatches: Cell::new(0), resident: RefCell::new(Vec::new()), error: RefCell::new(None), fence: rerail_blocks::ledger::Fence::new() })
     }
 
     /// The launches made so far.
@@ -403,6 +453,9 @@ impl Pass {
     fn launch_at(&self, pipe: &Pipe, buffers: &[(&Buffer, u64)], bytes: &[u8], grid: Grid<'_>) {
         if self.error.borrow().is_some() {
             return;
+        }
+        for (b, _) in buffers {
+            self.holds(b);
         }
         let made = (|| {
             if buffers.len() != pipe.buffers.len() {
@@ -474,21 +527,46 @@ impl Pass {
         self.launch(pipe, buffers, &join_p(params, longs), Grid::Groups(groups, GROUP));
     }
 
+    /// Launches of the UKL library's (`rerail_gpu::library`) on this pass's queue, in order with its own: `call`
+    /// returns the launches it made, which count to the submission's budget. The library's kernels read only what
+    /// they bind. An error is the commit's, as a launch's is.
+    pub fn library(&self, call: impl FnOnce(&ComputeQueue) -> Result<usize, String>) {
+        if self.error.borrow().is_some() {
+            return;
+        }
+        match call(&self.queue) {
+            Ok(made) => self.dispatches.set(self.dispatches.get() + made),
+            Err(e) => *self.error.borrow_mut() = Some(format!("the UKL library: {e}")),
+        }
+    }
+
     /// Makes `buffers` resident for the launches after it: buffers a kernel reaches by address (a view's directory
     /// and tapes, decision 0353 step 4d), bound by none.
     pub fn use_read(&self, buffers: &[&Buffer]) {
+        for b in buffers {
+            self.holds(b);
+        }
         self.resident.borrow_mut().extend(buffers.iter().map(|b| (*b).clone()));
     }
 
     /// Makes `buffer` resident for the launches after it, to be read and written: a cache a kernel's reads keep (a
     /// 16z batch's blocks, decision 0353 step 4b), reached by address.
     pub fn use_read_write(&self, buffer: &Buffer) {
+        self.holds(buffer);
         self.resident.borrow_mut().push(buffer.clone());
     }
 
     /// Holds the launches after it until the host signals `event` with `value` or more (a gate's, `crate::col`).
     pub fn wait_for_event(&self, event: &SharedEvent, value: u64) {
         self.queue.wait_for_event(event, value);
+    }
+
+    /// The block `b` lies in (by its contents' address), held by this submission's fence.
+    fn holds(&self, b: &Buffer) {
+        let at = b.contents() as usize;
+        if at != 0 {
+            self.fence.uses_address(at);
+        }
     }
 
     /// Commits the launches (checked against the launch budget): what to wait for.
@@ -498,7 +576,8 @@ impl Pass {
         }
         crate::score::phase("gpu commit", shared::guard)?;
         let event = self.queue.flush();
-        Ok(Submitted { event: Arc::new(event), reads: Vec::new(), committed: host_clock(), watcher: false })
+        self.fence.mark_committed();
+        Ok(Submitted { event: Arc::new(event), reads: Vec::new(), committed: host_clock(), watcher: false, fence: Some(self.fence.clone()) })
     }
 
     /// Commits the launches and waits for them: their device seconds.
@@ -565,103 +644,70 @@ impl Column {
     }
 }
 
-/// A multi-level exclusive scan of `count` `uint`s in place, its levels' sums in scratch; the total after it in
-/// `total()`.
+/// A multi-level exclusive scan of `count` `uint`s, the UKL library's (`rerail_gpu::library`): in place, its buffer
+/// holding `count + 1` values, the total after them. Its levels are this thread's scratch (`new`) or its own
+/// (`owned`).
 pub struct Scan {
     count: usize,
-    /// Each level's threadgroups and their sums.
-    levels: Vec<(usize, Buffer)>,
+    space: ScanSpace,
     /// The levels' buffers when they are the scan's own (`owned`), not this thread's scratch.
     _owned: Vec<Held>,
 }
 
 impl Scan {
     pub fn new(count: usize) -> Result<Scan, String> {
-        let mut levels = Vec::new();
-        let mut size = count;
-        loop {
-            let groups = size.div_ceil(TILE).max(1);
-            levels.push((groups, scratch(SCAN + levels.len(), 4 * groups)?));
-            if groups == 1 {
-                break;
-            }
-            size = groups;
-        }
-        Ok(Scan { count, levels, _owned: Vec::new() })
+        let space = ScanSpace::new_in(device_count(count)?, |level, words| scratch(SCAN + level, 4 * words))?;
+        Ok(Scan { count, space, _owned: Vec::new() })
     }
 
-    /// A scan whose levels are its own: several in one submission, each total read after it completes.
+    /// A scan whose levels are its own: several in one submission.
     pub fn owned(count: usize) -> Result<Scan, String> {
-        let (mut levels, mut owned) = (Vec::new(), Vec::new());
-        let mut size = count;
-        loop {
-            let groups = size.div_ceil(TILE).max(1);
-            let h = Held::new(4 * groups)?;
-            levels.push((groups, h.buffer.clone()));
+        let mut owned = Vec::new();
+        let space = ScanSpace::new_in(device_count(count)?, |_, words| {
+            let h = Held::new(4 * words)?;
+            let b = h.buffer.clone();
             owned.push(h);
-            if groups == 1 {
-                break;
-            }
-            size = groups;
-        }
-        Ok(Scan { count, levels, _owned: owned })
+            Ok(b)
+        })?;
+        Ok(Scan { count, space, _owned: owned })
     }
 
     /// An owned scan's buffers, to keep until its submission completes.
-    fn into_held(self) -> Vec<Held> {
+    pub fn into_held(self) -> Vec<Held> {
         self._owned
     }
 
+    /// The scan of `data`'s `count` values, in place: `count + 1` values, the total last.
     pub fn encode(&self, pass: &Pass, data: &Buffer) -> Result<(), String> {
-        let block = fixed("scan_block")?;
-        let add = fixed("scan_add")?;
-        let mut inputs: Vec<(&Buffer, usize)> = vec![(data, self.count)];
-        for (k, (groups, sums)) in self.levels.iter().enumerate() {
-            let (buffer, n) = inputs[k];
-            pass.run(&block, &[buffer, sums], &[n as u32], &[], *groups);
-            inputs.push((sums, *groups));
-        }
-        // Back down: each level's blocks plus the scanned sums above them.
-        for k in (0..self.levels.len().saturating_sub(1)).rev() {
-            let (buffer, n) = inputs[k];
-            pass.run(&add, &[buffer, &self.levels[k].1], &[n as u32], &[], self.levels[k].0);
-        }
+        self.encode_into(pass, data, data)
+    }
+
+    /// The scan of `input`'s `count` values into `output` (`count + 1` values, the total last).
+    pub fn encode_into(&self, pass: &Pass, input: &Buffer, output: &Buffer) -> Result<(), String> {
+        pass.library(|q| scan_exclusive_u32_in(q, input, output, self.count as u32, false, &self.space));
         Ok(())
     }
 
-    /// Encodes the grids of a scan sized on the device: of `min(totals[slot], cap) + 1` values (a stage's rows and
-    /// one), from the binding table's count the work before wrote, not the host's guess of its space. The scan's
-    /// levels are those of `count` values (its most). Returns the grids' words, for `encode_sized` and
-    /// `Pass::run_bytes_indirect`.
+    /// Encodes the sizes of a scan sized on the device: of `min(totals[slot], cap)` values (a stage's rows), from the
+    /// binding table's count the work before wrote, not the host's guess of its space; `cap` below `count`. Returns the
+    /// sizes, for `encode_sized` and `Pass::run_bytes_indirect` (the grid over the `n + 1` outputs at
+    /// `SCAN_OUTPUT_GRID`, `GROUP` threads a group).
     pub fn size(&self, pass: &Pass, totals: &Buffer, slot: usize, cap: usize) -> Result<Held, String> {
-        assert!(self.levels.len() <= 8 && cap < self.count);
-        let size = fixed("scan_size")?;
-        let a = Held::new(4 * 40)?;
-        pass.run(&size, &[totals, &a.buffer], &[slot as u32, cap as u32, self.levels.len() as u32], &[], 1);
-        Ok(a)
+        let sizes = Held::new(4 * SCAN_SIZES)?;
+        pass.library(|q| self.space.size(q, totals, slot as u32, cap as u32, GROUP as u32, &sizes.buffer));
+        Ok(sizes)
     }
 
-    /// `encode`, each level's grid `size`'s.
+    /// `encode`, of `size`'s count, on its grids.
     pub fn encode_sized(&self, pass: &Pass, data: &Buffer, sizes: &Held) -> Result<(), String> {
-        let block = fixed("scan_block_sized")?;
-        let add = fixed("scan_add_sized")?;
-        let a: &Buffer = &sizes.buffer;
-        let mut inputs: Vec<&Buffer> = vec![data];
-        for (k, (groups, sums)) in self.levels.iter().enumerate() {
-            pass.run_indirect(&block, &[inputs[k], sums, a], &[k as u32], a, 4 * (8 + 3 * k as u64), *groups);
-            inputs.push(sums);
-        }
-        for k in (0..self.levels.len().saturating_sub(1)).rev() {
-            pass.run_indirect(&add, &[inputs[k], &self.levels[k].1, a], &[k as u32], a, 4 * (8 + 3 * k as u64), self.levels[k].0);
-        }
+        pass.library(|q| scan_sized(q, data, &sizes.buffer, &self.space));
         Ok(())
     }
+}
 
-    /// The scan's total, after its submission completed.
-    fn total(&self) -> u32 {
-        // SAFETY: the top level holds one sum, written by its block.
-        unsafe { *self.levels.last().expect("a level").1.contents().cast::<u32>() }
-    }
+/// A count of values the device's scans and sorts take: 32 bits.
+fn device_count(count: usize) -> Result<u32, String> {
+    u32::try_from(count).map_err(|_| format!("{count} values: past the device's scans"))
 }
 
 /// A relation sorted by its column 0 on the device: its runs, and its other columns in the sorted order.
@@ -793,7 +839,7 @@ pub fn encode_sorted_pairs(pass: &Pass, pairs: &Held, n: usize, first_bits: u32,
         return Ok(());
     }
     let width = if bits <= 32 { Width::W32 } else { Width::W64 };
-    let [init, hist, scatter, ..] = sort_pipes(width)?;
+    let [init, ..] = sort_pipes(width)?;
     let narrow = fixed("pair_keys")?;
     let gather = gather_pipe(Width::W64)?;
     let kb = width.bytes();
@@ -801,23 +847,22 @@ pub fn encode_sorted_pairs(pass: &Pass, pairs: &Held, n: usize, first_bits: u32,
     let (keys_a, keys_b) = (Held::new(kb * n)?, Held::new(kb * n)?);
     let passes = bits.div_ceil(8);
     let (idx_a, idx_b) = (Held::new(4 * n)?, Held::new(4 * n)?);
-    let tiles = n.div_ceil(TILE).max(1);
-    let histogram = Held::new(4 * 256 * tiles)?;
-    let hscan = Scan::owned(256 * tiles)?;
+    let mut owned = Vec::new();
+    let space = RadixSpace::new_in(device_count(n)?, |_, words| {
+        let h = Held::new(4 * words)?;
+        let b = h.buffer.clone();
+        owned.push(h);
+        Ok(b)
+    })?;
     let nn = n as u32;
     // The words as sort keys of the sort's width (a 32-bit key when the bits fit).
     pass.run(&narrow, &[&words.buffer, &lead.buffer], &[nn, u32::from(width == Width::W64), second_bits], &[], groups(n));
     pass.run(&init, &[&lead.buffer, &keys_a.buffer, &idx_a.buffer], &[nn], &[], groups(n));
-    for p in 0..passes {
-        let (ki, ii, ko, io) = if p % 2 == 0 { (&keys_a, &idx_a, &keys_b, &idx_b) } else { (&keys_b, &idx_b, &keys_a, &idx_a) };
-        pass.run(&hist, &[&ki.buffer, &histogram.buffer], &[nn, 8 * p, tiles as u32], &[], tiles);
-        hscan.encode(pass, &histogram.buffer)?;
-        pass.run(&scatter, &[&ki.buffer, &ii.buffer, &histogram.buffer, &ko.buffer, &io.buffer], &[nn, 8 * p, tiles as u32], &[], tiles);
-    }
+    radix_sort(pass, width, [&keys_a.buffer, &idx_a.buffer], [&keys_b.buffer, &idx_b.buffer], n, bits, &space);
     let order = if passes % 2 == 0 { &idx_a } else { &idx_b };
     pass.run(&gather, &[&words.buffer, &order.buffer, &out.buffer], &[nn], &[], groups(n));
-    keep.extend([lead, keys_a, keys_b, idx_a, idx_b, histogram]);
-    keep.extend(hscan.into_held());
+    keep.extend([lead, keys_a, keys_b, idx_a, idx_b]);
+    keep.extend(owned);
     Ok(())
 }
 
@@ -845,7 +890,7 @@ pub struct SortParts {
 /// buffers (`perm`, `starts`) that work already in the submission writes, back to the pool at once.
 pub fn encode_sort(pass: &Pass, lead: &Buffer, width: Width, bits: u32, n: usize) -> Result<SortParts, String> {
     let key = width.key();
-    let [init, hist, scatter, heads, compact] = sort_pipes(width)?;
+    let [init, heads, compact] = sort_pipes(width)?;
     let kb = key.bytes();
     let (keys_a, keys_b) = (scratch(KEYS_A, kb * n)?, scratch(KEYS_B, kb * n)?);
     // The order ends in `idx_a` after an even number of passes: that one is the relation's own, the other scratch.
@@ -853,27 +898,18 @@ pub fn encode_sort(pass: &Pass, lead: &Buffer, width: Width, bits: u32, n: usize
     let perm = Held::new(4 * n)?;
     let other = scratch(IDX, 4 * n)?;
     let (idx_a, idx_b): (&Buffer, &Buffer) = if passes % 2 == 0 { (&perm.buffer, &other) } else { (&other, &perm.buffer) };
-    let tiles = n.div_ceil(TILE).max(1);
     let starts = Held::new(4 * (n + 1))?;
     let rkeys = Held::new(kb * n)?;
     let nruns = Held::new(4)?;
     if n > 0 {
-        let histogram = scratch(HIST, 4 * 256 * tiles)?;
-        let hscan = Scan::new(256 * tiles)?;
-        let heads_buf = scratch(HEADS, 4 * n)?;
-        // The heads' scan after the histograms': the two share scratch levels, one after the other in the command
-        // buffer. Made here, before any dispatch, so its levels are at their size for both.
+        // The histograms' scan and the heads' share scratch levels, one after the other in the command buffer. Both
+        // are made here, before any dispatch, so its levels are at their size for both.
+        let space = RadixSpace::new_in(device_count(n)?, |k, words| scratch(if k == 0 { HIST } else { SCAN + k - 1 }, 4 * words))?;
+        let heads_buf = scratch(HEADS, 4 * (n + 1))?;
         let rscan = Scan::new(n)?;
-        fixed("scan_block")?;
-        fixed("scan_add")?;
         let nn = n as u32;
         pass.run(&init, &[lead, &keys_a, idx_a], &[nn], &[], groups(n));
-        for p in 0..passes {
-            let (ki, ii, ko, io) = if p % 2 == 0 { (&keys_a, idx_a, &keys_b, idx_b) } else { (&keys_b, idx_b, &keys_a, idx_a) };
-            pass.run(&hist, &[ki, &histogram], &[nn, 8 * p, tiles as u32], &[], tiles);
-            hscan.encode(pass, &histogram)?;
-            pass.run(&scatter, &[ki, ii, &histogram, ko, io], &[nn, 8 * p, tiles as u32], &[], tiles);
-        }
+        radix_sort(pass, key, [&keys_a, idx_a], [&keys_b, idx_b], n, bits, &space);
         let keys = if passes % 2 == 0 { &keys_a } else { &keys_b };
         pass.run(&heads, &[keys, &heads_buf], &[nn], &[], groups(n));
         rscan.encode(pass, &heads_buf)?;
@@ -1187,7 +1223,7 @@ impl ProbeJob {
         let count = pipeline(&variant, "probe_count", || probe_source(&lw, right.key, &rw))?;
         let scatter = pipeline(&variant, "probe_scatter", || probe_source(&lw, right.key, &rw))?;
         let bases: Vec<i64> = left.iter().map(|c| c.base).chain([right.base]).chain(right.others.iter().map(|c| c.base)).collect();
-        let counts = Held::new(4 * nl)?;
+        let counts = Held::new(4 * (nl + 1))?;
         let scan = Scan::owned(nl)?;
         let cap = expect.max(2 * nl).min(u32::MAX as usize / 2);
         let space = Held::new(8 * cap)?;
@@ -1202,9 +1238,13 @@ impl ProbeJob {
         Ok(ProbeJob { nl, cap, counts: Some(counts), scan: Some(scan), space: Some(space), bases, scatter: Some(scatter), empty: false })
     }
 
-    /// The pairs, after the submission completed.
+    /// The pairs, after the submission completed: the scan's total, after the counts.
     pub fn total(&self) -> usize {
-        self.scan.as_ref().map_or(0, |s| s.total() as usize)
+        match (&self.scan, &self.counts) {
+            // SAFETY: `nl + 1` counts, the last the scan's total, read after its submission completed.
+            (Some(_), Some(counts)) => unsafe { *counts.buffer.contents().cast::<u32>().add(self.nl) as usize },
+            _ => 0,
+        }
     }
 
     /// Whether the pairs outgrew their space (after the submission completed).
@@ -1275,13 +1315,12 @@ pub fn prewarm() {
     rerail_context::cores_spawn(move || {
         let _run = rerail_context::enter(run);
         crate::exec::as_job("the GPU's prewarm", || {
-            let _ = std::panic::catch_unwind(|| objc::rc::autoreleasepool(|| {
+            let _ = std::panic::catch_unwind(|| super::released(|| {
                 if Fused::can() {
                     let _ = fixed("sort_all");
                     let _ = fixed("probe_all");
                 }
-                let _ = fixed("scan_block");
-                let _ = fixed("scan_add");
+                let _ = rerail_gpu::library::ready();
                 for w in [Width::W64, Width::W32, Width::W16] {
                     let _ = sort_pipes(w);
                     let _ = gather_pipe(w);
@@ -1395,7 +1434,8 @@ impl ProbeOne {
 //
 // Each job's buffers are reached through device addresses in a table the host writes (`Buffer::device_address`),
 // and made resident with the launches: a batch of any number of joins costs the host two launches. A device without
-// addresses (OpenCL 1.2) takes the radix sort and the probe join instead (`Fused::can`).
+// addresses for its allocations (OpenCL without Intel's unified shared memory) takes the radix sort and the probe
+// join instead (`Fused::can`).
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -1446,9 +1486,10 @@ pub struct Fused {
 }
 
 impl Fused {
-    /// Whether the process's device can run the fused sorts and probes: their tables hold device addresses.
+    /// Whether the process's device can run the fused sorts and probes: their tables hold the addresses of leased
+    /// buffers, which the device allocated (`Device::allocations_have_addresses`).
     pub fn can() -> bool {
-        device().is_ok_and(|d| d.has_addresses())
+        device().is_ok_and(|d| d.allocations_have_addresses())
     }
 
     fn addr(&mut self, b: &Buffer) -> u64 {
@@ -1689,13 +1730,12 @@ mod host_costs {
         let empty = per(300, || {
             Pass::new().unwrap().commit_wait().unwrap();
         });
-        let block = fixed("scan_block").unwrap();
-        let data = Held::zeroed(4096).unwrap();
-        let sums = Held::zeroed(4).unwrap();
+        let keys = fixed("pair_keys").unwrap();
+        let (words, out) = (Held::zeroed(8 * 256).unwrap(), Held::zeroed(8 * 256).unwrap());
         let dispatch = per(100, || {
             let pass = Pass::new().unwrap();
             for _ in 0..50 {
-                pass.run(&block, &[&data.buffer, &sums.buffer], &[1024], &[], 1);
+                pass.run(&keys, &[&words.buffer, &out.buffer], &[256], &[], 1);
             }
             pass.commit_wait().unwrap();
         });
@@ -1730,106 +1770,5 @@ mod host_costs {
                 probe_gpu / runs as f64 * 1e6
             );
         }
-    }
-}
-
-/// Decision 0440 step 5's speed gate: the UKL library's scan and radix sort (`rerail_gpu::library`) against this
-/// lane's own kernels on the same input: device time of the submission, warmed, the median of nine runs taken in
-/// turn. A measurement: `--ignored`.
-#[cfg(test)]
-mod library_speed {
-    use super::*;
-    use rerail_gpu::kernels::{alloc, buffer_of};
-    use rerail_gpu::library::{radix_sort_pairs, scan_exclusive_u32};
-
-    fn median(mut v: Vec<f64>) -> f64 {
-        v.sort_by(f64::total_cmp);
-        v[v.len() / 2]
-    }
-
-    /// The lane's time and the library's, in ms, of `lane` and `lib` (each returns its device seconds).
-    fn race(what: &str, mut lane: impl FnMut() -> f64, mut lib: impl FnMut() -> f64) -> (f64, f64) {
-        for _ in 0..3 {
-            lane();
-            lib();
-        }
-        let (mut a, mut b) = (Vec::new(), Vec::new());
-        for _ in 0..9 {
-            a.push(lane());
-            b.push(lib());
-        }
-        let (a, b) = (median(a) * 1e3, median(b) * 1e3);
-        eprintln!("{what}: lane {a:.3} ms, UKL library {b:.3} ms ({:.2}x)", b / a);
-        (a, b)
-    }
-
-    #[test]
-    #[ignore = "a measurement"]
-    fn the_library_is_no_slower_than_the_lane() {
-        let layer = shared::layer().expect("a device");
-        let mut x = 0x9e37_79b9_7f4a_7c15u64;
-        let mut next = move || {
-            x ^= x << 13;
-            x ^= x >> 7;
-            x ^= x << 17;
-            x
-        };
-
-        // A scan of 16M values.
-        let n = 1usize << 24;
-        let vals: Vec<u32> = (0..n).map(|_| (next() % 7) as u32).collect();
-        let data = Held::of(vals.iter().copied()).unwrap();
-        let lane_scan = Scan::owned(n).unwrap();
-        let (inb, out) = (buffer_of(&vals).unwrap(), alloc::<u32>(n + 1).unwrap());
-        let (a, b) = race(
-            "scan of 16M u32",
-            || {
-                let pass = Pass::new().unwrap();
-                lane_scan.encode(&pass, &data.buffer).unwrap();
-                pass.commit_wait().unwrap()
-            },
-            || {
-                let mut q = ComputeQueue::new(layer.queue);
-                scan_exclusive_u32(&q, &inb, &out, n as u32).unwrap();
-                let e = q.flush();
-                e.await_().unwrap();
-                e.gpu_seconds()
-            },
-        );
-        assert!(b <= a * 1.1, "the library's scan is slower than the lane's");
-
-        // A radix sort of 4M 32-bit keys with their rows: four passes of histogram, scan and scatter each.
-        let n = 1usize << 22;
-        let keys: Vec<u32> = (0..n).map(|_| next() as u32).collect();
-        let rows: Vec<u32> = (0..n as u32).collect();
-        let [_, hist, scatter, ..] = sort_pipes(Width::W32).unwrap();
-        let (ka, kb) = (Held::of(keys.iter().copied()).unwrap(), Held::new(4 * n).unwrap());
-        let (ia, ib) = (Held::of(rows.iter().copied()).unwrap(), Held::new(4 * n).unwrap());
-        let tiles = n.div_ceil(TILE);
-        let histogram = Held::new(4 * 256 * tiles).unwrap();
-        let hscan = Scan::owned(256 * tiles).unwrap();
-        let (lk, lv) = (buffer_of(&keys).unwrap(), buffer_of(&rows).unwrap());
-        let (tk, tv) = (alloc::<u32>(n).unwrap(), alloc::<u32>(n).unwrap());
-        let (a, b) = race(
-            "radix sort of 4M u32 keys and rows",
-            || {
-                let pass = Pass::new().unwrap();
-                for p in 0..4u32 {
-                    let (ki, ii, ko, io) = if p % 2 == 0 { (&ka, &ia, &kb, &ib) } else { (&kb, &ib, &ka, &ia) };
-                    pass.run(&hist, &[&ki.buffer, &histogram.buffer], &[n as u32, 8 * p, tiles as u32], &[], tiles);
-                    hscan.encode(&pass, &histogram.buffer).unwrap();
-                    pass.run(&scatter, &[&ki.buffer, &ii.buffer, &histogram.buffer, &ko.buffer, &io.buffer], &[n as u32, 8 * p, tiles as u32], &[], tiles);
-                }
-                pass.commit_wait().unwrap()
-            },
-            || {
-                let mut q = ComputeQueue::new(layer.queue);
-                radix_sort_pairs::<u32>(&q, &lk, &lv, &tk, &tv, n as u32, 32).unwrap();
-                let e = q.flush();
-                e.await_().unwrap();
-                e.gpu_seconds()
-            },
-        );
-        assert!(b <= a * 1.1, "the library's sort is slower than the lane's");
     }
 }

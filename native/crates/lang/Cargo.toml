@@ -157,12 +157,8 @@ tikv-jemalloc-sys = { version = "=0.7.1", default-features = false }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Memory", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-# A loaded tape's home, a residency slab (decision 0353 step 4a).
-rerail-metal = { path = "../metal" }
 block = "0.1.6"
 metal = "0.33.0"
-
-[target.'cfg(target_os = "macos")'.dev-dependencies]
 
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
@@ -181,3 +177,8 @@ cc = "=1.11.1"
 sha2 = "0.11"
 tree-sitter-generate = { version = "=0.27.2", default-features = false }
 flate2 = "=1.1.11"
+
+# The device layer's targets (macOS and Linux): the GPU lane (decision 0440 step E).
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+# A loaded tape's home, a residency slab (decision 0353 step 4a).
+rerail-metal = { path = "../metal" }

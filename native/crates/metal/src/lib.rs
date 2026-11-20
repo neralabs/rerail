@@ -1,11 +1,13 @@
-//! The engine's Metal runtime, in a crate of its own so that the GPU code that needs no engine
-//! types rebuilds without the engine: the device, the buffer budget and its reservations,
-//! mapped no-copy buffers (`MappedBuffer`), the execution lock, compiled pipelines, and the
+//! The engine's GPU runtime, in a crate of its own so that the GPU code that needs no engine types
+//! rebuilds without the engine: the device (the device layer's, on every backend: decision 0440),
+//! the buffer budget and its reservations, mapped no-copy buffers (`HostMapped`), the execution
+//! lock, compiled pipelines, and the
 //! launch layer's per-evaluation budget (`launch`).
 //!
 //! `test-hooks` gives each test thread its own buffer ledger (`test_pool`) and the buffer
 //! observations, for the engine's tests as for this crate's.
-#![cfg(target_os = "macos")]
+// Where the device layer is (decision 0440 step E).
+#![cfg(any(target_os = "macos", target_os = "linux"))]
 #![allow(clippy::missing_safety_doc)]
 
 /// Block programs on Metal (decision 0066): the interpreter and generated MSL, over a batch of
@@ -16,17 +18,12 @@ pub mod buffer_observation;
 pub mod lane;
 pub mod launch;
 pub mod launch_budget;
-/// The preprocessor's evaluator over tapes (decision 0436): plain MSL passes.
-/// The building blocks of the preprocessor's grid passes (decision 0448).
-pub mod pp_blocks;
+/// The preprocessor's evaluation arena and its kernels' one UKL source (decisions 0448, 0468).
+pub mod pp_arena;
+/// The preprocessor's evaluator over tapes (decision 0436).
 pub mod pp_eval;
 /// Macro expansion on the device (decision 0448).
 pub mod pp_expand;
-/// The device work queue (decision 0027) in MSL, for the preprocessor's expansion (0448) until it
-/// is written in UKL; the engine's kernels include `<ukl/workqueue.h>` (0440 step C).
-pub mod work_queue {
-    pub const SOURCE: &str = include_str!("work_queue.metal");
-}
 /// The preprocessing words on the device (decision 0348, stage 5).
 pub mod pp_on;
 /// Pre-pinned blocks (decision 0039): the device's scratch buffers, made once and reused.
@@ -53,6 +50,7 @@ static POOL_HOOKS: std::sync::LazyLock<()> = std::sync::LazyLock::new(|| {
 
 /// The process's one device as Metal's (`rerail_accel::gpu::shared`, decision 0100 §2), for what is Metal's own:
 /// its compiler's probes, its residency's measures.
+#[cfg(target_os = "macos")]
 pub static METAL_DEVICE: std::sync::LazyLock<Option<metal::Device>> = std::sync::LazyLock::new(|| {
     std::sync::LazyLock::force(&POOL_HOOKS);
     rerail_accel::gpu::shared::get().map(|s| s.device.clone())
@@ -64,13 +62,8 @@ pub(crate) fn pool_hooks() {
 }
 
 /// The process's one device (`METAL_DEVICE`), or `UnsupportedBackend` without one.
+#[cfg(target_os = "macos")]
 pub fn device() -> Result<metal::Device, Error> {
     METAL_DEVICE.clone().ok_or(Error::UnsupportedBackend)
 }
 
-/// The process's one command queue (`rerail_accel::gpu::shared`, decision 0100 §2). Every command buffer the engine
-/// makes is made on it, so the engine's programs, its relational work and the executor's lanes are submitted in one
-/// order; no module makes a queue of its own (`executors_are_shared`, the engine's source guard).
-pub fn queue() -> Result<metal::CommandQueue, Error> {
-    rerail_accel::gpu::shared::get().map(|s| s.queue.clone()).ok_or(Error::UnsupportedBackend)
-}

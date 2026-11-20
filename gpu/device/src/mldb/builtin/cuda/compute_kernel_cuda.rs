@@ -83,6 +83,8 @@ const CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR: i32 = 75;
 const CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR: i32 = 76;
 const CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN: i32 = 97;
 const CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES: i32 = 100;
+const CU_DEVICE_ATTRIBUTE_CAN_USE_HOST_POINTER_FOR_REGISTERED_MEM: i32 = 91;
+const CUDA_ERROR_HOST_MEMORY_ALREADY_REGISTERED: CUresult = 712;
 const CU_MEMHOSTREGISTER_PORTABLE: u32 = 0x01;
 const CU_MEMHOSTREGISTER_DEVICEMAP: u32 = 0x02;
 const CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES: i32 = 1;
@@ -102,7 +104,7 @@ fn api() -> Result<&'static Api, String> {
     static API: OnceLock<Result<Api, String>> = OnceLock::new();
     API.get_or_init(|| {
         // The hardware queues the driver maps streams onto, round-robin in the order they are made: enough that no
-        // two of the process's streams share one (`CudaQueueRoot`). Read by the driver when it loads; a value the
+        // two of the process's streams (a root's each, `CudaQueueRoot`, and any a caller makes) share one. Read by the driver when it loads; a value the
         // environment sets is kept.
         if std::env::var_os("CUDA_DEVICE_MAX_CONNECTIONS").is_none() {
             // SAFETY: once, before the driver loads, as the process's first use of the device.
@@ -198,6 +200,9 @@ pub struct CudaDevice {
     /// Whether the device reads the host's pageable memory through the host's page tables (a GB10's ATS): then
     /// memory wrapped in place (`wrap_host_memory`) is read at the host's address, nothing registered.
     pub pageable: bool,
+    /// Whether registered host memory is the device's at the host's address (`CAN_USE_HOST_POINTER_FOR_REGISTERED_MEM`):
+    /// then a wrap may span several registrations (`Registered`).
+    host_pointer: bool,
 }
 
 unsafe impl Send for CudaDevice {}
@@ -238,9 +243,10 @@ impl CudaDevice {
             let sm = (attr(CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR)? * 10 + attr(CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR)?) as u32;
             let max_shared_per_block = attr(CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN)? as u32;
             let pageable = attr(CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES).unwrap_or(0) != 0;
+            let host_pointer = attr(CU_DEVICE_ATTRIBUTE_CAN_USE_HOST_POINTER_FOR_REGISTERED_MEM).unwrap_or(0) != 0;
             let mut ctx = std::ptr::null_mut();
             ck((a.cu_device_primary_ctx_retain)(&mut ctx, dev), "cuDevicePrimaryCtxRetain")?;
-            Ok(CudaDevice { ctx, sm, max_shared_per_block, pageable })
+            Ok(CudaDevice { ctx, sm, max_shared_per_block, pageable, host_pointer })
         }
     }
 
@@ -272,8 +278,15 @@ struct Allocation {
     len: u64,
     /// The block's size class: the bytes it holds. 0: memory wrapped in place (`wrap_host_memory`), its owner's.
     class: u64,
-    /// Wrapped memory registered with the driver (`cuMemHostRegister`), unregistered when the buffer goes.
-    registered: bool,
+    /// Wrapped memory's registration with the driver: none (read where it lies), the wrap's own (`cuMemHostRegister`
+    /// of exactly its bytes), or its share of the page runs registered (`Registered`); released when the buffer goes.
+    registered: Registration,
+}
+
+enum Registration {
+    None,
+    Own,
+    Runs(Vec<u64>),
 }
 
 unsafe impl Send for Allocation {}
@@ -285,10 +298,14 @@ impl Drop for Allocation {
     /// freeing. The pool keeps a process's peak of each class (0440 E1: the pool's slabs are `cuMemHostAlloc`'s).
     fn drop(&mut self) {
         if self.class == 0 {
-            if self.registered
-                && let Ok(a) = api()
-            {
-                unsafe { (a.cu_mem_host_unregister)(self.host.cast()) };
+            match std::mem::replace(&mut self.registered, Registration::None) {
+                Registration::None => {}
+                Registration::Own => {
+                    if let Ok(a) = api() {
+                        unsafe { (a.cu_mem_host_unregister)(self.host.cast()) };
+                    }
+                }
+                Registration::Runs(runs) => release_runs(&runs),
             }
             return;
         }
@@ -376,19 +393,28 @@ pub fn alloc_uninitialized_array_sync<T>(device: &CudaDevice, length: usize) -> 
         must(unsafe { (a.cu_mem_host_get_device_pointer)(&mut dev, host, 0) }, "cuMemHostGetDevicePointer");
         Block { host: host.cast(), dev }
     });
-    CudaBuffer(Arc::new(Allocation { host, dev, len, class, registered: false }))
+    CudaBuffer(Arc::new(Allocation { host, dev, len, class, registered: Registration::None }))
 }
 
 /// A buffer over `len` bytes of the host's memory at `ptr`, read in place (decision 0353): at the host's address
-/// where the device reads pageable memory (`CudaDevice::pageable`), else registered with the driver and mapped.
+/// where the device reads pageable memory (`CudaDevice::pageable`); else its pages registered with the driver and
+/// mapped. The driver registers whole pages and refuses a page registered already (error 712), and wraps share
+/// pages (two small ones in a page, a view inside a block wrapped whole): where registered memory is the device's at
+/// the host's address, the pages are registered once, in runs a wrap shares (`Registered`); elsewhere a wrap's own
+/// registration.
 ///
 /// # Safety
 /// The memory outlives the buffer and its clones, and every use of them by queued work.
 pub unsafe fn wrap_host_memory(device: &CudaDevice, ptr: *mut u8, len: usize) -> Result<CudaBuffer, String> {
+    let wrap = |dev: DevPtr, registered: Registration| Ok(CudaBuffer(Arc::new(Allocation { host: ptr, dev, len: len as u64, class: 0, registered })));
     if device.pageable {
-        return Ok(CudaBuffer(Arc::new(Allocation { host: ptr, dev: ptr as DevPtr, len: len as u64, class: 0, registered: false })));
+        return wrap(ptr as DevPtr, Registration::None);
     }
     let a = device.current();
+    if device.host_pointer {
+        let runs = register_runs(a, ptr as u64, len as u64)?;
+        return wrap(ptr as DevPtr, Registration::Runs(runs));
+    }
     unsafe {
         ck((a.cu_mem_host_register)(ptr.cast(), len, CU_MEMHOSTREGISTER_PORTABLE | CU_MEMHOSTREGISTER_DEVICEMAP), "cuMemHostRegister")?;
         let mut dev = 0;
@@ -396,7 +422,108 @@ pub unsafe fn wrap_host_memory(device: &CudaDevice, ptr: *mut u8, len: usize) ->
             (a.cu_mem_host_unregister)(ptr.cast());
             return Err(e);
         }
-        Ok(CudaBuffer(Arc::new(Allocation { host: ptr, dev, len: len as u64, class: 0, registered: true })))
+        wrap(dev, Registration::Own)
+    }
+}
+
+/// A run of pages registered with the driver for wraps (`wrap_host_memory`): its end, and how many wraps hold it.
+struct Run {
+    end: u64,
+    holders: usize,
+}
+
+/// The runs registered, by their first byte; they never overlap. Pages pinned otherwise (the pool's blocks,
+/// `cuMemHostAlloc`) are in none: they are mapped already, and their owner keeps them.
+static REGISTERED: std::sync::Mutex<std::collections::BTreeMap<u64, Run>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+fn page_bytes() -> u64 {
+    static PAGE: OnceLock<u64> = OnceLock::new();
+    *PAGE.get_or_init(|| (unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).max(4096) as u64)
+}
+
+/// Registers the pages of `[at, at + len)` that no run holds, as runs, and holds every run in it: the runs' starts.
+fn register_runs(a: &Api, at: u64, len: u64) -> Result<Vec<u64>, String> {
+    let page = page_bytes();
+    let (lo, hi) = (at / page * page, (at + len.max(1)).div_ceil(page) * page);
+    let mut runs = REGISTERED.lock().unwrap_or_else(|p| p.into_inner());
+    // The gaps between the runs in [lo, hi).
+    let mut held: Vec<(u64, u64)> = runs.range(..hi).rev().take_while(|(_, r)| r.end > lo).map(|(&s, r)| (s, r.end)).collect();
+    held.reverse();
+    let mut gaps = Vec::new();
+    let mut from = lo;
+    for &(s, e) in &held {
+        if s > from {
+            gaps.push((from, s));
+        }
+        from = from.max(e);
+    }
+    if from < hi {
+        gaps.push((from, hi));
+    }
+    let mut made = Vec::new();
+    for (s, e) in gaps {
+        if let Err(err) = register_gap(a, s, e, page, &mut made) {
+            for (s, _) in made {
+                unsafe { (a.cu_mem_host_unregister)(s as Ptr) };
+            }
+            return Err(err);
+        }
+    }
+    for (s, e) in made {
+        runs.insert(s, Run { end: e, holders: 0 });
+    }
+    let starts: Vec<u64> = runs.range(..hi).rev().take_while(|(_, r)| r.end > lo).map(|(&s, _)| s).collect();
+    for s in &starts {
+        runs.get_mut(s).expect("a run").holders += 1;
+    }
+    Ok(starts)
+}
+
+/// Registers `[s, e)` (pages) as a run; where some of its pages are pinned otherwise (error 712), the pages that are
+/// not, each stretch a run of its own.
+fn register_gap(a: &Api, s: u64, e: u64, page: u64, made: &mut Vec<(u64, u64)>) -> Result<(), String> {
+    let flags = CU_MEMHOSTREGISTER_PORTABLE | CU_MEMHOSTREGISTER_DEVICEMAP;
+    let r = unsafe { (a.cu_mem_host_register)(s as Ptr, (e - s) as usize, flags) };
+    if r == 0 {
+        made.push((s, e));
+        return Ok(());
+    }
+    if r != CUDA_ERROR_HOST_MEMORY_ALREADY_REGISTERED {
+        return ck(r, "cuMemHostRegister");
+    }
+    let mapped = |p: u64| {
+        let mut dev = 0;
+        unsafe { (a.cu_mem_host_get_device_pointer)(&mut dev, p as Ptr, 0) == 0 }
+    };
+    let mut p = s;
+    while p < e {
+        if mapped(p) {
+            p += page;
+            continue;
+        }
+        let mut q = p + page;
+        while q < e && !mapped(q) {
+            q += page;
+        }
+        ck(unsafe { (a.cu_mem_host_register)(p as Ptr, (q - p) as usize, flags) }, "cuMemHostRegister")?;
+        made.push((p, q));
+        p = q;
+    }
+    Ok(())
+}
+
+/// Lets go of a wrap's runs: a run no wrap holds is unregistered.
+fn release_runs(starts: &[u64]) {
+    let mut runs = REGISTERED.lock().unwrap_or_else(|p| p.into_inner());
+    for s in starts {
+        let Some(r) = runs.get_mut(s) else { continue };
+        r.holders -= 1;
+        if r.holders == 0 {
+            runs.remove(s);
+            if let Ok(a) = api() {
+                unsafe { (a.cu_mem_host_unregister)(*s as Ptr) };
+            }
+        }
     }
 }
 
@@ -558,40 +685,46 @@ impl CudaComputeFunction {
 /// The hardware queues asked of the driver (its maximum).
 const MAX_CONNECTIONS: usize = 32;
 
-/// What a queue's work goes to (`metal::CommandQueue`): a fixed set of streams, made once, which queues take in turn.
+/// What a queue's work goes to (`metal::CommandQueue`): one stream, made once. Its queues' work runs in the order it is
+/// flushed, as a Metal command queue's command buffers run in the order they are committed: the engine's batches rely
+/// on it (a batch reads what the one committed before it wrote, `Batch::commit_open`). A root of several streams, each
+/// queue taking the next, ran two submissions at once with no order between them (0440 step E).
 ///
 /// The driver runs streams on a few hardware queues; streams that share one are run in order, as one. A stream held
 /// by a wait for the host (`CudaComputeQueue::wait_for_event`, an armed prediction) then holds back every stream on
 /// its hardware queue, and the work the host awaits before it signals may be among them: a deadlock (seen on a
 /// V100). Metal has the same rule within a command queue, which is why the forest keeps its waiting work on a queue
-/// of its own (`shared.waiting`). Here the process makes its streams once, fewer than the hardware queues
-/// (`MAX_CONNECTIONS`), so each has one of its own and the waiting root's stream holds back nothing else. Queues of
-/// one root share its streams: their work is ordered more than it must be, never less.
+/// of its own (`shared.waiting`). Here each root's stream has a hardware queue of its own (`MAX_CONNECTIONS`), so the
+/// waiting root's holds back nothing else.
 pub struct CudaQueueRoot {
     device: CudaDevice,
-    streams: Vec<Ptr>,
-    next: std::sync::atomic::AtomicUsize,
+    stream: Ptr,
+}
+
+/// Held while a submission's operations go onto a stream (`CudaComputeQueue::flush`): one submission's are
+/// contiguous, as a command buffer's are, never interleaved with another thread's.
+static ISSUE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// An operation of a queue, recorded when it is encoded and issued when the queue is flushed: nothing runs before
+/// its submission is committed, as on Metal, so submissions run in the order they are committed (a launch issued as
+/// it was encoded ran before an earlier-committed submission of another thread, and read what it had not written yet).
+enum Op {
+    Launch { func: Ptr, grid: [u32; 3], block: [u32; 3], shared: u32, params: Vec<Vec<u64>>, name: String },
+    Memset { dst: u64, bytes: usize },
+    Memcpy { dst: u64, src: u64, bytes: usize },
+    WaitValue { at: u64, value: u64 },
 }
 
 unsafe impl Send for CudaQueueRoot {}
 unsafe impl Sync for CudaQueueRoot {}
 
 impl CudaQueueRoot {
-    /// A root of `streams` streams on `device`. Made at the process's start (`shared`), the waiting root first.
-    pub fn new(device: CudaDevice, streams: usize) -> CudaQueueRoot {
+    /// A root on `device`. Made at the process's start (`shared`), the waiting root first.
+    pub fn new(device: CudaDevice) -> CudaQueueRoot {
         let a = device.current();
-        let streams = (0..streams.max(1))
-            .map(|_| {
-                let mut stream = std::ptr::null_mut();
-                must(unsafe { (a.cu_stream_create)(&mut stream, CU_STREAM_NON_BLOCKING) }, "cuStreamCreate");
-                stream
-            })
-            .collect();
-        CudaQueueRoot { device, streams, next: Default::default() }
-    }
-
-    fn stream(&self) -> Ptr {
-        self.streams[self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % self.streams.len()]
+        let mut stream = std::ptr::null_mut();
+        must(unsafe { (a.cu_stream_create)(&mut stream, CU_STREAM_NON_BLOCKING) }, "cuStreamCreate");
+        CudaQueueRoot { device, stream }
     }
 }
 
@@ -600,9 +733,8 @@ impl CudaQueueRoot {
 pub struct CudaComputeQueue {
     device: CudaDevice,
     stream: Ptr,
-    /// The event recorded where the work since the last flush starts (the GPU time is measured from it; it counts
-    /// the work other queues put on the same stream between, as the root's streams are shared).
-    start: RefCell<Ptr>,
+    /// The operations encoded since the last flush, in order (`Op`).
+    ops: RefCell<Vec<Op>>,
     /// The staging memory for `enqueue_copy_from_host`, and how much is used (as on Metal).
     staging: RefCell<Option<(CudaBuffer, u64)>>,
     /// The buffers the work since the last flush uses that nothing else may hold (staging): kept to the event.
@@ -619,13 +751,9 @@ fn new_event(a: &Api) -> Ptr {
 }
 
 impl CudaComputeQueue {
-    /// A queue on one of `root`'s streams (in turn).
+    /// A queue on `root`'s stream.
     pub fn new(root: &CudaQueueRoot) -> Self {
-        let a = root.device.current();
-        let stream = root.stream();
-        let start = new_event(a);
-        must(unsafe { (a.cu_event_record)(start, stream) }, "cuEventRecord");
-        CudaComputeQueue { device: root.device, stream, start: RefCell::new(start), staging: Default::default(), keep: Default::default() }
+        CudaComputeQueue { device: root.device, stream: root.stream, ops: Default::default(), staging: Default::default(), keep: Default::default() }
     }
 
     /// `newBindContext`: one launch of `function`, on the queue's stream.
@@ -633,7 +761,7 @@ impl CudaComputeQueue {
         // The rows' parameters, then the indirect launch's counts (`GEN_OUTER_PARAMETER_GROUPS`: none, a direct launch).
         let mut params = vec![Vec::new(); function.param_sizes.len() + 1];
         params[function.param_sizes.len()] = vec![0];
-        CudaBindContext { device: self.device, stream: self.stream, function, params, shared: 0, keep: &self.keep }
+        CudaBindContext { function, params, shared: 0, keep: &self.keep, ops: &self.ops }
     }
 
     /// `enqueueCopyFromHost`: the bytes are staged now, and copied into `dst` at `dst_offset` in queue order.
@@ -665,9 +793,8 @@ impl CudaComputeQueue {
         let count = count.unwrap_or(dst.length() as usize / size - offset);
         let one = unsafe { std::slice::from_raw_parts((value as *const T).cast::<u8>(), size) };
         if one.iter().all(|&b| b == 0) {
-            let a = self.device.current();
             self.keep.borrow_mut().push(dst.clone());
-            must(unsafe { (a.cu_memset_d8_async)(dst.device_address() + (offset * size) as u64, 0, count * size, self.stream) }, "cuMemsetD8Async");
+            self.ops.borrow_mut().push(Op::Memset { dst: dst.device_address() + (offset * size) as u64, bytes: count * size });
             return;
         }
         let bytes: Vec<u8> = one.iter().copied().cycle().take(count * size).collect();
@@ -679,29 +806,37 @@ impl CudaComputeQueue {
         if length == 0 {
             return;
         }
-        let a = self.device.current();
         self.keep.borrow_mut().extend([src.clone(), dst.clone()]);
-        must(unsafe { (a.cu_memcpy_async)(dst.device_address() + dst_offset, src.device_address() + src_offset, length as usize, self.stream) }, "cuMemcpyAsync");
+        self.ops.borrow_mut().push(Op::Memcpy { dst: dst.device_address() + dst_offset, src: src.device_address() + src_offset, bytes: length as usize });
     }
 
     /// Holds the queue's later work until the host signals `event` with `value` or more (Metal's
     /// `encodeWaitForEvent`).
     pub fn wait_for_event(&self, event: &CudaSharedEvent, value: u64) {
-        let a = self.device.current();
         self.keep.borrow_mut().push(event.word.clone());
-        must(unsafe { (a.cu_stream_wait_value64)(self.stream, event.word.device_address(), value, CU_STREAM_WAIT_VALUE_GEQ) }, "cuStreamWaitValue64");
+        self.ops.borrow_mut().push(Op::WaitValue { at: event.word.device_address(), value });
     }
 
-    /// The work so far, as an event to await.
+    /// The work so far, issued onto the root's stream between two events, as an event to await. A launch the driver
+    /// refuses fails the event (`await_`); the operations after it are not issued.
     pub fn flush(&mut self) -> CudaComputeEvent {
         let a = self.device.current();
-        let end = new_event(a);
-        must(unsafe { (a.cu_event_record)(end, self.stream) }, "cuEventRecord");
-        let next = new_event(a);
-        must(unsafe { (a.cu_event_record)(next, self.stream) }, "cuEventRecord");
-        let start = self.start.replace(next);
+        let (start, end) = (new_event(a), new_event(a));
+        let ops = std::mem::take(&mut *self.ops.borrow_mut());
+        let mut failed = None;
+        {
+            let _issue = ISSUE.lock().unwrap_or_else(|p| p.into_inner());
+            must(unsafe { (a.cu_event_record)(start, self.stream) }, "cuEventRecord");
+            for op in ops {
+                if let Err(e) = issue(a, self.stream, op) {
+                    failed = Some(e);
+                    break;
+                }
+            }
+            must(unsafe { (a.cu_event_record)(end, self.stream) }, "cuEventRecord");
+        }
         *self.staging.borrow_mut() = None;
-        CudaComputeEvent { device: self.device, start, end, keep: std::mem::take(&mut *self.keep.borrow_mut()) }
+        CudaComputeEvent { device: self.device, start, end, keep: std::mem::take(&mut *self.keep.borrow_mut()), failed }
     }
 
     pub fn finish(mut self) -> Result<(), String> {
@@ -709,22 +844,28 @@ impl CudaComputeQueue {
     }
 }
 
-impl Drop for CudaComputeQueue {
-    /// The stream is its root's; the buffers of the work not flushed are kept until it completes (`PENDING`).
-    fn drop(&mut self) {
-        let a = self.device.current();
-        let keep = std::mem::take(&mut *self.keep.borrow_mut());
-        if !keep.is_empty() {
-            let end = new_event(a);
-            must(unsafe { (a.cu_event_record)(end, self.stream) }, "cuEventRecord");
-            PENDING.lock().unwrap().push(Pending { end, keep });
+/// One operation onto `stream`.
+fn issue(a: &Api, stream: Ptr, op: Op) -> Result<(), String> {
+    match op {
+        Op::Launch { func, grid, block, shared, mut params, name } => {
+            // The driver reads each parameter's bytes during the call.
+            let mut ptrs: Vec<Ptr> = params.iter_mut().map(|p| p.as_mut_ptr().cast::<c_void>()).collect();
+            ck(
+                unsafe { (a.cu_launch_kernel)(func, grid[0], grid[1], grid[2], block[0], block[1], block[2], shared, stream, ptrs.as_mut_ptr(), std::ptr::null_mut()) },
+                &format!("launching {name}"),
+            )
         }
-        unsafe { (a.cu_event_destroy)(*self.start.borrow()) };
+        Op::Memset { dst, bytes } => ck(unsafe { (a.cu_memset_d8_async)(dst, 0, bytes, stream) }, "cuMemsetD8Async"),
+        Op::Memcpy { dst, src, bytes } => ck(unsafe { (a.cu_memcpy_async)(dst, src, bytes, stream) }, "cuMemcpyAsync"),
+        Op::WaitValue { at, value } => ck(unsafe { (a.cu_stream_wait_value64)(stream, at, value, CU_STREAM_WAIT_VALUE_GEQ) }, "cuStreamWaitValue64"),
     }
 }
 
-/// Work dropped before it completed (a queue, or an event not awaited), and the buffers it uses: Metal keeps a
-/// command buffer's resources until it completes; here they go back to the pool once `end` has passed.
+/// A queue dropped without a flush runs nothing (a Metal command buffer never committed): its operations and the
+/// buffers they would use are dropped with it.
+
+/// Work dropped before it completed (an event not awaited), and the buffers it uses: Metal keeps a command buffer's
+/// resources until it completes; here they go back to the pool once `end` has passed.
 struct Pending {
     end: Ptr,
     keep: Vec<CudaBuffer>,
@@ -757,15 +898,23 @@ pub struct CudaComputeEvent {
     start: Ptr,
     end: Ptr,
     keep: Vec<CudaBuffer>,
+    /// The operation the driver refused when it was issued, if one was.
+    failed: Option<String>,
 }
 
 unsafe impl Send for CudaComputeEvent {}
+// SAFETY: its methods take `&self` and call the driver API, which is thread-safe, in the device's context made
+// current on the calling thread (`current`); nothing in it is written after it is made.
+unsafe impl Sync for CudaComputeEvent {}
 
 impl CudaComputeEvent {
     /// Waits for the work to complete; an error if it did not.
     pub fn await_(&self) -> Result<(), String> {
         let a = self.device.current();
         ck(unsafe { (a.cu_event_synchronize)(self.end) }, "awaiting the queue's work")?;
+        if let Some(e) = &self.failed {
+            return Err(e.clone());
+        }
         GPU_NANOS.fetch_add((self.gpu_seconds() * 1e9) as u64, Ordering::Relaxed);
         Ok(())
     }
@@ -804,14 +953,14 @@ impl Drop for CudaComputeEvent {
 /// The bind context of one launch (`MetalBindContext`): each parameter's bytes, and the dynamic shared memory the
 /// threadgroup rows take.
 pub struct CudaBindContext<'a> {
-    device: CudaDevice,
-    stream: Ptr,
     function: &'a CudaComputeFunction,
     /// Each parameter's bytes, in 8-byte words (the driver reads each at its own size).
     params: Vec<Vec<u64>>,
     shared: u64,
     /// The queue's buffers in use: those bound here are kept until the launch completes.
     keep: &'a RefCell<Vec<CudaBuffer>>,
+    /// The queue's operations, which the launch joins.
+    ops: &'a RefCell<Vec<Op>>,
 }
 
 fn words(bytes: &[u8]) -> Vec<u64> {
@@ -858,12 +1007,15 @@ impl CudaBindContext<'_> {
         if (0..3).any(|i| d(grid, i) == 0 || d(block, i) == 0) {
             return Ok(());
         }
-        let mut ptrs: Vec<Ptr> = self.params.iter_mut().map(|p| p.as_mut_ptr().cast::<c_void>()).collect();
-        let a = self.device.current();
-        ck(
-            unsafe { (a.cu_launch_kernel)(f.func, d(grid, 0), d(grid, 1), d(grid, 2), d(block, 0), d(block, 1), d(block, 2), self.shared as u32, self.stream, ptrs.as_mut_ptr(), std::ptr::null_mut()) },
-            &format!("launching {}", f.name),
-        )
+        self.ops.borrow_mut().push(Op::Launch {
+            func: f.func,
+            grid: [d(grid, 0), d(grid, 1), d(grid, 2)],
+            block: [d(block, 0), d(block, 1), d(block, 2)],
+            shared: self.shared as u32,
+            params: self.params.clone(),
+            name: f.name.clone(),
+        });
+        Ok(())
     }
 
     pub fn use_buffer(&mut self, buffer: &CudaBuffer) {

@@ -599,7 +599,7 @@ fn wildcard_and_missing_flags_preserve_native_node_meaning() {
             typed,
             "JIT: {query}"
         );
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         if super::super::execution_shape::register_paths(&program.words).is_some() {
             assert_eq!(
                 super::super::execute_with_backend(

@@ -77,7 +77,7 @@ impl SpanEnds {
         (super::block::run_batch(&programs, &self.batch()).into_iter().map(|mut r| r.outputs.swap_remove(0)).collect(), RanOn::Cpu)
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     /// The batch on the device; `Ok(None)` with no device, or a form it lacks (recorded: `span_ends`).
     fn metal(&self) -> Result<Option<(Vec<Vec<u64>>, RanOn)>, String> {
         let natives: Vec<&super::native_ir::BlockNative> = self.filters.iter().map(|f| &f.native).collect();
@@ -105,7 +105,7 @@ impl rerail_accel::kernel::Program for SpanEnds {
     }
 
     fn run(&self, lane: rerail_accel::Lane) -> Result<rerail_accel::kernel::ProgramOutput, String> {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         if lane == rerail_accel::Lane::Gpu
             && let Some(r) = self.metal()?
         {
@@ -128,7 +128,7 @@ pub fn ends_on(ex: &rerail_accel::Executor, filters: &[std::sync::Arc<SpanPrefil
     if files.is_empty() {
         return Ok((Vec::new(), RanOn::Cpu));
     }
-    let gpu = cfg!(target_os = "macos") && device;
+    let gpu = cfg!(any(target_os = "macos", target_os = "linux")) && device;
     let program = SpanEnds { filters: filters.to_vec(), sources: sources.to_vec(), files: files.to_vec(), gpu };
     let kernel = rerail_accel::Kernel::Program(rerail_accel::kernel::ProgramKernel(std::sync::Arc::new(program)));
     let launch = match lane {

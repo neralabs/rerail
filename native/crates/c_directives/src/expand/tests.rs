@@ -414,7 +414,7 @@ fn the_compiled_words_are_the_interpreters() {
 /// The words on the process's device (`clif_ukl`'s UKL of the same IR, decisions 0348 stage 5, 0440 step D) are the
 /// interpreter's, on every example and TU, in C and C++: on Metal, OpenCL and the CPU's backend (`RERAIL_GPU`), all of
 /// them one batch a round (`expand_tus_with`, 0408 L3), and the host evaluates nothing meanwhile (`host_runs`).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 fn the_device_words_are_the_interpreters() {
     if rerail_metal::lane::device().is_err() {
@@ -506,7 +506,7 @@ fn the_compiled_words_code_counted() {
 /// The words' code built ahead of time (`clif_rust`, the `generated` feature) gives the
 /// interpreter's tokens on every example and TU, for each build; each build is the source the
 /// words translate to now (its fingerprint), so it is the JIT's code compiled by rustc.
-#[cfg(feature = "generated")]
+#[cfg(all(feature = "generated", target_arch = "aarch64"))]
 #[test]
 #[ignore = "Q367: overflows its 2 MB test stack in `rust_source`, as at Go-C-and-C-support's own ce2c4019c83"]
 fn the_aot_words_are_the_interpreters() {
@@ -819,7 +819,7 @@ fn the_compiled_ifs_have_the_interpreters_values() {
 /// The device's rungs (0348, stage L1): a TU whose expansion outgrows the smallest rung's rooms
 /// (a macro of 8 macros of 8 macros: 4,096 tokens from 60) is run again at larger rungs, and
 /// its tokens are the interpreter's.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 fn the_device_rungs_run_a_tu_again_past_its_room() {
     if rerail_metal::lane::device().is_err() {

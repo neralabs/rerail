@@ -7524,7 +7524,7 @@ fn a_placed_tape_reads_as_one_held_in_its_own_bytes() {
         // `in_format` keeps a tape held in another format as it is (a document's tape is format 16 now): the
         // placed tape is in the format its bytes were stored in.
         assert_eq!(placed.format(), own.format(), "held as stored");
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         assert_eq!(placed.placed(), crate::code_rule_dsl::tape::placed::device().is_some(), "{format:?}: in a slab's room where there is a device");
         assert_eq!(placed.to_bytes().unwrap(), bytes, "{format:?}: the bytes as stored");
         let text = Arc::new(source.clone());
