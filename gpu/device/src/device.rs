@@ -167,6 +167,20 @@ impl Device {
         }
     }
 
+    /// The memory domain its kernels read (decisions 0440 §7.2, 0491 step 4): 0 for the host's memory, read in place
+    /// (Apple's unified memory, the CPU, an OpenCL device sharing the host's memory, a CUDA device reading the host's
+    /// pages, as a GB10 does); 1 for a discrete card's own memory, whose copy of a region a mirror holds
+    /// (`rerail_blocks::region::Region::mirror_in`).
+    pub fn domain(&self) -> u32 {
+        match self {
+            #[cfg(target_os = "linux")]
+            Device::Native(d) => u32::from(!d.pageable),
+            #[cfg(not(target_os = "linux"))]
+            Device::Native(_) => 0,
+            Device::Cpu(_) | Device::OpenCl(_) => 0,
+        }
+    }
+
     /// Whether every buffer has a kernels' address (`Buffer::device_address`), memory wrapped in place too: every
     /// backend's but OpenCL's.
     pub fn has_addresses(&self) -> bool {

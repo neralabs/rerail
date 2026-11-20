@@ -818,6 +818,13 @@ impl Deref for Frozen {
     }
 }
 
+impl Frozen {
+    /// Its block, by handle: what a region of it holds (`region::whole`).
+    pub fn arc(&self) -> &Arc<Block> {
+        &self.0
+    }
+}
+
 /// A run of `T`s in a shared block, read as a slice by the host: an array the host builds once and the device then
 /// reads in the same block (decision 0289 §3). A frozen region (decision 0491): its block lives, and its chunk stays
 /// taken, as long as any of its `Cells`, or a GPU use of it, does.

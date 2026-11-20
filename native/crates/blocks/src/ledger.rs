@@ -76,6 +76,9 @@ pub struct Ledger {
     /// GPU uses of chunks queued now (`State::chunks`' length): with none, a CPU access is checked without the lock
     /// (a block's arrays are read and written at every value, `cpu_read`, `cpu_write`).
     chunk_uses: std::sync::atomic::AtomicUsize,
+    /// The block's own region while a handle holds it (`region::whole`, decision 0491 step 3): what a kernel's bind
+    /// of the block, found by address, pins (`region::bind_address`).
+    pub(crate) root: Mutex<std::sync::Weak<crate::region::Region>>,
     base: usize,
     /// Its pages may go to the OS: an anonymous block's (a slab's are the device buffer's, a file's are written back).
     pages: bool,
@@ -142,7 +145,7 @@ fn bit(bits: &[u64], i: usize) -> bool {
 
 impl Ledger {
     pub(crate) fn new(base: *mut u8, len: usize, pages: bool, ext: Arc<Extent>) -> Arc<Ledger> {
-        let l = Arc::new(Ledger { state: Mutex::default(), chunk_uses: std::sync::atomic::AtomicUsize::new(0), base: base as usize, pages, ext });
+        let l = Arc::new(Ledger { state: Mutex::default(), chunk_uses: std::sync::atomic::AtomicUsize::new(0), root: Mutex::new(std::sync::Weak::new()), base: base as usize, pages, ext });
         let mut live = blocks();
         let i = live.partition_point(|e| e.0 < l.base);
         live.insert(i, (l.base, l.base + len, Arc::downgrade(&l)));
@@ -421,6 +424,48 @@ impl Ledger {
     }
 }
 
+/// A value that owns memory a kernel may bind and that is no block's (a device pool's lease): held as a block's memory
+/// is, by a ledger found at its address. A command buffer that binds its bytes holds it (`Fence::uses_address`), and
+/// when dropped it goes (`T`'s drop: back to its pool) only once that work completes (R5): the next holder's host
+/// writes are never ordered before a queued kernel's reads.
+pub struct Tracked<T: Send + 'static> {
+    value: Option<T>,
+    ledger: Arc<Ledger>,
+}
+
+impl<T: Send + 'static> Tracked<T> {
+    /// `value`, whose memory is the `len` bytes at `base`: found by any address in them while it lives.
+    pub fn new(value: T, base: *mut u8, len: usize) -> Tracked<T> {
+        let ext = Arc::new(crate::block::Extent { top: std::sync::atomic::AtomicUsize::new(0), free: std::sync::atomic::AtomicUsize::new(0) });
+        Tracked { value: Some(value), ledger: Ledger::new(base, len.max(1), false, ext) }
+    }
+
+    /// Its ledger: what a fence's use of its bytes holds.
+    pub fn ledger(&self) -> &Arc<Ledger> {
+        &self.ledger
+    }
+}
+
+impl<T: Send + 'static> std::ops::Deref for Tracked<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        self.value.as_ref().expect("a tracked value lives until dropped")
+    }
+}
+
+impl<T: Send + 'static> std::ops::DerefMut for Tracked<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        self.value.as_mut().expect("a tracked value lives until dropped")
+    }
+}
+
+impl<T: Send + 'static> Drop for Tracked<T> {
+    fn drop(&mut self) {
+        let value = self.value.take();
+        self.ledger.let_go(Box::new(move || drop(value)));
+    }
+}
+
 /// The live blocks' address ranges, the lowest first, each with its ledger: how a buffer bound for a kernel is found
 /// to be a block's (`Fence::uses_address`), whoever made the buffer.
 // state: bookkeeping (the blocks in the process, by address: what is mapped, not what a relation has)
@@ -447,12 +492,14 @@ pub struct Fence {
     done: AtomicBool,
     /// Its command buffer is committed: a wait for it ends (`mark_committed`).
     committed: AtomicBool,
+    /// The regions its binds by address pinned (`region::bind_address`), by address and access: each once.
+    pinned: Mutex<Vec<(usize, bool)>>,
     signal: Condvar,
 }
 
 impl Fence {
     pub fn new() -> Arc<Fence> {
-        Arc::new(Fence { uses: Mutex::new(Vec::new()), after: Mutex::new(Vec::new()), done: AtomicBool::new(false), committed: AtomicBool::new(false), signal: Condvar::new() })
+        Arc::new(Fence { uses: Mutex::new(Vec::new()), after: Mutex::new(Vec::new()), done: AtomicBool::new(false), committed: AtomicBool::new(false), pinned: Mutex::new(Vec::new()), signal: Condvar::new() })
     }
 
     fn add(&self, ledger: &Arc<Ledger>, access: Access, chunk: Option<(usize, usize)>) {
@@ -473,6 +520,16 @@ impl Fence {
         if !known {
             self.add(&l, Access::Write, None);
         }
+        true
+    }
+
+    /// Whether `key` (a region, with its access) is pinned on it for the first time now.
+    pub(crate) fn first_pin(&self, key: usize, write: bool) -> bool {
+        let mut p = self.pinned.lock().unwrap_or_else(|e| e.into_inner());
+        if p.contains(&(key, write)) {
+            return false;
+        }
+        p.push((key, write));
         true
     }
 
@@ -683,6 +740,33 @@ mod tests {
         let gone = Arc::new(AtomicBool::new(false));
         let len = 4 * PAGE;
         (Box::new(Watched { base: crate::mem::reserve(len), len, gone: gone.clone() }), gone)
+    }
+
+    /// R5 for memory of no block's (a pool's lease, `Tracked`): a fence that binds its bytes, found by address, holds it;
+    /// dropped meanwhile, it goes only when the fence completes. Unbound, it goes at once.
+    #[test]
+    fn a_tracked_lease_bound_by_address_goes_after_its_fence() {
+        struct Lease(Arc<AtomicBool>);
+        impl Drop for Lease {
+            fn drop(&mut self) {
+                self.0.store(true, SeqCst);
+            }
+        }
+        let mem = vec![0u8; 4096];
+        let base = mem.as_ptr().cast_mut();
+        let gone = Arc::new(AtomicBool::new(false));
+        let t = Tracked::new(Lease(gone.clone()), base, 4096);
+        let f = Fence::new();
+        assert!(f.uses_address(base as usize + 100), "found by an address inside it");
+        drop(t);
+        assert!(!gone.load(SeqCst), "held by the queued work");
+        f.complete();
+        assert!(gone.load(SeqCst), "gone once its work completes");
+        assert!(!Fence::new().uses_address(base as usize + 100), "no longer found once gone");
+        let gone = Arc::new(AtomicBool::new(false));
+        drop(Tracked::new(Lease(gone.clone()), base, 4096));
+        assert!(gone.load(SeqCst), "unbound: at once");
+        drop(mem);
     }
 
     /// R5: a block dropped while a GPU use of it is queued keeps its memory until the use completes.

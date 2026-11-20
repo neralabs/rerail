@@ -130,7 +130,7 @@ thread_local! {
     /// This thread's scratch buffers, two sets by slot: a sort's or probe's intermediates, kept for the next. A
     /// submission uses one set (`scratch_set`); the lane has at most two in flight, each on its own set, and starts
     /// a third only once the first completed, so no two in flight share one.
-    static SCRATCH: RefCell<[Vec<Option<shared::Pooled>>; 2]> = const { RefCell::new([Vec::new(), Vec::new()]) };
+    static SCRATCH: RefCell<[Vec<Option<rerail_blocks::ledger::Tracked<shared::Pooled>>>; 2]> = const { RefCell::new([Vec::new(), Vec::new()]) };
     static SET: Cell<usize> = const { Cell::new(0) };
 }
 
@@ -144,6 +144,11 @@ pub fn scratch_set(set: usize) -> usize {
 pub struct Pipe {
     function: Arc<ComputeFunction>,
     buffers: Vec<String>,
+    /// Whether the kernel may write each buffer, as it declares it (`ROBUFFER` is read-only, decision 0491 step 5):
+    /// how a launch pins what it binds.
+    writes: Vec<bool>,
+    /// Its name, as a pin names its operation.
+    op: &'static str,
     /// Whether it takes the parameter block `a`.
     args: bool,
     name: String,
@@ -170,8 +175,12 @@ pub fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> R
     let function = crate::score::phase("compile", || super::kernels::function_fixed(&source(), name, None));
     let mut args: Vec<_> = function.get_argument_info().to_vec();
     args.sort_by_key(|a| a.compute_function_arg_index);
-    let buffers = args.iter().filter(|a| a.disposition == GridComputeFunctionArgumentDisposition::Buffer && a.name != "a").map(|a| a.name.clone()).collect();
-    let pipe = Arc::new(Pipe { args: args.iter().any(|a| a.name == "a"), function, buffers, name: name.to_owned() });
+    let bound: Vec<_> = args.iter().filter(|a| a.disposition == GridComputeFunctionArgumentDisposition::Buffer && a.name != "a").collect();
+    let buffers = bound.iter().map(|a| a.name.clone()).collect();
+    let writes = bound.iter().map(|a| a.ty.access != rerail_device::compute_kernel::MemoryRegionAccess::Read).collect();
+    // One a kernel for the process (the pipes are the machine's, decision 0442): a pin's operation names it.
+    let op: &'static str = Box::leak(name.to_owned().into_boxed_str());
+    let pipe = Arc::new(Pipe { args: args.iter().any(|a| a.name == "a"), function, buffers, writes, op, name: name.to_owned() });
     Ok(Arc::clone(pipes().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).entry(key).or_insert(pipe)))
 }
 
@@ -187,7 +196,7 @@ fn sort_pipes(width: Width) -> Result<[Arc<Pipe>; 3], String> {
 /// `pass`: the rows end in `pair` after an even number of passes, else in `tmp`.
 fn radix_sort(pass: &Pass, key: Width, pair: [&Buffer; 2], tmp: [&Buffer; 2], n: usize, bits: u32, space: &RadixSpace) {
     let (pair, tmp): ([&BufferRef; 2], [&BufferRef; 2]) = ([pair[0], pair[1]], [tmp[0], tmp[1]]);
-    pass.library(|q| {
+    pass.library(pair.iter().chain(&tmp).copied().chain(space.buffers()), |q| {
         let sorted = if key == Width::W64 { radix_sort_pairs_in::<u64>(q, pair, tmp, n as u32, bits, space) } else { radix_sort_pairs_in::<u32>(q, pair, tmp, n as u32, bits, space) };
         sorted.map(|(_, made)| made)
     });
@@ -343,13 +352,14 @@ pub fn scratch(slot: usize, bytes: usize) -> Result<Buffer, String> {
             s.resize_with(slot + 1, || None);
         }
         if s[slot].as_ref().is_none_or(|b| (b.length() as usize) < bytes) {
-            // A submission not yet completed may read the shorter one: it is released, held by the device's
-            // commands until they complete, not returned to the pool, whose next lease may be written by the host at
-            // once.
-            if let Some(old) = s[slot].take() {
-                old.release();
+            // The shorter one goes to Metal, not the pool: callers hold its buffer by handle (`scratch` hands out
+            // clones) and may bind it again, and Metal keeps it while one does. Its ledger holds it for the queued work.
+            if let Some(mut old) = s[slot].take() {
+                old.released();
             }
-            s[slot] = Some(shared::lease_for_join(bytes.max(64), true)?);
+            let lease = shared::lease_for_join(bytes.max(64), true)?;
+            let (base, len) = (lease.host(), lease.length() as usize);
+            s[slot] = Some(rerail_blocks::ledger::Tracked::new(lease, base, len));
         }
         Ok(s[slot].as_ref().expect("a scratch buffer").device_buffer().clone())
     })
@@ -357,8 +367,9 @@ pub fn scratch(slot: usize, bytes: usize) -> Result<Buffer, String> {
 
 /// A device buffer of the one manager's pool (decision 0100 §2): a free one of its size class when there is one,
 /// returned when dropped. A buffer the device has seen is resident already: a new one costs its creation and its
-/// mapping at its first use, a pooled one neither. Its holder drops it only once every submission that reads it has
-/// completed (`Submitted::reads`, `Keyed`'s drop): the next lease's host writes are not ordered after a device read.
+/// mapping at its first use, a pooled one neither. Its lease is held as a block's memory is (decision 0491 step 2,
+/// `rerail_blocks::ledger::Tracked`): a pass that binds it holds it, so dropped while queued work reads it, it goes
+/// back to the pool only once that work completes, and the next lease's host writes are never ordered before it.
 pub struct Held {
     _lease: Lease,
     pub buffer: Buffer,
@@ -367,7 +378,9 @@ pub struct Held {
 /// What keeps a held buffer's memory: a lease of the pool, a staged column whose shared buffer the device reads
 /// in place (`crate::col`), or what holds a block the device reads in place (its owner's handle: decision 0325).
 enum Lease {
-    Pooled(#[allow(dead_code)] shared::Pooled),
+    Pooled(#[allow(dead_code)] rerail_blocks::ledger::Tracked<shared::Pooled>),
+    /// A lease whose bytes the host does not map (none to find a kernel's binding by): its holder keeps it.
+    Unmapped(#[allow(dead_code)] shared::Pooled),
     Col(#[allow(dead_code)] crate::col::Col),
     Kept(#[allow(dead_code)] Box<dyn std::any::Any + Send + Sync>),
 }
@@ -379,20 +392,31 @@ impl Held {
         Held { _lease: Lease::Kept(keep), buffer }
     }
 
+    /// `kept`, holding the block by its own region too (`rerail_blocks::region::whole`, decision 0491 step 3): a
+    /// kernel's bind of `buffer` pins that region, read or written as the kernel declares, so the block's frozenness
+    /// and versions are its regions'.
+    pub fn of_block(buffer: Buffer, region: rerail_blocks::region::Shared<u8>, keep: Box<dyn std::any::Any + Send + Sync>) -> Held {
+        Held { _lease: Lease::Kept(Box::new((keep, region))), buffer }
+    }
+
     /// A buffer of at least `bytes` (its contents are a previous user's: every reader writes first).
     pub fn new(bytes: usize) -> Result<Held, String> {
         device()?;
-        let lease = shared::lease_for_join(bytes, false)?;
-        let buffer = lease.device_buffer().clone();
-        Ok(Held { _lease: Lease::Pooled(lease), buffer })
+        Ok(Held::pooled(shared::lease_for_join(bytes, false)?))
     }
 
     /// A buffer of at least `bytes`, its first `bytes` zero.
     pub fn zeroed(bytes: usize) -> Result<Held, String> {
         device()?;
-        let lease = shared::lease_for_join(bytes, true)?;
+        Ok(Held::pooled(shared::lease_for_join(bytes, true)?))
+    }
+
+    /// `lease`, tracked by its bytes' address while it lives.
+    fn pooled(lease: shared::Pooled) -> Held {
         let buffer = lease.device_buffer().clone();
-        Ok(Held { _lease: Lease::Pooled(lease), buffer })
+        let (base, len) = (lease.host(), lease.length() as usize);
+        let lease = if base.is_null() { Lease::Unmapped(lease) } else { Lease::Pooled(rerail_blocks::ledger::Tracked::new(lease, base, len)) };
+        Held { _lease: lease, buffer }
     }
 
     /// A buffer holding `values`, written by the host.
@@ -451,8 +475,8 @@ impl Pass {
         if self.error.borrow().is_some() {
             return;
         }
-        for (b, _) in buffers {
-            self.holds(b);
+        for (i, (b, _)) in buffers.iter().enumerate() {
+            self.holds(b, pipe.op, i, pipe.writes.get(i).copied().unwrap_or(true));
         }
         let made = (|| {
             if buffers.len() != pipe.buffers.len() {
@@ -526,10 +550,15 @@ impl Pass {
 
     /// Launches of the UKL library's (`rerail_gpu::library`) on this pass's queue, in order with its own: `call`
     /// returns the launches it made, which count to the submission's budget. The library's kernels read only what
-    /// they bind. An error is the commit's, as a launch's is.
-    pub fn library(&self, call: impl FnOnce(&ComputeQueue) -> Result<usize, String>) {
+    /// they bind, `binds`: held until the work completes, as a launch's buffers are (decision 0491 step 2). An error
+    /// is the commit's, as a launch's is.
+    pub fn library<'b>(&self, binds: impl IntoIterator<Item = &'b Buffer>, call: impl FnOnce(&ComputeQueue) -> Result<usize, String>) {
         if self.error.borrow().is_some() {
             return;
+        }
+        for (i, b) in binds.into_iter().enumerate() {
+            // The library's kernels write their outputs and scratch: each held as written.
+            self.holds(b, "a UKL library launch", i, true);
         }
         match call(&self.queue) {
             Ok(made) => self.dispatches.set(self.dispatches.get() + made),
@@ -541,7 +570,7 @@ impl Pass {
     /// and tapes, decision 0353 step 4d), bound by none.
     pub fn use_read(&self, buffers: &[&Buffer]) {
         for b in buffers {
-            self.holds(b);
+            self.holds(b, "a resident read", 0, false);
         }
         self.resident.borrow_mut().extend(buffers.iter().map(|b| (*b).clone()));
     }
@@ -549,7 +578,7 @@ impl Pass {
     /// Makes `buffer` resident for the launches after it, to be read and written: a cache a kernel's reads keep (a
     /// 16z batch's blocks, decision 0353 step 4b), reached by address.
     pub fn use_read_write(&self, buffer: &Buffer) {
-        self.holds(buffer);
+        self.holds(buffer, "a resident write", 0, true);
         self.resident.borrow_mut().push(buffer.clone());
     }
 
@@ -558,12 +587,16 @@ impl Pass {
         self.queue.wait_for_event(event, value);
     }
 
-    /// The block `b` lies in (by its contents' address), held by this submission's fence.
-    fn holds(&self, b: &Buffer) {
+    /// The block or pooled lease `b` lies in (by its contents' address), held by this submission's fence until its
+    /// work completes (decision 0491 step 2): what drops it meanwhile keeps it from the pool until then. A block's
+    /// own region, while a handle holds it, is pinned as the kernel declares the argument, read or written (step 5). Every mapped
+    /// buffer a kernel binds is one: a test build fails on one that is not, which nothing would keep.
+    fn holds(&self, b: &Buffer, kernel: &'static str, arg: usize, write: bool) {
         let at = b.contents() as usize;
-        if at != 0 {
-            self.fence.uses_address(at);
-        }
+        let known = at == 0 || rerail_blocks::region::bind_address(&self.fence, at, write, kernel);
+        #[cfg(any(test, feature = "test-hooks"))]
+        assert!(known, "{kernel}'s buffer {arg} ({} bytes) lies in no block or pooled lease the ledger knows: nothing holds it while the work runs (decision 0491 step 2)", b.length());
+        let _ = (known, kernel, arg);
     }
 
     /// Commits the launches (checked against the launch budget): what to wait for.
@@ -681,7 +714,7 @@ impl Scan {
 
     /// The scan of `input`'s `count` values into `output` (`count + 1` values, the total last).
     pub fn encode_into(&self, pass: &Pass, input: &Buffer, output: &Buffer) -> Result<(), String> {
-        pass.library(|q| scan_exclusive_u32_in(q, input, output, self.count as u32, false, &self.space));
+        pass.library([input, output].into_iter().chain(self.space.buffers()), |q| scan_exclusive_u32_in(q, input, output, self.count as u32, false, &self.space));
         Ok(())
     }
 
@@ -691,13 +724,13 @@ impl Scan {
     /// `SCAN_OUTPUT_GRID`, `GROUP` threads a group).
     pub fn size(&self, pass: &Pass, totals: &Buffer, slot: usize, cap: usize) -> Result<Held, String> {
         let sizes = Held::new(4 * SCAN_SIZES)?;
-        pass.library(|q| self.space.size(q, totals, slot as u32, cap as u32, GROUP as u32, &sizes.buffer));
+        pass.library([totals, &sizes.buffer].into_iter().chain(self.space.buffers()), |q| self.space.size(q, totals, slot as u32, cap as u32, GROUP as u32, &sizes.buffer));
         Ok(sizes)
     }
 
     /// `encode`, of `size`'s count, on its grids.
     pub fn encode_sized(&self, pass: &Pass, data: &Buffer, sizes: &Held) -> Result<(), String> {
-        pass.library(|q| scan_sized(q, data, &sizes.buffer, &self.space));
+        pass.library([data, &sizes.buffer].into_iter().chain(self.space.buffers()), |q| scan_sized(q, data, &sizes.buffer, &self.space));
         Ok(())
     }
 }
@@ -1859,7 +1892,10 @@ mod tests {
             let pass = Pass::new().unwrap();
             let mut fused = Fused::default();
             let mut arena = Arena::new(2 * left.len(), probe_blocks(left.len())).unwrap();
-            let one = fused.probe(&[Column::raw(&raw).unwrap()], right, &mut arena).unwrap();
+            // The probed column is held until the dispatch binds it (decision 0491 step 2: the tables hold its
+            // address alone, so a column dropped here would give its lease back while the kernel reads it).
+            let probed = [Column::raw(&raw).unwrap()];
+            let one = fused.probe(&probed, right, &mut arena).unwrap();
             let mut keep = Vec::new();
             fused.dispatch(&pass, &arena, &mut keep).unwrap();
             pass.commit_wait().unwrap();

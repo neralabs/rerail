@@ -4,7 +4,7 @@ Date: 2026-11-20. Status: decided (the user, 2026-11-20, on 0487: "I was expecti
 that tracks frozenness, readers, writers, allocation, GPU placement, versions (after mutation), implicit freeing when
 there are no users left and detection of invariant issues like two writers, simultaneous readers and writers, etc. It
 should also give out references with constness properly set. Like the mldb block and memory region handling");
-the handles built (`rerail_blocks::region`); `Cells` and a relation's arrays (`BlockVec`) moved to them (step 2).
+steps 1 to 5 built (`rerail_blocks::region`, 2026-11-20); what is left is in step 3.
 
 ## Intro
 
@@ -106,6 +106,16 @@ of 2026-11-20 (fa09c9c761). Item 7 above is that model for one region and two sp
   brings it back; a read or a freeze before then fails (`a_device_copy_is_uploaded_when_behind_and_synced_back_after_a_write`).
 - **R9** With unified memory a sync is a wait, and a sync on an uncommitted write fails
   (`with_unified_memory_a_sync_is_a_wait`).
+- **R10** A truncated region gives its tail back; a truncate while shared fails (`a_truncated_region_gives_back_its_tail`).
+- **R11** A region's GPU pin is a chunk use of its block's ledger, which raw-offset writers are checked against
+  (`a_regions_gpu_pin_is_its_ledgers_chunk_use`, `a_block_vec_under_a_queued_gpu_use_of_its_chunk_fails`).
+- **R12** A pooled lease bound by address goes back to the pool only after its fence
+  (`a_tracked_lease_bound_by_address_goes_after_its_fence`, `a_pooled_held_buffer_is_found_by_its_address`).
+- **R13** A block's own region is pinned by a kernel's bind found by address, by the kernel's declared access; a
+  frozen block's refuses a GPU write (`a_blocks_bind_by_address_pins_its_own_region`,
+  `a_frozen_blocks_region_refuses_a_gpu_write`, `a_kernels_write_moves_its_blocks_version_and_a_read_does_not`).
+- **R14** Two device domains: one owner; the other catches up through the host; two domains never write one region
+  (`two_domains_hold_one_owner_and_the_other_catches_up_through_the_host`, `the_device_names_its_memory_domain`).
 
 ## Steps
 
@@ -122,21 +132,43 @@ of 2026-11-20 (fa09c9c761). Item 7 above is that model for one region and two sp
    `Held::kept`), whose `Batch` lists then go. A kernel binds a region only through `buffer_read` / `buffer_write`.
    (`Pass::commit` marks its fence committed: done.)
 
-   **What holds the lists (found 2026-11-20).** A launch binds `&Buffer`, so the pass cannot keep the buffer's
-   owner. For a block's buffer that does no harm: the pass's fence holds the block in its ledger (`uses_address`),
-   and a chunk freed meanwhile retires until the fence completes. A pooled buffer (`shared::Pooled`) is not a block.
-   The ledger does not know it, and its lease goes back to the pool the moment it is dropped, so the next lease's
-   host writes would overwrite what a queued kernel still reads. `Batch`'s `keep`, `read` and `held` lists hold such
-   buffers until `finish`. They cannot be attached to the open pass either: a parameter block is kept
-   (`Batch::block`) before `Batch::pass(n)` may commit that pass and open the next one, which then binds it.
-   So the lists go after **the pool's buffers are blocks** (step 3's pool slabs): a lease is a region of a pool
-   block, a launch pins it on the pass's fence, and its return to the pool retires through the ledger as any chunk
-   does. Then a launch takes the handles it binds, and nothing else keeps them.
-3. **The block itself as the root region:** `Facts` (done: an `Arc<Block>`, which a region in it keeps) and the
-   pool's slabs hold their block by handle, so a block's
-   frozenness, placement and lifetime are read in the same place as its regions'.
-4. **Domains (0440 §7.2):** a region's host and device versions become an entry a domain, with the owner domain of a
-   mutable region, and each device in the device layer names its domain. A test with two domains besides the host
-   (two mirrors) locks it: a write in one makes the other behind, and only the owner may write.
-5. **Kernels' rows bind their arguments:** the device layer gives each kernel's parameter rows (read, write) to the
-   host, and `Pass::run` pins each argument by its row.
+   **What held the lists, and what holds them now (2026-11-20).** A launch binds `&Buffer`, so the pass could not
+   keep the buffer's owner. A block's buffer did no harm: the pass's fence holds the block in its ledger
+   (`uses_address`), and a chunk freed meanwhile retires until the fence completes. A pooled buffer
+   (`shared::Pooled`) was no block's: the ledger did not know it, and its lease went back to the pool the moment it
+   was dropped. `Batch`'s `keep`, `read` and `held` lists held those buffers until `finish`. (A keep could not be
+   attached to the open pass: `Batch::block` kept a parameter block before `Batch::pass(n)` could commit that pass.)
+   The user chose (2026-11-20) the pool's buffers held as blocks' memory, by the one ledger, over a second ledger in
+   the pool. Done:
+   - **A pooled lease is held by a ledger of its own** (`rerail_blocks::ledger::Tracked`): registered at its bytes'
+     address as a block's is, so a bind finds it, and dropped while a fence uses it, it goes back to the pool when
+     the fence completes (`let_go`, R5). The join's buffers (`join::Held`), the thread's scratch slots and a staged
+     column's store (`col::Store`) are leases held so. A lease is not yet a region of a slab block: the pool's
+     classes, budgets and trimming stay as they are (step 3).
+   - **Every buffer a kernel binds is held by its pass**: a launch's (`Pass::holds`), a resident read or write's,
+     and a UKL library call's, which now names what it binds (`Pass::library`, `ScanSpace::buffers`,
+     `RadixSpace::buffers`). A test build fails on a mapped buffer bound that no ledger knows.
+   - **`Batch`'s lists are gone**, with `Batch::keeps` and `Batch::hold`. `Batch::block` returns its `Held`, which
+     the caller drops once its launch is encoded. A relation built into (`Building`) is still held until `finish`,
+     which marks its index built.
+   - A scratch slot that grows still hands its old lease to Metal, not the pool: callers hold its buffer by clone.
+   - Found on the way: `Scan::size`'s sizes buffer was bound only by library launches, so no fence held it. The
+     lists hid that. Without them it went back to the pool before its kernels ran, and the parity tests' rows
+     differed (`a_pooled_held_buffer_is_found_by_its_address`, the setfix parity tests).
+
+3. **The block itself as the root region** (done): `region::whole(block)` is the block's own region, one a block
+   while a handle holds it (its ledger keeps a weak reference, so a bind found by address reaches it). A frozen
+   block's is frozen. Its pins hold the block, not a chunk: a relation's CPU writers write other chunks meanwhile.
+   `Facts` holds its block by `Arc`. The device's handles of a block (`join::Held::of_block`: `DevRel`'s, an
+   index's) hold it by this region, so the block's frozenness, versions and pins are read where its regions' are.
+   A pool lease stays a ledger of its own (`Tracked`), not a region of a slab block: a block puts its header at
+   offset 0, and the join binds a lease's buffer at offset 0 at about 100 sites. A lease's region in a block would
+   bind at its offset; that is the one piece left, and it buys no check the lease's ledger lacks.
+4. **Domains (0440 §7.2)** (done): `Access` keeps a version a domain and each queued GPU write its domain;
+   `mirror_in(domain, …)`, `bind_read_on` / `bind_write_on` and `owner()`. A bind in a domain whose copy is behind
+   takes the latest through the host, from the owner's copy; a read or write in one domain while another domain's
+   write is queued fails (one owner domain). The device layer names each device's domain (`Device::domain`: 0 for
+   Apple's GPU, the CPU, OpenCL and a CUDA device reading the host's pages; 1 for a discrete card).
+5. **Kernels' rows bind their arguments** (done): the device layer gives each kernel's arguments with their access
+   (`ROBUFFER` read, `RWBUFFER` / `WOBUFFER` write), and a launch pins each bound buffer's block by it
+   (`join::Pipe::writes`, `region::bind_address`). A UKL library call's binds are held as written.

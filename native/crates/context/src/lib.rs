@@ -544,6 +544,18 @@ pub fn job_run() -> Option<std::sync::Arc<dyn RunOwn>> {
 /// A job's handle (`job_run`): the run, and the context the job was made in.
 struct InContext(std::sync::Arc<dyn RunOwn>, Context);
 
+/// Dropped on a thread that holds no run (a pool thread whose job carried it, its guard gone): the context drops
+/// with the run's shared object on the thread (`within`), as its values' drops may read it (a store's writers). The
+/// run is dropped after, its own values likewise (`Bare`'s drop).
+impl Drop for InContext {
+    fn drop(&mut self) {
+        if run_own().is_none() {
+            let _within = within(std::sync::Arc::clone(self.0.shared()));
+            drop(std::mem::take(&mut self.1));
+        }
+    }
+}
+
 impl RunOwn for InContext {
     fn with_context(&self) -> Option<(&std::sync::Arc<dyn RunOwn>, &Context)> {
         Some((&self.0, &self.1))
@@ -712,6 +724,27 @@ impl Caller {
 
 /// A run with nothing of its own but its values and its shared object (`within`, `test_run`).
 struct Bare(RunValues, std::sync::Arc<Shared>);
+
+/// A run's last handle dropped on a thread that holds no run: its values drop with its shared object on the thread
+/// (`within`), as a value's drop may read it. The run `within` makes holds no values, so its own drop does nothing.
+impl Drop for Bare {
+    fn drop(&mut self) {
+        self.0.end_in(&self.1);
+    }
+}
+
+impl RunValues {
+    /// Drops the values, its run ending: on a thread that holds no run, with the run's `shared` object on the thread
+    /// (`within`), as a value's drop may read it (a store's writers). Every run's drop calls it.
+    pub fn end_in(&mut self, shared: &std::sync::Arc<Shared>) {
+        let (settings, locals) = (std::mem::take(self.settings.get_mut()), std::mem::take(self.locals.get_mut()));
+        if (settings.is_empty() && locals.is_empty()) || run_own().is_some() {
+            return;
+        }
+        let _within = within(std::sync::Arc::clone(shared));
+        drop((settings, locals));
+    }
+}
 
 impl RunOwn for Bare {
     fn values(&self) -> &RunValues {
@@ -886,6 +919,44 @@ pub fn test_run() -> impl Drop {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A run's last handle dropped on a thread that holds no run (a pool thread whose job carried it): what the run
+    /// and its context hold drops with the run's shared object on the thread, so a value whose drop reads it (a
+    /// store's writers) finds it. Before, such a drop read outside any run and aborted the process (`wave0_…`, 2026-11-20).
+    #[test]
+    fn a_runs_last_handle_dropped_off_its_thread_drops_its_values_in_its_shared_object() {
+        #[derive(Default)]
+        struct Marker;
+        struct ReadsShared(std::sync::Arc<std::sync::atomic::AtomicBool>);
+        impl Drop for ReadsShared {
+            fn drop(&mut self) {
+                let _ = shared::<Marker>();
+                self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let dropped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let job = std::thread::spawn({
+            let dropped = dropped.clone();
+            move || {
+                // A run of the engine's own thread, its context holding the value; the job's handle outlives both.
+                engine_thread();
+                let shared = std::sync::Arc::new(Shared::default());
+                let _run = enter(Some(std::sync::Arc::new(Bare(RunValues::default(), shared))));
+                let _bound = bind(ReadsShared(dropped));
+                job_run()
+            }
+        })
+        .join()
+        .unwrap();
+        std::thread::spawn(move || {
+            engine_thread();
+            assert!(run_own().is_none());
+            drop(job);
+        })
+        .join()
+        .expect("the run's values dropped in its shared object, not outside any run");
+        assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
+    }
 
     /// Q337: a job's captures end inside its run (`in_run`); with the run's guard in the job's body, a capture's drop
     /// comes after the guard's and is outside the run.
