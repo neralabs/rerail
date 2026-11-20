@@ -483,6 +483,11 @@ pub struct Stats {
     /// rel → the engine's relation as its heavy values were made or last merged over (`InRel::mark`): its change
     /// since is merged into them, not counted again (O172).
     pub heavy_mark: table::RelMap<std::sync::Arc<super::native::component::RelMark>>,
+    /// (rel, col) → heavy values a model or any of its forks made, with the engine's relation as they were made
+    /// over (`InRel::mark`): shared by a model's forks (`fork`), which plan a wave's components apart and take their
+    /// own back only as each retires. A fork takes an entry whose mark finds the relation unchanged (decision 0477:
+    /// corpus0's components counted each chunk's `kind` view again, 107 times). Held by the model, not the process.
+    pub heavy_shared: std::sync::Arc<parking_lot::Mutex<HashMap<(String, usize), (std::sync::Arc<super::native::component::RelMark>, std::sync::Arc<table::HeavyCol>)>>>,
     /// (rule, binding pattern) → [bindings in, bindings out]: fanouts native joins observed, per rule (`obs_rule`).
     /// By rule first: a component's model takes its rules' alone (`Model::fork`).
     pub obs: HashMap<u64, HashMap<Sig, [i64; 2]>>,
@@ -623,6 +628,7 @@ impl Stats {
             keys: Default::default(),
             counts: Default::default(),
             heavy_mark: Default::default(),
+            heavy_shared: Default::default(),
             obs: HashMap::new(),
             solving: BTreeSet::new(),
             sized: BTreeSet::new(),
@@ -840,6 +846,7 @@ impl Stats {
             keys: Default::default(),
             counts: Default::default(),
             heavy_mark: Default::default(),
+            heavy_shared: Default::default(),
             obs: HashMap::new(),
             solving: BTreeSet::new(),
             sized: BTreeSet::new(),
@@ -1025,6 +1032,7 @@ impl Model {
             keys: Default::default(),
             counts: Default::default(),
             heavy_mark: Default::default(),
+            heavy_shared: std::sync::Arc::clone(&st.heavy_shared),
             obs: rules.iter().filter_map(|r| Some((*r, st.obs.get(r)?.clone()))).collect(),
             solving: BTreeSet::new(),
             sized: BTreeSet::new(),
@@ -7926,7 +7934,7 @@ impl<'a> Run<'a, '_> {
             }
             for cols in held.values().filter(|cols| cols.len() >= 2) {
                 for &(rel, c) in cols {
-                    if self.model.stats.solving.contains(rel) || self.heavy_current(rel, c) {
+                    if self.model.stats.solving.contains(rel) || self.heavy_current(rel, c) || self.heavy_from_shared(rel, c) {
                         continue;
                     }
                     let wanted = raised.iter().any(|(r, k)| r == rel && *k == c) || raise && {
@@ -7972,7 +7980,9 @@ impl<'a> Run<'a, '_> {
                 self.model.stats.heavy.insert((rel.as_str(), c), std::sync::Arc::new(h));
                 n += 1;
             }
-            self.model.stats.heavy_mark.insert(rel.as_str(), std::sync::Arc::new(now.mark()));
+            let mark = std::sync::Arc::new(now.mark());
+            self.share_heavy(&rel, &cols, &mark);
+            self.model.stats.heavy_mark.insert(rel.as_str(), mark);
         }
         let held: Vec<_> = full.iter().map(|(rel, _)| engine::held(self.db, rel)).collect();
         let made = table::heavy_batch(full.iter().zip(&held).map(|((rel, cols), now)| (engine::derived(self.db, rel), now.clone(), cols.clone())).collect());
@@ -7984,9 +7994,38 @@ impl<'a> Run<'a, '_> {
                 self.model.stats.heavy.insert((rel.as_str(), c), std::sync::Arc::new(h));
                 n += 1;
             }
-            if let Some(now) = now { self.model.stats.heavy_mark.insert(rel.as_str(), std::sync::Arc::new(now.mark())); }
+            if let Some(now) = now {
+                let mark = std::sync::Arc::new(now.mark());
+                self.share_heavy(rel, cols, &mark);
+                self.model.stats.heavy_mark.insert(rel.as_str(), mark);
+            }
         }
         n
+    }
+
+    /// Heavy values of column `c` of `rel` another fork of this model made over the relation as it is now
+    /// (`Stats::heavy_shared`), taken as this model's own: whether there were any.
+    fn heavy_from_shared(&mut self, rel: &str, c: usize) -> bool {
+        let Some(now) = super::native::component::held(self.db, rel) else { return false };
+        let found = self.model.stats.heavy_shared.lock().get(&(rel.to_owned(), c)).cloned();
+        let Some((mark, h)) = found else { return false };
+        if !now.delta_since_mark(&mark).is_some_and(|(a, r)| a.is_empty() && r.is_empty()) {
+            return false;
+        }
+        self.model.stats.heavy.insert((rel, c), h);
+        self.model.stats.heavy_mark.insert(rel, mark);
+        true
+    }
+
+    /// Shares the heavy values of `rel`'s columns `cols` this model holds, made over the relation `mark` saw, with the
+    /// model's other forks (`Stats::heavy_shared`).
+    fn share_heavy(&self, rel: &str, cols: &[usize], mark: &std::sync::Arc<super::native::component::RelMark>) {
+        let mut shared = self.model.stats.heavy_shared.lock();
+        for &c in cols {
+            if let Some(h) = self.model.stats.heavy.at(rel, c) {
+                shared.insert((rel.to_owned(), c), (std::sync::Arc::clone(mark), std::sync::Arc::clone(h)));
+            }
+        }
     }
 
     /// Whether column `c` of `rel`'s heavy values are of its rows now: made or merged over the engine's relation as

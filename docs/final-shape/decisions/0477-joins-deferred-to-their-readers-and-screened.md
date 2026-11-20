@@ -309,8 +309,23 @@ by section): `auto` 1,013.8 G against `off` 976.2 G (+3.9%), the same findings.
 On this build, measured again: `off` 952.7 G, `auto` 961.8 G (+1.0%), findings 463 `d067ec2ebf6f` in both, the host at
 load 3.5.
 
-Left: `auto` still runs about 300 strata of its own (`pre_*`, `fz*`, `rr_deferred_pairs_*`), and 107 heavy-value
-counts of `kind` a fork made and no model kept.
+### What `auto` made of its own, by producer (2026-11-20)
+
+Compared by family, not by name: the negated demand's splits (`pre_*`) are numbered by rule position, which the
+rewrite shifts, so a comparison by name counted each as new; `auto` has fewer (170 against 178) and as much work.
+Its own strata, profiled (join work, rows): 15 request relations (1.53 M), 23 more factors and 17 more factor keys
+(0.45 M), against 0.54 M of relations it no longer derives. By producer, off against auto and its request, four
+cost more than the whole difference, each now removed:
+
+| Producer | Off | Auto | Request | What it was | Now |
+|---|---|---|---|---|---|
+| `exc_call` | 42 k | 118 k | 1.23 M | `PT010` asks for every call (`field(c, "function", _)`, in `exc_call`'s rule too): the request, a union over 14 readers, restricted nothing | a request whose key atoms the producer's rule reads, with their constants, and whose other atoms are constant-free, is not made (`void_request`) |
+| `str_lit` | 32 k | factors | (464 k key) | the key of the part `unparen(e, m)`, every node, stored to reduce a part of 16 k | a part of one atom is its own key, probed by the others, not stored (the tree's `factorize` and the version's pass alike) |
+| `lambda_arg` | 1.6 k | 171 k | 83 k | the request was forced to lead its producer (`demand_first`): 14,360 calls' arguments walked where `kind($g, "lambda")` reads 229 | the request bounds its producer as a demand does (Q59, `own_demand`): an atom a constant restricts may lead |
+| `kind`, heavy values | | 107 counts | | the forks of a wave counted each chunk's `kind` view apart; each took its own back only as it retired | the forks of a model share what they made, each with its relation's mark (`Stats::heavy_shared`): 18 counts |
+
+corpus0 x B-now, one thread, profiling build, the M1 Max at load 1.7: `off` 953.3 G, `auto` 955.9 G (+0.27%),
+findings 463 `d067ec2ebf6f` in both.
 
 ## Open
 

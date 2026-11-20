@@ -2945,6 +2945,37 @@ fn a_demanded_rule_may_be_led_by_a_constant_restricted_atom() {
     assert!(model.valid_live_driver(&order, &b, None), "a kept order led by it is kept");
 }
 
+/// A deferred join's request (`rr_deferred_pairs_x`, decision 0477) bounds its producer as a demand does (Q59): an
+/// atom a constant restricts may lead it, as corpus0's `lambda_arg` led by its lambdas (229), not its 14,360
+/// requested calls; an unrestricted atom may not.
+#[test]
+fn a_deferred_joins_producer_may_be_led_by_a_constant_restricted_atom() {
+    let program = |body: &str| parse(&format!(
+        ".decl x(v: number)\n.decl rr_deferred_pairs_x(v: number)\n.decl k(n: number, c: number)\n.decl col(n: number, c: number)\n\
+         rr_deferred_pairs_x(1). k(1, 7). col(1, 2).\n\
+         x(v) :- rr_deferred_pairs_x(v), {body}.\n.output x\n"
+    )).unwrap();
+    let lead = |body: &str| {
+        let p = program(body);
+        let db = Connection::open_in_memory().unwrap();
+        let mut stats = Stats::empty(&p);
+        stats.card.insert("rr_deferred_pairs_x", 5_000_000.0);
+        stats.card.insert("k", 10.0);
+        stats.card.insert("col", 10.0);
+        let mut inputs = Inputs::file();
+        inputs.facts.clear();
+        inputs.given = Some(stats);
+        let model = make_plan(&body::Placed::of_program(&p).unwrap(), &db, inputs).unwrap();
+        let r = &p.rules[0];
+        let alone = body::alone(r).unwrap();
+        let b = body::nth(&alone, 0);
+        let (order, _, _) = model.plan_rule(body::Placed::of_program(&p).unwrap().fields().unwrap(), &b, None).unwrap();
+        r.body[order[0].at].atom().map(|a| a.rel.to_string()).unwrap()
+    };
+    assert_eq!(lead("k(v, 7)"), "k", "led by the restricted atom");
+    assert_eq!(lead("col(v, c)"), "rr_deferred_pairs_x", "an unrestricted atom does not lead");
+}
+
 /// A demanded relation's rule (decision 0048's split: `x` computed for `demand_x`'s keys) is driven by its demand,
 /// whatever the statistics say (Q59): the guard is structural. Priced here as the outlier run saw it (the demand
 /// large, a scan of `col` small), the search still starts from `demand_x`, and a kept order that does not is not

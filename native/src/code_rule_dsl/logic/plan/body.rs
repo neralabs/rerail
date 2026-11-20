@@ -236,18 +236,21 @@ impl<'v> Body<'v> {
                             .and_then(|s| s.strip_suffix("_pairs")) == Some(base))
                     // A demanded relation's own demand (`demand_x`) is not one: its rule may be led by an atom a
                     // constant restricts (Q59, `demand_bounds_lead`, which `plan_inner` keeps).
-                    || rel.strip_prefix(super::corpus::product_demand::PREFIX) == Some(head)
-                    // Maintenance gives each witness rule a support head (wide__sup0). It needs the same
-                    // driving request as wide itself. An explicitly driving delta still takes precedence.
-                    || rel.strip_prefix(super::corpus::product_demand::DEFERRED_PAIRS)
-                        .is_some_and(|producer| producer == super::super::front::shape_base(head)))
+                    || rel.strip_prefix(super::corpus::product_demand::PREFIX) == Some(head))
             })
         })
     }
-    /// A demanded relation's own demand (decision 0048's `x :- demand_x, …`), which bounds what its rule reads.
+    /// A demanded relation's own demand (decision 0048's `x :- demand_x, …`), which bounds what its rule reads; or a
+    /// deferred join's request (`rr_deferred_pairs_x`, decision 0477), of its producer or of the support heads
+    /// maintenance gives its rules (`wide__sup0`). Not forced to lead (Q59, `demand_bounds_lead`): forced, corpus0's
+    /// `lambda_arg` walked the arguments of 14,360 requested calls (171 k rows) where `kind($g, "lambda")` reads 229.
     pub fn own_demand(&self) -> Option<usize> {
         let head = self.rel(self.head());
-        (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| !a.neg() && self.rel(a).strip_prefix("demand_").is_some_and(|r| r == head)))
+        (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| {
+            let rel = self.rel(a);
+            !a.neg() && (rel.strip_prefix("demand_").is_some_and(|r| r == head)
+                || rel.strip_prefix(super::corpus::product_demand::DEFERRED_PAIRS).is_some_and(|p| p == super::super::front::shape_base(head)))
+        }))
     }
     /// Whether an order led by literal `lead` keeps a demanded relation's rule to what its demand bounds (Q59): led
     /// by the demand, or by an atom a constant restricts (a column a constant names, or a variable an equality binds
