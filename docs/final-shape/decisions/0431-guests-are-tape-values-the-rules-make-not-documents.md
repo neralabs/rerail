@@ -184,6 +184,17 @@ code may be named by which rules asked for it, or in what order.
      `html/embeds.rr`) is uploaded, the batch's and a value's alike (Q310). R8's test allows exactly `parsed`'s rows
      for it.
 
+   As built (a memo hit's values, 2026-11-20): a file read from the memo parses nothing, yet the corpus batch and the
+   manifest are what the run that parsed its strings made.
+   - The fixpoint's answer records each request it answers with a value, its string node and grammar, in order. A
+     chunk's entries keep them (`memo::VALUES`), each by the files that own its string (a value's string, by the
+     value's askers). A request at another chunk's document leaves the chunk unmemoised, as an unattributable row does.
+   - A hit hands its requests to the corpus batch. `with_guests` admits them in order through `Guests::admit`, as the
+     fixpoint did, after the guests' rounds (`memo::GUESTS`). A string inside a value waits for that value. Each tape
+     is found by its text among the root's last runs' tapes and its source named, as a parse names it (R6).
+   - Without this, a warm run's batch held no value: the base relations looked changed, and the cross part ran again
+     and wrote its plans.
+
 ## Requirements, each with its test
 
 | | Requirement | Test |
@@ -194,7 +205,7 @@ code may be named by which rules asked for it, or in what order.
 | R4 | No string is parsed unless a rule asks for it | `a_string_no_rule_asks_for_is_not_parsed` |
 | R5 | The batch is built once a chunk and grows by the rest (§6; `Report::batch_grown` counts the documents added): a file's programs, and the rows read are a rebuilt batch's. A tape value no longer grows it (§8, R10, which supersedes `tape_values_build_no_second_batch`) | `a_files_programs_build_no_second_batch` |
 | R6 | A text a run parsed is not parsed again: after an edit elsewhere in its file, in a new file, after a rule's edit (`Report::guest_parses`) | `an_edit_elsewhere_parses_no_text_the_last_run_parsed`, `a_new_file_with_a_text_parsed_before_parses_nothing`, `an_edited_rule_parses_no_text_the_last_run_parsed`; guard `equal_texts_are_parsed_once_a_run` |
-| R7 | A file read from the memo has its programs and tape values for a cross-file rule: a value's rows are base rows of each file that asked for it (`owners`, `askers`), kept in its entry and restored with it | `a_file_read_from_the_memo_has_its_tape_values_for_a_cross_file_rule` |
+| R7 | A file read from the memo has its programs and tape values for a cross-file rule: a value's rows are base rows of each file that asked for it (`owners`, `askers`), kept in its entry and restored with it; its values are in the corpus batch and its manifest as the run that parsed them made them (§8, a memo hit's values), so a warm run writes nothing | `a_file_read_from_the_memo_has_its_tape_values_for_a_cross_file_rule`, `the_run_after_a_cold_one_with_tape_values_writes_nothing` |
 | R8 | CPU and Metal give the same rows, the device reading the same tapes: a value's rows read where they lie, none uploaded (but Q310's filtered inputs) | `cpu_and_metal_read_the_same_tape_values`, with both kinds |
 | R9 | A finding placed at a tape value's node is refused: the lowering derives `rr_unplaced(clause)`, and the run fails naming the clauses | `a_finding_at_a_tape_values_node_is_refused` |
 | R10 | A string a rule parses is parsed in the program's fixpoint (§8): no slice and no round runs for it, the batch never grows by a value, each value is admitted once at its first lookup (`Report::values_admitted`), a string inside a value too; no scan lists a hidden value's nodes, and a shown one's are read after the request (§8, as built) | `tape_values_are_read_in_the_fixpoint` |
