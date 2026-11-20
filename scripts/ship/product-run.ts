@@ -49,7 +49,10 @@ const loadMs = performance.now() - started;
 
 console.error("shipbar: phase read");
 // The files a repository walk reads: the product's walk enters no folder of IGNORED_DIRECTORIES (dependency, cache and
-// build output, version control's), and neither does a `.rerail` run's corpus.
+// build output, version control's), as a `.rerail` run's corpus does not (corpus.rs `corpus_paths`), with two
+// differences: in a Git work tree that corpus is Git's listing, so `.gitignore` applies there and not here, and in a
+// Python site directory (one holding a `*.dist-info` folder) it enters every folder. Outside a Git work tree and a site
+// directory, as the exported corpora the suite and the shippability bar compare on are, the two list the same files.
 const files: { path: string; language: string; source: string }[] = [];
 const walk = (directory: string): void => {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {

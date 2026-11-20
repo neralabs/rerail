@@ -87,13 +87,15 @@ export class OmpHost {
       return host;
     } catch (error) { await host.close(); throw error; }
   }
+  /** The first frame from `from` on that `predicate` takes, looked for at least once, then until `timeoutMs` is up. */
   private async waitFor(predicate: (frame: Frame) => boolean, from = 0, timeoutMs = 60_000): Promise<Frame> {
     const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
+    for (;;) {
       const found = this.frames.slice(from).find(predicate);
       if (found) return found;
       if (this.failure) throw this.failure;
       if (this.closed) throw new Error(`OMP exited (${this.exitCode}): ${this.errors.join("")}`);
+      if (Date.now() >= deadline) break;
       await delay(10);
     }
     throw new Error(`Standalone OMP timed out: ${this.errors.join("")}\n${JSON.stringify(this.frames.slice(-5))}`);
@@ -105,12 +107,21 @@ export class OmpHost {
     if (!response.success) throw new Error(`OMP ${String(command.type)} failed: ${response.error}`);
     return response;
   }
-  /** `timeoutMs` bounds the agent's run, for a prompt whose tools keep the daemon busy for longer than the default minute. */
-  async prompt(message: string, { timeoutMs }: { timeoutMs?: number } = {}): Promise<void> {
+  /**
+   * Sends `message` and waits for the run it starts to end: its last `agent_end`, the one OMP does not mark
+   * `isTerminal: false`. OMP marks an `agent_end` that a queued steer or follow-up continues so, and the prompt's own
+   * result can come before that continuation. A prompt that starts no run ends at its result. `timeoutMs` bounds the
+   * agent's run, for a prompt whose tools keep the daemon busy for longer than the default minute.
+   */
+  async prompt(message: string, { timeoutMs = 60_000 }: { timeoutMs?: number } = {}): Promise<void> {
     const from = this.frames.length;
     const response = await this.command({ type: "prompt", message });
-    await this.waitFor(frame => frame.type === "agent_end" || (frame.type === "prompt_result" && frame.id === response.id), from, timeoutMs);
-    // agent_end observers and queued steers may still be settling; the command's idle barrier handles both.
+    const deadline = Date.now() + timeoutMs;
+    await this.waitFor(frame => frame.type === "prompt_result" && frame.id === response.id, from, timeoutMs);
+    if (this.frames.slice(from).some(frame => frame.type === "agent_start")) {
+      await this.waitFor(frame => frame.type === "agent_end" && frame.isTerminal !== false, from, deadline - Date.now());
+    }
+    // agent_end observers may still be settling; the command's idle barrier waits for them.
     await this.snapshot();
   }
   async snapshot(): Promise<HostEvidence> {

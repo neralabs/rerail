@@ -57,11 +57,18 @@ function general() {
       row("Footer", "Shows in Claude Code, OMP and Pi only.",
         data.presence === null ? h("span.val", null, "…") : seg("presence", [["compact", "Show"], ["silent", "Do not show"]], data.presence)),
       installed === null ? null : row("Installed", null, h("span.val", null, installed)),
+      data.health ? row("Version", null, h("span.val", null, data.health.version)) : null,
       historyRow(),
-      ui.scope === null ? null : row("Follow .gitignore",
-        [`New sessions in ${repoName() || "this repo"} skip Git-ignored files, and so does `, h("code", null, "rerail rules test"),
-          ". Agent tools can turn this on, not off."],
-        data.followGitignore === null ? h("span.val", null, "…") : seg("gitignore", [["on", "On"], ["off", "Off"]], data.followGitignore ? "on" : "off"))));
+      gitignoreRow()));
+}
+
+/** Follow .gitignore, for the repo shown: On or Off, which a person sets here. */
+function gitignoreRow() {
+  if (ui.scope === null) return null;
+  return row("Follow .gitignore",
+    [`New sessions in ${repoName() || "this repo"} skip Git-ignored files, and so does `, h("code", null, "rerail rules test"),
+      ". Agent tools can turn this on, not off."],
+    data.followGitignore === null ? h("span.val", null, "…") : seg("gitignore", [["on", "On"], ["off", "Off"]], data.followGitignore ? "on" : "off"));
 }
 
 /** One repo: its name (a link to it unless the page shows it), how many rules it has, and On / Off where it has any. */
@@ -118,7 +125,7 @@ function refreshCounts() {
 export function render(root) {
   refreshCounts();
   const counts = data.repositories.map(repoCounts);
-  const sig = JSON.stringify([ui.theme, data.presence, ui.scope, data.followGitignore, data.health?.installedAt, data.health?.database.path,
+  const sig = JSON.stringify([ui.theme, data.presence, ui.scope, data.followGitignore, data.health?.installedAt, data.health?.version, data.health?.database.path,
     data.repositories, data.repository?.repositoryKey, data.repository?.name, counts, data.agents, data.agentsError, clearAsk, clearing]);
   setContent(root, sig, () => h("div.settings", null, general(), repos(), agents(), uninstall()));
 }

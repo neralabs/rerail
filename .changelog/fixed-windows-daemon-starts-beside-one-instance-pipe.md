@@ -1,0 +1,1 @@
+On Windows, the daemon now starts when another program holds its engine pipe's name with a pipe that allows one instance: it listens on a pipe of its own with a random suffix, as it already did beside other holders, where every start failed with `listen EBUSY` and no daemon ran.

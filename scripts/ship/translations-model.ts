@@ -344,13 +344,18 @@ function untranslatedProblems(declaration: Declaration, r: RuleResult): string[]
   return problems;
 }
 
-/**
- * A same rule's disagreements: still listed in `different`, or, gating, the original failed on files of a corpus for
- * another reason than their syntax errors, so the rule's findings there were not compared.
- */
+/** A same rule's disagreement: still listed in `different`. */
 function sameProblems(declaration: Declaration, r: RuleResult): string[] {
-  const problems = declaration.different[r.rule] === undefined ? [] : [`${r.rule}: reports the same findings as its original now; remove it from different`];
-  if (!declaration.equivalent) return problems;
+  return declaration.different[r.rule] === undefined ? [] : [`${r.rule}: reports the same findings as its original now; remove it from different`];
+}
+
+/**
+ * A translated rule's original, in a gating pack, failed on files of a corpus for another reason than their syntax
+ * errors, so the rule's findings there were not compared: whether its findings are the same or listed as different.
+ */
+function originalFailureProblems(declaration: Declaration, r: RuleResult): string[] {
+  if (!declaration.equivalent) return [];
+  const problems: string[] = [];
   for (const [corpus, c] of Object.entries(r.corpora)) {
     const other = c.originalFailures?.other;
     if (other !== undefined) problems.push(`${r.rule}: on ${corpus}, the original failed on ${other.count} file(s) for another reason than syntax errors; the first: ${other.first.slice(0, 200)}`);
@@ -389,10 +394,14 @@ function differentProblems(declaration: Declaration, r: RuleResult, ran: readonl
   return [...(declaration.equivalent ? unexplained(r.rule, listed, ran) : []), ...changedCounts(r.rule, listed, counts, ran)];
 }
 
-/** A translated rule's disagreements: still listed in `untranslated`, then those of a same or a different rule. */
+/**
+ * A translated rule's disagreements: still listed in `untranslated`, then those of a same or a different rule, then
+ * its original's failures on files.
+ */
 function translatedProblems(declaration: Declaration, r: RuleResult, ran: readonly string[]): string[] {
   const problems = declaration.untranslated[r.rule] === undefined ? [] : [`${r.rule}: is translated now; remove it from untranslated`];
   problems.push(...(r.status === "same" ? sameProblems(declaration, r) : differentProblems(declaration, r, ran)));
+  problems.push(...originalFailureProblems(declaration, r));
   return problems;
 }
 
@@ -421,10 +430,10 @@ function runProblems(ran: readonly string[], unattributed: Readonly<Record<strin
  * its reason, a rule without a translation not listed in `untranslated` (or listed and translated now, or listed in
  * `different`), a rule that failed, an entry naming no rule of the pack. `ran` names the corpora the run compared:
  * counts of others are not checked, except that a pack that gates may list counts only on those (its run compares all
- * its corpora, or fails). A pack that gates fails too on a run that compared no corpus, on a same rule whose original
- * failed on files of a corpus for another reason than their syntax errors (isParseFailure), and on the original's
- * failures of no rule (`unattributed`, per corpus: `code: message`). Only a pack declaring `equivalent: true` fails on
- * them (gates); the rest report them.
+ * its corpora, or fails). A pack that gates fails too on a run that compared no corpus, on a translated rule (same or
+ * different) whose original failed on files of a corpus for another reason than their syntax errors (isParseFailure),
+ * and on the original's failures of no rule (`unattributed`, per corpus: `code: message`). Only a pack declaring
+ * `equivalent: true` fails on them (gates); the rest report them.
  */
 export function gateProblems(declaration: Declaration, results: readonly RuleResult[], ran: readonly string[], pack: readonly string[], unattributed: Readonly<Record<string, readonly string[]>> = {}): string[] {
   const problems = results.flatMap((r) => ruleProblems(declaration, r, ran));
@@ -519,12 +528,12 @@ export function exampleFiles(packJson: { rules?: { id: string; examples?: Record
   return { files, skipped };
 }
 
-/** One tool call made of an example, as `rerail-engine run-policies --tool-calls` reads it. */
+/** One tool call, as `rerail-engine run-policies --tool-calls` reads it. */
 export interface ExampleToolCall {
-  /** The example: `<rule> <kind>`. */
+  /** Where it comes from: `<rule> <example kind>`, or `<rule> <file>:<line>` for a test's call. */
   id: string;
   tool: string;
-  input: { command: string };
+  input: Record<string, unknown>;
 }
 
 /**
@@ -533,19 +542,50 @@ export interface ExampleToolCall {
  * conformance/pack-validation.ts tries it). An example without text is not a call, and is skipped with why.
  */
 export function exampleToolCalls(packJson: { rules?: { id: string; examples?: Record<string, { text?: string } | undefined> }[] }, sources: ReadonlyMap<string, string>): { calls: ExampleToolCall[]; skipped: string[] } {
-  const calls: ExampleToolCall[] = [];
-  const skipped: string[] = [];
+  const out: { calls: ExampleToolCall[]; skipped: string[] } = { calls: [], skipped: [] };
   for (const rule of packJson.rules ?? []) {
     const source = sources.get(rule.id);
-    if (source === undefined) continue;
-    const tool = source === "tool:*" ? "Bash" : source.slice("tool:".length);
-    for (const [kind, example] of Object.entries(rule.examples ?? {})) {
-      if (example === undefined) continue;
-      if (typeof example.text !== "string") skipped.push(`${rule.id} ${kind}: no text`);
-      else calls.push({ id: `${rule.id} ${kind}`, tool, input: { command: example.text } });
-    }
+    if (source !== undefined) ruleToolCalls(rule, source === "tool:*" ? "Bash" : source.slice("tool:".length), out);
   }
-  return { calls, skipped };
+  return out;
+}
+
+/** One tool-call rule's examples as calls through `tool`, into `out`: each example with text, the others skipped. */
+function ruleToolCalls(rule: { id: string; examples?: Record<string, { text?: string } | undefined> }, tool: string, out: { calls: ExampleToolCall[]; skipped: string[] }): void {
+  for (const [kind, example] of Object.entries(rule.examples ?? {})) {
+    if (example === undefined) continue;
+    if (typeof example.text !== "string") out.skipped.push(`${rule.id} ${kind}: no text`);
+    else out.calls.push({ id: `${rule.id} ${kind}`, tool, input: { command: example.text } });
+  }
+}
+
+/** A test's call in a `.rerail` file: `.tool_call "<tool>" `<input as JSON>``. */
+const TOOL_CALL_LINE = /^\s*\.tool_call\s+"([^"]+)"\s+`(.*)`\s*$/;
+
+/**
+ * The calls a tool-call rule's translation tests with (its `.tool_call` lines, in `file`, named by its line), so the
+ * original is run on each of them too: its tests check the translation against what its author expects, this checks it
+ * against the original. An input that is not a JSON object is skipped with why.
+ */
+export function testToolCalls(rule: string, file: string, text: string): { calls: ExampleToolCall[]; skipped: string[] } {
+  const out: { calls: ExampleToolCall[]; skipped: string[] } = { calls: [], skipped: [] };
+  text.split("\n").forEach((line, i) => {
+    const m = TOOL_CALL_LINE.exec(line);
+    if (m !== null) testToolCall(`${rule} ${file}:${i + 1}`, m[1]!, m[2]!, out);
+  });
+  return out;
+}
+
+/** One test call, its input read as JSON, into `out`. */
+function testToolCall(id: string, tool: string, raw: string, out: { calls: ExampleToolCall[]; skipped: string[] }): void {
+  let input: unknown;
+  try {
+    input = JSON.parse(raw);
+  } catch {
+    input = undefined;
+  }
+  if (isObject(input)) out.calls.push({ id, tool, input });
+  else out.skipped.push(`${id}: its input is not a JSON object`);
 }
 
 /**

@@ -7,11 +7,11 @@ Start with `/rerail-create` in your coding agent (`$rerail-create` in Codex):
 
 | You type | What happens |
 |---|---|
-| `/rerail-create` | The agent suggests rules from this repo's sessions and written standards, and writes the ones you pick |
+| `/rerail-create` | The agent suggests rules from this repo's sessions and written standards, tests them, and adds the ones that pass in Log until you approve them |
 | `/rerail-create use our logger, not console.log` | The agent writes that rule |
 | `/rerail-create the no-sync rule keeps telling you to use fs/promises in our CLI` | The agent tunes that rule, or offers to switch it to Log |
 
-The agent tests each draft, reads it back, and adds it only after you say yes.
+The agent tests each draft. A rule you asked for is read back and added only after you say yes. Rules it suggests are added in Log, steering no one, and the agent asks once whether to approve them so they steer; the ones you leave wait on the dashboard's Overview, which says what they caught in Log and sends you to Created by you, where you read each one and approve it on its page.
 
 <details>
 <summary>Where the agent's method comes from</summary>
@@ -122,7 +122,7 @@ A draft is the rule plus the cases it must catch and pass; test it before adding
 ```json
 {
   "kind": "code",
-  "rule": { "format": "rerail.policy/v1", "id": "local:…", "revision": 1, "mode": "steer", "description": "…", "scope": { "include": ["…"], "exclude": [] }, "clauses": ["…"] },
+  "rule": { "format": "rerail.policy/v1", "id": "local:…", "revision": 1, "mode": "steer", "title": "…", "description": "…", "scope": { "include": ["…"], "exclude": [] }, "clauses": ["…"] },
   "cases": {
     "caught": [{ "path": "src/a.ts", "content": "…" }],
     "passed": [{ "path": "src/a.ts", "content": "…" }]
@@ -137,6 +137,7 @@ A draft is the rule plus the cases it must catch and pass; test it before adding
 |---|---|
 | `kind` | `code` |
 | `rule` | the rule document |
+| `rule.title` | the rule in your own words, as the dashboard lists it; the agent never reads it. `rules add` refuses a rule without one. |
 | `folder` | optional: the repository folder to add the rule at, `""` for the whole repository. Absent, a new rule goes to the whole repository and one already added stays where it is. |
 | `cases.caught`, `cases.passed` | files the rule must catch, and must let pass: `{ "path", "content" }` |
 

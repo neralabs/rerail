@@ -20,13 +20,16 @@
 // recorded beside the comparison, as the product reports them and carries on.
 //
 // A tool-call rule (`sample.boundary: "tool-call"`) matches a coding agent's tool call, not files: it is compared on
-// the tool-calls corpus only. Its original is matched against each call as the runtime matches one
-// (ConversationRuleRegistry, repeats not held back, as pack validation checks examples); its translation runs through
-// `run-policies --tool-calls <calls.json>`. A finding is (rule, call): the original names no code, so none is compared.
+// the tool-calls corpus only: the rule's pack.json examples and every call its translation's tests make (`.tool_call`),
+// so a translation's tests are checked against the original too. Its original is matched against each call as the
+// runtime matches one (ConversationRuleRegistry, repeats not held back, as pack validation checks examples); its
+// translation runs through `run-policies --tool-calls <calls.json>`. A finding is (rule, call): the original names no
+// code, so none is compared.
 //
 // The corpora, each compared on its own:
 //   examples   pack.json's `rules[].examples` that are files, laid out as few directories as hold them;
-//   tool-calls the pack's tool-call rules' pack.json examples, each a call (translations-model.ts exampleToolCalls);
+//   tool-calls the pack's tool-call rules' pack.json examples, each a call (translations-model.ts exampleToolCalls),
+//              and their translations' test calls (testToolCalls);
 //   fixtures   the pack's recorded upstream fixtures, <corpora>/recorded/<pack>/files, as the shippability bar's
 //              `prepare` makes them (checked against <corpora>/corpora.lock.json when it is there);
 //   <name>     each real-code corpus of scripts/ship/corpora.json for the pack: its `translations[<pack>]`, else the
@@ -47,7 +50,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { availableParallelism } from "node:os";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs, type ParseArgsConfig } from "node:util";
 import { bundledModelPath, ConversationRuleRegistry, stableJsonText } from "../../src/engine/index.js";
@@ -63,6 +66,7 @@ import {
   type ExampleToolCall,
   exampleFiles,
   exampleToolCalls,
+  testToolCalls,
   type Finding,
   FIXTURES_CORPUS,
   gateProblems,
@@ -608,13 +612,29 @@ function toolCallRules(pack: string, ruleIds: readonly string[]): Map<string, st
   return out;
 }
 
+/** Every call the tool-call rules' translations test with (their `.tool_call` lines), so both sides run on each. */
+function translationTestCalls(sources: ReadonlyMap<string, string>, runnable: ReadonlyMap<string, readonly string[]>): { calls: ExampleToolCall[]; skipped: string[] } {
+  const out: { calls: ExampleToolCall[]; skipped: string[] } = { calls: [], skipped: [] };
+  for (const rule of sources.keys()) {
+    for (const path of runnable.get(rule) ?? []) {
+      const found = testToolCalls(rule, basename(path), readFileSync(path, "utf8"));
+      out.calls.push(...found.calls);
+      out.skipped.push(...found.skipped);
+    }
+  }
+  return out;
+}
+
 /**
- * The tool-call rules compared on their examples as calls, into their inputs: the originals through the runtime's
+ * The tool-call rules compared on their examples and their translations' test calls, into their inputs: the originals through the runtime's
  * matcher, the translations through `run-policies --tool-calls`; the corpus compared.
  */
 async function runToolCalls(run: PackRun, sources: ReadonlyMap<string, string>, runnable: ReadonlyMap<string, readonly string[]>, inputs: ReadonlyMap<string, RuleInput>): Promise<Corpus> {
-  const { calls, skipped } = exampleToolCalls(readJson(join(SELF, "packs", run.pack, "pack.json")), sources);
-  for (const s of skipped) run.notes.push(`example not compared: ${s}`);
+  const examples = exampleToolCalls(readJson(join(SELF, "packs", run.pack, "pack.json")), sources);
+  const tests = translationTestCalls(sources, runnable);
+  for (const s of examples.skipped) run.notes.push(`example not compared: ${s}`);
+  for (const s of tests.skipped) run.notes.push(`test call not compared: ${s}`);
+  const calls = [...examples.calls, ...tests.calls];
   const runWork = join(run.work, "runs", TOOL_CALLS_CORPUS);
   const root = join(runWork, "root");
   mkdirSync(root, { recursive: true });
