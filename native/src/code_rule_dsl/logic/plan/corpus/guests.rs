@@ -155,14 +155,19 @@ fn embedding(host: &Document, name: &str) -> Option<crate::code_rule_dsl::langua
     dialect.embeds().iter().map(|&(via, _)| via).find(|via| via.id() == name)
 }
 
-/// A grammar name's dialect label, and whether its text is parsed in a wrapper (an expression's `( … )`): a
-/// fragment the registry declares (decision 0082), or a dialect's label.
-fn grammar(name: &str) -> Option<(&'static str, bool)> {
-    if let Some((dialect, start)) = crate::code_rule_dsl::language::fragment(name) {
-        return crate::code_rule_dsl::language::label(dialect).map(|label| (label, start == "expression"));
+/// A grammar name's dialect label, and the fragment it parses (decision 0466: from a node kind, its tapes under its
+/// own tag): a fragment the registry declares (decision 0082), or a dialect's label, a whole text.
+fn grammar(name: &str) -> Option<(&'static str, Option<core::Fragment>)> {
+    if let Some((dialect, _)) = crate::code_rule_dsl::language::fragment(name) {
+        return crate::code_rule_dsl::language::label(dialect).zip(Some(core::Fragment::named(name)));
     }
     let dialect = crate::code_rule_dsl::language::dialect_by_label(name)?;
-    crate::code_rule_dsl::language::label(dialect).map(|label| (label, false))
+    crate::code_rule_dsl::language::label(dialect).map(|label| (label, None))
+}
+
+/// The tag a grammar's tapes are stored under: a fragment's own, else its dialect's.
+fn tape_tag_of(label: &str, fragment: Option<core::Fragment>) -> Option<i64> {
+    fragment.map(|f| i64::from(f.tag)).or_else(|| core::label_tag(label))
 }
 
 /// A document's key past every file's (`memo::doc_keys` gives files keys below `GUEST_KEYS`), with `key << 32`
@@ -319,7 +324,7 @@ pub(super) fn grammar_tags(v: &crate::code_rule_dsl::logic::program_image::Versi
         };
         match r.head().args().nth(column) {
             Some(TermRef::Str(a)) => {
-                if let Some(tag) = grammar(v.text(a)).and_then(|(label, _)| core::label_tag(label)) {
+                if let Some(tag) = grammar(v.text(a)).and_then(|(label, fragment)| tape_tag_of(label, fragment)) {
                     tags.insert(tag);
                 }
             }
@@ -505,7 +510,7 @@ impl Guests {
         if let Some(via) = embedding(host, grammar_name) {
             return Ok(self.program(host, at, via, "program")?.map_or(Got::Not, Got::New));
         }
-        let Some((label, wrap)) = grammar(grammar_name) else { return Ok(Got::Not) };
+        let Some((label, fragment)) = grammar(grammar_name) else { return Ok(Got::Not) };
         // A tape value is never code to rules that do not name it: its nodes are no file's, so a finding on one has no
         // place. In the run's language it is in the annotations' range (a type expression, Python's in a Python run);
         // shown, a string the demand asked for only because its rule's inputs hold it (every string, for `type_ctx`)
@@ -519,23 +524,22 @@ impl Guests {
         // A node id's low bits are its local id only under preorder ids (`syntax::Numbering`).
         let Some(local) = ids.local((at & 0xffff_ffff) as u32) else { return Ok(Got::Not) };
         let Some((text, place)) = host_text(host, ids, local) else { return Ok(Got::Not) };
-        let (text, place) = if wrap { wrapped(text, place) } else { (text, place) };
-        self.tape_value(host, host_key, at, grammar_name, "fragment", label, wrap, text, place, range, parses)
+        self.tape_value(host, host_key, at, grammar_name, "fragment", label, fragment, text, place, range, parses)
     }
 
     /// String `at` of `host`, its `text` parsed as `label`: a tape value (decision 0431), keyed by its grammar and
     /// text, not its place. A text made already in this chunk gains the place; else it is parsed (once a run,
     /// `parse`) and made. Its rows are the files' that hold it (`files`, as a value's).
     #[allow(clippy::too_many_arguments)]
-    fn tape_value(&mut self, host: &Document, host_key: u32, at: i64, grammar_name: &str, role: &str, label: &str, wrap: bool, text: String, place: Placement, range: Range, parses: &Parses<'_>) -> Result<Got, String> {
-        let identity = format!("tape:{wrap}:{text}");
+    fn tape_value(&mut self, host: &Document, host_key: u32, at: i64, grammar_name: &str, role: &str, label: &str, fragment: Option<core::Fragment>, text: String, place: Placement, range: Range, parses: &Parses<'_>) -> Result<Got, String> {
+        let identity = format!("tape:{text}");
         let files = self.files_of(i64::from(host_key));
         let here = syntax::TapePlace { host: host_key, at, place };
         if let Some(key) = self.values.get(&(grammar_name.to_owned(), identity.clone())).copied() {
             self.files.entry(key).or_default().extend(files);
             return Ok(Got::Placed(key as u32, here));
         }
-        let Some((facts, root, digest)) = parse(&host.path, label, wrap, text.clone(), parses)? else { return Ok(Got::Not) };
+        let Some((facts, root, digest)) = parse(&host.path, label, fragment, text.clone(), parses)? else { return Ok(Got::Not) };
         let key = self.key_for(&[b"tape", grammar_name.as_bytes(), identity.as_bytes()], range, &host.path);
         self.values.insert((grammar_name.to_owned(), identity), i64::from(key));
         self.files.insert(i64::from(key), files);
@@ -653,7 +657,7 @@ impl Guests {
     /// asked for by document `asker`. Its places are its own text's. It is its askers' files' (O96): `memo` keeps its
     /// rows with each, and its path is the first's.
     fn value(&mut self, by_key: &HashMap<u32, &Document>, asker: i64, grammar_name: &str, text: String, made: Made, parses: &Parses<'_>) -> Result<Option<Document>, String> {
-        let Some((label, wrap)) = grammar(grammar_name) else { return Ok(None) };
+        let Some((label, fragment)) = grammar(grammar_name) else { return Ok(None) };
         let (identity, known_as) = match &made {
             Made::Splice { node, with, .. } => (format!("splice:{node}:{with}"), String::new()),
             _ => (format!("parse:{text}"), grammar_name.to_owned()),
@@ -661,8 +665,7 @@ impl Guests {
         let files = self.files_of(asker);
         let path = files.first().and_then(|f| u32::try_from(*f).ok()).and_then(|f| by_key.get(&f)).map_or_else(String::new, |d| d.path.clone());
         let path = path.as_str();
-        let (text, _) = if wrap { wrapped(text, Placement::At([0, 0])) } else { (text, Placement::At([0, 0])) };
-        let Some((facts, root, digest)) = parse(path, label, wrap, text, parses)? else { return Ok(None) };
+        let Some((facts, root, digest)) = parse(path, label, fragment, text, parses)? else { return Ok(None) };
         let key = self.key_for(&[b"value", grammar_name.as_bytes(), identity.as_bytes()], Range::Hidden, path);
         self.values.insert((known_as, identity), i64::from(key));
         self.files.insert(i64::from(key), files);
@@ -687,7 +690,7 @@ impl Guests {
         let ids = self.numbering(d)?;
         let Some((_, id, _)) = ids.at((node & 0xffff_ffff) as u32) else { return Ok(None) };
         let base = syntax::unparsed(d);
-        // The unparsed text's offset in the document's text (a wrapped fragment's root starts past the `(`).
+        // The unparsed text's offset in the document's text (where its root is not its first node).
         let off = match d.guest.as_deref() {
             Some(g) if g.root != 0 => d.facts.start(g.root) as usize,
             _ => 0,
@@ -733,17 +736,8 @@ fn embedded(host: &Document, build: &mut dyn FnMut(crate::code_rule_dsl::embed::
     build(root, host.facts.source.as_str())
 }
 
-/// A text in its wrapper `( … )`, and its placement one byte on.
-fn wrapped(text: String, place: Placement) -> (String, Placement) {
-    let place = match place {
-        Placement::Copied { delta, within } => Placement::Copied { delta: delta - 1, within },
-        Placement::Mapped { pieces, within } => Placement::Mapped { pieces: pieces.iter().map(|p| syntax::normalized::Piece { d: p.d + 1, ..*p }).collect(), within },
-        at => at,
-    };
-    (format!("({text})"), place)
-}
-
-/// A guest's or value's tree: its facts, its root (a wrapped expression's), and the facts' digest.
+/// A guest's or value's tree: its facts, its root (0: a fragment's tape is rooted at its start node, decision 0466),
+/// and the facts' digest.
 type Parsed = (Arc<core::Facts>, u32, [u8; 32]);
 
 /// The guests' trees by grammar and text, for one run: a pack's guests repeat their texts (one annotation in many files,
@@ -754,7 +748,7 @@ type Parsed = (Arc<core::Facts>, u32, [u8; 32]);
 /// so a text a run parsed is not parsed again.
 #[derive(Default)]
 pub(super) struct Parses<'a> {
-    kept: std::sync::Mutex<(usize, HashMap<(String, bool, String), Option<Parsed>>)>,
+    kept: std::sync::Mutex<(usize, HashMap<(String, Option<core::Fragment>, String), Option<Parsed>>)>,
     /// The texts parsed, not found kept (`Report::guest_parses`): decision 0431 R6, a text a run parsed is not
     /// parsed again.
     parsed: std::sync::atomic::AtomicUsize,
@@ -787,18 +781,18 @@ impl<'a> Parses<'a> {
     }
 }
 
-/// `text` parsed as `label`, its root (a wrapped expression's) and its facts' digest; `None` when the parser gives no
-/// facts. Kept for the run by grammar and text (`Parses`).
-fn parse(path: &str, label: &str, wrap: bool, text: String, parses: &Parses<'_>) -> Result<Option<Parsed>, String> {
+/// `text` parsed as `label` (as `fragment`, from its start kind, where it is one), its root and its facts' digest;
+/// `None` when the parser gives no facts. Kept for the run by grammar and text (`Parses`).
+fn parse(path: &str, label: &str, fragment: Option<core::Fragment>, text: String, parses: &Parses<'_>) -> Result<Option<Parsed>, String> {
     /// The texts kept, in bytes, before the memo starts again (the facts kept are a small multiple of it).
     const KEPT_BYTES: usize = 8 << 20;
-    let key = (label.to_owned(), wrap, text);
+    let key = (label.to_owned(), fragment, text);
     if let Some(hit) = parses.kept.lock().expect("the parsed guests").1.get(&key) {
         crate::code_rule_dsl::prof::count("guests.parse_kept", 1);
         return Ok(hit.clone());
     }
     let file = crate::code_rule_dsl::facts::core::Source { language: label.to_owned(), source: Arc::new(key.2.clone()) };
-    let built = match (&parses.store, core::label_tag(label)) {
+    let built = match (&parses.store, tape_tag_of(label, fragment)) {
         // Decision 0431 R6: found among the last runs' tapes by its text, or queued earlier in this run; else parsed,
         // and queued for the store with its source, which the manifest names.
         (Some(s), Some(tag)) if cfg!(feature = "tape-cache") => {
@@ -808,24 +802,29 @@ fn parse(path: &str, label: &str, wrap: bool, text: String, parses: &Parses<'_>)
             let found = if s.run_tag == Some(tag) { s.by_text.get(&hash) } else { s.others.get(&(hash, tag)) };
             match found {
                 Some((source, _)) => s.late.lock().expect("the late sources").push(*source),
-                None if core::tape_queued(s.cache, &file, &digest) => {}
+                None if core::tape_queued(s.cache, &file, &digest, fragment) => {}
                 None => {
                     parses.parsed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
             }
-            core::build_in_wave_with_tape(&file, s.cache, Some(digest), found.map(|(_, f)| f), true, false).map(|(b, _)| b)
+            match fragment {
+                Some(f) => core::build_fragment_in_wave(&file, f, s.cache, Some(digest), found.map(|(_, f)| f), true),
+                None => core::build_in_wave_with_tape(&file, s.cache, Some(digest), found.map(|(_, f)| f), true, false).map(|(b, _)| b),
+            }
         }
         _ => {
             parses.parsed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            core::build(&file)
+            match fragment {
+                Some(f) => core::build_fragment(&file, f),
+                None => core::build(&file),
+            }
         }
     };
     let built = built.map_err(|e| format!("{path}: {e}"))?;
     let parsed = match built {
         Built::Facts(facts) => {
-            let root = if wrap { wrapped_root(&facts, label) } else { 0 };
             let digest = core::digest(&facts);
-            Some((Arc::new(facts), root, digest))
+            Some((Arc::new(facts), 0, digest))
         }
         _ => None,
     };
@@ -853,26 +852,6 @@ fn taped(path: &str, label: &str, text: String, parse: crate::code_rule_dsl::emb
 
 /// A document's tape in its file's context (`Document::tape`).
 type Tape = Option<(crate::code_rule_dsl::tape::TapeDoc, Arc<dyn crate::code_rule_dsl::facts::core::SourceFile>)>;
-
-/// The root of a wrapped expression `( e )`: `e`, the one named child of the parenthesized expression the module's
-/// one statement is, when the text parses so; else the module's first named child (a partial tree's).
-fn wrapped_root(f: &core::Facts, label: &str) -> u32 {
-    let Some(dialect) = crate::code_rule_dsl::language::dialect_by_label(label) else { return 0 };
-    let kinds = dialect.kinds();
-    let name = |id: u32| kinds.kind_name(core::kind_code(f.kind(id))).unwrap_or("");
-    let named = |id: u32| -> Vec<u32> { f.children(id).iter().copied().filter(|&c| f.named(c) && !name(c).contains("comment")).collect() };
-    let first = named(0).first().copied().unwrap_or(0);
-    let path = (|| {
-        let [statement] = named(0)[..] else { return None };
-        let [paren] = named(statement)[..] else { return None };
-        if name(paren) != "parenthesized_expression" {
-            return None;
-        }
-        let [e] = named(paren)[..] else { return None };
-        Some(e)
-    })();
-    path.unwrap_or(first)
-}
 
 #[cfg(test)]
 mod tests {

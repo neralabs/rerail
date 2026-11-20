@@ -37,5 +37,6 @@
       "language": "css",
       "via": "raw-text"
     }
-  ]
+  ],
+  "fragments": [{ "name": "html-element", "dialect": "html", "start": "element", "tapeTag": 32 }]
 }

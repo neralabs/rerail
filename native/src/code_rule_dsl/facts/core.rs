@@ -81,9 +81,13 @@ pub fn label_tag(label: &str) -> Option<i64> {
 
 /// Whether this process has queued the tape of a text whose SHA-256 is `digest` in the grammar `file` names, for the
 /// store (`build_in_wave_with_tape` then reads it, not parses it): decision 0431 R6's count of the texts parsed.
-pub fn tape_queued(cache: &crate::content_store::ContentStore, file: &dyn SourceFile, digest: &[u8; 32]) -> bool {
+pub fn tape_queued(cache: &crate::content_store::ContentStore, file: &dyn SourceFile, digest: &[u8; 32], fragment: Option<Fragment>) -> bool {
     use crate::code_rule_dsl::build_ids::grammar_version;
-    let Some(tag) = file_language(file).and_then(tape_tag).map(i64::from) else { return false };
+    let tag = match fragment {
+        Some(f) => Some(i64::from(f.tag)),
+        None => file_language(file).and_then(tape_tag).map(i64::from),
+    };
+    let Some(tag) = tag else { return false };
     let fv = i64::from(crate::code_rule_dsl::tape::formats::stored_version());
     cache.queued_tape(&queued_tape(digest, tag, grammar_version(), fv)).is_some()
 }
@@ -214,6 +218,32 @@ pub fn build_with_tape(file: &dyn SourceFile, keep: bool) -> Result<(Built, Opti
     facts_of_image(file, &grammar, image.primary, Terminators::of(language), keep)
 }
 
+/// A fragment's parse (decision 0466): the node kind it starts at, and the tag its tapes are stored under (never its
+/// dialect's).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Fragment {
+    pub start: &'static str,
+    pub tag: u8,
+}
+
+impl Fragment {
+    /// The fragment the registry names `name`.
+    pub fn named(name: &str) -> Option<Self> {
+        let (_, start) = crate::code_rule_dsl::language::fragment(name)?;
+        Some(Fragment { start, tag: crate::code_rule_dsl::language::fragment_tag(name)? })
+    }
+}
+
+/// [`build`] of `file` as a fragment (decision 0466): parsed from its start by its dialect's hand-written parser, its
+/// tape's root one node of that kind. `Unparsed` where the parser refuses the text.
+pub fn build_fragment(file: &dyn SourceFile, fragment: Fragment) -> Result<Built, String> {
+    use crate::code_rule_dsl::{lines::Terminators, tape::{Grammar, TapeImage}};
+    let language = file_language(file).ok_or_else(|| format!("{} has no grammar", file.language()))?;
+    let grammar = Grammar::embedded(language)?;
+    let Some(image) = TapeImage::parse_from(&grammar, file.source(), fragment.start, &|| false) else { return Ok(Built::Unparsed) };
+    facts_of_image(file, &grammar, image?.primary, Terminators::of(language), false).map(|(built, _)| built)
+}
+
 /// [`build_with_tape`] of an embedded program (decision 0431 §4), read off the tape or tree its embedder parsed
 /// (`embed::Parse`), not parsed again.
 pub fn build_parsed(file: &dyn SourceFile, parse: crate::code_rule_dsl::embed::Parse, keep: bool) -> Result<(Built, Option<TapeDoc>), String> {
@@ -322,13 +352,41 @@ pub fn build_in_wave_with_tape(
     named: bool,
     keep: bool,
 ) -> Result<(Built, Option<TapeDoc>), String> {
+    build_in_wave_as(file, None, cache, digest, found, named, keep)
+}
+
+/// [`build_in_wave`] of `file` as a fragment (decision 0466): its tape stored and found under the fragment's tag.
+pub fn build_fragment_in_wave(
+    file: &dyn SourceFile,
+    fragment: Fragment,
+    cache: &crate::content_store::ContentStore,
+    digest: Option<[u8; 32]>,
+    found: Option<&crate::content_store::TapeFrame>,
+    named: bool,
+) -> Result<Built, String> {
+    build_in_wave_as(file, Some(fragment), cache, digest, found, named, false).map(|(built, _)| built)
+}
+
+/// [`build_in_wave_with_tape`], of a whole file or a fragment.
+fn build_in_wave_as(
+    file: &dyn SourceFile,
+    fragment: Option<Fragment>,
+    cache: &crate::content_store::ContentStore,
+    digest: Option<[u8; 32]>,
+    found: Option<&crate::content_store::TapeFrame>,
+    named: bool,
+    keep: bool,
+) -> Result<(Built, Option<TapeDoc>), String> {
     use crate::code_rule_dsl::lines::Terminators;
     use crate::code_rule_dsl::tape::{self, TapeImage};
     use crate::code_rule_dsl::build_ids::grammar_version;
     use crate::content_store::HashKey;
     use sha2::Digest as _;
     let language = file_language(file).ok_or_else(|| format!("{} has no grammar", file.language()))?;
-    let tag = i64::from(tape_tag(language).ok_or("the dialect has no tape tag")?);
+    let tag = match fragment {
+        Some(f) => i64::from(f.tag),
+        None => i64::from(tape_tag(language).ok_or("the dialect has no tape tag")?),
+    };
     let (gv, fv) = (grammar_version(), i64::from(tape::formats::stored_version()));
     let bytes = file.source().as_bytes();
     let digest: [u8; 32] = match digest {
@@ -370,7 +428,11 @@ pub fn build_in_wave_with_tape(
             crate::code_rule_dsl::logic::profile::decision("input tape cache", || "miss".into());
             let parse = crate::code_rule_dsl::logic::profile::span(|| "tape parse".into());
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, file.source().len() as u64);
-            let Some(image) = TapeImage::parse(&grammar, file.source(), &|| false) else {
+            let parsed = match fragment {
+                Some(f) => TapeImage::parse_from(&grammar, file.source(), f.start, &|| false),
+                None => TapeImage::parse(&grammar, file.source(), &|| false),
+            };
+            let Some(image) = parsed else {
                 return Ok((Built::Unparsed, None));
             };
             let image = image?;

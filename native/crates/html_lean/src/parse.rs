@@ -47,6 +47,18 @@ pub fn parse(src: &[u8]) -> R<Tape> {
 
 /// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
 pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
+    parse_from(src, Start::Document, finish)
+}
+
+/// The node kind a parse starts at (decision 0466): a whole document, or one element alone, its root (a fragment).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Start {
+    Document,
+    Element,
+}
+
+/// [`parse_into`] from `start`.
+pub fn parse_from<Out>(src: &[u8], start: Start, finish: &mut dyn Sink<Out>) -> R<Out> {
     // The scanner reads a NUL as the text's end.
     if src.contains(&0) {
         return Err(Refusal::Lex(src.iter().position(|&c| c == 0).unwrap_or(0) as u32));
@@ -55,7 +67,10 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
     let mut widths = Widths::guess(src.len());
     loop {
         let mut p = P { src, b: &b, w: Writer::new(0, widths, src.len() / 4 + 16).to(finish.target(), src), open: Vec::new(), serialized: tags::SERIALIZED_EMPTY, at: 0 };
-        p.document()?;
+        match start {
+            Start::Document => p.document()?,
+            Start::Element => p.element_fragment()?,
+        }
         match finish.finish(p.w) {
             Ok(done) => return Ok(done),
             Err(Redo(w)) => {
@@ -176,6 +191,50 @@ impl<'a> P<'a> {
         }
         self.close(root, self.src.len());
         Ok(())
+    }
+
+    /// One element alone, the root (decision 0466): read as inside a document, its end where the scanner ends it, with
+    /// no `html`, `head` or `body` implied around it. A text after it (another element, a comment) is refused: a
+    /// fragment's tape has one root. An element open at the end ends there where it may (a void element, `p`, …), at
+    /// the text's end less blanks.
+    fn element_fragment(&mut self) -> R<()> {
+        self.blanks()?;
+        if self.byte(self.at) != b'<' || !self.byte(self.at + 1).is_ascii_alphabetic() {
+            return self.refuse();
+        }
+        // `script` and `style` are kinds of their own (`script_element`, `style_element`), not an `element`.
+        let (_, ty) = self.name(self.at + 1)?;
+        if ty == tags::SCRIPT || ty == tags::STYLE {
+            return self.refuse();
+        }
+        let last = self.src.len() - self.src.iter().rev().take_while(|&&c| is_blank(c)).count();
+        loop {
+            if self.at >= last {
+                while let Some(o) = self.open.last() {
+                    if !tags::ends_at_eof(o.ty) {
+                        return self.refuse();
+                    }
+                    self.at = last;
+                    self.end_implicitly();
+                }
+                return Ok(());
+            }
+            match self.src[self.at] {
+                b'<' => self.tag()?,
+                b'&' => self.entity()?,
+                b'>' => return self.refuse(),
+                _ => self.text()?,
+            }
+            self.w.commit();
+            if self.open.is_empty() {
+                // The root ended: nothing but blanks may follow.
+                self.blanks()?;
+                return if self.at >= self.src.len() { Ok(()) } else { self.refuse() };
+            }
+            if self.at < last {
+                self.blanks()?;
+            }
+        }
     }
 
     /// At a `<`: a comment, a doctype, an end tag, or a start tag, after the implicit ends the

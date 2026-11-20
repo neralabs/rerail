@@ -25,6 +25,11 @@ fn kind_ids() -> &'static [Option<u16>] {
 /// `source`'s tape from the lean parser: `Err` where it refuses the file; `Ok(Err)` where the tape
 /// cannot be made.
 pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_html_lean::Refusal> {
+    encode_from(grammar, source, "document", budget).expect("a document is a start")
+}
+
+/// [`encode`] from the node kind `start` (decision 0466): `None` for a kind the parser does not start at.
+pub fn encode_from(grammar: &Grammar, source: &str, start: &str, budget: &dyn Fn() -> bool) -> Option<Result<Result<TapeImage, String>, rerail_html_lean::Refusal>> {
     let ids = kind_ids();
     let code_of = move |&key: &u32| -> Result<Code, String> {
         let (kind, _, _, extra) = rerail_html_lean::unkey(key);
@@ -35,13 +40,24 @@ pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Res
         }
         Ok(code)
     };
-    rerail_html_lean::tape_into(source.as_bytes(), &mut super::formats::lean(grammar, source, budget, code_of))
+    rerail_html_lean::tape_from_into(source.as_bytes(), start, &mut super::formats::lean(grammar, source, budget, code_of))
 }
 
 /// HTML's tree parser: the lean parser, standing in for tree-sitter-html where it reads the file.
 pub struct Lean;
 
 impl TreeParser for Lean {
+    fn starts(&self) -> &'static [&'static str] {
+        rerail_html_lean::STARTS
+    }
+
+    /// One element (decision 0466). Its scripts and styles are its `raw_text`: a fragment's tape is one image, and no
+    /// program is made from them (a rule asks for one by its own embed).
+    fn parse_from(&self, grammar: &Grammar, source: &str, start: &str, budget: &dyn Fn() -> bool) -> Option<Result<TapeImage, String>> {
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "lean HTML parse of a fragment".into());
+        encode_from(grammar, source, start, budget)?.ok()
+    }
+
     fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
         if !grammar.lang.embeds().is_empty() {
             return None;

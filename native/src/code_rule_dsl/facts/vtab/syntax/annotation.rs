@@ -7,11 +7,11 @@
 //!                                  `annotations`), nested ones included
 //! ```
 //!
-//! Its tree is decision 0055's guest: `parsed(s, "annotation", root)` asks for it (`corpus::guests` parses the string's
-//! value as `( … )`, the expression inside the parentheses its root), and a string Ruff's parser refuses has
-//! `string_annotation(s)` and no `parsed` row (its guest does not parse and is withheld). A string nested in an
-//! annotation (`"List['A']"`'s `'A'`) is a node of its outer annotation's guest: its row is made once that guest is a
-//! document of the batch, found by its range in the guest's text (one byte on, past the `(`).
+//! Its tree is a tape value (decision 0431): `parsed(s, "annotation", root)` asks for it, and `corpus::guests` parses
+//! the string's value as the `annotation` fragment, from a `type` (decision 0466), its root that `type`. A string the
+//! parser refuses has `string_annotation(s)` and no `parsed` row. A string nested in an annotation (`"List['A']"`'s
+//! `'A'`) is a node of its outer annotation's value: its row is made once that value is a document of the batch,
+//! found by its range in the value's text.
 
 use super::{Dialect, Document, Projected, Relation};
 use crate::code_rule_dsl::language::GrammarDialect;
@@ -158,8 +158,8 @@ impl Annotations {
             pending.retain(|(at, by_range)| {
                 let Some(nested) = self.nested.get(at).cloned() else { return true };
                 for n in nested {
-                    // The guest's text is the string's value in `( … )`.
-                    if let Some(&s) = by_range.get(&((n.start + 1) as u32, (n.end + 1) as u32)) {
+                    // The guest's text is the string's value, its positions the value's (decision 0466).
+                    if let Some(&s) = by_range.get(&(n.start as u32, n.end as u32)) {
                         self.hosts.push(s);
                         if !n.inner.is_empty() {
                             self.nested.insert(s, n.inner);

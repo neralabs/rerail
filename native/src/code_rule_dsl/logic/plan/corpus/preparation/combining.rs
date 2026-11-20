@@ -532,7 +532,8 @@ impl ProgramPass for FoldOwn<'_> {
         }
         let dialect = crate::code_rule_dsl::logic::plan::corpus::hiding::dialect_label;
         // `rr_in_<g>_<c>_…<orig>`, every `<g>` the run's own (as `Hide` names them: `g` with non-alphanumerics as `_`).
-        let grammars: Vec<&str> = ["annotation", label].into_iter().filter(|g| dialect(g) == label).collect();
+        // The run's language and its fragments (decision 0466).
+        let grammars: Vec<&str> = crate::code_rule_dsl::language::fragments().iter().map(|(n, ..)| *n).chain([label]).filter(|g| dialect(g) == label).collect();
         let own_mid = |mut mid: &str| -> bool {
             if mid.is_empty() {
                 return false;

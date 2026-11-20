@@ -2289,7 +2289,8 @@ roots(k) :- kind(s, "string"), parsed(s, "annotation", r), kind(r, k).
     // ("Li" "st"): each part is a string of its own, and the concatenation is List, from its first part's text.
     assert!(names.contains(&shown_row(&["Li", "5", "5"])), "{names:?}");
     assert_eq!(whole, [["List", "5", "5"]]);
-    assert_eq!(roots, [["identifier"], ["subscript"]]);
+    // Each root is a `type` (decision 0466 R5): what follows `x:` in a file.
+    assert_eq!(roots, [["type"]]);
     // 'Baz' inside "Opt['Baz']": round 2, through the annotation; `ident` does not see inside it.
     assert_eq!(nested, [["Baz"]]);
     assert!(!names.iter().any(|n| n[0].starts_with("Baz")), "{names:?}");
@@ -2298,7 +2299,8 @@ roots(k) :- kind(s, "string"), parsed(s, "annotation", r), kind(r, k).
 
 /// Decision 0431 §7 (it replaces Q30): a string a rule parses is a tape value, stored with its text behind the run,
 /// so the next run finds it by the text and parses nothing (R6). The host's source is stored, and so is the
-/// annotation's text as it is parsed (wrapped: `(List[int])`).
+/// annotation's text, as it is (no wrapper). Decision 0466 R6: its tape is stored under the fragment's own tag, and
+/// no tape of the text under Python's.
 #[test]
 fn a_run_stores_its_tape_values_by_their_text() {
     use sha2::Digest as _;
@@ -2313,7 +2315,13 @@ ident(x) :- kind(s, "string"), parsed(s, "annotation", _), guest_of(i, s), kind(
     let store = crate::content_store::ContentStore::open(&crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().unwrap()).unwrap();
     let key = |t: &str| crate::content_store::HashKey::from_sha256_digest(sha2::Sha256::digest(t.as_bytes()).into());
     assert!(store.source_by_hash(key(py)).unwrap().is_some(), "the host's source is stored");
-    assert!(store.source_by_hash(key("(List[int])")).unwrap().is_some(), "the tape value's text is stored");
+    let text = store.source_by_hash(key("List[int]")).unwrap().expect("the tape value's text is stored");
+    let (gv, fv) = (crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()));
+    let tag = |t: u8| i64::from(t);
+    let fragment = crate::code_rule_dsl::language::fragment_tag("annotation").unwrap();
+    let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python).unwrap();
+    assert!(store.tape_frames_for(&[text], tag(fragment), gv, fv).unwrap()[0].is_some(), "under the fragment's tag");
+    assert!(store.tape_frames_for(&[text], tag(python), gv, fv).unwrap()[0].is_none(), "not under Python's");
 }
 
 /// Decision 0431 R1: there are no guest documents. A program the grammar holds (an HTML file's scripts) is part of its

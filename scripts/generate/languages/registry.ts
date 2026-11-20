@@ -49,7 +49,9 @@ export const languageEntrySchema = z
     /** `dialects`: the embedded language's dialects the embedding gives, every one where absent; a language embeds itself only through dialects it names (Markdown's inline grammar). */
     embeds: z.array(z.object({ language: name, via: name, dialects: z.array(name).min(1).optional() }).strict()).optional(),
     /** Grammars of a part of a dialect (decision 0082): `name` is `dialect` parsed from `start`. The engine reads them; the host does not. */
-    fragments: z.array(z.object({ name, dialect: name, start: z.enum(["expression"]) }).strict()).optional(),
+    // A grammar of a part of a dialect: parsed from the node kind `start` by its hand-written parser (decision 0466),
+    // its tapes under a tag of its own.
+    fragments: z.array(z.object({ name, dialect: name, start: z.string().regex(/^[a-z][a-z0-9_]*$/), tapeTag: z.number().int().min(1).max(255) }).strict()).optional(),
   })
   .strict()
   .superRefine((entry, context) => {
@@ -83,6 +85,7 @@ function claimDialects({ file, entry }: RegistryEntry, claim: ClaimKey): void {
     for (const suffix of dialect.suffixes) claim("suffix", suffix, file);
     if (dialect.tapeTag !== undefined) claim("tape tag", String(dialect.tapeTag), file);
   }
+  for (const fragment of entry.fragments ?? []) claim("tape tag", String(fragment.tapeTag), file);
 }
 
 function embedProblems({ file, entry }: RegistryEntry, entries: readonly RegistryEntry[], ids: ReadonlySet<string>): string[] {

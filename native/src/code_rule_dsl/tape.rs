@@ -276,6 +276,18 @@ pub trait TreeParser: Send + Sync {
     /// it stopped at a limit before it read the file.
     fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>>;
 
+    /// The node kinds it parses a text from besides a whole file (decision 0466): a fragment's start.
+    fn starts(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// `source` parsed from the node kind `start` (one of `starts`), the tape's root one such node with none above
+    /// it: `None` where the parser refuses the text (there is no tree-sitter fallback for a fragment), `Some(Err)`
+    /// where the tape cannot be made.
+    fn parse_from(&self, _grammar: &Grammar, _source: &str, _start: &str, _budget: &dyn Fn() -> bool) -> Option<Result<TapeImage, String>> {
+        None
+    }
+
     /// Its own kinds, where its trees are not a tree-sitter grammar's.
     fn kinds(&self) -> Option<OwnTable> {
         None
@@ -340,6 +352,12 @@ pub fn install_parsers(registered: Vec<ParserImpl>) {
 pub fn tree_parser(dialect: GrammarDialect) -> Option<&'static dyn TreeParser> {
     let router = ROUTER.get()?;
     router.chosen.iter().find(|(lang, _)| *lang == dialect).map(|&(_, i)| router.registered[i].parser)
+}
+
+/// The node kinds `dialect`'s hand-written parser parses a fragment from (decision 0466): none for a dialect only
+/// tree-sitter parses.
+pub fn starts(dialect: GrammarDialect) -> &'static [&'static str] {
+    tree_parser(dialect).map_or(&[], |p| p.starts())
 }
 
 /// Every registered implementation, in registration order, and whether the router took it.
@@ -1535,6 +1553,24 @@ impl TapeImage {
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, tree.root_node().descendant_count() as u64);
         }
         Some(Self::encode(tree.root_node(), grammar, source, budget))
+    }
+
+    /// `source` parsed from the node kind `start` by `grammar`'s hand-written parser (decision 0466): `None` where its
+    /// dialect has no parser that starts there. A text the parser refuses is one `ERROR` node over it (`refused`):
+    /// no tree is made up for it, and a rule's `.on guest_error` sees it where it stands.
+    pub fn parse_from(grammar: &Grammar, source: &str, start: &str, budget: &impl Fn() -> bool) -> Option<Result<FileImage, String>> {
+        let parser = tree_parser(grammar.lang).filter(|p| p.starts().contains(&start))?;
+        let image = parser.parse_from(grammar, source, start, &budget).unwrap_or_else(|| Self::refused(grammar, source, budget));
+        Some(image.map(|image| FileImage::single(image, source)))
+    }
+
+    /// A refused fragment's tape (decision 0466): one `ERROR` node over the text less the blanks at its ends.
+    pub fn refused(grammar: &Grammar, source: &str, budget: &impl Fn() -> bool) -> Result<Self, String> {
+        let start = source.len() - source.trim_start().len();
+        let end = source.trim_end().len().max(start);
+        let kf = Code::error(0)?.kf();
+        let node = Pending { kf, parent: None, start: start as u32, length: (end - start) as u32, size: 1, extra: false, error: true, missing: false, kind_alias: None };
+        Self::finish(vec![node], Vec::new(), grammar, source, budget)
     }
 
     /// The documents of a tree-sitter tree of `source`: its tape, and the programs its embedders

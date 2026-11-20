@@ -5577,3 +5577,90 @@ fn scala_tapes_from_the_lean_parser_are_tree_sitters() {
         &["class A {\n", "def f( = 1\n", "val x = (1,\n"],
     );
 }
+
+/// Decision 0466 R2 against tree-sitter: a `type` fragment's tape is tree-sitter-python's `type` node of the same text
+/// written after `x: ` (positions less the prefix's bytes, its field gone), unions too, where the lean parser
+/// refuses such a file and tree-sitter reads it.
+#[test]
+fn a_type_fragment_is_tree_sitters_written_annotation() {
+    use crate::code_rule_dsl::tape::python_lean;
+    use rerail_tape_format::tape::Tape as _;
+    let grammar = Grammar::new(GrammarDialect::Python).unwrap();
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&GrammarDialect::Python.get_ts_language()).unwrap();
+    // A tape's nodes from `root` on, in either format: depth, kind, field, flags, classes and span, the span less
+    // `shift`, the root's field left out.
+    let plain = |image: &TapeImage, root: usize, shift: u64| -> String {
+        let t = image.tape();
+        let end = t.subtree_end(root);
+        let mut open: Vec<usize> = Vec::new();
+        let mut out = String::new();
+        for i in root..end {
+            while open.last().is_some_and(|&e| e <= i) {
+                open.pop();
+            }
+            let e = t.table().entry(t.code(i));
+            let field = if i == root || e.field == 0 { String::new() } else { format!(" {}:", grammar.field_name(e.field).unwrap_or("?")) };
+            let classes: Vec<&str> = e.classes.iter().map(|&c| grammar.kind_name(c).unwrap_or("?")).collect();
+            out.push_str(&format!("{}{}{field} {} {classes:?} [{}..{}]\n", "  ".repeat(open.len()), grammar.kind_name(e.kind).unwrap_or("?"), e.flags, t.start(i) - shift, t.end(i) - shift));
+            open.push(t.subtree_end(i));
+        }
+        out
+    };
+    for text in ["int", "List[int]", "Dict[str, List[int]]", "a.b.C", "Optional['A']", "Callable[[int], str]", "int | None", "List[int] | None", "Optional[A] | B[C]", "Literal[1, 'a']", "*Ts", "x: y"] {
+        let ours = python_lean::encode_from(&grammar, text, "type", &|| false).unwrap_or_else(|e| panic!("{text:?}: {e:?}")).unwrap();
+        let src = format!("x: {text}\n");
+        let tree = parser.parse(&src, None).unwrap();
+        assert!(!tree.root_node().has_error(), "{src:?}");
+        let theirs = TapeImage::encode(tree.root_node(), &grammar, &src, &|| false).unwrap().primary;
+        let t = theirs.tape();
+        let at = (0..t.len()).find(|&i| grammar.kind_name(t.table().entry(t.code(i)).kind) == Some("type")).expect("the annotation's type");
+        assert_eq!(plain(&ours, 0, 0), plain(&theirs, at, 3), "{text:?}");
+        assert_eq!(ours.tape().subtree_end(0), ours.tape().len(), "{text:?}: one root");
+    }
+}
+
+/// Decision 0466 R4: every fragment the registry declares starts at a node kind its dialect's hand-written parser
+/// parses from (`TreeParser::starts`): no fragment is left to tree-sitter, which has one start rule.
+#[test]
+fn every_fragment_starts_where_its_parser_starts() {
+    for &(name, dialect, start, _) in crate::code_rule_dsl::language::fragments() {
+        if !dialect.built() {
+            continue;
+        }
+        assert!(super::starts(dialect).contains(&start), "fragment {name}: {dialect:?}'s hand-written parser does not start at `{start}` (it starts at {:?})", super::starts(dialect));
+    }
+}
+
+/// Decision 0466 R1 through the router: a JSX fragment's tape is one `jsx_element` over its text, read by the lean
+/// parser; a text it refuses is one `ERROR` over it less blanks (no tree made up); TypeScript starts at no element.
+#[test]
+fn a_fragment_is_parsed_from_its_start_by_its_parser() {
+    use rerail_tape_format::tape::Tape as _;
+    let js = Grammar::new(GrammarDialect::JavaScript).unwrap();
+    let root = |image: &FileImage| {
+        let t = image.primary.tape();
+        assert_eq!(t.subtree_end(0), t.len(), "one root");
+        let e = t.table().entry(t.code(0));
+        (if e.flags & CODE_ERROR != 0 { "ERROR" } else { js.kind_name(e.kind).unwrap() }, t.start(0), t.end(0))
+    };
+    let image = TapeImage::parse_from(&js, " <a>{b}</a> ", "jsx_element", &|| false).unwrap().unwrap();
+    assert_eq!(root(&image), ("jsx_element", 1, 11));
+    let image = TapeImage::parse_from(&js, " <a>{b} ", "jsx_element", &|| false).unwrap().unwrap();
+    assert_eq!(root(&image), ("ERROR", 1, 7));
+    let ts = Grammar::new(GrammarDialect::TypeScript).unwrap();
+    assert!(TapeImage::parse_from(&ts, "<a></a>", "jsx_element", &|| false).is_none());
+    let py = Grammar::new(GrammarDialect::Python).unwrap();
+    assert!(TapeImage::parse_from(&py, "int", "expression", &|| false).is_none(), "a start no parser lists");
+}
+
+/// Decision 0466 R1 for HTML: an element alone is one `element` over its text, with no `document`, `html` or `body`.
+#[test]
+fn an_html_fragment_is_one_element() {
+    use rerail_tape_format::tape::Tape as _;
+    let html = Grammar::new(GrammarDialect::Html).unwrap();
+    let image = TapeImage::parse_from(&html, "\n<li>a <b>c</b></li>\n", "element", &|| false).unwrap().unwrap();
+    let t = image.primary.tape();
+    assert_eq!(t.subtree_end(0), t.len(), "one root");
+    assert_eq!((html.kind_name(t.table().entry(t.code(0)).kind), t.start(0), t.end(0)), (Some("element"), 1, 20));
+}

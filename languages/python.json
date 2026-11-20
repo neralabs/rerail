@@ -21,5 +21,5 @@
     "formatArgs": "supported"
   },
   "suppressions": ["noqa", "nosec"],
-  "fragments": [{ "name": "annotation", "dialect": "python", "start": "expression" }]
+  "fragments": [{ "name": "annotation", "dialect": "python", "start": "type", "tapeTag": 30 }]
 }

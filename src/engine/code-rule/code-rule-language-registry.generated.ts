@@ -35,7 +35,8 @@ export const LANGUAGE_REGISTRY = /* registry */ [
       {
         "name": "annotation",
         "dialect": "python",
-        "start": "expression"
+        "start": "type",
+        "tapeTag": 30
       }
     ]
   },
@@ -117,6 +118,14 @@ export const LANGUAGE_REGISTRY = /* registry */ [
       "eslint",
       "oxlint",
       "biome"
+    ],
+    "fragments": [
+      {
+        "name": "jsx",
+        "dialect": "javascript",
+        "start": "jsx_element",
+        "tapeTag": 31
+      }
     ]
   },
   {
@@ -468,7 +477,29 @@ export const LANGUAGE_REGISTRY = /* registry */ [
       "calls": "not-supported-yet",
       "formatArgs": "not-supported-yet"
     },
-    "suppressions": []
+    "suppressions": [],
+    "embeds": [
+      {
+        "language": "javascript",
+        "via": "raw-text"
+      },
+      {
+        "language": "json",
+        "via": "raw-text"
+      },
+      {
+        "language": "css",
+        "via": "raw-text"
+      }
+    ],
+    "fragments": [
+      {
+        "name": "html-element",
+        "dialect": "html",
+        "start": "element",
+        "tapeTag": 32
+      }
+    ]
   },
   {
     "format": "rerail.language/v1",

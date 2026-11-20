@@ -5571,3 +5571,17 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
     (`combined_programs_see_guests_by_their_own_policy`).
 - **Done when**: no round outside the fixpoint; a file's programs read from its stored tape; the setting's meaning
   decided.
+
+### Q269. A fragment is parsed from a node kind (decision 0466)
+
+- **Asked** (2026-11-19, the user): "we need to allow a parse to start from a given node type ... a Python annotation
+  is not a module. It's a type. A JSX document doesn't start with a <html> tag"; tree-sitter-only dialects: "Hand-written
+  parsers only". Before 0431's language-declared embeds at known places (the user's choice 2 for HTML in a string).
+- **Steps**: R1–R7's tests; the parsers' `STARTS` and `parse_from` (Python `type`, TSX `jsx_element`, HTML
+  `element`); the registry's fragment start and tag; the engine's fragment parse (no wrapper, no `wrapped_root`); the
+  libraries' rules over a `type` root; PostHog's findings.
+- **Done when**: R1–R7 hold and PostHog's findings are unchanged or each change is named.
+- **Done** (2026-11-19). R1–R7 hold (0466 "Tests"). The three parsers start at `type`, `jsx_element` /
+  `jsx_self_closing_element` and `element`. A refused text is one `ERROR` node, so `.on guest_error` still sees it.
+  The libraries' rules needed no change: `annotation`, `parsed_in` and `ann_strip` already read a `type` root.
+  PostHog on the CPU is unchanged: 29,747 findings, fa0efeaed6ff.

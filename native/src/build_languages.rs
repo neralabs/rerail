@@ -78,18 +78,23 @@ struct Entry {
     fragments: Vec<Fragment>,
 }
 
-/// A fragment grammar: `name`, as a rule's `embed`, `sub_tape` or `parsed` names it, is `dialect` parsed from
-/// `start`. `expression`: the text inside a written `( … )`, whose root is the expression.
+/// A fragment grammar: `name`, as a rule's `sub_tape` or `parsed` names it, is `dialect` parsed from the node kind
+/// `start` by the dialect's hand-written parser (decision 0466): its tape's root is one `start` node, and its tapes
+/// are stored under `tapeTag`, never a dialect's. That the parser starts there is the engine's test
+/// (`every_fragment_starts_where_its_parser_starts`): the parsers' start lists are theirs, not the registry's.
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct Fragment {
     name: String,
     dialect: String,
     start: String,
+    tape_tag: u8,
 }
 
-/// The start symbols a fragment may name.
-const FRAGMENT_STARTS: &[&str] = &["expression"];
+/// Whether `kind` is a node kind's name: lowercase letters, digits and underscores, a letter first.
+fn is_kind_name(kind: &str) -> bool {
+    kind.starts_with(|c: char| c.is_ascii_lowercase()) && kind.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
 
 #[derive(Clone, Copy, Deserialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
@@ -456,8 +461,8 @@ fn validate_entry(name: &str, stem: &str, entry: &Entry, vendored: &[&str]) {
             fragment.dialect
         );
         assert!(
-            FRAGMENT_STARTS.contains(&fragment.start.as_str()),
-            "{name}: fragment {} starts at `{}`, which is not one of {FRAGMENT_STARTS:?}",
+            is_kind_name(&fragment.start),
+            "{name}: fragment {} starts at `{}`, which is not a node kind's name",
             fragment.name,
             fragment.start
         );
@@ -518,12 +523,15 @@ fn validate_registry(entries: &[(String, Entry)]) {
             }
         }
     }
-    // A fragment's name is a grammar name beside the dialects' labels: unique among both.
+    // A fragment's name is a grammar name beside the dialects' labels: unique among both. Its tape tag is one too.
     let mut grammars: BTreeMap<&str, &str> = labels.iter().map(|(label, (name, _))| (*label, name.as_str())).collect();
     for (name, entry) in entries {
         for fragment in &entry.fragments {
             if let Some(other) = grammars.insert(fragment.name.as_str(), name.as_str()) {
                 panic!("{name}: fragment {} is also {other}'s dialect label or fragment", fragment.name);
+            }
+            if let Some(other) = tags.insert(fragment.tape_tag, name) {
+                panic!("{name}: tape tag {} is also {other}'s; a tape tag is never reused", fragment.tape_tag);
             }
         }
         for embed in &entry.embeds {
@@ -766,11 +774,11 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
     }
     out.push_str("];\n\n");
 
-    out.push_str("/// The registry's fragment grammars (decision 0082): name, dialect, start symbol.\n");
-    out.push_str("const FRAGMENTS: &[(&str, GrammarDialect, &str)] = &[\n");
+    out.push_str("/// The registry's fragment grammars (decisions 0082, 0466): name, dialect, start kind, tape tag.\n");
+    out.push_str("const FRAGMENTS: &[(&str, GrammarDialect, &str, u8)] = &[\n");
     for entry in &supported {
         for fragment in &entry.fragments {
-            let _ = writeln!(out, "    ({:?}, {}, {:?}),", fragment.name, variant(&fragment.dialect), fragment.start);
+            let _ = writeln!(out, "    ({:?}, {}, {:?}, {}),", fragment.name, variant(&fragment.dialect), fragment.start, fragment.tape_tag);
         }
     }
     out.push_str("];\n\n");
@@ -1176,6 +1184,31 @@ mod tests {
         let generated = Registry::new("embeds", &[one, two]).generate();
         assert!(generated.contains("pub enum Via {\n    CompiledView,\n"));
         assert!(generated.contains("Self::One => &[(Via::CompiledView, GrammarDialect::Two)],"));
+    }
+
+    /// Decision 0466: a fragment starts at a node kind and has a tape tag of its own, which no dialect's is.
+    #[test]
+    fn a_fragment_names_a_start_kind_and_a_tag_of_its_own() {
+        let mut one = supported("one", ".one", 1);
+        one["fragments"] = json!([{ "name": "one-type", "dialect": "one", "start": "type", "tapeTag": 2 }]);
+        let generated = Registry::new("fragment", &[one]).generate();
+        assert!(generated.contains("(\"one-type\", GrammarDialect::One, \"type\", 2),"), "{generated}");
+    }
+
+    #[test]
+    #[should_panic(expected = "tape tag 1 is also")]
+    fn a_fragment_does_not_share_a_dialects_tag() {
+        let mut one = supported("one", ".one", 1);
+        one["fragments"] = json!([{ "name": "one-type", "dialect": "one", "start": "type", "tapeTag": 1 }]);
+        Registry::new("fragment-tag", &[one]).generate();
+    }
+
+    #[test]
+    #[should_panic(expected = "which is not a node kind's name")]
+    fn a_fragment_starts_at_a_kind_name() {
+        let mut one = supported("one", ".one", 1);
+        one["fragments"] = json!([{ "name": "one-type", "dialect": "one", "start": "Type!", "tapeTag": 2 }]);
+        Registry::new("fragment-start", &[one]).generate();
     }
 
     /// Markdown's inline grammar (decision 0431 §4): a language embeds a dialect of its own it names, and a dialect

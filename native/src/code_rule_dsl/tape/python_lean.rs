@@ -44,25 +44,38 @@ fn ids() -> Option<&'static Ids> {
 /// `source`'s tape from the lean parser: `Err` where it refuses the file; `Ok(Err)` where the tape
 /// cannot be made.
 pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_python_lean::Refusal> {
+    encode_from(grammar, source, "module", budget)
+}
+
+/// [`encode`] from the node kind `start` (decision 0466).
+pub fn encode_from(grammar: &Grammar, source: &str, start: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_python_lean::Refusal> {
     let Some(ids) = ids() else {
         return Ok(Err("tree-sitter-python lacks a kind or field the lean parser names".into()));
     };
     let code_of = move |&key: &u32| -> Result<Code, String> {
         let (kind, field, class, extra) = rerail_python_lean::unkey(key);
-        let kind = ids.kinds[usize::from(kind)];
-        let mut code = Code::plain(kind, ids.fields[usize::from(field)], &ids.classes[usize::from(class)])?;
+        let mut code = Code::plain(ids.kinds[usize::from(kind)], ids.fields[usize::from(field)], &ids.classes[usize::from(class)])?;
         if extra {
             code.flags |= CODE_EXTRA;
         }
         Ok(code)
     };
-    rerail_python_lean::tape_into(source.as_bytes(), &mut super::formats::lean(grammar, source, budget, code_of))
+    rerail_python_lean::tape_from_into(source.as_bytes(), start, &mut super::formats::lean(grammar, source, budget, code_of))
 }
 
 /// Python's tree parser: the lean parser, standing in for tree-sitter-python where it reads the file.
 pub struct Lean;
 
 impl TreeParser for Lean {
+    fn starts(&self) -> &'static [&'static str] {
+        rerail_python_lean::STARTS
+    }
+
+    fn parse_from(&self, grammar: &Grammar, source: &str, start: &str, budget: &dyn Fn() -> bool) -> Option<Result<TapeImage, String>> {
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "lean Python parse of a fragment".into());
+        encode_from(grammar, source, start, budget).ok()
+    }
+
     fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
         if !grammar.lang.embeds().is_empty()
             || !matches!(crate::code_rule_dsl::language::base(crate::code_rule_dsl::language::Family::of(grammar.lang)).parse_input(source), std::borrow::Cow::Borrowed(_))
