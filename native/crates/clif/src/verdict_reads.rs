@@ -1,5 +1,5 @@
 //! A text test's verdicts in the one rolling cache (decision 0478 step 2d), written once in CLIF for the host (the
-//! blocks crate's `generated_reads.rs`), the kernels (`relation_reads.metal`) and the JIT.
+//! blocks crate's `generated_reads.rs`), the kernels (`<ukl/reads/relation.h>`) and the JIT.
 //!
 //! An entry holds 64 symbols of one test (the user's choice, 2026-11-19): its key is `(test + 1) << 32 | symbol >> 6`,
 //! its payload two masks of 64 bits, the symbols known to pass (`YES`) and known to fail (`NO`), each a pair of u32s.

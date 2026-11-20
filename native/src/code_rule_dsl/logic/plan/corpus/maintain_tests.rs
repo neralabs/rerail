@@ -90,6 +90,9 @@ impl Session {
         let out = self.dir.join("out-kept");
         let _ = std::fs::remove_dir_all(&out);
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(self.dir.join("kept-frames.sqlite")));
+        // The counts are the run's (decision 0441): read in a run of this test's own, which the corpus run joins, so
+        // they include those of its loops' halves another of the pool's threads steals (`rerail_context::inside_pool`).
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         let (before, levels) = (shape::now(), maintain::strata_by_levels());
         let report = super::run(&self.program, &self.dir.join("src"), None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
         let (shape, by_levels) = (shape::since(before), maintain::strata_by_levels() - levels);

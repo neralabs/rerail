@@ -204,7 +204,7 @@ fn inner_needs(f: &RrFile, lits: &[LitAt], bound: &BTreeSet<String>) -> BTreeSet
 }
 
 /// Clause `c`'s body, read off its tape.
-fn body_of(f: &RrFile, c: u32) -> Vec<LitAt> {
+pub fn body_of(f: &RrFile, c: u32) -> Vec<LitAt> {
     f.tape().get(c, Field::Body).map_or_else(Vec::new, |b| f.body_at(b, 0))
 }
 
@@ -400,36 +400,38 @@ fn tarjan(nodes: &BTreeSet<String>, graph: &BTreeMap<String, BTreeSet<String>>) 
     out
 }
 
+/// Relations in a clause's literals `lits`, with nested groups' and aggregate bodies'.
+pub fn clause_reads(f: &RrFile, lits: &[LitAt], out: &mut Vec<String>) {
+    fn term(f: &RrFile, t: &At, out: &mut Vec<String>) {
+        match f.tv(t) {
+            T::Agg { body, .. } => clause_reads(f, &body, out),
+            T::Bin { l, r, .. } => {
+                term(f, &l, out);
+                term(f, &r, out);
+            }
+            T::Call { args, .. } => args.iter().for_each(|a| term(f, a, out)),
+            _ => {}
+        }
+    }
+    for l in lits {
+        match f.lit(l) {
+            L::Group { alts, .. } => alts.iter().for_each(|a| clause_reads(f, a, out)),
+            L::Atom { rel, args, .. } => {
+                out.push(rel);
+                args.iter().for_each(|a| term(f, a, out));
+            }
+            L::Cmp { l, r, .. } => {
+                term(f, &l, out);
+                term(f, &r, out);
+            }
+            L::Pattern { .. } => {}
+        }
+    }
+}
+
 /// Relations a program's rules read that none of its files declares, nor the lowering makes (its built-ins): the
 /// syntax-level form of `lowering_tail::Declared`, which a run and check-rr apply to the lowered program.
 pub fn undeclared(statements: &[&Stmt]) -> Vec<String> {
-    fn reads(f: &RrFile, lits: &[LitAt], out: &mut Vec<String>) {
-        fn term(f: &RrFile, t: &At, out: &mut Vec<String>) {
-            match f.tv(t) {
-                T::Agg { body, .. } => reads(f, &body, out),
-                T::Bin { l, r, .. } => {
-                    term(f, &l, out);
-                    term(f, &r, out);
-                }
-                T::Call { args, .. } => args.iter().for_each(|a| term(f, a, out)),
-                _ => {}
-            }
-        }
-        for l in lits {
-            match f.lit(l) {
-                L::Group { alts, .. } => alts.iter().for_each(|a| reads(f, a, out)),
-                L::Atom { rel, args, .. } => {
-                    out.push(rel);
-                    args.iter().for_each(|a| term(f, a, out));
-                }
-                L::Cmp { l, r, .. } => {
-                    term(f, &l, out);
-                    term(f, &r, out);
-                }
-                L::Pattern { .. } => {}
-            }
-        }
-    }
     let mut declared = BTreeSet::new();
     for s in statements {
         if let Some(S::Decl(name) | S::Edit(name) | S::Violation(name)) = s.what() {
@@ -448,7 +450,7 @@ pub fn undeclared(statements: &[&Stmt]) -> Vec<String> {
             continue;
         }
         let mut read = Vec::new();
-        reads(f, &body_of(f, n), &mut read);
+        clause_reads(f, &body_of(f, n), &mut read);
         let head = s.heads().first().map_or("", |h| *h).to_owned();
         for rel in read.into_iter().filter(|r| !declared.contains(r) && !built_in(r)) {
             out.insert(format!("line {}: relation {rel} is read by the rule for {head} and not declared", s.line()));

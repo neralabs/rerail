@@ -1953,6 +1953,42 @@ fn program_order(path: &Path) -> Result<(Vec<PathBuf>, Vec<LibraryFile>), Error>
     Ok((order, files))
 }
 
+/// Index authored clause heads for the current CLI profile. Shared library names survive
+/// combination; private heads also have the policy prefix assigned by the combiner.
+pub fn profile_join_sources(paths: &[&Path]) -> Option<super::profile::author_joins::Sources> {
+    use super::profile::author_joins::{Locations, Sources};
+    if !super::profile::on() { return None; }
+    let mut locations = Locations::default();
+    let mut indexed = BTreeSet::new();
+    for (i, root) in paths.iter().enumerate() {
+        if root.extension().is_some_and(|e| e == "json") { continue; }
+        let own = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        let files = program_order(&own).map(|(order, _)| order).unwrap_or_else(|_| vec![own.clone()]);
+        for file in files {
+            if file != own && !indexed.insert(file.clone()) { continue; }
+            let Ok((rr_file, _)) = read_shared(&file) else { continue };
+            for st in rr_file.statements().iter().filter(|st| st.what() == Some(S::Clause)) {
+                let (f, n) = (st.file(), st.node());
+                let body = check::body_of(f, n);
+                if body.is_empty() {
+                    continue;
+                }
+                let mut reads = Vec::new();
+                check::clause_reads(f, &body, &mut reads);
+                let line = st.line();
+                for name in st.heads() {
+                    let key = if file == own && paths.len() > 1 { format!("p{i}_{name}") } else { name.to_owned() };
+                    for read in &reads {
+                        locations.reads.entry((key.clone(), read.clone())).or_default().insert((file.clone(), line));
+                    }
+                    locations.definitions.entry(key).or_insert_with(|| (name.to_owned(), BTreeSet::new())).1.insert((file.clone(), line));
+                }
+            }
+        }
+    }
+    Some(Sources::enter(locations))
+}
+
 /// A file and everything it includes, each once, includes first: (path, statements without the
 /// includes, the included files' `.output`s left out); and every library file read or probed, in reading order.
 pub fn program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {

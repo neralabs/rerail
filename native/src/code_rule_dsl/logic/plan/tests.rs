@@ -2786,7 +2786,7 @@ fn a_probe_on_several_columns_reads_a_combinations_rows() {
 fn live_statistics_invalidate_only_changed_distribution_slots() {
     let p=parse_version(".decl a(x:number,y:number)\n").unwrap();
     let mut model=Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: Default::default()};
-    let sample=|key| LiveRel {n:10,delta:2,ndv:vec![10,1],sq:vec![10,100],freq:vec![(1,HashMap::from([(Constant::Int(key),10)]))]};
+    let sample=|key| LiveRel {n:10,delta:2,ndv:vec![10,1],sq:vec![10,100],freq:vec![(1,HashMap::from([(Constant::Int(key),10)]))],keys:Vec::new(),counts:Vec::new()};
     assert_eq!(live_stats(&mut model,"a",sample(1)),vec![0,1,2]);
     assert!(live_stats(&mut model,"a",sample(1)).is_empty());
     assert_eq!(live_stats(&mut model,"a",sample(2)),vec![2],"equal counts and fanouts with new keys must invalidate");
@@ -3681,4 +3681,67 @@ fn a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it() {
     assert!(prep.0.contains_key(&line("o", 0, None)), "`o` reads the inputs alone");
     assert!(prep.0.contains_key(&line("r", 0, None)), "`o`'s inferred facts size it");
     assert!(!prep.0.contains_key(&line("z", 0, None)), "`anc` is not sized: `z` is not prepared");
+}
+
+/// Decision 0506: where both columns' keys are kept, a probe hits as often as the keys they share say. Containment
+/// takes the probed column's values as all present where it has as many distinct values as the binding (1,000
+/// each here), so a join of disjoint values was priced as if each probe hit; their filters say none does.
+#[test]
+fn kept_keys_price_a_probe_by_the_keys_two_columns_share() {
+    use crate::code_rule_dsl::logic::bloom::Keys;
+    let p = parse(".decl a(x:number,y:number)\n.decl b(y:number,z:number)\n.decl c(z:number,w:number)\n.decl out(x:number,w:number)\nout(x,w) :- a(x,y), b(y,z), c(z,w).\n.output out\n").unwrap();
+    let derived: HashSet<String> = ["a", "b", "c", "out"].into_iter().map(str::to_owned).collect();
+    let work = |keys: Option<(Keys, Keys)>| {
+        let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: derived.clone().into()};
+        for (rel, rows, ndv, fan) in [("a", 10_000.0, [10_000.0, 1_000.0], [1.0, 10.0]), ("b", 1_000.0, [1_000.0, 1_000.0], [1.0, 1.0]), ("c", 1_000.0, [1_000.0, 1_000.0], [1.0, 1.0])] {
+            model.stats.card.insert(rel, rows);
+            for (c, (ndv, fan)) in ndv.into_iter().zip(fan).enumerate() {
+                model.ndv.insert((rel, c), ndv);
+                model.stats.fan.insert((rel, c), fan);
+            }
+        }
+        if let Some((a, b)) = keys {
+            model.stats.keys.insert(("a", 1), a);
+            model.stats.keys.insert(("b", 0), b);
+        }
+        let ((_, work, _), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, 0), None).unwrap();
+        work
+    };
+    let containment = work(None);
+    let same = work(Some((Keys::of(0..1_000), Keys::of(0..1_000))));
+    let apart = work(Some((Keys::of(0..1_000), Keys::of(5_000..6_000))));
+    assert!((same / containment - 1.0).abs() < 0.1, "the same keys price as containment does: {same} against {containment}");
+    assert!(apart < 0.5 * containment, "keys two columns do not share are probes that miss: {apart} against {containment}");
+}
+
+/// Decision 0506: a join of two columns skewed on the same few keys, priced by their sketches' counters (`join_size`):
+/// the rows the two columns join, whichever is probed. Their fanouts and distinct values price a probe of `b` by `a`'s
+/// rows at a tenth of what it makes (the keys both hold heavy are 1% of `a`'s distinct values, and most of its rows).
+#[test]
+fn join_counts_price_a_join_of_two_skewed_columns_by_its_rows() {
+    use crate::code_rule_dsl::logic::join_size::JoinCounts;
+    let p = parse(".decl a(x:number,y:number)\n.decl b(y:number,z:number)\n.decl out(x:number,z:number)\nout(x,z) :- a(x,y), b(y,z).\n.output out\n").unwrap();
+    let derived: HashSet<String> = ["a", "b", "out"].into_iter().map(str::to_owned).collect();
+    // `a.y`: 1,000 rows of each of 5 keys and 5,000 of one each; `b.y`: 100 of each of the 5, and 500 others.
+    let ay: Vec<i64> = (0..5_000).map(|i| i % 5).chain(1_000..6_000).collect();
+    let by: Vec<i64> = (0..500).map(|i| i % 5).chain(10_000..10_500).collect();
+    let joined = 5.0 * 1_000.0 * 100.0;
+    let last = |counts: bool| {
+        let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: derived.clone().into()};
+        for (rel, ys, y) in [("a", &ay, 1), ("b", &by, 0)] {
+            let c = JoinCounts::of(ys.iter().copied());
+            model.stats.card.insert(rel, c.rows);
+            model.ndv.insert((rel, y), 5.0 + (ys.len() / 2) as f64);
+            model.stats.fan.insert((rel, y), c.f2 / c.rows);
+            model.ndv.insert((rel, 1 - y), c.rows);
+            model.stats.fan.insert((rel, 1 - y), 1.0);
+            if counts {
+                model.stats.counts.insert((rel, y), std::sync::Arc::new(c));
+            }
+        }
+        *model.plan_rule_step_rows(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, 0), None).unwrap().1.last().unwrap()
+    };
+    let (with, without) = (last(true), last(false));
+    assert!((with / joined - 1.0).abs() < 0.25, "priced by the counters: {with} rows against {joined}");
+    eprintln!("a join of skewed columns: {with} rows priced by the counters, {without} without, {joined} made");
 }

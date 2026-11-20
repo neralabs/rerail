@@ -1124,6 +1124,23 @@ fn owner_col(rel: &InRel, c: usize) -> usize {
     }
 }
 
+/// The screen of a stage of `rel` (decision 0506): the kept filter of the first of `d`'s keys' columns (the
+/// relation's own, before `narrowed`) whose sketch keeps one, where its sketches count every row (as the CPU's screen
+/// borrows it: `join_filter`), bound where it lies in its block. `None` for a view's rows, or no such key.
+fn screen_of(rel: &InRel, d: &mj::Stage) -> Result<Option<mj::Screen>, String> {
+    if !crate::code_rule_dsl::logic::bloom::kept_keys_read() || !matches!(d.mode, mj::JOIN | mj::SEMI | mj::ANTI | mj::AGG | mj::WITNESS) {
+        return Ok(None);
+    }
+    for k in 0..(d.nkeys as usize).min(mj::MAX_KEYS) {
+        let Some(kept) = rel.kept_keys(d.key_rcol[k] as usize) else { continue };
+        let b = kept.in_block();
+        let device = rerail_accel::gpu::join::device()?;
+        let held = rerail_accel::gpu::join::Held::kept(b.facts().block.device_buffer(device)?, Box::new(kept.clone()));
+        return Ok(Some(mj::Screen { held: Rc::new(held), at: u32::try_from(b.at()).map_err(|_| "a filter past 4 GB of its block")?, key: k as u32 }));
+    }
+    Ok(None)
+}
+
 /// The columns of the relation an atom's stage reads (`d`'s keys, column tests, binds, row program and fold): the
 /// device holds only these of it (decision 0277).
 fn right_cols(d: &mj::Stage) -> Vec<usize> {
@@ -1205,6 +1222,8 @@ struct Run<'p> {
     places: Vec<Option<Vec<u32>>>,
     /// Per witness stage, its probes' relations, sorts and descriptors (their columns where the copies hold them).
     probes: Vec<Option<Vec<(Rc<mj::DevRel>, Option<Rc<mj::DevIndex>>, mj::Stage)>>>,
+    /// Each stage's screen: its relation's kept filter of a key's column (`screen_of`, decision 0506).
+    screens: Vec<Option<mj::Screen>>,
     /// The head's distinct rows (a column per slot of `uniq_cols`), made on the device after the last stage; their
     /// count is `totals`' last word.
     uniq: Option<mj::Table>,
@@ -1489,7 +1508,7 @@ impl<'p> Run<'p> {
         if uniq_cols.len() > 16 {
             return Err("a head of more than 16 slots".into());
         }
-        Ok(Run { plan: Rc::new(plan.clone()), _plan: std::marker::PhantomData, io, tables, caps, totals, counters, counter, rels: vec![None; plan.stages.len()], places: vec![None; plan.stages.len()], probes: vec![None; plan.stages.len()], uniq: None, uniq_cols, arena: None })
+        Ok(Run { plan: Rc::new(plan.clone()), _plan: std::marker::PhantomData, io, tables, caps, totals, counters, counter, rels: vec![None; plan.stages.len()], places: vec![None; plan.stages.len()], probes: vec![None; plan.stages.len()], screens: vec![None; plan.stages.len()], uniq: None, uniq_cols, arena: None })
     }
 
     /// The space for stage `k`'s rows out, from its input's space.
@@ -1520,6 +1539,7 @@ impl<'p> Run<'p> {
                     match (&s.kind, &self.rels[k]) {
                         (Kind::Atom { rel, cols }, None) => {
                             let (dev, ix, place) = resident(rel, &right_cols(&s.desc), cols, batch, rep)?;
+                            self.screens[k] = screen_of(rel, &s.desc)?;
                             self.rels[k] = Some((dev, ix));
                             self.places[k] = Some(place);
                         }
@@ -1530,6 +1550,7 @@ impl<'p> Run<'p> {
                                 need.extend((0..b.nkeys as usize).filter(|&q| b.key_kind[q] == mj::ACOL).map(|q| b.key_slot[q] as usize));
                             }
                             let (dev, ix, place) = resident(rel, &need, cols, batch, rep)?;
+                            self.screens[k] = screen_of(rel, &s.desc)?;
                             let mut probes = Vec::new();
                             for (r, bcols, b) in rest {
                                 let (bdev, bix, bplace) = resident(r, &right_cols(b), bcols, batch, rep)?;
@@ -1589,9 +1610,9 @@ impl<'p> Run<'p> {
                         let desc = self.places[k].as_deref().map_or(s.desc, |at| narrowed(s.desc, at));
                         if let Some(probes) = &self.probes[k] {
                             let rest: Vec<(mj::Stage, &mj::DevRel, Option<&mj::DevIndex>)> = probes.iter().map(|(r, ix, b)| (*b, &**r, ix.as_deref())).collect();
-                            batch.witness(desc, left, right.ok_or("a witness with no relation")?, &rest, i, o, &self.totals, &out)
+                            batch.witness(desc, left, right.ok_or("a witness with no relation")?, self.screens[k].as_ref(), &rest, i, o, &self.totals, &out)
                         } else {
-                            batch.stage(desc, left, right, i, o, &self.totals, &self.counters, self.counter[k], &out)
+                            batch.stage(desc, left, right, self.screens[k].as_ref(), i, o, &self.totals, &self.counters, self.counter[k], &out)
                         }
                     }
                     .map_err(|e| format!("{e:?}: a stage's space for {cap_in} rows"))?;
@@ -1887,6 +1908,7 @@ fn resume_(ticket: u64, rules: &[(&Plan, &JoinRule, usize)], store: &Store, name
         rep.dispatches += d.dispatches;
         rep.gpu_seconds += d.gpu_seconds;
         rep.sized += d.sized;
+        rep.screened += d.screened;
     }
     rep.waved = 1;
     let c0 = thread_cpu();
@@ -1951,6 +1973,7 @@ fn finish_timed(batch: &mut mj::Batch, rep: &mut Report) -> Result<(), String> {
     rep.dispatches += done.dispatches;
     rep.gpu_seconds += done.gpu_seconds;
     rep.sized += done.sized;
+    rep.screened += done.screened;
     Ok(())
 }
 
@@ -2216,7 +2239,7 @@ fn place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], store: &Sto
                 let fresh_rows = mj::Table::new(k, cap).map_err(|e| format!("{e:?}"))?;
                 let counters = mj::Words::zeroed(1).map_err(|e| format!("{e:?}"))?;
                 // A stage reads its bindings' count from its in-slot: the union's is the cap (slot 0).
-                b.stage(d, &rows, Some((&dev, Some(&ix))), slot.unwrap_or(0), 2, &words, &counters, None, &fresh_rows).map_err(|e| format!("{e:?}"))?;
+                b.stage(d, &rows, Some((&dev, Some(&ix))), None, slot.unwrap_or(0), 2, &words, &counters, None, &fresh_rows).map_err(|e| format!("{e:?}"))?;
                 hold.push(rows);
                 hold_rels.push((dev, ix));
                 (fresh_rows, Some(2))
@@ -2329,6 +2352,7 @@ fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: &Inte
         rep.dispatches += done.dispatches;
         rep.gpu_seconds += done.gpu_seconds;
         rep.sized += done.sized;
+        rep.screened += done.screened;
         let mut again = Vec::new();
         for &k in &pending {
             let r = runs[k].as_mut().expect("a run");
@@ -2561,7 +2585,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
                     d.nkeys = k as u32;
                     let fresh_rows = mj::Table::new(k, cap).map_err(|e| format!("{e:?}"))?;
                     let counters = mj::Words::zeroed(1).map_err(|e| format!("{e:?}"))?;
-                    batch.stage(d, &distinct, Some((&total, ix.as_deref())), 1, 2, &words, &counters, None, &fresh_rows).map_err(|e| format!("{e:?}"))?;
+                    batch.stage(d, &distinct, Some((&total, ix.as_deref())), None, 1, 2, &words, &counters, None, &fresh_rows).map_err(|e| format!("{e:?}"))?;
                     news.push((h, fresh_rows, words, true));
                     hold.push(distinct);
                 }
@@ -2577,6 +2601,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         rep.dispatches += done.dispatches;
         rep.gpu_seconds += done.gpu_seconds;
         rep.sized += done.sized;
+        rep.screened += done.screened;
         drop(ran);
         drop((hold, old_maps));
         // The new rows onto each relation, and as its next delta; a relation with none has no delta.
@@ -2650,6 +2675,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         rep.dispatches += done.dispatches;
         rep.gpu_seconds += done.gpu_seconds;
         rep.sized += done.sized;
+        rep.screened += done.screened;
         if !any {
             break;
         }

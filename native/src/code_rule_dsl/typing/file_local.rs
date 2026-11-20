@@ -187,6 +187,7 @@ mod on_version;
 pub use on_version::FileLocal;
 mod passes;
 pub use passes::{FactorizeExports, Locate, MoveCrossFile, PushLocalJoins, RequestsFileLocal, locate_all};
+pub(crate) use passes::factorize_intermediates;
 pub mod export_demand;
 pub use export_demand::DemandExports;
 use crate::code_rule_dsl::logic::program_image::passes::Parts as _;

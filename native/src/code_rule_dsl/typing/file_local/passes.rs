@@ -11,6 +11,7 @@ use crate::code_rule_dsl::logic::program_image::{Lit as L, LitRef, RuleRef, Slot
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 mod factorize;
+pub(crate) use factorize::factorize_intermediates;
 mod push;
 mod requests;
 pub use factorize::FactorizeExports;
@@ -260,6 +261,8 @@ impl ProgramPass for Locate {
 pub(super) enum BodyItem<'v> {
     Orig(LitRef<'v>),
     New(String, Vec<NOwned<'v>>),
+    /// A negated atom made (a cached product's parts read while its pairs are not kept, decision 0506).
+    Not(String, Vec<NOwned<'v>>),
 }
 
 /// A term of a rule being made: one of its source rule's, or a variable by name.
@@ -267,6 +270,8 @@ pub(super) enum BodyItem<'v> {
 pub(super) enum NOwned<'v> {
     T(TermRef<'v>),
     V(String),
+    /// A constant.
+    C(i64),
 }
 
 /// A rule of the round's program: its source rule, its head (the source's, or one made), its body.
@@ -284,6 +289,34 @@ fn t_from<'b>(input: &'b Version, src: RuleRef<'b>, n: &'b NOwned<'b>) -> T<'b> 
     match n {
         NOwned::T(t) => t_of(input, src, *t),
         NOwned::V(s) => T::Var(s.as_str()),
+        NOwned::C(n) => T::Int(*n),
+    }
+}
+
+impl Made<'_> {
+    /// The names of the variables the rule being made reads or writes.
+    pub(super) fn names(&self, v: &Version) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        let owned = |args: &[NOwned<'_>], out: &mut BTreeSet<String>| {
+            for a in args {
+                match a {
+                    NOwned::T(t) => out.extend(term_vars(v, self.src, *t)),
+                    NOwned::V(s) => drop(out.insert(s.clone())),
+                    NOwned::C(_) => {}
+                }
+            }
+        };
+        match &self.head {
+            None => self.src.head().args().for_each(|t| out.extend(term_vars(v, self.src, t))),
+            Some((_, args)) => owned(args, &mut out),
+        }
+        for it in &self.body {
+            match it {
+                BodyItem::Orig(l) => out.extend(lit_vars(v, self.src, *l)),
+                BodyItem::New(_, args) | BodyItem::Not(_, args) => owned(args, &mut out),
+            }
+        }
+        out
     }
 }
 
@@ -348,6 +381,10 @@ fn write_onto(b: &mut Builder<'_>, input: &Version, round: &Round<'_>, onto: boo
                 BodyItem::New(rel, args) => {
                     let args: Vec<T<'_>> = args.iter().map(|n| t_from(input, m.src, n)).collect();
                     rb.atom(rel.as_str(), &args)
+                }
+                BodyItem::Not(rel, args) => {
+                    let args: Vec<T<'_>> = args.iter().map(|n| t_from(input, m.src, n)).collect();
+                    rb.not(rel.as_str(), &args)
                 }
             };
         }

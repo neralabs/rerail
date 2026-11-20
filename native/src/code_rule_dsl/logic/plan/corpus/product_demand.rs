@@ -13,6 +13,7 @@ use crate::code_rule_dsl::logic::program_image::{AtomRef, Builder, CmpOp, Lit, R
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+pub(super) mod deferred;
 mod nullable;
 mod upstream;
 
@@ -163,6 +164,9 @@ impl<'i> Program<'i> {
 
 pub(in crate::code_rule_dsl::logic::plan) const PREFIX: &str = "rr_product_demand_";
 
+/// The pair caches the deferred joins give a join (decision 0506, `deferred`).
+pub(in crate::code_rule_dsl::logic::plan) const DEFERRED_PAIRS: &str = "rr_deferred_pairs_";
+
 /// Check the image for a possible product before decoding rules for the demand analysis.
 fn may_have_products(version: &Version) -> bool {
     fn vars(term: TermRef<'_>, out: &mut BTreeSet<Slot>) {
@@ -226,6 +230,11 @@ pub(super) enum BoundProducts {
 impl ProgramPass for BoundProducts {
     const NAME: &'static str = "bound node products by their readers";
 
+    /// `RERAIL_READER_DEMAND=off` (`preparation::reader_demand`) is another output: its key.
+    fn settings(&self) -> Vec<u8> {
+        vec![u8::from(super::preparation::reader_demand())]
+    }
+
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let version: &Version = cx.v();
         if matches!(self, Self::Whole) && !may_have_products(version) {
@@ -233,7 +242,7 @@ impl ProgramPass for BoundProducts {
         }
         use crate::code_rule_dsl::logic::program_image::fields::FieldsMut as _;
         let mut program = Program::of(version);
-        let rewritten = rewrite(&mut program, true)?;
+        let rewritten = rewrite(&mut program, super::preparation::reader_demand())?;
         if rewritten.products.is_empty() {
             return Ok(());
         }
@@ -453,8 +462,10 @@ fn disconnected_nodes(rule: RuleRef<'_>, program: &Program<'_>, varies: &BTreeSe
     groups.iter().filter(|group| group.reads_input && group.vars.iter().any(|x| node_vars.contains(&x))).take(2).count() == 2
 }
 
+/// The refusal of `relation`'s product, named as its author wrote it (`profile::author_joins`, decision 0506).
 fn refusal(relation: &str, reason: impl std::fmt::Display) -> String {
-    format!("unbounded node Cartesian product in `{relation}`: {reason}")
+    let source = crate::code_rule_dsl::logic::profile::author_joins::source_name(relation, None);
+    format!("unbounded node Cartesian product in `{source}`: {reason}")
 }
 
 /// The connected parts of `rule`'s body a demand may read: its positive atoms of no demanded relation and no computed
@@ -608,7 +619,11 @@ fn rewrite_products(program: &mut Program<'_>, mut demanded: BTreeSet<String>) -
             let available = contexts(program, reader, own.then(|| guard_vars.clone()), &demanded);
             for (i, a, is_atom) in reads {
                 let rel = v.rel_name(a.rel());
-                let from_reader = || format!("the read in `{head_rel}` has no connected demand");
+                let from_reader = || {
+                    let source = crate::code_rule_dsl::logic::profile::author_joins::source_name(head_rel, Some(rel));
+                    let columns = program.columns(rel).unwrap_or_default().into_iter().map(|(name, _)| name).collect::<Vec<_>>().join(", ");
+                    format!("the read in `{source}` has no connected demand for ({columns})")
+                };
                 if !is_atom || a.gated() || !a.args().all(plain) {
                     return Err(refusal(rel, from_reader()));
                 }
