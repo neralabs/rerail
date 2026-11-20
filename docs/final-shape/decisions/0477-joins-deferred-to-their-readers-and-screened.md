@@ -169,17 +169,39 @@ measured: with them unread, the M1 Max's runs (all threads) were 1,002.4-1,017.7
 1,016.8 G. The multi-threaded runs read the other way (on 1,024.7-1,096.6 G, off 1,002.4-1,017.7 G), within their
 spread under load.
 
+## The screen on the device (2026-11-20)
+
+- **A device sort of 4,096 rows or more makes its runs' filter** (`Keyed::filter`, `screen_bloom`) in its own command
+  buffer: one thread a run, from the runs' keys where the sort wrote them (0353: a derived fact, nothing copied), a
+  byte a row, 256 B to 4 MiB, none past 8 M rows (under 4 bits a key it is full and refuses little). Every probe of
+  that sort (`probe_count` and `probe_scatter`, both of which searched the runs) tests a left key with one load first;
+  a key it refuses has no pairs. The fused small path (a sort of at most 2,048 rows, searched in a few cached steps)
+  is not screened.
+- **Its hash is the device's**, not the host format's (`SCREEN_HASH`: 32-bit multiplies, murmur3's finish over the
+  key's halves). The filter never leaves the device, and the host format's two 64-bit multiplies are emulated on
+  Apple GPUs: with them the probe paid more than the search it spared (200,000 right rows: 1,047 against 872 us).
+  The statistics' filter (`col_bloom`) keeps the host's format: it is compared with the host's.
+- Measured (`a_screened_probe_finds_the_hosts_pairs`, 2,000,000 left keys, 1% present, the misses between the right's
+  keys; probe GPU time, median of 20 interleaved; two runs each host):
+
+  | right rows, sort word | M3 with / without | M1 Max with / without |
+  |---|---|---|
+  | 200,000, 16-bit | 1,113 / 1,304 and 896 / 913 us | 914 / 5,034 and 1,068 / 5,211 us |
+  | 200,000, 64-bit | 905 / 1,279 and 1,079 / 1,825 us | 889 / 5,859 and 902 / 5,997 us |
+  | 4,000,000, 64-bit | 873 / 2,722 and 847 / 2,448 us | 1,170 / 9,543 and 1,179 / 9,605 us |
+
+  Misses past the right's greatest key (the first version of the test) all search one path, in cache: there the
+  filter only added its hash. A 1 MiB cap at 4 M rows (2 bits a key) was 4% slower; hence 4 MiB and the bound.
+
 ## Open
 
-- **A morsel or device screen**: hash a block of keys and test them, or a pass over the scan's column in its block
-  (0353) that writes a selection the probe kernel reads. To build where a workload's screened probes are a
-  measurable share of its run. None measured here is (see above).
+- **A morsel screen on the CPU**: hash a block of keys and test them at once. The CPU screen costs a hash a row only
+  while it pays (the back-off); a block's hashes would cut that hash's latency where it does.
+- **The device's fused small path and its staged stages** (`metal_join`) are not screened.
 - **Walks driven by a key** (the first step a probe): a screen there belongs to the caller's loop, the scan that
   drives the walks.
 - **The heavy values' filters (`HeavyCol::keys`, 2,048 words) are made apart from the columns' kept ones.** A derived
   relation's column has one kept now: the heavy values could take it, and compare by `Keys::shared` at any sizes.
-- **What the screens count is not fed back yet.** A screened walk measures its probe's hit share exactly (up to the
-  filter's false hits): the planner could take it in place of its estimate for that pair of columns.
 - **The AMS counters (0096)** share one hash across columns, so two columns' counters estimate a join's size
   (Σₖ L[k]·R[k]). They are not used yet.
 - **The deferred step decodes the tree** for every program it runs on (Q186).

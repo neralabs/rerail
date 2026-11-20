@@ -786,11 +786,66 @@ pub struct Keyed {
     nruns: Held,
     /// Columns 1.. in the sorted order (column 0 is the runs' keys).
     others: Vec<Column>,
+    /// The runs' keys as a blocked Bloom filter (decision 0477; the device's hash, `SCREEN_HASH`) and its 64-bit
+    /// words, made in the sort's command buffer where the sort has `SCREENED_ROWS` rows: a probe tests a left key
+    /// with one load before its search of the runs, and one the filter refuses has no pairs.
+    filter: Option<(Held, u32)>,
     /// The sort's command buffer while it may still run (`settle`), then its runs and GPU time (as bits).
     pending: std::sync::Mutex<Option<Submitted>>,
     runs: std::sync::atomic::AtomicUsize,
     gpu: std::sync::atomic::AtomicU64,
     pub bytes: usize,
+}
+
+/// The device's screen filter (`Keyed::filter`): a blocked Bloom filter of the sort's runs' keys, made and read by
+/// the device only, so its hash is the device's: 32-bit multiplies (native, where the host format's 64-bit ones are
+/// emulated: a probe paid more for that hash than for the search it spared). A key's 64-bit word is its second
+/// hash's low bits, and its 5 bits 6-bit fields of the first.
+const SCREEN_HASH: &str = r#"
+static inline uint2 screen_hash(ulong key) {
+    uint h = uint(key) ^ (uint(key >> 32) * 0x9e3779b1u);
+    h ^= h >> 16; h *= 0x85ebca6bu; h ^= h >> 13; h *= 0xc2b2ae35u; h ^= h >> 16;
+    uint w = h * 0x27d4eb2fu;
+    return uint2(h, w ^ (w >> 15));
+}
+
+static inline ulong screen_mask(uint h) {
+    ulong m = 0;
+    for (uint i = 0; i < 5; i++) m |= 1ul << ((h >> (6 * i)) & 63);
+    return m;
+}
+"#;
+
+/// The kernel that makes a sort's screen filter: a thread a run, its key (the sort word plus `base[0]`) into its
+/// word's two 32-bit halves with atomics. `p`: the rows (a bound on the runs), the filter's words.
+fn screen_source(key: Width) -> String {
+    format!(
+        r#"#include <metal_stdlib>
+using namespace metal;
+{SCREEN_HASH}
+kernel void screen_bloom(device const {k}* rkeys [[buffer(0)]], device const uint* nruns [[buffer(1)]], device atomic_uint* words [[buffer(2)]],
+                         constant uint* p [[buffer(3)]], constant long* base [[buffer(4)]], uint r [[thread_position_in_grid]]) {{
+    if (r >= p[0] || r >= nruns[0]) return;
+    uint2 h = screen_hash(ulong(rkeys[r]) + ulong(base[0]));
+    ulong m = screen_mask(h.x);
+    uint w = h.y & (p[1] - 1);
+    if (uint(m) != 0) atomic_fetch_or_explicit(&words[2 * w], uint(m), memory_order_relaxed);
+    if (uint(m >> 32) != 0) atomic_fetch_or_explicit(&words[2 * w + 1], uint(m >> 32), memory_order_relaxed);
+}}
+"#,
+        k = key.ty()
+    )
+}
+
+/// The fewest rows a sort is screened for (`Keyed::filter`): below them a search of its runs is a few cached steps.
+pub const SCREENED_ROWS: usize = 4096;
+
+/// A sort's filter words: a byte a row (at most its distinct keys), a power of two, 256 B to 4 MiB (a sort of 4 M
+/// rows holds 64 MB). `None` past 8 M rows, where it would hold under 4 bits a key: full, it refuses little, and a
+/// probe pays its hash for nothing (4 M rows in 1 MiB: 4% slower).
+fn screen_words(rows: usize) -> Option<usize> {
+    const MOST: usize = 1 << 19;
+    (rows <= MOST * 16).then(|| (rows / 8).next_power_of_two().clamp(32, MOST))
 }
 
 pub fn groups(n: usize) -> usize {
@@ -891,8 +946,18 @@ impl Keyed {
         reads.push(lead);
         let kb = parts.key.bytes();
         let bytes = 4 * n + (n + 1) * (4 + kb) + others.iter().map(Column::bytes).sum::<usize>();
+        // Its runs' keys' filter, one thread a run: read from the runs where the sort wrote them.
+        let filter = if n >= SCREENED_ROWS && let Some(words) = screen_words(n) {
+            let bloom = pipeline(&format!("screen {:?}", parts.key.bytes()), "screen_bloom", || screen_source(parts.key))?;
+            let f = Held::zeroed(8 * words)?;
+            pass.run(&bloom, &[&parts.rkeys.buffer, &parts.nruns.buffer, &f.buffer], &[n as u32, words as u32], &[base], groups(n));
+            Some((f, words as u32))
+        } else {
+            None
+        };
+        let bytes = bytes + filter.as_ref().map_or(0, |(_, w)| 8 * *w as usize);
         let SortParts { perm, starts, rkeys, nruns, key } = parts;
-        let keyed = Keyed { rows: n, key, base, perm, starts, rkeys, nruns, others, pending: std::sync::Mutex::new(None), runs: std::sync::atomic::AtomicUsize::new(usize::MAX), gpu: std::sync::atomic::AtomicU64::new(0), bytes };
+        let keyed = Keyed { rows: n, key, base, perm, starts, rkeys, nruns, others, filter, pending: std::sync::Mutex::new(None), runs: std::sync::atomic::AtomicUsize::new(usize::MAX), gpu: std::sync::atomic::AtomicU64::new(0), bytes };
         Ok((keyed, reads))
     }
 }
@@ -1365,15 +1430,27 @@ fn probe_source(left: &[Width], key: Width, right: &[Width]) -> String {
     let kt = key.ty();
     let lcols: String = left.iter().enumerate().map(|(i, w)| format!(", device const {}* l{i} [[buffer({})]]", w.ty(), 4 + i)).collect();
     let rcols: String = right.iter().enumerate().map(|(i, w)| format!(", device const {}* r{} [[buffer({})]]", w.ty(), i + 1, 4 + k + i)).collect();
-    let n = 4 + k + right.len();
+    // The runs' filter is the input after the columns (`Keyed::filter`; with no filter, `p`'s words are 0).
+    let f = 4 + k + right.len();
+    let n = f + 1;
     let mut test = String::from("true");
     for i in 1..k {
         test.push_str(&format!(" && ulong(l{i}[t]) + ulong(base[{i}]) == ulong(r{i}[q]) + ulong(base[{}])", k + i));
     }
-    let args = format!("device const {kt}* rkeys [[buffer(0)]], device const uint* starts [[buffer(1)]], device const uint* nruns [[buffer(2)]], device const uint* perm [[buffer(3)]]{lcols}{rcols}");
+    let args = format!("device const {kt}* rkeys [[buffer(0)]], device const uint* starts [[buffer(1)]], device const uint* nruns [[buffer(2)]], device const uint* perm [[buffer(3)]]{lcols}{rcols}, device const ulong* bloom [[buffer({f})]]");
     format!(
         r#"#include <metal_stdlib>
 using namespace metal;
+
+{SCREEN_HASH}
+// Whether the runs' filter (`words` 64-bit words, none at 0) may hold `key`: one load. A key it refuses is in no run
+// (decision 0477).
+static inline bool may_hold(device const ulong* bloom, uint words, ulong key) {{
+    if (words == 0) return true;
+    uint2 h = screen_hash(key);
+    ulong m = screen_mask(h.x);
+    return (bloom[h.y & (words - 1)] & m) == m;
+}}
 
 // The run of a left row's key 0 (`lo`, and whether there is one): a bounded binary search of the runs' keys.
 static inline bool find(ulong key, device const {kt}* rkeys, uint runs, long rbase, thread uint& lo) {{
@@ -1392,7 +1469,8 @@ kernel void probe_count({args}, device uint* counts [[buffer({n})]], constant ui
     if (t >= p[0]) return;
     uint run;
     uint c = 0;
-    if (find(ulong(l0[t]) + ulong(base[0]), rkeys, nruns[0], base[{k}], run)) {{
+    ulong key = ulong(l0[t]) + ulong(base[0]);
+    if (may_hold(bloom, p[1], key) && find(key, rkeys, nruns[0], base[{k}], run)) {{
         for (uint q = starts[run]; q < starts[run + 1]; q++) c += uint({test});
     }}
     counts[t] = c;
@@ -1402,7 +1480,8 @@ kernel void probe_scatter({args}, device const uint* offsets [[buffer({n})]], de
                           constant long* base [[buffer({n3})]], uint t [[thread_position_in_grid]]) {{
     if (t >= p[0]) return;
     uint run;
-    if (!find(ulong(l0[t]) + ulong(base[0]), rkeys, nruns[0], base[{k}], run)) return;
+    ulong key = ulong(l0[t]) + ulong(base[0]);
+    if (!may_hold(bloom, p[2], key) || !find(key, rkeys, nruns[0], base[{k}], run)) return;
     uint at = offsets[t];
     for (uint q = starts[run]; q < starts[run + 1]; q++) {{
         if ({test}) {{
@@ -1464,7 +1543,14 @@ impl ProbeJob {
         let mut inputs: Vec<&BufferRef> = vec![&right.rkeys.buffer, &right.starts.buffer, &right.nruns.buffer, &right.perm.buffer];
         inputs.extend(left.iter().map(|c| &*c.buffer.buffer));
         inputs.extend(right.others.iter().map(|c| &*c.buffer.buffer));
+        // The runs' filter, or (none: its words are 0) a buffer the kernels do not read.
+        inputs.push(right.filter.as_ref().map_or(&*right.rkeys.buffer, |(f, _)| &*f.buffer));
         inputs
+    }
+
+    /// The runs' filter's words (0: none).
+    fn screen(right: &Keyed) -> u32 {
+        right.filter.as_ref().map_or(0, |(_, w)| *w)
     }
 
     /// The probe of `right` by `left`, encoded after whatever `pass` holds (a sort of `right` in it is read in order).
@@ -1490,11 +1576,12 @@ impl ProbeJob {
         let inputs = Self::inputs(left, right);
         let mut with = inputs.clone();
         with.push(&counts.buffer);
-        pass.run(&count, &with, &[nl as u32], &bases, groups(nl));
+        let words = Self::screen(right);
+        pass.run(&count, &with, &[nl as u32, words], &bases, groups(nl));
         scan.encode(pass, &counts.buffer)?;
         let mut with = inputs;
         with.extend([&*counts.buffer, &*space.buffer]);
-        pass.run(&scatter, &with, &[nl as u32, cap as u32], &bases, groups(nl));
+        pass.run(&scatter, &with, &[nl as u32, cap as u32, words], &bases, groups(nl));
         Ok(ProbeJob { nl, cap, counts: Some(counts), scan: Some(scan), space: Some(space), bases, scatter: Some(scatter), empty: false })
     }
 
@@ -1517,7 +1604,7 @@ impl ProbeJob {
         };
         let mut with = Self::inputs(left, right);
         with.extend([&*counts.buffer, &*out.buffer]);
-        pass.run(scatter, &with, &[self.nl as u32, total as u32], &self.bases, groups(self.nl));
+        pass.run(scatter, &with, &[self.nl as u32, total as u32, Self::screen(right)], &self.bases, groups(self.nl));
         self.space = Some(out);
         self.cap = total;
         Ok(self)
@@ -1949,6 +2036,7 @@ impl Fused {
             rkeys,
             nruns,
             others,
+            filter: None,
             pending: std::sync::Mutex::new(None),
             runs: std::sync::atomic::AtomicUsize::new(usize::MAX),
             gpu: std::sync::atomic::AtomicU64::new(0),
@@ -2120,6 +2208,47 @@ mod tests {
         want.sort_unstable();
         assert!(!want.is_empty());
         assert_eq!(got, want);
+    }
+
+    /// Decision 0477: a sort of `SCREENED_ROWS` rows or more is screened by its runs' filter, made on the device from
+    /// its runs. A probe whose keys mostly miss (2,000,000 left keys, 1% of them among 200,000 or 4,000,000 right
+    /// ones, the others between them; 16 and 64-bit sorts) finds the host join's pairs with the filter and without
+    /// it; its GPU time is printed for both.
+    #[test]
+    fn a_screened_probe_finds_the_hosts_pairs() {
+        if device().is_err() {
+            return;
+        }
+        for (nr, modulus, high) in [(200_000, 60_000, 0), (200_000, 1 << 50, -(1 << 55)), (4_000_000, 1 << 50, -(1 << 55))] {
+            // The right's keys even, the left's misses odd and among them: a miss's search ends anywhere in the runs.
+            let right: Vec<i64> = rows(nr, 21, modulus, high).into_iter().map(|v| v & !1).collect();
+            let mut left: Vec<i64> = rows(2_000_000, 22, modulus, high).into_iter().map(|v| v | 1).collect();
+            for (i, l) in left.iter_mut().enumerate().filter(|(i, _)| i % 100 == 0) {
+                *l = right[i % right.len()];
+            }
+            let screened = Keyed::sort(vec![Column::upload(&right).unwrap()]).unwrap();
+            let mut plain = Keyed::sort(vec![Column::upload(&right).unwrap()]).unwrap();
+            plain.filter = None;
+            assert!(screened.filter.is_some());
+            let column = || vec![Column::upload(&left).unwrap()];
+            let (with, without) = (probe(&column(), &screened, 0).unwrap(), probe(&column(), &plain, 0).unwrap());
+            // Interleaved, 20 each: a probe's GPU time moves by a fifth between runs at a millisecond.
+            let (mut gpu_with, mut gpu_without) = (Vec::new(), Vec::new());
+            for _ in 0..20 {
+                gpu_with.push(probe(&column(), &screened, 0).unwrap().gpu_seconds);
+                gpu_without.push(probe(&column(), &plain, 0).unwrap().gpu_seconds);
+            }
+            let median = |v: &mut Vec<f64>| { v.sort_by(f64::total_cmp); v[v.len() / 2] * 1e6 };
+            let mut want = crate::rows::join(&[&left], &[&right]);
+            want.sort_unstable();
+            let (mut a, mut b) = (with.pairs, without.pairs);
+            a.sort_unstable();
+            b.sort_unstable();
+            assert!(want.len() >= 20_000, "{} pairs", want.len());
+            assert_eq!(a, want);
+            assert_eq!(b, want);
+            println!("{nr} right rows, modulus {modulus}: {} pairs; probe GPU (median of 20) with the filter {:.0} us, without {:.0} us", want.len(), median(&mut gpu_with), median(&mut gpu_without));
+        }
     }
 }
 
