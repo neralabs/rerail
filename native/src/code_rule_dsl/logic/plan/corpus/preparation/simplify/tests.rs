@@ -1,4 +1,4 @@
-//! The simplifier's passes (decision 0038) on versions: each program read from `.rr` text, run through `passes`, and
+//! The simplifier's passes (decision 0038) on versions: each program read from `.rerail` text, run through `passes`, and
 //! its rules compared as `show_rule` prints them.
 
 use super::{Report, passes};
@@ -559,7 +559,7 @@ fn an_existence_count_reads_the_projection() {
 }
 
 /// A relation whose readers read no location column keeps its first one: the split partitions a file-local
-/// relation's rows by it, and a load hands on a document's rows by it (python/modules.rr's `py_docmod`).
+/// relation's rows by it, and a load hands on a document's rows by it (python/modules.rerail's `py_docmod`).
 #[test]
 fn a_projection_keeps_a_location_column() {
     let (report, v) = simplified(
@@ -622,7 +622,7 @@ fn an_existence_count_is_a_negation() {
         some(n) :- node(_, n, "call", _, _), count : { pair(n, _, _) } > 0.
         many(n) :- node(_, n, "call", _, _), count : { pair(n, _, _) } > 1.
     "#;
-    // The `.rr` reader reads `count : {…} = 0` as the negation already (`none`'s rule): only `> 0` is left.
+    // The `.rerail` reader reads `count : {…} = 0` as the negation already (`none`'s rule): only `> 0` is left.
     let read = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
     assert!(rules_of(&read, "none").iter().all(|r| !r.contains("count")), "{:?}", rules(&read));
     let (report, v) = simplified(text);
@@ -741,4 +741,34 @@ fn reads_of_a_relation_the_stated_facts_emptied_are_decided() {
     assert_eq!(rules_of(&v, "unselected").len(), 1, "{text:#?}");
     let split = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(&v).unwrap();
     assert!(split.local.contains("asked"), "{:?}\n{text:#?}", split.causes);
+}
+
+/// A relation whose every rule a fact test decides away is empty: a rule reading it goes, a negated read of it is
+/// dropped, to a fixpoint (a file scope the run's options rule out, read by a guest's copies). The tree simplify's test
+/// of 9a9b270ce, on the version's passes.
+#[test]
+fn a_relation_its_fact_tests_empty_takes_its_readers() {
+    let (_, v) = simplified(
+        r#"
+        .decl opt(k: symbol)
+        opt("a").
+        .decl base(n: number)
+        .input base
+        .decl scope(n: number)
+        scope(n) :- base(n), opt("b").
+        .decl reads(n: number)
+        reads(n) :- base(n), scope(n).
+        .decl again(n: number)
+        again(n) :- reads(n).
+        .decl apart(n: number)
+        apart(n) :- base(n), !scope(n).
+        .decl out(n: number)
+        .output out
+        out(n) :- again(n).
+        out(n) :- apart(n).
+        "#,
+    );
+    let heads: std::collections::BTreeSet<String> = v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect();
+    assert!(!heads.contains("scope") && !heads.contains("reads") && !heads.contains("again"), "{heads:?}");
+    assert!(rules(&v).iter().any(|r| r.contains("base(") && !r.contains("scope")), "{:?}", rules(&v));
 }

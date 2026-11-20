@@ -1,0 +1,78 @@
+.policy "django-practice-exists-for-existence" revision 1
+.description "Use QuerySet.exists() to test whether a queryset has rows, not count(), len() or the queryset's truth."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. Testing whether a queryset is empty by counting its rows (count() compared with 0
+// or 1, or used as a truth value), by loading them (len() of it, compared or tested the same way) or by testing the
+// queryset itself loads or counts every matching row; exists() stops at the first. The queryset is a chain from a
+// manager written in the test, so no other code reads its rows (the docs' "Don't overuse exists()" case, a queryset
+// in a variable that is iterated later, is left alone). The queryset must be Django's: in a file that imports Django
+// or DRF (python/django's dj_django_doc), or rooted at a model class of the run (dj_qs_model); mongoengine's
+// `Document.objects` has count() but no exists(), so a Document class of the run in a file without Django is left
+// alone.
+//   if Book.objects.filter(author=a).count() > 0:      reported
+//   if len(Book.objects.filter(author=a)) == 0:        reported
+//   if not Book.objects.filter(author=a):              reported
+//   if Book.objects.filter(author=a).count() > 5:      not reported: a real count
+//   books = Book.objects.filter(author=a)
+//   if books:                                          not reported: books may be iterated after
+//   len(Book.objects.filter(author=a))                 not reported here: django-practice-count-not-len
+//   if Page.objects.filter(slug=s).count() > 0:        not reported in a mongoengine file (Page a Document)
+
+#include "python/django.rerail"
+
+.violation ExistsForExistence(at: node, how: symbol) "{how} only to test whether any exist; call `.exists()` on the queryset instead (`not qs.exists()` to test for none), which fetches one row at most."
+
+// efe_counted(x, q, how): x counts the inline queryset q: `<q>.count()`, or `len(<q>)`. A `raw()` queryset has no
+// count() or exists().
+.decl efe_counted(x: node, q: node, how: symbol)
+efe_counted(x, q, "`.count()` counts every matching row") :- dj_qs_call(x, "count"), py_no_args(x),
+    field(x, "function", f), attr_of(f, q, _).
+efe_counted(x, q, "`len()` loads every matching row") :- kind(x, "call"), field(x, "function", f),
+    sym_of(f, "builtins.len"), posarg(x, 0, a), !posarg(x, 1, _), unparen(a, q), dj_qs(q), !dj_qs_call(q, "raw").
+// efe_django(q): queryset q is Django's, outside test code: its file imports Django, or its chain starts at a model
+// class of the run.
+.decl efe_django(q: node)
+efe_django(q) :- dj_qs(q), docof(q, d), dj_django_doc(d), !dj_test_doc(d).
+efe_django(q) :- dj_qs_model(q, _), docof(q, d), !dj_test_doc(d).
+
+ExistsForExistence(c, how) :- py_empty_cmp(c, x), efe_counted(x, q, how), efe_django(q).
+ExistsForExistence(x, how) :- py_truth(x), efe_counted(x, q, how), efe_django(q).
+ExistsForExistence(x, "Testing the queryset itself loads every matching row") :- py_truth(x), kind(x, "call"), dj_qs(x),
+    !dj_qs_call(x, "raw"), efe_django(x).
+
+// The cases, `cases/django-practice-exists-for-existence/`, read as one repository: each line ending in `# caught` is
+// reported, and no other line.
+.test cases exactly
+    .fixture "mongo/docs.py" from "cases/django-practice-exists-for-existence/mongo/docs.py"
+    .fixture "shop/models.py" from "cases/django-practice-exists-for-existence/shop/models.py"
+    .fixture "shop/services/stock.py" from "cases/django-practice-exists-for-existence/shop/services/stock.py"
+    .fixture "shop/tests/test_views.py" from "cases/django-practice-exists-for-existence/shop/tests/test_views.py"
+    .fixture "shop/views.py" from "cases/django-practice-exists-for-existence/shop/views.py"
+    .fixture "src/inventory/__init__.py" from "cases/django-practice-exists-for-existence/src/inventory/__init__.py"
+    .fixture "src/inventory/models.py" from "cases/django-practice-exists-for-existence/src/inventory/models.py"
+    .expect _ at "shop/services/stock.py":7
+    .expect _ at "shop/services/stock.py":12
+    .expect _ at "shop/views.py":7
+    .expect _ at "shop/views.py":9
+    .expect _ at "shop/views.py":11
+    .expect _ at "shop/views.py":13
+    .expect _ at "shop/views.py":15
+    .expect _ at "shop/views.py":20
+    .expect _ at "shop/views.py":22
+    .expect _ at "shop/views.py":24
+    .expect _ at "shop/views.py":25
+    .expect _ at "shop/views.py":27
+    .expect _ at "shop/views.py":33
+    .expect _ at "shop/views.py":35
+    .expect _ at "shop/views.py":37
+    .expect _ at "shop/views.py":42
+    .expect _ at "shop/views.py":44
+    .expect _ at "shop/views.py":49
+    .expect _ at "shop/views.py":51
+    .expect _ at "shop/views.py":53
+    .expect _ at "shop/views.py":54
+    .expect _ at "shop/views.py":55
+    .expect _ at "shop/views.py":56
+.end

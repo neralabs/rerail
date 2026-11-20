@@ -1,4 +1,4 @@
-//! `translate.translate(doc)`: one JSON policy as display `.rr` text. The clauses are lowered construct by
+//! `translate.translate(doc)`: one JSON policy as display `.rerail` text. The clauses are lowered construct by
 //! construct (lower.rs), simplified (simplify.rs, fold.rs), given shared metavariable columns (share.rs) and
 //! demand (demand.rs), then printed: notes, declarations, rules, the library part and the helpers.
 
@@ -65,7 +65,7 @@ fn option_ast(a: &Obj) -> Option<Obj> {
     Some(out)
 }
 
-fn obj_of<'a>(v: Option<&'a Value>) -> &'a Obj {
+fn obj_of(v: Option<&Value>) -> &Obj {
     v.and_then(Value::as_obj).unwrap_or(empty_obj())
 }
 
@@ -377,7 +377,7 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize
             note.push(format!("// The JSON `constraints` on {} are added to every rule.", names.join(", ")));
         }
         if !opts.is_empty() {
-            note.push("// `options` carries JSON settings that have no .rr form yet.".to_owned());
+            note.push("// `options` carries JSON settings that have no .rerail form yet.".to_owned());
         }
         body.push(Item::Note(note));
         body.push(Item::Viol(vl));
@@ -588,7 +588,7 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize
         out.push(String::new());
     }
     if !prog.uses.is_empty() {
-        out.extend(prog.uses.iter().map(|u| format!("#include \"{u}.rr\"")));
+        out.extend(prog.uses.iter().map(|u| format!("#include \"{u}.rerail\"")));
         out.push(String::new());
     }
     let mut em = Emit { px, prog: &prog, inputs: &shared.inputs, declared: Set::new(), out };
@@ -662,7 +662,7 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize
     let mut out = em.out;
     if out.iter().any(|l| !l.trim_start().starts_with("//") && l.contains("ast(")) {
         let i = out.iter().position(String::is_empty).unwrap_or(out.len());
-        out.insert(i, "// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.".to_owned());
+        out.insert(i, "// ast(n, {…}) atoms are JSON terms with no .rerail form yet; the engine matches them as it does today.".to_owned());
     }
     Ok((format!("{}\n", out.join("\n").trim_end()), prog.untranslated))
 }

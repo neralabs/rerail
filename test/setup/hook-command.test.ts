@@ -1,0 +1,55 @@
+import { posix, win32 } from "node:path";
+import { describe, expect, it } from "vitest";
+import { generatedHookTarget, hookCommand, windowsCmdHookCommand } from "../../src/setup/harness-registration.js";
+
+// Pure functions only: nothing here registers a hook or writes a coding agent's settings. Each takes the platform the
+// hook is for and uses its path rules, so these run on every host.
+const CURSOR_HOOK = "dist/hosts/cursor/cursor-hook.js";
+
+describe("the POSIX sh hook command", () => {
+  const node = "/usr/local/bin/node";
+  const root = "/home/me/.rerail/current";
+  const hook = posix.join(root, CURSOR_HOOK);
+
+  it("recognizes the form it writes, with the hook under the package root", () => {
+    const written = hookCommand({ platform: "linux", nodePath: node, root }, CURSOR_HOOK);
+    expect(written).toBe(`sh -c 'if [ -x "$0" ]; then exec "$0" "$1"; fi; exec node "$1"' ${node} ${hook}`);
+    expect(generatedHookTarget(written, CURSOR_HOOK, "linux")).toEqual({ nodePath: node, script: hook });
+    expect(generatedHookTarget(written.replace(hook, "/home/me/other.js"), CURSOR_HOOK, "linux")).toBeUndefined();
+  });
+});
+
+describe("the Windows cmd hook command", () => {
+  const node = String.raw`C:\Program Files\nodejs\node.exe`;
+  const root = String.raw`C:\Users\me\.rerail\current`;
+  const hook = win32.join(root, CURSOR_HOOK);
+
+  it("falls back to node.exe from PATH alone, never a bare node cmd looks for in the current folder", () => {
+    const command = windowsCmdHookCommand(`"${node}"`, `"${hook}"`);
+    expect(command).toBe(`cmd /d /c "if exist "${node}" ("${node}" "${hook}") else (for %I in (node.exe) do @"%~$PATH:I" "${hook}")"`);
+    expect(command).not.toContain("(node ");
+  });
+
+  it("keeps each % of a Windows path single, since no batch file reads the command back", () => {
+    // cmd.exe given a command line on its own, outside a batch file, reads `%%` as two characters.
+    const percent = String.raw`C:\Users\a%b`;
+    const command = hookCommand({ platform: "win32", nodePath: win32.join(percent, "node.exe"), root: win32.join(percent, ".rerail", "current") }, CURSOR_HOOK);
+    expect(command).toContain(`"${win32.join(percent, "node.exe")}"`);
+    expect(command).not.toContain("%%");
+  });
+
+  it("recognizes the PowerShell form Codex runs and each cmd form earlier set-ups wrote, so registering replaces it", () => {
+    const written = windowsCmdHookCommand(`"${node}"`, `"${hook}"`);
+    expect(generatedHookTarget(written, CURSOR_HOOK, "win32")).toEqual({ nodePath: node, script: hook });
+    // Codex hands a hook's command to PowerShell.
+    const powershell = `$LASTEXITCODE = 1; if (Test-Path -LiteralPath '${node}') { & '${node}' '${hook}' } else { node '${hook}' }; exit $LASTEXITCODE`;
+    expect(generatedHookTarget(powershell, CURSOR_HOOK, "win32")).toEqual({ nodePath: node, script: hook });
+    const legacy = `cmd /d /c "if exist "${node}" ("${node}" "${hook}") else (node "${hook}")"`;
+    expect(generatedHookTarget(legacy, CURSOR_HOOK, "win32")).toEqual({ nodePath: node, script: hook });
+    // Releases before this one doubled each `%` in a path, which only a batch file turns back into one.
+    const percentNode = String.raw`C:\Users\a%b\node.exe`;
+    const doubled = `cmd /d /c "if exist "${percentNode.replaceAll("%", "%%")}" ("${percentNode.replaceAll("%", "%%")}" "${hook}") else (node "${hook}")"`;
+    expect(generatedHookTarget(doubled, CURSOR_HOOK, "win32")).toEqual({ nodePath: percentNode, script: hook });
+    expect(generatedHookTarget(`cmd /d /c "if exist "${node}" ("${node}" "${hook}") else (calc)"`, CURSOR_HOOK, "win32")).toBeUndefined();
+  });
+});

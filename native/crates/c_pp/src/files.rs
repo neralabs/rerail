@@ -1,6 +1,6 @@
 //! Where the preprocessor's files come from: a header name resolved to a path, and a path read.
 //!
-//! In the engine, resolution is rules (`c/includes.rr`) and reading is the engine's; `Search` is
+//! In the engine, resolution is rules (`c/includes.rerail`) and reading is the engine's; `Search` is
 //! the search order a compiler driver has (quote, `-iquote`, `-I`, `-isystem`, `-idirafter`), over
 //! the file system or a map of texts, for tests and the `clang -E` oracle.
 

@@ -304,9 +304,11 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
     }
     drop(putting);
     let finishing = rerail_prof::code_rule_dsl::logic::profile::span(|| "kept facts: the block finished and synced".into());
-    w.finish().map_err(io)?;
+    // Written back as the store's flush mode says (decision 0481): by default the OS writes it at its own pace.
+    let flush = crate::content_store::connection::flush_of(t);
+    w.finish(flush).map_err(io)?;
     std::fs::rename(&making, dir.join(&name)).map_err(io)?;
-    sync_dir(&dir).map_err(io)?;
+    sync_dir(&dir, flush).map_err(io)?;
     drop(finishing);
     if from < rows.len() {
         t.prepare_cached("DELETE FROM main.facts_chain WHERE space = ?1 AND seq >= ?2")?.execute(rusqlite::params![&space[..], rows[from].0])?;

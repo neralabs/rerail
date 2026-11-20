@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
@@ -8,12 +8,13 @@ import type { CodeRuleViolation } from "../../../src/engine/code-rule/code-rule.
 import { openRerailDatabase, resetRepositoryHistory } from "../../../src/engine/storage/database.js";
 import { RERAIL_BASELINE_SCHEMA_VERSION } from "../../../src/engine/storage/migrations.js";
 import { RERAIL_BASELINE_SCHEMA_STATEMENTS } from "../../../src/engine/storage/baseline-schema.js";
-import { SqliteSessionStore } from "../../../src/runtime/index.js";
+import { SqliteSessionReader, SqliteSessionStore } from "../../../src/runtime/index.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 async function temporaryDatabase(): Promise<string> {
@@ -25,8 +26,9 @@ async function temporaryDatabase(): Promise<string> {
 }
 
 /*
- * The oracle: history read straight from `audits`, the way it was before the derived tables. Every answer the
- * derived tables give must equal it, whoever wrote the audits and however they changed since.
+ * The oracle: history read straight from `audits`, the way it was before the derived tables, from ongoing audits
+ * alone (a scan is not the session's history). Every answer the derived tables give must equal it, whoever wrote the
+ * audits and however they changed since.
  */
 const KEY = (value: string): string => `coalesce(json_extract(${value}, '$.clauseId'), '') || char(31)
   || coalesce(json_extract(${value}, '$.path'), '') || char(31)
@@ -43,7 +45,7 @@ const scopeSql = (repositories: readonly string[] | undefined): string => reposi
 function oracleActivity(client: Database.Database, since: number, repositories?: readonly string[]): Map<string, RuleActivityTotals> {
   const rows = client.prepare(`
     WITH in_range AS (SELECT audit_id, session_id, started_at, mode, violations_json, rule_revisions_json FROM audits audit
-      WHERE started_at >= ? AND ${scopeSql(repositories)}),
+      WHERE started_at >= ? AND origin = 'ongoing' AND ${scopeSql(repositories)}),
     violations AS (
       SELECT json_extract(violation.value, '$.ruleId') AS ruleId,
         count(DISTINCT ${KEY("violation.value")}) AS distinctViolations,
@@ -73,7 +75,7 @@ function oracleHistory(client: Database.Database, since: number, repositories?: 
         row_number() OVER copies AS copy,
         max(${LOGGED}) OVER copies AS logged
       FROM audits audit, json_each(audit.violations_json) violation
-      WHERE audit.started_at >= ? AND ${scopeSql(repositories)}
+      WHERE audit.started_at >= ? AND audit.origin = 'ongoing' AND ${scopeSql(repositories)}
       WINDOW copies AS (PARTITION BY audit.audit_id, json_extract(violation.value, '$.ruleId'), ${KEY("violation.value")} ORDER BY violation.key
         ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
     ) WHERE copy = 1
@@ -140,7 +142,7 @@ const revisions = (next: () => number) => RULES.filter(() => next() < 0.6).map(r
 /**
  * Audits written every way history gets written: this build's store (start, progress, finish, paged results,
  * interruption, a scan's cumulative progress), plain SQL the way an older Rerail sharing the file writes, and audits
- * re-dated after the fact.
+ * re-dated after the fact. Some of the store's are scans (`origin`), which history leaves out.
  */
 function writeHistory(path: string, client: Database.Database, seed: number): void {
   const next = random(seed);
@@ -157,8 +159,8 @@ function writeHistory(path: string, client: Database.Database, seed: number): vo
         continue;
       }
       const auditId = store.start({
-        sessionId, workspaceRoot: "/w", scope: "repository", mode: auditMode(next), revision: 1, catalogRevision: null,
-        ruleRevisions: revisions(next), paths: [], ruleProvenance: [],
+        sessionId, workspaceRoot: "/w", scope: "repository", mode: auditMode(next), origin: next() < 0.2 ? "scan" : "ongoing",
+        revision: 1, catalogRevision: null, ruleRevisions: revisions(next), paths: [], ruleProvenance: [],
       });
       if (way === 1) {
         store.progress(auditId, { violations: violations(next) });
@@ -363,6 +365,100 @@ describe("derived audit history", () => {
     }
   });
 
+  // A scan finds what the checkout already holds: none of it is the session's violation, nor a run of its rules.
+  it("leaves a scan's violations and rules out of the session's history, and keeps them on the scan", async () => {
+    const path = await temporaryDatabase();
+    const database = openRerailDatabase(path);
+    const store = new SqliteAuditStore(path);
+    try {
+      openSessions(path);
+      const found = (ruleId: string) => ({
+        id: ruleId, ruleId, clauseId: "clause", code: "even", mode: "steer", message: "m", path: "src/a.ts", captures: {}, variables: {},
+      }) as CodeRuleViolation;
+      const ongoing = store.start({
+        sessionId: "s1", workspaceRoot: "/w", scope: "touched-files", mode: "steer", revision: 1, catalogRevision: null,
+        ruleRevisions: [{ ruleId: "rule-a", revision: 1 }], paths: ["src/a.ts"],
+      });
+      store.finish(ongoing, { status: "completed", violations: [found("rule-a")], failures: [] });
+      const scan = store.start({
+        sessionId: "s1", workspaceRoot: "/w", scope: "repository", mode: "log", origin: "scan", revision: 1, catalogRevision: null,
+        ruleRevisions: [{ ruleId: "rule-a", revision: 1 }, { ruleId: "rule-b", revision: 1 }], paths: [],
+      });
+      store.progress(scan, { violations: [found("rule-b")] });
+      store.finish(scan, { status: "completed", violations: [found("rule-b"), found("rule-a")], failures: [] });
+
+      expect(store.listViolationHistory({ since: 0 }).violations.map(entry => [entry.auditId, entry.violation.ruleId])).toEqual([[ongoing, "rule-a"]]);
+      expect(store.ruleActivity(0)).toEqual(new Map([["rule-a", { distinctViolations: 1, loggedViolations: 0, sessions: 1, lastSeenAt: expect.any(Number), audits: 1 }]]));
+      expect(store.sessionsWithViolations(0)).toBe(1);
+      const reader = new SqliteSessionReader(path);
+      try {
+        expect(reader.sessionPage({ limit: 10 }).sessions.find(session => session.sessionId === "s1"))
+          .toMatchObject({ violationCount: 1, steeredViolations: 1 });
+      } finally {
+        reader.close();
+      }
+      expectMatchesOracle(path, database.$client);
+      // `rerail scan` still reads what the scan found.
+      expect(store.get(ongoing)?.origin).toBe("ongoing");
+      expect(store.get(scan)).toMatchObject({ origin: "scan", violations: [{ ruleId: "rule-b" }, { ruleId: "rule-a" }] });
+    } finally {
+      store.close();
+      database.$client.close();
+    }
+  });
+
+  it("marks the scans a file recorded before audits had an origin, and takes them out of its history", async () => {
+    const path = await temporaryDatabase();
+    const previous = openRerailDatabase(path);
+    const client = previous.$client;
+    const triggers = () => client.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name").all();
+    const current = triggers();
+    let requested: string[] = [];
+    let repositoryAudit = "";
+    try {
+      openSessions(path);
+      // The file as the build before `audits-origin` left it: its triggers derive history from every audit, and it has
+      // not run the step (unrecorded after the writes, whose opens would run it).
+      for (const { name, sql } of current as Array<{ name: string; sql: string }>) {
+        if (!sql.includes(".origin = 'ongoing'")) continue;
+        client.exec(`DROP TRIGGER \`${name}\`; ${sql.replaceAll(/ AND (NEW|OLD)\.origin = 'ongoing'/gu, "").replaceAll(/WHERE (NEW|OLD)\.origin = 'ongoing'\s+AND /gu, "WHERE ")}`);
+      }
+      expect(triggers()).not.toEqual(current);
+      writeHistory(path, client, 8);
+      client.prepare("UPDATE audits SET origin = 'ongoing'").run();
+      // Scans it recorded: two by `rerail scan --session` and the first repository audit, whichever held violations.
+      const withViolations = client.prepare("SELECT audit_id FROM audits WHERE json_array_length(violations_json) > 0 ORDER BY audit_id LIMIT 3")
+        .pluck().all() as string[];
+      requested = withViolations.slice(0, 2);
+      repositoryAudit = withViolations[2]!;
+      client.prepare(`INSERT INTO audit_requests (id, session_id, workspace_root, scope, mode, paths_json, status, created_at, audit_ids_json)
+        VALUES ('request', 's1', '/w', 'repository', 'log', '[]', 'completed', 1, ?)`).run(JSON.stringify(requested));
+      client.prepare(`INSERT INTO repository_audits (workspace_root, session_id, audit_id, status, started_at)
+        VALUES ('/w', 's1', ?, 'completed', 1)`).run(repositoryAudit);
+      client.prepare("DELETE FROM schema_migrations WHERE id = 'audits-origin'").run();
+      // The older triggers derived the scans' violations: the case to repair.
+      expect(client.prepare("SELECT count(*) AS n FROM audit_violations WHERE audit_id IN (?, ?, ?)").get(...requested, repositoryAudit)).not.toEqual({ n: 0 });
+    } finally {
+      client.close();
+    }
+
+    const database = openRerailDatabase(path);
+    try {
+      expect(database.$client.prepare("SELECT audit_id FROM audits WHERE origin = 'scan' ORDER BY audit_id").pluck().all())
+        .toEqual([...requested, repositoryAudit].sort());
+      // The step dropped the older triggers, and the DDL created this build's again.
+      expect(database.$client.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name").all()).toEqual(current);
+      expectMatchesOracle(path, database.$client);
+      // Every rollup row is what the sightings left make it.
+      expect(database.$client.prepare(`SELECT session_id, rule_id, violation_key, last_seen_at, last_logged_at FROM rule_violation_rollup
+        ORDER BY session_id, rule_id, violation_key`).all()).toEqual(database.$client.prepare(`
+        SELECT session_id, rule_id, violation_key, max(started_at) AS last_seen_at, max(CASE WHEN logged = 1 THEN started_at END) AS last_logged_at
+        FROM audit_violations WHERE rule_id IS NOT NULL GROUP BY session_id, rule_id, violation_key ORDER BY session_id, rule_id, violation_key`).all());
+    } finally {
+      database.$client.close();
+    }
+  });
+
   it("fills the derived history from the audits a file already holds when it is upgraded, then keeps it current", async () => {
     const path = await temporaryDatabase();
     const created = new Database(path);
@@ -386,12 +482,18 @@ describe("derived audit history", () => {
           VALUES (?, ?, '/w', 'touched-files', ?, 1, NULL, ?, '[]', '[]', ?, NULL, 'completed', ?, '[]')`)
           .run(`before-${index}`, SESSIONS[index % SESSIONS.length]![0], auditMode(next), JSON.stringify(revisions(next)), Math.floor(next() * 10_000), JSON.stringify(violations(next)));
       }
+      // Scans among them: the upgrade fills history from every audit, then takes these out with no rollup trigger yet.
+      baseline.prepare(`INSERT INTO audit_requests (id, session_id, workspace_root, scope, mode, paths_json, status, created_at, audit_ids_json)
+        VALUES ('request', 's1', '/w', 'repository', 'log', '[]', 'completed', 1, '["before-0","before-3"]')`).run();
+      baseline.prepare("INSERT INTO repository_audits (workspace_root, session_id, audit_id, status, started_at) VALUES ('/w', 's2', 'before-4', 'completed', 1)").run();
     } finally {
       baseline.close();
     }
 
     const database = openRerailDatabase(path);
     try {
+      expect(database.$client.prepare("SELECT audit_id FROM audits WHERE origin = 'scan' ORDER BY audit_id").pluck().all())
+        .toEqual(["before-0", "before-3", "before-4"]);
       expectMatchesOracle(path, database.$client);
       writeHistory(path, database.$client, 4);
       expectMatchesOracle(path, database.$client);

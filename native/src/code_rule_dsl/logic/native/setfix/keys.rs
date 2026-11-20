@@ -25,6 +25,16 @@ pub const EMPTY: u32 = u32::MAX;
 pub const SLOT: usize = 3;
 /// The fewest slots a map holds.
 const LEAST: usize = 16;
+/// Column places 0, 1, 2, …: a key of a relation's first columns (`find`), as one of any columns (`find_at`).
+const LEADING: [usize; 64] = {
+    let mut out = [0; 64];
+    let mut c = 0;
+    while c < 64 {
+        out[c] = c;
+        c += 1;
+    }
+    out
+};
 
 /// A lattice relation's key map: see the module's doc.
 #[derive(Clone)]
@@ -82,6 +92,12 @@ impl KeyMap {
     /// The slot of `key` (the first `key.len()` columns of the relation `data`, `k` columns a row): `Ok`, the slot
     /// holding it; `Err`, the empty slot it would go in.
     pub(super) fn find<D: RowData + ?Sized>(&self, data: &D, k: usize, key: &[i64]) -> Result<usize, usize> {
+        self.find_at(data, k, &LEADING[..key.len()], key)
+    }
+
+    /// The slot of `key`, the values of columns `cols` (in order) of the relation `data`: `find` of any columns, as a
+    /// declared key's map probes them (decision 0361 step 6).
+    pub(super) fn find_at<D: RowData + ?Sized>(&self, data: &D, k: usize, cols: &[usize], key: &[i64]) -> Result<usize, usize> {
         let mask = self.places() - 1;
         let mut s = self.start(rerail_blocks::key_hash(key));
         // Bounded: a map past half full grows before a key goes in, so an empty slot is always found.
@@ -90,7 +106,7 @@ impl KeyMap {
             if row == EMPTY {
                 return Err(s);
             }
-            if key.iter().enumerate().all(|(c, &v)| data.value(row, k, c) == v) {
+            if key.iter().zip(cols).all(|(&v, &c)| data.value(row, k, c) == v) {
                 return Ok(s);
             }
             s = (s + 1) & mask;
@@ -128,21 +144,26 @@ impl KeyMap {
     /// Room for one more key: past half full, every key placed again in twice the slots (its rows' keys read where
     /// they lie, `nkeys` columns of `k`), near `home`.
     pub(super) fn reserve<D: RowData + ?Sized>(&mut self, data: &D, k: usize, nkeys: usize, home: Option<&Home>) {
+        self.reserve_at(data, k, &LEADING[..nkeys], home)
+    }
+
+    /// `reserve` of a map keyed by columns `cols` (`find_at`).
+    pub(super) fn reserve_at<D: RowData + ?Sized>(&mut self, data: &D, k: usize, cols: &[usize], home: Option<&Home>) {
         if 2 * (self.keys + 1) <= self.places() {
             return;
         }
         let mut grown = KeyMap::new(home, 2 * self.places());
         // copy: not block data: one key's values at a time, what the hash reads.
-        let mut key = vec![0i64; nkeys];
+        let mut key = vec![0i64; cols.len()];
         for s in 0..self.places() {
             let row = self.row(s);
             if row == EMPTY {
                 continue;
             }
-            for (c, v) in key.iter_mut().enumerate() {
+            for (v, &c) in key.iter_mut().zip(cols) {
                 *v = data.value(row, k, c);
             }
-            let Err(at) = grown.find(data, k, &key) else { unreachable!("a key held twice") };
+            let Err(at) = grown.find_at(data, k, cols, &key) else { unreachable!("a key held twice") };
             grown.set(at, row, self.changes(s), self.round(s));
         }
         *self = grown;

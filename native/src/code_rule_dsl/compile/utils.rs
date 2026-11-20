@@ -12,10 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Weak};
 
 /// A `utils` or `constraints` object: names to ast rules, in name order.
-pub fn rule_map<'a>(
-    value: Option<&'a Value>,
-    path: &str,
-) -> Result<BTreeMap<String, &'a Value>> {
+pub fn rule_map<'a>(value: Option<&'a Value>, path: &str) -> Result<BTreeMap<String, &'a Value>> {
     let Some(value) = value else {
         return Ok(BTreeMap::new());
     };
@@ -58,10 +55,7 @@ pub fn is_metavariable_name(name: &str) -> bool {
 
 /// A `utils` object as utility definitions, ids checked. A utility is a rule, or `{ params, rule }`:
 /// capture names its callers bind to their own (`{ "matches": { "id": { "P": "$C" } } }`).
-pub fn util_map<'a>(
-    value: Option<&'a Value>,
-    path: &str,
-) -> Result<BTreeMap<String, UtilDef<'a>>> {
+pub fn util_map<'a>(value: Option<&'a Value>, path: &str) -> Result<BTreeMap<String, UtilDef<'a>>> {
     let mut utils = BTreeMap::new();
     for (id, rule) in rule_map(value, path)? {
         if id.contains(['(', ')', ',', '=']) {
@@ -269,6 +263,7 @@ impl<'a> UtilScope<'a> {
             documents: self.documents,
             instances: None,
             side,
+            patterns: self.patterns,
         }
     }
 }
@@ -300,6 +295,22 @@ pub struct UtilScope<'a> {
     pub instances: Option<&'a Instances>,
     /// The document the rule being compiled reads.
     pub side: Side,
+    /// The patterns the query's compilation has compiled (`language::Patterns`); `None` compiles each where asked.
+    pub patterns: Option<&'a crate::code_rule_dsl::language::Patterns>,
+}
+
+impl UtilScope<'_> {
+    /// A rule's pattern for `language`, compiled once for the query where it has a table of them.
+    pub fn pattern(
+        &self,
+        source: crate::code_rule_dsl::language::PatternSource<'_>,
+        language: crate::code_rule_dsl::language::GrammarDialect,
+    ) -> std::result::Result<ast_grep_core::matcher::Pattern, ast_grep_core::matcher::PatternError> {
+        match self.patterns {
+            Some(patterns) => patterns.get(source, language),
+            None => crate::code_rule_dsl::language::rule_pattern(source, language),
+        }
+    }
 }
 
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

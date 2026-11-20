@@ -41,6 +41,13 @@ pub(super) fn outputs_alone(rel: &str) -> bool {
 /// running the slice. Not an output: they are no relation of the file-local part.
 pub(super) const GUESTS: &str = "guests:";
 
+/// The `lines` key of an entry's tape values asked inside the fixpoint (decision 0431 §8): each `(at, grammar)` a
+/// rule of the file asked to parse. A chunk of partial hits whose cone sees guests but asks none (a rule reading a
+/// relation hiding widened to annotations, `FoldOwn`) admits them before its run, as far as the cone sees them: no
+/// entry keeps a base relation's rows (decision 0458 step 4), so the values are made again, not read from the entry.
+/// Under `GUESTS`, so it is no output; no round (`guest_round` is `None`).
+pub(super) const VALUES: &str = "guests:values";
+
 /// An entry's `outputs` key for round `round`'s lines of slice relation `rel`.
 pub(super) fn guest_key(round: usize, rel: &str) -> String {
     format!("{GUESTS}{round}:{rel}")
@@ -67,7 +74,7 @@ pub(super) fn covered_words(identity: &[u8; 32]) -> [i64; 2] {
 
 /// The identities `entry` holds (`COVERED`).
 pub(super) fn covered(entry: &Entry) -> HashSet<[i64; 2]> {
-    entry.rows.get(COVERED).map(|(_, v)| v.chunks_exact(2).map(|w| [w[0], w[1]]).collect()).unwrap_or_default()
+    entry.rows.get(COVERED).map(|(_, v)| v.as_chunks::<2>().0.iter().map(|w| [w[0], w[1]]).collect()).unwrap_or_default()
 }
 
 /// Whether `a` and `b` hold the same rows (exported or output) of relation `rel`, in any order.
@@ -364,6 +371,23 @@ pub(super) fn with_modules(digest: [u8; 32], modules: &BTreeMap<String, String>)
         hash.update(path.as_bytes());
         hash.update(b"\0");
         hash.update(module.as_bytes());
+        hash.update(b"\0");
+    }
+    hash.finalize().into()
+}
+
+/// `digest` with the folders whose Python files no regular package holds folded in (`corpus::package_root_modules`,
+/// core.rerail's `unpackaged`): a file's `unpackaged` row follows from its folder, which an `__init__.py` added or removed
+/// changes. A file added to such a folder changes nothing. None leaves the digest as it was.
+pub(super) fn with_unpackaged(digest: [u8; 32], folders: &BTreeSet<&str>) -> [u8; 32] {
+    if folders.is_empty() {
+        return digest;
+    }
+    let mut hash = Sha256::new();
+    hash.update(b"rerail.corpus-local-unpackaged/v1\0");
+    hash.update(digest);
+    for folder in folders {
+        hash.update(folder.as_bytes());
         hash.update(b"\0");
     }
     hash.finalize().into()
@@ -826,7 +850,7 @@ pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries:
             }
         }
         let mut by: Vec<_> = by.into_iter().collect();
-        by.sort_by(|a, b| b.1.1.cmp(&a.1.1));
+        by.sort_by_key(|b| std::cmp::Reverse(b.1.1));
         let top: Vec<String> = by.iter().take(12).map(|(r, (n, b))| format!("{r}: {n} rows, {:.1} MB", *b as f64 / 1048576.0)).collect();
         eprintln!("rerail: the memo's entries: {:.1} MB over {} documents; by relation: {}", estimate as f64 / 2097152.0, held.len(), top.join("; "));
     }
@@ -1171,7 +1195,7 @@ pub mod tests {
         use crate::code_rule_dsl::logic::program_image::{Builder, Version, fields::ProgramFields};
         let read = crate::code_rule_dsl::logic::rr::parse_version(".decl a(s: symbol)\n.decl b(s: symbol)\nb(\"x\").\n.output a\n").unwrap();
         let mut b = Builder::on(&read);
-        b.set_facts("a", &[]);
+        b.fields().set_facts("a", &[]);
         let (v, _) = b.finish().unwrap();
         // Stored as an image, and opened again.
         let back = Version::open(v.fold().unwrap().base_bytes().unwrap()).unwrap();

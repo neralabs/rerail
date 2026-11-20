@@ -1,7 +1,8 @@
-//! The Bitlex ladder's checks (the engine's tests and this crate's use them): thirteen languages, from one keyword to a data language with nested
-//! records, lists, texts, escapes, numbers and two kinds of comment, a step at a time. Each is
-//! parsed by its Bitlex file alone (`bitlex_ladder/`), with no Rust between the bytes and the
-//! nodes.
+//! The Bitlex ladder's checks (the engine's tests and this crate's use them). The ladder was built
+//! a step at a time, from one keyword to a data language with nested records, lists, texts,
+//! escapes, numbers and two kinds of comment; the tree keeps its last step (13), and JSON and
+//! JSONC (14, 15), and git's history the rest (decision 0422). Each is parsed by its Bitlex file
+//! alone (`bitlex_ladder/`), with no Rust between the bytes and the nodes.
 //!
 //! The languages are made up, so that no step is a known format: records are `< >`, lists
 //! `( )`, items are separated by `;`, an entry is `#key# = value`, texts are between `#`, a caret
@@ -83,11 +84,71 @@ impl Ids {
     }
 }
 
-pub const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/bitlex_ladder");
+/// The ladder's directory (`bitlex_ladder/` beside this crate's `src/`), found as the program runs: above the program,
+/// `CARGO_MANIFEST_DIR` or the working directory. Not written into the build (decision 0224): with its checkout's path
+/// in, this crate and every crate above it were a different crate in every checkout, for every profile.
+pub fn dir() -> String {
+    let ladder = std::path::Path::new(file!()).parent().and_then(std::path::Path::parent).expect("src/ladder.rs").join("bitlex_ladder");
+    let starts = [std::env::current_exe().ok(), std::env::var_os("CARGO_MANIFEST_DIR").map(Into::into), std::env::current_dir().ok()];
+    starts
+        .into_iter()
+        .flatten()
+        .find_map(|start| start.ancestors().map(|a| a.join(&ladder)).find(|d| d.is_dir()))
+        .unwrap_or_else(|| panic!("no directory above the program, CARGO_MANIFEST_DIR or the working directory holds {}", ladder.display()))
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// A grammar whose gap mark (`semi`) is read from the blank run before each token, with two
+/// comment kinds as extras (`ladder_tests::a_gap_mark_read_from_the_blanks`): each extra keeps
+/// the blank marks of its own gap (`Records::extra`). The Metal tests run it too.
+pub const BLANKS_STEP: &str = r#"lexer t
+class ws        = ' ' '\n'
+class lf        = '\n'
+class slash     = '/'
+class star      = '*'
+class dq        = '"'
+class word      = 'a'..'z'
+class punct     = '(' ')' ';'
+mask line_open  = slash & next(slash)
+mask block_open = slash & next(star)
+mask block_end  = slash & prev(star)
+regions hidden {
+  line  = line_open .. lf outside
+  block = block_open .. block_end
+  str   = dq .. dq
+}
+mask code       = ~hidden & ~o_line & ~o_block & ~o_str
+mask last_byte  = ~next(~empty)
+error "a comment or a string open at the end of the file" by tokens when (f_block | f_str) & last_byte
+mask w          = code & word
+mask name       = fill(w, ~w)
+error "a byte no token takes" by tokens when code & ~ws & ~name & ~punct
+token line_comment = start slash & o_line read line
+token multiline_comment = start slash & o_block read block
+token string    = start o_str read str
+token simple_identifier = start name & ~prev(name) run word
+token punct     = start code & punct
+keywords simple_identifier { "k" }
+keywords punct { "(" ")" ";" } required
+skip ws
+mark semi       = lf & code unless after ";", end, ends
+tree t {
+  node source_file whole = (statement (semi | ';'))*
+  choice statement nested = call | simple_identifier | string
+  node call             = 'k' '(' [simple_identifier | string] ')'
+  hidden semi
+  extra line_comment multiline_comment
+}
+"#;
+
+/// A text of `BLANKS_STEP` whose comments lie after a line break, one after another too, and
+/// on their token's line: semi's bits of its records are 0, 0, 1, 1, 0, 1.
+pub const BLANKS_TEXT: &[u8] = b"a // x\n// y\n/* z */ /* w */\nb\n";
 
 /// The ladder's files, in order.
 pub fn steps() -> Vec<(String, String)> {
-    steps_in(DIR)
+    steps_in(&dir())
 }
 
 /// The steps of a ladder in `dir`, in order: its `.bitlex` files (not those of its
@@ -464,26 +525,80 @@ pub struct Compiled {
     pub program: Words,
     pub native: Structure,
     pub parser: crate::native_cpu_stream::Parser,
+    /// The program's text, as the assembler read it.
+    pub text: String,
+    /// Tier 2's state machine as text (`grammar::text`).
+    pub machine: String,
 }
 
 pub fn compile_step(name: &str, source: &str) -> Compiled {
+    compile_step_shaped(name, source, crate::bitlex_masks::Shape::Auto)
+}
+
+/// `compile_step` with tier 2's shape: `Shape::Rules` makes the rules calls.
+pub fn compile_step_shaped(name: &str, source: &str, shape: crate::bitlex_masks::Shape) -> Compiled {
+    compile_step_with(name, source, shape, false)
+}
+
+/// A step compiled as a rules grammar's parser is (`kotlin_parser::compile_text`'s way, `rules`): tier 2 shaped by its
+/// rules (`Shape::Rules`), tier 1's blocks padded for the bytes before (`native_cpu_block::BACK`), the clusters by rule;
+/// else as `compile_step`.
+pub fn compile_step_as(name: &str, source: &str, rules: bool) -> Compiled {
+    let shape = if rules { crate::bitlex_masks::Shape::Rules } else { crate::bitlex_masks::Shape::Auto };
+    compile_step_with(name, source, shape, rules)
+}
+
+/// A step in tier 2's `shape`; `by_rules`: tier 1 padded for the bytes before and the clusters by rule.
+fn compile_step_with(name: &str, source: &str, shape: crate::bitlex_masks::Shape, by_rules: bool) -> Compiled {
+    // `RERAIL_STEP_TIMES`: each phase's time.
+    let times = std::env::var_os("RERAIL_STEP_TIMES").is_some();
+    let (mut t0, mut c0) = (std::time::Instant::now(), crate::native_cpu_block::thread_cpu());
+    let mut phase = |what: &str| {
+        let c = crate::native_cpu_block::thread_cpu();
+        if times {
+            eprintln!("{name}: {what} {:.2?} wall, {:.2}s CPU", t0.elapsed(), c - c0);
+        }
+        (t0, c0) = (std::time::Instant::now(), c);
+    };
     let stmts = parse(source).unwrap_or_else(|e| panic!("{name}: parses: {e}"));
     let ids = Ids::default();
     let compiled = {
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
         let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field };
-        crate::bitlex_masks::compile(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("{name}: compiles: {e}"))
+        crate::bitlex_masks::compile_shaped(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols), shape).unwrap_or_else(|e| panic!("{name}: compiles: {e}"))
     };
+    phase("bitlex compile");
     let text = compiled.text();
     // `RERAIL_LADDER_DUMP`: the program as text, for a step whose name holds it.
     if std::env::var("RERAIL_LADDER_DUMP").is_ok_and(|d| name.contains(&d)) {
         eprintln!("{name}:\n{}\n{text}", compiled.machine);
     }
     let program = crate::rir_asm::assemble(&text).unwrap_or_else(|e| panic!("{name}: assembles: {e}\n{text}"));
-    let native = crate::native_ir::lower(&program, 0, 0).unwrap_or_else(|e| panic!("{name}: lowers: {e:?}"));
-    let parser = crate::native_cpu_stream::Parser::new(&native).unwrap_or_else(|e| panic!("{name}: Cranelift refuses: {e:?}"));
-    Compiled { stmts, ids, program, native, parser }
+    let mut native = crate::native_ir::lower(&program, 0, 0).unwrap_or_else(|e| panic!("{name}: lowers: {e:?}"));
+    phase("assemble and lower");
+    let parser = if by_rules {
+        for b in &mut native.block_programs {
+            b.pad = crate::native_cpu_block::BACK as u16;
+        }
+        crate::native_cpu_stream::Parser::with_cut(&native, &crate::native_cpu_clusters::by_rules(&native))
+    } else {
+        crate::native_cpu_stream::Parser::new(&native)
+    };
+    let parser = parser.unwrap_or_else(|e| panic!("{name}: Cranelift refuses: {e:?}"));
+    phase("Cranelift (tier 1 and tier 2)");
+    let machine = compiled.machine.clone();
+    Compiled { stmts, ids, program, native, parser, text, machine }
+}
+
+/// Why the compiler refuses `source` in tier 2's `shape`; `None` where it compiles.
+pub fn compile_error_shaped(source: &str, shape: crate::bitlex_masks::Shape) -> Option<String> {
+    let stmts = parse(source).unwrap_or_else(|e| panic!("parses: {e}"));
+    let ids = Ids::default();
+    let kind = |n: &str| Some(ids.of(n));
+    let field = |n: &str| Some(ids.of(&format!("field {n}")));
+    let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field };
+    crate::bitlex_masks::compile_shaped(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols), shape).err()
 }
 
 /// Why the compiler refuses `source`; `None` where it compiles.
@@ -675,6 +790,9 @@ pub fn check_documents(
         let compiled = c.parser.parse(&bytes).ok().map(as_ids);
         let tier1 = c.parser.tier1.extract(&bytes);
         if !tier1_agrees(&tier1, &run, &made, lazy) {
+            if std::env::var_os("RERAIL_LADDER_CODES").is_some() {
+                eprintln!("codes interp {:x?}\n      cpu    {:x?}\nstarts {:?}", run.codes, tier1.codes, run.positions.first());
+            }
             return Some(format!("{}: tier 1 compiled differs from its interpreter", show()));
         }
         if interp != want || compiled != want {

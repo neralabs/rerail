@@ -48,7 +48,7 @@ pub fn embedded_dialects(
 ) -> Option<GrammarDialects> {
     let mut embedded: GrammarDialects = Vec::new();
     for &(_, host) in dialects {
-        for &(through, dialect) in host.embeds() {
+        for &(through, dialect) in host.program_embeds() {
             if through == via && !embedded.iter().any(|&(_, known)| known == dialect) {
                 embedded.push((
                     language::label(dialect).expect("embedded dialect has a file label"),

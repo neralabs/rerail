@@ -1,13 +1,14 @@
 /**
  * History, by session (`#sessions`, `?sessionId=<id>&host=<agent>` selects one): the repository's coding agent
- * sessions by day (All · With violations · In progress, `?filter=`), and the selected one's transcript with the
- * violations Rerail logged and steered in it, filtered to one rule from its dropdown in either Show all events state.
+ * sessions by day (All · With violations · Declined steers, `?filter=`), and the selected one's
+ * transcript with the violations Rerail logged and steered in it and the steers the coding agent declined with its
+ * reasons, filtered to one rule from its dropdown in either Show all events state.
  */
 import { h, setAttr, setText, setClass, chevron, searchIcon, syncChildren } from "../dom.js";
-import { fmt, plural, ago, duration, stamp, dayLabel, daysAgo, shortSessionId, truncate } from "../format.js";
+import { fmt, plural, ago, clock, stamp, dayLabel, daysAgo, shortSessionId, startOfDay, truncate } from "../format.js";
 import { data, ui, repoName, titleOf as ruleTitle, packRuleOf } from "../state.js";
 import { ensureTitle, loadSession, loadSessionFindings, loadMoreSessions, loadEarlier } from "../poll.js";
-import { sessionTurns, sessionCorrections, sessionViolationTotal, loadedFrom, placeCorrections, resumeCommand, openState, lastEventAt, isOpen, violationCounts } from "../sessions-model.js";
+import { sessionTurns, sessionCorrections, sessionViolationTotal, sessionDeclinedTotal, loadedFrom, placeCorrections, resumeCommand, openState, lastEventAt, violationCounts } from "../sessions-model.js";
 import { copyText, invalidate, loadMore, renderNow, toast } from "../shell.js";
 import { renderTimeline, jumpTo, placeTicks } from "../render/timeline.js";
 
@@ -97,7 +98,7 @@ function build() {
   el.chips = h("div.chips", { style: "margin-bottom:8px" },
     h("button.chip", { "data-act": "sfilter", "data-i": "all" }, "All"),
     h("button.chip", { "data-act": "sfilter", "data-i": "corr" }, "With violations"),
-    h("button.chip", { "data-act": "sfilter", "data-i": "open" }, "In progress"));
+    h("button.chip", { "data-act": "sfilter", "data-i": "declined" }, "Declined steers"));
   el.list = h("div.srows");
   el.listBox = h("div.list.slist", null, h("div.slhead", null, h("span", null, "Session"), h("span", null, "Violations")), el.list);
   el.listEmpty = h("div.empty", { hidden: true }, h("p", null, "No sessions match."));
@@ -106,8 +107,11 @@ function build() {
   el.hpick = h("select", { id: "hpick", "aria-label": "Choose a session" });
   el.hpickLabel = h("span.m", { "aria-hidden": "true" });
   el.hpickWrap = h("h2.hpick", { hidden: true }, h("span.sel", null, el.hpickLabel, el.hpick, chevron(12)));
-  el.state = h("span", { hidden: true });
-  el.started = h("span"); el.dur = h("span"); el.events = h("span"); el.violations = h("span"); el.sid = h("span.mono");
+  // The header: the title and its one action; when the session ran; what Rerail saw in it.
+  el.stateText = h("span");
+  el.state = h("span.state", null, h("i.dot", { "aria-hidden": "true" }), el.stateText);
+  el.started = h("span"); el.last = h("span", { hidden: true });
+  el.events = h("span"); el.violations = h("span"); el.steered = h("span", { hidden: true }); el.declined = h("span", { hidden: true });
   el.resume = h("button.btn.sm.solid", { "data-act": "resumetoggle", "aria-expanded": "false" });
   el.resumeLbl = h("p.lbl");
   el.resumeText = h("textarea.one", { id: "resumeText", readonly: true, "aria-label": "Resume command" });
@@ -133,8 +137,9 @@ function build() {
     el.aside,
     h("section", null, h("div.list", null,
       h("div.shead", null,
-        h("div.l1", null, el.title, el.hpickWrap, el.state),
-        h("div.l3", null, el.started, el.dur, el.events, el.violations, el.sid, h("span.acts", null, el.resume)),
+        h("div.l1", null, el.title, el.hpickWrap, h("span.acts", null, el.resume)),
+        h("div.l2.when", null, el.started, el.state, el.last),
+        h("div.l2.stats", null, el.events, el.violations, el.steered, el.declined),
         el.resumeBox),
       h("div.tfilter", null, el.ruleCtl, h("label.tall", null, el.showAll, " Show all events")),
       el.scroll)));
@@ -148,8 +153,8 @@ function createListItem(item) {
   }
   const s = item.s;
   return h("button.srow", { "data-act": "ssel", "data-i": s.sessionId, "aria-current": "false" },
-    h("span.l", null, h("span.t"), h("span.m", null, h("span.state"), h("span.ev"), h("span.sid"))),
-    h("span.c.num", null, h("b"), h("span.st")));
+    h("span.l", null, h("span.t"), h("span.m", null, h("span.state"), h("span.vc", null, h("span.st"), h("span.dc")))),
+    h("span.c.num", null, h("b")));
 }
 
 function updateListItem(node, item) {
@@ -157,7 +162,9 @@ function updateListItem(node, item) {
     setAttr(node, "aria-expanded", String(item.open));
     setText(node.querySelector(".name"), item.name);
     const withC = item.withC ? ` · ${fmt(item.withC)} with violations` : "";
-    setText(node.querySelector(".cnt"), `${fmt(item.count)} ${plural(item.count, "session")}${withC}`);
+    const cnt = node.querySelector(".cnt"), counts = `${fmt(item.count)} ${plural(item.count, "session")}${withC}`;
+    setText(cnt, counts);
+    setAttr(cnt, "title", counts);
     return;
   }
   const s = item.s;
@@ -170,13 +177,14 @@ function updateListItem(node, item) {
   setAttr(state, "class", `state ${st ?? ""}`);
   setText(state, rowState(st, s));
   setAttr(state, "title", "Last event");
-  setText(node.querySelector(".ev"), `${fmt(s.eventCount)} events`);
-  setText(node.querySelector(".sid"), shortSessionId(s.sessionId, s.host));
-  const c = node.querySelector(".c"), { logged, steered } = violationCounts(s);
+  // The meta line reads "<state>  N steered · N declined"; the count column is the violations alone.
+  const c = node.querySelector(".c"), { logged, steered, declined } = violationCounts(s);
   setClass(c, "zero", logged === 0);
-  setText(c.firstChild, fmt(logged));
-  setText(c.lastChild, logged === 0 ? "" : `${fmt(steered)} steered`);
-  setAttr(c, "title", `${fmt(logged)} ${plural(logged, "violation")} logged, ${fmt(steered)} steered`);
+  setText(c.querySelector("b"), fmt(logged));
+  setText(node.querySelector(".m .st"), logged === 0 ? "" : `${fmt(steered)} steered`);
+  setText(node.querySelector(".m .dc"), declined === 0 ? "" : `${fmt(declined)} declined`);
+  const ofDeclined = declined === 0 ? "" : `, ${fmt(declined)} of them declined by the coding agent`;
+  setAttr(c, "title", `${fmt(logged)} ${plural(logged, "violation")} logged, ${fmt(steered)} steered${ofDeclined}`);
 }
 
 function rowState(st, s) {
@@ -212,7 +220,7 @@ export function render(root) {
 
 function passesFilter(s) {
   if (ui.sessFilter === "corr") return s.violationCount > 0;
-  if (ui.sessFilter === "open") return isOpen(s);
+  if (ui.sessFilter === "declined") return violationCounts(s).declined > 0;
   return ui.sessFilter === "all";
 }
 
@@ -244,21 +252,43 @@ function renderList(all, sess) {
   const total = Math.max(data.sessions.total, all.length);
   // Filters and search run over the loaded pages; the total says how many more Load more can bring.
   const narrowed = ui.sessFilter !== "all" || q !== "";
-  setText(v.lead, narrowed ? `${fmt(visible.length)} of ${fmt(total)} sessions, newest first.` : `${fmt(total)} ${plural(total, "session")}, newest first.`);
-  if (v.search.value !== ui.sessQuery && document.activeElement !== v.search) v.search.value = ui.sessQuery;
-  for (const c of v.chips.children) setAttr(c, "aria-pressed", String(c.dataset.i === ui.sessFilter));
-
-  if (sess.sessionId !== revealed) { revealed = sess.sessionId; ui.openDays.add(dayKey(daysAgo(sess.startedAt))); }
-  const items = groupByDay(visible).flatMap(g => groupItems(g, q !== ""));
+  renderListControls(visible.length, total, narrowed);
+  revealSelectedDay(sess);
+  // A chip or a search opens every day group, so what it matches shows instead of hiding in a folded day.
+  const items = groupByDay(visible).flatMap(g => groupItems(g, narrowed));
   syncChildren(v.list, items, i => i.key, createListItem, updateListItem);
   setAttr(v.listEmpty, "hidden", items.length > 0);
+  renderLoadMore(all.length, total);
+  renderPicker(visible, sess);
+  if (listHidden) renderHeadPicker(all, sess);
+}
+
+/** The lead's count, the search box (left alone while the person types in it) and which chip is pressed. */
+function renderListControls(shown, total, narrowed) {
+  setText(v.lead, narrowed ? `${fmt(shown)} of ${fmt(total)} sessions, newest first.` : `${fmt(total)} ${plural(total, "session")}, newest first.`);
+  if (v.search.value !== ui.sessQuery && document.activeElement !== v.search) v.search.value = ui.sessQuery;
+  for (const c of v.chips.children) setAttr(c, "aria-pressed", String(c.dataset.i === ui.sessFilter));
+}
+
+/** A newly selected session opens its day once; after that the person owns the fold. */
+function revealSelectedDay(sess) {
+  if (sess.sessionId === revealed) return;
+  revealed = sess.sessionId;
+  ui.openDays.add(dayKey(daysAgo(sess.startedAt)));
+}
+
+/** Load more, while the daemon has more pages, with how many of the sessions are loaded. */
+function renderLoadMore(loaded, total) {
   const more = data.sessions.next !== null;
   setAttr(v.more, "hidden", !more);
-  if (more) setText(v.more.firstChild, `Load more · ${fmt(all.length)} of ${fmt(total)} loaded`);
+  if (more) setText(v.more.firstChild, `Load more · ${fmt(loaded)} of ${fmt(total)} loaded`);
+}
+
+/** The narrow layout's Session picker, over the sessions the list shows. */
+function renderPicker(visible, sess) {
   syncChildren(v.pick, visible.slice(0, 200), s => s.sessionId, s => h("option", { value: s.sessionId }),
     (o, s) => { setText(o, `${titleOf(s.sessionId)} · ${shortSessionId(s.sessionId, s.host)}`); });
   if (v.pick.value !== sess.sessionId) v.pick.value = sess.sessionId;
-  if (listHidden) renderHeadPicker(all, sess);
 }
 
 /** List hidden: the session heading is the picker, over every loaded session (and the selected one, if past them). */
@@ -281,10 +311,44 @@ function renderListToggle() {
   setText(v.listToggle, listHidden ? "Show list" : "Hide list");
 }
 
+/**
+ * The session's state: in progress, no end recorded (open but silent), or when it ended, as a time beside its start
+ * (with the date only when it ended on another day), so its length reads from the two.
+ */
 function headerState(st, sess) {
-  if (st === "live") return `In progress · last event ${ago(lastEventAt(sess))}`;
-  if (st === "stale") return `No end recorded · last event ${ago(lastEventAt(sess))}`;
-  return "";
+  if (st === "live") return "In progress";
+  if (st === "stale") return "No end recorded";
+  const sameDay = startOfDay(sess.endedAt) === startOfDay(sess.startedAt);
+  return `Ended ${sameDay ? clock(sess.endedAt) : stamp(sess.endedAt)}`;
+}
+
+/** A count in the header's stats line, hidden at zero when `hideZero`. */
+function setCount(el, n, label, hideZero = false) {
+  setAttr(el, "hidden", hideZero && n === 0);
+  setText(el, `${fmt(n)} ${label}`);
+}
+
+/** "Started Nov 19, 12:09 PM · Ended 12:47 PM", or "Started … · ● In progress · last event 3m ago" while open. */
+function renderWhen(sess) {
+  const st = openState(sess);
+  setText(v.started, `Started ${stamp(sess.startedAt)}`);
+  // `data-state`, not the list's live/stale classes, so the separator before it stays the header's "·".
+  setAttr(v.state, "data-state", st ?? "ended");
+  setText(v.stateText, headerState(st, sess));
+  setAttr(v.last, "hidden", st === null);
+  setText(v.last, `last event ${ago(lastEventAt(sess))}`);
+}
+
+/** "6 events · 5 violations · 3 steered · 1 declined", over the whole session; a count the daemon has not given is left out. */
+function renderStats(sess) {
+  setCount(v.events, sess.eventCount, "events");
+  // The violation count sits here; the controls row below is only the rule filter and Show all events.
+  const violations = sessionViolationTotal(sess.sessionId) ?? sess.violationCount ?? 0;
+  setCount(v.violations, violations, plural(violations, "violation"));
+  // A deep-linked session past the loaded list has no list row, so no steered count to show.
+  setCount(v.steered, sess.steeredViolations ?? 0, "steered", true);
+  setCount(v.declined, sessionDeclinedTotal(sess), "declined", true);
+  setAttr(v.declined, "title", "Steered violations whose steer the coding agent declined, with its reason on each card.");
 }
 
 function resumeLabel(rc, st) {
@@ -296,18 +360,11 @@ function renderHeader(sess) {
   ensureTitle(sess);
   const title = titleOf(sess.sessionId);
   setText(v.title, title); setAttr(v.title, "title", title);
+  // The session's id is in the resume box and the list's search, not on show; tests and links read it here.
+  setAttr(v.title.closest(".shead"), "data-session", sess.sessionId);
+  renderWhen(sess);
+  renderStats(sess);
   const st = openState(sess);
-  setAttr(v.state, "hidden", st === null);
-  setAttr(v.state, "class", st ?? "");
-  setText(v.state, headerState(st, sess));
-  setText(v.started, `Started ${stamp(sess.startedAt)}`);
-  setText(v.dur, duration((sess.endedAt ?? lastEventAt(sess)) - sess.startedAt));
-  setText(v.events, `${fmt(sess.eventCount)} events`);
-  // The violation count sits in the meta line; the controls row below is only the rule filter and Show all events.
-  const violations = sessionViolationTotal(sess.sessionId) ?? sess.violationCount ?? 0;
-  setText(v.violations, `${fmt(violations)} ${plural(violations, "violation")}`);
-  setText(v.sid, shortSessionId(sess.sessionId, sess.host));
-  setAttr(v.sid, "title", sess.sessionId);
   const rc = resumeCommand(sess);
   setText(v.resume, resumeLabel(rc, st));
   setAttr(v.resume, "aria-expanded", String(ui.resumeOpen));

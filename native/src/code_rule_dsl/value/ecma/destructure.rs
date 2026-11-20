@@ -3,8 +3,8 @@
 //! `a` the node `1` and `c` the node `2`). A name gets an element only where the literal decides
 //! it: no default, no rest, no spread or computed key that could supply it, no getter.
 
-use crate::code_rule_dsl::tree::Tree;
 use super::operand;
+use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::value::NodeRef;
 use crate::code_rule_dsl::value::key::{identifier_name, static_property_name};
 use ast_grep_core::{Doc, Node};

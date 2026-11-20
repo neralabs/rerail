@@ -190,6 +190,9 @@ pub enum Line {
     /// Relation `rel` is a lattice's (decision 0124): its last column the value, joined by the lattice `name`'s join,
     /// the `keys` columns before it the key; after `widen` changes of a key, widened.
     Lattice { rel: usize, keys: usize, name: String, widen: Option<u32> },
+    /// Relation `rel`'s layout says columns `cols` are a key (decision 0361 step 6): its rows are checked as they are
+    /// written, and a second row of a key is reported (`key_breaks`).
+    Key { rel: usize, cols: Vec<usize> },
     Request(usize),
     Produced(usize),
     /// The relation's statistics are kept as its rows come (`Rel::stats`): a session keeps it for its next run.
@@ -243,7 +246,7 @@ pub fn hex(s: &str) -> String {
 }
 
 pub fn unhex(s: &str) -> Result<String, String> {
-    if s.len() % 2 != 0 || !s.is_ascii() {
+    if !s.len().is_multiple_of(2) || !s.is_ascii() {
         return Err(format!("bad hex {s}"));
     }
     let b: Result<Vec<u8>, String> = (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|e| e.to_string())).collect();
@@ -503,6 +506,7 @@ impl std::fmt::Display for Line {
             Line::KeptOld => f.write_str("keptold"),
             Line::KeptRows(rels) => write!(f, "keptrows {}", comma(rels)),
             Line::Lattice { rel, keys, name, widen } => write!(f, "lattice {rel} {keys} {} {}", hex(name), widen.map_or_else(|| "-".to_owned(), |w| w.to_string())),
+            Line::Key { rel, cols } => write!(f, "key {rel} {}", cols.iter().map(usize::to_string).collect::<Vec<_>>().join(",")),
             Line::Request(r) => write!(f, "request {r}"),
             Line::Produced(r) => write!(f, "produced {r}"),
             Line::Stats(r) => write!(f, "stats {r}"),
@@ -607,6 +611,7 @@ impl ComponentSpec {
                     name: unhex(at(3)?)?,
                     widen: if at(4)? == "-" { None } else { Some(num(at(4)?)?) },
                 },
+                "key" => Line::Key { rel: num(at(1)?)?, cols: list(at(2)?)? },
                 "request" => Line::Request(num(at(1)?)?),
                 "produced" => Line::Produced(num(at(1)?)?),
                 "stats" => Line::Stats(num(at(1)?)?),

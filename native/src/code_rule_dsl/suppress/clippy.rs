@@ -625,14 +625,24 @@ pub mod tests {
                 "cfg_attr.rs" => {
                     crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/cfg_attr.rs")
                 }
-                "expect.rs" => crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/expect.rs"),
+                "expect.rs" => {
+                    crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/expect.rs")
+                }
                 "expression.rs" => {
                     crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/expression.rs")
                 }
-                "forbid.rs" => crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/forbid.rs"),
-                "groups.rs" => crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/groups.rs"),
-                "macros.rs" => crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/macros.rs"),
-                "names.rs" => crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/names.rs"),
+                "forbid.rs" => {
+                    crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/forbid.rs")
+                }
+                "groups.rs" => {
+                    crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/groups.rs")
+                }
+                "macros.rs" => {
+                    crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/macros.rs")
+                }
+                "names.rs" => {
+                    crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/names.rs")
+                }
                 "override.rs" => {
                     crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/override.rs")
                 }

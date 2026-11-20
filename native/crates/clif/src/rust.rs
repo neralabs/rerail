@@ -318,11 +318,11 @@ pub struct Shape {
     merges: Vec<Vec<usize>>,
     header: Vec<bool>,
     merge: Vec<bool>,
-    /// The structure printed as MSL's C++ (`clif_msl`), which has no labels: each labelled
+    /// The structure printed as C (`clif_ukl`), which has no labels: each labelled
     /// block a `do { … } while (false)` and each loop a `for (;;)` over one. A jump sets the
     /// target's number (`j`: a loop's `2x + 1`, a merge's `2y + 2`) and breaks; each construct
     /// on the way out stops it there or breaks on.
-    pub msl: bool,
+    pub c: bool,
 }
 
 pub fn successors(f: &ir::Function, b: ir::Block) -> Vec<ir::Block> {
@@ -485,7 +485,7 @@ impl Shape {
         for m in &mut merges {
             m.sort_by_key(|&b| std::cmp::Reverse(order.rpo[b]));
         }
-        Some(Shape { block, succ, label, rpo: order.rpo, merges, header, merge, msl: false })
+        Some(Shape { block, succ, label, rpo: order.rpo, merges, header, merge, c: false })
     }
 
     /// Each dispatch's entry `e` that only jumps (`only_jump`) on into the same dispatch, with
@@ -567,7 +567,7 @@ impl Shape {
     /// successor's).
     pub fn tree(&self, emit: Emit<'_>, x: usize) -> Result<String, String> {
         let within = self.within(emit, x, &self.merges[x])?;
-        Ok(match (self.header[x], self.msl) {
+        Ok(match (self.header[x], self.c) {
             (false, _) => within,
             (true, false) => format!("'b{x}: loop {{\n{within}}}\n"),
             (true, true) => format!("for (;;) {{\ndo {{\n{within}}} while (false);\nif (j != 0u && j != {}u) break;\nj = 0u;\n}}\n", 2 * x + 1),
@@ -578,9 +578,9 @@ impl Shape {
     fn transfer(&self, emit: Emit<'_>, x: usize, k: usize) -> Result<String, String> {
         let to = self.succ[x][k];
         let jump = if self.rpo[to] <= self.rpo[x] {
-            if self.msl { format!("{{ j = {}u; break; }}", 2 * to + 1) } else { format!("continue 'b{to};") }
+            if self.c { format!("{{ j = {}u; break; }}", 2 * to + 1) } else { format!("continue 'b{to};") }
         } else if self.merge[to] {
-            if self.msl { format!("{{ j = {}u; break; }}", 2 * to + 2) } else { format!("break 'm{to};") }
+            if self.c { format!("{{ j = {}u; break; }}", 2 * to + 2) } else { format!("break 'm{to};") }
         } else {
             self.tree(emit, to)?
         };
@@ -594,13 +594,13 @@ impl Shape {
         if let Some((&y, rest)) = ys.split_first() {
             let inner = self.within(emit, x, rest)?;
             let after = self.tree(emit, y)?;
-            if self.msl {
+            if self.c {
                 return Ok(format!("do {{\n{inner}}} while (false);\nif (j != 0u && j != {}u) break;\nj = 0u;\n{after}", 2 * y + 2));
             }
             return Ok(format!("'m{y}: {{\n{inner}}}\n{after}"));
         }
         let Some(b) = self.block[x] else {
-            if self.msl {
+            if self.c {
                 // A jump in a case breaks the `switch`, then the construct around it.
                 let mut s = String::from("switch (d) {\n");
                 for k in 0..self.succ[x].len() {

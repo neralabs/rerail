@@ -190,7 +190,7 @@ impl Docs {
         let tag = self.tags[i];
         // A text-only document has no dialect, and no node.
         let dialect = if tag == TEXT { None } else { self.context.dialects.get(tag) };
-        // `core.rr`: a document that does not parse is withheld from the policy (no facts) but its `doc`, path and
+        // `core.rerail`: a document that does not parse is withheld from the policy (no facts) but its `doc`, path and
         // `syntax_error` rows; its outcome is Unknown(parse). T's shape keeps every document. A guest that does not
         // parse is withheld too, unless the policy keeps its partial tree (decision 0055 §6).
         let guest = d.guest.as_deref().filter(|_| core);
@@ -208,7 +208,9 @@ impl Docs {
         // A guest's nodes have their places in its file: the file's lines, where the batch holds the file.
         let placed = guest.map(|g| (g, self.file_lines(g.host).unwrap_or_else(|| Arc::new(core_rr::Lines::shared(Arc::clone(&d.facts.source), python_lines, &self.context.block)))));
         let new_span = profile::span(|| "projected".into());
-        let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, projection.node_anchors.as_ref().filter(|_| core), &self.context.block);
+        // A guest's file is made before it (`file_lines`), so its own lines are never built ahead of it (decision 0470 step 2:
+        // the eager batch hands a file the lines a program of it built first).
+        let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, None, projection.node_anchors.as_ref().filter(|_| core), &self.context.block);
         drop(new_span);
         // A program that reads `end_point` has each node's end point among the positions, after the lines.
         let nodes = p.len();
@@ -220,7 +222,7 @@ impl Docs {
         p.module = crate::code_rule_dsl::module_path::ModulePath::dotted(d.module.as_deref().unwrap_or(&module(&d.path)));
         // Its positions (tokens, text, lines) in the top slots (`granules::span_low`): past them ids would clash.
         if p.defs.is_some() && u64::from(p.locs() - p.len()) > granules::POSITIONS {
-            self.fail(format!("{} has more than {} positions (tokens and lines: core.rr's span ids)", d.path, granules::POSITIONS));
+            self.fail(format!("{} has more than {} positions (tokens and lines: core.rerail's span ids)", d.path, granules::POSITIONS));
         }
         // A file's lines, for its guests a later round or an admitted value places in it.
         if core && guest.is_none() && let Some(x) = &p.extra {
@@ -229,7 +231,7 @@ impl Docs {
         MadeDoc { p, withheld, error }
     }
     /// The lines of the file a guest of `host` is in (through guests of guests), where the batch holds that file in
-    /// core.rr's shape.
+    /// core.rerail's shape.
     fn file_lines(&self, host: u32) -> Option<Arc<core_rr::Lines>> {
         let mut k = host;
         for _ in 0..=self.context.host.len() {

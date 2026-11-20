@@ -1,6 +1,5 @@
 //! The planner's passes over a version (decision 0173, stage 2 step 3), each stated as an edit: `normalize` is a
-//! derivation (every rule rewritten, each recording its source, §9), `stated_apart` an overlay of what it moves. Each is
-//! the tree pass it replaces (`plan::sql_kernel::normalize`, `plan::stated_apart`), checked against it (`tests`).
+//! derivation (every rule rewritten, each recording its source, §9), `stated_apart` an overlay of what it moves.
 use super::about::About;
 use super::build::{Builder, PartFields, Rewrite, Site, T};
 use super::manager::{Cx, Pipeline, ProgramPass, ProgramW, RuleOut, RulePass, Select, Step};
@@ -10,12 +9,22 @@ use super::{Cell, RelId, RuleId, Slot};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
-/// `v` normalized for the SQL kernel (`sql_kernel::normalize`): each relation of no columns, or a lattice of no
-/// keys, gets a leading presence column (`program::physical`); and when any lattice is not flat, each `top` becomes its
-/// lattice's value and each ground rule a fact (`program::tops`). A derivation of `v`: every rule came from one of
+/// `v` normalized for the SQL kernel: each relation of no columns, or a lattice of no keys, gets a leading presence
+/// column (SQLite's physical sentinel: a table needs a column, and a lattice a key); and when any lattice is not flat,
+/// each `top` becomes its lattice's value (the `top` keyword belongs to a lattice, not the flat lattice's numeric
+/// sentinel) and each ground rule a fact. A derivation of `v`: every rule came from one of
 /// `v`'s. Also the sentinel relations, those and every declared one of no columns, by id. A rule pass (`Normalize`).
 pub fn normalize(v: &Arc<Version>) -> Result<(Arc<Version>, Vec<RelId>), String> {
-    let mut pass = Normalize::default();
+    run_normalize(v, Normalize::default())
+}
+
+/// `normalize` with each lattice's top given by relation (the SQL extension's lattices, whose operations the session
+/// registers: `native::TOP` where none is given), and `top` read as its value whatever the lattices.
+pub fn normalize_with_tops(v: &Arc<Version>, tops: BTreeMap<String, i64>) -> Result<(Arc<Version>, Vec<RelId>), String> {
+    run_normalize(v, Normalize { given_tops: Some(tops), ..Normalize::default() })
+}
+
+fn run_normalize(v: &Arc<Version>, mut pass: Normalize) -> Result<(Arc<Version>, Vec<RelId>), String> {
     let mut p = Pipeline::new("normalize", v.clone());
     p.rules(&mut pass);
     let (out, _) = p.finish()?;
@@ -78,6 +87,8 @@ pub struct Normalize {
     /// Each lattice's value column and top, by relation, when any lattice is not flat.
     top_of: Vec<Option<(usize, i64)>>,
     tops: bool,
+    /// The tops given (`normalize_with_tops`), by relation.
+    given_tops: Option<BTreeMap<String, i64>>,
     /// The facts it states: each sentinel's, with its presence cell, and each ground rule's head.
     facts: BTreeMap<RelId, Vec<Vec<Cell>>>,
     /// The relations given a presence column, and every declared one of no columns, by id.
@@ -86,7 +97,7 @@ pub struct Normalize {
 
 /// The rows of `r`'s stated facts in `v`, a sentinel's with its presence cell.
 fn rows_of(v: &Version, sentinel: &[bool], r: RelId) -> Vec<Vec<Cell>> {
-    let rows = v.facts(v.rel_atom(r)).map(|f| f.rows().map(|row| row.collect::<Vec<Cell>>()).collect()).unwrap_or_else(Vec::new);
+    let rows: Vec<Vec<Cell>> = v.facts(v.rel_atom(r)).map(|f| f.rows().map(|row| row.collect::<Vec<Cell>>()).collect()).unwrap_or_default();
     if sentinel[r.index()] { rows.into_iter().map(|row: Vec<Cell>| std::iter::once(Cell::Int(1)).chain(row).collect()).collect() } else { rows }
 }
 
@@ -111,9 +122,14 @@ impl RulePass for Normalize {
         sentinels.dedup();
         self.sentinels = sentinels;
         // Each lattice's value column (in `v`'s atoms) and its top, when any lattice is not flat.
-        self.tops = about.lattice.iter().any(|l| v.text(l.lattice) != "flat");
+        self.tops = self.given_tops.is_some() || about.lattice.iter().any(|l| v.text(l.lattice) != "flat");
         self.top_of = vec![None; n];
-        if self.tops {
+        if let Some(given) = &self.given_tops {
+            for l in &about.lattice {
+                let top = given.get(v.rel_name(l.rel)).copied().unwrap_or(crate::code_rule_dsl::logic::native::TOP);
+                self.top_of[l.rel.index()] = Some((l.keys, top));
+            }
+        } else if self.tops {
             for l in &about.lattice {
                 let lat = crate::code_rule_dsl::logic::native::lattice(v.text(l.lattice)).map_err(|e| e.to_string())?;
                 self.top_of[l.rel.index()] = Some((l.keys, lat.top()));
@@ -150,17 +166,17 @@ impl RulePass for Normalize {
             }
             if self.sentinel[v.rel_of(d.name()).expect("declared").index()] {
                 let cols: Vec<(&str, &str)> = std::iter::once(("__presence", "int")).chain(d.cols().map(|(c, t)| (v.text(c), v.text(t)))).collect();
-                b.declare(v.text(d.name()), &cols);
+                b.fields().declare(v.text(d.name()), &cols);
             }
         }
         for l in &about.lattice {
             if self.sentinel[l.rel.index()] {
-                b.set_lattice_keys(v.rel_name(l.rel), l.keys + 1);
+                b.fields().set_lattice_keys(v.rel_name(l.rel), l.keys + 1);
             }
         }
-        b.add_nullary(&empty);
+        b.fields().add_nullary(&empty);
         for (r, rows) in std::mem::take(&mut self.facts) {
-            b.set_fact_cells(v.rel_name(r), rows);
+            b.fields().set_fact_cells(v.rel_name(r), rows);
         }
         Ok(())
     }
@@ -270,7 +286,7 @@ impl Rewrite for Normal<'_> {
 }
 
 /// Each relation of `v` with rules and stated facts, its facts moved apart into `rel__stated`, read by the rule
-/// `rel(x…) :- rel__stated(x…)`; a lattice relation keeps its facts (`plan::stated_apart`). An overlay of `v`; and the
+/// `rel(x…) :- rel__stated(x…)`; a lattice relation keeps its facts. An overlay of `v`; and the
 /// pairs `(rel, rel__stated)`, in name order. A program pass (`StatedApart`).
 pub fn stated_apart(v: &Arc<Version>) -> Result<(Arc<Version>, Vec<(RelId, RelId)>), String> {
     let mut pass = StatedApart::default();
@@ -305,9 +321,9 @@ impl ProgramPass for StatedApart {
             let rows: Vec<Vec<Cell>> = v.facts(v.rel_atom(rel)).expect("stated facts").rows().map(|r| r.collect()).collect();
             let d = v.decl(v.rel_atom(rel)).ok_or_else(|| format!("{name} has stated facts and no declaration"))?;
             let cols: Vec<(&str, &str)> = d.cols().map(|(c, t)| (v.text(c), v.text(t))).collect();
-            b.drop_facts(name);
-            b.declare(&apart, &cols);
-            b.set_fact_cells(&apart, rows);
+            b.fields().drop_facts(name);
+            b.fields().declare(&apart, &cols);
+            b.fields().set_fact_cells(&apart, rows);
             let args: Vec<String> = (0..cols.len()).map(|i| format!("rr_s{i}")).collect();
             let args: Vec<T<'_>> = args.iter().map(|a| T::Var(a)).collect();
             let to = b.rel(&apart);
@@ -348,8 +364,8 @@ impl<F: Fn(super::RuleId) -> bool, S: AsRef<str>, T: AsRef<str>> ProgramPass for
     fn run(&mut self, _: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let b = w.overlay()?;
         b.retain(|r| (self.keep)(r.id()));
-        b.set_inputs(self.inputs);
-        b.set_outputs(self.outputs);
+        b.fields().set_inputs(self.inputs);
+        b.fields().set_outputs(self.outputs);
         Ok(())
     }
 }
@@ -366,11 +382,11 @@ impl<S: AsRef<str>> ProgramPass for PartOf<'_, S> {
     const NAME: &'static str = "part's fields";
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let b = w.overlay()?;
-        b.set_inputs(self.inputs);
-        b.set_outputs(self.outputs);
-        b.keep_relation_fields(self.fields.natives, self.fields.lattice, self.fields.gates);
+        b.fields().set_inputs(self.inputs);
+        b.fields().set_outputs(self.outputs);
+        b.fields().keep_relation_fields(self.fields.natives, self.fields.lattice, self.fields.gates);
         // The request record of the relations whose rules the part holds (decision 0331): the record is by rule.
-        b.keep_asked(&|rel| cx.v().rel(rel).is_some_and(|r| cx.v().heads(r).next().is_some()));
+        b.fields().keep_asked(&|rel| cx.v().rel(rel).is_some_and(|r| cx.v().heads(r).next().is_some()));
         Ok(())
     }
 }
@@ -381,7 +397,7 @@ pub struct SetAnswers<'a>(pub &'a BTreeMap<String, Vec<String>>);
 impl ProgramPass for SetAnswers<'_> {
     const NAME: &'static str = "answers";
     fn run(&mut self, _: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
-        w.overlay()?.set_answers(self.0);
+        w.overlay()?.fields().set_answers(self.0);
         Ok(())
     }
 }
@@ -392,7 +408,7 @@ pub struct SetQualifiers<'a>(pub &'a [(&'a str, &'a str)]);
 impl ProgramPass for SetQualifiers<'_> {
     const NAME: &'static str = "qualifiers";
     fn run(&mut self, _: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
-        w.overlay()?.set_qualifiers(self.0);
+        w.overlay()?.fields().set_qualifiers(self.0);
         Ok(())
     }
 }
@@ -413,7 +429,8 @@ impl Parts for std::sync::Arc<Version> {
     /// the part's own fields, never folded: `inputs` and `outputs`, and the natives, lattices and gates of the relations
     /// `fields` takes (`keep_relation_fields`). It costs its range list and its fields, never a copy of the program.
     fn part<S: AsRef<str>>(&self, rules: impl Fn(&str) -> bool, inputs: &[S], outputs: &[S], fields: PartFields<'_>) -> Result<Arc<Version>, String> {
-        let mut p = Pipeline::new("part", self.clone());
+        // `Retain` keeps whole relations, and `PartOf` states the record of those with rules.
+        let mut p = Pipeline::stating_record("part", self.clone());
         p.program(&mut Retain(rules)).program(&mut PartOf { inputs, outputs, fields });
         Ok(p.finish()?.0)
     }

@@ -54,3 +54,26 @@ passes all 8 tests under strict.
   was started from. Keying by the corpus root needs the root where the store is chosen (`tape_cache_path`
   takes none).
 - **The old store** `$TMPDIR/rerail-tape-cache.sqlite` is no longer opened, and nothing removes it.
+
+## Amendment (2026-11-19): a store is one process's at a time
+
+Runs started at once from one directory shared the project's store, and so its atoms lease (decision 0049), which a
+run keeps across its waves: eight concurrent `run-rr` of a Django rule over netbox, from one directory, ended three
+to five of eight with `content store writer is busy`, each after waiting `LEASE_WAIT` (60 s) in `Atoms::acquire`
+(Django rules' bug 5; decision 0160 measured the lease deadlocking). Concurrent `test-rr` processes shared testing
+mode's store the same way, from any directory.
+
+The engine now keeps the product's discipline: a store belongs to one process, as the machine-wide one belongs to the
+main daemon (`main-instance.lock`). A process owns a store by an exclusive OS lock on `<store>-owner.lock`, held for
+its life and released by the OS however it ends; `<store>-owner.json` names the holder for messages
+(`corpus::owner`).
+
+- The project's store and testing mode's are the first of their slots no other process owns: `<name>.sqlite`, then
+  `<name>-2.sqlite`, `<name>-3.sqlite`, … A run alone, or runs one after another, keep the first and what it caches;
+  runs at once each own one. No process waits for a slot.
+- A store `RERAIL_TAPE_CACHE` names is waited for: the second process says whose it is, and runs once that process
+  ends, or fails after 600 s with an error that names it.
+- The cleanup of other builds' stores leaves a store a live process owns.
+
+Sharing one store between concurrent processes stays unsupported: that is the lease's design question (decisions
+0049, 0160, 0170), not the store's choice.

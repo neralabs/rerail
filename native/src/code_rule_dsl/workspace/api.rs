@@ -22,7 +22,6 @@ use super::storage::{Attached, StorageContext, attach_storage, unix_seconds};
 use super::{
     CLAUSE_WORK_BUDGET, CandidateSets, STORED_RESULT_UNAVAILABLE, WorkspaceState, check_closed,
 };
-use crate::code_rule_dsl::rule_api::CompiledCodeRuleDsl;
 use crate::code_rule_dsl::budget::MatchBudget;
 use crate::code_rule_dsl::eval::evidence::Side;
 use crate::code_rule_dsl::eval::{evaluation_json, overflow_evaluation};
@@ -32,10 +31,11 @@ use crate::code_rule_dsl::model::{
     ClauseKind, CodeRuleScope, CompiledCodeRule, Evaluation, Metrics, Query, Snapshot,
 };
 use crate::code_rule_dsl::placement::parse_placement;
+use crate::code_rule_dsl::prof::release_allocator_memory;
+use crate::code_rule_dsl::rule_api::CompiledCodeRuleDsl;
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::{matcher::GrammarMatcher, profile};
 use crate::content_store::{OperationDeadline, StoreError, WorkspaceCompletion};
-use crate::code_rule_dsl::prof::release_allocator_memory;
 use napi::bindgen_prelude::{AsyncTask, Buffer};
 use napi::{Env, Result, Task};
 use napi_derive::napi;
@@ -53,10 +53,12 @@ static WORKSPACE_INSTANCES: std::sync::atomic::AtomicU64 = std::sync::atomic::At
 
 #[napi]
 pub struct CodeRuleDslWorkspace {
-    #[napi(skip)] pub state: Arc<Mutex<WorkspaceState>>,
+    #[napi(skip)]
+    pub state: Arc<Mutex<WorkspaceState>>,
     /// Each registered code rule's scope, and whether the code rule reads text
     /// (`CompiledCodeRule::reads_text`), answered without the state lock.
-    #[napi(skip)] pub scopes: Mutex<Vec<(CodeRuleScope, bool)>>,
+    #[napi(skip)]
+    pub scopes: Mutex<Vec<(CodeRuleScope, bool)>>,
     /// Whether a code rule reads `file.package.serverGraph`, answered without the state lock.
     pub(super) server_graph: AtomicBool,
     /// Whether a code rule has an AST clause in a family whose files read their nearest
@@ -76,12 +78,18 @@ impl Default for CodeRuleDslWorkspace {
 
 /// The Node environment's machine (decision 0442). The addon's caller is the environment: it makes one machine and
 /// keeps it in its instance data, so every workspace it makes shares its pool, its CPU slot and its learned model,
-/// each workspace on a shared object of its own. Another environment (a worker thread) has its own.
+/// each workspace on a shared object of its own. Another environment (a worker thread) has its own. The main
+/// environment's lives as long as the process, on its main thread: that thread is one of its pool's
+/// (`Machine::here`), so its own work and its waits are the pool's.
 fn environment_machine(env: &napi::Env) -> Result<Arc<crate::code_rule_dsl::logic::profile::Machine>> {
     if let Some(machine) = env.get_instance_data::<Arc<crate::code_rule_dsl::logic::profile::Machine>>()? {
         return Ok(Arc::clone(machine));
     }
-    let machine = crate::code_rule_dsl::logic::profile::Machine::new();
+    let machine = if crate::code_rule_dsl::logic::profile::is_main_thread() {
+        crate::code_rule_dsl::logic::profile::Machine::here()
+    } else {
+        crate::code_rule_dsl::logic::profile::Machine::new()
+    };
     env.set_instance_data(Arc::clone(&machine), (), |_| {})?;
     Ok(machine)
 }
@@ -268,6 +276,7 @@ impl CodeRuleDslWorkspace {
                                     producer.violation.project.clear();
                                     producer.violation.each = None;
                                     producer.violation.node_regexes.clear();
+                                    producer.violation.gap_tests.clear();
                                 }
                                 id
                             })
@@ -531,11 +540,7 @@ impl CodeRuleDslWorkspace {
         AsyncTask::new(self.result_page_task(cursor, maximum_bytes))
     }
 
-    pub fn result_page_task(
-        &self,
-        cursor: u32,
-        maximum_bytes: u32,
-    ) -> WorkspaceResultPageTask {
+    pub fn result_page_task(&self, cursor: u32, maximum_bytes: u32) -> WorkspaceResultPageTask {
         WorkspaceResultPageTask {
             state: Arc::clone(&self.state),
             closed: Arc::clone(&self.closed),
@@ -875,6 +880,8 @@ impl Task for WorkspaceStorageTask {
             // and interactive edits evaluate without reuse. Only a root outside any repository is
             // expected; any other cause is reported, so reuse is never lost silently.
             let discovery_started = Instant::now();
+            // Only the open is under a Git read's time limit (`git_workspace::discover`): the walk
+            // and status of a large checkout may take longer, as they always could.
             let discovered = crate::git_workspace::discover(std::path::Path::new(&self.root));
             let discovery_milliseconds = discovery_started.elapsed().as_secs_f64() * 1000.0;
             let discovered = match discovered {

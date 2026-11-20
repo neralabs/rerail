@@ -76,6 +76,36 @@ test.describe("History by rule over a mature repository", () => {
     await expect(violationRows(page)).toHaveCount(total);
   });
 
+  test("each violation counts in one outcome, and a declined one shows the coding agent's reason", async ({ page, rerail }) => {
+    // The open session's agent declined its typescript-eslint-no-non-null-assertion steer.
+    await page.goto(await rerail.dashboard("mature", { hash: "history" }));
+    const chips = content(page).locator(".hchips .chip");
+    await expect(chips).toHaveText(["All", "Log only", "Steered", "Declined"]);
+    const rule = ruleRows(page).and(page.locator('[data-i="typescript-eslint-no-non-null-assertion"]'));
+    await expect(rule.locator(".m .dc")).toHaveText("1 declined");
+
+    await chips.filter({ hasText: "Declined" }).click();
+    await expect(page).toHaveURL(/#history\?outcome=declined$/u);
+    await expect(ruleRows(page)).toHaveCount(1);
+    await expect(rule.locator(".c b")).toHaveText("1");
+    await expect(content(page).locator(".hsum .tsum")).toContainText("1 declined");
+
+    const declined = content(page).locator('.hist .ev[data-outcome="declined"]');
+    await expect(declined).toHaveCount(1);
+    await expect(declined.locator(".hoc")).toHaveText("Declined");
+    await expect(declined.locator(".hsaid .k")).toHaveText("Agent said");
+    await expect(declined.locator(".hsaid .v")).not.toBeEmpty();
+    // Its other violations were steered and not declined.
+    await expect(content(page).locator('.hist .ev[data-outcome="steered"] .hoc').first()).toHaveText("Steered");
+
+    // Under Steered, the rule counts its steered violations alone, as its summary line does.
+    await chips.filter({ hasText: "Steered" }).click();
+    await rule.click();
+    await expect(page).toHaveURL(/#history\?outcome=steered&rule=typescript-eslint-no-non-null-assertion$/u);
+    const steered = await content(page).locator(".hsum .tsum span").filter({ hasText: /steered$/u }).textContent();
+    await expect(rule.locator(".c b")).toHaveText(steered!.replace(" steered", ""));
+  });
+
   test("a legacy #activity?rule= link shows that rule", async ({ page, rerail }) => {
     await page.goto(await rerail.dashboard("mature", { hash: "activity?rule=eslint-eqeqeq" }));
 

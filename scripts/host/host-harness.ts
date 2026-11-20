@@ -256,6 +256,10 @@ export async function sandboxEnvironment(sandbox: string, project: string, rerai
     "NODE_EXTRA_CA_CERTS",
   ])
     if (process.env[key] !== undefined) env[key] = process.env[key];
+  // Experimental features the run turned on (docs/internal-testing.md) reach the hosts too, which run some of them.
+  for (const [key, value] of Object.entries(process.env)) {
+    if (key === "RERAIL_EXPERIMENTAL" || key.startsWith("RERAIL_EXPERIMENTAL_")) env[key] = value;
+  }
   return env;
 }
 
@@ -452,7 +456,7 @@ export async function configureHostAuth(
       await importAccessOnlyAuth("codex", sandbox, profile, env, timeoutMs);
     }
     const hooks = await readFile(join(ROOT, "hooks", "codex.json"), "utf8");
-    await writeFile(join(env.CODEX_HOME, "hooks.json"), hooks.replaceAll("$PLUGIN_ROOT", ROOT), { mode: 0o600 });
+    await writeFile(join(env.CODEX_HOME, "hooks.json"), hooks.replaceAll("${PLUGIN_ROOT}", ROOT), { mode: 0o600 });
   } else if (host === "claude-code") {
     if (!process.env.ANTHROPIC_FOUNDRY_API_KEY)
       throw new Error("FAILED prerequisite: Claude Code requires ANTHROPIC_FOUNDRY_API_KEY");

@@ -150,7 +150,7 @@ fn record_of(facts: &Facts) -> Option<Record> {
 /// The link kept under `family`, its record, and the sources it was read from.
 pub(super) fn lookup(store: &ContentStore, family: &[u8; 32]) -> Option<(Arc<Version>, Record, Vec<SourceId>)> {
     let _s = crate::code_rule_dsl::logic::profile::span(|| "the combine's last link, from the store (decision 0373)".into());
-    let (version, facts, sources) = kept(store, family, &front::Lists::default()).ok().flatten()?;
+    let (version, facts, sources) = kept(store, family).ok().flatten()?;
     Some((version, record_of(&facts)?, sources))
 }
 

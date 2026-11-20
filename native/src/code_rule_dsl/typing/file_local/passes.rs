@@ -87,7 +87,7 @@ impl ProgramPass for MoveCrossFile {
     }
     fn run(&mut self, _cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let words: Vec<(&str, &str)> = self.0.iter().map(|r| (r.as_str(), super::CROSS_FILE)).collect();
-        w.on()?.add_qualifiers(&words);
+        w.on()?.fields().add_qualifiers(&words);
         Ok(())
     }
 }
@@ -210,7 +210,7 @@ impl ProgramPass for Locate {
         let b = w.derive()?;
         for (at, cols) in &ats {
             let cols: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
-            b.declare(at, &cols);
+            b.fields().declare(at, &cols);
         }
         const D: &str = "__located_d";
         for item in items {
@@ -322,10 +322,10 @@ fn write_onto(b: &mut Builder<'_>, input: &Version, round: &Round<'_>, onto: boo
     }
     for (rel, cols) in &round.decls {
         let cols: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
-        b.declare(rel, &cols);
+        b.fields().declare(rel, &cols);
     }
     for rel in &round.undeclared {
-        b.undeclare(rel);
+        b.fields().undeclare(rel);
     }
     for m in &round.rules {
         if m.kept {
@@ -355,7 +355,7 @@ fn write_onto(b: &mut Builder<'_>, input: &Version, round: &Round<'_>, onto: boo
     }
     if !round.no_inline.is_empty() {
         let words: Vec<(&str, &str)> = round.no_inline.iter().map(|k| (k.as_str(), "no_inline")).collect();
-        b.add_qualifiers(&words);
+        b.fields().add_qualifiers(&words);
     }
     Ok(())
 }

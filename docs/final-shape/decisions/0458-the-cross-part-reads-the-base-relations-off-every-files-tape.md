@@ -104,6 +104,15 @@ Each has its test before the code that meets it.
   documents' old rows are counted out and their new ones in, read where they lie (`RelStats::documents_read`); else
   they are counted off the corpus batch. A session's input delta of a base relation no longer reads entries: it is
   the changed documents' versions, else the session's kept rows by document.
+- **Step 4 under 0431 §8, a partial hit's tape values** (2026-11-20, the hub merge). The hub's partial hit read a
+  guest's base rows from its entry (`has_base`: an entry without them was a miss). Here no entry keeps them, so
+  an entry keeps what its file's fixpoint asked instead: each `(at, grammar)` of a tape value (`memo::VALUES`,
+  under `guests:`, no output). A chunk of partial hits whose cone sees guests (`guests_seen`) admits them before
+  its run, as far as the cone sees them. It also admits those its own rules ask. A cone that reads a relation
+  hiding widened to annotations (`FoldOwn`) and asks none itself then reads their rows, as the full run did
+  (`a_partial_hit_makes_only_the_guests_its_cone_can_see`, the `ids` edit). The values are made again from
+  their texts' shas (each parsed at most once a run), never read from the entry. A partial entry carries the
+  asks on to the next edit.
 - **Step 5, R6** (2026-11-19, the 50 data-layer files, against 0439's runs): 589 outputs equal across the edit,
   the warm run after it and the edited tree's cold run; the chain's values 17.9 MB to 10.6 MB, no base relation's
   granule left; instructions cold 198.9 G to 212.3 G, the edit 37.3 G to 35.2 G; peak memory cold 888 MB to 724 MB.

@@ -26,11 +26,7 @@ pub fn canonicalize_value(value: Value) -> Value {
     }
 }
 
-pub fn reject_unknown(
-    object: &Map<String, Value>,
-    allowed: &[&str],
-    path: &str,
-) -> Result<()> {
+pub fn reject_unknown(object: &Map<String, Value>, allowed: &[&str], path: &str) -> Result<()> {
     if let Some(key) = object.keys().find(|key| !allowed.contains(&key.as_str())) {
         return Err(invalid(format!("unknown field `{key}` at {path}")));
     }

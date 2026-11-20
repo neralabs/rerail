@@ -3,8 +3,9 @@
 > Structural tool-call rules catch commands an agent should never run: `git push --force`, `rm -rf`,
 > `--no-verify`. Every example ran through the engine. **FLAG**: the rule fired. **PASS**: it stayed quiet.
 
-Internal testing: Rerail's latest release ships code rules only, not tool-call rules. See
-[Internal testing](../README.md#internal-testing).
+Internal testing: Rerail's latest release ships code rules only, not tool-call rules. They are experimental: none is
+checked, and `rerail rules test` and `rules add` refuse one, unless `RERAIL_EXPERIMENTAL_CONVERSATION_RULES=1` (or
+`RERAIL_EXPERIMENTAL=1`) is set. See [Internal testing](internal-testing.md).
 
 ---
 
@@ -35,6 +36,7 @@ A rule pairs a match condition with the tool calls it reads and what to tell the
 {
   "id": "oss:no-force-push",
   "mode": "steer",
+  "title": "No force-push",
   "match": { "field": "input.command", "regex": "\\bgit\\s+push\\b[^\\n]*\\s--force(?:\\s|=|$)" },
   "sample": { "source": "tool:Bash", "boundary": "tool-call" },
   "action": { "content": "Do not force-push: it rewrites published history. Ask the user first." },
@@ -51,6 +53,7 @@ A rule pairs a match condition with the tool calls it reads and what to tell the
 
 | Part | What it does |
 | --- | --- |
+| `title` | The rule in your own words, which the dashboard lists it by; the agent never reads it. `rules add` refuses a rule without one. |
 | `mode` | `log` records a match; `steer` tells the agent; `block` is stored as the intent to stop the call and, until block enforcement lands, is delivered exactly like `steer`. |
 | `match` | One `field` plus exactly one of `regex`, `eq`, `contains` — or `all` / `any` / `not` over conditions. |
 | `sample.source` | Which tool's calls to read: `tool:Bash` for one tool, `tool:*` for every tool. |
@@ -379,6 +382,7 @@ Test each rule against real cases, measure its noise, then install it.
   "rule": {
     "id": "oss:no-force-push",
     "mode": "steer",
+    "title": "No force-push",
     "match": { "field": "input.command", "regex": "\\bgit\\s+push\\b[^\\n]*\\s--force(?:\\s|=|$)" },
     "sample": { "source": "tool:Bash", "boundary": "tool-call" },
     "action": { "content": "Do not force-push: it rewrites published history. Ask the user first." },

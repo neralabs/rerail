@@ -18,7 +18,7 @@
 //! reads through a no-copy wrap of its used extent (decision 0435 §1). A block never moves, and reserves address space
 //! enough that a tail grows in it in place (decision 0445): its pages are taken as rows are written, and a dead
 //! relation's go back to the OS. Where a reservation is memory (WASI), a block is sized, and a tail whose block is full
-//! moves to another, one copy of its rows (as a vector's growth copies them; `MOVED` counts them). Every row
+//! moves to another, one copy of its rows (as a vector's growth copies them; `moved` counts them). Every row
 //! lies whole in one segment. Segments past `MAX_SEGMENTS` are merged from the newest (the small ones a session's
 //! edits add), so a row's segment is found among a few.
 
@@ -53,13 +53,21 @@ impl Life {
     }
 }
 
-/// Relations moved out of a full block (`Part::grow`, `Part::moved_room`), and the bytes of their rows copied: none
-/// where a block reserves address space (decision 0445), read by the profile.
-pub static MOVED: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+/// Relations moved out of a full block (`Part::moved_whole`), and the bytes of their rows copied: none where a block
+/// reserves address space (decision 0445), read by the profile. On the shared object (decision 0442), as `Merged` is.
+#[derive(Default)]
+struct Moved([std::sync::atomic::AtomicU64; 2]);
 
 fn count_move(rows: u32, k: usize) {
-    MOVED[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    MOVED[1].fetch_add(u64::from(rows) * k as u64 * 8, std::sync::atomic::Ordering::Relaxed);
+    let m = crate::code_rule_dsl::logic::profile::shared::<Moved>();
+    m.0[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    m.0[1].fetch_add(u64::from(rows) * k as u64 * 8, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The relations moved out of a full block so far, and their rows' bytes copied (`count_move`), for a profile.
+pub fn moved() -> (u64, u64) {
+    let m = crate::code_rule_dsl::logic::profile::shared::<Moved>();
+    (m.0[0].load(std::sync::atomic::Ordering::Relaxed), m.0[1].load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// Room a block keeps past a new relation's: what its other relations' tails may take meanwhile.
@@ -80,63 +88,10 @@ pub struct Facts {
 }
 
 impl Facts {
-    /// A block of relations of `life`: the chunk's evaluating on this thread, if one is, counted in its tally.
+    /// A block of relations of `life`: the chunk's the run is evaluating, if one is, counted in its tally.
     fn new(block: Block, life: Life) -> Facts {
-        let tally = CHUNK.with(|c| c.borrow().as_ref().map(|c| Arc::clone(&c.tally)));
+        let tally = current_chunk().map(|c| Arc::clone(&c.tally));
         Facts { block, ix: Mutex::new(()), given: crate::code_rule_dsl::logic::profile::local::<GivenBack>(), tally, life }
-    }
-}
-
-
-/// Values a relation holds beside its rows (its dead bits, its rows' levels). Read as a slice; never written in
-/// place.
-pub enum Shared<T: Copy + 'static> {
-    Own(Vec<T>),
-}
-
-impl<T: Copy + 'static> Shared<T> {
-    /// The values it holds on the heap.
-    pub fn capacity(&self) -> usize {
-        match self {
-            Shared::Own(v) => v.capacity(),
-        }
-    }
-}
-
-impl<T: Copy + 'static> Default for Shared<T> {
-    fn default() -> Self {
-        Shared::Own(Vec::new())
-    }
-}
-
-impl<T: Copy + 'static> Clone for Shared<T> {
-    fn clone(&self) -> Self {
-        match self {
-            // copy: not block data: a relation's own values, as a clone of it always copied them.
-            Shared::Own(v) => Shared::Own(v.clone()),
-        }
-    }
-}
-
-impl<T: Copy + 'static> std::ops::Deref for Shared<T> {
-    type Target = [T];
-    #[inline(always)]
-    fn deref(&self) -> &[T] {
-        match self {
-            Shared::Own(v) => v,
-        }
-    }
-}
-
-impl<T: Copy + 'static> From<Vec<T>> for Shared<T> {
-    fn from(v: Vec<T>) -> Self {
-        Shared::Own(v)
-    }
-}
-
-impl<T: Copy + std::fmt::Debug + 'static> std::fmt::Debug for Shared<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_list().entries(self.iter()).finish()
     }
 }
 
@@ -148,7 +103,7 @@ impl Drop for Facts {
     }
 }
 
-/// What a chunk's evaluation wrote in blocks of relations (decision 0435 §4, Q261): every block it made, at its
+/// What a chunk's evaluation wrote in blocks of relations (decision 0435 §4, Q314): every block it made, at its
 /// most (a block's used bytes never fall), and of the blocks still held when it ended (rows it handed on), the bytes
 /// past their free lists (decision 0445). A
 /// function of the chunk and its plans, not of the threads' timing, as the process's count is not.
@@ -224,15 +179,15 @@ pub fn held() -> [(usize, usize, usize); 3] {
 pub struct Chunk {
     open: [Mutex<Option<Arc<Facts>>>; 4],
     made: Mutex<Vec<std::sync::Weak<Facts>>>,
-    /// What its jobs allocated less what they freed, so far (bytes; another chunk's frees can make it negative).
-    heap: std::sync::atomic::AtomicI64,
-    /// The most its live blocks and its jobs' heap held at once, seen at a block made or a job's end.
-    most: std::sync::atomic::AtomicUsize,
     /// The bytes written in its blocks given back (`Facts`'s drop), and in those held when it ended (`Written`).
     tally: Arc<std::sync::atomic::AtomicUsize>,
     /// Of its blocks held when it ended, their used bytes, and those past their free lists (`Written::held`).
     live: std::sync::atomic::AtomicUsize,
     held: std::sync::atomic::AtomicUsize,
+    /// What its jobs allocated less what they freed, so far (bytes; another chunk's frees can make it negative).
+    heap: std::sync::atomic::AtomicI64,
+    /// The most its live blocks and its jobs' heap held at once, seen at a block made or a job's end.
+    most: std::sync::atomic::AtomicUsize,
     /// Its scopes' heap at their most, summed (`Written::heap`): each scope's own (`enter_chunk`), whatever ran
     /// beside it.
     peaks: std::sync::atomic::AtomicUsize,
@@ -299,10 +254,9 @@ thread_local! {
     static PEAK: std::cell::Cell<(i64, i64)> = const { std::cell::Cell::new((0, 0)) };
 }
 
-/// A chunk entered on this thread (`enter_chunk`): when it drops, the thread's chunk is back, and what this thread
-/// allocated less freed meanwhile (less the scopes inside) is the chunk's.
-pub struct InChunk {
-    old: Option<Option<Arc<Chunk>>>,
+/// A chunk scope entered on this thread (`enter_chunk`): when it drops, what this thread allocated less freed meanwhile
+/// (less the scopes inside) is the chunk's. The chunk itself is the run's context's (`InChunk`), which a job carries.
+pub struct ChunkScope {
     chunk: Option<Arc<Chunk>>,
     net: i64,
     given: i64,
@@ -311,18 +265,18 @@ pub struct InChunk {
     outer_peak: i64,
 }
 
-/// Enters `chunk` on this thread, for a job carried into it or its own evaluation (`in_chunk`).
-pub fn enter_chunk(chunk: Option<Arc<Chunk>>) -> InChunk {
-    let old = CHUNK.with(|c| c.replace(chunk.clone()));
-    // The scope it is inside stops at its most so far; this one's peak counts from here.
+/// Enters a scope of `chunk` on this thread, for a job carried into it (`setfix::carried`) or its own evaluation
+/// (`in_chunk`).
+pub fn enter_chunk(chunk: Option<Arc<Chunk>>) -> ChunkScope {
+    // The scope it is inside stops at its most so far; this one's peak counts from here (decision 0469).
     let outer_peak = scope_peak();
     PEAK.with(|p| p.set((0, 0)));
     peak_reset();
     let (net, given) = (heap_net(), GIVEN.with(std::cell::Cell::get));
-    InChunk { old: Some(old), chunk, net, given, top: TOP.with(|t| t.replace((net, given))), outer_peak }
+    ChunkScope { chunk, net, given, top: TOP.with(|t| t.replace((net, given))), outer_peak }
 }
 
-impl Drop for InChunk {
+impl Drop for ChunkScope {
     fn drop(&mut self) {
         let own = (heap_net() - self.net) - (GIVEN.with(std::cell::Cell::get) - self.given);
         let most = scope_peak().max(0) as usize;
@@ -338,15 +292,17 @@ impl Drop for InChunk {
             c.peaks.fetch_add(most, std::sync::atomic::Ordering::Relaxed);
             c.note();
         }
-        if let Some(old) = self.old.take() {
-            CHUNK.with(|c| *c.borrow_mut() = old);
-        }
     }
+}
+
+/// The chunk the run is evaluating (`InChunk`), for a job to enter a scope of (`setfix::carried`).
+pub fn current_chunk() -> Option<Arc<Chunk>> {
+    crate::code_rule_dsl::logic::profile::bound::<InChunk>().0
 }
 
 /// What the chunk this thread evaluates has held at its most so far (`Chunk::held_most`); `None` outside one.
 pub fn chunk_held_most() -> Option<usize> {
-    let chunk = CHUNK.with(|c| c.borrow().clone())?;
+    let chunk = current_chunk()?;
     // The scope this thread is in, its allocation so far: its chunk's, not given yet.
     let (net, given) = TOP.with(std::cell::Cell::get);
     let open = (heap_net() - net) - (GIVEN.with(std::cell::Cell::get) - given);
@@ -356,10 +312,9 @@ pub fn chunk_held_most() -> Option<usize> {
     Some(most)
 }
 
-thread_local! {
-    /// The chunk this thread's run is evaluating (`in_chunk`): carried to its jobs (`setfix::carried`).
-    pub static CHUNK: std::cell::RefCell<Option<Arc<Chunk>>> = const { std::cell::RefCell::new(None) };
-}
+/// The chunk the run is evaluating (`in_chunk`), in the run's context: its jobs' relations go in its blocks too.
+#[derive(Clone, Default)]
+struct InChunk(Option<Arc<Chunk>>);
 
 /// Runs `f` as a chunk's evaluation: the relations it and its jobs make go in blocks of the chunk's own, given back
 /// with the last of its rows (decision 0289: a chunk is a block). What outlives the chunk keeps only its own block;
@@ -376,7 +331,7 @@ fn held_of(live: &[(Life, usize, usize)]) -> usize {
 
 /// `in_chunk`, and what the chunk's blocks wrote and its scopes' heap at their most (`Written`).
 pub fn in_chunk_measured<R>(f: impl FnOnce() -> R) -> (R, Written) {
-    struct Leave(Option<InChunk>, Arc<Chunk>);
+    struct Leave(Option<(ChunkScope, crate::code_rule_dsl::logic::profile::Bound)>, Arc<Chunk>);
     impl Drop for Leave {
         fn drop(&mut self) {
             drop(self.0.take());
@@ -388,7 +343,7 @@ pub fn in_chunk_measured<R>(f: impl FnOnce() -> R) -> (R, Written) {
             // it holds (decision 0445: a block one kept relation holds lives, its dead relations' pages given back).
             // A device run's own relations (views, totals, deltas) are handed on to nothing: a block of theirs outlives
             // the chunk only while device work still in flight holds it, so it is the device's timing, not rows held
-            // (Q261: on Metal 15-30 of a chunk's blocks outlived it, a different number every run).
+            // (Q314: on Metal 15-30 of a chunk's blocks outlived it, a different number every run).
             let (n, live) = (made.len(), made.iter().filter_map(std::sync::Weak::upgrade).map(|f| (f.life, f.block.used(), f.block.used().saturating_sub(f.block.free_bytes()))).collect::<Vec<_>>());
             self.1.live.store(live.iter().map(|l| l.1).sum(), std::sync::atomic::Ordering::Relaxed);
             self.1.held.store(held_of(&live), std::sync::atomic::Ordering::Relaxed);
@@ -409,7 +364,9 @@ pub fn in_chunk_measured<R>(f: impl FnOnce() -> R) -> (R, Written) {
         }
     }
     let chunk = Arc::new(Chunk::default());
-    let leave = Leave(Some(enter_chunk(Some(chunk.clone()))), chunk.clone());
+    // The chunk is the run's context's (its jobs' too); its scope here counts this thread's allocation into it.
+    let bound = crate::code_rule_dsl::logic::profile::bind(InChunk(Some(chunk.clone())));
+    let leave = Leave(Some((enter_chunk(Some(chunk.clone())), bound)), chunk.clone());
     let r = f();
     // Its open blocks are let go here: a block none of its relations holds is given back, and tallied.
     drop(leave);
@@ -456,7 +413,7 @@ fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<F
 /// after it, the room could be another thread's by then, or not in one piece (a free list's), and the chunk failed
 /// (an index's 2.5 MB, the data layer's 50 policies on 901 files). A new open block when that one has no such chunk.
 fn open_chunk(life: Life, need: usize, align: usize) -> Result<(Arc<Facts>, (usize, usize)), String> {
-    let chunk = CHUNK.with(|c| c.borrow().clone());
+    let chunk = current_chunk();
     let runs = crate::code_rule_dsl::logic::profile::local::<Open>();
     let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
     if let Some(f) = &*open
@@ -545,6 +502,32 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
         }
         let ptr = std::ptr::NonNull::new(facts.block.ptr::<T>(g.at)).expect("a block's chunk");
         BlockVec { facts: Some(facts.clone()), ptr, life, at: g.at, len: g.len, cap: g.kept / size_of::<T>(), kept: g.kept, owner: None, _t: std::marker::PhantomData }
+    }
+
+    /// `n` items, those past its length `v`.
+    pub fn resize(&mut self, n: usize, v: T)
+    where
+        T: Copy,
+    {
+        if n <= self.len {
+            if self.owner.is_some() {
+                let near = self.facts.clone();
+                self.realloc(near.as_ref().map(|f| (f, 0)), self.len);
+            }
+            self.len = n;
+            return;
+        }
+        if self.owner.is_some() || n > self.cap {
+            let near = self.facts.clone();
+            self.realloc(near.as_ref().map(|f| (f, 0)), n.max(2 * self.cap));
+        }
+        // SAFETY: room for `n` past the chunk's start, this vector's alone.
+        unsafe {
+            for i in self.len..n {
+                self.ptr_mut().add(i).write(v);
+            }
+        }
+        self.len = n;
     }
 
     /// Whether `into_chunk` would hand its chunk on to `facts`' block (or it has none to hand).
@@ -822,7 +805,7 @@ fn lease_exact(bytes: usize, life: Life) -> Result<Block, String> {
 
 /// A relation of `k` columns holding `vals` (row by row), alone in a block of anonymous memory, as a run's block is
 /// when the device's spare budget refuses it a slab: bound on the device by a wrap of its used extent
-/// (`Block::gpu_buffer`), which what is added to the block after that wrap lies past.
+/// (`Block::device_buffer`), which what is added to the block after that wrap lies past.
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn anon_in_block(k: usize, vals: &[i64]) -> InBlock {
     let rows = vals.len() / k;
@@ -997,7 +980,7 @@ impl Part {
         // A relation given room past its rows (`extra`: its indexes', `Rows::with_index_room`) is alone in its block
         // too, so its indexes lie with it.
         let alone = life == Life::Device || extra > 0;
-        let chunk = CHUNK.with(|c| c.borrow().clone());
+        let chunk = crate::code_rule_dsl::logic::profile::bound::<InChunk>().0;
         let (runs, live_blocks) = (crate::code_rule_dsl::logic::profile::local::<Open>(), crate::code_rule_dsl::logic::profile::machine::<Live>());
         let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
         for fresh in [false, true] {
@@ -1256,6 +1239,7 @@ impl Part {
         let k = self.rel().rows.ncols as usize;
         let pre = self.base.as_ref().map_or(0, |_| self.rel().base_rows);
         let mut moved = Part::new(self.life, k, room.max(rows as usize) + pre as usize);
+        count_move(rows + pre, k);
         if let Some(base) = &self.base {
             // copy: growth: a continuation moved out of a full block takes the rows of its chain with it, once.
             moved.copy_reads(base, pre);
@@ -1396,13 +1380,19 @@ pub struct Kills {
     at: usize,
     /// The relation it is a delta of, and its block: kept while it is.
     base: Part,
+    /// Its dead bits are its base's own (`try_kills_own`, decision 0478 step 5d), which its base gives back: only
+    /// its descriptor is its own.
+    own_dead: bool,
 }
 
 impl Drop for Kills {
     fn drop(&mut self) {
         let block = &self.base.facts().block;
-        // SAFETY: `try_kills` made it in `block`, which `base` keeps, and this was its last holder.
-        let given = unsafe { (*block.ptr::<Relation>(self.at)).release_kills(block) };
+        // SAFETY: `try_kills` (or `try_kills_own`) made it in `block`, which `base` keeps, and this was its last holder.
+        let given = unsafe {
+            let rel = &*block.ptr::<Relation>(self.at);
+            if self.own_dead { rel.release(block) } else { rel.release_kills(block) }
+        };
         self.base.facts().given.0.fetch_add(given, std::sync::atomic::Ordering::Relaxed);
     }
 }
@@ -1446,6 +1436,27 @@ impl InBlock {
     /// The relation's own index on `cols` over its rows, if one is built (by the device or a probe): none is built.
     pub fn found_index(&self, cols: &[u16]) -> Option<usize> {
         self.own_index_if(cols, self.rows as usize, false)
+    }
+
+    /// An index on `cols` of a relation of no columns whose key values are read elsewhere (a view's home: decision
+    /// 0478 step 5e), each row's key hash `hash(i)`: found, or built now. `key` names the view's key columns, by which
+    /// it is found again.
+    pub fn own_index_hashed(&self, key: &[u16], hash: &dyn Fn(u32) -> u64) -> Option<usize> {
+        let r = self.relation();
+        if self.dead != 0 || r.base_rows != 0 || key.is_empty() || key.len() > rerail_blocks::relation::MAX_KEY {
+            return None;
+        }
+        let _g = self.facts.ix.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = r.find_index(key, self.rows) {
+            return Some(i);
+        }
+        // SAFETY: under the block's index lock; the room is reserved, then built from the hashes, before it is marked.
+        unsafe {
+            let room = r.try_reserve_index_buckets(&self.facts.block, key, self.rows, self.rows as usize)?;
+            r.build_index_hashed(&room, hash);
+            r.index_built(&room);
+            Some(room.index)
+        }
     }
 
     fn own_index_if(&self, cols: &[u16], keys: usize, build: bool) -> Option<usize> {
@@ -1726,12 +1737,19 @@ impl Rows {
         // are checked, `setfix::Levels`): a delta made before holds the dead bits of then. Reused only while they are
         // these (Q173: the device's subtraction of a head's rows read the old bits, and some runs' findings differed).
         // SAFETY: `at` is a delta's descriptor in `one`'s block, which `one` keeps.
-        let fresh = |at: usize| unsafe { (*block.ptr::<Relation>(at)).dead.as_slice() == dead };
+        let fresh = |at: usize| unsafe {
+            let d = (*block.ptr::<Relation>(at)).dead.as_slice();
+            std::ptr::eq(d, dead) || d == dead
+        };
+        // Its own dead bits, kept in its block (decision 0478 step 5d): the delta reads them there.
+        let own = one.rel().own_dead();
+        let own = !own.is_empty() && std::ptr::eq(own, dead);
         let k = match &*kills {
             Some(k) if fresh(k.at) => k.clone(),
             _ => {
-                let at = block.offset_of(Relation::try_kills(block, &spec(self.k), one.rel(), dead)?);
-                let k = Arc::new(Kills { at, base: one.clone() });
+                let rel = if own { Relation::try_kills_own(block, &spec(self.k), one.rel())? } else { Relation::try_kills(block, &spec(self.k), one.rel(), dead)? };
+                let at = block.offset_of(rel);
+                let k = Arc::new(Kills { at, base: one.clone(), own_dead: own });
                 // (the one before goes here, unless a reader still holds it)
                 *kills = Some(k.clone());
                 k
@@ -1744,7 +1762,7 @@ impl Rows {
     /// are not merged yet. A reader that can do without the block (the CPU's probes) asks for this, so it makes no
     /// copy.
     pub fn in_one_block(&self) -> Option<InBlock> {
-        let (one, rows) = self.one_unmerged().or_else(|| self.merged.get().map(|p| (p, self.rows() as u32)))?;
+        let (one, rows) = self.one_unmerged().or_else(|| self.merged.get().map(|m| (m, self.rows() as u32)))?;
         Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows, dead: 0, kills: None, part: Some(one.clone()) })
     }
 
@@ -1755,9 +1773,8 @@ impl Rows {
         Some(p.in_block(p.len()))
     }
 
-    /// The rows as one relation, and how many rows a reader binding it reads (ids from 0): the one part, or a
-    /// continuation of the one segment (a fork, decision 0384 step 7: its base's rows read through it). `None` where
-    /// its parts read as no one relation (`one` merges them).
+    /// The rows as one relation without a copy, and how many rows a reader binding it reads (ids from 0): the one
+    /// part, or a continuation of the one segment (a fork, decision 0384 step 7: its base's rows read through it).
     fn one_unmerged(&self) -> Option<(&Part, u32)> {
         let tail = self.tail.as_ref().filter(|t| t.len() > 0);
         if self.segs.is_empty() {
@@ -1772,15 +1789,13 @@ impl Rows {
         // one before, the first a relation of its own, as a fork's and a fork of a fork's are): the last, read down its
         // chain. A frozen relation's prefix too: every reader of a bound relation reads the rows it is bound with
         // (`InBlock::rows`), and its indexes are of them (`find_index`'s rows).
-        if let Some(end) = chain_of(self.segs.iter().map(|(f, p)| (*f, p)).chain(tail.map(|t| (self.from, t))))
-            && end.reads() as usize == self.rows()
-        {
-            return Some((end, end.reads()));
-        }
-        None
+        chain_of(self.segs.iter().map(|(f, p)| (*f, p)).chain(tail.map(|t| (self.from, t))))
+            .filter(|end| end.reads() as usize == self.rows())
+            .map(|end| (end, end.reads()))
     }
 
-    /// The rows as one relation, merged where no part reads as it (`one_unmerged`).
+    /// The rows as one relation, and how many rows a reader binding it reads: `one_unmerged`, or every part merged
+    /// into one (made once and kept).
     fn one(&self) -> Option<(&Part, u32)> {
         if let Some(one) = self.one_unmerged() {
             return Some(one);
@@ -2163,7 +2178,7 @@ mod tests {
         // Its most when asked: its own 100 + 30 - 10 MB, the other chunk's 50 MB not, the 500 MB before it not.
         assert_eq!(held, 120 << 20, "{} MB", held >> 20);
         assert_eq!(other.held_most(), 50 << 20, "the other chunk's job is its own");
-        assert!(CHUNK.with(|c| c.borrow().is_none()), "the thread's chunk is back");
+        assert!(current_chunk().is_none(), "the run's chunk is back");
     }
 
     /// An empty kept relation keeps its width: one started from it holds the rows pushed to it (it dropped them when
@@ -2461,6 +2476,34 @@ mod tests {
         assert_eq!(merged(), before, "nothing merged");
     }
 
+    /// A chunk takes its size class, the next power of two, from a block with a free list: an open block whose room
+    /// passes the check (`bytes` and the margin) can still hold no chunk of the class. "an open block with room holds
+    /// 2144940 bytes" (`python/references.rerail` on all): its room was 3 to 4 MiB. Such a chunk goes to a new open block.
+    #[test]
+    fn a_chunk_the_open_blocks_room_cannot_take_goes_to_a_new_block() {
+        // A run of its own: the open blocks are the run's (`Open`), and another test's would take their room.
+        let _run = crate::code_rule_dsl::logic::profile::test_run();
+        let room = |f: &Arc<Facts>| f.block.reserved().saturating_sub(f.block.used());
+        let probe = BlockVec::<u8>::from_iter_in(None, [0u8]);
+        let open = probe.facts().expect("a chunk").clone();
+        // Fillers of whole classes bring the room to 3.5 MiB: past 2 MiB and the margin, short of 4 MiB.
+        let target = 7usize << 19;
+        let mut fillers = Vec::new();
+        for bit in (6..40).rev() {
+            while room(&open) >= target + (1 << bit) {
+                let v = BlockVec::<u8>::with_capacity_in(None, 1 << bit);
+                assert!(Arc::ptr_eq(v.facts().expect("a chunk"), &open), "a filler in the open block");
+                fillers.push(v);
+            }
+        }
+        let need = (1usize << 21) + 4;
+        let left = room(&open);
+        assert!(left >= need + MARGIN && left < need.next_power_of_two(), "room {left} for {need} bytes");
+        let v = BlockVec::<u32>::from_iter_in(None, 0..(need / 4) as u32);
+        assert!(!Arc::ptr_eq(v.facts().expect("a chunk"), &open), "in a new open block");
+        assert!(v.iter().copied().eq(0..(need / 4) as u32));
+    }
+
     /// Decision 0384: a tail whose block has no room for the device's rows is moved into a relation with room
     /// (`tail_moved`, and `Lent::moved` for a next lot), and the claims make that its tail: one relation, nothing
     /// merged, every row by its id.
@@ -2710,8 +2753,10 @@ mod tests {
         if !RESERVES_ADDRESS_SPACE {
             return;
         }
+        // Its own shared object (decision 0442): the moves counted are this test's, none of a test beside it.
+        let _own = crate::code_rule_dsl::logic::profile::within(crate::code_rule_dsl::logic::profile::Shared::new());
         in_chunk(|| {
-            let moved = MOVED[0].load(std::sync::atomic::Ordering::Relaxed);
+            let before = moved().0;
             let mut r = Rows::new(1);
             // copy: not block data (a test's literal rows)
             let lot: Vec<i64> = (0..1 << 20).collect();
@@ -2722,13 +2767,13 @@ mod tests {
             }
             assert!(Arc::ptr_eq(&facts, &block_of(&r)), "the same block");
             assert!(facts.block.used() > 64 << 20, "past the old size: {} bytes", facts.block.used());
-            assert_eq!(MOVED[0].load(std::sync::atomic::Ordering::Relaxed), moved, "no relation moved");
+            assert_eq!(moved().0, before, "no relation moved");
             assert_eq!(r.get(9 << 20 | 5, 0), 5);
         });
     }
 
     /// A chunk holds the rows it handed on, never a device run's own relations, which outlive it only while device
-    /// work in flight holds them (Q261: on Metal, a different number of them every run).
+    /// work in flight holds them (Q314: on Metal, a different number of them every run).
     #[test]
     fn a_chunk_holds_what_it_handed_on_not_a_device_runs_own() {
         let live = [(Life::Run, 10 << 20, 4 << 20), (Life::Kept, 2 << 20, 2 << 20), (Life::Device, 64 << 20, 64 << 20), (Life::Source, 1 << 20, 0)];

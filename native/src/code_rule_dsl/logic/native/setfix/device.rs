@@ -18,9 +18,8 @@
 //! It does not take string joins, text tests, computed text (`cat`, text functions), gates or requests: the forms
 //! (recursion), gates or requests: the forms `DEVICE_FORMS` lacks.
 //!
-//! **One submission per stratum.** Every seed join of the stratum is encoded into one `metal_join::Batch`, and the
-//! relations they read stay on the device across the chunk's strata (`Resident`): uploaded once, sorted once per key,
-//! while the engine holds the relation (a weak reference: a relation the engine drops is dropped here too). A stage
+//! **One submission per stratum.** Every seed join of the stratum is encoded into one `metal_join::Batch`; no device
+//! cache holds a relation across strata (decision 0450 step 3: a view's indexes are in its own block). A stage
 //! whose rows overflow the space its table was given is run again from that stage with the exact size, in one more
 //! submission for every rule that overflowed.
 //!
@@ -643,8 +642,10 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 if literal_test(op).is_some() && (matches!(p, Key::Slot(_)) || [s, p].iter().any(|k| matches!(k, Key::Slot(x) if deferred.contains_key(x) || is_arena(*x)))) =>
             {
                 // A literal test whose pattern is bound (or a cat's text): the two texts compared on the device a
-                // word at a time, pairwise, as `strings::test` does (a pattern holding the set separator refused).
-                let op = literal_test(op).expect("a literal test") | mj::TEXT_SPLIT;
+                // word at a time, pairwise, as `strings::test` does: a constant set split into its members, a bound
+                // pattern holding the set separator refused (`TEXT_BOUND`: no set).
+                let bound = if matches!(p, Key::Slot(_)) { mj::TEXT_BOUND } else { 0 };
+                let op = literal_test(op).expect("a literal test") | mj::TEXT_SPLIT | bound;
                 stages.push(textop(i, op, *want, *p, *s, &deferred, &origin, &known)?);
                 i += 1;
             }
@@ -1279,7 +1280,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
             let dev = if let Some(d) = made {
 // copy (0353 step 4): a view made on the device for a stratum (decision 0353).
                 let device = rerail_accel::gpu::join::device()?;
-                let block = d.block.gpu_buffer(device);
+                let block = d.block.device_buffer(device)?;
                 let dev = mj::DevRel::empty(k, n).map_err(|e| format!("{e:?}: a view of {n} rows, {k} columns"))?;
                 batch.expand_view(&block, d.root, d.view, &want, &dev).map_err(|e| format!("{e:?}: a view made on the device"))?;
                 rep.uploads += 1;

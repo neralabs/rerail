@@ -180,6 +180,7 @@ fn bulk_indexes_have_the_canonical_shape_and_allow_edits() {
                 Node::set_index(&incremental, key.clone(), Some(*value))
             };
         }
+        #[allow(clippy::type_complexity)]
         fn shape(n: &Link<i64>, out: &mut Vec<(Vec<Option<i64>>, usize, [u8; 32])>) {
             if let Some(n) = n {
                 out.push((n.key.to_vec(), n.size, n.digest));

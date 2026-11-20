@@ -92,7 +92,7 @@ impl TempDir {
             std::process::id()
         ));
         std::fs::create_dir_all(&path).unwrap();
-        Self(path.canonicalize().unwrap())
+        Self(dunce::canonicalize(path).unwrap())
     }
 
     fn store(&self) -> PathBuf {
@@ -385,8 +385,11 @@ fn hosts_repository_ingestion_and_file_sets_share_one_package_derivation() {
     let repository = git_workspace::discover(&root).unwrap();
     let mut manifests = crate::code_rule_dsl::package_manifest::Manifests::new(root.clone());
     let mut indexed = |path: &str, language: &str| {
-        repository_package(&mut manifests, &repository, path, language)
-            .map(|manifest| crate::code_rule_dsl::package_manifest::of_file(&manifest).expect("an ECMA manifest").to_wire())
+        repository_package(&mut manifests, &repository, path, language).map(|manifest| {
+            crate::code_rule_dsl::package_manifest::of_file(&manifest)
+                .expect("an ECMA manifest")
+                .to_wire()
+        })
     };
     // A workspace or snapshot holding the same texts (the symlink is not one of its entries).
     let entries = files
@@ -406,7 +409,11 @@ fn hosts_repository_ingestion_and_file_sets_share_one_package_derivation() {
         crate::code_rule_dsl::package_manifest::manifest_in(path, |directory| {
             entries.get(directory)
         })
-        .map(|manifest| crate::code_rule_dsl::package_manifest::of_file(&manifest).expect("an ECMA manifest").to_wire())
+        .map(|manifest| {
+            crate::code_rule_dsl::package_manifest::of_file(&manifest)
+                .expect("an ECMA manifest")
+                .to_wire()
+        })
     };
     // The nearest manifest decides. `bin` targets resolve against its folder (an absolute one or
     // one outside it never names a file below it); an unparsable `engines.node` falls through to
@@ -2661,6 +2668,73 @@ fn a_clause_that_runs_out_of_work_fails_alone() {
     restarted.close();
 }
 
+/// A clause comparing each integer with every one before it (`follows` to the end, a `compare` of two captures) runs
+/// out of its allowance on a list of 20,000 and fails alone with `budget-exceeded`, its sibling walks reading the
+/// list's gaps made once for the file (`gap::gaps_of`), not once a walk: each walk made them before, 6,125 times
+/// under the full allowance, uncharged (Q134's n² on the workspace's path, where no tape's `GapScope` is).
+#[test]
+fn a_quadratic_compare_over_the_siblings_runs_out_of_its_allowance_making_the_gaps_once() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("compare-allowance");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    let costly = json!({
+        "id": "costly", "violation": { "anchor": "witness.span", "code": "LEAST", "message": "least so far" },
+        "forbid": { "ast": { "language": "python", "rule": {
+            "kind": "integer", "pattern": "$A",
+            "not": { "follows": { "stopBy": "end", "kind": "integer", "pattern": "$B",
+                "compare": { "left": "A", "op": "le", "right": "B" } } } } } }
+    });
+    let code_rule = compile("compare-allowance", json!([costly]));
+    let numbers = (0..20_000).map(|n| n.to_string()).collect::<Vec<_>>().join(", ");
+    let file = json!([{ "path": "generated.py", "language": "python", "source": format!("x = [{numbers}]\n") }]);
+    let workspace = stored_workspace(&store, "/compare-allowance", &code_rule);
+    // About 500 walks' worth of the allowance (the full one is 50,000 polls, 6,125 walks).
+    TEST_CLAUSE_WORK_BUDGET.set(Some(4_000));
+    let made = crate::code_rule_dsl::matcher::gap::GAPS_MADE.load(std::sync::atomic::Ordering::Relaxed);
+    let evaluated = apply_json(&workspace, 1, file);
+    let made = crate::code_rule_dsl::matcher::gap::GAPS_MADE.load(std::sync::atomic::Ordering::Relaxed) - made;
+    TEST_CLAUSE_WORK_BUDGET.set(None);
+    let failures = evaluated["evaluation"]["failures"].as_array().unwrap();
+    assert_eq!(failures.len(), 1, "{evaluated}");
+    assert_eq!(failures[0]["code"], json!("budget-exceeded"), "{evaluated}");
+    // Other tests' files may make theirs meanwhile, on other threads: well under the walks' 500.
+    assert!(made < 100, "the parents' gaps made {made} times");
+    workspace.close();
+}
+
+/// Tests of a token the tape leaves out (RER-131) that say more than its text: the comma right before a node that is its
+/// parent's first (the React packs' state setter, `[value, setValue]`), and a count of the commas before a node
+/// (`eslint-no-setter-return`'s descriptor, the third argument). Asked of the parent's gaps, they find what a full
+/// tree's tokens did; before, the first found nothing and the second counted no implied comma.
+#[test]
+fn a_token_test_on_an_implied_comma_reads_the_parents_tokens() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("implied-comma");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    let clause = |id: &str, rule: Value| json!({
+        "id": id, "violation": { "anchor": "witness.span", "code": id.to_uppercase(), "message": id },
+        "forbid": { "ast": { "language": "javascript", "rule": rule } }
+    });
+    let code_rule = compile("implied-comma", json!([
+        clause("second", json!({ "kind": "identifier", "inside": { "kind": "array_pattern", "stopBy": "neighbor" },
+            "follows": { "stopBy": "neighbor", "regex": "^,$", "not": { "follows": { "stopBy": "end", "regex": "^,$" } } } })),
+        clause("third", json!({ "kind": "identifier", "inside": { "kind": "arguments", "stopBy": "neighbor" },
+            "count": { "follows": { "regex": "^,$", "stopBy": "end" }, "min": 2, "max": 2 } })),
+    ]));
+    let source = "const [a, b, c] = x;\nf(p, q, r, s);\n";
+    let file = json!([{ "path": "a.js", "language": "javascript", "source": source }]);
+    let workspace = stored_workspace(&store, "/implied-comma", &code_rule);
+    let evaluated = apply_json(&workspace, 1, file);
+    let mut found: Vec<(String, String)> = evaluated["evaluation"]["violations"].as_array().unwrap().iter().map(|v| {
+        let (start, end) = (v["span"]["startByte"].as_u64().unwrap() as usize, v["span"]["endByte"].as_u64().unwrap() as usize);
+        let text = source[start..end].to_owned();
+        (v["clauseId"].as_str().unwrap().to_owned(), text)
+    }).collect();
+    found.sort();
+    assert_eq!(found, [("second".to_owned(), "b".to_owned()), ("third".to_owned(), "r".to_owned())], "{evaluated}");
+    workspace.close();
+}
+
 /// A utility verdict a clause computed while its allowance ran out is not remembered for the
 /// clauses after it: the second clause reads the same utility at the same node and either finds
 /// its violation or fails, never reports nothing. Both share a `define`'s utility, so a verdict
@@ -3889,7 +3963,9 @@ fn undecodable_tapes_leave_the_search_index_backlog_without_pinning_its_cursor()
     let lookup = |tape_id| SearchKindLookup {
         tape_id,
         index_version: POSITIONAL_INDEX_VERSION,
-        kind_tokens: vec![kind_index_token(crate::code_rule_dsl::language::GrammarDialect::Python, call).unwrap()],
+        kind_tokens: vec![
+            kind_index_token(crate::code_rule_dsl::language::GrammarDialect::Python, call).unwrap(),
+        ],
     };
     assert_eq!(
         store
@@ -4461,7 +4537,11 @@ fn a_request_that_fails_partway_leaves_the_package_context_unchanged() {
     assert_eq!(reported(), ["app/a.ts", "app/page.tsx"]);
     let context = || {
         let state = workspace.state.lock().unwrap();
-        let project = state.project.as_any().downcast_ref::<super::ingest::ecma::EcmaProject>().expect("ECMAScript's project context");
+        let project = state
+            .project
+            .as_any()
+            .downcast_ref::<super::ingest::ecma::EcmaProject>()
+            .expect("ECMAScript's project context");
         (
             project.graph_entries.keys().cloned().collect::<Vec<_>>(),
             project.server_graph_directories.clone(),

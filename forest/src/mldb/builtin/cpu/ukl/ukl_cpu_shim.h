@@ -1,5 +1,6 @@
 /** ukl_cpu_shim.h                                     -*- C++ -*-
     Copyright (c) Jeremy Barnes.  All rights reserved.
+    Used here under the Apache License, Version 2.0: MLDB's license is https://github.com/mldbai/mldb/blob/e3caed6fa44782d08eb640702fd60e9a2576d939/LICENSE
     This file is part of MLDB.
 
     UKL's shim for the CPU: a UKL kernel as C++ for the host's compiler, run a threadgroup at a time with each of
@@ -141,6 +142,9 @@ struct __ukl_cpu_launch {
     uint64_t stack_bytes;
     char* error;               // where a failure is described, `error_bytes` at most
     uint64_t error_bytes;
+    unsigned char* sched;      // the scheduler's storage (`__ukl_cpu_sched`), `sched_bytes` of it, the host thread's
+    uint64_t sched_bytes;
+    void* (*tls)(void);        // the host thread's slot for the running scheduler and thread (`__ukl_cpu_tls`)
 };
 
 enum { __UKL_RUN = 0, __UKL_AT_TG = 1, __UKL_AT_SG = 2, __UKL_DONE = 3 };
@@ -167,8 +171,16 @@ struct __ukl_cpu_sched {
     uint64_t slots[__UKL_CPU_MAX_THREADS];
 };
 
-static thread_local __ukl_cpu_sched* __ukl_sched;
-static thread_local __ukl_cpu_thread* __ukl_self;
+// The running scheduler and thread: in the host thread's one slot (`__ukl_cpu_launch::tls`), never a thread-local of
+// the library's. macOS gives each loaded image's thread-locals a pthread key of their own, and a process runs out of
+// them (about 512) after a few hundred kernel libraries: a thread-local's first use then aborts.
+struct __ukl_cpu_tls {
+    __ukl_cpu_sched* sched;
+    __ukl_cpu_thread* self;
+};
+static void* (*__ukl_cpu_tls_of)(void);  // the launch's: the same function in every launch
+#define __ukl_sched (((__ukl_cpu_tls*)__ukl_cpu_tls_of())->sched)
+#define __ukl_self (((__ukl_cpu_tls*)__ukl_cpu_tls_of())->self)
 
 extern "C" __attribute__((used, visibility("hidden"))) void __ukl_cpu_entry(__ukl_cpu_thread* t)
 {
@@ -327,7 +339,12 @@ template <typename G> static int __ukl_cpu_run(const __ukl_cpu_launch* L, G&& gr
         __ukl_cpu_say(L, "more threads in a threadgroup than the CPU backend runs (1024)");
         return 1;
     }
-    static thread_local __ukl_cpu_sched sched;
+    if (L->sched_bytes < sizeof(__ukl_cpu_sched)) {
+        __ukl_cpu_say(L, "the host gave the scheduler too little storage");
+        return 1;
+    }
+    __atomic_store_n(&__ukl_cpu_tls_of, L->tls, __ATOMIC_RELAXED);
+    __ukl_cpu_sched& sched = *(__ukl_cpu_sched*)L->sched;
     __ukl_cpu_sched* outer = __ukl_sched;
     __ukl_cpu_thread* outer_self = __ukl_self;
     __ukl_sched = &sched;

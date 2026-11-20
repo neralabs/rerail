@@ -194,8 +194,12 @@ fn the_corpus_reads_the_same_or_is_refused() {
     let c = compiled_or_panic();
     let root = std::env::var("RERAIL_C_CORPUS").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/lean-corpus"));
     let (mut same_n, mut refused, mut differ) = (0, 0, Vec::new());
-    // The other backends', against Cranelift's: files whose rows differ.
-    let (mut interp, mut metal) = (Vec::new(), Vec::new());
+    // The other backends', against Cranelift's: files whose rows differ (the device's on macOS alone, as it runs).
+    let mut interp = Vec::new();
+    #[cfg(target_os = "macos")]
+    let mut metal = Vec::new();
+    #[cfg(not(target_os = "macos"))]
+    let metal: Vec<String> = Vec::new();
     for (dir, cpp) in [("c", false), ("cpp", true)] {
         let Ok(entries) = std::fs::read_dir(root.join(dir)) else { continue };
         let mut paths: Vec<_> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
@@ -269,16 +273,16 @@ fn a_file_past_64_kib_is_read_at_wide_columns() {
     }
 }
 
-/// Every step of the ladder compiles to the native IR (the last is `GRAMMAR`, which the other
-/// tests compile through Cranelift too).
+/// The ladder's step compiles to the native IR, and is `GRAMMAR`, which the other tests compile
+/// through Cranelift too. The earlier steps are in git's history (decision 0422).
 #[test]
 fn every_ladder_step_compiles() {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/bitlex_ladder");
     let mut steps: Vec<_> = std::fs::read_dir(dir).expect("the ladder").map(|e| e.expect("an entry").path()).collect();
     steps.sort();
-    assert!(steps.len() >= 2);
     for p in &steps {
         crate::lower_kinds(&std::fs::read_to_string(p).unwrap(), KINDS, FIELDS).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
     }
     assert_eq!(std::fs::read_to_string(steps.last().unwrap()).unwrap(), GRAMMAR, "the last step is the grammar");
 }
+

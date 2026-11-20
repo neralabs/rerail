@@ -1,4 +1,4 @@
-"""Checks that ruff-npy002-numpy-legacy-random.methods.rr round-trips: each group's functions and message are the
+"""Checks that ruff-npy002-numpy-legacy-random.methods.rerail round-trips: each group's functions and message are the
 JSON clause's, and the string-annotation clause lists every function once."""
 import importlib.util, json, os, re
 HERE = os.path.dirname(os.path.abspath(__file__))

@@ -161,46 +161,41 @@ struct Options {
     base: Option<String>,
 }
 
-thread_local! {
-    static OPTIONS: std::cell::RefCell<Options> = const { std::cell::RefCell::new(Options { facts_dir: None, require_facts: false, base: None }) };
-}
-
-/// Carries the caller's options to a job of its run on another thread (`run_state`).
-pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
-    c.cloned(&["OPTIONS"], &OPTIONS);
+/// The caller's options (`set_facts_dir`, `require_facts`, `set_base`), in the run's context: its runs' jobs read them
+/// too (decision 0442). Each setter binds the options changed for the rest of the caller's extent.
+fn options() -> Options {
+    crate::code_rule_dsl::logic::profile::bound::<Options>()
 }
 
 /// `logic --facts DIR`: the facts directory of this caller's runs.
 pub fn set_facts_dir(dir: PathBuf) -> std::result::Result<(), String> {
-    OPTIONS.with(|o| {
-        let mut o = o.borrow_mut();
-        if o.facts_dir.is_some() {
-            return Err("the facts directory is already set".to_owned());
-        }
-        o.facts_dir = Some(dir);
-        Ok(())
-    })
+    let mut o = options();
+    if o.facts_dir.is_some() {
+        return Err("the facts directory is already set".to_owned());
+    }
+    o.facts_dir = Some(dir);
+    crate::code_rule_dsl::logic::profile::bind_here(o);
+    Ok(())
 }
 
 fn facts_dir(root: &Path) -> PathBuf {
-    OPTIONS.with(|o| o.borrow().facts_dir.clone()).unwrap_or_else(|| root.join(".rerail").join("facts"))
+    options().facts_dir.unwrap_or_else(|| root.join(".rerail").join("facts"))
 }
 
 /// `logic --require-facts`, for this caller's runs.
 pub fn require_facts() {
-    OPTIONS.with(|o| o.borrow_mut().require_facts = true);
+    crate::code_rule_dsl::logic::profile::bind_here(Options { require_facts: true, ..options() });
 }
 
 /// `logic --base REV`, for this caller's runs.
 pub fn set_base(rev: String) -> std::result::Result<(), String> {
-    OPTIONS.with(|o| {
-        let mut o = o.borrow_mut();
-        if o.base.is_some() {
-            return Err("the base revision is already set".to_owned());
-        }
-        o.base = Some(rev);
-        Ok(())
-    })
+    let mut o = options();
+    if o.base.is_some() {
+        return Err("the base revision is already set".to_owned());
+    }
+    o.base = Some(rev);
+    crate::code_rule_dsl::logic::profile::bind_here(o);
+    Ok(())
 }
 
 fn unreadable(detail: impl std::fmt::Display) -> Failure { Failure { kind: "unreadable", detail: detail.to_string() } }
@@ -208,7 +203,7 @@ fn unreadable(detail: impl std::fmt::Display) -> Failure { Failure { kind: "unre
 /// The tree of `rev` in the repository that holds `root`, and `root`'s path inside it.
 fn base_tree(root: &Path, rev: &str) -> ReadResult<(gix::Repository, gix::ObjectId, PathBuf)> {
     let repo = gix::discover(root).map_err(|e| unreadable(format!("no repository holds {}: {e}", root.display())))?;
-    // `git_rev("base", …)`: the merge base of HEAD and `rev`, as core.rr defines it.
+    // `git_rev("base", …)`: the merge base of HEAD and `rev`, as core.rerail defines it.
     let (revs, _) = crate::code_rule_dsl::logic::strings::git::revisions(root, Some(rev)).map_err(unreadable)?;
     let base = revs.iter().find(|(n, _)| n == "base").map(|(_, id)| id.clone()).unwrap_or_default();
     let resolve = || -> std::result::Result<gix::ObjectId, Box<dyn std::error::Error + Send + Sync>> {
@@ -217,7 +212,7 @@ fn base_tree(root: &Path, rev: &str) -> ReadResult<(gix::Repository, gix::Object
     };
     let tree = resolve().map_err(|e| unreadable(format!("base revision {rev}: {e}")))?;
     let workdir = repo.workdir().ok_or_else(|| unreadable("the repository has no work tree"))?;
-    let canonical = |p: &Path| p.canonicalize().map_err(|e| unreadable(format!("{}: {e}", p.display())));
+    let canonical = |p: &Path| dunce::canonicalize(p).map_err(|e| unreadable(format!("{}: {e}", p.display())));
     let prefix = canonical(root)?.strip_prefix(canonical(workdir)?).map(Path::to_path_buf).map_err(unreadable)?;
     Ok((repo, tree, prefix))
 }
@@ -342,7 +337,7 @@ pub(in crate::code_rule_dsl) fn inputs_digest(root: &Path, globs: &[String]) -> 
         hash.update(path.as_bytes());
         hash.update([0]);
         hash.update(blob_id(&bytes).as_bytes());
-        hash.update([b'\n']);
+        hash.update(*b"\n");
     }
     Ok(format!("sha256:{}", hash.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>()))
 }
@@ -432,7 +427,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 fn of_result(result: &ReadResult<String>) -> String {
-    match result { Ok(text) => sha256_hex(text.as_bytes()), Err(f) => format!("{}", f.kind) }
+    match result { Ok(text) => sha256_hex(text.as_bytes()), Err(f) => f.kind.to_string() }
 }
 
 fn read_repository_file(root: &Path, name: &str) -> ReadResult<String> {
@@ -460,7 +455,7 @@ fn artifact_entry(text: &ReadResult<String>, digest: &ReadResult<String>) -> Str
 /// input withholds removed. What it reads of the rules is `shape`'s.
 pub(super) fn populate(program: &mut Edit<'_>, shape: &super::shape::Shape, root: &Path) -> Result<()> {
     let declared = artifacts(&program.settings())?;
-    let base = OPTIONS.with(|o| o.borrow().base.clone());
+    let base = options().base;
     let base = base.as_deref();
     let mut consulted = Vec::new();
     let mut base_read = base_reader(root, base);
@@ -488,7 +483,7 @@ pub(super) fn populate(program: &mut Edit<'_>, shape: &super::shape::Shape, root
     consulted.extend(seen.into_inner());
     git_revisions(program, shape, root, base, &mut consulted);
     crate::code_rule_dsl::logic::run::local::<Consulted>().0.lock().unwrap_or_else(|e| e.into_inner()).extend(consulted);
-    if OPTIONS.with(|o| o.borrow().require_facts) {
+    if options().require_facts {
         required_by(program, shape)?;
     }
     Ok(())
@@ -501,20 +496,19 @@ fn git_revisions(program: &mut Edit<'_>, shape: &super::shape::Shape, root: &Pat
     if !shape.read.contains("git_rev") {
         return;
     }
-    program.b.retain_inputs(|n| n != "git_rev");
+    program.b.fields().retain_inputs(|n| n != "git_rev");
     let key = format!("{}\t{}", root.display(), base.unwrap_or(""));
     match crate::code_rule_dsl::logic::strings::git::revisions(root, base) {
         Ok((rows, _)) => {
             consulted.push(("git_rev".to_owned(), key, rows.iter().map(|(n, id)| format!("{n}={id}")).collect::<Vec<_>>().join(",")));
-            program.b.add_facts("git_rev", &rows.into_iter().map(|(n, id)| [Value::Str(n.into()), Value::Str(id.into())].into()).collect::<Vec<_>>());
+            program.b.fields().add_facts("git_rev", &rows.into_iter().map(|(n, id)| [Value::Str(n.into()), Value::Str(id.into())].into()).collect::<Vec<_>>());
             if base.is_none() {
-                return;
             }
         }
         Err(detail) => {
             consulted.push(("git_rev".to_owned(), key, String::new()));
-            program.b.retain_inputs(|n| n != "input_error");
-            program.b.add_facts("input_error", &[[Value::Str("git_rev".into()), Value::Str("unreadable".into()), Value::Str(detail.clone().into())].into()]);
+            program.b.fields().retain_inputs(|n| n != "input_error");
+            program.b.fields().add_facts("input_error", &[[Value::Str("git_rev".into()), Value::Str("unreadable".into()), Value::Str(detail.clone().into())].into()]);
             let withheld = withhold(program, &BTreeMap::from([("git_rev".to_owned(), "git_rev unreadable".to_owned())]));
             for (output, why) in withheld.unknown {
                 eprintln!("unknown: {} ({why}): rows may be missing", output.strip_prefix("rr_place_").unwrap_or(&output));
@@ -622,9 +616,9 @@ fn populate_with(
             }
             let data = artifacts.entry(name.clone()).or_insert_with(|| artifact(name));
             let result = data.as_ref().map_err(Clone::clone).and_then(|data| json_rows(data, pointer, records, Vec::new(), columns));
-            program.b.retain_inputs(|n| n != rel);
+            program.b.fields().retain_inputs(|n| n != rel);
             match result {
-                Ok(rows) => program.b.add_facts(rel, &rows.into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect::<Vec<_>>()),
+                Ok(rows) => program.b.fields().add_facts(rel, &rows.into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect::<Vec<_>>()),
                 Err(error) => {
                     let row = vec![Value::Str(format!("artifact:{name}").into()), Value::Str(error.kind.to_owned().into()), Value::Str(error.detail.clone().into())];
                     if !errors.contains(&row) {
@@ -666,9 +660,9 @@ fn populate_with(
         } else if at_base {
             base_readers.rows(path, io, pointer, records, Vec::new(), columns, base)
         } else { readers.rows(path, io, pointer, records, Vec::new(), columns, read) };
-        program.b.retain_inputs(|name| name != rel);
+        program.b.fields().retain_inputs(|name| name != rel);
         match result {
-            Ok(rows) => program.b.add_facts(rel, &rows.into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect::<Vec<_>>()),
+            Ok(rows) => program.b.fields().add_facts(rel, &rows.into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect::<Vec<_>>()),
             Err(error) if at_base => {
                 let row = vec![Value::Str(format!("{path}@base").into()), Value::Str(error.kind.to_owned().into()), Value::Str(error.detail.clone().into())];
                 if !errors.contains(&row) {
@@ -680,8 +674,8 @@ fn populate_with(
         }
     }
     if !errors.is_empty() {
-        program.b.retain_inputs(|name| name != "input_error");
-        program.b.add_facts("input_error", &errors.into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect::<Vec<_>>());
+        program.b.fields().retain_inputs(|name| name != "input_error");
+        program.b.fields().add_facts("input_error", &errors.into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect::<Vec<_>>());
     }
     if !incomplete.is_empty() {
         let withheld = withhold(program, &incomplete);
@@ -831,11 +825,7 @@ grew(e) :- now_entry(e), !was(_, e).
 
     /// The version of program `text`.
     fn version(text: &str) -> V {
-        image(&crate::code_rule_dsl::logic::rr::parse(text).unwrap())
-    }
-
-    fn image(p: &front::Program) -> V {
-        crate::code_rule_dsl::logic::program_image::Builder::of_program(p).unwrap().finish().unwrap().0
+        crate::code_rule_dsl::logic::rr::parse_version(text).unwrap()
     }
 
     /// `v` with its inputs read (`populate_with`).
@@ -928,8 +918,8 @@ grew(e) :- now_entry(e), !was(_, e).
 
     #[test]
     fn artifact_declarations_are_parsed_and_must_agree() {
-        let program = crate::code_rule_dsl::logic::rr::parse(".artifact \"test_collection\" inputs \"**/*.py\", \"pyproject.toml\"\n").unwrap();
-        let declared = artifacts(&program.settings).unwrap();
+        let program = crate::code_rule_dsl::logic::rr::parse_version(".artifact \"test_collection\" inputs \"**/*.py\", \"pyproject.toml\"\n").unwrap();
+        let declared = artifacts(&crate::code_rule_dsl::logic::program_image::fields::ProgramFields::settings(&*program)).unwrap();
         assert_eq!(declared["test_collection"], vec!["**/*.py".to_owned(), "pyproject.toml".to_owned()]);
         let twice = vec![
             ("artifact".to_owned(), "\"a\" inputs \"*.py\"".to_owned()),

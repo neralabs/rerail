@@ -35,7 +35,7 @@ const DOCUMENTS: &[&str] = &[
 
 #[test]
 fn records_are_each_tokens_bytes_and_code() {
-    let mut steps: Vec<_> = std::fs::read_dir(crate::ladder::DIR).expect("the ladder").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "bitlex")).collect();
+    let mut steps: Vec<_> = std::fs::read_dir(crate::ladder::dir()).expect("the ladder").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "bitlex")).collect();
     steps.sort();
     let (mut with, mut tokens, mut worded) = (0, 0, 0);
     for path in steps {
@@ -87,7 +87,8 @@ fn records_are_each_tokens_bytes_and_code() {
             assert_eq!((&got.positions, &got.codes, &got.totals), (&run.positions, &run.codes, &run.totals), "{name}: {doc:?}: the compiled record pass");
         }
     }
-    assert!(with >= 10, "{with} steps with records");
+    // The three steps (decision 0422).
+    assert!(with >= 3, "{with} steps with records");
     assert!(tokens > 200 && worded > 20, "{tokens} tokens, {worded} words");
 }
 

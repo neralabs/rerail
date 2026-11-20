@@ -13,9 +13,9 @@
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.py"), "f(1)\ng()\nh(f(2))\n").unwrap();
         // The rule with the core declarations it reads (`kind`, `text`), as `rerail-engine` reads a rule file.
-        let path = dir.join("calls.rr");
+        let path = dir.join("calls.rerail");
         std::fs::write(&path, &rule).unwrap();
-        let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap();
+        let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap();
         std::fs::remove_file(&path).unwrap();
         let run = || {
             let out = dir.join("out");
@@ -44,8 +44,8 @@
     /// atom rows name this store's atoms, and read so, the program is this store's (nothing to move).
     #[test]
     fn a_prepared_program_of_another_store_moves_to_this_stores_atoms() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/ruff-up006-non-pep585-annotation.rr");
-        let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/ruff-up006-non-pep585-annotation.rerail");
+        let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap();
         let dir = crate::code_rule_dsl::fixtures::temp().with_extension("prepared-moved");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.py"), "from typing import List\nx: List[int] = []\n").unwrap();
@@ -56,15 +56,14 @@
         let store = crate::content_store::ContentStore::open(&dir.join("other.sqlite")).unwrap();
         let fillers: Vec<String> = (0..64).map(|i| format!("a string interned first {i}")).collect();
         store.intern_atoms(&fillers.iter().map(String::as_str).collect::<Vec<_>>()).unwrap();
-        let lists = Default::default();
-        let moved = super::relocate(&store, &mut facts, &prepared.lowered.version, &lists).expect("every name has an atom here").expect("the names moved");
+        let moved = super::relocate(&store, &mut facts, &prepared.lowered.version).expect("every name has an atom here").expect("the names moved");
         assert_ne!(moved.digest(), prepared.lowered.version.digest(), "the moved image names other atoms");
         // The pointer's rows name this store's atoms, so the program read again is the store's.
         let strings: Vec<String> = facts["prepared_interned_atom"].iter().map(|r| match &r[2] { crate::code_rule_dsl::logic::front::Value::Str(s) => s.to_string(), other => panic!("{other:?}") }).collect();
-        let here: Vec<i64> = store.intern_atoms(&strings.iter().map(String::as_str).collect::<Vec<_>>()).unwrap().into_iter().map(|a| i64::from(u32::from(a))).collect();
+        let here: Vec<i64> = store.intern_atoms(&strings.iter().map(String::as_str).collect::<Vec<_>>()).unwrap().into_iter().map(i64::from).collect();
         let kept: Vec<i64> = facts["prepared_interned_atom"].iter().map(|r| r[3].integer().unwrap()).collect();
         assert_eq!(kept, here);
-        assert!(super::relocate(&store, &mut facts, &moved, &lists).expect("read").is_none(), "already this store's");
+        assert!(super::relocate(&store, &mut facts, &moved).expect("read").is_none(), "already this store's");
         super::prepared_of(&facts, std::sync::Arc::clone(&prepared.source), moved, prepared.lowered.dialect).expect("the moved program reads as prepared");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -73,8 +72,8 @@
     /// facts (decision 0155). A pack rule, prepared.
     #[test]
     fn a_prepared_program_reads_back_from_its_text_and_facts() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/ruff-up006-non-pep585-annotation.rr");
-        let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/ruff-up006-non-pep585-annotation.rerail");
+        let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap();
         let dir = crate::code_rule_dsl::fixtures::temp().with_extension("prepared-facts");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.py"), "from typing import List\nx: List[int] = []\n").unwrap();
@@ -128,20 +127,20 @@
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.py"), "f()\n").unwrap();
         // The rule read as facts, with the core declarations it reads (`kind`, `text`).
-        let rule = dir.join("rule.rr");
+        let rule = dir.join("rule.rerail");
         std::fs::write(&rule, ".decl calls(c: node, x: symbol)\ncalls(c, x) :- kind(c, \"call\"), text(c, x).\n.decl seen(x: symbol)\nseen(x) :- calls(c, x), !kind(c, \"exec\").\n.output seen\n").unwrap();
-        let program = crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap();
+        let program = crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap();
         std::fs::remove_file(&rule).unwrap();
         let mut facts = crate::code_rule_dsl::logic::program_facts::Facts::new();
-        crate::code_rule_dsl::logic::program_facts::write(&mut facts, "rule", &program);
-        let document = crate::code_rule_dsl::logic::program_text::document(&facts, &Default::default()).unwrap();
+        crate::code_rule_dsl::logic::program_facts::write_version(&mut facts, "rule", &program);
+        let document = crate::code_rule_dsl::logic::program_text::document(&facts, &[]).unwrap();
         let query = format!(
             "{document}\n.decl negated(rel: symbol)\nnegated(rel) :- body(\"rule\", _, _, l), lit_atom(\"rule\", l, a), atom(\"rule\", a, rel, 1, _).\n.output negated\n"
         );
         // Run as any rule is, over a corpus of one file: the program's facts are the query's own.
-        let path = dir.join("query.rr");
+        let path = dir.join("query.rerail");
         std::fs::write(&path, &query).unwrap();
-        let query = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap();
+        let query = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap();
         let out = dir.join("out");
         super::super::run(&query, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
         let rows = crate::code_rule_dsl::logic::plan::output::shown(&out, "negated").unwrap();

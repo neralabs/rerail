@@ -14,7 +14,7 @@ measured that differently:
   so every run cuts the same chunks (R6). Its measure is what the chunk's own blocks of relations wrote
   (`rows::in_chunk_measured`, `Written::bytes`). That is the same on every run, but it leaves out the heap: a typing
   program's or a matcher's own vectors and maps, which are most of what a chunk holds on the data layer's 50
-  policies (Q316).
+  policies (Q355).
 - **Q203 item 3** (benchmarks-on-integration, b6d2c1eba0) measured a chunk by its live blocks plus its jobs' net
   heap, from jemalloc's per-thread counters, at the most seen at a block made or a job's end
   (`rows::Chunk::held_most`). That counts the heap, but its "most" is sampled across threads: when two jobs of a
@@ -63,7 +63,7 @@ their reservations: since 0445 a block reserves 16 GiB of address space.
 `leg-083-typed` on 901 files of the data layer's repository (1,972,112 nodes, the CPU binding, the M5 at load
 27-43, 2026-11-19): 8 chunks, held at the caller's most (262,144 nodes), against 80 before the merge, cut to the
 8,192-node floor by the process's footprint. A typing chunk measures 932-1,043 bytes a node: about 120 in its
-blocks, the rest its scopes' heap peaks (the 30 KB a node Q316 saw was the footprint's rise, not the chunk's own).
+blocks, the rest its scopes' heap peaks (the 30 KB a node Q355 saw was the footprint's rise, not the chunk's own).
 The count when the chunks begin leaves 959 MB of the 1,152 MB room; the footprint is 144-297 MB then. The per-chunk
 costs went with the chunks (the statistics 4.95 to 0.02 s, the views and tables 3.73 to 0.02 s, the order probes 1.6
 s to 0); the findings are the same; the peak footprint 1,342 to 1,124 MB, system time 9.0 to 4.7 s.

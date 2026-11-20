@@ -3,6 +3,7 @@ import { describeScan, runHeadlessScan, type HeadlessScanOptions, type ScanRepor
 import { RemoteOutbox } from "../runtime/remote-outbox.js";
 import type { RuleDocument } from "../engine/catalog/rule-store.js";
 import { daemonEndpoint, findRunningDaemon, type DaemonEndpoint } from "../runtime/daemon-control.js";
+import { remoteSinkEnabled, requireExperiment } from "../engine/experimental-features.js";
 
 import {
   auditSettingsPatchSchema, auditSettingsSchema, type AuditControls, type AuditSettings, type AuditSettingsPatch, type AuditRequest,
@@ -208,7 +209,7 @@ async function runHeadlessScanCommand(args: readonly string[], options: AuditCli
   const report = await runHeadlessScan(headlessScanOptions(parsed, ruleDocuments, options));
   print(options, parsed.flags.has("--json"), report, describeScan(report));
   // Internal testing: with a remote added, the report goes to it too (the daemon or `rerail remote push` sends it).
-  if (!parsed.flags.has("--no-send") && report.status === "completed") queueScanForRemotes(report, ruleDocuments, options);
+  if (!parsed.flags.has("--no-send") && report.status === "completed" && remoteSinkEnabled()) queueScanForRemotes(report, ruleDocuments, options);
   return scanExitCode(report, parsed.flags);
 }
 
@@ -292,7 +293,10 @@ function scanExitCode(report: ScanReport, flags: ReadonlySet<string>): number {
 }
 
 export async function runAuditCommand(command: "scan" | "settings", args: readonly string[], options: AuditCliOptions): Promise<number> {
-  if (command === "scan" && !args.includes("--session")) return await runHeadlessScanCommand(args, options);
+  if (command === "scan" && !args.includes("--session")) {
+    requireExperiment("HEADLESS_SCAN");
+    return await runHeadlessScanCommand(args, options);
+  }
   const parsed = parseCommon(args);
   const patch = command === "settings" ? settingsPatch(parsed) : undefined;
   const base = await targetDaemon(options);

@@ -91,4 +91,3 @@ pub struct GridComputeFunctionArgument {
     pub ty: ComputeKernelType,
     pub disposition: GridComputeFunctionArgumentDisposition,
 }
-

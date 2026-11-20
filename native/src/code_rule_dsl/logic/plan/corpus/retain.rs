@@ -507,7 +507,7 @@ impl<'a> Reads<'a> {
 }
 
 /// The strata of `prog` that `kept` (of program `key`) lets a run skip, given its inputs' digests.
-/// `sccs`: `prog`'s strata (`front::strata`), computed once by the caller for every pass over the program.
+/// `sccs`: `prog`'s strata (`analyses::strata`), computed once by the caller for every pass over the program.
 pub(in crate::code_rule_dsl) fn cut(kept: Option<&Retained>, key: [u8; 32], prog: &Placed, sccs: &[BTreeSet<String>], inputs: &HashMap<String, u64>) -> Result<Cut> {
     let kept = kept.filter(|k| k.key == key);
     let mut changed: Vec<String> = inputs.iter().filter(|(rel, d)| kept.and_then(|k| k.inputs.get(*rel)) != Some(*d)).map(|(rel, _)| rel.clone()).collect();
@@ -574,7 +574,7 @@ impl Cut {
             }
             let outputs: Vec<String> = v.outputs().map(|a| v.text(a)).filter(|o| dirty(o)).map(str::to_owned).collect();
             let part = v.part(&dirty, &inputs, &outputs, PartFields { natives: &dirty, lattice: &all, gates }).map_err(super::Error::Plan)?;
-            crate::code_rule_dsl::logic::version_trace::note_versions("session.cut", v, &part);
+            crate::code_rule_dsl::logic::version_trace::note("session.cut", v, &part);
             Ok(cross.with_version(part))
         }
     }
@@ -1494,9 +1494,13 @@ impl Source for Layered {
 
 #[cfg(test)]
 pub mod tests {
-    fn st(p: &front::Program) -> Vec<BTreeSet<String>> { front::strata(p).unwrap().0 }
     /// A program's version, as a run reads it (t36 item 7).
-    fn pl(p: &front::Program) -> Placed { Placed::of_program(p).unwrap() }
+    fn pl(p: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Placed { Placed::whole(p.clone()) }
+    /// A version's strata, each by its relations' names (the `Strata` analysis).
+    fn strata_of(v: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Vec<BTreeSet<String>> {
+        let s = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::program_image::Strata>(v).unwrap();
+        s.sccs.iter().map(|scc| scc.iter().map(|&r| v.rel_name(r).to_owned()).collect()).collect()
+    }
     use super::*;
 
     /// A kept input with its delta reads as its rows now: the changed owners' kept rows gone, their new rows after
@@ -1578,39 +1582,43 @@ pub mod tests {
 
     #[test]
     fn unchanged_gated_programs_reuse_only_complete_retained_results() {
-        use crate::code_rule_dsl::logic::magic;
-        let p = front::prune(crate::code_rule_dsl::logic::rr::parse(include_str!("../golden/programs/workload.rr")).unwrap());
-        let p = magic::magic_adorn(p, &magic::Options { gate:true, ..Default::default() }).unwrap();
-        assert!(!p.gates.is_empty());
-        let (strata,_) = front::strata(&p).unwrap();
+        use crate::code_rule_dsl::logic::plan::corpus::preparation::{magic::ProgramDemand, prune::Prune};
+        use crate::code_rule_dsl::logic::program_image::{fields::ProgramFields, manager::Pipeline};
+        let p = crate::code_rule_dsl::logic::rr::parse_version(include_str!("../golden/programs/workload.rerail")).unwrap();
+        let mut pipeline = Pipeline::new("gated demand", p);
+        pipeline.program(&mut Prune::default());
+        let mut demand = ProgramDemand { every: true, gate: true, ..ProgramDemand::default() };
+        pipeline.program(&mut demand);
+        let p = pipeline.finish().unwrap().0;
+        assert!(matches!(demand.outcome, Some(Ok(_))) && !ProgramFields::gates(&*p).is_empty());
+        let strata = strata_of(&p);
         let key=[1;32];
-        let inputs:HashMap<_,_>=p.inputs.iter().map(|r|(r.clone(),7)).collect();
+        let inputs:HashMap<_,_>=p.input_names().into_iter().map(|r|(r,7)).collect();
         let rels=strata.iter().flatten().map(|name| {
-            let width=p.decls[name.as_str()].len();
+            let width=p.columns_of(name).unwrap().len();
             (name.clone(),Kept { rel:InRel::flat(&[],vec![b'i';width]),width,output:None })
         }).collect();
         let mut kept=Retained {key,inputs:inputs.clone(),rels,input_srcs:Default::default(),input_layouts:Default::default(),framed_ranges:Default::default(),measured:Default::default(),input_docs:Default::default(),docs:Default::default(),frames:None,admitted:Default::default(),late:Default::default(),late_stats:Default::default(),past:Default::default(),views:Default::default()};
-        let result=cut(Some(&kept),key,&pl(&p),&st(&p),&inputs).unwrap();
+        let result=cut(Some(&kept),key,&Placed::whole(p.clone()),&strata,&inputs).unwrap();
         assert_eq!(result.strata,(0,strata.len()));
-        let v=crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap().0;
-        let lowered=lower::Lowered {version:v,domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python,normal:Default::default()};
+        let lowered=lower::Lowered {version:p.clone(),domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python,normal:Default::default()};
         let reused=result.program(&lowered).unwrap();
         let placed=reused.placed().unwrap();
         // A view of an input's columns (Q37: `kind(n, k) :- node(_, n, k, _, _).`) is never kept: its rule stays, to
         // hold it again. Nothing else runs.
         let left:BTreeSet<String>=placed.v.rules().map(|r| placed.v.rel_name(r.head().rel()).to_owned()).collect();
         assert_eq!(left,BTreeSet::from(["docof".to_owned(),"kind".to_owned()]));
-        assert!(placed.v.rules().all(|r| crate::code_rule_dsl::logic::plan::input_view_shape(&placed.v,r,|n| p.inputs.iter().any(|i| i==n)).is_some()));
+        assert!(placed.v.rules().all(|r| crate::code_rule_dsl::logic::plan::input_view_shape(&placed.v,r,|n| p.input_names().iter().any(|i| i==n)).is_some()));
         assert!(placed.fields().unwrap().gates().is_empty());
         let mut changed=inputs.clone();
         *changed.values_mut().next().unwrap()=8;
         for (candidate,rows) in [(key,changed),([2;32],inputs.clone())] {
-            assert_eq!(cut(Some(&kept),candidate,&pl(&p),&st(&p),&rows).unwrap().strata,(strata.len(),strata.len()));
+            assert_eq!(cut(Some(&kept),candidate,&Placed::whole(p.clone()),&strata,&rows).unwrap().strata,(strata.len(),strata.len()));
         }
         // A kept relation missing (not a view's: those are not kept, so their absence changes nothing).
         let missing=kept.rels.keys().find(|r| !left.contains(r.as_str())).unwrap().clone();
         kept.rels.remove(&missing);
-        assert_eq!(cut(Some(&kept),key,&pl(&p),&st(&p),&inputs).unwrap().strata,(strata.len(),strata.len()));
+        assert_eq!(cut(Some(&kept),key,&Placed::whole(p.clone()),&strata,&inputs).unwrap().strata,(strata.len(),strata.len()));
     }
 }
 
@@ -1801,7 +1809,7 @@ impl InKept {
 /// The digest of `read` a derived relation records (t33 K4): as `known` has it (an input as the run bound it, a
 /// relation as derived or named), or, for the program's stated facts, their identity, which is the program's.
 /// Anything else (an answer the run binds by another way, as a load's) has none: what reads it is not current.
-fn read_digest(read: &str, known: &HashMap<String, u64>, derived: &BTreeSet<&String>, prog: &Placed, leaves: &crate::code_rule_dsl::logic::plan::Leaves<'_>) -> Option<u64> {
+fn read_digest(read: &str, known: &HashMap<String, u64>, derived: &BTreeSet<&String>, prog: &Placed, leaves: &crate::code_rule_dsl::logic::plan::Leaves) -> Option<u64> {
     if let Some(d) = known.get(read) {
         return Some(*d);
     }
@@ -1861,13 +1869,15 @@ fn program_key(h: &mut sha2::Sha256, p: &Placed) {
 /// Identities kept as a stored fact under `key` (`parts::keep_facts`): read back where kept, else made by `make` and
 /// kept. The key names everything they are made of (the programs, the binds, the engine), so a program the run held
 /// before reads its identities rather than hashing its strata again (Q19's identities, decision 0379).
-fn kept_identities(store: &ContentStore, what: &str, key: [u8; 32], make: impl FnOnce() -> Result<Vec<(String, [u8; 32])>>) -> Result<Vec<(String, [u8; 32])>> {
+/// `named`: the source of the facts read, for the run's manifest (`kept_facts_alone`).
+fn kept_identities(store: &ContentStore, what: &str, key: [u8; 32], named: &mut Vec<crate::content_store::SourceId>, make: impl FnOnce() -> Result<Vec<(String, [u8; 32])>>) -> Result<Vec<(String, [u8; 32])>> {
     use super::preparation::parts::{hex, keep_facts, kept_facts_alone, rows_of, str};
     let kept = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| format!("{what}: kept"));
-        kept_facts_alone(store, &key).and_then(|f| rows_of(&f, "frame_ident").map(|r| Some((r.first()?.clone(), super::preparation::parts::unhex(r.get(1)?)?))).collect::<Option<Vec<_>>>())
+        kept_facts_alone(store, &key).and_then(|(f, source)| rows_of(&f, "frame_ident").map(|r| Some((r.first()?.clone(), super::preparation::parts::unhex(r.get(1)?)?))).collect::<Option<Vec<_>>>().map(|k| (k, source)))
     };
-    if let Some(k) = kept {
+    if let Some((k, source)) = kept {
+        named.push(source);
         return Ok(k);
     }
     let made = make()?;
@@ -1883,7 +1893,7 @@ pub(in crate::code_rule_dsl) type StrataIdents = Arc<HashMap<String, [u8; 32]>>;
 
 /// `p`'s strata identities (`identities_by_heads` over `sccs`), kept as a stored fact under the program and its
 /// components. Read before the first wave only (decision 0104): a reader inside the waves is handed them.
-fn strata_idents_kept(store: &ContentStore, p: &Placed, sccs: &[BTreeSet<String>]) -> Result<StrataIdents> {
+fn strata_idents_kept(store: &ContentStore, p: &Placed, sccs: &[BTreeSet<String>], named: &mut Vec<crate::content_store::SourceId>) -> Result<StrataIdents> {
     use sha2::{Digest as _, Sha256};
     let mut h = Sha256::new();
     h.update(b"rerail/strata identities v1\0");
@@ -1897,14 +1907,15 @@ fn strata_idents_kept(store: &ContentStore, p: &Placed, sccs: &[BTreeSet<String>
         h.update([1]);
     }
     let leaves = crate::code_rule_dsl::logic::plan::Leaves::of_placed(p.clone());
-    let made = kept_identities(store, "a program's strata identities", h.finalize().into(), || Ok(leaves.identities_by_heads(sccs)?.into_iter().collect()))?;
+    let made = kept_identities(store, "a program's strata identities", h.finalize().into(), named, || Ok(leaves.identities_by_heads(sccs)?.into_iter().collect()))?;
     Ok(Arc::new(made.into_iter().collect()))
 }
 
 /// Each of `progs`' strata identities (`strata_idents_kept`), read before the first wave (decision 0104), for
-/// `Retained::bind_kept_named`: what the part's kept entries are named by.
-pub(in crate::code_rule_dsl) fn strata_kept(store: &ContentStore, progs: &[&Placed]) -> Result<Vec<StrataIdents>> {
-    progs.iter().map(|p| strata_idents_kept(store, p, &p.components()?)).collect()
+/// `Retained::bind_kept_named`: what the part's kept entries are named by. `named`: the sources of the kept facts
+/// read, for the run's manifest.
+pub(in crate::code_rule_dsl) fn strata_kept(store: &ContentStore, progs: &[&Placed], named: &mut Vec<crate::content_store::SourceId>) -> Result<Vec<StrataIdents>> {
+    progs.iter().map(|p| strata_idents_kept(store, p, &p.components()?, named)).collect()
 }
 
 /// A relation's column types, as frames store them.
@@ -2646,7 +2657,7 @@ impl Retained {
 
     #[allow(clippy::too_many_arguments)]
     fn from_frame_snapshot(
-        space: [u8; 32], kept: Option<Arc<kept_read::Bound>>, key: [u8; 32], prog: &Placed, leaves: &crate::code_rule_dsl::logic::plan::Leaves<'_>,
+        space: [u8; 32], kept: Option<Arc<kept_read::Bound>>, key: [u8; 32], prog: &Placed, leaves: &crate::code_rule_dsl::logic::plan::Leaves,
         sccs: &[BTreeSet<String>], names: HashMap<String, KeptRel>, stored: HashMap<KeptRel, KeptStored>, bound: &HashMap<String, u64>,
     ) -> Result<Self> {
         let derived: BTreeSet<&String> = sccs.iter().flatten().collect();
@@ -3062,15 +3073,17 @@ impl Retained {
             let atoms = &atoms;
             // In the run and under the span open here, on whichever thread runs it: rayon's loops carry neither.
             let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
-            whole.into_par_iter().filter_map(|(rel, k)| {
-                let _in = carry.enter();
-                let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || "a relation's rows, digested".into());
-                if k.rel.levels_shape().2 {
-                    return None;
-                }
-                let types = frame_types(prog, domains, rel, k.rel.types());
-                held_digest(&Cells::new(atoms, &types), &k.rel).map(|d| (rel, d))
-            }).collect()
+            crate::code_rule_dsl::logic::profile::on_cores(|| {
+                whole.into_par_iter().filter_map(|(rel, k)| {
+                    let _in = carry.enter();
+                    let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || "a relation's rows, digested".into());
+                    if k.rel.levels_shape().2 {
+                        return None;
+                    }
+                    let types = frame_types(prog, domains, rel, k.rel.types());
+                    held_digest(&Cells::new(atoms, &types), &k.rel).map(|d| (rel, d))
+                }).collect()
+            })
         };
         for scc in sccs {
             let reads: Vec<String> = all_reads.of_scc(scc).into_iter().filter(|r| !scc.contains(r) && !literals.contains(r.as_str())).collect();
@@ -3345,10 +3358,12 @@ pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InK
         use rayon::prelude::*;
         // In the run, on whichever thread runs it: its frames' placement reads the machine's device memory.
         let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
-        inputs.par_iter().map(|(rel, source)| {
-            let _in = carry.enter();
-            one_input(rel, source)
-        }).collect()
+        crate::code_rule_dsl::logic::profile::on_cores(|| {
+            inputs.par_iter().map(|(rel, source)| {
+                let _in = carry.enter();
+                one_input(rel, source)
+            }).collect()
+        })
     };
     for ((rel, _), done) in inputs.iter().zip(framed_inputs) {
         let Some((digest, n)) = done else { continue };

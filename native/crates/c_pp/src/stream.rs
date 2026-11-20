@@ -19,7 +19,7 @@ use rerail_c_lean::T;
 use rerail_c_lean::pp::{Options, P, Phase2, PpLexer, PpTok};
 use std::collections::HashMap;
 
-/// A configuration (`c/env.rr`'s rows): the dialect, the predefined macros, the answers of the
+/// A configuration (`c/env.rerail`'s rows): the dialect, the predefined macros, the answers of the
 /// `__has_*` family, and the fixed date and time.
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -215,6 +215,15 @@ pub struct Pp<'a> {
     base: u32,
     /// The `__has_*` tests asked that the configuration does not answer (a profile's to add).
     pub unanswered: Vec<(String, String)>,
+    /// The parallel reading's (`parallel`): definitions by position, and the position read at.
+    /// `None` in the serial pass, whose table is `macros`.
+    vis: Option<parallel::Vis>,
+    vis_pos: u64,
+    /// The parallel reading's record of the definitions a test looked up, while one is kept.
+    looked: Option<std::cell::RefCell<Vec<(u32, Option<u32>)>>>,
+    /// The parallel reading's isolated list: its index in `stack`, and whether the reading asked
+    /// past its end (a call's `(` or arguments) or met what the parallel shape does not carry.
+    par: Option<parallel::Isolated>,
 }
 
 /// A token's spelling.
@@ -266,6 +275,10 @@ impl<'a> Pp<'a> {
             s,
             base: 0,
             unanswered: Vec::new(),
+            vis: None,
+            vis_pos: 0,
+            looked: None,
+            par: None,
         };
         for &(name, b, fnlike) in BUILTINS {
             let sym = pp.syms.get(name.as_bytes());
@@ -276,6 +289,13 @@ impl<'a> Pp<'a> {
 
     /// Symbol `sym`'s definition.
     fn def_of(&self, sym: u32) -> Option<u32> {
+        if let Some(v) = &self.vis {
+            let d = v.at(sym, self.vis_pos);
+            if let Some(l) = &self.looked {
+                l.borrow_mut().push((sym, d));
+            }
+            return d;
+        }
         match self.macros.get(sym as usize) {
             Some(&d) if d != 0 => Some(d - 1),
             _ => None,
@@ -527,13 +547,18 @@ impl<'a> Pp<'a> {
     /// Whether the next token is `(`, looked at without reading it (nor leaving a finished
     /// expansion).
     fn next_is_lparen(&mut self) -> bool {
-        for s in self.stack.iter_mut().rev() {
+        let outer = self.par.as_ref().map(|p| p.outer);
+        for (k, s) in self.stack.iter_mut().enumerate().rev() {
             match s {
                 Src::Toks { toks, pos, stop, .. } => {
                     if *pos < toks.len() {
                         return toks[*pos].is(T::LParen);
                     }
                     if *stop {
+                        if Some(k) == outer {
+                            // The parallel reading's list ends here: what follows it decides.
+                            self.par.as_mut().unwrap().peeked = true;
+                        }
                         return false;
                     }
                 }
@@ -583,6 +608,7 @@ impl<'a> Pp<'a> {
         self.collecting -= 1;
         let file = self.cur_file();
         if !done {
+            self.note_cut();
             self.diag(file, name.start, Diag::UnterminatedCall, self.syms.text(name.sym).to_vec().as_slice());
             return Err(false);
         }
@@ -975,6 +1001,7 @@ impl<'a> Pp<'a> {
         loop {
             let t = self.lex_raw();
             if t.kind == P::Eof {
+                self.note_cut();
                 break;
             }
             if t.is(T::LParen) {
@@ -989,6 +1016,16 @@ impl<'a> Pp<'a> {
         }
         self.collecting -= 1;
         v
+    }
+
+    /// In the parallel reading, a call whose arguments ran to the end of a list: where the list is
+    /// the isolated one, the call wants tokens after it.
+    fn note_cut(&mut self) {
+        let Some(p) = &self.par else { return };
+        // A directive's reading has no isolated list (`usize::MAX`).
+        if p.outer.checked_add(1) == Some(self.stack.len()) {
+            self.par.as_mut().unwrap().cut = true;
+        }
     }
 
     /// The header name tokens make (`"…"`, or `<` … `>` spelled with their blanks), expanded first
@@ -1158,26 +1195,40 @@ impl<'a> Pp<'a> {
 
     /// `#define`.
     fn define(&mut self, hash: Tk, file: u32) {
-        let Some(n) = self.line_tok().filter(|t| t.kind == P::Ident) else {
+        let line = self.line_rest();
+        let Some(def) = self.parse_define(hash, file, &line) else { return };
+        let n = def.name;
+        if let Some(old) = self.def_of(n)
+            && !self.same_def(&self.defs[old as usize], &def)
+        {
+            self.diag(file, hash.start, Diag::Redefined, self.syms.text(n).to_vec().as_slice());
+        }
+        self.set_def(n, def);
+    }
+
+    /// A `#define`'s definition from its line's tokens after `define`; `None` where it is malformed.
+    fn parse_define(&mut self, hash: Tk, file: u32, line: &[Tk]) -> Option<Def> {
+        let mut line = line.iter().copied();
+        let Some(n) = line.next().filter(|t| t.kind == P::Ident) else {
             self.diag(file, hash.start, Diag::Malformed, b"define");
-            return;
+            return None;
         };
         let mut def = Def { name: n.sym, fnlike: false, params: Vec::new(), variadic: false, body: Vec::new(), builtin: None, disabled: false, file, at: hash.start };
-        let mut first = self.line_tok();
+        let mut first = line.next();
         if first.is_some_and(|t| t.is(T::LParen) && t.flags & SPACE == 0) {
             def.fnlike = true;
             let mut want = true;
             loop {
-                let Some(t) = self.line_tok() else {
+                let Some(t) = line.next() else {
                     self.diag(file, hash.start, Diag::Malformed, b"define");
-                    return;
+                    return None;
                 };
                 if t.is(T::RParen) && (!want || def.params.is_empty()) && !(want && def.variadic) {
                     break;
                 }
                 if def.variadic {
                     self.diag(file, hash.start, Diag::Malformed, b"define");
-                    return;
+                    return None;
                 }
                 if want && t.kind == P::Ident {
                     def.params.push(t.sym);
@@ -1193,17 +1244,17 @@ impl<'a> Pp<'a> {
                     want = true;
                 } else {
                     self.diag(file, hash.start, Diag::Malformed, b"define");
-                    return;
+                    return None;
                 }
             }
-            first = self.line_tok();
+            first = line.next();
         }
         let mut body = Vec::new();
         if let Some(mut f) = first {
             f.flags &= !SPACE;
             body.push(f);
         }
-        body.extend(self.line_rest());
+        body.extend(line);
         let last = body.len().saturating_sub(1);
         for (k, t) in body.iter_mut().enumerate() {
             if t.kind == P::HashHash && k > 0 && k < last {
@@ -1211,12 +1262,7 @@ impl<'a> Pp<'a> {
             }
         }
         def.body = body;
-        if let Some(old) = self.def_of(n.sym)
-            && !self.same_def(&self.defs[old as usize], &def)
-        {
-            self.diag(file, hash.start, Diag::Redefined, self.syms.text(n.sym).to_vec().as_slice());
-        }
-        self.set_def(n.sym, def);
+        Some(def)
     }
 
     /// Whether two definitions are the same (C17 §6.10.3p2): parameters, and replacement lists
@@ -1233,6 +1279,11 @@ impl<'a> Pp<'a> {
     /// An `#if`'s or `#elif`'s line: its value (false where it is no expression).
     fn if_expr(&mut self, file: u32, at: u32) -> bool {
         let rest = self.line_rest();
+        self.if_value(file, at, rest)
+    }
+
+    /// The value of an `#if`'s or `#elif`'s line `rest` (its tokens after the directive's name).
+    fn if_value(&mut self, file: u32, at: u32, rest: Vec<Tk>) -> bool {
         self.in_if = true;
         let toks = self.expand_list(rest);
         self.in_if = false;
@@ -1542,6 +1593,22 @@ impl<'a> Pp<'a> {
         let (w0, w1) = (word(0), word(1));
         let s = Syms4 { once: self.s.once, push: self.s.push_macro, pop: self.s.pop_macro, gcc: self.s.gcc, clang: self.s.clang, poison: self.s.poison };
         let string_arg = |toks: &[Tk], k: usize| toks.get(k + 1).filter(|t| t.is(T::LParen)).and(toks.get(k + 2)).filter(|t| t.kind == P::Str).copied();
+        if self.par.is_some() {
+            // The parallel reading places these by position (`parallel`): noted, as carried out.
+            let ev = if w0 == s.once {
+                Some((parallel::Ev::Once, NO_SYM))
+            } else if w0 == s.push || w0 == s.pop {
+                string_arg(&toks, 0).map(|st| {
+                    let name = destringize(self.text(&st));
+                    (if w0 == s.push { parallel::Ev::Push } else { parallel::Ev::Pop }, self.syms.get(&name))
+                })
+            } else {
+                None
+            };
+            if let Some(ev) = ev {
+                self.par.as_mut().unwrap().events.push(ev);
+            }
+        }
         if w0 == s.once {
             self.once[file as usize] = true;
             return;
@@ -1620,3 +1687,5 @@ fn destringize(s: &[u8]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests;
+
+pub mod parallel;

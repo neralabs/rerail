@@ -5,10 +5,10 @@ The 10 rules have 191 lines, against 190 in the machine translation (which is sh
 
 | file | what |
 |---|---|
-| `lib/blade/syntax.rr` | the engine's Blade tree (Forte's kinds, fields and leaves, as `native/src/code_rule_dsl/blade/forte/tree.rs` documents them) and the compiled PHP program, reached as `parsed(document, "compiled-view", program)`: directives by name, directive blocks, echoes, `blade_code` |
-| `lib/blade/values.rr` | `php/values.rr` over the compiled program, with any compiled-view marker (`;`) counted as writing any variable |
+| `lib/blade/syntax.rerail` | the engine's Blade tree (Forte's kinds, fields and leaves, as `native/src/code_rule_dsl/blade/forte/tree.rs` documents them) and the compiled PHP program, reached as `parsed(document, "compiled-view", program)`: directives by name, directive blocks, echoes, `blade_code` |
+| `lib/blade/values.rerail` | `php/values.rerail` over the compiled program, with any compiled-view marker (`;`) counted as writing any variable |
 
-The Bladestan rules reuse `lib/php/values.rr` (php_if_const, php_identical) as they are: the program is PHP in
+The Bladestan rules reuse `lib/php/values.rerail` (php_if_const, php_identical) as they are: the program is PHP in
 tree-sitter-php's kinds.
 
 ## Scores
@@ -20,7 +20,7 @@ Rust (`native/src/code_rule_dsl/blade/`). What was checked:
 - Review fix: the compiled PHP is not the Blade document's last child. The engine keeps it as a derived document
   of its own (`tape.rs` `DerivedImage`, `embed/compiled_view.rs` `Via::CompiledView`; "no tape holds another"), so
   the first version's `blade_code` (`inside(n, p, "program")` under `document`) could never hold, and the three
-  rules over the program and the marker rule were vacuous. `blade_code` now reaches the program as `lib/vue/code.rr`
+  rules over the program and the marker rule were vacuous. `blade_code` now reaches the program as `lib/vue/code.rerail`
   reaches guest trees: `parsed(document, "compiled-view", program)`. That needs the engine to give `parsed` rows
   for compiled views (request 3 below).
 
@@ -53,7 +53,7 @@ Rust (`native/src/code_rule_dsl/blade/`). What was checked:
 (a) As for the PHP pack's if-always-false (packs/php/NOTES-php.md, (d)): a variable is followed to its one write;
 PHPStan reads types. A directive Blade does not compile (an application's own `Blade::directive`) is a marker that
 may write every variable (blade/view.rs). A marker's text is `;` whatever directive it stands for (view.rs
-`marker` emits `;` over the directive's bytes), so `lib/blade/values.rr` cannot pick out the `@props`, `@aware` and
+`marker` emits `;` over the directive's bytes), so `lib/blade/values.rerail` cannot pick out the `@props`, `@aware` and
 unknown-directive markers: it treats every empty statement of the compiled view as writing any variable of its
 scope. That is sound but loses reports: after an `@foreach` (whose marker only defines `$loop`), `@error` or a
 written `;`, no variable of that scope is followed. Request 2 would narrow it.
@@ -70,7 +70,7 @@ and the rule reports it (`<div class="@if($a)">` with its `@endif` elsewhere).
    modules (or a small crate split out of them) to write Blade facts, the document tree and its compiled view (as a
    guest tree, with a `parsed(document, "compiled-view", program)` row), as the engine's tape does. Until then this pack, and `complexity-cyclomatic-blade`, cannot be scored.
 2. **Core (proposal): `.decl blade_host(n: node, h: node)`**, the template node a compiled PHP node stands for
-   (the JSON's `host`). With it `lib/blade/values.rr` would count only the markers that may write any variable:
+   (the JSON's `host`). With it `lib/blade/values.rerail` would count only the markers that may write any variable:
    `php_dynamic(s) :- kind(m, "empty_statement"), blade_code(m), blade_host(m, h), blade_directive(h, x),
    (x = "props" ; x = "aware" ; !blade_known(x)), nearest(m, s, php_scope_kind).` Until then every marker counts.
 3. **Engine requirement: `parsed` rows for compiled views.** `parsed(r, "compiled-view", p)`, with r the Blade

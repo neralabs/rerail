@@ -946,8 +946,10 @@ mod tests {
     }
 
     /// A job over a file: a run over the file stops it until its deadline.
+    #[cfg(unix)]
     struct OverFile(Counter, std::path::PathBuf);
 
+    #[cfg(unix)]
     impl Job for OverFile {
         fn name(&self) -> String {
             self.0.name()
@@ -1013,7 +1015,8 @@ mod tests {
         let c = read_conditions(&mut last);
         assert!((0.0..=1.0).contains(&c.busy), "{c:?}");
         assert!(c.charge.is_none_or(|ch| (0.0..=100.5).contains(&ch)), "{c:?}");
-        assert!(c.footprint > 0, "{c:?}");
+        // The footprint is macOS's figure (`proc_pid_rusage`); elsewhere it is not read and is 0.
+        assert!(c.footprint > 0 || cfg!(not(target_os = "macos")), "{c:?}");
         eprintln!("CONDITIONS {c:?}");
     }
 
@@ -1032,7 +1035,8 @@ mod tests {
     }
 
     /// A job seen from inside: its thread's quality of service, and that the scheduler's own thread ran it.
-    struct Probe(std::sync::Arc<Mutex<Vec<(String, Option<&'static str>)>>>);
+    type Seen = std::sync::Arc<Mutex<Vec<(String, Option<&'static str>)>>>;
+    struct Probe(Seen);
 
     impl Job for Probe {
         fn name(&self) -> String {

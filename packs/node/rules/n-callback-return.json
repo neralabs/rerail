@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-callback-return",
-  "revision": 4,
+  "revision": 5,
   "mode": "steer",
   "description": "Return right after calling a callback named callback, cb or next; otherwise the function keeps running and the callback can fire twice.",
   "scope": {
@@ -147,44 +147,66 @@
                 }
               },
               {
-                "not": {
-                  "any": [
-                    {
-                      "inside": {
-                        "matches": "c1"
-                      }
-                    },
-                    {
-                      "inside": {
-                        "kind": "binary_expression",
-                        "field": "right",
-                        "inside": {
-                          "matches": "c1"
+                "any": [
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "kind": "optional_chain"
+                        }
+                      },
+                      {
+                        "has": {
+                          "regex": "^\\?\\.$"
                         }
                       }
-                    }
-                  ]
-                }
-              },
-              {
-                "not": {
-                  "any": [
-                    {
-                      "inside": {
-                        "matches": "c2"
-                      }
-                    },
-                    {
-                      "inside": {
-                        "kind": "binary_expression",
-                        "field": "right",
-                        "inside": {
-                          "matches": "c2"
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "not": {
+                          "any": [
+                            {
+                              "inside": {
+                                "matches": "c1"
+                              }
+                            },
+                            {
+                              "inside": {
+                                "kind": "binary_expression",
+                                "field": "right",
+                                "inside": {
+                                  "matches": "c1"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "not": {
+                          "any": [
+                            {
+                              "inside": {
+                                "matches": "c2"
+                              }
+                            },
+                            {
+                              "inside": {
+                                "kind": "binary_expression",
+                                "field": "right",
+                                "inside": {
+                                  "matches": "c2"
+                                }
+                              }
+                            }
+                          ]
                         }
                       }
-                    }
-                  ]
-                }
+                    ]
+                  }
+                ]
               },
               {
                 "inside": {

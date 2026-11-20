@@ -1,8 +1,8 @@
 //! `nearest($n, $a, set)` read from the transducer's file-local FIX (O12, option a), on the version (decision 0281's
 //! path, step 6a): each literal becomes the input atom `nearest_<set>($n, $a)`, which the run binds beside the base
 //! relations (`facts::vtab::syntax::with_nearest`). What the pass finds is the relations the run must make
-//! (`nearest_<set>`, and the tree axes' `rr_inside_<set>` and `rr_has_<set>`), each with its set's kind atoms, as
-//! `lower::Given::transduce_nearest` finds them on the tree.
+//! (`nearest_<set>`, and the tree axes' `rr_inside_<set>` and `rr_has_<set>`), each with its set's kind atoms. A pass
+//! of preparation, before the program's run.
 
 use crate::code_rule_dsl::logic::front::{AXIS, DESCENDANTS, NEAREST, is_axis};
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
@@ -65,14 +65,14 @@ impl RulePass for Nearest {
         let before = inputs.len();
         for set in std::mem::take(&mut self.used) {
             let rel = format!("{NEAREST}{set}");
-            b.declare(&rel, &[("n", "node"), ("a", "node")]);
+            b.fields().declare(&rel, &[("n", "node"), ("a", "node")]);
             if !inputs.contains(&rel) {
                 inputs.push(rel.clone());
             }
             self.sets.push((rel, kinds(&set)));
         }
         if inputs.len() != before {
-            b.set_inputs(&inputs);
+            b.fields().set_inputs(&inputs);
         }
         Ok(())
     }

@@ -75,7 +75,7 @@ pub fn root_of(b: &Block) -> &FactsRoot {
     b.root()
 }
 
-fn rel_in<'b>(b: &'b Block, r: usize) -> Option<&'b Relation> {
+fn rel_in(b: &Block, r: usize) -> Option<&Relation> {
     root_of(b).rels.as_slice()[r].get()
 }
 

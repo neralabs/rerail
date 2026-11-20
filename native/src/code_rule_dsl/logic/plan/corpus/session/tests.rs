@@ -18,7 +18,7 @@ fn a_session_reruns_what_an_edit_changed() {
     std::fs::create_dir_all(&src).unwrap();
     std::fs::write(src.join("a.py"), "import hashlib\nhashlib.md5(b'x')\n").unwrap();
     std::fs::write(src.join("b.py"), "import pickle\npickle.loads(b'x')\n").unwrap();
-    let rule = packs().join("bandit-b301-pickle.rr");
+    let rule = packs().join("bandit-b301-pickle.rerail");
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let findings = || crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap();
@@ -50,7 +50,7 @@ fn a_sessions_outputs_are_overlays_of_the_rows_an_edit_changed() {
     for i in 0..6 {
         std::fs::write(src.join(format!("m{i}.py")), format!("import pickle\npickle.loads(b'{i}')\n")).unwrap();
     }
-    let rule = packs().join("bandit-b301-pickle.rr");
+    let rule = packs().join("bandit-b301-pickle.rerail");
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = |to: &std::path::Path| super::super::run(&program, &src, None, to, "program", Binding::Cpu, 1 << 18).unwrap();
     let names = |dir: &std::path::Path| -> Vec<String> { output::Outputs::open(dir).unwrap().names().into_iter().map(str::to_owned).collect() };
@@ -96,7 +96,7 @@ fn a_session_runs_the_cross_file_strata_an_edit_changed() {
     std::fs::write(src.join("main.py"), "from pkg.loader import load\nload(b'x')\n").unwrap();
     std::fs::write(src.join("other.py"), "import json\njson.loads('1')\n").unwrap();
     let rules = packs();
-    let programs: Vec<String> = ["bandit-b301-pickle.rr", "bandit-b307-eval.rr"].iter().map(|r| crate::code_rule_dsl::tools::flatten(&rules.join(r)).unwrap()).collect();
+    let programs: Vec<String> = ["bandit-b301-pickle.rerail", "bandit-b307-eval.rerail"].iter().map(|r| crate::code_rule_dsl::tools::flatten(&rules.join(r)).unwrap()).collect();
     let texts: Vec<&str> = programs.iter().map(String::as_str).collect();
     let run = || super::super::run_all(&texts, &src, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let findings = || {
@@ -153,9 +153,9 @@ fn a_session_keeps_its_cross_part_across_a_file_local_edit() {
     std::fs::write(src.join("b.py"), "from a import helper, other\n\ndef main():\n    assert True\n    helper(1)\n    other(2)\n").unwrap();
     // `at` is the cross-file part; `flagged`, file-local, is the rule edited.
     let program = |kind: &str| format!(
-        "#include \"core.rr\"\n.decl called(c: node, x: symbol)\ncalled(c, x) :- kind(c, \"call\"), field(c, \"function\", f), text(f, x).\n.decl defined(d: node, x: symbol)\ndefined(d, x) :- kind(d, \"function_definition\"), field(d, \"name\", n), text(n, x).\n.decl at(x: symbol, k: number)\nat(x, k) :- called(c, x), defined(_, x), col(c, k).\n.decl flagged(n: node)\nflagged(n) :- kind(n, \"assert_statement\"), !kind(n, \"{kind}\").\n.decl flag_line(l: number)\nflag_line(l) :- flagged(n), line(n, l).\n.output at, flag_line\n"
+        "#include \"core.rerail\"\n.decl called(c: node, x: symbol)\ncalled(c, x) :- kind(c, \"call\"), field(c, \"function\", f), text(f, x).\n.decl defined(d: node, x: symbol)\ndefined(d, x) :- kind(d, \"function_definition\"), field(d, \"name\", n), text(n, x).\n.decl at(x: symbol, k: number)\nat(x, k) :- called(c, x), defined(_, x), col(c, k).\n.decl flagged(n: node)\nflagged(n) :- kind(n, \"assert_statement\"), !kind(n, \"{kind}\").\n.decl flag_line(l: number)\nflag_line(l) :- flagged(n), line(n, l).\n.output at, flag_line\n"
     );
-    let program = |kind: &str| crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(&program(kind)).unwrap()).unwrap();
+    let program = |kind: &str| crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(&program(kind)).unwrap()).unwrap();
     let run = |text: &str| super::super::run(text, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let rows = || ["at", "flag_line"].map(|r| {
         let mut v: Vec<String> = std::fs::read_to_string(out.join(format!("{r}.csv"))).unwrap_or_default().lines().map(str::to_owned).collect();
@@ -208,7 +208,7 @@ fn recursive_cross_file_stratum() -> Ran {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-reach");
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
-    let rule = base.join("reach.rr");
+    let rule = base.join("reach.rerail");
     std::fs::write(
         &rule,
         r#".policy "test-import-cycle" revision 1
@@ -216,7 +216,7 @@ fn recursive_cross_file_stratum() -> Ran {
 .language python
 .mode steer
 .scope include "**/*.py"
-#include "python/names.rr"
+#include "python/names.rerail"
 .decl dep(a: number, b: number)
 dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
 .decl reach(a: number, b: number) no_reach
@@ -273,7 +273,7 @@ fn a_session_passes_on_a_quiet_stratum() {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-quiet");
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
-    let rule = base.join("quiet.rr");
+    let rule = base.join("quiet.rerail");
     std::fs::write(
         &rule,
         r#".policy "test-quiet" revision 1
@@ -281,7 +281,7 @@ fn a_session_passes_on_a_quiet_stratum() {
 .language python
 .mode steer
 .scope include "**/*.py"
-#include "python/names.rr"
+#include "python/names.rerail"
 .decl dep(a: number, b: number)
 dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
 .decl via_h(a: number)
@@ -334,7 +334,7 @@ fn a_session_keeps_its_part_around_an_inlined_relation() {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-inlined");
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
-    let rule = base.join("near.rr");
+    let rule = base.join("near.rerail");
     std::fs::write(
         &rule,
         r#".policy "test-imported-back" revision 1
@@ -342,7 +342,7 @@ fn a_session_keeps_its_part_around_an_inlined_relation() {
 .language python
 .mode steer
 .scope include "**/*.py"
-#include "python/names.rr"
+#include "python/names.rerail"
 .decl dep(a: number, b: number)
 dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
 .decl back(a: number, b: number) inline
@@ -388,7 +388,7 @@ fn a_session_inserts_only_rows_new_against_the_survivors() {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-ins");
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
-    let rule = base.join("reach.rr");
+    let rule = base.join("reach.rerail");
     std::fs::write(
         &rule,
         r#".policy "test-import-reach" revision 1
@@ -396,7 +396,7 @@ fn a_session_inserts_only_rows_new_against_the_survivors() {
 .language python
 .mode steer
 .scope include "**/*.py"
-#include "python/names.rr"
+#include "python/names.rerail"
 .decl dep(a: number, b: number)
 dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
 .decl reach(a: number, b: number) no_reach
@@ -495,8 +495,8 @@ fn wave0_session(tag: &str, rules: &str, files: &[(&str, &str)], edits: &[(&str,
     let _ = std::fs::remove_dir_all(&base);
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
-    let rule = base.join("w0.rr");
-    let head = ".policy \"test-wave0\" revision 1\n.description \"A maintained stratum's first wave.\"\n.language python\n.mode steer\n.scope include \"**/*.py\"\n#include \"python/names.rr\"\n.decl dep(a: number, b: number)\ndep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).\n";
+    let rule = base.join("w0.rerail");
+    let head = ".policy \"test-wave0\" revision 1\n.description \"A maintained stratum's first wave.\"\n.language python\n.mode steer\n.scope include \"**/*.py\"\n#include \"python/names.rerail\"\n.decl dep(a: number, b: number)\ndep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).\n";
     std::fs::write(&rule, format!("{head}{rules}")).unwrap();
     for (path, text) in files {
         std::fs::write(src.join(path), text).unwrap();
@@ -594,7 +594,7 @@ fn cross_file_aggregate() -> Ran {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-count");
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
-    let rule = base.join("hub.rr");
+    let rule = base.join("hub.rerail");
     std::fs::write(
         &rule,
         r#".policy "test-import-hub" revision 1
@@ -602,7 +602,7 @@ fn cross_file_aggregate() -> Ran {
 .language python
 .mode steer
 .scope include "**/*.py"
-#include "python/names.rr"
+#include "python/names.rerail"
 .decl dep(a: number, b: number)
 dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
 .decl fan(b: number, n: number)
@@ -661,7 +661,7 @@ fn a_session_keeps_a_negation_that_still_fails() {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-lone");
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
-    let rule = base.join("lone.rr");
+    let rule = base.join("lone.rerail");
     std::fs::write(
         &rule,
         r#".policy "test-unresolved-import" revision 1
@@ -669,7 +669,7 @@ fn a_session_keeps_a_negation_that_still_fails() {
 .language python
 .mode steer
 .scope include "**/*.py"
-#include "python/names.rr"
+#include "python/names.rerail"
 .decl dep(a: number, b: number)
 dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
 .violation LONE(at: node) code "LONE" "An import of no file, in a file that imports none."
@@ -716,7 +716,7 @@ fn session_costs() {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-costs");
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
-    let rule = base.join("costs.rr");
+    let rule = base.join("costs.rerail");
     std::fs::write(
         &rule,
         r#".policy "test-session-costs" revision 1
@@ -724,7 +724,7 @@ fn session_costs() {
 .language python
 .mode steer
 .scope include "**/*.py"
-#include "python/names.rr"
+#include "python/names.rerail"
 .decl dep(a: number, b: number)
 dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
 .decl reach(a: number, b: number)
@@ -796,7 +796,7 @@ fn a_session_derives_the_reach_index_again_when_cycles_and_connections_change() 
     for (path, text) in REACH_START {
         std::fs::write(src.join(path), text).unwrap();
     }
-    let rule = base.join("reach.rr");
+    let rule = base.join("reach.rerail");
     std::fs::write(&rule, REACH_RULE).unwrap();
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();

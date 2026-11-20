@@ -501,12 +501,11 @@ impl<'a> P<'a> {
                 }
                 // A name's type arguments (as `simple_name` reads them): their `,`s are theirs.
                 T::Lt if j > from && self.is_ident_at(j - 1) => {
-                    if let Some(e) = self.scan_type_args(j) {
-                        if follows_type_args(self.kind_at(e)) {
+                    if let Some(e) = self.scan_type_args(j)
+                        && follows_type_args(self.kind_at(e)) {
                             j = e;
                             continue;
                         }
-                    }
                 }
                 _ => {}
             }
@@ -1582,6 +1581,7 @@ impl<'a> P<'a> {
         Ok(n)
     }
 
+    #[allow(clippy::wrong_self_convention, reason = "named for the grammar rule it parses")]
     fn into_ahead(&mut self) -> bool {
         self.is_word(w::INTO) && self.is_ident_at(1)
     }
@@ -1594,6 +1594,7 @@ impl<'a> P<'a> {
     }
 
     /// `from_clause`: `from [type] name in expression`.
+    #[allow(clippy::wrong_self_convention, reason = "named for the grammar rule it parses")]
     fn from_clause(&mut self) -> R<()> {
         let c = self.open(K::FromClause, f::NONE, C_NONE)?;
         self.tk(K::FromClause, K::TFrom)?;

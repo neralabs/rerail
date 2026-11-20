@@ -1,6 +1,6 @@
 # M1: per-rule baseline on the current engine
 
-Scripts: `../experiments/m1/` (recordings not checked in). Stopped early by direction; the per-rule table is complete. The per-rule table below is complete: all 8 rules ran twice. The stage breakdown is complete for serverplan-steps only. The 60-rule run was skipped because it isn't cheap: serverplan-quality alone needs 10 GiB and about 350–410 s CPU, and DLRE's own first-50 run took 1,990 s wall before the all-60 run was cancelled.
+Scripts: `../experiments/m1/` (removed; at 7efcac9c67) (recordings not checked in). Stopped early by direction; the per-rule table is complete. The per-rule table below is complete: all 8 rules ran twice. The stage breakdown is complete for serverplan-steps only. The 60-rule run was skipped because it isn't cheap: serverplan-quality alone needs 10 GiB and about 350–410 s CPU, and DLRE's own first-50 run took 1,990 s wall before the all-60 run was cancelled.
 
 ## Setup
 - **Timing addon (runs -1 and -2):** the Pulling-it-all-together build, `/Users/jeremy/orca/workspaces/rerail/Pulling-it-all-together/native/rerail_engine.darwin-arm64.node` (sha256 `c5a261c0…`).
@@ -79,7 +79,7 @@ I didn't profile it. Likely causes are the per-file storage writes and reads in 
 - Release-build times and profile-build proportions come from different optimisation levels.
 - The per-rule sum (994–1,220 s) double-counts the fixed per-run cost of ingesting the corpus, so it is not a 60-rule estimate. The empty-rule baseline that would measure that fixed cost was never run.
 
-Everything is in `../experiments/m1/`:
+Everything is in `../experiments/m1/` (removed; at 7efcac9c67):
 - `runs/<rule>-{1,2,prof}/`: `resource.txt`, `parity.json`, `stderr.log`
 - `run_one.sh` and `batch.sh`: the runners
 - `make_recordings.py`: builds the one-rule recordings

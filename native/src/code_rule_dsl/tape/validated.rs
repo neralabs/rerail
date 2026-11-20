@@ -36,7 +36,7 @@ pub fn visit(
 ) -> Result<([u8; 32], Vec<(String, bool)>), String> {
     checked(budget)?;
     // The source's digest, returned: a tape decoded from the wire holds none of its own (`TapeImage::source_digest`).
-    let digest = source_digest(&source, budget)?;
+    let digest = source_digest(source, budget)?;
     if image.language != grammar.lang
         || image.source_len != source.len()
         || image.source_digest.is_some_and(|stored| stored != digest)
@@ -217,6 +217,5 @@ fn visit_tape<T: rerail_tape_format::tape::Tape>(
             child_end: None,
         });
     }
-    drop(admit);
     Ok(aliases)
 }

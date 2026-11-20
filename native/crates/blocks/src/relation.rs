@@ -115,6 +115,25 @@ structure! {
         pub pend_used: AtomicU64,
         /// A continuation's base (`CONTINUES`): its descriptor's offset from this one's, in the same block; 0 for none.
         pub base_off: AtomicI64,
+        /// Its row ranges known to be in an order already (decision 0180), written once when it is frozen into an
+        /// input (decision 0478 step 5c), in row order; and the bytes of their chunk, given back at its release.
+        pub known: Span<Known>,
+        pub known_kept: AtomicU64,
+        /// A frozen relation's dead rows (bit `id`; decision 0478 step 5d), given to it once and given back at its
+        /// release; the bytes of their chunk. Its kills delta (`try_kills_at`) reads them here.
+        pub own_dead: Span<u64>,
+        pub own_dead_kept: AtomicU64,
+    }
+}
+
+structure! {
+    /// Rows `lo..hi` of a relation are in the order on `cols` (`ncols` of them; decision 0180): a writer wrote them
+    /// sorted, so an order built later takes them in place.
+    pub struct Known {
+        pub lo: u32,
+        pub hi: u32,
+        pub ncols: u32,
+        pub cols: [u16; MAX_KEY],
     }
 }
 
@@ -232,6 +251,17 @@ impl Relation {
     /// A delta of `base` with no rows of its own whose dead bits are `words` (row `id` dead when bit `id` of them is
     /// set): a relation's kills of the rows it shares, read beside them where they lie (decision 0325: the device
     /// skips a dead row by its bit, `rel_dead`). `None` when the block cannot hold it.
+    /// `try_kills`, its dead bits the ones `base` keeps (`own_dead`), read where they lie: nothing copied.
+    pub fn try_kills_own<'b>(block: &'b Block, spec: &Spec, base: &Relation) -> Option<&'b Relation> {
+        let words = base.own_dead();
+        assert!(!words.is_empty(), "a relation's own dead rows");
+        let rel = Relation::try_create(block, spec, Some(base))?;
+        // SAFETY: `words` lie in `block` (`base`'s), which `base` keeps while its delta lives (the delta's holder keeps
+        // `base`).
+        unsafe { Span::set(&rel.dead, words.as_ptr(), words.len()) };
+        Some(rel)
+    }
+
     /// Its dead bits are a chunk of their own, so a delta replaced when they change goes back whole
     /// (`release_kills`).
     pub fn try_kills<'b>(block: &'b Block, spec: &Spec, base: &Relation, words: &[u64]) -> Option<&'b Relation> {
@@ -273,6 +303,14 @@ impl Relation {
     /// It lies in `block`, and no one reads or writes it after (its last holder's).
     pub unsafe fn release(&self, block: &Block) -> usize {
         let given = unsafe { self.rows.release(block) + self.killed.release(block) };
+        let kept = self.known_kept.load(Acquire) as usize;
+        if kept > 0 {
+            block.free_chunk_fit(block.offset_of(self.known.as_ptr()), kept);
+        }
+        let kept = self.own_dead_kept.load(Acquire) as usize;
+        if kept > 0 {
+            block.free_chunk_fit(block.offset_of(self.own_dead.as_ptr()), kept);
+        }
         // Its added indexes, and their directory: chunks of the block's.
         if self.flags.load(Acquire) & ADDED != 0 {
             // SAFETY: the caller's: this is the relation's last use.
@@ -320,6 +358,7 @@ impl Relation {
     }
 
     #[inline]
+    #[allow(clippy::should_implement_trait, reason = "the relation's index `i` of its sorted orders, by number: not `ops::Index`")]
     pub fn index(&self, i: usize) -> &Index {
         &self.indexes.as_slice()[i]
     }
@@ -347,6 +386,69 @@ impl Relation {
         let found = (0..n).find(|&i| ix[i].ordered == 0 && built(i) == cols.len() && ix[i].key[..cols.len()] == *cols && ix[i].rows.len() == rows as usize);
         std::sync::atomic::fence(Acquire);
         found
+    }
+
+    /// Its dead rows' bits as given (`adopt_dead`): empty when none were.
+    pub fn own_dead(&self) -> &[u64] {
+        if self.own_dead_kept.load(Acquire) == 0 {
+            return &[];
+        }
+        self.own_dead.as_slice()
+    }
+
+    /// Takes its dead rows' bits, `len` words in the chunk at `at` of `block` (`kept` bytes), written: kept from now on,
+    /// given back at its release (decision 0478 step 5d). False when it has some already.
+    ///
+    /// # Safety
+    /// It lies in `block`; the chunk is the caller's to give and nothing writes it after; nothing else writes its
+    /// descriptor meanwhile.
+    pub unsafe fn adopt_dead(&self, block: &Block, at: usize, len: usize, kept: usize) -> bool {
+        if self.own_dead_kept.load(Acquire) != 0 || len == 0 || kept == 0 {
+            return false;
+        }
+        // SAFETY: the caller's.
+        unsafe {
+            let me = std::ptr::from_ref(self).cast_mut();
+            Span::set(&raw mut (*me).own_dead, block.ptr::<u64>(at), len);
+        }
+        self.own_dead_kept.store(kept as u64, Release);
+        true
+    }
+
+    /// Its row ranges known to be in an order (`Known`): none until `try_set_known`.
+    pub fn known(&self) -> &[Known] {
+        if self.known_kept.load(Acquire) == 0 {
+            return &[];
+        }
+        self.known.as_slice()
+    }
+
+    /// Writes its known ranges (decision 0478 step 5c), once: `(lo, hi, cols)` each, in row order. False when they
+    /// were written already, a key is past `MAX_KEY`, or `block` has no room.
+    ///
+    /// # Safety
+    /// It lies in `block`, and nothing else writes its descriptor meanwhile (its writer's, at freeze).
+    pub unsafe fn try_set_known(&self, block: &Block, ranges: &[(u32, u32, &[u16])]) -> bool {
+        if ranges.is_empty() {
+            return true;
+        }
+        if self.known_kept.load(Acquire) != 0 || ranges.iter().any(|(_, _, c)| c.len() > MAX_KEY) {
+            return false;
+        }
+        let Some((at, kept)) = block.try_alloc_chunk_fit(ranges.len() * size_of::<Known>(), 8) else { return false };
+        let p = block.ptr::<Known>(at);
+        // SAFETY: `p` holds `ranges.len()` entries, this relation's alone; the caller's for its descriptor.
+        unsafe {
+            for (i, &(lo, hi, cols)) in ranges.iter().enumerate() {
+                let mut c = [0u16; MAX_KEY];
+                c[..cols.len()].copy_from_slice(cols);
+                p.add(i).write(Known { lo, hi, ncols: cols.len() as u32, cols: c });
+            }
+            let me = std::ptr::from_ref(self).cast_mut();
+            Span::set(&raw mut (*me).known, p, ranges.len());
+        }
+        self.known_kept.store(kept as u64, Release);
+        true
     }
 
     /// The sorted order on `cols` over `rows` rows (decision 0478 step 5b), built: its number.
@@ -525,6 +627,20 @@ impl Relation {
     /// # Safety
     /// `room` is this relation's, reserved and not yet built, and nothing reads it meanwhile.
     pub unsafe fn build_index(&self, room: &IndexRoom) {
+        let key = &room.key[..room.ncols];
+        // A continuation's values are of every row it reads (its base's first); a delta's its own rows'.
+        let value = |i: u32, c: u16| if self.continues() { self.get(i, c as usize) } else { self.rows.get(i, c as usize) };
+        // SAFETY: the caller's.
+        unsafe { self.build_index_hashed(room, &|i| key.iter().fold(crate::SEED, |h, &c| crate::mix(h, value(i, c)))) }
+    }
+
+    /// `build_index`, each row's key hash given (`hash(i)` for its row `i`: `SEED` mixed with its key's values, as
+    /// `key_hash`): for a relation whose key values are read elsewhere (a view's home of no columns, decision 0478
+    /// step 5e).
+    ///
+    /// # Safety
+    /// As `build_index`'s.
+    pub unsafe fn build_index_hashed(&self, room: &IndexRoom, hash: &dyn Fn(u32) -> u64) {
         let ix = &self.indexes.as_slice()[room.index];
         let n = room.rows_n as usize;
         // SAFETY: the caller's: the room's spans are ours to write.
@@ -535,9 +651,7 @@ impl Relation {
         offs.fill(0);
         // A continuation's index is of every row it reads (its base's first, ids from 0); a delta's of its own.
         let base = if self.continues() { 0 } else { self.base_rows };
-        let key = &room.key[..room.ncols];
-        let value = |i: u32, c: u16| if self.continues() { self.get(i, c as usize) } else { self.rows.get(i, c as usize) };
-        let bucket: Vec<u32> = (0..n as u32).map(|i| (key.iter().fold(crate::SEED, |h, &c| crate::mix(h, value(i, c))) & room.mask) as u32).collect();
+        let bucket: Vec<u32> = (0..n as u32).map(|i| (hash(i) & room.mask) as u32).collect();
         for &b in &bucket {
             offs[b as usize + 1] += 1;
         }
@@ -895,8 +1009,8 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
     // Decided against the kills alone: a duplicate dropped here is one of its own rows, never a base row.
     let order: &mut [u32] = scratch.take(m);
     let mut live = 0;
-    for p in 0..m {
-        let i = ids[p] as usize;
+    for (p, &id) in ids.iter().enumerate().take(m) {
+        let i = id as usize;
         if (p > 0 && same(p)) || base_live(i) {
             continue;
         }

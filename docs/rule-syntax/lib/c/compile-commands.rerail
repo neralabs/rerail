@@ -1,0 +1,81 @@
+// C's and C++'s configurations from a build's own record (decision 0327, "Configuration is
+// facts"): each entry of a `compile_commands.json` is a translation unit under a configuration of
+// its own, and a compiler profile gives every configuration the compiler's own macros and search
+// path. Settings:
+//
+//   c.compile_commands   the `compile_commands.json` (CMake's `CMAKE_EXPORT_COMPILE_COMMANDS`, Bear)
+//   c.profile.<lang>     a compiler profile for units of `lang` (`c`, `c++`, `objective-c`, …),
+//                        written by `scripts/dev/c-profile`
+//
+// The rows are rules', so a rule can add to them or take a unit's configuration from elsewhere.
+#include "c/env.rerail"
+
+// The entries, answered natively (`language::adapter::c_pp::CompileCommands`): entry `e`'s file
+// and directory as written, and its arguments from 0 (the compiler), a `command` split as a shell
+// splits it.
+.decl c_compile_command(path: symbol, e: number, file: symbol, dir: symbol)
+.decl c_compile_arg(path: symbol, e: number, i: number, arg: symbol)
+
+.decl c_cc(path: symbol)
+c_cc(p) :- env("c.compile_commands", p).
+// Entry e's unit (its file under its directory) and configuration (the file's path and e).
+.decl c_cc_unit(path: symbol, e: number, tu: symbol, cfg: symbol)
+c_cc_unit(p, e, f, c) :- c_cc(p), c_compile_command(p, e, f, _), match("/.*", f), c = cat(p, "#", to_string(e)).
+c_cc_unit(p, e, t, c) :- c_cc(p), c_compile_command(p, e, f, d), !match("/.*", f), d != ".", t = cat(d, "/", f),
+    c = cat(p, "#", to_string(e)).
+c_cc_unit(p, e, f, c) :- c_cc(p), c_compile_command(p, e, f, "."), !match("/.*", f), c = cat(p, "#", to_string(e)).
+c_tu(t, c) :- c_cc_unit(_, _, t, c).
+
+// The options that take a value, written after them (`-I inc`) or joined (`-Iinc`).
+.decl c_cc_takes(flag: symbol)
+c_cc_takes("-D"). c_cc_takes("-U"). c_cc_takes("-I"). c_cc_takes("-F"). c_cc_takes("-iquote").
+c_cc_takes("-isystem"). c_cc_takes("-idirafter"). c_cc_takes("-x").
+.decl c_cc_opt(path: symbol, e: number, i: number, flag: symbol, v: symbol)
+c_cc_opt(p, e, i, f, v) :- c_cc(p), c_compile_arg(p, e, i, f), c_cc_takes(f), c_compile_arg(p, e, j, v), j = i + 1.
+c_cc_opt(p, e, i, f, v) :- c_cc(p), c_compile_arg(p, e, i, a), c_cc_takes(f), n = strlen(f), strlen(a) > n,
+    substr(a, 0, n) = f, v = substr(a, n, strlen(a) - n).
+
+// `-D` and `-U`, after every macro of the profile (their order from 1000000), in the command's order.
+c_predefine(c, o, n, b) :- c_cc_unit(p, e, _, c), c_cc_opt(p, e, i, "-D", v), match("(?<n>[^=]+)=(?<b>.*)", v),
+    o = i + 1000000.
+c_predefine(c, o, v, "1") :- c_cc_unit(p, e, _, c), c_cc_opt(p, e, i, "-D", v), !match("[^=]*=.*", v),
+    o = i + 1000000.
+c_config_undef(c, o, v) :- c_cc_unit(p, e, _, c), c_cc_opt(p, e, i, "-U", v), o = i + 1000000.
+
+// The search path: a relative directory is the entry's directory's.
+.decl c_cc_dirflag(flag: symbol, kind: symbol)
+c_cc_dirflag("-I", "angle"). c_cc_dirflag("-iquote", "quote"). c_cc_dirflag("-isystem", "system").
+c_cc_dirflag("-idirafter", "after"). c_cc_dirflag("-F", "framework").
+c_include_dir(c, o, v, k) :- c_cc_unit(p, e, _, c), c_cc_opt(p, e, o, f, v), c_cc_dirflag(f, k), match("/.*", v).
+c_include_dir(c, o, x, k) :- c_cc_unit(p, e, _, c), c_cc_opt(p, e, o, f, v), c_cc_dirflag(f, k), !match("/.*", v),
+    c_compile_command(p, e, _, d), x = cat(d, "/", v).
+
+// The language: `-x`'s, else the file's suffix's (`.c` C, `.m` Objective-C, `.mm` Objective-C++,
+// any other C++); the standard: `-std=`'s, else GNU's 17.
+.decl c_cc_x(cfg: symbol, lang: symbol)
+c_cc_x(c, l) :- c_cc_unit(p, e, _, c), c_cc_opt(p, e, _, "-x", l).
+.decl c_cc_has_x(cfg: symbol)
+c_cc_has_x(c) :- c_cc_x(c, _).
+.decl c_cc_lang(cfg: symbol, lang: symbol)
+c_cc_lang(c, l) :- c_cc_x(c, l).
+c_cc_lang(c, "c") :- c_cc_unit(_, _, t, c), !c_cc_has_x(c), suffix(".c", t).
+c_cc_lang(c, "objective-c") :- c_cc_unit(_, _, t, c), !c_cc_has_x(c), suffix(".m", t).
+c_cc_lang(c, "objective-c++") :- c_cc_unit(_, _, t, c), !c_cc_has_x(c), suffix(".mm", t).
+c_cc_lang(c, "c++") :- c_cc_unit(_, _, t, c), !c_cc_has_x(c), !suffix(".c", t), !suffix(".m", t), !suffix(".mm", t).
+.decl c_cc_std(cfg: symbol, std: symbol)
+c_cc_std(c, s) :- c_cc_unit(p, e, _, c), c_compile_arg(p, e, _, a), match("-std=(?<s>.+)", a).
+.decl c_cc_has_std(cfg: symbol)
+c_cc_has_std(c) :- c_cc_std(c, _).
+c_lang(c, l, s) :- c_cc_lang(c, l), c_cc_std(c, s).
+c_lang(c, l, "gnu17") :- c_cc_lang(c, l), !c_cc_has_std(c), !suffix("++", l).
+c_lang(c, l, "gnu++17") :- c_cc_lang(c, l), !c_cc_has_std(c), suffix("++", l).
+
+// A compiler profile (`scripts/dev/c-profile`): its `#define` lines (`clang -dM -E`) are the
+// configuration's first macros, by line, and its `dir KIND PATH` lines its search path's
+// compiler-own part (after the command's: their order from 1000000).
+.decl c_profile(cfg: symbol, f: symbol)
+c_profile(c, f) :- c_lang(c, l, _), k = cat("c.profile.", l), env(k, f).
+c_predefine(c, i, n, b) :- c_profile(c, f), file_line(f, i, x),
+    match("#define (?<n>[A-Za-z_0-9]+(?:\\([^)]*\\))?) ?(?<b>.*)", x).
+c_include_dir(c, o, d, k) :- c_profile(c, f), file_line(f, i, x), match("dir (?<k>[a-z]+) (?<d>.+)", x),
+    o = i + 1000000.

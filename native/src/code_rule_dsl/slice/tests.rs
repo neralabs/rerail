@@ -150,10 +150,7 @@ fn an_edit_reruns_its_file_and_a_whitespace_edit_cuts_off() {
 
 /// The user and system CPU time this process has spent.
 fn cpu() -> std::time::Duration {
-    let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
-    unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
-    let time = |t: libc::timeval| std::time::Duration::new(t.tv_sec as u64, t.tv_usec as u32 * 1000);
-    time(usage.ru_utime) + time(usage.ru_stime)
+    rerail_prof::process_cpu()
 }
 
 /// The slice's bench (06 S6; S8 measures on S7's sample): a cold audit of `RERAIL_S6_FILES`
@@ -285,40 +282,42 @@ fn ws_keys(
         .iter()
         .filter(|(policy, compiled)| compiled.inner.clauses.iter().any(|c| names.contains(&format!("{policy}/{}", c.id))))
         .collect::<Vec<_>>();
-    let per_file = files
-        .par_iter()
-        .map(|(path, source)| {
-            let snapshot = json!({
-                "facts": [], "format": "rerail.repository-snapshot/v1", "revision": 0,
-                "files": [{ "language": "python", "path": path, "source": source }],
+    let per_file = crate::code_rule_dsl::logic::profile::on_cores(|| {
+        files
+            .par_iter()
+            .map(|(path, source)| {
+                let snapshot = json!({
+                    "facts": [], "format": "rerail.repository-snapshot/v1", "revision": 0,
+                    "files": [{ "language": "python", "path": path, "source": source }],
+                })
+                .to_string();
+                let (mut keys, mut failed) = (Keys::new(), BTreeSet::new());
+                for (policy, compiled) in &policies {
+                    let result: serde_json::Value = serde_json::from_str(&compiled.evaluate(snapshot.clone(), "report".to_owned()).unwrap()).unwrap();
+                    for v in result["violations"].as_array().unwrap() {
+                        if names.contains(&format!("{policy}/{}", v["clauseId"].as_str().unwrap())) {
+                            keys.insert((
+                                v["ruleId"].as_str().unwrap().to_owned(),
+                                v["code"].as_str().unwrap().to_owned(),
+                                v["path"].as_str().unwrap().to_owned(),
+                                v["span"]["startLine"].as_u64().unwrap() as usize,
+                            ));
+                        }
+                    }
+                    for f in result["failures"].as_array().unwrap() {
+                        if names.contains(&format!("{policy}/{}", f["clauseId"].as_str().unwrap_or_default())) {
+                            failed.insert((
+                                compiled.inner.id.clone(),
+                                f["path"].as_str().unwrap_or_default().to_owned(),
+                                f["code"].as_str().unwrap_or_default().to_owned(),
+                            ));
+                        }
+                    }
+                }
+                (keys, failed)
             })
-            .to_string();
-            let (mut keys, mut failed) = (Keys::new(), BTreeSet::new());
-            for (policy, compiled) in &policies {
-                let result: serde_json::Value = serde_json::from_str(&compiled.evaluate(snapshot.clone(), "report".to_owned()).unwrap()).unwrap();
-                for v in result["violations"].as_array().unwrap() {
-                    if names.contains(&format!("{policy}/{}", v["clauseId"].as_str().unwrap())) {
-                        keys.insert((
-                            v["ruleId"].as_str().unwrap().to_owned(),
-                            v["code"].as_str().unwrap().to_owned(),
-                            v["path"].as_str().unwrap().to_owned(),
-                            v["span"]["startLine"].as_u64().unwrap() as usize,
-                        ));
-                    }
-                }
-                for f in result["failures"].as_array().unwrap() {
-                    if names.contains(&format!("{policy}/{}", f["clauseId"].as_str().unwrap_or_default())) {
-                        failed.insert((
-                            compiled.inner.id.clone(),
-                            f["path"].as_str().unwrap_or_default().to_owned(),
-                            f["code"].as_str().unwrap_or_default().to_owned(),
-                        ));
-                    }
-                }
-            }
-            (keys, failed)
-        })
-        .collect::<Vec<_>>();
+            .collect::<Vec<_>>()
+    });
     per_file.into_iter().fold((Keys::new(), BTreeSet::new()), |(mut keys, mut failed), (k, f)| {
         keys.extend(k);
         failed.extend(f);
@@ -492,9 +491,9 @@ fn a_supertype_rule_finds_the_same_members_on_every_backend() {
     let dir = temp("supertype");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "x = f(y)\nreturn g(x)\n").unwrap();
-    let backends = [ExecutionBackend::CpuInterpreter, ExecutionBackend::CpuJit];
-    #[cfg(target_os = "macos")]
-    let backends = [backends.as_slice(), &[ExecutionBackend::MetalInterpreter, ExecutionBackend::MetalJit]].concat();
+    // The device's backends where there is one (Metal).
+    let device = if cfg!(target_os = "macos") { &[ExecutionBackend::MetalInterpreter, ExecutionBackend::MetalJit][..] } else { &[] };
+    let backends = [ExecutionBackend::CpuInterpreter, ExecutionBackend::CpuJit].into_iter().chain(device.iter().copied());
     let mut reference = None;
     for backend in backends {
         let store = ContentStore::open(&temp("supertype-store").with_extension("sqlite")).unwrap();
@@ -523,14 +522,18 @@ fn a_supertype_rule_finds_the_same_members_on_every_backend() {
 /// The sample and the stores are removed after (every run left them in the temporary directory).
 #[test]
 fn the_backends_find_the_same_keys_on_real_files() {
+    // Two cold audits of 250 files with every Python clause: 5 minutes on 4 idle cores, 13 on CI's 4-vCPU runner (2
+    // cores, hyperthreaded) beside the other tests of its leg. More than a test's 10 minutes, never hours.
+    crate::test_watchdog::allow(std::time::Duration::from_secs(1500));
     let policies = policies();
     let dir = temp("phase4");
     let (paths, _) = sample_of(&dir, 4, 0);
     assert!(paths.len() == 4 || std::env::var_os("RERAIL_S7_FIXTURES").is_some() || std::env::var_os("RERAIL_S7_FILES").is_some(), "{} files", paths.len());
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut stores = vec![dir.clone()];
-    let backends = [("interpreter", ExecutionBackend::CpuInterpreter), ("jit", ExecutionBackend::CpuJit)];
-    #[cfg(target_os = "macos")]
-    let backends = [backends.as_slice(), &[("metal-interpreter", ExecutionBackend::MetalInterpreter), ("metal-jit", ExecutionBackend::MetalJit)]].concat();
+    // The device's backends where there is one (Metal).
+    let device = if cfg!(target_os = "macos") { &[("metal-interpreter", ExecutionBackend::MetalInterpreter), ("metal-jit", ExecutionBackend::MetalJit)][..] } else { &[] };
+    let backends = [("interpreter", ExecutionBackend::CpuInterpreter), ("jit", ExecutionBackend::CpuJit)].into_iter().chain(device.iter().copied());
     let mut reference: Option<(Keys, BTreeMap<(String, String), Coverage>)> = None;
     for (name, backend) in backends {
         let path = temp(&format!("phase4-{name}")).with_extension("sqlite");
@@ -636,6 +639,8 @@ fn the_slice_finds_ws_findings_on_real_files() {
                 crate::code_rule_dsl::transducer::packed::metal_backend::reserved_mb(),
                 crate::code_rule_dsl::transducer::packed::metal_backend::driver_mb()
             );
+            // jemalloc's counters; Windows builds use the system allocator, which keeps none.
+            #[cfg(not(windows))]
             let jemalloc = || {
                 let _ = tikv_jemalloc_ctl::epoch::advance();
                 format!(
@@ -645,6 +650,8 @@ fn the_slice_finds_ws_findings_on_real_files() {
                     tikv_jemalloc_ctl::stats::resident::read().unwrap_or(0) >> 20
                 )
             };
+            #[cfg(windows)]
+            let jemalloc = || String::from("none (the system allocator)");
             eprintln!("S7 jemalloc: {}", jemalloc());
             crate::code_rule_dsl::prof::purge_allocator_pages();
             eprintln!("S7 after purge: jemalloc {}; footprint {} MB", jemalloc(), footprint());
@@ -885,8 +892,13 @@ fn s8_measures_the_targets_on_s7s_sample() {
     let backends = std::env::var("RERAIL_S8_BACKENDS").unwrap_or_else(|_| "cpu,metal".to_owned());
     let passes = std::env::var("RERAIL_S8_PASSES").ok().and_then(|n| n.parse().ok()).unwrap_or(3_usize);
     let load = || {
+        // The one-minute load average; Windows keeps none (0).
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut loads = [0.0_f64; 3];
-        unsafe { libc::getloadavg(loads.as_mut_ptr(), 3) };
+        #[cfg(unix)]
+        unsafe {
+            libc::getloadavg(loads.as_mut_ptr(), 3)
+        };
         loads[0]
     };
     eprintln!("S8: {} files ({} from {repo}); edited {}", paths.len(), paths.iter().filter(|p| p.starts_with('r')).count(), first.display());

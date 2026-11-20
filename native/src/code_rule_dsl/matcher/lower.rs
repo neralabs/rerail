@@ -8,7 +8,7 @@ use super::relation::StopBy;
 use super::{AstMatcher, GrammarMatcher};
 use ast_grep_core::MatchStrictness;
 use ast_grep_core::matcher::{Matcher, Pattern};
-use regex::Regex;
+use crate::code_rule_dsl::regexes::Regex;
 use std::sync::Arc;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -72,25 +72,41 @@ pub struct Fact {
     pub kinds: Option<BTreeSet<u16>>,
 }
 
-/// One node a fact's producer reports: the node, and each slot's target.
-pub(in crate::code_rule_dsl) type FactRow = (u32, Vec<u32>);
-
-/// A fact's findings on one file: rows with their slots' targets, or (a fact with no slot) its
-/// nodes as bits.
-#[derive(Clone)]
+/// A fact's findings on one file, in its batch's fact block (Q289): rows with their slots' targets, or (a fact with no
+/// slot) its nodes as bits. Written once where they are found (`Fact::found`), and read there by the CPU's label
+/// passes and the device's (`Pass::Fact`, the block bound whole).
+#[derive(Clone, Copy, Debug)]
 pub enum FactFound {
-    Rows(Vec<FactRow>),
-    Nodes(Vec<u64>),
+    /// `n` rows of `width` u32s at byte `at`: each its node, then its slots' targets (file-local).
+    Rows { at: usize, n: usize, width: usize },
+    /// `words` u64s of bits at byte `at`: the file's nodes the fact holds at.
+    Nodes { at: usize, words: usize },
 }
 
 impl FactFound {
-    /// Each row: a node and its slots' targets.
-    pub fn rows(&self) -> Box<dyn Iterator<Item = (u32, &[u32])> + '_> {
-        match self {
-            Self::Rows(rows) => Box::new(rows.iter().map(|(node, targets)| (*node, targets.as_slice()))),
-            Self::Nodes(bits) => Box::new(bits.iter().enumerate().flat_map(|(word, &bits)| {
-                (0..64).filter(move |bit| bits >> bit & 1 != 0).map(move |bit| (word as u32 * 64 + bit, &[][..]))
-            })),
+    /// Each row in `block`: a node and its slots' targets.
+    pub fn rows<'a>(&self, block: &'a rerail_blocks::block::Block) -> Box<dyn Iterator<Item = (u32, &'a [u32])> + 'a> {
+        match *self {
+            Self::Rows { at, n, width } => {
+                // SAFETY: `found` wrote `n * width` u32s at `at`, and the block is not written there again.
+                let cells = unsafe { std::slice::from_raw_parts(block.ptr::<u32>(at), n * width) };
+                Box::new(cells.chunks_exact(width.max(1)).map(|row| (row[0], &row[1..])))
+            }
+            Self::Nodes { .. } => {
+                let bits = self.nodes(block).unwrap_or(&[]);
+                Box::new(bits.iter().enumerate().flat_map(|(word, &bits)| {
+                    (0..64).filter(move |bit| bits >> bit & 1 != 0).map(move |bit| (word as u32 * 64 + bit, &[][..]))
+                }))
+            }
+        }
+    }
+
+    /// The nodes as bits, where the findings are a node set.
+    pub fn nodes<'a>(&self, block: &'a rerail_blocks::block::Block) -> Option<&'a [u64]> {
+        match *self {
+            // SAFETY: `found` wrote `words` u64s at `at`.
+            Self::Nodes { at, words } => Some(unsafe { std::slice::from_raw_parts(block.ptr::<u64>(at), words) }),
+            Self::Rows { .. } => None,
         }
     }
 }
@@ -116,38 +132,12 @@ impl Fact {
     /// Its nodes on `tape` where they are a node set (`is_node_set`), from the tape's sibling
     /// positions; asked once per tape where another fact asks the same (`question`).
     pub fn nth_bits(&self, tape: &crate::code_rule_dsl::tape::TapeDoc, siblings: &super::nth_child::SiblingPositions) -> Option<Arc<Vec<u64>>> {
-        // A `filePath` test is the document's: every node where its path passes, none where it fails or the run gave
-        // the tape no path (W's `file_path()` with none).
-        if let AstMatcher::Semantic(super::Semantic::FilePath(condition)) = &self.producer {
-            let nodes = tape.transducer_len();
-            let mut bits = vec![0u64; nodes.div_ceil(64)];
-            if tape.path().is_some_and(|path| condition.holds(path)) {
-                bits.iter_mut().for_each(|w| *w = !0);
-                if nodes % 64 != 0
-                    && let Some(last) = bits.last_mut()
-                {
-                    *last &= (1 << (nodes % 64)) - 1;
-                }
-            }
-            return Some(Arc::new(bits));
-        }
-        let AstMatcher::NthChild(nth) = &self.producer else { return None };
-        if !self.slots.is_empty() {
+        if !self.is_node_set() {
             return None;
         }
         let answer = || {
-            let bits = nth.bits(tape, &siblings.of(nth, tape), self.kinds.as_ref());
-            // `RERAIL_SETS_CHECK`: the bits against W's rows.
-            if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_SETS_CHECK").is_some()) {
-                let file = ast_grep_core::AstGrep::doc(tape.clone());
-                let _scopes = super::FileScopeSlot::install(Vec::new(), None, !tape.syntax_error_ranges().is_empty());
-                let starts = (0..tape.transducer_len() as u32).filter(|&node| self.kinds.as_ref().is_none_or(|kinds| kinds.contains(&tape.transducer_kind(node))));
-                let rows = nth.rows(&file, starts);
-                let ones = bits.iter().enumerate().flat_map(|(w, &b)| (0..64u32).filter(move |i| b >> i & 1 != 0).map(move |i| w as u32 * 64 + i)).collect::<Vec<_>>();
-                if ones != rows {
-                    eprintln!("SETS_CHECK differs on nthChild {}", self.key);
-                }
-            }
+            let mut bits = vec![0u64; tape.transducer_len().div_ceil(64)];
+            self.write_bits(tape, siblings, &mut bits);
             bits
         };
         Some(match self.question() {
@@ -156,32 +146,97 @@ impl Fact {
         })
     }
 
-    /// The findings of `file` (`rows`), as bits where they are a node set (`nth_bits`).
+    /// Writes its nodes on `tape` (a node set, `is_node_set`) as bits into `bits`: zero, a word per 64 of the tape's
+    /// nodes. Where they live is the caller's: an answer of its own (`nth_bits`), or the batch's fact block (`found`).
+    fn write_bits(&self, tape: &crate::code_rule_dsl::tape::TapeDoc, siblings: &super::nth_child::SiblingPositions, bits: &mut [u64]) {
+        // A `filePath` test is the document's: every node where its path passes, none where it fails or the run gave
+        // the tape no path (W's `file_path()` with none).
+        if let AstMatcher::Semantic(super::Semantic::FilePath(condition)) = &self.producer {
+            let nodes = tape.transducer_len();
+            if tape.path().is_some_and(|path| condition.holds(path)) {
+                bits.iter_mut().for_each(|w| *w = !0);
+                if nodes % 64 != 0
+                    && let Some(last) = bits.last_mut()
+                {
+                    *last &= (1 << (nodes % 64)) - 1;
+                }
+            }
+            return;
+        }
+        let AstMatcher::NthChild(nth) = &self.producer else { unreachable!("a node set is nthChild or filePath") };
+        nth.bits(tape, &siblings.of(nth, tape), self.kinds.as_ref(), bits);
+        // `RERAIL_SETS_CHECK`: the bits against W's rows.
+        if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_SETS_CHECK").is_some()) {
+            let file = ast_grep_core::AstGrep::doc(tape.clone());
+            let _scopes = super::FileScopeSlot::install(Vec::new(), None, !tape.syntax_error_ranges().is_empty());
+            let starts = (0..tape.transducer_len() as u32).filter(|&node| self.kinds.as_ref().is_none_or(|kinds| kinds.contains(&tape.transducer_kind(node))));
+            let rows = nth.rows(&file, starts);
+            let ones = bits.iter().enumerate().flat_map(|(w, &b)| (0..64u32).filter(move |i| b >> i & 1 != 0).map(move |i| w as u32 * 64 + i)).collect::<Vec<_>>();
+            if ones != rows {
+                eprintln!("SETS_CHECK differs on nthChild {}", self.key);
+            }
+        }
+    }
+
+    /// The findings of `file` (`rows`), as bits where they are a node set (`nth_bits`), written into `block` (the
+    /// batch's fact block, Q289). A row is at most a node of the file, so its region is the file's nodes', and what is
+    /// left is given back where no other allocation came after it (the rest is address space, never written). `None` where the block cannot hold them.
     pub fn found(
         &self,
         file: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
         starts: impl Iterator<Item = u32>,
         siblings: &super::nth_child::SiblingPositions,
-    ) -> FactFound {
-        match self.nth_bits(file.root().get_doc(), siblings) {
-            Some(bits) => FactFound::Nodes(Arc::unwrap_or_clone(bits)),
-            None => FactFound::Rows(self.rows(file, starts)),
+        block: &rerail_blocks::block::Block,
+    ) -> Option<FactFound> {
+        if self.is_node_set() {
+            // Written in the block where it is made, once a tape for the facts that ask the same (`question`).
+            let tape = file.root().get_doc();
+            let words = tape.transducer_len().div_ceil(64);
+            let place = || {
+                let at = block.try_alloc(8 * words, 8)?;
+                // SAFETY: just allocated, zero, for `words` u64s; written only here.
+                self.write_bits(tape, siblings, unsafe { std::slice::from_raw_parts_mut(block.ptr::<u64>(at), words) });
+                Some(at)
+            };
+            let at = match self.question() {
+                Some(question) => siblings.placed(&question, place)?,
+                None => place()?,
+            };
+            return Some(FactFound::Nodes { at, words });
         }
+        let width = 1 + self.slots.len();
+        let cap = file.root().get_doc().transducer_len();
+        let size = 4 * width * cap;
+        let at = block.try_alloc(size.max(4), 4)?;
+        let mut n = 0;
+        self.each_row(file, starts, &mut |node, targets| {
+            // SAFETY: at most `cap` rows, one a node, in the region allocated for them.
+            let row = unsafe { std::slice::from_raw_parts_mut(block.ptr::<u32>(at + 4 * width * n), width) };
+            row[0] = node;
+            row[1..].copy_from_slice(targets);
+            n += 1;
+        });
+        block.shrink_last(at, size.max(4), (4 * width * n).max(4));
+        Some(FactFound::Rows { at, n, width })
     }
 
     /// The rows of `file`: every node the producer matches, with its slots' targets. The predicate's
     /// verdicts are read as W's matcher reads them (`match_root`'s settings): an unknown one is no row.
-    pub(in crate::code_rule_dsl) fn rows(
+    /// Each is given to `sink` as it is found: its node and its slots' targets.
+    fn each_row(
         &self,
         file: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
         starts: impl Iterator<Item = u32>,
-    ) -> Vec<FactRow> {
+        sink: &mut dyn FnMut(u32, &[u32]),
+    ) {
         use super::util::{THREE_VALUED, UNKNOWN, UTIL_DEPTH, UTIL_EXCEEDED, UTIL_STEPS_LEFT};
         use ast_grep_core::matcher::Matcher;
         if let AstMatcher::NthChild(nth) = &self.producer {
-            return nth.rows(file, starts).into_iter().map(|node| (node, Vec::new())).collect();
+            for node in nth.rows(file, starts) {
+                sink(node, &[]);
+            }
+            return;
         }
-        let mut rows = Vec::new();
         super::resolve::CURRENT_CLAUSE.set(self as *const Self as usize);
         THREE_VALUED.set(true);
         for ordinal in starts {
@@ -198,11 +253,10 @@ impl Fact {
                 .map(|i| env.get_match(&slot_name(i)).map(|target| target.node_id() as u32))
                 .collect::<Option<Vec<u32>>>();
             if let Some(targets) = targets {
-                rows.push((ordinal, targets));
+                sink(ordinal, &targets);
             }
         }
         UNKNOWN.set(false);
-        rows
     }
 }
 
@@ -657,6 +711,9 @@ impl Lowering {
     fn count(&mut self, count: &super::count::Count, shares: bool) -> Result<MatchTree, Unsupported> {
         if count.binding.is_some() {
             return Err(Unsupported("count as"));
+        }
+        if count.gap.is_some() {
+            return Err(Unsupported("count of implied tokens"));
         }
         let (axis, related, stop) = match &count.relation {
             AstMatcher::Inside(related, stop) => (Axis::Inside, related, stop),

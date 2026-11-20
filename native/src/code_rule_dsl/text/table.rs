@@ -38,7 +38,7 @@ pub struct Table {
 
 impl Table {
     /// Its bytes, where the automata block holds them.
-    pub fn bytes(&self) -> &'static [u8] {
+    pub fn bytes(&self) -> super::automata::Bytes {
         self.automaton.bytes()
     }
 

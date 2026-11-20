@@ -43,9 +43,9 @@ impl Session {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let marker = format!("# {name} {:?}\n", std::time::SystemTime::now());
-        let rule = dir.join("program.rr");
+        let rule = dir.join("program.rerail");
         std::fs::write(&rule, program).unwrap();
-        let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+        let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
         let handle = super::session::Handle::open(&dir.join("session")).unwrap();
         let s = Session { _one: one, dir, marker, program, outputs: outputs.to_vec(), handle, fresh: 0 };
         for (file, body) in files {
@@ -73,6 +73,8 @@ impl Session {
         let out = self.dir.join("out");
         let _ = std::fs::remove_dir_all(&out);
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(self.dir.join("kept.sqlite")));
+        // The run's own scope, held here: its shape is the run's count (decision 0442), read before it ends.
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         let (before, levels) = (shape::now(), maintain::strata_by_levels());
         let report = {
             let _bound = self.handle.bind();
@@ -322,21 +324,21 @@ fn r4_a_changed_read_s_delta_leads_its_line() {
 
 /// R4 with readers: a stratum derived again past θ hands its readers its delta against its kept rows, and a reader
 /// maintained over that delta has versions of its own for the strata above it. On the O125 replay, `cls_q` derived
-/// again past θ, and so did `type_of`. Its reader `type_first`, a `min` over it, was maintained and stopped:
+/// again past θ, and so did `type_of`. Its reader `type_first`, a `min` over it (a `min` over a node here: one over a symbol is refused), was maintained and stopped:
 /// "type_of has no version".
 const AGAIN_THEN_MAINTAINED: &str = r#"
 .decl def(n: node, q: symbol)
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl edge(a: symbol, b: symbol)
 edge(a, b) :- kind(n, "import_statement"), field(n, "name", t), text(t, b), docof(n, d), doc(d, _, a).
-.decl a(q: symbol)
-a(q) :- def(_, q), q = "m0.f0".
+.decl a(n: node, q: symbol)
+a(n, q) :- def(n, q), q = "m0.f0".
 .decl b(q: symbol, m: symbol)
-b(q, m) :- a(q), edge(m, _).
+b(q, m) :- a(_, q), edge(m, _).
 .decl c(m: symbol)
 c(m) :- b(_, m).
-.decl first(q: symbol)
-first(q) :- a(_), q = min q2 : { a(q2) }.
+.decl first(n: node)
+first(n) :- a(_, _), n = min n2 : { a(n2, _) }.
 .output c
 .output first
 "#;

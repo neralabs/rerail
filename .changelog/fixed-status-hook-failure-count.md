@@ -1,0 +1,1 @@
+`rerail status` keeps counting hook events that could not be recorded after its log of them passes 256 KB and moves aside, and says from when it counts once older ones are gone. Before, the count started over at each move, and hooks failing at the same moment could lose earlier failures.

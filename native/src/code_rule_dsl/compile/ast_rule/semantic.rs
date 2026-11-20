@@ -9,11 +9,9 @@ use super::super::resolve::{
 use super::super::value::{compile_value, validate_value};
 use super::*;
 use crate::code_rule_dsl::language::Family;
-use crate::code_rule_dsl::language::adapter::{
-    ValueFeature, gate,
-};
-use crate::code_rule_dsl::matcher::{Comparison, Semantic, SemanticText};
 use crate::code_rule_dsl::language::adapter::pack as language_pack;
+use crate::code_rule_dsl::language::adapter::{ValueFeature, gate};
+use crate::code_rule_dsl::matcher::{Comparison, Semantic, SemanticText};
 
 /// The semantic keys' grammar-independent checks, in `validate_ast_rule`'s order.
 pub(super) fn validate(
@@ -94,12 +92,10 @@ pub(super) fn compare_reading(
         .get("text")
         .and_then(Value::as_str)
         .unwrap_or("source");
-    gate(
-        &format!("{compare_path}/text"),
-        { let pack = language_pack::pack(Family::of(language)); pack.value_feature(
-            ValueFeature::Compare(text, name)
-        ) },
-    )?;
+    gate(&format!("{compare_path}/text"), {
+        let pack = language_pack::pack(Family::of(language));
+        pack.value_feature(ValueFeature::Compare(text, name))
+    })?;
     let reading = Reading::new(language, utils.options.clone(), utils.python.clone());
     comparison.reading = Some(match text {
         // getStaticValue in the key's scope (TypeScript), a computed key's value through its
@@ -152,7 +148,12 @@ pub(super) fn compile_key(
         (Stage::Late, "layout") => Some(compile_layout(value, path)),
         (Stage::Late, key) if crate::code_rule_dsl::matcher::term::term(key).is_some() => {
             let term = crate::code_rule_dsl::matcher::term::term(key).expect("registered");
-            Some((term.compile)(value, language, path, utils.options.as_ref()))
+            Some((term.compile)(
+                value,
+                language,
+                path,
+                utils.options.as_ref(),
+            ))
         }
         (Stage::Late, "value") => Some(compile_value(
             value,
@@ -228,15 +229,19 @@ fn compile_calls(
     path: &str,
     utils: &UtilScope,
 ) -> Result<AstMatcher> {
-    use crate::code_rule_dsl::language::adapter::{
-        CallFeature, gate,
-    };
+    use crate::code_rule_dsl::language::adapter::{CallFeature, gate};
     let definition = crate::code_rule_dsl::calls::split(calls, path)?.definition;
-    let (verdict, kinds) = { let pack = language_pack::pack(Family::of(language)); (
-        pack.calls_feature(CallFeature::Calls),
-        if definition { pack.calls_function_kinds() }
-        else { pack.calls_call_kinds() },
-    ) };
+    let (verdict, kinds) = {
+        let pack = language_pack::pack(Family::of(language));
+        (
+            pack.calls_feature(CallFeature::Calls),
+            if definition {
+                pack.calls_function_kinds()
+            } else {
+                pack.calls_call_kinds()
+            },
+        )
+    };
     gate(path, verdict)?;
     let collector = utils.calls.ok_or_else(|| {
         invalid(format!(

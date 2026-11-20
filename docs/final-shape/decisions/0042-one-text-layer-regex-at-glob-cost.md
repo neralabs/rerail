@@ -60,7 +60,7 @@ The vocabulary holds the distinct texts of token-like nodes: identifiers, dotted
 literals (raw, quotes and prefix included), numbers, comments, and file paths. A matcher on any of
 these runs over the distinct strings, never over nodes:
 
-| Canonical matcher | Runs as | Measured (0037, nera-data-layer) |
+| Canonical matcher | Runs as | Measured (0037, the data-layer repository) |
 |---|---|---|
 | exact set | hash lookup of symbol ids | 396 of 444 identifier patterns |
 | prefix, suffix, contains sets | one multi-string search per group | — |
@@ -120,13 +120,13 @@ How a node's verdict is read from one file-wide scan:
 
 ## Evidence: serverplan_quality's regexes
 
-252 distinct, 2,139 uses (`gate/data-layer/final-shape/data-layer-serverplan-quality.json`, a
+252 distinct, 2,139 uses (`packs/data-layer/upstream/lint/authored/final-shape/data-layer-serverplan-quality.json`, a
 census by form):
 
 | What it tests | Distinct | Uses | Canonical matcher |
 |---|---:|---:|---|
 | exact set of names | 145 | 586 | exact set |
-| file path | 38 | 481 | over the path vocabulary (9,010 paths on nera-data-layer) |
+| file path | 38 | 481 | over the path vocabulary (9,010 paths on the data-layer repository) |
 | prefix, suffix or contains set | 26 | 193 | literal set |
 | other name shapes (`[A-Za-z_]\w*Intent`, `\b\B`) | 14 | 231 | suffix set, `never`, small DFAs |
 | string literal values (`^[rRuU]*'''branch_id'''…`) | 10 | 18 | DFA over the raw string vocabulary |

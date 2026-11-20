@@ -75,7 +75,7 @@ impl Unit {
             Unit::Candidate => "none: the planner's own rate is shown, with no roof",
             Unit::Byte => "SHA-256 of 64 MB in memory (the content key every stored byte needs)",
             Unit::IndexEntry => "entering 1M row ids of 2-column rows in a hash table (foldhash), not presized",
-            Unit::Literal => "cloning a program of 1M body literals (atoms of 3 variables), as a transformation that rebuilds it does",
+            Unit::Literal => "rewriting a program's body literals (atoms of 3 variables) node by node into a new image, as a pass that rebuilds it does",
             Unit::FileStat => "reading one file's metadata 20k times (the file system's cached path)",
         }
     }
@@ -102,7 +102,7 @@ pub(super) fn calibrate(units: &std::collections::BTreeSet<Unit>) -> (BTreeMap<U
         source = "read from the roof cache";
     }
     let missing: Vec<Unit> = units.iter().copied().filter(|u| !known.contains_key(u)).collect();
-    // Phase 0's run (`bootstrap.rr`, inside a run) measures none: its profile is a part of the run's, whose own report
+    // Phase 0's run (`bootstrap.rerail`, inside a run) measures none: its profile is a part of the run's, whose own report
     // measures them after every phase, so the loops (seconds in a debug build) are not charged to the run's loading.
     if !missing.is_empty() && crate::code_rule_dsl::phase_clock::active() {
         source = "not measured in phase 0's run (the run's own profile measures them)";
@@ -299,16 +299,23 @@ fn roof(u: Unit) -> Option<f64> {
         }
         Unit::Candidate => None,
         Unit::Literal => {
-            use crate::code_rule_dsl::logic::front::{Atom, Literal, Term};
-            let var = |i: usize| Term::Var(format!("v{}", i % 7).into());
-            // 2^16 literals: a clone's cost per literal, as 2^20 measured it, without ~650 MB held three times over.
-            let body: Vec<Literal> = (0..1usize << 16)
-                .map(|i| Literal::Atom(Atom { rel: format!("r{}", i % 97).into(), args: [var(i), var(i + 1), var(i + 2)].into(), neg: false, gated: false }))
-                .collect();
+            // 2^16 body literals (atoms of 3 variables) in the image's layout: a node's kind, size and value, in three
+            // columns (`program_image::Image::node`), 4 nodes a literal. A pass that rebuilds the program writes each
+            // node into a new image's columns, as this does.
+            let n = 1usize << 16;
+            let kinds: Vec<u8> = (0..n * 4).map(|i| if i % 4 == 0 { 1 } else { 2 }).collect();
+            let sizes: Vec<u32> = (0..n * 4).map(|i| if i % 4 == 0 { 4 } else { 1 }).collect();
+            let vals: Vec<u32> = (0..n * 4).map(|i| if i % 4 == 0 { (i / 4 % 97) as u32 } else { (i % 7) as u32 }).collect();
             Some(best(3, || {
                 let t = Instant::now();
-                std::hint::black_box(body.clone());
-                (t.elapsed().as_secs_f64(), body.len() as u64)
+                let (mut k, mut z, mut v) = (Vec::new(), Vec::new(), Vec::new());
+                for i in 0..kinds.len() {
+                    k.push(kinds[i]);
+                    z.push(sizes[i]);
+                    v.push(vals[i]);
+                }
+                std::hint::black_box((k, z, v));
+                (t.elapsed().as_secs_f64(), n as u64)
             }))
         }
         Unit::FileStat => {
@@ -454,6 +461,13 @@ pub fn report(r: &mut String, own: &BTreeMap<String, f64>, work: &BTreeMap<(Stri
 #[cfg(test)]
 pub mod tests {
     use super::*;
+
+    /// The literal's roof is measured on the image's node layout: a positive cost per literal.
+    #[test]
+    fn the_literal_roof_rewrites_image_nodes() {
+        let per = roof(Unit::Literal).expect("the literal's roof");
+        assert!(per.is_finite() && per > 0.0, "{per}");
+    }
 
     /// Roofs written to the cache read back by unit name, `None` included; an unknown name is skipped.
     #[test]

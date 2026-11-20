@@ -96,6 +96,7 @@ fn document(store: &ContentStore, file: File) -> Result<Document> {
         tape: None,
         guest: None,
         module: None,
+        unpackaged: false,
     };
     Ok(Document {
         file,

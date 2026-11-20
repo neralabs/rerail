@@ -469,11 +469,10 @@ impl Lower {
                     .copied()
                     .collect::<BTreeSet<_>>()
             });
-        if names.len() > 1 {
-            if let Some(selected) = self.factored(&names, exact)? {
+        if names.len() > 1
+            && let Some(selected) = self.factored(&names, exact)? {
                 return Ok(selected);
             }
-        }
         // A branch that contains every other branch is the union.
         if let Some(name) = names
             .iter()

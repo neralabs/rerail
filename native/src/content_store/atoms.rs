@@ -448,7 +448,7 @@ impl Kept {
         // SAFETY: as `get`'s; an entry taken is this thread's to write, `text.len()` bytes at its payload.
         unsafe {
             let r = rerail_blocks::generated_reads::text_open(self.cache(), fns, sym, text.len() as u32);
-            if r & 3 != rerail_clif::reads::TAKEN as u64 {
+            if r & 3 != rerail_clif::view::cache::TAKEN as u64 {
                 return false;
             }
             let e = (r & !3) as *mut u8;

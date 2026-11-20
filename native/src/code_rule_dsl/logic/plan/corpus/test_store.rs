@@ -5,7 +5,7 @@
 //! test's thread ends. No test sees what another left behind, and none waits on another's leases (O146).
 //!
 //! The template holds what every test would otherwise make first: the rule library's phase 0 (each module's tape and
-//! its loads, `bootstrap.rr`'s plan) and the core program's plan. It is made once per build (keyed by the build's
+//! its loads, `bootstrap.rerail`'s plan) and the core program's plan. It is made once per build (keyed by the build's
 //! identities, `build_ids`), by the first test process that wants it, under a file lock; the processes after it find
 //! it ready (`<key>.ready`). It is written to a staging store, drained (atoms, queued writes), and published with
 //! `VACUUM INTO` and a rename, so a reader never sees half of one. A binary that registers no language (a lower
@@ -79,10 +79,13 @@ fn make(path: &Path) {
     std::fs::create_dir_all(&staging).expect("the template's staging directory");
     let store = staging.join("store.sqlite");
     let filling = store.clone();
+    // The thread fills it for its starter, on its starter's object (decision 0442; a test's: the tests' one).
+    let shared = crate::code_rule_dsl::logic::profile::shared_here();
     let filled = std::thread::Builder::new()
         .name("store template".into())
         // Test plumbing, not a run's SQL: the strict mode (`RERAIL_SQL_STRICT`) leaves it alone.
         .spawn(move || {
+            let _within = crate::code_rule_dsl::logic::profile::within(shared);
             // Its runs skip `ready` (they fill the template), and take nothing the thread that waits on them holds.
             FILLING.with(|f| f.set(true));
             crate::code_rule_dsl::logic::profile::behind(|| fill(&filling))
@@ -130,14 +133,14 @@ fn make(path: &Path) {
 fn fill(store: &Path) -> std::result::Result<(), String> {
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.to_owned()));
     let lib = std::fs::canonicalize(crate::code_rule_dsl::logic::rr::library()).map_err(|e| e.to_string())?;
-    let mut seeds = vec![super::phase0::Seed::Text { t_shape: false, includes: vec![(0, "core.rr".to_owned())], phases: Vec::new() }];
+    let mut seeds = vec![super::phase0::Seed::Text { t_shape: false, includes: vec![(0, "core.rerail".to_owned())], phases: Vec::new() }];
     let mut modules = Vec::new();
     rule_files(&lib, &mut modules);
     modules.sort();
     seeds.extend(modules.into_iter().map(super::phase0::Seed::File));
     super::phase0::graphs(&seeds).map_err(|e| e.to_string())?;
-    let program = "#include \"core.rr\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n";
-    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(program).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    let program = "#include \"core.rerail\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n";
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(program).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     let corpus = templates().join("corpus");
     std::fs::create_dir_all(&corpus).map_err(|e| e.to_string())?;
     let out = store.with_extension("out");
@@ -156,7 +159,7 @@ fn rule_files(dir: &Path, out: &mut Vec<PathBuf>) {
         let path = entry.path();
         if path.is_dir() {
             rule_files(&path, out);
-        } else if path.extension().is_some_and(|e| e == "rr") {
+        } else if path.extension().is_some_and(|e| e == "rerail") {
             out.push(path);
         }
     }
@@ -225,10 +228,9 @@ thread_local! {
     static OWN: std::cell::OnceCell<Store> = const { std::cell::OnceCell::new() };
 }
 
-thread_local! {
-    /// The store of the test whose run a job on this thread works for (`carried`).
-    static HANDED: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
-}
+/// The store of the test whose run a job works for (`carried`), in the job's context.
+#[derive(Clone, Default)]
+struct Handed(Option<PathBuf>);
 
 /// Carries the test's store to a job on another thread (`run_state`): the job's runs use the store of the test that
 /// started it, not the process's.
@@ -242,30 +244,24 @@ pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run
         .with(|p| p.borrow().clone())
         .or_else(|| handed())
         .or_else(|| (named && !super::names_its_store()).then(|| OWN.with(|own| own.get_or_init(copy).path.clone())));
-    c.part(&["OWN", "HANDED"], crate::code_rule_dsl::logic::run_state::Shared(mine, hand));
+    c.part(&["OWN"], crate::code_rule_dsl::logic::run_state::Shared(mine, hand));
 }
 
-/// The store this thread was handed (`carried`), if any.
+/// The store this job was handed (`carried`), if any.
 pub(super) fn handed() -> Option<PathBuf> {
-    HANDED.with(|h| h.borrow().clone())
+    crate::code_rule_dsl::logic::profile::bound::<Handed>().0
 }
 
-/// While the guard lives, this thread's runs use `store` (another thread's test's).
-fn hand(store: Option<PathBuf>) -> impl Drop {
-    struct Handed(Option<PathBuf>);
-    impl Drop for Handed {
-        fn drop(&mut self) {
-            HANDED.with(|h| h.replace(self.0.take()));
-        }
-    }
-    Handed(HANDED.with(|h| h.replace(store)))
+/// While the guard lives, this job's runs use `store` (another thread's test's).
+fn hand(store: Option<PathBuf>) -> crate::code_rule_dsl::logic::profile::Bound {
+    crate::code_rule_dsl::logic::profile::bind(Handed(store))
 }
 
 /// The store of the test on this thread, made on first use; on a job's thread, the store of the test that started it
 /// (`carried`). Off a test's thread (one the harness did not name after a test: a pool's), `None`, said once per
 /// thread name.
 pub(super) fn own() -> Option<PathBuf> {
-    if let Some(handed) = HANDED.with(|h| h.borrow().clone()) {
+    if let Some(handed) = handed() {
         return Some(handed);
     }
     let thread = std::thread::current();
@@ -280,9 +276,11 @@ pub(super) fn own() -> Option<PathBuf> {
     Some(OWN.with(|own| own.get_or_init(copy).path.clone()))
 }
 
-/// Whether `path` is the store of the test on this thread (its own, not one shared with other threads).
+/// Whether `path` is the store of the test on this thread (its own, not one shared with other threads), or the one a
+/// job was handed by its test (`carried`): the same test's store, whose observer goes with it (`Store`'s drop forgets
+/// the store's one observer; a job's own would hold its files open past the test).
 pub(super) fn is_own(path: &Path) -> bool {
-    OWN.with(|own| own.get().is_some_and(|s| s.path == path))
+    OWN.with(|own| own.get().is_some_and(|s| s.path == path)) || handed().is_some_and(|h| h == path)
 }
 
 /// Removes the directories of test processes that have exited.

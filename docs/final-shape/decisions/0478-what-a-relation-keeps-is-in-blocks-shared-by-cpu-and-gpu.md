@@ -1,6 +1,7 @@
 # 0478. What a relation keeps is in blocks, the same for the CPU and the GPU
 
-Date: 2026-11-19 (0450 on Native-and-GPU-strata until the merge into investigate-bend-vs-datalog, 2026-11-19). Status: decided (user, 2026-11-19, on Q314); built in steps below.
+Date: 2026-11-19. Status: decided (user, 2026-11-19, on Q314); built in steps below. Numbered 0450 on
+Native-GPU-strata (renumbered in the roll-up: the hub has its own 0450).
 
 ## Intro
 
@@ -390,7 +391,7 @@ that size came from the cache's first use, a 16z block decoded, and nothing else
   relation copied, 0353 row 6) and hands it back in the index (`DevIndex::moved`). `RESIDENT` held that index, and
   with it the moved relation, past the stratum; after step 3 nothing held it past the stage that encoded it. So the
   relation was released while the batch built into it, and another made in its place. Of 16 hogql runs on Metal of
-  the builds with it (04a2cf4cc, 4242a36f5), one stopped at Q253's check (an index count reset, "a relation's
+  the builds with it (04a2cf4cc, 4242a36f5), one stopped at Q265's check (an index count reset, "a relation's
   descriptor overwritten while its index was built") and one gave 1,037 findings instead of 1,629. The batch now
   keeps every relation it moves until its work completes: 12 of 12 runs gave 1,629, none stopped.
 - hogql cold, Metal, profiling, format 15, load 31-38, four pairs against step 5a's build, then eight runs alone:
@@ -435,9 +436,145 @@ sort again).
 - **Found while measuring: a directory forgotten early.** A first build forgot a relation's whole directory at
   `unindex` when no `Part` but its own held it, hash indexes included. One Metal run of three then lost a whole
   chunk's findings (1,375 of 1,629). The relation's orders are now given back only at its release, as its hash
-  indexes always were. 7 of 7 runs gave 1,629 after that. **Open (R2):** some reader of a directory holds no `Part`
-  of its relation (the device's index by its number, by the sign of it), so `Part::is_unique` was no proof that no one
-  reads it. It should hold one.
+  indexes always were. 7 of 7 runs gave 1,629 after that. **Corrected after 5e:** that loss was not this change's.
+  Step 7's build (d8f645ce4), made before 5b, lost a chunk too in one Metal run of four at load 20 (1,487 findings).
+  Whether the early forget added to it is not known. The loss is open (below, step 5e).
 - hogql cold, profiling, format 15, three pairs against step 7's build each:
   - CPU, load 32-36: 83.1-84.0 B against 83.0-83.5 B. Even.
   - Metal, the final build, seven runs at load 19-24: 75.5-79.2 B, against 76.2-77.2 B for step 7 at load 24-27.
+
+## Built (2026-11-19, step 5c: the known-sorted ranges in the block)
+
+- A relation's row ranges known to be in an order (decision 0180: `runs::Sorted`) are written once at its freeze in
+  its block's relation descriptor (`Relation::known`, a span of `Known { lo, hi, ncols, cols }`, given back at its
+  release; `try_set_known`). `Sorted` now holds the part whose block keeps its ranges (`base`) and the ranges noted
+  since (`own`, while a relation is derived). A frozen input's `own` is empty: its ranges are read in the block.
+  A maintained relation (`Rel::based`) starts from the old relation's part.
+- Not written (kept as they were): a key past the block's `MAX_KEY` (8), or a block with no room. The profile counts
+  both ("frozen orders"). On hogql all were written: 257 relations in one phase and 18 in another, 0 not.
+- Found on the way: `in_block_orders` compared a key with setfix's `MAX_KEY` (64), not the block's (8). An order of
+  9 or more columns would have failed `try_add_order`'s check. It now stays as it was.
+- Test: `a_frozen_relations_known_sorted_ranges_are_in_its_block`.
+- hogql cold, profiling, format 15, load 24-28: CPU 83.5-83.7 B against 5b's 83.3-83.8 B; Metal 74.7-76.3 B, 1,629
+  findings in each run.
+
+## Built (2026-11-19, step 5d: the dead rows in the block)
+
+- A relation's dead rows (bit `id`) are a block array (`BlockVec<u64>`) while it is derived (`Rel::dead`) and after
+  (`InRel::dead`), not a heap vector. So are those that hold them for a step: a maintained relation's origin
+  (`Origin::Based`), a mark (`RelMark`), the statistics' dead rows when they were counted, and the levels' dead rows
+  at their start. At freeze (`in_block_dead`), the chunk goes to the block relation that holds the relation's last
+  rows (`Relation::adopt_dead`, `own_dead`; given back at its release). From then on `InRel::dead` reads it there,
+  borrowed, and every clone of it is another borrow.
+- The device's dead rows (the kills delta, `Rows::in_block_dead`) read the same words when the relation is in one
+  part (`Relation::try_kills_own`). Before, the bits were copied into the delta at each change. Rows in several
+  parts still merge for the device (0353 row 6), and their delta still copies.
+- Left as they are (counted, "frozen orders"): dead rows that lie in another block than the last part's.
+- Test: `a_frozen_relations_dead_rows_are_its_blocks_and_the_devices`.
+- hogql cold freezes no relation with dead rows (0 either way), so it measures no change: CPU 83.2-83.3 B against
+  5c's 83.2-83.3 B at load 57-65; Metal 73.7-74.8 B, 1,629 findings in each run.
+
+## Built (2026-11-19, step 5e: an input's probes keep no table or order of their own)
+
+- How hogql's derived inputs were probed, by path (the profile's "probe paths", main phase): 109 with no key, 23 by
+  a kept order, 43 by a sorted view, 10 by a source's own block index, 61 by a source's lookup, 20 by a selective
+  lead column, 19 by a block index built, **4 by a lazily sorted order of their own and 1 by a host hash table of
+  their own**. Those last two kinds were what R5 still had on the heap. Both are gone:
+  - **A lazy order** (an input whose rows lie in several parts, so it has no block index) goes, once sorted, into the
+    directory of its last part's block, as a frozen relation's orders do (`in_block_orders`). The probe plan keeps a
+    handle.
+  - **A view's index** is built in a home of its own (`view_index`): a relation of no columns and the view's row
+    count in a block (`Part::for_device`, as the device's view home), its hash index built from each row's key read
+    through the view (`Relation::build_index_hashed`, `InBlock::own_index_hashed`). On hogql the one host table was
+    over a view of no rows. `Csr::build`, `Csr::table` and `Csr::ids` are gone: an empty view has no index.
+- What `InRel::idx` keeps is now a probe plan by column set: which path, a block index's number with the part that
+  keeps it, a kept order's number, a lead column. Nothing of the relation's data is in it.
+- Test: `an_order_made_at_a_probe_is_in_the_blocks_directory`.
+- hogql cold, profiling, format 15, load 18-23: CPU 83.2-83.9 B against 5d's 83.6-84.2 B.
+- **Open: on Metal a run can lose a whole chunk's findings.** Of 3 runs of this build, 2 lost one (1,358 and 1,487
+  findings). Of 4 runs each, alternating at the same load, step 7's build lost one (1,487) and 5d's none. It is older
+  than 5b and is not this step's. Being looked into next.
+
+## Built (2026-11-19, step 6a: an input's measured statistics, value counts and key runs in blocks)
+
+- `InRel::measured` (each column's four statistics) is written once, when first asked, in a block near the rows
+  (`BlockVec<[i64; 4]>`).
+- `InRel::counted` (rows per value of a column the rules test by constants) is a sorted array of (value, rows) per
+  column, in a block (`BlockVec<[i64; 2]>`), found by a binary search. It was a map of maps. To count, the rows' ids
+  are sorted by their value read where it lies: no value is copied.
+- `Keyed::runs` (a key column's ascending runs) is an array of `KeyRun { first, start, end }` in a block, shared by
+  every clone of the relation. Only the list of which columns were counted (a handle each) stays on the relation.
+- Test: `an_inputs_value_counts_and_statistics_are_in_a_block`.
+- hogql cold, profiling, format 15: CPU 83.3-84.1 B against 5e's 83.3-84.0 B; Metal 74.6-78.1 B, 1,629 in each of 3
+  runs.
+
+## Built (2026-11-19, step 6b: the count tables in blocks)
+
+- A count table (decision 0098 §1, `table::Table`) was a map from each key (a boxed copy of its values) to a slot of
+  the histogram's counts. It is now open addressing in a block near the relation's rows. Each slot holds the key's
+  first row and its rows (`[u32; 2]`), and is found by the key's hash (`rerail_blocks::key_hash`). The probe checks
+  the key against that row's values, read where they lie, so no key is copied. The histogram kernel's coder gives
+  each key's first row with its code.
+- `InRel::tables` keeps a handle per key-column set.
+- Test: `a_count_table_is_slots_in_a_block`. `a_count_many_bindings_reach_reads_its_count_table` stays ignored (the
+  scalar summaries' memo answers its count first, decision 0100, open).
+- hogql builds no count table. CPU 83.7-87.1 B against 6a's 84.6-88.9 B at load 39-59 (noisy). Metal 75.5-77.1 B;
+  one run of 3 lost a chunk (1,487: Q337, older than this work).
+
+## Built (2026-11-19, step 6c: the sketches' arrays in blocks)
+
+- A column's sketch (`setfix::sketch::Sketch`, decision 0112) keeps its arrays in blocks (`BlockVec`), not on the
+  heap: the HyperLogLog registers, the count sketch's counters, the small exact counts (`[value, rows]`), and a
+  compact label page's counts. A sparse label set's counts were a `HashMap`. They are now open addressing in a block
+  (`[value, rows]` slots, `-1` empty), starting at 128 slots and doubling to at most 2,048 (1,024 values), so a
+  sketch stays within `bounded_histograms`' bound. A sketch's numbers are the same as before.
+- A maintained relation (`Rel::based`) still starts from a clone of the old relation's sketches. A clone writes its
+  arrays again in a block, as the heap's clone did before, because the new relation adds to them.
+- Tests: `a_sketchs_arrays_are_in_blocks`; the sketch tests (`sketch::tests`, `bounded_histograms`) pass unchanged.
+- hogql cold, profiling, format 15, load 27-38: CPU 83.6-84.8 B against 6b's 83.7-84.8 B; peak 372-410 MB against
+  326-401 MB. Metal 74.9-78.6 B, 1,629 in each of 3 runs.
+
+## Built (2026-11-19, step 6d: the scalar summaries in blocks; the versions)
+
+- An input's scalar summaries (`scalars::Pool`, decision 0100) memoize each group key's summary (count, sum, min,
+  max) per bag. They were a `HashMap<Vec<i64>, Summary>` a bag, each key a heap copy. They are now open addressing in
+  a block (`scalars::Groups`): each slot is used, the key's values, then the summary in six words. A table doubles past
+  half full, and is cleared when the relation's epoch changes, as before. The pool's map from a bag to its table
+  is a handle per bag (a few per relation).
+- `InRel::vers` (decision 0364 stage 2) holds handles to the relation's versions (`Old`, `Minus`, `Plus`), each an
+  `InRel` whose rows, indexes, orders, dead rows and statistics are now in blocks (steps 5-6). Nothing of their data
+  is in the handle, so it needs no change.
+- Test: `a_bags_summaries_by_key_are_in_a_block`; the scalars tests pass unchanged.
+- hogql cold, profiling, format 15, load 16-30, seven pairs against 6c: CPU 83.6-86.3 B against 83.4-85.4 B (one pair
+  92.4 and 94.3 B, both high); Metal 75.9-81.4 B against 75.8 B, 1,629 in each of 5 runs.
+
+## Built (2026-11-19, step 6e: each row's level in a block), and what R5 still lacks
+
+- Each row's level (decision 0090: `Rel::level`, `InRel::level`) was a heap vector of one `u32` a row. It was not in
+  the inventory, but it is per-row relation data. It is now a block array (`BlockVec<u32>`), written near the rows.
+  A frame's levels are written there once (`from_flat_levels`), and a mark's old prefix too (`delta_since_mark`, as
+  the heap's `to_vec` did before).
+- hogql cold, six pairs against 6d at load 34-46: CPU 84.3-86.7 B against 83.7-85.4 B, within the spread. Metal
+  74.6-76.4 B, 1,629 in each of 3 runs.
+- **What R5 still lacks (found closing step 6, not in the inventory):** `InRel::stats` and `Rel::stats`
+  (`KeptStats`, decision 0096's statistics kept by delta: `statkeep::RelStats`). Each column holds an exact map of
+  value to count (`FxHashMap`, up to 256 values) and `plan::sketch::Sketch`s, all on the heap. Work queue Q338.
+- What stays on `InRel` and is not relation data: its column types, the key sets each order serves (`serves`), its
+  name, its uid, the probe plans (`idx`), the handles to block arrays and orders, and the versions' handles.
+
+## Built (2026-11-19, step 6f: the statistics kept by delta in blocks; Q338)
+
+- A column's kept statistics (`plan::statkeep`, decision 0096) held an exact map of value to count (`FxHashMap`)
+  and the planner's sketches, whose levels were a vector of boxed pages. Now:
+  - The exact counts are open addressing in a block (`statkeep::Exact`): `[value, count]` slots, a count of 0 empty.
+    A value counted back to 0 is taken out, and the slots after it shift back (no tombstones). It starts at 16 slots
+    and doubles past half full.
+  - A planner sketch (`plan::sketch::Sketch`) is one block array: the AMS counters, then a page per level a value
+    reached. Each level's page is recorded inline (`page`), and `open` marks the levels holding a count. A level
+    counted back to zero keeps its page but is closed, so equality, `bytes` and the stored format (`encode`, format 2)
+    are as before.
+- Not changed: the corpus totals' `Moments` (HyperLogLog registers), which are a chunk's totals, not a relation's.
+- Tests: `a_columns_exact_counts_are_slots_in_a_block` and `a_planner_sketchs_counters_are_one_block_array`. The
+  statkeep and sketch tests pass unchanged.
+- hogql cold, four pairs against 6e at load 25-37: CPU 83.5-84.1 B against 83.6-83.9 B; Metal 75.6-77.7 B, 1,629 in
+  each of 3 runs.

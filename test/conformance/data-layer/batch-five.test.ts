@@ -3,7 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { replay } from "../../../conformance/data-layer/replay.js";
-import { fixturesPath } from "../../support/oracles.js";
+import { requirePackFixture } from "../../../scripts/s3/pack-fixtures.mjs";
+import { repositoryPath } from "../../support/oracles.js";
+
+// The data-layer port's recordings are pack test data, not in git: `npm run fixtures:pull` fetches them.
+const portData = (name: string) =>
+  requirePackFixture(repositoryPath("packs", "data-layer", "upstream", "lint", "authored", "fixtures", "host", "data-layer-port", name));
 
 const candidates = new Set(["missing_async_pairs", "sync_async_signatures", "async_sync_delegation",
   "data_layer_facade_purity", "data_layer_compat_aliases", "layer_violations", "backend_coupling", "imperative_private_functions", "public_api_triples", "internal_dead_code"]);
@@ -11,7 +16,7 @@ const candidates = new Set(["missing_async_pairs", "sync_async_signatures", "asy
 it("matches the recorded source corpus for all ten fifth-batch candidates", async () => {
   const directory = mkdtempSync(join(tmpdir(), "rerail-batch-five-"));
   const paths = ["batch-05-recording.json", "batch-05-probes.json", "batch-05-graph-probes.json", "batch-05-remaining-graph-probes.json", "batch-05-relational-probes.json"].map(name => {
-    const recording = JSON.parse(readFileSync(fixturesPath("host", "data-layer-port", name), "utf8"));
+    const recording = JSON.parse(readFileSync(portData(name), "utf8"));
     recording.checks = recording.checks.filter((check: string) => candidates.has(check));
     recording.events = recording.events.filter((event: { check: string }) => candidates.has(event.check));
     const path = join(directory, name);

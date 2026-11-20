@@ -224,8 +224,14 @@ fn split_at_pos(mut lo: usize, mut hi: usize, less: impl Fn(usize) -> bool) -> u
 /// (`cmp_vals`, tagged when they are every column). Its writer records them: a wave's new rows are written sorted by
 /// the first order (`Fresh::settle`). A relation's rows are only appended (deleted ones stay in place, marked), so a
 /// range stays true. Ranges in an order on columns `c` are in the order on any prefix of `c` too, untagged.
+///
+/// A frozen relation's ranges are in its block (`Relation::known`, decision 0478 step 5c): `base` reads them there,
+/// holding its part. `own` are the ranges noted since (a relation's waves while it is derived), after `base`'s.
 #[derive(Clone, Default)]
-pub(super) struct Sorted(Vec<(u32, u32, Arc<[usize]>)>);
+pub(super) struct Sorted {
+    base: Option<crate::code_rule_dsl::facts::rows::Part>,
+    own: Vec<(u32, u32, Arc<[usize]>)>,
+}
 
 /// Whether the sorts past a run's own use what is known sorted (decision 0187: a wave's batch, a scan for the next
 /// step's probes, an order sorted again). `RERAIL_KNOWN_SORTED=runs` (a measurement aid) keeps it to the runs
@@ -258,7 +264,7 @@ impl Sorted {
     /// dedup order, which leads with a hash (`tagged`), and these lead with the values.
     pub(super) fn whole(n: u32, k: usize, cols: &[usize]) -> Sorted {
         let cols = if tagged(cols, k) { &cols[..k - 1] } else { cols };
-        Sorted(if n > 0 && !cols.is_empty() { vec![(0, n, cols.into())] } else { Vec::new() })
+        Sorted { base: None, own: if n > 0 && !cols.is_empty() { vec![(0, n, cols.into())] } else { Vec::new() } }
     }
     /// Rows `lo..hi` of `data` are in the order on `cols`: joined to the range before when it ends at `lo` in the
     /// same order and its last row is not past row `lo`.
@@ -267,7 +273,7 @@ impl Sorted {
             return;
         }
         debug_assert!((lo + 1..hi).all(|id| cmp_ids(data, k, cols, tagged(cols, k), id - 1, id).is_le()), "rows {lo}..{hi} said sorted on {cols:?} are not");
-        if let Some((_, end, c)) = self.0.last_mut()
+        if let Some((_, end, c)) = self.own.last_mut()
             && *end == lo
             && **c == *cols
             && cmp_ids(data, k, cols, tagged(cols, k), lo - 1, lo).is_le()
@@ -275,7 +281,61 @@ impl Sorted {
             *end = hi;
             return;
         }
-        self.0.push((lo, hi, cols.into()));
+        self.own.push((lo, hi, cols.into()));
+    }
+
+    /// Every range, `base`'s then `own`'s, each given to `f` (lo, hi, its columns) until it says to stop.
+    fn each(&self, f: &mut dyn FnMut(u32, u32, &[usize])) {
+        if let Some(p) = &self.base {
+            for kn in p.rel().known() {
+                let mut c = [0usize; rerail_blocks::relation::MAX_KEY];
+                let n = kn.ncols as usize;
+                for (d, &s) in c.iter_mut().zip(&kn.cols[..n]) {
+                    *d = s as usize;
+                }
+                f(kn.lo, kn.hi, &c[..n]);
+            }
+        }
+        for (a, b, c) in &self.own {
+            f(*a, *b, c);
+        }
+    }
+
+    /// The ranges written in `part`'s relation's block (decision 0478 step 5c), and read there from now on: true when
+    /// they are (they were already, or there are none), false when its block keeps others or has no room (they then
+    /// stay as they were).
+    pub(super) fn into_block(&mut self, part: &crate::code_rule_dsl::facts::rows::Part) -> bool {
+        if self.own.is_empty() && self.base.as_ref().is_some_and(|b| std::ptr::eq(b.rel(), part.rel())) {
+            return true;
+        }
+        if self.own.is_empty() && self.base.is_none() {
+            return true;
+        }
+        let mut all: Vec<(u32, u32, Vec<u16>)> = Vec::new();
+        let mut wide = false;
+        self.each(&mut |a, b, c| {
+            wide |= c.len() > rerail_blocks::relation::MAX_KEY;
+            all.push((a, b, c.iter().map(|&x| x as u16).collect()));
+        });
+        if wide {
+            return false;
+        }
+        let ranges: Vec<(u32, u32, &[u16])> = all.iter().map(|(a, b, c)| (*a, *b, &c[..])).collect();
+        let written = {
+            let _g = part.facts().ix.lock().unwrap_or_else(|e| e.into_inner());
+            // SAFETY: under its block's index lock, at the relation's freeze: nothing else writes its descriptor.
+            unsafe { part.rel().try_set_known(&part.facts().block, &ranges) }
+        };
+        if written {
+            self.base = Some(part.clone());
+            self.own = Vec::new();
+        }
+        written
+    }
+
+    /// Whether every range is read in a block (none noted since).
+    pub(super) fn in_block(&self) -> bool {
+        self.own.is_empty()
     }
     /// The parts of rows `lo..hi` known to be in the order on `cols`, in row order.
     pub(super) fn within(&self, cols: &[usize], k: usize, lo: u32, hi: u32) -> Vec<(u32, u32)> {
@@ -283,7 +343,9 @@ impl Sorted {
         if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_KNOWN_SORTED").is_ok_and(|v| v == "off")) {
             return Vec::new();
         }
-        self.0.iter().filter(|(a, b, c)| *a < hi && *b > lo && implies(c, cols, k)).map(|&(a, b, _)| (a.max(lo), b.min(hi))).collect()
+        let mut out = Vec::new();
+        self.each(&mut |a, b, c| if a < hi && b > lo && implies(c, cols, k) { out.push((a.max(lo), b.min(hi))) });
+        out
     }
     /// The parts of rows `lo..hi` known to be sorted by a key (`implies_key`: column `tag`'s hash tag first, when
     /// given, then the values of `cols`), in row order.
@@ -291,11 +353,15 @@ impl Sorted {
         if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_KNOWN_SORTED").is_ok_and(|v| v == "off")) {
             return Vec::new();
         }
-        self.0.iter().filter(|(a, b, c)| *a < hi && *b > lo && implies_key(c, k, tag, cols)).map(|&(a, b, _)| (a.max(lo), b.min(hi))).collect()
+        let mut out = Vec::new();
+        self.each(&mut |a, b, c| if a < hi && b > lo && implies_key(c, k, tag, cols) { out.push((a.max(lo), b.min(hi))) });
+        out
     }
     /// Rows known sorted, over every range.
     pub(super) fn rows(&self) -> u64 {
-        self.0.iter().map(|&(a, b, _)| u64::from(b - a)).sum()
+        let mut n = 0;
+        self.each(&mut |a, b, _| n += u64::from(b - a));
+        n
     }
 }
 
@@ -403,34 +469,19 @@ pub(super) fn cmp_ids<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], t
     cmp_with(cols, tagged, |c| data.value(a, k, c), |c| data.value(b, k, c))
 }
 
-/// The span of `tags` (sorted) equal to `t`, searched from `from`: a galloping search forward from there, or (with
-/// `place`) from where an even spread of tags would put it.
+/// The span of `tags` (sorted) equal to `t`, at or past `from`: its start by a galloping search from `from`, or (with
+/// `place`) from where an even spread of tags would put it, back or forward; its end by a galloping search from its
+/// start. A span costs reads logarithmic in its length: its end was walked, so a tag thousands of rows share (a leading
+/// value most rows hold) was read to its end once per row a sorted batch searched. Generic so a test counts the reads.
 #[inline]
-fn tag_span(tags: &[u16], t: u16, from: usize, place: bool) -> (usize, usize) {
+fn tag_span<T: Copy + Ord + Into<u64>>(tags: &[T], t: T, from: usize, place: bool) -> (usize, usize) {
     let n = tags.len();
     if from >= n {
         return (n, n);
     }
-    let mut at = if place { from.max(((t as usize) * n) >> 16) } else { from };
-    // Back while the place is past the span's start (it can be, placed by interpolation).
-    let mut step = 1;
-    while at > from && tags[at.min(n - 1)] >= t {
-        at = at.saturating_sub(step).max(from);
-        step *= 2;
-    }
-    // Forward, galloping, to the first tag at or past `t`.
-    let mut bound = 1;
-    while at + bound <= n && tags[at + bound - 1] < t {
-        bound *= 2;
-    }
-    let lo = if bound > 1 { at + bound / 2 } else { at };
-    let hi = (at + bound - 1).min(n);
-    let s = lo + tags[lo..hi].partition_point(|&x| x < t);
-    let mut e = s;
-    while e < n && tags[e] == t {
-        e += 1;
-    }
-    (s, e)
+    let at = if place { from.max(((t.into() as usize) * n) >> 16) } else { from };
+    let s = from + gallop(&tags[from..], at - from, |&x| x < t);
+    (s, s + gallop(&tags[s..], 0, |&x| x == t))
 }
 
 /// An order on the columns `cols` (every key set it answers is a prefix of them).
@@ -644,7 +695,7 @@ impl Run {
         let n = self.ids.len();
         let Some(&lead) = cols.first() else {
             // No columns: one row at most, held when a live id is.
-            if self.ids.iter().any(|id| live(id)) {
+            if self.ids.iter().any(live) {
                 held.iter_mut().for_each(|h| *h = true);
             }
             return;
@@ -665,7 +716,7 @@ impl Run {
                 let (s, e) = tag_span(&self.tags, tag(row[lead]), at, false);
                 let p = split_at_pos(s, e, |j| cmp(self.ids.get(j)).is_lt());
                 at = p;
-                held[i] = (p..e).map(|j| self.ids.get(j)).take_while(|&id| cmp(id).is_eq()).any(|id| live(id));
+                held[i] = (p..e).map(|j| self.ids.get(j)).take_while(|&id| cmp(id).is_eq()).any(live);
                 continue;
             }
             // The first id at or past the row is past the block before the first fence at or past its leading value.
@@ -681,7 +732,7 @@ impl Run {
             let hi = (start + bound - 1).min(n);
             let p = split_at_pos(lo, hi, |j| cmp(self.ids.get(j)).is_lt());
             at = p;
-            held[i] = (p..n).map(|j| self.ids.get(j)).take_while(|&id| cmp(id).is_eq()).any(|id| live(id));
+            held[i] = (p..n).map(|j| self.ids.get(j)).take_while(|&id| cmp(id).is_eq()).any(live);
         }
     }
 
@@ -1985,7 +2036,7 @@ pub mod tests {
         let shapes: [(&str, fn(i64) -> i64); 5] = [
             ("narrow", |i| i % 37),
             ("negative", |i| (i % 211) - 105),
-            ("node", |i| ((i % 9) << 32) | (i * 7) % 4001),
+            ("node", |i| ((i % 9) << 32) | ((i * 7) % 4001)),
             ("wide", |i| i.wrapping_mul(0x9E37_79B9_7F4A_7C15u64 as i64)),
             ("extremes", |i| [i64::MIN, -1, 0, 1, i64::MAX][i as usize % 5]),
         ];
@@ -2019,7 +2070,7 @@ pub mod tests {
         let mut rand = move || { x ^= x << 13; x ^= x >> 7; x ^= x << 17; x };
         for shape in ["clustered", "shuffled", "small"] {
             let rows: Vec<i64> = (0..n as i64).flat_map(|i| {
-                let node = match shape { "clustered" => ((i / 600) << 32) | (i % 600) * 3, "shuffled" => (((rand() % 9000) as i64) << 32) | (rand() % 4000) as i64, _ => (rand() % 40_000) as i64 };
+                let node = match shape { "clustered" => ((i / 600) << 32) | ((i % 600) * 3), "shuffled" => (((rand() % 9000) as i64) << 32) | (rand() % 4000) as i64, _ => (rand() % 40_000) as i64 };
                 [node, (rand() % 5000) as i64]
             }).collect();
             for cols in [vec![0usize], vec![0, 1]] {
@@ -2143,5 +2194,54 @@ pub mod tests {
         let merged = Run::merge(&rows, k, &cols, &a, &b);
         assert_eq!(merged.ids.to_vec(), want);
         assert_eq!(merged.tags, run.tags);
+    }
+
+    /// A tag counted at each comparison (`tag_span` reads tags only by comparing them); only
+    /// `a_tag_span_costs_reads_logarithmic_in_its_length` makes them, so one counter serves.
+    #[derive(Clone, Copy, Debug)]
+    struct Read(u16);
+    static READS: AtomicU64 = AtomicU64::new(0);
+    impl PartialEq for Read {
+        fn eq(&self, o: &Read) -> bool {
+            READS.fetch_add(1, AtomicOrdering::Relaxed);
+            self.0 == o.0
+        }
+    }
+    impl Eq for Read {}
+    impl PartialOrd for Read {
+        fn partial_cmp(&self, o: &Read) -> Option<Ordering> {
+            Some(self.cmp(o))
+        }
+    }
+    impl Ord for Read {
+        fn cmp(&self, o: &Read) -> Ordering {
+            READS.fetch_add(1, AtomicOrdering::Relaxed);
+            self.0.cmp(&o.0)
+        }
+    }
+    impl From<Read> for u64 {
+        fn from(t: Read) -> u64 {
+            t.0 as u64
+        }
+    }
+
+    /// A span of one tag is found in reads logarithmic in its length, from any place in it: `held_sorted` searches a
+    /// sorted batch's rows from where the last one ended, and a batch of rows sharing a leading value (so a tag) read
+    /// the rest of the span for each row when its end was walked: 1,000 rows over a span of 2^20 read 524M tags.
+    #[test]
+    fn a_tag_span_costs_reads_logarithmic_in_its_length() {
+        let span = 1usize << 20;
+        let tags: Vec<Read> = std::iter::repeat_n(Read(1), 10).chain(std::iter::repeat_n(Read(5), span)).chain(std::iter::repeat_n(Read(9), 10)).collect();
+        let rows = 1000;
+        READS.store(0, AtomicOrdering::Relaxed);
+        for i in 0..rows {
+            let from = 10 + i * (span / rows);
+            assert_eq!(tag_span(&tags, Read(5), from, false), (from, 10 + span));
+        }
+        assert_eq!(tag_span(&tags, Read(5), 0, true), (10, 10 + span));
+        assert_eq!(tag_span(&tags, Read(9), 0, true), (10 + span, 20 + span));
+        let reads = READS.load(AtomicOrdering::Relaxed);
+        // About 4 log2(2^20) reads a search; the walk read about rows * span / 2.
+        assert!(reads <= (rows as u64 + 2) * 100, "{reads} tag reads for {rows} searches of a span of {span}");
     }
 }

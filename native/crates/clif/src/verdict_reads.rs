@@ -117,7 +117,7 @@ fn text_key(b: &mut B<'_, '_>, fns: Value, sym: Value) -> Value {
 }
 
 /// The text of functions `fns` of symbol `sym` kept in the cache (the descriptor): its entry (its bytes `LEN` less
-/// `PAYLOAD`, at `PAYLOAD`), with what was found in the low bits (`reads::FOUND`, `NOT_KEPT`, `PENDING`).
+/// `PAYLOAD`, at `PAYLOAD`), with what was found in the low bits (`view::cache::FOUND`, `NOT_KEPT`, `PENDING`).
 pub fn text_find(b: &mut B<'_, '_>) -> Value {
     let (fns, sym) = (b.arg(0), b.arg(1));
     let key = text_key(b, fns, sym);
@@ -126,7 +126,7 @@ pub fn text_find(b: &mut B<'_, '_>) -> Value {
     crate::reads::cache_lookup(b, cache, key, none, None)
 }
 
-/// `text_find`, or on a miss an entry taken for a text of `len` bytes (`reads::TAKEN`): its caller writes the text
+/// `text_find`, or on a miss an entry taken for a text of `len` bytes (`view::cache::TAKEN`): its caller writes the text
 /// at `PAYLOAD`, then `cache_done`. A text past the cache's most is not kept (`NOT_KEPT`).
 pub fn text_open(b: &mut B<'_, '_>) -> Value {
     let (fns, sym, len) = (b.arg(0), b.arg(1), b.arg(2));
@@ -189,7 +189,7 @@ mod tests {
     /// still in it is not cleared under it, and is cleared once its writer is done.
     #[test]
     fn texts_of_any_length_are_kept_in_the_arenas_by_bytes() {
-        use crate::reads::{FOUND, NOT_KEPT, PENDING, TAKEN};
+        use crate::view::cache::{FOUND, NOT_KEPT, PENDING, TAKEN};
         use crate::view::cache::{Counts, LEN, PAYLOAD};
         use rerail_blocks::generated_reads::{cache_done, text_find, text_open};
         let spec = Spec::arena(3, 16, 1024, 256);

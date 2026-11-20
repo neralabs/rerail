@@ -9,20 +9,20 @@ something else, the rule follows Ruff. Messages are the JSON's, with `$X` placeh
 
 | file | lines | what |
 |---|---|---|
-| `lib/python/misc-seen.rr` | 19 | `seen_module(d, m)`: document d imports m or a module under it (Ruff's `seen_module`), for the modules a library asks about with `seen_ask(m)` |
-| `lib/python/logging.rr` | 83 | logging calls (`log_call`) on a logger (Ruff's `is_logger_candidate`: inline `getLogger`, qualified names, the `logger-objects` option, the name heuristic, which skips a class or def defined in the file) or by a bare `logging.x` name; the message argument, keywords, `exc_info`, "in an except handler" |
-| `lib/python/datetime.rr` | 43 | datetime calls in a file that imports datetime; `naive_tz` (the tz argument is missing or `None`, by position or keyword); `then_astimezone` (`.replace(…)` chains ending in `.astimezone`) |
-| `lib/python/misc-boolean-trap.rr` | 32 | FBT's positional parameters and the defs it exempts (dunder operators, `__post_init__`, setters, `@override`, stubs) |
-| `lib/python/misc-comments.rr` | 19 | `fixme_tag(c, t, d)`: Ruff's TodoDirective, the first task tag right after a `#` |
-| `lib/python/misc-airflow.rr` | 93 | `air_ref` (Airflow names read by qualified name, at the name or the attribute's last part), `air_kw` (first keyword of a call), `air_call`, `air_dag` (shared by AIR002, AIR301 and AIR311), `air_kind(q, m, s)` (Ruff's `is_airflow_builtin_or_provider`, one regex for every rule), `air_value` / `air_instance` (Ruff's `resolve_assignment`: the binding current at the read; shared by AIR301 and AIR303), `air_task` / `air_in_task`, `air_guarded` (Ruff's `is_guarded_by_try_except`: an `except ImportError` fallback import, or an `except AttributeError` attribute, whose try reads the new name) |
+| `lib/python/misc-seen.rerail` | 19 | `seen_module(d, m)`: document d imports m or a module under it (Ruff's `seen_module`), for the modules a library asks about with `seen_ask(m)` |
+| `lib/python/logging.rerail` | 83 | logging calls (`log_call`) on a logger (Ruff's `is_logger_candidate`: inline `getLogger`, qualified names, the `logger-objects` option, the name heuristic, which skips a class or def defined in the file) or by a bare `logging.x` name; the message argument, keywords, `exc_info`, "in an except handler" |
+| `lib/python/datetime.rerail` | 43 | datetime calls in a file that imports datetime; `naive_tz` (the tz argument is missing or `None`, by position or keyword); `then_astimezone` (`.replace(…)` chains ending in `.astimezone`) |
+| `lib/python/misc-boolean-trap.rerail` | 32 | FBT's positional parameters and the defs it exempts (dunder operators, `__post_init__`, setters, `@override`, stubs) |
+| `lib/python/misc-comments.rerail` | 19 | `fixme_tag(c, t, d)`: Ruff's TodoDirective, the first task tag right after a `#` |
+| `lib/python/misc-airflow.rerail` | 93 | `air_ref` (Airflow names read by qualified name, at the name or the attribute's last part), `air_kw` (first keyword of a call), `air_call`, `air_dag` (shared by AIR002, AIR301 and AIR311), `air_kind(q, m, s)` (Ruff's `is_airflow_builtin_or_provider`, one regex for every rule), `air_value` / `air_instance` (Ruff's `resolve_assignment`: the binding current at the read; shared by AIR301 and AIR303), `air_task` / `air_in_task`, `air_guarded` (Ruff's `is_guarded_by_try_except`: an `except ImportError` fallback import, or an `except AttributeError` attribute, whose try reads the new name) |
 
 Data tables, generated from the JSON (`gen-<id>.py` writes, `check-<id>.py` round-trips; each prints `0 differences`):
 
 | table | rows | from |
 |---|---|---|
-| `ruff-air301-airflow3-removal.names.rr` | 76 | the name clauses' `old-name` lists, prefix flags, `new-import` guards and messages |
-| `ruff-air302-airflow3-moved-to-provider.moved.rr` | 182 | each clause's `old` list, plus the provider, version, module and name parsed from its message |
-| `ruff-air312-airflow3-suggested-to-move-to-provider.moved.rr` | 31 | the `deprecated` list. The new module is the old one under `airflow.providers.standard`, with Ruff's two exceptions (`sensor.bash`, sic, and `sensors.time`). The check compares the old names with the JSON and every row with the arms of Ruff's `suggested_to_move_to_provider_in_3.rs` (`RUFF_SRC` overrides its path): 31 names, 31 arms, 0 differences |
+| `ruff-air301-airflow3-removal.names.rerail` | 76 | the name clauses' `old-name` lists, prefix flags, `new-import` guards and messages |
+| `ruff-air302-airflow3-moved-to-provider.moved.rerail` | 182 | each clause's `old` list, plus the provider, version, module and name parsed from its message |
+| `ruff-air312-airflow3-suggested-to-move-to-provider.moved.rerail` | 31 | the `deprecated` list. The new module is the old one under `airflow.providers.standard`, with Ruff's two exceptions (`sensor.bash`, sic, and `sensors.time`). The check compares the old names with the JSON and every row with the arms of Ruff's `suggested_to_move_to_provider_in_3.rs` (`RUFF_SRC` overrides its path): 31 names, 31 arms, 0 differences |
 
 The 52 rules have 1,536 lines, comments and directives included. Most are 16 to 60 lines. AIR311 has 64,
 because its name table is inline. ERA001 has 91, for its grammar (E1). AIR301 has 176, above the 130 aimed
@@ -117,7 +117,7 @@ Options this batch reads (`option_item`): `logger-objects` (G, LOG), `flake8-boo
 - **S1. `seen_module` is whole-file.** Ruff's `seen_module` is set in visit order, so a call before the
   file's `import logging` or `import datetime` is not checked. Here any import in the file counts. The
   same goes for `airflow` in every AIR rule.
-- **N1. Names resolve without flow.** names.rr's `qn` does not follow flow: a later import binding also counts
+- **N1. Names resolve without flow.** names.rerail's `qn` does not follow flow: a later import binding also counts
   for a read before it. This shows only in contrived code.
 - **N2. PD101 reads any binding.** Its name resolution takes any binding of the receiver, where Ruff takes
   the current one.
@@ -137,7 +137,7 @@ Options this batch reads (`option_item`): `logger-objects` (G, LOG), `flake8-boo
 - **A3. Only direct base classes count.** Ruff's `any_qualified_base_class` follows base classes
   transitively; here only direct bases are checked. This affects AIR301's `execute` of a BaseOperator
   subclass and AIR303's `get_link` of a BaseOperatorLink subclass. Ruff's `resolve_assignment` (the binding
-  current at the read) is `air_value` in misc-airflow.rr, used by AIR301 and AIR303 alike.
+  current at the read) is `air_value` in misc-airflow.rerail, used by AIR301 and AIR303 alike.
 - **A4. Two AIR301 quirks.** Ruff's `DayOfWeekSensor` arm for `use_task_execution_day` is unreachable,
   because it sits under the operator test, which needs a name ending in `Operator`. It is left out here
   too. AIR301's `apply_defaults` fix (delete the line) is omitted.
@@ -156,7 +156,7 @@ Options this batch reads (`option_item`): `logger-objects` (G, LOG), `flake8-boo
   tags are Ruff's default (TODO, FIXME, XXX), not the `task-tags` setting. The `isort:` pragma options
   match in lower case only. The `# /// script` metadata block is read only in files that have that
   comment (`era_has_script`).
-- **T1. `truth_of` follows Ruff's Truthiness.** ruff-classes.rr's `truth_of` (shared with the RUF rules) now
+- **T1. `truth_of` follows Ruff's Truthiness.** ruff-classes.rerail's `truth_of` (shared with the RUF rules) now
   also knows floats and imaginary numbers (zero is falsey), bytes, t-strings, the ellipsis, lambdas and
   generators, displays whose only elements are splats (unknown), and builtin constructors
   `list()`/`tuple()`/`set()`/`dict()`/`frozenset()` (no arguments: falsey; one positional argument: its
@@ -189,16 +189,16 @@ Options this batch reads (`option_item`): `logger-objects` (G, LOG), `flake8-boo
 
 ## Duplicates to merge
 
-- `misc-comments.rr` `fixme_tag(c, t, d)` and `misc2-todo.rr` `todo_tag` (arity 4) read the same Ruff
+- `misc-comments.rerail` `fixme_tag(c, t, d)` and `misc2-todo.rerail` `todo_tag` (arity 4) read the same Ruff
   TodoDirective.
-- `misc-airflow.rr` `air_guarded` / `air_in_handler` / `air_catches` and `misc2-numpy.rr` `npy_guarded` /
+- `misc-airflow.rerail` `air_guarded` / `air_in_handler` / `air_catches` and `misc2-numpy.rerail` `npy_guarded` /
   `npy_in_handler` / `npy_catches` implement the same Ruff helper, `is_guarded_by_try_except`.
-  `exceptions.rr`'s `exc_handler` / `exc_type` cover the handler part too. One library relation,
+  `exceptions.rerail`'s `exc_handler` / `exc_type` cover the handler part too. One library relation,
   `guarded_fallback(e, new_q)`, would serve AIR and NPY.
-- ERA001's `era_own_line` and `misc2-noqa.rr`'s `own_line_comment` are the same relation.
-- `misc-seen.rr` `seen_module(d, m)` and `simplify.rr` `sim_os_seen(d)` (Ruff's `seen_module` for `os`) are the
+- ERA001's `era_own_line` and `misc2-noqa.rerail`'s `own_line_comment` are the same relation.
+- `misc-seen.rerail` `seen_module(d, m)` and `simplify.rerail` `sim_os_seen(d)` (Ruff's `seen_module` for `os`) are the
   same.
-- `logging.rr` `log_call` / `logger_expr` and `exceptions.rr` `exc_log` both implement Ruff's
+- `logging.rerail` `log_call` / `logger_expr` and `exceptions.rerail` `exc_log` both implement Ruff's
   `is_logger_candidate`.
-- misc-airflow.rr's `air_value` / `air_instance` (Ruff's `typing::resolve_assignment`) would fit in ruff.rr
+- misc-airflow.rerail's `air_value` / `air_instance` (Ruff's `typing::resolve_assignment`) would fit in ruff.rerail
   beside `typed_as`.

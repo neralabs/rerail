@@ -3,12 +3,13 @@
 //! host), its format, its widths. One definition: the device's `DocView` is this, and its MSL is
 //! written from it ([`ukl`]), with each field's offset asserted against Rust's.
 
-/// A document's view (124 bytes, u32s; the device's `DocView`, `device_tape.h`).
+/// A document's view (128 bytes, u32s; the device's `DocView`, `device_tape.h`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TapeView {
-    /// The document's first byte in its batch's chunk block (the device's; 0 on the host): every
-    /// offset below counts from it, so a copy into another block changes `at` alone (0289 §4).
+    /// The document's first byte from its batch's bound block (the device's; 0 on the host), with `at_high` an i64:
+    /// every offset below counts from it. A document in another slab of the batch is reached by the difference of
+    /// the slabs' GPU addresses (decision 0353 step 4, 0471), so a batch reads its documents where they lie.
     pub at: u32,
     pub nodes: u32,
     pub node_base: u32,
@@ -51,14 +52,28 @@ pub struct TapeView {
     /// u32 field words, u32 presences, u32 0]`, then the document's words and each block's (`tape_has_kind`). 0 where
     /// it has none (format 15, or a tape stored without one).
     pub presence: u32,
+    /// `at`'s high word (`at` and this, an i64: `TapeView::offset`).
+    pub at_high: u32,
 }
-const _: () = assert!(std::mem::size_of::<TapeView>() == 124);
+const _: () = assert!(std::mem::size_of::<TapeView>() == 128);
+
+impl TapeView {
+    /// The document's first byte from its batch's bound block: `at` and `at_high`, an i64.
+    pub fn offset(&self) -> i64 {
+        (u64::from(self.at_high) << 32 | u64::from(self.at)) as i64
+    }
+
+    /// Sets the document's first byte from its batch's bound block (`offset`).
+    pub fn set_offset(&mut self, offset: i64) {
+        (self.at, self.at_high) = (offset as u32, (offset >> 32) as u32);
+    }
+}
 
 /// The view in UKL: `struct TapeView`, `DocView` its name in the kernels, and each field's offset and
 /// the size asserted against this definition's, so the kernels cannot read a layout of their own.
 pub fn ukl() -> String {
     use std::mem::offset_of;
-    let fields: [(&str, &str, usize); 21] = [
+    let fields: [(&str, &str, usize); 22] = [
         ("uint32_t", "at", offset_of!(TapeView, at)),
         ("uint32_t", "nodes", offset_of!(TapeView, nodes)),
         ("uint32_t", "node_base", offset_of!(TapeView, node_base)),
@@ -80,6 +95,7 @@ pub fn ukl() -> String {
         ("uint32_t", "line_base", offset_of!(TapeView, line_base)),
         ("uint32_t", "tape", offset_of!(TapeView, tape)),
         ("uint32_t", "presence", offset_of!(TapeView, presence)),
+        ("uint32_t", "at_high", offset_of!(TapeView, at_high)),
     ];
     let mut s = String::from("#include <ukl/backend.h>\ntypedef struct TapeView {\n");
     for (ty, name, _) in fields.iter() {
@@ -183,6 +199,14 @@ pub mod cache {
     pub const READY: i32 = 8;
     pub const LEN: i32 = 12;
     pub const PAYLOAD: i32 = 16;
+    /// What an open lookup (`cache_lookup` with no fill) found, in its result's low bits (an entry is `ALIGN`-aligned).
+    pub const FOUND: i64 = 0;
+    /// An entry of the size asked taken, being written: the caller writes its payload, then `cache_done`.
+    pub const TAKEN: i64 = 1;
+    /// None kept, none taken (a size of 0 asked, past the most, or no room): the dead entry.
+    pub const NOT_KEPT: i64 = 2;
+    /// Another thread writes the key's entry: the dead entry; read again after that writer's pass.
+    pub const PENDING: i64 = 3;
     /// An entry's alignment in its arena.
     pub const ALIGN: usize = 64;
     /// A generation's stamp while the thread that turned it clears it (a spare whose writers were not yet done is

@@ -1,6 +1,6 @@
 # T8 notes: Pulling-it-all-together branch docs
 
-Source root: `/Users/jeremy/orca/workspaces/rerail/Pulling-it-all-together/docs/` (excluding `rule-engine-direction/`).
+Source root: `/Users/jeremy/orca/workspaces/rerail/Pulling-it-all-together/docs/` (excluding `rule-engine-direction/`). This repository's copies of these docs were removed; at 7efcac9c67.
 Citations are `file:line` relative to that root. Read-only research; nothing built or run.
 
 Number tags: **M** = measured (the doc reports a run), **D** = design target/limit/declared constant, **A** = arithmetic/derived by the doc or by me from the doc's numbers (I mark mine "A, mine").
@@ -263,7 +263,7 @@ Rules (D) (:16-32)
 
 Enforcement (:36-46): with fixed dependencies and sufficient capacity, 100x more independent roots or files must keep the same producer stage count; thread/row counts scale with volume; genuinely dependent producer requires a subsequent wave; repeated SQL scans or insertion batch size changes cannot create more stages (:36-39). CPU stage traces are CPU passes, not GPU launches; a GPU backend must record kernel launches, command submissions, intermediate readbacks separately and preserve GPU-owned counts between dependent kernels; general recursive inference can require additional semantic waves (:42-46).
 
-Provenance (:50-53): Landing NER-1562 at `ce7d2da32` is the execution-shape reference (broad classes, homogeneous signature blocks, compact frontiers, shared-command counts); its dynamic production integration incomplete; Rerail does not import Landing's rule engine or persisted tape ABI.
+Provenance (:50-53): Landing's scale-test branch at `ce7d2da32` is the execution-shape reference (broad classes, homogeneous signature blocks, compact frontiers, shared-command counts); its dynamic production integration incomplete; Rerail does not import Landing's rule engine or persisted tape ABI.
 
 Current CPU implementation (:57-89)
 - Workspace driver collects dirty relational work across policies, clauses, files; stateless collects all partitions in the policy (:57-58). SQL sessions retain connections, stage positions, work counters, diagnostic anchors across suspension (:59). File-local result caches keep exact document-version keys (:60). Workspace eligibility witnesses gate native syntax inputs (:61). Global clauses can keep selective projected evidence when a file gate can't express row selection (:62). Preparation extracts full declared inputs before consumers run (:63).
@@ -339,7 +339,7 @@ Regressions found (SQL-shape lessons) (:180-200)
 
 Not about storage/perf mostly. Facts:
 - Every new Linear issue requires Jeremy's approval (:3-5). Oracle revision `2b1504ad...` (:9).
-- Retained feature issues (implemented): NER-1969 line queries/filters/first matches/paths/same-file gates/line terminators; NER-1970 whole-file valid/invalid syntax gates; NER-1971 current/previous line predicates, bounded context (:18-22). Withdrawn NER-1968, 1972-1977 (:34-42).
+- Retained feature issues (implemented): line queries/filters/first matches/paths/same-file gates/line terminators; whole-file valid/invalid syntax gates; current/previous line predicates, bounded context (:18-22). Seven withdrawn issues (:34-42).
 - String parity defects: adjacent literal concatenation and decoded-newline second diagnostic line; outside passing 317-call corpus (:46-61).
 - Batch two: per-file content gates, bounded line state, indentation filters, LF-only scanning, bounded context windows (:78-83).
 - Batch three: all ten shapes use existing capabilities (AST relations, captures, node identity, configurable name lists, decoded values, per-binding reporting); candidate defects: attribute-store mismatch, excessive recursive descendant scans (:95-99).
@@ -559,7 +559,7 @@ Store tables named here: `file_kind_counts(fid,code)` + posting segment, `nera_p
 
 ## sql-composition-opportunities.md (179 lines)
 
-- Sibling branches surveyed (:11-16): `Moti-Velz/sql-set-composition` `e1a46a28`; `jeremy/sql-capture-demand-spikes` `f0907707...`; `jbarnes/ner-1562-sql-rerailer` `9bc40b37`.
+- Sibling branches surveyed (:11-16): `Moti-Velz/sql-set-composition` `e1a46a28`; `jeremy/sql-capture-demand-spikes` `f0907707...`; `jbarnes/sql-rerailer` `9bc40b37`.
 - Sibling numbers (M, other branches): generated B023 SQL over 138 files 125.553 ms kernel CPU vs older frame compiler 5,478.944 ms vs handwritten 63.349 ms; generated query 51.560 ms in preparation (:24-28). NER sibling: 164,480,024-byte query and > 2 GiB during preparation for `eager_resolve`; "Named CTEs alone do not establish bounded preparation cost." (:30-32)
 - 1. Tree intervals: `relational/forest.rs` computed preorder ranges then expanded every root into pairs; proposed `(file, root, lo, hi, expand)`; requires proven tree with contiguous subtrees; excluded edges/nested stop conditions need proof; raw CST bounds alone insufficient (:36-48).
 - 2. Push demand: separate semantic node sets from answer construction; kind/field/value predicates restrict keys before joins; semijoins for existence; capture text deferred (:56-59). `removed-calls` shape `call.function -> attribute.attribute -> identifier`: reference decodes all identifier text; candidate decodes only identifiers on demanded path; SQLite can evaluate native predicate before selective joins (control) (:61-66). Covers capture-free conjunction only; not ordered choice, negative captures, unknown results, reached failures (:68-70).
@@ -1090,7 +1090,7 @@ Measured per-edit costs (M; "edit" = one-file edit, CPU unless noted)
 - Rules (D): vtab callbacks only read prepared data; never dispatch producers or wait on a device. Source text = immutable side array with checked ranges; paths/grammar names stay host metadata. Output order uses logical request identities. Per-relation completion or failure; failure exposes no partial rows, cannot prove absence, cannot spend another relation's allowance. "Resident input and result capacity determine execution partitions. SQL insertion batches, publication pages, file boundaries, and exact signatures cannot determine dispatch boundaries." 100x more roots/files must keep the same stage count; only true dependencies add waves.
 - CPU backend limits (D): 64 MiB packed input arena, 256 MiB result columns, 100 producer passes per batch across waves, 256 MiB SQLite admission target (not a process memory bound). Measured CPU backend: cold 2.898 -> 2.553 s, edit 1.192 -> 1.036 s, RSS 572 -> 652 MiB (M).
 - GPU-specific: CPU stage traces are not GPU launches; a GPU backend must record kernel launches, command submissions, readbacks separately; no fixed launch count across recursive algorithms. Transducer-era rule: partitioning loop only for a hard device limit, recorded (sql-driven-transducer-execution.md:168-170). "CPU SQL statements are not equivalent to GPU kernel launches." (sql-preparation-architecture.md:274-281). Any GPU measurement in these docs: not found (copied-column batch prototype adds ~3.3 MiB and is CPU-only; "Future GPU work needs ... a separate transfer measurement", sql-composition-opportunities.md:160-162).
-- Provenance: Landing NER-1562 `ce7d2da32` is the execution-shape reference; Rerail imports neither its engine nor its tape ABI (gpu contract :50-53).
+- Provenance: Landing's scale-test branch `ce7d2da32` is the execution-shape reference; Rerail imports neither its engine nor its tape ABI (gpu contract :50-53).
 
 ### 5. SQL execution-shape lessons with measurements
 1. Execute fewer copies of shared work: 9 -> 3 grouped clauses: cold CPU 46.707 -> 14.370 s (relational-execution-design.md:93-106). Repeated `descendants` (six identical recursive queries, 23,860,081 VM each) and per-scope `nodes`/`ownership` were the dominant early costs (code-rule-profiling.md:273-278; shared-sql-performance.md:55-98).

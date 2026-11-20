@@ -47,7 +47,7 @@ mod held;
 use runs::{Index, RowData};
 mod rows;
 pub use rows::{Facts, InBlock, Row, Written, in_chunk, in_chunk_measured};
-use rows::{Rows, Shared};
+use rows::{BlockVec, Rows};
 /// A column's statistics in a fixed size (decision 0112): no index is kept for them.
 pub mod sketch;
 use sketch::Sketch;
@@ -77,6 +77,8 @@ mod survivor_tests;
 mod maintain_mode_tests;
 #[cfg(test)]
 mod cut_tests;
+#[cfg(test)]
+mod key_tests;
 #[cfg(test)]
 mod view_tests;
 #[cfg(test)]
@@ -122,11 +124,30 @@ struct Deferred { texts: Vec<String>, at: HashMap<String, u32> }
 /// (whose document is in the high 32 bits, from 0x6000… on).
 const DEFERRED: i64 = 1 << 40;
 
+/// A database's shared symbols: its interner, behind the lock that `sym_atom`, `sym_cat` and `cat_symbols`
+/// write under, with its atom arena beside the lock. The arena is the interner's own and never changes, so a
+/// loader's cursor (`Interner::for_loading`, at every component's open) reads it without the lock: it waited there
+/// behind the SQL functions' writes, 2,004 of 2,204 samples parked (Q203 item 3, ab71).
+pub struct Symbols { atoms: Arc<crate::content_store::atoms::Atoms>, cursor: RwLock<Interner> }
+
+impl Symbols {
+    fn new(atoms: Arc<crate::content_store::atoms::Atoms>) -> Symbols {
+        Symbols { atoms: Arc::clone(&atoms), cursor: RwLock::new(Interner { atoms, buf: String::new(), failed: None, deferred: None }) }
+    }
+    /// The atom arena the symbols are in, read without the lock.
+    pub fn atoms(&self) -> &Arc<crate::content_store::atoms::Atoms> { &self.atoms }
+}
+
+impl std::ops::Deref for Symbols {
+    type Target = RwLock<Interner>;
+    fn deref(&self) -> &RwLock<Interner> { &self.cursor }
+}
+
 impl Interner {
     /// A loader's scratch cursor over the same atom arena. Loading SQL may call sym_text/sym_atom,
-    /// so it must not hold the registered cursor's lock across SQLite execution.
-    fn for_loading(shared: &RwLock<Self>) -> Self {
-        Self { atoms: Arc::clone(&shared.read().unwrap().atoms), buf: String::new(), failed: None, deferred: None }
+    /// so it must not hold the registered cursor's lock across SQLite execution; nor does it take it.
+    fn for_loading(shared: &Symbols) -> Self {
+        Self { atoms: Arc::clone(shared.atoms()), buf: String::new(), failed: None, deferred: None }
     }
     /// The text `v` stands for if it is a text this morsel deferred.
     fn deferred_text(&self, v: i64) -> Option<&str> {
@@ -190,9 +211,9 @@ impl Interner {
 /// store's atoms again. They hold no file open: the store's last handle closes them (`ContentStore`'s drop).
 /// `RERAIL_LEVELS_ON_CYCLES`: a leveled component keeps levels only on its relations on a cycle (`open`).
 #[derive(Default)]
-struct DatabaseSymbols(Mutex<HashMap<String, Arc<RwLock<Interner>>>>);
+struct DatabaseSymbols(Mutex<HashMap<String, Arc<Symbols>>>);
 /// The symbols of `conn`'s database: the shared object's arena of it.
-pub fn symbols(conn: impl Scoped) -> Result<Arc<RwLock<Interner>>> {
+pub fn symbols(conn: impl Scoped) -> Result<Arc<Symbols>> {
     let conn = conn.db();
     // A connection's symbols are found once (by its path) and kept for it until it closes (`forget_scope`).
     let on = on(&conn);
@@ -226,8 +247,7 @@ fn conn_path(conn: impl Scoped) -> Arc<str> {
 pub fn prime(conn: &Connection) -> Result<Arc<crate::content_store::atoms::Atoms>> {
     conn_path(conn);
     let syms = symbols(conn)?;
-    let arena = Arc::clone(&syms.read().unwrap().atoms);
-    Ok(arena)
+    Ok(Arc::clone(syms.atoms()))
 }
 /// What the evaluator keeps for one connection (decision 0442): on the connection itself (`vtab::ConnData`), dropped
 /// as it closes, or (its relations and components) as a run reuses it (`forget_engine`). Two connections, on any
@@ -237,7 +257,7 @@ pub struct OnConn {
     /// Its main database's path (`conn_path`): SQLite's `sqlite3_db_filename` takes the connection's mutex.
     path: parking_lot::Mutex<Option<Arc<str>>>,
     /// Its symbols (`symbols`).
-    syms: parking_lot::Mutex<Option<Arc<RwLock<Interner>>>>,
+    syms: parking_lot::Mutex<Option<Arc<Symbols>>>,
     /// Its open components, by name.
     components: parking_lot::Mutex<HashMap<String, Arc<Mutex<Component>>>>,
     /// The relations of components run with `nowrite`, by table, until they are materialized.
@@ -256,19 +276,19 @@ pub struct OnConn {
 fn on(conn: impl Scoped) -> Arc<OnConn> {
     conn.db().data().get::<OnConn>()
 }
-fn symbols_by_path(conn: impl Scoped) -> Result<Arc<RwLock<Interner>>> {
+fn symbols_by_path(conn: impl Scoped) -> Result<Arc<Symbols>> {
     let conn = conn.db();
     let key = conn_path(conn).to_string();
     let held_ = crate::code_rule_dsl::logic::profile::shared::<DatabaseSymbols>();
     let mut syms = held_.0.lock().unwrap();
     let atoms = crate::content_store::atoms::Atoms::for_connection(conn.sql()?);
     // A store created again at the same path has new atoms (`Atoms::for_database`, checked by `Atoms::attach`).
-    if let Some(s) = syms.get(&key) && Arc::ptr_eq(&s.read().unwrap().atoms, &atoms) {
+    if let Some(s) = syms.get(&key) && Arc::ptr_eq(s.atoms(), &atoms) {
         return Ok(Arc::clone(s));
     }
     // An arena made after the store was written holds none of its atoms yet: the run's SQL and joins read them.
     atoms.read_stored().map_err(|e| err(e.to_string()))?;
-    let s = Arc::new(RwLock::new(Interner { atoms, buf: String::new(), failed: None, deferred: None }));
+    let s = Arc::new(Symbols::new(atoms));
     syms.insert(key, Arc::clone(&s));
     Ok(s)
 }
@@ -413,10 +433,24 @@ pub const LIVE_BATCH: usize = 4096;
 pub fn is_dead(dead: &[u64], id: u32) -> bool {
     !dead.is_empty() && dead.get(id as usize >> 6).is_some_and(|w| w >> (id & 63) & 1 == 1)
 }
-fn kill(dead: &mut Vec<u64>, id: u32) -> bool {
+/// A bitset of dead rows that grows: a heap one (a step's own) or a relation's, in its block.
+trait Bits: std::ops::DerefMut<Target = [u64]> {
+    fn grow_to(&mut self, n: usize);
+}
+impl Bits for Vec<u64> {
+    fn grow_to(&mut self, n: usize) {
+        self.resize(n, 0);
+    }
+}
+impl Bits for BlockVec<u64> {
+    fn grow_to(&mut self, n: usize) {
+        self.resize(n, 0);
+    }
+}
+fn kill(dead: &mut impl Bits, id: u32) -> bool {
     let w = id as usize >> 6;
     if dead.len() <= w {
-        dead.resize(w + 1, 0);
+        dead.grow_to(w + 1);
     }
     let was = dead[w] >> (id & 63) & 1 == 1;
     dead[w] |= 1 << (id & 63);
@@ -434,19 +468,22 @@ fn kill(dead: &mut Vec<u64>, id: u32) -> bool {
 /// component, so a maintained run's new rows are above the rows they read.
 pub struct Rel { table: String, types: Vec<u8>, pub k: usize, pub n: usize, data: Rows, stored: usize, lo: usize, hi: usize,
              wave: u32, idx: Vec<Index>, serves: Vec<Vec<Vec<usize>>>, indexed: usize, pending: keys::RowSet, sketches: Vec<Sketch>,
-             dead: Vec<u64>, ndead: usize, summaries: scalars::Pool,
+             /// Its dead rows (bit `id`), in its rows' block (decision 0478 step 5d): handed to its block relation when
+             /// it is frozen.
+             dead: BlockVec<u64>, ndead: usize, summaries: scalars::Pool,
              /// Its row ranges known to be in an order already (decision 0180), recorded as its waves write them.
              sorted: runs::Sorted,
              /// The kept relation it started as (`InRel::delta_since`).
              from: Option<Origin>,
              /// Each row's level (decision 0090: `lbase` plus the wave that pushed it), while every row has one.
-             level: Vec<u32>, lbase: u32,
+             /// Each row's level, in a block (decision 0478 R5).
+             level: BlockVec<u32>, lbase: u32,
              /// Whether its rows get levels: only a relation of a recursive stratum reads them (`open`), and at 4
              /// bytes a row they are not held for the others.
              leveled: bool,
              /// Its statistics kept as its rows come (`kept_stats`), the planner's form of them kept by delta
              /// (decision 0096): rows `..indexed` counted in, and those `stats_dead` marks counted out.
-             stats: Option<KeptStats>, stats_dead: Vec<u64>,
+             stats: Option<KeptStats>, stats_dead: BlockVec<u64>,
              /// A lattice relation's key and join (`lattice` lines): one live row a key, its value the join of all the
              /// key's values derived (`Lat::fold`). `None`: a set.
              lat: Option<Box<Lat>>,
@@ -456,7 +493,18 @@ pub struct Rel { table: String, types: Vec<u8>, pub k: usize, pub n: usize, data
              cap: u32,
              /// Declared sorted (`.decl … sorted`, decision 0456 K7): its live rows laid out in canonical order (its
              /// columns in turn) when its component is done (`InRel::moved`).
-             ordered: bool }
+             ordered: bool,
+             /// The keys its layout declares (`key` lines, decision 0361 step 6), each checked as rows are written;
+             /// and those a second row of a key broke, not checked again, until `key_breaks` takes them.
+             keyed: Vec<KeyCheck>, broke: Vec<Vec<usize>> }
+
+/// A key a relation's layout declares (decision 0361 step 6): its columns, and an index of the relation's rows by
+/// them in its block (`keys::KeyMap`), each key's first live row. A second live row of a key breaks the fact.
+#[derive(Clone)]
+pub struct KeyCheck {
+    cols: Vec<usize>,
+    map: keys::KeyMap,
+}
 
 /// A lattice relation's state (decision 0124): its last column is the value, the columns before it the key. A key's
 /// row is replaced when a wave's values for it join to a new value: the old row dead, the new one the next wave's
@@ -531,7 +579,7 @@ enum Origin {
     /// Its first `n` rows are the old relation's (`Rel::based`), less those it marked dead; it added the rest.
     /// `dead`: the old relation's dead rows, as it started (its version at the run's start, decision 0364 stage 2:
     /// what `old`, `minus` and `plus` are read from, with no other relation kept).
-    Based { at: usize, n: usize, dead: Arc<Vec<u64>> },
+    Based { at: usize, n: usize, dead: Arc<BlockVec<u64>> },
     /// Made from the old relation's survivors (too many dead to keep in place): its first `kept` rows, then those
     /// it added; `removed`, the old rows it left out, row-major.
     Compacted { at: usize, old_n: usize, kept: usize, removed: Vec<i64> },
@@ -542,8 +590,8 @@ impl Rel {
         assert!(k <= MAX_KEY, "{table}: {k} columns, past the {MAX_KEY} an order is probed with");
         Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Rows::new(k), stored: 0, lo: 0, hi: 0, wave: 0,
               idx: vec![Index::new((0..k).collect())], serves: vec![Vec::new()], indexed: 0, pending: keys::RowSet::default(),
-              sketches: vec![Sketch::default(); k], dead: Vec::new(), ndead: 0, summaries: Default::default(), sorted: Default::default(), from: None,
-              level: Vec::new(), lbase: 0, leveled: true, stats: None, stats_dead: Vec::new(), lat: None, cap: u32::MAX, ordered: false }
+              sketches: vec![Sketch::default(); k], dead: BlockVec::new(), ndead: 0, summaries: Default::default(), sorted: Default::default(), from: None,
+              level: BlockVec::new(), lbase: 0, leveled: true, stats: None, stats_dead: BlockVec::new(), lat: None, cap: u32::MAX, ordered: false, keyed: Vec::new(), broke: Vec::new() }
     }
     /// Makes this relation a lattice's (its `lattice` line): the rows it holds so far fold by key, as a wave's do.
     fn set_lattice(&mut self, name: &str, keys: usize, lattice: Arc<dyn super::Lattice>, widen: Option<u32>) -> Result<()> {
@@ -677,7 +725,7 @@ impl Rel {
         });
         let orders: Vec<Index> = match &made { Some((ix, _)) => vec![ix.clone()], None => old.chains.iter().zip(&whole).filter(|(_, w)| **w).map(|(o, _)| o.clone()).collect() };
         let data = &old.rows;
-        let mut dead = old.dead.to_vec();
+        let mut dead = old.dead.clone();
         let mut ndead = old.ndead;
         let mut row = vec![0i64; k];
         for g in 0..gone.n {
@@ -705,11 +753,11 @@ impl Rel {
         }
         let serves = if made.is_none() && old.serves.len() == whole.len() { old.serves.iter().zip(&whole).filter(|(_, w)| **w).map(|(s, _)| s.clone()).collect() } else { idx.iter().map(|_| Vec::new()).collect() };
         let sketches = match made { Some((_, sketches)) => sketches, None => old.sketches.clone() };
-        let level = if old.has_levels() { old.level.to_vec() } else { Vec::new() };
-        let from = Some(Origin::Based { at: old as *const InRel as usize, n: old.n, dead: Arc::new(old.dead.to_vec()) });
+        let level = if old.has_levels() { old.level.clone() } else { BlockVec::new() };
+        let from = Some(Origin::Based { at: old as *const InRel as usize, n: old.n, dead: Arc::new(old.dead.clone()) });
         Some(Rel { table: table.to_string(), types: types.to_vec(), k, n: old.n, data: old.rows.shared(old.n), stored: 0, lo: 0, hi: 0, wave: 0, idx, serves,
                    indexed: old.n, pending: keys::RowSet::default(), sketches, dead, ndead, summaries: Default::default(), sorted: old.sorted.clone(), from, level,
-                   lbase: 0, leveled: true, stats: old.stats.clone(), stats_dead: old.dead.to_vec(), lat: None, cap: u32::MAX, ordered: false })
+                   lbase: 0, leveled: true, stats: old.stats.clone(), stats_dead: old.dead.clone(), lat: None, cap: u32::MAX, ordered: false, keyed: Vec::new(), broke: Vec::new() })
     }
     /// `based`'s relation, made from `old`'s rows less those of `gone` rather than in place (compacted).
     fn compacted(table: &str, types: &[u8], old: &InRel, gone: Option<&InRel>) -> Rel {
@@ -721,7 +769,7 @@ impl Rel {
         }
         // Each row keeps its kept level; without levels, none are recorded (`Rel::push`).
         let levels = old.has_levels();
-        if !levels { rel.level = vec![0; 1]; }
+        if !levels { rel.level = BlockVec::from_iter_in(None, [0]); }
         let mut row = vec![0i64; k];
         let mut removed = Vec::new();
         for id in 0..old.len() {
@@ -730,7 +778,7 @@ impl Rel {
             for (c, v) in row.iter_mut().enumerate() { *v = r.at(c); }
             if gone_rows.contains(&row) { removed.extend_from_slice(&row); } else if rel.push(&row) && levels { *rel.level.last_mut().expect("a level pushed") = old.level[id]; }
         }
-        if !levels { rel.level.clear(); }
+        if !levels { rel.level.resize(0, 0); }
         // A kept relation read in place (decision 0456 step 6, a view of its entry) is counted by its view.
         if old.k == k {
             rel.from = Some(Origin::Compacted { at: old as *const InRel as usize, old_n: old.len(), kept: rel.n, removed });
@@ -812,8 +860,78 @@ impl Rel {
         }
         any
     }
+    /// Checks columns `cols` as a key of its rows from now on (a `key` line, decision 0361 step 6), the rows it holds
+    /// already first. A lattice relation's key is its own (it folds by it), and a key it broke is not checked again.
+    fn set_key(&mut self, cols: Vec<usize>) -> Result<()> {
+        if cols.is_empty() || cols.len() > MAX_KEY || cols.iter().any(|&c| c >= self.k) {
+            return Err(err(format!("{}: key {cols:?} of {} columns", self.table, self.k)));
+        }
+        if self.lat.is_some() || self.keyed.iter().any(|x| x.cols == cols) || self.broke.contains(&cols) {
+            return Ok(());
+        }
+        self.keyed.push(KeyCheck { cols, map: keys::KeyMap::new(None, 0) });
+        let n = self.n;
+        self.check_key(self.keyed.len() - 1, 0, n);
+        Ok(())
+    }
+    /// Checks every declared key over rows `from..` (written since `from`).
+    fn check_keys(&mut self, from: usize) {
+        for i in (0..self.keyed.len()).rev() {
+            self.check_key(i, from, self.n);
+        }
+    }
+    /// Checks key `i` over rows `from..to`: each live row's key put in the map, or found there. Found with another live
+    /// row (of other values: dedup leaves no two equal), the key is broken: moved to `broke`, its map dropped. A key
+    /// whose row died is taken by the next row of it (a maintained run's removal, then its add).
+    fn check_key(&mut self, i: usize, from: usize, to: usize) {
+        let k = self.k;
+        let (dead, cap, level, data) = (&self.dead, self.cap, &self.level, &self.data);
+        let gone = |id: u32| is_dead(dead, id) || (cap != u32::MAX && level.get(id as usize).is_some_and(|&l| l >= cap));
+        let check = &mut self.keyed[i];
+        // copy: not block data: one key's values at a time, what the map's hash reads.
+        let mut key = [0i64; MAX_KEY];
+        let mut broken = false;
+        for id in from..to {
+            let id = id as u32;
+            if gone(id) {
+                continue;
+            }
+            for (j, &c) in check.cols.iter().enumerate() {
+                key[j] = data.value(id, k, c);
+            }
+            let key = &key[..check.cols.len()];
+            check.map.reserve_at(data, k, &check.cols, None);
+            match check.map.find_at(data, k, &check.cols, key) {
+                Ok(s) => {
+                    let held = check.map.row(s);
+                    if held == id {
+                        continue;
+                    }
+                    if gone(held) {
+                        check.map.set(s, id, 0, 0);
+                    } else if (0..k).any(|c| data.value(held, k, c) != data.value(id, k, c)) {
+                        broken = true;
+                        break;
+                    }
+                }
+                Err(s) => check.map.set(s, id, 0, 0),
+            }
+        }
+        if broken {
+            let c = self.keyed.remove(i);
+            self.broke.push(c.cols);
+        }
+    }
     /// Adds a row (of the next wave, its delta) unless it is there.
     fn push(&mut self, row: &[i64]) -> bool {
+        let from = self.n;
+        let new = self.push_row(row);
+        if new && !self.keyed.is_empty() {
+            self.check_keys(from);
+        }
+        new
+    }
+    fn push_row(&mut self, row: &[i64]) -> bool {
         // A dead row derived again is a new row (its old id stays dead).
         if self.contains(row) { return false; }
         let k = self.k;
@@ -831,7 +949,17 @@ impl Rel {
     /// (`Fresh::settle`), so the dedup test reads each of the first order's runs once, in order, not row by row
     /// (decision 0112). `pend`: the rows stay in no order past this wave's end (a gate's relation, its delta set
     /// later), so they are also put in `pending` for the dedup tests until then. Whether any was new.
-    fn push_fresh(&mut self, mut f: Fresh, pend: bool) -> bool {
+    fn push_fresh(&mut self, f: Fresh, pend: bool) -> bool {
+        let (from, placed) = (self.n, !f.placed.is_empty());
+        let new = self.push_fresh_rows(f, pend);
+        // A declared key's check over the rows written (decision 0361 step 6). Rows the device placed are not read on
+        // the host (decision 0384: no host work on the Metal path): their key's check is the device's, left open.
+        if new && !self.keyed.is_empty() && !placed {
+            self.check_keys(from);
+        }
+        new
+    }
+    fn push_fresh_rows(&mut self, mut f: Fresh, pend: bool) -> bool {
         // Rows placed by the device (decision 0325 step 4) are taken as they lie: claimed in this relation's tail,
         // where the device wrote them past its rows (decision 0384 step 3), or their relation made its tail. Beside
         // rows derived here (which may repeat them) or into a lattice (which folds each), they are read with those
@@ -962,7 +1090,7 @@ impl Rel {
         self.pending = keys::RowSet::default();
     }
     /// The rows dead now and not when the statistics last counted them out taken out of them, and those revived
-    /// (a level's rows dead while checked, `Levels`) put back: a word of the dead marks at a time, so a relation with
+    /// put back: a word of the dead marks at a time, so a relation with
     /// none changed costs its marks' words.
     fn count_dead(&mut self) {
         let Some(stats) = &mut self.stats else { return };
@@ -1116,6 +1244,10 @@ impl Cands<'_> {
 /// `levels`: per row, the device fixpoint's round that made it (decision 0311), where its relation keeps levels; else
 /// empty.
 pub struct Fresh { data: Vec<i64>, n: usize, emitted: u64, settled: usize, breaks: Vec<u32>, lost: bool, levels: Vec<u32>,
+                   /// The relation's first order when its first row came, or as of its last settle: the order its
+                   /// settled rows are in and `breaks` were noted in. An order a relation reorders (`Rel::want` chains
+                   /// a new set into it) leaves them in no order known.
+                   order: Vec<usize>,
                    /// Rows written in place by another writer (the device, decision 0325 step 4), each lot distinct,
                    /// not held by the relation, and in no order: the relation takes them as they lie (`push_fresh`).
                    /// With each lot, its rows' rounds when the device's fixpoint made them (decision 0311's levels).
@@ -1199,6 +1331,9 @@ impl Fresh {
     #[inline]
     fn offer(&mut self, row: &[i64], rel: &Rel) {
         let k = rel.k;
+        if self.n == 0 {
+            self.order.clone_from(&rel.idx[0].cols);
+        }
         if !self.lost && self.n > self.settled && runs::known_beyond_runs() {
             let cols = &rel.idx[0].cols;
             if runs::cmp_vals(cols, runs::tagged(cols, k), &self.data[(self.n - 1) * k..self.n * k], row).is_gt() {
@@ -1219,6 +1354,15 @@ impl Fresh {
     /// Drops the rows `rel` holds and the repeats: the rest, distinct, sorted by `rel`'s first order (so a wave's rows
     /// are checked against it as one sorted batch, each run searched once in order, not row by row).
     fn settle(&mut self, rel: &Rel) {
+        // Settled and noted in an order the relation has since changed: sorted whole.
+        if self.order != rel.idx[0].cols {
+            if self.n > 0 {
+                self.settled = 0;
+                self.lost = true;
+                self.breaks.clear();
+            }
+            self.order.clone_from(&rel.idx[0].cols);
+        }
         let (k, n, settled) = (rel.k, self.n, self.settled);
         if settled == n {
             return;
@@ -1290,6 +1434,14 @@ impl Fresh {
             return;
         }
         debug_assert_eq!(o.settled, o.n, "a morsel's rows are settled");
+        if self.n == 0 {
+            self.order = o.order.clone();
+        } else if o.order != self.order {
+            // Settled in another order than these: none of them is in a known order.
+            self.settled = 0;
+            self.lost = true;
+            self.breaks.clear();
+        }
         if !self.lost && self.n > self.settled {
             self.breaks.push(self.n as u32);
             if self.breaks.len() * IN_ORDER > self.n - self.settled + o.n + IN_ORDER * IN_ORDER {
@@ -1327,7 +1479,7 @@ enum Body { Sql(String), Join(JoinRule), Unplanned }
 /// `full`: its head reached the width cap under `RERAIL_WIDEST=cut` (decision 0462): it derives no more this run.
 struct ProbeRule { head: usize, delta: usize, body: Body, whole: Option<JoinRule>, wkey: Option<Arc<JoinSpec>>, budget: std::cell::Cell<Option<u64>>, full: std::cell::Cell<bool> }
 
-pub struct Store { pub rels: Vec<Rel>, syms: Arc<RwLock<Interner>> }
+pub struct Store { pub rels: Vec<Rel>, syms: Arc<Symbols> }
 /// `seeded`: the seed joins have run (in the first wave). `write`: at the fixpoint, insert the new rows into the
 /// relations' tables (else they stay native, in `DERIVED`, until `set_fixpoint_materialize`).
 /// `requests`: relations whose new rows the caller answers (`pending`, `add`), each with the rows answered so far.
@@ -2000,6 +2152,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
                 let lattice = super::lattice(name).map_err(|e| err(format!("lattice {name}: {e}")))?;
                 rels.get_mut(*rel).ok_or_else(|| err(format!("lattice: no relation {rel}")))?.set_lattice(name, *keys, lattice, *widen)?;
             }
+            Line::Key { rel, cols } => rels.get_mut(*rel).ok_or_else(|| err(format!("key: no relation {rel}")))?.set_key(cols.clone())?,
             Line::Seed { head, join } => {
                 let j = { let _j = crate::code_rule_dsl::logic::profile::span(|| "open: joins".into()); join_rule_with(conn, join, &mut syms, !device_wanted)? };
                 if device_wanted { seed_specs.push((probes.len(), join.clone())); }
@@ -2157,7 +2310,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
             }
         }
         for (r, keep) in rels.iter_mut().zip(keep) {
-            if !keep { r.leveled = false; r.level = Vec::new(); }
+            if !keep { r.leveled = false; r.level = BlockVec::new(); }
         }
     }
     // Rows this run pushes go above every kept row's level in the component (`Rel::level`).
@@ -3029,6 +3182,16 @@ pub fn step_counts(conn: impl Scoped, name: &str) -> Result<Vec<Vec<(i64, i64)>>
     }).collect())
 }
 
+/// The declared keys (`key` lines, decision 0361 step 6) a second row broke in component `name`'s relations since the
+/// last call: each relation's place in the spec and the key's columns. Taken: each is reported once.
+pub fn key_breaks(conn: impl Scoped, name: &str) -> Result<Vec<(usize, Vec<usize>)>> {
+    let conn = conn.db();
+    let comp = component(conn, name)?;
+    let comp = comp.lock().unwrap();
+    let mut store = comp.store.write().unwrap();
+    Ok(store.rels.iter_mut().enumerate().flat_map(|(i, r)| std::mem::take(&mut r.broke).into_iter().map(move |c| (i, c))).collect())
+}
+
 /// The maintain mode's lines of component `name` (decision 0364 stage 3): its removal joins, its checked adds and its
 /// rechecks, each in spec order, with each one's steps' (in, out) binding counts by plan step since the last call (as
 /// `step_counts`'s); the counts restart. Their work, for the next run's planning budget (Q208).
@@ -3600,7 +3763,7 @@ unsafe impl VTabCursor for RelCursor {
 // An input relation is read once per process (`INPUTS`) with a hash index per key-column set, built on first use.
 // T's `near`/`down` steps (ancestor climbs over a loaded tape) are not kept: tree axes run in the transducer.
 
-/// `@dot(a, b)` (`core.rr`): `a.b`, and `b` when `a` is "".
+/// `@dot(a, b)` (`core.rerail`): `a.b`, and `b` when `a` is "".
 /// `cat(a, b)` as a rule's head computes it, with `conn`'s symbols (the recursive-maintenance spike's evaluator).
 pub fn cat_symbols(conn: &Connection, a: i64, b: i64) -> i64 {
     let syms = symbols(conn).expect("the connection's symbols");
@@ -3734,13 +3897,18 @@ pub struct InRel { pub k: usize, n: usize, rows: Rows, pub view: Option<View>, b
                    /// Its row ranges known to be in an order already (decision 0180): its relation's, when moved.
                    sorted: runs::Sorted,
                    /// Its columns' statistics and its orders' key sets, as its relation had them (`Rel`).
-                   sketches: Vec<Sketch>, serves: Vec<Vec<Vec<usize>>>, pub dead: Shared<u64>, pub ndead: usize, summaries: scalars::Pool,
+                   sketches: Vec<Sketch>, serves: Vec<Vec<Vec<usize>>>,
+                   /// Its dead rows (bit `id`): read in its block, which its block relation keeps (decision 0478 step 5d;
+                   /// `BlockVec::shared`), unless they were held in another block.
+                   pub dead: BlockVec<u64>, pub ndead: usize, summaries: scalars::Pool,
                    /// Each column's statistics (`syntax::measured`), measured when first asked: a kept relation's rows
                    /// do not change, so a session's later runs read them, not measure them again (0094 §4).
-                   measured: std::sync::OnceLock<Vec<[i64; 4]>>,
+                   /// In a block (decision 0478 step 6).
+                   measured: std::sync::OnceLock<BlockVec<[i64; 4]>>,
                    /// Rows per value of the columns the rules test by constants (`Source::value_counts`), counted when
                    /// first asked, a column at a time, for the same reason.
-                   counted: Mutex<HashMap<usize, HashMap<i64, i64>>>,
+                   /// Each a column's (value, rows), sorted by value, in a block (decision 0478 step 6).
+                   counted: Mutex<Vec<(usize, BlockVec<[i64; 2]>)>>,
 
                    /// Its count tables by key columns (decision 0098 §1, `table`), built when a count step's walks have
                    /// cost as much, or ahead in a level's device wave; shared by every step that counts it so.
@@ -3752,7 +3920,8 @@ pub struct InRel { pub k: usize, n: usize, rows: Rows, pub view: Option<View>, b
                    /// Its id for the run: the executor keeps what a lane built from it by this (decision 0100 §4).
                    uid: level::Uid,
                    /// Each row's level, when the native engine derived it (`Rel::level`); empty otherwise.
-                   level: Shared<u32>,
+                   /// In a block (decision 0478 R5).
+                   level: BlockVec<u32>,
                    /// Its statistics, kept as its relation's rows came and went (`Rel::stats`).
                    stats: Option<KeptStats>,
                    /// A view of an input's columns read into flat rows (`hold_view`, Q37): made again in less than
@@ -3769,7 +3938,15 @@ pub struct InRel { pub k: usize, n: usize, rows: Rows, pub view: Option<View>, b
 /// the rows themselves where they are runs ascending in the column that do not overlap (`runs`: each run's first
 /// value and its rows, sorted by that value; a probe finds its run, then its row, by two binary searches).
 #[derive(Clone)]
-pub struct Keyed { col: usize, runs: Vec<(i64, u32, u32)>, src: Option<(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, usize)> }
+pub struct Keyed { col: usize, runs: Arc<BlockVec<KeyRun>>, src: Option<(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, usize)> }
+rerail_blocks::structure! {
+    /// A run of a keyed column (`Keyed`): its first value, and its rows `start..end`, in a block (decision 0478 step 6).
+    pub struct KeyRun {
+        pub first: i64,
+        pub start: u32,
+        pub end: u32,
+    }
+}
 impl Keyed {
     /// Column `c` of `n` rows of `k` values (`flat`) as such runs, if its values are a key in them: each maximal run
     /// that ascends strictly, sorted by first value, and each run's last value under the next one's first. `None`
@@ -3792,7 +3969,12 @@ impl Keyed {
             }
         }
         runs.sort_unstable_by_key(|r| r.0);
-        runs.windows(2).all(|w| at(w[0].2 as usize - 1) < w[1].0).then_some(Keyed { col: c, runs, src: None })
+        if !runs.windows(2).all(|w| at(w[0].2 as usize - 1) < w[1].0) {
+            return None;
+        }
+        // Written once in a block (decision 0478 step 6): its probes read it there.
+        let runs = BlockVec::from_iter_in(None, runs.into_iter().map(|(first, start, end)| KeyRun { first, start, end }));
+        Some(Keyed { col: c, runs: Arc::new(runs), src: None })
     }
 }
 /// A base input read in place: the bound vtab source's columns `cols`, at its rows `ids` (all rows when `None`, the
@@ -3958,7 +4140,7 @@ impl<'a> RowRef<'a> {
 /// when first probed (`ordered`: printed or not, decision 0186), so an order no probe reaches costs nothing.
 /// Over a relation whose key column `cols[lead]` ascends over its rows (`InRel::keyed`), a probe is that column's
 /// binary search, at most one row, every other key checked by the step (`keyed`): nothing is built.
-pub struct Csr { cols: Vec<usize>, table: HashTable<(u32, u32, u32)>, ids: Vec<u32>, source: bool, sorted: bool, chain: Option<usize>, lead: usize, composite: bool, keyed: bool, ordered: Option<bool>, order: OnceLock<Index>,
+pub struct Csr { cols: Vec<usize>, source: bool, sorted: bool, chain: Option<usize>, lead: usize, composite: bool, keyed: bool, ordered: Option<bool>, order: OnceLock<Index>,
     /// A derived input's order (`ordered`) for a ranged probe (`Ranged`): the key's columns, then this one, so a key's
     /// rows are in its order and a range of it is found by searching (`Found::within`).
     then: Option<usize>,
@@ -3994,92 +4176,58 @@ impl Csr {
                 if env_set!("RERAIL_SPIKE_INDEX") {
                     eprintln!("O125 order made took {:.3} ms rows={} cols={:?} of {} viewed={}", (thread_cpu() - c0) * 1e3, rel.len(), self.cols, rel.name.get().map_or("?", String::as_str), rel.viewed);
                 }
-                order
+                // Into the directory of the block that holds the relation's last rows, as a frozen relation's orders
+                // (decision 0478 step 5e): this keeps a handle to it.
+                in_block_orders(vec![order], &rel.rows, rel.k, rel.n).pop().expect("the order, in its block or as it was")
             }))),
             None => self.chain.map(|i| &rel.chains[i]),
         }
     }
-    fn build(rel: &InRel, cols: &[usize]) -> Csr {
-        // Each row's key read once (a view's values go through its source), then hashed once.
-        let (k, n) = (cols.len(), rel.len());
-        let mut keys: Vec<i64> = Vec::with_capacity(n * k);
-        for id in 0..n {
-            let row = rel.at(id);
-            keys.extend(cols.iter().map(|&c| row.at(c)));
-        }
-        let key = |id: usize| &keys[id * k..][..k];
-        let hashes: Vec<u64> = (0..n).map(|id| hash_vals(key(id).iter().copied())).collect();
-        // First pass: each key's group (its entry's `.1`, for now) and size; each row's group.
-        let mut table: HashTable<(u32, u32, u32)> = HashTable::new();
-        let mut group = vec![0u32; n];
-        let mut groups = 0u32;
-        for id in 0..n {
-            match table.find_mut(hashes[id], |&(rep, _, _)| key(rep as usize) == key(id)) {
-                Some(e) => {
-                    e.2 += 1;
-                    group[id] = e.1;
-                }
-                None => {
-                    table.insert_unique(hashes[id], (id as u32, groups, 1), |&(rep, _, _)| hashes[rep as usize]);
-                    group[id] = groups;
-                    groups += 1;
-                }
-            }
-        }
-        // Each group's start; then the rows placed by their group, in row order.
-        let mut start = vec![0u32; groups as usize];
-        for e in table.iter() {
-            start[e.1 as usize] = e.2;
-        }
-        let mut at = 0;
-        for s in &mut start {
-            let len = *s;
-            *s = at;
-            at += len;
-        }
-        for e in table.iter_mut() {
-            e.1 = start[e.1 as usize];
-        }
-        let mut ids = vec![0u32; n];
-        for id in 0..n {
-            let g = &mut start[group[id] as usize];
-            ids[*g as usize] = id as u32;
-            *g += 1;
-        }
-        // A dead row (`Rel::based`) is in no key's run: each run keeps its live rows, in order.
-        if !rel.dead.is_empty() {
-            for e in table.iter_mut() {
-                let (s, l) = (e.1 as usize, e.2 as usize);
-                let mut w = s;
-                for r in s..s + l {
-                    if !is_dead(&rel.dead, ids[r]) {
-                        ids[w] = ids[r];
-                        w += 1;
-                    }
-                }
-                e.2 = (w - s) as u32;
-            }
-        }
-        Csr { cols: cols.to_vec(), table, ids, source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None }
-    }
     /// `key` holds the values of `cols`, in order. Its rows of the key; for an index in the block (`block`), its
     /// bucket's rows, a key's candidates, which the reader checks (`exact`).
     fn get<'a>(&'a self, rel: &InRel, key: &[i64]) -> &'a [u32] {
-        if let Some((ib, i)) = &self.block {
-            return ib.relation().group(*i, key.iter().fold(rerail_blocks::SEED, |h, &v| rerail_blocks::mix(h, v)));
-        }
-        self.table.find(hash_vals(key.iter().copied()), |&(rep, _, _)| self.cols.iter().zip(key).all(|(&c, &v)| rel.at(rep as usize).at(c) == v))
-            .map_or(&[], |&(_, start, len)| &self.ids[start as usize..][..len as usize])
+        let _ = rel;
+        // Its index is its block's (decision 0478 step 5e); without one (an empty view) no row has the key.
+        self.block.as_ref().map_or(&[], |(ib, i)| ib.relation().group(*i, key.iter().fold(rerail_blocks::SEED, |h, &v| rerail_blocks::mix(h, v))))
     }
 }
-/// A frozen relation's orders (`in_block_orders`): put in its block's directory; read in another relation's directory
-/// (a maintained relation's, `Rel::based`); kept as they were, their arrays in another block or the directory full.
-pub static ORDERS_KEPT: [std::sync::atomic::AtomicU64; 3] = [const { std::sync::atomic::AtomicU64::new(0) }; 3];
+
+
+/// A frozen relation's dead rows `dead` handed to the block relation that holds its last rows (decision 0478 step
+/// 5d: `Relation::adopt_dead`), and read there (borrowed: `BlockVec::shared`): its kills delta, the device's dead
+/// rows, reads the same words (`Relation::try_kills_own`). Left as they are when they lie in another block.
+fn in_block_dead(dead: BlockVec<u64>, rows: &Rows) -> BlockVec<u64> {
+    let Some(p) = rows.parts().last() else { return dead };
+    if dead.is_empty() || dead.is_shared() {
+        return dead;
+    }
+    let facts = p.facts();
+    match dead.into_chunk(facts) {
+        Ok(g) => {
+            let adopted = {
+                let _g = facts.ix.lock().unwrap_or_else(|e| e.into_inner());
+                // SAFETY: the chunk is the relation's dead rows, written, in its block; under the block's index lock, at
+                // its freeze.
+                unsafe { p.rel().adopt_dead(&facts.block, g.at, g.len, g.kept) }
+            };
+            run_counts().dead_kept[usize::from(!adopted)].fetch_add(1, AtomicOrdering::Relaxed);
+            // SAFETY: adopted, `p`'s relation keeps the words.
+            if adopted { unsafe { BlockVec::shared(p, g.at, g.len) } } else { BlockVec::from_chunk(facts, p.life(), g) }
+        }
+        Err(dead) => {
+            run_counts().dead_kept[1].fetch_add(1, AtomicOrdering::Relaxed);
+            dead
+        }
+    }
+}
+
+
 
 /// A frozen relation's orders `idx` (rows `rows`, `n` of `k` values) in its block (decision 0478 step 5b, the user's
 /// choice): each that holds every row, merged into one run, its arrays handed to the directory of the relation that
 /// holds its last rows (`Relation::try_add_order`), where any reader finds it by its key, the device too. What is
-/// returned are handles to them, which read them there (`Run::in_block`) and keep that relation. An order read in
+/// returned are handles to them, which read them there (`Run::in_block`) and keep that relation. A key is at most
+/// the block's `MAX_KEY` (8) columns: a wider order stays as it was. An order read in
 /// an older relation's directory already (a maintained relation's, `Rel::based`) stays read there. One whose arrays
 /// lie in another block, over fewer rows, or whose directory is full, stays as it was, in its blocks.
 fn in_block_orders(idx: Vec<Index>, rows: &Rows, k: usize, n: usize) -> Vec<Index> {
@@ -4087,21 +4235,26 @@ fn in_block_orders(idx: Vec<Index>, rows: &Rows, k: usize, n: usize) -> Vec<Inde
     let part = ib.part.as_ref().expect("a part's relation");
     let mut out = Vec::with_capacity(idx.len());
     for ix in idx {
-        if ix.rows() != n || ix.cols.is_empty() || ix.cols.len() > MAX_KEY {
-            ORDERS_KEPT[2].fetch_add(1, AtomicOrdering::Relaxed);
+        if ix.rows() != n || ix.cols.is_empty() || ix.cols.len() > rerail_blocks::relation::MAX_KEY {
+            run_counts().orders_kept[2].fetch_add(1, AtomicOrdering::Relaxed);
             out.push(ix);
             continue;
         }
         if ix.runs() == 1 && ix.borrowed() {
-            ORDERS_KEPT[1].fetch_add(1, AtomicOrdering::Relaxed);
+            run_counts().orders_kept[1].fetch_add(1, AtomicOrdering::Relaxed);
             out.push(ix);
             continue;
         }
-        let Some((cols, printed, run)) = ix.into_one(rows, k) else { continue };
+        if ix.runs() == 0 {
+            // No rows: nothing to keep in a block.
+            out.push(ix);
+            continue;
+        }
+        let Some((cols, printed, run)) = ix.into_one(rows, k) else { unreachable!("an order of runs") };
         let given = match run.give(&ib.facts) {
             Ok(given) => given,
             Err(run) => {
-                ORDERS_KEPT[2].fetch_add(1, AtomicOrdering::Relaxed);
+                run_counts().orders_kept[2].fetch_add(1, AtomicOrdering::Relaxed);
                 out.push(Index::of_run(cols, printed, run));
                 continue;
             }
@@ -4115,12 +4268,12 @@ fn in_block_orders(idx: Vec<Index>, rows: &Rows, k: usize, n: usize) -> Vec<Inde
         match added {
             // SAFETY: order `i` was just built in `part`'s relation's directory, which `part` keeps.
             Some(i) => {
-                ORDERS_KEPT[0].fetch_add(1, AtomicOrdering::Relaxed);
+                run_counts().orders_kept[0].fetch_add(1, AtomicOrdering::Relaxed);
                 out.push(Index::of_run(cols, printed, unsafe { runs::Run::in_block(part, i) }));
             }
             None => {
                 // The directory is full: the order stays as it was, its chunks its own again.
-                ORDERS_KEPT[2].fetch_add(1, AtomicOrdering::Relaxed);
+                run_counts().orders_kept[2].fetch_add(1, AtomicOrdering::Relaxed);
                 out.push(Index::of_run(cols, printed, given.into_run(&ib.facts, part.life())));
             }
         }
@@ -4307,7 +4460,7 @@ pub fn hold_view_in_place(conn: impl Scoped, table: &str, src: Arc<dyn crate::co
     let k = types.len();
     debug_assert_eq!(cols.len(), k);
     let view = View { src, cols, ids: None, eqs: Vec::new() };
-    let rel = Arc::new(InRel { vers: Default::default(), viewed: true, keyed: None, k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Shared::default(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Shared::default(), stats: None });
+    let rel = Arc::new(InRel { vers: Default::default(), viewed: true, keyed: None, k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: BlockVec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: BlockVec::new(), stats: None });
     let _ = rel.name.set(table.to_owned());
     forgotten_on_close();
     on(&conn).derived.lock().insert(table.to_owned(), rel);
@@ -4325,7 +4478,7 @@ pub fn give_versions(conn: impl Scoped, table: &str, types: Vec<u8>, given: [(Ar
     let view = |(src, cols): (Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Option<Vec<usize>>)| -> Arc<InRel> {
         let viewed = cols.is_some();
         let view = View { src, cols: cols.unwrap_or_else(|| (0..k).collect()), ids: None, eqs: Vec::new() };
-        Arc::new(InRel { vers: Default::default(), viewed, keyed: None, k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types: types.clone(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Shared::default(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Shared::default(), stats: None })
+        Arc::new(InRel { vers: Default::default(), viewed, keyed: None, k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types: types.clone(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: BlockVec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: BlockVec::new(), stats: None })
     };
     forgotten_on_close();
     on(&conn).given.lock().insert(table.to_owned(), given.map(view));
@@ -4389,7 +4542,7 @@ pub fn hold_view(conn: impl Scoped, table: &str, src: Arc<dyn crate::code_rule_d
 /// repeats a value, a document's, is none).
 fn view_key(src: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: &[usize], flat: &[i64]) -> Option<Keyed> {
     match (0..cols.len()).find(|&c| src.keys_rows(cols[c])) {
-        Some(c) => Some(Keyed { col: c, runs: Vec::new(), src: Some((Arc::clone(src), cols[c])) }),
+        Some(c) => Some(Keyed { col: c, runs: Arc::new(BlockVec::new()), src: Some((Arc::clone(src), cols[c])) }),
         None => (0..cols.len()).find_map(|c| Keyed::of(flat, cols.len(), c)),
     }
 }
@@ -4478,7 +4631,7 @@ impl InRel {
     /// A relation of `rows` (flat, `types.len()` values each) an earlier run kept (decision 0077 §4), in no table.
     pub fn kept(types: Vec<u8>, rows: Vec<i64>, n: usize) -> Arc<InRel> {
         let k = types.len();
-        Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n, rows: Rows::frozen(k, rows, n), view: None, base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Shared::default(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Shared::default(), stats: None })
+        Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n, rows: Rows::frozen(k, rows, n), view: None, base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: BlockVec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: BlockVec::new(), stats: None })
     }
     /// Its columns' value types (the engine's codes).
     pub fn types(&self) -> &[u8] {
@@ -4489,13 +4642,13 @@ impl InRel {
         let k = types.len();
         let n = rows.len();
         let flat: Vec<i64> = rows.iter().flat_map(|r| r.iter().copied()).collect();
-        Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n, rows: Rows::frozen(k, flat, n), view: None, base: false, types, stored: n, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Shared::default(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Shared::default(), stats: None })
+        Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n, rows: Rows::frozen(k, flat, n), view: None, base: false, types, stored: n, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: BlockVec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: BlockVec::new(), stats: None })
     }
     /// A relation of `n` rows, flat (`types.len()` values each), as a stored frame gives them (t33 K4): read as a
     /// relation the run derived.
     pub fn from_flat(rows: Vec<i64>, n: usize, types: Vec<u8>) -> Arc<InRel> {
         let k = types.len();
-        Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n, rows: Rows::frozen(k, rows, n), view: None, base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Shared::default(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Shared::default(), stats: None })
+        Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n, rows: Rows::frozen(k, rows, n), view: None, base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: BlockVec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: BlockVec::new(), stats: None })
     }
     /// `from_flat`'s relation with each row's level (decision 0090), as a frame of its levels gives them: `None` when
     /// they are not one per row.
@@ -4504,7 +4657,8 @@ impl InRel {
             return None;
         }
         let mut rel = Arc::into_inner(Self::from_flat(rows, n, types)).expect("a new relation");
-        rel.level = level.into();
+        // Each row's level, written once in its rows' block (decision 0478 R5).
+        rel.level = BlockVec::from_iter_in(rel.rows.home().as_ref(), level);
         Some(Arc::new(rel))
     }
     /// Its live rows' levels, in `live_rows`' order: `None` unless every row has one (`has_levels`).
@@ -4517,10 +4671,12 @@ impl InRel {
     /// A relation of `rows` (`n` of them, `types.len()` values each) gathered where they lie (`Rows::append_part`),
     /// rows `dead` marks not among them: an export the chunks handed on, read in place.
     pub fn held(rows: Rows, n: usize, types: Vec<u8>, dead: Vec<u64>) -> Arc<InRel> {
-        Self::held_shared(rows, n, types, dead.into(), Shared::default())
+        // Its dead rows written once in its rows' block (decision 0478 step 5d).
+        let dead = BlockVec::from_iter_in(rows.home().as_ref(), dead);
+        Self::held_shared(rows, n, types, dead, BlockVec::new())
     }
     /// `held`, its dead bits and levels a kept block's, read where they lie (decision 0401 F3).
-    pub fn held_shared(rows: Rows, n: usize, types: Vec<u8>, dead: Shared<u64>, level: Shared<u32>) -> Arc<InRel> {
+    pub fn held_shared(rows: Rows, n: usize, types: Vec<u8>, dead: BlockVec<u64>, level: BlockVec<u32>) -> Arc<InRel> {
         let k = types.len();
         debug_assert!(level.is_empty() || level.len() == n, "{} levels of {n} rows", level.len());
         let ndead = dead.iter().map(|w| w.count_ones() as usize).sum();
@@ -4960,7 +5116,7 @@ impl InRel {
     pub fn index_detail(&self) -> (usize, usize, Vec<(Vec<usize>, usize, usize)>, Vec<(Vec<usize>, usize)>) {
         let set = self.sketches.iter().map(Sketch::bytes).sum::<usize>() + self.dead.capacity() * 8;
         let chains = self.chains.iter().map(|ix| (ix.cols.clone(), ix.runs(), ix.bytes())).collect();
-        let csr = self.idx.lock().map(|m| m.values().map(|c| (c.cols.clone(), c.ids.capacity() * 4 + c.table.capacity() * (12 + 1) + c.order.get().map_or(0, Index::bytes))).collect()).unwrap_or_default();
+        let csr = self.idx.lock().map(|m| m.values().map(|c| (c.cols.clone(), c.order.get().map_or(0, Index::bytes))).collect()).unwrap_or_default();
         (self.k, set, chains, csr)
     }
     pub fn held_bytes(&self) -> (usize, usize, usize) {
@@ -5115,22 +5271,37 @@ impl crate::code_rule_dsl::facts::vtab::Source for Derived {
         if self.2.is_none() && let Some(src) = self.0.held_source() { return src.value_counts(wanted); }
         let mut counted = self.0.counted.lock().unwrap();
         for &(c, _) in wanted {
-            if c < self.0.k && !counted.contains_key(&c) {
-                let mut counts: HashMap<i64, i64> = HashMap::default();
-                for row in 0..self.len() {
-                    *counts.entry(self.value(row, c)).or_default() += 1;
+            if c < self.0.k && !counted.iter().any(|(x, _)| *x == c) {
+                // The rows ordered by their value, read where it lies, then each value's rows: the counts written once
+                // in a block (decision 0478 step 6). No value is copied.
+                let mut ids: Vec<u32> = (0..self.len() as u32).collect();
+                ids.sort_unstable_by_key(|&r| self.value(r as usize, c));
+                let home = self.0.rows.home();
+                let mut counts = BlockVec::with_capacity_in(home.as_ref(), 0);
+                let mut at = 0;
+                while at < ids.len() {
+                    let v = self.value(ids[at] as usize, c);
+                    let end = at + ids[at..].partition_point(|&r| self.value(r as usize, c) == v);
+                    counts.push([v, (end - at) as i64]);
+                    at = end;
                 }
-                counted.insert(c, counts);
+                counted.push((c, counts));
             }
         }
-        Some(wanted.iter().map(|(c, v)| counted.get(c).and_then(|m| m.get(v)).copied().unwrap_or(0)).collect())
+        let count = |c: usize, v: i64| {
+            let m = &counted.iter().find(|(x, _)| *x == c)?.1;
+            m.binary_search_by_key(&v, |e| e[0]).ok().map(|i| m[i][1])
+        };
+        Some(wanted.iter().map(|&(c, v)| count(c, v).unwrap_or(0)).collect())
     }
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         if let Some(src) = self.0.held_source() && let Some(s) = src.statistics() {
             return Some(self.columns().into_iter().zip(s).map(|(n, (_, a, b, c, d))| (n, a, b, c, d)).collect());
         }
         let m = self.0.measured.get_or_init(|| {
-            self.0.posted().unwrap_or_else(|| crate::code_rule_dsl::facts::vtab::syntax::measured(self).into_iter().map(|(_, a, b, c, d)| [a, b, c, d]).collect())
+            let m: Vec<[i64; 4]> = self.0.posted().unwrap_or_else(|| crate::code_rule_dsl::facts::vtab::syntax::measured(self).into_iter().map(|(_, a, b, c, d)| [a, b, c, d]).collect());
+            // Written once in a block (decision 0478 step 6).
+            BlockVec::from_iter_in(self.0.rows.home().as_ref(), m)
         });
         Some(self.columns().into_iter().zip(m).map(|(n, s)| (n, s[0], s[1], s[2], s[3])).collect())
     }
@@ -5211,7 +5382,7 @@ unsafe impl VTabCursor for DerivedCursor {
 pub struct KeptStats(crate::code_rule_dsl::logic::plan::statkeep::RelStats);
 /// A relation as `InRel::mark` saw it: enough to find its change later (`delta_since_mark`).
 #[derive(Clone, Debug)]
-pub struct RelMark { at: usize, n: usize, k: usize, dead: Vec<u64> }
+pub struct RelMark { at: usize, n: usize, k: usize, dead: BlockVec<u64> }
 
 impl KeptStats {
     fn of(k: usize) -> KeptStats {
@@ -5236,8 +5407,14 @@ impl InRel {
         }
         let rows = rel.data.freeze(rel.n);
         let chains = in_block_orders(rel.idx, &rows, rel.k, rel.n);
-        InRel { vers: Default::default(), viewed: false, keyed: None, k: rel.k, n: rel.n, rows, view: None, base: false, types: rel.types, stored: rel.stored, idx: Mutex::new(HashMap::default()), chains, sorted: rel.sorted,
-                sketches: rel.sketches, serves: rel.serves, dead: rel.dead.into(), ndead: rel.ndead, summaries: rel.summaries, measured: Default::default(), counted: Default::default(), tables: Default::default(), name: std::sync::OnceLock::from(rel.table), from: rel.from, uid: Default::default(), level: rel.level.into(), stats: rel.stats }
+        // Its known-sorted ranges in its block too (decision 0478 step 5c).
+        let mut sorted = rel.sorted;
+        if let Some(p) = rows.parts().last() {
+            run_counts().sorted_kept[usize::from(!sorted.into_block(p))].fetch_add(1, AtomicOrdering::Relaxed);
+        }
+        let dead = in_block_dead(rel.dead, &rows);
+        InRel { vers: Default::default(), viewed: false, keyed: None, k: rel.k, n: rel.n, rows, view: None, base: false, types: rel.types, stored: rel.stored, idx: Mutex::new(HashMap::default()), chains, sorted,
+                sketches: rel.sketches, serves: rel.serves, dead, ndead: rel.ndead, summaries: rel.summaries, measured: Default::default(), counted: Default::default(), tables: Default::default(), name: std::sync::OnceLock::from(rel.table), from: rel.from, uid: Default::default(), level: rel.level, stats: rel.stats }
     }
     /// `rel`'s live rows in canonical order (its columns in turn, as the keep orders a kept relation, decision 0456
     /// K3): one sort here, so the keep sorts nothing and its readers probe its leading columns as a range of rows in
@@ -5256,8 +5433,14 @@ impl InRel {
         let mut sorted = runs::Sorted::default();
         let lead: Vec<usize> = (0..k.saturating_sub(1).max(1)).collect();
         sorted.note(&flat[..], k, &lead, 0, n as u32);
-        InRel { vers: Default::default(), viewed: false, keyed: None, k, n, rows: Rows::frozen(k, flat, n), view: None, base: false, types: rel.types, stored: rel.stored, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted,
-                sketches: rel.sketches, serves: rel.serves, dead: Shared::default(), ndead: 0, summaries: rel.summaries, measured: Default::default(), counted: Default::default(), tables: Default::default(), name: std::sync::OnceLock::from(rel.table), from: None, uid: Default::default(), level: level.into(), stats: rel.stats }
+        let rows = Rows::frozen(k, flat, n);
+        // Its known-sorted ranges and its levels in its block too (decision 0478 steps 5c, R5).
+        if let Some(p) = rows.parts().last() {
+            run_counts().sorted_kept[usize::from(!sorted.into_block(p))].fetch_add(1, AtomicOrdering::Relaxed);
+        }
+        let level = BlockVec::from_iter_in(rows.home().as_ref(), level);
+        InRel { vers: Default::default(), viewed: false, keyed: None, k, n, rows, view: None, base: false, types: rel.types, stored: rel.stored, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted,
+                sketches: rel.sketches, serves: rel.serves, dead: BlockVec::new(), ndead: 0, summaries: rel.summaries, measured: Default::default(), counted: Default::default(), tables: Default::default(), name: std::sync::OnceLock::from(rel.table), from: None, uid: Default::default(), level, stats: rel.stats }
     }
     /// What `delta_since_mark` needs of this relation later, without holding it: its address, rows and dead rows.
     /// The rows whose columns `cols` hold `key`, each given to `f` (a row: its value of a column), read as a join
@@ -5387,7 +5570,7 @@ impl InRel {
     }
 
     pub fn mark(&self) -> RelMark {
-        RelMark { at: self as *const InRel as usize, n: self.len(), k: self.k, dead: self.dead.to_vec() }
+        RelMark { at: self as *const InRel as usize, n: self.len(), k: self.k, dead: self.dead.clone() }
     }
     /// Its rows' change from `old`, the kept relation it started as (`Rel::based`), as `(added, removed)` row-major:
     /// the rows it added after `old`'s, and `old`'s live rows it marked dead. A row deleted and derived again is in
@@ -5435,9 +5618,9 @@ impl InRel {
             None => return None,
         };
         if !levels {
-            rel.level.clear();
+            rel.level = BlockVec::new();
         } else if rel.level.len() != rel.n {
-            rel.level = vec![0; rel.n];
+            rel.level = BlockVec::from_iter_in(rel.data.home().as_ref(), std::iter::repeat_n(0, rel.n));
         }
         let start = rel.n;
         let k = new.k;
@@ -5480,7 +5663,7 @@ impl InRel {
         if self.k != old.k || self.view.is_some() {
             return None;
         }
-        if self as *const InRel as usize == old.at && self.n == old.n && *self.dead == *old.dead {
+        if self as *const InRel as usize == old.at && self.n == old.n && self.dead[..] == old.dead[..] {
             return Some(DeltaIds { rel: self, gone: Gone::Ids(Vec::new()), added: Vec::new() });
         }
         self.ids_from(old.at, old.n)
@@ -5621,7 +5804,7 @@ impl InRel {
     }
     /// No rows, `k` columns.
     fn empty(k: usize) -> InRel {
-        InRel { vers: Default::default(), viewed: false, keyed: None, k, n: 0, rows: Rows::new(k), view: None, base: false, types: vec![b'i'; k], stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Shared::default(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Shared::default(), stats: None }
+        InRel { vers: Default::default(), viewed: false, keyed: None, k, n: 0, rows: Rows::new(k), view: None, base: false, types: vec![b'i'; k], stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: BlockVec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: BlockVec::new(), stats: None }
     }
     /// Rows, levels held, and whether it is a view (`RERAIL_LEVELS_WHY`).
     pub fn levels_shape(&self) -> (usize, usize, bool) {
@@ -5657,7 +5840,7 @@ impl InRel {
     /// rows, or compacted with rows gone (those are in no row of it).
     pub fn start(&self) -> Option<(usize, &[u64])> {
         match &self.from {
-            Some(Origin::Based { n, dead, .. }) if self.view.is_none() => Some((*n, dead.as_slice())),
+            Some(Origin::Based { n, dead, .. }) if self.view.is_none() => Some((*n, &dead[..])),
             // Compacted with no rows gone (the maintain mode's start, decision 0364): its first `kept` rows are the
             // kept relation's live ones, every one live at the start.
             Some(Origin::Compacted { kept, removed, .. }) if self.view.is_none() && removed.is_empty() => Some((*kept, &[])),
@@ -5701,7 +5884,8 @@ impl InRel {
                 // Its rows' levels as they were (a recursive stratum's, decision 0364): a level is never lowered in
                 // place, so the first `n0` are the start's.
                 if self.has_levels() {
-                    Arc::get_mut(&mut old).expect("just made").level = self.level[..n0].to_vec().into();
+                    let home = self.rows.home();
+                    Arc::get_mut(&mut old).expect("just made").level = BlockVec::from_iter_in(home.as_ref(), self.level[..n0].iter().copied());
                 }
                 Some(old)
             }
@@ -5714,7 +5898,7 @@ impl InRel {
                 let every = InRel::held(self.rows.shared(self.n), self.n, self.types.clone(), Vec::new());
                 let view = View { src: every.source(names), cols: (0..k).collect(), ids: Some(ids), eqs: Vec::new() };
                 let n = view.ids.as_ref().map_or(0, Vec::len);
-                Some(Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n, rows: Rows::new(k), view: Some(view), base: false, types: self.types.clone(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Shared::default(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Shared::default(), stats: None }))
+                Some(Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n, rows: Rows::new(k), view: Some(view), base: false, types: self.types.clone(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: BlockVec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: BlockVec::new(), stats: None }))
             }
         }
     }
@@ -5724,7 +5908,7 @@ impl InRel {
         let k = names.len();
         let n = ids.len();
         let view = View { src, cols: (0..k).collect(), ids: Some(ids), eqs: Vec::new() };
-        let rel = Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n, rows: Rows::new(k), view: Some(view), base: false, types: vec![b'i'; k], stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Shared::default(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Shared::default(), stats: None });
+        let rel = Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n, rows: Rows::new(k), view: Some(view), base: false, types: vec![b'i'; k], stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: BlockVec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: BlockVec::new(), stats: None });
         rel.source(names)
     }
     /// A relation read in place from every row of `src`, its columns in order (`hold_source`).
@@ -5734,7 +5918,7 @@ impl InRel {
         // step's probes is not sorted again (decision 0187).
         let sorted = src.order().map_or_else(runs::Sorted::default, |cols| runs::Sorted::whole(src.len() as u32, k, &cols));
         let view = View { src, cols: (0..k).collect(), ids: None, eqs: Vec::new() };
-        Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted, sketches: Vec::new(), serves: Vec::new(), dead: Shared::default(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Shared::default(), stats: None })
+        Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted, sketches: Vec::new(), serves: Vec::new(), dead: BlockVec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: BlockVec::new(), stats: None })
     }
     pub fn in_block(&self) -> Option<InBlock> {
         if self.view.is_some() || self.k == 0 {
@@ -5765,8 +5949,8 @@ impl InRel {
             return match src.key_row(*sc, v) { Some(r) => r as u32..r as u32 + 1, None => 0..0 };
         }
         let (k, c) = (self.k, ky.col);
-        let i = ky.runs.partition_point(|r| r.0 <= v);
-        let Some(&(_, start, end)) = i.checked_sub(1).map(|i| &ky.runs[i]) else { return 0..0 };
+        let i = ky.runs.partition_point(|r| r.first <= v);
+        let Some((start, end)) = i.checked_sub(1).map(|i| (ky.runs[i].start, ky.runs[i].end)) else { return 0..0 };
         let (mut lo, mut hi) = (start, end);
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
@@ -5896,7 +6080,7 @@ impl InRel {
         let mut idx = self.idx.lock().unwrap();
         idx.entry(mask).or_insert_with(|| {
             run_counts().orders_opened.fetch_add(1, AtomicOrdering::Relaxed);
-            Arc::new(Csr { cols: cols.to_vec(), table: HashTable::new(), ids: Vec::new(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: Some(false), order: OnceLock::new(), block: None, then: Some(c) })
+            Arc::new(Csr { cols: cols.to_vec(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: Some(false), order: OnceLock::new(), block: None, then: Some(c) })
         }).clone()
     }
     /// Its rows' index on `cols` in their block (decision 0478 step 5, R2): the one the device finds and builds, over
@@ -5911,6 +6095,26 @@ impl InRel {
         let i = if build { ib.own_index(&key) } else { ib.found_index(&key) }?;
         Some((ib, i))
     }
+    /// An index on `cols` of this view's rows in a block: a home of no columns and the view's row count (as the
+    /// device's view home, `Part::for_device`), its index built from each row's key read through the view. Dead rows
+    /// are in it, as in every block index; a probe skips them by their bits.
+    fn view_index(&self, cols: &[usize]) -> Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)> {
+        if self.view.is_none() || cols.is_empty() || self.len() == 0 {
+            return None;
+        }
+        assert!(cols.len() <= rerail_blocks::relation::MAX_KEY, "a view's key of {} columns", cols.len());
+        let n = self.len();
+        let home = crate::code_rule_dsl::facts::rows::Part::for_device(0, n).unwrap_or_else(|e| panic!("a view's index home of {n} rows: {e}"));
+        let ib = home.in_block(n as u32);
+        let key: Vec<u16> = cols.iter().map(|&c| c as u16).collect();
+        let hash = |i: u32| {
+            let row = self.at(i as usize);
+            cols.iter().fold(rerail_blocks::SEED, |h, &c| rerail_blocks::mix(h, row.at(c)))
+        };
+        charge(Unit::IndexEntry, n as u64);
+        let i = ib.own_index_hashed(&key, &hash).expect("room for its one index");
+        Some((ib, i))
+    }
     fn index(&self, cols: &[usize]) -> Arc<Csr> {
         let mask = cols.iter().fold(0u64, |m, &c| m | 1 << c);
         let mut idx = self.idx.lock().unwrap();
@@ -5919,39 +6123,43 @@ impl InRel {
             let _index = crate::code_rule_dsl::logic::profile::span(move || (if base { "open: index of a base input" } else { "open: index of a derived input" }).into());
             let (t0, c0) = (Instant::now(), thread_cpu());
             // No key columns: the step reads every row, not an index.
-            let empty = |source, sorted| Csr { cols: cols.to_vec(), table: HashTable::new(), ids: Vec::new(), source, sorted, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None };
+            let path = |i: usize| { run_counts().index_paths[i].fetch_add(1, AtomicOrdering::Relaxed); };
+            let empty = |source, sorted| Csr { cols: cols.to_vec(), source, sorted, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None };
             let m = if cols.is_empty() {
-                empty(false, false)
+                path(0); empty(false, false)
             } else if let Some(b) = self.block_index(cols, false) {
+                path(1);
                 // An index in the relation's block, which the device or an earlier probe built (decision 0478 R2).
                 Csr { block: Some(b), ..empty(false, false) }
             } else if let Some(i) = self.chains.iter().position(|ix| ix.answers(cols)) {
+                path(2);
                 Csr { chain: Some(i), ..empty(false, false) }
             } else if let Some(lead) = self.keyed.as_ref().and_then(|ky| cols.iter().position(|&x| x == ky.col)) {
+                path(3);
                 Csr { keyed: true, lead, ..empty(false, false) }
             } else if let (Some(v), [c]) = (&self.view, cols) && v.ids.is_none() && v.eqs.is_empty() && v.src.sorts_rows(v.cols[*c]) {
-                empty(false, true)
+                path(4); empty(false, true)
             } else if let Some(v) = self.view.as_ref().filter(|v| v.ids.is_none() && v.eqs.is_empty())
                 && let Some((ib, i)) = v.src.own_index(&cols.iter().map(|&c| v.cols[c]).collect::<Vec<_>>())
             {
                 // A whole source held as one block relation to be probed so (`held`): its own index, found or
                 // built there and shared with the device (decision 0325 step 5), not a host table or a lookup a probe.
-                Csr { block: Some((ib, i)), ..empty(false, false) }
+                path(5); Csr { block: Some((ib, i)), ..empty(false, false) }
             } else if let (Some(v), [c]) = (&self.view, cols) && v.src.indexed(v.cols[*c]) && !v.src.sorts_rows(v.cols[*c]) {
                 // (A source's lookup allocates each probe's rows; over a sorted source a filtered view builds its own.)
-                empty(true, false)
+                path(6); empty(true, false)
             } else if let Some(v) = &self.view && cols.len() > 1 && v.ids.is_none() && v.eqs.is_empty() && v.src.composite() {
                 // The source answers every key column at once (the reach index's bitmap test).
-                Csr { composite: true, ..empty(false, false) }
+                path(7); Csr { composite: true, ..empty(false, false) }
             } else if let Some((lead, sorted)) = self.lead(cols) {
                 // A key of several columns, one of them selective in the source's own index (a node column of
                 // `inside_<set>`, `node`, `name`): its candidates, checked against the other keys by the step, not a
                 // hash table of every row.
-                Csr { lead, ..empty(!sorted, sorted) }
+                path(8); Csr { lead, ..empty(!sorted, sorted) }
             } else if let Some((chain, lead)) = self.chain_lead(cols) {
                 // The same for a derived relation: one of its key columns' own chains, kept from the waves that made
                 // it, is selective, so no composite index is built.
-                Csr { chain: Some(chain), lead, ..empty(false, false) }
+                path(9); Csr { chain: Some(chain), lead, ..empty(false, false) }
             } else {
                 // `RERAIL_KEY_PRINTS` (measurement aids): `off` probes the sorted order by its rows, `hash` builds the hash
                 // table of before decision 0112's derived-input order.
@@ -5960,13 +6168,13 @@ impl InRel {
                 if let Some(b) = self.block_index(cols, true).filter(|_| mode == 0) {
                     // A derived relation's rows in their block: its index built there, the one the device finds
                     // (decision 0478 step 5), not an order or table of its own.
-                    Csr { block: Some(b), ..empty(false, false) }
+                    path(10); Csr { block: Some(b), ..empty(false, false) }
                 } else if self.view.is_none() && mode != 2 {
                     // A derived relation's rows are its own: a sorted order on the key columns (dead rows are in
                     // it, as in a kept chain; readers skip them). Its probes give whole keys, so it keeps a print a
                     // row and a probe reads prints, not rows (`runs::print_span`).
                     // It is made on its first probe (`Csr::runs`), unless `RERAIL_LAZY_ORDERS=off` (a measurement aid).
-                    let csr = Csr { ordered: Some(mode != 1), ..empty(false, false) };
+                    path(11); let csr = Csr { ordered: Some(mode != 1), ..empty(false, false) };
                     run_counts().orders_opened.fetch_add(1, AtomicOrdering::Relaxed);
                     if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_LAZY_ORDERS").is_ok_and(|v| v == "off")) { csr.runs(self); }
                     csr
@@ -5975,10 +6183,17 @@ impl InRel {
                     && let Some(i) = ib.own_index(&cols.iter().map(|&c| v.cols[c] as u16).collect::<Vec<_>>())
                 {
                     // A whole source in one block relation: that relation's own index, found or built there.
-                    Csr { block: Some((ib, i)), ..empty(false, false) }
+                    path(12); Csr { block: Some((ib, i)), ..empty(false, false) }
+                } else if let Some(b) = self.view_index(cols) {
+                    // A view's key read once a row, its index built in a home of its own in a block (decision 0478 step
+                    // 5e): the view's rows are the tape's, so the home holds none, only the index.
+                    path(13);
+                    Csr { block: Some(b), ..empty(false, false) }
                 } else {
-                    charge(Unit::IndexEntry, self.len() as u64);
-                    Csr::build(self, cols)
+                    // A view of no rows: nothing to index. Any other has its index in a block (`view_index`).
+                    assert_eq!(self.len(), 0, "a view's index in a block of its own: none could be made");
+                    path(14);
+                    empty(false, false)
                 }
             };
             if env_set!("RERAIL_SPIKE_INDEX") {
@@ -6045,13 +6260,13 @@ fn input_of(conn: impl Scoped, spec: &InputKey, syms: &mut Interner) -> Result<A
             if view.ids.is_none() && view.eqs.is_empty() && view.cols.iter().enumerate().all(|(i, &c)| i == c)
                 && let Some(held) = held_rel(view.src.as_ref(), types.len())
             {
-                let rel = Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k: held.k, n: held.n, rows: held.rows.clone(), view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: held.dead.clone(), ndead: held.ndead, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Shared::default(), stats: None });
+                let rel = Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k: held.k, n: held.n, rows: held.rows.clone(), view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: held.dead.clone(), ndead: held.ndead, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: BlockVec::new(), stats: None });
                 loaded(0, thread_cpu() - c0, 0);
                 keep(&rel);
                 return Ok(rel);
             }
             let n = view.ids.as_ref().map_or(0, Vec::len);
-            let rel = Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k: types.len(), n, rows: Rows::new(types.len()), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Shared::default(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Shared::default(), stats: None });
+            let rel = Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k: types.len(), n, rows: Rows::new(types.len()), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: BlockVec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: BlockVec::new(), stats: None });
             loaded(0, thread_cpu() - c0, 0);
             if env_set!("RDL_PROFILE") {
                 eprintln!("      view of {n} rows in {:.1} ms: SELECT {cols} FROM {table}", t0.elapsed().as_secs_f64() * 1e3);
@@ -6067,7 +6282,7 @@ fn input_of(conn: impl Scoped, spec: &InputKey, syms: &mut Interner) -> Result<A
         for (i, &t) in types.iter().enumerate() { rows.push(read_value(r.get_ref(i)?, t, syms).map_err(|e| err(format!("{table}: {e}")))?); }
         n += 1;
     }
-    let rel = Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k: types.len(), n, rows: Rows::frozen(types.len(), rows, n), view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Shared::default(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Shared::default(), stats: None });
+    let rel = Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k: types.len(), n, rows: Rows::frozen(types.len(), rows, n), view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: BlockVec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: BlockVec::new(), stats: None });
     loaded(usize::from(!base), thread_cpu() - c0, rel.len() as u64);
     if env_set!("RDL_PROFILE") {
         eprintln!("      input {} rows in {:.1} ms: SELECT {cols} FROM {table}", rel.len(), t0.elapsed().as_secs_f64() * 1e3);
@@ -6536,32 +6751,30 @@ impl std::fmt::Debug for NodeTexts {
 /// on its caller's thread, as before (to compare).
 /// Not under `walks_whole`.
 fn morsels_on() -> bool {
-    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_MORSELS").map_or(true, |v| v != "off")) && !WALKS_WHOLE.with(std::cell::Cell::get)
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_MORSELS").map_or(true, |v| v != "off")) && !rerail_prof::code_rule_dsl::logic::profile::bound::<WalksWhole>().0
 }
 
 thread_local! {
     /// The walks this thread ran in morsels (`morsels_walked`).
     static IN_MORSELS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    /// Under `walks_whole`: this run's joins each walk on one thread.
-    static WALKS_WHOLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Runs `f` with each join walked whole on its thread, not in morsels: for work that already keeps the pool busy
 /// beside others like it (a run's chunks evaluating at once, decision 0254), where morsels would only add jobs and
 /// the memory of their rows. The jobs `f` starts walk so too (`carried`).
 pub fn walks_whole<R>(f: impl FnOnce() -> R) -> R {
-    struct Reset(bool);
-    impl Drop for Reset {
-        fn drop(&mut self) { WALKS_WHOLE.with(|w| w.set(self.0)); }
-    }
-    let _reset = Reset(WALKS_WHOLE.with(|w| w.replace(true)));
+    let _whole = rerail_prof::code_rule_dsl::logic::profile::bind(WalksWhole(true));
     f()
 }
 
+/// Bound under `walks_whole`: this run's joins each walk on one thread, in its jobs too (the run's context).
+#[derive(Clone, Copy, Default)]
+struct WalksWhole(bool);
+
+/// Enters a scope of the run's chunk in a job of the run (`rows::enter_chunk`, Q203 item 3): what the job holds is
+/// the chunk's. The chunk itself is the run's context's, which the job carries.
 pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
-    c.copy(&["WALKS_WHOLE"], &WALKS_WHOLE);
-    // The chunk, with its account of what the job holds (`rows::enter_chunk`, Q203 item 3).
-    c.part(&["CHUNK"], crate::code_rule_dsl::logic::run_state::Shared(crate::code_rule_dsl::facts::rows::CHUNK.with(|c| c.borrow().clone()), crate::code_rule_dsl::facts::rows::enter_chunk));
+    c.part(&["TOP"], crate::code_rule_dsl::logic::run_state::Shared(crate::code_rule_dsl::facts::rows::current_chunk(), crate::code_rule_dsl::facts::rows::enter_chunk));
 }
 
 
@@ -6760,7 +6973,7 @@ fn join_rule_with(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, index
 /// that names one probes by it, and the caller presets them (`run_join_collect`).
 fn join_rule_bound(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, index: bool, pre: &[usize]) -> Result<JoinRule> {
     let conn = conn.db();
-    let unindexed = |cols: &[usize]| Arc::new(Csr { cols: cols.to_vec(), table: HashTable::new(), ids: Vec::new(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None });
+    let unindexed = |cols: &[usize]| Arc::new(Csr { cols: cols.to_vec(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None });
     let mut bound: Vec<bool> = Vec::new();
     for &s in pre {
         if bound.len() <= s { bound.resize(s + 1, false) }
@@ -7557,18 +7770,17 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     s.columns.resize_with(f.columns.len(), Vec::new);
                     s.params.clear();
                     s.params.extend(f.params.iter().map(|p| { let v = val(slots, p.key); if p.doc { v >> 32 } else { v } }));
-                    // Past the head (`tail`), the walk needs one witness: the first row that makes the head's row ends the
-                    // step, and its rows are gathered 8 at first, then 8 times as many each chunk, so a binding whose
-                    // first rows hold a witness reads those alone. A zero count's helper over the lines between a
-                    // decorator and each later def (`rr_agg15`) walked 25.4 M lines for 25,426 pairs, each pair's every
-                    // line to the head.
+                    // Past the tail (`cut_from`), the first row made ends the step's loop, as the row-by-row path
+                    // ends it: a chunk's rows after it, and the candidates not yet gathered, would make the same head
+                    // row again. Without it a fused step read every candidate past the head's last binding, and a
+                    // planner pricing that step as one witness took a cross product there (work queue Q240). Its rows
+                    // are gathered 8 at first, then 8 times as many each chunk, so a binding whose first rows hold a
+                    // witness reads those alone: a zero count's helper over the lines between a decorator and each
+                    // later def (`rr_agg15`) walked 25.4 M lines for 25,426 pairs, each pair's every line to the head.
                     let made = cx.n;
-                    let tail = i >= cx.cut_from;
-                    let mut limit = if tail { 8 } else { rowcode::CHUNK };
-                    let mut cut = false;
-                    /// Runs a chunk; whether the head's row was made past the head (`made`, the rows before it).
-                    fn flush(cx: &mut Ctx<'_, '_>, i: usize, f: &rowcode::Fused, s: &mut rowcode::Scratch, slots: &mut [i64], made: Option<u64>) -> bool {
-                        let mut cut = false;
+                    let cut = i >= cx.cut_from;
+                    let mut limit = if cut { 8 } else { rowcode::CHUNK };
+                    fn flush(cx: &mut Ctx<'_, '_>, i: usize, f: &rowcode::Fused, s: &mut rowcode::Scratch, slots: &mut [i64], cut: Option<u64>) {
                         let counts = &cx.counts;
                         // Each fused step's entries and its passes, as `go` counts them step by step.
                         let bump = |m: usize, n: u64| {
@@ -7593,7 +7805,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                                 }
                                 if i == 0 { cx.at0 = s.ids[r]; cx.seen0 = true; }
                                 go(cx, i + 1 + f.steps, slots);
-                                if made.is_some_and(|m| cx.n > m) { cut = true; break 'rows; }
+                                if cut.is_some_and(|made| cx.n > made) { break 'rows; }
                             }
                         }
                         cx.work += added.get();
@@ -7601,23 +7813,23 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         s.rows = 0;
                         s.ids.clear();
                         s.columns.iter_mut().for_each(Vec::clear);
-                        cut
                     }
+                    let cut = cut.then_some(made);
+                    let witnessed = |cx: &Ctx<'_, '_>| cut.is_some_and(|made| cx.n > made);
                     rows.each(cands, need, |id, row| {
-                        if cx.stop { return true; }
+                        if cx.stop || witnessed(cx) { return true; }
                         if rows.dead(id) || only.as_ref().is_some_and(|o| !o.has(id)) { return false; }
                         if !keys.iter().all(|&(c, k)| exact >> c & 1 != 0 || row.at(c) == val(slots, k)) || !tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) { return false; }
                         for &(k, c) in &f.gather { s.columns[k].push(row.at(c)); }
                         if i == 0 { s.ids.push(id); }
                         s.rows += 1;
                         if s.rows == limit {
-                            cut = flush(cx, i, f, &mut s, slots, tail.then_some(made));
+                            flush(cx, i, f, &mut s, slots, cut);
                             limit = (limit * 8).min(rowcode::CHUNK);
-                            return cut;
                         }
                         false
                     });
-                    if s.rows > 0 && !cx.stop && !cut { flush(cx, i, f, &mut s, slots, tail.then_some(made)); }
+                    if s.rows > 0 && !cx.stop && !witnessed(cx) { flush(cx, i, f, &mut s, slots, cut); }
                     s.rows = 0;
                     s.ids.clear();
                     s.columns.iter_mut().for_each(Vec::clear);
@@ -8977,7 +9189,7 @@ pub mod posted_tests {
         let new = InRel::moved(Rel::compacted("t", b"ii", &old, Some(&most)));
         assert!(new.has_levels());
         let kept: Vec<u32> = (20..40).map(|i| old.level[i]).collect();
-        assert_eq!(*new.level, *kept);
+        assert_eq!(new.level[..], kept[..]);
         let same = InRel::moved(Rel::based("t", b"ii", &old, None).expect("nothing gone"));
         assert_eq!(*same.level, *old.level);
     }
@@ -9069,7 +9281,7 @@ pub mod probe_tests {
     use crate::code_rule_dsl::logic::strings::functions::Kind;
 
     /// A slot a later step tests its result against (`bind: false`) is read by that step: a split's part so tested
-    /// is no unread part (held as 0, the test would fail on every row), nor only a probe's key. `types.rr`'s `hexpr`,
+    /// is no unread part (held as 0, the test would fail on every row), nor only a probe's key. `types.rerail`'s `hexpr`,
     /// planned from `res($t, $d)`: `$t = @cat($d0, $r)` split `"pkg.m.B"`, then `$r = @substr($h, …)` tested the
     /// part, and the dotted annotation resolved to nothing.
     #[test]
@@ -9112,6 +9324,23 @@ pub mod scope_tests {
         // A connection opened after it, at its address or not, starts with none of it.
         let next = Connection::open(&path).unwrap();
         assert!(on(&next).path.lock().is_none() && on(&next).syms.lock().is_none());
+    }
+
+    /// A loader's cursor (`Interner::for_loading`, at every component's open) takes no lock: while a writer
+    /// (`sym_atom`, `sym_cat`) holds the symbols, one is made at once, over the same arena, and interns into it.
+    /// It read the arena under the lock, and waited there (Q203 item 3: 2,004 samples of 2,204 parked).
+    #[test]
+    fn a_loaders_cursor_is_made_while_the_symbols_are_written() {
+        let path = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&path).unwrap());
+        let conn = Connection::open(&path).unwrap();
+        let shared = symbols(&conn).unwrap();
+        let mut writing = shared.write().unwrap();
+        let mut cursor = Interner::for_loading(&shared);
+        assert!(Arc::ptr_eq(cursor.atoms(), writing.atoms()));
+        let id = cursor.id("a loader's text");
+        assert_eq!(writing.get("a loader's text"), Some(id));
+        writing.check().unwrap();
     }
 }
 
@@ -9157,6 +9386,21 @@ pub struct SetfixCounts {
     pub orders_made: OrderCount,
     /// Rows a cut left that a walk going on from it read in their order, unsorted (`scan_order`, decision 0294).
     pub left_in_order: std::sync::atomic::AtomicU64,
+    /// How a derived input's probes of a column set were answered (`InRel::index`), by path: no key, a block index
+    /// found, a kept order, a keyed column, a sorted view, a source's own block index, a source's lookup, a composite
+    /// source, a selective lead column, a selective chain, a block index built, a lazily sorted order of its own, a
+    /// source's block index (filtered view), a view's index in a home of its own (0478 step 5e), an empty view.
+    pub index_paths: [std::sync::atomic::AtomicU64; 15],
+    /// Frozen relations' dead rows handed to their block relation (`in_block_dead`), and those not (they lay in
+    /// another block, or it had some).
+    pub dead_kept: [std::sync::atomic::AtomicU64; 2],
+    /// Frozen relations whose known-sorted ranges are read in their block, and those whose are not (a key past the
+    /// block's `MAX_KEY`, or no room).
+    pub sorted_kept: [std::sync::atomic::AtomicU64; 2],
+    /// A frozen relation's orders (`in_block_orders`): put in its block's directory; read in another relation's
+    /// directory (a maintained relation's, `Rel::based`); kept as they were, their arrays in another block or the
+    /// directory full.
+    pub orders_kept: [std::sync::atomic::AtomicU64; 3],
 }
 
 /// The run's `SetfixCounts`.
@@ -9206,5 +9450,40 @@ impl TestLattice {
         }).collect();
         out.sort_unstable();
         out
+    }
+}
+
+#[cfg(test)]
+pub mod fresh_tests {
+    use super::*;
+
+    /// A relation's first order can change while a wave's rows wait in `Fresh` (`Rel::want` chains a new key set
+    /// into it: (0, 1, 2, 3) became [1, 0, 2, 3]). The rows settled and the stretches noted in the old order are in
+    /// no order known in the new one, so they are sorted whole. Taken as known, the relation was handed rows "said
+    /// sorted" that were not (`python/references.rerail`'s `rf_hit` on 1,000 files).
+    #[test]
+    fn rows_settled_before_a_reorder_are_sorted_again() {
+        for settle_first in [false, true] {
+            let mut rel = Rel::new("t", b"iiii");
+            let old = rel.idx[0].cols.clone();
+            let mut rows: Vec<[i64; 4]> = (0..500i64).map(|i| [i, (i * 7919) % 211, i % 3, 0]).collect();
+            rows.sort_by(|a, b| runs::cmp_vals(&old, runs::tagged(&old, 4), a, b));
+            let mut f = Fresh::default();
+            for (i, r) in rows.iter().enumerate() {
+                f.offer(r, &rel);
+                if settle_first && i == 300 {
+                    f.settle(&rel);
+                }
+            }
+            rel.want(&[1]);
+            let cols = rel.idx[0].cols.clone();
+            assert_ne!(cols, old, "the first order changed");
+            assert!(rel.push_fresh(f, false));
+            assert_eq!(rel.n, 500);
+            let t = runs::tagged(&cols, 4);
+            for id in 1..rel.n as u32 {
+                assert!(runs::cmp_ids(&rel.data, 4, &cols, t, id - 1, id).is_le(), "settle first {settle_first}: rows {} and {id}", id - 1);
+            }
+        }
     }
 }

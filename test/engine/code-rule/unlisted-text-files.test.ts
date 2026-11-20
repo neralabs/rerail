@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, open, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -9,9 +9,10 @@ import { bundledCodeRuleDslDirectory } from "../../../src/engine/code-rule/code-
 import { languageFor, NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
 import { type CodeRule, codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
 import { testCodeRuleCatalog } from "../../support/repository-rules.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const roots: string[] = [];
-afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+afterEach(async () => { await Promise.all(roots.splice(0).map(async path => await removeFolder(path))); });
 
 /** A regex rule on every file: it reads text, so the files no language lists are read for it. */
 const REGEX_ANYWHERE = codeRuleSchema.parse({
@@ -63,17 +64,17 @@ async function workspace(git: boolean, codeRules: readonly CodeRule[], tree: Rea
     workspaceRoot: root, steerDelivery: { requestSteer: vi.fn(async () => undefined) }, audits: recorder,
     scope: "ai-output", timingLog: line => lines.push(line),
   });
-  /** One log-only audit: its status, the sorted paths it reports, and its failures. */
+  /** One log-only audit: its status, and the sorted paths and failures it reports, so a test checks which ones; "a repository audit's failure list" checks the walk's path order on the unsorted list. */
   const audit = async (scope: "repository" | "touched-files", paths?: string[]) => {
     const [auditId] = await enforcer.audit("unlisted", { scope, mode: "log", ...(paths === undefined ? {} : { paths }) });
     const result = audits.get(auditId!)?.result;
     return {
       status: result?.status,
       paths: (result?.violations ?? []).map(violation => violation.path).toSorted(),
-      failures: (result?.failures ?? []).map(failure => `${failure.path ?? ""} ${failure.code}`),
+      failures: (result?.failures ?? []).map(failure => `${failure.path ?? ""} ${failure.code}`).toSorted(),
     };
   };
-  return { root, enforcer, audit, lines };
+  return { root, enforcer, audit, audits, lines };
 }
 
 async function settledViolationPaths(enforcer: NativeCodeRuleEnforcer): Promise<string[]> {
@@ -189,6 +190,43 @@ describe("files no language lists", () => {
       expect((await bridge.checkpoint("turn")).failures).toEqual([unchecked]);
       expect((await bridge.checkpoint("final")).failures).toEqual([]);
     } finally { await bridge.close(); }
+  });
+});
+
+/**
+ * 22 paths in path order, the byte order Git sorts paths in: an upper-case name before a lower-case one, and folder `a`
+ * after its siblings `a-b.ts` and `a.ts` but before `a0.ts`, as if its name ended in "/".
+ */
+const IN_PATH_ORDER = [
+  "B/x.ts", "a-b.ts", "a.ts", "a/b-c.ts", "a/b.ts", "a/b/c.ts", "a/b0.ts", "a/c.ts", "a0.ts", "b.ts",
+  "c/1.ts", "c/10.ts", "c/11.ts", "c/12.ts", "c/2.ts", "c/3.ts", "c/4.ts", "c/5.ts", "c/6.ts", "c/7.ts", "c/8.ts", "c/9.ts",
+];
+
+describe("a repository audit's failure list", () => {
+  it.each(WALKS)("names the first 20 failures in path order through %s, whatever order a folder lists its entries in", async (_name, git) => {
+    const { root, enforcer, audits } = await workspace(git, [REGEX_ANYWHERE]);
+    // A TypeScript file holding a NUL byte cannot be read as source: one failure each. They are made in an order that
+    // is neither path order nor its reverse (7 and 22 share no factor), so a filesystem that lists a folder in the
+    // order its entries were made, or in the reverse, lists them in neither.
+    for (const index of IN_PATH_ORDER.keys()) {
+      const path = IN_PATH_ORDER[(index * 7) % IN_PATH_ORDER.length]!;
+      await mkdir(dirname(join(root, path)), { recursive: true });
+      await writeFile(join(root, path), "NEEDLE(1);\0\n");
+    }
+    try {
+      await enforcer.openWorkspace("unlisted");
+      // The failure list as the audit records it: the workspace's `audit` sorts failures, which would hide the order.
+      const [auditId] = await enforcer.audit("unlisted", { scope: "repository", mode: "log" });
+      const result = audits.get(auditId!)?.result;
+      expect({
+        status: result?.status,
+        paths: (result?.violations ?? []).map(violation => violation.path).toSorted(),
+        failures: (result?.failures ?? []).map(failure => `${failure.path ?? ""} ${failure.code}`),
+      }).toEqual({
+        status: "completed", paths: ["Justfile", "LICENSE", "deps/yarn.lock", "web/a.ts"],
+        failures: IN_PATH_ORDER.slice(0, 20).map(path => `${path} source-incomplete`),
+      });
+    } finally { await enforcer.close(); }
   });
 });
 

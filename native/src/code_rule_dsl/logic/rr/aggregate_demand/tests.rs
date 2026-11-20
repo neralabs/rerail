@@ -1,11 +1,10 @@
 use super::*;
-use crate::code_rule_dsl::logic::{
-    front::{self, Literal},
-    rr,
-};
+use crate::code_rule_dsl::logic::program_image::{CmpOp, Lit, RuleRef, T, TermRef, Version, about::About, analyses};
+use crate::code_rule_dsl::logic::rr;
+use std::sync::Arc;
 
-fn program(extra: &str) -> Program {
-    rr::parse(&format!(
+fn program(extra: &str) -> Arc<Version> {
+    rr::parse_version(&format!(
         r#"
 .decl wanted(world: number, s: number, x: number)
 .decl ancestor(world: number, s: number, p: number)
@@ -19,29 +18,38 @@ fn program(extra: &str) -> Program {
     .unwrap()
 }
 
+/// The rules of `v` whose head's relation passes `keep`.
+fn rules<'v>(v: &'v Version, keep: impl Fn(&str) -> bool) -> Vec<RuleRef<'v>> {
+    v.rules().filter(|r| keep(v.rel_name(r.head().rel()))).collect()
+}
+
+/// Rule `r`'s body atoms: each one's relation, whether it is negated, and its arguments.
+fn atoms<'v>(v: &'v Version, r: RuleRef<'v>) -> Vec<(&'v str, bool, Vec<TermRef<'v>>)> {
+    r.body().filter_map(|l| l.atom()).map(|a| (v.rel_name(a.rel()), a.neg(), a.args().collect())).collect()
+}
+
+/// `v` stratifies.
+fn stratifies(v: &Version) {
+    analyses::strata(v, &About::of(v)).unwrap();
+}
+
+/// The helper and its demand guard: the helper reads the guard over three columns.
+fn guarded_helper(p: &Version) -> RuleRef<'_> {
+    let helper = rules(p, |h| h.starts_with("rr_agg") && !h.contains("demand"))[0];
+    assert!(atoms(p, helper).iter().any(|(rel, _, args)| rel.starts_with("rr_demand_agg") && args.len() == 3), "unrestricted helper: {}", p.show_rule(helper));
+    helper
+}
+
 #[test]
 fn zero_count_is_an_antijoin_with_demanded_world_scope_and_name() {
     let p = program(
         "result(w,s,x,0) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 0.",
     );
-    let reader = p.rules.iter().find(|r| r.head.rel == "result").unwrap();
-    assert!(
-        !reader.body.iter().any(|l| matches!(l, Literal::Agg { .. })),
-        "zero count still enumerates: {reader}"
-    );
-    assert!(
-        reader
-            .body
-            .iter()
-            .any(|l| matches!(l, Literal::Atom(a) if a.neg))
-    );
-    let helper = p
-        .rules
-        .iter()
-        .find(|r| r.head.rel.starts_with("rr_agg") && !r.head.rel.contains("demand"))
-        .unwrap();
-    assert!(helper.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.rel.starts_with("rr_demand_agg") && a.args.len() == 3)), "unrestricted helper: {helper}");
-    front::strata(&p).unwrap();
+    let reader = rules(&p, |h| h == "result")[0];
+    assert!(!reader.body().any(|l| matches!(l.view(), Lit::Agg { .. })), "zero count still enumerates: {}", p.show_rule(reader));
+    assert!(atoms(&p, reader).iter().any(|(_, neg, _)| *neg));
+    guarded_helper(&p);
+    stratifies(&p);
 }
 
 #[test]
@@ -50,18 +58,9 @@ fn general_count_and_sum_restrict_groups_without_dropping_witness_columns() {
         let p = program(&format!(
             "result(w,s,x,k) :- wanted(w,s,x), k = {expression} : {{ ancestor(w,s,p), binding(w,p,x,v) }}."
         ));
-        let helper = p
-            .rules
-            .iter()
-            .find(|r| r.head.rel.starts_with("rr_agg") && !r.head.rel.contains("demand"))
-            .unwrap();
-        assert_eq!(
-            helper.head.args.len(),
-            5,
-            "count/sum must retain distinct witnesses"
-        );
-        assert!(helper.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.rel.starts_with("rr_demand_agg") && a.args.len() == 3)), "{helper}");
-        front::strata(&p).unwrap();
+        let helper = guarded_helper(&p);
+        assert_eq!(helper.head().args().count(), 5, "count/sum must retain distinct witnesses");
+        stratifies(&p);
     }
 }
 
@@ -70,19 +69,10 @@ fn recursive_consumer_does_not_create_an_aggregate_dependency_cycle() {
     let p = program(
         "result(w,s,x,0) :- wanted(w,s,x).\nresult(w,s,x,k) :- result(w,s,x,0), wanted(w,s,x), k = count : { ancestor(w,s,p), binding(w,p,x,v) }.",
     );
-    front::strata(&p).unwrap();
-    let demands: Vec<_> = p
-        .rules
-        .iter()
-        .filter(|r| r.head.rel.starts_with("rr_demand_agg"))
-        .collect();
+    stratifies(&p);
+    let demands = rules(&p, |h| h.starts_with("rr_demand_agg"));
     assert!(!demands.is_empty());
-    assert!(demands.iter().all(|r| {
-        !r.body
-            .iter()
-            .filter_map(Literal::atom)
-            .any(|a| a.rel == "result")
-    }));
+    assert!(demands.iter().all(|&r| !atoms(&p, r).iter().any(|(rel, _, _)| *rel == "result")));
 }
 
 /// Actual helper rows stay proportional to demanded keys, despite unrelated scopes and names.
@@ -114,18 +104,23 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
             source.push_str(&format!("binding({w},1,{x},10).\n"));
         }
     }
-    let mut p = rr::parse(&source).unwrap();
-    let helpers: BTreeSet<_> = p
-        .rules
-        .iter()
-        .filter(|r| r.head.rel.starts_with("rr_agg"))
-        .map(|r| r.head.rel.to_string())
+    let p = rr::parse_version(&source).unwrap();
+    let helpers: BTreeSet<String> = p
+        .rules()
+        .map(|r| p.rel_name(r.head().rel()))
+        .filter(|rel| rel.starts_with("rr_agg"))
+        .map(str::to_owned)
         .collect();
-    p.outputs.extend(helpers.iter().cloned());
+    let p = {
+        let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&p);
+        let outputs: Vec<String> = p.output_names().into_iter().chain(helpers.iter().cloned()).collect();
+        b.fields().set_outputs(&outputs);
+        b.finish().unwrap().0
+    };
     let file = crate::code_rule_dsl::fixtures::temp();
     let dump = zstd::decode_all(
         std::fs::File::open(
-            std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+            rerail_store::source_tree::native()
                 .join("src/code_rule_dsl/logic/plan/golden/facts.sql.zst"),
         )
         .unwrap(),
@@ -135,7 +130,7 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
         .unwrap()
         .execute_batch(std::str::from_utf8(&dump).unwrap())
         .unwrap();
-    let result = plan::run_sql(&p, &file).unwrap();
+    let result = plan::run_sql(p.clone(), &file).unwrap();
     assert_eq!(
         result.shown()["counts"],
         [["1", "1", "1", "2"], ["2", "1", "1", "1"], ["3", "1", "1", "0"]]
@@ -157,7 +152,7 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
     let was_on = crate::code_rule_dsl::logic::profile::on();
     crate::code_rule_dsl::logic::profile::reset();
     crate::code_rule_dsl::logic::profile::set(true);
-    let native = plan::run_sql_native(&p, &file, "program", |db| {
+    let native = plan::run_sql_native(p.clone(), &file, "program", |db| {
         let rc = unsafe {
             crate::code_rule_dsl::logic::native::extension::sqlite3_extension_init(
                 db.handle(),
@@ -176,7 +171,7 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
     let store = crate::content_store::ContentStore::open(&path).unwrap();
     let db = rusqlite::Connection::open(&path).unwrap();
     crate::code_rule_dsl::logic::native::register(&db).unwrap();
-    let lowered = plan::lower::lower(&p, crate::code_rule_dsl::language::GrammarDialect::Python,
+    let lowered = plan::lower::lowered(p, crate::code_rule_dsl::language::GrammarDialect::Python,
         &mut |s| store.intern_atoms(s).map_err(|e| plan::Error::Plan(e.to_string()))).unwrap();
     let native = plan::run_atoms_native_over(&lowered, &db, "main", plan::Stats::empty_of_lowered(&lowered).unwrap(),
         BTreeSet::new(), "program").unwrap();
@@ -215,113 +210,68 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
 
 #[test]
 fn already_restricted_helpers_are_stable_and_recursive_only_guards_are_refused() {
-    let p = program(
-        "result(w,s,x,k) :- wanted(w,s,x), k = count : { ancestor(w,s,p), binding(w,p,x,v) }.",
-    );
-    let before = p.rules.clone();
-    assert_eq!(p.rules, before, "optimization must be idempotent");
+    let text = "result(w,s,x,k) :- wanted(w,s,x), k = count : { ancestor(w,s,p), binding(w,p,x,v) }.";
+    let shown = |v: &Version| v.rules().map(|r| v.show_rule(r)).collect::<Vec<_>>();
+    assert_eq!(shown(&program(text)), shown(&program(text)), "optimization must be idempotent");
     let p = program(
         "result(w,s,x,0) :- wanted(w,s,x).\nresult(w,s,x,k) :- result(w,s,x,0), k = count : { ancestor(w,s,p), binding(w,p,x,v) }.",
     );
-    assert!(
-        !p.rules
-            .iter()
-            .any(|r| r.head.rel.starts_with("rr_demand_agg")),
-        "recursive result is not a safe demand source"
-    );
-    front::strata(&p).unwrap();
+    assert!(rules(&p, |h| h.starts_with("rr_demand_agg")).is_empty(), "recursive result is not a safe demand source");
+    stratifies(&p);
 }
 
 #[test]
 fn multiple_consumers_union_their_safe_demands() {
+    use crate::code_rule_dsl::logic::program_image::{Builder, LitRef, Rewrite, fields::FieldsMut, manager::Pipeline, t_of};
     // Model reuse of a private helper after lowering; consumers may demand different keys.
-    let mut p = program(
+    let p = program(
         "result(w,s,x,k) :- wanted(w,s,x), k = count : { ancestor(w,s,p), binding(w,p,x,v) }.",
     );
-    let demand = p
-        .rules
-        .iter()
-        .find(|r| r.head.rel.starts_with("rr_demand_agg"))
-        .unwrap()
-        .head
-        .rel
-        .clone();
-    p.rules.retain(|r| r.head.rel != demand);
-    p.decls.remove(demand.as_str());
-    for r in &mut p.rules {
-        r.body.retain(|l| l.atom().is_none_or(|a| a.rel != demand));
+    let demand = p.rel_name(rules(&p, |h| h.starts_with("rr_demand_agg"))[0].head().rel()).to_owned();
+    // The program without the demand: its rules, its declaration and its reads go.
+    struct Unread<'a>(&'a Version, &'a str);
+    impl Rewrite for Unread<'_> {
+        fn keep(&mut self, l: LitRef<'_>) -> bool {
+            l.atom().is_none_or(|a| self.0.rel_name(a.rel()) != self.1)
+        }
     }
-    let mut second = p
-        .rules
-        .iter()
-        .find(|r| r.head.rel == "result")
-        .unwrap()
-        .clone();
-    second.body.push(Literal::Cmp {
-        l: Term::Var("w".into()),
-        op: "=",
-        r: Term::Int(2),
-    });
-    p.rules.push(second);
+    let mut b = Builder::derive(&p);
+    b.fields().undeclare(&demand);
+    for r in p.rules().filter(|r| p.rel_name(r.head().rel()) != demand) {
+        b.rewrite(&p, r, &mut Unread(&p, &demand)).finish().unwrap();
+    }
+    // A second reader of `result`'s rule, at another key.
+    let result = rules(&p, |h| h == "result")[0];
+    let head: Vec<T<'_>> = result.head().args().map(|t| t_of(&p, result, t)).collect();
+    let mut second = b.rule().head("result", &head);
+    for l in result.body().filter(|l| l.atom().is_none_or(|a| p.rel_name(a.rel()) != demand)) {
+        second = second.lit(&p, result, l);
+    }
+    second.cmp(T::Var("w"), CmpOp::Eq, T::Int(2)).finish().unwrap();
+    let (v, _) = b.finish().unwrap();
     // The pass placed again, on the version of the edited program.
-    use crate::code_rule_dsl::logic::program_image::{build::Builder, manager::Pipeline};
-    let (v, _) = Builder::of_program(&p).unwrap().finish().unwrap();
     let mut pipe = Pipeline::new("test", v);
     pipe.program(&mut crate::code_rule_dsl::logic::plan::corpus::preparation::lowering_tail::AggregateDemand);
     let (out, _) = pipe.finish().unwrap();
-    let p = out.program(&front::Lists::default()).unwrap();
-    assert_eq!(
-        p.rules
-            .iter()
-            .filter(|r| r.head.rel.starts_with("rr_demand_agg"))
-            .count(),
-        2,
-        "{}",
-        out.show()
-    );
-    front::strata(&p).unwrap();
+    assert_eq!(rules(&out, |h| h.starts_with("rr_demand_agg")).len(), 2, "{}", out.show());
+    stratifies(&out);
 }
 
 #[test]
-#[ignore = "pyflakes.rr writes the outer binding as a rule (`outer_bound`, 913cb3f7a), not an aggregate over bound_in: no rr_agg helper reads it"]
+#[ignore = "pyflakes.rerail writes the outer binding as a rule (`outer_bound`, 913cb3f7a), not an aggregate over bound_in: no rr_agg helper reads it"]
 fn pyflakes_outer_binding_existence_keeps_load_and_nearest_scope_demands() {
-    let p = rr::parse("#include \"python/pyflakes.rr\"\n.output unbound_ref\n").unwrap();
-    let helpers: Vec<_> = p
-        .rules
-        .iter()
-        .filter(|r| {
-            r.head.rel.starts_with("rr_agg")
-                && r.body
-                    .iter()
-                    .any(|l| l.atom().is_some_and(|a| a.rel == "bound_in"))
-        })
-        .collect();
+    let p = rr::parse_version("#include \"python/pyflakes.rerail\"\n.output unbound_ref\n").unwrap();
+    let helpers: Vec<_> = p.rules().filter(|&r| p.rel_name(r.head().rel()).starts_with("rr_agg") && atoms(&p, r).iter().any(|(rel, _, _)| *rel == "bound_in")).collect();
     assert!(!helpers.is_empty());
     for helper in helpers {
-        let guard = helper
-            .body
-            .iter()
-            .filter_map(Literal::atom)
-            .find(|a| a.rel.starts_with("rr_demand_agg"))
-            .expect("outer bindings still expanded globally");
-        let demands: Vec<_> = p.rules.iter().filter(|r| r.head.rel == guard.rel).collect();
-        assert!(
-            demands.iter().all(|r| r
-                .body
-                .iter()
-                .any(|l| l.atom().is_some_and(|a| a.rel == "load_ref"))),
-            "load demand lost: {demands:?}"
-        );
-        assert!(
-            demands
-                .iter()
-                .all(|r| r.body.iter().any(|l| matches!(l, Literal::Nearest { .. }))),
-            "nearest scope delayed: {demands:?}"
-        );
+        let guard = atoms(&p, helper).into_iter().find(|(rel, _, _)| rel.starts_with("rr_demand_agg")).expect("outer bindings still expanded globally").0;
+        let demands = rules(&p, |h| h == guard);
+        let shown = demands.iter().map(|&r| p.show_rule(r)).collect::<Vec<_>>();
+        assert!(demands.iter().all(|&r| atoms(&p, r).iter().any(|(rel, _, _)| *rel == "load_ref")), "load demand lost: {shown:?}");
+        assert!(demands.iter().all(|&r| r.body().any(|l| matches!(l.view(), Lit::Nearest { .. }))), "nearest scope delayed: {shown:?}");
     }
-    front::strata(&p).unwrap();
+    stratifies(&p);
 }
-
 
 #[test]
 fn nested_zero_counts_preserve_outer_groups_in_sql_and_native_execution() {
@@ -355,7 +305,7 @@ hit(f) :- fn(f), count : { ident(x), count : { ref(n,f,x) } = 0 } > 0.
 /// positions, not every byte (the pairs below each, every pair of the text's bytes, were 17.9 M rows of a 6 KB text).
 #[test]
 fn a_guard_reached_through_a_comparison_restricts_the_demand() {
-    let p = rr::parse(
+    let p = rr::parse_version(
         r#"
 .decl byte(i: number, v: number)
 .input byte
@@ -365,10 +315,11 @@ odd(p) :- byte(p, _), q = @sub(p, 1), byte(q, 92), m = max j : { byte(j, v), v !
 "#,
     )
     .unwrap();
-    let demand = p.rules.iter().find(|r| r.head.rel.starts_with("rr_demand_agg")).unwrap_or_else(|| panic!("no demand: {p:?}"));
+    let demand = *rules(&p, |h| h.starts_with("rr_demand_agg")).first().unwrap_or_else(|| panic!("no demand: {}", p.show()));
     assert!(
-        demand.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.rel == "byte" && matches!(&a.args[1], front::Term::Int(92)))),
-        "the demand reads every byte: {demand}"
+        atoms(&p, demand).iter().any(|(rel, _, args)| *rel == "byte" && matches!(args[1], TermRef::Int(92))),
+        "the demand reads every byte: {}",
+        p.show_rule(demand)
     );
-    front::strata(&p).unwrap();
+    stratifies(&p);
 }

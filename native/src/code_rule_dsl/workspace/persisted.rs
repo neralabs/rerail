@@ -690,7 +690,7 @@ pub(super) fn persist_files(
     };
     // Each file's payloads (tape bytes, encoded local results, blob alias) are
     // independent of every other file's, so they are built on the worker pool.
-    let prepared = (|| {
+    let prepared = crate::code_rule_dsl::logic::profile::on_cores(|| {
         paths
             .par_iter()
             .map(|path| {
@@ -774,7 +774,7 @@ pub(super) fn persist_files(
                 ))
             })
             .collect::<Result<Vec<_>>>()
-    })()?;
+    })?;
     // Each file's derived documents, borrowing the bytes built above and the texts its image holds.
     let documents = prepared
         .iter()

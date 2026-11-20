@@ -2,13 +2,19 @@
 //!
 //! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
 // A mounted module re-exports its dependency's by glob, and its sources import the same items
-// under the same names: the glob's name and the private one are one item.
-#![allow(dead_code, unused_imports, hidden_glob_reexports)]
+// under the same names: the glob's name and the private one are one item. The mounts also widen what the crates
+// above read (the split's facades, not a design).
+#![allow(dead_code, unused_imports, hidden_glob_reexports, private_interfaces, private_bounds)]
+// What the split widened for the crates above is no public API (`len`, `()` errors, `new`); the long
+// signatures and tuple types are the sources' own.
+#![allow(clippy::len_without_is_empty, clippy::result_unit_err, clippy::new_without_default)]
+#![allow(clippy::type_complexity, clippy::too_many_arguments)]
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
 pub use rerail_store::content_store;
+pub use rerail_store::git_access;
 pub use rerail_store::git_workspace;
 extern crate self as rerail_logic;
 #[path = "../../../src/code_rule_dsl"]
@@ -83,6 +89,7 @@ pub mod code_rule_dsl {
     #[cfg(any(test, feature = "test-hooks"))]
     pub use rerail_lang::code_rule_dsl::fixtures;
     pub use rerail_lang::code_rule_dsl::json;
+    pub use rerail_lang::code_rule_dsl::regexes;
     pub use rerail_lang::code_rule_dsl::language;
     pub use rerail_lang::code_rule_dsl::lines;
     pub mod logic;

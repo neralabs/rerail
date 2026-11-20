@@ -164,7 +164,8 @@ pub fn regex_matches(
     haystack: &str,
     limit: usize,
 ) -> (Vec<Range<usize>>, bool) {
-    let (matches, complete) = regex_query_matches(regex, source, haystack, &RegexOptions::default(), limit);
+    let (matches, complete) =
+        regex_query_matches(regex, source, haystack, &RegexOptions::default(), limit);
     (
         matches.into_iter().map(|matched| matched.range).collect(),
         complete,

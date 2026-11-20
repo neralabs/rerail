@@ -1,4 +1,4 @@
-# `.rr`, step 22: a rule file's tests.
+# `.rerail`, step 22: a rule file's tests.
 #
 #   .fixtures app
 #       .fixture "a.py" ```x = 1```

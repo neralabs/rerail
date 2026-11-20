@@ -37,9 +37,11 @@ fn describe_matcher(matcher: &AstMatcher, language: GrammarDialect) -> Value {
         }
         AstMatcher::Kind(kind) => json!({ "kind": kind.potential_kinds().map(|kinds|
             kinds.iter().map(|id| kind_name(id as u16)).collect::<Vec<_>>()) }),
+        AstMatcher::Supertype(supertype) => {
+            json!({ "supertype": kind_name(supertype.class), "kinds":
+            supertype.kinds.iter().map(|&id| kind_name(id)).collect::<Vec<_>>() })
+        }
         AstMatcher::Regex(_) => json!({ "regex": true }),
-        AstMatcher::Supertype(supertype) => json!({ "supertype": kind_name(supertype.class),
-            "kinds": supertype.kinds.iter().map(|&id|kind_name(id)).collect::<Vec<_>>() }),
         AstMatcher::Never => json!({ "never": true }),
         AstMatcher::TestUnknown(_) => json!({ "testUnknown": true }),
         AstMatcher::All(items) | AstMatcher::Any(items) => {
@@ -436,7 +438,13 @@ pub(super) fn record_transient(navigation_bytes: usize) {
 }
 
 /// W's retained-bytes report (`workspace/memory.rs`), which P's profile dropped.
-pub(super) fn record_retained(source: usize, tape: usize, grammar: usize, dispatch: usize, results: usize) {
+pub(super) fn record_retained(
+    source: usize,
+    tape: usize,
+    grammar: usize,
+    dispatch: usize,
+    results: usize,
+) {
     with_profile(|profile| {
         profile.retained_source_bytes = Some(source);
         profile.retained_tape_bytes = Some(tape);

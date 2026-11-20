@@ -621,8 +621,7 @@ impl<'a> P<'a> {
             self.array_initializer(f::VALUE)?;
         } else {
             let mut any = false;
-            loop {
-                let Some(j) = self.scan_annotations(0) else { break };
+            while let Some(j) = self.scan_annotations(0) {
                 if self.kind_at(j) != T::LBracket || self.kind_at(j + 1) == T::RBracket {
                     break;
                 }

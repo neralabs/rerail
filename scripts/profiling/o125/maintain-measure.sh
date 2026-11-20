@@ -1,7 +1,7 @@
 #!/bin/zsh
 # maintain-measure.sh MODE [LAST]: decision 0364's measurement over the O125 replay (t43 step 1). From the worktree
 # root, with the inputs under $IN (default tmp/mm-in: `o125-replay/`, a copy of ~/orca/rerail-shared/o125-replay,
-# and `calls-policy.rr`) and the engine at $ENGINE. Writes under $OUT (default tmp/mm/MODE).
+# and `calls-policy.rerail`) and the engine at $ENGINE. Writes under $OUT (default tmp/mm/MODE).
 #
 #   kept     a process per step, its store kept from step to step (the CLI's path: the kept part from frames, K4)
 #   session  one process for every step (`repeat`, RERAIL_SESSION): the kept part in memory
@@ -22,7 +22,7 @@ cp -R $IN/o125-replay/00 $W
 # was sometimes missing from its replay, and the whole-run cutoff answered the last run's findings (work queue Q189).
 export RERAIL_JOURNAL=off RERAIL_SQL_STRICT=1 RERAIL_DEVICE=cpu RERAIL_RR_LIB=$PWD/docs/rule-syntax/lib RERAIL_KEPT_BYTES=1 RERAIL_MODE_TRACE=1
 export RERAIL_COSTS=$OUTA/costs.sqlite RERAIL_IMAGE_STORE=$OUTA/images
-POLICY=$INA/${POLICY_NAME:-calls-policy.rr}
+POLICY=$INA/${POLICY_NAME:-calls-policy.rerail}
 # BSD seq counts down (`seq 1 0` is "1 0"): LAST=00 is step 00 alone.
 steps=(00); [ $((10#$LAST)) -gt 0 ] && steps+=($(seq 1 $((10#$LAST)) | xargs printf "%02d\n"))
 apply() {  # the files step $1 changed, and those it removed

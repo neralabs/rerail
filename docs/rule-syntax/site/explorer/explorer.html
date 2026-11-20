@@ -211,7 +211,7 @@ kbd { font: 12px var(--font-mono); border: 1px solid var(--line); border-bottom-
 </head>
 <body>
 <header class="top">
-  <div class="brand">Rerail logic <span class="ext">.rr</span></div>
+  <div class="brand">Rerail logic <span class="ext">.rerail</span></div>
   <nav class="views" aria-label="Views">
     <a href="index.html#intro">Intro</a>
     <a href="index.html#syntax">Syntax</a>
@@ -224,7 +224,7 @@ kbd { font: 12px var(--font-mono); border: 1px solid var(--line); border-bottom-
 <div class="intro">
   <p><b>The engine runs in this page.</b> Start from a scenario, or pick any Python rule and write your own files: each change runs
     the rule again: the findings, every relation it derived, the program the engine actually ran (the rule with
-    <code>core.rr</code> and its includes), the join plans it chose, its SQL and where the CPU went.
+    <code>core.rerail</code> and its includes), the join plans it chose, its SQL and where the CPU went.
     <kbd>Ctrl</kbd>&nbsp;<kbd>Enter</kbd> runs at once.</p>
 </div>
 <div class="scen">
@@ -309,7 +309,7 @@ const START_RULE = "bandit-b307-eval";
 const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
 const span = (cls, s) => `<span class="${cls}">${esc(s)}</span>`;
 
-// .rr: Soufflé Datalog with core.rr's additions: directives, $variables, @builtins, relations before "(".
+// .rerail: Soufflé Datalog with core.rerail's additions: directives, $variables, @builtins, relations before "(".
 const RR = /(\/\/.*|\/\*[\s\S]*?\*\/)|("(?:[^"\\]|\\.)*")|(\$[A-Za-z_][\w]*)|(@[A-Za-z_][\w]*)|(^[ \t]*[.#][a-z_]+\b)|(\b\d+(?:\.\d+)?\b)|(\b[A-Za-z_][\w]*(?=\())|(:-)/gm;
 function hlRR(text) {
   return text.replace(/[^]*/, (all) => {
@@ -405,7 +405,7 @@ const srcEd = editor($("src-ed"), hlPY, { label: "Python source" });
 function setRule(id, hash = id) {
   const base = byId.get(id);
   if (!base) return false;
-  rule = { id, d: base.d, files: { [`${id}.rr`]: base.rr, ...base.parts }, active: `${id}.rr` };
+  rule = { id, d: base.d, files: { [`${id}.rerail`]: base.rerail, ...base.parts }, active: `${id}.rerail` };
   $("rule-q").value = id;
   $("rule-d").textContent = base.d || "";
   if (location.hash.slice(1) !== hash) history.replaceState(null, "", "#" + hash);
@@ -615,8 +615,8 @@ function runNow(full = false) {
   const mine = ++seq;
   setState("busy", "Running", (full ? "A full run of the rule over " : "Running the rule over ") + Object.keys(sources).length + " files…");
   const id = rule.id;
-  const parts = Object.fromEntries(Object.entries(rule.files).filter(([n]) => n !== `${id}.rr`));
-  backend.run({ id, rr: rule.files[`${id}.rr`], parts, sources, lib: bundle.lib, full }).then(
+  const parts = Object.fromEntries(Object.entries(rule.files).filter(([n]) => n !== `${id}.rerail`));
+  backend.run({ id, rr: rule.files[`${id}.rerail`], parts, sources, lib: bundle.lib, full }).then(
     (result) => { running = false; if (mine === seq) show(result); if (pending) runNow(pending === "full"); },
     (error) => { running = false; setState("fail", "Stopped", String(error.message || error)); if (pending) runNow(pending === "full"); });
 }
@@ -734,7 +734,7 @@ function draw(name) {
     if (programShown === (result.program || result.programError)) return;
     programShown = result.program || result.programError;
     $("v-program").innerHTML = result.program
-      ? `<p class="note">The rule as the engine ran it: <code>core.rr</code> and every file it includes, lowered and printed back as one program.</p><div class="ed" id="prog-ed" style="max-height:none"></div>`
+      ? `<p class="note">The rule as the engine ran it: <code>core.rerail</code> and every file it includes, lowered and printed back as one program.</p><div class="ed" id="prog-ed" style="max-height:none"></div>`
       : `<div class="callout"><b>The rule did not read as a program.</b><pre>${esc(result.programError || "no message")}</pre></div>`;
     if (result.program) editor($("prog-ed"), hlRR, { readonly: true }).value = result.program;
   } else if (name === "plans") {

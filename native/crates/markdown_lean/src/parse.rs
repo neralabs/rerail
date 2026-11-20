@@ -171,6 +171,9 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
     }
 }
 
+/// A table row's token (`row_tokens`): its start, end, class and punctuation.
+type RowToken = (usize, usize, u8, Option<K>);
+
 impl<'a> P<'a> {
     fn refuse<T>(&self) -> R<T> {
         Err(Refusal::Parse(self.at as u32))
@@ -436,8 +439,7 @@ impl<'a> P<'a> {
                     blank_start = u8::MAX;
                     self.open(K::ThematicBreak, 0, t.start);
                     self.take(t);
-                    let n = self.line_end_or_eof(V_BLOCK)?;
-                    n
+                    self.line_end_or_eof(V_BLOCK)?
                 }
                 BLOCK_QUOTE_START => {
                     blank_start = u8::MAX;
@@ -845,7 +847,7 @@ impl<'a> P<'a> {
                 Some(e) => return Err(Refusal::Parse(e.start as u32)),
                 None => {
                     let Some((lexed, end)) = self.line_token() else { return self.refuse() };
-                    if !(first && lexed == Lexed::Space) && !inline {
+                    if !(inline || (first && lexed == Lexed::Space)) {
                         self.open(K::Inline, f::HEADING_CONTENT, self.at);
                         inline = true;
                     }
@@ -1261,7 +1263,7 @@ impl<'a> P<'a> {
 
     /// A row's tokens, to the scanner's token that ends it (scanned, not taken): `(start, end,
     /// class, punctuation)`, the class 0 a pipe, 1 white space, 2 a cell's token.
-    fn row_tokens(&mut self, valid: Valid) -> R<(Vec<(usize, usize, u8, Option<K>)>, Tok)> {
+    fn row_tokens(&mut self, valid: Valid) -> R<(Vec<RowToken>, Tok)> {
         let mut toks = Vec::new();
         loop {
             if let Some(e) = self.next(valid)? {

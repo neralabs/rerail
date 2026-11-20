@@ -14,7 +14,6 @@ use std::time::Duration;
 use super::object_segments::CODEC_RAW;
 use std::sync::Arc;
 use std::thread;
-use std::time::Instant;
 
 fn temporary_database(label: &str) -> TemporaryDatabase {
     TemporaryDatabase::new(&format!("rerail-content-store-{label}"))
@@ -516,7 +515,10 @@ fn source_and_tape_objects_deduplicate_and_round_trip() {
     let other = store.put_source(b"print('world')\n", &[]).unwrap();
     let other_tape = store.put_tape(other, 1, 45, 1, b"compact tape").unwrap();
     assert_ne!(other_tape, tape);
-    assert_eq!(store.tape_by_source(other, 1, 45, 1).unwrap(), Some(other_tape));
+    assert_eq!(
+        store.tape_by_source(other, 1, 45, 1).unwrap(),
+        Some(other_tape)
+    );
     {
         let connection = store.connection.lock().unwrap();
         // No row holds an object's bytes: each names its range in a segment, raw (floor 7).
@@ -1924,18 +1926,21 @@ fn one_store_uses_independent_thread_connections_for_reads_and_writes() {
     let store = Arc::new(store);
     let writer = Arc::clone(&store);
     let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (read_tx, read_rx) = std::sync::mpsc::channel();
+    // The writer holds its transaction until the read is done: a read that waited on the writer's connection or
+    // transaction would never be done, and the writer's bounded wait says so (an order, not a clock under load).
     let handle = thread::spawn(move || {
         let connection = writer.connection.lock().unwrap();
         connection.execute_batch("BEGIN IMMEDIATE").unwrap();
         started_tx.send(()).unwrap();
-        thread::sleep(Duration::from_millis(150));
+        let read_beside = read_rx.recv_timeout(Duration::from_secs(10)).is_ok();
         connection.execute_batch("COMMIT").unwrap();
+        read_beside
     });
     started_rx.recv().unwrap();
-    let started = Instant::now();
     assert_eq!(store.get_source(source).unwrap(), b"shared");
-    assert!(started.elapsed() < Duration::from_millis(100));
-    handle.join().unwrap();
+    read_tx.send(()).unwrap();
+    assert!(handle.join().unwrap(), "the read waited for the writer's transaction");
 }
 
 #[test]
@@ -1991,7 +1996,9 @@ fn concurrent_open_serializes_schema_creation() {
         .map(|_| {
             let path = path.to_path_buf();
             let barrier = Arc::clone(&barrier);
+            let caller = rerail_prof::code_rule_dsl::logic::profile::caller();
             thread::spawn(move || {
+                let _caller = caller.enter();
                 barrier.wait();
                 ContentStore::open(&path).unwrap()
             })

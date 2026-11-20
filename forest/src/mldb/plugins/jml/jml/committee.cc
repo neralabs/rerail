@@ -1,4 +1,5 @@
 // This file is part of MLDB. Copyright 2015 mldb.ai inc. All rights reserved.
+// Used here under the Apache License, Version 2.0: MLDB's license is https://github.com/mldbai/mldb/blob/e3caed6fa44782d08eb640702fd60e9a2576d939/LICENSE
 
 /* committee.cc
    Jeremy Barnes, 15 March 2006

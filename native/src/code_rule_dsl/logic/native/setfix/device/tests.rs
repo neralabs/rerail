@@ -682,7 +682,7 @@
                     assert!(report.refused.is_none() && report.waved == 1, "{report:?}");
                     in_place += report.in_place;
                 }
-                assert_eq!(super::waves_kept(), 0, "the wave's completion goes with its last stratum (Q261: kept for ever, before)");
+                assert_eq!(super::waves_kept(), 0, "the wave's completion goes with its last stratum (Q314: kept for ever, before)");
             } else {
                 for (name, _, _) in &strata {
                     super::super::run(&db, name, 0).unwrap();
@@ -1192,7 +1192,7 @@
             let image = crate::code_rule_dsl::tape::TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
             let lines = Arc::new(crate::code_rule_dsl::lines::LineTable::new(&source, crate::code_rule_dsl::lines::Terminators::of(lang)));
             let facts = Arc::new(core::from_image(source, &grammar, image, lines).unwrap());
-            Document { key: (5 + 2 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None }
+            Document { key: (5 + 2 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
         }).collect();
         let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
         let store_path = std::env::temp_dir().join(format!("rerail-refused-view-{}-{nonce}.sqlite", std::process::id()));
@@ -1241,7 +1241,7 @@
             let path = format!("v{at}.py");
             let file = FileInput::new(path.clone(), "python".to_owned(), Arc::new((*source).to_owned()), None, None, "core").unwrap();
             let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("{path}") };
-            Document { key: (3 + 2 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None }
+            Document { key: (3 + 2 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
         }).collect();
         let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
         let store_path = std::env::temp_dir().join(format!("rerail-view-index-{}-{nonce}.sqlite", std::process::id()));
@@ -1283,7 +1283,7 @@
             let path = format!("d{at}.py");
             let file = FileInput::new(path.clone(), "python".to_owned(), Arc::new((*source).to_owned()), None, None, "core").unwrap();
             let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("{path}") };
-            Document { key: (7 + 3 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None }
+            Document { key: (7 + 3 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
         }).collect() };
         let docs = make();
         let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
@@ -1306,7 +1306,7 @@
                 if d.in_place.is_none() {
                     let out = mj::DevRel::empty(cols.len(), n).unwrap();
                     let mut batch = mj::Batch::new().expect("the device");
-                    batch.expand_view(&d.block.gpu_buffer(device), d.root, d.view, &cols, &out).unwrap();
+                    batch.expand_view(&d.block.device_buffer(device).unwrap(), d.root, d.view, &cols, &out).unwrap();
                     batch.finish().unwrap();
                     for (j, &c) in cols.iter().enumerate() {
                         let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
@@ -1333,8 +1333,13 @@
             }
         }
         assert_eq!(seen, 10);
-        assert_eq!(in_place, 10, "node, child, field, core_node and line read in place");
-        // core.rr's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
+        // Read in place where the device's buffers have addresses, which the views' directory is of (Metal's, the
+        // CPU's); made elsewhere (decision 0440 step C: OpenCL 1.2's buffers have none), which the made branch above
+        // checked.
+        let addresses = rerail_device::device::alloc_uninitialized_array_sync::<u8>(device, 1).device_address().is_some();
+        let read_in_place = if addresses { 10 } else { 0 };
+        assert_eq!(in_place, read_in_place, "node, child, field, core_node and line read in place");
+        // core.rerail's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
         {
             use crate::code_rule_dsl::facts::vtab::syntax::{Guest, Made, Placement, Projection, shaped};
             // With a guest (decision 0055): its places are its host's lines, through its placement, found on the
@@ -1347,31 +1352,43 @@
             // host's line 2.
             let place = Placement::Copied { delta: 10, within: [10, 24] };
             let guest = Guest { host: 7, file: 7, at: 7 << 32, grammar: "python".to_owned(), role: "program".to_owned(), root: 0, place: place.clone(), in_file: place, made: Made::Host };
-            docs.push(Document { key: 100, core: "/w#core:d0.py#guest:python:0".to_owned(), digest: core::digest(&facts), path: "d0.py".to_owned(), facts, tape: None, guest: Some(Arc::new(guest)), module: None });
+            docs.push(Document { key: 100, core: "/w#core:d0.py#guest:python:0".to_owned(), digest: core::digest(&facts), path: "d0.py".to_owned(), facts, tape: None, guest: Some(Arc::new(guest)), module: None, unpackaged: false });
             let core_views = shaped(&store, docs, &Projection::core()).unwrap();
             {
                 let view = |name: &str| core_views.iter().find(|(n, _)| *n == name).unwrap().1.clone();
                 let (docof, line) = (view("docof"), view("line"));
-                let guest: Vec<usize> = (0..docof.len()).filter(|&r| docof.value(r, 1) == 100).collect();
+                // `docof` is a place's file (decision 0431 §4): the guest's is its host's, 7. Its rows are those of
+                // file 7 that the batch without it does not have.
+                let without = shaped(&store, make(), &Projection::core()).unwrap();
+                let host = without.iter().find(|(n, _)| *n == "docof").unwrap().1.clone();
+                let host: std::collections::HashSet<i64> = (0..host.len()).filter(|&r| host.value(r, 1) == 7).map(|r| host.value(r, 0)).collect();
+                let guest: Vec<usize> = (0..docof.len()).filter(|&r| docof.value(r, 1) == 7 && !host.contains(&docof.value(r, 0))).collect();
                 assert!(!guest.is_empty(), "the guest's places are rows");
                 assert!(guest.iter().all(|&r| line.value(r, 1) == 2), "the guest's places are its host's lines");
             }
             // Each document's places read in place (decision 0353 step 4d): the views' reads over the batch's
-            // directory, its tapes and core.rr's lines in the batch's block; a guest's (a copied stretch) through its
-            // host's lines and its placement. With the guest and without.
+            // directory, its tapes and core.rerail's lines in the batch's block; a guest's (a copied stretch) through its
+            // host's lines and its placement. With the guest and without. Made where the device is not Metal (the
+            // directory's addresses are Metal's, decision 0440 step C).
             let own_views = shaped(&store, make(), &Projection::core()).unwrap();
             for views in [&core_views, &own_views] {
                 for name in ["line", "end_line", "col", "docof"] {
                     let src = &views.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name}")).1;
-                    let v = src.device_view().and_then(|d| d.in_place.clone()).unwrap_or_else(|| panic!("{name}: read in place"));
+                    let d = src.device_view().unwrap_or_else(|| panic!("{name}: on the device"));
+                    assert_eq!(d.in_place.is_some(), device.metal().is_some(), "{name}: read in place on Metal alone");
                     let n = src.len();
                     assert!(n > 0, "{name}: rows");
                     for cols in [vec![0, 1], vec![1]] {
-                        let view = mj::DevRel::view(2, n, v.clone()).unwrap();
                         let out = mj::DevRel::empty(cols.len(), n).unwrap();
                         let mut batch = mj::Batch::new().expect("the device");
-                        let from: Vec<mj::Col> = cols.iter().map(|&c| mj::Col::From(c)).collect();
-                        batch.copy_rows(mj::Rows::Rel(&view), n, &from, mj::Rows::Rel(&out), 0).unwrap();
+                        match &d.in_place {
+                            Some(v) => {
+                                let view = mj::DevRel::view(2, n, v.clone()).unwrap();
+                                let from: Vec<mj::Col> = cols.iter().map(|&c| mj::Col::From(c)).collect();
+                                batch.copy_rows(mj::Rows::Rel(&view), n, &from, mj::Rows::Rel(&out), 0).unwrap();
+                            }
+                            None => batch.expand_view(&d.block.device_buffer(device).unwrap(), d.root, d.view, &cols, &out).unwrap(),
+                        }
                         batch.finish().unwrap();
                         for (j, &c) in cols.iter().enumerate() {
                             let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();

@@ -24,7 +24,7 @@
 //!   that ran (decision 0245). It is the only wider search: the plan runs none. A one-shot process serves the
 //!   waiting searches at its run's end (`drain_at_end`), within a share of its CPU; each search stops at its budget.
 //!
-//! **The same on every run** (Q261). What the memo teaches is a function of the run's inputs, as the plans are (Q88):
+//! **The same on every run** (Q314). What the memo teaches is a function of the run's inputs, as the plans are (Q88):
 //! - A chunk reads the memo as it was once chunks `0..=n - window` were filed (`ChunkMemo`, made by
 //!   `OrderedPlans::next`), with what it wrote itself; what it writes (`Op`) goes into the run's memo when it is filed,
 //!   in the chunks' order, each line's in the order it wrote them. Before, every chunk read and wrote one memo as it
@@ -267,7 +267,7 @@ pub(super) struct Memo {
     growth: FxHashMap<(u64, usize), f64>,
 }
 
-/// What a chunk reads and writes of the memo (Q261): the run's as filed when it began, with its own writes, and
+/// What a chunk reads and writes of the memo (Q314): the run's as filed when it began, with its own writes, and
 /// those writes, to be filed into the run's in the chunks' order (`file_ops`).
 pub(super) struct ChunkMemo {
     memo: RwLock<Memo>,
@@ -521,17 +521,6 @@ struct Joins {
 
 fn joins() -> Arc<Joins> {
     super::super::profile::shared::<Joins>()
-}
-
-/// Empties the shared object's join statistics: a test's, after it wrote them.
-#[cfg(test)]
-pub fn clear() {
-    let j = joins();
-    *j.memo.write() = Memo::default();
-    j.noted.store(false, Relaxed);
-    j.exact.store(false, Relaxed);
-    j.raised.store(false, Relaxed);
-    j.requests.lock().clear();
 }
 pub(super) const FLAGS: usize = 0;
 pub(super) const MEASURED: usize = 1;
@@ -799,11 +788,11 @@ pub(super) fn propose(key: PlanKey, mut orders: Vec<(Vec<StoredStep>, f64)>, wal
     orders.truncate(PROPOSALS);
     run_counts().counts[PROPOSED].fetch_add(orders.len() as u64, Relaxed);
     log(|| format!("proposals for line {:x}: {} orders, {} {:?}{}", key as u64, orders.len(), if walked.is_some() { "walked" } else { "prices" }, orders.iter().map(|o| format!("{} {:.0}", o.0.iter().map(|s| s.0.to_string()).collect::<Vec<_>>().join("."), o.1)).collect::<Vec<_>>(), walked.map_or(String::new(), |w| format!("; the order it ran walked {w:.0}"))));
-    let held = joins();
-    let mut m = held.memo.write();
-    // A one-shot process's are its next run's (Q261): a search ends at idle, at the clock's time, and its proposals
+    let st_ = joins();
+    let mut m = st_.memo.write();
+    // A one-shot process's are its next run's (Q314): a search ends at idle, at the clock's time, and its proposals
     // went to whichever chunk planned after.
-    if DRAIN.with(std::cell::Cell::get) {
+    if crate::code_rule_dsl::logic::profile::bound::<Drain>().0 {
         m.held.push((key, orders, walked));
         return;
     }
@@ -886,11 +875,10 @@ pub(super) fn pricing() -> bool {
 /// A small generator for exploration and random orders: `RERAIL_JOIN_SEED` fixes it.
 pub(super) struct Rng(u64);
 impl Rng {
-    /// From `RERAIL_JOIN_SEED`, else a fixed seed, and `salt` (Q261: the clock and a count shared by every thread
+    /// From `RERAIL_JOIN_SEED`, else a fixed seed, and `salt` (Q314: the clock and a count shared by every thread
     /// drew differently on every run).
     pub(super) fn new(salt: u64) -> Rng {
-        // A setting, read once a run (decision 0442).
-        let seed = rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_JOIN_SEED").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(0x2545_f491_4f6c_dd1d));
+        let seed = rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_JOIN_SEED").ok().and_then(|v| v.parse().ok()).unwrap_or(0x2545_f491_4f6c_dd1du64));
         let mut x = seed ^ salt.wrapping_mul(0x9e37_79b9_7f4a_7c15);
         // A few rounds, so neighbouring salts draw apart.
         for _ in 0..4 {
@@ -1118,7 +1106,7 @@ pub fn critical_timed(strata: &[String], producers: &[Vec<usize>], runs: &[LineR
     if let Some(m) = &mut measured {
         m.shared = m.strata.iter().filter(|j| path.contains(j)).count();
     }
-    // The path that notes is the one the lines' work predicts, each line by its work (Q261): the measured path and
+    // The path that notes is the one the lines' work predicts, each line by its work (Q314): the measured path and
     // its seconds (decision 0208) are the clock's, and a line noted is planned again, so they made the plans the
     // clock's. The measured path is reported.
     let on: FxHashSet<usize> = path.iter().copied().collect();
@@ -1247,30 +1235,24 @@ pub fn search_one(over: &dyn Fn() -> bool) -> bool {
     true
 }
 
-thread_local! {
-    /// Decision 0243: whether a run's end serves the waiting searches (`drain_at_end`): a one-shot process ends before the
-    /// machine is idle, and its requests, with the relations they hold, end with it. Decision 0272: every command of the
-    /// CLI (`tools::cli`) sets it; a long-lived caller (the reactor) leaves the searches to the idle job. The caller's
-    /// (decision 0442): held by the thread that set it, carried to its runs' jobs (`carried`).
-    static DRAIN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// Carries the caller's `drain_at_end` to a job of its run on another thread (`run_state`).
-pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
-    c.copy(&["DRAIN"], &DRAIN);
-}
+/// Decision 0243: whether a run's end serves the waiting searches (`drain_at_end`): a one-shot process ends before the
+/// machine is idle, and its requests, with the relations they hold, end with it. Decision 0272: every command of the
+/// CLI (`tools::cli`) sets it; a long-lived caller (the reactor) leaves the searches to the idle job. The caller's
+/// (decision 0442), in the run's context, so its runs' jobs see it too.
+#[derive(Clone, Copy, Default)]
+struct Drain(bool);
 /// The share of the process's CPU a run's end may spend on them.
 const DRAIN_SHARE: f64 = 0.05;
 
 /// Sets whether the ends of this caller's runs serve the waiting searches.
 pub fn drain_at_end(on: bool) {
-    DRAIN.with(|d| d.set(on));
+    crate::code_rule_dsl::logic::profile::bind_here(Drain(on));
 }
 
 /// At a run's end, where `drain_at_end` is set: the waiting searches, most important first, until this thread has
 /// spent `DRAIN_SHARE` of the process's CPU so far on them. The searches the budget leaves wait, as before.
 pub(super) fn drain() {
-    if !DRAIN.with(std::cell::Cell::get) {
+    if !crate::code_rule_dsl::logic::profile::bound::<Drain>().0 {
         return;
     }
     // The proposals held for the next run (`propose`): written back with the notes (`to_store`, after this).
@@ -1296,7 +1278,7 @@ struct TakeHeld;
 impl Drop for TakeHeld {
     fn drop(&mut self) {
         let held = joins();
-        let mut m = held.memo.write();
+    let mut m = held.memo.write();
         for (key, orders, walked) in std::mem::take(&mut m.held) {
             take_proposals(&mut m, key, orders, walked);
         }
@@ -1471,10 +1453,10 @@ pub fn from_store((notes, exact, raised): Stored) {
     let mut m = st_.memo.write();
     let mut taken: FxHashSet<PlanKey> = FxHashSet::default();
     for (k, n) in notes {
-        if !m.notes.contains_key(&k) {
+        m.notes.entry(k).or_insert_with(|| {
             taken.insert(k);
-            m.notes.insert(k, n);
-        }
+            n
+        });
     }
     for (k, rule, sig, c) in exact {
         if taken.contains(&k)

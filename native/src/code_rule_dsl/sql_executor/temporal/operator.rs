@@ -225,7 +225,7 @@ impl Operator {
             recursive: BTreeMap::new(),
             temporal: BTreeMap::new(),
             // A temporal trace's one step is a rule's query, not a producer's.
-            program: Arc::new(crate::code_rule_dsl::logic::front::Program::default()),
+            program: crate::code_rule_dsl::logic::program_image::Builder::base().finish().expect("an empty program").0,
             planning_digest: None,
             producers: BTreeMap::new(),
         };

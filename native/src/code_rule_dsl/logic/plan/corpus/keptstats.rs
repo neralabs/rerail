@@ -209,12 +209,11 @@ impl Keeper {
                 }
                 return;
             }
-            Some((c, k)) => match {
+            Some((c, k)) => {
                 if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
                     eprintln!("statkeep {path}: counted under {:?}, now {:?}", (c, k), now);
                 }
-                old(c, k)
-            } {
+                match old(c, k) {
                 Some(before) => {
                     // A relation whose rows the edit left as they were (node ids by definition keep an unchanged
                     // definition's) is counted out and in again to no effect: left as counted. Each relation's
@@ -269,7 +268,8 @@ impl Keeper {
                     return;
                 }
                 None => return self.fail(format!("{path}: the memo no longer holds the rows counted")),
-            },
+                }
+            }
             None => {}
         }
         self.count(entry, 1);
@@ -290,7 +290,7 @@ impl Keeper {
         let doc_at = &self.doc_at;
         let ok = self.export_rels.iter().all(|rel| match (entry.rows.get(rel), doc_at.get(rel).copied().flatten()) {
             (Some((width, values)), Some(at)) if by_file && at < *width => {
-                by_document(values, *width, |row| memo::document_of(row[at])).iter().all(|(d, rows)| counted.patch_own(rel, *width, *d, Some(at), rows, sign))
+                by_document(values, *width, |row| memo::document_of(row[at]), None).iter().all(|(d, rows)| counted.patch_own(rel, *width, *d, Some(at), rows, sign))
             }
             (Some((width, values)), _) => counted.patch(rel, *width, values, sign),
             (None, _) => true,
@@ -614,6 +614,41 @@ pub(super) fn same(a: (memo::Content, i64), b: (memo::Content, i64)) -> bool {
         }
 }
 
+/// `flat`'s rows (`width` a row) grouped by the document `doc` says each names, in the order the documents first
+/// come, each row taken at the columns `from` (all, when `None`). A document's rows mostly come together, so its
+/// group is looked up once a run of them.
+fn by_document(flat: &[i64], width: usize, doc: impl Fn(&[i64]) -> i64, from: Option<&[usize]>) -> Vec<(i64, Vec<i64>)> {
+    let mut groups: Vec<(i64, Vec<i64>)> = Vec::new();
+    let mut at: rustc_hash::FxHashMap<i64, usize> = Default::default();
+    let mut last: Option<(i64, usize)> = None;
+    for row in flat.chunks_exact(width) {
+        let d = doc(row);
+        let g = match last {
+            Some((l, g)) if l == d => g,
+            _ => {
+                let g = *at.entry(d).or_insert_with(|| {
+                    groups.push((d, Vec::new()));
+                    groups.len() - 1
+                });
+                last = Some((d, g));
+                g
+            }
+        };
+        match from {
+            Some(from) => groups[g].1.extend(from.iter().map(|&c| row[c])),
+            None => groups[g].1.extend_from_slice(row),
+        }
+    }
+    groups
+}
+
+/// `before` and `now` without the relations whose rows are the same in both: what an edit changed, by relation.
+fn changed_only(before: &memo::Entry, now: &memo::Entry) -> (memo::Entry, memo::Entry) {
+    let same = |rel: &String| before.rows.get(rel) == now.rows.get(rel);
+    let keep = |e: &memo::Entry| memo::Entry { rows: e.rows.iter().filter(|(r, _)| !same(r)).map(|(r, v)| (r.clone(), v.clone())).collect(), key: e.key, nodes: e.nodes, outputs: Default::default() };
+    (keep(before), keep(now))
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::{Keeper, memo};
@@ -687,35 +722,4 @@ pub mod tests {
         assert_eq!(carried["e"].rows(), 20);
         assert_eq!(carried["r"].rows(), 40);
     }
-}
-
-/// `flat`'s rows (`width` a row) grouped by the document `doc` says each names, in the order the documents first
-/// come. A document's rows mostly come together, so its group is looked up once a run of them.
-fn by_document(flat: &[i64], width: usize, doc: impl Fn(&[i64]) -> i64) -> Vec<(i64, Vec<i64>)> {
-    let mut groups: Vec<(i64, Vec<i64>)> = Vec::new();
-    let mut at: rustc_hash::FxHashMap<i64, usize> = Default::default();
-    let mut last: Option<(i64, usize)> = None;
-    for row in flat.chunks_exact(width) {
-        let d = doc(row);
-        let g = match last {
-            Some((l, g)) if l == d => g,
-            _ => {
-                let g = *at.entry(d).or_insert_with(|| {
-                    groups.push((d, Vec::new()));
-                    groups.len() - 1
-                });
-                last = Some((d, g));
-                g
-            }
-        };
-        groups[g].1.extend_from_slice(row);
-    }
-    groups
-}
-
-/// `before` and `now` without the relations whose rows are the same in both: what an edit changed, by relation.
-fn changed_only(before: &memo::Entry, now: &memo::Entry) -> (memo::Entry, memo::Entry) {
-    let same = |rel: &String| before.rows.get(rel) == now.rows.get(rel);
-    let keep = |e: &memo::Entry| memo::Entry { rows: e.rows.iter().filter(|(r, _)| !same(r)).map(|(r, v)| (r.clone(), v.clone())).collect(), key: e.key, nodes: e.nodes, outputs: Default::default() };
-    (keep(before), keep(now))
 }

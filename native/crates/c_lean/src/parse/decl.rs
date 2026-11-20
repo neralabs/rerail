@@ -1042,7 +1042,7 @@ impl<'a> P<'a> {
                 self.leaf(K::Identifier, f::PREFIX, C_NONE)?;
                 self.tk(K::Attribute, K::TColonColon)?;
             }
-            if !self.is_ident() && !(self.cpp && self.peek() == T::Name) {
+            if !(self.is_ident() || self.cpp && self.peek() == T::Name) {
                 return self.refuse();
             }
             self.leaf(K::Identifier, f::NAME, C_NONE)?;

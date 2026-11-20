@@ -2,7 +2,7 @@
 
 use rerail_rr_syntax as rr;
 
-/// The repository's `.rr` files.
+/// The repository's `.rerail` files.
 fn corpus() -> Vec<String> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
@@ -13,7 +13,7 @@ fn corpus() -> Vec<String> {
             let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
             if p.is_dir() && !skip {
                 work.push(p);
-            } else if p.extension().is_some_and(|x| x == "rr") {
+            } else if p.extension().is_some_and(|x| x == "rerail") {
                 files.extend(std::fs::read_to_string(&p).ok());
             }
         }

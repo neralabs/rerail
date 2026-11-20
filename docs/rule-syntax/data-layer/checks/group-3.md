@@ -1,4 +1,4 @@
-# Group 3: what `.rr` lacks for twenty data-layer checks
+# Group 3: what `.rerail` lacks for twenty data-layer checks
 
 Oracle: scripts at revision 2b1504ad. Citations are `script.py:LINE` in `scripts/` (helpers in `scripts/lint_lib/`).
 The suite runs each check's *plugin* (`lint_all.py` `linter_plugin_factories`), not its CLI. Where the two differ, the
@@ -31,7 +31,7 @@ These come up in several checks. Each check's list names the ones it needs and g
   position (load, store or del). Sketch: `kind(n,"identifier"), text(n,x)`, excluding the `attribute` field of
   `attribute`, the `name` field of def/class/keyword_argument, identifiers under `parameters` (bare, typed, default
   and splat forms) and `lambda_parameters`, `dotted_name`/`aliased_import` under import statements,
-  `global`/`nonlocal` names, `except … as x` targets, and match-pattern capture names. `names.rr` `nameref` excludes
+  `global`/`nonlocal` names, `except … as x` targets, and match-pattern capture names. `names.rerail` `nameref` excludes
   only the `attribute` and `name` fields, so it also matches parameters and import names, which Python does not
   treat as `Name`.
 - **chain** (LIB) `attr_chain(e: node, p: node)` and `call_chain(e: node, p: node)`: p is reached from e by stepping
@@ -45,7 +45,7 @@ These come up in several checks. Each check's list names the ones it needs and g
   "pos" (posonly or regular), "kwonly", "vararg", "kwarg". Sketch: walk `parameters`. Children after a bare `*`
   (`keyword_separator`) or after a `list_splat_pattern` are kwonly. `typed_parameter`/`typed_default_parameter` carry
   field `type`, and the splat kind comes from the wrapped `list_splat_pattern`/`dictionary_splat_pattern`.
-  `names.rr` `param(f, x, i)` has neither the annotation nor the kind.
+  `names.rerail` `param(f, x, i)` has neither the annotation nor the kind.
 - **str_const** (LIB) `str_const(n: node, v: symbol)`: n is an `ast.Constant` whose value is a `str`, meaning a
   `string` or `concatenated_string` with no `interpolation` child and no `b`/`B` prefix; v is its value. Sketch:
   `str` restricted by `kind`, `child` and a prefix regex. Also `docstring(s: node)`: s is the first
@@ -60,7 +60,7 @@ These come up in several checks. Each check's list names the ones it needs and g
 - **traversal order** (Hard part, shared): "first" and "last" in these collectors mean pre-order over
   `ast.iter_child_nodes` (`lint_lib/fact_engine.py:829`), which is field order, not byte order. A FunctionDef's
   `decorator_list` comes after its `body`, and a ClassDef's `bases` come before its `body`. Node offsets (`node(...)`
-  start, or node ids, which names.rr notes grow in source order) match except where decorators or `IfExp`
+  start, or node ids, which names.rerail notes grow in source order) match except where decorators or `IfExp`
   (`test` before `body`) are involved.
 - **test paths** (POLICY): `FileScopeSpec(include_tests=False)` drops any path with a part `tests` *or* `test`
   (`lint_lib/fact_engine.py:1358`). Directory walks always skip `.git .venv venv __pycache__ tmp`
@@ -348,7 +348,7 @@ These come up in several checks. Each check's list names the ones it needs and g
     is the callee's attr or id, plus `Class.attr` for `self./cls.` calls. A candidate resolves only when exactly one
     function symbol in the file has that simple name or symbol, and that symbol is not the caller.
     `count : {…} = 1`. Then reach-eager is a recursion over it, cut at legacy surfaces, and the reported line is the
-    first call (`min`) whose target reaches. `python/calls.rr` `call_target` resolves by scope, not this way, so it
+    first call (`min`) whose target reaches. `python/calls.rerail` `call_target` resolves by scope, not this way, so it
     gives different answers.
   - LIB py_frame: calls belong to the innermost function. `_legacy_surface_depth` is any enclosing legacy-decorated
     function (`within`, `:499`).

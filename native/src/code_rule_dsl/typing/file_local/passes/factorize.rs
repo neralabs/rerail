@@ -6,7 +6,7 @@
 //! (`p4_outer(f, x) :- p4_read(_, x, f, _), fz_a(f, p), fz_b(p, x)`): their join is the cross part's ordinary join,
 //! per key, from the columns they bind.
 //!
-//! - **Each part** keeps its own comparisons and negations (`keeps::factors`), and is reduced by the keys every part
+//! - **Each part** keeps its own comparisons and negations (`keeps::factors_of`), and is reduced by the keys every part
 //!   holds (`fz_a(f, p) :- …, fzk_b(p)`): every row stored then joins, so a part never holds more rows than the
 //!   product it replaces. The keys are chained, the parts of fewest atoms first: `fzk_a(p) :- …`, then
 //!   `fzk_b(p) :- bound_in(p, x), fzk_a(p)`, so a part that is itself a join is made only for the keys the parts

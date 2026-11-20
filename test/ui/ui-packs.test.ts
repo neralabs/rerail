@@ -50,14 +50,15 @@ afterEach(() => {
 describe("the whole-pack switch", () => {
   const rules = (...on: boolean[]) => on.map((enabled, i) => ({ rule: { id: `r${i}` }, enabled }));
 
-  it("is on only when every rule is on: some on, none on and no rules all read off", () => {
-    expect(packSwitch(rules(true, false, true))).toEqual({ on: 2, total: 3, state: "false" });
+  it("is on when every rule is on, halfway when some are, and off when none is or there are none", () => {
+    expect(packSwitch(rules(true, false, true))).toEqual({ on: 2, total: 3, state: "mixed" });
     expect(packSwitch(rules(true, true))).toEqual({ on: 2, total: 2, state: "true" });
     expect(packSwitch(rules(false, false))).toEqual({ on: 0, total: 2, state: "false" });
     expect(packSwitch([])).toEqual({ on: 0, total: 0, state: "false" });
   });
 
-  it("off with some rules on turns the rest on, then on turns everything off, then on again", () => {
+  it("halfway turns the rest on, then on turns everything off, then on again", () => {
+    expect(packSwitch(rules(true, false, false)).state).toBe("mixed");
     let set = rules(true, false, false);
     const click = () => { const on = switchTurnsOn(packSwitch(set).state); set = set.map(r => ({ ...r, enabled: on })); };
 
@@ -117,7 +118,7 @@ describe("the writes the whole-pack switch sends", () => {
 
   it("with some rules on turns every rule of the pack on, owned as the page says, and shows it at once", async () => {
     const before = packSwitch(([...data.rules.values()] as StoredRule[]).filter(r => r.source.kind === "pack"));
-    expect(before).toMatchObject({ state: "false", on: 2 });
+    expect(before).toMatchObject({ state: "mixed", on: 2 });
 
     const saving = page("checkout").setPackEnabled("typescript", switchTurnsOn(before.state), "On.");
 

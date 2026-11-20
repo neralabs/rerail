@@ -56,9 +56,9 @@ impl Corpus {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let marker = format!("# {name} {:?}\n", std::time::SystemTime::now());
-        let rule = dir.join("program.rr");
+        let rule = dir.join("program.rerail");
         std::fs::write(&rule, PROGRAM).unwrap();
-        let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+        let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
         let c = Corpus { dir, marker, program, runs: 0 };
         for (file, body) in FILES {
             c.write(file, body);
@@ -226,7 +226,7 @@ fn r5_the_runs_read_no_sql_inside_the_waves() {
             .env("RERAIL_TAPE_CACHE", &store)
             .env("RERAIL_CHILD_RUN", c.dir.join("src"))
             .env("RERAIL_CHILD_OUT", c.dir.join(format!("out{n}")))
-            .env("RERAIL_CHILD_PROGRAM", c.dir.join("program.rr"))
+            .env("RERAIL_CHILD_PROGRAM", c.dir.join("program.rerail"))
             .env("RERAIL_COSTS", c.dir.join("costs.sqlite"))
             .env("RERAIL_IMAGE_STORE", c.dir.join("images"))
             .env("RERAIL_SQL_STRICT", "1");

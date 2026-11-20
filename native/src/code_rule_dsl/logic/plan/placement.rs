@@ -21,7 +21,6 @@
 use super::{Mode, Order};
 use crate::code_rule_dsl::logic::program_image::{AggRef, CmpOp, Lit, TermRef, Version};
 use crate::code_rule_dsl::logic::device::caps::{self, DeviceFn};
-use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A relational form a stratum's plans use: what a backend must be able to run.
@@ -230,31 +229,29 @@ pub enum Binding {
     Always,
 }
 
-thread_local! {
-    /// This thread's run's binding (`typing::file_local::Binding::Metal` is `Metal`).
-    static DEVICE: Cell<Binding> = const { Cell::new(Binding::Cpu) };
-}
-
-/// Carries the binding to a job on another thread (`run_state`).
-pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
-    c.copy(&["DEVICE"], &DEVICE);
-    c.cloned(&["RECORDED"], &RECORDED);
+/// The run's binding (`typing::file_local::Binding::Metal` is `Metal`), in the run's context: its jobs' too.
+#[derive(Clone, Copy)]
+struct Device(Binding);
+impl Default for Device {
+    fn default() -> Self {
+        Device(Binding::Cpu)
+    }
 }
 
 /// Whether this thread's run may use the device.
 pub(in crate::code_rule_dsl) fn device() -> bool {
-    DEVICE.with(Cell::get) != Binding::Cpu
+    binding() != Binding::Cpu
 }
 
-/// Sets whether this thread's run may place strata on the device; the previous value, to restore. `RERAIL_DEVICE=always`
-/// makes a Metal binding `Always`, and so does a caller's `Always` (a test's, `set_binding`).
-pub(in crate::code_rule_dsl) fn set_device(on: bool) -> bool {
+/// Whether this run may place strata on the device, until the guard drops. `RERAIL_DEVICE=always` makes a Metal
+/// binding `Always`, and so does a caller's `Always` (a test's, `set_binding`).
+pub(in crate::code_rule_dsl) fn set_device(on: bool) -> rerail_prof::code_rule_dsl::logic::profile::Bound {
     let b = match on {
         false => Binding::Cpu,
         true if always_env() || binding() == Binding::Always => Binding::Always,
         true => Binding::Metal,
     };
-    set_binding(b) != Binding::Cpu
+    set_binding(b)
 }
 
 /// What a block this run makes for the device to read asks of the block policy (decision 0342): the device may
@@ -263,14 +260,14 @@ pub fn block_device() -> rerail_blocks::alloc::Device {
     if device() { rerail_blocks::alloc::Device::May } else { rerail_blocks::alloc::Device::No }
 }
 
-/// This thread's binding.
+/// The run's binding.
 pub fn binding() -> Binding {
-    DEVICE.with(Cell::get)
+    rerail_prof::code_rule_dsl::logic::profile::bound::<Device>().0
 }
 
-/// Sets this thread's binding; the previous one, to restore.
-pub fn set_binding(b: Binding) -> Binding {
-    DEVICE.with(|d| d.replace(b))
+/// The run's binding, until the guard drops.
+pub fn set_binding(b: Binding) -> rerail_prof::code_rule_dsl::logic::profile::Bound {
+    rerail_prof::code_rule_dsl::logic::profile::bind(Device(b))
 }
 
 fn always_env() -> bool {
@@ -349,7 +346,7 @@ fn row_term(v: &Version, t: TermRef<'_>) -> bool {
     }
 }
 
-/// The device's form of `.rr`'s (or the native engine's) function `f`.
+/// The device's form of `.rerail`'s (or the native engine's) function `f`.
 fn device_fn(f: &str) -> Option<DeviceFn> {
     caps::device_fn(caps::native(f))
 }
@@ -576,7 +573,7 @@ pub(in crate::code_rule_dsl) fn price_join(j: &JoinEst, sorted: bool) -> JoinCho
         PROBE_FIXED + j.input * (keys * UPLOAD_PER_VALUE + PROBE_PER_ROW) + j.output * PROBE_PER_PAIR + sort
     };
     let probe_s = (!j.range).then(|| probe(sorted));
-    let tile_s = j.range.then(|| TILE_FIXED + (j.input + j.relation) * keys * TILE_HOST_PER_VALUE + j.output * TILE_COMPARES_PER_PAIR * TILE_PER_COMPARE);
+    let tile_s = j.range.then_some(TILE_FIXED + (j.input + j.relation) * keys * TILE_HOST_PER_VALUE + j.output * TILE_COMPARES_PER_PAIR * TILE_PER_COMPARE);
     // The device's form is the cheaper of its own, and is taken over the CPU's index while under `GPU_BIAS` times it.
     let device = [(JoinForm::Probe, probe_s), (JoinForm::Tile, tile_s)].into_iter()
         .filter_map(|(f, p)| Some((f, p?))).min_by(|a, b| a.1.total_cmp(&b.1));
@@ -595,38 +592,22 @@ pub struct Ran {
     pub why: String,
 }
 
-/// The placements kept while `recording` (decision 0442: the recording caller's, held by its thread and carried to
-/// its runs' jobs, `carried`).
+/// The placements kept while `recording` (decision 0442: the recording caller's, in the run's context, so its runs'
+/// jobs record into it too).
 type Recorded = std::sync::Arc<std::sync::Mutex<Vec<(String, Ran)>>>;
 
-thread_local! {
-    static RECORDED: std::cell::RefCell<Option<Recorded>> = const { std::cell::RefCell::new(None) };
-}
+#[derive(Clone, Default)]
+struct Recording(Option<Recorded>);
 
-/// The recording under way for this thread's runs, if one is.
+/// The recording under way for this caller's runs, if one is.
 fn recorded_here() -> Option<Recorded> {
-    RECORDED.with(|r| r.borrow().clone())
+    rerail_prof::code_rule_dsl::logic::profile::bound::<Recording>().0
 }
 
 /// While the guard lives, every native stratum's placement in this caller's runs is kept (`recorded`).
 #[cfg(any(test, feature = "test-hooks"))]
-pub fn recording() -> impl Drop {
-    struct On(Option<Recorded>);
-    impl Drop for On {
-        fn drop(&mut self) {
-            let was = self.0.take();
-            RECORDED.with(|r| *r.borrow_mut() = was);
-        }
-    }
-    let was = RECORDED.with(|r| {
-        let mut r = r.borrow_mut();
-        let was = r.clone();
-        if r.is_none() {
-            *r = Some(Default::default());
-        }
-        was
-    });
-    On(was)
+pub fn recording() -> Option<rerail_prof::code_rule_dsl::logic::profile::Bound> {
+    recorded_here().is_none().then(|| rerail_prof::code_rule_dsl::logic::profile::bind(Recording(Some(Default::default()))))
 }
 
 /// The kept placements of strata whose key starts with `prefix` (taken).
@@ -790,7 +771,7 @@ pub(in crate::code_rule_dsl) fn place(shape: &Shape) -> Placement {
         + GPU_PER_WORK * terms.other_work;
     let gpu_s = CPU_PER_STRATUM + device_s;
     let missing: Vec<Form> = shape.forms.iter().copied().filter(|f| !DEVICE_FORMS.contains(f)).collect();
-    let binding = DEVICE.with(Cell::get);
+    let binding = binding();
     let device = binding != Binding::Cpu;
     // The GPU while its price is under `GPU_BIAS` times the CPU's (decision 0321).
     let gpu_cheaper = device_s < cpu_work_s * gpu_bias();
@@ -798,21 +779,42 @@ pub(in crate::code_rule_dsl) fn place(shape: &Shape) -> Placement {
     Placement { gpu, gpu_cheaper, missing, cpu_s, gpu_s, device, joins, lacking: shape.lacking(), terms }
 }
 
+/// A measurement aid only: `RERAIL_DEVICE_JOINS=off` keeps every stratum's joins on the CPU under a device binding,
+/// so a run can be paired against the same binding with them on. Placement still prices and reports as usual.
+pub(crate) fn device_joins_off() -> bool {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_DEVICE_JOINS").is_ok_and(|v| v == "off"))
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::code_rule_dsl::logic::front::{Atom, Literal, Rule, Term};
     use crate::code_rule_dsl::logic::plan::Step;
+    use crate::code_rule_dsl::logic::program_image::{Builder, CmpOp, T};
 
-    fn atom(rel: &str, neg: bool) -> Literal {
-        Literal::Atom(Atom { rel: rel.into(), args: [Term::Var("x".into())].into(), neg, gated: false })
+    /// A body literal of a test's rule: an atom over `x`, or `l = r`.
+    #[derive(Clone)]
+    enum Literal {
+        Atom(&'static str, bool),
+        Eq(T<'static>, T<'static>),
     }
 
-    /// Adds `lits`, planned in their order, to `shape`.
-    fn adds(shape: &mut Shape, lits: &[Literal], head: &[Term], work: f64, recursive: bool) {
+    fn atom(rel: &'static str, neg: bool) -> Literal {
+        Literal::Atom(rel, neg)
+    }
+
+    /// Adds `out(head…) :- lits`, planned in their order, to `shape`.
+    fn adds(shape: &mut Shape, lits: &[Literal], head: &[T<'_>], work: f64, recursive: bool) {
         let steps: Vec<Step> = (0..lits.len()).map(|at| Step { at, mode: None }).collect();
-        let head = Atom { rel: "out".into(), args: head.to_vec().into(), neg: false, gated: false };
-        let made = crate::code_rule_dsl::logic::plan::body::alone(&Rule { head, body: lits.to_vec().into() }).expect("a rule");
+        let mut b = Builder::base();
+        let mut r = b.rule().head("out", head);
+        for l in lits {
+            r = match l {
+                Literal::Atom(rel, neg) => r.atom_with(*rel, &[T::Var("x")], *neg, false),
+                Literal::Eq(lt, rt) => r.cmp(lt.clone(), CmpOp::Eq, rt.clone()),
+            };
+        }
+        r.finish().expect("a rule");
+        let made = b.finish().expect("a version").0;
         let b = crate::code_rule_dsl::logic::plan::body::nth(&made, 0);
         shape.add(Order::new(&b, &steps), work, recursive, false);
     }
@@ -822,7 +824,7 @@ pub mod tests {
         // A large join with a negation, a text test and a computed head: the GPU's price is lower, and the computed
         // term is the form it lacks.
         let mut big = Shape::default();
-        let len = Term::Call("sha256".into(), [Term::Var("x".into())].into());
+        let len = T::Call("sha256", vec![T::Var("x")]);
         adds(&mut big, &[atom("kind", false), atom("strtest_3", false), atom("within", true)], &[len], 4e6, false);
         assert_eq!(big.forms, [Form::Join, Form::Negation, Form::Computed, Form::TextTest].into_iter().collect());
         let p = place(&big);
@@ -831,31 +833,31 @@ pub mod tests {
         assert!(p.why().contains("no computed term"), "{}", p.why());
         // Without the computed head, under the Metal binding, the device takes it; under the CPU binding it does not.
         let mut plain = Shape::default();
-        adds(&mut plain, &[atom("kind", false), atom("within", true)], &[Term::Var("x".into())], 4e6, false);
+        adds(&mut plain, &[atom("kind", false), atom("within", true)], &[T::Var("x")], 4e6, false);
         assert!(plain.missing_none());
-        let was = set_device(true);
+        let device = set_device(true);
         let p = place(&plain);
-        set_device(was);
+        drop(device);
         assert!(p.gpu && p.missing.is_empty(), "{p:?}");
         assert!(!place(&plain).gpu, "the CPU binding keeps it");
         // `@doc(x) = @doc(y)` and `@in(x, {…})` are row code, and so is `z = cat(x, y)` (a text the device makes);
         // `sha256(x)` is not, nor a cat or `lower(x)` in a recursive stratum (its rounds would join the text before it
         // is a symbol); `lower(x)` is (a text the device makes into its arena).
-        let cmp = |l: Term, r: Term| Literal::Cmp { l, op: "=", r };
-        let doc = |v: &str| Term::Call("doc".into(), [Term::Var(v.into())].into());
+        let cmp = |l: T<'static>, r: T<'static>| Literal::Eq(l, r);
+        let doc = |v: &'static str| T::Call("doc", vec![T::Var(v)]);
         let mut docs = Shape::default();
         adds(&mut docs, &[atom("kind", false), cmp(doc("x"), doc("y"))], &[], 1.0, false);
         assert!(docs.forms.contains(&Form::Comparison) && !docs.forms.contains(&Form::Computed));
-        let made = || cmp(Term::Var("z".into()), Term::Call("cat".into(), [Term::Var("x".into()), Term::Var("y".into())].into()));
+        let made = || cmp(T::Var("z"), T::Call("cat", vec![T::Var("x"), T::Var("y")]));
         let mut cat = Shape::default();
         adds(&mut cat, &[atom("kind", false), made()], &[], 1.0, false);
         assert!(cat.forms.contains(&Form::Comparison) && !cat.forms.contains(&Form::Computed), "{:?}", cat.forms);
         let mut rec = Shape::default();
         adds(&mut rec, &[atom("kind", false), made()], &[], 1.0, true);
         assert!(rec.forms.contains(&Form::Computed));
-        let lower = || cmp(Term::Var("z".into()), Term::Call("lower".into(), [Term::Var("x".into())].into()));
+        let lower = || cmp(T::Var("z"), T::Call("lower", vec![T::Var("x")]));
         let mut len = Shape::default();
-        adds(&mut len, &[atom("kind", false), cmp(Term::Var("z".into()), Term::Call("sha256".into(), [Term::Var("x".into())].into()))], &[], 1.0, false);
+        adds(&mut len, &[atom("kind", false), cmp(T::Var("z"), T::Call("sha256", vec![T::Var("x")]))], &[], 1.0, false);
         assert!(len.forms.contains(&Form::Computed));
         let mut low = Shape::default();
         adds(&mut low, &[atom("kind", false), lower()], &[], 1.0, false);
@@ -866,16 +868,15 @@ pub mod tests {
         // A tiny stratum stays on the CPU: the submission costs more than the work, even under the Metal binding.
         let mut small = Shape::default();
         adds(&mut small, &[atom("kind", false)], &[], 10.0, false);
-        let was = set_device(true);
+        let device = set_device(true);
         let p = place(&small);
-        set_device(was);
+        drop(device);
         assert!(!p.gpu_cheaper && !p.gpu);
         assert_eq!(p.why(), "CPU: cheaper");
         // Join steps priced on each form: a large equi-join takes the sort and probe, its second probe of the same
         // relation pays no sort; a range inside a document takes the tile; a small lookup stays on the CPU's index.
         let est = |rel: &str, input: f64, output: f64, range: bool| JoinEst { rel: rel.into(), input, relation: 1e6, output, walked: (input, output), keys: 1, range, cost: 1.0 };
-        let mut joined = Shape::default();
-        joined.joins = vec![est("a", 1e6, 1e6, false), est("a", 1e6, 1e6, false), est("b", 1e6, 1e6, true), est("c", 10.0, 10.0, false)];
+        let joined = Shape { joins: vec![est("a", 1e6, 1e6, false), est("a", 1e6, 1e6, false), est("b", 1e6, 1e6, true), est("c", 10.0, 10.0, false)], ..Shape::default() };
         let p = place(&joined);
         let forms: Vec<JoinForm> = p.joins.iter().map(|c| c.form).collect();
         assert_eq!(forms, vec![JoinForm::Probe, JoinForm::Probe, JoinForm::Tile, JoinForm::Index], "{p:?}");
@@ -894,7 +895,7 @@ pub mod tests {
         // priced level on either side while each row came back (decision 0321's `kind`). A join whose rows the device
         // would make past the bound head, where the CPU's walk keeps one witness (decision 0229), is priced with every
         // row on the device.
-        let was = set_device(true);
+        let device = set_device(true);
         let mut copy = Shape { work: 50_000.0, rows: 50_000.0, scanned: 50_000.0, rules: 1, steps: 1, ..Shape::default() };
         copy.reads = vec![("node".into(), 50_000.0, 2, true)];
         let p = place(&copy);
@@ -912,7 +913,7 @@ pub mod tests {
         assert!(!at(2.5).gpu, "{:?}", at(2.5));
         let cut = |walked: f64| Shape { work: 2e6, rows: 1e3, rules: 1, steps: 2, joins: vec![JoinEst { rel: "node".into(), input: 1e3, relation: 1e6, output: 1e3, walked: (1e3, walked), keys: 1, range: false, cost: 1.0 }], ..Shape::default() };
         assert!(place(&cut(1e3)).gpu_s < place(&cut(1e7)).gpu_s, "every row walked costs the device more");
-        set_device(was);
+        drop(device);
         // A recursive probe planned for the delta it saw at open is priced over the rows its relation gains: its
         // seeds' rows (here 500, against the 18 it saw) and one round more, at most as many again.
         let mut rounds = Shape { work: 100.0, ..Shape::default() };
@@ -929,13 +930,7 @@ pub mod tests {
         assert!(many.probes.is_empty());
         // Recursion and computed terms are forms too.
         let mut rec = Shape::default();
-        adds(&mut rec, &[atom("edge", false)], &[Term::Call("add".into(), vec![].into())], 1.0, true);
+        adds(&mut rec, &[atom("edge", false)], &[T::Call("add", vec![])], 1.0, true);
         assert!(rec.forms.contains(&Form::Recursion) && rec.forms.contains(&Form::Computed));
     }
-}
-
-/// A measurement aid only: `RERAIL_DEVICE_JOINS=off` keeps every stratum's joins on the CPU under a device binding,
-/// so a run can be paired against the same binding with them on. Placement still prices and reports as usual.
-pub(crate) fn device_joins_off() -> bool {
-    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_DEVICE_JOINS").is_ok_and(|v| v == "off"))
 }

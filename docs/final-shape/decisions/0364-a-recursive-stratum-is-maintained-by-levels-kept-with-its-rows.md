@@ -466,6 +466,6 @@ step 18).
   per key changes without its existence changing, which levels alone do not cover.
 - **Scale.** The largest real set here is 37 files and 480,000 recursive rows. At 2,410 files of the data layer a
   session's edits now take 44-59 s against a 515 s first run, their findings a cold run's (t43 step 20). Left at
-  that size: two strata derived again where the mode is priced above a derive by small deltas (Q313), and the
-  9,010-file ladder (Q312). That ladder is one policy run with its scope dropped (`dl-history.sh`), not the data
-  layer's workload (its 50 policies together, Q315); its times are this mode's at size, nothing more.
+  that size: two strata derived again where the mode is priced above a derive by small deltas (Q352), and the
+  9,010-file ladder (Q351). That ladder is one policy run with its scope dropped (`dl-history.sh`), not the data
+  layer's workload (its 50 policies together, Q354); its times are this mode's at size, nothing more.
