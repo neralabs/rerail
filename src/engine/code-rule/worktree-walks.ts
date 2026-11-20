@@ -158,6 +158,11 @@ export interface WatcherWalk {
   readonly registry?: string | undefined;
   /** Those of `worktrees` the session takes for the first time, or had a subtree of it could not read. */
   readonly firstSight: ReadonlySet<string>;
+  /**
+   * Those of `firstSight` the session takes for the first time: it holds no read of them yet. One whose subtree it could
+   * not read it holds a read of, so it can record a change elsewhere there for the repository (`#recorders`).
+   */
+  readonly fresh: ReadonlySet<string>;
   /** When the session opened, on the filesystem's clock. */
   readonly startedAt: number;
   /**
@@ -767,10 +772,11 @@ export class WorktreeWalks {
   /**
    * Of the changes each read found, those no session made (`WatcherWalk.claims`), handed to one session watching the
    * worktree to record once for the repository: the first that has taken the worktree before, as only a session that
-   * holds the read before it takes a change as one. None when every session watching it takes it for the first time: the
-   * read is their baseline (`#unclaimed` says which sessions are asked). None of a change in a session's folder: that
-   * session's own walk judges what changes there, as every session's does in its folder; nor of one made in the folder of
-   * a session that closed since, before it closed (`#departed`).
+   * holds the read before it takes a change as one, though a subtree of it was unread (`WatcherWalk.fresh`). None when
+   * every session watching it takes it for the first time: the read is their baseline (`#unclaimed` says which sessions
+   * are asked). None of a change in a session's folder: that session's own walk judges what changes there, as every
+   * session's does in its folder; nor of one made in the folder of a session that closed since, before it closed
+   * (`#departed`).
    */
   async #recorders(
     starts: ReadonlyMap<Watching, WatcherWalk>,
@@ -782,7 +788,7 @@ export class WorktreeWalks {
     await Promise.all(this.#departed.map(departed => departed.known));
     for (const [root, findings] of found) {
       if (findings.changes.length === 0) continue;
-      const recorder = [...walking].find(([, walk]) => walk.worktrees.has(root) && !walk.firstSight.has(root))?.[0];
+      const recorder = [...walking].find(([, walk]) => walk.worktrees.has(root) && !walk.fresh.has(root))?.[0];
       if (recorder === undefined) continue;
       const unclaimed = await this.#unclaimed(starts, root, findings);
       if (unclaimed.size > 0) records.set(recorder, (records.get(recorder) ?? new Map<string, ReadonlySet<string>>()).set(root, unclaimed));

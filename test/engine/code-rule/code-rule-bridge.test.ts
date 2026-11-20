@@ -5668,6 +5668,21 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
   });
 
+  // The session holds a read of the rest of the worktree, so it records for the repository what no session made there.
+  it("records for the repository a write no session made that a walk first reading a folder of a worktree finds there", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    await mkdir(join(worktree, "deep"));
+    discovery.directories.set(join(worktree, "deep"), [async () => { throw new Error("EMFILE: too many open files"); }]);
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    await writeFile(join(worktree, "deep", "new.py"), "violation\n");
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits.map(edit => edit.path), batch.mode, batch.owner])).toEqual([
+      [[repositoryPath(root, join(worktree, "deep", "new.py"))], "log", "repository"],
+    ]);
+  });
+
   it("records a write a walk that first reads a folder of a worktree finds there, its `.git` entry kept", async () => {
     const root = await twoBranches();
     const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));

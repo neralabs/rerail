@@ -1156,7 +1156,7 @@ describe("what a walk looks at in a watched worktree that no notice tells of", (
 /** A session's part in a walk where it watches no worktree, its folder the checkout at `folder`, and claims nothing. */
 function quietWalk(folder: string): WatcherWalk {
   return {
-    worktrees: new Set(), checkout: folder, folder, firstSight: new Set(), startedAt: 0, heads: new Set(), unmerged: new Set(),
+    worktrees: new Set(), checkout: folder, folder, firstSight: new Set(), fresh: new Set(), startedAt: 0, heads: new Set(), unmerged: new Set(),
     scan: async () => undefined, holdsRefusal: () => false, claims: async () => new Set(), take: async () => undefined,
   };
 }
@@ -1169,7 +1169,7 @@ function watcherOf(roots: readonly string[], scans: string[], gaveUp = false): W
   return {
     clock: async () => Date.now(),
     start: () => ({
-      worktrees: new Set(roots), checkout: undefined, folder: "/nowhere", firstSight: new Set(), startedAt: 0, heads: new Set(), unmerged: new Set(),
+      worktrees: new Set(roots), checkout: undefined, folder: "/nowhere", firstSight: new Set(), fresh: new Set(), startedAt: 0, heads: new Set(), unmerged: new Set(),
       scan: async ({ root }) => {
         scans.push(root);
         return {
