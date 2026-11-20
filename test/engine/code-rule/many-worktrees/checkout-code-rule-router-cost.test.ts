@@ -63,10 +63,12 @@ const RULE = codeRuleSchema.parse({
 
 /**
  * A session in a started repository's main checkout with `count` Git worktrees beside it, as a repository many agents
- * work in has. The session knows every worktree, as its first walk of them leaves it (`worktreeRoots`), and has a lane
- * open in each, as that walk opens one wherever it asks whether a file is read.
+ * work in has. The session knows every worktree, as its first walk of them leaves it (`worktreeRoots`); that walk's
+ * questions are answered by the main checkout's lane, which holds the same rules. With `lanes` (the default) the
+ * session has a lane open in each worktree too, as an edit there opens one; without, the walk's answers are all it has
+ * of them.
  */
-async function sessionWithWorktrees(count: number) {
+async function sessionWithWorktrees(count: number, lanes = true) {
   const base = await realpath(await mkdtemp(join(tmpdir(), "rerail-router-cost-")));
   cleanups.push(() => removeFolder(base));
   const main = join(base, "main");
@@ -92,6 +94,7 @@ async function sessionWithWorktrees(count: number) {
   });
   expect(auditor.worktreeRoots()).toEqual(worktrees);
   for (const worktree of worktrees) expect(auditor.acceptsPath(join(worktree, "api", "x.py"))).toBe(true);
+  if (lanes) for (const worktree of worktrees) auditor.ignoredEdit(join(worktree, "api", "x.py"));
   // The first walk records each worktree it finds; the next one finds them recorded.
   auditor.worktreeRoots();
   return { base, main, databasePath, worktrees, catalogs, owners, auditor };
@@ -194,15 +197,18 @@ describe("CheckoutCodeRuleRouter in a repository with many worktrees", () => {
   }
 
   it("costs one tool call the same statements and Git processes however many worktrees the session knows", async () => {
-    const costOf = async (count: number) => {
-      const { catalogs, auditor } = await sessionWithWorktrees(count);
+    const costOf = async (count: number, lanes: boolean) => {
+      const { catalogs, auditor } = await sessionWithWorktrees(count, lanes);
       await editToolCall(auditor, 1);
       return await cost(catalogs.database, () => editToolCall(auditor, 2));
     };
-    const few = await costOf(1);
-    expect(await costOf(6)).toEqual(few);
-    // The checkout declares no submodules, so its ignore rules ask Git nothing.
-    expect(few.gitProcesses).toBe(0);
+    // Each worktree with a lane of its own, and each answered for by the main checkout's lane alone.
+    for (const lanes of [true, false]) {
+      const few = await costOf(1, lanes);
+      expect(await costOf(6, lanes)).toEqual(few);
+      // The checkout declares no submodules, so its ignore rules ask Git nothing.
+      expect(few.gitProcesses).toBe(0);
+    }
   }, 60_000);
 
   it("reads the session checkout's rules at every event, so what its catalog reports is current before any tool call", async () => {

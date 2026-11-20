@@ -29,6 +29,7 @@ import {
 import type { IgnoreRulesChange } from "../engine/code-rule/ignore-rule-files.js";
 import { claudeCodeReportedPreimage } from "../engine/code-rule/tool-result/reported-preimage.js";
 import { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
+import { GitIgnoreMatchers } from "../engine/native/git-ignore-matchers.js";
 import {
   buildSteer, type AuditorCloseOptions, type CodeRuleAuditor, type AuditSettings, type CodeRuleViolation, type RuleSteerDelivery,
   type RepositoryAuditHooks, type SteerMetadata, type SteerSourceOf,
@@ -1151,6 +1152,11 @@ export interface RerailRuntimeOptions {
    * one to all its runtimes; a runtime makes its own otherwise, which its sessions share.
    */
   worktreeWalks?: RepositoryWorktreeWalks;
+  /**
+   * Git's ignore rules of each checkout, one matcher for every session (`GitIgnoreMatchers`): the engine service passes
+   * one to all its runtimes; a runtime makes its own otherwise, which its sessions share.
+   */
+  gitIgnoreMatchers?: GitIgnoreMatchers;
   /** Receives the timing lines of session start and slow turn ends (the daemon passes its log); without it they are not written. */
   timingLog?: (line: string) => void;
   /** The sessions an engine service suspended (`closeIdleSession`), which this runtime takes back as it opens one. */
@@ -1238,6 +1244,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #ingestLanes = new SessionLanes();
   readonly #sourceObservations: SourceObservationCache = new Map();
   readonly #worktreeWalks: RepositoryWorktreeWalks;
+  readonly #gitIgnoreMatchers: GitIgnoreMatchers;
   readonly #discoveryWaitMs: number | undefined;
   readonly #timingLog: ((line: string) => void) | undefined;
   readonly #startWatch: RepositoryStartWatch | undefined;
@@ -1265,6 +1272,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#auditSettings = { ...DEFAULT_AUDIT_SETTINGS, ...options.auditSettings };
     this.#discoveryWaitMs = options.discoveryWaitMs;
     this.#worktreeWalks = options.worktreeWalks ?? new RepositoryWorktreeWalks();
+    this.#gitIgnoreMatchers = options.gitIgnoreMatchers ?? new GitIgnoreMatchers();
     this.#timingLog = options.timingLog;
     this.#autostart = options.autostart ?? true;
     this.#createAuditor = options.createAuditor ?? ((auditorOptions) => new CheckoutCodeRuleRouter({
@@ -1274,6 +1282,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       startingCheckout: startingCheckout(this.#owners, auditorOptions.workspaceRoot).checkoutRoot,
       owners: this.#owners,
       catalogs: this.#catalogs,
+      gitIgnoreMatchers: this.#gitIgnoreMatchers,
     }));
     if (options.embedder !== undefined) this.#embedder = options.embedder;
     else if (options.modelPath !== undefined) this.#embedder = new NativeSemanticEmbedder(options.modelPath);

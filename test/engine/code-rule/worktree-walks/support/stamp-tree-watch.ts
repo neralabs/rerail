@@ -53,6 +53,8 @@ export class StampTreeWatch implements TreeWatch {
   readonly #movedAway = new Set<string>();
   /** By root, a handle on each folder a Linux watch follows: the watch stands for that folder, not for its path. */
   readonly #handles = new Map<string, Map<string, number>>();
+  /** What `until` waits for, each checked again after a watch. */
+  readonly #waiting: Array<{ readonly met: () => boolean; readonly resolve: () => void }> = [];
   closed = false;
 
   constructor(options: { byFolder?: boolean } = {}) {
@@ -67,7 +69,23 @@ export class StampTreeWatch implements TreeWatch {
     else if (this.#byFolder) this.#takeUp(root, before, folders);
     this.folders.set(root, folders);
     if (this.#byFolder) this.#hold(root, folders);
+    this.#settle();
     return true;
+  }
+
+  /** Resolves once `met` holds, read now and after each watch: a test waits for that fact, not for a time. */
+  until(met: () => boolean): Promise<void> {
+    if (met()) return Promise.resolve();
+    const { promise, resolve } = Promise.withResolvers<void>();
+    this.#waiting.push({ met, resolve });
+    return promise;
+  }
+
+  #settle(): void {
+    for (const waiter of this.#waiting.filter(waiter => waiter.met())) {
+      this.#waiting.splice(this.#waiting.indexOf(waiter), 1);
+      waiter.resolve();
+    }
   }
 
   /** Holds a handle on each of `folders` not held yet, and lets go of each held one no longer followed. */
@@ -89,6 +107,9 @@ export class StampTreeWatch implements TreeWatch {
     this.#entries.delete(root);
     this.folders.delete(root);
     this.#hold(root, []);
+    // As the engine does, the notices queued for a root it lets go of go with it.
+    this.#lost.delete(root);
+    this.#ended.delete(root);
     this.unwatched.push(root);
   }
 
