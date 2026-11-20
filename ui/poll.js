@@ -62,10 +62,18 @@ let backoff = INTERVAL;
 /** When (`performance.now()`) a failed read last doubled `backoff`. */
 let doubledAt = -Infinity;
 /**
- * When the last read a change asked for began and, once it answered, ended (`performance.now()`, which a changed wall
- * clock does not move), for the pace; a new stream starts it over, and the person's own reads do not count.
+ * When the last read a change asked for began (`performance.now()`, which a changed wall clock does not move), for
+ * the pace; a new stream starts it over, and the person's own reads do not count.
  */
 let lastChangeRead = -Infinity;
+/**
+ * Where the pace's 5 s ticks count from: the stream's first message, which no change of the daemon's times. A change
+ * within the pace of the last read is read at the next tick, as the poll's ticks fell where they fell; ticks counted
+ * from that read, which a change began, fall just before a write of a source that writes once a second, each time.
+ */
+let paceOrigin = 0;
+/** The capability the page's last read went with (`ACCESS_KEY`): a beat reads again when it is gone or another. */
+let accessRead = null;
 /** The read the pace holds back, if any; the stream opened again after its end, if waiting; two missed beats. */
 let paceTimer = null;
 let retryTimer = null;
@@ -831,6 +839,7 @@ export async function refresh() {
   if (inFlight) { queued = true; return inFlight; }
   const asked = Date.now();
   data.readingSince = asked;
+  accessRead = storedAccess();
   windowRead = sinceFor();
   inFlight = poll();
   try { await inFlight; } finally { inFlight = null; }
@@ -853,30 +862,31 @@ function afterRead(asked) {
 /** The tab is in the background: nothing is followed or read until it shows again. */
 const hidden = () => typeof document !== "undefined" && document.hidden;
 
-/**
- * A read a change asked for, counted for the pace from its end, as the poll counted its pause: a pace counted from the
- * read's start reads every 5 s exactly, which a source that writes once a second meets just before one of its writes
- * each time, so that write waited the whole pace where the poll's drifting pace met it anywhere.
- */
+/** A read a change asked for, counted for the pace. */
 function changeRead() {
   clearTimeout(paceTimer);
   paceTimer = null;
-  const began = (lastChangeRead = performance.now());
-  // Unless a new stream started the pace over meanwhile.
-  void refresh().finally(() => { if (lastChangeRead === began) lastChangeRead = performance.now(); });
+  lastChangeRead = performance.now();
+  void refresh();
 }
 
-/** Read again for a change: at once when the last such read ended `INTERVAL` ago or more, else once it is that old. */
+/**
+ * Read again for a change: at once when the last such read began `INTERVAL` ago or more, else at the pace's next tick
+ * (`paceOrigin`), so the page reads no more often than the poll did while the daemon keeps changing.
+ */
 function readSoon() {
-  const wait = lastChangeRead + INTERVAL - performance.now();
-  if (wait <= 0) changeRead();
-  else paceTimer ??= setTimeout(paceDue, wait);
+  const now = performance.now();
+  if (now - lastChangeRead >= INTERVAL) changeRead();
+  else paceTimer ??= setTimeout(changeRead, paceOrigin + (Math.floor((now - paceOrigin) / INTERVAL) + 1) * INTERVAL - now);
 }
 
-/** The pace held a read back: read now, or later if the read the pace counts from ended after the timer was set. */
-function paceDue() {
-  paceTimer = null;
-  readSoon();
+/** This origin's stored capability (`ACCESS_KEY`), or null; a browser that refuses storage has none. */
+function storedAccess() {
+  try {
+    return globalThis.localStorage?.getItem(ACCESS_KEY) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -899,8 +909,13 @@ function readFor(next) {
   readSoon();
 }
 
-/** Whether a message asks for a read: a new token, a conflict event, a failed count to try again. */
-const asksRead = (event, next) => next !== token || event === "conflicts" || mergeAssistCountRetry() || windowMoved() || mergeAssistMoves();
+/**
+ * Whether a message asks for a read: a new token, a conflict event, a failed count to try again, or a capability gone or
+ * changed since the last read (another tab's change tells this one; this tab's own does not), which the poll found at its
+ * next read.
+ */
+const asksRead = (event, next) =>
+  next !== token || event === "conflicts" || mergeAssistCountRetry() || windowMoved() || mergeAssistMoves() || storedAccess() !== accessRead;
 
 /**
  * Whether the activity window the page shows has moved past what the last read asked for: Today at local midnight, a
@@ -951,6 +966,7 @@ function startOver(next) {
   clearTimeout(paceTimer);
   paceTimer = null;
   lastChangeRead = -Infinity;
+  paceOrigin = performance.now();
   mergeAssistCountDue = true;
   data.behindSince ||= Date.now();
   token = next;

@@ -30,8 +30,6 @@ let githubNext: GithubState = "signed-in";
 let daemonAheadMs = 0;
 /** A daemon that says gh is due now at every status, as one whose gh read has not answered yet. */
 let githubDueNow = false;
-/** How long, on the page's clock, the daemon takes to answer a read of the repositories. */
-let repositoriesMs = 0;
 let renders: boolean[] = [];
 let visibility: (() => void)[] = [];
 const encoder = new TextEncoder();
@@ -112,7 +110,6 @@ beforeEach(async () => {
   githubNext = "signed-in";
   daemonAheadMs = 0;
   githubDueNow = false;
-  repositoriesMs = 0;
   renders = [];
   vi.stubGlobal("location", { origin: "http://127.0.0.1:4000" });
   vi.stubGlobal("fetch", async (input: URL, init: { signal?: AbortSignal } = {}) => {
@@ -120,7 +117,6 @@ beforeEach(async () => {
     if (!up) throw new TypeError("fetch failed");
     if (url.pathname === "/api/changes") return streams404 ? json({ error: "not-found" }, 404) : openStream(init.signal!);
     reads.push(url.pathname);
-    if (url.pathname === "/api/repositories" && repositoriesMs > 0) await new Promise(resolve => setTimeout(resolve, repositoriesMs));
     return failing.has(url.pathname) ? json({ error: "internal" }, 500) : answer(url);
   });
   setScope({ repository: "A", checkout: "/work/a" });
@@ -180,30 +176,24 @@ describe("the dashboard following the daemon's change stream", () => {
     expect(vi.getTimerCount()).toBe(1);
   });
 
-  // As the poll counted its pause from a read's end: counted from the start, the page reads every 5 s exactly, and a
-  // source that writes once a second meets it just before one of its writes each time.
-  it("counts the 5 s pace from the end of the last read a change asked for, as the poll counted its pause", async () => {
-    repositoriesMs = 400;
-    // The stream's first message reads, then a new token at once: that read takes 400 ms.
+  // The ticks count from the stream's first message, as the poll's fell where they fell. Counted from the read a change
+  // began, they fall just before a write of a source that writes once a second, each time, so that write waits them out.
+  it("reads a change within the pace at the next 5 s tick from the stream's first message, not 5 s after the read a change began", async () => {
     stream().send("t1");
     await settle();
-    await after(400);
+    await after(2_000);
     stream().send("t2");
     await settle();
-    await after(400);
     expect(readsOf("/api/repositories")).toBe(2);
 
-    await after(600);
+    await after(1_000);
     stream().send("t3");
     await settle();
-    // 5 s from the start of the read t2 asked for: nothing yet.
-    await after(4_000);
+    await after(1_999);
     expect(readsOf("/api/repositories")).toBe(2);
-    // 5 s from its end.
-    await after(400);
+    // 5 s from the first message, 3 s after the read t2 began.
+    await after(1);
     expect(readsOf("/api/repositories")).toBe(3);
-    // That read answers before the next case: the page holds one read out at a time, across cases.
-    await after(400);
   });
 
   it("renders at a beat that brings nothing new and reads nothing, nor moves the poll's time views read more after", async () => {
