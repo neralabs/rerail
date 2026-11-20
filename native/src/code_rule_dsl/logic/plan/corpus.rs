@@ -10816,7 +10816,7 @@ pub mod tests {
         make(walked.path());
         assert_eq!(files(walked.path()), listed, "the walk");
         let work = tempfile::tempdir().unwrap();
-        let git = |args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(work.path()).args(args).output().unwrap().status.success(), "git {args:?}");
+        let git = |args: &[&str]| assert!(std::process::Command::new("git").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").arg("-C").arg(work.path()).args(args).output().unwrap().status.success(), "git {args:?}");
         git(&["init", "-q"]);
         make(work.path());
         git(&["add", "-A"]);
