@@ -529,6 +529,10 @@ fallback (`fallbackPipe`), and whether a listed pipe is an engine's (`isEnginePi
   `kernelSocketPath`, where hooks read it. While every instance of the held pipe is taken, as when this home's engine
   is busy, the start waits up to 30 s for a free one, as long as Node's own connect waits, so a busy engine of this
   home that frees one in that time stops the start; the holder then has 2 s to answer.
+- When the holder made the name with a cap on its instances and has made them all, as a pipe that allows one instance
+  has, libuv reports `EBUSY`. A Node pipe server never caps its instances, so no Rerail engine holds a name that way:
+  the engine listens on the suffixed name at once, without the challenge, which would take the holder's one free
+  instance or wait for one it never frees.
 - Rerail 0.1.3 listened on the name with no check and no fallback, so a pipe another user created first made every
   daemon start fail. A probe that sent the capability to learn who holds the pipe would hand it to that user.
 

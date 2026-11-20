@@ -95,6 +95,18 @@ describe("#24 harnesses in CI", () => {
     expect(paths(result)).toEqual(["scripts/b.test.mjs", "test/slow/c.test.ts"]);
   });
 
+  it("reads a filter the shell expands as possibly none, and the package's vitest bin as vitest", () => {
+    const result = harnessesInCi(
+      memoryRepo({
+        ".github/workflows/ci.yml": ci('read -ra tests <<< "$TESTS"\nnode_modules/.bin/vitest run --dir test --shard=1/2 "${tests[@]}"'),
+        "test/a.test.ts": "",
+        "test/b/c.test.ts": "",
+        "other/d.test.ts": "",
+      }),
+    );
+    expect(paths(result)).toEqual(["other/d.test.ts"]);
+  });
+
   it("counts a test file run directly as an entry point", () => {
     const result = harnessesInCi(
       memoryRepo({

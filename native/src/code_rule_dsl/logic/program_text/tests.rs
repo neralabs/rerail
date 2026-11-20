@@ -63,7 +63,7 @@ fn a_program_reads_back_from_its_text() {
 /// The pack rules' programs, as read from their files, read back from their text.
 #[test]
 fn pack_programs_read_back_from_their_text() {
-    let packs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs");
+    let packs = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs");
     let mut files: Vec<_> = std::fs::read_dir(&packs).unwrap().flatten().filter(|d| d.path().is_dir()).flat_map(|d| std::fs::read_dir(d.path()).unwrap().flatten().map(|f| f.path())).filter(|p| p.extension().is_some_and(|e| e == "rerail")).collect();
     files.sort();
     let mut read_back = 0;

@@ -1,13 +1,13 @@
 From 9c2ed7ae58f7c6ae13386d0a2e98f97159bd09ed Mon Sep 17 00:00:00 2001
 From: rerail farm <noreply@example.invalid>
-Subject: [PATCH] rerail-farm: cache crate types that link
+Subject: [PATCH] rerail-farm: cache crate types that link and test harnesses
  (SCCACHE_CACHE_LINKED), path-less sysroot --extern, keep SOURCE_DATE_EPOCH;
  debug key logging
 
 ---
  src/cmdline.rs       |   4 +-
- src/compiler/rust.rs | 107 ++++++++++++++++++++++++++++++++++++++-----
- 2 files changed, 99 insertions(+), 12 deletions(-)
+ src/compiler/rust.rs | 115 +++++++++++++++++++++++++++++++++++++++++++++------
+ 2 files changed, 106 insertions(+), 13 deletions(-)
 
 diff --git a/src/cmdline.rs b/src/cmdline.rs
 index f639396..e43d2c4 100644
@@ -25,7 +25,7 @@ index f639396..e43d2c4 100644
                          && k != "MINICOM"
                          && k != "DESTDIR"
 diff --git a/src/compiler/rust.rs b/src/compiler/rust.rs
-index a6aface..7301eed 100644
+index a6aface..b51db63 100644
 --- a/src/compiler/rust.rs
 +++ b/src/compiler/rust.rs
 @@ -427,6 +427,54 @@ pub struct RustCompilation {
@@ -37,7 +37,7 @@ index a6aface..7301eed 100644
 +    linked: bool,
 +}
 +
-+/// Crate types that rustc links with the system linker. sccache does not know all of a link's
++/// Crate types that rustc links with the system linker (and a test harness, `--test`). sccache does not know all of a link's
 +/// inputs, so it never caches them, unless `SCCACHE_CACHE_LINKED` is set in the server's environment:
 +/// then their inputs are taken to be what it hashes for an rlib (the sources, every `--extern`, the
 +/// static libraries) plus the linker's and the SDK's versions (`linker_identity`). A system library
@@ -166,7 +166,22 @@ index a6aface..7301eed 100644
              Some(CodeGen(ArgCodegen { opt, value })) => {
                  match (opt.as_ref(), value) {
                      ("extra-filename", Some(value)) => extra_filename = Some(value.to_owned()),
-@@ -1835,6 +1903,7 @@ fn parse_arguments(arguments: &[OsString], cwd: &Path) -> CompilerArguments<Pars
+@@ -1794,7 +1862,13 @@ fn parse_arguments(arguments: &[OsString], cwd: &Path) -> CompilerArguments<Pars
+                         }
+                         input = Some(val.clone());
+                     }
+-                    Argument::UnknownFlag(_) => {}
++                    // A test harness (`--test`) is an executable rustc links, as a `bin` is: cached
++                    // with the linked crate types (`cache_linked`).
++                    Argument::UnknownFlag(ref flag) => {
++                        if flag == "--test" && cache_linked() {
++                            crate_types.linked = true;
++                        }
++                    }
+                     _ => unreachable!(),
+                 }
+             }
+@@ -1835,6 +1909,7 @@ fn parse_arguments(arguments: &[OsString], cwd: &Path) -> CompilerArguments<Pars
      if let CrateTypes {
          rlib: false,
          staticlib: false,
@@ -174,7 +189,7 @@ index a6aface..7301eed 100644
      } = crate_types
      {
          cannot_cache!("crate-type", NO_CRATE_TYPE_PASSED.to_owned())
-@@ -2299,6 +2368,13 @@ where
+@@ -2299,6 +2374,13 @@ where
                  })
          };
          args.hash(&mut HashToDigest { digest: &mut m });
@@ -188,7 +203,7 @@ index a6aface..7301eed 100644
          // 4. The digest of all source files (this includes src file from cmdline).
          // 5. The digest of all files listed on the commandline (self.externs).
          // 6. The digest of all static libraries listed on the commandline (self.staticlibs).
-@@ -2363,6 +2439,11 @@ where
+@@ -2363,6 +2445,11 @@ where
              .hash(&mut HashToDigest { digest: &mut m });
          // 10. The version of the compiler.
          self.version.hash(&mut HashToDigest { digest: &mut m });
@@ -200,7 +215,7 @@ index a6aface..7301eed 100644
  
          // metadata / dep-info don't ever generate binaries, but
          // rustc still makes them appear in the --print
-@@ -3092,6 +3173,7 @@ impl pkg::InputsPackager for RustInputsPackager {
+@@ -3092,6 +3179,7 @@ impl pkg::InputsPackager for RustInputsPackager {
              CrateTypes {
                  rlib: true,
                  staticlib: false,
@@ -208,7 +223,7 @@ index a6aface..7301eed 100644
              }
          );
  
-@@ -4533,6 +4615,7 @@ hash 42fac6f0 stable_crate_id StableCrateId(12206970385906972588)
+@@ -4533,6 +4621,7 @@ hash 42fac6f0 stable_crate_id StableCrateId(12206970385906972588)
                  crate_types: CrateTypes {
                      rlib: true,
                      staticlib: false,
@@ -216,7 +231,7 @@ index a6aface..7301eed 100644
                  },
                  dep_info: None,
                  emit,
-@@ -4638,6 +4721,7 @@ hash 42fac6f0 stable_crate_id StableCrateId(12206970385906972588)
+@@ -4638,6 +4727,7 @@ hash 42fac6f0 stable_crate_id StableCrateId(12206970385906972588)
                      crate_types: CrateTypes {
                          rlib: true,
                          staticlib: false,
@@ -224,7 +239,7 @@ index a6aface..7301eed 100644
                      },
                      dep_info: None,
                      emit: ["link".to_string()].into_iter().collect(),
-@@ -4728,6 +4812,7 @@ hash 42fac6f0 stable_crate_id StableCrateId(12206970385906972588)
+@@ -4728,6 +4818,7 @@ hash 42fac6f0 stable_crate_id StableCrateId(12206970385906972588)
                  crate_types: CrateTypes {
                      rlib: true,
                      staticlib: false,

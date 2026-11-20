@@ -120,6 +120,8 @@ const effectiveRuleBase = {
   addedAt: z.number().int().nullable()
     .describe("Epoch milliseconds the attachment that brings the rule in (its pack, or the rule itself) was added at this folder."),
   updatedAt: z.number().int().nullable().describe("Epoch milliseconds a rule created by you was last edited; null for rules by Rerail."),
+  copiedFromRuleId: z.string().nullable()
+    .describe("The By Rerail rule a rule created by you is an edited copy of; approving the copy turns that rule off where the copy is added. Null for any other rule."),
   approval: z.object({ subject: approvalSubjectSchema, approved: z.boolean() }).strict().optional()
     .describe("Present for a rule Rerail did not publish (created by you, in a worktree's .rerail/rules, or in a third party's or a folder's pack): until a person approves its content it runs in Log."),
 };

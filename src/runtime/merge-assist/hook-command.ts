@@ -8,10 +8,10 @@
  * nothing else: delivery goes on without it.
  */
 import type { ChildProcess } from "node:child_process";
-import { isAbsolute, resolve as resolvePath } from "node:path";
+import { resolve as resolvePath } from "node:path";
 import { endProcessTree, spawn, type ProcessTreeOptions } from "../../engine/child-process.js";
 import type { ConflictEvent, ConflictHookCommand, ConflictHookOutcome } from "../../engine/merge-assist/model.js";
-import { programOnPath } from "../../engine/system-programs.js";
+import { namesOneFile, programOnPath } from "../../engine/system-programs.js";
 import type { ConflictHandler, ConflictHandlerContext } from "./conflict-hook.js";
 import type { StoredConflict } from "./conflict-store.js";
 import { isoSeconds } from "./state.js";
@@ -44,9 +44,11 @@ const failed = (error: string): HookAnswer => ({ ok: false, error, note: null, s
 /**
  * The program to start, as an absolute path: a path with a separator from the checkout's root, else the one PATH finds
  * in the command's environment (on Windows a `.exe` or `.com` only, which starts without a shell); undefined when none.
+ * On Windows a path from the root of the current drive (`\tools\hook.exe`) so gets the checkout's drive, where Windows
+ * reads it, since Rerail starts a program there only by a path from a drive or a server.
  */
 function hookProgram(program: string, cwd: string, env: NodeJS.ProcessEnv): string | undefined {
-  if (isAbsolute(program)) return program;
+  if (namesOneFile(program)) return program;
   if (/[\\/]/u.test(program)) return resolvePath(cwd, program);
   return programOnPath(program, { env });
 }
