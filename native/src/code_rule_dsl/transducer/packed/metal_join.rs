@@ -340,26 +340,16 @@ static inline void view_put(device uchar* out, ulong rows_at, uint r, uint c, lo
     *(device long*)(out + clif_rows_at((device const uchar*)out, rows_at, r, c)) = v;
 }
 
-// p: the root's offset, the view (`device_chunk::VIEW_*`), the rows, the columns, an axis's pairs' offset (else 0),
-// the made relation's rows' descriptor's offset (low, high), then each column's index.
+// p: the root's offset, the view (`device_chunk::VIEW_*`), the rows, the columns, the made relation's rows'
+// descriptor's offset (low, high), then each column's index.
 kernel void view_expand(device const char* B [[buffer(0)]], device uchar* out [[buffer(1)]], constant uint* p [[buffer(2)]],
                         uint r [[thread_position_in_grid]]) {
     uint n = p[2];
     if (r >= n) return;
-    ulong rows_at = ulong(p[5]) | (ulong(p[6]) << 32);
+    ulong rows_at = ulong(p[4]) | (ulong(p[5]) << 32);
     device const ChunkRoot* root = (device const ChunkRoot*)(B + p[0]);
     device const ChunkDoc* docs = items<ChunkDoc>(root->docs);
     uint view = p[1];
-    if (view == 4u) {
-        // An axis read whole (`Within`): a pair of node rows, inner << 32 | outer; each column the node's id.
-        ulong pair = ((device const ulong*)(B + p[4]))[r];
-        for (uint c = 0u; c < p[3]; c++) {
-            uint row = p[7 + c] == 0u ? uint(pair >> 32) : uint(pair & 0xffffffffu);
-            device const ChunkDoc& d = docs[doc_of_node(docs, root->ndocs, row)];
-            view_put(out, rows_at, r, c, global_of(d, row - d.node_row));
-        }
-        return;
-    }
     if (view >= 5u && view <= 8u) {
         // core.rr's places (`View::Loc`): the document whose `Loc` rows hold `r`, then its local's span.
         uint lo = 0u, hi = root->ndocs;
@@ -382,7 +372,7 @@ kernel void view_expand(device const char* B [[buffer(0)]], device uchar* out [[
         device const uint* pl = items<uint>(d.placed) + 3u * l;
         for (uint c = 0u; c < p[3]; c++) {
             long v;
-            if (p[7 + c] == 0u) {
+            if (p[6 + c] == 0u) {
                 v = loc_global(d, l);
             } else if (view == 8u) {
                 v = long(d.key);
@@ -409,7 +399,7 @@ kernel void view_expand(device const char* B [[buffer(0)]], device uchar* out [[
     uint l = view == 1u ? i + 1u : (view == 2u ? items<uint>(d.fielded)[i] : i);
     uint id = items<uint>(d.core)[l];
     for (uint c = 0u; c < p[3]; c++) {
-        uint col = p[7 + c];
+        uint col = p[6 + c];
         long v;
         if ((view == 0u || view == 3u) && col == 0u) {
             v = long(d.key);
@@ -2718,15 +2708,14 @@ impl Batch {
 
     /// The columns `cols` (its source's) of a view made from a chunk block on the device (decision 0289 §2), into
     /// `out`, a relation of `out.rows` rows whose columns are `cols` in order: what `Viewed::row_at` made on the host.
-    /// `pairs`: an axis's pairs' offset in the block (`device_chunk::VIEW_AXIS`), else 0.
 // copy (0353 step 4): a view expanded into a relation (660.8 MB a run on hogql). It goes: a view is a
 // read of the tape, and a stage reads it in place (decision 0353).
-    pub(in crate::code_rule_dsl) fn expand_view(&mut self, block: &metal::Buffer, root: usize, view: u32, pairs: usize, cols: &[usize], out: &DevRel) -> Result<(), Error> {
+    pub(in crate::code_rule_dsl) fn expand_view(&mut self, block: &metal::Buffer, root: usize, view: u32, cols: &[usize], out: &DevRel) -> Result<(), Error> {
         let expand = pipeline("chunk_views", "view_expand", chunk_views_source)?;
         let pass = self.pass(1)?;
         let at = |o: usize| u32::try_from(o).map_err(|_| Error::BackendCapacity);
         let rows_at = out.rows_at();
-        let mut p = vec![at(root)?, view, out.rows as u32, cols.len() as u32, at(pairs)?, rows_at as u32, (rows_at >> 32) as u32];
+        let mut p = vec![at(root)?, view, out.rows as u32, cols.len() as u32, rows_at as u32, (rows_at >> 32) as u32];
         p.extend(cols.iter().map(|&c| c as u32));
         if out.rows > 0 {
             pass.run(&expand, &[block, &out.buffer.buffer], &p, &[], groups(out.rows));

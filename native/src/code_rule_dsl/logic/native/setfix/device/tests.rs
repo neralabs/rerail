@@ -1041,7 +1041,7 @@
                 if d.in_place.is_none() {
                     let out = mj::DevRel::empty(cols.len(), n).unwrap();
                     let mut batch = mj::Batch::new().expect("the device");
-                    batch.expand_view(&d.block.gpu_buffer(device), d.root, d.view, d.pairs, &cols, &out).unwrap();
+                    batch.expand_view(&d.block.gpu_buffer(device), d.root, d.view, &cols, &out).unwrap();
                     batch.finish().unwrap();
                     for (j, &c) in cols.iter().enumerate() {
                         let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
@@ -1116,7 +1116,8 @@
                 }
             }
         }
-        // The kind-set axes and containment, read whole: the batch's solve, its pairs made ids on the device.
+        // The kind-set axes and containment, read whole: the batch's solve, its answer as ids in a block of its own,
+        // which the device reads where it lies (decision 0353 step 5): nothing made on the device for it.
         use crate::code_rule_dsl::facts::vtab::syntax::within::{Axis, Mode, Within};
         use crate::code_rule_dsl::facts::nearest::Binding;
         use crate::code_rule_dsl::facts::vtab::Source as _;
@@ -1128,25 +1129,32 @@
         kinds.sort_unstable();
         kinds.dedup();
         let kinds: Vec<i64> = kinds.into_iter().step_by(3).collect();
+        // Its columns `cols`, read by a stage from the relation where it lies, against the host's reads.
+        let read_in_place = |name: &str, src: &Within, cols: &[usize]| {
+            let n = src.len();
+            let ib = src.in_block().unwrap_or_else(|| panic!("{name}: its answer in a block"));
+            assert_eq!(ib.rows as usize, n, "{name}");
+            let rel = mj::DevRel::in_block(&ib, 2).unwrap();
+            let out = mj::DevRel::empty(cols.len(), n).unwrap();
+            let mut batch = mj::Batch::new().expect("the device");
+            let from: Vec<mj::Col> = cols.iter().map(|&c| mj::Col::From(c)).collect();
+            batch.copy_rows(mj::Rows::Rel(&rel), n, &from, mj::Rows::Rel(&out), 0).unwrap();
+            batch.finish().unwrap();
+            for (j, &c) in cols.iter().enumerate() {
+                let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
+                assert_eq!(out.column(j), &host[..], "{name}: column {c} read in place");
+            }
+        };
         let axes = [
             ("nearest", Within::axis(Arc::clone(&batch), Axis::Nearest, &kinds, Binding::Cpu)),
             ("inside", Within::axis(Arc::clone(&batch), Axis::Inside, &kinds, Binding::Cpu)),
             ("within", Within::new(Arc::clone(&batch), Mode::Tree)),
         ];
         for (name, src) in &axes {
-            let n = src.len();
-            assert!(n > 0, "{name}: rows");
-            let d = src.device_view().unwrap_or_else(|| panic!("{name}: made on the device"));
-            assert_eq!(d.rows, n, "{name}");
+            assert!(src.len() > 0, "{name}: rows");
+            assert!(src.device_view().is_none(), "{name}: no view made on the device");
             for cols in [vec![0, 1], vec![1]] {
-                let out = mj::DevRel::empty(cols.len(), n).unwrap();
-                let mut batch = mj::Batch::new().expect("the device");
-                batch.expand_view(&d.block.gpu_buffer(device), d.root, d.view, d.pairs, &cols, &out).unwrap();
-                batch.finish().unwrap();
-                for (j, &c) in cols.iter().enumerate() {
-                    let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
-                    assert_eq!(out.column(j), &host[..], "{name}: column {c}");
-                }
+                read_in_place(name, src, &cols);
             }
         }
         // On the device's binding the solve itself is made on the device in the chunk: the host's rows, in its order,
@@ -1164,12 +1172,8 @@
                 let id = node.value(r, 1);
                 assert_eq!(dev.lookup(0, &[id]), host.lookup(0, &[id]), "the rows of {id}");
             }
-            let d = dev.device_view().expect("made on the device");
-            let out = mj::DevRel::empty(2, n).unwrap();
-            let mut batch = mj::Batch::new().expect("the device");
-            batch.expand_view(&d.block.gpu_buffer(device), d.root, d.view, d.pairs, &[0, 1], &out).unwrap();
-            batch.finish().unwrap();
-            assert_eq!(out.column(1), &(0..n).map(|r| host.value(r, 1)).collect::<Vec<_>>()[..]);
+            // The device's solve, its answer as ids too: read where it lies.
+            read_in_place("the device's solve", &dev, &[0, 1]);
         }
         // Containment over every kind, in one submission (space sized before the count) and past a bound of no rows
         // (written again once the total is read): the same pairs, as many as the host's containment.

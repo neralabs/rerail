@@ -103,10 +103,9 @@ pub struct Within {
     chosen: std::sync::atomic::AtomicBool,
     /// The `n` side of every node, made once (`solved`).
     solved: OnceLock<Solved>,
-    /// The solve's pairs copied into the batch's chunk block for the device (decision 0289 §2): their offset, or
-    /// `None` when the block cannot hold them.
-    #[cfg(target_os = "macos")]
-    on_device: OnceLock<Option<usize>>,
+    /// The solve's answer as ids (decision 0353 step 5): a relation of two columns in a block, each row's ids as
+    /// `value` reads them, written once on its first whole read (`ids`), which the device reads where it lies.
+    ids: OnceLock<crate::code_rule_dsl::facts::rows::Rows>,
     /// The format a test reads the documents' tapes in (`reading`); else each is read as held.
     format: Option<Format>,
     /// Per document, the axis's set as its tape's code numbers (all of them for the tree's containment).
@@ -156,8 +155,7 @@ impl Within {
             expected: Mutex::new(0.0),
             chosen: std::sync::atomic::AtomicBool::new(false),
             solved: OnceLock::new(),
-            #[cfg(target_os = "macos")]
-            on_device: OnceLock::new(),
+            ids: OnceLock::new(),
             format: None,
             sets: (0..batch.docs.len()).map(|_| OnceLock::new()).collect(),
             shared: Mutex::new(FxHashMap::default()),
@@ -412,6 +410,22 @@ impl Within {
             return unsafe { std::slice::from_raw_parts(self.batch.chunk().block.ptr::<u32>(c.start), n) };
         }
         &s.start
+    }
+
+    /// The solve's answer as ids, in a block of its own (decision 0353 step 5): row `r` is `value(r, 0), value(r, 1)`,
+    /// written once here, as each pair's two nodes' ids are read off the tape. A derived fact, not a copy: the
+    /// pairs are node rows, and the ids a read of them.
+    fn ids(&self) -> &crate::code_rule_dsl::facts::rows::Rows {
+        use crate::code_rule_dsl::facts::rows::{Life, Rows};
+        self.ids.get_or_init(|| {
+            let pairs = self.pairs();
+            let mut rows = Rows::living(2, Life::Source);
+            rows.reserve(2 * pairs.len());
+            for &p in pairs {
+                rows.extend_from_slice(&[self.batch.id((p >> 32) as usize), self.batch.id((p & 0xffff_ffff) as usize)]);
+            }
+            rows
+        })
     }
 
     /// The solve's rows, pairs of node rows.
@@ -731,30 +745,14 @@ impl Within {
 }
 
 impl Source for Within {
-    /// Read whole by the device: the batch's solve, its pairs made ids on the device from the chunk block.
-    #[cfg(target_os = "macos")]
-    fn device_view(&self) -> Option<crate::code_rule_dsl::facts::vtab::DeviceView<'_>> {
-        use super::device_chunk;
+    /// Read whole (the device, a whole read's own index): the batch's solve, its answer as ids where it lies
+    /// (decision 0353 step 5). An axis with no solve has none: its rows are made per looked-up node.
+    fn in_block(&self) -> Option<crate::code_rule_dsl::facts::rows::InBlock> {
         if !self.solvable() {
             return None;
         }
-        let pairs = self.pairs();
-        let chunk = self.batch.chunk();
-        // Solved in the chunk, the pairs are there already; else copied in once.
-        let at = match &self.solved().in_chunk {
-            Some(c) => c.pairs,
-// copy (0353 step 5): the pairs copied for the device (decision 0353).
-            None => (*self.on_device.get_or_init(|| device_chunk::put_pairs(chunk, pairs)))?,
-        };
-        Some(crate::code_rule_dsl::facts::vtab::DeviceView {
-            block: &chunk.block,
-            root: chunk.root,
-            view: device_chunk::VIEW_AXIS,
-            rows: pairs.len(),
-            pairs: at,
-            #[cfg(target_os = "macos")]
-            in_place: None,
-        })
+        let n = self.pairs().len();
+        self.ids().in_block().filter(|b| b.rows as usize == n)
     }
     fn columns(&self) -> Vec<String> {
         self.names().iter().map(|&c| c.to_owned()).collect()
