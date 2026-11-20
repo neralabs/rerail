@@ -788,6 +788,7 @@ q("a.b.c", 1). q("a.b.c", 2). q("a", 3).
 up(p, k, u) :- q(p, k), u = @pkg_up(p, k).
 .output lo, hi, one, up
 "#;
+    // (A min or max over symbols is refused: `front::tests::named_errors`.)
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();

@@ -2076,3 +2076,43 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
     }
     assert_eq!(tried, 2 * 3 * 3, "every case, format and shape");
 }
+
+/// A batch grown by a round's documents (guests) keeps its files' matcher rows (`Grower::grow`): the wave reads no
+/// guest, and a node's id is its document's, so the rows of the first build hold. Run again at each round of guests,
+/// the wave read every file of the chunk: 17 s of 131 s of CPU on `all` once the reference graph's rules read string
+/// annotations (decision 0483).
+#[test]
+fn a_batch_rebuilt_with_guests_keeps_its_matcher_rows() {
+    struct Once(std::sync::atomic::AtomicUsize, Arc<dyn Source>);
+    impl AstWave for Once {
+        fn len(&self) -> usize {
+            1
+        }
+        fn matched(
+            &self,
+            _: &Batch,
+            _: &[(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)],
+            _: crate::code_rule_dsl::facts::nearest::Binding,
+            _: &crate::content_store::atoms::Atoms,
+        ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Ok(vec![("rr_ast_1_1".to_owned(), Arc::clone(&self.1))])
+        }
+    }
+    let store = ContentStore::open(&temp("kept-matchers")).unwrap();
+    let mut rows = Relation::new(&["n"]);
+    rows.push(&[7]);
+    let rows: Arc<dyn Source> = Arc::new(rows);
+    let wave = Arc::new(Once(std::sync::atomic::AtomicUsize::new(0), Arc::clone(&rows)));
+    let matchers = Matchers::new(Arc::clone(&wave) as Arc<dyn AstWave>);
+    let tests = crate::code_rule_dsl::logic::strings::Vocabulary::default();
+    let (binding, projection) = (crate::code_rule_dsl::facts::nearest::Binding::Cpu, Projection::default());
+    let mut docs = documents();
+    let round = docs.split_off(docs.len() / 2);
+    assert!(!round.is_empty());
+    let (_, mut grower) = Grower::start(&store, docs, &[], &matchers, &tests, binding, &projection).unwrap();
+    let grown = grower.grow(&store, round, &[], &tests, binding, &projection).unwrap();
+    assert_eq!(wave.0.load(std::sync::atomic::Ordering::Relaxed), 1, "the wave ran again over the files the first build had matched");
+    let (_, matched) = grown.iter().find(|(n, _)| n == "rr_ast_1_1").expect("the first build's matcher rows are bound");
+    assert!(Arc::ptr_eq(matched, &rows), "the first build's rows, not a copy");
+}

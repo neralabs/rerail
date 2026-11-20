@@ -852,7 +852,7 @@ pub fn encode_sort(pass: &Pass, lead: &Buffer, width: Width, bits: u32, n: usize
     let passes = bits.div_ceil(8);
     let perm = Held::new(4 * n)?;
     let other = scratch(IDX, 4 * n)?;
-    let (idx_a, idx_b): (&Buffer, &Buffer) = if passes % 2 == 0 { (&perm.buffer, &other) } else { (&other, &perm.buffer) };
+    let (idx_a, idx_b): (&Buffer, &Buffer) = if passes.is_multiple_of(2) { (&perm.buffer, &other) } else { (&other, &perm.buffer) };
     let tiles = n.div_ceil(TILE).max(1);
     let starts = Held::new(4 * (n + 1))?;
     let rkeys = Held::new(kb * n)?;
@@ -874,7 +874,7 @@ pub fn encode_sort(pass: &Pass, lead: &Buffer, width: Width, bits: u32, n: usize
             hscan.encode(pass, &histogram)?;
             pass.run(&scatter, &[ki, ii, &histogram, ko, io], &[nn, 8 * p, tiles as u32], &[], tiles);
         }
-        let keys = if passes % 2 == 0 { &keys_a } else { &keys_b };
+        let keys = if passes.is_multiple_of(2) { &keys_a } else { &keys_b };
         pass.run(&heads, &[keys, &heads_buf], &[nn], &[], groups(n));
         rscan.encode(pass, &heads_buf)?;
         pass.run(&compact, &[keys, &heads_buf, &starts.buffer, &rkeys.buffer, &nruns.buffer], &[nn], &[], groups(n));
@@ -1586,7 +1586,7 @@ mod tests {
             let mut keep = Vec::new();
             encode_sorted_pairs(&pass, &pairs, n, fb, sb, &out, &mut keep).unwrap();
             pass.commit_wait().unwrap();
-            let got: Vec<(u32, u32)> = read(&out, 2 * n).chunks_exact(2).map(|p| (p[0], p[1])).collect();
+            let got: Vec<(u32, u32)> = read(&out, 2 * n).as_chunks::<2>().0.iter().map(|p| (p[0], p[1])).collect();
             let mut want: Vec<(u32, u32)> = want_in.iter().map(|p| (p[0], p[1])).collect();
             want.sort_unstable();
             assert_eq!(got, want, "{n} pairs of {fb} and {sb} bits");

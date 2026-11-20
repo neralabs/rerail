@@ -1,4 +1,4 @@
-//! `reference_edge` and `reference_open` (`logic::plan::corpus::references`) against W's reference graph on the
+//! `reference_edge` and `reference_open` (`python/references.rerail`, decision 0483) against W's reference graph on the
 //! replay's fixtures: for every event of the policies that read the graph (`internal-dead-code`'s relational
 //! `references`, `imperative-private-functions`' `calls { graph: references }`), the corpus runner's rows under the
 //! converter's `.references` setting equal the graph W's evaluation of the policy installs (`eval::stateless_calls`)
@@ -61,11 +61,9 @@ fn w(document: &Json, files: &[(String, String)]) -> (contracts::Key, BTreeSet<E
 fn ours(dir: &std::path::Path, setting: &str) -> Graph {
     let program = format!(
         "{setting}
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl reference_edge(src: node, dst: node, via: symbol)
-.decl reference_open(n: node)
-.input doc, node, reference_edge, reference_open
+.language python
+.scope include \"**/*.py\", \"**/*.pyi\"
+#include \"python/references.rerail\"
 .decl edge(sp: symbol, ss: number, se: number, tp: symbol, ts: number, te: number, via: symbol)
 edge(sp, ss, se, tp, ts, te, v) :- reference_edge(s, t, v), node(d, s, _, ss, se), doc(d, sp, _), node(e, t, _, ts, te), doc(e, tp, _).
 .decl open(p: symbol, s: number, e: number)

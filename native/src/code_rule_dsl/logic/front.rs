@@ -462,7 +462,7 @@ pub const PRAGMA: &str = "cross-rounds";
 /// A base relation's document column, including raw text views.
 pub fn document_column(relation: &str) -> Option<usize> {
     match relation {
-        "node" | "doc" | "pkg" | "unpackaged" | "path_part" | "file_name" | "syntax_error" | "cpython_syntax_error" |
+        "node" | "doc" | "pkg" | "unpackaged" | "tape_error" | "path_part" | "file_name" | "syntax_error" | "cpython_syntax_error" |
         "source" | "src_line" | "src_line_lf" | "tape_line" | "split_line" | "lf_line" | "line_count" | "parsed"
         // Decision 0055's: a guest and its host are one file (`corpus::guests` attributes its rows to the host).
         | "tape_of" | "rr_program" | "host_node" => Some(0),

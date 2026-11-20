@@ -326,7 +326,7 @@ DEFINE_KERNEL2(join, tile_scatter,
         let Some(out) = &self.out else { return Vec::new() };
         // SAFETY: `2 * total` words, written by the scatter.
         let flat = unsafe { std::slice::from_raw_parts(out.buffer.contents().cast::<u32>(), 2 * self.total) };
-        flat.chunks_exact(2).map(|p| (p[0], p[1])).collect()
+        flat.as_chunks::<2>().0.iter().map(|p| (p[0], p[1])).collect()
     }
 }
 

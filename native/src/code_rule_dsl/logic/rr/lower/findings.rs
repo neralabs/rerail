@@ -261,6 +261,7 @@ impl<'p> Findings<'_, 'p> {
         // `.on syntax_error report CODE [at line 1]` and `.on input_error report CODE` (`core.rerail`).
         let on = on_reports(&self.b.settings());
         let guest_errors = self.guest_policy(seen.reads_guest_policy);
+        self.references_setting()?;
         if violations.is_empty() && on.is_empty() && guest_errors.is_empty() {
             return Ok(false);
         }
@@ -549,6 +550,72 @@ impl<'p> Findings<'_, 'p> {
         self.b.fields().add_input("rr_program");
     }
 
+    /// The `.references` setting (W's: `siblingLinks`, `constructorFields`, `scope`) as the facts
+    /// `python/references.rerail` reads (decision 0483 R5), in a program that includes it: `references_given(1)`, the
+    /// scope's globs (`**` when it names none; none when it includes nothing), each sibling link, and the constructor
+    /// fields' renaming. Each renaming is W's `Regex::replace`, the first match only: it is given as a regex whose
+    /// every match is that one (`first_match`), for `@rx_replace`. No setting, no facts.
+    fn references_setting(&mut self) -> Result<(), Error> {
+        let settings: Vec<String> = self.b.settings().into_iter().filter(|(k, _)| k == "references").map(|(_, v)| v).collect();
+        if settings.is_empty() || !self.b.declares(REFERENCE_SETTING[0]) {
+            return Ok(());
+        }
+        let bad = |m: String| Error::Syntax(format!(".references: {m}"));
+        let [text] = settings.as_slice() else { return Err(bad("more than one setting".into())) };
+        let value: serde_json::Value = serde_json::from_str(text.trim()).map_err(|e| bad(e.to_string()))?;
+        let object = value.as_object().ok_or_else(|| bad("not a JSON object".into()))?;
+        if let Some(key) = object.keys().find(|k| !["siblingLinks", "constructorFields", "scope"].contains(&k.as_str())) {
+            return Err(bad(format!("unknown key {key}")));
+        }
+        let str_at = |v: &serde_json::Value, key: &str, at: &str| -> Result<String, Error> {
+            v.get(key).and_then(serde_json::Value::as_str).map(str::to_owned).ok_or_else(|| bad(format!("{at}/{key} must be a string")))
+        };
+        let regex = |re: &str, at: &str| regex::Regex::new(re).map(drop).map_err(|e| bad(format!("{at}: {e}")));
+        let s = |t: &str| Value::Str(t.into());
+        let mut rows: Vec<(&str, Vec<Value>)> = vec![("references_given", vec![Value::Int(1)])];
+        let scope = object.get("scope");
+        let globs = |key: &str| -> Result<Vec<String>, Error> {
+            // No scope is every file; a scope names both arrays (`compile::compile_scope`).
+            match scope.map(|s| s.get(key)) {
+                None => Ok(if key == "include" { vec!["**".to_owned()] } else { Vec::new() }),
+                Some(None) => Err(bad(format!("/scope/{key} must be an array"))),
+                Some(Some(v)) => v
+                    .as_array()
+                    .ok_or_else(|| bad(format!("/scope/{key} must be an array")))?
+                    .iter()
+                    .map(|g| g.as_str().map(str::to_owned).ok_or_else(|| bad(format!("/scope/{key} holds a non-string"))))
+                    .collect(),
+            }
+        };
+        rows.extend(globs("include")?.iter().map(|g| ("references_include", vec![s(g)])));
+        rows.extend(globs("exclude")?.iter().map(|g| ("references_exclude", vec![s(g)])));
+        if let Some(links) = object.get("siblingLinks") {
+            let links = links.as_array().filter(|l| (1..=32).contains(&l.len())).ok_or_else(|| bad("siblingLinks must hold 1 to 32 links".into()))?;
+            for (i, link) in links.iter().enumerate() {
+                let at = format!("/siblingLinks/{i}");
+                let decorator = str_at(link, "decorator", &at)?;
+                let name = link.get("name").ok_or_else(|| bad(format!("{at}/name is required")))?;
+                let (replace, by) = (str_at(name, "replace", &format!("{at}/name"))?, str_at(name, "by", &format!("{at}/name"))?);
+                regex(&decorator, &format!("{at}/decorator"))?;
+                regex(&replace, &format!("{at}/name/replace"))?;
+                let (re, by) = first_match(&replace, &by);
+                rows.push(("references_sibling", vec![Value::Int(i as i64), s(&decorator), s(&replace), s(&re), s(&by)]));
+            }
+        }
+        if let Some(fields) = object.get("constructorFields") {
+            let at = "/constructorFields/fieldToParameter";
+            let spec = fields.get("fieldToParameter").ok_or_else(|| bad(format!("{at} is required")))?;
+            let (replace, by) = (str_at(spec, "replace", at)?, str_at(spec, "by", at)?);
+            regex(&replace, at)?;
+            let (re, by) = first_match(&replace, &by);
+            rows.push(("references_field", vec![s(&re), s(&by)]));
+        }
+        for (rel, row) in rows {
+            self.b.fields().add_facts(rel, &[crate::code_rule_dsl::logic::front::List::from(row)]);
+        }
+        Ok(())
+    }
+
     /// Decision 0055's settings as `guest_policy` facts, which the corpus runner and the batch read:
     /// - `.guests on | off`: `guest_policy("library", …)`, whether the libraries' `embed`s are made (on by default);
     /// - `.on guest_error [GRAMMAR] skip | partial [warn | report CODE]`, or `.on guest_error [GRAMMAR] warn | report
@@ -822,5 +889,67 @@ fn call_at(scoped: bool) -> &'static str {
         "a `.scope tool_calls` policy's findings are at a tool call, `at: symbol`"
     } else {
         "`at` is a tool call (a symbol) only in a `.scope tool_calls` policy"
+    }
+}
+
+/// The facts the `.references` setting gives `python/references.rerail` (`Findings::references_setting`): none without
+/// the setting.
+pub const REFERENCE_SETTING: [&str; 5] = ["references_given", "references_include", "references_exclude", "references_sibling", "references_field"];
+
+/// `re` and `by` rewritten so that `@rx_replace`'s every match (the regex crate's `replace_all`) is `Regex::replace`'s
+/// one, the first: the regex is anchored at the start and takes the text before that match as group 1, the match as
+/// group 2. `by`'s group references move along (`$n` and `${n}` to `${n+2}`, `$0` to `${2}`; names stay), and the
+/// text before the match is put back first.
+pub fn first_match(re: &str, by: &str) -> (String, String) {
+    let mut out = String::from("${1}");
+    let mut rest = by;
+    while let Some(at) = rest.find('$') {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + 1..];
+        if let Some(tail) = after.strip_prefix('$') {
+            out.push_str("$$");
+            rest = tail;
+            continue;
+        }
+        let (name, tail) = if let Some(inner) = after.strip_prefix('{') {
+            match inner.find('}') {
+                Some(end) => (&inner[..end], &inner[end + 1..]),
+                None => ("", after),
+            }
+        } else {
+            let end = after.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(after.len());
+            (&after[..end], &after[end..])
+        };
+        match name.parse::<usize>() {
+            _ if name.is_empty() => out.push('$'),
+            Ok(n) => out.push_str(&format!("${{{}}}", n + 2)),
+            Err(_) => out.push_str(&format!("${{{name}}}")),
+        }
+        rest = tail;
+    }
+    out.push_str(rest);
+    (format!("^(?s:(.*?))({re})"), out)
+}
+
+#[cfg(test)]
+mod first_match_tests {
+    /// Each rewritten pair replaces as W's `Regex::replace` does: the first match only, groups and all.
+    #[test]
+    fn a_rewritten_regex_replaces_the_first_match_only() {
+        for (s, re, by) in [
+            ("a_b_c", "_", "-"),
+            ("foo_async", "(?:_async)?$", "_lazy"),
+            ("foo", "$", "_lazy"),
+            ("__x", "^_+", ""),
+            ("ab12cd34", "([a-z]+)([0-9]+)", "$2$1"),
+            ("ab12", "(?P<w>[a-z]+)", "<${w}>"),
+            ("ab12", "[a-z]+", "[$0]$$"),
+            ("none", "z", "y"),
+        ] {
+            let want = regex::Regex::new(re).unwrap().replace(s, by).into_owned();
+            let (re2, by2) = super::first_match(re, by);
+            let got = regex::Regex::new(&re2).unwrap().replace_all(s, by2.as_str()).into_owned();
+            assert_eq!(got, want, "{s:?} {re:?} {by:?} as {re2:?} {by2:?}");
+        }
     }
 }

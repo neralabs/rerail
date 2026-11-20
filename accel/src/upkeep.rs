@@ -96,13 +96,17 @@ impl<'a> Slice<'a> {
     }
 }
 
+/// A probe of other processes' runs on a store: the store's path, its runs lock file (if it opened), when the probe
+/// last looked, and whether another process held the lock then.
+type ProbeHeld = (std::path::PathBuf, Option<std::fs::File>, Instant, bool);
+
 /// The machine's upkeep (decision 0442): its jobs and their scheduler, the runs under way on it, the probes of other
 /// processes' runs, the settings in force.
 #[derive(Default)]
 struct Upkeep {
     /// Runs under way on the machine ([`run_begins`]).
     runs: std::sync::atomic::AtomicUsize,
-    probes: Mutex<Vec<(std::path::PathBuf, Option<std::fs::File>, Instant, bool)>>,
+    probes: Mutex<Vec<ProbeHeld>>,
     settings: OnceLock<Mutex<Settings>>,
     jobs: Mutex<Vec<Entry>>,
     stop: AtomicBool,
@@ -426,7 +430,7 @@ pub fn cpu_ticks() -> (u64, u64) {
         let ticks = std::slice::from_raw_parts(info as *const u32, count as usize);
         let (mut busy, mut total) = (0u64, 0u64);
         // Per core: user, system, idle, nice.
-        for c in ticks.chunks_exact(4) {
+        for c in ticks.as_chunks::<4>().0 {
             busy += c[0] as u64 + c[1] as u64 + c[3] as u64;
             total += c.iter().map(|&t| t as u64).sum::<u64>();
         }

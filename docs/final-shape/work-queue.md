@@ -8142,3 +8142,63 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
     assertion states 0361 now: `o` is not prepared, and `r` is, as `o`'s inferred facts size it.
   - The plan module's tests pass (90). Along the way: `gate/executor-coverage/packs.tsv` was stale since the merge's
     `lib/python/references.rr` became `.rerail` and the library's programs counted one more. Blessed.
+
+### Q379. (Q285 on final-rerail-shape) On Metal at the default 512 MB, the reference graph's rules leave the ast matcher wave no room (0483)
+- **Seen** (2026-11-20, 565dbba02, all, `--metal`): with `python/references.rerail` on the run's path, the run panics:
+  "the ast matcher wave failed on Metal: BackendCapacity". 966 device joins ran on the CPU instead ("a lease of N MB
+  past the Metal budget of 512 MB (509 MB leased, 0 MB idle)"). With `--metal-mb 2048` it passes, and its rows are the
+  before run's (plus `rr_embed_req`), at 76 s of CPU and 26 s of wall against the before run's 37 s and 32 s. Even
+  2 GB was leased to 2,031 MB at two moments.
+- **Cause**: the run's derived relations' row blocks are leased from the one Metal budget (0266 §16). The profile at
+  2 GB: "rows' blocks: a run's 28 (546 MB written of 1119 MB)", 1.1–1.4 GB leased. The rules derive about 80 M head
+  rows where W's Rust derived none, and half of each block reserved is not written. The wave's ledger counts those
+  leases, and `make_room` can free only idle buffers and residency slabs.
+- **Not the fix**: a wait in the ledger for leases to be dropped (`tmp/refs/room-wait.patch`; its test passed). The
+  blocks are held for the run, not for a submission: the run waited and then failed all the same, and each split
+  level would wait again.
+- **Do**: row blocks that pass the budget spill to the deferrable tier (mmap slabs) rather than hold device leases;
+  reserve a block's written extent, not twice it.
+
+### Q380. Roll-up 19 (final-rerail-shape onto Pulling-it-all-together): what the merge chose, and what stays open
+
+- **Merged** (2026-11-20): final-rerail-shape at 498b4c99a5, four commits past roll-up 18's 1e61e44029. Its
+  decision 0476 is 0483 here, as at roll-up 18; its Q285 is Q379. Its `.rr` rule files are `.rerail` here.
+- **Taken from theirs**:
+  - 0483: the reference graph is rules on the run's path. `references.rs` and the `REFERENCE_RELATIONS` clause are
+    gone; `python/references.rerail` derives `reference_edge` and `reference_open` (`rr::DERIVED_BY`, which the
+    name check reads as a clause's head), and includes `python/names.rerail`.
+  - `shards.rs` lists `tape_error`.
+  - Q379 (theirs' Q285), and 0483's results at 2 GB and 512 MB.
+- **Kept from ours**:
+  - The matcher rows across guest rounds: ours' `Grower` already keeps them, so theirs' `Matchers::rows_in`,
+    `relations` and `AstWave::relations` are not taken. Theirs' test is recast on `Grower::start` and `grow`: the
+    wave runs once, and the grown batch's sources are the first build's rows (`Arc::ptr_eq`).
+  - The calls rules (`calls.rerail` twice and `calls_cx.rerail`): `type_miss` over any type, with no `type_first`.
+    Theirs' `calls_p3.rr` is not taken: its rules are `points-to.rerail` here, with no min.
+  - The data-layer programs: ours' dc055d8f2b had already replaced theirs' min and max over symbols.
+- **Made to fit**:
+  - `references.rerail` read `doc_role(d, "primary")`, which 0431 removed: a read is `docof(i, _)`, a file's.
+  - The two authored dead-code checks in the data-layer lint pack include `python/references.rerail`, as theirs do.
+    The change is staged in `packs/data-layer/upstream/lint/publish/` and waits for the publish workflow.
+  - `gate/executor-coverage/packs.tsv`: one more library file uses the bound-pattern glob (455 programs).
+    The test's message now names the rows that differ.
+- **Found and fixed on the way**:
+  - The engine's build id did not cover the crates it reaches by path (`accel`, the device crates): a fix to
+    `accel` kept the id, and the test stores' template, made empty by a failed fill, stayed. `build.rs` now hashes
+    each path crate's `src`, `build.rs` and `Cargo.toml`.
+  - The pool's `held_here` read a pooled buffer's Metal length, and failed on the CPU device: it reads the pool's
+    own length.
+  - `rerail-accel`'s 23 clippy findings: `price::Measured` is one measured job, for `observe` and the fits; type
+    aliases, `Blob`'s `Default`, the tile job boxed, let-chains, `as_chunks`, `is_multiple_of`.
+- **Checked**:
+  - A Linux DGX Spark: the engine's lib tests, all of them, with the corpus tier.
+  - The same: `rerail-accel`'s tests.
+  - An M1 Max: the engine and `rerail-accel` are clippy-clean.
+  - The M1 Max, CPU device: the reference tests and the template test.
+  - The Node SQL report test fails only on the Linux host, which has no Node; it passes on the M1 Max.
+- **Open**:
+  - The pack publish needs its owner's approval.
+  - Metal tests were not run: the user's order of 2026-11-20 holds.
+  - `rule_files_pass_their_own_tests` passes in 161 s. Its 44 tests take 3.6 s each, up to 8.4 s for a Django
+    pack case, and each test is a few lines. The cost is each program's translation with the calls library, not
+    its run.

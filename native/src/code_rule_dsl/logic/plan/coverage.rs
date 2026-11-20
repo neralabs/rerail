@@ -397,7 +397,13 @@ fn packs_ledger(all: &[Probe], matrix: &str) {
         return;
     }
     let had = std::fs::read_to_string(&path).unwrap_or_default();
-    assert!(had == text, "the executors' gaps by pack differ from {}: RERAIL_BLESS_COVERAGE=1 writes it", path.display());
+    if had != text {
+        let old: BTreeSet<&str> = had.lines().collect();
+        let new: BTreeSet<&str> = text.lines().collect();
+        let gone = old.difference(&new).copied().collect::<Vec<_>>().join("\n");
+        let came = new.difference(&old).copied().collect::<Vec<_>>().join("\n");
+        panic!("the executors' gaps by pack differ from {}: RERAIL_BLESS_COVERAGE=1 writes it\n--- ledger\n{gone}\n+++ now\n{came}", path.display());
+    }
 }
 
 /// The ledger's place.

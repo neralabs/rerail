@@ -380,6 +380,14 @@ pub struct Sample {
     pub threads: u32,
 }
 
+impl Sample {
+    /// What a price learns from in it ([`crate::price::fit_rates`]).
+    pub fn measured(&self) -> crate::price::Measured<'_> {
+        let Sample { lane, ref forms, launches, units, wall, cpu, cold, ok, load, .. } = *self;
+        crate::price::Measured { lane, forms, launches, units, wall, cpu, load, cold, ok }
+    }
+}
+
 /// The machine's samples for its cost model, kept for the engine to take (decision 0442).
 #[derive(Default)]
 struct Samples {
@@ -631,7 +639,17 @@ impl Scoreboard {
         let cold = phases.iter().any(|p| matches!(p.0, "pipeline compile" | "pipeline wait" | "new buffer"));
         // The run prices its later launches from this one (`price::observe`): one kernel name's jobs only.
         if units > 0.0 && t.items.windows(2).all(|w| w[0].form == w[1].form) && let Some(first) = t.items.first() {
-            crate::price::observe(t.lane, first.form, t.items.len() as u32, units, share, cpu, crate::exec::cores_slowdown(), cold, ok);
+            crate::price::observe(crate::price::Measured {
+                lane: t.lane,
+                forms: first.form,
+                launches: t.items.len() as u32,
+                units,
+                wall: share,
+                cpu,
+                load: crate::exec::cores_slowdown(),
+                cold,
+                ok,
+            });
         }
         let kept = samples();
         if kept.keep.load(Ordering::Relaxed) && units > 0.0 {
