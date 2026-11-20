@@ -542,19 +542,21 @@ export interface ExampleToolCall {
  * conformance/pack-validation.ts tries it). An example without text is not a call, and is skipped with why.
  */
 export function exampleToolCalls(packJson: { rules?: { id: string; examples?: Record<string, { text?: string } | undefined> }[] }, sources: ReadonlyMap<string, string>): { calls: ExampleToolCall[]; skipped: string[] } {
-  const calls: ExampleToolCall[] = [];
-  const skipped: string[] = [];
+  const out: { calls: ExampleToolCall[]; skipped: string[] } = { calls: [], skipped: [] };
   for (const rule of packJson.rules ?? []) {
     const source = sources.get(rule.id);
-    if (source === undefined) continue;
-    const tool = source === "tool:*" ? "Bash" : source.slice("tool:".length);
-    for (const [kind, example] of Object.entries(rule.examples ?? {})) {
-      if (example === undefined) continue;
-      if (typeof example.text !== "string") skipped.push(`${rule.id} ${kind}: no text`);
-      else calls.push({ id: `${rule.id} ${kind}`, tool, input: { command: example.text } });
-    }
+    if (source !== undefined) ruleToolCalls(rule, source === "tool:*" ? "Bash" : source.slice("tool:".length), out);
   }
-  return { calls, skipped };
+  return out;
+}
+
+/** One tool-call rule's examples as calls through `tool`, into `out`: each example with text, the others skipped. */
+function ruleToolCalls(rule: { id: string; examples?: Record<string, { text?: string } | undefined> }, tool: string, out: { calls: ExampleToolCall[]; skipped: string[] }): void {
+  for (const [kind, example] of Object.entries(rule.examples ?? {})) {
+    if (example === undefined) continue;
+    if (typeof example.text !== "string") out.skipped.push(`${rule.id} ${kind}: no text`);
+    else out.calls.push({ id: `${rule.id} ${kind}`, tool, input: { command: example.text } });
+  }
 }
 
 /**
