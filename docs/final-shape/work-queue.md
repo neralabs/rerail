@@ -5418,7 +5418,7 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
 - **Record**: done (2026-11-19, Typing-support): as **Fixed** above. The journal tests that still failed on a
   loaded host are Q223's (fseventsd delivering late), done: 22 of 22 runs on the M3.
 
-### Q292. (Q251 until 2026-11-19; the hub's Q251 is a level's fact constraints) 0364 R7 is red: after a use is added, two recheck lines are unpriced
+### Q292. (Q251 until 2026-11-19; the hub's Q251 is a level's fact constraints) (done) 0364 R7 is red: after a use is added, two recheck lines are unpriced
 
 Seen 2026-11-19 on an M-series farm host, at this branch's a9c6b3b62 and on the hub (django-bugs' 2e9d16bc8 names it
 failing at 24740af51): `maintain_tests::r7_the_recheck_order_is_priced` fails at maintain_tests.rs:327, "R7: after a
@@ -5587,7 +5587,7 @@ Python process for every batch, though `code_rule_dsl::cpython` computes the sam
   declares `under`'s key, breaks it, and reads `[("under", "key(a)")]` from the run.
 
 
-### Q300. (Q189 on cost-classifier-metal-rf) A loop's stolen halves lose their run where two runs share a pool
+### Q300. (Q189 on cost-classifier-metal-rf) (done) A loop's stolen halves lose their run where two runs share a pool
 
 - **Found** (2026-11-19, porting 0477): a parallel loop inside `on_cores` splits by rayon's `join`, and a half
   another of the machine's pool threads steals runs with nothing of its caller's: no run and no bindings. With
@@ -5603,6 +5603,14 @@ Python process for every batch, though `code_rule_dsl::cpython` computes the sam
   Then `Inside` goes.
 - **Done when**: a test with two runs' loops in one pool at once reads each run's own value in every item, and a
   profiled corpus0 x B-now run completes.
+- **Record**: done (2026-11-20, Typing-support). rayon-core 1.13.0 is vendored and patched
+  (`native/vendor/rayon-core-1.13.0`, PATCHES.md): `StackJob` and `HeapJob` capture the installed carrier when made
+  and enter it where another thread runs them, left before the latch is set. The engine's carrier is `job_run`
+  (`rerail_context::carry`, installed by `Machine::new`); `Inside`, its thread-local and `on_cores`'s registration
+  are gone. `two_runs_loops_in_one_pool_at_once_each_read_their_own_run` passes (two callers, 8 loops each of 4096
+  items, every item its own run's value and binding), as do rerail-context's 10, 88 logic/prof/accel and 32 engine
+  run-state tests. corpus0 x B-now cold, profiled: completes, 463 findings, the same digest; unprofiled 1,143.9 G
+  instructions, against 1,146-1,155 G before (0442, "Every job carries its maker's run").
 
 ### Q301. (Q190 on cost-classifier-metal-rf) The deferred joins are priced (0477)
 

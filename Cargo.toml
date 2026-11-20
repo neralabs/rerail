@@ -15,6 +15,8 @@ cranelift-codegen = { path = "native/vendor/cranelift-codegen-0.125.4" }
 cranelift-codegen-meta = { path = "native/vendor/cranelift-codegen-meta-0.125.4" }
 cranelift-assembler-x64-meta = { path = "native/vendor/cranelift-assembler-x64-meta-0.125.4" }
 cranelift-native = { path = "native/vendor/cranelift-native-0.125.4" }
+# A job carries its maker's run to the thread that steals it (native/vendor/rayon-core-1.13.0/PATCHES.md).
+rayon-core = { path = "native/vendor/rayon-core-1.13.0" }
 
 # Dependencies (SQLite's C, tree-sitter, regex, cranelift, ast-grep) are optimized in dev and test
 # builds: they compile once and stay cached, while this crate keeps its fast unoptimized rebuilds.
