@@ -831,6 +831,30 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// Q219: a root asked through `/./` (`…/q179/./work/r3/corpus-dl`) is told an edit under it, named under the
+    /// root as asked, as the same root spelled plainly is.
+    #[test]
+    fn a_root_spelled_with_a_dot_is_told_an_edit_under_it() {
+        let base = std::env::temp_dir().join(format!("rerail-journal-dot-{}", std::process::id()));
+        let cookies = base.join("cookies");
+        std::fs::create_dir_all(base.join("work/root")).unwrap();
+        std::fs::create_dir_all(&cookies).unwrap();
+        let dotted = base.join(".").join("work/root");
+        assert!(dotted.to_str().unwrap().contains("/./"), "{dotted:?}");
+        let Since::Lost { cursor: Some(first), .. } = since(std::slice::from_ref(&dotted), None, &cookies, SETTLE) else { panic!("no cursor without one") };
+        std::fs::write(base.join("work/root/edited.py"), "y = 2\n").unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        next_epoch();
+        match since(std::slice::from_ref(&dotted), Some(first), &cookies, SETTLE) {
+            Since::Changed { paths, .. } => {
+                assert!(paths.iter().any(|p| p.ends_with("work/root/edited.py")), "the edit is named: {paths:?}");
+                assert!(paths.iter().all(|p| p.starts_with(&dotted)), "named under the root as asked: {paths:?}");
+            }
+            other => eprintln!("the journal did not answer: {other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     /// The journal names a file written after the cursor; once every earlier event is in, a replay from a later
     /// cursor names nothing. A write just before a cursor may be named too (its event's id came after the cursor):
     /// a path looked at again, never one missed.

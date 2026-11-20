@@ -11,6 +11,7 @@ accel/src/gpu/shared.rs::EVICTORS	stays	code registered at load (the pool's evic
 accel/src/gpu/shared.rs::GUARD	stays	code registered at load (a hook)
 accel/src/gpu/shared.rs::LEASE_HOOK	stays	code registered at load (a hook)
 accel/src/gpu/shared.rs::OTHER_RESERVED	stays	code registered at load (a hook)
+accel/src/gpu/shared.rs::REFUSAL_HOOK	stays	code registered at load (a hook)
 accel/src/gpu/shared.rs::SHARED	stays	the device and its one queue: the forest's, one per process (code registered at load)
 accel/src/price.rs::FIRST_PRICE	stays	code registered at load (a hook)
 accel/src/price.rs::VERSIONS	stays	an id counter: append-only (rate versions no two machines share)
@@ -153,6 +154,7 @@ native/src/code_rule_dsl/logic/profile/memory.rs::PEAK	stays	the process's footp
 native/src/code_rule_dsl/logic/profile/memory.rs::SAMPLED	stays	the process's footprint sampler (RERAIL_PROF_MEMORY_MS): it measures the process (the OS's figures for it) and the spans open on all its threads, as the heap sampler does
 native/src/code_rule_dsl/logic/profile/memory.rs::START	stays	the process's footprint sampler (RERAIL_PROF_MEMORY_MS): it measures the process (the OS's figures for it) and the spans open on all its threads, as the heap sampler does
 native/src/code_rule_dsl/logic/profile/memory.rs::STARTED	stays	the process's footprint sampler (RERAIL_PROF_MEMORY_MS): it measures the process (the OS's figures for it) and the spans open on all its threads, as the heap sampler does
+native/src/code_rule_dsl/logic/profile/memory.rs::TOLD	stays	the process's footprint sampler's refusal reporter (Q203 (c)): it tells the first few device leases the process refuses, with the heap sampler's holdings
 native/src/code_rule_dsl/logic/rr.rs::CORE	stays	computed once from the engine's own files
 native/src/code_rule_dsl/logic/rr.rs::SHAPE	stays	computed once from the engine's own files
 native/src/code_rule_dsl/logic/rr/images.rs::SHIPPED	stays	computed once from the engine's own files
