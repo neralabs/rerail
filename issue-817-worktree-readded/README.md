@@ -1,6 +1,6 @@
 # A worktree made again is read as soon as Git lists it
 
-For [pull request #909](https://github.com/neralabs/rerail/pull/909), head 91af14122. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #909](https://github.com/neralabs/rerail/pull/909), head 26afefb92. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -10,7 +10,7 @@ For [pull request #909](https://github.com/neralabs/rerail/pull/909), head 91af1
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 908 lines in 16 files: 412 ship, 496 are tests and text | Careful. It adds one watched folder per repository. | Nothing. No CI run on GitHub yet: not pushed. | 5 |
+| 951 lines in 16 files: 446 ship, 505 are tests and text | Careful. It adds one watched folder per repository. | Nothing. No CI run on GitHub yet: not pushed. | 5 |
 
 ## 2. Intent, and the gap
 
@@ -46,7 +46,7 @@ One change, low risk: one more watched folder per repository; what a walk reads 
 | Change | Check | It holds with this limit |
 |---|---|---|
 | Made again | users lose nothing | Every worktree is watched as on `main` near the Linux watch budget, shown at the engine's seam only: the registry watch takes only spare room and gives it up. On Windows 11 a lock-file cycle in a registry entry takes about 0.25 ms more. |
-| Made again | Windows 11: no new failure | Windows 11: the 24 changed and importing test files pass at this head (749) and at `main` 6b3990ba8 (736), none failed. Five states, 5 runs at 1e7110240: here 5 of 5 in every state. One other run's 35 s hook stall is unexplained. |
+| Made again | Windows 11: no new failure | Windows 11: the 24 changed and importing test files pass at this head (750) and at `main` bf24c778f (736), none failed. Five states, 5 runs at 1e7110240: here 5 of 5 in every state. One other run's 35 s hook stall is unexplained. |
 | Made again | CI at this head | No CI run on GitHub yet: the branch is not pushed. On Linux x64 CI's lint and type-check job passes at this head; the build and integration job (23 files, 91 tests) at 1e7110240. |
 
 </details>
@@ -63,7 +63,7 @@ One change, low risk: one more watched folder per repository; what a walk reads 
 
 | Option | What a user gets | Cost | What it breaks |
 |---|---|---|---|
-| Watch Git's registry folder **(chosen)** | A worktree read and watched again as soon as Git lists it, with or without a walk while it was gone. | One watch per repository; on Linux one per entry. | A repository's first linked worktree, added while a session runs: no registry folder yet, as on `main`. |
+| Watch Git's registry folder **(chosen)** | A worktree read and watched again as soon as Git lists it, with or without a walk while it was gone. | One watch per repository; on Linux one per entry. | A repository's first linked worktree, or its only one removed and added again: no registry folder then, as on `main`. |
 | Watch the folder above a gone worktree | The same, while one is gone. | On Windows the engine watches that folder's whole tree, every other worktree with it. | Every write in every worktree comes as a notice of it. |
 | Read the registry at each tool call | The same at the next tool call. | A read of every entry per tool call. | A file written while the session is idle waits. |
 
@@ -107,7 +107,7 @@ Nothing has to merge first: it stands alone on `main` 6b3990ba8, which it has me
 
 1. **One Windows 11 run** at 1e7110240: two Read tool calls took about 35 s and the late file was missed. The cause is unknown; four more such runs recorded every file.
 2. **macOS** never ran.
-3. **A repository's first linked worktree** added while a session runs waits for the next walk, as on `main`: no registry folder exists yet.
+3. **A repository's only linked worktree** removed and added again, or its first one added while a session runs, waits for the next walk, as on `main`: Git keeps no registry folder without one.
 4. **A folder put back by another program** moved away and back with `mv`: Git's list does not change, so a write there waits for the 10-minute reread, as on `main`.
 5. **The Linux watch budget's edge** an engine at its budget does not watch the registry, as on `main`; the budget is shown at the engine's seam only.
 
@@ -129,13 +129,13 @@ The description on GitHub is the record: "How you tested it" holds the runs on `
 |---|---|---|
 | Linux x64 | The built Claude Code hook against a daemon of `main` and of this branch, five states, one machine | `main` 6b3990ba8 beside this head, 3 runs each: `main` walked 0 of 3, the folder above 1 of 3, another branch 1 of 3; no walk between, late file 0 of 3. Here 3 of 3 in every state. Earlier, 5 runs each: `main` cccb25a8d and ba0545900 2 or 3 of 5 in the walk-between states; 1e7110240 5 of 5. |
 | Windows 11 | The same probe at 1e7110240 and `main` cccb25a8d on one machine, 5 runs each | `main` cccb25a8d: 1 to 4 of 5 in the walk-between states, late file 3 or 4 of 5 with no walk between. Here 5 of 5 in every state, each with the engine built for its own commit. One other run stalled 35 s, cause unknown. |
-| Linux x64 and Windows 11 | The 24 changed and importing test files, this head and `main` 6b3990ba8 on one machine | Linux: here 745 passed and one `audit-history.test.ts` case at its 5 s limit; `main` 733 passed. That file alone, five runs each: the first two fail at both. Windows, each with its own engine: here 749 passed, `main` 736, none failed. |
+| Linux x64 and Windows 11 | The 24 changed and importing test files, this head and `main` bf24c778f on one machine | Linux: here 742 passed and 5 `audit-history.test.ts` cases at their 5 s limit; `main` 732 passed and 1 such case. That file alone, both at once on another machine: the same 4 cases at each. Windows, each with its own engine: here 750 passed, `main` 736, none failed. |
 | Linux x64 | The spare root's cases, 10 runs in a row, at 1e7110240 | 10 of 10 runs passed: the spare root's nine cases, each run with its build. |
-| Linux x64 | Each line of the change taken out alone | 20 of 20 fail a case on Linux x64; an earlier head's 28 each failed one, and 12 of the 28 ran as Windows 11 builds, 11 failing their case (birth time aside). |
+| Linux x64 | Each line of the change taken out alone | 20 of 20, and this round's 9 of 9 at this head, fail a case on Linux x64; an earlier head's 28 each failed one, and 12 of the 28 ran as Windows 11 builds, 11 failing their case (birth time aside). |
 | Linux x64 and Windows 11 | Daemon CPU per Bash tool call at 48 worktrees; Git's lock-file cycle in a registry entry | Linux, 12 alternating pairs: medians 402 ms at `main` cccb25a8d and 408 at 1e7110240, higher in 6 and lower in 6. Windows, 6 pairs of 300 cycles: median 153 ms unwatched, 229 ms watched. |
-| Linux x64 | CI's lint and type-check job, the engine's format check, clippy and tests | At this head: lint and type-check, `check-rustfmt.mjs`, clippy with `-D warnings`, the executors guard test and the tree watch's 30 cases, each exit 0. The build and integration job at 1e7110240: 23 files, 91 tests passed. |
-| Linux x64 | The automated reviewer's rules at `main` 6b3990ba8 over the diff against it | No new finding and no new complexity, with the published 0.1.5 and with Rerail built from `main`. |
+| Linux x64 | CI's lint and type-check job, the engine's format check, clippy and tests | At this head: lint and type-check, `check-rustfmt.mjs`, clippy with `-D warnings`, the executors guard test, the tree watch's 30 cases and the wasm32-wasip1 check, each exit 0. The build and integration job at 1e7110240: 23 files, 91 tests passed. |
+| Linux x64 | The automated reviewer's rules at `main` bf24c778f over the diff against `main` 6b3990ba8 | No new finding and no new complexity, with the published 0.1.5 and with Rerail built from `main`. |
 
-**Sources.** The branch at 91af14122 and its diff against `main` 6b3990ba8, read on 20 November 2026; runs on Linux x64 machines and Windows 11 machines.
+**Sources.** The branch at 26afefb92 and its diff against `main` 6b3990ba8, read on 20 November 2026; runs on Linux x64 machines and Windows 11 machines.
 
 </details>
