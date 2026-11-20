@@ -396,12 +396,21 @@ function suspendedSessions(state: EngineRoutingState, runtimeKey: string): Suspe
   return {
     keep: suspension => keepSuspended(state, runtimeKey, suspension),
     get: sessionId => state.suspended.get(sessionId)?.suspension,
-    take: (sessionId) => {
-      const entry = state.suspended.get(sessionId);
-      state.suspended.delete(sessionId);
-      return entry?.suspension;
-    },
+    take: (sessionId) => takeSuspended(state, sessionId)?.suspension,
   };
+}
+
+/**
+ * Takes the suspended session `sessionId` out of the service, and ends the wait for the write lock its open for a scan
+ * met (`retryResume`): a session opened or ended otherwise needs no such open, and the wait's worker would go on until
+ * the lock is given back.
+ */
+function takeSuspended(state: EngineRoutingState, sessionId: string): SuspendedEntry | undefined {
+  const entry = state.suspended.get(sessionId);
+  state.suspended.delete(sessionId);
+  state.resumeRetries.get(sessionId)?.abort();
+  state.resumeRetries.delete(sessionId);
+  return entry;
 }
 
 /** The lane one session's work in one runtime runs in, one at a time. */
@@ -688,7 +697,8 @@ async function closeIdleSessions(state: EngineRoutingState, idleMs: number, now:
  * One idle sweep: the kept runtimes' part (`KeptRuntimes.sweep`: each kept 15 minutes closes while the daemon is short of
  * room, or once its checkout was removed) beside the sessions' (`sweepSessions`), not behind it: a quiet session's
  * idle close waits for its session's work and a read of its walks, and so held every kept runtime past its time. The
- * kept runtimes' part starts first and closes what it closes before the sessions' part begins. Settles once both have.
+ * kept runtimes' part starts first: it begins the closes the daemon's room needs before the sessions' part begins, and
+ * looks for removed checkout folders beside it. Settles once both have.
  */
 async function sweepIdle(state: EngineRoutingState, options: EngineServiceOptions, databasePath: string): Promise<void> {
   const idleMs = options.idleSessionMs ?? IDLE_SESSION_MS;
@@ -834,8 +844,9 @@ async function openSuspended(state: EngineRoutingState, sessionId: string, entry
 
 /**
  * Opens `sessionId` again (`resumeSuspended`) once the write lock its open met is given back (`waitForWriteLock`, on a
- * worker thread), once however often it is asked meanwhile. A session no longer suspended by then is left alone; the
- * service's close stops the wait. A wait that fails fails the session's queued scans, saying why, as a failed open does.
+ * worker thread), once however often it is asked meanwhile. The session's suspension taken back (`takeSuspended`: its
+ * own event opened it, or it ended) stops the wait, as the service's close does. A wait that fails fails the session's
+ * queued scans, saying why, as a failed open does.
  */
 function retryResume(state: EngineRoutingState, sessionId: string, now: () => number): void {
   const entry = state.suspended.get(sessionId);
@@ -856,7 +867,7 @@ function retryResume(state: EngineRoutingState, sessionId: string, now: () => nu
  */
 function endUnopened(state: EngineRoutingState, entry: SuspendedEntry, reason: string): void {
   const { suspension } = entry;
-  state.suspended.delete(suspension.descriptor.sessionId);
+  takeSuspended(state, suspension.descriptor.sessionId);
   failScans(suspension, reason);
   endEntries([entry]);
 }
@@ -886,9 +897,8 @@ function endSuspended(state: EngineRoutingState): void {
  * the time the end came, as the runtime ends an open session's.
  */
 function endIfSuspended(state: EngineRoutingState, sessionId: string): void {
-  const entry = state.suspended.get(sessionId);
+  const entry = takeSuspended(state, sessionId);
   if (entry === undefined) return;
-  state.suspended.delete(sessionId);
   endEntries([entry], Date.now());
 }
 

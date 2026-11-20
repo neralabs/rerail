@@ -52,6 +52,19 @@ vi.mock("node:fs/promises", async importOriginal => {
   };
 });
 
+/** Each wait for a write lock begun, with its signal, and whether a quiet session's open for a scan began it. */
+const lockWaits = vi.hoisted(() => [] as Array<{ signal: AbortSignal | undefined; resume: boolean }>);
+vi.mock("../../../src/engine/storage/write-lock-wait.js", async importOriginal => {
+  const actual = await importOriginal<{ waitForWriteLock: (path: string, signal?: AbortSignal, since?: number) => Promise<boolean> }>();
+  return {
+    ...actual,
+    waitForWriteLock: (path: string, signal?: AbortSignal, since?: number) => {
+      lockWaits.push({ signal, resume: new Error().stack?.includes("retryResume") === true });
+      return actual.waitForWriteLock(path, signal, since);
+    },
+  };
+});
+
 /** Holds the next open of the file at `path` until `release`; `entered` settles once that open has begun. */
 function holdOpen(path: string) {
   const entered = Promise.withResolvers<void>();
@@ -859,6 +872,31 @@ describe("the engine service's idle close", () => {
       if (writer.inTransaction) writer.exec("ROLLBACK");
       writer.close();
       sessions.close();
+      controls.close();
+    }
+  }, 30_000);
+
+  // Before, the wait went on, a worker thread with its own connection watching the database's log, until the lock was
+  // given back, though nothing was left for it to open.
+  it("stops a quiet session's wait for the write lock its open for a scan met once the session's next event opens it", async () => {
+    const { clock, service, start, prompt, databasePath } = await idleService({ needsRoom: () => false });
+    await start("a");
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    const controls = new SqliteAuditControlStore(databasePath);
+    const writer = new Database(databasePath);
+    try {
+      controls.requestAudit("a", { scope: "repository" });
+      writer.exec("BEGIN IMMEDIATE");
+      lockWaits.length = 0;
+      await service.resumeSession("a");
+      const [wait] = lockWaits.filter(begun => begun.resume);
+      expect(wait?.signal?.aborted).toBe(false);
+      await prompt("a", "back");
+      expect(wait!.signal!.aborted).toBe(true);
+    } finally {
+      if (writer.inTransaction) writer.exec("ROLLBACK");
+      writer.close();
       controls.close();
     }
   }, 30_000);
