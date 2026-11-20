@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import { appendFile, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, utimes, writeFile } from "node:fs/promises";
 import type * as FileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
@@ -38,7 +38,10 @@ const discovery = vi.hoisted(() => ({
   opens: new Map<string, Array<() => Promise<void>>>(),
   /** The modified and change time `lstat` gives a file, as a copy that keeps its source's times leaves where no change time is kept. */
   stamps: new Map<string, number>(),
-  /** An entry about to be looked at there by `lstat`, before it is. */
+  /**
+   * An entry about to be looked at there by `lstat`, before it is; not a checkout's `.git` entry as a read of its
+   * `HEAD` checks the entry's owner (`headReads.reading`), as Git does, which is no look for the entry.
+   */
   looks: new Map<string, Array<() => Promise<void>>>(),
 }));
 /**
@@ -67,17 +70,22 @@ const listings = vi.hoisted(() => ({
   next: [] as Array<{ asked(checkout: string): void; released: Promise<void> }>, delayMs: 0,
   asked: [] as Array<{ checkout: string; asked: number; answered: number | undefined }>,
 }));
-/** How many reads of a checkout's `HEAD` (`readGitHead`) have ended, whether from Git's files or by asking Git. */
-const headReads = vi.hoisted(() => ({ count: 0 }));
+/**
+ * How many reads of a checkout's `HEAD` (`readGitHead`) have ended, whether from Git's files or by asking Git, and the
+ * checkout of each read that runs now.
+ */
+const headReads = vi.hoisted(() => ({ count: 0, reading: [] as string[] }));
 vi.mock("../../../src/engine/git-head-reader.js", async importOriginal => {
   const actual = await importOriginal<typeof HeadReader>();
   return {
     ...actual,
     readGitHead: async (...args: Parameters<typeof actual.readGitHead>) => {
+      headReads.reading.push(args[0]);
       try {
         return await actual.readGitHead(...args);
       } finally {
         headReads.count += 1;
+        headReads.reading.splice(headReads.reading.indexOf(args[0]), 1);
       }
     },
   };
@@ -164,7 +172,7 @@ vi.mock("node:fs/promises", async importOriginal => {
     // would leave `mtime` and `ctime` disagreeing with them. No case sets both: each case sets one map, and the
     // clean-up after each case empties both.
     lstat: async (...args: Parameters<typeof actual.lstat>) => {
-      await discovery.looks.get(String(args[0]))?.shift()?.();
+      if (!headReads.reading.includes(dirname(String(args[0])))) await discovery.looks.get(String(args[0]))?.shift()?.();
       const info = await actual.lstat(...args);
       const at = discovery.stamps.get(String(args[0]));
       const times = heldTimes.get(String(args[0])) ?? (at === undefined ? undefined : { mtimeMs: at, ctimeMs: at });
