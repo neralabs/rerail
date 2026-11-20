@@ -44,6 +44,10 @@ parse spent about 400 instructions a node, 300 of them in the ops.
    bytes set, which is the mask `cell_put` built from the width at every put with a shift and a select. `put` has
    already loaded it for its escape test.
 
+6. **An entry past a side list's last is placed with no search** (`place`). An escaped value's entry and a high
+   code's entry come in row order, except after a late close or a retag. So where the list is empty or its last
+   entry is below the new one, the entry goes at the end; only otherwise is `w_find` called.
+
 ## Measured
 
 `json_tests::simdjson_form_against_simdjson`, `--profile profiling`, arm64, one thread:
@@ -55,6 +59,8 @@ parse spent about 400 instructions a node, 300 of them in the ops.
 | 3 | 44.2 | 39.5 |
 | 4 (open, leaf) and 5 | 40.6 | 35.8 |
 | 4 (close, the slot before) | 39.0 | 34.9 |
+| the newline index a word at a time (0493) | 38.9 | 34.9 |
+| 6 | 38.4 | 34.6 |
 | simdjson | 5.8 | 14.2 |
 
 Time against simdjson: 6.7× on `twitter.json` and 2.3× on `numbers.json` (load about 40, so the times are rough).
@@ -65,7 +71,8 @@ Time against simdjson: 6.7× on `twitter.json` and 2.3× on `numbers.json` (load
   `w_leaf` through `Writer::leaf`. Each of these fails some of them:
   - a leaf written with length 0: 8;
   - a cell's mask all ones: 10;
-  - the slot of the node before written at the node's own place: 10.
+  - the slot of the node before written at the node's own place: 10;
+  - every entry appended with no search: 10.
 - No test can catch a change in when a block is settled: a block made final later (by the next block's first node, a
   commit, or the finish) gives the same bytes. Moving close's never-settle test before the call keeps settle's own
   logic, so it is safe by construction.
@@ -73,6 +80,27 @@ Time against simdjson: 6.7× on `twitter.json` and 2.3× on `numbers.json` (load
 - Tier 2's format 16 tests, JSON's, and the JSON and probe AOT ladders pass.
 
 ## What is left
+
+A profile of `twitter.json` (8,526 samples, before 6):
+
+| Where | Share |
+|---|---:|
+| the walk `r0` | 25% |
+| `w_open` | 19% |
+| `w_close` | 17% |
+| `w_leaf` | 16% |
+| the newline index | 6% |
+| `w_finalize`, once a block | 6% |
+| `w_find` | 3% |
+
+What the ops still do at each node, which simdjson's tape writes don't:
+- **They check their arguments** (bounds, a node outside the root, an open part's room, a close with nothing open).
+  0434's R14 requires this: the ops fail as the reference does. It stays.
+- **They keep a second open stack** (`OPEN`: index, children, last child, start) beside tier 2's.
+- **They write 4 or 5 cells a node** (code, slot, gap, length, and a checkpoint every 8th), the format's columns,
+  where simdjson writes one word.
+- **`w_finalize` sets each node's presence bits** at the block's end: 2 to 4 reads and writes of memory a node. A
+  bitmap of the numbers seen in the block would make that one bit a node, then a pass over the numbers.
 
 A cell's write still loads its column's offset and width, and the side list's count, which it tests. The block's
 room is still found through its table entry and a select on the 16z flag.

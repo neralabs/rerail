@@ -827,7 +827,7 @@ mod ops {
             escaped,
             |w| {
                 // Entries come in row order but for an ancestor's late close.
-                let k = w.call("w_find", &[js, count, j]);
+                let k = place(w, js, count, j);
                 let inside = w.f.ins().icmp(IntCC::UnsignedLessThan, k, count);
                 let ka = w.index(js, k, 2);
                 let found = w.ld16(ka, 0);
@@ -869,6 +869,25 @@ mod ops {
         let cell = w.f.ins().iadd(room, col);
         let cell = w.f.ins().iadd(cell, off);
         w.cell_put_masked(cell, esc, cellv);
+    }
+
+    /// Where entry `j` goes in a list of `count` whose offsets are at `js` (`w_find`, the first not below it): past
+    /// the last where the last is below it, as entries come in row order but for a late close or a retag, with no
+    /// search.
+    fn place(w: &mut W<'_, '_>, js: Value, count: Value, j: Value) -> Value {
+        let k = w.var(I32, count);
+        let some = w.f.ins().icmp_imm(IntCC::NotEqual, count, 0);
+        w.if_(some, |w| {
+            let last = w.f.ins().iadd_imm(count, -1);
+            let la = w.index(js, last, 2);
+            let lj = w.ld16(la, 0);
+            let behind = w.f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, lj, j);
+            w.if_(behind, |w| {
+                let found = w.call("w_find", &[js, count, j]);
+                w.set(k, found);
+            });
+        });
+        w.get(k)
     }
 
     /// Entry `(j, v)` inserted at `k` of a list of `count`, the ones from `k` moved up one.
@@ -990,7 +1009,7 @@ mod ops {
                 let (count_at, js, vs) = w.list(area, zero);
                 let count = w.ld(I32, count_at, 0);
                 // Entries come in row order but for a retag.
-                let k = w.call("w_find", &[js, count, j]);
+                let k = place(w, js, count, j);
                 insert(w, count_at, js, vs, count, k, j, r);
             },
         );

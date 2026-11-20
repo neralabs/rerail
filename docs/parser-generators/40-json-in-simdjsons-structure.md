@@ -601,12 +601,13 @@ about 300 instructions a node, where simdjson writes one tape word a value. The 
 - `w_close` makes no call to `w_settle` unless the block can be final;
 - `w_commit`'s common case is inlined;
 - each op works out its node's block (room, side area) once, not at each cell;
-- a cell's mask is its array's escape, already loaded.
+- a cell's mask is its array's escape, already loaded;
+- a side-list entry past the list's last is placed with no search.
 
 | | `twitter.json`, instr/byte | `numbers.json` |
 |---|---:|---:|
 | Before | 48.7 | 45.0 |
-| Now | 39.0 | 34.9 |
+| Now | 38.4 | 34.6 |
 | simdjson | 5.8 | 14.2 |
 
 ## Step 36, done: the newline index from tier 1's bits (decision 0493)
