@@ -211,15 +211,15 @@ vi.mock("node:fs/promises", async importOriginal => {
       await discovery.accesses.get(String(args[0]))?.shift()?.();
       await actual.access(...args);
     },
-    // Each call is counted, and first runs the hook a case set for its path in `discovery.lstats`, but for an entry
-    // in a checkout a reader of Git's files reads meanwhile (`gitFileReads`): that reader's look at the checkout's `.git`
-    // entry, which on Windows comes before it opens the entry, is no walk's look at it. A path in `heldTimes` reports
+    // Each call is counted, and first runs the hook a case set for its path in `discovery.lstats`, but for the `.git`
+    // entry of a checkout a reader of Git's files reads meanwhile (`gitFileReads`): that reader's look, which on
+    // Windows comes before it opens the entry, is no walk's look at it. A path in `heldTimes` reports
     // the earlier `lstat`'s times whole; one in `discovery.stamps` reports its stamp as both its modified and change
     // time. A path in both keeps its held times: a stamp sets only the two numbers, so it would leave `mtime` and
     // `ctime` disagreeing with them. No case sets both: each case sets one map, and the clean-up after each case empties
     // both.
     lstat: (async (...args: Parameters<typeof actual.lstat>) => {
-      if (!gitFileReads.reading.includes(dirname(String(args[0])))) {
+      if (basename(String(args[0])) !== ".git" || !gitFileReads.reading.includes(dirname(String(args[0])))) {
         discovery.calls.lstat += 1;
         await discovery.lstats.get(String(args[0]))?.shift()?.();
       }
@@ -2101,6 +2101,26 @@ describe("CodeRuleBridge", () => {
       expect(extra.filter(more => more > 2 * MAX_TOLD_AT_ONCE)).toEqual([]);
       expect(extra.at(-1)).toBeLessThanOrEqual(0);
       expect(onDiscoveryGaps.mock.calls.flatMap(([gaps]) => gaps as unknown[])).toHaveLength(MAX_TOLD_GAPS + 1);
+    });
+
+    it("counts a walk's lstats of the entries beside a checkout's .git while a reader of Git's files reads that checkout", async () => {
+      const root = await workspace();
+      const bridge = gapBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))));
+      await bridge.openWorkspace("session-1");
+      await bridge.checkpoint("turn");
+      const lstats = async (): Promise<number> => {
+        const before = discovery.calls.lstat;
+        await bridge.checkpoint("turn");
+        await bridge.settleWalk();
+        return discovery.calls.lstat - before;
+      };
+      const alone = await lstats();
+      const read = Promise.withResolvers<void>();
+      const reading = gitFileReads.during(root, async () => await read.promise);
+      const beside = await lstats();
+      read.resolve();
+      await reading;
+      expect(beside).toBe(alone);
     });
 
     /** The path of each place told, in the order told. */
