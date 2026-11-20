@@ -289,58 +289,74 @@
                 &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
             )
         };
-        for (language, pattern, read_as) in [
-            ("c", "gets($A)", "macro_type_specifier"),
-            ("c", "$F($A)", "macro_type_specifier"),
-            ("c", "gets($$$A)", "macro_type_specifier"),
-            ("c", "gets(b)", "macro_type_specifier"),
-            ("cpp", "std::atoi($A)", "declaration"),
-            ("cpp", "$X::atoi($A)", "declaration"),
+        let matches = |language: &str, pattern: Value, path: &str, source: &str| {
+            let compiled = compile(language, pattern.clone())
+                .unwrap_or_else(|error| panic!("{language} {pattern}: {}", error.reason));
+            matched_texts(&evaluate_file(&compiled, language, path, source), source)
+        };
+        let c = "void f(char *b) { gets(b); int x = atoi(b); foo.bar(b); x = gets(b); }\n";
+        let cpp = "void f(char *b) { std::atoi(b); int x = std::atoi(b); }\n";
+        for (language, pattern, read_as, path, source, call) in [
+            ("c", "gets($A)", "macro_type_specifier", "a.c", c, "gets(b)"),
+            ("c", "$F($A)", "macro_type_specifier", "a.c", c, "gets(b)"),
+            ("c", "gets($$$A)", "macro_type_specifier", "a.c", c, "gets(b)"),
+            ("c", "gets(b)", "macro_type_specifier", "a.c", c, "gets(b)"),
+            ("c", "gets($A)\n", "macro_type_specifier", "a.c", c, "gets(b)"),
+            ("c", " gets($A)", "macro_type_specifier", "a.c", c, "gets(b)"),
+            ("cpp", "std::atoi($A)", "declaration", "a.cpp", cpp, "std::atoi(b)"),
+            ("cpp", "$X::atoi($A)", "declaration", "a.cpp", cpp, "std::atoi(b)"),
         ] {
+            let written = pattern.trim();
+            let reason = rejection(compile(language, json!(pattern)));
             assert_eq!(
-                rejection(compile(language, json!(pattern))),
+                reason,
                 format!(
-                    "/clauses/0/forbid/ast/rule/pattern: `{pattern}` parses as a `{read_as}` at file scope, \
-                     not the `call_expression` a function body holds, so it never matches; write \
-                     {{\"context\":\"void f() {{ {pattern}; }}\",\"selector\":\"call_expression\"}} \
-                     ({language} grammar)"
+                    "/clauses/0/forbid/ast/rule/pattern: `{written}` parses as a `{read_as}` at file \
+                     scope, not the `call_expression` a function body holds; to match the \
+                     `call_expression` write \
+                     {{\"context\":\"void f() {{ {written}; }}\",\"selector\":\"call_expression\"}}, \
+                     or for the `{read_as}` a `context` that holds it with \"selector\": \
+                     \"{read_as}\" ({language} grammar)"
                 ),
-                "{language} {pattern}"
+                "{language} {pattern:?}"
+            );
+            // The form the refusal names compiles, and matches every call, statement or not.
+            let at = reason.find("write ").expect("a contextual form") + "write ".len();
+            let contextual = serde_json::Deserializer::from_str(&reason[at..])
+                .into_iter::<Value>()
+                .next()
+                .expect("a contextual form")
+                .expect("JSON");
+            let texts = matches(language, contextual.clone(), path, source);
+            assert_eq!(
+                texts.iter().filter(|text| text.starts_with(call)).count(),
+                2,
+                "{language} {contextual}: {texts:?}"
             );
         }
-        let source = "void f(char *b) { gets(b); int x = atoi(b); foo.bar(b); x = gets(b); }\n";
         for (language, pattern, path, matched) in [
             ("c", json!("gets($A);"), "a.c", "gets(b);"),
             ("c", json!("foo.bar($A)"), "a.c", "foo.bar(b)"),
             ("c", json!("x = gets($A)"), "a.c", "x = gets(b)"),
             ("cpp", json!("atoi($A)"), "a.cpp", "atoi(b)"),
             ("cpp", json!("foo.bar($A)"), "a.cpp", "foo.bar(b)"),
-            (
-                "c",
-                json!({ "context": "void f() { gets($A); }", "selector": "call_expression" }),
-                "a.c",
-                "gets(b)",
-            ),
         ] {
-            let compiled = compile(language, pattern.clone())
-                .unwrap_or_else(|error| panic!("{language} {pattern}: {}", error.reason));
-            let result = evaluate_file(&compiled, language, path, source);
+            let texts = matches(language, pattern.clone(), path, c);
             assert!(
-                matched_texts(&result, source)
-                    .iter()
-                    .any(|text| text.starts_with(matched)),
-                "{language} {pattern}: {:?}",
-                matched_texts(&result, source)
+                texts.iter().any(|text| text.starts_with(matched)),
+                "{language} {pattern}: {texts:?}"
             );
         }
-        let source = "void f(char *b) { std::atoi(b); int x = std::atoi(b); }\n";
-        let compiled = compile(
-            "cpp",
-            json!({ "context": "void f() { std::atoi($A); }", "selector": "call_expression" }),
-        )
-        .unwrap_or_else(|error| panic!("{}", error.reason));
-        let result = evaluate_file(&compiled, "cpp", "a.cpp", source);
-        assert_eq!(matched_texts(&result, source).len(), 2);
+        // A macro's type is the other reading: the refusal's `context` with its kind matches it.
+        let source = "void f(void) { STACK_OF(X509) *certs; }\n";
+        assert!(rejection(compile("c", json!("STACK_OF($T)"))).contains("macro_type_specifier"));
+        let pattern = json!({ "context": "STACK_OF($T) *x;", "selector": "macro_type_specifier" });
+        let texts = matches("c", pattern, "a.c", source);
+        assert!(
+            texts.len() == 1 && texts[0].starts_with("STACK_OF(X509)"),
+            "{texts:?}"
+        );
         // A statement that is no expression keeps its own reading.
         compile("c", json!("if ($A) $B")).unwrap_or_else(|error| panic!("{}", error.reason));
     }
+

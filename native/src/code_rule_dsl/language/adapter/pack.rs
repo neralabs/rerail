@@ -50,6 +50,7 @@ pub trait LanguagePack: Send + Sync {
     fn syntax_parse_literal_sub(&self, grammar: crate::code_rule_dsl::literal::Grammar, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::literal::SubDoc>, interpolation: &str, spend: &mut dyn FnMut (usize) -> bool) -> Option<crate::code_rule_dsl::literal::Parsed>;
     fn syntax_parse_literal_str(&self, grammar: crate::code_rule_dsl::literal::Grammar, node: &ast_grep_core::Node<'_, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>, interpolation: &str, spend: &mut dyn FnMut (usize) -> bool) -> Option<crate::code_rule_dsl::literal::Parsed>;
     fn syntax_dollar_names(&self) -> bool;
+    fn syntax_body_pattern(&self, pattern: &str, language: crate::code_rule_dsl::language::GrammarDialect) -> Option<(String, String)>;
     fn syntax_feature(&self, feature: crate::code_rule_dsl::language::adapter::syntax::SyntaxFeature) -> Result<(), crate::code_rule_dsl::language::adapter::Refusal>;
     fn syntax_compile_language_options(&self, value: &serde_json::Value, path: &str) -> napi::Result<crate::code_rule_dsl::language::adapter::syntax::QueryOptions>;
     fn syntax_compile_when(&self, value: &serde_json::Value, path: &str, options: Option<&crate::code_rule_dsl::scope::options::LanguageOptions>, python: Option<&crate::code_rule_dsl::scope::options::PythonOptions>, document: &crate::code_rule_dsl::compile::config::Options) -> napi::Result<crate::code_rule_dsl::language::adapter::syntax::QueryWhen>;
@@ -268,6 +269,9 @@ impl<A: Adapter + SyntaxRules> LanguagePack for Pack<A> {
     }
     fn syntax_dollar_names(&self) -> bool {
         <A as SyntaxRules>::DOLLAR_NAMES
+    }
+    fn syntax_body_pattern(&self, pattern: &str, language: crate::code_rule_dsl::language::GrammarDialect) -> Option<(String, String)> {
+        <A as SyntaxRules>::body_pattern(pattern, language)
     }
     fn syntax_feature(&self, feature: crate::code_rule_dsl::language::adapter::syntax::SyntaxFeature) -> Result<(), crate::code_rule_dsl::language::adapter::Refusal> {
         <A as SyntaxRules>::feature(feature)
