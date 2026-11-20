@@ -59,6 +59,7 @@ beforeAll(() => {
 afterEach(async () => {
   delete process.env.RERAIL_RR_MEMORY_MB;
   delete process.env.RERAIL_RR_DEADLINE_MS;
+  delete process.env.RERAIL_RR_STORE;
   vi.clearAllMocks();
   await Promise.all(roots.splice(0).map(root => removeFolder(root)));
 });
@@ -165,6 +166,18 @@ describe("runRerailPolicies", () => {
       span: { startByte: callAt, endByte: MULTI_LINE.lastIndexOf(")") + 1, startLine: 1, startColumn: "    return ".length, endLine: 3, endColumn: 5 },
     });
     expect(leftDirectories()).toEqual([]);
+  });
+
+  it("keeps no store unless RERAIL_RR_STORE=checkout asks for the checkout's, and refuses any other value", async () => {
+    const { root, rule } = checkout({ "a.py": "shout(1)\n" });
+    const stores = (): string[] => readdirSync(temporary).filter(name => name === "rerail-stores");
+    expect(await runRerailPolicies({ root, policies: [rule] })).toMatchObject({ status: "completed" });
+    expect(stores()).toEqual([]);
+    process.env.RERAIL_RR_STORE = "checkout";
+    expect(await runRerailPolicies({ root, policies: [rule] })).toMatchObject({ status: "completed" });
+    expect(stores()).toEqual(["rerail-stores"]);
+    process.env.RERAIL_RR_STORE = "on";
+    expect(await runRerailPolicies({ root, policies: [rule] })).toEqual({ status: "failed", message: 'RERAIL_RR_STORE is "on": it takes "off" or "checkout"' });
   });
 
   it("runs two checkouts at once, each to its own findings", async () => {

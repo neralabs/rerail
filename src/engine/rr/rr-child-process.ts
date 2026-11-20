@@ -75,22 +75,18 @@ function childArguments(): string[] {
 }
 
 /**
- * This process's environment, for the child: its thread cap, and none of the runner's own settings.
+ * This process's environment, for the child: its thread cap, its store, and none of the runner's own settings.
  *
- * The child keeps the engine's store of the checkout it runs in: the engine picks one per working directory
- * (`$TMPDIR/rerail-stores/<build>-<directory>.sqlite`, one owner process at a time), never the daemon's content store.
- * So runs of one checkout reuse each other's work, and runs of two checkouts never share a store. A store named by
- * `RERAIL_TAPE_CACHE` is left out for that reason (every `RERAIL_*` variable is also part of a run's reuse key).
- * Measured with the Django pack (27 rules, 4 threads) against the engine with no store (`RERAIL_TAPE_CACHE=off`):
- * - an unchanged checkout takes 0.2 to 0.4 s with the store, against a full run each time without it;
- * - on a 229-file project, a run after an edit takes 3.5 s against 13 s, and a first run 12.6 s against 13 s;
- * - on a 1,300-file project, a run after an edit costs more with the store (183 s, 5.8 GB, against 123 s and 4.7 GB on
- *   16 threads), and a first run peaks 1.7 times higher. But without a store that project's run stalls on 4 threads,
- *   the cap a laptop gets, so the store is what lets it finish at all.
+ * With no store (`budgets.store` false, the default; `rr-budgets.ts` says why) the child runs with
+ * `RERAIL_TAPE_CACHE=off`. With one, it keeps the engine's store of the checkout it runs in: the engine picks one per
+ * working directory (`$TMPDIR/rerail-stores/<build>-<directory>.sqlite`, one owner process at a time), never the
+ * daemon's content store, so runs of one checkout reuse each other's work and runs of two checkouts never share a
+ * store. Either way a `RERAIL_TAPE_CACHE` this process has is not passed on (every `RERAIL_*` variable is also part
+ * of a run's reuse key).
  */
-function childEnvironment(threads: number): NodeJS.ProcessEnv {
+function childEnvironment(budgets: RrBudgets): NodeJS.ProcessEnv {
   const kept = Object.entries(process.env).filter(([name]) => !name.startsWith("RERAIL_RR_") && name !== "RERAIL_TAPE_CACHE");
-  return { ...Object.fromEntries(kept), RERAIL_THREADS: String(threads) };
+  return { ...Object.fromEntries(kept), RERAIL_THREADS: String(budgets.threads), ...(budgets.store ? {} : { RERAIL_TAPE_CACHE: "off" }) };
 }
 
 /** A temporary directory for one child: its request written, an empty `out` for the run, its result's path. */
@@ -195,7 +191,7 @@ export async function runChild(requestOf: RrChildRequestOf, options: RrChildOpti
     killLiveOnExit();
     const child = spawn(process.execPath, args, {
       cwd: options.cwd,
-      env: childEnvironment(options.budgets.threads),
+      env: childEnvironment(options.budgets),
       stdio: ["ignore", "ignore", "pipe", "ipc"],
     });
     live.set(child, directory);
@@ -215,7 +211,7 @@ export function runChildSync(requestOf: RrChildRequestOf, options: Omit<RrChildO
     const started = performance.now();
     const ran = spawnSync(process.execPath, args, {
       cwd: options.cwd,
-      env: childEnvironment(options.budgets.threads),
+      env: childEnvironment(options.budgets),
       stdio: ["ignore", "ignore", "pipe"],
       timeout: options.budgets.deadlineMs,
       killSignal: "SIGKILL",
