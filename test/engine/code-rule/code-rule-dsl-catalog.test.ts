@@ -1682,7 +1682,8 @@ describe("rules whose finding in one file can depend on another", () => {
         require_each: [[{ require_each: { subject: evidence, evidence } }], true],
         budget: [[{ budget: { query: evidence, count: { lte: 1 } } }], true],
         relational: [[{ relational: { inputs: { files }, query: "SELECT __path path,__start start_byte,__end end_byte FROM files", key: ["path"] } }], true],
-        llm: [[{ llm: {} }], true],
+        // The engine answers an `llm` clause with a missing-capability failure that names no file.
+        llm: [[{ llm: {} }], false],
         // A `report_when` gate reports the rule's findings only once their count over every file passes it.
         define: [[{ define: { report_when: { count: { gt: 3 } } } }, { forbid: needle }], true],
       };

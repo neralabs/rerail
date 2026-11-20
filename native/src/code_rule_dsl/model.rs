@@ -758,8 +758,9 @@ pub struct CompiledClause {
 
 impl CompiledClause {
     /// Whether the workspace evaluates the clause one file at a time: a forbid whose query is
-    /// (`Query::is_file_local`). Every other clause runs over the workspace's files together. No
-    /// arm is a wildcard, so a new kind of clause does not compile until it says which it is.
+    /// file-local (`Query::is_file_local`). Every other clause runs over the workspace's files
+    /// together. No arm is a wildcard, so a new kind of clause does not compile until it says which
+    /// it is.
     pub fn is_file_local(&self) -> bool {
         match &self.kind {
             ClauseKind::Forbid(query) => query.is_file_local(),
@@ -790,9 +791,12 @@ impl CompiledClause {
 
     /// Whether the clause's finding in one file can depend on another file's text: the workspace
     /// evaluates it over its files together, or keeps a `calls` closure or an `importTarget` view
-    /// over every file for it. These are the predicates `add_code_rule` routes the clause by.
+    /// over every file for it. These are the predicates `add_code_rule` routes the clause by. An
+    /// `llm` clause, which the workspace holds with those, reads no file: the engine answers it
+    /// with a missing-capability failure that names none (`eval::evaluate_clauses`).
     pub fn reads_other_files(&self) -> bool {
-        !self.is_file_local() || self.holds_calls() || self.reads_import_targets_locally()
+        !matches!(self.kind, ClauseKind::Llm)
+            && (!self.is_file_local() || self.holds_calls() || self.reads_import_targets_locally())
     }
 }
 

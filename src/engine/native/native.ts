@@ -104,7 +104,8 @@ export interface NativeCompiledCodeRuleDsl {
   readsText(): boolean;
   /**
    * Whether a finding of the code rule in one file can depend on another file's text: a clause the engine evaluates over
-   * many files (any but a `regex`, `ast` or `file` forbid), a `calls` or `importTarget` term, or a `report_when` gate.
+   * many files (any but a `regex`, `ast` or `file` forbid, and an `llm` clause, which reads no file), a `calls` or
+   * `importTarget` term, or a `report_when` gate.
    * The engine routes each clause by the same predicates, so the answer cannot drift from what it evaluates.
    */
   readsOtherFiles(): boolean;
