@@ -392,32 +392,52 @@ describe("the daemon's change stream (GET /api/changes)", () => {
         await mergeAssist.stop();
       }
     });
+
+    it("reads the checkout's files at each beat while a stat of gh's hosts file never answers", async () => {
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+      const checkout = gitRepository(join(realpathSync(root), "web"));
+      mkdirSync(join(checkout, ".rerail", "rules"), { recursive: true });
+      recordCheckout(database, checkout);
+      // Only the sign-in stamp is read here, and it never answers, as on a home folder whose share dropped.
+      const mergeAssist = { signInStamp: () => new Promise<never>(() => undefined) } as unknown as MergeAssistService;
+      const stalled = storesFor({ changeFeed: { beatMs: BEAT_MS }, mergeAssist });
+      const stream = messagesOf(await createRerailApi(stalled, operations, { version: "0.0.0-test" }).request(`/api/changes?${new URLSearchParams({ checkout })}`));
+      // Each wait within a bound of its own, under the case's: files read behind the stalled stat fail here, not at the
+      // case's timeout.
+      const within = async <T>(waiting: Promise<T>): Promise<T | string> =>
+        await Promise.race([waiting, new Promise<string>(resolve => setTimeout(resolve, 2_000, "nothing within 2 s"))]);
+      try {
+        const first = await within(filesRead(stream));
+        expect(first).not.toBe("nothing within 2 s");
+
+        writeFileSync(join(checkout, ".rerail", "rules", "local.json"), "{}\n");
+        await vi.advanceTimersByTimeAsync(BEAT_MS);
+
+        expect(await within(movedFrom(stream, (first as Message).data))).not.toBe("nothing within 2 s");
+      } finally {
+        await stream.stop();
+        stalled.close();
+      }
+    });
   });
 
-  it("reads the checkout's files at each beat while a stat of gh's hosts file never answers", async () => {
+  it("reads nothing of Merge Assist's at the stream's start or its beats while its experiment is off", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     const checkout = gitRepository(join(realpathSync(root), "web"));
-    mkdirSync(join(checkout, ".rerail", "rules"), { recursive: true });
     recordCheckout(database, checkout);
-    // Only the sign-in stamp is read here, and it never answers, as on a home folder whose share dropped.
-    const mergeAssist = { signInStamp: () => new Promise<never>(() => undefined) } as unknown as MergeAssistService;
-    const stalled = storesFor({ changeFeed: { beatMs: BEAT_MS }, mergeAssist });
-    const stream = messagesOf(await createRerailApi(stalled, operations, { version: "0.0.0-test" }).request(`/api/changes?${new URLSearchParams({ checkout })}`));
-    // Each wait within a bound of its own, under the case's: files read behind the stalled stat fail here, not at the
-    // case's timeout.
-    const within = async <T>(waiting: Promise<T>): Promise<T | string> =>
-      await Promise.race([waiting, new Promise<string>(resolve => setTimeout(resolve, 2_000, "nothing within 2 s"))]);
+    const signInStamp = vi.fn(async () => "hosts.yml as first written");
+    const mergeAssist = { signInStamp } as unknown as MergeAssistService;
+    const off = storesFor({ changeFeed: { beatMs: BEAT_MS }, mergeAssist });
+    const stream = messagesOf(await createRerailApi(off, operations, { version: "0.0.0-test" }).request(`/api/changes?${new URLSearchParams({ checkout })}`));
     try {
-      const first = await within(filesRead(stream));
-      expect(first).not.toBe("nothing within 2 s");
-
-      writeFileSync(join(checkout, ".rerail", "rules", "local.json"), "{}\n");
+      const first = await filesRead(stream);
       await vi.advanceTimersByTimeAsync(BEAT_MS);
+      expect(await stream.next()).toEqual(first);
 
-      expect(await within(movedFrom(stream, (first as Message).data))).not.toBe("nothing within 2 s");
+      expect(signInStamp).not.toHaveBeenCalled();
     } finally {
       await stream.stop();
-      stalled.close();
+      off.close();
     }
   });
 

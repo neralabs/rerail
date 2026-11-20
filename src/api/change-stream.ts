@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { CheckoutContext, RuleCatalog } from "../engine/catalog/repository-model.js";
 import { worktreeRulesStamp } from "../engine/catalog/worktree-pack.js";
+import { mergeAssistExperimentEnabled } from "../engine/experimental-features.js";
 import { branchFilesStamp } from "../engine/merge-assist/branch-git.js";
 import type { ChangeFeed, ChangeNotice } from "./change-feed.js";
 import type { RerailApiStores } from "./operation.js";
@@ -31,10 +32,12 @@ async function checkoutFiles(checkout: CheckoutContext): Promise<string> {
 
 /**
  * `gh`'s sign-in as the checkout's Merge Assist status compares it (`signInStamp`: one stat of `gh`'s hosts file, no
- * process, nothing while Merge Assist is off there). A login, logout or switch made with `gh` moves it, so an open
- * Merge Assist page reads the status, which reads `gh` because the file moved.
+ * process, nothing while Merge Assist is off there, or while its experiment is off, when nothing of it runs). A login,
+ * logout or switch made with `gh` moves it, so an open Merge Assist page reads the status, which reads `gh` because the
+ * file moved.
  */
 async function signInStamp(stores: RerailApiStores, checkout: CheckoutContext): Promise<string> {
+  if (!mergeAssistExperimentEnabled()) return "";
   try {
     return await stores.mergeAssist().signInStamp(checkout.checkoutPath);
   } catch {
@@ -54,7 +57,8 @@ const FILE_READS: Readonly<Record<string, (stores: RerailApiStores, checkout: Ch
 
 /**
  * What the last read of each part of each scoped checkout found (`FILE_READS`), so a new stream's first token starts
- * from it and waits for no read; one entry per part and checkout a page has followed.
+ * from it and waits for no read; one entry per part and per `checkout` a stream named, recorded or not, kept for the
+ * daemon's life.
  */
 const lastRead = new Map<string, string>();
 
@@ -176,7 +180,7 @@ function changeStream(feed: ChangeFeed, token: StreamToken): Response {
 /**
  * `GET /api/changes[?checkout=<path>]`: what the dashboard follows instead of reading everything every 5 s. Not an
  * operation: it is HTTP's own (MCP has no stream), so neither the OpenAPI document nor the MCP tools list it. Stores
- * without a change feed answer 404, and the page then reads again only on what the person does.
+ * without a change feed answer 404, and the page then reads every 5 s, as it did before the stream.
  */
 export function mountChangeStream(app: OpenAPIHono, stores: RerailApiStores, salt: string): void {
   app.get("/api/changes", context => {
