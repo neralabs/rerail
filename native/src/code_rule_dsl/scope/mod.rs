@@ -22,6 +22,7 @@ pub mod usage;
 pub use lookup::Lookup;
 
 use crate::code_rule_dsl::identifier::{name_in, nfkc};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::value::{Followed, NodeRef};
@@ -32,7 +33,6 @@ use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::ops::Range;
 use std::sync::{Arc, OnceLock};
-use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// The value namespace: variables, functions, parameters, imports, classes, enums.
 pub const VALUE: u8 = 1;
@@ -399,9 +399,11 @@ pub type NameTable = Arc<dyn FileNames>;
 
 /// The scope of a program an embedding gives a meaning of its own (`embed::Embedder`): its crate registers it
 /// for its `Via` as the engine loads (Blade's compiled view, `embed::compiled_view::scope`).
-pub(crate) type ProgramScope = fn(&mut Builder<'_>, &Node<'_, crate::code_rule_dsl::tape::TapeDoc>) -> Result<(), BuildError>;
+pub(crate) type ProgramScope =
+    fn(&mut Builder<'_>, &Node<'_, crate::code_rule_dsl::tape::TapeDoc>) -> Result<(), BuildError>;
 
-static PROGRAM_SCOPES: OnceLock<Vec<(crate::code_rule_dsl::language::Via, ProgramScope)>> = OnceLock::new();
+static PROGRAM_SCOPES: OnceLock<Vec<(crate::code_rule_dsl::language::Via, ProgramScope)>> =
+    OnceLock::new();
 
 /// The engine's program scopes, by `Via`; the first call holds.
 pub fn install_program_scopes(scopes: Vec<(crate::code_rule_dsl::language::Via, ProgramScope)>) {
@@ -410,7 +412,11 @@ pub fn install_program_scopes(scopes: Vec<(crate::code_rule_dsl::language::Via, 
 
 /// `via`'s program scope, where its embedding registered one.
 fn program_scope(via: crate::code_rule_dsl::language::Via) -> Option<ProgramScope> {
-    PROGRAM_SCOPES.get()?.iter().find(|(known, _)| *known == via).map(|(_, scope)| *scope)
+    PROGRAM_SCOPES
+        .get()?
+        .iter()
+        .find(|(known, _)| *known == via)
+        .map(|(_, scope)| *scope)
 }
 
 pub fn annotation_offset(index: usize) -> usize {
@@ -659,16 +665,23 @@ impl ScopeTable {
         match program_scope {
             Some(scope) => {
                 // A program's document is a tape's (`tape_doc`).
-                let root = unsafe { &*(&root as *const Node<'_, D> as *const Node<'_, crate::code_rule_dsl::tape::TapeDoc>) };
+                let root = unsafe {
+                    &*(&root as *const Node<'_, D>
+                        as *const Node<'_, crate::code_rule_dsl::tape::TapeDoc>)
+                };
                 scope(&mut builder, root)?
             }
             None => {
-                { let pack = language_pack::pack(family); language_pack::scope_visit(pack, &mut builder, &root, reading) }?
-            }
+                let pack = language_pack::pack(family);
+                language_pack::scope_visit(pack, &mut builder, &root, reading)
+            }?,
         }
         let mut table = builder.table;
         table.sort_references();
-        { let pack = language_pack::pack(family); language_pack::scope_finish(pack, &mut table, &root) };
+        {
+            let pack = language_pack::pack(family);
+            language_pack::scope_finish(pack, &mut table, &root)
+        };
         Ok(table)
     }
 
@@ -818,7 +831,10 @@ impl ScopeTable {
     /// The binding `name` resolves to at `reference`, or `None` for a global or builtin. A Python
     /// `del` resolves in its own scope only; a `Deletion` binding may be the answer.
     pub fn resolve(&self, reference: &Reference, name: &str) -> Option<&Binding> {
-        { let pack = language_pack::pack(self.family); pack.scope_resolve(self, reference, name) }
+        {
+            let pack = language_pack::pack(self.family);
+            pack.scope_resolve(self, reference, name)
+        }
     }
 
     /// PHP: the one binding every path reaches a read with, as its scope and its index among that
@@ -837,7 +853,10 @@ impl ScopeTable {
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn unbound(&self, reference: &Reference, name: &str) -> bool {
         if reference.access != Access::Del
-            && let Some(annotation) = { let pack = language_pack::pack(self.family); pack.scope_unbound_annotation(self, reference, name) }
+            && let Some(annotation) = {
+                let pack = language_pack::pack(self.family);
+                pack.scope_unbound_annotation(self, reference, name)
+            }
         {
             return !self.binding_at(annotation, name).rebound;
         }
@@ -853,17 +872,15 @@ impl ScopeTable {
     /// annotation no nested `nonlocal` may initialize.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn unbound_locally(&self, reference: &Reference, name: &str, builtin: bool) -> bool {
-        { let pack = language_pack::pack(self.family); pack.scope_unbound_locally(self, reference, name, builtin) }
+        {
+            let pack = language_pack::pack(self.family);
+            pack.scope_unbound_locally(self, reference, name, builtin)
+        }
     }
 
     /// Ruff's lookup of `name` at `reference` (`unbound_locally`).
     #[cfg(any(test, feature = "test-hooks"))]
-    pub fn ruff_unbound_locally(
-        &self,
-        reference: &Reference,
-        name: &str,
-        builtin: bool,
-    ) -> bool {
+    pub fn ruff_unbound_locally(&self, reference: &Reference, name: &str, builtin: bool) -> bool {
         if reference.access != Access::Del {
             let walk = self.walk(reference, name, true);
             if let Some(annotation) = walk.unbound {
@@ -950,11 +967,7 @@ impl ScopeTable {
 
     /// The binding `name` at a Python `reference` resolves to, as its scope and its index among
     /// that scope's bindings of the name (in Ruff's order; see `build_with`).
-    pub fn resolve_python_index(
-        &self,
-        reference: &Reference,
-        name: &str,
-    ) -> Option<(u32, usize)> {
+    pub fn resolve_python_index(&self, reference: &Reference, name: &str) -> Option<(u32, usize)> {
         if reference.access == Access::Del {
             let scope = &self.scopes[reference.scope as usize];
             if !scope.nonlocals.contains(name) {
@@ -1185,11 +1198,7 @@ impl ScopeTable {
 
     /// The scope holding the binding `name` resolves to at a TypeScript `reference`, and the
     /// binding's index among that scope's bindings of the name.
-    pub fn resolve_lexical_index(
-        &self,
-        reference: &Reference,
-        name: &str,
-    ) -> Option<(u32, usize)> {
+    pub fn resolve_lexical_index(&self, reference: &Reference, name: &str) -> Option<(u32, usize)> {
         let mut current = Some(reference.scope);
         while let Some(index) = current {
             let scope = &self.scopes[index as usize];
@@ -1220,7 +1229,10 @@ impl ScopeTable {
         reference: &Reference,
         name: &str,
     ) -> Option<(&Binding, Option<NodeRef>)> {
-        { let pack = language_pack::pack(self.family); pack.scope_binding(self, reference, name) }
+        {
+            let pack = language_pack::pack(self.family);
+            pack.scope_binding(self, reference, name)
+        }
     }
 }
 
@@ -1262,7 +1274,10 @@ fn thread_stack() -> Option<(usize, usize)> {
     // SAFETY: both read the calling thread's own attributes.
     let (top, size) = unsafe {
         let this = libc::pthread_self();
-        (libc::pthread_get_stackaddr_np(this) as usize, libc::pthread_get_stacksize_np(this))
+        (
+            libc::pthread_get_stackaddr_np(this) as usize,
+            libc::pthread_get_stacksize_np(this),
+        )
     };
     (top != 0 && size != 0).then_some((top, size))
 }

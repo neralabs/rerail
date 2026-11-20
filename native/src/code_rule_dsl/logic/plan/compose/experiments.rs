@@ -42,10 +42,7 @@ fn bodies(sql: &str) -> Vec<(String, std::ops::Range<usize>)> {
         return Vec::new();
     };
     let mut out = Vec::new();
-    loop {
-        let Some(cols) = sql[at..].find('(').map(|n| n + at) else {
-            break;
-        };
+    while let Some(cols) = sql[at..].find('(').map(|n| n + at) {
         let name = sql[at..cols].trim().trim_matches('"').to_owned();
         let Some(as_at) = sql[cols..].find(" AS ").map(|n| n + cols + 4) else {
             break;

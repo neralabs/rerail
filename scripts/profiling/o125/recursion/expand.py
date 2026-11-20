@@ -1,4 +1,4 @@
-# expand.py <policy.rr> <out.rr>: the policy with its `#include`s read in (each file once), searched in the including
+# expand.py <policy.rerail> <out.rerail>: the policy with its `#include`s read in (each file once), searched in the including
 # file's directory, then docs/rule-syntax and docs/rule-syntax/lib, as the engine reads them. Run from the worktree.
 import os,re,sys
 PATHS=['docs/rule-syntax','docs/rule-syntax/lib']

@@ -1,3 +1,0 @@
-^(?:add|append|clear|discard|extend|insert|pop|popitem|remove|setdefault|update)$
-^(?:fn)$
-^(?:read|read_version|versioned_read|versioned_write|write|write_version)$

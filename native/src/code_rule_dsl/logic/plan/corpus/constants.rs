@@ -12,7 +12,7 @@
 //!
 //! Such a relation has one value for the whole run. Left in the program, a rule that reads it reads a relation the
 //! file-local part cannot make (a file read is a request, answered in the cross-file part), so the rule, and every
-//! rule after it, runs in the cross-file part over every document's base rows: `struct.rr`'s definitions were all
+//! rule after it, runs in the cross-file part over every document's base rows: `struct.rerail`'s definitions were all
 //! cross-file for `py_version` alone, and a warm run measured 2.3 M base rows to plan them.
 //!
 //! So these relations are derived first, by a run of the same engine over no documents with the requests answered
@@ -247,7 +247,7 @@ fn key(programs: &[&str], added: &super::added::Added, root: &Path, options: &se
     }
     h.update(options.to_string().as_bytes());
     h.update([0]);
-    h.update(std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
+    h.update(dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
     h.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }

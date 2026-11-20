@@ -1,4 +1,4 @@
-//! `ast.parse`'s verdict on a module's text, as CPython 3.13 gives it (core.rr's `syntax_error(d, l, msg)`): whether it
+//! `ast.parse`'s verdict on a module's text, as CPython 3.13 gives it (core.rerail's `syntax_error(d, l, msg)`): whether it
 //! raises `SyntaxError` (or its subclasses `IndentationError`, `TabError`), and the error's `lineno` and `msg`, and
 //! where CPython puts it (`Located`: `offset`, `text`, `end_lineno`, `end_offset`), by how CPython raises it (`Span`:
 //! at a token or a node, at the tokenizer's cursor, at a token with no column, at a bracket never closed).
@@ -143,7 +143,7 @@ fn at_start(span: Span) -> Span {
 /// APPROX: `b` is the expression Ruff read there, which runs on where CPython's stops at a token its grammar refuses
 /// (`ef f[**P, T](\n…)`: CPython's `b` ends at the `**`, Ruff's at the call's `)` lines later), so `text` loses its line
 /// end; and where Ruff fails at another token than CPython's furthest (`raise e,.x`, at `,` rather than `.`), the
-/// columns are Ruff's. 3 of the 737 mutants (`cpython::parity`, Q293) differ so.
+/// columns are Ruff's. 3 of the 737 mutants (`cpython::parity`, Q360) differ so.
 fn read_failed(cx: &Cx, start: TextSize, end: TextSize) -> usize {
     let at = cx.tokens.iter().position(|t| t.start() == start && !t.kind().is_trivia());
     let beside = at.is_some_and(|i| {

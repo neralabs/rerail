@@ -22,8 +22,8 @@ pub fn projection(v: &Version, reads: BTreeSet<String>, matchers: &Matchers) -> 
     projection_of(v, reads).with_long_text_parts(demand, anchors)
 }
 
-/// The projection of the program `v` reading `reads`, before its long text and anchors: `core.rr`'s shape for a
-/// program that includes `core.rr` (declares every relation it declares as an input), T's for one that declares its
+/// The projection of the program `v` reading `reads`, before its long text and anchors: `core.rerail`'s shape for a
+/// program that includes `core.rerail` (declares every relation it declares as an input), T's for one that declares its
 /// base relations itself (T's programs, the converter's, O74).
 pub fn projection_of(v: &Version, reads: BTreeSet<String>) -> Projection {
     let (spans, token_text) = span_text_demand(v);
@@ -515,7 +515,7 @@ fn find(x: &serde_json::Value, name: &str, ancestor: bool, outer: Outer<'_>, out
 /// matcher's root or capture (`rr_ast_*`, a matcher with no `inside`, `follows` or `precedes`), or by a column of a
 /// relation whose every rule proves it. Of a proven node a rule may read only what the node itself holds (its kind,
 /// text, literals, place in the source, document), and its children: no parent, ancestor, sibling or neighbouring
-/// token, which a narrowed projection would not have, or would have otherwise. In `sources.rr` (phase 1): import
+/// token, which a narrowed projection would not have, or would have otherwise. In `sources.rerail` (phase 1): import
 /// statements' subtrees.
 pub fn node_anchors(v: &Version, settings: &[(String, String)], matchers: &Matchers) -> Result<BTreeSet<String>, String> {
     let setting = |key: &str| settings.iter().filter(|(k, _)| k == key).map(|(_, x)| x.trim().to_owned()).collect::<Vec<_>>();

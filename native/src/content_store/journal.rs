@@ -89,6 +89,13 @@ pub fn current_id() -> u64 {
     fsevents::current_id()
 }
 
+/// Drops this process's streams, as a new process starts with none: its next question is a replay from the cursor
+/// it gives (`observe`'s Q189 test, which moves a stored cursor past an edit as a merged replay does).
+#[cfg(all(test, target_os = "macos"))]
+pub fn forget_streams() {
+    fsevents::forget_streams();
+}
+
 /// An id every change under `root` made before now has (FSEvents'): the cookie id of a replay from `from`, which
 /// comes after each change's event (`fsevents::sync`), where `current_id` may be taken before a late event's id is
 /// given (`observe`'s Q189 test, on a loaded host).
@@ -471,6 +478,11 @@ mod fsevents {
     }
     static COUNTER: AtomicU64 = AtomicU64::new(0);
 
+    #[cfg(test)]
+    pub(super) fn forget_streams() {
+        streams().0.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    }
+
     /// A new outermost run: a question after this waits for a cookie of its own, once per stream.
     pub(super) fn next_epoch() {
         streams().1.fetch_add(1, Ordering::Relaxed);
@@ -663,9 +675,6 @@ mod fsevents {
         let mut all = streams.0.lock().unwrap_or_else(|e| e.into_inner());
         // A replay whose history lacks its marker is started again, from the same cursor, while `settle` allows.
         let deadline = Instant::now() + settle;
-        // How long the question may wait for its cookie: the caller's bound (Q221: a run waits no longer than
-        // checking its kept answers by `stat` costs), else `WAIT`; a test's settle budget is the least it waits.
-        let budget = wait.unwrap_or(WAIT).max(settle);
         let mut again: Option<String> = None;
         let (at, synced) = loop {
             // A stream that lost track answers nothing more: a question under its roots replays afresh.
@@ -700,7 +709,10 @@ mod fsevents {
             let t = Instant::now();
             let fresh = all[at].synced.is_none_or(|(e, _)| e != epoch);
             let first = all[at].synced.is_none();
-            let r = sync(&mut all[at], epoch, budget);
+            // The caller's bound (Q184, Q221: no longer than checking what the journal would save), within the
+            // settle window the merge of 0400 gave a stream; else that window. `settle` bounds a replay's restarts
+            // for its marker, not a sync: taken as the sync's wait, every root of a warm run waited for its cookie.
+            let r = sync(&mut all[at], epoch, wait.map_or(WAIT.max(settle), |w| w.min(WAIT.max(settle))));
             if std::env::var_os("RERAIL_JOURNAL_TRACE").is_some() {
                 let live = &all[at];
                 let (n, history, cookie) = live.shared.seen.lock().map(|s| (s.events.len(), s.history_at, s.cookie_at)).unwrap_or((0, None, None));
@@ -816,6 +828,30 @@ mod tests {
             }
         }
         eprintln!("trusted {changed}, behind {behind}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Q219: a root asked through `/./` (`…/q179/./work/r3/corpus-dl`) is told an edit under it, named under the
+    /// root as asked, as the same root spelled plainly is.
+    #[test]
+    fn a_root_spelled_with_a_dot_is_told_an_edit_under_it() {
+        let base = std::env::temp_dir().join(format!("rerail-journal-dot-{}", std::process::id()));
+        let cookies = base.join("cookies");
+        std::fs::create_dir_all(base.join("work/root")).unwrap();
+        std::fs::create_dir_all(&cookies).unwrap();
+        let dotted = base.join(".").join("work/root");
+        assert!(dotted.to_str().unwrap().contains("/./"), "{dotted:?}");
+        let Since::Lost { cursor: Some(first), .. } = since(std::slice::from_ref(&dotted), None, &cookies, SETTLE) else { panic!("no cursor without one") };
+        std::fs::write(base.join("work/root/edited.py"), "y = 2\n").unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        next_epoch();
+        match since(std::slice::from_ref(&dotted), Some(first), &cookies, SETTLE) {
+            Since::Changed { paths, .. } => {
+                assert!(paths.iter().any(|p| p.ends_with("work/root/edited.py")), "the edit is named: {paths:?}");
+                assert!(paths.iter().all(|p| p.starts_with(&dotted)), "named under the root as asked: {paths:?}");
+            }
+            other => eprintln!("the journal did not answer: {other:?}"),
+        }
         let _ = std::fs::remove_dir_all(&base);
     }
 

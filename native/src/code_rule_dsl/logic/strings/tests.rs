@@ -88,14 +88,19 @@ fn tests_on_text_relations_become_relations() {
          c(s) :- name(_, t), s = @dot(t, \"x\"), prefix(\"_\", s).\n.output a, b, c\n",
     )
     .unwrap();
-    // The glob set is one relation for both rules (patterns in any order); the computed string stays per row.
+    // The glob set is one relation for both rules (patterns in any order); the computed string stays per row. The
+    // tests are numbered by their content (operator, then patterns), not by the rules' order: the equality set 0,
+    // the globs 1, the suffix 2.
     assert_eq!(v.tests.len(), 3, "{:?}", v.tests.iter().map(|t| &t.0).collect::<Vec<_>>());
     let text = rules_of(&prog);
-    // Tests are numbered in their content's order, operator then patterns: `equals`, `glob`, `suffix`.
-    assert!(text.contains("!strtest_2($s)"), "{text}");
-    assert!(text.contains("@prefix"), "{text}");
+    // The tests are numbered by their content, not the rules' order: each is named here by what it matches.
     let rows = v.rows(&["_x".into(), "x_async".into(), "db".into(), "y".into()], &[1, 2, 3, 4]);
-    assert_eq!(rows, [vec![3], vec![1, 2], vec![2]]);
+    let suffix = rows.iter().position(|r| *r == [2]).expect("the suffix test");
+    assert!(text.contains(&format!("!strtest_{suffix}($s)")), "{text}");
+    assert!(text.contains("@prefix"), "{text}");
+    let mut sorted = rows.clone();
+    sorted.sort();
+    assert_eq!(sorted, [vec![1, 2], vec![2], vec![3]], "the glob set, the suffix, the names");
 }
 
 /// `fstring_template`'s markers are the program's constants, each once; a marker that is not a constant is an error.
@@ -124,7 +129,7 @@ fn regexes_and_their_rewrites_agree() {
     }
 }
 
-/// `core.rr`'s text functors give the values its comments give as examples.
+/// `core.rerail`'s text functors give the values its comments give as examples.
 #[test]
 fn text_functors_follow_core_rr() {
     use super::functions::*;
@@ -141,11 +146,11 @@ fn text_functors_follow_core_rr() {
     assert_eq!(convert("max-age", "camelCase", "dash"), "maxAge");
     assert_eq!(convert("maxAge", "snakeCase", ""), "max_age");
     assert_eq!(convert("max_age", "pascalCase", "underscore"), "MaxAge");
-    // W's json_group_array: non-ASCII kept, controls escaped (core.rr's @json_str).
+    // W's json_group_array: non-ASCII kept, controls escaped (core.rerail's @json_str).
     assert_eq!(json_str("a\"b\u{e9}\u{1f600}\u{1}\n"), "\"a\\\"b\u{e9}\u{1f600}\\u0001\\n\"");
 }
 
-/// Nested alternatives, which globset refuses, are expanded to one level (`public-api-triples.rr`'s `hint`).
+/// Nested alternatives, which globset refuses, are expanded to one level (`public-api-triples.rerail`'s `hint`).
 #[test]
 fn globs_nest_alternatives() {
     let p = "{{versioned,}{databaseconnection,readtransaction},{lazyresult,lazyseq}}";
@@ -176,9 +181,10 @@ finding(d,l) :- selected(d,l,t), contains("inspect",t).
     assert_eq!(vocabulary.tests.len(), 2, "both line predicates must be batched");
     let rendered = rules_of(&program);
     assert!(!rendered.contains("@prefix") && !rendered.contains("@contains"), "{rendered}");
-    // In the tests' content order: `contains` before `prefix`.
-    assert_eq!(vocabulary.rows(&["#inspect".into(), "inspect".into(), "clean".into()], &[11,12,13]),
-               [vec![11,12], vec![11]]);
+    // Numbered by their content: `prefix` and `contains` in either order.
+    let mut rows = vocabulary.rows(&["#inspect".into(), "inspect".into(), "clean".into()], &[11,12,13]);
+    rows.sort();
+    assert_eq!(rows, [vec![11], vec![11,12]]);
 }
 
 /// A second writer can construct strings that the prepared vocabulary never saw.

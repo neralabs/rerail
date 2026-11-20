@@ -182,9 +182,10 @@ mod tests {
     }
 
     /// A chunk written before it is read (a relation's rows) is taken again as it was left: no bytes are zeroed
-    /// for it. One asked zeroed is, and the bytes zeroed are counted.
+    /// for it. One asked zeroed is, and the bytes zeroed are counted (the run's count: other tests zero too).
     #[test]
     fn a_chunk_written_before_read_is_not_zeroed() {
+        let _run = rerail_context::test_run();
         let b = block();
         let a = b.try_alloc_chunk(4096, 64).unwrap();
         unsafe { std::ptr::write_bytes(b.ptr::<u8>(a), 0xab, 4096) };

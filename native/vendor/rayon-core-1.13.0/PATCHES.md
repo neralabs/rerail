@@ -7,7 +7,7 @@ Why: decision 0442 keeps a run's state in the run, on the thread that runs it. A
 and a half another pool thread steals ran there with nothing of its caller's: no run, no bindings. The engine
 worked around it by keeping the runs inside a pool (`rerail_context::Inside`), which a stolen half could read only
 when every job in the pool was one run's; with two runs' loops in one pool at once (a corpus run's phase 0 beside
-its main program) a stolen half could not tell which it was of (work queue Q300).
+its main program) a stolen half could not tell which it was of (work queue Q386).
 
 What changed:
 - `carrier::set_job_carrier(capture, enter)` installs, once for the process, a function that captures what a job

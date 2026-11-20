@@ -4,7 +4,8 @@
 //!
 //! - `RERAIL_PARITY_PYTHON`: the interpreters, `:`-separated (default `python3`); each is one oracle.
 //! - `RERAIL_PARITY_ROOTS`: the corpora, `:`-separated directories (their `.py` files, `.git`, `node_modules` and
-//!   virtualenvs left out), and `fixtures`: the files of every recorded event (`fixtures/host/data-layer-port`).
+//!   virtualenvs left out), and `fixtures`: the files of every recorded event (the data-layer port's recordings, pack
+//!   test data under `packs/data-layer/upstream/lint/`, which `npm run fixtures:pull` fetches).
 //! - `RERAIL_PARITY_SHOW`: how many differences to print per fact (default 20).
 //!
 //! `cargo test --profile profiling --lib -- cpython::parity --ignored --nocapture`
@@ -68,7 +69,14 @@ fn directory(root: &Path) -> Corpus {
 
 /// The Python files of every recorded event, each distinct (path, source) once, written under a temporary directory.
 fn fixtures() -> Corpus {
-    let port = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../gate/data-layer/fixtures/host/data-layer-port");
+    let relative = "packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port";
+    // The checkout found as the test runs, not written into the build (decision 0224).
+    let port = rerail_store::source_tree::root().expect("the checkout").join(relative);
+    assert!(
+        port.exists(),
+        "{relative} is missing: pack test data is not in git: run `npm run fixtures:pull` (each tool-pack's archive, \
+         which its test-data.lock pins, from S3) (CONTRIBUTING.md, \"Pack test data\")"
+    );
     let mut sources: BTreeSet<(String, String)> = BTreeSet::new();
     let mut names: Vec<PathBuf> = std::fs::read_dir(&port).unwrap().flatten().map(|e| e.path()).collect();
     names.sort();

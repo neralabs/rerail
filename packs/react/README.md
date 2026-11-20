@@ -1,5 +1,7 @@
 # Rerail rule pack: React
 
+**Linter-equivalent to eslint-plugin-react 7.37.5 and react-hooks 7.1.1.** Each rule flags what the original flags, bar declared differences. Its own practice rules are Rerail's, not ports. [What this means](../../docs/rule-packs.md#linter-equivalent).
+
 The pack ships 30 eslint-plugin-react and 10 eslint-plugin-react-hooks rules, ports of eslint-plugin-react 7.37.5 and
 eslint-plugin-react-hooks 7.1.1, and 11 React practice rules of its own, which port no linter
 ([React practice rules](#react-practice-rules)). A port starts in `candidates/rules/` (none today) and moves to `rules/` and
@@ -174,7 +176,7 @@ Port of eslint-plugin-react 7.37.5 react/jsx-no-script-url with its default opti
 
 ### `react-jsx-no-target-blank`
 
-Port of eslint-plugin-react 7.37.5 react/jsx-no-target-blank with default options (links only, enforceDynamicLinks always, allowReferrer false). Reports an `<a>` whose last `target` is possibly `_blank` (a string, or a conditional with a `_blank` branch), with an external last `href` string (`scheme:` or `//`) or any `href` expression, and whose last `rel` does not give `noreferrer` on every value it may take (a string, the first quasi of a template, both branches of a conditional, or, when target and rel test the same name, the branch on which target is `_blank`).
+Port of eslint-plugin-react 7.37.5 react/jsx-no-target-blank with default options (links only, enforceDynamicLinks always, allowReferrer false). Reports an `<a>` whose last `target` is possibly `_blank` (a string, or a conditional with a `_blank` branch), with an external last `href` string (`scheme:` or `//`) or any `href` expression, and whose last `rel` does not give `noreferrer` on every value it may take (a string, the first quasi of a template, both branches of a conditional, or, when target and rel test the same name, the branch on which target is `_blank`). As upstream compares only the tests' names, two tests that are both something other than a name (a call, a member access), even different ones, count as the same.
 
 ### `react-jsx-no-undef`
 
@@ -410,3 +412,4 @@ It leaves alone, as not reactive reads: callees of calls (`load()`, `api.post(â€
 **Sources:**
 - react.dev, [Reusing Logic with Custom Hooks](https://react.dev/learn/reusing-logic-with-custom-hooks#keep-your-custom-hooks-focused-on-concrete-high-level-use-cases): "Avoid creating and using custom 'lifecycle' Hooks â€¦ the linter won't warn you about it because the linter only checks direct `useEffect` calls."
 - adamalston, [carbon#18886](https://github.com/carbon-design-system/carbon/pull/18886), "refactor: delete useEffectOnce hook", with [carbon#18885](https://github.com/carbon-design-system/carbon/issues/18885): "behavior can be replicated by using a plain `useEffect` with an empty dependency array."
+

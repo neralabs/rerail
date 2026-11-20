@@ -1,8 +1,8 @@
 //! TypeScript values (tree-sitter-typescript 0.23): literals as ECMAScript reads them, strings as
 //! UTF-16 code units, and operators folded, in the sense of eslint-utils' `getStaticValue`.
 
-use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::language::Family;
+use crate::code_rule_dsl::tree::Tree;
 
 #[rustfmt::skip]
 #[path = "ecma/builtins.generated.rs"]
@@ -96,10 +96,7 @@ fn decode_node<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
             }
         }
         // The last expression's value.
-        "sequence_expression" => match node
-            .named_code()
-            .last()
-        {
+        "sequence_expression" => match node.named_code().last() {
             Some(last) => decode(&last, context),
             None => Value::Unknown,
         },
@@ -251,12 +248,9 @@ pub fn operand<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
     let kind = node.kind();
     if kind == "type_assertion" {
         // `<T>x`: type arguments first, then the expression.
-        return node
-            .named_code()
-            .last();
+        return node.named_code().last();
     }
-    let mut named = node
-        .named_code();
+    let mut named = node.named_code();
     let first = named.next()?;
     if kind == "parenthesized_expression" && named.next().is_some() {
         return None;
@@ -490,9 +484,7 @@ fn template<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
             return Value::Unknown;
         };
         units.extend(chunk);
-        let Some(expression) = substitution
-            .first_code()
-        else {
+        let Some(expression) = substitution.first_code() else {
             return Value::Unknown;
         };
         let Some(string) = ops::to_string(&decode(&expression, context)) else {
@@ -646,9 +638,7 @@ fn array<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
             }
             "spread_element" => {
                 after_element = true;
-                let spread = child
-                    .first_code()
-                    .map(|inner| decode(&inner, context));
+                let spread = child.first_code().map(|inner| decode(&inner, context));
                 let items = match spread {
                     Some(Value::Array(items)) => items,
                     Some(Value::Utf16(units)) => char::decode_utf16(units.iter().copied())
@@ -732,9 +722,7 @@ fn regexp<D: Doc>(node: &Node<'_, D>) -> Value {
 
 /// An object literal: only that it is an object, which is truthy even when empty.
 fn object<D: Doc>(node: &Node<'_, D>) -> Value {
-    let members = node
-        .named_code()
-        .collect::<Vec<_>>();
+    let members = node.named_code().collect::<Vec<_>>();
     let spreads = members
         .iter()
         .filter(|member| member.kind() == "spread_element")
@@ -760,7 +748,11 @@ pub struct Numbers;
 impl crate::code_rule_dsl::matcher::NumberText for Numbers {
     fn to_precision(&self, text: &str, digits: u32) -> Option<String> {
         let number = ecma_number(text)?;
-        Some(if number.is_finite() { to_precision(number, digits) } else { crate::code_rule_dsl::matcher::number_to_string(number) })
+        Some(if number.is_finite() {
+            to_precision(number, digits)
+        } else {
+            crate::code_rule_dsl::matcher::number_to_string(number)
+        })
     }
 }
 
@@ -783,4 +775,3 @@ fn ecma_number(text: &str) -> Option<f64> {
     };
     Some(if negative { -magnitude } else { magnitude })
 }
-

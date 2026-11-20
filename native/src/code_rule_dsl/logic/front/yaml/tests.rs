@@ -3,7 +3,7 @@ use crate::code_rule_dsl::logic::program_image::{Lit, Version};
 use crate::code_rule_dsl::logic::rr::parse_version;
 
 fn packs() -> Vec<(String, Value)> {
-    let root = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../packs");
+    let root = rerail_store::source_tree::native().join("../packs");
     let mut out = Vec::new();
     for pack in std::fs::read_dir(root).unwrap() {
         let rules = pack.unwrap().path().join("rules");
@@ -22,7 +22,7 @@ fn packs() -> Vec<(String, Value)> {
     out
 }
 
-/// Every pack's policy round-trips: document → AST → `.rr` text → AST → the same document, its matchers as `ast`
+/// Every pack's policy round-trips: document → AST → `.rerail` text → AST → the same document, its matchers as `ast`
 /// atoms of `violation` rules.
 #[test]
 fn pack_policies_round_trip_through_datalog_text() {
@@ -45,7 +45,7 @@ fn pack_policies_round_trip_through_datalog_text() {
         let back = parse_version(&text).unwrap_or_else(|e| panic!("{path}: {e}\n{text}"));
         let shown = |v: &Version| v.rules().map(|r| v.show_rule(r)).collect::<Vec<_>>();
         assert_eq!(shown(&back), shown(&prog), "{path}");
-        assert_eq!(documents(&back).unwrap(), [doc.clone()], "{path}");
+        assert_eq!(documents(&back).unwrap(), std::slice::from_ref(doc), "{path}");
     }
     assert!(rules >= 500, "{rules} matcher rules");
 }

@@ -62,6 +62,7 @@ struct Waiting<'a> {
 // SAFETY: as `Parked`'s: a waiting component is resumed by one job at a time, after the one that parked it ended.
 unsafe impl Send for Waiting<'_> {}
 
+#[allow(clippy::large_enum_variant)]
 enum State<'a> {
     Job(Handle<Out<'a>>),
     Inline(Strand<'a>, Members),

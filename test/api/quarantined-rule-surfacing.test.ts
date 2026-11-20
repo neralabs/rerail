@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -24,6 +24,7 @@ import {
   libraryRules,
 } from "../../src/engine/index.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 function codeRule(id: string): CodeRule {
   return codeRuleSchema.parse({
@@ -62,7 +63,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   warnings.mockRestore();
-  await rm(root, { recursive: true, force: true });
+  await removeFolder(root);
 });
 
 /** A set-up repository whose library holds `test:kept` and `test:broken`, whose row no longer validates. */

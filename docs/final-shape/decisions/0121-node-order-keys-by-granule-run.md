@@ -64,6 +64,11 @@ k = document << 32 | rank << 18 | index in granule
   session give the same keys, and the memo's entries (one per content, 0052) stay right.
 - **Overflow.** A document with more runs, or a granule with more nodes, than the bits hold falls back to the
   preorder index. There is one scheme per document, so its keys still compare.
+- **Not dense.** The keys skip at every run boundary, so a reader may compare them but not step over them.
+  The SQL walk of `nearest` down from a bound ancestor did step over them: `k + 1` to the next node, `k + size` to
+  the subtree's end. It stopped at the first boundary, and `workload.rr`'s `type_of` fell from 1841 to 1755 rows.
+  It now goes down by parent lookups (`tape`'s `par`), which no numbering of nodes affects
+  (`nearest_descends_across_granule_boundaries_as_the_climb_finds`).
 
 Measured over the replay's own edits (`node_order_keys_census`, rows deleted plus inserted):
 

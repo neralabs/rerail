@@ -393,7 +393,6 @@ pub struct GpuTotal {
     pub upload_bytes: u64,
     /// Uploads by what was read (`UPLOAD_KINDS`): bytes and the host's CPU.
     pub upload_by: [(u64, f64); 4],
-    pub resident: u64,
     /// Relations read where they lie, in their block (decision 0325): nothing uploaded.
     pub in_place: u64,
     pub sorts: u64,
@@ -433,7 +432,6 @@ impl GpuTotal {
             a.0 += b.0;
             a.1 += b.1;
         }
-        self.resident += o.resident;
         self.in_place += o.in_place;
         self.sorts += o.sorts;
         self.sort_hits += o.sort_hits;
@@ -711,7 +709,7 @@ pub struct Open {
 /// A thread's open spans and the SQL statement it runs, where a dump on another thread can read them (`watch`).
 pub struct Thread {
     name: String,
-    /// Its Mach port (macOS), for its CPU read from another thread; 0 elsewhere.
+    /// Its Mach port (macOS) or its thread id (Linux), for its CPU read from another thread; 0 elsewhere.
     port: u32,
     counters: memory::Counters,
     opens: Vec<Open>,
@@ -1122,7 +1120,7 @@ pub fn process_cpu() -> f64 {
     }
 }
 
-/// The live threads' Mach ports and names (macOS; none elsewhere).
+/// The live threads' Mach ports (macOS) or thread ids (Linux), and names; none elsewhere.
 fn live_threads() -> Vec<(u32, String)> {
     #[cfg(target_os = "macos")]
     {
@@ -1159,7 +1157,21 @@ fn live_threads() -> Vec<(u32, String)> {
         unsafe { libc::vm_deallocate(task, list as libc::vm_address_t, (count as usize * std::mem::size_of::<libc::thread_act_t>()) as libc::vm_size_t) };
         named
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        let Ok(tasks) = std::fs::read_dir("/proc/self/task") else { return Vec::new() };
+        tasks
+            .flatten()
+            .filter_map(|task| {
+                let id: u32 = task.file_name().to_str()?.parse().ok()?;
+                // A thread that ended meanwhile has no `comm`.
+                let name = std::fs::read_to_string(task.path().join("comm")).ok()?;
+                let name = name.trim_end();
+                Some((id, if name.is_empty() { "unnamed".to_owned() } else { name.to_owned() }))
+            })
+            .collect()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         Vec::new()
     }
@@ -1208,7 +1220,11 @@ fn register() -> std::sync::Arc<parking_lot::Mutex<Thread>> {
     #[cfg(target_os = "macos")]
     // SAFETY: the calling thread's own port; no right is taken.
     let port = unsafe { libc::pthread_mach_thread_np(libc::pthread_self()) };
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    // SAFETY: no arguments; the calling thread's id. The system call, not glibc's `gettid` (2.30): the Linux engine
+    // links against 2.17.
+    let port = unsafe { libc::syscall(libc::SYS_gettid) } as u32;
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let port = 0;
     let me = std::sync::Arc::new(parking_lot::Mutex::new(Thread {
         name: std::thread::current().name().unwrap_or("unnamed").to_owned(),
@@ -1250,9 +1266,12 @@ pub fn here() -> Option<String> {
     STACK.with(|s| s.lock().opens.last().map(|o| o.path.clone()))
 }
 
-/// `f` for a parallel iterator's items, each a sizeable piece of work (a file, a tape): on a thread with no span
-/// open (a pool thread that took the item), under `name` in the span open where `carried` was called; on a thread
-/// with one open (the caller's), as it is. Rayon's work taken by another thread is under no span of that thread's.
+/// `f` for a parallel iterator's items, each a sizeable piece of work (a file, a tape, a piece of `par_pieces`):
+/// on a thread whose innermost open span is not the one open where `carried` was called, under `name` in that one;
+/// on the caller's thread, inside its span, as it is. A thread that took the item while it waited inside another
+/// span (rayon's join runs any queued piece) so counts it apart: as that span's own, the piece's CPU and
+/// allocation were charged to whatever the thread waited in (Q203 item 3: a chunk's joins seemed to allocate
+/// 3.7 GB more at the same rows).
 pub fn carried<A, R>(name: &'static str, f: impl Fn(A) -> R + Sync + Send) -> impl Fn(A) -> R + Sync + Send {
     let carry = carry();
     move |a| {
@@ -1285,7 +1304,10 @@ impl Carry {
             }
         }
         let run = InRun::enter(&self.run);
-        let span = (self.under.is_some() && STACK.with(|s| s.lock().opens.is_empty())).then(|| span_at(self.under.as_deref(), || name.to_owned()));
+        // A span when the item runs where the innermost open span is not the carried one: another thread, or one
+        // that took it while waiting inside another span (Q203 item 3), so its CPU is counted apart.
+        let elsewhere = self.under.as_deref().is_some_and(|u| STACK.with(|s| s.lock().opens.last().is_none_or(|o| o.path != u)));
+        let span = elsewhere.then(|| span_at(self.under.as_deref(), || name.to_owned()));
         In(Some(run), span)
     }
 }
@@ -1303,6 +1325,22 @@ impl InRun {
         }
         InRun { _entered: Some(Box::new(enter(run.clone()))) }
     }
+}
+
+/// `f` over `items` on the pool in pieces (about `PIECES_PER_THREAD` a thread, at least `min` items each), each
+/// piece through [`carried`] (a span when another thread, or one waiting in another span, takes it): `f` maps a
+/// piece to its items' results, in order, so a piece's state (a pattern set) is made once a piece.
+pub fn par_pieces<T: Sync, R: Send>(name: &'static str, items: &[T], min: usize, f: impl Fn(&[T]) -> Vec<R> + Sync + Send) -> Vec<R> {
+    use rayon::prelude::*;
+    const PIECES_PER_THREAD: usize = 4;
+    // On the machine's pool (decision 0442), whose threads the pieces are sized by.
+    let pieces: Vec<Vec<R>> = on_cores(|| {
+        let size = items.len().div_ceil(rayon::current_num_threads() * PIECES_PER_THREAD).max(min).max(1);
+        items.par_chunks(size).map(carried(name, f)).collect()
+    });
+    let mut out = Vec::with_capacity(items.len());
+    pieces.into_iter().for_each(|p| out.extend(p));
+    out
 }
 
 /// Opens span `name` under `under`, a path another thread's `here` gave: a pool job's span (`crate::threads`), at
@@ -1591,7 +1629,7 @@ pub fn warm() -> bool {
 /// `what`), and why each is allowed: locks against another process's collection, the timestamps by which
 /// collection judges recency, and the cost statistics. Nothing else is exempt from the warm check.
 ///
-/// Changing this list needs the user's approval (decision 0211). `scripts/check/check-warm-mode.py` holds a copy
+/// Changing this list needs the user's approval (decision 0211). `scripts/check/check_warm_mode.py` holds a copy
 /// and refuses a commit that changes one without the other.
 pub const WARM_WRITES_ALLOWED: &[(&str, &str)] = &[
     ("the combined program's pins released", "a lock: the release of the combined program's leases"),
@@ -1761,7 +1799,7 @@ pub unsafe fn warm_commit(db: *mut rusqlite::ffi::sqlite3) {
 pub fn strict_on_every_connection() {
     use rusqlite::ffi;
     unsafe extern "C" fn trace(event: u32, _: *mut std::ffi::c_void, p: *mut std::ffi::c_void, _: *mut std::ffi::c_void) -> std::ffi::c_int {
-        if event == ffi::SQLITE_TRACE_STMT as u32 {
+        if event == ffi::SQLITE_TRACE_STMT {
             // SAFETY: for SQLITE_TRACE_STMT, P is the statement.
             let text = unsafe { std::ffi::CStr::from_ptr(ffi::sqlite3_sql(p.cast::<ffi::sqlite3_stmt>())) }.to_string_lossy();
             strict_statement("sqlite", &text);
@@ -1777,7 +1815,7 @@ pub fn strict_on_every_connection() {
         // SAFETY: SQLite calls this with a connection it has just opened.
         unsafe {
             if strict() {
-                ffi::sqlite3_trace_v2(db, ffi::SQLITE_TRACE_STMT as u32, Some(trace), std::ptr::null_mut());
+                ffi::sqlite3_trace_v2(db, ffi::SQLITE_TRACE_STMT, Some(trace), std::ptr::null_mut());
             }
             // A connection that sets a commit hook of its own (the store's, for its atoms) calls `warm_commit` there.
             if warm() {
@@ -2165,8 +2203,8 @@ pub fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
         ms(sum.gpu), sum.submissions, sum.dispatches, sum.reruns, sum.arena_reruns, sum.waved, sum.sized);
     let _ = writeln!(r, "  host CPU {:.1} ms: encode {:.1}, uploads {:.1}, wait {:.1} ({:.1} ms wall), rows back into the store {:.1}",
         ms(sum.host()), ms(sum.encode), ms(sum.upload), ms(sum.wait), ms(sum.wait_wall), ms(sum.decode));
-    let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), read in place {}, found resident {}; sorts made {}, found resident {}; bindings {}, head rows {} ({} distinct, made so on the device; {} written in place into their heads' blocks); texts made {}",
-        sum.uploads, sum.upload_bytes as f64 / 1e6, sum.in_place, sum.resident, sum.sorts, sum.sort_hits, sum.bindings, sum.rows, sum.distinct, sum.placed, sum.made);
+    let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), read in place {}; sorts made {}, found in their blocks {}; bindings {}, head rows {} ({} distinct, made so on the device; {} written in place into their heads' blocks); texts made {}",
+        sum.uploads, sum.upload_bytes as f64 / 1e6, sum.in_place, sum.sorts, sum.sort_hits, sum.bindings, sum.rows, sum.distinct, sum.placed, sum.made);
     let by: Vec<String> = UPLOAD_KINDS.iter().zip(&sum.upload_by).map(|(k, (b, c))| format!("{k} {:.1} MB in {:.1} ms", *b as f64 / 1e6, ms(*c))).collect();
     let _ = writeln!(r, "  uploads by what they read: {}", by.join(", "));
     let mut top = ran.clone();
@@ -2180,7 +2218,9 @@ pub fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
             format!("{}/{}", g.runs, t.runs), format!("{}/{}", si(t.gpu_work), si(t.work - t.gpu_work)), g.rules, g.submissions, g.rows, short(key, 60));
     }
     if !refused.is_empty() {
-        let mut by: BTreeMap<&str, (u64, f64, Vec<(f64, &str)>)> = BTreeMap::new();
+        // A reason's strata, their CPU, and each stratum's CPU and key.
+        type ByReason<'k> = (u64, f64, Vec<(f64, &'k str)>);
+        let mut by: BTreeMap<&str, ByReason<'_>> = BTreeMap::new();
         for (key, t) in &refused {
             let e = by.entry(t.refused.as_deref().unwrap_or("")).or_default();
             e.0 += 1;
@@ -2627,6 +2667,20 @@ pub fn memory_report(r: &mut String, spans: &BTreeMap<String, SpanTotal>) {
         memory::mb(live as f64),
         memory::mb(resident as f64)
     );
+    // The count the run is weighed by (decision 0435 §3, §5): beside the footprint, their gap names what it misses.
+    let w = rerail_accel::budget::written();
+    let _ = writeln!(
+        r,
+        "What the run wrote (decision 0435): {} MB now, {} MB at most read, of a limit of {} MB; heap {} MB, host blocks {} MB, the GPU pool's leases {} MB and idle {} MB, rerail-metal's ledger {} MB",
+        memory::mb(w.total() as f64),
+        memory::mb(rerail_accel::budget::written_most() as f64),
+        memory::mb(rerail_accel::budget::limit() as f64),
+        memory::mb(w.heap as f64),
+        memory::mb(w.host_blocks as f64),
+        memory::mb(w.leased as f64),
+        memory::mb(w.idle as f64),
+        memory::mb(w.ledger as f64)
+    );
     let _ = writeln!(r, "Spans by bytes their thread allocated while open, less the spans inside them (own); kept = allocated less freed, in all");
     let _ = writeln!(r, "{:>10} {:>10} {:>10} {:>9}  span", "own MB", "all MB", "kept MB", "calls");
     let mut by: Vec<(&String, &SpanTotal)> = spans.iter().filter(|(_, t)| t.own_alloc > 0).collect();
@@ -2647,7 +2701,8 @@ pub fn memory_report(r: &mut String, spans: &BTreeMap<String, SpanTotal>) {
     memory::sampled_report(r);
 }
 
-/// CPU (user + system) of the thread with Mach port `port` (macOS), read from another thread; `None` elsewhere.
+/// CPU (user + system) of the thread with Mach port (macOS) or thread id (Linux) `port`, read from another thread;
+/// `None` for a thread that has ended, and elsewhere.
 fn thread_cpu(port: u32) -> Option<f64> {
     #[cfg(target_os = "macos")]
     {
@@ -2661,7 +2716,23 @@ fn thread_cpu(port: u32) -> Option<f64> {
         let t = |v: libc::time_value_t| f64::from(v.seconds) + f64::from(v.microseconds) / 1e6;
         Some(t(info.user_time) + t(info.system_time))
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        // Thread id 0 would name the calling thread's clock.
+        if port == 0 {
+            return None;
+        }
+        // The thread's CPU clock as glibc's `pthread_getcpuclockid` makes it (`CPUCLOCK_SCHED | CPUCLOCK_PERTHREAD`):
+        // any thread of the process may read it; one that has ended gives EINVAL.
+        let clock = (!(port as libc::clockid_t) << 3) | 6;
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: fills `t` with that clock's time.
+        if unsafe { libc::clock_gettime(clock, &mut t) } != 0 {
+            return None;
+        }
+        Some(t.tv_sec as f64 + t.tv_nsec as f64 / 1e9)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         let _ = port;
         None
@@ -2903,6 +2974,45 @@ pub mod tests {
         set(false);
     }
 
+    /// A carried piece taken by a thread waiting inside another span is that piece's, under the span it was made
+    /// in, not the other span's own (Q203 item 3); the caller's thread runs its own pieces as its own.
+    #[test]
+    fn a_piece_taken_inside_another_span_is_charged_apart() {
+        let _serial = test_run();
+        set(true);
+        reset();
+        let spin = |ms: u64| {
+            let t = cpu();
+            while cpu() - t < ms as f64 / 1e3 {
+                std::hint::black_box(0u64);
+            }
+        };
+        let piece = {
+            let _made = span(|| "made".into());
+            let piece = carried("a piece", move |ms: u64| spin(ms));
+            // The caller's own thread, in the span it was made in: as it is, no span of its own.
+            piece(1);
+            piece
+        };
+        // The other thread in the test's run, profiled (decision 0442), its own span open when it takes the piece.
+        let run = job_run();
+        std::thread::scope(|t| {
+            t.spawn(|| {
+                let _run = InRun::enter(&run);
+                let _waiting = span(|| "waiting".into());
+                piece(30);
+            });
+        });
+        let got: Vec<i64> = par_pieces("pieces", &(0..1000).collect::<Vec<i64>>(), 10, |p: &[i64]| p.iter().map(|x| x * 2).collect());
+        let s = spans();
+        set(false);
+        assert_eq!(got, (0..1000).map(|x| x * 2).collect::<Vec<_>>(), "in order");
+        assert!(s.contains_key("made/a piece"), "{:?}", s.keys().collect::<Vec<_>>());
+        assert!(!s.keys().any(|k| k.starts_with("made/a piece") && s[k].calls > 1), "the caller's own piece opened none");
+        assert!(s["made/a piece"].own >= 0.025, "{}", s["made/a piece"].own);
+        assert!(s["waiting"].own < 0.015, "the waiting span's own holds none of the piece: {}", s["waiting"].own);
+    }
+
     #[test]
     fn spans_charge_memory_and_a_dump_lists_what_is_open() {
         let _serial = test_run();
@@ -2977,6 +3087,9 @@ pub struct Report {
     pub dispatches: u32,
     /// Runs again from an overflowing stage.
     pub reruns: u32,
+    /// Times it waited for the device's memory before it encoded (`gpu::shared::admit`, Q203), and the seconds.
+    pub admit_waits: u32,
+    pub admit_seconds: f64,
     pub gpu_seconds: f64,
     /// This thread's CPU: encoding (uploads and sorts' encoding included), waiting, and reading the rows back into
     /// the store.
@@ -2995,7 +3108,6 @@ pub struct Report {
     pub upload_bytes: u64,
     /// The uploads by what they read (`UPLOAD_KINDS`, in order): bytes and this thread's CPU.
     pub upload_by: [(u64, f64); 4],
-    pub resident_hits: u32,
     /// Relations read where they lie, in their block (decision 0325).
     pub in_place: u32,
     pub sorts: u32,

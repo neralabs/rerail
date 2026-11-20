@@ -11,8 +11,8 @@ use super::{
     Binding, BuildError, Builder, Form, Import, NodeRef, Reference, ScopeKind, ScopeTable, Site,
     TYPE, VALUE,
 };
-use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::calls::rust::{LIBRARY_ROOTS, crate_module, std_macro};
+use crate::code_rule_dsl::tree::Tree;
 use ast_grep_core::{Doc, Node};
 
 /// The macro namespace: `macro_rules!` definitions and imported macros.

@@ -129,7 +129,7 @@ pub fn reader_demand() -> bool {
 
 /// How the deferred joins pass (`product_demand::deferred`) runs for one prepared program. `RERAIL_DEFERRED_JOINS`:
 /// `off` (the default) leaves the joins as written; `auto` and `adaptive` share a frequently requested endpoint's work
-/// and admit small pair caches; `on` makes the static rewrites alone. Off by default (decision 0477): on corpus0 x
+/// and admit small pair caches; `on` makes the static rewrites alone. Off by default (decision 0506): on corpus0 x
 /// B-now `auto` took 7-12% more instructions for the same findings, and nothing prices the rewrite yet. A run that loads (`world::wanted`) keeps them:
 /// a load hands exports back by location, which a new factor has none of.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -220,8 +220,7 @@ pub fn defer_joins(v: &Arc<Version>, d: &Deferral) -> Result<(Arc<Version>, Vec<
     Ok((out, decided))
 }
 
-/// `version` pruned to the rules its outputs read (`preparation::Prune`): what the bridged programs' check reads
-/// (`bridge::wanted`), before the run prepares the program.
+/// `version` pruned to the rules its outputs read (`prune::Prune`), before the run prepares the program.
 pub fn pruned(version: Arc<Version>) -> Result<Arc<Version>, String> {
     let mut p = Pipeline::new("pruned", version);
     p.program(&mut prune::Prune::default());
@@ -253,7 +252,7 @@ pub(super) fn front_of(version: Arc<Version>, dialect: crate::code_rule_dsl::lan
     if whole {
         p.program(&mut super::product_demand::BoundProducts::Whole);
     }
-    // Joins deferred to what their readers request (`product_demand::deferred`, decision 0477): the requested pairs
+    // Joins deferred to what their readers request (`product_demand::deferred`, decision 0506): the requested pairs
     // or endpoints drive the producer, or the two factors meet in each reader. A part prepared alone lacks its
     // readers. The rounds of attributes answered on request that an earlier try made eager are undone first.
     if deferral.on && whole {

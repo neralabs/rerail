@@ -31,6 +31,55 @@ fn run_normalize(v: &Arc<Version>, mut pass: Normalize) -> Result<(Arc<Version>,
     Ok((out, pass.sentinels))
 }
 
+/// `normalize`'s version of a version and its sentinels, held by the version it is of (decision 0281 §2): a run
+/// reads its program normalized (`body::Placed::normalized`), and a corpus run runs the program on each chunk, so it
+/// was normalized again on each (84 times on 901 files of the data layer's repository, 2.5 s of one policy's CPU).
+/// Made over the version's twin (`manager::twin`): held by the version, a derivation of the version itself would
+/// hold it, and neither would drop.
+#[derive(Debug)]
+pub struct NormalForm {
+    pub v: Arc<Version>,
+    pub sentinels: Vec<RelId>,
+}
+
+impl PartialEq for NormalForm {
+    fn eq(&self, o: &NormalForm) -> bool {
+        self.v.digest() == o.v.digest() && self.sentinels == o.sentinels
+    }
+}
+
+impl super::manager::Analysis for NormalForm {
+    const NAME: &'static str = "normal form";
+    const READS: super::manager::Reads = super::manager::Reads::ALL;
+    fn compute(cx: &Cx<'_>) -> Result<NormalForm, String> {
+        let (v, sentinels) = normalize(&super::manager::twin(cx.v()))?;
+        Ok(NormalForm { v, sentinels })
+    }
+}
+
+/// `stated_apart`'s overlay of a version and the pairs it moves, held by the version it is of, and made over its
+/// twin, as `NormalForm` is.
+#[derive(Debug)]
+pub struct ApartForm {
+    pub v: Arc<Version>,
+    pub stated: Vec<(RelId, RelId)>,
+}
+
+impl PartialEq for ApartForm {
+    fn eq(&self, o: &ApartForm) -> bool {
+        self.v.digest() == o.v.digest() && self.stated == o.stated
+    }
+}
+
+impl super::manager::Analysis for ApartForm {
+    const NAME: &'static str = "stated apart form";
+    const READS: super::manager::Reads = super::manager::Reads::ALL;
+    fn compute(cx: &Cx<'_>) -> Result<ApartForm, String> {
+        let (v, stated) = stated_apart(&super::manager::twin(cx.v()))?;
+        Ok(ApartForm { v, stated })
+    }
+}
+
 /// `normalize` as a rule pass (decision 0281): what it reads of the whole program is found once (`begin`), each rule
 /// is rewritten alone (a ground rule's head is a fact once `top` is its value), and the declarations, lattice keys
 /// and facts it changes are written once (`finish`).
@@ -51,7 +100,7 @@ pub struct Normalize {
 
 /// The rows of `r`'s stated facts in `v`, a sentinel's with its presence cell.
 fn rows_of(v: &Version, sentinel: &[bool], r: RelId) -> Vec<Vec<Cell>> {
-    let rows = v.facts(v.rel_atom(r)).map(|f| f.rows().map(|row| row.collect::<Vec<Cell>>()).collect()).unwrap_or_else(Vec::new);
+    let rows: Vec<Vec<Cell>> = v.facts(v.rel_atom(r)).map(|f| f.rows().map(|row| row.collect::<Vec<Cell>>()).collect()).unwrap_or_default();
     if sentinel[r.index()] { rows.into_iter().map(|row: Vec<Cell>| std::iter::once(Cell::Int(1)).chain(row).collect()).collect() } else { rows }
 }
 
@@ -383,7 +432,8 @@ impl Parts for std::sync::Arc<Version> {
     /// the part's own fields, never folded: `inputs` and `outputs`, and the natives, lattices and gates of the relations
     /// `fields` takes (`keep_relation_fields`). It costs its range list and its fields, never a copy of the program.
     fn part<S: AsRef<str>>(&self, rules: impl Fn(&str) -> bool, inputs: &[S], outputs: &[S], fields: PartFields<'_>) -> Result<Arc<Version>, String> {
-        let mut p = Pipeline::new("part", self.clone());
+        // `Retain` keeps whole relations, and `PartOf` states the record of those with rules.
+        let mut p = Pipeline::stating_record("part", self.clone());
         p.program(&mut Retain(rules)).program(&mut PartOf { inputs, outputs, fields });
         Ok(p.finish()?.0)
     }

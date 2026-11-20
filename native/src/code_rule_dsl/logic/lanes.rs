@@ -410,6 +410,40 @@ mod wave_tests {
         rerail_accel::Kernel::Histogram { off: std::sync::Arc::from([0u32, 0]), codes: std::sync::Arc::from(Vec::<u16>::new()), width: 1 }
     }
 
+    /// Q90 (Native-and-GPU-strata), on 0386's scope: a thread waiting on a job runs another meanwhile, with a
+    /// submission of its own deferred to its wave. The job's flush runs its own submission alone, its mark sees it
+    /// (`deferred_since`), and the thread's runs once the job has ended, at the thread's flush. Before 0386 the job
+    /// joined the open submission, and its members went back parked on a wave of this thread's, to be resumed on
+    /// another, which refused them to the CPU.
+    #[test]
+    fn a_job_flushes_its_own_submissions_and_not_its_threads() {
+        std::thread::spawn(|| {
+            use std::sync::atomic::{AtomicU32, Ordering};
+            // Which submissions ran: the test's own, held by the two it defers.
+            let ran = std::sync::Arc::new(AtomicU32::new(0));
+            let (first, second) = (std::sync::Arc::clone(&ran), std::sync::Arc::clone(&ran));
+            wave::defer(Box::new(move || {
+                first.fetch_or(1, Ordering::Relaxed);
+                Ok(())
+            }));
+            let job = wave::enter();
+            let mark = wave::mark();
+            wave::defer(Box::new(move || {
+                second.fetch_or(2, Ordering::Relaxed);
+                Ok(())
+            }));
+            assert!(wave::deferred_since(mark), "what the job defers is its own");
+            assert_eq!(wave::flush(1).unwrap(), 1, "the job's flush runs its own submission alone");
+            assert_eq!(ran.load(Ordering::Relaxed), 2);
+            job.exit();
+            assert_eq!(ran.load(Ordering::Relaxed), 2, "the thread's submission waits for its thread's flush");
+            assert_eq!(wave::flush(1).unwrap(), 1);
+            assert_eq!(ran.load(Ordering::Relaxed), 3, "the thread's submission ran when its thread flushed");
+        })
+        .join()
+        .unwrap();
+    }
+
     #[test]
     fn a_jobs_wave_scope_keeps_the_outer_waves_apart() {
         std::thread::spawn(|| {

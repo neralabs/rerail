@@ -190,6 +190,19 @@ impl Stored {
         self.at(id)?.str(id)
     }
 
+    /// The ids read, as a directory's runs (decision 0478 step 2b): each view's from its first id to the next's, at
+    /// most to the end below which ids are read here.
+    pub(crate) fn runs(&self, below: Sym) -> Vec<(rerail_blocks::atoms::Run, std::sync::Arc<rerail_blocks::block::Block>)> {
+        let end = self.end.min(below);
+        (0..self.views.len())
+            .map(|k| {
+                let next = self.views.get(k + 1).map_or(end, |(_, v)| v.first().min(end));
+                (self.views[k].1.run_upto(next), std::sync::Arc::clone(self.views[k].1.block()))
+            })
+            .filter(|(r, _)| r.first < r.end)
+            .collect()
+    }
+
     pub(crate) fn hash(&self, id: Sym) -> Option<u64> {
         self.at(id)?.hash(id)
     }
@@ -332,7 +345,7 @@ impl Stored {
         Ok(())
     }
 
-    /// A block's appends written back (on the disk with `Flush::Synced`, decision 0465), then its row's end moved to
+    /// A block's appends written back (on the disk with `Flush::Synced`, decision 0481), then its row's end moved to
     /// them, in the transaction.
     fn seal(connection: &Connection, seq: i64, w: &AtomsW) -> StoreResult<()> {
         w.sync().map_err(io)?;
@@ -375,7 +388,7 @@ pub(crate) fn private_dir(dir: &Path) -> std::io::Result<()> {
 }
 
 /// A new file's name on the disk before the commit that names it, with `Flush::Synced`; otherwise the OS's to write
-/// (decision 0465).
+/// (decision 0481).
 pub(crate) fn sync_dir(dir: &Path, flush: rerail_blocks::block::Flush) -> std::io::Result<()> {
     if !flush.waits() {
         return Ok(());

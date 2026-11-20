@@ -23,7 +23,7 @@ use crate::block::Blocks;
 use crate::kinds::{self, K, f};
 use crate::{Refusal, Tape, key};
 use rerail_simd8::swar::{first_of2, load8};
-use rerail_tape_format::{Redo, Widths, Writer};
+use rerail_tape_format::{Redo, Sink, Widths, Writer};
 
 mod expr;
 mod stmt;
@@ -39,7 +39,7 @@ pub fn parse(src: &[u8]) -> R<Tape> {
 }
 
 /// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
-pub fn parse_into<Out>(src: &[u8], finish: &mut dyn FnMut(Writer) -> Result<Out, Redo>) -> R<Out> {
+pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
     // Stage 1 once, for every width tried.
     let mut blocks = Blocks::of(src);
     if let Some(at) = blocks.first_nul() {
@@ -58,7 +58,7 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn FnMut(Writer) -> Result<Out,
             at: start,
             last_end: start,
             look: None,
-            w: Writer::new(0, widths, src.len() / 3 + 16),
+            w: Writer::new(0, widths, src.len() / 3 + 16).to(finish.target(), src),
             frames: Vec::with_capacity(64),
             held: Vec::with_capacity(64),
             extras: Vec::with_capacity(16),
@@ -71,11 +71,11 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn FnMut(Writer) -> Result<Out,
             memo: (usize::MAX, Tok { t: T::Eof, s: 0, e: 0, w: 0 }),
         };
         p.program()?;
-        match finish(p.w) {
+        match finish.finish(p.w) {
             Ok(done) => return Ok(done),
             // A value past the guessed widths: read again at the wider ones.
             Err(Redo(nw)) => {
-                if nw == widths {
+                if nw == widths && !finish.again() {
                     return Err(Refusal::TooLarge);
                 }
                 widths = nw;
@@ -213,8 +213,8 @@ fn walk(a: usize, kids: &[(u32, bool)], out: &mut [bool]) {
             if w != 0 && (w >> 3 & 3) as usize == to - from {
                 let word = &kinds::WORD[(w >> 5) as usize..(w >> 5) as usize + (to - from)];
                 if word.iter().zip(&kids[from..to]).all(|(&l, k)| l == k.0) {
-                    for i in from..to {
-                        out[i] |= w >> (i - from) & 1 == 1;
+                    for (j, o) in out[from..to].iter_mut().enumerate() {
+                        *o |= w >> j & 1 == 1;
                     }
                 }
             }
@@ -1187,7 +1187,7 @@ impl<'s> P<'s> {
     /// `_literal_string` to (`"ip"`, which both read: tree-sitter takes the `literal`).
     fn expect_column(&mut self, ctx: Ctx, field: u8) -> R<u32> {
         let t = self.peek()?;
-        let quoted = self.src.get(t.s as usize) == Some(&b'"');
+        let quoted = self.src.get(t.s) == Some(&b'"');
         let Some((s, e)) = self.ident_span(ctx)? else { return self.refuse() };
         Ok(self.leaf(if quoted { K::Literal } else { K::Identifier }, field, s, e))
     }
@@ -1243,11 +1243,11 @@ impl<'s> P<'s> {
             2 => &[f::SCHEMA, f::NAME],
             _ => &[f::DATABASE, f::SCHEMA, f::NAME],
         };
-        for i in 0..n {
+        for (i, &field) in fields.iter().enumerate().take(n) {
             if i > 0 {
                 self.token(K::TDot, 0, d.dots[i], d.dots[i] + 1);
             }
-            self.leaf(K::Identifier, fields[i], d.parts[i].0, d.parts[i].1);
+            self.leaf(K::Identifier, field, d.parts[i].0, d.parts[i].1);
         }
         let node = Node(self.frames.len() as u32 - 1);
         self.close_span(node, Some((s, e)))

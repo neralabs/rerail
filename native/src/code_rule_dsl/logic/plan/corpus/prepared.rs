@@ -2,7 +2,7 @@
 //! demanded, lowered, its joins pushed, located and split.
 //!
 //! - **Programs.** Its two programs (`source`, the program as demanded; `lowered`, as lowered) are each kept as their
-//!   `.rr` text (`program_text`), a source of the store by its sha256, and read back by the rr parser straight into a
+//!   `.rerail` text (`program_text`), a source of the store by its sha256, and read back by the rr parser straight into a
 //!   program: nothing is lowered or joined again.
 //! - **Pointer.** One facts-memo entry (decision 0052) under the program text's source, for the run's plan: what
 //!   preparing found (`prepared_*` relations, small: per relation or per intern call, not per node) and the two
@@ -380,7 +380,7 @@ pub fn prepared_of(
         source,
         vocabulary: Arc::new(vocabulary),
         // Its stored image alone: the tree read is the split's, made above, and dropped.
-        lowered: lower::Lowered { version, domains: Arc::new(domains), ops, dialect },
+        lowered: lower::Lowered { version, domains: Arc::new(domains), ops, dialect, normal: Default::default() },
         sets,
         matchers,
         demanded: list("prepared_demanded")?,
@@ -607,7 +607,7 @@ fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_stor
 }
 
 // Its tests run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the
-// engine registers as it loads (the languages, their `.rr` libraries).
+// engine registers as it loads (the languages, their `.rerail` libraries).
 
 // Its tests run in the engine's test binary (its facade of this module mounts `identity_tests.rs`): they read what the
-// engine registers as it loads (the languages, their `.rr` libraries).
+// engine registers as it loads (the languages, their `.rerail` libraries).

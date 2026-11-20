@@ -738,7 +738,7 @@ struct Plan {
 /// the input relation `strtest_<k>(s)`, negated where the test is: rules then join on symbols, and the run fills
 /// each relation from the vocabulary (decision 0037). Equal tests share one relation. The others stay per row.
 ///
-/// And each `match_all("re", sp, m)` (core.rr's built-in: `m` is each match of `re` in span `sp`'s text, as Rust's
+/// And each `match_all("re", sp, m)` (core.rerail's built-in: `m` is each match of `re` in span `sp`'s text, as Rust's
 /// `find_iter` finds them) into an atom over the input relation `matchall_<k>(sp, m)`, and each
 /// `match_group("re", sp, m, g, gsp)` (`gsp` the span of named group `g` in match `m`) into one over
 /// `matchgroup_<k>(sp, m, g, gsp)`, `k` the regex's (one per distinct regex, so the two agree on `m`), which the

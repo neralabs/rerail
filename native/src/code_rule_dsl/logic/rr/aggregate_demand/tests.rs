@@ -120,7 +120,7 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
     let file = crate::code_rule_dsl::fixtures::temp();
     let dump = zstd::decode_all(
         std::fs::File::open(
-            std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+            rerail_store::source_tree::native()
                 .join("src/code_rule_dsl/logic/plan/golden/facts.sql.zst"),
         )
         .unwrap(),
@@ -258,9 +258,9 @@ fn multiple_consumers_union_their_safe_demands() {
 }
 
 #[test]
-#[ignore = "pyflakes.rr writes the outer binding as a rule (`outer_bound`, 913cb3f7a), not an aggregate over bound_in: no rr_agg helper reads it"]
+#[ignore = "pyflakes.rerail writes the outer binding as a rule (`outer_bound`, 913cb3f7a), not an aggregate over bound_in: no rr_agg helper reads it"]
 fn pyflakes_outer_binding_existence_keeps_load_and_nearest_scope_demands() {
-    let p = rr::parse_version("#include \"python/pyflakes.rr\"\n.output unbound_ref\n").unwrap();
+    let p = rr::parse_version("#include \"python/pyflakes.rerail\"\n.output unbound_ref\n").unwrap();
     let helpers: Vec<_> = p.rules().filter(|&r| p.rel_name(r.head().rel()).starts_with("rr_agg") && atoms(&p, r).iter().any(|(rel, _, _)| *rel == "bound_in")).collect();
     assert!(!helpers.is_empty());
     for helper in helpers {

@@ -28,7 +28,7 @@ fn kind_ids() -> &'static [Option<u16>] {
 /// cannot be made.
 pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_vue_lean::Refusal> {
     let ids = kind_ids();
-    let code_of = |&key: &u32| -> Result<Code, String> {
+    let code_of = move |&key: &u32| -> Result<Code, String> {
         let (kind, _, _, extra) = rerail_vue_lean::unkey(key);
         let kind = ids[usize::from(kind)].ok_or_else(|| format!("tree-sitter-vue lacks the lean parser's kind {kind}"))?;
         let mut code = Code::plain(kind, 0, &[])?;
@@ -37,7 +37,7 @@ pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Res
         }
         Ok(code)
     };
-    rerail_vue_lean::tape_into(source.as_bytes(), &mut super::formats::lean(grammar, source, budget, &code_of))
+    rerail_vue_lean::tape_into(source.as_bytes(), &mut super::formats::lean(grammar, source, budget, code_of))
 }
 
 /// Vue's tree parser: the lean parser, standing in for tree-sitter-vue where it reads the file.
@@ -50,7 +50,8 @@ impl TreeParser for Lean {
             Ok(image) => {
                 drop(span);
                 crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::SourceByte, source.len() as u64);
-                Some(image.and_then(|image| FileImage::embedding(image, grammar, source, budget)).map_err(TemplateError::Encode))
+                // Its scripts and template expressions are embedded by the router (`TapeImage::parse`).
+                Some(image.map(|image| FileImage::single(image, source)).map_err(TemplateError::Encode))
             }
             Err(why) => {
                 crate::code_rule_dsl::logic::profile::decision("Vue parse", || format!("a file the lean parser refused ({why:?}): tree-sitter-vue"));

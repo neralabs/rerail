@@ -3,7 +3,7 @@
 The short version: Tempo has real page-allocated, uncompressed caches and real pinning, but its production Metal path still copies every tape on every evaluation. v9np can avoid that copy, but four lines in our spec currently forbid or ignore the residency design (Part D lists them).
 
 Abbreviations used below:
-- **T:** = `/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/tempo/`. Branch `jbarnes/ner-1562-scale-test-the-re-railer`, HEAD `d737fad16`. The working tree is clean (`git status` shows nothing), so everything below is committed.
+- **T:** = `/Users/jeremy/orca/workspaces/scale-test-the-re-railer/tempo/`. Branch `jbarnes/scale-test-the-re-railer`, HEAD `d737fad16`. The working tree is clean (`git status` shows nothing), so everything below is committed.
 - **M:** = `/Users/jeremy/orca/workspaces/rerail/Pulling-it-all-together/native/src/`.
 - **S:** = `/Users/jeremy/orca/workspaces/rerail/Pulling-it-all-together/docs/rule-engine-direction/`.
 

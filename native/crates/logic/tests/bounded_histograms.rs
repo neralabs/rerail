@@ -1,3 +1,5 @@
+// The sketch alone: what its relation reads of it (`small`) is not this binary's.
+#[allow(dead_code)]
 #[path = "../../../src/code_rule_dsl/logic/native/setfix/sketch.rs"]
 mod sketch;
 // The sketch hashes keys as the Bloom filters do (`logic::bloom::hash`), read at its path in the engine.
@@ -6,6 +8,10 @@ mod code_rule_dsl {
     pub mod logic {
         pub mod bloom;
     }
+}
+/// The block arrays a sketch keeps (decision 0478 step 6c).
+mod rows {
+    pub use rerail_facts::code_rule_dsl::facts::rows::BlockVec;
 }
 #[test]
 fn compact_integer_domains_keep_exact_counts_past_64_distinct_values() {

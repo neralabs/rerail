@@ -2,10 +2,10 @@
 //!
 //!   rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <json>]
 //!   rerail-engine asm <file.rir>
-//!   rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>]
+//!   rerail-engine logic <program.rerail | dir of .rerail> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>]
 //!   rerail-engine gc <store.sqlite> [--history-mb <n>]
 //!   rerail-engine sql <store.sqlite> <request.json>
-//!   rerail-engine flatten <program.rr>
+//!   rerail-engine flatten <program.rerail>
 //!   rerail-engine csv <out dir> [<to dir>]   (a run's outputs, `outputs.rro`, as `.csv` files)
 //!   rerail-engine run-rr | run-policies | check-rr | convert-rr ... (`tools::cli`)
 //!

@@ -127,7 +127,7 @@ fn head(p: &Placed, k: usize) -> &str {
     p.v.rel_name(p.rule(k).head().rel())
 }
 
-/// `p`'s composed query: its rules read by their handles, its fields from its version (`Placed::of_program`, or an
+/// `p`'s composed query: its rules read by their handles, its fields from its version (`Placed::whole`, or an
 /// edit of one).
 pub(super) fn compile(p: &Placed, model: &mut Model) -> Result<Compiled> {
     let pf = p.fields()?;
@@ -174,11 +174,10 @@ pub(super) fn compile(p: &Placed, model: &mut Model) -> Result<Compiled> {
     };
     let mut frame_counts = BTreeMap::<String, usize>::new();
     for n in pf.natives() {
-        if needed.contains(pf.rel_name(n.rel)) {
-            if let NativeSpec::Python { input, .. } | NativeSpec::PythonCandidates { input, .. } = &n.spec {
+        if needed.contains(pf.rel_name(n.rel))
+            && let NativeSpec::Python { input, .. } | NativeSpec::PythonCandidates { input, .. } = &n.spec {
                 *frame_counts.entry(pf.rel_name(*input).to_owned()).or_default() += 1;
             }
-        }
     }
     let mut frames = BTreeMap::new();
     let mut frame_defs = Vec::new();
@@ -359,7 +358,6 @@ pub(super) fn compile(p: &Placed, model: &mut Model) -> Result<Compiled> {
             dependencies,
         );
     }
-    drop(add);
     defs.extend(frame_defs);
     if defs.iter().any(|d| d.contains("rdl_int")) {
         defs.insert(
@@ -428,11 +426,10 @@ fn count_reads(block: &mut Select, reads: &mut BTreeMap<String, usize>) {
 /// Apply physical relation names through joins, aggregates and correlated subqueries.
 fn bind_names(block: &mut Select, names: &HashMap<String, String>) {
     for item in &mut block.from {
-        if let Relation::Derived { rel, delta: false } | Relation::Input { rel, .. } = &item.relation {
-            if let Some(table) = names.get(rel) {
+        if let Relation::Derived { rel, delta: false } | Relation::Input { rel, .. } = &item.relation
+            && let Some(table) = names.get(rel) {
                 item.relation = Relation::Bound { rel: rel.clone(), table: ident(table).into_owned() };
             }
-        }
     }
     let ons = block.from.iter_mut().flat_map(|item| match &mut item.join {
         Join::On(on) => on.iter_mut().collect::<Vec<_>>(), Join::Cross => Vec::new(),

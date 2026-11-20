@@ -1,4 +1,4 @@
-"""Seeded syntax-error mutants of a directory's Python files, for `cpython::parity::syntax_error_parity` (Q293, Q389).
+"""Seeded syntax-error mutants of a directory's Python files, for `cpython::parity::syntax_error_parity` (Q360, Q391).
 
     python3 -I -S scripts/dev/python-syntax-mutants.py SRC OUT
 

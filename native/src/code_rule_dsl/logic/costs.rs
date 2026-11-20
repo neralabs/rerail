@@ -10,10 +10,13 @@
 //! The writer's thread and the training's work behind the run: what they send to SQLite no wave waits for.
 //!
 //! - **The learned model** (`rerail_accel::cost_model`): after the rates, the model saved for this machine (table
-//!   `models`) is put in place, and a thread of its own, at the utility quality of service and in a pool of two
-//!   threads apart from the engine's, trains a model on the samples read. A model that beats the rates on the
-//!   newest fifth of them is put in place and saved; one that does not is taken out, with the saved one. Training
-//!   runs again once [`RETRAIN_AFTER`] more samples are written, at most every [`RETRAIN_EVERY`].
+//!   `models`) is put in place, on a thread of its own. Without one, the prices are the rates (the statistics).
+//!   Training is upkeep's alone (decision 0190): idle work, on an idle machine and never beside a run (`Retrain`),
+//!   in a pool of two threads at upkeep's quality of service. A process that exits with its run never trains (a
+//!   training beside the run held 345 MB of ep2's 610 MB peak, and never finished, Q230). A model that beats the
+//!   rates on the newest fifth of the samples is put in place and saved; one that does not is taken out, with the
+//!   saved one. Due with no saved model, and again once [`RETRAIN_AFTER`] more samples are written, at most every
+//!   [`RETRAIN_EVERY`].
 //!
 //! The store is `RERAIL_COSTS` (a SQLite file; `off`: none), else `~/.cache/rerail/costs.sqlite`. Its table keeps
 //! each sample's features as they were measured.
@@ -57,8 +60,10 @@ fn path() -> Option<PathBuf> {
 /// This machine, as its samples are keyed: the architecture, its cores, and its GPU.
 pub fn machine() -> String {
     let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    // The process's device, whatever its backend (decision 0440 step C): a run on OpenCL or the CPU's backend keys
+    // its samples apart from the GPU's. accel's device lane is macOS's until step E.
     #[cfg(target_os = "macos")]
-    let gpu = rerail_accel::gpu::shared::get().map(|s| s.device.name().to_owned()).unwrap_or_default();
+    let gpu = rerail_accel::gpu::shared::layer().map(|l| l.device.name()).unwrap_or_default();
     #[cfg(not(target_os = "macos"))]
     let gpu = String::new();
     format!("{} {cores} cores {gpu}", std::env::consts::ARCH).trim().to_owned()
@@ -371,17 +376,20 @@ fn read() {
             *costs().fitted.lock().unwrap_or_else(|p| p.into_inner()) = Some((samples.len(), fitted.len()));
             #[cfg(target_os = "macos")]
             {
-                // Without a saved model, one is trained at once (placement wants one). Else the saved model is put in
-                // place, and the samples since it count toward the next training, the upkeep job's (`Retrain`: once
-                // `RETRAIN_AFTER` samples were written since it and it is `RETRAIN_EVERY` old, on an idle machine).
+                // The saved model is put in place; without one the prices are the rates. Training is the upkeep
+                // job's (`Retrain`, on an idle machine): due with no saved model, else once `RETRAIN_AFTER` samples
+                // were written since it and it is `RETRAIN_EVERY` old.
                 let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
                 let due = saved.is_none();
+                if due {
+                    costs().written.fetch_max(RETRAIN_AFTER, std::sync::atomic::Ordering::Relaxed);
+                }
                 if let Some((since, at)) = saved {
                     costs().written.store(since as usize, std::sync::atomic::Ordering::Relaxed);
                     let age = std::time::Duration::from_secs_f64((now - at).max(0.0));
                     *costs().trained_at.lock().unwrap_or_else(|p| p.into_inner()) = std::time::Instant::now().checked_sub(age).or_else(|| Some(std::time::Instant::now()));
                 }
-                train(path, samples, true, due);
+                place_saved(path, due);
             }
         }
         Err(e) => {
@@ -396,59 +404,43 @@ fn model_state(s: String) {
     *costs().model_state.lock().unwrap_or_else(|p| p.into_inner()) = s;
 }
 
-/// Puts this machine's saved model in place, if there is one that reads, its kernels compiled first (the training
-/// thread's: a new binary compiles them in seconds).
+/// Puts this machine's saved model in place, if there is one that reads, its kernels compiled first (a new binary
+/// compiles them in seconds). `due`: a training is due, upkeep's.
 #[cfg(target_os = "macos")]
-fn load_saved(path: &PathBuf, fit: bool) {
+fn load_saved(path: &PathBuf, due: bool) {
     let Ok(db) = rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) else { return };
     let saved: rusqlite::Result<(Vec<u8>, i64)> = db.query_row("SELECT model, trained_on FROM models WHERE machine = ?1", [machine()], |r| Ok((r.get(0)?, r.get(1)?)));
     // No `models` table yet (a store from before it) reads as no model.
-    let Ok((bytes, trained_on)) = saved else { return };
+    let Ok((bytes, trained_on)) = saved else {
+        model_state("none saved: the prices are the rates; a training is due on an idle machine (upkeep)".into());
+        return;
+    };
     match rerail_accel::cost_model::CostModel::from_bytes(&bytes) {
         Ok(m) => {
             let t = std::time::Instant::now();
             if let Err(e) = m.warm() {
-                model_state(format!("the saved model does not predict ({e}); training a new one"));
+                model_state(format!("the saved model does not predict ({e}): the prices are the rates"));
                 return;
             }
             rerail_accel::cost_model::install(Some(std::sync::Arc::new(m)));
-            let next = if fit { "training a new one" } else { "no training due" };
+            let next = if due { "a training due on an idle machine (upkeep)" } else { "no training due" };
             model_state(format!("the saved model ({trained_on} samples) in place, warmed in {:.2} s; {next}", t.elapsed().as_secs_f64()));
         }
-        Err(e) => model_state(format!("the saved model does not read ({e}); training a new one")),
+        Err(e) => model_state(format!("the saved model does not read ({e}): the prices are the rates")),
     }
 }
 
-/// Trains a model on `samples` (oldest first) on a thread of its own, unless one is training: in a pool of two
-/// threads at the utility quality of service, apart from the engine's. With `saved`, the saved model is put in
-/// place first ([`load_saved`]). A model that wins is put in place and saved; else the model in place, and the
-/// saved one, are taken out.
+/// Puts this machine's saved model in place ([`load_saved`]) on a thread of its own, at the utility quality of
+/// service: never a training (`Retrain`'s, upkeep's). `due`: none is saved, a training is due.
 #[cfg(target_os = "macos")]
-/// Without `fit`, only the saved model is put in place: no training is due.
-fn train(path: PathBuf, samples: Vec<rerail_accel::score::Sample>, saved: bool, fit: bool) {
-    use std::sync::atomic::Ordering;
-    if costs().training.swap(true, Ordering::AcqRel) {
-        return;
-    }
-    if fit {
-        costs().written.store(0, Ordering::Relaxed);
-        *costs().trained_at.lock().unwrap_or_else(|p| p.into_inner()) = Some(std::time::Instant::now());
-    }
+fn place_saved(path: PathBuf, due: bool) {
     let spawned = rerail_accel::exec::service("rerail-cost-model", None, move || {
         crate::code_rule_dsl::logic::profile::behind_the_run();
         rerail_accel::cost_model::set_qos(rerail_accel::cost_model::Qos::Utility);
-        if saved {
-            load_saved(&path, fit);
-        }
-        if !fit {
-            costs().training.store(false, Ordering::Release);
-            return;
-        }
-        self::fit(&path, &samples, false, &|| false);
-        costs().training.store(false, Ordering::Release);
+        load_saved(&path, due);
     });
     if spawned.is_err() {
-        costs().training.store(false, Ordering::Release);
+        model_state("the saved model not read: no thread".into());
     }
 }
 
@@ -508,8 +500,9 @@ fn fit(path: &PathBuf, samples: &[rerail_accel::score::Sample], upkeep: bool, st
         false
 }
 
-/// The cost model's retraining as an upkeep job (decision 0190 §4): due once [`RETRAIN_AFTER`] samples were
-/// written since the last training, at least [`RETRAIN_EVERY`] after it; idle work, run after an hour of waiting.
+/// The cost model's training as an upkeep job (decision 0190 §4), its only one: due once [`RETRAIN_AFTER`] samples
+/// were written since the last training (at once with none saved), at least [`RETRAIN_EVERY`] after it. Idle work
+/// that never starves: on an idle machine only, never through a run.
 #[cfg(target_os = "macos")]
 struct Retrain;
 
@@ -525,8 +518,8 @@ impl rerail_accel::upkeep::Job for Retrain {
         use std::sync::atomic::Ordering;
         let st_ = costs();
         let since = st_.trained_at.lock().unwrap_or_else(|p| p.into_inner()).is_none_or(|t| t.elapsed() >= RETRAIN_EVERY);
-        if costs().written.load(Ordering::Relaxed) >= RETRAIN_AFTER && !costs().training.load(Ordering::Acquire) && since && path().is_some() {
-            rerail_accel::upkeep::Due::Idle { starve: std::time::Duration::from_secs(3600) }
+        if st_.written.load(Ordering::Relaxed) >= RETRAIN_AFTER && !st_.training.load(Ordering::Acquire) && since && path().is_some() {
+            rerail_accel::upkeep::Due::Idle { starve: std::time::Duration::MAX }
         } else {
             rerail_accel::upkeep::Due::No
         }
@@ -851,16 +844,12 @@ pub mod tests {
     #[test]
     #[ignore = "writes the store it is given: COSTS_COPY=<a copy of costs.sqlite> --ignored --nocapture"]
     fn a_trained_model_is_saved_and_put_in_place_again() {
-        use std::sync::atomic::Ordering;
         let path = std::path::PathBuf::from(std::env::var("COSTS_COPY").expect("COSTS_COPY"));
         let db = super::open(&path).unwrap();
         db.execute("DELETE FROM models", []).unwrap();
         let samples = super::read_samples(&db, super::READ, super::READ_PER_FORM).unwrap();
         let t = std::time::Instant::now();
-        super::train(path.clone(), samples, false, true);
-        while super::costs().training.load(Ordering::Acquire) {
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
+        assert!(!super::fit(&path, &samples, false, &|| false), "not stopped");
         let state = super::costs().model_state.lock().unwrap().clone();
         eprintln!("trained in {:.1} s: {state}", t.elapsed().as_secs_f64());
         let installed = rerail_accel::cost_model::current().expect("the model in place");
@@ -887,7 +876,7 @@ pub mod tests {
         let jobs = super::upkeep_jobs();
         assert_eq!(jobs.len(), 2);
         let mut job = super::Retrain;
-        assert!(matches!(job.due(), Due::Idle { .. }), "no saved model: due");
+        assert_eq!(job.due(), Due::Idle { starve: std::time::Duration::MAX }, "no saved model: due, on an idle machine only (never through a run)");
         let stop = std::sync::atomic::AtomicBool::new(false);
         let (c, t) = (rerail_accel::exec::process_cpu(), std::time::Instant::now());
         rerail_accel::upkeep::lower_this_thread();

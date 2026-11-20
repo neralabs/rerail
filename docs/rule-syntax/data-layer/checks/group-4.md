@@ -1,4 +1,4 @@
-# Group 4: what .rr lacks for 23 data-layer checks
+# Group 4: what .rerail lacks for 23 data-layer checks
 
 ## Shared facts for the checks below
 
@@ -19,7 +19,7 @@ These hold for every plugin-based check in this part, and are cited once here.
   changes nothing, but where it does, it is noted under the check.
 - **Line numbering.** Text scans number lines with Python's `str.splitlines()`, which also breaks on `\v \f \x1c-\x1e
   \x85    `. AST line numbers count only `\n`, `\r\n` and `\r`. The two numberings differ in any file that
-  contains one of the extra terminators. This is the "line terminators" item of the earlier port's ledger (NER-1969).
+  contains one of the extra terminators. This is the "line terminators" item of the earlier port's ledger (the line-query issue).
 
 ---
 
@@ -67,7 +67,7 @@ These hold for every plugin-based check in this part, and are cited once here.
     (`lint_classvar_check.py:115-121`).
   - `NATIVE op_at(n: node, i: number, s: symbol)`: the i-th anonymous operator token of `n`, with two-token
     operators joined (`is not`, `not in`). core's `op(n, s)` gives the set of tokens but not their order, and
-    tokens have no node or offset to sort by. `cmp` (names.rr) covers only unchained comparisons. The oracle
+    tokens have no node or offset to sort by. `cmp` (names.rerail) covers only unchained comparisons. The oracle
     zips `ops` with `comparators` over a whole chain: `get_origin(x) is A is ClassVar` is reported
     (`lint_classvar_check.py:146-151`).
   - `LIB cmp_link(c: node, i: number, op: symbol, r: node)`: operator `i` of comparison `c` and its right
@@ -391,7 +391,7 @@ These hold for every plugin-based check in this part, and are cited once here.
   - `EXISTS kind(c, "comment"), line, contains`: the allow marker on line L or L-1 of the call's start line (`:178-183`). The
     oracle tests the raw line text, so a marker inside a string literal also suppresses. With comment nodes it does not.
   - `EXISTS .scope dirs "conform"`, `file_name` + `match("test_.*\\.py", …)`, `.scope tests true`.
-  - `EXISTS signed_list`: the allowlist is empty by design (`:98`). In `.rr` it is dropped, or kept as an empty signed
+  - `EXISTS signed_list`: the allowlist is empty by design (`:98`). In `.rerail` it is dropped, or kept as an empty signed
     list keyed `code:path:line`.
   - `POLICY extraction-failure findings`: a file whose fact extraction fails yields `BCH000` at line 1 with the
     error text (`:253-255`). A file that cannot be read or decoded is skipped silently (`:282-285`).

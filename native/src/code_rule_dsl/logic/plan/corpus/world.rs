@@ -1,5 +1,5 @@
 //! The file system a program reads and the documents it loads (t21 E1, E2): the generic half of typing against
-//! libraries. No rule here knows a language; a language's `env.rr` and `modules.rr` say what to read.
+//! libraries. No rule here knows a language; a language's `env.rerail` and `modules.rerail` say what to read.
 //!
 //! A program may read, as relations:
 //! - `dir_entry(dir, name, is_dir)`: the entries of a directory;
@@ -82,7 +82,7 @@ pub(super) struct World {
     refused: BTreeSet<String>,
     budget: usize,
     /// The documents loaded from beyond the corpus root (the libraries'), which the budget bounds. A source file of
-    /// the run's own tree is always loaded (phase 1, `sources.rr`).
+    /// the run's own tree is always loaded (phase 1, `sources.rerail`).
     beyond: usize,
     /// Loads past the budget, or in another grammar than the run's, not taken.
     pub(super) dropped: usize,

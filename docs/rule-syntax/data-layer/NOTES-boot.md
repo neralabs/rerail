@@ -1,10 +1,10 @@
 # NOTES: the boot group (bootstrap and schema checks)
 
-Seven checks, written by hand in `.rr`. Scores are `rrlab dl` on the recorded batch 9 and 10 events, matched on
+Seven checks, written by hand in `.rerail`. Scores are `rrlab dl` on the recorded batch 9 and 10 events, matched on
 (path, line, code). "Reader" is the engine's reader (`rr-census`, `CLAUSES=1`): yes means the file parses and every
 clause lowers.
 
-| Check | Python lines | `.rr` lines | rrlab dl (exact / events) | Reader |
+| Check | Python lines | `.rerail` lines | rrlab dl (exact / events) | Reader |
 |---|---|---|---|---|
 | bootstrap_cache_health | 370 | 53 | 16 / 16 | yes |
 | bootstrap_lazy_sql | 390 | 16 + 54 (lib) | 2 / 2 | yes |
@@ -19,16 +19,16 @@ coverage entry). Events whose expected result is an exception (the linter raises
 not counted: a policy withholds an unparsable document.
 
 Shared files:
-- `lib/data-layer/boot-python.rr` (79 lines): how these scripts read Python by spelling. `callee_name` (a Name id or
+- `lib/data-layer/boot-python.rerail` (79 lines): how these scripts read Python by spelling. `callee_name` (a Name id or
   Attribute attr callee), `deco_word` (a decorator's name, through a call), `def_walk` (ast.walk of a def:
   decorators, signature, nested defs), and the scripts' `_annotation_names`: `ann_word`, `ann_word_s` (a
   whole-string annotation parsed), `ann_top`, `ann_subscript`, `ann_value_word`, `ann_slice_word`. Used by six of
   the seven checks.
-- `lib/data-layer/boot-lazy-sql.rr` (54 lines): the BLB findings, shared by bootstrap-lazy-sql and
+- `lib/data-layer/boot-lazy-sql.rerail` (54 lines): the BLB findings, shared by bootstrap-lazy-sql and
   bootstrap-eager-resolve, which are the same report under two names.
-- `data-layer/bootstrap-engine-invariants.tables.rr`, from `gen-bootstrap-engine-invariants.py`: every module-level
+- `data-layer/bootstrap-engine-invariants.tables.rerail`, from `gen-bootstrap-engine-invariants.py`: every module-level
   frozenset of the linter as `bei_set(SET, x)`, under the linter's own names (32 sets, 409 rows).
-- `data-layer/schema-introspection-data-paths.tables.rr`, from `gen-schema-introspection-data-paths.py`: the probe
+- `data-layer/schema-introspection-data-paths.tables.rerail`, from `gen-schema-introspection-data-paths.py`: the probe
   names, SQL markers, authority words, path markers and primitive definitions. Its `--check` also compares the
   rule's `.scope include` lines with DATA_PATH_PREFIXES.
 
@@ -100,10 +100,10 @@ Remaining misses:
 
 ## Library and core change requests
 
-**python/ast.rr, `ast_name`: match captures are not Names.** In `case x:`, `case [a, *r]:`,
+**python/ast.rerail, `ast_name`: match captures are not Names.** In `case x:`, `case [a, *r]:`,
 `case P(k=b) as c:` CPython binds x, a, r, b and c as strings (MatchAs.name, MatchStar.name), not as ast.Name.
 A dotted value `case C.RED:` and the class `P` are Names. `ast_name` counts the captures, so BEI002 reports
-`case _publish_static_naming_rows_direct:`, and the linter does not. Proposed addition to ast.rr, next to `not_name`:
+`case _publish_static_naming_rows_direct:`, and the linter does not. Proposed addition to ast.rerail, next to `not_name`:
 
 ```
 // Match captures: CPython keeps a capture's name as a string (MatchAs.name, MatchStar.name, MatchMapping.rest),

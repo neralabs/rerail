@@ -1,12 +1,12 @@
-//! core.rr's relations in a program: core.rr is every program's prelude (decision 0043), as the libraries read it.
+//! core.rerail's relations in a program: core.rerail is every program's prelude (decision 0043), as the libraries read it.
 //!
-//! - **Declarations.** `rr::program` reads core.rr before every file, so a file's program has all of core.rr's
-//!   declarations, and a program that includes core.rr reads core.rr's shape (`plan::text_demand::projection_of`); the
+//! - **Declarations.** `rr::program` reads core.rerail before every file, so a file's program has all of core.rerail's
+//!   declarations, and a program that includes core.rerail reads core.rerail's shape (`plan::text_demand::projection_of`); the
 //!   inputs it does not read are neither bound nor planned. A file may not declare or derive a
-//!   core.rr relation (decision 0141, `rr::read_file`). A relation read and not declared, which core.rr declares,
-//!   has core.rr's declaration and is an input (`declare_core`: a program's text parsed alone, `rr::parse`). Such a
-//!   text's own declaration replaces core.rr's: a converted program's `syntax_error(d: number)` (the tape has an
-//!   error node, what the corpus binds) stands where core.rr's `syntax_error(d, l, msg)` (the batch's `core_rr` row:
+//!   core.rerail relation (decision 0141, `rr::read_file`). A relation read and not declared, which core.rerail declares,
+//!   has core.rerail's declaration and is an input (`declare_core`: a program's text parsed alone, `rr::parse`). Such a
+//!   text's own declaration replaces core.rerail's: a converted program's `syntax_error(d: number)` (the tape has an
+//!   error node, what the corpus binds) stands where core.rerail's `syntax_error(d, l, msg)` (the batch's `core_rr` row:
 //!   CPython's verdict for Python, `cpython::syntax`, through `facts::vtab::syntax::python_syntax`) would. An authored
 //!   overlay, a file, reads the tape's verdict as the converter gives it, `tape_syntax_error(d)` (`logic::convert`),
 //!   and CPython's under the name the converter gives it, `cpython_syntax_error(d, l, msg)`.
@@ -20,7 +20,7 @@
 //!   ```
 //!
 //!   Negated, the three of several literals read a relation of their rows, `rr_core_<name>`, with the same body.
-//!   `within` is the engine's relation (decision 0050), `kind` and T's `docof` projections of `node` and core.rr's
+//!   `within` is the engine's relation (decision 0050), `kind` and T's `docof` projections of `node` and core.rerail's
 //!   `docof` an input (`Lowerer::projections`), and `unset` the value -1 (`lower::unset`).
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -31,12 +31,12 @@ use super::{Lowerer, ty};
 use super::Tm;
 use crate::code_rule_dsl::logic::front::{Error, is_axis};
 
-const CORE: &str = include_str!("../../../../../../docs/rule-syntax/lib/core.rr");
+const CORE: &str = include_str!("../../../../../../docs/rule-syntax/lib/core.rerail");
 
-/// core.rr's declarations, in the engine's column types.
+/// core.rerail's declarations, in the engine's column types.
 pub(super) static DECLS: LazyLock<BTreeMap<String, Vec<(String, String)>>> = LazyLock::new(|| {
     let decls = CORE.lines().filter(|l| l.starts_with(".decl ")).collect::<Vec<_>>().join("\n");
-    let file = super::super::from_tape::RrFile::read(decls).expect("core.rr's declarations parse");
+    let file = super::super::from_tape::RrFile::read(decls).expect("core.rerail's declarations parse");
     let t = file.tape();
     file.statements()
         .iter()
@@ -50,7 +50,7 @@ pub(super) static DECLS: LazyLock<BTreeMap<String, Vec<(String, String)>>> = Laz
 /// The core relations `rewrite` lowers: where the program does not derive one, no relation of the program.
 pub(super) const REWRITTEN: [&str; 3] = ["next_sibling", "precedes", "earlier"];
 
-/// Whether core.rr declares `rel`.
+/// Whether core.rerail declares `rel`.
 pub fn is_core(rel: &str) -> bool {
     DECLS.contains_key(rel)
 }
@@ -110,7 +110,7 @@ impl Lowerer {
         }
         let arity = DECLS[rel].len();
         if args.len() != arity {
-            return Err(Error::Syntax(format!("{rel} takes {arity} arguments (core.rr), not {}", args.len())));
+            return Err(Error::Syntax(format!("{rel} takes {arity} arguments (core.rerail), not {}", args.len())));
         }
         let args = args.iter().map(|a| self.term_tm(a)).collect::<Result<Vec<_>, _>>()?;
         if neg {
@@ -153,8 +153,8 @@ impl Lowerer {
     }
 }
 
-/// core.rr's declaration of each relation `read` names (with the arity it is read with: what the rules read, `reads`)
-/// that `prog` does not declare, as an input; `docof_of_locs` set where it is core.rr's `docof` (over spans). `prog`
+/// core.rerail's declaration of each relation `read` names (with the arity it is read with: what the rules read, `reads`)
+/// that `prog` does not declare, as an input; `docof_of_locs` set where it is core.rerail's `docof` (over spans). `prog`
 /// may be a header alone (a version's), since it reads no rules.
 pub fn declare_core(prog: &mut (impl crate::code_rule_dsl::logic::program_image::fields::FieldsMut + ?Sized), read: &BTreeSet<(String, usize)>, docof_of_locs: &mut bool) -> Result<(), Error> {
     use crate::code_rule_dsl::logic::program_facts::Field;
@@ -164,10 +164,10 @@ pub fn declare_core(prog: &mut (impl crate::code_rule_dsl::logic::program_image:
         }
         let Some(cols) = DECLS.get(rel) else { continue };
         if cols.len() != *arity {
-            return Err(Error::Syntax(format!("{rel} is read with {arity} columns and core.rr declares {}", cols.len())));
+            return Err(Error::Syntax(format!("{rel} is read with {arity} columns and core.rerail declares {}", cols.len())));
         }
         if rel == "docof" {
-            // core.rr's `docof(x: loc, d)`: an input that spans have rows in, not `node`'s projection.
+            // core.rerail's `docof(x: loc, d)`: an input that spans have rows in, not `node`'s projection.
             *docof_of_locs = true;
         }
         let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
@@ -184,7 +184,7 @@ pub fn declare_core(prog: &mut (impl crate::code_rule_dsl::logic::program_image:
     Ok(())
 }
 
-/// `v` less core.rr's relations it neither reads, derives nor outputs, declared as core.rr declares them: the
+/// `v` less core.rerail's relations it neither reads, derives nor outputs, declared as core.rerail declares them: the
 /// prelude's declarations and inputs, which are no relations of the program. The converter's overlay reads an
 /// authored file so (`logic::convert::overlay`), its declarations checked against the converter's.
 #[cfg(any(test, feature = "test-hooks"))]

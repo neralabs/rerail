@@ -235,7 +235,7 @@ pub fn pack(dir: &Path, out: &Path) -> std::io::Result<usize> {
         }
         images.push((key, std::fs::read(&path)?));
     }
-    images.sort_by(|a, b| a.0.cmp(&b.0));
+    images.sort_by_key(|a| a.0);
     let mut head = Vec::with_capacity(HEADER + images.len() * ENTRY);
     head.extend_from_slice(MAGIC);
     head.extend_from_slice(&VERSION.to_le_bytes());

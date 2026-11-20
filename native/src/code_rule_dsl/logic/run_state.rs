@@ -27,7 +27,7 @@
 //! in a test file) are left out: a test sets them on its own thread.
 //!
 //! The tests below read the source: every thread-local is listed, every listed one exists, and every **Carried**
-//! one is taken by [`Carry::here`]. `scripts/check/check-thread-state.py` refuses a commit that adds an unlisted
+//! one is taken by [`Carry::here`]. `scripts/check/check_thread_state.py` refuses a commit that adds an unlisted
 //! thread-local, before it is made.
 
 use std::any::Any;
@@ -49,11 +49,15 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/blocks/src/scratch.rs", "THREAD", Thread, "this thread's scratch region for a freeze's sort keys, emptied at each use"),
     ("crates/c_directives/src/expand.rs", "JIT", Thread, "this thread's Cranelift code of the process's pp words (0348), without a rustc build of them; the same on any thread"),
     ("crates/clif/src/rust.rs", "ADDRESSES", Thread, "this thread's scratch or counters in a backend"),
+    ("crates/clif/src/rust.rs", "CHECKED", Call, "the state of one call in progress on this thread, set and reset within it (`translate_ops`)"),
     ("crates/clif/src/rust.rs", "READS", Thread, "this thread's scratch or counters in a backend"),
+    ("crates/compiler/src/pp_words.rs", "HOST_RUNS", Thread, "a count of this thread's work, read by tests and the profile"),
     ("crates/compiler/src/native_cpu_stream.rs", "IDS", Thread, "this thread's scratch or counters in a backend"),
     ("crates/metal/src/buffer_observation.rs", "ACTIVE", Thread, "this thread's scratch or counters in a backend"),
     ("crates/metal/src/launch.rs", "EVALUATION", Thread, "this thread's scratch or counters in a backend"),
     ("crates/metal/src/test_pool.rs", "LEDGERS", Thread, "this thread's share of the test pool"),
+    ("crates/metal/src/test_pool.rs", "MEASURED", Thread, "this thread's test reads the driver's own figure (a test switch, per thread as the test pool is)"),
+    ("crates/metal/src/test_pool.rs", "WORKING_SET", Thread, "this thread's test's working set for the device (a test switch, per thread as the test pool is)"),
     ("crates/prof/src/lib.rs", "LEFT", Thread, "this thread's sampling countdown"),
     ("crates/prof/src/lib.rs", "SPAN", Thread, "this thread's sampled span"),
     ("crates/prof/src/lib.rs", "THREAD_IX", Thread, "this thread's number in the heap samples taken with no span open"),
@@ -92,19 +96,21 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/native/setfix.rs", "MIXED", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
     ("crates/context/src/lib.rs", "RUN", Carried, ""),
     ("crates/context/src/lib.rs", "CONTEXT", Carried, ""),
+    ("src/code_rule_dsl/facts/rows.rs", "GIVEN", Thread, "the bytes this thread's chunk scopes gave their chunks: the thread's own allocation counts, read against its jemalloc net"),
+    ("src/code_rule_dsl/facts/rows.rs", "NET", Thread, "inside rows.rs's tests module (a test build only): a test's stand-in for the allocator's net counter"),
+    ("src/code_rule_dsl/facts/rows.rs", "PEAK", Thread, "this thread's innermost chunk scope's heap peak so far: the thread's own allocation counts (decision 0469)"),
+    ("src/code_rule_dsl/facts/rows.rs", "PEAK_AT", Thread, "inside rows.rs's tests module (a test build only): a test's stand-in for the allocator's per-thread peak"),
+    ("src/code_rule_dsl/facts/rows.rs", "TOP", Carried, ""),
+    ("src/code_rule_dsl/mod.rs", "COUNTERS", Thread, "jemalloc's counters of this thread's allocations"),
     ("src/code_rule_dsl/logic/native/setfix.rs", "IN_MORSELS", Thread, "the walks this thread ran in morsels, read by tests"),
     ("src/code_rule_dsl/logic/native/setfix.rs", "VARIANTS", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
     ("src/code_rule_dsl/logic/native/setfix/closure.rs", "SEMI_NAIVE_HERE", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
     ("src/code_rule_dsl/logic/native/setfix/runs.rs", "INLINE", Call, "a lazy order's build under way on this thread (`runs::inline`): its sorts stay on the thread, never handed to the pool"),
     ("src/code_rule_dsl/logic/native/setfix/device.rs", "ARENA", Thread, "this thread's device waves and launches"),
-    ("src/code_rule_dsl/logic/native/setfix/device.rs", "AUTOMATA", Thread, "device automata by pattern: any thread's gives the same"),
     ("src/code_rule_dsl/logic/native/setfix/device.rs", "BINDER", Thread, "this thread's device waves and launches"),
     ("src/code_rule_dsl/logic/native/setfix/device.rs", "FLUSHED", Thread, "this thread's device waves and launches"),
-    ("src/code_rule_dsl/logic/native/setfix/device.rs", "GROWTH", Thread, "this thread's device waves and launches"),
     ("src/code_rule_dsl/logic/native/setfix/device.rs", "LAST", Thread, "this thread's device waves and launches"),
-    ("src/code_rule_dsl/logic/native/setfix/device.rs", "RESIDENT", Thread, "this thread's device waves and launches"),
     ("src/code_rule_dsl/logic/native/setfix/device.rs", "SUSPENDED", Thread, "this thread's device waves and launches"),
-    ("src/code_rule_dsl/logic/native/setfix/device.rs", "TESTS", Thread, "device text tests by pattern: any thread's gives the same"),
     ("src/code_rule_dsl/logic/plan.rs", "OWN_PLANS", Carried, ""),
     ("src/code_rule_dsl/logic/plan.rs", "OWN_PLANNED", Carried, ""),
     ("src/code_rule_dsl/logic/plan.rs", "SEED", Call, "the last priced body's cheapest start, read by the same pricing"),
@@ -162,6 +168,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/profile/sql.rs", "EXPLAINING", Thread, "this thread's statement being explained"),
     ("src/code_rule_dsl/profile/sql.rs", "FRAME", Thread, "this thread's statement counters"),
     ("src/code_rule_dsl/profile/trace.rs", "CONTEXT", Call, "the attribution of the work this thread does for one call"),
+    ("src/code_rule_dsl/regexes/mod.rs", "LET_GO", Call, "the regexes a document's compilation let go of, kept by the table until that compilation ends"),
     ("src/code_rule_dsl/residency/admission/relational/producer.rs", "READERS", Call, "the state of one call in progress on this thread"),
     ("src/code_rule_dsl/residency/admission/relational/syntax.rs", "POOL", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/semver/mod.rs", "KEY_COMPARISONS", Thread, "a count of this thread's work, read by tests and the profile"),
@@ -179,8 +186,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/waves/relational/syntax.rs", "POOL", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/content_store/atoms.rs", "RESERVING", Thread, "this thread's store write in progress"),
     ("src/content_store/atoms/map.rs", "MAPPED", Call, "a write in progress whose symbols are mapped (`atoms::map::mapped`)"),
-    ("src/content_store/compression.rs", "DECODERS", Thread, "this thread's codecs"),
-    ("src/content_store/compression.rs", "DICT_ENCODERS", Thread, "this thread's codecs"),
+    ("src/content_store/compression.rs", "DECODER", Thread, "this thread's codecs"),
     ("src/content_store/compression.rs", "ENCODED", Thread, "the bytes of frames this thread made, read around a writer's job"),
     ("src/content_store/compression.rs", "ENCODER", Thread, "this thread's codecs"),
     ("src/content_store/connection.rs", "ATTEMPT_WAITED", Thread, "this thread's SQLite connections and their waits"),
@@ -226,6 +232,8 @@ const CARRIERS: &[fn(&mut Capture)] = &[
     super::run::carried,
     super::plan::carried,
     super::plan::keeps::carried,
+    // A job's scope of the run's chunk (Q203 item 3).
+    super::native::setfix::carried,
     #[cfg(any(test, feature = "test-hooks"))]
     super::plan::corpus::test_store::carried,
 ];

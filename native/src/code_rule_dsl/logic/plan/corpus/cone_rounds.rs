@@ -391,6 +391,7 @@ pub(in crate::code_rule_dsl) fn world_digest(digest: impl Fn(&str) -> Option<u64
 }
 
 /// Where the rounds start.
+#[allow(clippy::large_enum_variant)]
 pub(in crate::code_rule_dsl) enum Start {
     /// From the last run's final round.
     Kept(retain::Retained),
@@ -440,8 +441,8 @@ impl RoundProgram {
         let atoms = on.store.atoms_handle();
         // What the store holds of the program before the rounds: what the rounds write back is compared with it.
         let was = match &kept {
-            Some(k) => k.frames().cloned(),
-            None => retain::Retained::from_frames(on.store, on.space, on.key, on.key, &self.placed, &self.sccs, &inputs.constant_digests(&atoms, &self.placed, domains))?.frames().cloned(),
+            Some(k) => k.in_kept().cloned(),
+            None => retain::Retained::bind_kept(on.store, on.space, on.key, on.key, &self.placed, &self.sccs, &inputs.constant_digests(&atoms, &self.placed, domains))?.in_kept().cloned(),
         };
         if let Some(k) = &kept {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "rounds/the last run's, from the frames".into());
@@ -533,7 +534,7 @@ impl RoundProgram {
                     let all = corpus_rows.get(rel.as_str()).into_iter().flatten().chain(provisional.get(&rel).into_iter().flatten()).chain(answers.rows.get(&rel).into_iter().flatten()).filter(|r| seen.insert(*r));
                     of_rows(width, all)
                 };
-                let digest = retain::digest(source.as_ref(), &retain::cells_of(&atoms, &self.placed, &domains, &rel, width));
+                let digest = retain::digest(source.as_ref(), &retain::cells_of(&atoms, &self.placed, domains, &rel, width));
                 bound.insert(rel, (source, digest));
             }
             let given: Vec<(String, Arc<dyn Source>, u64, bool)> = bound.iter().map(|(r, (s, d))| (r.clone(), Arc::clone(s), *d, !fresh.contains(r))).collect();
@@ -642,7 +643,7 @@ impl RoundProgram {
                 let cut = retain::Cut { clean, strata: (0, 0), changed: Vec::new() };
                 let sources: Vec<(String, Arc<dyn Source>)> = bound.iter().map(|(r, (s, _))| (r.clone(), Arc::clone(s))).collect();
                 let digests: std::collections::HashMap<String, u64> = bound.iter().map(|(r, (_, d))| (r.clone(), *d)).collect();
-                next.write_frames(on.store, was, &self.placed, &self.domains, &retain::Locations::new(), &self.sccs, &cut, &sources, &digests, &BTreeSet::new(), &HashMap::new(), HashMap::new(), None, &HashMap::new(), None)?
+                next.write_kept(on.store, was, &self.placed, &self.domains, &retain::Locations::new(), &self.sccs, &cut, &sources, &digests, &BTreeSet::new(), &HashMap::new(), HashMap::new(), None, &HashMap::new(), &BTreeSet::new())?
             }
             None => 0,
         };

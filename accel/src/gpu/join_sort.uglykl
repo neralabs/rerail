@@ -1,0 +1,250 @@
+// The radix sort, its runs, the gather and the column statistics (decision 0095 §4, 0209 §6), in UKL (decision 0440
+// step C), for a column word `COL_T` (16, 32 or 64 bits) read into sort words `KEY_T` (32 or 64): defined in front of
+// the source by `join.rs` (`sort_source`), with `join_common.h`. One variant per column width.
+//
+// The sort: a stable LSD radix sort of 1,024-row tiles. A tile's digit histogram is counted in threadgroup memory; a
+// row's place is its digit's offset for the tile (the scan of every tile's histogram, digit-major), the rows of its
+// digit in the tile's earlier rounds and rank groups, and its rank among its rank group's earlier threads of the
+// digit (a bounded loop over the group). No atomic decides an order.
+//
+// A rank group is a SIMD group where it has 32 lanes or more, its digits shuffled; below 32 lanes (the CPU's and
+// OpenCL's narrower widths), 32 threads, their digits read from threadgroup memory. So the counts are at most 8 rank
+// groups' of 256 digits whatever the width: a group a lane would need 256 KB.
+#define SORT_RG (UKL_SIMD_WIDTH >= 32u ? (uint32_t)UKL_SIMD_WIDTH : 32u)
+#define SORT_RGS (JOIN_TG / SORT_RG)
+
+// Each row's key and its place. p0: the rows.
+DEFINE_KERNEL2(join, sort_init,
+               ROBUFFER, COL_T,    col,  "[a.p0]",
+               RWBUFFER, KEY_T,    keys, "[a.p0]",
+               RWBUFFER, uint32_t, idx,  "[a.p0]",
+               ARGS,     JoinP,    a,    ,
+               GID0,     uint32_t, t,    )
+{
+  if (t < a.p0) { keys[t] = (KEY_T)col[t]; idx[t] = t; }
+}
+
+// A tile's digit histogram, digit-major across the tiles: hist[d * tiles + tile]. p: the rows, the digit's shift,
+// the tiles.
+DEFINE_KERNEL2(join, sort_hist,
+               ROBUFFER, KEY_T,    keys, "[a.p0]",
+               RWBUFFER, uint32_t, hist, "[256 * a.p2]",
+               ARGS,     JoinP,    a,    ,
+               SHARED,   uint32_t, h,    256,
+               TGID0,    uint32_t, tg,   ,
+               LID0,     uint32_t, t,    )
+{
+  ukl_atomic_store_local(&h[t], 0u);
+  ukl_tg_barrier();
+  for (uint32_t i = 0u; i < 4u; i++) {
+    uint32_t at = tg * 1024u + i * 256u + t;
+    if (at < a.p0) ukl_atomic_add_local(&h[(uint32_t)(keys[at] >> a.p1) & 255u], 1u);
+  }
+  ukl_tg_barrier();
+  hist[t * a.p2 + tg] = ukl_atomic_load_local(&h[t]);
+}
+
+// Each row at its digit's offset for the tile, after the tile's earlier rows of the digit: stable. p: the rows, the
+// digit's shift, the tiles. `counts`: per rank group, its rows of each digit; `digits`, each thread's digit, where a
+// rank group is not a SIMD group.
+DEFINE_KERNEL2(join, sort_scatter,
+               ROBUFFER, KEY_T,    keys,   "[a.p0]",
+               ROBUFFER, uint32_t, idx,    "[a.p0]",
+               ROBUFFER, uint32_t, offs,   "[256 * a.p2]",
+               RWBUFFER, KEY_T,    okeys,  "[a.p0]",
+               RWBUFFER, uint32_t, oidx,   "[a.p0]",
+               ARGS,     JoinP,    a,      ,
+               SHARED,   uint32_t, counts, 2048,
+               SHARED,   uint32_t, digits, 256,
+               SHARED,   uint32_t, before, 256,
+               SHARED,   uint32_t, base,   256,
+               TGID0,    uint32_t, tg,     ,
+               LID0,     uint32_t, t,      )
+{
+  uint32_t tiles = a.p2;
+  uint32_t sg = t / SORT_RG, first = sg * SORT_RG, me = t - first;
+  base[t] = offs[t * tiles + tg];
+  before[t] = 0u;
+  for (uint32_t i = 0u; i < 4u; i++) {
+    uint32_t at = tg * 1024u + i * 256u + t;
+    bool live = at < a.p0;
+    KEY_T key = live ? keys[at] : (KEY_T)0;
+    uint32_t d = live ? ((uint32_t)(key >> a.p1) & 255u) : 256u;
+    uint32_t rank = 0u;
+    bool last = true;
+    // The width is the kernel's constant: every thread takes the same side.
+    bool shuffled = UKL_SIMD_WIDTH >= 32u;
+    if (!shuffled) {
+      digits[t] = d;
+      ukl_tg_barrier();
+    }
+    for (uint32_t j = 0u; j < SORT_RG; j++) {
+      uint32_t dj = shuffled ? ukl_sg_shuffle(d, j __UKL_ARGS) : digits[first + j];
+      if (dj == d && j < me) rank++;
+      if (dj == d && j > me) last = false;
+    }
+    for (uint32_t s = 0u; s < SORT_RGS; s++) counts[s * 256u + t] = 0u;
+    ukl_tg_barrier();
+    if (live && last) counts[sg * 256u + d] = rank + 1u;
+    ukl_tg_barrier();
+    uint32_t acc = 0u;
+    for (uint32_t s = 0u; s < SORT_RGS; s++) { uint32_t c = counts[s * 256u + t]; counts[s * 256u + t] = acc; acc += c; }
+    ukl_tg_barrier();
+    if (live) {
+      uint32_t to = base[d] + before[d] + counts[sg * 256u + d] + rank;
+      okeys[to] = key;
+      oidx[to] = idx[at];
+    }
+    ukl_tg_barrier();
+    before[t] += acc;
+    ukl_tg_barrier();
+  }
+}
+
+// Whether each sorted place starts a run. p0: the rows.
+DEFINE_KERNEL2(join, run_heads,
+               ROBUFFER, KEY_T,    keys,  "[a.p0]",
+               RWBUFFER, uint32_t, heads, "[a.p0]",
+               ARGS,     JoinP,    a,     ,
+               GID0,     uint32_t, t,     )
+{
+  if (t < a.p0) heads[t] = (uint32_t)(t == 0u || keys[t] != keys[t - 1u]);
+}
+
+// Each run's first place and key; the runs' count, and the end of the last. p0: the rows.
+DEFINE_KERNEL2(join, run_compact,
+               ROBUFFER, KEY_T,    keys,   "[a.p0]",
+               ROBUFFER, uint32_t, rid,    "[a.p0]",
+               RWBUFFER, uint32_t, starts, "[a.p0 + 1]",
+               RWBUFFER, KEY_T,    rkeys,  "[a.p0]",
+               RWBUFFER, uint32_t, nruns,  "[1]",
+               ARGS,     JoinP,    a,      ,
+               GID0,     uint32_t, t,      )
+{
+  uint32_t n = a.p0;
+  if (t >= n) return;
+  bool head = t == 0u || keys[t] != keys[t - 1u];
+  if (head) { starts[rid[t]] = t; rkeys[rid[t]] = keys[t]; }
+  if (t == n - 1u) { uint32_t r = rid[t] + (uint32_t)head; starts[r] = n; nruns[0] = r; }
+}
+
+// A column gathered into a sorted order. p0: the rows.
+DEFINE_KERNEL2(join, gather,
+               ROBUFFER, COL_T,    col,  "[rows]",
+               ROBUFFER, uint32_t, perm, "[a.p0]",
+               RWBUFFER, COL_T,    out,  "[a.p0]",
+               ARGS,     JoinP,    a,    ,
+               GID0,     uint32_t, t,    )
+{
+  if (t < a.p0) out[t] = col[perm[t]];
+}
+
+// The threadgroup's sums of `sq` and `cube` into S[0] and C[0].
+UKL_INLINE void join_tg_sums(UKL_LOCAL uint64_t* S, UKL_LOCAL uint64_t* C, uint32_t t, uint64_t sq, uint64_t cube)
+{
+  S[t] = sq; C[t] = cube;
+  ukl_tg_barrier();
+  for (uint32_t s = 128u; s > 0u; s >>= 1) {
+    if (t < s) { S[t] += S[t + s]; C[t] += C[t + s]; }
+    ukl_tg_barrier();
+  }
+}
+
+// Each run's length (0 past the runs), 1,024 a threadgroup, four a thread; the group's sums of lengths squared and
+// cubed into `part` (two words a group). p0: the rows.
+DEFINE_KERNEL2(join, col_stats,
+               ROBUFFER, uint32_t, starts, "[a.p0 + 1]",
+               ROBUFFER, uint32_t, nruns,  "[1]",
+               RWBUFFER, uint32_t, lens,   "[a.p0]",
+               RWBUFFER, uint64_t, part,   "[2 * tiles]",
+               ARGS,     JoinP,    a,      ,
+               SHARED,   uint64_t, S,      256,
+               SHARED,   uint64_t, C,      256,
+               TGID0,    uint32_t, g,      ,
+               LID0,     uint32_t, t,      )
+{
+  uint32_t n = a.p0;
+  uint32_t runs = n > 0u ? nruns[0] : 0u;
+  uint64_t sq = 0u, cube = 0u;
+  for (uint32_t i = 0u; i < 4u; i++) {
+    uint32_t r = g * 1024u + i * 256u + t;
+    if (r >= n) break;
+    uint32_t len = r < runs ? starts[r + 1u] - starts[r] : 0u;
+    lens[r] = len;
+    uint64_t l = len;
+    sq += l * l;
+    cube += l * l * l;
+  }
+  join_tg_sums(S, C, t, sq, cube);
+  if (t == 0u) { part[2u * g] = S[0]; part[2u * g + 1u] = C[0]; }
+}
+
+// One threadgroup: the groups' sums (p[1] of them) and the runs' count into `out`. p0: the rows.
+DEFINE_KERNEL2(join, col_sum,
+               ROBUFFER, uint64_t, part,  "[2 * a.p1]",
+               ROBUFFER, uint32_t, nruns, "[1]",
+               RWBUFFER, uint64_t, out,   "[3]",
+               ARGS,     JoinP,    a,     ,
+               SHARED,   uint64_t, S,     256,
+               SHARED,   uint64_t, C,     256,
+               LID0,     uint32_t, t,     )
+{
+  uint32_t n = a.p0, groups = a.p1;
+  uint64_t sq = 0u, cube = 0u;
+  for (uint32_t g = t; g < groups; g += 256u) { sq += part[2u * g]; cube += part[2u * g + 1u]; }
+  join_tg_sums(S, C, t, sq, cube);
+  if (t == 0u) { out[0] = n > 0u ? nruns[0] : 0u; out[1] = S[0]; out[2] = C[0]; }
+}
+
+// The k longest runs, longest first, from the lengths' sort (ascending, stable): each one's key and length.
+// p: the rows, k.
+DEFINE_KERNEL2(join, col_top,
+               ROBUFFER, uint32_t, perm,  "[a.p0]",
+               ROBUFFER, uint32_t, lens,  "[a.p0]",
+               ROBUFFER, KEY_T,    rkeys, "[a.p0]",
+               RWBUFFER, uint64_t, out,   "[3 + 2 * a.p1]",
+               ARGS,     JoinP,    a,     ,
+               GID0,     uint32_t, t,     )
+{
+  uint32_t n = a.p0, k = a.p1;
+  if (t >= k) return;
+  uint64_t key = 0u, len = 0u;
+  if (t < n) { uint32_t r = perm[n - 1u - t]; len = lens[r]; key = (uint64_t)rkeys[r]; }
+  out[3u + t] = key;
+  out[3u + k + t] = len;
+}
+
+// The engine's sketch hash (`logic::bloom::hash`, setfix's `mix`).
+UKL_INLINE uint64_t join_bloom_hash(uint64_t x)
+{
+  x ^= 0x9e3779b97f4a7c15UL;
+  x ^= x >> 30;
+  x *= 0xbf58476d1ce4e5b9UL;
+  x ^= x >> 27;
+  x *= 0x94d049bb133111ebUL;
+  return x ^ (x >> 31);
+}
+
+// The column's distinct values into a blocked Bloom filter (`logic::bloom`), decision 0506: a thread a run (one a
+// distinct value), its key less the base back to the value, five bits of one 64-bit word, set as the word's two
+// 32-bit halves with atomics (the same bytes as the host's words). `words` zeroed. p: the rows, the filter's 64-bit
+// words (a power of two), and whether the base is the span's (`span[0]`, on the device) or the host's (`b0`).
+DEFINE_KERNEL2(join, col_bloom,
+               ROBUFFER, KEY_T,    rkeys, "[a.p0]",
+               ROBUFFER, uint32_t, nruns, "[1]",
+               ROBUFFER, int64_t,  span,  "[1]",
+               RWBUFFER, uint32_t, words, "[2 * a.p1]",
+               ARGS,     JoinP,    a,     ,
+               GID0,     uint32_t, r,     )
+{
+  if (r >= a.p0 || r >= nruns[0]) return;
+  uint64_t h = join_bloom_hash((uint64_t)rkeys[r] + (uint64_t)(a.p2 != 0u ? span[0] : a.b0));
+  uint32_t w = (uint32_t)(h >> 40) & (a.p1 - 1u);
+  uint32_t lo = 0u, hi = 0u;
+  for (uint32_t i = 0u; i < 5u; i++) {
+    uint32_t b = (uint32_t)(h >> (6u * i)) & 63u;
+    if (b < 32u) lo |= 1u << b; else hi |= 1u << (b - 32u);
+  }
+  if (lo != 0u) ukl_atomic_or(&words[2u * w], lo);
+  if (hi != 0u) ukl_atomic_or(&words[2u * w + 1u], hi);
+}

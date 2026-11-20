@@ -135,7 +135,7 @@ impl<T> Drop for DemandZeroRegion<T> {
 // Windows: committed VirtualAlloc pages are demand-zero, as an anonymous mapping's are.
 #[cfg(windows)]
 impl<T> DemandZeroRegion<T> {
-    fn new(count: usize) -> Result<Self, Error> {
+    pub fn new(count: usize) -> Result<Self, Error> {
         use windows_sys::Win32::System::Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc};
         let mapped_bytes = count
             .checked_mul(mem::size_of::<T>())
@@ -462,7 +462,7 @@ fn reverse_pending(function: &mut FunctionBuilder<'_>, task: cranelift_codegen::
     };
     let last = function.ins().iadd_imm(high, -1);
     let (a, b) = (record(function, low), record(function, last));
-    const _: () = assert!(mem::size_of::<PendingRecord>() % 4 == 0);
+    const _: () = assert!(mem::size_of::<PendingRecord>().is_multiple_of(4));
     for word in 0..mem::size_of::<PendingRecord>() as i32 / 4 {
         let x = function.ins().load(types::I32, flags, a, 4 * word);
         let y = function.ins().load(types::I32, flags, b, 4 * word);
@@ -2911,79 +2911,77 @@ fn execute_batch_packed_once(
             return Err(Error::BackendFailure);
         }
     }
-    let task_outputs = (|| {
-        crate::code_rule_dsl::logic::profile::on_cores(|| {
-            spans
-                .into_par_iter()
-                .map(|span| span.iter_mut().map(|(program, context)| {
-                    // The queue uses tombstones within a task. Keeping a full
-                    // table of tombstones across roots turns each new insert into
-                    // a capacity-length probe. These records reference only the
-                    // current task's histories and cannot survive its execution.
-                    unsafe {
-                        if context.queued_state_quota_limit != 0 {
-                            std::ptr::write_bytes(
-                                context.queued_states,
-                                0,
-                                context.queued_state_quota_limit as usize,
-                            );
-                        }
-                        if context.greedy_entry_quota_limit != 0 {
-                            std::ptr::write_bytes(
-                                context.greedy_entries,
-                                0,
-                                context.greedy_entry_quota_limit as usize,
-                            );
-                        }
+    let task_outputs = crate::code_rule_dsl::logic::profile::on_cores(|| {
+        spans
+            .into_par_iter()
+            .map(|span| span.iter_mut().map(|(program, context)| {
+                // The queue uses tombstones within a task. Keeping a full
+                // table of tombstones across roots turns each new insert into
+                // a capacity-length probe. These records reference only the
+                // current task's histories and cannot survive its execution.
+                unsafe {
+                    if context.queued_state_quota_limit != 0 {
+                        std::ptr::write_bytes(
+                            context.queued_states,
+                            0,
+                            context.queued_state_quota_limit as usize,
+                        );
                     }
-                    context.most_steps = 0;
-                    unsafe { entries[*program](context) };
-                    // The task's steps: its total, or its longest path's or candidate's where that is more (what its
-                    // budget had to hold, decision 0334).
-                    unsafe {
-                        let most = context.most_steps.max(context.current_steps);
-                        (*context.status).reserved = (*context.status).reserved.max(most);
+                    if context.greedy_entry_quota_limit != 0 {
+                        std::ptr::write_bytes(
+                            context.greedy_entries,
+                            0,
+                            context.greedy_entry_quota_limit as usize,
+                        );
                     }
-                    let status = unsafe { *context.status };
-                    if status.error != 0 {
-                        return Ok(TaskPackedOutput {
-                            results: Vec::new(),
-                            captures: Vec::new(),
-                            properties: Vec::new(),
-                            bytes: Vec::new(),
-                        });
-                    }
-                    Ok(TaskPackedOutput {
-                        results: unsafe {
-                            std::slice::from_raw_parts(context.results, status.result_count as usize)
-                                .to_vec()
-                        },
-                        captures: unsafe {
-                            std::slice::from_raw_parts(
-                                context.final_captures,
-                                status.final_capture_count as usize,
-                            )
+                }
+                context.most_steps = 0;
+                unsafe { entries[*program](context) };
+                // The task's steps: its total, or its longest path's or candidate's where that is more (what its
+                // budget had to hold, decision 0334).
+                unsafe {
+                    let most = context.most_steps.max(context.current_steps);
+                    (*context.status).reserved = (*context.status).reserved.max(most);
+                }
+                let status = unsafe { *context.status };
+                if status.error != 0 {
+                    return Ok(TaskPackedOutput {
+                        results: Vec::new(),
+                        captures: Vec::new(),
+                        properties: Vec::new(),
+                        bytes: Vec::new(),
+                    });
+                }
+                Ok(TaskPackedOutput {
+                    results: unsafe {
+                        std::slice::from_raw_parts(context.results, status.result_count as usize)
                             .to_vec()
-                        },
-                        properties: unsafe {
-                            std::slice::from_raw_parts(
-                                context.properties,
-                                status.property_count as usize,
-                            )
-                            .to_vec()
-                        },
-                        bytes: unsafe {
-                            std::slice::from_raw_parts(
-                                context.output_bytes,
-                                status.output_byte_count as usize,
-                            )
-                            .to_vec()
-                        },
-                    })
-                }).collect::<Result<Vec<_>, Error>>())
-                .collect::<Result<Vec<Vec<_>>, Error>>()
-        })
-    })()?
+                    },
+                    captures: unsafe {
+                        std::slice::from_raw_parts(
+                            context.final_captures,
+                            status.final_capture_count as usize,
+                        )
+                        .to_vec()
+                    },
+                    properties: unsafe {
+                        std::slice::from_raw_parts(
+                            context.properties,
+                            status.property_count as usize,
+                        )
+                        .to_vec()
+                    },
+                    bytes: unsafe {
+                        std::slice::from_raw_parts(
+                            context.output_bytes,
+                            status.output_byte_count as usize,
+                        )
+                        .to_vec()
+                    },
+                })
+            }).collect::<Result<Vec<_>, Error>>())
+            .collect::<Result<Vec<Vec<_>>, Error>>()
+    })?
     .into_iter()
     .flatten()
     .collect::<Vec<_>>();

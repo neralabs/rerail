@@ -519,6 +519,16 @@ impl Store {
 }
 
 /// Analysis `A` of `v`, held by `v` (`Version::analyses`): for a reader outside a pipeline (a run's `Placed`).
+/// `v`'s twin (`Version::twin`) holding `v`'s analyses: what an analysis of `v` makes over `v` it makes over this,
+/// so the analysis, held by `v`, does not hold `v` (a cycle, which no drop ends: Q377). The analyses are shared, as
+/// they are of the same rules under the same ids (`Store::adopt`), so none is computed again; none adopted is a
+/// version made over `v` (each is made over a twin), so the twin holds none of `v` either.
+pub fn twin(v: &Arc<Version>) -> Arc<Version> {
+    let t = v.twin();
+    t.analyses().adopt(v.analyses());
+    t
+}
+
 pub fn analysis<A: Analysis>(v: &Arc<Version>) -> Result<Arc<A>> {
     let decided = RefCell::new(Vec::new());
     Cx { v, store: v.analyses(), pass: "reader", decided: &decided, asked: None }.get::<A>()
@@ -1270,6 +1280,7 @@ impl AskedByRule {
         }
         Some(AskedByRule { by, reqs: self.reqs.clone() })
     }
+
     /// `v`'s record with the carried relations' entries by rule, where they differ from what `v` states (a step
     /// changed their rules and did not state it); `None` where they agree. A request relation the pipeline does not
     /// carry (a step made it) keeps its own.
@@ -1292,6 +1303,7 @@ impl AskedByRule {
         }
         Some(out)
     }
+
     /// The record as `Version::asked` states it, for `v`'s rules.
     fn asked(&self, v: &Version) -> super::about::Asked {
         let mut asked = super::about::Asked::new();
@@ -1333,6 +1345,12 @@ impl<'s> Pipeline<'s> {
     pub fn new(name: &'static str, v: Arc<Version>) -> Pipeline<'s> {
         let asked = AskedByRule::of(&v);
         Pipeline { name, input: v.clone(), v, decided: RefCell::new(Vec::new()), stages: Vec::new(), failed: None, keep: false, last: Vec::new(), kept: Vec::new(), keyed: None, asked, asked_again: false }
+    }
+    /// A pipeline whose last step states the request record itself (a part's fields, `passes::PartOf`): the record is
+    /// not carried by rule, nor stated again after each step (Q180). Restated after a step, the record is a layer of
+    /// its own that the last step's states again (a part made a view, the record's overlay and its fields' overlay).
+    pub fn stating_record(name: &'static str, v: Arc<Version>) -> Pipeline<'s> {
+        Pipeline { asked: None, ..Pipeline::new(name, v) }
     }
     /// A pipeline whose steps are keyed and kept in `steps` (0281 §6). A step's key is a chain: the input version's
     /// identity (`identity`), the pipeline's name and the engine build, then for each step so far its pass's `NAME`,
@@ -1431,25 +1449,26 @@ impl<'s> Pipeline<'s> {
         let mut delta = Delta::of(from, &out);
         let mut out = out;
         match (&mut self.asked, carry) {
-            (Some(asked), Carry::Step) => asked.step(from, &out, &delta),
+            (Some(asked), Carry::Step) => {
+                asked.step(from, &out, &delta);
+                // A step that added, dropped, replaced or reordered a request relation's rules and did not state the
+                // record left it by place over other rules (Q226: `inline filters` made three, and `request rules
+                // another subsumes` read the record misaligned and kept it whole; a text pass replaced one, the count
+                // the same). Stated again now, by rule, as the tree's passes state it, so the next pass reads it
+                // aligned.
+                if let Some(restated) = (!delta.is_empty()).then(|| asked.restated(&out)).flatten() {
+                    let mut b = out.builder();
+                    b.fields().set_asked(&restated);
+                    out = b.finish_overlay()?;
+                    delta = Delta::of(from, &out);
+                }
+            }
             (Some(asked), Carry::Onto(kept)) => *asked = asked.onto(&kept, &out, &delta),
             (Some(asked), Carry::Is(now)) => *asked = now,
             // A pipeline that began with no record carries the one its first step states (the lowering's tail: the
             // requests made on request, `SourcesOnRequest`), unless a stored step left it to be read on `load`.
             (None, _) if !self.asked_again && from.asked().is_empty() => self.asked = AskedByRule::of(&out),
             (None, _) => {}
-        }
-        // A step that added, dropped, replaced or reordered a request relation's rules and did not state the record
-        // left it by place over other rules (Q180 on cost-classifier-metal-rf, Q226 here: `inline filters` made three,
-        // and `request rules another subsumes` read the record misaligned and kept it whole; a text pass replaced one,
-        // the count the same). Stated again now, by rule, so the next pass reads it aligned.
-        if let Some(asked) = &self.asked
-            && let Some(restated) = (!delta.is_empty()).then(|| asked.restated(&out)).flatten()
-        {
-            let mut b = out.builder();
-            b.fields().set_asked(&restated);
-            out = b.finish_overlay()?;
-            delta = Delta::of(from, &out);
         }
         let cx = Cx { v: &out, store: out.analyses(), pass, decided: &self.decided, asked: None };
         out.analyses().carry(from.analyses(), &cx, &delta)?;

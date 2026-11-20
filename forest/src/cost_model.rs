@@ -660,9 +660,9 @@ mod tests {
             return;
         }
         fn t<R>(what: &str, f: impl FnOnce() -> R) -> R {
-            let (g, c, w) = (crate::compute_kernel_metal::gpu_seconds_awaited(), crate::process_cpu(), std::time::Instant::now());
+            let (g, c, w) = (crate::device::gpu_seconds_awaited(), crate::process_cpu(), std::time::Instant::now());
             let r = f();
-            eprintln!("PHASE {what:44}: {:9.2} ms wall {:9.2} ms CPU {:9.2} ms GPU", w.elapsed().as_secs_f64() * 1e3, (crate::process_cpu() - c) * 1e3, (crate::compute_kernel_metal::gpu_seconds_awaited() - g) * 1e3);
+            eprintln!("PHASE {what:44}: {:9.2} ms wall {:9.2} ms CPU {:9.2} ms GPU", w.elapsed().as_secs_f64() * 1e3, (crate::process_cpu() - c) * 1e3, (crate::device::gpu_seconds_awaited() - g) * 1e3);
             r
         }
         let train = samples(12000);
@@ -705,13 +705,13 @@ mod tests {
         let fs = Arc::new(DatasetFeatureSpace::from_columns(&named, FeatureType::Real).unwrap());
         let targets: Vec<f32> = train.iter().map(|s| s.wall.max(MIN_SECONDS).ln() as f32).collect();
         let config = CostConfig::default().forest;
-        let (t, c, g) = (std::time::Instant::now(), crate::process_cpu(), crate::compute_kernel_metal::gpu_seconds_awaited());
+        let (t, c, g) = (std::time::Instant::now(), crate::process_cpu(), crate::device::gpu_seconds_awaited());
         let mut n = 0;
         while t.elapsed().as_secs_f64() < secs {
             train_regression_flat(fs.clone(), &targets, None, None, &config).unwrap();
             n += 1;
         }
-        eprintln!("PROFILED {n} forests: {:.1} ms wall {:.1} ms CPU {:.1} ms GPU a forest", t.elapsed().as_secs_f64() * 1e3 / n as f64, (crate::process_cpu() - c) * 1e3 / n as f64, (crate::compute_kernel_metal::gpu_seconds_awaited() - g) * 1e3 / n as f64);
+        eprintln!("PROFILED {n} forests: {:.1} ms wall {:.1} ms CPU {:.1} ms GPU a forest", t.elapsed().as_secs_f64() * 1e3 / n as f64, (crate::process_cpu() - c) * 1e3 / n as f64, (crate::device::gpu_seconds_awaited() - g) * 1e3 / n as f64);
     }
 
     /// The model learns the costs (within a few percent on samples like those it trained on), the host's and the

@@ -2,7 +2,7 @@
 //! row of a fixed schema, so a rule can read a program as data (`write_version`); a field's rows read back as the field
 //! (`fields`).
 //!
-//! These rows are not how a program is kept (decision 0155): a kept program is its `.rr` text (`program_text`). The
+//! These rows are not how a program is kept (decision 0155): a kept program is its `.rerail` text (`program_text`). The
 //! rows are made from a program when asked for, and the text's `.about` part is the rows of what has no syntax
 //! (`write_field`).
 //!
@@ -427,7 +427,7 @@ pub enum Field<'a> {
     Gates(&'a [(String, Gate)]),
     /// `.policy { … }`: lint-rule documents, each without its matchers, which are the rules' `ast` atoms (`yaml`).
     Policies(&'a [serde_json::Value]),
-    /// `.rr` setting directives (`.mode block`, `.scope include "…"`, …), by name, as written (`logic::rr`).
+    /// `.rerail` setting directives (`.mode block`, `.scope include "…"`, …), by name, as written (`logic::rr`).
     Settings(&'a [(String, String)]),
     /// Relations the evaluator makes from their inputs' rows rather than from rules (`dfs_first`), by name. Each
     /// has one rule over its inputs, which orders it after them; its rows are the native operator's.
@@ -443,7 +443,7 @@ pub enum Field<'a> {
     /// relation: for each of its rules, in order, the relations whose readers it serves. `Prune` keeps a request
     /// rule only while one of them is reached, as a reader's request is kept with the reader (`manager::AskedByRule`).
     Asked(&'a BTreeMap<String, Vec<BTreeSet<String>>>),
-    /// The regexes `match_all` and `match` run over `source` or `src_line` spans (`core.rr`: their captures are
+    /// The regexes `match_all` and `match` run over `source` or `src_line` spans (`core.rerail`: their captures are
     /// spans), and over which: the batch makes `rx_span(p, c, j, g, m)` for them, each match's groups as spans.
     RxSpans(&'a BTreeSet<(SpanIn, String)>),
 }

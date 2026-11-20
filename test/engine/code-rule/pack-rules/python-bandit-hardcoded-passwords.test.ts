@@ -1,6 +1,6 @@
 /**
- * bandit-b105-hardcoded-password-string and bandit-b107-hardcoded-password-default (packs/python/candidates/) must
- * report what Bandit 1.9.4's general_hardcoded_password plugin reports.
+ * bandit-b105-hardcoded-password-string (packs/python/rules/) and bandit-b107-hardcoded-password-default
+ * (packs/python/candidates/rules/) must report what Bandit 1.9.4's general_hardcoded_password plugin reports.
  *
  * B107 checks only `FunctionDef`: a lambda's or an `async def`'s parameter defaults are not reported (#267).
  *
@@ -34,9 +34,10 @@ const evaluationSchema = z.object({
   failures: z.array(z.unknown()).default([]),
 });
 
-async function compile(ruleId: string): Promise<NativeCompiledCodeRuleDsl> {
+/** Compiles the rule document at `folder` (the pack's `rules` or `candidates/rules`). */
+async function compile(folder: readonly string[], ruleId: string): Promise<NativeCompiledCodeRuleDsl> {
   if (runtime === undefined) throw new Error("Native binding must export CodeRuleDslRuntime");
-  const document = await readFile(repositoryPath("packs", "python", "candidates", "rules", `${ruleId}.json`), "utf8");
+  const document = await readFile(repositoryPath("packs", "python", ...folder, `${ruleId}.json`), "utf8");
   return runtime.compile(document, "json", capabilities);
 }
 
@@ -102,14 +103,14 @@ const B105: readonly (readonly [string, number[]])[] = [
 ];
 
 describe("bandit-b107-hardcoded-password-default", async () => {
-  const rule = await compile("bandit-b107-hardcoded-password-default");
+  const rule = await compile(["candidates", "rules"], "bandit-b107-hardcoded-password-default");
   it.each(B107)("%s is reported: %s", (source, reported) => {
     expect(reportedColumns(rule, source).length > 0).toBe(reported);
   });
 });
 
 describe("bandit-b105-hardcoded-password-string", async () => {
-  const rule = await compile("bandit-b105-hardcoded-password-string");
+  const rule = await compile(["rules"], "bandit-b105-hardcoded-password-string");
   it.each(B105)("%s reports columns %j", (source, columns) => {
     expect(reportedColumns(rule, source)).toEqual(columns);
   });

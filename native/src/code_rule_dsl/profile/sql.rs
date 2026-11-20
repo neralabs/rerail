@@ -590,7 +590,8 @@ unsafe extern "C" fn trace(
                     }
                 };
                 let sql = String::from_utf8_lossy(canonical);
-                if let Some(observer)=&profiler.observer {observer.start(pointer);}
+                // SAFETY: the live statement SQLite gave this trace callback, for its length.
+                if let Some(observer)=&profiler.observer {unsafe { observer.start(pointer) };}
                 let query = state.query(&sql, "sql");
                 state.sql_started += 1;
                 state.origin_started[origin] += 1;
@@ -621,7 +622,8 @@ unsafe extern "C" fn trace(
                 }
             }
             ffi::SQLITE_TRACE_PROFILE => {
-                if let Some(observer)=&profiler.observer {observer.end(pointer);}
+                // SAFETY: as at its start: the live statement SQLite gave this trace callback.
+                if let Some(observer)=&profiler.observer {unsafe { observer.end(pointer) };}
                 let Some(running) = state.running.remove(&key) else {
                     return;
                 };

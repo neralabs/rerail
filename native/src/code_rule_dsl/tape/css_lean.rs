@@ -26,7 +26,7 @@ fn kind_ids() -> &'static [Option<u16>] {
 /// cannot be made.
 pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_css_lean::Refusal> {
     let ids = kind_ids();
-    let code_of = |&key: &u32| -> Result<Code, String> {
+    let code_of = move |&key: &u32| -> Result<Code, String> {
         let (kind, _, _, extra) = rerail_css_lean::unkey(key);
         let kind = ids[usize::from(kind)].ok_or_else(|| format!("tree-sitter-css lacks the lean parser's kind {kind}"))?;
         let mut code = Code::plain(kind, 0, &[])?;
@@ -35,7 +35,7 @@ pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Res
         }
         Ok(code)
     };
-    rerail_css_lean::tape_into(source.as_bytes(), &mut super::formats::lean(grammar, source, budget, &code_of))
+    rerail_css_lean::tape_into(source.as_bytes(), &mut super::formats::lean(grammar, source, budget, code_of))
 }
 
 /// CSS's tree parser: the lean parser, standing in for tree-sitter-css where it reads the file.
@@ -43,9 +43,6 @@ pub struct Lean;
 
 impl TreeParser for Lean {
     fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
-        if !grammar.lang.embeds().is_empty() {
-            return None;
-        }
         let span = crate::code_rule_dsl::logic::profile::span(|| "lean CSS parse and tape".into());
         match encode(grammar, source, &budget) {
             Ok(image) => {

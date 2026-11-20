@@ -195,6 +195,25 @@ const GPU_PER_SUBMISSION: f64 = 0.15e-3;
 /// the GPU had to be twice the cheaper (`MARGIN`, 2), against estimates 8 times off (decision 0320).
 pub(in crate::code_rule_dsl) const GPU_BIAS: f64 = 2.0;
 
+/// How long a stratum placed on the device may wait for the device's memory before it runs on the CPU instead (Q203):
+/// the CPU's price for its `work` units of planned work less the device's, at the prices it was placed by. Never
+/// negative.
+pub fn worth_waiting(work: f64) -> f64 {
+    ((CPU_PER_STRATUM + CPU_PER_WORK * work) - (GPU_PER_SUBMISSION + GPU_PER_WORK * work)).max(0.0)
+}
+
+/// The most work placed on the device waits for the device's memory (`gpu::shared::admit`), whatever the CPU's price
+/// for it: a wait past it is a wave held up, not a choice of the work's.
+const ADMIT_MAX: f64 = 0.5;
+
+/// How long work placed on the device (a stratum's tables, a matcher wave's workspace) waits for the device's memory to
+/// be admitted, for `work` units of its planned work: what waiting is worth (`worth_waiting`), at most `ADMIT_MAX`.
+/// Past it the work runs on the CPU, the price having chosen it (0334); the admission refuses at once where no lease
+/// coming back makes the room.
+pub fn admission_patience(work: f64) -> f64 {
+    worth_waiting(work).min(ADMIT_MAX)
+}
+
 /// `GPU_BIAS`, or `RERAIL_GPU_BIAS` when set: a measurement aid only, to refit the bias over runs at several.
 pub(in crate::code_rule_dsl) fn gpu_bias() -> f64 {
     rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_GPU_BIAS").ok().and_then(|v| v.parse().ok()).filter(|b: &f64| *b > 0.0).unwrap_or(GPU_BIAS))
@@ -225,11 +244,11 @@ pub(in crate::code_rule_dsl) fn device() -> bool {
 }
 
 /// Whether this run may place strata on the device, until the guard drops. `RERAIL_DEVICE=always` makes a Metal
-/// binding `Always`.
+/// binding `Always`, and so does a caller's `Always` (a test's, `set_binding`).
 pub(in crate::code_rule_dsl) fn set_device(on: bool) -> rerail_prof::code_rule_dsl::logic::profile::Bound {
     let b = match on {
         false => Binding::Cpu,
-        true if always_env() => Binding::Always,
+        true if always_env() || binding() == Binding::Always => Binding::Always,
         true => Binding::Metal,
     };
     set_binding(b)
@@ -327,7 +346,7 @@ fn row_term(v: &Version, t: TermRef<'_>) -> bool {
     }
 }
 
-/// The device's form of `.rr`'s (or the native engine's) function `f`.
+/// The device's form of `.rerail`'s (or the native engine's) function `f`.
 fn device_fn(f: &str) -> Option<DeviceFn> {
     caps::device_fn(caps::native(f))
 }
@@ -554,7 +573,7 @@ pub(in crate::code_rule_dsl) fn price_join(j: &JoinEst, sorted: bool) -> JoinCho
         PROBE_FIXED + j.input * (keys * UPLOAD_PER_VALUE + PROBE_PER_ROW) + j.output * PROBE_PER_PAIR + sort
     };
     let probe_s = (!j.range).then(|| probe(sorted));
-    let tile_s = j.range.then(|| TILE_FIXED + (j.input + j.relation) * keys * TILE_HOST_PER_VALUE + j.output * TILE_COMPARES_PER_PAIR * TILE_PER_COMPARE);
+    let tile_s = j.range.then_some(TILE_FIXED + (j.input + j.relation) * keys * TILE_HOST_PER_VALUE + j.output * TILE_COMPARES_PER_PAIR * TILE_PER_COMPARE);
     // The device's form is the cheaper of its own, and is taken over the CPU's index while under `GPU_BIAS` times it.
     let device = [(JoinForm::Probe, probe_s), (JoinForm::Tile, tile_s)].into_iter()
         .filter_map(|(f, p)| Some((f, p?))).min_by(|a, b| a.1.total_cmp(&b.1));
@@ -760,6 +779,12 @@ pub(in crate::code_rule_dsl) fn place(shape: &Shape) -> Placement {
     Placement { gpu, gpu_cheaper, missing, cpu_s, gpu_s, device, joins, lacking: shape.lacking(), terms }
 }
 
+/// A measurement aid only: `RERAIL_DEVICE_JOINS=off` keeps every stratum's joins on the CPU under a device binding,
+/// so a run can be paired against the same binding with them on. Placement still prices and reports as usual.
+pub(crate) fn device_joins_off() -> bool {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_DEVICE_JOINS").is_ok_and(|v| v == "off"))
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -851,8 +876,7 @@ pub mod tests {
         // Join steps priced on each form: a large equi-join takes the sort and probe, its second probe of the same
         // relation pays no sort; a range inside a document takes the tile; a small lookup stays on the CPU's index.
         let est = |rel: &str, input: f64, output: f64, range: bool| JoinEst { rel: rel.into(), input, relation: 1e6, output, walked: (input, output), keys: 1, range, cost: 1.0 };
-        let mut joined = Shape::default();
-        joined.joins = vec![est("a", 1e6, 1e6, false), est("a", 1e6, 1e6, false), est("b", 1e6, 1e6, true), est("c", 10.0, 10.0, false)];
+        let joined = Shape { joins: vec![est("a", 1e6, 1e6, false), est("a", 1e6, 1e6, false), est("b", 1e6, 1e6, true), est("c", 10.0, 10.0, false)], ..Shape::default() };
         let p = place(&joined);
         let forms: Vec<JoinForm> = p.joins.iter().map(|c| c.form).collect();
         assert_eq!(forms, vec![JoinForm::Probe, JoinForm::Probe, JoinForm::Tile, JoinForm::Index], "{p:?}");
@@ -909,10 +933,4 @@ pub mod tests {
         adds(&mut rec, &[atom("edge", false)], &[T::Call("add", vec![])], 1.0, true);
         assert!(rec.forms.contains(&Form::Recursion) && rec.forms.contains(&Form::Computed));
     }
-}
-
-/// A measurement aid only: `RERAIL_DEVICE_JOINS=off` keeps every stratum's joins on the CPU under a device binding,
-/// so a run can be paired against the same binding with them on. Placement still prices and reports as usual.
-pub(crate) fn device_joins_off() -> bool {
-    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_DEVICE_JOINS").is_ok_and(|v| v == "off"))
 }

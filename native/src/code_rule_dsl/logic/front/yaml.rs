@@ -100,9 +100,9 @@ pub fn documents(v: &Version) -> Result<Vec<Value>, Error> {
     Ok(out)
 }
 
-/// The `.rr` text of a program of policies: its declarations, outputs, `.policy` documents and rules.
+/// The `.rerail` text of a program of policies: its declarations, outputs, `.policy` documents and rules.
 pub fn text(v: &Arc<Version>) -> String {
-    crate::code_rule_dsl::logic::rr::print_version(v).expect("matcher rules print as .rr")
+    crate::code_rule_dsl::logic::rr::print_version(v).expect("matcher rules print as .rerail")
 }
 
 // cratify: `tests` is rerail-logic's (it mounts it)

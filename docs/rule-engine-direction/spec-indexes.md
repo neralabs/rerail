@@ -82,7 +82,7 @@ DLRE built a **second, private SQLite store** following ast-index-spike's `tape_
 
 `ANALYZE temp.*` runs after each materialized relational stage (`relational/storage.rs:68`, `reachability.rs:87,144`, `forest.rs:159`). That is spike dead end D50: temp tables plus ANALYZE, 57-115x slower.
 
-### 1.3 N1562 (`jbarnes/ner-1562-sql-rerailer` @ `8b6576f0`)
+### 1.3 N1562 (`jbarnes/sql-rerailer` @ `8b6576f0`)
 - **Schema:** none new. Its `content_store/schema.rs` is older than main (it predates `file_documents`).
 - **Estimates:** constants. `set_estimated_rows(100_000)` or `i64::MAX` in `rerail_matches` `xBestIndex` (`transducer/sql_backend.rs:2461-2468`).
 - **Design:** `docs/sql-scope-and-operational-semantics-design.md:609-627` specifies SQL-visible statistics: documents by language, nodes by document and kind, kind frequencies "from `fts5vocab` over `search_kind_fts`", candidate counts per scope recipe, demand counts, multiplicity and failure counts. "Virtual tables use these values for `estimatedRows`." None of this is implemented. `query/plan/` has identities and grouping, no statistics.

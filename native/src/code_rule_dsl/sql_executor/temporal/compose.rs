@@ -475,14 +475,13 @@ impl Frame {
             })
             .collect();
         for op in &mut self.operators {
-            if op.phase_eligible && op.active {
-                if let Some(states) = &op.run.reductions {
+            if op.phase_eligible && op.active
+                && let Some(states) = &op.run.reductions {
                     w.context_rows += states
                         .values()
                         .map(|s| s.phase_context_rows(&counts))
                         .sum::<u64>();
                 }
-            }
             if op.active {
                 op.run
                     .counts

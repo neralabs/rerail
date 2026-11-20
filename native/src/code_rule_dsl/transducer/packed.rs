@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 
 use super::super::tape::TapeDoc;
 use ast_grep_core::MatchStrictness;
@@ -34,7 +33,6 @@ pub mod capture_run;
 // cratify: `metal_backend` is rerail-device-metal's (it mounts it)
 // cratify: a re-export of rerail-device-metal's, which its facades of this module make
 pub mod metal_batch_abi;
-// cratify: `metal_parallel` is rerail-device-metal's (it mounts it)
 // Row programs on Metal: scan, count and scatter over the 16-bit layout (decision 0095).
 // cratify: `metal_rows` is rerail-device-metal's (it mounts it)
 // Relations sorted by a key on the device, and the joins that probe them (decision 0095).
@@ -134,7 +132,7 @@ pub mod regex_block;
 // cratify: `block_rows_tests` is rerail-device-metal's (it mounts it)
 #[cfg(test)]
 pub mod block_digest_tests;
-// The `.rr` parser (`rerail_rr_parser`): the Bitlex grammar compiled, the engine's parser for
+// The `.rerail` parser (`rerail_rr_parser`): the Bitlex grammar compiled, the engine's parser for
 // what it refuses. Nothing in the engine parses with it yet; named here for the engine's callers.
 #[allow(unused_imports)]
 pub use rerail_rr_parser as rr_parser;
@@ -1939,6 +1937,19 @@ impl Program {
             vec![1, 2],
             Vec::new(),
         )
+    }
+
+    /// Whether `pattern` is a bare metavariable (`$X`, `$_`, `$$X`), and if so whether it wants a named node. At its
+    /// root such a pattern holds at every node (a named one for `$X`), its one capture the node itself: a node test,
+    /// not a pattern to match (t45 §3).
+    pub fn bare_metavariable(pattern: &Pattern) -> Option<bool> {
+        if !matches!(pattern.strictness, MatchStrictness::Smart) {
+            return None;
+        }
+        match &pattern.node {
+            PatternNode::MetaVar { meta_var: MetaVariable::Capture(_, named) | MetaVariable::Dropped(named) } => Some(*named),
+            _ => None,
+        }
     }
 
     pub fn compile_ast_grep_pattern(pattern: &Pattern) -> Result<Self, Error> {

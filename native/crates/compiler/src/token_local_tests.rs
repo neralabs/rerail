@@ -1,6 +1,6 @@
 //! The facts of `token_local` (doc 25, step 1): exact facts on small grammars and the checker's
-//! catching of wrong claims. Every claim on the `.rr` grammar is checked on its corpus in the
-//! `.rr` parser's crate (`rerail_rr_parser`'s `token_local_tests`).
+//! catching of wrong claims. Every claim on the `.rerail` grammar is checked on its corpus in the
+//! `.rerail` parser's crate (`rerail_rr_parser`'s `token_local_tests`).
 
 use std::collections::BTreeSet;
 

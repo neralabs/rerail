@@ -1,6 +1,6 @@
-# Group 8: what `.rr` lacks for 18 data-layer checks
+# Group 8: what `.rerail` lacks for 18 data-layer checks
 
-Oracle: scripts at revision 2b1504ad (`scripts/…`). Library names cite `lib/core.rr` and `lib/python/*.rr` on this
+Oracle: scripts at revision 2b1504ad (`scripts/…`). Library names cite `lib/core.rerail` and `lib/python/*.rerail` on this
 branch. "EXISTS" means the meaning can be written today, possibly as several rules; the composition is named.
 Notes that apply to more than one check:
 
@@ -547,7 +547,7 @@ Notes that apply to more than one check:
   - EXISTS annotation-name lowercase tests with `(?i)` regexes; path hints with `doc` path `contains`.
 - **Hard parts:** the `detail` ("calls X") depends on BFS order (`:173-179`). It is message only and not part of the
   key. The candidate needed a native `reference_edges` table and a SQL `relational` clause
-  (Data-layer-rule-expressivity `docs/data-layer-batch-five.md`, "Declared references"). In `.rr` that is plain
+  (Data-layer-rule-expressivity `docs/data-layer-batch-five.md` (removed; at 7efcac9c67), "Declared references"). In `.rerail` that is plain
   recursive Datalog over `declared_ref`, so no new construct is needed. The batch notes say the graph *deliberately
   ignores* assignment aliases, quoted receiver annotations, positional-only annotations, conditional field annotations
   and indirect module re-exports. `declared_ref` must reproduce those omissions, not resolve more.
@@ -579,7 +579,7 @@ Notes that apply to more than one check:
     (abstractmethod decorator or ABC base, as `SymbolInfo.is_abstract` sets it).
   - EXISTS two categories per class at one span: the finding key includes `category`.
 - **Hard parts:** the production plugin adds dynamic-import roots, but standalone `analyze_dead_code` does not
-  (batch-five notes, "Dynamic-import probes disagreed"). The `.rr` port must follow the plugin. Module-level
+  (batch-five notes, "Dynamic-import probes disagreed"). The `.rerail` port must follow the plugin. Module-level
   references are expanded once per module the first time any of its symbols is reached, plus for every module imported
   anywhere. That is monotone, so recursion gives the same fixpoint. "Imported anywhere" is by fully-qualified name
   from `imported_symbols`, so a symbol imported only under `TYPE_CHECKING` still counts.

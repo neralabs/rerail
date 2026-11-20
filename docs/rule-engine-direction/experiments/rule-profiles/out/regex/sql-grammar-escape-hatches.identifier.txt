@@ -1,5 +1,0 @@
-^(?:Iterable|Mapping|Optional|Sequence|dict|frozenset|list|set|tuple)$
-^(?:SqlAdminQuery|SqlBuiltQuery|SqlDdlStatement|SqlLegacy|SqlRawSql|SqlRawSqlWithParams|SqlUnsafe|_SqlPrebuiltCondition|_SqlPrebuiltQuery)$
-^(?:__init__)$
-^(?:self)$
-^(?:str)$

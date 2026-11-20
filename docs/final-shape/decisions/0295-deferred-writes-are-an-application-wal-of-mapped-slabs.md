@@ -289,8 +289,19 @@ wrap, anonymous or file-backed, so the pool's own budget is what counts those.
    as a row of codec 0 pointing at its range (`seg`, `seg_at`, `seg_len`; no frame), moving a stored row there
    (upsert), so a row whose segment went missing is whole again once its file is parsed again. Every read of either
    (the corpus's tapes before the first wave, residency, the bulk reads, search indexing, the prefilter's tapes) maps
-   the segment; a row of `seg` 0 is an older or lone write's zstd frame, decompressed as before. Outside a run's
-   waves (a standalone build, a publication) a file is still compressed and written in its own rows. Upkeep compacts
+   the segment. **No inline rows (2026-11-19, the user: "why do we have inline sql rows? ... We should not have them
+   anymore").** Inline zstd rows (`seg` 0) had stayed for writes outside a run's waves (a standalone build, a
+   publication, a snapshot, `put_source`/`put_tape`), for rows written before, and for a gather that found no room on
+   disk. Now every write places its objects in a segment: outside the waves `Placing` writes one segment of the
+   write's sources and tapes before its transaction, which numbers it (`max(seg)+1`) and inserts rows pointing at it,
+   and names the file once the rows commit (an overlay publication's pass gives its rows `seg` 0 as "this pass's
+   segment", which its SQL resolves to the number the pass's transaction registered); a gather with no room is dropped
+   and its files parsed again later. No source or tape is compressed (`compress_source`, `compress_tape`, the
+   shipped dictionaries' use and the decompressed read cache are gone: a read is the bytes in their segment). The
+   floor is 7 (`content-v7.sqlite`): an older store, which may hold inline rows, is refused, not read. Results,
+   relationships, the facts memo and tree pages keep their zstd rows (not sources or tapes). Tests:
+   `objects_whose_rows_disagree_with_their_segments_fail_closed`, `source_and_tape_objects_deduplicate_and_round_trip`
+   (no row holds bytes). Upkeep compacts
    the segments; a row whose segment is gone is marked `seg` -1 (never a segment's number) rather than deleted, as
    other rows name it. The store's disk budget (`capacity`) counts the three segment directories, which it did not.
    Test: `a_runs_tapes_and_sources_are_gathered_into_a_segment_and_read_there`.

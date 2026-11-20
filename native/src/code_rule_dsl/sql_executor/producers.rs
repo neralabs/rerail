@@ -202,8 +202,9 @@ pub fn steps(db: &mut Database, emitted: &mut plan::emit::Emitted, program: &Ver
     }
     let resolved = resolve(db, emitted, program, producers)?;
     let all_reads: Vec<Vec<String>> = resolved.iter().map(|(reads, _)| reads.clone()).collect();
-    let mut stratum = emitted.program.steps.iter().map(|s| s.stratum).max().unwrap_or(0);
-    for (p, reads) in producers.iter().zip(&all_reads) {
+    let top = emitted.program.steps.iter().map(|s| s.stratum).max().unwrap_or(0);
+    // Each producer a stratum of its own, after the program's.
+    for (stratum, (p, reads)) in (top + 1..).zip(producers.iter().zip(&all_reads)) {
         let decl = program.columns_of(&p.rel).unwrap_or_default();
         let below = downstream(program, producers, &all_reads, &p.rel);
         if let Some(cycle) = reads.iter().find(|r| below.contains(*r)) {
@@ -218,7 +219,6 @@ pub fn steps(db: &mut Database, emitted: &mut plan::emit::Emitted, program: &Ver
             .zip(&columns)
             .map(|((_, ty), c)| if ty == "sym" { format!("sym_atom({c})") } else { c.clone() })
             .collect();
-        stratum += 1;
         emitted.program.steps.push(schedule::Step {
             output: p.rel.clone(),
             stratum,

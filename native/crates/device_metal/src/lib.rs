@@ -2,13 +2,21 @@
 //!
 //! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
 // A mounted module re-exports its dependency's by glob, and its sources import the same items
-// under the same names: the glob's name and the private one are one item.
-#![allow(dead_code, unused_imports, hidden_glob_reexports)]
+// under the same names: the glob's name and the private one are one item. The mounts also widen what the crates
+// above read (the split's facades, not a design).
+#![allow(dead_code, unused_imports, hidden_glob_reexports, private_interfaces, private_bounds)]
+// What the split widened for the crates above is no public API (`len`, `()` errors, `new`); the long
+// signatures and tuple types are the sources' own.
+#![allow(clippy::len_without_is_empty, clippy::result_unit_err, clippy::new_without_default)]
+#![allow(clippy::type_complexity, clippy::too_many_arguments)]
+// The mounts' `#[path]`s name the directories of the Metal modules they hold, which only macOS builds.
+#![cfg_attr(not(target_os = "macos"), allow(unused_attributes))]
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
 pub use rerail_store::content_store;
+pub use rerail_store::git_access;
 pub use rerail_store::git_workspace;
 extern crate self as rerail_device_metal;
 #[path = "../../../src/code_rule_dsl"]
@@ -92,6 +100,7 @@ pub mod code_rule_dsl {
     pub use rerail_w::code_rule_dsl::hooks;
     pub use rerail_w::code_rule_dsl::identifier;
     pub use rerail_lang::code_rule_dsl::json;
+    pub use rerail_lang::code_rule_dsl::regexes;
     pub mod language {
         pub use rerail_lang::code_rule_dsl::language::*;
         pub use rerail_w::code_rule_dsl::language::adapter;
@@ -430,7 +439,6 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use tree_sitter::{Language, Node as TsNode, TreeCursor};
         #[allow(unused_imports)]
-        #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::tape::index::IndexImage;
         #[allow(unused_imports)]
         pub(super) use crate::code_rule_dsl::tape::wire::index_span;
@@ -468,8 +476,6 @@ pub mod code_rule_dsl {
             #[cfg(target_os="macos")]
             pub mod metal_join;
             #[cfg(target_os="macos")]
-            pub mod metal_parallel;
-            #[cfg(target_os="macos")]
             pub mod metal_program_backend;
             #[cfg(target_os="macos")]
             pub mod metal_rows;
@@ -503,7 +509,6 @@ pub mod code_rule_dsl {
             use std::sync::Arc;
             #[allow(unused_imports)]
             #[cfg(any(test, feature = "test-hooks"))]
-            #[allow(unused_imports)]
             use crate::code_rule_dsl::transducer::packed::literal_anchors::*;
             #[allow(unused_imports)]
             #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
@@ -531,13 +536,11 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use rerail_compiler::native_cpu_codegen;
             #[allow(unused_imports)]
-            #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use rerail_compiler::native_cpu_rows;
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::packed_batch::PackedExecution;
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use rerail_compiler::block;
-            #[allow(unused_imports)]
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use rerail_rr_parser as rr_parser;
             #[allow(unused_imports)]
@@ -641,5 +644,8 @@ pub(crate) fn test_languages() {
     ONCE.call_once(|| {
         register(Family::Python, &Pack::<Python>::NEW);
         language::register_base(Family::Python, &Pack::<Python>::NEW);
+        // Python's strings embed code at the places it declares (decision 0470): a Python file's tape reads its
+        // embedder, which the engine registers with the rest as it loads.
+        crate::code_rule_dsl::embed::install_embedders(vec![(language::Via::CallArgument, &rerail_lang_python::code_rule_dsl::embed::call_argument::CallArgument)]);
     });
 }

@@ -1,4 +1,4 @@
-//! Joins deferred to their readers' requests (decision 0477), on the version. A binary positive join projected
+//! Joins deferred to their readers' requests (decision 0506), on the version. A binary positive join projected
 //! across a hidden key (`wide(a, b) :- lhs(a, k), rhs(b, k)`) is driven by what its readers request: the pairs
 //! (or one endpoint) every reader binds become reader demand on it (`upstream::install_named`, `DEFERRED_PAIRS`);
 //! a request for one endpoint that is frequent shares its side's witnesses across the pairs requested (`share`);

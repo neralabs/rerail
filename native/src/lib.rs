@@ -1,6 +1,9 @@
 // A build of some languages, or without the addon (`headless`), leaves the others' code and the addon's API unused by
 // design: dead-code warnings there say nothing (the default build still warns).
-#![cfg_attr(any(not(feature = "all-languages"), feature = "headless"), allow(dead_code))]
+#![cfg_attr(
+    any(not(feature = "all-languages"), feature = "headless"),
+    allow(dead_code)
+)]
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
@@ -14,35 +17,47 @@ mod build_identity;
 #[allow(dead_code)]
 mod build_languages;
 // Each test's time limit, enforced inside the test binary (`RERAIL_TEST_TIMEOUT`).
-#[cfg(test)]
-mod test_watchdog;
-// The test binary's stores flush nothing (`RERAIL_FLUSH=none`, decision 0465) unless the environment says otherwise.
-#[cfg(test)]
-mod test_flush;
+mod code_rule_dsl;
 #[cfg(test)]
 mod executors_guard_tests;
 #[cfg(test)]
+mod test_watchdog;
+// The test binary's stores flush nothing (`RERAIL_FLUSH=none`, decision 0481) unless the environment says otherwise.
+#[cfg(test)]
+mod test_flush;
+#[cfg(test)]
 mod text_readers_guard_tests;
-mod code_rule_dsl;
+#[cfg(all(test, not(windows)))]
+pub(crate) use code_rule_dsl::prof::purge_allocator_pages;
 /// The engine's tools without Node (`rerail-engine dump` / `asm`).
 pub use code_rule_dsl::tools;
-#[cfg(test)]
-pub(crate) use code_rule_dsl::prof::purge_allocator_pages;
 pub use rerail_store::content_store;
-pub use rerail_w::git_ignore;
+/// Every in-process Git read (`native/src/git_access`): the opener, its setup and its pool are the store's
+/// (`rerail-store`), which the workspace discovery and the ignore matcher open through; the Node-API object that
+/// installs the setup is the engine's.
+pub mod git_access {
+    pub use rerail_store::git_access::*;
+    pub mod owner;
+    #[cfg(test)]
+    mod tests;
+}
+pub mod git_start;
 pub use rerail_store::git_workspace;
 pub use rerail_store::source_tree;
+pub use rerail_w::git_ignore;
 mod main_instance;
 mod model;
 pub use rerail_w::panic_boundary;
+mod path_owner;
 pub mod process;
 pub use rerail_logic::threads;
 /// The browser's long-lived engine: `rerail_command` and its buffers (wasm/README.md).
 #[cfg(target_family = "wasm")]
 pub mod reactor;
 mod rules;
+pub mod tree_watch;
 
-use model::{ModelFingerprint, load_model, verify_model};
+use model::{ModelFingerprint, shared_model, verify_model};
 use napi::{Error, Result, Status, bindgen_prelude::Float32Array};
 use napi_derive::napi;
 use rules::{CompileSummary, ModelEncoder, NativeMatch, NativeRuleInput, NativeSample, RuleSet};
@@ -57,10 +72,14 @@ static GLOBAL: Sampled = Sampled;
 /// jemalloc, with the heap sampler around it (`rerail_prof::heap`, `RERAIL_HEAP_SAMPLE`): off, one load more an
 /// allocation. Tree-sitter's allocations go to jemalloc directly and are not sampled.
 #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+#[cfg_attr(test, allow(dead_code))]
 struct Sampled;
 
+// Every allocation of every crate calls these through the allocator shim (`__rust_alloc`): inlined into it, as
+// jemalloc's own are, they cost the shim one load more an allocation and not a call of their own.
 #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
 unsafe impl std::alloc::GlobalAlloc for Sampled {
+    #[inline]
     unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
         let p = unsafe { tikv_jemallocator::Jemalloc.alloc(layout) };
         if rerail_prof::heap::on() {
@@ -68,6 +87,7 @@ unsafe impl std::alloc::GlobalAlloc for Sampled {
         }
         p
     }
+    #[inline]
     unsafe fn alloc_zeroed(&self, layout: std::alloc::Layout) -> *mut u8 {
         let p = unsafe { tikv_jemallocator::Jemalloc.alloc_zeroed(layout) };
         if rerail_prof::heap::on() {
@@ -75,12 +95,14 @@ unsafe impl std::alloc::GlobalAlloc for Sampled {
         }
         p
     }
+    #[inline]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
         if rerail_prof::heap::on() {
             rerail_prof::heap::free(ptr as usize);
         }
         unsafe { tikv_jemallocator::Jemalloc.dealloc(ptr, layout) }
     }
+    #[inline]
     unsafe fn realloc(&self, ptr: *mut u8, layout: std::alloc::Layout, new_size: usize) -> *mut u8 {
         let q = unsafe { tikv_jemallocator::Jemalloc.realloc(ptr, layout, new_size) };
         if rerail_prof::heap::on() && !q.is_null() {
@@ -118,10 +140,12 @@ pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
 pub(crate) fn install_store_functions() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        code_rule_dsl::build_ids::set(env!("RERAIL_ENGINE_BUILD_ID"), env!("RERAIL_GRAMMAR_BUILD_ID"));
+        code_rule_dsl::build_ids::set(
+            env!("RERAIL_ENGINE_BUILD_ID"),
+            env!("RERAIL_GRAMMAR_BUILD_ID"),
+        );
         code_rule_dsl::install_devices();
         code_rule_dsl::install_languages();
-        content_store::set_language_tags(code_rule_dsl::stored_tape_tag, code_rule_dsl::path_tape_tag);
         content_store::set_connection_functions(|db| {
             code_rule_dsl::text::install(db)?;
             code_rule_dsl::prefilter::tapes::install(db)
@@ -322,7 +346,10 @@ pub fn native_memory_profile() -> String {
 
 /// SQLite's allocator set when the library loads, before anything can initialize SQLite
 /// (`content_store::sqlite_on_jemalloc`).
-#[cfg(all(any(target_os = "macos", target_os = "linux"), not(feature = "system-allocator")))]
+#[cfg(all(
+    any(target_os = "macos", target_os = "linux"),
+    not(feature = "system-allocator")
+))]
 #[used]
 #[cfg_attr(target_os = "macos", unsafe(link_section = "__DATA,__mod_init_func"))]
 #[cfg_attr(target_os = "linux", unsafe(link_section = ".init_array"))]
@@ -333,11 +360,9 @@ static SQLITE_ALLOCATOR: extern "C" fn() = {
     install
 };
 
-
 #[napi]
 pub struct ConversationEngine {
     encoder: ModelEncoder,
-    fingerprint: ModelFingerprint,
     rules: RuleSet,
 }
 
@@ -351,22 +376,20 @@ impl ConversationEngine {
                 "max_input_tokens must be positive",
             ));
         }
-        let loaded = load_model(Path::new(&model_path))?;
-        let dimensions = loaded.fingerprint.dimensions as usize;
+        let model = shared_model(Path::new(&model_path))?;
+        let dimensions = model.fingerprint.dimensions as usize;
         Ok(Self {
             encoder: ModelEncoder {
-                model: loaded.model,
-                tokenizer: loaded.tokenizer,
+                model,
                 max_input_tokens: max_input_tokens as usize,
             },
-            fingerprint: loaded.fingerprint,
             rules: RuleSet::empty(dimensions),
         })
     }
 
     #[napi]
     pub fn fingerprint(&self) -> ModelFingerprint {
-        self.fingerprint.clone()
+        self.encoder.model.fingerprint.clone()
     }
     #[napi(catch_unwind)]
     pub fn embed_texts(&self, texts: Vec<String>) -> Result<Vec<Float32Array>> {
@@ -379,7 +402,7 @@ impl ConversationEngine {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
-        let vectors = self.encoder.model.encode_with_args(
+        let vectors = self.encoder.model.model.encode_with_args(
             &texts,
             Some(self.encoder.max_input_tokens),
             texts.len(),
@@ -390,7 +413,7 @@ impl ConversationEngine {
                 "embedding count did not match text count",
             ));
         }
-        let dimensions = self.fingerprint.dimensions as usize;
+        let dimensions = self.encoder.model.fingerprint.dimensions as usize;
         vectors
             .into_iter()
             .map(|vector| {
@@ -414,6 +437,7 @@ impl ConversationEngine {
             .map(|text| {
                 let encoding = self
                     .encoder
+                    .model
                     .tokenizer
                     .encode(text.as_str(), false)
                     .map_err(|error| {
@@ -462,6 +486,7 @@ impl ConversationEngine {
                 }
                 let encoding = self
                     .encoder
+                    .model
                     .tokenizer
                     .encode(text.as_str(), false)
                     .map_err(|error| {
@@ -548,8 +573,12 @@ mod tests {
         let before = allocated();
         let bytes = std::hint::black_box(vec![0u8; 1 << 20]);
         let after = allocated();
-        assert!(after - before >= bytes.len() as u64,
-            "Rust allocations must use production jemalloc and reach its profile counters: {} bytes recorded for {} allocated", after - before, bytes.len());
+        assert!(
+            after - before >= bytes.len() as u64,
+            "Rust allocations must use production jemalloc and reach its profile counters: {} bytes recorded for {} allocated",
+            after - before,
+            bytes.len()
+        );
     }
 
     #[test]
@@ -563,7 +592,8 @@ mod tests {
         };
         // Its pages kept dirty until purged: no decay by time (the default purges after 10 s, which a loaded run's
         // pause can reach).
-        unsafe { raw::write::<isize>(format!("arena.{arena}.dirty_decay_ms\0").as_bytes(), -1) }.unwrap();
+        unsafe { raw::write::<isize>(format!("arena.{arena}.dirty_decay_ms\0").as_bytes(), -1) }
+            .unwrap();
         let flags = MALLOCX_ARENA(arena as usize) | MALLOCX_TCACHE_NONE;
         let size = 4 << 20;
         // Other tests' runs purge every arena when they end (`purge_allocator_pages`): one of them can purge this
@@ -581,6 +611,9 @@ mod tests {
             super::purge_allocator_pages();
             dirty() == 0
         });
-        assert!(seen, "a freed block's pages are dirty until purged, and none after");
+        assert!(
+            seen,
+            "a freed block's pages are dirty until purged, and none after"
+        );
     }
 }

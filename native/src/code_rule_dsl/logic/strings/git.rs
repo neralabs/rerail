@@ -34,7 +34,7 @@ struct State {
 struct GitState(Mutex<Option<State>>);
 
 /// The root of a run, for the run's length: calls answer from the repository that holds it. A run inside another
-/// (phase 0's `bootstrap.rr` run, a phase) sets its own and puts the outer run's back when it ends.
+/// (phase 0's `bootstrap.rerail` run, a phase) sets its own and puts the outer run's back when it ends.
 pub struct Scope(Option<PathBuf>);
 
 pub fn scope(root: &Path) -> Scope {
@@ -92,8 +92,8 @@ fn tracked(state: &mut State, path: &str) -> Option<bool> {
 
 fn open(root: &Path) -> Option<Repo> {
     let repo = gix::discover(root).ok()?;
-    let workdir = repo.workdir()?.canonicalize().ok()?;
-    let prefix = root.canonicalize().ok()?.strip_prefix(&workdir).ok()?.to_path_buf();
+    let workdir = dunce::canonicalize(repo.workdir()?).ok()?;
+    let prefix = dunce::canonicalize(root).ok()?.strip_prefix(&workdir).ok()?.to_path_buf();
     Some(Repo { repo, prefix })
 }
 
@@ -214,6 +214,8 @@ pub mod tests {
 
     #[test]
     fn commits_and_paths_are_answered_from_the_object_store() {
+        // A run of its own (decision 0442): the root is the run's (`GitState`), and outside a run each read is fresh.
+        let _run = crate::code_rule_dsl::logic::profile::test_run();
         let dir = std::env::temp_dir().join(format!("rerail-git-fn-{}", std::process::id()));
         let root = dir.join("sub");
         std::fs::create_dir_all(root.join("docs")).unwrap();

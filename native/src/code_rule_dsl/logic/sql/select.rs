@@ -379,11 +379,10 @@ fn check_select(
                 }
             }
             SqlExpression::Exists { query, .. } | SqlExpression::Scalar(query) => inner.push(query),
-            SqlExpression::Column(_) | SqlExpression::Function { .. } => {
-                if failure.is_none() {
+            SqlExpression::Column(_) | SqlExpression::Function { .. }
+                if failure.is_none() => {
                     failure = Some("the planner's SQL names columns by alias and functions by bare name".to_owned());
                 }
-            }
             _ => {}
         });
     }

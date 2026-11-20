@@ -2,7 +2,7 @@
 //! runs) in the content store: each program as its image (decision 0173), a source by its bytes' digest, and the
 //! facts that name them.
 //!
-//! A program was once kept as its `.rr` text too (decisions 0155, 0162), read back into a tree. The tree is gone
+//! A program was once kept as its `.rerail` text too (decisions 0155, 0162), read back into a tree. The tree is gone
 //! (decision 0276 step 6), and so is that form: a program kept as text alone, by a store written before images, is
 //! not read, and the run that wanted it compiles it again.
 
@@ -713,7 +713,7 @@ pub struct Opened {
     pub rows_in_place: bool,
 }
 
-/// `facts` as a `.rr` document: the schema's declarations, `extra`'s, and every row as a fact. `rr::parse_version`
+/// `facts` as a `.rerail` document: the schema's declarations, `extra`'s, and every row as a fact. `rr::parse_version`
 /// reads it back as the same rows.
 pub fn document(facts: &Facts, extra: &[(&str, &[(&str, &str)])]) -> Result<String, String> {
     use crate::code_rule_dsl::logic::program_image::{Builder, fields::FieldsMut as _};

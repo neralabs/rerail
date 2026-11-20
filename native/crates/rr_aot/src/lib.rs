@@ -1,4 +1,4 @@
-//! The `.rr` parser built ahead of time, run on the JIT's harness, compiled by rustc and LLVM
+//! The `.rerail` parser built ahead of time, run on the JIT's harness, compiled by rustc and LLVM
 //! from Rust the build script writes: tier 1's the JIT's own functions (their Cranelift IR,
 //! `clif_rust`); tier 2's the structured backend of the native IR (`rust_stream`), a function a
 //! rule, as the lean parser's.
@@ -17,6 +17,12 @@ mod tier1_aot {
 #[allow(unused_mut, unused_variables, unused_assignments, unreachable_code, unused_labels, unused_unsafe, unused_parens, non_snake_case, dead_code, clippy::all)]
 mod tier2_aot {
     include!(concat!(env!("OUT_DIR"), "/tier2_aot.rs"));
+}
+#[cfg(feature = "generated")]
+// Tier 2 writing format 16 by the writer's ops (decision 0434), the lints as `tier2_aot`'s.
+#[allow(unused_mut, unused_variables, unused_assignments, unreachable_code, unused_labels, unused_unsafe, unused_parens, non_snake_case, dead_code, clippy::all)]
+mod tier2_16_aot {
+    include!(concat!(env!("OUT_DIR"), "/tier2_16_aot.rs"));
 }
 
 #[cfg(feature = "generated")]
@@ -52,9 +58,12 @@ pub fn aot(tiers: Tiers) -> Result<rerail_rr_parser::Compiled, String> {
     let mut c = c?;
     let one = clif_rust::rust_source(&c.parser)?;
     let (widths, tag) = c.parser.tier2.widths_tag();
-    let two = rust_stream::rust_source_at(&native_ir::lower(&c.program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?, widths, tag)?;
+    let native = native_ir::lower(&c.program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
+    let two = rust_stream::rust_source_at(&native, widths, tag)?;
+    let (widths16, tag16) = c.parser.sixteen().ok_or("no format 16 tier 2")?.widths_tag();
+    let sixteen = rust_stream::rust_source_16(&native, widths16, tag16)?;
     let sealed = |src: &str| src.lines().last().and_then(|l| l.strip_prefix("pub const SOURCE: u64 = 0x")?.strip_suffix(';').and_then(|h| u64::from_str_radix(h, 16).ok()));
-    if sealed(&one) != Some(tier1_aot::SOURCE) || sealed(&two) != Some(tier2_aot::SOURCE) {
+    if sealed(&one) != Some(tier1_aot::SOURCE) || sealed(&two) != Some(tier2_aot::SOURCE) || sealed(&sixteen) != Some(tier2_16_aot::SOURCE) {
         return Err("the ahead-of-time source is of another program than the JIT compiles".into());
     }
     c.parser.tier1.ir.clear();
@@ -76,6 +85,9 @@ pub fn aot(tiers: Tiers) -> Result<rerail_rr_parser::Compiled, String> {
         // SAFETY: the source is this program's code (the fingerprint), reading and writing
         // `Ctx` as the JIT's does. It counts its calls open itself (the frame shift unused).
         unsafe { c.parser.tier2.set_entry(entry, 4) };
+        // SAFETY: as above, the format 16 source on the format 16 run's harness (`write16`: the writer and numbers
+        // set).
+        unsafe { c.parser.sixteen_mut().ok_or("no format 16 tier 2")?.set_entry(entry16, 4) };
     }
     Ok(c)
 }
@@ -91,6 +103,13 @@ pub fn aot(_: Tiers) -> Result<rerail_rr_parser::Compiled, String> {
 unsafe extern "C" fn entry(ctx: *const native_cpu_stream::Ctx) -> u64 {
     // SAFETY: the harness's contract (`CompiledStream::call`).
     unsafe { tier2_aot::tier2_entry(ctx as u64) }
+}
+
+/// The generated format 16 entry, on the harness's `Ctx`.
+#[cfg(feature = "generated")]
+unsafe extern "C" fn entry16(ctx: *const native_cpu_stream::Ctx) -> u64 {
+    // SAFETY: the harness's contract (`CompiledStream::write16`).
+    unsafe { tier2_16_aot::tier2_entry(ctx as u64) }
 }
 
 #[cfg(all(test, feature = "generated"))]

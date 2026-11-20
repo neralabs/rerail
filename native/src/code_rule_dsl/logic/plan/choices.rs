@@ -22,7 +22,7 @@
 //! does each later chunk of a run, where the first chunk's choices were made at the same size.
 //!
 //! Kept in the process (each part of a run, each chunk), and across processes in the tape cache: an entry of facts
-//! under a source named by the prepared program's key, a rewritten program as its `.rr` text (`program_text`, decision
+//! under a source named by the prepared program's key, a rewritten program as its `.rerail` text (`program_text`, decision
 //! 0155) named by its digest. The run's manifest names that source and the entry's plan (`named`), so collection keeps
 //! the entry while it keeps the run.
 
@@ -159,7 +159,12 @@ impl Drop for Durable {
             let notes = super::joins::to_store().map(note_rows);
             // And the prepared plans (decision 0361 step 5, Q228), where the run made any.
             let ready = super::prepared_to_store();
-            let Some(plans) = super::plans_to_store().or_else(|| (notes.is_some() || ready.is_some()).then(super::stored_plans).flatten()) else { return };
+            let changed = super::plans_to_store();
+            // A warm run changes none of them: which did, named.
+            if changed.is_some() || notes.is_some() || ready.is_some() {
+                super::super::profile::warm_fault("the kept plans changed", || format!("plans: {}, join notes: {}, prepared plans: {}", changed.as_ref().map_or(0, |p| p.len()), notes.as_ref().map_or(0, |n| n.0.len()), ready.as_ref().map_or(0, |r| r.len())));
+            }
+            let Some(plans) = changed.or_else(|| (notes.is_some() || ready.is_some()).then(super::stored_plans).flatten()) else { return };
             let notes = notes.unwrap_or_default();
             let ready = super::prepared::store_rows(&ready.unwrap_or_else(super::prepared_held));
             let _span = super::super::profile::span(|| "kept plans, queued for the store".into());
@@ -175,9 +180,13 @@ impl Drop for Durable {
 pub(super) fn lookup(key: &[u8; 32], nodes: f64) -> Option<Chosen> {
     // Memory is ahead of the store (decision 0102): choices this process holds are the newest there are, so the store
     // is read only for a program this process has not planned. Nor does the read wait for the writer: what a queued
-    // write holds is in memory already.
-    if let Some(c) = kept().0.lock().expect("the kept choices").get(key) {
-        return holds(c.nodes, nodes).then(|| c.clone());
+    // write holds is in memory already. A chunk's are its view's (Q314).
+    let held = match super::chunk_choices() {
+        Some(c) => c.own.lock().iter().rev().find(|(k, _)| k == key).map(|(_, c)| c.clone()).or_else(|| c.at.get(key).cloned()),
+        None => kept().0.lock().expect("the kept choices").get(key).cloned(),
+    };
+    if let Some(c) = held {
+        return holds(c.nodes, nodes).then_some(c);
     }
     // Decoded when first looked up: a run asks for a few of the entries read at its start (decoding them all there was
     // 0.07 s of an edit's).
@@ -185,12 +194,66 @@ pub(super) fn lookup(key: &[u8; 32], nodes: f64) -> Option<Chosen> {
         let (_, _, entries, images) = &**d.0.as_ref()?;
         entries.get(&path(key)).and_then(|entry| decode_chosen(images, entry))
     })?;
-    keep(*key, found.clone());
+    match super::chunk_choices() {
+        // What the store held is the same for every chunk: kept in the chunk's view, not written again at filing.
+        Some(c) => c.take(*key, found.clone(), false),
+        None => keep(*key, found.clone()),
+    }
     holds(found.nodes, nodes).then_some(found)
 }
 
-/// Keeps the choices made for program `key`, in this process and in the store.
+/// The choices a chunk reads and makes (Q314): the process's as filed when it began, and its own, filed into the
+/// process's and the store in the chunks' order (`file`). Before, the first chunk to plan a program, by the clock,
+/// chose its inlining and demand for every chunk after (one hogql run in three inlined differently).
+pub(super) struct ChunkChoices {
+    at: Arc<HashMap<[u8; 32], Chosen>>,
+    own: parking_lot::Mutex<Vec<([u8; 32], Chosen)>>,
+    /// What it took since it last handed them on (`made_in`), and whether it made them (to keep in the store).
+    out: parking_lot::Mutex<Vec<([u8; 32], Chosen, bool)>>,
+}
+
+/// The process's choices now, for a chunk to begin from.
+pub(super) fn snapshot() -> Arc<HashMap<[u8; 32], Chosen>> {
+    Arc::new(kept().0.lock().expect("the kept choices").clone())
+}
+
+pub(super) fn chunk_choices(at: &Arc<HashMap<[u8; 32], Chosen>>) -> Arc<ChunkChoices> {
+    Arc::new(ChunkChoices { at: Arc::clone(at), own: Default::default(), out: Default::default() })
+}
+
+/// What a chunk chose (with whether it was made there), for its filing.
+pub(super) fn made_in(c: &ChunkChoices) -> Vec<([u8; 32], Chosen, bool)> {
+    std::mem::take(&mut *c.out.lock())
+}
+
+impl ChunkChoices {
+    fn take(&self, key: [u8; 32], chosen: Chosen, made: bool) {
+        self.own.lock().push((key, chosen.clone()));
+        self.out.lock().push((key, chosen, made));
+    }
+}
+
+/// Files a chunk's choices into the process's, in the order it made them; those it made, into the store too.
+pub(super) fn file(made: Vec<([u8; 32], Chosen, bool)>) {
+    for (key, chosen, here) in made {
+        if here {
+            remember_now(key, chosen);
+        } else {
+            keep(key, chosen);
+        }
+    }
+}
+
+/// Keeps the choices made for program `key`, in this process and in the store; in a chunk, at its filing.
 pub(super) fn remember(key: [u8; 32], chosen: Chosen) {
+    if let Some(c) = super::chunk_choices() {
+        c.take(key, chosen, true);
+        return;
+    }
+    remember_now(key, chosen);
+}
+
+fn remember_now(key: [u8; 32], chosen: Chosen) {
     keep(key, chosen.clone());
     crate::code_rule_dsl::logic::profile::with_bound(|d: &DurableSide| {
         if let Some((store, prepared, _, _)) = d.0.as_deref() {
@@ -388,7 +451,7 @@ fn decode_chosen(images: &HashMap<[u8; 32], crate::code_rule_dsl::logic::program
     let version = match facts.get(REWRITTEN).and_then(|rows| rows.first()).map(|r| r.as_slice()) {
         Some([Value::Str(digest)]) => {
             // The image is the program's version, read where the store holds it (decision 0464), its rules in order.
-            let bytes = images.get(&unhex(&digest)?)?;
+            let bytes = images.get(&unhex(digest)?)?;
             Some(super::body::Placed::whole(crate::code_rule_dsl::logic::program_image::Version::open_shared(bytes.clone()).ok()?))
         }
         Some(_) => return None,

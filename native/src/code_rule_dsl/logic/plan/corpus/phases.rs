@@ -1,9 +1,9 @@
 //! Phases over separate fact spaces (decision 0083 §1).
 //!
-//! A phase is a `.rr` program that names itself and the relations it hands on:
+//! A phase is a `.rerail` program that names itself and the relations it hands on:
 //!
 //! ```text
-//! // typing/programs/struct.rr                    // a later phase, or any rule
+//! // typing/programs/struct.rerail                    // a later phase, or any rule
 //! .phase struct                                   .decl struct__binds(m: symbol, x: symbol, t: symbol)
 //! .export unit, def, binds                        r(m, x) :- struct__binds(m, x, _).
 //! ```
@@ -44,7 +44,7 @@ struct Phases(std::sync::Arc<Vec<String>>);
 #[derive(Clone, Default)]
 struct HandedDown(std::sync::Arc<Vec<(String, std::sync::Arc<Facts>)>>);
 
-/// Phase 1's name (`sources.rr`): run first, once for a run, by the runner (`corpus::run_observed`), not as a phase a
+/// Phase 1's name (`sources.rerail`): run first, once for a run, by the runner (`corpus::run_observed`), not as a phase a
 /// program's reads start.
 pub(super) const SOURCES: &str = "sources";
 
@@ -122,8 +122,8 @@ pub fn declared(prog: &(impl ProgramFields + ?Sized)) -> Option<Declared> {
     Some(Declared { name, exports: list("export") })
 }
 
-/// The phase program `name`, with its `#include`s read in: `<phase_dir>/<name>.rr` when the run's options name a
-/// `phase_dir`, else `typing/programs/<name>.rr`.
+/// The phase program `name`, with its `#include`s read in: `<phase_dir>/<name>.rerail` when the run's options name a
+/// `phase_dir`, else `typing/programs/<name>.rerail`.
 fn source(name: &str, dir: Option<&Path>) -> Result<Option<String>> {
     let Some(path) = locate(name, dir) else {
         return Ok(None);
@@ -145,10 +145,10 @@ fn locate(name: &str, dir: Option<&Path>) -> Option<PathBuf> {
 /// Where a phase program `name` is looked for, in order: `dir`, then the engine's own programs.
 fn candidates(name: &str, dir: Option<&Path>) -> Vec<PathBuf> {
     let builtin = builtin_dir();
-    dir.into_iter().chain([builtin.as_path()]).map(|d| d.join(format!("{name}.rr"))).collect()
+    dir.into_iter().chain([builtin.as_path()]).map(|d| d.join(format!("{name}.rerail"))).collect()
 }
 
-/// The files of every phase program `programs` may read, and of the phases those may read: each phase's `.rr` and
+/// The files of every phase program `programs` may read, and of the phases those may read: each phase's `.rerail` and
 /// its `#include`s. A run of a phased program is a function of them too, so the whole-run cutoff names them
 /// (O-cutoff-phases).
 ///
@@ -167,7 +167,7 @@ pub(super) fn phase_files(read: &[crate::code_rule_dsl::logic::rr::TextNames], d
         let phases: BTreeSet<&str> = names
             .iter()
             .filter_map(|rel| rel.split_once(SEP))
-            .filter(|(phase, export)| !phase.is_empty() && !export.is_empty() && own.as_deref() != Some(*phase) && !phase.starts_with("typing_") && !phase.starts_with("rr_"))
+            .filter(|(phase, export)| !phase.is_empty() && !export.is_empty() && own.as_deref() != Some(*phase) && !phase.starts_with("rr_"))
             .map(|(phase, _)| phase)
             .collect();
         for name in phases {
@@ -196,7 +196,7 @@ pub(super) fn wanted_in(prog: &(impl ProgramFields + ?Sized), shape: &super::sha
     let mut out: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
     for rel in shape.read.iter().map(String::as_str).filter(|r| !shape.made.contains(*r) && prog.declares(r)) {
         let Some((phase, export)) = rel.split_once(SEP) else { continue };
-        if phase.is_empty() || export.is_empty() || own.as_deref() == Some(phase) || phase.starts_with("typing_") || phase.starts_with("rr_") {
+        if phase.is_empty() || export.is_empty() || own.as_deref() == Some(phase) || phase.starts_with("rr_") {
             continue;
         }
         if source(phase, dir)?.is_some() {
@@ -206,10 +206,10 @@ pub(super) fn wanted_in(prog: &(impl ProgramFields + ?Sized), shape: &super::sha
     Ok(out)
 }
 
-/// Whether `rel` names an earlier phase's export (`<phase>__<export>`): shared by every program of a run, as bridged
-/// relations are (`corpus::combine` does not prefix it).
-pub(crate) fn is_phased(rel: &str) -> bool {
-    rel.split_once(SEP).is_some_and(|(p, e)| !p.is_empty() && !e.is_empty() && !p.starts_with("typing_") && !p.starts_with("rr_") && !e.contains(SEP))
+/// Whether `rel` names an earlier phase's export (`<phase>__<export>`): shared by every program of a run
+/// (`corpus::combine` does not prefix it).
+pub fn is_phased(rel: &str) -> bool {
+    rel.split_once(SEP).is_some_and(|(p, e)| !p.is_empty() && !e.is_empty() && !p.starts_with("rr_") && !e.contains(SEP))
 }
 
 /// A batch of policies run one after another over one tree (`tools::run_policies`): while it is held, phase 1's runs
@@ -369,8 +369,8 @@ pub(crate) fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::
         // Phase 1 ran before any phase, for the run (`PhaseOne`): its exports are handed on as it left them. A run
         // that did not run it (given its files, or with `RERAIL_SOURCES_PHASE=off`) reads none.
         if name == SOURCES {
-            // Its program is still found (a builtin): the run checks it is there, though it reads none of it.
-            source(&name, dir.as_deref())?.expect("sources.rr, a builtin phase program");
+            // Its program is there (a builtin), though phase 1 ran it already.
+            let _ = source(&name, dir.as_deref())?.expect("sources.rerail, a builtin phase program");
             let rows = crate::code_rule_dsl::logic::profile::with_bound(|p: &HeldPhaseOne| p.0.as_ref().map(|o| o.rows.clone())).unwrap_or_default();
             hand_on(&reads, &rows, &mut facts);
             continue;
@@ -383,17 +383,17 @@ pub(crate) fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::
         if shape.made.contains("load") && loads_documents(&program, dir.as_deref(), &mut BTreeSet::new())? {
             return Err(Error::Plan(format!("a program reading phase {name}, whose fixed point loaded documents, loads documents itself: it reads the libraries through {name}'s exports")));
         }
-        let declared = declared(&*program).ok_or_else(|| Error::Plan(format!("{name}.rr: no `.phase {name}`")))?;
+        let declared = declared(&*program).ok_or_else(|| Error::Plan(format!("{name}.rerail: no `.phase {name}`")))?;
         if declared.name != name {
-            return Err(Error::Plan(format!("{name}.rr says `.phase {}`", declared.name)));
+            return Err(Error::Plan(format!("{name}.rerail says `.phase {}`", declared.name)));
         }
         for export in &declared.exports {
-            let cols = program.columns_of(export).ok_or_else(|| Error::Plan(format!("{name}.rr exports {export}, which it does not declare")))?;
+            let cols = program.columns_of(export).ok_or_else(|| Error::Plan(format!("{name}.rerail exports {export}, which it does not declare")))?;
             if let Some((c, _)) = cols.iter().find(|(_, t)| t == "node") {
-                return Err(Error::Plan(format!("{name}.rr exports {export}, whose column {c} is a node: an export names symbols, which an edit does not renumber")));
+                return Err(Error::Plan(format!("{name}.rerail exports {export}, whose column {c} is a node: an export names symbols, which an edit does not renumber")));
             }
             if cols.first().is_none_or(|(_, t)| t != "symbol" && t != "sym") {
-                return Err(Error::Plan(format!("{name}.rr exports {export}: its first column, the row's granule, must be a symbol")));
+                return Err(Error::Plan(format!("{name}.rerail exports {export}: its first column, the row's granule, must be a symbol")));
             }
         }
         for (rel, export) in &reads {
@@ -457,11 +457,11 @@ pub(super) fn current() -> Option<String> {
 
 /// Phase 1's program, the builtin one.
 pub(super) fn sources_path() -> PathBuf {
-    rerail_store::source_tree::native().join("src/code_rule_dsl/typing/programs/sources.rr")
+    rerail_store::source_tree::native().join("src/code_rule_dsl/typing/programs/sources.rerail")
 }
 
 /// Phase 1, `sources` (decision 0104): the run's source files, each `(path, module, grammar, content digest)`, loaded
-/// as documents by `sources.rr`, its own run of the same engine, with the libraries their imports reach. What it hands
+/// as documents by `sources.rerail`, its own run of the same engine, with the libraries their imports reach. What it hands
 /// on is each file that became a document, `(path, grammar, content)`, in the order given, and each library document:
 /// the later phases' documents.
 pub(super) fn sources(
@@ -480,7 +480,7 @@ pub(super) fn sources(
     const NAME: &str = SOURCES;
     let _running = Running::enter(NAME)?;
     let dir = options.get("phase_dir").and_then(|v| v.as_str()).map(PathBuf::from);
-    let src = source(NAME, dir.as_deref())?.expect("sources.rr, a builtin phase program");
+    let src = source(NAME, dir.as_deref())?.expect("sources.rerail, a builtin phase program");
     // Within a batch of policies (`Batch`), a run over the same files, tree, language and options as an earlier one
     // is that one: phase 1 is a function of them (O-batch-phase-sources).
     let key = Batch::active().then(|| {
@@ -499,12 +499,12 @@ pub(super) fn sources(
         <[u8; 32]>::from(hash.finalize())
     });
     if let Some(found) = key.and_then(|k| Batch::get(&k)) {
-        crate::code_rule_dsl::logic::profile::decision("phase 1 (sources.rr)", || "the batch's run of the same files, taken again".into());
+        crate::code_rule_dsl::logic::profile::decision("phase 1 (sources.rerail)", || "the batch's run of the same files, taken again".into());
         let (one, exports) = found;
         return Ok((one, PhaseRun { name: NAME.to_owned(), report: Report::default(), exports }));
     }
     let program = crate::code_rule_dsl::logic::rr::parse_version(&src)?;
-    let declared = declared(&*program).ok_or_else(|| Error::Plan(format!("{NAME}.rr: no `.phase {NAME}`")))?;
+    let declared = declared(&*program).ok_or_else(|| Error::Plan(format!("{NAME}.rerail: no `.phase {NAME}`")))?;
     // Its documents are those it loads: it is given no file of its own, and its language is the run's. The program
     // read, given that language and its exports as its outputs (decision 0249), not its text with directives after it.
     let handed = {
@@ -619,4 +619,4 @@ fn hand_on(reads: &[(String, String)], rows: &BTreeMap<String, Vec<Vec<Value>>>,
 }
 
 // Its tests run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the
-// engine registers as it loads (the languages, their `.rr` libraries).
+// engine registers as it loads (the languages, their `.rerail` libraries).

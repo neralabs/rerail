@@ -7,12 +7,12 @@ fn original_cpython_programs_use_private_projections_and_bounded_join_work() {
     let corpus: Vec<(String, String)> = serde_json::from_slice(&raw).unwrap();
     for (program, output, count) in [
         (
-            include_str!("../../logic/plan/golden/programs/workload.rr"),
+            include_str!("../../logic/plan/golden/programs/workload.rerail"),
             "type_of",
             1841,
         ),
         (
-            include_str!("../../logic/plan/golden/programs/calls.rr"),
+            include_str!("../../logic/plan/golden/programs/calls.rerail"),
             "call_target",
             256,
         ),
@@ -60,6 +60,7 @@ fn original_cpython_programs_use_private_projections_and_bounded_join_work() {
                         tape: None,
                         guest: None,
                         module: None,
+                        unpackaged: false,
                     }
                 })
                 .collect();

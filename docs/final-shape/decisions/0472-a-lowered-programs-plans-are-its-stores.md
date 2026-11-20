@@ -1,6 +1,6 @@
 # 0472. A lowered program's plans are its store's: they do not move across stores
 
-Status: accepted (2026-11-19), Q296's decision. Made in the work queue's order, by the agent doing the work; the
+Status: accepted (2026-11-19), Q291's decision. Made in the work queue's order, by the agent doing the work; the
 user may overrule it.
 
 ## Intro
@@ -8,10 +8,10 @@ user may overrule it.
 A rule is lowered against a store: each name it holds becomes the store's atom for it (decision 0270). So everything
 hashed over a lowered rule depends on the store's numbering: rule hashes, the file-local helpers' names
 (`typing::file_local::helper_name`), a version's identity (`manager::identity`), and a line's key (`line_key`). The
-same rules lowered on two new stores get two identities (Q296: `#n2708` on one store, `#n13220` on the other). Within
+same rules lowered on two new stores get two identities (Q291: `#n2708` on one store, `#n13220` on the other). Within
 one store all of these stay the same, because the store keeps its atoms.
 
-Q296 asked whether plans should move across stores. If they should, every one of those hashes would have to be over
+Q291 asked whether plans should move across stores. If they should, every one of those hashes would have to be over
 the names' text and not their atoms.
 
 ## Decision

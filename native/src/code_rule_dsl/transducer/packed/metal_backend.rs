@@ -1,6 +1,6 @@
-//! The matcher's anchor scan on Metal (an anchor literal's nodes found on the device). The Metal
-//! runtime it runs on (the device, the buffer budget, mapped buffers, pipelines, launches) is the
-//! `rerail-metal` crate's, re-exported here.
+//! The matcher's anchor scan (an anchor literal's nodes found on the device), in UKL on the process's device
+//! through the lane (decision 0440 step C). The runtime it runs on (the device, the buffer budget, launches) is
+//! the `rerail-metal` crate's, re-exported here.
 
 use super::{EMIT, Error, KIND, Program, TEXT, TextPredicate, split};
 use crate::code_rule_dsl::tape::TapeDoc;
@@ -10,16 +10,7 @@ pub use rerail_metal::launch;
 /// The Metal tests' allocation counter, where they name it (it moved into `rerail-metal` with the runtime).
 #[cfg(any(test, feature = "metal-tests"))]
 pub(super) use rerail_metal::buffer_observation::BufferObservation;
-use launch::{CheckedComputeEncoder, commit_checked, wait_checked};
-use metal::{CommandQueue, ComputePipelineState, Device, MTLSize};
 use std::collections::BTreeMap;
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct AnchorHit {
-    node: u32,
-    group: u32,
-}
 
 #[derive(Default)]
 struct LiteralTrie {
@@ -44,7 +35,7 @@ impl LiteralTrie {
         if self.children.is_empty() {
             return;
         }
-        source.push_str(&format!("switch(source[span.x+{depth}u]){{"));
+        source.push_str(&format!("switch(source[start+{depth}u]){{"));
         for (byte, child) in &self.children {
             source.push_str(&format!("case {byte}u:"));
             child.emit(depth + 1, source);
@@ -77,16 +68,14 @@ fn anchor_literal(program: &Program) -> Result<(u16, &[u8], u16, u16), Error> {
 }
 
 pub struct PreparedAnchorScan {
-    pipeline: ComputePipelineState,
-    queue: CommandQueue,
-    kinds: MappedBuffer,
-    spans: MappedBuffer,
-    node_files: MappedBuffer,
-    group_enabled: MappedBuffer,
-    source: MappedBuffer,
-    hits: MappedBuffer,
-    hit_count: MappedBuffer,
-    locations: Vec<(usize, u32)>,
+    kernel: rerail_metal::lane::Kernel,
+    /// The files, resident in one block: the kernel reads each node's kind, span and text there, in place.
+    table: crate::code_rule_dsl::residency::slabs::DocTable,
+    docs: rerail_metal::lane::HostMapped,
+    group_enabled: rerail_metal::lane::Buffer,
+    /// {node, group} pairs, appended by the kernel.
+    hits: rerail_metal::lane::Buffer,
+    hit_count: rerail_metal::lane::Buffer,
     group_programs: Vec<Vec<usize>>,
     file_program_masks: Vec<u32>,
     program_words: usize,
@@ -175,70 +164,60 @@ pub fn prepare_anchor_scan_with_eligibility(
     }
     let mut tests = String::new();
     for ((kind, length), trie) in &tries {
-        tests.push_str(&format!("if(kind=={kind}u && span.y-span.x=={length}u){{"));
+        tests.push_str(&format!("if(kind=={kind}u && end-start=={length}u){{"));
         trie.emit(0, &mut tests);
         tests.push('}');
     }
-    let metal_source = format!(
-        r#"#include <metal_stdlib>
-using namespace metal;
-struct AnchorHit {{ uint node; uint group; }};
-kernel void anchors(device const ushort* kinds [[buffer(0)]], device const uint2* spans [[buffer(1)]],
- device const uint* nodeFiles [[buffer(2)]], device const uint* groupEnabled [[buffer(3)]],
- device const uchar* source [[buffer(4)]], device AnchorHit* hits [[buffer(5)]],
- device atomic_uint* hitCount [[buffer(6)]], constant uint& count [[buffer(7)]],
- uint id [[thread_position_in_grid]]) {{
- if(id>=count)return; uint kind=kinds[id]; uint2 span=spans[id]; uint group=0xffffffffu; {tests}
- if(group!=0xffffffffu){{uint file=nodeFiles[id]; uint word=groupEnabled[file*{group_words}u+(group>>5u)];
-  if((word&(1u<<(group&31u)))!=0u){{uint slot=atomic_fetch_add_explicit(hitCount,1u,memory_order_relaxed);hits[slot]={{id,group}};}}}}
-}}"#
-    );
-    let pipeline = pipeline_named(&metal_source, "anchors")?;
-    let device = rerail_metal::device()?;
-    let queue = rerail_metal::queue()?;
-    let mut source = Vec::new();
-    let mut kinds = Vec::new();
-    let mut spans = Vec::new();
-    let mut node_files = Vec::new();
-    let mut locations = Vec::new();
-    for (fi, file) in files.iter().enumerate() {
-        let base = u32::try_from(source.len()).map_err(|_| Error::BackendFailure)?;
-        source.extend_from_slice(file.transducer_source());
-        for ordinal in 0..file.transducer_len() {
-            let ordinal = u32::try_from(ordinal).map_err(|_| Error::BackendFailure)?;
-            let span = file.transducer_span(ordinal);
-            let start = u32::try_from(span.start)
-                .ok()
-                .and_then(|start| base.checked_add(start))
-                .ok_or(Error::BackendFailure)?;
-            let end = u32::try_from(span.end)
-                .ok()
-                .and_then(|end| base.checked_add(end))
-                .ok_or(Error::BackendFailure)?;
-            kinds.push(file.transducer_kind(ordinal));
-            spans.push([start, end]);
-            node_files.push(u32::try_from(fi).map_err(|_| Error::BackendFailure)?);
-            locations.push((fi, ordinal));
-        }
+    use crate::code_rule_dsl::residency::slabs::{DocTable, DocView, admit_docs};
+    use rerail_metal::lane;
+    // The files where they are resident, read there by the kernel from the bound block (decisions 0353, 0471): a
+    // 16z batch, or one over several slabs, is refused where buffers have no kernels' address (OpenCL 1.2), as every
+    // reader of the block is.
+    let table = DocTable::new(admit_docs(files)?).ok_or(Error::BackendCapacity)?;
+    if table.nodes != files.iter().map(TapeDoc::transducer_len).sum::<usize>() {
+        return Err(Error::BackendFailure);
     }
-    let kinds = MappedBuffer::from_slice(&device, &kinds)?;
-    let spans = MappedBuffer::from_slice(&device, &spans)?;
-    let node_files = MappedBuffer::from_slice(&device, &node_files)?;
-    let group_enabled = MappedBuffer::from_slice(&device, &group_enabled)?;
-    let source = MappedBuffer::new(&device, &source)?;
-    let hits = MappedBuffer::zeroed::<AnchorHit>(&device, locations.len())?;
-    let hit_count = MappedBuffer::zeroed::<u32>(&device, 1)?;
+    u32::try_from(table.nodes).map_err(|_| Error::BackendFailure)?;
+    // UKL (decision 0440 step C): one thread a node, its document found among the views.
+    let source = format!(
+        r#"{view}
+typedef struct AnchorArgs {{ uint32_t count; uint32_t documents; }} AnchorArgs;
+UKL_REFLECT_STRUCT(AnchorArgs, count, documents)
+DEFINE_KERNEL2(anchor_scan, anchors,
+               ROBUFFER, DocView,  docs,         "[args.documents]",
+               ROBUFFER, uint32_t, groupEnabled, "[args.documents * {group_words}]",
+               RWBUFFER, uint32_t, hits,         "[2 * args.count]",
+               RWBUFFER, uint32_t, hitCount,     "[1]",
+               ARGS,     AnchorArgs, args,       ,
+               ROBUFFER, uint8_t,  chunk,        "[slab]",
+               GID0,     uint32_t, id,           )
+{{
+ if(id>=args.count)return;
+ uint32_t file=doc_index(docs,args.documents,id);
+ DocView d=docs[file];
+ UKL_GLOBAL const uint8_t* s=chunk;
+ uint32_t i=id-d.node_base,kind=tape_kind(s,d,i),start=tape_start(s,d,i),end=tape_end(s,d,i);
+ UKL_GLOBAL const uint8_t* source=tape_source(s,d);
+ uint32_t group=0xffffffffu; {tests}
+ if(group!=0xffffffffu){{uint32_t word=groupEnabled[file*{group_words}u+(group>>5u)];
+  if((word&(1u<<(group&31u)))!=0u){{uint32_t slot=ukl_atomic_add(&hitCount[0],1u);hits[2u*slot]=id;hits[2u*slot+1u]=group;}}}}
+}}
+"#,
+        view = super::metal_program_backend::tape_view(table.format().unwrap_or(0)),
+    );
+    let kernel = lane::kernel(&source, "anchors", Some(table.format().unwrap_or(0)));
+    let device = lane::device()?;
+    let docs = if table.views.is_empty() { lane::HostMapped::zeroed::<DocView>(1)? } else { lane::HostMapped::from_slice(&table.views)? };
+    let group_enabled = lane::buffer_of(device, &group_enabled);
+    let hits = lane::buffer_of(device, &vec![0_u32; 2 * table.nodes]);
+    let hit_count = lane::buffer_of(device, &[0_u32]);
     Ok(PreparedAnchorScan {
-        pipeline,
-        queue,
-        kinds,
-        spans,
-        node_files,
+        kernel,
+        table,
+        docs,
         group_enabled,
-        source,
         hits,
         hit_count,
-        locations,
         group_programs,
         file_program_masks: flat_program_masks,
         program_words,
@@ -265,7 +244,7 @@ impl PreparedAnchorScan {
         let mut anchors = (0..self.file_count)
             .map(|_| (0..self.program_count).map(|_| Vec::new()).collect())
             .collect::<Vec<Vec<Vec<u32>>>>();
-        if self.locations.is_empty() {
+        if self.table.nodes == 0 {
             return Ok((
                 anchors,
                 AnchorScanProfile {
@@ -275,59 +254,57 @@ impl PreparedAnchorScan {
                 },
             ));
         }
-        let _evaluation = evaluation_scope();
-        unsafe {
-            self.hit_count.buffer.contents().cast::<u32>().write(0);
+        #[repr(C)]
+        #[derive(Clone, Copy)]
+        struct AnchorArgs {
+            count: u32,
+            documents: u32,
         }
+        // SAFETY: two u32s, no padding.
+        unsafe impl rerail_metal::lane::Pod for AnchorArgs {}
+        let _evaluation = evaluation_scope();
         let dispatch_started = std::time::Instant::now();
-        let command = self.queue.new_command_buffer();
-        let encoder = command.new_compute_command_encoder();
-        encoder.set_label("anchor_selection");
-        encoder.set_compute_pipeline_state(&self.pipeline);
-        encoder.set_buffer(0, Some(&self.kinds.buffer), 0);
-        encoder.set_buffer(1, Some(&self.spans.buffer), 0);
-        encoder.set_buffer(2, Some(&self.node_files.buffer), 0);
-        encoder.set_buffer(3, Some(&self.group_enabled.buffer), 0);
-        encoder.set_buffer(4, Some(&self.source.buffer), 0);
-        encoder.set_buffer(5, Some(&self.hits.buffer), 0);
-        encoder.set_buffer(6, Some(&self.hit_count.buffer), 0);
-        let count = u32::try_from(self.locations.len()).map_err(|_| Error::BackendFailure)?;
-        encoder.set_bytes(7, 4, (&count as *const u32).cast());
-        let width = self.pipeline.thread_execution_width();
-        // One dispatch is the complete anchor-selection phase.
-        encoder.checked_dispatch_threads(
-            command,
-            MTLSize {
-                width: count as u64,
-                height: 1,
-                depth: 1,
-            },
-            MTLSize {
-                width,
-                height: 1,
-                depth: 1,
-            },
-        );
-        encoder.end_encoding();
-        commit_checked(command)?;
-        wait_checked(command)?;
+        let count = self.table.nodes as u32;
+        let block = self.table.block.as_ref().ok_or(Error::BackendFailure)?;
+        // One launch is the complete anchor-selection phase, after the hit count is zeroed.
+        let mut command = rerail_metal::lane::Command::new("anchor_selection");
+        command.fill(&self.hit_count, 0, 1, 0);
+        let mut launch = command
+            .launch(&self.kernel, "anchor_selection")
+            .buffer("docs", self.docs.buffer())
+            .buffer("groupEnabled", &self.group_enabled)
+            .buffer("hits", &self.hits)
+            .buffer("hitCount", &self.hit_count)
+            .value("args", &AnchorArgs { count, documents: self.table.views.len() as u32 })
+            .buffer("chunk", block.device_buffer());
+        for slab in &self.table.slabs {
+            launch = launch.uses(slab.device_buffer());
+        }
+        if let Some(cache) = &self.table.cache {
+            launch = launch.uses(cache);
+        }
+        launch.threads(u64::from(count), 64);
+        command.run()?;
+        if self.table.cache.as_ref().is_some_and(|cache| rerail_metal::slabs::zcache_failed(cache) != 0) {
+            return Err(Error::BackendCapacity);
+        }
         let dispatch_and_wait = dispatch_started.elapsed();
         let reconstruction_started = std::time::Instant::now();
-        let hit_count = unsafe { self.hit_count.buffer.contents().cast::<u32>().read() as usize };
-        if hit_count > self.locations.len() {
+        // SAFETY: the command finished; the kernel wrote the count and that many pairs.
+        let hit_count = unsafe { self.hit_count.contents().cast::<u32>().read() as usize };
+        if hit_count > self.table.nodes {
             return Err(Error::BackendFailure);
         }
-        let mut hits = unsafe {
-            std::slice::from_raw_parts(self.hits.buffer.contents().cast::<AnchorHit>(), hit_count)
-                .to_vec()
-        };
+        // copy: not block data (the kernel's hits, sorted for the files' order)
+        let mut hits = unsafe { std::slice::from_raw_parts(self.hits.contents().cast::<[u32; 2]>(), hit_count) }.to_vec();
         // Atomic append order is undefined. Global node order is file order plus preorder order.
-        hits.sort_unstable_by_key(|hit| hit.node);
-        for hit in hits {
-            let (file, ordinal) = self.locations[hit.node as usize];
+        hits.sort_unstable_by_key(|hit| hit[0]);
+        for [node, group] in hits {
+            let file = self.table.views.partition_point(|view| view.node_base <= node) - 1;
+            let ordinal = node - self.table.views[file].node_base;
             let programs = self
                 .group_programs
-                .get(hit.group as usize)
+                .get(group as usize)
                 .ok_or(Error::BackendFailure)?;
             for &program in programs {
                 let enabled = self.file_program_masks[file * self.program_words + program / 32]

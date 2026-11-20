@@ -112,7 +112,7 @@ impl Database {
         let mut profiler =
             unsafe { super::super::super::sql_profile::Profiler::configured(&connection) }
                 .map_err(|e| e.to_string())?;
-        if let Some(p)=&mut profiler {if let Some(a)=&admission {p.observe(a.shared.clone());}}
+        if let Some(p)=&mut profiler&& let Some(a)=&admission {p.observe(a.shared.clone());}
         super::super::reductions::register(&connection).map_err(|e|e.to_string())?;
         let modules = Modules::default();
         // Establish RAII ownership before any fallible binding or hook registration.

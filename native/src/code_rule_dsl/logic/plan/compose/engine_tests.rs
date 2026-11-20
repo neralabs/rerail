@@ -1,11 +1,11 @@
-//! Tests of this module that read what the engine registers as it loads (the languages, their `.rr` libraries,
+//! Tests of this module that read what the engine registers as it loads (the languages, their `.rerail` libraries,
 //! the ECMA crate's functions): the engine's facade of the module mounts them.
 
 #[test]
 fn pruning_dead_native_producers_removes_their_dependency_edges() {
     let p = super::super::super::rr::parse_version(
         r#"
-#include "core.rr"
+#include "core.rerail"
 .decl wanted(n:node)
 wanted(n) :- node(_,n,_,_,_).
 .decl targets(q:symbol)

@@ -10,7 +10,7 @@ All 35 rules share one new library:
 
 | file | lines | what |
 |---|---|---|
-| `lib/python/pathlib.rr` | 201 | calls by qualified name, with the callee where Ruff reports (`pth_call`); Ruff's Arguments API (`call_len`, `arg_value` = `find_argument_value`, `single_arg` = `check_os_pathlib_single_arg_calls`, `kw_set` = `is_keyword_only_argument_non_default`); Ruff's type inference for one binding (`only_site`, `site_init`, `site_ann`), with ints (`resolved_int`, `file_descriptor` = `is_file_descriptor`) and pathlib paths (`path_obj` = `is_pathlib_path`) |
+| `lib/python/pathlib.rerail` | 201 | calls by qualified name, with the callee where Ruff reports (`pth_call`); Ruff's Arguments API (`call_len`, `arg_value` = `find_argument_value`, `single_arg` = `check_os_pathlib_single_arg_calls`, `kw_set` = `is_keyword_only_argument_non_default`); Ruff's type inference for one binding (`only_site`, `site_init`, `site_ann`), with ints (`resolved_int`, `file_descriptor` = `is_file_descriptor`) and pathlib paths (`path_obj` = `is_pathlib_path`) |
 
 Most rules are one line of logic. The 17 single-path rules (PTH100, 106-108, 110-115, 117, 119, 120, 202-205)
 are each one `single_arg` row: the function's qualified name and its parameter name, which differs (`s` for
@@ -76,7 +76,7 @@ Summary: all 35 rules match Ruff 0.16.9's tests exactly, 309 findings. PTH210 ne
 so, as the tests run at 3.14 (H2). Against 0.15.7, the only differences are V1 and V2 (0.16.9 is newer) and H1
 (a harness gap). The reviewer's cases (scratchpad `rev-py-pth/`) give the same 309 with its `score.py`.
 
-All the scores above come from rrlab on the shared `lib/`. A first run used a copy with one fix in `names.rr`;
+All the scores above come from rrlab on the shared `lib/`. A first run used a copy with one fix in `names.rerail`;
 the re-run on the committed `lib/`, with that fix, gives the same 309 findings.
 
 ## Deviations
@@ -114,8 +114,8 @@ None from the JSON's meaning. Where the JSON's form and Ruff 0.16.9's code diffe
 - **H1, PTH118 (1 FN), and potentially every rule: calls in string annotations.** Ruff parses a string
   annotation and checks the calls in it: `x: "os.path.join(p, q)" = 1` is PTH118. The JSON adds an "in-string"
   clause to each rule for this, and it parses every string. The rules here use only the tree relations. If the
-  engine gives the parsed annotation tree (`parsed(s, "annotation", r)`) the same tree relations, as names.rr's
-  `annotation` and ast.rr's `ann_node` expect, the rules report there with no extra clause. rrlab leaves `parsed`
+  engine gives the parsed annotation tree (`parsed(s, "annotation", r)`) the same tree relations, as names.rerail's
+  `annotation` and ast.rerail's `ann_node` expect, the rules report there with no extra clause. rrlab leaves `parsed`
   empty. For this to work, names inside the parsed tree must also resolve (C1). None of Ruff's own PTH fixtures
   has such a case.
 - **H2, PTH210 (13 FP at the default target).** Ruff's tests run at Python 3.14 (`LinterSettings::for_rule`
@@ -140,5 +140,5 @@ None from the JSON's meaning. Where the JSON's form and Ruff 0.16.9's code diffe
   must also work from the string's scope (`look`), so that `ruff_qual` resolves `os.path.join` in
   `x: "os.path.join(p, q)"`. If that is not the engine's model, core should say how a rule reaches a parsed
   tree. No rule here needs a new relation.
-- No other changes. `lib/python/pathlib.rr` is new. check_rr reports no other file declaring any of its
+- No other changes. `lib/python/pathlib.rerail` is new. check_rr reports no other file declaring any of its
   relations.

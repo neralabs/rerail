@@ -426,7 +426,7 @@ pub fn never_unrolled(ops: &[BlockOp], tables: &[ClassTable], rounds: &[Vec<(u16
 
 /// A lemma: values that never hold together at a position, each an operation at a lag from it
 /// (read as a `prev` reads it) and its value; `STREAM` for "the byte is in the stream".
-type Lemma = Vec<(u16, u32, bool)>;
+pub type Lemma = Vec<(u16, u32, bool)>;
 
 /// A lemma's value "the byte at this lag is in the stream" (`Lemma`).
 const STREAM: u16 = u16::MAX;
@@ -479,7 +479,7 @@ pub struct Induction {
 
 /// The version of what the provers answer, in every question's key (`Proofs`, decision 0414):
 /// bumped with any change that can make one answer differently.
-pub const PROOFS_VERSION: u32 = 1;
+pub const PROOFS_VERSION: u32 = 2;
 
 /// An answer the provers made: whether a value is zero everywhere, or the bytes it can be at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -590,6 +590,13 @@ pub fn decode(bytes: &[u8]) -> Known {
 /// from the value meets them, each class by its table's bytes; the delay; and `asker`, the prover
 /// and its settings. The same question in another grammar, or at other numbers, has this key.
 pub fn question(ops: &[BlockOp], tables: &[ClassTable], rounds: &[Vec<(u16, u16)>], v: u16, d: u8, asker: &str) -> Vec<u8> {
+    question_given(ops, tables, rounds, v, d, asker, &[])
+}
+
+/// `question`, asked of a prover given `given` (`Induction::given`): the lemmas whose values all lie in the cone, as
+/// the cone numbers them, are in the key too, as the answer may use them (a walk's kinds apart, decision 0484, which
+/// the equations do not show). A lemma with a value outside the cone is never applied (the window is the cone's).
+pub fn question_given(ops: &[BlockOp], tables: &[ClassTable], rounds: &[Vec<(u16, u16)>], v: u16, d: u8, asker: &str, given: &[Lemma]) -> Vec<u8> {
     use std::fmt::Write;
     let nexts: HashMap<u16, u16> = rounds.iter().flatten().copied().collect();
     let mut number: HashMap<u16, u16> = HashMap::default();
@@ -617,6 +624,20 @@ pub fn question(ops: &[BlockOp], tables: &[ClassTable], rounds: &[Vec<(u16, u16)
             BlockOp::Carry(_) => write!(out, ";{op:?} {:?}", nexts.get(&at).map(|n| number[n])),
             _ => write!(out, ";{op:?}"),
         };
+    }
+    let mut lemmas: Vec<Vec<(u16, u32, bool)>> = given
+        .iter()
+        .filter(|l| l.iter().all(|(at, _, _)| number.contains_key(at)))
+        .map(|l| {
+            let mut l: Vec<(u16, u32, bool)> = l.iter().map(|&(at, lag, b)| (number[&at], lag, b)).collect();
+            l.sort_unstable();
+            l
+        })
+        .collect();
+    lemmas.sort_unstable();
+    lemmas.dedup();
+    for l in &lemmas {
+        let _ = write!(out, ";lemma {l:?}");
     }
     out.into_bytes()
 }
@@ -802,6 +823,12 @@ impl Induction {
         self.given.push(lemma);
     }
 
+    /// The lemmas given so far (`add_lemma`, `never_inductive`): what a keyed answer may depend on beside its
+    /// question (`question_given`).
+    pub fn given(&self) -> &[Lemma] {
+        &self.given
+    }
+
     /// `hypothesis`: `v` is this lemma's values all holding, assumed not to hold at every lag
     /// past the position's: by induction on the stream's positions, the first where they hold
     /// has none before it (sound).
@@ -907,17 +934,13 @@ impl Induction {
             let window = {
                 let (_, plain) = cone(ops, v);
                 let reach = plain.keys().copied().max().unwrap_or(0).max(u32::from(d)) + self.horizon;
-                let (mut readers, mut far) = unrolled_readers(ops, nexts, v, reach);
-                // Its values are made at every lag of the window: their bytes' groups too.
-                for &(at, l, _) in whole.into_iter().flatten().filter(|&&(at, _, _)| at != STREAM) {
-                    let (theirs, f) = unrolled_readers(ops, nexts, at, reach);
-                    for lag in 1..=reach {
-                        for (k, set) in &theirs {
-                            readers.entry(k + lag + l).or_default().extend(set.iter().copied());
-                        }
-                        far = far.max(f + lag + l);
-                    }
+                // The root at its lag, and the hypothesis' values at every lag of the window where they are made there
+                // (`whole`): their readers too, so each byte `op` reads has its groups; one walk from every root.
+                let mut roots = vec![(v, 0u32)];
+                for lag in 1..=reach {
+                    roots.extend(whole.into_iter().flatten().filter(|&&(at, _, _)| at != STREAM).map(|&(at, l, _)| (at, lag + l)));
                 }
+                let (readers, far) = unrolled_readers(ops, nexts, &roots, reach);
                 let mut u = Unrolled { ops, tables, nexts, d: u32::from(d), reach, clauses: Clauses::default(), vars: 1, memo: HashMap::default(), before: HashMap::default(), past: HashMap::default(), groups: HashMap::default(), readers: HashMap::default() };
                 // A literal that is true.
                 u.clauses.push(&[1]);
@@ -1102,11 +1125,11 @@ fn carried(ops: &[BlockOp], nexts: &HashMap<u16, u16>, at: u16) -> bool {
 
 /// The readers of each lag's byte, as `Unrolled::op` reads them.
 /// And the farthest lag any operation is read at (a `within` at its byte's).
-fn unrolled_readers(ops: &[BlockOp], nexts: &HashMap<u16, u16>, v: u16, reach: u32) -> (HashMap<u32, HashSet<Reader>>, u32) {
+fn unrolled_readers(ops: &[BlockOp], nexts: &HashMap<u16, u16>, roots: &[(u16, u32)], reach: u32) -> (HashMap<u32, HashSet<Reader>>, u32) {
     let mut far = 0;
     let mut readers: HashMap<u32, HashSet<Reader>> = HashMap::default();
     let mut seen = HashSet::default();
-    let mut work = vec![(v, 0u32)];
+    let mut work = roots.to_vec();
     while let Some((at, lag)) = work.pop() {
         if !seen.insert((at, lag)) {
             continue;

@@ -127,7 +127,7 @@
         let (plans, ready) = read_plans(&store, &prepared).unwrap();
         assert_eq!(plans.get(&key), Some(&stored), "the plans are kept beside the prepared plans");
         assert_eq!(ready.get(&[3u8; 32]).map(|p| &**p), Some(&made), "a version's prepared plans read back");
-        assert!(!ready.contains_key(&[4u8; 32]), "a version with none has no rows");
+        assert!(ready.get(&[4u8; 32]).is_some_and(|p| p.0.is_empty()), "a version with none is kept as its id alone, read back with nothing to make again");
         assert!(read_all(&store, &prepared).unwrap().is_empty(), "the choices do not read the plans");
         drop(store);
         let _ = std::fs::remove_dir_all(&dir);

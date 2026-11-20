@@ -59,7 +59,7 @@ pub(super) trait Part: Sized + Send {
     fn alone(self) -> Result<Self::Linked>;
     /// Its header, taken out, and its rules, renamed by `names`.
     fn into_parts(self, names: &Names) -> (Self::Header, Self::Rules);
-    /// The linked program of `fields` and each part's rules, in order. A rule `core.rr` gives (its head is the
+    /// The linked program of `fields` and each part's rules, in order. A rule `core.rerail` gives (its head is the
     /// engine's) is taken once.
     fn link(fields: Builder<'static>, rules: Vec<Self::Rules>, core: &BTreeSet<String>) -> Result<Self::Linked>;
     /// `link`, and how many of the linked rules are each part's (in the parts' order), where a link of this form is
@@ -79,7 +79,7 @@ pub(super) trait Part: Sized + Send {
     }
 }
 
-/// `linked` without the repeats of a rule `core.rr` gives after its first (`Part::link`), and each part's count of
+/// `linked` without the repeats of a rule `core.rerail` gives after its first (`Part::link`), and each part's count of
 /// rules after (`counts`, the parts' rules in order, before).
 fn without_core_repeats(linked: Arc<Version>, counts: &[usize], core: &BTreeSet<String>) -> Result<(Arc<Version>, Vec<usize>)> {
     let mut seen = BTreeSet::new();
@@ -458,7 +458,7 @@ impl Part for Versioned {
             counts.push(n);
         }
         let (linked, _) = b.finish().map_err(plan)?;
-        // A rule `core.rr` gives, taken once: the copies after the first dropped.
+        // A rule `core.rerail` gives, taken once: the copies after the first dropped.
         let (linked, counts) = without_core_repeats(linked, &counts, core)?;
         Ok((linked, Some(counts)))
     }

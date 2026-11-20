@@ -49,7 +49,7 @@ fn toks(text: &str) -> String {
     let mut lx = PpLexer::new(text.as_bytes(), Options::cpp(20, true));
     let mut v = Vec::new();
     loop {
-        let t = lx.next();
+        let t = lx.next_token();
         if t.kind == P::Eof {
             break;
         }
@@ -270,7 +270,7 @@ fn predefines_and_expansion_facts() {
     cfg.define("X=1").define("F(a)=a+X").define("Y").undef("Y");
     let (got, facts) = run_with(&[("main.c", "F(2) X Y\n")], &[], cfg);
     assert_eq!(got.join(" "), "2 + 1 1 Y");
-    let names: Vec<(u32, &[u8], u32)> = facts.expansions.iter().map(|e| (e.0, e.1.as_slice(), e.6)).collect();
+    let names: Vec<(u32, &[u8], u32)> = facts.expansions.iter().map(|e| (e.id, e.name.as_slice(), e.parent)).collect();
     // `X` inside `F`'s expansion is expansion 2's, from expansion 1.
     assert_eq!(names, [(1, b"F".as_slice(), 0), (2, b"X".as_slice(), 1), (3, b"X".as_slice(), 0)]);
 }

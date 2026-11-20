@@ -1,7 +1,7 @@
-//! The checks of `docs/rule-syntax/site/check_rr.py` (and its `souffle.py`), over `.rr` statements:
+//! The checks of `docs/rule-syntax/site/check_rr.py` (and its `souffle.py`), over `.rerail` statements:
 //! - every rule is grounded: each variable is bound by a positive atom, a pattern, a `match` group or an
 //!   assignment before a negation, a comparison, a text test or the head needs it;
-//! - no relation is declared twice in one program (a file, what it includes, and `core.rr`), and no declaration
+//! - no relation is declared twice in one program (a file, what it includes, and `core.rerail`), and no declaration
 //!   takes a built-in constraint's name;
 //! - the program is stratified: no relation depends on itself through `!`, an aggregate or a relation passed to a
 //!   built-in, unless both are `ordered by` the same order and the use is tied to the head by it
@@ -450,7 +450,11 @@ pub fn undeclared(statements: &[&Stmt]) -> Vec<String> {
             declared.insert(name.to_owned());
         }
     }
-    let built_in = |rel: &str| TESTS.iter().any(|(t, _)| *t == rel) || RELATION_ARG.iter().any(|(r, _)| *r == rel) || super::lower::BUILT_INS.contains(&rel);
+    // The import closure's relations (`rr_cx_*`) are the engine's: a run adds `components.rerail` to a program that reads
+    // one, with their declarations (`plan::corpus`'s `reads_components`, decision 0450 §3).
+    let built_in = |rel: &str| {
+        TESTS.iter().any(|(t, _)| *t == rel) || RELATION_ARG.iter().any(|(r, _)| *r == rel) || super::lower::BUILT_INS.contains(&rel) || rel.starts_with("rr_cx_")
+    };
     let mut out = BTreeSet::new();
     for s in statements.iter().filter(|s| s.what() == Some(S::Clause)) {
         let (f, n) = (s.file(), s.node());

@@ -108,7 +108,7 @@ pub mod program_image {
 }
 pub mod program_text;
 pub mod version_trace;
-/// Main's JSON rules translated to `.rr` on read (decision 0175).
+/// Main's JSON rules translated to `.rerail` on read (decision 0175).
 pub mod json_rules;
 #[allow(dead_code)]
 pub mod rr;

@@ -264,7 +264,7 @@ fn sessions_isolate_bindings_and_reject_invalid_relation_shapes() {
 fn rule_files_use_the_core_prelude_and_unused_inputs_need_no_binding() {
     let (dir, mut executor) = executor();
     executor.bind_snapshot(json!({"files":[{"path":"a.py", "language":"python", "source":"def f():\n    pass\n"}]}).to_string()).unwrap();
-    let file = dir.path().join("functions.rr");
+    let file = dir.path().join("functions.rerail");
     std::fs::write(&file, ".decl functions(n: node)\nfunctions(n) :- node(_, n, \"function_definition\", _, _).\n.output functions\n").unwrap();
     executor
         .run_file(file.to_string_lossy().into_owned(), "python".into(), None)
@@ -319,7 +319,7 @@ fn corpus_sql_mode_matches_native_rule_execution() {
     let program = CLOSURE.replace(".input edge", "edge(1, 2). edge(2, 3). edge(3, 4).");
     for (name, modes) in [("sql", ""), ("native", "program")] {
         let report = crate::code_rule_dsl::tools::logic(
-            &[program.clone()],
+            std::slice::from_ref(&program),
             &root,
             None,
             &dir.path().join(name),
@@ -559,7 +559,7 @@ fn a_corpus_runs_memoised_rows_bind_by_name_from_their_frames() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), format!("{marker}def f():\n    pass\n")).unwrap();
     std::fs::write(dir.join("b.py"), format!("{marker}def f():\n    pass\ndef g():\n    pass\n")).unwrap();
-    let rule = dir.join("dup.rr");
+    let rule = dir.join("dup.rerail");
     std::fs::write(&rule, r#"
 .decl def(n: node, x: symbol)
 def(n, x) :- kind(n, "function_definition"), field(n, "name", c), text(c, x).
@@ -614,7 +614,7 @@ named(n, x) :- def(n, x), x = "g".
         .unwrap();
     assert!(changed >= 1);
     // This process holds the frames in memory (decision 0104): an edit from outside is the next process's to read.
-    crate::content_store::forget_frames_snapshot(&path);
+    crate::content_store::forget_held_snapshot(&path);
     executor.bind_corpus(dir.to_string_lossy().into_owned(), Some(vec!["def".into()])).unwrap();
     assert_eq!(rows(&mut executor, &format!("SELECT count(*) FROM def WHERE n = {a_node}")), json!([[1]]));
     let err = executor.query("SELECT count(*) FROM def".into(), None, None).unwrap_err().to_string();

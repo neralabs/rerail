@@ -437,7 +437,7 @@ Evidence: `research/regex.md` (all 1,140 regexes of the data-layer rules, measur
 
 ### 5.1 Code conditions are AST conditions
 
-Whole-file text regex clauses (`Query::Regex { source: Content }`) exist because 14 data-layer rules were ported from nera-data-layer's own line-scanning linters at exact parity. Their line state machine (`compile/line_state.rs`), comment filters and indentation filters rebuild parser knowledge by hand (string and docstring tracking, "not a comment", "not under `if TYPE_CHECKING:`"). Measured census of the 113 clauses:
+Whole-file text regex clauses (`Query::Regex { source: Content }`) exist because 14 data-layer rules were ported from the data-layer repository's own line-scanning linters at exact parity. Their line state machine (`compile/line_state.rs`), comment filters and indentation filters rebuild parser knowledge by hand (string and docstring tracking, "not a comment", "not under `if TYPE_CHECKING:`"). Measured census of the 113 clauses:
 
 | Class | Count | Lowering |
 |---|---|---|

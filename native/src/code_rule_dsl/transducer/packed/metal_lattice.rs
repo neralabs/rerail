@@ -1,6 +1,6 @@
-//! File-local lattice FIX on Metal (list step 17; 02 §"Document-local lattice strata", 03 §7,
+//! File-local lattice FIX on the device (list step 17; 02 §"Document-local lattice strata", 03 §7,
 //! I10's R0): `logic::native::lattice_fixpoint`'s graph (seed values, copy edges, binary
-//! transfers) over the flat lattice, solved on the device work queue (`metal_work_queue`). An
+//! transfers) over the flat lattice, solved on the device work queue (`metal_work_queue`, `lattice.uglykl`), on the process's device (decision 0440 step C). An
 //! item is a cell to evaluate; a cell whose value rose pushes its dependents, which any idle
 //! worker takes up, across every threadgroup, until none is active. The device, not the host,
 //! decides each further evaluation (03 §7's device-side enqueue).
@@ -9,8 +9,9 @@
 //! least fixpoint, whatever order its cells are evaluated in.
 use super::*;
 pub use crate::code_rule_dsl::logic::device::lattice::{Solved, System};
+use rerail_metal::lane;
 
-const SOURCE: &str = include_str!("metal_lattice.metal");
+const SOURCE: &str = include_str!("lattice.uglykl");
 /// The absent value (`logic::native::BOT`).
 const BOT: i64 = i64::MIN;
 /// The top value (`logic::native::TOP`).
@@ -24,6 +25,7 @@ struct Args {
     polls: u32,
     pad: u32,
 }
+unsafe impl lane::Pod for Args {}
 
 /// `(start, items)` CSR of `edges` by their first element over `n` cells.
 fn csr(n: usize, mut edges: Vec<(u32, u32)>) -> (Vec<u32>, Vec<u32>) {
@@ -47,7 +49,7 @@ pub(in crate::code_rule_dsl) fn solve(system: &System<'_>) -> Result<Solved, Err
     if n > u32::MAX as usize / 4 {
         return Err(Error::BackendCapacity);
     }
-    let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
+    lane::device()?;
     let (copy_start, copies) = csr(n, system.copies.to_vec());
     let (bin_start, bin_index) = csr(n, system.bins.iter().enumerate().map(|(at, bin)| (bin.0, at as u32)).collect());
     let bins = system.bins.iter().map(|&(_, op, left, right)| [u32::from(op), left, right, 0]).collect::<Vec<_>>();
@@ -90,17 +92,25 @@ pub(in crate::code_rule_dsl) fn solve(system: &System<'_>) -> Result<Solved, Err
     let stats = zeroed::<u32>(4)?;
     let made_in = super::metal_backend::launch::host_seconds() - begun;
     let args = Args { cells: n as u32, capacity: queue.capacity, polls: super::work_queue::POLLS, pad: 0 };
-    let pipeline = pipeline()?;
-    let ran = super::work_queue::run(device, &pipeline, &queue, groups, "Rerail lattice FIX", |encoder| {
-        for (index, buffer) in [
-            &state, &values, &seeds, &copy_start, &copies, &bin_start, &bin_index, &bins, &out_start, &outs, &queued, &queue.slots, &queue.control, &stats,
-        ]
-        .iter()
-        .enumerate()
-        {
-            encoder.set_buffer(index as u64, Some(buffer.buffer()), 0);
-        }
-        encoder.set_bytes(14, std::mem::size_of::<Args>() as u64, std::ptr::from_ref(&args).cast());
+    let kernel = lane::kernel_fixed(SOURCE, "lattice_queue", None);
+    let ran = super::work_queue::run(&kernel, &queue, groups, "Rerail lattice FIX", |launch| {
+        let rows: [(&'static str, &super::blocks::Block); 14] = [
+            ("state", &state),
+            ("values", &values),
+            ("seeds", &seeds),
+            ("copyStart", &copy_start),
+            ("copies", &copies),
+            ("binStart", &bin_start),
+            ("binIndex", &bin_index),
+            ("bins", &bins),
+            ("outStart", &out_start),
+            ("outs", &outs),
+            ("queued", &queued),
+            ("slots", &queue.slots),
+            ("control", &queue.control),
+            ("stats", &stats),
+        ];
+        rows.into_iter().fold(launch, |l, (name, b)| l.buffer(name, b.device_buffer())).value("args", &args)
     })?;
     let (made, reused) = [&state, &values, &seeds, &copy_start, &copies, &bin_start, &bin_index, &bins, &out_start, &outs, &queued, &queue.slots, &queue.control, &stats]
         .iter()
@@ -129,15 +139,82 @@ pub(in crate::code_rule_dsl) fn solve(system: &System<'_>) -> Result<Solved, Err
     })
 }
 
-fn pipeline() -> Result<metal::ComputePipelineState, Error> {
-    #[derive(Default)]
-    struct LatticePipeline(std::sync::Mutex<Option<metal::ComputePipelineState>>);
-    let held_ = crate::code_rule_dsl::logic::profile::machine::<LatticePipeline>();
-    let mut cached = held_.0.lock().map_err(|_| Error::BackendFailure)?;
-    if let Some(pipeline) = &*cached {
-        return Ok(pipeline.clone());
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lub(a: i64, b: i64) -> i64 {
+        if a == BOT {
+            b
+        } else if b == BOT || a == b {
+            a
+        } else {
+            TOP
+        }
     }
-    let pipeline = pipeline_named(&format!("{}\n{SOURCE}", super::work_queue::SOURCE), "lattice_queue")?;
-    *cached = Some(pipeline.clone());
-    Ok(pipeline)
+
+    fn transfer(op: u8, a: i64, b: i64) -> i64 {
+        const BIG: i64 = 1 << 40;
+        match op {
+            _ if a == TOP || b == TOP => TOP,
+            b'+' => a + b,
+            b'-' => a - b,
+            b'*' if a.abs() < BIG && b.abs() < BIG => a * b,
+            _ => TOP,
+        }
+    }
+
+    /// The least fixpoint by rounds over every cell until none changes: the reference.
+    fn fixpoint(s: &System<'_>) -> Vec<i64> {
+        let mut v = s.seeds.to_vec();
+        loop {
+            let mut next = s.seeds.to_vec();
+            for &(cell, source) in s.copies {
+                next[cell as usize] = lub(next[cell as usize], v[source as usize]);
+            }
+            for &(cell, op, l, r) in s.bins {
+                let (a, b) = (v[l as usize], v[r as usize]);
+                if a != BOT && b != BOT {
+                    next[cell as usize] = lub(next[cell as usize], transfer(op, a, b));
+                }
+            }
+            if next == v {
+                return v;
+            }
+            v = next;
+        }
+    }
+
+    /// The device's fixpoint, on the process's device, equals the host's: 20,000 cells, copies along chains and
+    /// back (cycles), transfers of each operator, seeds of every kind.
+    #[test]
+    fn the_device_reaches_the_lattices_least_fixpoint() {
+        if lane::device().is_err() {
+            return;
+        }
+        let n = 20_000u32;
+        let mut x = 0x9e37_79b9u32;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            x
+        };
+        let seeds: Vec<i64> = (0..n).map(|_| match next() % 10 { 0 => 7, 1 => i64::from(next() % 5), 2 => TOP, _ => BOT }).collect();
+        let mut copies = Vec::new();
+        let mut bins = Vec::new();
+        for c in 1..n {
+            match next() % 4 {
+                0 => copies.push((c, c - 1)),
+                1 => copies.push((c, next() % n)),
+                2 => bins.push((c, [b'+', b'-', b'*', b'/'][(next() % 4) as usize], next() % c, next() % c)),
+                _ => {}
+            }
+        }
+        let system = System { seeds: &seeds, copies: &copies, bins: &bins };
+        let want = fixpoint(&system);
+        let solved = solve(&system).unwrap();
+        assert_eq!(solved.values, want, "on {}", lane::backend());
+        assert!(solved.visits > 0);
+    }
 }

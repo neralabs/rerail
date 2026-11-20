@@ -11,4 +11,4 @@ pub mod rounds;
 pub mod terms;
 // cratify: `oracle_tests` is rerail-engine's (it mounts it)
 // Its tests run in the engine's test binary (its facade of this module mounts `typing/phase_tests.rs`): they read what the
-// engine registers as it loads (the languages, their `.rr` libraries).
+// engine registers as it loads (the languages, their `.rerail` libraries).

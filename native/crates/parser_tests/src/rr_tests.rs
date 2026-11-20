@@ -1,11 +1,12 @@
-//! The `.rr` ladder (docs/parser-generators/24-rr-and-bitlex-plan.md §3): `.rr`, the rule
-//! language, a construct at a time, each step a Bitlex file in `bitlex_ladder/rr/`, parsed with
-//! no Rust between the bytes and the nodes.
+//! The `.rerail` ladder (docs/parser-generators/24-rr-and-bitlex-plan.md §3): `.rerail`, the rule
+//! language, built a construct at a time, parsed with no Rust between the bytes and the nodes. The
+//! tree keeps its last step, `rr_syntax/bitlex_ladder/22-test-blocks.bitlex`, the `.rerail` parser's
+//! grammar; git's history keeps the steps before it (decision 0422).
 //!
 //! Each step is checked as the ladder's are (`bitlex_ladder_tests::check_ladder`): the reference
 //! evaluator, the interpreters and Cranelift give the same nodes on every document, and each
 //! step has the compiler's shape. And each document a step parses is parsed by the engine's
-//! own `.rr` parser too (`rerail_rr_syntax::tape`): the two trees must be equal, node for node (kind,
+//! own `.rerail` parser too (`rerail_rr_syntax::tape`): the two trees must be equal, node for node (kind,
 //! field, span, size), and the engine's must have no `ERROR`. A step's kinds and fields are named
 //! as the engine's tape names them (`rerail_rr_syntax::tape`).
 //!
@@ -17,13 +18,13 @@ use rerail_rr_syntax as rr;
 
 const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../rr_syntax/bitlex_ladder");
 
-/// The bytes a mutation writes: `.rr`'s punctuation, quotes, comment openers and words.
+/// The bytes a mutation writes: `.rerail`'s punctuation, quotes, comment openers and words.
 const ALPHABET: &[u8] = b"().,:-=<>!\"`/*#_ \naZ9~;@{}\\";
 
 /// Sample texts of the token kinds the steps' grammars name, with the edge cases of each.
 const SAMPLES: &[(&str, &[&str])] = &[(
     "string",
-    &["\"a\"", "\"\"", "\"x/y.rr\"", "\"a \\\" b\"", "\"\\\\\"", "\"two\nlines\"", "\"// not a comment\"", "\"é\"", "\"\\u{e9}\""],
+    &["\"a\"", "\"\"", "\"x/y.rerail\"", "\"a \\\" b\"", "\"\\\\\"", "\"two\nlines\"", "\"// not a comment\"", "\"é\"", "\"\\u{e9}\""],
 ), (
     "comment",
     &["// c", "//", "// a, (1) é\r", "//// x", "// #include \"y\"", "// /* x", "// \"x", "/* c */", "/**/", "/*/", "/* a\n b */", "/* // \" ` */", "/*** x **/"],
@@ -221,7 +222,7 @@ const CASES: &[(&str, &str)] = &[
     (".policy {\"a\" 1}", "never"),
     (".policy {\"a\": tru}", "never"),
     (".policy /* c */ {\"a\": 1}", "never"),
-    // The other directives: all of `.rr`.
+    // The other directives: all of `.rerail`.
     (".type t = /* c */ a\n.input r(IO=x /* d */, f=\"y\")\n.functor f(x: number): symbol stateful // e\n.edit e(a: node)\n.pragma \"a\" \"b\"\n.lattice l<> { A -> @f, B -> 1 + x }\n.input a, b(x)\n.output c", "11"),
     // An empty raw text: no leaf, and its field on the node made last.
     (".type t\n.input r()\n.decl x(a: t)", "11"),
@@ -278,13 +279,17 @@ const CASES: &[(&str, &str)] = &[
     ("r(x) :- x = a -b, s(\"a\\qb\", \"two\nlines\", 007) // c\n.", "06"),
     // A rule file's tests (decision 0130): a fixture set, a test that uses it, with `exactly`, its
     // statements a file's; `.end` past a comment; `exactly` and `uses` as names.
-    (".fixtures app\n  .fixture \"a.py\" ```\n    x = 1\n    ```\n.end\n.test t exactly uses app, b\n  #include \"c.rr\"\n  seen(1).\n  r(x) :- seen(x).\n  .expect B101 at \"a.py\":1\n.end\nr(x) :- s(x).", "22"),
+    (".fixtures app\n  .fixture \"a.py\" ```\n    x = 1\n    ```\n.end\n.test t exactly uses app, b\n  #include \"c.rerail\"\n  seen(1).\n  r(x) :- seen(x).\n  .expect B101 at \"a.py\":1\n.end\nr(x) :- s(x).", "22"),
     (".test exactly\n.end\n.test uses uses a\n. // c\n end\n.fixtures f exactly(1).\n.end", "22"),
     // Blocks do not nest; a `.end` outside a block; a block with no `.end`.
     (".test a\n.test b\n.end\n.end", "never"),
     (".fixtures a\n.fixtures b\n.end\n.end", "never"),
     ("r(x).\n.end", "never"),
     (".test a\nr(x).", "never"),
+    // `.input` with no relation, before an `#include` (`io_bare`'s `hash_word`, a keyword's
+    // token), a comment between: the engine refuses it, so every step does.
+    (".input #include \"a\"", "never"),
+    (". /* a\n b */input // c\n#include \"a\"", "never"),
 ];
 
 /// A node by names: kind, field ("" for none), start, end, size.
@@ -359,7 +364,7 @@ fn has_block_lines(src: &str) -> bool {
 
 fn against_the_engine(step: &str, c: &Compiled, bytes: &[u8], want: &Option<Vec<IdNode>>) -> Option<String> {
     let nodes = want.as_ref()?;
-    // A `.rr` file is text: the engine reads only UTF-8.
+    // A `.rerail` file is text: the engine reads only UTF-8.
     let src = std::str::from_utf8(bytes).ok()?;
     // A step before the test blocks reads a block's lines as settings, as the engine did then: a document with
     // them is the engine's from that step on.
@@ -384,7 +389,7 @@ fn against_the_engine(step: &str, c: &Compiled, bytes: &[u8], want: &Option<Vec<
     ))
 }
 
-/// Every step of the `.rr` ladder: the ladder's checks, and the engine's tree on every document
+/// Every step of the `.rerail` ladder: the ladder's checks, and the engine's tree on every document
 /// the step parses.
 #[test]
 fn rr_steps_parse_as_the_reference_and_the_engine() {
@@ -415,14 +420,14 @@ fn rr_cases_parse_from_their_steps() {
 /// each level they call refusing it too, no level that may end and go on.
 #[test]
 fn a_refused_mark_is_checked() {
-    let source = std::fs::read_to_string(format!("{DIR}/10-policy.bitlex")).expect("step 10");
+    let source = std::fs::read_to_string(format!("{DIR}/22-test-blocks.bitlex")).expect("the grammar");
     assert_eq!(rerail_compiler::ladder::compile_error(&source), None);
     let refuse = "refuse json_bad in json_document json_inner_object json_inner_array";
     for (from, to, why) in [
         (refuse, "refuse json_bad in json_document json_inner_object", "calls one that does not"),
         (refuse, "refuse json_bad in json_document json_member json_inner_object json_inner_array", "no nested level"),
         (refuse, "refuse json_bad in source_file json_document json_inner_object json_inner_array", "the root"),
-        ("hidden line newline json_bad", "hidden line newline", "no hidden mark"),
+        ("newline policy_on json_bad fix_on", "newline policy_on fix_on", "no hidden mark"),
         ("merge json_object ']'", "merge json_object ']' [merge json_object '.']", "may end only after its last token"),
     ] {
         assert_eq!(source.matches(from).count(), 1, "{from}");
@@ -435,7 +440,7 @@ fn a_refused_mark_is_checked() {
 /// the program (`RETAG m=3` names one; `provisional` fields the program checks at `ACCEPT`).
 #[test]
 fn a_reading_is_checked() {
-    let source = std::fs::read_to_string(format!("{DIR}/12-parenthesized.bitlex")).expect("step 12");
+    let source = std::fs::read_to_string(format!("{DIR}/22-test-blocks.bitlex")).expect("the grammar");
     assert_eq!(rerail_compiler::ladder::compile_error(&source), None);
     for (from, to, why) in [
         ("reread parenthesized_strict pattern_tail\n  provisional", "reread nowhere pattern_tail\n  provisional", "no reading of that name"),
@@ -446,8 +451,8 @@ fn a_reading_is_checked() {
         let e = rerail_compiler::ladder::compile_error(&source.replace(from, to));
         assert!(e.as_deref().is_some_and(|e| e.contains(why)), "{to}: {e:?}");
     }
-    let c = rerail_compiler::ladder::compile_step("12", &source);
-    assert_eq!(c.program.readings.maps.len(), 2);
+    let c = rerail_compiler::ladder::compile_step("22", &source);
+    assert_eq!(c.program.readings.maps.len(), source.lines().filter(|l| l.trim_start().starts_with("reading ")).count());
     assert_eq!(c.program.readings.provisional, [c.ids.of("field bare")]);
     let rereads = c.native.structural.iter().filter(|b| matches!(b.operation, rerail_compiler::native_ir::StructuralOperation::Reread { .. })).count();
     assert!(rereads > 0, "the words reread");
@@ -505,7 +510,7 @@ fn rr_look() {
     }
 }
 
-/// Every `.rr` file of the repository through a step's compiled path (`RERAIL_RR_STEP`, the
+/// Every `.rerail` file of the repository through a step's compiled path (`RERAIL_RR_STEP`, the
 /// last step by default), against the engine's tree: the files it parses as the engine does,
 /// those it parses differently or the engine refuses (each a bug), and those it sends to the
 /// engine, by the reference's reason. Run by name.
@@ -526,7 +531,7 @@ fn rr_corpus() {
             let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
             if p.is_dir() && !skip {
                 work.push(p);
-            } else if p.extension().is_some_and(|x| x == "rr") {
+            } else if p.extension().is_some_and(|x| x == "rerail") {
                 files.push(p);
             }
         }

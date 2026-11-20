@@ -383,7 +383,7 @@ pub struct HeavyCol {
     /// The sums of counts squared and cubed (the column's second and third moments).
     pub sq: f64,
     pub cube: f64,
-    /// Every value the column holds, as a Bloom filter (`logic::bloom`, `STAT_WORDS` words, decision 0477): whether
+    /// Every value the column holds, as a Bloom filter (`logic::bloom`, `STAT_WORDS` words, decision 0506): whether
     /// a value outside `top` is held at all, and how many values two columns share. A merge adds the values it adds
     /// and keeps those it removes, so a value it refuses is never held. `None` where it was not made.
     pub keys: Option<std::sync::Arc<crate::code_rule_dsl::logic::bloom::Filter>>,
@@ -509,7 +509,7 @@ pub fn heavy_fan(here: &HeavyCol, by: &[&HeavyCol]) -> Option<f64> {
     // The values heavy in none: each column's tail less the values of `vals` it holds in its tail. A binding is
     // drawn from a value every column of `by` holds (`drawn`), and finds rows where `here` holds it too (`met`); a
     // drawn value `here` lacks is a binding of no rows. Both are counted by containment (as many as the fewest any
-    // has left) or, where two columns' filters tell values apart (decision 0477), as many as those two share, less
+    // has left) or, where two columns' filters tell values apart (decision 0506), as many as those two share, less
     // the heavy values both hold.
     let left = |h: &HeavyCol| (h.tail_ndv - (vals.len() - h.top.len()) as f64).max(0.0);
     let shared = |x: &HeavyCol, y: &HeavyCol| -> Option<f64> {
@@ -686,7 +686,7 @@ mod tests {
         assert!((heavy_fan(&h, &[&h, &h]).unwrap() - true3 / true2).abs() < 1e-9);
         assert_eq!((h.sq, h.cube), (true2, true3));
     }
-    /// Two columns whose tails share 50 of 2,000 keys (decision 0477): containment would price a probe as if all
+    /// Two columns whose tails share 50 of 2,000 keys (decision 0506): containment would price a probe as if all
     /// 2,000 met; the columns' filters price it by about the 50 that do.
     #[test]
     fn the_columns_filters_count_the_tail_keys_two_columns_share() {

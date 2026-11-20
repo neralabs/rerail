@@ -418,7 +418,7 @@ impl Families {
             return Ok(None);
         };
         let source = Arc::new(source);
-        let Some((bytes, _)) = store.get_tapes_bulk(&[id])?.remove(&id) else {
+        let Some(bytes) = store.get_tapes_bulk(&[id])?.remove(&id) else {
             return Ok(None);
         };
         let grammar = tape::Grammar::new(language).map_err(StoreError::Invalid)?;
@@ -470,12 +470,11 @@ impl Families {
     /// tape), else the store's.
     pub fn stored(graph: &(impl Graph + ?Sized), scope: &str, path: &str) -> StoreResult<Option<Arc<Tape>>> {
         let read = graph.binding(&tape_name(scope, path))?.unwrap_or(ABSENT);
-        if read != ABSENT {
-            if let Some(tape) = graph.store().working_set().tape(read).and_then(|tape| tape.downcast::<Tape>().ok()) {
+        if read != ABSENT
+            && let Some(tape) = graph.store().working_set().tape(read).and_then(|tape| tape.downcast::<Tape>().ok()) {
                 crate::code_rule_dsl::prof::count("working_set.tape_hits", 1);
                 return Ok(Some(tape));
             }
-        }
         Self::default().take(graph, scope, path, read)
     }
 
@@ -630,7 +629,7 @@ pub fn stored_documents(graph: &(impl Graph + ?Sized), scope: &str, paths: &[Str
             return Err(StoreError::Invalid(format!("stale core facts for {core}")));
         }
         let key = graph.store().atom(&crate::code_rule_dsl::facts::observe::path_name(scope, path))?.ok_or_else(|| StoreError::Corrupt(format!("{path} has no atom")))?;
-        out.push(crate::code_rule_dsl::facts::vtab::syntax::Document { key, path: path.clone(), core, digest, facts: Arc::new(facts), tape: None, guest: None, module: None });
+        out.push(crate::code_rule_dsl::facts::vtab::syntax::Document { key, path: path.clone(), core, digest, facts: Arc::new(facts), tape: None, guest: None, module: None, unpackaged: false });
     }
     Ok(out)
 }

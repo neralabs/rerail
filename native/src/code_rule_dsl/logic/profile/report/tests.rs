@@ -129,7 +129,7 @@
         super::super::set(true);
         let p = crate::code_rule_dsl::logic::rr::parse_version(
             r#"
-#include "core.rr"
+#include "core.rerail"
 .decl selected(n:node)
 selected(n) :- text(n,"request").
 .decl result(n:node)

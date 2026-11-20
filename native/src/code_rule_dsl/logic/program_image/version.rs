@@ -224,6 +224,18 @@ impl Version {
         debug_assert!(!matches!(**parent, Version::View { .. }), "a view of a view is of its parent");
         Arc::new(Version::View { parent: parent.clone(), ranges, size, digest, analyses: Held::default() })
     }
+    /// Its twin: the same layer (its image or delta, its parent, its ranges, its digest), as a version of its own
+    /// with an empty slot (`held`). What a version's analysis makes over it is made over its twin: kept in the
+    /// version's slot, it would hold its parent, the version itself, which then never drops (Q377).
+    pub fn twin(&self) -> Arc<Version> {
+        Arc::new(match self {
+            Version::Base { image, digest, .. } => Version::Base { image: image.clone(), digest: *digest, analyses: Held::default() },
+            Version::View { parent, ranges, size, digest, .. } => Version::View { parent: parent.clone(), ranges: ranges.clone(), size: *size, digest: *digest, analyses: Held::default() },
+            Version::Overlay { parent, delta, size, depth, digest, .. } => {
+                Version::Overlay { parent: parent.clone(), delta: delta.clone(), size: *size, depth: *depth, digest: *digest, analyses: Held::default() }
+            }
+        })
+    }
     /// Whether rule id `k` is in `ranges`.
     fn in_ranges(ranges: &[(u32, u32)], k: u32) -> bool {
         let at = ranges.partition_point(|&(s, _)| s <= k);

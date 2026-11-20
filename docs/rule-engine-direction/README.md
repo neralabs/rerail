@@ -4,7 +4,7 @@ This document gathers what has been learned so far about running Rerail code rul
 
 - the current execution branches;
 - the Tempo Metal work;
-- nera-data-layer PR 2539, the declarative YAML linter over SQLite facts;
+- the data-layer repository's PR 2539, the declarative YAML linter over SQLite facts;
 - the `neralabs/ast-index-spike` repository, a syntax tape stored in SQL with structural patterns lowered to SQL.
 
 The other files here:
@@ -18,7 +18,7 @@ The other files here:
 - `decisions/`: decision records, each citing the prior work it consulted.
 - `spec.md`: the normative specification (§0–§19), with `spec-transducer.md` (the transducer IR), `spec-indexes.md` (exact index DDL), `spec-fusion.md` (transducer fusion) and `spec-tooling.md` (memory limits, debugging, testing, profiling).
 - `research/`: the evidence behind each spec section: tape regularity and v8/v9np measurements, the transducer IR, the SQL/transducer boundary, Metal recursion and device-side enqueue, fusion, the fusion opportunity and cost model on the data-layer rules, heavy-rule execution profiles, regex lowering and trigram indexes (`regex.md`), the heavy relational inputs (`heavy-inputs.md`), the latest SSC fragment work (`ssc-fragments.md`), Tempo tape residency (`tempo-residency.md`), measurements M1 and M2/M7, the data-layer rule shape fixes with their measured costs (`shape-fixes.md`), and the workstream scan.
-- `experiments/`: the code and raw output for each research document. Database files are not checked in.
+- `experiments/` (removed; at 7efcac9c67): the code and raw output for each research document. Database files are not checked in.
 
 ## Product targets
 
@@ -38,7 +38,7 @@ All three are required:
 
    A differential test runs both bindings on every rule. Precedent:
    - ast-index-spike swapped a native child-enumeration table function for its pure-SQL equivalent with 0 mismatches over 4,264 queries.
-   - The ner-1562 tests swap an ordinary table in for `rerail_matches`.
+   - The scale-test branch's tests swap an ordinary table in for `rerail_matches`.
 
 3. **Compiler.** Rules lower to SQL fragments over these contracts. The caller writes the anti-join, aggregate or recursion; there is no interpreter or program counter encoded in CTEs.
    - The compiler chooses the query shape at plan time from stored statistics: which kind to anchor on, whether to climb from a leaf or descend from the anchor, whether to seed from a value or a structure, whether to emit a probe.

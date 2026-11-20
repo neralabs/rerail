@@ -1,5 +1,5 @@
-//! The `.rr` front end: the rule-syntax files parse and pass `check_rr.py`'s checks, the spellings lower to the
-//! engine's forms, and every `.rdl` program translates to `.rr` that lowers to the same program.
+//! The `.rerail` front end: the rule-syntax files parse and pass `check_rr.py`'s checks, the spellings lower to the
+//! engine's forms, and every `.rdl` program translates to `.rerail` that lowers to the same program.
 
 use super::*;
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
@@ -7,7 +7,7 @@ use crate::code_rule_dsl::logic::program_image::{Lit, RuleRef, TermRef, Version,
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-/// A program's `.rr` text, lowered to its version.
+/// A program's `.rerail` text, lowered to its version.
 fn parse(src: &str) -> Result<Arc<Version>, Error> {
     parse_version(src)
 }
@@ -15,6 +15,18 @@ fn parse(src: &str) -> Result<Arc<Version>, Error> {
 /// `v`'s rules whose head's relation passes `keep`, each written out.
 fn shown(v: &Version, keep: impl Fn(&str) -> bool) -> Vec<String> {
     v.rules().filter(|r| keep(v.rel_name(r.head().rel()))).map(|r| v.show_rule(r)).collect()
+}
+
+/// An alternative of a disjunction holds its own literals alone: `(i = k ; within(i, k))` is a rule with `i = k` and
+/// one with `within(i, k)`. The rule `within` wrote outside its pick held both, so the first alternative read only
+/// the keys' descendants (django-practice-bulk-not-loop reported `filter(**{field: value})`).
+#[test]
+fn an_alternative_holds_only_its_own_literals() {
+    let p = parse(".decl key(i: node)\nkey(i) :- kind(p, \"pair\"), field(p, \"key\", k), (i = k ; within(i, k)).\n.output key\n").unwrap();
+    let rules = shown(&p, |h| h == "key");
+    let within = format!("{}(", crate::code_rule_dsl::facts::vtab::syntax::WITHIN);
+    assert_eq!(rules.len(), 2, "{rules:?}");
+    assert_eq!(rules.iter().filter(|r| r.contains(&within)).count(), 1, "one alternative reads `within`: {rules:?}");
 }
 
 /// `v`'s rules whose head's relation passes `keep`.
@@ -35,13 +47,13 @@ fn strata(v: &Version) -> Result<Vec<BTreeSet<String>>, Error> {
 #[test]
 fn include_seed_ignores_quoted_directives_and_preserves_real_includes() {
     let quoted = parse(r##".decl x(s:symbol)
-x("#include \"absent.rr\"").
-// #include "absent.rr"
+x("#include \"absent.rerail\"").
+// #include "absent.rerail"
 "##).unwrap();
     assert_eq!(quoted.fact_rows("x").len(), 1);
-    let included = parse("#include \"core.rr\"\n.decl answer(n:node)\nanswer(n) :- kind(n, \"call\").\n").unwrap();
+    let included = parse("#include \"core.rerail\"\n.decl answer(n:node)\nanswer(n) :- kind(n, \"call\").\n").unwrap();
     assert!(included.declares("doc"), "a real include still supplies its declarations");
-    assert!(parse("#unknown \"x.rr\"\n").is_err());
+    assert!(parse("#unknown \"x.rerail\"\n").is_err());
     assert!(parse(".decl broken(\n").is_err(), "the lexical shortcut does not bypass compilation errors");
 }
 
@@ -49,7 +61,7 @@ fn finding_contract(source: &str, program: &str) -> Vec<serde_json::Value> {
     let root = crate::code_rule_dsl::fixtures::temp().with_extension("rr-contract");
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("a.py"), source).unwrap();
-    let rule = root.join("rule.rr");
+    let rule = root.join("rule.rerail");
     std::fs::write(&rule, program).unwrap();
     let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &root.join("out"), &serde_json::Value::Null).unwrap();
     let rows = report["diagnostics"].as_array().unwrap().clone();
@@ -78,7 +90,7 @@ box(k=keyword(), *(positional(),))
 "#, r#"
 .policy "contract:python-visit-order" revision 1
 .language python
-#include "python/ast.rr"
+#include "python/ast.rerail"
 .violation Visitation(at: node, callee: symbol, ordinal: number) "{callee}"
 Visitation(c, name, i) :- call_name(c, name), visit_index(c, i).
 .violation Before(at: node) code "BEFORE" "body before decorator"
@@ -151,7 +163,7 @@ RawText(@place(p, 1)) :- doc(d, p, _), source(d, sp), text(sp, t), contains("mar
 fn public_rr_report_preserves_compiled_policy_metadata() {
     let root = crate::code_rule_dsl::fixtures::temp().with_extension("rr-metadata");
     std::fs::create_dir_all(&root).unwrap();
-    let rule = root.join("rule.rr");
+    let rule = root.join("rule.rerail");
     std::fs::write(&rule, r#"
 .policy "contract:metadata" revision 7
 .mode block
@@ -212,8 +224,8 @@ fn source_span_producers_retain_rows_through_local_planning() {
     let rows = finding_contract("# marker\nx = y\n", r#"
 .policy "contract:source" revision 1
 .language python
-#include "python/ast.rr"
-#include "python/calls.rr"
+#include "python/ast.rerail"
+#include "python/calls.rerail"
 .decl selected(d: number, t: symbol)
 selected(d, t) :- source(d, sp), text(sp, t), contains("marker", t).
 .violation Seen(at: node, source_text: symbol) "{source_text}"
@@ -243,10 +255,10 @@ fn files(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// The hand-written `.rr` files: the library, the data-layer rules and the spikes (`site/` is the page's code).
+/// The hand-written `.rerail` files: the library, the data-layer rules and the spikes (`site/` is the page's code).
 fn rr_files() -> Vec<PathBuf> {
     let mut out = Vec::new();
-    files(&rule_syntax(), "rr", &mut out);
+    files(&rule_syntax(), "rerail", &mut out);
     // `typing/programs` holds copies of the engine's typing programs (T's dialect, its own inputs): not rules.
     // `packs/python-main` is generated from all of main's rules (`site/regen_main_pack.sh`), the ones the reader
     // refuses too, so a test over every rule of main sees them all; its own check is `reader-check.txt`.
@@ -267,7 +279,7 @@ fn rule_syntax_files_parse() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-/// `check_rr.py`: every rule grounded; per program (a file, its includes and `core.rr`) no relation declared twice
+/// `check_rr.py`: every rule grounded; per program (a file, its includes and `core.rerail`) no relation declared twice
 /// nor a built-in constraint declared, and every cycle through `!` or an aggregate allowed by `ordered by`.
 #[test]
 fn rule_syntax_files_pass_check_rr() {
@@ -277,7 +289,7 @@ fn rule_syntax_files_pass_check_rr() {
         given.extend(check::fix_relations(&read(f).unwrap().0));
     }
     let mut problems = Vec::new();
-    // Phase 0 resolves every file's includes in one run of `bootstrap.rr`, not one run each.
+    // Phase 0 resolves every file's includes in one run of `bootstrap.rerail`, not one run each.
     let seeds: Vec<_> = rr_files().into_iter().map(|f| crate::code_rule_dsl::logic::plan::corpus::phase0::Seed::File(f.canonicalize().unwrap())).collect();
     crate::code_rule_dsl::logic::plan::corpus::phase0::graphs(&seeds).unwrap();
     for f in rr_files() {
@@ -285,7 +297,7 @@ fn rule_syntax_files_pass_check_rr() {
             problems.push(format!("{}:{line}: unbound {}", short(&f), vars.join(", ")));
         }
         let mut program = program(&f).unwrap().0;
-        let core = library().join("core.rr").canonicalize().unwrap();
+        let core = library().join("core.rerail").canonicalize().unwrap();
         if !program.iter().any(|(p, _)| *p == core) {
             program.push((core.clone(), read(&core).unwrap().0));
         }
@@ -315,7 +327,7 @@ fn check_rr_finds_problems() {
     let cyclic = statements(".decl a(x: number)\n.decl b(x: number)\na(x) :- b(x), !a(x).\nb(x) :- a(x).\n");
     let refs: Vec<&from_tape::Stmt> = cyclic.iter().collect();
     assert_eq!(check::strata(&refs).len(), 1);
-    let twice = vec![("a.rr".to_owned(), statements(".decl a(x: number)")), ("b.rr".to_owned(), statements(".decl a(x: number)\n.decl glob(x: symbol)"))];
+    let twice = vec![("a.rerail".to_owned(), statements(".decl a(x: number)")), ("b.rerail".to_owned(), statements(".decl a(x: number)\n.decl glob(x: symbol)"))];
     assert_eq!(check::declarations(&twice).len(), 2);
 }
 
@@ -461,7 +473,7 @@ At(s, i) :- kind(m, "module"), child(m, s, _), !kind(s, "comment"),
 }
 
 /// An aggregate's context leaves out the clause's own head where the rest binds its variables: through it, the
-/// aggregate would sit in the head's recursion (lazy-analyzer.rr's `la_cb`).
+/// aggregate would sit in the head's recursion (lazy-analyzer.rerail's `la_cb`).
 #[test]
 fn a_context_leaves_out_the_clause_head() {
     let p = parse(concat!(
@@ -765,8 +777,8 @@ fn native_aggregates_and_text_functions_run() {
 .input node, doc
 .decl kv(k: number, v: number)
 kv(1, 5). kv(1, 3). kv(1, 9). kv(2, 4).
-.decl ks(k: number, s: symbol)
-ks(1, "b"). ks(1, "a"). ks(2, "c").
+.decl ks(k: number, s: number)
+ks(1, 20). ks(1, 10). ks(2, 30).
 .decl lo(k: number, v: number)
 lo(k, v) :- kv(k, _), v = min x : { kv(k, x) }.
 .decl hi(k: number, v: number)
@@ -874,7 +886,7 @@ fn authored() -> Vec<(String, String, PathBuf)> {
     out.into_iter().map(|(name, path)| (name, std::fs::read_to_string(&path).unwrap(), path)).collect()
 }
 
-/// A lowered `.rr` program without the requests its lowering derives (`rr_embed_req` for `parsed`, decision 0055;
+/// A lowered `.rerail` program without the requests its lowering derives (`rr_embed_req` for `parsed`, decision 0055;
 /// `rr_parse_req`, `rr_splice_req` for tape operations, 0058;
 /// `rr_dir_req`, `rr_file_req` for the file system, t21) and the context relations only they read (a context's
 /// `rr_ctx` and the `rr_cover` groups it joins): an `.rdl` program
@@ -900,7 +912,7 @@ fn without_requests(p: &Version) -> Arc<Version> {
     b.finish().unwrap().0
 }
 
-/// Each copied `.rdl` program (T's, until step 31 removes them) translates to `.rr` that lowers, its `.rr` beside it
+/// Each copied `.rdl` program (T's, until step 31 removes them) translates to `.rerail` that lowers, its `.rerail` beside it
 /// is that translation, and the lowered program prints back as itself. (The `.rdl` was also read by the front end's
 /// own parser and compared; that parser went with the intermediate forms, 0276 step 6.)
 #[test]
@@ -914,7 +926,7 @@ fn rdl_programs_translate_to_the_same_program() {
                 continue;
             }
         };
-        let beside = path.with_extension("rr");
+        let beside = path.with_extension("rerail");
         if beside.exists() && std::fs::read_to_string(&beside).unwrap() != rr {
             failures.push(format!("{name}: {} is not its translation", beside.display()));
         }
@@ -938,15 +950,15 @@ fn rdl_programs_translate_to_the_same_program() {
 #[test]
 fn rr_programs_print_as_themselves() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/programs/data_layer");
-    let prelude = std::fs::read_to_string(dir.join("prelude.rr")).unwrap();
+    let prelude = std::fs::read_to_string(dir.join("prelude.rerail")).unwrap();
     let mut found = Vec::new();
-    files(&dir, "rr", &mut found);
+    files(&dir, "rerail", &mut found);
     let mut programs: Vec<(String, String)> = found
         .into_iter()
-        .filter(|p| !p.ends_with("prelude.rr"))
+        .filter(|p| !p.ends_with("prelude.rerail"))
         .map(|p| (short(&p), format!("{prelude}\n{}", std::fs::read_to_string(&p).unwrap())))
         .collect();
-    let quality = repo().join("gate/data-layer/final-shape/data-layer-serverplan-quality.rr");
+    let quality = repo().join("gate/data-layer/final-shape/data-layer-serverplan-quality.rerail");
     programs.push((short(&quality), std::fs::read_to_string(&quality).unwrap()));
     let mut failures = Vec::new();
     let mut lowered = 0;
@@ -988,26 +1000,26 @@ b(s) :- t(s), !match("(?i)x(y)", s).
     assert_eq!(super::print::search("rx", r"^(?:a\)[)]b)$"), r"a\)[)]b");
 }
 
-/// Writes each authored program's `.rr` beside it (run once per change of an `.rdl`).
+/// Writes each authored program's `.rerail` beside it (run once per change of an `.rdl`).
 #[test]
-#[ignore = "writes files: the .rr translations of the authored .rdl programs"]
+#[ignore = "writes files: the .rerail translations of the authored .rdl programs"]
 fn write_rr_translations() {
     for (name, text, path) in authored() {
-        std::fs::write(path.with_extension("rr"), translate(&text).unwrap_or_else(|e| panic!("{name}: {e}"))).unwrap();
+        std::fs::write(path.with_extension("rerail"), translate(&text).unwrap_or_else(|e| panic!("{name}: {e}"))).unwrap();
     }
 }
 
 /// Which hand-written data-layer rules lower to the engine today, and what stops the others (a report).
-/// `RERAIL_RR_REPORT_EXTRA=<dir>[:<dir>…]` reports the `.rr` files under those directories too (another branch's
+/// `RERAIL_RR_REPORT_EXTRA=<dir>[:<dir>…]` reports the `.rerail` files under those directories too (another branch's
 /// packs, say), with `#include` still read from this library.
 #[test]
 #[ignore = "a report: what the hand-written rules need from the lowering"]
 fn hand_written_rules_lowering_report() {
     let mut out = Vec::new();
-    files(&rule_syntax().join("data-layer"), "rr", &mut out);
-    files(&library(), "rr", &mut out);
+    files(&rule_syntax().join("data-layer"), "rerail", &mut out);
+    files(&library(), "rerail", &mut out);
     for dir in std::env::var("RERAIL_RR_REPORT_EXTRA").iter().flat_map(|dirs| dirs.split(':')).filter(|d| !d.is_empty()) {
-        files(Path::new(dir), "rr", &mut out);
+        files(Path::new(dir), "rerail", &mut out);
     }
     for f in out {
         let result = parse_file_version(&f);
@@ -1083,7 +1095,7 @@ fn aggregates_inside_terms_lower() {
     assert_eq!(two.body().filter(|l| matches!(l.view(), Lit::Agg { .. })).count(), 2, "{}", p.show_rule(two));
 }
 
-/// The aggregates print as `.rr` that reads back as the same program.
+/// The aggregates print as `.rerail` that reads back as the same program.
 #[test]
 fn aggregates_print_as_themselves() {
     let b = parse(concat!(
@@ -1211,13 +1223,13 @@ s(q) :- s(x), split_dot(x, q, _), !split_dot(x, q, "y").
     // The nearest block: a climb from n that stops at the first member of blk, which is a.
     assert!(rules[1].iter().any(|l| l.starts_with("rr_up") && l.ends_with("($n, $a)")), "{:?}", rules[1]);
     assert!(rules[1].iter().any(|l| l == "blk($a)"), "{:?}", rules[1]);
-    // `next_sibling` is core.rr's, written out over `child` in the rule (`rr::lower::core`): no relation of the program.
+    // `next_sibling` is core.rerail's, written out over `child` in the rule (`rr::lower::core`): no relation of the program.
     assert!(shown(&p, |h| h == "next_sibling").is_empty() && !p.input_names().contains(&"next_sibling".to_owned()));
     let again = parse(&print_version(&p).unwrap()).unwrap();
     assert_eq!(difference(&p, &again), None);
 }
 
-/// What the axes still refuse says so by name; core.rr's `within`, `earlier` and `precedes_stop` negate with a node
+/// What the axes still refuse says so by name; core.rerail's `within`, `earlier` and `precedes_stop` negate with a node
 /// unnamed, through their relations: n has no ancestor, n has nothing after it, n has no later sibling before a stop.
 #[test]
 fn axes_refuse_by_name() {
@@ -1332,15 +1344,15 @@ fn negated_conjunctions_lower_to_helpers() {
 fn programs_are_kept_by_the_hashes_of_what_they_read() {
     let dir = std::env::temp_dir().join(format!("rr-library-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let (main, helper) = (dir.join("main.rr"), dir.join("zz_helper_0044.rr"));
+    let (main, helper) = (dir.join("main.rerail"), dir.join("zz_helper_0044.rerail"));
     std::fs::write(&helper, ".decl h(x: number)\nh(1).\n").unwrap();
-    std::fs::write(&main, "#include \"zz_helper_0044.rr\"\n.decl r(x: number)\nr(x) :- h(x).\n.output r\n").unwrap();
+    std::fs::write(&main, "#include \"zz_helper_0044.rerail\"\n.decl r(x: number)\nr(x) :- h(x).\n.output r\n").unwrap();
     let (first, files) = read_file(&main).unwrap();
     let names: Vec<String> = files.iter().map(|f| f.path.file_name().unwrap().to_string_lossy().into_owned()).collect();
-    assert_eq!(names.first().map(String::as_str), Some("core.rr"), "core.rr first: {names:?}");
+    assert_eq!(names.first().map(String::as_str), Some("core.rerail"), "core.rerail first: {names:?}");
     // In reading order: each file, then what it includes; the helper twice, as the library probe
-    // that found nothing and as the file beside main.rr.
-    assert_eq!(names, ["core.rr", "main.rr", "zz_helper_0044.rr", "zz_helper_0044.rr"]);
+    // that found nothing and as the file beside main.rerail.
+    assert_eq!(names, ["core.rerail", "main.rerail", "zz_helper_0044.rerail", "zz_helper_0044.rerail"]);
     assert!(files.iter().any(|f| f.sha256.is_none() && f.path.starts_with(library())), "the include's library probe is recorded");
     assert!(files.iter().filter_map(LibraryFile::fact).all(|f| f.starts_with("library_file(") && f.contains("\"sha256:")));
     let (again, files_again) = read_file(&main).unwrap();
@@ -1354,7 +1366,7 @@ fn programs_are_kept_by_the_hashes_of_what_they_read() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// `must, may` (core.rr 3): two sides, negation reading the other one, and what reads them three-valued too.
+/// `must, may` (core.rerail 3): two sides, negation reading the other one, and what reads them three-valued too.
 #[test]
 fn must_may_relations_run() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("mustmay");
@@ -1466,7 +1478,7 @@ fn python_split_lines_are_lossless_and_document_local() {
 seen(p, l, t) :- doc(d, p, _), split_line(d, l, t).
 .output seen
 "#;
-    let policy = dir.join("lines.rr");
+    let policy = dir.join("lines.rerail");
     std::fs::write(&policy, program).unwrap();
     let program = crate::code_rule_dsl::tools::read_rr(&policy).unwrap();
     let out = dir.join("out");
@@ -1486,7 +1498,7 @@ fn empty_corpora_run_global_absence_findings() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("emptyrr");
     let corpus = dir.join("corpus");
     std::fs::create_dir_all(&corpus).unwrap();
-    let policy = dir.join("rule.rr");
+    let policy = dir.join("rule.rerail");
     std::fs::write(&policy, r#"
 .policy "empty-contract" revision 1
 .violation Missing(at: span) code "MISSING" "required file is absent"
@@ -1508,7 +1520,7 @@ fn explicit_input_files_preserve_the_callers_document_batch() {
     std::fs::write(root.join(".hidden/a.txt"), "hidden text").unwrap();
     std::fs::write(root.join("included.py"), "included text").unwrap();
     std::fs::write(root.join("ignored.py"), "ignored text").unwrap();
-    let policy = dir.join("rule.rr");
+    let policy = dir.join("rule.rerail");
     std::fs::write(&policy, r#"
 .policy "explicit-inputs" revision 1
 .language python
@@ -1533,7 +1545,7 @@ fn a_policy_read_once_still_reads_the_roots_settings() {
     let root = dir.join("corpus");
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("a.py"), "x = 1\n").unwrap();
-    let policy = dir.join("rule.rr");
+    let policy = dir.join("rule.rerail");
     std::fs::write(&policy, r#"
 .policy "settings-read" revision 1
 .language python
@@ -1559,7 +1571,7 @@ fn a_handed_program_run_again_finds_the_same() {
     let root = dir.join("corpus");
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("a.py"), "def f():\n    pass\n\nf()\n").unwrap();
-    let policy = dir.join("rule.rr");
+    let policy = dir.join("rule.rerail");
     std::fs::write(&policy, ".policy \"handed-again\" revision 1\n.language python\n.violation Call(at: node) code \"CALL\" \"a call\"\nCall(n) :- kind(n, \"call\").\n").unwrap();
     crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let run = |out: &str| crate::code_rule_dsl::tools::run_rr(&policy, &root, &dir.join(out), &serde_json::Value::Null).map(|r| r["diagnostics"].clone());
@@ -1580,7 +1592,7 @@ fn lf_lines_keep_other_separators_and_the_trailing_empty_line() {
     let first = format!("{}\rtwo\u{2028}three\u{b}four", "x".repeat(400));
     std::fs::write(root.join("a.py"), format!("{first}\nfive\n")).unwrap();
     std::fs::write(root.join("empty.py"), "").unwrap();
-    let policy = dir.join("rule.rr");
+    let policy = dir.join("rule.rerail");
     std::fs::write(&policy, r#"
 .policy "lf-lines" revision 1
 .language python
@@ -1618,7 +1630,7 @@ fn repository_json_selectors_preserve_typed_rows_and_wildcard_keys() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rrjson");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("policy.json"), r#"{"counts":{"a":2,"b":3},"groups":{"g":{"entries":[{"name":"one","limit":4},{"name":"two","limit":5}]}},"title":"kept"}"#).unwrap();
-    let rule = dir.join("rule.rr");
+    let rule = dir.join("rule.rerail");
     std::fs::write(&rule, r#"
 .policy "contract:json" revision 1
 .decl counts(k: symbol, n: number)
@@ -1648,7 +1660,7 @@ fn a_language_of_several_dialects_runs_over_each() {
     std::fs::write(dir.join("b.js"), "\nlet b = 2;\n").unwrap();
     std::fs::write(dir.join("c.tsx"), "\n\nlet c = <p/>;\n").unwrap();
     std::fs::write(dir.join("d.py"), "d = 1\n").unwrap();
-    let rule = dir.join("rule.rr");
+    let rule = dir.join("rule.rerail");
     std::fs::write(&rule, r#"
 .policy "contract:dialects" revision 1
 .language typescript
@@ -1662,7 +1674,7 @@ Let(d, x) :- kind(d, "variable_declarator"), field(d, "name", n), text(n, x).
     assert_eq!(actual, ["a", "b", "c"]);
     assert_eq!(report["files"], 3);
     // Scoped to `.js` alone, the one dialect with files is JavaScript, not the TypeScript the policy names.
-    let js = dir.join("js.rr");
+    let js = dir.join("js.rerail");
     std::fs::write(&js, std::fs::read_to_string(&rule).unwrap().replace(".scope include \"**/*\"", ".scope include \"**/*.js\"")).unwrap();
     let report = crate::code_rule_dsl::tools::run_rr(&js, &dir, &dir.join("out-js"), &serde_json::Value::Null).unwrap();
     let actual: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|r| r["message"].as_str().unwrap()).collect();
@@ -1676,7 +1688,7 @@ fn repository_inputs_report_missing_and_malformed_without_partial_rows() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rrinputerrors");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("bad.json"), r#"[1,"wrong type"]"#).unwrap();
-    let rule = dir.join("rule.rr");
+    let rule = dir.join("rule.rerail");
     std::fs::write(&rule, r#"
 .policy "contract:input-errors" revision 1
 .decl bad(n: number)
@@ -1698,7 +1710,7 @@ Leaked(@place("bad.json", 1)) :- bad(_).
 fn shared_signing_library_verifies_an_existing_empty_allowlist() {
     let rows = finding_contract("", r#"
 .policy "contract:shared-signature" revision 1
-#include "data-layer/signing.rr"
+#include "data-layer/signing.rerail"
 allow_sig("original", "lint_admin_async_purity", "xN3ugqWFKXrfdfYHOWH14S9NfLPHCwnni7yf1errzrn17xHvVgd6C3y/QXR7mwfGPnFwpuq/HcCWAx9C2crzDg==").
 allow_sig("tampered", "lint_admin_async_purity", "xN3ugqWFKXrfdfYHOWH14S9NfLPHCwnni7yf1errzrn17xHvVgd6C3y/QXR7mwfGPnFwpuq/HcCWAx9C2crzDg==").
 allow_entry("tampered", "added.py").
@@ -1741,7 +1753,7 @@ fn tree_digests_compare_subtrees_without_positions() {
     std::fs::create_dir_all(&dir).unwrap();
     let source = "a = (1, 2)\nb = (1, 2,)\nc = 'x'\nd = \"x\"\ne = 16\nf = 0x10\ng = (h)\nh = h  # note\ni = [1, 2]\n";
     std::fs::write(dir.join("a.py"), source).unwrap();
-    let rule = dir.join("digest.rr");
+    let rule = dir.join("digest.rerail");
     std::fs::write(&rule, r#"
 .decl rhs(l: symbol, r: node)
 rhs(l, r) :- field(a, "left", x), text(x, l), field(a, "right", r), kind(a, "assignment").
@@ -1766,7 +1778,7 @@ fn def_digests_hash_each_definitions_own_code() {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.py"), source).unwrap();
-        let rule = dir.join("d.rr");
+        let rule = dir.join("d.rerail");
         std::fs::write(&rule, r#"
 .decl unit(k: symbol, s: symbol)
 unit("<module>", s) :- def_digest(n, s), kind(n, "module").
@@ -1804,7 +1816,7 @@ fn definition_ids_keep_other_definitions_rows_across_a_body_edit() {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.py"), source).unwrap();
-        let rule = dir.join("d.rr");
+        let rule = dir.join("d.rerail");
         std::fs::write(&rule, ".decl k(n: node, s: symbol)\nk(n, s) :- kind(n, s).\n.decl p(n: node, q: node, i: number)\np(n, q, i) :- child(n, q, i).\n.output k, p\n").unwrap();
         let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
         let out = dir.join("out");
@@ -1826,14 +1838,14 @@ fn definition_ids_keep_other_definitions_rows_across_a_body_edit() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `match_all` and `match` with captures (`core.rr`): over a `source` or `src_line` span each group is a span, with
+/// `match_all` and `match` with captures (`core.rerail`): over a `source` or `src_line` span each group is a span, with
 /// its text and line (`rx_span`); over a symbol, `match_all` gives a row per match with its groups' text.
 #[test]
 fn match_all_captures_spans_over_source_text_and_symbols_over_symbols() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("matchall");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "x = 1  # SEC1 SEC22\nclass Foo:\n    pass\nclass Bar: pass\n").unwrap();
-    let rule = dir.join("m.rr");
+    let rule = dir.join("m.rerail");
     std::fs::write(&rule, r#"
 .decl sec(l: number, c: symbol, k: number)
 sec(l, c, k) :- src_line(d, l, sp), match_all("(?<m>SEC\\d+)", sp), text(m, c), line(m, k).
@@ -1881,7 +1893,7 @@ fn a_text_test_of_a_capture_in_its_own_body_tests_the_captured_text() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("capturetest");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "a = \"x\u{211d}y plain\"\nb = \"2\u{211d}6789\"\n").unwrap();
-    let rule = dir.join("m.rr");
+    let rule = dir.join("m.rerail");
     std::fs::write(&rule, r#"
 .decl piece(t: loc)
 piece(p) :- kind(p, "string_content").
@@ -1908,7 +1920,7 @@ fn match_all_over_nodes_of_a_kind_and_over_captures_gives_spans() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("matchkinds");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "a = \"/x/{id}/{name}\"\nb = \"/x/{id}/{name}\"\nc = 'k9 zz'\n# note AB12 CD3\n").unwrap();
-    let rule = dir.join("m.rr");
+    let rule = dir.join("m.rerail");
     std::fs::write(&rule, r#"
 .decl str_or_comment(s: node)
 str_or_comment(s) :- kind(s, "string").
@@ -1941,7 +1953,7 @@ fn match_all_captures_spans_over_a_nodes_text_and_over_captures() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("matchnode");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "x = 'ab1 cd22'\ny = 'ab1 cd22'  # ef3\n").unwrap();
-    let rule = dir.join("m.rr");
+    let rule = dir.join("m.rerail");
     std::fs::write(&rule, r#"
 .decl piece(t: loc)
 piece(t) :- kind(t, "string_content").
@@ -1973,7 +1985,7 @@ fn match_all_over_a_node_gives_each_match_and_count_ranges_over_wildcards() {
     std::fs::write(dir.join("a.py"), "f(a, b, c)
 g(d)
 ").unwrap();
-    let rule = dir.join("m.rr");
+    let rule = dir.join("m.rerail");
     std::fs::write(&rule, r#"
 .decl comma(l: number, c: number)
 comma(l, c) :- kind(n, "argument_list"), match_all(",", n, m), line(m, l), col(m, c).
@@ -1993,14 +2005,14 @@ in_text(t, k) :- kind(n, "argument_list"), text(n, t), k = count : { match_all("
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `data-layer/noqa-sec-ratchet.rr`, whose `match_all` over each line's span is what lowering refused (O80): every
+/// `data-layer/noqa-sec-ratchet.rerail`, whose `match_all` over each line's span is what lowering refused (O80): every
 /// SEC code on a suppression line counts, inside the comment or not.
 #[test]
 fn noqa_sec_ratchet_counts_every_sec_code_on_suppression_lines() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("noqa");
     std::fs::create_dir_all(dir.join("impl")).unwrap();
     std::fs::write(dir.join("impl/a.py"), "x = \"SEC1\"  # noqa: SEC2\ny = 1  # noqa: E501, SEC3 SEC44\nz = \"SEC9\"\n").unwrap();
-    let rule = crate::code_rule_dsl::logic::rr::library().join("../data-layer/noqa-sec-ratchet.rr");
+    let rule = crate::code_rule_dsl::logic::rr::library().join("../data-layer/noqa-sec-ratchet.rerail");
     let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
@@ -2015,7 +2027,7 @@ fn syntax_error_directives_preserve_raw_source_relations() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("good.py"), "x = 1\n").unwrap();
     std::fs::write(dir.join("bad.py"), "y = 2\ndef (:\n").unwrap();
-    let rule = dir.join("w.rr");
+    let rule = dir.join("w.rerail");
     std::fs::write(&rule, r#"
 .policy "t:withheld" revision 1
 .on syntax_error report BAD000 at line 1
@@ -2051,7 +2063,7 @@ fn outputs_do_not_depend_on_the_chunk_size() {
         let body: String = (1..30).map(|k| format!("def b{j}_{k}():\n    return b{j}_{}()\n\n", k - 1)).collect();
         std::fs::write(dir.join(format!("big{j}.py")), format!("def b{j}_0():\n    return 0\n\n{body}")).unwrap();
     }
-    let rule = dir.join("c.rr");
+    let rule = dir.join("c.rerail");
     std::fs::write(&rule, r#"
 .decl defined(x: symbol)
 defined(x) :- kind(n, "function_definition"), field(n, "name", m), text(m, x).
@@ -2290,7 +2302,7 @@ fn guests_run_with<T>(name: &str, files: &[(&str, &str)], rule: &str, read: impl
         std::fs::create_dir_all(dir.join(path).parent().unwrap()).unwrap();
         std::fs::write(dir.join(path), text).unwrap();
     }
-    let path = dir.join("g.rr");
+    let path = dir.join("g.rerail");
     std::fs::write(&path, rule).unwrap();
     let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap();
     let out = dir.join("out");
@@ -2300,23 +2312,24 @@ fn guests_run_with<T>(name: &str, files: &[(&str, &str)], rule: &str, read: impl
     rows
 }
 
-/// A string annotation is parsed where it stands: its names have the file's lines and columns, through the escapes
-/// and the parts of a concatenation (the normalized text's map); a string inside a parsed one is parsed in the next
-/// round, for a rule that reaches it through the annotation (`ann`): an annotation is not shown to rules that do not
-/// name it, so `ident`'s `kind(s, "string")` does not see it. Bytes give no guest.
+/// A string annotation is a tape value (decision 0431): its names are placed in the file through the string
+/// (`guest_place`), through the escapes and the parts of a concatenation (the normalized text's map); a string inside
+/// a parsed one is parsed in the next round, for a rule that reaches it through the annotation (`ann`), and is placed
+/// in the annotation's text, which is no file's: an annotation is not shown to rules that do not name it, so
+/// `ident`'s `kind(s, "string")` does not see it. Bytes give no guest.
 #[test]
 fn string_annotations_are_guests_at_their_host_lines() {
     let py = "x: \"List[int]\" = []\n\ndef f(y: 'Dict[str, Foo]') -> \"Bar\": ...\nz: \"A\\x42\" = 1\nw: (\"Li\" \"st\") = 2\nq: \"Opt['Baz']\" = 3\nb: b\"Nope\" = 4\n";
     let rule = r#"
 .decl ident(x: symbol, l: number, c: number)
-ident(x, l, c) :- kind(s, "string"), parsed(s, "annotation", _), guest(g, _, s, _), node(g, i, "identifier", _, _), text(i, x), line(i, l), col(i, c).
+ident(x, l, c) :- kind(s, "string"), parsed(s, "annotation", _), guest_of(i, s), kind(i, "identifier"), text(i, x), guest_place(i, s, l, c).
 .decl ann(n: node)
 ann(r) :- kind(s, "string"), parsed(s, "annotation", r).
 ann(c) :- ann(p), child(p, c, _).
-.decl nested(x: symbol, l: number, c: number)
-nested(x, l, c) :- ann(s), kind(s, "string"), parsed(s, "annotation", _), guest(g, _, s, _), node(g, i, "identifier", _, _), text(i, x), line(i, l), col(i, c).
+.decl nested(x: symbol)
+nested(x) :- ann(s), kind(s, "string"), parsed(s, "annotation", _), guest_of(i, s), kind(i, "identifier"), text(i, x).
 .decl whole(x: symbol, l: number, c: number)
-whole(x, l, c) :- kind(s, "concatenated_string"), parsed(s, "annotation", _), guest(g, _, s, _), node(g, i, "identifier", _, _), text(i, x), line(i, l), col(i, c).
+whole(x, l, c) :- kind(s, "concatenated_string"), parsed(s, "annotation", _), guest_of(i, s), kind(i, "identifier"), text(i, x), guest_place(i, s, l, c).
 .decl roots(k: symbol)
 roots(k) :- kind(s, "string"), parsed(s, "annotation", r), kind(r, k).
 .output ident, nested, whole, roots
@@ -2331,31 +2344,161 @@ roots(k) :- kind(s, "string"), parsed(s, "annotation", r), kind(r, k).
     // ("Li" "st"): each part is a string of its own, and the concatenation is List, from its first part's text.
     assert!(names.contains(&shown_row(&["Li", "5", "5"])), "{names:?}");
     assert_eq!(whole, [["List", "5", "5"]]);
-    assert_eq!(roots, [["identifier"], ["subscript"]]);
+    // Each root is a `type` (decision 0466 R5): what follows `x:` in a file.
+    assert_eq!(roots, [["type"]]);
     // 'Baz' inside "Opt['Baz']": round 2, through the annotation; `ident` does not see inside it.
-    assert_eq!(nested, [["Baz", "6", "9"]]);
+    assert_eq!(nested, [["Baz"]]);
     assert!(!names.iter().any(|n| n[0].starts_with("Baz")), "{names:?}");
     assert!(!names.iter().any(|n| n[0].starts_with("Nope")), "{names:?}");
 }
 
-/// A guest is made in a wave, where no run reads the store (decision 0104), so no later process reads its tape: a run
-/// stores none, and its own collection has none to delete (Q30). The host's source is stored; the annotation's text,
-/// parsed as a guest (wrapped: `(List[int])`), is not.
+/// Decision 0431 §7 (it replaces Q30): a string a rule parses is a tape value, stored with its text behind the run,
+/// so the next run finds it by the text and parses nothing (R6). The host's source is stored, and so is the
+/// annotation's text, as it is (no wrapper). Decision 0466 R6: its tape is stored under the fragment's own tag, and
+/// no tape of the text under Python's.
 #[test]
-fn a_run_stores_no_source_of_its_guests() {
+fn a_run_stores_its_tape_values_by_their_text() {
     use sha2::Digest as _;
     let py = "x: \"List[int]\" = []\n";
     let rule = r#"
 .decl ident(x: symbol)
-ident(x) :- kind(s, "string"), parsed(s, "annotation", _), guest(g, _, s, _), node(g, i, "identifier", _, _), text(i, x).
+ident(x) :- kind(s, "string"), parsed(s, "annotation", _), guest_of(i, s), kind(i, "identifier"), text(i, x).
 .output ident
 "#;
-    let [names] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("no-guest-sources", &[("a.py", py)], rule, &["ident"])).unwrap();
-    assert!(names.contains(&shown_row(&["List"])), "the guest was made: {names:?}");
+    let [names] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("tape-value-sources", &[("a.py", py)], rule, &["ident"])).unwrap();
+    assert!(names.contains(&shown_row(&["List"])), "the tape value was made: {names:?}");
     let store = crate::content_store::ContentStore::open(&crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().unwrap()).unwrap();
     let key = |t: &str| crate::content_store::HashKey::from_sha256_digest(sha2::Sha256::digest(t.as_bytes()).into());
     assert!(store.source_by_hash(key(py)).unwrap().is_some(), "the host's source is stored");
-    assert!(store.source_by_hash(key("(List[int])")).unwrap().is_none(), "the guest's source is not");
+    let text = store.source_by_hash(key("List[int]")).unwrap().expect("the tape value's text is stored");
+    let (gv, fv) = (crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()));
+    let tag = |t: u8| i64::from(t);
+    let fragment = crate::code_rule_dsl::language::fragment_tag("annotation").unwrap();
+    let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python).unwrap();
+    assert!(store.tape_frames_for(&[text], tag(fragment), gv, fv).unwrap()[0].is_some(), "under the fragment's tag");
+    assert!(store.tape_frames_for(&[text], tag(python), gv, fv).unwrap()[0].is_none(), "not under Python's");
+}
+
+/// Decision 0431 R1: there are no guest documents. A program the grammar holds (an HTML file's scripts) is part of its
+/// file: its nodes are numbered in the file's id space, so `docof` of a script's root is the file's, as the `raw_text`
+/// it stands at is, and its lines are the file's.
+#[test]
+fn a_program_a_file_holds_is_the_files() {
+    let html = "<!doctype html>\n<script>\nlet a = f(1);\n</script>\n<script type=\"module\">g(2)</script>\n";
+    let rule = r#"
+.language html
+#include "html/embeds.rerail"
+.decl same(d: number, e: number)
+same(d, e) :- kind(r, "raw_text"), parsed(r, "javascript", p), docof(r, d), docof(p, e).
+.decl calls(x: symbol, l: number)
+calls(x, l) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x), line(c, l).
+.output same, calls
+"#;
+    let [same, calls] = <[Vec<Vec<String>>; 2]>::try_from(guests_run("program-in-file", &[("a.html", html)], rule, &["same", "calls"])).unwrap();
+    assert_eq!(same.len(), 1, "both scripts are a.html's: {same:?}");
+    assert_eq!(same[0][0], same[0][1], "a script's root is its file's: {same:?}");
+    assert_eq!(calls, [["f(1)", "3"], ["g(2)", "5"]]);
+}
+
+/// Decision 0431 §4: a file's programs are granules of the file, so an edit inside one script renumbers no node of
+/// the other script and none of the file's own.
+#[test]
+fn an_edit_in_one_script_renumbers_no_other_program() {
+    let html = |body: &str| format!("<!doctype html>\n<p>hi</p>\n<script>\n{body}\n</script>\n<script>g(2); h(3)</script>\n");
+    let rule = r#"
+.language html
+#include "html/embeds.rerail"
+.decl ids(x: symbol, n: node, d: number)
+ids(x, c, d) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x), docof(c, d).
+ids(x, e, d) :- kind(e, "element"), text(e, x), docof(e, d).
+.output ids
+"#;
+    let before = guests_run("one-script-a", &[("a.html", &html("let a = f(1);"))], rule, &["ids"]).remove(0);
+    let after = guests_run("one-script-b", &[("a.html", &html("let a = f(1) + k(4);"))], rule, &["ids"]).remove(0);
+    let kept = |rows: &[Vec<String>]| rows.iter().filter(|r| ["g(2)", "h(3)", "<p>hi</p>"].contains(&r[0].as_str())).cloned().collect::<Vec<_>>();
+    assert_eq!(kept(&before).len(), 3, "{before:?}");
+    assert_eq!(kept(&before), kept(&after), "the second script's and the file's ids stay");
+    assert!(before.iter().all(|r| r[2] == before[0][2]), "every node is a.html's: {before:?}");
+}
+
+/// Decision 0431 R2: `guest_of(n, s)` names the string node a guest node was parsed from (it replaces
+/// `docof(n, d), guest(d, _, s, _)`), for every node of the guest and for no node of the file's own tree.
+#[test]
+fn guest_of_names_the_string_a_node_was_parsed_from() {
+    let py = "x: \"List[int]\" = []\nList = 1\n";
+    let rule = r#"
+.decl from(x: symbol, l: number, c: number)
+from(x, l, c) :- kind(s, "string"), parsed(s, "annotation", _), guest_of(i, s), kind(i, "identifier"), text(i, x), line(s, l), col(s, c).
+.decl own(x: symbol)
+own(x) :- kind(i, "identifier"), text(i, x), !guest_of(i, _).
+.output from, own
+"#;
+    let [from, own] = <[Vec<Vec<String>>; 2]>::try_from(guests_run("guest-of", &[("a.py", py)], rule, &["from", "own"])).unwrap();
+    assert_eq!(from, [["List", "1", "3"], ["int", "1", "3"]], "each name of the annotation, at its string");
+    assert_eq!(own, [["List"], ["x"]], "the file's own identifiers are no guest's");
+}
+
+/// Decision 0431 R3: a string a rule parses is a tape value. The same annotation in two files is one tape and one
+/// set of nodes: both strings' `parsed` give the same root. A tape value's node is no file's (its positions are its
+/// own text's); a rule places it through its string.
+#[test]
+fn one_tape_at_two_places_is_one_set_of_nodes() {
+    let a = "x: \"List[int]\" = []\n";
+    let b = "\n\n\ny: \"List[int]\" = []\n";
+    let rule = r#"
+.decl tapes(t: tape)
+tapes(t) :- kind(s, "string"), sub_tape(s, "annotation", t).
+.decl roots(r: node)
+roots(r) :- kind(s, "string"), parsed(s, "annotation", r).
+.decl files(f: symbol)
+files(f) :- kind(s, "string"), parsed(s, "annotation", r), docof(r, d), doc(d, f, _).
+.decl at(f: symbol, l: number)
+at(f, l) :- kind(s, "string"), parsed(s, "annotation", _), line(s, l), docof(s, d), doc(d, f, _).
+.output tapes, roots, files, at
+"#;
+    let [tapes, roots, files, at] = <[Vec<Vec<String>>; 4]>::try_from(guests_run("guest-two-places", &[("a.py", a), ("b.py", b)], rule, &["tapes", "roots", "files", "at"])).unwrap();
+    assert_eq!(tapes.len(), 1, "one tape for the one text: {tapes:?}");
+    assert_eq!(roots.len(), 1, "one root, the tape's, for both places: {roots:?}");
+    assert!(files.is_empty(), "a tape value's node is no file's: {files:?}");
+    assert_eq!(at, [["a.py", "1"], ["b.py", "4"]], "each place at its string");
+}
+
+/// Decision 0431 R9: a finding placed at a tape value's node is refused, not dropped: the node is no file's, so the
+/// finding has no place. Its rule places it through the string (`guest_place`, or at the string).
+#[test]
+fn a_finding_at_a_tape_values_node_is_refused() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("tape-finding");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x: \"List[int]\" = []\n").unwrap();
+    let program = r#"
+.policy "t:tape-finding" revision 1
+.language python
+.violation Inner(at: node) "a name inside an annotation"
+Inner(i) :- string_annotation(s), parsed(s, "annotation", _), guest_of(i, s), kind(i, "identifier").
+"#;
+    let rule = dir.with_extension("tape-finding.rerail");
+    std::fs::write(&rule, program).unwrap();
+    let flat = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    std::fs::remove_file(&rule).unwrap();
+    let ran = crate::code_rule_dsl::logic::plan::corpus::run(&flat, &dir, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
+    let _ = std::fs::remove_dir_all(&dir);
+    let err = ran.err().map(|e| e.to_string()).unwrap_or_default();
+    assert!(err.contains("Inner") && err.contains("tape value"), "the finding is refused, naming its clause: {err:?}");
+}
+
+/// Decision 0431 R4: the rules decide what is parsed. A plain string holding the same text as an annotation is not
+/// parsed: no node of it is a guest's.
+#[test]
+fn a_string_no_rule_asks_for_is_not_parsed() {
+    let py = "x: \"List[int]\" = []\ny = \"Dict[str, int]\"\n";
+    let rule = r#"
+.decl names(x: symbol)
+names(x) :- string_annotation(s), parsed(s, "annotation", _), kind(i, "identifier"), guest_of(i, _), text(i, x).
+.output names
+"#;
+    let [names] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("guest-asked-only", &[("a.py", py)], rule, &["names"])).unwrap();
+    assert_eq!(names, [["List"], ["int"]], "only the annotation is parsed: {names:?}");
 }
 
 /// `.on guest_error`: a guest that does not parse is withheld (skip, the default) or keeps its partial tree, and
@@ -2370,9 +2513,9 @@ fn guests_that_do_not_parse_follow_the_policy() {
 .on syntax_error report BAD000
 {on}
 .decl roots(l: number)
-roots(l) :- kind(s, "string"), parsed(s, "annotation", r), line(r, l).
+roots(l) :- kind(s, "string"), parsed(s, "annotation", _), line(s, l).
 .decl kept(l: number)
-kept(l) :- kind(s, "string"), guest(_, _, s, "annotation"), line(s, l).
+kept(l) :- kind(s, "string"), sub_tape(s, "annotation", _), line(s, l).
 .output roots, kept
 "#
         )
@@ -2386,20 +2529,18 @@ kept(l) :- kind(s, "string"), guest(_, _, s, "annotation"), line(s, l).
     assert_eq!(roots, [["1"], ["2"]], "the broken guest keeps its partial tree");
 }
 
-/// A library's `embed` and `embed_value` declare guests of a role. `sub_tape` gives a guest's tape: equal texts share
-/// one. Guests in the run's language are shown to rules that do not name them (`top`) unless `.guests off`; a rule
-/// that reaches them through a guest relation (`doc_role`) sees them either way (decision 0058 §1).
+/// A string a rule parses is reached through `parsed` (decision 0431 §2; the libraries' `embed` went with §4).
+/// `sub_tape` gives its tape: equal texts share one. A tape value is never code to a rule that does not name it
+/// (`top`), `.guests off` or not; the rule that parses it reaches it either way (decision 0058 §1).
 #[test]
-fn embeds_declare_guests_and_guests_off_leaves_them_out() {
+fn parsed_strings_are_reached_through_parsed_and_guests_off_leaves_them_reached() {
     let py = "a = \"import os\"\nb = \"import os\"\nc = 1\n";
     let rule = |guests: &str| {
         format!(
             r#"
 {guests}
-embed(d, s, "python", "code") :- kind(s, "string"), docof(s, d).
-embed_value(d, n, "python", "made", "import sys") :- kind(n, "integer"), docof(n, d).
-.decl imp(r: symbol, x: symbol, l: number)
-imp(r, x, l) :- doc_role(g, r), node(g, i, "import_statement", _, _), text(i, x), line(i, l).
+.decl imp(x: symbol, l: number)
+imp(x, l) :- kind(s, "string"), parsed(s, "python", r), within(i, r), kind(i, "import_statement"), text(i, x), line(s, l).
 .decl tapes(t: tape)
 tapes(t) :- kind(s, "string"), sub_tape(s, "python", t).
 .decl top(x: symbol, l: number)
@@ -2408,30 +2549,31 @@ top(x, l) :- kind(i, "import_statement"), text(i, x), line(i, l).
 "#
         )
     };
-    let guests = [["code", "import os", "1"], ["code", "import os", "2"], ["made", "import sys", "3"]];
+    let parsed = [["import os", "1"], ["import os", "2"]];
     let [imp, tapes, top] = <[Vec<Vec<String>>; 3]>::try_from(guests_run("embed", &[("a.py", py)], &rule(""), &["imp", "tapes", "top"])).unwrap();
-    assert_eq!(imp, guests);
+    assert_eq!(imp, parsed);
     assert_eq!(tapes.len(), 1, "{tapes:?}");
-    assert_eq!(top, [["import os", "1"], ["import os", "2"], ["import sys", "3"]], "Python guests are shown in a Python run");
+    assert!(top.is_empty(), "a tape value is no rule's code that does not name it: {top:?}");
     let [imp, top] = <[Vec<Vec<String>>; 2]>::try_from(guests_run("embedoff", &[("a.py", py)], &rule(".guests off"), &["imp", "top"])).unwrap();
-    assert_eq!(imp, guests, "`.guests off` hides guests; it does not stop a library's embeds");
+    assert_eq!(imp, parsed, "`.guests off` hides guests; `parsed` still reaches them");
     assert!(top.is_empty(), "{top:?}");
 }
 
-/// SQL in a Python string (decision 0058 §1–2): a library's `embed` makes an SQL guest on an SQL tape (tag 10). A
-/// rule that reaches it through `guest` names SQL kinds, and they print as SQL's; a rule that does not name a guest
-/// sees only the Python file, even for the qualified `"sql:…"` kind.
+/// SQL in a Python string (decision 0058 §1–2): a rule's `parsed` makes an SQL tape value (tag 10). A rule that
+/// reaches it through `parsed` names SQL kinds, and they print as SQL's, placed at the file's lines through the string
+/// (`guest_place`); a rule that does not name a guest sees only the Python file, even for the qualified `"sql:…"` kind.
 #[test]
 fn sql_in_python_is_an_sql_tape_hidden_from_unscoped_rules() {
     let py = "def f(db):\n    db.execute(\"SELECT name FROM users WHERE id = 1\")\n    db.execute(\"SELECT \\\"id\\\" FROM orders\")\n";
     let rule = r#"
-embed(d, s, "sql", "query") :- kind(c, "call"), field(c, "arguments", a), child(a, s, _), kind(s, "string"), docof(s, d).
+.decl sqlstr(s: node)
+sqlstr(s) :- kind(c, "call"), field(c, "arguments", a), child(a, s, _), kind(s, "string").
 .decl sqlkinds(k: symbol)
-sqlkinds(k) :- guest(g, _, _, "sql"), node(g, _, k, _, _).
+sqlkinds(k) :- sqlstr(s), parsed(s, "sql", r), (n = r ; within(n, r)), node(_, n, k, _, _).
 .decl docs(g: number)
-docs(g) :- guest(g, _, _, "sql").
+docs(g) :- sqlstr(s), parsed(s, "sql", r), node(g, r, _, _, _).
 .decl objects(x: symbol, l: number, c: number)
-objects(x, l, c) :- guest(g, _, _, "sql"), node(g, n, "object_reference", _, _), text(n, x), line(n, l), col(n, c).
+objects(x, l, c) :- sqlstr(s), parsed(s, "sql", r), within(n, r), kind(n, "object_reference"), text(n, x), guest_place(n, s, l, c).
 .decl unscoped(k: symbol)
 unscoped(k) :- node(_, _, k, _, _).
 .decl qualified(x: symbol)
@@ -2448,7 +2590,7 @@ counted(c) :- c = count : { kind(_, "sql:object_reference") }.
     let [sqlkinds, objects, unscoped, qualified, counted] = <[Vec<Vec<String>>; 5]>::try_from(shown).unwrap();
     assert!(sqlkinds.contains(&shown_row(&["object_reference"])), "{sqlkinds:?}");
     assert!(!sqlkinds.contains(&shown_row(&["call"])), "SQL nodes are SQL's kinds: {sqlkinds:?}");
-    assert!(docs.len() == 2 && docs.iter().all(|&g| g >= i64::from(crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS)), "an SQL guest in a Python run is a hidden document: {docs:?}");
+    assert!(docs.len() == 2 && docs.iter().all(|&g| g >= i64::from(crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS)), "an SQL tape value in a Python run is hidden: {docs:?}");
     assert!(objects.contains(&shown_row(&["users", "2", "33"])), "{objects:?}");
     // `"SELECT \"id\" FROM orders"` parses as its normalized text, and `orders` keeps its column past the escapes.
     assert!(objects.contains(&shown_row(&["orders", "3", "35"])), "{objects:?}");
@@ -2459,7 +2601,8 @@ counted(c) :- c = count : { kind(_, "sql:object_reference") }.
     assert!(counted.iter().all(|c| c == &["0"]), "{counted:?}");
 }
 
-/// An HTML file's `<script>` and `<style>` are guests (`html/embeds.rr`, decision 0238): a script's text is
+/// An HTML file's `<script>` and `<style>` are its grammar's programs (decision 0238; 0431 §4: `embed::raw_text`, which
+/// `html/embeds.rerail` describes): a script's text is
 /// JavaScript, or JSON by its type, and none for a type no grammar reads; a style's text is CSS. Each stands at its
 /// `raw_text`, so its nodes have the file's lines.
 #[test]
@@ -2467,43 +2610,54 @@ fn html_scripts_and_styles_are_javascript_json_and_css_guests() {
     let html = "<!doctype html>\n<script>\nlet a = f(1);\n</script>\n<script type=\"text/template\"><b>x</b></script>\n<script type=\"module\">g(2)</script>\n<script type=\"application/ld+json\">{\"a\": 1}</script>\n<style>\np { color: red; }\n</style>\n";
     let rule = r#"
 .language html
-#include "html/embeds.rr"
+#include "html/embeds.rerail"
 .decl calls(x: symbol, l: number)
-calls(x, l) :- guest(g, _, _, "javascript"), node(g, c, "call_expression", _, _), text(c, x), line(c, l).
+calls(x, l) :- kind(t, "raw_text"), parsed(t, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x), line(c, l).
 .decl decls(x: symbol, l: number)
-decls(x, l) :- guest(g, _, _, "css"), node(g, n, "declaration", _, _), text(n, x), line(n, l).
+decls(x, l) :- kind(t, "raw_text"), parsed(t, "css", p), within(n, p), kind(n, "declaration"), text(n, x), line(n, l).
 .decl pairs(x: symbol, l: number)
-pairs(x, l) :- guest(g, _, _, "json"), node(g, n, "pair", _, _), text(n, x), line(n, l).
-.decl guests(g: symbol, r: symbol)
-guests(g, r) :- guest(d, _, _, g), doc_role(d, r).
-.output calls, decls, pairs, guests
+pairs(x, l) :- kind(t, "raw_text"), parsed(t, "json", p), within(n, p), kind(n, "pair"), text(n, x), line(n, l).
+.decl guests(g: symbol)
+guests(g) :- kind(t, "raw_text"), parsed(t, g, _).
+.decl own(x: symbol)
+own(x) :- kind(t, "raw_text"), parsed(t, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x), node(d, c, _, _, _), docof(t, d).
+.decl bydoc(x: symbol)
+bydoc(x) :- kind(t, "raw_text"), parsed(t, "javascript", p), node(d, p, _, _, _), node(d, c, "javascript:call_expression", _, _), text(c, x).
+.output calls, decls, pairs, guests, own, bydoc
 "#;
-    let [calls, decls, pairs, guests] = <[Vec<String>; 4]>::try_from(joined(guests_run("htmlguests", &[("a.html", html)], rule, &["calls", "decls", "pairs", "guests"]))).unwrap();
+    let [calls, decls, pairs, guests, own, bydoc] = <[Vec<String>; 6]>::try_from(joined(guests_run("htmlguests", &[("a.html", html)], rule, &["calls", "decls", "pairs", "guests", "own", "bydoc"]))).unwrap();
     assert_eq!(calls, ["f(1)\t3", "g(2)\t6"]);
     assert_eq!(decls, ["color: red;\t9"]);
     assert_eq!(pairs, ["\"a\": 1\t7"]);
-    assert_eq!(guests, ["css\tprogram", "javascript\tprogram", "json\tprogram"], "the template script has no guest");
+    assert_eq!(guests, ["css", "javascript", "json"], "the template script has no program");
+    // A program is named by its file and place (decision 0431 §4): its nodes' document is the file's, and a lookup by
+    // the file finds every program's. A file's document is no one grammar's, so a kind read through it is qualified.
+    assert_eq!(own, ["f(1)", "g(2)"], "a program's node is in its file's document");
+    assert_eq!(bydoc, ["f(1)", "g(2)"], "the file's document holds both scripts' calls");
 }
 
-/// A Markdown file's inline content is guests of tree-sitter-md's inline grammar (`markdown/embeds.rr`, decision
-/// 0238): each `inline` and `pipe_table_cell` node, its text less the block continuations inside it (a quote's
-/// `> `), so its nodes stand at the file's lines and columns, past the continuations too.
+/// A Markdown file's inline content is its programs in tree-sitter-md's inline grammar (decision 0238; 0431 §4:
+/// `embed::inline_content`, which `markdown/embeds.rerail` describes): each `inline` and `pipe_table_cell` node, its text
+/// less the block continuations inside it (a quote's `> `), so its nodes stand at the file's lines and columns, past
+/// the continuations too.
 #[test]
 fn markdown_inline_content_is_a_guest_at_its_host_places() {
     let md = "# A *b*\n\n> Some *text* and a [link](u)\n> on `two` lines.\n\n| a | **b** |\n|---|---|\n| `c` | d |\n";
     let rule = r#"
 .language markdown
-#include "markdown/embeds.rr"
+#include "markdown/embeds.rerail"
 .decl at(k: symbol, x: symbol, l: number, c: number)
-at("emphasis", x, l, c) :- guest(g, _, _, "markdown-inline"), node(g, n, "emphasis", _, _), text(n, x), line(n, l), col(n, c).
-at("strong_emphasis", x, l, c) :- guest(g, _, _, "markdown-inline"), node(g, n, "strong_emphasis", _, _), text(n, x), line(n, l), col(n, c).
-at("code_span", x, l, c) :- guest(g, _, _, "markdown-inline"), node(g, n, "code_span", _, _), text(n, x), line(n, l), col(n, c).
-at("link_destination", x, l, c) :- guest(g, _, _, "markdown-inline"), node(g, n, "link_destination", _, _), text(n, x), line(n, l), col(n, c).
-.decl roles(r: symbol)
-roles(r) :- guest(d, _, _, "markdown-inline"), doc_role(d, r).
-.output at, roles
+at("emphasis", x, l, c) :- parsed(_, "markdown-inline", p), within(n, p), kind(n, "emphasis"), text(n, x), line(n, l), col(n, c).
+at("strong_emphasis", x, l, c) :- parsed(_, "markdown-inline", p), within(n, p), kind(n, "strong_emphasis"), text(n, x), line(n, l), col(n, c).
+at("code_span", x, l, c) :- parsed(_, "markdown-inline", p), within(n, p), kind(n, "code_span"), text(n, x), line(n, l), col(n, c).
+at("link_destination", x, l, c) :- parsed(_, "markdown-inline", p), within(n, p), kind(n, "link_destination"), text(n, x), line(n, l), col(n, c).
+// A grammar named by a variable asks for nothing (`parsed(h, "markdown-inline", _)` beside `kind(h, k)` would ask
+// for every node's text): this reads the programs the file holds.
+.decl hosts(g: symbol, k: symbol)
+hosts(g, k) :- parsed(h, g, _), kind(h, k).
+.output at, hosts
 "#;
-    let [at, roles] = <[Vec<String>; 2]>::try_from(joined(guests_run("mdinline", &[("a.md", md)], rule, &["at", "roles"]))).unwrap();
+    let [at, hosts] = <[Vec<String>; 2]>::try_from(joined(guests_run("mdinline", &[("a.md", md)], rule, &["at", "hosts"]))).unwrap();
     assert_eq!(
         at,
         [
@@ -2515,7 +2669,7 @@ roles(r) :- guest(d, _, _, "markdown-inline"), doc_role(d, r).
             "strong_emphasis\t**b**\t6\t6",
         ]
     );
-    assert_eq!(roles, ["fragment"]);
+    assert_eq!(hosts, ["markdown-inline\tinline", "markdown-inline\tpipe_table_cell"], "each program stands at its inline or cell");
 }
 
 /// Tape operations (decision 0058 §4): `@parse(g, x)` makes a value document from a text (here a string's
@@ -2535,16 +2689,13 @@ back(x) :- q(_, x0), t = @parse("sql", x0), x = @unparse(t).
 fixed(x) :- q(_, x0), t = @parse("sql", x0), tape_of(d, t), node(d, n, "object_reference", _, _), text(n, "users"), t2 = @parse("sql", "accounts"), t3 = @splice(t, n, t2), x = @unparse(t3).
 .decl seen(x: symbol)
 seen(x) :- kind(n, "object_reference"), text(n, x).
-.decl roles(r: symbol)
-roles(r) :- doc_role(_, r).
-.output tables, back, fixed, seen, roles
+.output tables, back, fixed, seen
 "#;
-    let [tables, back, fixed, seen, roles] = <[Vec<Vec<String>>; 5]>::try_from(guests_run("tapeops", &[("a.py", py)], rule, &["tables", "back", "fixed", "seen", "roles"])).unwrap();
+    let [tables, back, fixed, seen] = <[Vec<Vec<String>>; 4]>::try_from(guests_run("tapeops", &[("a.py", py)], rule, &["tables", "back", "fixed", "seen"])).unwrap();
     // `"SELECT name \<newline> FROM users"`: the escaped newline is gone from the text that is parsed.
     assert_eq!(back, [["SELECT name  FROM users"]]);
     assert_eq!(tables, [["users", "1"]], "a value's places are its own text's");
     assert_eq!(fixed, [["SELECT name  FROM accounts"]]);
-    assert_eq!(roles, [["primary"], ["value"]]);
     assert!(seen.is_empty(), "{seen:?}");
 }
 
@@ -2603,7 +2754,7 @@ Found(@place("a.py", 1), i) :- sample(s), match_all("{pattern}", s, i, _, _).
 
 /// Printed engine programs use reserved helper names; run through the internal text boundary used by run_rr.
 fn complete_rule(program: &str) -> String {
-    let path = crate::code_rule_dsl::fixtures::temp().with_extension("public.rr");
+    let path = crate::code_rule_dsl::fixtures::temp().with_extension("public.rerail");
     std::fs::write(&path, program).unwrap();
     let program = parse_file_version(&path).unwrap();
     std::fs::remove_file(path).unwrap();
@@ -2689,7 +2840,7 @@ objects(n, x) :- q(s, x0), t = @parse("sql", x0), tape_of(d, t), node(d, n, "obj
         for (path, text) in &files {
             std::fs::write(dir.join(path), text).unwrap();
         }
-        let path = dir.join("g.rr");
+        let path = dir.join("g.rerail");
         std::fs::write(&path, rule).unwrap();
         let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap();
         let out = dir.join("out");
@@ -2708,7 +2859,8 @@ objects(n, x) :- q(s, x0), t = @parse("sql", x0), tape_of(d, t), node(d, n, "obj
 }
 
 /// A combined run's programs each see the guests their own `.guests` shows (decision 0058 §1, O97): one batch, one
-/// set of embeds, and each program's rules bounded by its own setting.
+/// set of tape values, and each program's rules bounded by its own setting. A tape value is no unscoped rule's code
+/// under either (decision 0431 §3); the rule that parses it reaches it under both.
 #[test]
 fn combined_programs_see_guests_by_their_own_policy() {
     let py = "a = \"import os\"\nb = \"import sys\"\n";
@@ -2716,11 +2868,10 @@ fn combined_programs_see_guests_by_their_own_policy() {
         format!(
             r#"
 {guests}
-embed(d, s, "python", "code") :- kind(s, "string"), docof(s, d).
 .decl top(x: symbol, l: number)
 top(x, l) :- kind(i, "import_statement"), text(i, x), line(i, l).
 .decl through(x: symbol)
-through(x) :- doc_role(g, "code"), node(g, i, "import_statement", _, _), text(i, x).
+through(x) :- kind(s, "string"), parsed(s, "python", r), within(i, r), kind(i, "import_statement"), text(i, x).
 .output top, through
 "#
         )
@@ -2732,7 +2883,7 @@ through(x) :- doc_role(g, "code"), node(g, i, "import_statement", _, _), text(i,
         .iter()
         .enumerate()
         .map(|(i, text)| {
-            let path = dir.join(format!("p{i}.rr"));
+            let path = dir.join(format!("p{i}.rerail"));
             std::fs::write(&path, text).unwrap();
             crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap()
         })
@@ -2743,7 +2894,7 @@ through(x) :- doc_role(g, "code"), node(g, i, "import_statement", _, _), text(i,
     let (off, on, off_through, on_through) = (read("p0_top"), read("p1_top"), read("p0_through"), read("p1_through"));
     let _ = std::fs::remove_dir_all(&dir);
     assert!(off.is_empty(), "`.guests off` hides the guests from its own rules: {off:?}");
-    assert_eq!(on, [["import os", "1"], ["import sys", "2"]], "the other program shows them");
+    assert!(on.is_empty(), "a tape value is no unscoped rule's code: {on:?}");
     assert_eq!(off_through, [["import os"], ["import sys"]], "a guest relation reaches them under `.guests off`");
     assert_eq!(on_through, off_through);
 }
@@ -2754,11 +2905,10 @@ through(x) :- doc_role(g, "code"), node(g, i, "import_statement", _, _), text(i,
 fn kind_sets_over_a_guest_are_its_grammars() {
     let py = "def f(db):\n    db.execute(\"SELECT name FROM users\")\n";
     let rule = r#"
-embed(d, s, "sql", "query") :- kind(c, "call"), field(c, "arguments", a), child(a, s, _), kind(s, "string"), docof(s, d).
 .decl clauses(kind: symbol)
 clauses("relation"). clauses("function_definition").
 .decl enclosing(x: symbol, k: symbol)
-enclosing(x, k) :- guest(g, _, _, "sql"), node(g, n, "object_reference", _, _), text(n, x), nearest(n, a, clauses), node(_, a, k, _, _).
+enclosing(x, k) :- kind(c, "call"), field(c, "arguments", l), child(l, s, _), kind(s, "string"), parsed(s, "sql", r), within(n, r), kind(n, "object_reference"), text(n, x), nearest(n, a, clauses), node(_, a, k, _, _).
 .decl outer(k: symbol)
 outer(k) :- kind(n, "call"), nearest(n, a, clauses), node(_, a, k, _, _).
 .output enclosing, outer
@@ -2786,7 +2936,50 @@ names(t) :- kind(s, "string"), parsed(s, "braceFormat", r), within(x, r), kind(x
     assert_eq!(names, [["a"], ["b"], ["w"]], "`inside` climbs to a guest's field");
 }
 
-/// `.scope` selects a repository's files (`core.rr`): a finding in a document outside `dirs`, or under a `tests`
+/// The `try` statements of `py` in a `with` block's body, read through a relation an annotation's root may fill too
+/// (as `sym_of` is), with `negated` (`!inside`, `within_stop` or `!has`) excluding those a def is around or in. Hiding
+/// clones the rule for annotation nodes, its axis over a copy of the kind set; folding that set into its original left
+/// the clone's axis on a set that no longer was, with no rows, so the negation held for every `try`.
+fn tries_in_the_block(name: &str, py: &str, negated: &str) -> Vec<Vec<String>> {
+    let rule = format!(
+        r#"
+.decl body(b: node)
+body(b) :- kind(w, "with_statement"), field(w, "body", b).
+body(r) :- kind(s, "string"), parsed(s, "annotation", r).
+.decl attempt(t: node)
+attempt(t) :- kind(t, "try_statement").
+.decl found(l: number)
+found(l) :- attempt(t), body(b), {negated}, line(t, l).
+.output found
+"#
+    );
+    guests_run(name, &[("a.py", py)], &rule, &["found"]).remove(0)
+}
+
+/// A `try` on line 2, and one on line 7 inside a def nested in the block.
+const TRY_IN_A_NESTED_DEF: &str = "with lock:\n    try:\n        pass\n    except E:\n        pass\n    def later():\n        try:\n            pass\n        except E:\n            pass\n";
+
+/// `!inside(t, _, S)` over a node of a relation an annotation may fill holds only where no ancestor is in S.
+#[test]
+fn a_negated_inside_over_a_maybe_annotation_node_reads_its_kind_set() {
+    assert_eq!(tries_in_the_block("negatedinside", TRY_IN_A_NESTED_DEF, "within(t, b), !inside(t, _, \"function_definition\")"), [["2"]]);
+}
+
+/// `within_stop(t, b, S)` from a node of a relation an annotation may fill stops at S.
+#[test]
+fn within_stop_over_a_maybe_annotation_node_stops_at_its_kind_set() {
+    assert_eq!(tries_in_the_block("withinstop", TRY_IN_A_NESTED_DEF, "within_stop(t, b, \"function_definition\")"), [["2"]]);
+}
+
+/// `!has(t, _, S)` over a node of a relation an annotation may fill holds only where no descendant is in S: the `try`
+/// on line 6 holds a def.
+#[test]
+fn a_negated_has_over_a_maybe_annotation_node_reads_its_kind_set() {
+    let py = "with lock:\n    try:\n        pass\n    except E:\n        pass\n    try:\n        def later():\n            pass\n    except E:\n        pass\n";
+    assert_eq!(tries_in_the_block("negatedhas", py, "within(t, b), !has(t, _, \"function_definition\")"), [["2"]]);
+}
+
+/// `.scope` selects a repository's files (`core.rerail`): a finding in a document outside `dirs`, or under a `tests`
 /// part with `tests false`, is dropped; `.scope given` (files a test gives) keeps them all.
 #[test]
 fn scope_drops_findings_outside_the_policy_files() {
@@ -2834,7 +3027,7 @@ fn scope_takes_option_dirs_text_documents_and_report_dirs() {
     let program = r#"
 .policy "t:scope-forms" revision 1
 .language python
-#include "python/ast.rr"
+#include "python/ast.rerail"
 .scope include "impl/**", "docs/**", "tools/**"
 .scope dirs option("roots")
 .scope text "**/*.md"
@@ -2845,7 +3038,7 @@ Call(c) :- kind(c, "call").
 Todo(@place(p, l)) :- doc(d, p, _), src_line(d, l, sp), contains("TODO", sp).
 "#;
     // The program with its includes, as the corpus reads it.
-    let rule = dir.with_extension("scope-forms.rr");
+    let rule = dir.with_extension("scope-forms.rerail");
     std::fs::write(&rule, program).unwrap();
     let flat = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     std::fs::remove_file(&rule).unwrap();
@@ -2879,7 +3072,7 @@ fn findings_keep_their_columns_and_an_annotation_is_not_code() {
     let program = r#"
 .policy "t:finding-columns" revision 1
 .language python
-#include "python/ast.rr"
+#include "python/ast.rerail"
 .violation Neg(at: node) "a doubled minus"
 Neg(u) :- kind(u, "unary_operator"), op(u, "-"), field(u, "argument", a), kind(a, "unary_operator").
 .decl tctx(n: node)
@@ -2887,7 +3080,7 @@ tctx(t) :- kind(t, "type").
 tctx(r) :- tctx(s), str_node(s), parsed(s, "annotation", r).
 tctx(c) :- tctx(p), child(p, c, _).
 "#;
-    let rule = dir.with_extension("finding-columns.rr");
+    let rule = dir.with_extension("finding-columns.rerail");
     std::fs::write(&rule, program).unwrap();
     let flat = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     std::fs::remove_file(&rule).unwrap();
@@ -2906,7 +3099,7 @@ fn pattern_literals_match_and_bind_their_metavariables() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("pattern");
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("src/a.py"), "t = name[:-4]\nu = name[1:-7]\nv = other[:-13]\n").unwrap();
-    let rule = dir.join("rule.rr");
+    let rule = dir.join("rule.rerail");
     std::fs::write(&rule, r#"
 .policy "t:pattern" revision 1
 .language python
@@ -3013,13 +3206,13 @@ fn library_relations_are_shared_and_each_policy_reads_its_own_scope() {
         std::fs::create_dir_all(dir.join("src").join(p).parent().unwrap()).unwrap();
         std::fs::write(dir.join("src").join(p), text).unwrap();
     }
-    std::fs::write(dir.join("fact-spaces-lib.rr"), r#"
+    std::fs::write(dir.join("fact-spaces-lib.rerail"), r#"
 .decl def_at(f: node, s: symbol)
 def_at(f, s) :- kind(f, "function_definition"), field(f, "name", n), text(n, s).
 "#).unwrap();
     let policy = |name: &str, scope: &str, body: &str| -> String {
-        let rule = dir.join(format!("{name}.rr"));
-        std::fs::write(&rule, format!(".policy \"t:{name}\" revision 1\n.language python\n#include \"python/ast.rr\"\n#include \"fact-spaces-lib.rr\"\n.scope dirs \"{scope}\"\n{body}\n")).unwrap();
+        let rule = dir.join(format!("{name}.rerail"));
+        std::fs::write(&rule, format!(".policy \"t:{name}\" revision 1\n.language python\n#include \"python/ast.rerail\"\n#include \"fact-spaces-lib.rerail\"\n.scope dirs \"{scope}\"\n{body}\n")).unwrap();
         crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap()
     };
     let a = policy("a", "a", ".violation Fn(at: node) \"a def\"\nFn(f) :- def_at(f, _).");
@@ -3060,7 +3253,7 @@ fn a_library_held_once_is_read_by_each_policy_in_its_own_scope() {
         std::fs::create_dir_all(dir.join("src").join(p).parent().unwrap()).unwrap();
         std::fs::write(dir.join("src").join(p), text).unwrap();
     }
-    let policy = |name: &str, scope: &str, body: &str| format!(".policy \"t:{name}\" revision 1\n.language python\n#include \"python/ast.rr\"\n.scope dirs \"{scope}\"\n{body}\n");
+    let policy = |name: &str, scope: &str, body: &str| format!(".policy \"t:{name}\" revision 1\n.language python\n#include \"python/ast.rerail\"\n.scope dirs \"{scope}\"\n{body}\n");
     let a = policy("a", "a", ".violation Fn(at: node) \"a call\"\nFn(c) :- call_name(c, _).");
     let b = policy("b", "b", ".violation Dup(at: node) \"two calls\"\nDup(c) :- call_name(c, s), call_name(d, s), c != d.");
     let run = |programs: &[&str], out: &str| -> Vec<String> {
@@ -3087,7 +3280,7 @@ fn a_grammar_the_registry_does_not_have_is_refused() {
     let lower = |text: &str| {
         let dir = crate::code_rule_dsl::fixtures::temp().with_extension("grammar");
         std::fs::create_dir_all(&dir).unwrap();
-        let rule = dir.join("g.rr");
+        let rule = dir.join("g.rerail");
         std::fs::write(&rule, text).unwrap();
         let got = crate::code_rule_dsl::logic::rr::parse_file_version(&rule).map(|_| ()).map_err(|e| e.to_string());
         let _ = std::fs::remove_dir_all(&dir);
@@ -3155,7 +3348,7 @@ first(l) :- m = min k : { xs(k) }, line(m, l).
 /// A text read once (`read_text`) gives the modules `modules` gives and the programs `parse` and `parse_own` give.
 #[test]
 fn a_text_read_once_is_read_as_each_reader_reads_it() {
-    let text = "#include \"python/ast.rr\"\n#include \"python/calls.rr\"\n.decl hit(c: node)\nhit(c) :- kind(c, \"call\").\n.output hit\n";
+    let text = "#include \"python/ast.rerail\"\n#include \"python/calls.rerail\"\n.decl hit(c: node)\nhit(c) :- kind(c, \"call\").\n.output hit\n";
     let shown = |p: &Version| shown(p, |_| true);
     let modules = super::modules(text).unwrap().expect("modules");
     let once = super::read_text(text).unwrap().modules().expect("modules");
@@ -3239,7 +3432,7 @@ fn a_rule_files_tests_are_no_part_of_its_program() {
 fn failed_expectations_say_what_the_run_had() {
     let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-test-fail");
     std::fs::create_dir_all(&dir).unwrap();
-    let file = dir.join("t.rr");
+    let file = dir.join("t.rerail");
     std::fs::write(&file, r#".policy "t:fail" revision 1
 .language python
 .scope include "**/*.py"
@@ -3290,7 +3483,7 @@ fn test_blocks_parse_only_whole() {
 fn run_tests_of(name: &str, text: &str) -> Vec<(String, Result<Vec<String>, String>)> {
     let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension(name);
     std::fs::create_dir_all(&dir).unwrap();
-    let file = dir.join("t.rr");
+    let file = dir.join("t.rerail");
     std::fs::write(&file, text).unwrap();
     let out = match super::testing::tests(&file) {
         Ok(tests) => tests
@@ -3346,17 +3539,106 @@ reach(a, c) :- reach(a, b), edge(b, c).
     ]);
 }
 
+/// A tool call is a test's input (`.tool_call`, `docs/rule-syntax/tool-calls.md`): the run is given the test's calls,
+/// "1", "2", … in order, and a `.scope tool_calls` policy's finding is at the call (path "", line 0, `at` its id). A
+/// call of another tool, a `--dry-run`, or the command in another argument is no finding.
+#[test]
+fn a_tests_tool_calls_are_its_runs_and_a_finding_is_at_the_call() {
+    let policy = r#".policy "t:tool-calls" revision 1
+.mode steer
+.scope tool_calls
+.violation Push(at: symbol) code "no-push" "a push from call {at}"
+Push(c) :- tool_call(c, "Bash"), tool_input(c, "command", s), match("(?s:.*)(?:\\bgit\\s+push\\b)(?s:.*)", s), !match("(?s:.*)(?:--dry-run)(?s:.*)", s).
+.test caught exactly
+    .tool_call "Bash" `{"command": "cd x &&\ngit push origin main"}`
+    .tool_call "Bash" `{"command": "git status"}`
+    .expect "no-push"
+.end
+.test passes
+    .tool_call "Bash" `{"command": "git push --dry-run"}`
+    .tool_call "Read" `{"command": "git push"}`
+    .tool_call "Bash" `{"description": "git push"}`
+    .expect no "no-push"
+.end
+.test says_which_call
+    .tool_call "Bash" `{"command": "ls"}`
+    .tool_call "Bash" `{"command": "git push"}`
+    .expect no "no-push"
+.end
+"#;
+    assert_eq!(run_tests_of("rr-tool-calls", policy), [
+        ("caught".to_owned(), Ok(vec![])),
+        ("passes".to_owned(), Ok(vec![])),
+        ("says_which_call".to_owned(), Ok(vec!["line 20: .expect no no-push: reported no-push at call \"2\"".to_owned()])),
+    ]);
+    let refused = run_tests_of("rr-tool-call-bad", ".decl r(x: symbol)\n.test t\n    .tool_call \"Bash\" `[1]`\n.end\n");
+    assert!(matches!(&refused[..], [(_, Err(e))] if e.contains(":3: `.tool_call \"<tool>\"`")), "{refused:?}");
+    // An empty fence (two backticks and nothing else) is refused with its line, not read past its ends.
+    for (directive, usage) in [(".tool_call \"Bash\" ``", ":3: `.tool_call \"<tool>\"`"), (".fixture \"a.py\" ``", ":3: `.fixture \"<path>\"` then a fenced text")] {
+        let refused = run_tests_of("rr-empty-fence", &format!(".decl r(x: symbol)\n.test t\n    {directive}\n.end\n"));
+        assert!(matches!(&refused[..], [(_, Err(e))] if e.contains(usage)), "{directive}: {refused:?}");
+    }
+}
+
+/// A policy reads tool calls when it says so, `.scope tool_calls` (as a JSON rule that reads `input` samples tool
+/// calls), and then reads no file, its findings at a call (`at: symbol`).
+#[test]
+fn a_policy_reads_tool_calls_only_under_scope_tool_calls() {
+    let head = ".policy \"t\" revision 1\n";
+    let reads = "V(c) :- tool_input(c, \"command\", s), match(\"ls\", s).\n";
+    let program = super::read_text(&format!("{head}.scope tool_calls\n.violation V(at: symbol) \"v\"\n{reads}")).unwrap().lower_version(false).unwrap();
+    assert_eq!(crate::code_rule_dsl::logic::program_image::fields::ProgramFields::doc_scopes(&*program), Some(Vec::new()), "a policy of tool calls reads no document");
+    for (text, why) in [
+        (format!("{head}.decl r(s: symbol)\nr(s) :- tool_input(_, \"command\", s).\n.output r\n"), "a policy that reads tool calls says `.scope tool_calls`"),
+        (format!("{head}.scope tool_calls\n.violation V(at: node) \"v\"\nV(n) :- kind(n, \"call\").\n"), "findings are at a tool call, `at: symbol`"),
+        (format!("{head}.violation V(at: symbol) \"v\"\nV(s) :- tool_input(_, \"command\", s).\n"), "says `.scope tool_calls`"),
+        (format!("{head}.violation V(at: symbol) \"v\"\n.decl w(s: symbol)\nw(\"a\").\nV(s) :- w(s).\n"), "only in a `.scope tool_calls` policy"),
+        (format!("{head}.scope tool_calls\n.scope include \"**/*.py\"\n.violation V(at: symbol) \"v\"\n{reads}"), "no `.scope include \"**/*.py\"` beside it"),
+        // A call's message names its id (`{at}`), never a property of it: a call has no line or name.
+        (format!("{head}.scope tool_calls\n.violation V(at: symbol) \"v {{at.line}}\"\n{reads}"), "{at.line}: a tool call has only its id"),
+        (format!("{head}.scope tool_calls\n.violation V(at: symbol) \"v {{at.name}}\"\n{reads}"), "{at.name}: a tool call has only its id"),
+    ] {
+        let error = super::read_text(&text).unwrap().lower_version(false).unwrap_err().to_string();
+        assert!(error.contains(why), "{text}: {error}");
+    }
+}
+
+/// A run of a file policy and a tool-call policy together (`docs/rule-syntax/tool-calls.md`): each finds what it finds
+/// alone, the file's finding at its path and line, the call's at the call.
+#[test]
+fn a_run_of_file_and_tool_call_policies_finds_both() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.py"), "x = 1\nf()\n").unwrap();
+    let file = dir.path().join("calls-file.rerail");
+    std::fs::write(&file, ".policy \"t:calls-file\" revision 1\n.language python\n.violation Call(at: node) code \"C1\" \"a call\"\nCall(c) :- kind(c, \"call\").\n").unwrap();
+    let tool = dir.path().join("calls-tool.rerail");
+    std::fs::write(&tool, ".policy \"t:calls-tool\" revision 1\n.scope tool_calls\n.violation Push(at: symbol) code \"no-push\" \"a push in call {at}\"\nPush(c) :- tool_input(c, \"command\", s), match(\"(?s:.*)(?:git push)(?s:.*)\", s).\n").unwrap();
+    let calls = serde_json::json!({ "toolCalls": [{"id": "e1", "tool": "Bash", "input": {"command": "git push"}}, {"id": "e2", "tool": "Bash", "input": {"command": "ls"}}] });
+    let report = crate::code_rule_dsl::tools::run_policies(&[file, tool], &root, &dir.path().join("out"), &calls).unwrap();
+    let mut found: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|d| (d["code"].clone(), d["path"].clone(), d["line"].clone(), d["at"].as_str().map(str::to_owned))).collect();
+    found.sort_by_key(|f| f.0.to_string());
+    assert_eq!(found, [
+        (serde_json::json!("C1"), serde_json::json!("a.py"), serde_json::json!(2), None),
+        (serde_json::json!("no-push"), serde_json::json!(""), serde_json::json!(0), Some("e1".to_owned())),
+    ], "{report}");
+    // The message names the call by its id (`{at}`).
+    let messages: Vec<&str> = report["diagnostics"].as_array().unwrap().iter().filter(|d| d["code"] == "no-push").filter_map(|d| d["message"].as_str()).collect();
+    assert_eq!(messages, ["a push in call e1"], "{report}");
+}
+
 /// What a test may not do is refused with its line: give a core relation, give one no rule declares, use a set that
 /// is not there, or have two fixtures at one path.
 #[test]
 fn a_test_that_cannot_run_is_refused_with_its_line() {
     let head = ".decl r(x: symbol)\nr(\"a\").\n";
     for (test, why) in [
-        (".test t\n    .given kind\n.end\n", "t.rr:4: .given kind: a core relation is the engine's"),
-        (".test t\n    .given nothing\n.end\n", "t.rr:4: .given nothing: no rule declares it"),
-        (".test t uses absent\n.end\n", "t.rr:3: no fixture set named absent"),
-        (".test t\n    .fixture \"a.py\" ```\n        x\n        ```\n    .fixture \"a.py\" ```\n        y\n        ```\n.end\n", "t.rr:3: two fixtures at \"a.py\""),
-        (".test t\n    .expect r(\"a\"\n.end\n", "t.rr:4: `.expect"),
+        (".test t\n    .given kind\n.end\n", "t.rerail:4: .given kind: a core relation is the engine's"),
+        (".test t\n    .given nothing\n.end\n", "t.rerail:4: .given nothing: no rule declares it"),
+        (".test t uses absent\n.end\n", "t.rerail:3: no fixture set named absent"),
+        (".test t\n    .fixture \"a.py\" ```\n        x\n        ```\n    .fixture \"a.py\" ```\n        y\n        ```\n.end\n", "t.rerail:3: two fixtures at \"a.py\""),
+        (".test t\n    .expect r(\"a\"\n.end\n", "t.rerail:4: `.expect"),
     ] {
         let got = run_tests_of("rr-refused", &format!("{head}{test}"));
         let error = match &got[0].1 { Err(e) => e.clone(), Ok(f) => format!("ran: {f:?}") };
@@ -3376,8 +3658,8 @@ fn a_printed_test_reads_back_as_written() {
     );
     let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-printed");
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("t.rr"), &text).unwrap();
-    let tests = super::testing::tests(&dir.join("t.rr")).unwrap();
+    std::fs::write(dir.join("t.rerail"), &text).unwrap();
+    let tests = super::testing::tests(&dir.join("t.rerail")).unwrap();
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(tests.len(), 1, "{text}");
     assert_eq!(tests[0].fixtures, [("src/a.py".to_owned(), content.as_bytes().to_vec())], "{text}");
@@ -3387,7 +3669,7 @@ fn a_printed_test_reads_back_as_written() {
 /// `flatten` keeps a file's text as written (`program_text`), so its tests and fixture sets go with it.
 #[test]
 fn a_flattened_file_keeps_its_tests() {
-    let file = rule_syntax().join("spikes/rr-tests/print-calls.rr");
+    let file = rule_syntax().join("spikes/rr-tests/print-calls.rerail");
     let flat = crate::code_rule_dsl::tools::flatten(&file).unwrap();
     let blocks = super::testing::blocks(&std::fs::read_to_string(&file).unwrap());
     assert!(blocks.len() >= 6 && blocks.iter().any(|b| b.starts_with(".fixtures logging_app")), "{blocks:?}");
@@ -3407,8 +3689,8 @@ fn converted_cases_are_tests() {
     let (caught, passed) = (n["caught"].as_array().unwrap().len(), n["passed"].as_array().unwrap().len());
     let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-cases");
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("t.rr"), tests).unwrap();
-    let read = super::testing::tests(&dir.join("t.rr")).unwrap();
+    std::fs::write(dir.join("t.rerail"), tests).unwrap();
+    let read = super::testing::tests(&dir.join("t.rerail")).unwrap();
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(read.len(), caught + passed);
     assert_eq!(read.iter().filter(|t| t.expects[0].negated).count(), passed);
@@ -3421,7 +3703,7 @@ fn converted_cases_are_tests() {
 #[test]
 fn aggregate_demand_keeps_the_candidates_a_whole_stratification_keeps() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer");
-    let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|e| e == "rr")).collect();
+    let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|e| e == "rerail")).collect();
     paths.sort();
     let (mut read, mut demanded) = (0, 0);
     for path in &paths {
@@ -3449,7 +3731,7 @@ fn lowers_back(dirs: &[&str], k: usize, n: usize) {
     let mut paths: Vec<_> = dirs
         .iter()
         .flat_map(|d| std::fs::read_dir(root.join(d)).unwrap().map(|e| e.unwrap().path()))
-        .filter(|p| p.extension().is_some_and(|e| e == "rr"))
+        .filter(|p| p.extension().is_some_and(|e| e == "rerail"))
         .collect();
     paths.sort();
     crate::code_rule_dsl::logic::plan::corpus::phase0::keep_files(paths.iter().skip(k).step_by(n));
@@ -3469,8 +3751,8 @@ fn lowers_back(dirs: &[&str], k: usize, n: usize) {
             if let Some(dir) = std::env::var_os("RERAIL_IDEMPOTENCY_DUMP") {
                 let name = path.file_stem().unwrap().to_string_lossy().into_owned();
                 std::fs::create_dir_all(&dir).unwrap();
-                std::fs::write(std::path::Path::new(&dir).join(format!("{name}.first.rr")), &printed).unwrap();
-                std::fs::write(std::path::Path::new(&dir).join(format!("{name}.again.rr")), &again).unwrap();
+                std::fs::write(std::path::Path::new(&dir).join(format!("{name}.first.rerail")), &printed).unwrap();
+                std::fs::write(std::path::Path::new(&dir).join(format!("{name}.again.rerail")), &again).unwrap();
             }
             let at = printed.lines().zip(again.lines()).position(|(a, b)| a != b).unwrap_or(printed.lines().count().min(again.lines().count()));
             differ.push(format!("{}: line {at}: {:?} / {:?}", path.display(), printed.lines().nth(at), again.lines().nth(at)));
@@ -3536,7 +3818,7 @@ fn lowering_is_idempotent_other_packs() {
 }
 
 /// `unreached_dropped`: an included file's clauses that nothing reaches are dropped before they are checked and
-/// lowered. For every `.rr` program under `dirs` that reads (the data layer's policies, and the packs', a test for
+/// lowered. For every `.rerail` program under `dirs` that reads (the data layer's policies, and the packs', a test for
 /// each group within the time a test may take), `preparation::Prune` of the program lowered from the rest is the program lowered whole, pruned: the same rules (each helper of the lowering's, numbered as it is met,
 /// as many), natives and outputs, the same inputs read, and the same declarations of the relations those rules name.
 fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usize)) -> usize {
@@ -3550,7 +3832,7 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
                 if !skip.iter().any(|s| path == manifest.join(s)) {
                     pending.push(path);
                 }
-            } else if path.extension().is_some_and(|e| e == "rr") {
+            } else if path.extension().is_some_and(|e| e == "rerail") {
                 paths.push(path);
             }
         }
@@ -3777,20 +4059,20 @@ fn dropping_unreached_clauses_prunes_to_the_same_program_other_packs() {
 }
 
 
-/// tsx/es-globals.rr is es_global's rows: the engine's ECMAScript globals table for `ecmaVersion: "latest"`, name for
+/// tsx/es-globals.rerail is es_global's rows: the engine's ECMAScript globals table for `ecmaVersion: "latest"`, name for
 /// name (the scope code reads the same table, `scope::options::EsGlobals`).
 #[test]
 fn es_globals_match_the_engines_table() {
     let table: serde_json::Value = serde_json::from_str(include_str!("../../scope/data/es_globals.generated.json")).unwrap();
     let latest = table["latest"].as_u64().unwrap().to_string();
     let want: std::collections::BTreeSet<String> = table["versions"][&latest].as_object().unwrap().keys().cloned().collect();
-    let rows = include_str!("../../../../../docs/rule-syntax/lib/tsx/es-globals.rr");
+    let rows = include_str!("../../../../../docs/rule-syntax/lib/tsx/es-globals.rerail");
     let got: std::collections::BTreeSet<String> = rows
         .lines()
         .filter_map(|l| l.strip_prefix("es_global(\"")?.strip_suffix("\").").map(str::to_owned))
         .collect();
     assert!(!want.is_empty());
-    assert_eq!(got, want, "regenerate tsx/es-globals.rr from es_globals.generated.json's version {latest}");
+    assert_eq!(got, want, "regenerate tsx/es-globals.rerail from es_globals.generated.json's version {latest}");
 }
 
 /// What only the engine reads is reached: a library's request rule, whose head nothing reads but whose body reads
@@ -3801,8 +4083,8 @@ fn es_globals_match_the_engines_table() {
 fn dropping_unreached_clauses_keeps_what_the_engine_reads() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("engine-reads");
     std::fs::create_dir_all(&dir).unwrap();
-    let rule = dir.join("p.rr");
-    std::fs::write(&rule, "#include \"python/modules.rr\"\n.decl n_loaded(p: symbol)\nn_loaded(p) :- loaded(p, _, _).\n.output n_loaded\n").unwrap();
+    let rule = dir.join("p.rerail");
+    std::fs::write(&rule, "#include \"python/modules.rerail\"\n.decl n_loaded(p: symbol)\nn_loaded(p) :- loaded(p, _, _).\n.output n_loaded\n").unwrap();
     let p = parse_file_version(&rule).unwrap();
     let heads: std::collections::BTreeSet<&str> = p.rules().map(|r| p.rel_name(r.head().rel())).collect();
     assert!(heads.contains("load"), "load's rule is kept");
@@ -3819,13 +4101,13 @@ fn has_over_a_guest_holds_with_two_programs() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "def f(db):\n    db.execute(\"SELECT name FROM users\")\n").unwrap();
     let text = |clause: &str, body: &str| {
-        let path = dir.join(format!("{clause}.rr"));
+        let path = dir.join(format!("{clause}.rerail"));
         std::fs::write(&path, format!(
-            "embed(d, s, \"sql\", \"query\") :- kind(c, \"call\"), field(c, \"arguments\", a), child(a, s, _), kind(s, \"string\"), docof(s, d).\n.violation {clause}(at: node) code \"{clause}\" \"m\"\n{clause}(n) :- {body}.\n"
+            ".violation {clause}(at: node) code \"{clause}\" \"m\"\n{clause}(n) :- {body}.\n"
         )).unwrap();
         crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap()
     };
-    let has = text("has_ref", "guest(g, _, _, \"sql\"), doc_root(g, n), has(n, _, \"object_reference\")");
+    let has = text("has_ref", "kind(c, \"call\"), field(c, \"arguments\", a), child(a, s, _), kind(s, \"string\"), parsed(s, \"sql\", r), has(r, _, \"object_reference\"), n = s");
     let other = text("calls", "kind(n, \"call\")");
     let out = dir.join("out");
     let options = serde_json::json!({ "memo": "off" });
@@ -3846,7 +4128,7 @@ fn library_modules_link_to_the_lowering_of_them_together() {
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(&packs).unwrap().map(|e| e.unwrap().path()).filter(|p| p.is_dir()).collect();
     dirs.sort();
     let mut checked = 0;
-    // Every pack's programs' include graphs in one run of phase 0 (`modules_of`), not one a program or a pack (Q294).
+    // Every pack's programs' include graphs in one run of phase 0 (`modules_of`), not one a program or a pack (Q361).
     let srcs: Vec<(PathBuf, String)> = dirs.iter().flat_map(|dir| {
         let mut programs = walk_rr(dir);
         programs.sort();
@@ -3904,7 +4186,7 @@ fn walk_rr(dir: &Path) -> Vec<PathBuf> {
         let p = e.path();
         if p.is_dir() {
             out.extend(walk_rr(&p));
-        } else if p.extension().is_some_and(|x| x == "rr") {
+        } else if p.extension().is_some_and(|x| x == "rerail") {
             out.push(p);
         }
     }
@@ -3912,13 +4194,13 @@ fn walk_rr(dir: &Path) -> Vec<PathBuf> {
 }
 
 /// Decision 0263: a library's relations are closed. A program adds no rules or facts to a relation a library file it
-/// includes declares, unless the declaration says `extensible` (`cmp_same_ask`, a request of `python/compare.rr`).
+/// includes declares, unless the declaration says `extensible` (`cmp_same_ask`, a request of `python/compare.rerail`).
 #[test]
 fn a_program_adds_only_to_extensible_library_relations() {
-    let closed = "#include \"python/ast.rr\"\nunparen(a, a) :- kind(a, \"call\").\n";
+    let closed = "#include \"python/ast.rerail\"\nunparen(a, a) :- kind(a, \"call\").\n";
     let refused = super::read_text(closed).unwrap().lower_version(false).expect_err("unparen is not extensible");
     assert!(refused.to_string().contains("`unparen` is declared in") && refused.to_string().contains("decision 0263"), "{refused}");
-    let open = "#include \"python/compare.rr\"\n.decl hit(a: node)\ncmp_same_ask(a, a) :- kind(a, \"call\").\nhit(a) :- cmp_same(a, a).\n.output hit\n";
+    let open = "#include \"python/compare.rerail\"\n.decl hit(a: node)\ncmp_same_ask(a, a) :- kind(a, \"call\").\nhit(a) :- cmp_same(a, a).\n.output hit\n";
     super::read_text(open).unwrap().lower_version(false).expect("cmp_same_ask is extensible");
 }
 
@@ -3926,7 +4208,7 @@ fn a_program_adds_only_to_extensible_library_relations() {
 /// the header found is the header read, and another text's is its own.
 #[test]
 fn a_texts_header_is_found_under_its_bytes() {
-    let text = "#include \"core.rr\"\n.policy \"test:header-0275\" revision 1\n.language python\n.decl out(x: symbol)\n.output out\n";
+    let text = "#include \"core.rerail\"\n.policy \"test:header-0275\" revision 1\n.language python\n.decl out(x: symbol)\n.output out\n";
     let header = text_header(text).unwrap();
     let kept = kept_header_found(text).expect("kept by the first read");
     assert_eq!(format!("{kept:?}"), format!("{header:?}"), "the header kept is the header read");
@@ -3942,10 +4224,10 @@ fn a_texts_header_is_found_under_its_bytes() {
 #[test]
 fn a_rule_files_program_is_found_while_what_it_read_holds() {
     let dir = tempfile::tempdir().unwrap();
-    let (main, helper) = (dir.path().join("main.rr"), dir.path().join("helper_0275.rr"));
+    let (main, helper) = (dir.path().join("main.rerail"), dir.path().join("helper_0275.rerail"));
     let original = ".decl helper(x: symbol)\nhelper(\"a\").\n";
     std::fs::write(&helper, original).unwrap();
-    std::fs::write(&main, "#include \"helper_0275.rr\"\n.decl out(x: symbol)\nout(x) :- helper(x).\n.output out\n").unwrap();
+    std::fs::write(&main, "#include \"helper_0275.rerail\"\n.decl out(x: symbol)\nout(x) :- helper(x).\n.output out\n").unwrap();
     let main = main.canonicalize().unwrap();
     let found = || kept_program_found(&main);
     assert!(found().is_none(), "nothing kept before the first read");
@@ -4000,7 +4282,7 @@ ends(l) :- kind(n, "expression_statement"), last_token(n, t), line(t, l).
     let [cv, vals, ends] = <[Vec<String>; 3]>::try_from(joined(guests_run("cross-value", &[("a.py", "x = 1\n"), ("b.py", "x = 2\n")], rule, &["cv", "vals", "ends"])).into_iter().map(|mut rows| { rows.sort(); rows }).collect::<Vec<_>>()).unwrap();
     assert_eq!(vals, ["1", "2"], "the file-local reader's values");
     assert_eq!(cv, ["1", "2"], "the cross-file reader's values");
-    // With `value`'s round undone the program still has core.rr's shape: its token leaves are made.
+    // With `value`'s round undone the program still has core.rerail's shape: its token leaves are made.
     assert_eq!(ends, ["1"], "a token leaf's reader");
 }
 
@@ -4012,7 +4294,7 @@ ends(l) :- kind(n, "expression_statement"), last_token(n, t), line(t, l).
 fn c_directives_are_answered_by_file() {
     let rule = r#"
 .language c
-#include "c/preprocess.rr"
+#include "c/preprocess.rerail"
 .decl c_file(p: symbol)
 c_file(p) :- kind(n, "translation_unit"), docof(n, d), doc(d, p, _).
 .decl inc(p: symbol, form: symbol, s: symbol)
@@ -4041,7 +4323,7 @@ macro(p, n, ps, v) :- seen(p), c_define(p, _, n, 1, ps, v, _, _).
 fn c_units_are_preprocessed_under_their_configurations() {
     let rule = r#"
 .language c
-#include "c/preprocess.rr"
+#include "c/preprocess.rerail"
 .decl c_file(p: symbol)
 c_file(p) :- kind(n, "translation_unit"), docof(n, d), doc(d, p, _).
 c_lang("on", "c", "gnu17").
@@ -4068,7 +4350,7 @@ read(c, p) :- c_pp_read(_, s, p), c_cfg_spec(c, s).
     assert_eq!(read, ["off\ta.c", "off\th.h", "on\ta.c", "on\th.h", "on\tsys/deep.h"]);
 }
 
-/// Decision 0327, `c/includes.rr`: each `#include` of the files a unit reaches resolves as a driver's search does,
+/// Decision 0327, `c/includes.rerail`: each `#include` of the files a unit reaches resolves as a driver's search does,
 /// over `dir_entry` and mode (a)'s rows. `<x.h>` is the angle directory's though the includer's directory and a
 /// system one have one too; its `#include_next` goes on to the system one; a name no search finds is unresolved.
 /// The closure is the files mode (b) enters, here where no branch is skipped.
@@ -4076,7 +4358,7 @@ read(c, p) :- c_pp_read(_, s, p), c_cfg_spec(c, s).
 fn c_includes_resolve_by_the_search_order() {
     let rule = r#"
 .language c
-#include "c/includes.rr"
+#include "c/includes.rerail"
 .decl c_file(p: symbol)
 c_file(p) :- kind(n, "translation_unit"), docof(n, d), doc(d, p, _).
 c_lang("c", "c", "gnu17").
@@ -4100,9 +4382,9 @@ entered(p) :- c_pp_included(_, _, _, _, p, _).
     assert_eq!(entered, closure);
 }
 
-/// Decision 0327: phase 1 (`sources.rr`) loads the headers a C run's units include, to the closure's fixed point, as
+/// Decision 0327: phase 1 (`sources.rerail`) loads the headers a C run's units include, to the closure's fixed point, as
 /// library documents, as Python's imports are: a `.h` file is C++'s by its suffix, so no document of a C run until
-/// reached. A program that reads `sources__library` has them as its documents (`struct.rr`'s way). A header no unit
+/// reached. A program that reads `sources__library` has them as its documents (`struct.rerail`'s way). A header no unit
 /// includes is none.
 #[test]
 fn a_c_runs_included_headers_are_its_documents() {
@@ -4123,7 +4405,7 @@ libs(m) :- sources__library(_, m, "c", _).
     assert_eq!(libs, ["inc/d.h", "inc/h.h"]);
 }
 
-/// Decision 0327, `c/compile-commands.rr`: a `compile_commands.json` entry is a unit under a configuration of its
+/// Decision 0327, `c/compile-commands.rerail`: a `compile_commands.json` entry is a unit under a configuration of its
 /// own, its `command` split as a shell splits it (`-DFOO="a b"`), its options joined (`-Iinc`) or apart (`-D BAR`),
 /// a relative directory its entry's; a compiler profile gives the configuration its first macros and its own search
 /// path. Mode (b) then takes the branch the configuration decides.
@@ -4131,8 +4413,8 @@ libs(m) :- sources__library(_, m, "c", _).
 fn c_configurations_come_from_compile_commands_and_a_profile() {
     let rule = r#"
 .language c
-#include "c/compile-commands.rr"
-#include "c/preprocess.rr"
+#include "c/compile-commands.rerail"
+#include "c/preprocess.rerail"
 .decl pre(n: symbol, b: symbol, o: number)
 pre(n, b, o) :- c_predefine(_, o, n, b).
 .decl und(n: symbol)
@@ -4178,7 +4460,7 @@ lines(p, i) :- f(p), file_line(p, i, _), i < 2.
 /// (`lower_in_version`) is the tree's (`lower_in`).
 #[test]
 fn a_cone_copied_onto_the_version_is_the_trees() {
-    let src = "#include \"python/compare.rr\"\n.decl hit(a: node)\ncmp_same_ask(a, a) :- kind(a, \"call\").\nhit(a) :- cmp_same(a, a).\n.output hit\n";
+    let src = "#include \"python/compare.rerail\"\n.decl hit(a: node)\ncmp_same_ask(a, a) :- kind(a, \"call\").\nhit(a) :- cmp_same(a, a).\n.output hit\n";
     let files = super::read_text(src).unwrap().files().expect("a modular text");
     let library = super::lower_library(&files, None).unwrap();
     let scoped = library.scoped(&files);
@@ -4199,7 +4481,7 @@ fn a_cone_copied_onto_the_version_is_the_trees() {
 #[test]
 fn a_context_in_a_cycle_is_widened_on_the_version() {
     let src = concat!(
-        "#include \"python/compare.rr\"\n",
+        "#include \"python/compare.rerail\"\n",
         ".decl e(n: node, x: symbol, s: number)\n.decl seed(n: node)\n.input e, seed\n",
         ".decl ask(n: node)\n.decl cb(n: node)\n.output cb\n",
         "ask(n) :- seed(n).\n",
@@ -4221,7 +4503,7 @@ fn a_context_in_a_cycle_is_widened_on_the_version() {
 #[test]
 fn the_lowerings_sets_are_made_on_the_version() {
     let src = concat!(
-        "#include \"python/compare.rr\"\n",
+        "#include \"python/compare.rerail\"\n",
         ".decl a(x: number)\n.decl r(x: number)\n.output r\n",
         "a(1). a(1). a(2).\n",
         "r(x) :- a(x), a(x).\n",
@@ -4244,7 +4526,7 @@ fn the_lowerings_sets_are_made_on_the_version() {
 #[test]
 fn a_rule_left_reading_no_relation_reads_the_unit_on_the_version() {
     let src = concat!(
-        "#include \"python/compare.rr\"\n",
+        "#include \"python/compare.rerail\"\n",
         ".decl b(x: number)\n.input b\n.decl r(x: number)\n.output r\n",
         "r(1) :- count : { b(_) } = 0.\n",
     );
@@ -4263,7 +4545,7 @@ fn a_rule_left_reading_no_relation_reads_the_unit_on_the_version() {
 #[test]
 fn aggregate_demand_is_placed_on_the_version() {
     let src = concat!(
-        "#include \"python/compare.rr\"\n",
+        "#include \"python/compare.rerail\"\n",
         ".decl a(x: number)\n.decl b(x: number, y: number)\n.input a, b\n.decl r(x: number)\n.decl s(x: number)\n.output r, s\n",
         "r(x) :- a(x), n = count : { b(x, y), y > x }, n > 1.\n",
         "s(x) :- a(x), count : { b(x, y), y > x } = 0.\n",
@@ -4285,7 +4567,7 @@ fn aggregate_demand_is_placed_on_the_version() {
 #[test]
 fn finishs_rewrites_run_on_the_version() {
     let src = concat!(
-        "#include \"python/compare.rr\"\n",
+        "#include \"python/compare.rerail\"\n",
         ".decl xs(n: node)\n.decl before(a: node, b: node)\n.decl last(n: node)\n.decl owner(n: node, a: node)\n",
         ".output before, last, owner\n",
         "xs(n) :- kind(n, \"identifier\").\n",
@@ -4313,7 +4595,7 @@ fn finishs_rewrites_run_on_the_version() {
 #[test]
 fn nullary_relations_and_the_scope_are_made_on_the_version() {
     let src = concat!(
-        "#include \"python/compare.rr\"\n",
+        "#include \"python/compare.rerail\"\n",
         ".scope include \"impl/**/*.py\"\n",
         ".decl flag()\n.decl r(n: node)\n.decl q(n: node)\n.output r, q\n",
         "flag() :- kind(_, \"module\").\n",
@@ -4340,7 +4622,7 @@ fn nullary_relations_and_the_scope_are_made_on_the_version() {
 #[test]
 fn kind_sets_are_made_on_the_version() {
     let src = concat!(
-        "#include \"python/compare.rr\"\n",
+        "#include \"python/compare.rerail\"\n",
         ".decl calls(k: symbol)\ncalls(\"call\").\n",
         ".decl code(k: symbol)\ncode(k) :- kind(_, k), k != \"comment\".\n",
         ".decl r(n: node, a: node)\n.decl s(n: node, a: node)\n.output r, s\n",
@@ -4364,7 +4646,7 @@ fn kind_sets_are_made_on_the_version() {
 #[test]
 fn grammar_names_and_builtins_are_checked_on_the_version() {
     let lower = |body: &str| {
-        let src = format!("#include \"python/compare.rr\"\n.decl hit(s: node)\n.output hit\n{body}\n");
+        let src = format!("#include \"python/compare.rerail\"\n.decl hit(s: node)\n.output hit\n{body}\n");
         let files = super::read_text(&src).unwrap().files().expect("a modular text");
         let library = super::lower_library(&files, None).unwrap();
         let scoped = library.scoped(&files);
@@ -4382,7 +4664,7 @@ fn grammar_names_and_builtins_are_checked_on_the_version() {
 #[test]
 fn span_patterns_are_found_on_the_version() {
     let src = concat!(
-        "#include \"python/compare.rr\"\n",
+        "#include \"python/compare.rerail\"\n",
         ".decl r(l: node)\n.decl c(n: node)\n.output r, c\n",
         "r(l) :- src_line(_, _, l), match(\"TODO.*\", l).\n",
         "c(n) :- kind(n, \"comment\"), match(\"#.*fixme\", n).\n",
@@ -4397,12 +4679,12 @@ fn span_patterns_are_found_on_the_version() {
     assert!(rx_spans.iter().any(|(w, p)| *w == SpanIn::Comment && p.contains("fixme")), "{rx_spans:?}");
 }
 
-/// core.rr's declarations and `node`'s projections are made on a modular text's version (decision 0281's path, step
+/// core.rerail's declarations and `node`'s projections are made on a modular text's version (decision 0281's path, step
 /// 7b): a rule reading `kind` reads it through the projection `kind(n, k) :- node(_, n, k, _, _)`, the program's
 /// first rule, as the tree's `lower::core_and_projections` makes it; a debug build checks the image against the tree's.
 #[test]
 fn core_declarations_and_projections_are_made_on_the_version() {
-    let src = concat!("#include \"python/compare.rr\"\n", ".decl r(n: node)\n.output r\n", "r(n) :- kind(n, \"call\").\n");
+    let src = concat!("#include \"python/compare.rerail\"\n", ".decl r(n: node)\n.output r\n", "r(n) :- kind(n, \"call\").\n");
     let files = super::read_text(src).unwrap().files().expect("a modular text");
     let library = super::lower_library(&files, None).unwrap();
     let scoped = library.scoped(&files);
@@ -4420,7 +4702,7 @@ fn core_declarations_and_projections_are_made_on_the_version() {
 #[test]
 fn findings_are_written_on_the_version() {
     let src = concat!(
-        "#include \"python/compare.rr\"\n",
+        "#include \"python/compare.rerail\"\n",
         ".on syntax_error report BAD000 at line 1\n",
         ".violation call_at(at: node) code \"C001\" \"call {at}\"\n",
         "call_at(n) :- kind(n, \"call\").\n",
@@ -4446,7 +4728,7 @@ fn findings_are_written_on_the_version() {
 #[test]
 fn three_valued_relations_are_written_on_the_version() {
     let src = concat!(
-        "#include \"python/compare.rr\"\n",
+        "#include \"python/compare.rerail\"\n",
         ".decl base(x: symbol)\nbase(\"a\"). base(\"b\").\n.decl known(x: symbol)\nknown(\"a\").\n",
         ".decl p(x: symbol) must, may\nmust p(x) :- known(x).\nmay p(x) :- base(x), !known(x).\n",
         ".decl q(x: symbol)\nq(x) :- base(x), !p(x).\n.output q, rr_must_q\n",
@@ -4469,7 +4751,7 @@ fn three_valued_relations_are_written_on_the_version() {
 #[test]
 fn a_module_is_linked_and_checked_declared_on_the_version() {
     let lower = |body: &str| {
-        let src = format!("#include \"python/compare.rr\"\n.decl hit(n: node)\n.output hit\n{body}\n");
+        let src = format!("#include \"python/compare.rerail\"\n.decl hit(n: node)\n.output hit\n{body}\n");
         let files = super::read_text(&src).unwrap().files().expect("a modular text");
         let library = super::lower_library(&files, None).unwrap();
         let scoped = library.scoped(&files);
@@ -4488,7 +4770,7 @@ fn a_module_is_linked_and_checked_declared_on_the_version() {
 fn a_texts_rules_are_written_as_a_version_in_its_walk() {
     // Two aggregates of two literals under one head make two helpers of one stem and column types (`helper_once`),
     // which the link keys by their rules, read from the version the walk wrote.
-    let src = "#include \"python/compare.rr\"\n.decl hit(n: node)\n.output hit\n.decl near(n: node, m: node)\nnear(n, m) :- child(_, n, _), child(_, m, _), kind(n, \"call\").\nhit(n) :- kind(n, \"call\"), child(_, n, _), !near(n, n).\n.decl sizes(n: node, a: number, b: number)\n.output sizes\nsizes(n, a, b) :- kind(n, \"call\"), a = count : { child(n, c, _), kind(c, \"name\") }, b = count : { child(n, c, _), kind(c, \"call\") }.\n";
+    let src = "#include \"python/compare.rerail\"\n.decl hit(n: node)\n.output hit\n.decl near(n: node, m: node)\nnear(n, m) :- child(_, n, _), child(_, m, _), kind(n, \"call\").\nhit(n) :- kind(n, \"call\"), child(_, n, _), !near(n, n).\n.decl sizes(n: node, a: number, b: number)\n.output sizes\nsizes(n, a, b) :- kind(n, \"call\"), a = count : { child(n, c, _), kind(c, \"name\") }, b = count : { child(n, c, _), kind(c, \"call\") }.\n";
     let files = super::read_text(src).unwrap().files().expect("a modular text");
     let library = super::lower_library(&files, None).unwrap();
     let scoped = library.scoped(&files);
@@ -4597,15 +4879,15 @@ fn a_layout_line_names_a_declared_relations_columns() {
 }
 
 /// The layouts go where the program goes (decision 0361 step 1): into its image's facts and back, into the version's
-/// about rows (`About::layouts`), and through `combine`, which renames relations. `core.rr`'s base relations declare
+/// about rows (`About::layouts`), and through `combine`, which renames relations. `core.rerail`'s base relations declare
 /// theirs (step 2).
 #[test]
 fn layouts_are_carried_with_the_program() {
     use crate::code_rule_dsl::logic::front::LayoutFact as F;
-    let policy = |name: &str| format!(".policy \"t:{name}\" revision 1\n.language python\n#include \"python/ast.rr\"\n.violation Fn(at: node) \"a call\"\nFn(c) :- call_name(c, _).\n");
+    let policy = |name: &str| format!(".policy \"t:{name}\" revision 1\n.language python\n#include \"python/ast.rerail\"\n.violation Fn(at: node) \"a call\"\nFn(c) :- call_name(c, _).\n");
     let p = parse(&policy("a")).unwrap();
     let layouts = ProgramFields::layouts(&*p);
-    let child = layouts.get("child").expect("core.rr declares child's layout");
+    let child = layouts.get("child").expect("core.rerail declares child's layout");
     assert!(child.contains(&F::Key(vec![1])) && child.contains(&F::Order { col: 2, within: vec![0], dense: true }), "{child:?}");
     assert!(layouts.get("node").is_some_and(|f| f.contains(&F::Key(vec![1]))), "{:?}", layouts.get("node"));
     // The image's facts, read back from its bytes.
@@ -4643,4 +4925,102 @@ fn a_negated_cross_product_is_bound_by_the_rules_context() {
     let bound = |helper: &str| helper.contains("rr_ctx") || helper.contains("want(");
     assert!(bound(&apart) && apart.contains("lit($lo") && apart.contains("lit($hi"), "{apart}\n{shown:#?}");
     assert!(!bound(&tied), "{tied}");
+}
+
+/// The modules `demand_split_child` reads, and the builtin references each holds.
+const SPLIT_MODULES: usize = 32;
+const SPLIT_REFERENCES: usize = 4;
+
+/// python/calls over `SPLIT_MODULES` modules of `SPLIT_REFERENCES` builtin references each: no demand split's rows grow
+/// as the references times the modules (`plan::demand::over::disconnected`). `builtin_ref`'s split with `docof` cut
+/// was every reference against every module (8,801 rows of work in its `pre_<i>` here, over the 4,096 of references
+/// times modules; 129.7M rows on edx-platform's 4,459 files). The profile is the process's, so the run is a child
+/// process of its own (`demand_split_child`), its rows read from its `heads.tsv`.
+#[test]
+fn a_demand_split_stays_linear_in_the_modules() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("src");
+    std::fs::create_dir_all(&root).unwrap();
+    // Plain nodes make the program's rarer kinds anchors (fewer than 1/32 of the nodes), so `docof` is a candidate.
+    let filler = (1..=300).map(|i| i.to_string()).collect::<Vec<_>>().join(", ");
+    let source = format!("x = len([1])\nprint(x)\ny = len(\"ab\")\nprint(y)\nDATA = [{filler}]\n");
+    assert_eq!(source.matches("len(").count() + source.matches("print(").count(), SPLIT_REFERENCES);
+    for m in 0..SPLIT_MODULES {
+        std::fs::write(root.join(format!("m{m}.py")), &source).unwrap();
+    }
+    let rule = directory.path().join("calls.rerail");
+    std::fs::write(&rule, ".policy \"split-linear\" revision 1\n.language python\n.scope include \"**/*.py\"\n#include \"python/calls.rerail\"\n.violation P(at: node) \"c\"\nP(c) :- call_target(c, f), kind(f, \"nothing_has_this_kind\").\n").unwrap();
+    let profile = directory.path().join("profile");
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+    child
+        .args(["--exact", "code_rule_dsl::logic::rr::tests::demand_split_child", "--ignored", "--nocapture"])
+        .env("RERAIL_PROFILE", &profile)
+        .env("RERAIL_TAPE_CACHE", "off")
+        .env("DEMAND_SPLIT_RULE", &rule)
+        .env("DEMAND_SPLIT_ROOT", &root)
+        .env("DEMAND_SPLIT_OUT", directory.path().join("out"));
+    let status = crate::code_rule_dsl::logic::plan::corpus::switches::started(|| child.status()).unwrap();
+    assert!(status.success());
+    // part, head, cpu_s, work (rows into the head's steps), plans
+    let heads = std::fs::read_to_string(profile.join("heads.tsv")).unwrap();
+    let rows: Vec<(&str, &str, u64)> = heads.lines().skip(1).map(|l| {
+        let c: Vec<&str> = l.split('\t').collect();
+        (c[0], c[1], c[3].parse().unwrap())
+    }).collect();
+    assert!(rows.iter().any(|(part, _, _)| part.contains("typing programs")), "the typing program ran: {heads}");
+    let product = (SPLIT_MODULES * SPLIT_MODULES * SPLIT_REFERENCES) as u64;
+    for (part, head, work) in &rows {
+        if head.starts_with("pre_") || head.starts_with("demand_") {
+            assert!(*work < product / 4, "{head} ({part}): {work} rows, against {product} for every reference times every module");
+        }
+    }
+}
+
+#[test]
+#[ignore = "child process of a_demand_split_stays_linear_in_the_modules"]
+fn demand_split_child() {
+    let var = |k: &str| {
+        std::path::PathBuf::from(std::env::var_os(k).unwrap_or_else(|| panic!("{k} unset: run by a_demand_split_stays_linear_in_the_modules")))
+    };
+    crate::code_rule_dsl::tools::run_rr(&var("DEMAND_SPLIT_RULE"), &var("DEMAND_SPLIT_ROOT"), &var("DEMAND_SPLIT_OUT"), &serde_json::Value::Null).unwrap();
+}
+
+/// Decision 0470 R5: a string at a place the Python language declares (`markupsafe.Markup`'s argument) is an HTML
+/// program of its file, at the string: a Python rule reaches it through `parsed(s, "html", p)`, and its nodes stand at
+/// the file's lines. A string at no place is no program: a rule that asks for it gets a tape value, at its own text's
+/// lines.
+#[test]
+fn a_string_at_a_declared_place_is_a_program_of_its_file() {
+    let py = "from markupsafe import Markup\n\nx = Markup(\n    \"<p><b>a</b></p>\"\n)\ny = \"<i>not</i>\"\n";
+    let rule = r#"
+.decl tags(t: symbol, l: number)
+tags(t, l) :- kind(s, "string"), parsed(s, "html", p), within(e, p), kind(e, "tag_name"), text(e, t), line(e, l).
+.output tags
+"#;
+    let [tags] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("place-program", &[("a.py", py)], rule, &["tags"])).unwrap();
+    let tags: BTreeSet<Vec<String>> = tags.into_iter().collect();
+    // The rule asks every string: the one at no place is a tape value (decision 0431), at its own text's line.
+    assert_eq!(tags, [["b", "4"], ["i", "1"], ["p", "4"]].iter().map(|r| r.iter().map(|v| (*v).to_owned()).collect()).collect(), "{tags:?}");
+}
+
+/// Decision 0470 R5, R7: a run reads the files that hold its language's programs only where the program says
+/// `.embedded on` (the user: "possible but not happen by default"). With it, an HTML run sees a Python file's Markup
+/// program and a JavaScript run an HTML file's script, at their files' lines, and none of the host files' own nodes;
+/// without it, neither.
+#[test]
+fn a_run_reads_the_files_holding_its_programs_only_when_asked() {
+    let py = "from markupsafe import Markup\n\nx = Markup(\n    \"<p><b>a</b></p>\"\n)\ny = \"<i>not</i>\"\n";
+    let html = "<p>x</p>\n<script>f(1)</script>\n";
+    let set = |rows: Vec<Vec<String>>| rows.into_iter().collect::<BTreeSet<Vec<String>>>();
+    let want = |rows: &[&[&str]]| rows.iter().map(|r| r.iter().map(|v| (*v).to_owned()).collect()).collect::<BTreeSet<Vec<String>>>();
+    let tags = |embedded: &str| format!(".language html\n{embedded}\n.decl tags(t: symbol, p: symbol, l: number)\ntags(t, p, l) :- kind(e, \"tag_name\"), text(e, t), docof(e, d), doc(d, p, _), line(e, l).\n.output tags\n");
+    let [on] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("embedded-on-html", &[("a.py", py), ("b.html", html)], &tags(".embedded on"), &["tags"])).unwrap();
+    assert_eq!(set(on), want(&[&["b", "a.py", "4"], &["p", "a.py", "4"], &["p", "b.html", "1"], &["script", "b.html", "2"]]), "an HTML run asked to");
+    let [off] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("embedded-off-html", &[("a.py", py), ("b.html", html)], &tags(""), &["tags"])).unwrap();
+    assert_eq!(set(off), want(&[&["p", "b.html", "1"], &["script", "b.html", "2"]]), "by default: its own files alone");
+    let calls = |embedded: &str| format!(".language javascript\n{embedded}\n.decl calls(x: symbol, p: symbol, l: number)\ncalls(x, p, l) :- kind(c, \"call_expression\"), text(c, x), docof(c, d), doc(d, p, _), line(c, l).\n.output calls\n");
+    let [on] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("embedded-on-js", &[("b.html", html)], &calls(".embedded on"), &["calls"])).unwrap();
+    assert_eq!(set(on), want(&[&["f(1)", "b.html", "2"]]), "a JavaScript run asked to");
+    let [off] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("embedded-off-js", &[("b.html", html)], &calls(""), &["calls"])).unwrap();
+    assert!(off.is_empty(), "by default: {off:?}");
 }

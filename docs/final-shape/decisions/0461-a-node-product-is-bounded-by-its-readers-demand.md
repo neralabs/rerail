@@ -46,4 +46,4 @@ Profiling build, on the M3:
 
 ## Open
 
-- The rewrite still reads the tree. A version-native port is open (Q297).
+- The rewrite still reads the tree. A version-native port is open (Q292).

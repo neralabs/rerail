@@ -1,5 +1,5 @@
 //! Canonical CPython 3.13 AST facts of a demand batch, computed natively (`code_rule_dsl::cpython`): no Python runs.
-//! SQL selects the roots. A node is found as W's `pythonAst` worker (deleted, work queue Q293) found it, by its span
+//! SQL selects the roots. A node is found as W's `pythonAst` worker (deleted, work queue Q360) found it, by its span
 //! and the classes its kind may be, and each field is the worker's: `dump`, `dump_sha256`, `body_sha256`,
 //! `signature_sha256`, `unparse`, `repr_unparse`, `literal_json`, `identifier`, the text fields `column` and a name's
 //! `identifier`, which parse nothing, and a module's `syntax_error`: the whole `SyntaxError` (`msg`, `lineno`,

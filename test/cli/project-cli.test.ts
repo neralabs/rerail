@@ -1,15 +1,17 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { preUpdateSnapshotPath, runResetCommand, runRulesCommand, type SnapshotUpdater, updateWithSnapshot } from "../../src/cli/project-cli.js";
 import type { UpdateResult, UpdateStatus } from "../../src/setup/index.js";
-import { defaultRerailDatabasePath, loadRuleCatalog, openRerailDatabase, recordCheckout, upsertLibraryRule } from "../../src/engine/index.js";
+import { defaultRerailDatabasePath, loadRuleCatalog, openRerailDatabase, recordCheckout, STATUS_LINES_FOLDER, upsertLibraryRule } from "../../src/engine/index.js";
 import { MOCK_CODE_RULES } from "../../src/cli/index.js";
+import { POSIX_MODES } from "../support/platform/file-mode.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 /** Set to make `eraseFreedPages` fail as a busy database or a full disk makes it fail. */
 const erase = vi.hoisted(() => ({ failure: undefined as Error | undefined }));
@@ -30,7 +32,7 @@ afterEach(async () => {
   erase.failure = undefined;
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
-  await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
+  await Promise.all(directories.splice(0).map(directory => removeFolder(directory)));
 });
 
 describe("rerail rules export", () => {
@@ -128,7 +130,7 @@ describe("rerail update", () => {
     migrate(path);
     expect(repositoryKeys(path)).toEqual(["after", "before"]);
     expect(repositoryKeys(preUpdateSnapshotPath(path))).toEqual(["before"]);
-    expect(statSync(preUpdateSnapshotPath(path)).mode & 0o777).toBe(0o600);
+    if (POSIX_MODES) expect(statSync(preUpdateSnapshotPath(path)).mode & 0o777).toBe(0o600);
     expect(vi.mocked(process.stdout.write)).toHaveBeenCalledWith(`Copied ${path} to ${preUpdateSnapshotPath(path)}\n`);
   });
 
@@ -168,7 +170,8 @@ describe("rerail update", () => {
 
   // When neither a new copy nor the old one's removal works (a folder this user cannot write), the update has still
   // happened: it is reported, with what to remove by hand, not failed.
-  it("reports an old copy it cannot remove instead of failing the update", async () => {
+  it("reports an old copy it cannot remove instead of failing the update", async ({ skip }) => {
+    skip(process.platform === "win32", "Windows ignores a folder's read-only mode, so no folder here refuses this user's writes");
     const path = await database();
     const updater = new FakeUpdater();
     await updateWithSnapshot(updater, path, "2.0.0");
@@ -253,6 +256,35 @@ describe("rerail reset", () => {
       expect(live.$client.prepare("SELECT count(*) AS n FROM events").get()).toEqual({ n: 0 });
       erase.failure = undefined;
       expect(runResetCommand([], () => "usage")).toBe(0);
+    } finally {
+      live.$client.close();
+    }
+  });
+
+  it("removes the Claude Code status line of each session it deletes, and keeps the lines of the sessions it keeps", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-reset-"));
+    directories.push(root);
+    vi.stubEnv("RERAIL_HOME", join(root, "home"));
+    const checkout = join(root, "repo");
+    mkdirSync(checkout);
+    vi.spyOn(process, "cwd").mockReturnValue(checkout);
+    vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    const live = openRerailDatabase(join(root, "home", "rerail.sqlite"));
+    try {
+      const { repositoryKey } = recordCheckout(live, checkout);
+      const session = live.$client.prepare("INSERT INTO sessions (session_id, host, cwd, repository_id, started_at, ended_at) VALUES (?, 'claude-code', ?, ?, 1, ?)");
+      session.run("ended-here", checkout, repositoryKey, 2);
+      session.run("running-here", checkout, repositoryKey, null);
+      session.run("in-another-repository", root, "another-repository", 2);
+      const status = join(root, "home", STATUS_LINES_FOLDER);
+      mkdirSync(status);
+      for (const sessionId of ["ended-here", "running-here", "in-another-repository"]) writeFileSync(join(status, sessionId), "a line\n");
+      // A file of the person's own, with a name no session id can have.
+      writeFileSync(join(status, "notes.txt"), "mine\n");
+
+      expect(runResetCommand([], () => "usage")).toBe(0);
+
+      expect(readdirSync(status).sort()).toEqual(["in-another-repository", "notes.txt", "running-here"]);
     } finally {
       live.$client.close();
     }

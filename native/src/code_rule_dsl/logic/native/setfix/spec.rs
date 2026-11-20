@@ -114,6 +114,27 @@ pub struct JoinSpec {
     /// (`JoinRule::from`). Empty (a spec read from text): each item is its own step.
     pub from: Vec<u32>,
     pub plan_steps: u32,
+    /// The rows the planner expects after each plan step, every row walked (`StepPlan::all`, decision 0277), where it
+    /// priced the rule: what the device sizes a stage's table by before the stage has run (`Est`).
+    pub est: Est,
+}
+
+/// A spec's estimates (`JoinSpec::est`): not the rule. Every two are equal and they hash as nothing, so a spec's
+/// identity (`level::digest`), and what is kept by it (the stages' growth seen, compiled forms), stay a chunk's to the
+/// next while its estimates change.
+#[derive(Clone, Debug, Default)]
+pub struct Est(pub Vec<f64>);
+
+impl PartialEq for Est {
+    fn eq(&self, _: &Est) -> bool {
+        true
+    }
+}
+
+impl Eq for Est {}
+
+impl std::hash::Hash for Est {
+    fn hash<H: std::hash::Hasher>(&self, _: &mut H) {}
 }
 
 /// How a relation starts: its table's rows, none, a query's rows, or a kept native relation less another's
@@ -153,6 +174,13 @@ pub enum Line {
     /// reach themselves through the stratum's rules as written, so they keep levels even where this run's rules over
     /// empty relations were left out and their cycle is not run (`leveled <rels|->`).
     Leveled(Vec<usize>),
+    /// A recursive component the static check proved (decision 0364 §5): no levels, its candidates rechecked once
+    /// each in the measure's order. Each relation's measure column (`cols`) and rank (`ranks`: a row's derivations
+    /// at its own node read relations of lower rank); a row's key is its measure's value, or the one row `key`'s
+    /// SQL reads with it bound (`?1`: the node's depth or document order); descending where `desc`. Not `keyed`:
+    /// the order is not the measure's (a node's key the run cannot read), and a candidate that stays is checked again
+    /// when a row it may read goes (`measured a|d <key|-> k|u <cols> <ranks>`).
+    Measured { desc: bool, key: Option<String>, keyed: bool, cols: Vec<usize>, ranks: Vec<usize> },
     /// Its relations started from kept rows (`Start::Base`) hold them as no wave's delta: its first wave is driven by
     /// its inputs' changes (seeds that read them, `plan::reads_change`), not by its kept rows (decision 0122 §2).
     KeptOld,
@@ -169,6 +197,9 @@ pub enum Line {
     Produced(usize),
     /// The relation's statistics are kept as its rows come (`Rel::stats`): a session keeps it for its next run.
     Stats(usize),
+    /// The relations declared sorted (`.decl … sorted`, decision 0456 K7): laid out in canonical order when done
+    /// (`sorted <rels>`).
+    Sorted(Vec<usize>),
     Seed { head: usize, join: Arc<JoinSpec> },
     Join { head: usize, delta: usize, join: Arc<JoinSpec>, whole: Option<Arc<JoinSpec>> },
     Probe { head: usize, delta: usize, sql: String },
@@ -176,9 +207,6 @@ pub enum Line {
     /// delta first has rows (`done 4`), and the caller gives it its join (`reprobe`).
     Unplanned { head: usize, delta: usize },
     Gate { done: usize, src: Option<usize>, quiet: Vec<usize>, after: Vec<usize> },
-    /// A recursive relation maintained by levels (decision 0090): its candidates, the level checked, those held,
-    /// those gone and the kept rows shown (`levels <cand> <chk> <held> <gone> <live>`).
-    Levels { cand: usize, chk: usize, held: usize, gone: usize, live: usize },
     Edge(EdgeSpec),
     /// The maintain mode (decision 0364 stage 3): a removal join, its head rows the candidates of relation `head`,
     /// read from its versions (`Source::Version`): run once, before the seeds (`remove <head> <hex join>`).
@@ -218,7 +246,7 @@ pub fn hex(s: &str) -> String {
 }
 
 pub fn unhex(s: &str) -> Result<String, String> {
-    if s.len() % 2 != 0 || !s.is_ascii() {
+    if !s.len().is_multiple_of(2) || !s.is_ascii() {
         return Err(format!("bad hex {s}"));
     }
     let b: Result<Vec<u8>, String> = (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|e| e.to_string())).collect();
@@ -474,6 +502,7 @@ impl std::fmt::Display for Line {
             Line::NoWrite => f.write_str("nowrite"),
             Line::Device => f.write_str("device"),
             Line::Leveled(rels) => write!(f, "leveled {}", comma(rels)),
+            Line::Measured { desc, key, keyed, cols, ranks } => write!(f, "measured {} {} {} {} {}", if *desc { "d" } else { "a" }, key.as_ref().map_or_else(|| "-".to_owned(), |k| hex(k)), if *keyed { "k" } else { "u" }, comma(cols), comma(ranks)),
             Line::KeptOld => f.write_str("keptold"),
             Line::KeptRows(rels) => write!(f, "keptrows {}", comma(rels)),
             Line::Lattice { rel, keys, name, widen } => write!(f, "lattice {rel} {keys} {} {}", hex(name), widen.map_or_else(|| "-".to_owned(), |w| w.to_string())),
@@ -481,6 +510,7 @@ impl std::fmt::Display for Line {
             Line::Request(r) => write!(f, "request {r}"),
             Line::Produced(r) => write!(f, "produced {r}"),
             Line::Stats(r) => write!(f, "stats {r}"),
+            Line::Sorted(rels) => write!(f, "sorted {}", comma(rels)),
             Line::Seed { head, join } => write!(f, "seed {head} {}", hex(&join.to_text())),
             Line::Remove { head, join } => write!(f, "remove {head} {}", hex(&join.to_text())),
             Line::AddChecked { head, join } => write!(f, "addchecked {head} {}", hex(&join.to_text())),
@@ -497,7 +527,6 @@ impl std::fmt::Display for Line {
             Line::Gate { done, src, quiet, after } => {
                 write!(f, "gate {done} {} {} {}", src.map_or("-".to_owned(), |s| s.to_string()), comma(quiet), comma(after))
             }
-            Line::Levels { cand, chk, held, gone, live } => write!(f, "levels {cand} {chk} {held} {gone} {live}"),
             Line::Edge(e) => {
                 let slots = |xs: &[usize]| xs.iter().map(|s| format!("v{s}")).collect::<Vec<_>>().join(" ");
                 let src = match &e.edge {
@@ -567,6 +596,13 @@ impl ComponentSpec {
                 "nowrite" => Line::NoWrite,
                 "device" => Line::Device,
                 "leveled" => Line::Leveled(t.get(1).map(|x| list(x)).transpose()?.unwrap_or_default()),
+                "measured" => Line::Measured {
+                    desc: at(1)? == "d",
+                    key: if at(2)? == "-" { None } else { Some(unhex(at(2)?)?) },
+                    keyed: at(3)? == "k",
+                    cols: list(at(4)?)?,
+                    ranks: list(at(5)?)?,
+                },
                 "keptold" => Line::KeptOld,
                 "keptrows" => Line::KeptRows(list(at(1)?)?),
                 "lattice" => Line::Lattice {
@@ -579,6 +615,7 @@ impl ComponentSpec {
                 "request" => Line::Request(num(at(1)?)?),
                 "produced" => Line::Produced(num(at(1)?)?),
                 "stats" => Line::Stats(num(at(1)?)?),
+                "sorted" => Line::Sorted(list(at(1)?)?),
                 "seed" => Line::Seed { head: num(at(1)?)?, join: join(at(2)?)? },
                 "remove" => Line::Remove { head: num(at(1)?)?, join: join(at(2)?)? },
                 "addchecked" => Line::AddChecked { head: num(at(1)?)?, join: join(at(2)?)? },
@@ -597,7 +634,6 @@ impl ComponentSpec {
                     quiet: list(at(3)?)?,
                     after: list(at(4)?)?,
                 },
-                "levels" => Line::Levels { cand: num(at(1)?)?, chk: num(at(2)?)?, held: num(at(3)?)?, gone: num(at(4)?)?, live: num(at(5)?)? },
                 "rule" => {
                     let sections: Vec<&[&str]> = t.get(5..).unwrap_or(&[]).split(|x| *x == ";").collect();
                     let section = |name: &str| -> Result<&[&str], String> {
@@ -660,8 +696,8 @@ pub mod tests {
              join 0 1 {} {}\nprobe 1 0 {}\ngate 2 - 0,1 -\ngate 2 0 - 0\nrule 0 1 sfx_a_0 ii key v0 ; ecols v1 ; pat v0 _ ; head v1 cat:v0:v1\n\
              rule 1 0 - - key  ; ecols  ; pat i:1 x:61 ; head v0",
             hex("SELECT 1"),
-            hex("a__old"),
-            hex("a__del"),
+            hex("a_kept"),
+            hex("a_gone"),
             hex(join),
             hex(join),
             hex("pos c0 v0\nhead v0"),

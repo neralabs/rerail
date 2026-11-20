@@ -25,7 +25,7 @@ pub use name::{List, Lists, Name};
 pub mod cycles;
 pub mod graph;
 pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
-pub use ast::{AXIS, AggOp, Algo, Branded, Class, DESCENDANTS, EVERY_KIND, FEW, Fan, GLOBAL, LIBRARY, LatticeDecl, LayoutFact, NEAREST, Native, OPTION_GLOB, QUALIFIERS, RESERVED, SCOPE_NOT, Shape, ShapeWait, Size as LayoutSize, SpanIn, Value, Values as LayoutValues, add_layout, axis, carried_record, globals, is_axis, is_transduced, layout_facts, readers_of_heads, record_copy, shape_base};
+pub use ast::{AXIS, AggOp, Algo, Branded, Class, DESCENDANTS, EVERY_KIND, FEW, Fan, GLOBAL, LIBRARY, LatticeDecl, LayoutFact, NEAREST, Native, OPTION_GLOB, QUALIFIERS, RESERVED, SCOPE_NOT, Shape, ShapeWait, Size as LayoutSize, SpanIn, Value, Values as LayoutValues, add_layout, axis, carried_record, globals, is_axis, is_transduced, layout_facts, readers_of_heads, record_copy};
 
 use ast::PUNCT;
 
@@ -74,11 +74,11 @@ pub enum Error {
     /// A component creates values (`@cat`, …) the data does not bound (`cycles`): `rule` is one it could not
     /// bound.
     UnboundedValueCycle { component: BTreeSet<String>, rule: String },
-    /// `.input r` where no `.decl` gives `r`'s columns (nor core.rr's, for `.rr`).
+    /// `.input r` where no `.decl` gives `r`'s columns (nor core.rerail's, for `.rerail`).
     UndeclaredInput { relation: String },
 }
 
-/// The `.rr` parser's error (`rerail_rr_syntax`) is a syntax error.
+/// The `.rerail` parser's error (`rerail_rr_syntax`) is a syntax error.
 impl From<rerail_rr_syntax::Error> for Error {
     fn from(e: rerail_rr_syntax::Error) -> Self {
         match e {
@@ -160,7 +160,7 @@ pub fn finish_checks_on(v: &crate::code_rule_dsl::logic::program_image::Version)
 /// value cycles are bounded by what the library's relations guarantee there (`cycles::check_given`).
 pub fn finish_checks_given(v: &crate::code_rule_dsl::logic::program_image::Version, library: Option<&crate::code_rule_dsl::logic::program_image::Version>) -> Result<(), Error> {
     use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
-    use crate::code_rule_dsl::logic::program_image::handles::{Lit, TermRef};
+    use crate::code_rule_dsl::logic::program_image::handles::{AggRef, Lit, TermRef};
     for rule in v.rules() {
         // A computed term is a value, not a pattern: an atom never matches on one (the backends would drop it).
         if let Some(a) = rule.body().filter_map(|l| if let Lit::Atom(a) = l.view() { Some(a) } else { None }).find(|a| a.args().any(|t| matches!(t, TermRef::Call(..)))) {
@@ -169,6 +169,22 @@ pub fn finish_checks_given(v: &crate::code_rule_dsl::logic::program_image::Versi
                 v.rel_name(a.rel()),
                 v.rel_name(rule.head().rel())
             )));
+        }
+    }
+    // A min or max over a symbol would order the symbols by their ids, not their text: refused, as in Soufflé. A
+    // declared type is kept as its canonical name (`sym`).
+    for rule in v.rules() {
+        for l in rule.body() {
+            let Lit::Agg { op: op @ (AggRef::Min | AggRef::Max), over: Some(o), atom, .. } = l.view() else { continue };
+            let rel = v.rel_name(atom.rel());
+            let cols = v.columns_of(rel).unwrap_or_default();
+            if atom.args().enumerate().any(|(i, t)| matches!(t, TermRef::Var(s) if s == o) && cols.get(i).is_some_and(|(_, ty)| matches!(ty.as_str(), "sym" | "symbol"))) {
+                let op = if matches!(op, AggRef::Min) { "min" } else { "max" };
+                return Err(Error::Syntax(format!(
+                    "{op} over a symbol of {rel} in the rule for {}: symbols have no order an aggregate keeps; compare them with `<`",
+                    v.rel_name(rule.head().rel())
+                )));
+            }
         }
     }
     for (relation, decl) in ProgramFields::lattice(v) {
@@ -446,11 +462,12 @@ pub const PRAGMA: &str = "cross-rounds";
 /// A base relation's document column, including raw text views.
 pub fn document_column(relation: &str) -> Option<usize> {
     match relation {
-        "node" | "doc" | "pkg" | "path_part" | "file_name" | "syntax_error" | "cpython_syntax_error" |
+        "node" | "doc" | "pkg" | "unpackaged" | "path_part" | "file_name" | "syntax_error" | "cpython_syntax_error" |
         "source" | "src_line" | "src_line_lf" | "tape_line" | "split_line" | "lf_line" | "line_count" | "parsed"
         // Decision 0055's: a guest and its host are one file (`corpus::guests` attributes its rows to the host).
-        | "doc_role" | "doc_root" | "tape_of" | "guest" | "host_node" => Some(0),
-        "docof" => Some(1),
+        | "tape_of" | "rr_program" | "host_node" => Some(0),
+        // Decision 0431: a string's parsed nodes, by the string (its file's node).
+        "docof" | "guest_of" | "guest_place" => Some(1),
         _ => None,
     }
 }

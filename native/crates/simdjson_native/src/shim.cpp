@@ -99,6 +99,14 @@ struct rerail_v9np_sink {
   uint8_t code_value[36];
   // The source's SHA-256.
   uint8_t digest[32];
+  // Format 16 (decision 0434): where `ev` is set, the walk writes no column. Each node is an event of three
+  // words appended to `ev` (`EV_OPEN | id << 8, start, 0`; `EV_LEAF | id << 8, start, end`; `EV_CLOSE, end, 0`,
+  // `id` the node's code), and `flush` is called with `ev_len` words when `ev_cap` are full and at the end: the
+  // caller gives them to format 16's ops. A walk never edits a node it wrote.
+  uint32_t* ev;
+  uint32_t ev_len;
+  uint32_t ev_cap;
+  void (*flush)(rerail_v9np_sink* sink);
 };
 
 // --- SHA-256 ------------------------------------------------------------------------------------------
@@ -177,8 +185,13 @@ struct sha256_portable {
 };
 
 #if SIMDJSON_IMPLEMENTATION_ARM64
+// The target that lets the SHA2 intrinsics inline. GCC 12 and older put them under `+crypto`, a flag of
+// its own that `+sha2` does not set (it also turns on AES, which no code here uses); GCC 13 split it
+// into `+aes` and `+sha2`.
 #if defined(__clang__)
 #define RERAIL_ARM_SHA "sha2"
+#elif __GNUC__ < 13
+#define RERAIL_ARM_SHA "+crypto"
 #else
 #define RERAIL_ARM_SHA "+sha2"
 #endif

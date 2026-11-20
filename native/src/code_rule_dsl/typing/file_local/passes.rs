@@ -261,7 +261,7 @@ impl ProgramPass for Locate {
 pub(super) enum BodyItem<'v> {
     Orig(LitRef<'v>),
     New(String, Vec<NOwned<'v>>),
-    /// A negated atom made (a cached product's parts read while its pairs are not kept, decision 0477).
+    /// A negated atom made (a cached product's parts read while its pairs are not kept, decision 0506).
     Not(String, Vec<NOwned<'v>>),
 }
 

@@ -5,7 +5,7 @@
 //! The rows are T's: over each document's named nodes other than comments, in preorder,
 //!
 //! ```text
-//! doc(d, path, module)   pkg(d, p)             node(d, n, kind, start, end_)
+//! doc(d, path, module)   pkg(d, p)   unpackaged(d)   node(d, n, kind, start, end_)
 //! child(p, c, idx)       field(p, f, c)        tape(n, par, size, depth)
 //! text(n, s)             intval(n, v)          op(n, s)
 //! ```
@@ -22,13 +22,13 @@
 //! 2); `doc`, `pkg`, `text`, `intval` and `op` are small and kept as [`Relation`]s.
 //!
 //! That is T's projection ([`Shape::T`]), which T's programs and the programs that declare the base relations
-//! themselves read. A program that includes `core.rr` reads `core.rr`'s ([`Shape::Core`], decision 0046, `core_rr`):
+//! themselves read. A program that includes `core.rerail` reads `core.rerail`'s ([`Shape::Core`], decision 0046, `core_rr`):
 //! comments are nodes, `text` is every node's, `op` every anonymous token's, and the source-text, token and literal
 //! relations are made. T's `op` is `op_t` in both.
 
 use super::{Modules, Relation, Source};
 use crate::code_rule_dsl::facts::Graph;
-use crate::code_rule_dsl::facts::core::{Facts, KIND_STRIDE, NONE, TEXT, kind_atom, kind_code};
+use crate::code_rule_dsl::facts::core::{Facts, NONE, TEXT, kind_atom, kind_code};
 use crate::code_rule_dsl::language::{KindCatalog, from_tape_tag};
 use crate::content_store::{ContentStore, StoreError, StoreResult};
 use rusqlite::Connection;
@@ -38,6 +38,7 @@ use std::sync::{Arc, OnceLock};
 use cells::{Block, Cells};
 
 pub mod within;
+pub mod values;
 
 /// The language's `within(n, a)`, `n` strictly below `a` (`within::Within`, tree mode).
 pub const WITHIN: &str = "within";
@@ -69,7 +70,7 @@ pub enum Shape {
     /// T's: named nodes without comments, `text` of identifiers, `op` of operator fields.
     #[default]
     T,
-    /// `core.rr`'s (decision 0046).
+    /// `core.rerail`'s (decision 0046).
     Core,
 }
 
@@ -105,8 +106,8 @@ pub struct Projection {
     /// The grammars whose guests keep their partial tree when they do not parse (`.on guest_error partial`,
     /// decision 0055 §6); `"*"` is every grammar. Any other broken guest is withheld.
     pub partial: BTreeSet<String>,
-    /// In T's shape, `syntax_error` is core.rr's `syntax_error(d, l, msg)`, CPython's verdict, not T's
-    /// `syntax_error(d)`: the program declares that one (a program of core.rr's base relations, not T's).
+    /// In T's shape, `syntax_error` is core.rerail's `syntax_error(d, l, msg)`, CPython's verdict, not T's
+    /// `syntax_error(d)`: the program declares that one (a program of core.rerail's base relations, not T's).
     pub verdict: bool,
     /// The relations the program's rules derive: the batch binds none of them, made or viewed (T's programs derive
     /// `docof` from `node`, `rr::lower::projections`; a program may name an output as a base relation is named). A
@@ -232,7 +233,7 @@ impl Projection {
     }
 
     /// The columns the batch binds base relation `rel` with (`select::input_columns`'), but T's `syntax_error(d)`
-    /// where the program declares that one and not core.rr's verdict (`verdict`): the cross-file part binds a base
+    /// where the program declares that one and not core.rerail's verdict (`verdict`): the cross-file part binds a base
     /// relation with the chunks' columns, on the same connection.
     pub fn columns(&self, rel: &str) -> Option<&'static [&'static str]> {
         if rel == "syntax_error" && self.shape == Shape::T && !self.verdict {
@@ -294,7 +295,7 @@ pub struct TextDemand {
 }
 
 /// What `Projection::of_parts` reads of a program: the spans whose text a rule reads and whether a token's, whether the
-/// program declares every relation `core.rr` does (core.rr's shape), the grammars whose errors keep a partial tree,
+/// program declares every relation `core.rerail` does (core.rerail's shape), the grammars whose errors keep a partial tree,
 /// whether `syntax_error` has three columns, the derived relations, and the regex spans and AST patterns.
 pub struct ProjectionParts {
     pub spans: BTreeSet<crate::code_rule_dsl::logic::front::ast::SpanIn>,
@@ -313,14 +314,14 @@ pub struct ProjectionParts {
 /// engine's `func` step and SQL's functions find it on the run's connection, so a text is read from the batch the run
 /// reads, never from a process-wide or per-thread table of batches by document key.
 pub struct LongTexts {
-    nodes: Relation,
+    nodes: Arc<Relation>,
     batch: Arc<Batch>,
     /// Each document key's place in `batch.docs`.
     docs: HashMap<u32, usize>,
 }
 
 impl LongTexts {
-    fn new(nodes: Relation, batch: &Arc<Batch>) -> Self {
+    fn new(nodes: Arc<Relation>, batch: &Arc<Batch>) -> Self {
         let docs = batch.docs.iter().enumerate().map(|(i, p)| (p.key, i)).collect();
         Self { nodes, batch: Arc::clone(batch), docs }
     }
@@ -391,7 +392,7 @@ impl LongTexts {
         values.get(&local).cloned()
     }
 
-    /// Node `n`'s string literal's content, as the batch's shape states `str(n, s)`: `core.rr`'s literal reading
+    /// Node `n`'s string literal's content, as the batch's shape states `str(n, s)`: `core.rerail`'s literal reading
     /// (`core_rr::node_str`), or T's (a string node's content between its quotes, `NodeRows`). It answers `str`'s
     /// requests (decisions 0174, 0353 step 3): only the nodes a rule asks for are read and interned.
     pub fn str_any(&self, n: i64) -> Option<String> {
@@ -413,6 +414,10 @@ impl LongTexts {
     /// Node `n`'s text or value as function `name` reads it (`NODE_READS`) through `source`, a binding of
     /// `rr_long_text_node`; none for another source or function.
     pub fn of(source: &dyn Source, name: &str, n: i64) -> Option<String> {
+        // A chunk's layered binding (decision 0431 §8): a tape value's node is read through its own batch.
+        if let Some(layered) = source.as_any()?.downcast_ref::<values::Layered>() {
+            return Self::of(&*layered.source_of(n), name, n);
+        }
         let texts = source.as_any()?.downcast_ref::<Self>()?;
         match name {
             "rr_node_text" => texts.long_text(n),
@@ -461,8 +466,12 @@ impl Source for LongTexts {
 }
 
 /// The batch's relation `name` as a source: `rr_long_text_node` with the batch (`LongTexts`), any other as rows.
-fn as_source(name: &str, rows: Relation, batch: &Arc<Batch>) -> Arc<dyn Source> {
-    if name == LONG_TEXT_NODES { Arc::new(LongTexts::new(rows, batch)) } else { Arc::new(rows) }
+/// How a batch's relations are made of their rows: written into a block (`Relation::from_rows`), or staged
+/// (`Relation::staged`).
+pub(super) type Make = fn(&[&str], &mut dyn Iterator<Item = Vec<i64>>) -> Relation;
+
+fn as_source(name: &str, rows: Arc<Relation>, batch: &Arc<Batch>) -> Arc<dyn Source> {
+    if name == LONG_TEXT_NODES { Arc::new(LongTexts::new(rows, batch)) } else { rows }
 }
 
 /// The relation of the nodes whose text `@rr_node_text` reads, bound with the batch every node read goes through
@@ -502,10 +511,13 @@ pub const HIDDEN_KEYS: u32 = (1 << 30) + (1 << 29);
 #[derive(Clone, Debug)]
 pub struct Guest {
     pub host: u32,
+    /// Its file's key (decision 0431 §4): a program's file (its host's, through a host that is a program too), whose
+    /// `docof`, lines and findings are its own; 0 for a tape value or a value, which are no file's.
+    pub file: u32,
     /// `at`: the host's node or span (`host << 32 | local`).
     pub at: i64,
     pub grammar: String,
-    /// "program" or "fragment" (`doc_role`).
+    /// "program" (a file's) or "fragment" (a string's).
     pub role: String,
     /// The core id of the guest's root: a fragment's expression inside its wrapper, else the tree's root. The
     /// document is that node's subtree.
@@ -529,10 +541,31 @@ pub enum Made {
     /// `@splice(tape, node, with)`: tape `tape` with node `node`'s text replaced by tape `with`'s, parsed in its
     /// grammar; a value document.
     Splice { tape: String, node: i64, with: String },
+    /// A string a rule parses (`parsed`, `sub_tape`, `embed_value`): a tape value (decision 0431). One per grammar
+    /// and text, whatever holds it; `places` are the strings it was parsed at. Its nodes are its tape's: their
+    /// positions are in its own text, and it is no file's (`doc` has no row for it), so a file's place of one of
+    /// its nodes is reached through the string.
+    Tape { places: Vec<TapePlace> },
 }
 
-/// A document's text as a rule gets it back (`@unparse`): a wrapped fragment's root's text (the expression inside
-/// `( … )`), else the whole text.
+/// A string a tape value was parsed at (decision 0431): its host document, its node, and where the value's bytes
+/// stand in the host (for `host_node`). Two places are one when they are the same node.
+#[derive(Clone, Debug)]
+pub struct TapePlace {
+    pub host: u32,
+    pub at: i64,
+    pub place: Placement,
+}
+
+impl PartialEq for TapePlace {
+    fn eq(&self, o: &Self) -> bool {
+        (self.host, self.at) == (o.host, o.at)
+    }
+}
+impl Eq for TapePlace {}
+
+/// A document's text as a rule gets it back (`@unparse`): its root's text where its root is not its first node, else
+/// the whole text (a fragment's tape is rooted at its start node, decision 0466).
 pub fn unparsed(d: &Document) -> &str {
     match d.guest.as_deref() {
         Some(g) if g.root != 0 => d.facts.text(g.root),
@@ -687,6 +720,9 @@ pub struct Document {
     /// The module a loaded document is (t21 E2: `load(path, module, …)`, the module its resolution gave); `None` for
     /// a file of the corpus, whose module follows from its path.
     pub module: Option<Arc<str>>,
+    /// A Python file no regular package holds: one of the root, or whose folder has no `__init__.py` (core.rerail's
+    /// `unpackaged`, `corpus::package_root_modules`).
+    pub unpackaged: bool,
 }
 
 /// W's values (`Extra`) and the AST patterns' matches (`ast_match`, matched over the tape), which a batch reads off
@@ -715,11 +751,13 @@ pub trait Producer: Send + Sync {
 }
 
 /// A [`Producer`]'s run over one batch.
-pub trait ProducerRun {
+pub trait ProducerRun: Send {
     /// Document `p`'s rows (`d` its document, `dialect` its grammar's kinds, `own`: it is of the producer's dialect).
     fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, own: bool, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()>;
-    /// The relations it made, with `atom` mapping a string's index to its atom.
-    fn relations(self: Box<Self>, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)>;
+    /// The relations of the rows it made since it was last asked, with `atom` mapping a string's index to its atom. A
+    /// batch that grows (decision 0431 §6) asks after each round, and keeps the producer: what it knows of a file
+    /// (its annotations, for the guests a later round adds) stays.
+    fn relations(&mut self, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)>;
     /// Whether it reads guests' documents too (else only files').
     fn reads_guests(&self) -> bool {
         false
@@ -739,7 +777,7 @@ fn producers() -> &'static [&'static dyn Producer] {
     PRODUCERS.get().map_or(&[], Vec::as_slice)
 }
 
-/// A comment's text without its marker (core.rr's `comment`): `#`, `--`, `//` (and a doc comment's `/` or `!`),
+/// A comment's text without its marker (core.rerail's `comment`): `#`, `--`, `//` (and a doc comment's `/` or `!`),
 /// `/*` to `*/` (and a doc comment's `*` or `!`) or `<!--` to `-->` taken off, then the whitespace around the rest.
 pub fn comment_body(text: &str) -> &str {
     let body = if let Some(rest) = text.strip_prefix("/*") {
@@ -781,6 +819,27 @@ impl Numbering {
         let (p, dialect) = self.p.as_ref()?;
         (local < p.len()).then(|| p.node(local)).map(|id| (id, dialect.name(&p.facts, id)))
     }
+    /// The root's id; `None` for a document with no nodes.
+    pub fn root(&self) -> Option<i64> {
+        let (p, _) = self.p.as_ref()?;
+        (p.len() > 0).then(|| p.global(0))
+    }
+    /// The id of the innermost numbered node over host bytes `[a, b]`: from the root, down through the child whose
+    /// span holds them (`GuestRows::host_nodes`' walk); `None` without a root.
+    pub fn over(&self, [a, b]: [u32; 2]) -> Option<i64> {
+        let (p, _) = self.p.as_ref()?;
+        if p.len() == 0 {
+            return None;
+        }
+        let mut over = 0;
+        while let Some(c) = p.children(over).find(|&c| {
+            let [x, y] = p.span(c);
+            x <= a && b <= y
+        }) {
+            over = c;
+        }
+        Some(p.global(over))
+    }
     /// The kind name of core id `id`, if the projection numbers it.
     pub fn kind_of(&self, id: u32) -> Option<&'static str> {
         let (p, dialect) = self.p.as_ref()?;
@@ -795,7 +854,7 @@ pub fn numbering(doc: &Document, shape: Shape) -> StoreResult<Numbering> {
     }
     let tag = crate::code_rule_dsl::facts::core::facts_tag(&doc.facts);
     let dialect = Dialect::kept(tag)?;
-    // In `core.rr`'s shape a guest's nodes are its root's subtree; in T's, its whole tree (`Batch::build`).
+    // In `core.rerail`'s shape a guest's nodes are its root's subtree; in T's, its whole tree (`Batch::build`).
     let guest = doc.guest.as_deref().filter(|_| shape == Shape::Core).map(|g| (g, Arc::new(core_rr::Lines::new("", false))));
     let p = Projected::new(doc.key, Arc::clone(&doc.facts), Some(&*dialect), shape, false, guest);
     Ok(Numbering { p: Some((p, dialect)) })
@@ -875,12 +934,13 @@ impl Class {
 
 /// A batch's dialects by tape tag: a table the tag indexes, since a row's `kind` reads its document's dialect per
 /// row (a hash map's probe was a third of that read).
-#[derive(Default)]
-pub struct Dialects(Vec<Option<Dialect>>);
+/// Shared by the batches a chunk's batch grows into (`Growth`).
+#[derive(Default, Clone)]
+pub struct Dialects(Vec<Option<Arc<Dialect>>>);
 
 impl Dialects {
     pub fn get(&self, tag: u8) -> Option<&Dialect> {
-        self.0.get(usize::from(tag)).and_then(Option::as_ref)
+        self.0.get(usize::from(tag)).and_then(|d| d.as_deref())
     }
     /// Tag `tag`'s dialect, made on first use.
     fn get_or_new(&mut self, tag: u8) -> StoreResult<&Dialect> {
@@ -889,13 +949,13 @@ impl Dialects {
             self.0.resize_with(at + 1, || None);
         }
         if self.0[at].is_none() {
-            self.0[at] = Some(Dialect::new(tag)?);
+            self.0[at] = Some(Arc::new(Dialect::new(tag)?));
         }
-        Ok(self.0[at].as_ref().expect("just made"))
+        Ok(self.0[at].as_deref().expect("just made"))
     }
     /// Each dialect with its tag, in tag order.
     pub fn iter(&self) -> impl Iterator<Item = (u8, &Dialect)> {
-        self.0.iter().filter_map(Option::as_ref).map(|d| (d.tag, d))
+        self.0.iter().filter_map(|d| d.as_deref()).map(|d| (d.tag, d))
     }
 }
 
@@ -923,9 +983,8 @@ pub struct Dialect {
     /// The `operators` field: a comparison's operator tokens (`a < b <= c`).
     operators: Option<u16>,
     pub canonical: Vec<u16>,
-    codes: HashMap<u16, Vec<u16>>,
     /// Whether W reads values of the dialect's nodes (its family's `ValueRules::SUPPORTED`): `Extra`'s `value` and
-    /// `value_type` are W's for its documents, `core_rr`'s literal values for the others (an `.rr` file's).
+    /// `value_type` are W's for its documents, `core_rr`'s literal values for the others (an `.rerail` file's).
     values: bool,
     /// The grammar's token automata: the tokens a named-only tape leaves out, in the gaps between a
     /// parent's stored children (`tree::Tree`'s `token`, `prev_token`; t31).
@@ -960,13 +1019,9 @@ impl Dialect {
                 _ => k,
             })
             .collect();
-        let mut codes: HashMap<u16, Vec<u16>> = HashMap::new();
-        for (k, &c) in canonical.iter().enumerate() {
-            codes.entry(c).or_default().push(k as u16);
-        }
         let family = Family::of(from_tape_tag(tag).and_then(crate::code_rule_dsl::language::label));
         let grammar = crate::code_rule_dsl::tape::tokens::TokenGrammar::of_dialect(dialect);
-        Ok(Self { tag, family, catalog, names, classes, granule_kinds, operator: catalog.field_id("operator"), operators: catalog.field_id("operators"), canonical, codes, values, grammar })
+        Ok(Self { tag, family, catalog, names, classes, granule_kinds, operator: catalog.field_id("operator"), operators: catalog.field_id("operators"), canonical, values, grammar })
     }
     /// What kind code `code` is to the granules (`granules::kind_flags`); ERROR and an unknown code are nothing.
     pub fn granule_kind(&self, code: u16) -> u8 {
@@ -1033,10 +1088,13 @@ impl Dialect {
 }
 
 /// A document's nodes, numbered in preorder: its named nodes other than comments (T's), or every named node
-/// (`core.rr`'s).
+/// (`core.rerail`'s).
 pub struct Projected {
     pub module: Option<crate::code_rule_dsl::module_path::ModulePath>,
     pub key: u32,
+    /// The key of the file it is part of (decision 0431 §4): its own, or a program's file's (`Guest::file`). Its
+    /// `docof`; its nodes keep its own key, which hiding reads.
+    pub file: u32,
     pub tag: u8,
     pub facts: Arc<Facts>,
     /// The tape nodes it numbers, its nodes and tokens, as a rank index (`ranks::Ranks`, decision 0353 step 2): a
@@ -1047,7 +1105,7 @@ pub struct Projected {
     /// Walked by anchors: an outermost anchor hangs from the root, which is not its tape parent, so a walk's parent
     /// is not always the tape's (a sibling is then read off the tape, `prev_sibling`).
     anchored: bool,
-    /// `core.rr`'s lines and spans; `None` in T's shape.
+    /// `core.rerail`'s lines and spans; `None` in T's shape.
     pub extra: Option<Box<Locs>>,
     /// Node ids numbered per definition (`DefIds`), when the run asks for them; else a node's id is its preorder.
     defs: Option<DefIds>,
@@ -1095,7 +1153,7 @@ impl DefIds {
 
 /// A document's lines, and its spans past its nodes (`Shape::Core`'s): from local id `len()`, its anonymous tokens
 /// (`tokens` of them, in preorder), then its whole text, then each line. Not `Extra`'s spans (`SPAN`), which the
-/// relations core.rr's programs read beyond T's are made over.
+/// relations core.rerail's programs read beyond T's are made over.
 pub struct Locs {
     lines: Arc<core_rr::Lines>,
     pub tokens: u32,
@@ -1135,17 +1193,17 @@ impl Locs {
 
 impl Projected {
     /// Document `key`'s projection in `shape`; `dialect` is its facts' (`None` for a text-only document, which has no
-    /// node). A `withheld` document (`core.rr`: one that does not parse) has no nodes and no spans: no facts. A guest's
+    /// node). A `withheld` document (`core.rerail`: one that does not parse) has no nodes and no spans: no facts. A guest's
     /// nodes are its root's subtree, placed in its host's lines (`host`).
     /// Its arrays are in a block of its own; a batch's documents' are in the batch's (`narrowed`).
     pub fn new(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, withheld: bool, guest: Option<(&Guest, Arc<core_rr::Lines>)>) -> Self {
         let block = cells::block(Self::bytes(&facts));
-        Self::narrowed(key, facts, dialect, shape, withheld, guest, None, &block)
+        Self::narrowed(key, facts, dialect, shape, withheld, guest, None, None, &block)
     }
     /// `new`, narrowed to `anchors` (`narrowed`): the root and each outermost anchor's subtree.
     pub fn anchored(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, anchors: &BTreeSet<String>) -> Self {
         let block = cells::block(Self::bytes(&facts));
-        Self::narrowed(key, facts, dialect, shape, false, None, Some(anchors), &block)
+        Self::narrowed(key, facts, dialect, shape, false, None, None, Some(anchors), &block)
     }
 
     /// What a projection's arrays can take in a block: `core`, `local`, `up`, `low`, the ordinals and the fielded
@@ -1160,7 +1218,8 @@ impl Projected {
     /// root's child here; the program reads no node outside the subtrees, nor an anchor's parent or place among its
     /// siblings, and its node ids stay inside its phase.
     #[allow(clippy::too_many_arguments)]
-    pub fn narrowed(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, withheld: bool, guest: Option<(&Guest, Arc<core_rr::Lines>)>, anchors: Option<&BTreeSet<String>>, block: &Arc<Block>) -> Self {
+    /// `known`: the document's own lines where a guest of it was projected first and built them (decision 0470 step 2).
+    pub fn narrowed(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, withheld: bool, guest: Option<(&Guest, Arc<core_rr::Lines>)>, known: Option<Arc<core_rr::Lines>>, anchors: Option<&BTreeSet<String>>, block: &Arc<Block>) -> Self {
         let identity_span = crate::code_rule_dsl::logic::profile::span(|| "identity maps".into());
         let f = &*facts;
         let (first, last) = match guest {
@@ -1187,8 +1246,11 @@ impl Projected {
         };
         // The walk: which tape nodes the projection numbers, marked in its rank index (`ranks`) in the block. A node's
         // local id is its rank among them, in preorder.
-        let (lo, hi) = (ranges.first().map_or(first, |r| r.0), ranges.last().map_or(first, |r| r.1).max(first + 1));
         let core_tokens = shape == Shape::Core && dialect.is_some() && !withheld;
+        // Walked by anchors, the root's tokens (below) lie anywhere in the document, past the last anchored subtree
+        // too: the index then reaches the document's end.
+        let root_tokens = ranges.len() > 1 && core_tokens && f.named(first);
+        let (lo, hi) = (ranges.first().map_or(first, |r| r.0), if root_tokens { end } else { ranges.last().map_or(first, |r| r.1) }.max(first + 1));
         let ranks = ranks::Ranks::build(block, lo, hi, |marks| {
             if withheld {
                 return;
@@ -1196,7 +1258,7 @@ impl Projected {
             // Walked by anchors, the root's own range is the root alone: its tokens between the anchored subtrees (a
             // `;` between two statements) are in no range, yet are tokens of an included node, as `Projected::span`
             // reads them.
-            if ranges.len() > 1 && core_tokens && f.named(first) {
+            if root_tokens {
                 let outside = |c: u32| !ranges.iter().any(|&(a, b)| a <= c && c < b);
                 for c in f.children(first) {
                     if !f.named(c) && f.end(c) > f.start(c) && outside(c) {
@@ -1254,9 +1316,11 @@ impl Projected {
             }
         });
         let tokens = ranks.count(Item::Token);
+        let file = guest.as_ref().map(|(g, _)| *g).filter(|g| g.made == Made::Host && g.file != 0).map_or(key, |g| g.file);
         let mut p = Projected {
             module: None,
             key,
+            file,
             tag: f.tag,
             ranks,
             idx: OnceLock::new(),
@@ -1268,7 +1332,7 @@ impl Projected {
         drop(identity_span);
         if shape == Shape::Core {
             let lines_span = crate::code_rule_dsl::logic::profile::span(|| "line index".into());
-            let lines = Arc::new(core_rr::Lines::shared(Arc::clone(&f.source), dialect.is_some_and(|d| d.family == Family::Python), p.block()));
+            let lines = known.unwrap_or_else(|| Arc::new(core_rr::Lines::shared(Arc::clone(&f.source), dialect.is_some_and(|d| d.family == Family::Python), p.block())));
             drop(lines_span);
             let _ids_span = crate::code_rule_dsl::logic::profile::span(|| "definition ids".into());
             if definition_ids() && let Some(dialect) = dialect {
@@ -1586,20 +1650,27 @@ impl Projected {
 
 /// One wave's documents, sorted by key, and the row offsets of the views.
 pub struct Batch {
-    pub docs: Vec<Projected>,
+    /// Each document's projection, shared with the batches it grows into (`Growth`, decision 0431 §6).
+    pub docs: Vec<Arc<Projected>>,
+    /// The documents' keys, in their order (ascending): the index a node's document is searched in (`doc`). Searched
+    /// in `docs` itself, each step read a different projection's line (Q220: `Batch::node` was a fifth of a join's
+    /// view reads).
+    keys: Vec<u32>,
+    /// The programs among the documents (decision 0431 §4), by file: `(file, document)`, ascending; a lookup of `node`
+    /// by its document reads a file's programs' rows with its own.
+    programs: Vec<(u32, usize)>,
     /// Each document's tape, for W's values answered on request (`LongTexts::value_any`, decision 0174), and its values,
     /// read off it at the first request; empty where no program asks for values.
-    valued: Vec<Option<Valued>>,
+    valued: Vec<Option<Arc<Valued>>>,
     pub dialects: Dialects,
-    /// The documents of each tape tag, ascending: a probe by kind reads its language's documents alone (a batch's
-    /// guests are documents of other languages, most of a Python batch's).
-    of_tag: [Vec<u32>; 256],
     pub nodes: Vec<usize>,
     children: Vec<usize>,
     fields: Vec<usize>,
     siblings: Vec<usize>,
     /// Nodes and spans (`Projected::locs`).
     locs: OnceLock<Vec<usize>>,
+    /// The `node` view's rows by kind (`by_kind`), made at the first lookup by kind.
+    kinds: OnceLock<KindRows>,
     shape: Shape,
     /// The registered lazy families (`Families`, Python's `py.*`: list step 25), by registration; `None` for one
     /// whose dialect has no document in the batch.
@@ -1615,7 +1686,65 @@ pub struct Batch {
     chunk: OnceLock<device_chunk::Chunk>,
 }
 
-/// A span's id (core.rr's `span`: a piece of a document's text): `d << 32 | granules::extra_low(kind, i)`, in slots of
+/// What a chunk's batch keeps to grow by a round's documents (decision 0431 §6): its block, which the later documents
+/// are projected into; its documents' projections, shared by each batch it grows into; its strings and their atoms;
+/// the files' lines their guests are placed by. A round's documents are projected once, and the rows made are theirs.
+#[derive(Default)]
+pub struct Growth {
+    docs: Vec<Arc<Projected>>,
+    keys: Vec<u32>,
+    valued: Vec<Option<Arc<Valued>>>,
+    dialects: Dialects,
+    strings: Vec<String>,
+    at: rustc_hash::FxHashMap<String, usize>,
+    atoms: Vec<u32>,
+    lines_of: HashMap<u32, Arc<core_rr::Lines>>,
+    host: HashMap<u32, u32>,
+    made: BTreeSet<&'static str>,
+    block: Option<Arc<Block>>,
+    /// The producers of its relations, kept: a later round's guests are read with what they know of the files.
+    produced: Option<Vec<(Option<u8>, Box<dyn ProducerRun>)>>,
+    /// Each tape value's places the batch has rows of, and whether it is withheld (no root): a round that gives it
+    /// more adds their rows alone (`GuestRows::places_added`).
+    places: HashMap<u32, (usize, bool)>,
+}
+
+/// The `node` view's rows by kind: an index of the view (decision 0353: an index in its relation's place, not a copy of
+/// its rows), made in one walk of each document's numbered nodes (`Projected::nodes`, no select) at the batch's first
+/// lookup by kind. Each match keeps its document, local id and tape node, so a lookup reads no rank and no select.
+/// Q220: a probe `kind($m, $k)` scanned every document's tape for the kind's codes (`Facts::of_kind`), 55 k probes
+/// of a cold run at 39 µs each, where t41's `kind`, a relation of its own, had an index.
+struct KindRows {
+    /// The kinds, ascending.
+    keys: Vec<i64>,
+    /// Where each kind's matches start in `at`, and one past the last.
+    starts: Vec<u32>,
+    /// Each kind's nodes in row order: `(document, local id, tape node)`.
+    at: Vec<(u32, u32, u32)>,
+}
+
+impl KindRows {
+    fn new(b: &Batch) -> Self {
+        let mut all: Vec<(i64, u32, u32, u32)> = Vec::with_capacity(b.nodes.last().copied().unwrap_or(0));
+        for (doc, p) in b.docs.iter().enumerate() {
+            let Some(dialect) = b.dialects.get(p.tag) else { continue };
+            all.extend(p.nodes().map(|(l, x)| (dialect.kind(&p.facts, x), doc as u32, l, x)));
+        }
+        // Stable: within a kind, the rows stay in order.
+        all.sort_by_key(|e| e.0);
+        let (mut keys, mut starts) = (Vec::new(), Vec::new());
+        for (i, e) in all.iter().enumerate() {
+            if keys.last() != Some(&e.0) {
+                keys.push(e.0);
+                starts.push(i as u32);
+            }
+        }
+        starts.push(all.len() as u32);
+        KindRows { keys, starts, at: all.into_iter().map(|(_, d, l, x)| (d, l, x)).collect() }
+    }
+}
+
+/// A span's id (core.rerail's `span`: a piece of a document's text): `d << 32 | granules::extra_low(kind, i)`, in slots of
 /// its kind's past every node of its document, so no node view has a row of it (`Batch::node`). `ExtraSpan::Line` `0`
 /// is the whole source (`source`), `Line` `l` physical line `l` (`src_line`), `Lf` `l` the `\n`-line `l`
 /// (`src_line_lf`), `Tape` `l` the tape's line `l` (`tape_line`), `Comment` `k` the document's `k`-th comment from 1,
@@ -1624,7 +1753,7 @@ pub struct Batch {
 /// a `match_all`, `match_group` or `rx_span` regex. A document with more of a kind than its capacity fails, named.
 fn extra_span(key: i64, kind: granules::ExtraSpan, i: u32) -> StoreResult<i64> {
     granules::extra_low(kind, i).map(|low| key << 32 | i64::from(low)).ok_or_else(|| {
-        StoreError::Invalid(format!("document {key} has more than {} {kind:?} spans (core.rr's span ids)", kind.capacity()))
+        StoreError::Invalid(format!("document {key} has more than {} {kind:?} spans (core.rerail's span ids)", kind.capacity()))
     })
 }
 
@@ -1800,7 +1929,7 @@ pub enum View {
     /// `next_sibling(a, b)`: `b` is the numbered direct child of `a`'s parent after `a`, those left out skipped. A
     /// row a node after a sibling (`Item::Sibling`), as `field`'s are its fielded nodes.
     Sibling,
-    /// `core.rr`'s place of a node or span (`loc`): `line(n, l)`, `end_line(n, l)`, `col(n, c)`, `docof(n, d)`,
+    /// `core.rerail`'s place of a node or span (`loc`): `line(n, l)`, `end_line(n, l)`, `col(n, c)`, `docof(n, d)`,
     /// read from the document's lines (`core_rr::Lines`), rows laid out over `Projected::locs`. A batch that makes
     /// one of them as rows (`Extra`, whose spans have places too) binds those rows instead (`Batch::made`).
     Loc(Place),
@@ -1814,7 +1943,7 @@ pub enum Place {
     Docof,
 }
 
-/// The relations of core.rr a batch makes only for a program that reads them (its `reads`), T's exporter having
+/// The relations of core.rerail a batch makes only for a program that reads them (its `reads`), T's exporter having
 /// had none of them, so a program that reads none does no work and interns no text:
 ///
 /// ```text
@@ -1842,18 +1971,18 @@ pub enum Place {
 /// `line`, `end_line` and `col` as a node's. `docof` has every node and every span (comments and matches included),
 /// each with its document (a span's `sp >> 32`, as a node's). Rows hold string indexes, as `Batch::build`'s do.
 ///
-/// In `core.rr`'s shape (`Shape::Core`) a relation made here is the batch's, in place of `core_rr`'s rows or the `Loc`
+/// In `core.rerail`'s shape (`Shape::Core`) a relation made here is the batch's, in place of `core_rr`'s rows or the `Loc`
 /// view of that name (`Batch::build`), and its node rows cover that shape's anonymous tokens too (`Locs`); `comment`
 /// is `core_rr`'s there (comments are nodes), so it is not made here.
 ///
 ///
-/// And each `matchall_<k>(sp, m)` read (`preparation::text::TextRelations`, core.rr's `match_all`): `m` each match of
+/// And each `matchall_<k>(sp, m)` read (`preparation::text::TextRelations`, core.rerail's `match_all`): `m` each match of
 /// regex `k` in span `sp`'s text, leftmost-first and non-overlapping (Rust's `find_iter`, as W's `regex` reads a
 /// file), over every span above. A match is a span (`MATCH`) with rows in `text` (what it matched), `line`,
 /// `end_line` and `col`, as W's finding of that regex is placed: in a line span, that line and the byte column in it
 /// (W's `lines` regexes); in the source, the lines and column of the tape's line table (W's content regex).
 ///
-/// And in `core.rr`'s shape, `rx_span(p, c, j, g, m)` where read (`rr::lower`'s `match_all` and `match` over a span):
+/// And in `core.rerail`'s shape, `rx_span(p, c, j, g, m)` where read (`rr::lower`'s `match_all` and `match` over a span):
 /// group `g` of match `j` (from 0) of regex `p` in span `c` is span `m` (`MATCH`, numbered with `match_all`'s), placed
 /// as `match_all`'s. A span `c` is a document's `source` span, one of its `src_line` spans, a comment node, a node of a
 /// kind, or a span an earlier pattern's group captured (`SpanIn`, decision 0081). Group "" is the whole match; a group
@@ -1866,7 +1995,7 @@ struct Extra {
     tape_line: bool,
     line_count: bool,
     text: bool,
-    /// `text` of the `source` and `src_line` spans: core.rr's programs make it where a rule reads a copy of such a
+    /// `text` of the `source` and `src_line` spans: core.rerail's programs make it where a rule reads a copy of such a
     /// span's text (`Projection::wants_span_text`), T's wherever `text` is read.
     source_text: bool,
     line_text: bool,
@@ -1893,6 +2022,8 @@ struct Extra {
     cols: Vec<[i64; 2]>,
     node_texts: Vec<[i64; 2]>,
     docofs: Vec<[i64; 2]>,
+    /// The document's file's key (`Projected::file`), the `docof` of its spans: set per document.
+    file: i64,
     values: Vec<[i64; 2]>,
     value_lits: Vec<[i64; 2]>,
     static_values: Vec<[i64; 2]>,
@@ -1928,7 +2059,7 @@ type MadeSpan = (i64, std::ops::Range<usize>, Option<usize>);
 impl Extra {
     fn new(reads: &BTreeSet<String>, matches: &[Arc<regex::Regex>], shape: Shape, [source_text, line_text]: [bool; 2]) -> Self {
         let mut extra = Self::made(reads, matches, shape, [source_text, line_text]);
-        // In core.rr's shape a node's and a position's places are views of the tape (`View::Loc`): made as rows only
+        // In core.rerail's shape a node's and a position's places are views of the tape (`View::Loc`): made as rows only
         // where spans are, which have places too (decision 0353 step 3). Made for every node and token beside the
         // views, they were hogql's 0.1 s and 255 MB a run, for a program that read no span.
         if shape == Shape::Core && !extra.spans() {
@@ -1992,7 +2123,7 @@ impl Extra {
     #[allow(clippy::too_many_arguments)]
     fn span(&mut self, sp: i64, first: usize, last: usize, col: usize, body: &str, text_too: bool, text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) {
         if self.docof {
-            self.docofs.push([sp, sp >> 32]);
+            self.docofs.push([sp, self.file]);
         }
         if self.text && text_too {
             text.push([sp, string(body) as i64]);
@@ -2009,7 +2140,7 @@ impl Extra {
     }
 
     /// Document `p`'s node rows: `line`, `end_line`, `col`, `node_text` and `docof`; and `line`, `end_line`, `col` and
-    /// `docof` of `core.rr`'s anonymous tokens (`Locs`), which follow the nodes. A guest's nodes are placed in its file
+    /// `docof` of `core.rerail`'s anonymous tokens (`Locs`), which follow the nodes. A guest's nodes are placed in its file
     /// (`Locs::place`, decision 0055).
     fn nodes(&mut self, p: &Projected, string: &mut dyn FnMut(&str) -> usize) {
         let f = &*p.facts;
@@ -2082,7 +2213,7 @@ impl Extra {
             }
         }
         if self.docof {
-            let key = i64::from(p.key);
+            let key = i64::from(p.file);
             self.docofs.extend(p.node_ids().chain(p.token_ids()).map(|(_, _, n)| n).chain(ends.map(|local| p.global(local))).map(|n| [n, key]));
         }
     }
@@ -2163,6 +2294,7 @@ impl Extra {
         let f = &*p.facts;
         self.values(p, d, dialect, string)?;
         self.nodes(p, string);
+        self.file = i64::from(p.file);
         let key = i64::from(p.key);
         use granules::ExtraSpan;
         let span = |kind: ExtraSpan, i: usize| extra_span(key, kind, u32::try_from(i).unwrap_or(u32::MAX));
@@ -2390,10 +2522,7 @@ impl Extra {
 
     /// The relations read, their strings as atoms (`atom` of a string index), and the `match_all` relations read.
     #[allow(clippy::type_complexity)]
-    fn relations(self, atom: &dyn Fn(i64) -> i64) -> (Vec<(&'static str, Relation)>, Vec<(String, Relation)>) {
-        let relation = |columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>| {
-            Relation::from_rows(columns, rows)
-        };
+    fn relations(self, atom: &dyn Fn(i64) -> i64, relation: Make) -> (Vec<(&'static str, Relation)>, Vec<(String, Relation)>) {
         let mut out = Vec::new();
         if self.source {
             out.push(("source", relation(&["d", "sp"], &mut self.sources.iter().map(|r| r.to_vec()))));
@@ -2463,7 +2592,7 @@ impl Extra {
 /// The small relations of a document's nodes, with string indexes: `text(n, s)`, `intval(n, v)`, `op(n, s)` (T's,
 /// also bound as `op_t`), and the text relations (decision 0037) `name(n, s)` (an identifier's text, an attribute's
 /// dotted text), `str(n, s)` (a string literal's content, between its quotes) and `strprefix(n, p)` (its prefix,
-/// lowercased). In `core.rr`'s shape only `intval` and T's `op`: `core_rr` makes the others as `core.rr` states them.
+/// lowercased). In `core.rerail`'s shape only `intval` and T's `op`: `core_rr` makes the others as `core.rerail` states them.
 #[derive(Default)]
 struct NodeRows {
     text: Vec<[i64; 2]>,
@@ -2475,7 +2604,14 @@ struct NodeRows {
 }
 
 impl NodeRows {
-    /// Document `p`'s rows (`dialect` its grammar's kinds; `core`: in `core.rr`'s shape).
+    /// The bytes of its rows so far (a copy's size, decision 0353's row 7).
+    fn bytes(&self) -> usize {
+        std::mem::size_of_val(self.text.as_slice()) + std::mem::size_of_val(self.intval.as_slice()) + std::mem::size_of_val(self.op.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.strs.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice())
+    }
+}
+
+impl NodeRows {
+    /// Document `p`'s rows (`dialect` its grammar's kinds; `core`: in `core.rerail`'s shape).
     fn document(&mut self, p: &Projected, dialect: &Dialect, core: bool, string: &mut dyn FnMut(&str) -> usize) {
         let f = &*p.facts;
         for (_, id, n) in p.node_ids() {
@@ -2538,7 +2674,7 @@ pub static BATCHES: parking_lot::Mutex<Vec<(Vec<u32>, std::sync::Weak<Batch>)>> 
 impl Batch {
     /// Projects each document and interns the batch's strings; the documents' keys are distinct.
     /// Returns the batch and its small relations (`doc`, `pkg`, `syntax_error`, `text`, `intval`, `op`), and those
-    /// of core.rr's the program `reads` that T had not (`Extra`), the `match_all` relations among them (of `matches`)
+    /// of core.rerail's the program `reads` that T had not (`Extra`), the `match_all` relations among them (of `matches`)
     /// apart. A text-only document (`core::TEXT`) has the document's relations and its text's, and no node.
     /// Also returns the batch's distinct strings and their symbols: its vocabulary, which text tests read
     /// (`logic::strings::Vocabulary`, decision 0037).
@@ -2552,21 +2688,39 @@ impl Batch {
         markers: &[String],
         metal: bool,
     ) -> StoreResult<(Arc<Self>, Vec<(&'static str, Relation)>, Vec<(String, Relation)>, (Vec<String>, Vec<u32>))> {
+        let mut grown = Growth::default();
+        let (batch, relations, matched, _) = Self::add(&mut grown, store, documents, projection, matches, markers, metal, false)?;
+        Ok((batch, relations, matched, (grown.strings, grown.atoms)))
+    }
+
+    /// The batch `grown` holds with `documents` added (decision 0431 §6): they are projected into its block, and the
+    /// rows made are theirs alone, past its keys; the batch made is every document's, the earlier ones' projections
+    /// shared. Its strings from the one given are the new ones.
+    fn add(
+        grown: &mut Growth,
+        store: &ContentStore,
+        documents: Vec<Document>,
+        projection: &Projection,
+        matches: &[Arc<regex::Regex>],
+        markers: &[String],
+        metal: bool,
+        alone: bool,
+    ) -> StoreResult<(Arc<Self>, Vec<(&'static str, Relation)>, Vec<(String, Relation)>, usize)> {
         let shape = projection.shape;
         let core = shape == Shape::Core;
         // What the program reads, for the relations made only for a program that reads them (`Extra` and those beside
         // it); a projection that names none (T's, `Projection::core`'s) reads none of them.
         let none = BTreeSet::new();
         let reads = projection.reads.as_ref().unwrap_or(&none);
-        let mut documents = documents;
+        // A document the batch holds is a tape value given more places (decision 0431 §6): the rows of those alone.
+        let (held, mut documents): (Vec<Document>, Vec<Document>) = documents.into_iter().partition(|d| grown.keys.binary_search(&d.key).is_ok());
         documents.sort_by_key(|d| d.key);
         if documents.windows(2).any(|w| w[0].key == w[1].key) {
             return Err(StoreError::Invalid("a batch holds a document key twice".into()));
         }
-        let mut dialects = Dialects::default();
-        let mut strings: Vec<String> = Vec::new();
+        let strings_from = grown.strings.len();
+        let Growth { strings, at, dialects, .. } = grown;
         // Every string of every node passes here: Fx, not SipHash (a third of the projection's time with SipHash).
-        let mut at: rustc_hash::FxHashMap<String, usize> = rustc_hash::FxHashMap::default();
         let mut string = |s: &str| -> usize {
             if let Some(&i) = at.get(s) {
                 return i;
@@ -2576,12 +2730,12 @@ impl Batch {
             strings.len() - 1
         };
         // Rows with string indexes; the indexes become atoms once the batch's strings are interned.
-        let (mut doc, mut pkg) = (Vec::new(), Vec::new());
+        let (mut doc, mut pkg, mut unpackaged) = (Vec::new(), Vec::new(), Vec::new());
         // `path_part(d, s)`: each directory of a document's path and its file name; `file_name(d, s)`: the last.
         let (mut path_part, mut file_name): (Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new());
         // `text`, `intval`, T's `op` and the text relations (`NodeRows`).
         let mut rows = NodeRows::default();
-        // `syntax_error(d)`: the documents whose parse has an error (`Facts::syntax_errors`); `core.rr`'s
+        // `syntax_error(d)`: the documents whose parse has an error (`Facts::syntax_errors`); `core.rerail`'s
         // `syntax_error(d, l, msg)` (`core_rr`): the first error's line and message.
         let mut errors = Vec::new();
         // The nodes visited for their scalar rows (`NodeRows::document`'s, `core_rr::CoreRows::node`'s).
@@ -2589,10 +2743,10 @@ impl Batch {
         let span_text = [crate::code_rule_dsl::logic::front::ast::SpanIn::Source, crate::code_rule_dsl::logic::front::ast::SpanIn::Line].map(|within| !core || projection.wants_span_text(within));
         let mut extra = Extra::new(reads, matches, shape, span_text);
         let mut tree = tree::Tree::new(reads);
-        let mut produced: Vec<(Option<u8>, Box<dyn ProducerRun>)> =
-            producers().iter().map(|producer| (crate::code_rule_dsl::language::tape_tag(producer.dialect()), producer.start(reads, markers))).collect();
+        // Kept by a batch that grows (`ProducerRun::relations`).
+        let produced = grown.produced.get_or_insert_with(|| producers().iter().map(|producer| (crate::code_rule_dsl::language::tape_tag(producer.dialect()), producer.start(reads, markers))).collect());
         let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python);
-        // `core.rr`'s (decision 0046).
+        // `core.rerail`'s (decision 0046).
         let mut c = core_rr::CoreRows::default();
         // Node identity/ancestry and line views do not require scalar rows or text interning.
         let scalar_nodes=!core || ["text","name","str","strprefix","value","value_type","static_value","comment","spread","op","op_at","op_t","intval","str_part","str_part_start","str_part_word"]
@@ -2674,16 +2828,22 @@ impl Batch {
         };
         let mut docs: Vec<Projected> = Vec::with_capacity(documents.len());
         // The batch's block: what the projections can take, the chunk's copies of the facts' arrays (4 bytes a node for
-        // each of `parent`, `start`, `end`, `kind`, `core.rr`'s places; `field`'s 2), its tables, and the axes' pairs
-        // read whole (`put_pairs`, up to 1 GB). The block reserves address space, not memory.
-        let block = cells::block((documents.iter().map(|d| Projected::bytes(&d.facts) + 22 * d.facts.len() + 4096).sum::<usize>() + (1 << 20) + (1 << 30)).next_power_of_two());
+        // each of `parent`, `start`, `end`, `kind`, `core.rerail`'s places; `field`'s 2), its tables, and the starts of the
+        // axes the device solves (4 bytes a node; their rows are relations of their own, decision 0353 step 5). The
+        // block reserves address space, not memory.
+        // A batch that grows (decision 0431 §6) projects its later documents into the same block: the gigabyte past
+        // its first documents' needs is address space for them.
+        let block = Arc::clone(grown.block.get_or_insert_with(|| cells::block((documents.iter().map(|d| Projected::bytes(&d.facts) + 22 * d.facts.len() + 4096).sum::<usize>() + (1 << 20) + (1 << 30)).next_power_of_two())));
         // Decision 0055: each document's role, root and tape; each guest's place, and its nodes' host nodes. A guest's
         // key is past every file's (`corpus::guests`), so its host is projected first and its lines are known.
         let mut g = GuestRows::default();
-        let mut lines_of: HashMap<u32, Arc<core_rr::Lines>> = HashMap::new();
+        let lines_of = &mut grown.lines_of;
+        // A file's lines built ahead of it, for a guest projected before it (below): taken by the file's projection.
+        let mut ahead: HashMap<u32, Arc<core_rr::Lines>> = HashMap::new();
         // Each guest's file: its host's, through guests of guests. Files' keys are below every guest's, so a file
         // is projected (and its lines known) before its guests; a guest's guests may come before it.
-        let host: HashMap<u32, u32> = documents.iter().filter_map(|d| d.guest.as_ref().map(|g| (d.key, g.host))).collect();
+        grown.host.extend(documents.iter().filter_map(|d| d.guest.as_ref().map(|g| (d.key, g.host))));
+        let host = &grown.host;
         let file_of = |mut k: u32| {
             for _ in 0..=host.len() {
                 match host.get(&k) {
@@ -2704,7 +2864,7 @@ impl Batch {
             } else {
                 Some(dialects.get_or_new(tag)?)
             };
-            // `core.rr`: a document that does not parse is withheld from the policy (no facts) but its `doc`, path
+            // `core.rerail`: a document that does not parse is withheld from the policy (no facts) but its `doc`, path
             // and `syntax_error` rows; its outcome is Unknown(parse). T's shape keeps every document.
             // A guest that does not parse is withheld too, unless the policy keeps its partial tree (decision 0055 §6).
             let guest = d.guest.as_deref().filter(|_| core);
@@ -2716,9 +2876,33 @@ impl Batch {
             };
             let withheld = core && error.is_some() && !guest.is_some_and(|g| projection.keeps_partial(&g.grammar));
             let python_lines = dialect.is_some_and(|d| d.family == Family::Python);
-            let placed = guest.map(|g| (g, lines_of.get(&file_of(g.host)).cloned().unwrap_or_else(|| Arc::new(core_rr::Lines::shared(Arc::clone(&d.facts.source), python_lines, &block)))));
+            // A guest's lines are its file's. A file that a run reads for its programs (decision 0470 step 2) has a hidden
+            // key, past its programs', so a program may come first: its file's lines are built then, from the file's
+            // document, and the file's projection takes them.
+            let placed = match guest {
+                Some(g) => {
+                    let file = file_of(g.host);
+                    let lines = match lines_of.get(&file) {
+                        Some(lines) => Arc::clone(lines),
+                        None => match documents.iter().find(|h| h.key == file && h.guest.is_none()) {
+                            Some(h) => {
+                                let tag = crate::code_rule_dsl::facts::core::facts_tag(&h.facts);
+                                let python = tag != TEXT && Family::of(crate::code_rule_dsl::language::from_tape_tag(tag).and_then(crate::code_rule_dsl::language::label)) == Family::Python;
+                                let lines = Arc::new(core_rr::Lines::shared(Arc::clone(&h.facts.source), python, &block));
+                                ahead.insert(file, Arc::clone(&lines));
+                                lines_of.insert(file, Arc::clone(&lines));
+                                lines
+                            }
+                            None => Arc::new(core_rr::Lines::shared(Arc::clone(&d.facts.source), python_lines, &block)),
+                        },
+                    };
+                    Some((g, lines))
+                }
+                None => None,
+            };
+            let known = if guest.is_none() && core { ahead.remove(&d.key) } else { None };
             let new_span = crate::code_rule_dsl::logic::profile::span(|| "projected".into());
-            let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, projection.node_anchors.as_ref().filter(|_| core), &block);
+            let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, known, projection.node_anchors.as_ref().filter(|_| core), &block);
             drop(new_span);
             // A program that reads `end_point` has each node's end point among the positions, after the lines.
             let nodes = p.len();
@@ -2730,7 +2914,7 @@ impl Batch {
             p.module = crate::code_rule_dsl::module_path::ModulePath::dotted(d.module.as_deref().unwrap_or(&module(&d.path)));
             // Its positions (tokens, text, lines) in the top slots (`granules::span_low`): past them ids would clash.
             if p.defs.is_some() && u64::from(p.locs() - p.len()) > granules::POSITIONS {
-                return Err(StoreError::Invalid(format!("{} has more than {} positions (tokens and lines: core.rr's span ids)", d.path, granules::POSITIONS)));
+                return Err(StoreError::Invalid(format!("{} has more than {} positions (tokens and lines: core.rerail's span ids)", d.path, granules::POSITIONS)));
             }
             if core && !projection.ast_patterns.is_empty() && guest.is_none() && !withheld
                 && let Some(dialect) = dialect
@@ -2753,9 +2937,11 @@ impl Batch {
                 unvalued.insert(d.key);
             }
             let key = i64::from(d.key);
-            // core.rr: a module for Python and Rust files, "" for the others; `pkg` for Python only. T's has both
+            // core.rerail: a module for Python and Rust files, "" for the others; `pkg` for Python only. T's has both
             // for every file.
-            let py_file = d.path.ends_with(".py") || d.path.ends_with(".pyi");
+            // A tape value (decision 0431) is no file's: no `doc` row, no module or package.
+            let tape_value = d.guest.as_deref().is_some_and(|g| matches!(g.made, Made::Tape { .. }));
+            let py_file = !tape_value && (d.path.ends_with(".py") || d.path.ends_with(".pyi"));
             let dotted = py_file || d.path.ends_with(".rs");
             let named = d.module.as_deref();
             let module = match named {
@@ -2763,13 +2949,18 @@ impl Batch {
                 None if core && !dotted => String::new(),
                 None => module(&d.path),
             };
-            doc.push([key, string(&d.path) as i64, string(&module) as i64]);
+            if !tape_value {
+                doc.push([key, string(&d.path) as i64, string(&module) as i64]);
+            }
             if !core || py_file {
                 let package = match named {
                     Some(m) => package_of(&d.path, m),
                     None => package(&d.path),
                 };
                 pkg.push([key, string(&package) as i64]);
+            }
+            if py_file && d.unpackaged {
+                unpackaged.push(key);
             }
             let parts: Vec<&str> = d.path.split('/').filter(|s| !s.is_empty()).collect();
             if let Some(last) = parts.last() {
@@ -2784,11 +2975,13 @@ impl Batch {
             if d.facts.syntax_errors() {
                 errors.push(key);
             }
-// copy (0353 step 3): core.rr's per-node rows. Tape answers become tape views, and derived values become
+// copy (0353 step 3): core.rerail's per-node rows. Tape answers become tape views, and derived values become
 // rules computed on demand, written once (decision 0353).
             let nodes_span = crate::code_rule_dsl::logic::profile::span(|| "node rows".into());
+            const NODE_ROWS: rerail_prof::copies::Site = rerail_prof::copies::Site::new(7, "3", "core.rerail's and the vtab's per-node rows (node rows)");
+            let (copying, rows_before) = (NODE_ROWS.start(), rows.bytes() + c.bytes());
             if let Some(dialect) = dialect {
-                // In core.rr's shape `NodeRows` makes only `intval` and T's `op` (`op_t`).
+                // In core.rerail's shape `NodeRows` makes only `intval` and T's `op` (`op_t`).
                 if scalar_nodes && (!core || projection.wants("intval") || projection.wants("op_t")) {
                     visited += p.len() as usize;
                     rows.document(&p, dialect, core, &mut string);
@@ -2815,9 +3008,10 @@ impl Batch {
                     c.withheld(&p, &(line, msg.clone()), &mut string);
                 }
             }
+            copying.done((rows.bytes() + c.bytes()).saturating_sub(rows_before));
             drop(nodes_span);
             let document_span = crate::code_rule_dsl::logic::profile::span(|| "document rows".into());
-            // A text-only document has core.rr's text rows too (its lines, `split_line`), and no tokens.
+            // A text-only document has core.rerail's text rows too (its lines, `split_line`), and no tokens.
             if core && (!withheld || guest.is_none()) {
                 let s = crate::code_rule_dsl::logic::profile::span(|| "core document rows".into());
                 c.document(&p, dialect, &mut string, wants_text, wants_tokens && !withheld, wants_split_lines, wants_lf_lines, wants_source_text, wants_line_text, guest.is_none(), projection);
@@ -2852,7 +3046,7 @@ impl Batch {
                 }
             }
             // A guest's are read only by a producer of guests' rows (string annotations); the others' are its file's.
-            for (own, run) in &mut produced {
+            for (own, run) in produced.iter_mut() {
                 if d.guest.is_none() || run.reads_guests() {
                     let _s = crate::code_rule_dsl::logic::profile::span(|| format!("produced rows: {}", run.name()));
                     run.document(&p, d, dialect, *own == Some(tag), &mut string)?;
@@ -2862,9 +3056,61 @@ impl Batch {
             docs.push(p);
         }
         // The guests' rows, once every document is projected: a guest's host may be a guest after it. Either shape:
-        // a program that declares its base relations itself (T's) reads guests as core.rr's do.
-        for ((p, d), &withheld) in docs.iter().zip(&documents).zip(&withheld_at) {
-            g.document(p, d, d.guest.as_deref(), withheld, &docs, [projection.wants("host_node"), projection.wants("unparse_of")], &mut string);
+        // a program that declares its base relations itself (T's) reads guests as core.rerail's do.
+        // The batch's documents in key order (its lookups search them by key and key range): the new ones merged
+        // among the projections it holds, shared, with their tapes for W's values. Guests' keys (0391's) do not
+        // ascend with the rounds.
+        let added: Vec<Arc<Projected>> = docs.into_iter().map(Arc::new).collect();
+        let added_valued: Vec<Option<Arc<Valued>>> = if projection.derived.contains(VALUE_REQ) {
+            documents
+                .iter()
+                .zip(&added)
+                .map(|(d, p)| d.tape.clone().filter(|_| dialects.get(p.tag).is_some_and(|x| x.values)).map(|(tape, file)| Arc::new(Valued { tape, file, values: OnceLock::new() })))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        {
+            let (held_docs, held_valued) = (std::mem::take(&mut grown.docs), std::mem::take(&mut grown.valued));
+            let valued = !held_valued.is_empty() || !added_valued.is_empty();
+            let (mut i, mut j) = (0, 0);
+            while i < held_docs.len() || j < added.len() {
+                if j == added.len() || (i < held_docs.len() && held_docs[i].key < added[j].key) {
+                    grown.docs.push(Arc::clone(&held_docs[i]));
+                    if valued {
+                        grown.valued.push(held_valued.get(i).cloned().flatten());
+                    }
+                    i += 1;
+                } else {
+                    grown.docs.push(Arc::clone(&added[j]));
+                    if valued {
+                        grown.valued.push(added_valued.get(j).cloned().flatten());
+                    }
+                    j += 1;
+                }
+            }
+            grown.keys = grown.docs.iter().map(|p| p.key).collect();
+        }
+        // A value admitted inside the fixpoint (decision 0431 §8) is a batch of its own: its views and relations are a
+        // part of the chunk's (`values::Layered`), its hosts found among every document the growth holds.
+        let held_all = grown.docs.clone();
+        let (docs, all): (Vec<Arc<Projected>>, &[Arc<Projected>]) = if alone { (added.clone(), &held_all) } else { (grown.docs.clone(), &held_all) };
+        let docs = &docs;
+        for ((p, d), &withheld) in added.iter().zip(&documents).zip(&withheld_at) {
+            g.document(p, d, d.guest.as_deref(), withheld, all, [projection.wants("host_node"), projection.wants("unparse_of"), projection.wants("guest_of"), projection.wants("guest_place")], &mut string);
+            if let Some(Made::Tape { places }) = d.guest.as_deref().map(|g| &g.made) {
+                grown.places.insert(d.key, (places.len(), withheld));
+            }
+        }
+        for d in &held {
+            let (Some(guest), Ok(at)) = (d.guest.as_deref(), grown.keys.binary_search(&d.key)) else { continue };
+            let (Made::Tape { places }, Some((had, withheld))) = (&guest.made, grown.places.get_mut(&d.key)) else {
+                return Err(StoreError::Invalid(format!("{}: a document the batch holds, given again, is not a tape value", d.path)));
+            };
+            if places.len() > *had {
+                g.places_added(&all[at], d, &guest.grammar, &places[*had..], *withheld, all, [projection.wants("host_node"), projection.wants("guest_of"), projection.wants("guest_place")], &mut string);
+                *had = places.len();
+            }
         }
         // Each lazy family's strings, where the batch has documents of its dialect.
         let vocabulary: Vec<Option<(u8, Vec<i64>)>> = families()
@@ -2882,8 +3128,10 @@ impl Batch {
         crate::code_rule_dsl::logic::profile::decision("projection demand",||serde_json::json!({"coreNodes":if core_nodes {docs.iter().map(|p| p.len() as usize).sum::<usize>()}else{0},"scalarNodes":visited,"nodes":docs.iter().map(|p| p.len() as usize).sum::<usize>(),"strings":strings.len(),"reads":projection.reads}).to_string());
         let intern = crate::code_rule_dsl::logic::profile::span(|| "intern atoms".into());
         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, strings.len() as u64);
-        let atoms = store.intern_atoms(&strings.iter().map(String::as_str).collect::<Vec<_>>())?;
+        let new_atoms = store.intern_atoms(&strings[strings_from..].iter().map(String::as_str).collect::<Vec<_>>())?;
+        grown.atoms.extend(new_atoms);
         drop(intern);
+        let atoms = &grown.atoms;
         let atom = |i: i64| i64::from(atoms[i as usize]);
         let bound: Vec<Option<Box<dyn BoundFamilies>>> = families()
             .iter()
@@ -2891,9 +3139,8 @@ impl Batch {
             .map(|(f, v)| v.map(|(tag, strings)| f.bind(tag, &dialects[tag].catalog, &strings.into_iter().map(atom).collect::<Vec<_>>(), docs.len())))
             .collect();
         let _relations_span = crate::code_rule_dsl::logic::profile::span(|| "relations".into());
-        let relation = |columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>| {
-            Relation::from_rows(columns, rows)
-        };
+        // A value alone's rows are staged: they are written once, past the chunk's relations' rows (`Grower::admit`).
+        let relation: Make = if alone { Relation::staged } else { Relation::from_rows };
         let pairs = |columns: &[&str], rows: &[[i64; 2]], sym: [bool; 2]| {
             relation(columns, &mut rows.iter().map(|&[a, b]| vec![if sym[0] { atom(a) } else { a }, if sym[1] { atom(b) } else { b }]))
         };
@@ -2901,21 +3148,22 @@ impl Batch {
             (LONG_TEXT_NODES, relation(&["n"], &mut long_text_nodes.iter().map(|&n| vec![n]))),
             ("doc", relation(&["d", "path", "module"], &mut doc.iter().map(|&[d, p, m]| vec![d, atom(p), atom(m)]))),
             ("pkg", pairs(&["d", "p"], &pkg, [false, true])),
+            ("unpackaged", relation(&["d"], &mut unpackaged.iter().map(|&d| vec![d]))),
             ("path_part", pairs(&["d", "s"], &path_part, [false, true])),
             ("file_name", pairs(&["d", "s"], &file_name, [false, true])),
             ("intval", pairs(&["n", "v"], &rows.intval, [false, false])),
             ("op_t", pairs(&["n", "s"], &rows.op, [false, true])),
         ];
-        relations.extend(g.relations(&atom));
+        relations.extend(g.relations(&atom, relation));
         if core {
             extra.literal_values(c.values_of(&unvalued));
         }
-        let (mut read, matched) = extra.relations(&atom);
-        read.extend(tree.relations(&atom));
-        for (_, run) in produced {
+        let (mut read, matched) = extra.relations(&atom, relation);
+        read.extend(tree.relations(&atom, relation));
+        for (_, run) in produced.iter_mut() {
             read.extend(run.relations(&atom));
         }
-        // The relations made for what the program reads are the batch's: in `core.rr`'s shape they stand in for
+        // The relations made for what the program reads are the batch's: in `core.rerail`'s shape they stand in for
         // `core_rr`'s rows and the views of the same name (W's values, the spans and places `match_all` reads,
         // `op_at`'s operators, `visit_index`'s CPython order).
         let made: BTreeSet<&'static str> = read.iter().map(|(name, _)| *name).collect();
@@ -2924,7 +3172,7 @@ impl Batch {
             c.extend_text(&rows.text);
             relations.extend(c.relations(&atom).into_iter().filter(|(name, _)| !made.contains(name)));
         } else {
-            // T's `syntax_error(d)`, or core.rr's `syntax_error(d, l, msg)` (CPython's verdict) where the program
+            // T's `syntax_error(d)`, or core.rerail's `syntax_error(d, l, msg)` (CPython's verdict) where the program
             // declares that one (`Projection::verdict`).
             let syntax_error = if projection.verdict {
                 c.relations(&atom).into_iter().find(|(name, _)| *name == "syntax_error").map(|(_, r)| r).expect("core_rr makes syntax_error")
@@ -2952,39 +3200,34 @@ impl Batch {
         let siblings = offsets(&|p| if projection.wants("next_sibling") { p.after_siblings() as usize } else { 0 });
         let locs = OnceLock::new();
         // W's values on request (decision 0174): the tapes of the documents W reads values of.
-        let valued: Vec<Option<Valued>> = if projection.derived.contains(VALUE_REQ) {
-            documents
-                .iter()
-                .zip(&docs)
-                .map(|(d, p)| d.tape.clone().filter(|_| dialects.get(p.tag).is_some_and(|x| x.values)).map(|(tape, file)| Valued { tape, file, values: OnceLock::new() }))
-                .collect()
-        } else {
-            Vec::new()
-        };
-        let mut of_tag: [Vec<u32>; 256] = std::array::from_fn(|_| Vec::new());
-        for (doc, p) in docs.iter().enumerate() {
-            of_tag[usize::from(p.tag)].push(doc as u32);
-        }
+        debug_assert!(grown.keys.is_sorted(), "a batch's documents ascend by key");
+        grown.made.extend(made.iter().copied());
         let batch = Arc::new(Batch {
-            docs,
-            valued,
-            dialects,
-            of_tag,
+            docs: docs.clone(),
+            keys: if alone { docs.iter().map(|p| p.key).collect() } else { grown.keys.clone() },
+            programs: {
+                let mut programs: Vec<(u32, usize)> = docs.iter().enumerate().filter(|(_, p)| p.file != p.key).map(|(d, p)| (p.file, d)).collect();
+                programs.sort_unstable();
+                programs
+            },
+            valued: if alone { added_valued.clone() } else { grown.valued.clone() },
+            dialects: dialects.clone(),
             nodes,
             children,
             fields,
             siblings,
             locs,
+            kinds: OnceLock::new(),
             shape,
             families: bound,
-            made,
+            made: grown.made.clone(),
             block,
             #[cfg(target_os = "macos")]
             chunk: OnceLock::new(),
         });
         #[cfg(any(test, feature = "test-hooks"))]
         BATCHES.lock().push((batch.docs.iter().map(|p| p.key).collect(), Arc::downgrade(&batch)));
-        Ok((batch, relations, matched, (strings, atoms)))
+        Ok((batch, relations, matched, strings_from))
     }
 
     /// The batch's chunk block (decision 0289), made on first use.
@@ -3024,6 +3267,11 @@ impl Batch {
         });
         (&self.docs[doc], row - offsets[doc])
     }
+    /// The documents of file `file`'s programs (decision 0431 §4).
+    fn programs_of(&self, file: u32) -> impl Iterator<Item = usize> + '_ {
+        let at = self.programs.partition_point(|&(f, _)| f < file);
+        self.programs[at..].iter().take_while(move |&&(f, _)| f == file).map(|&(_, d)| d)
+    }
     /// The document of key `d`, by index (the last one found tried first, as `locate`).
     fn doc(&self, d: i64) -> Option<usize> {
         let d = u32::try_from(d).ok()?;
@@ -3035,15 +3283,20 @@ impl Batch {
         if hit.is_some() {
             return hit;
         }
-        let i = self.docs.binary_search_by_key(&d, |p| p.key).ok()?;
+        let i = self.keys.binary_search(&d).ok()?;
         DOC.with(|h| h.set((key, i)));
         Some(i)
     }
     /// The document index and node of id `n`.
-    fn node(&self, n: i64) -> Option<(usize, u32)> {
+    pub fn node(&self, n: i64) -> Option<(usize, u32)> {
         let doc = self.doc(n >> 32)?;
         let local = self.docs[doc].local_of((n & 0xffff_ffff) as u32)?;
         (n >= 0 && local < self.docs[doc].len()).then_some((doc, local))
+    }
+    /// The nodes whose `kind` (the `node` view's column 2) is `kind`, in row order: `(document, local id, tape node)`.
+    fn by_kind(&self, kind: i64) -> &[(u32, u32, u32)] {
+        let k = self.kinds.get_or_init(|| KindRows::new(self));
+        k.keys.binary_search(&kind).map_or(&[][..], |i| &k.at[k.starts[i] as usize..k.starts[i + 1] as usize])
     }
     /// The document index and node or span of id `n`.
     fn loc(&self, n: i64) -> Option<(usize, u32)> {
@@ -3097,6 +3350,9 @@ impl Batch {
 struct Viewed {
     batch: Arc<Batch>,
     view: View,
+    /// The view's relation of no columns, its indexes' block, for a view the device reads in place (decision 0478 step
+    /// 3): made the first time it is read there. `None` inside when no block could be had.
+    home: std::sync::OnceLock<Option<crate::code_rule_dsl::facts::rows::Part>>,
 }
 impl Viewed {
     fn columns(view: View) -> &'static [&'static str] {
@@ -3190,7 +3446,10 @@ impl Source for Viewed {
         // lines) is on the device.
         #[cfg(target_os = "macos")]
         let loc = matches!(self.view, View::Loc(_));
-        let in_place = (loc || matches!(view, device_chunk::VIEW_NODE | device_chunk::VIEW_CHILD | device_chunk::VIEW_FIELD | device_chunk::VIEW_CORE | device_chunk::VIEW_LINE))
+        // The directory is of the process's device's addresses, which the stages read it by (decision 0440 step C):
+        // none where its buffers have none (`views_in_place`).
+        let on_device = rerail_accel::gpu::join::device().is_ok();
+        let in_place = (on_device && (loc || matches!(view, device_chunk::VIEW_NODE | device_chunk::VIEW_CHILD | device_chunk::VIEW_FIELD | device_chunk::VIEW_CORE | device_chunk::VIEW_LINE)))
             .then(|| device_chunk::views_in_place(&self.batch, chunk))
             .flatten()
             .filter(|v| (view != device_chunk::VIEW_LINE || v.lines) && (!loc || v.locs))
@@ -3207,14 +3466,18 @@ impl Source for Viewed {
         if matches!(self.view, View::Line) && in_place.is_none() && !device_chunk::fill_lines(&self.batch, chunk) {
             return None;
         }
+        #[cfg(target_os = "macos")]
+        let home = in_place.as_ref().and_then(|_| self.home.get_or_init(|| crate::code_rule_dsl::facts::rows::Part::for_device(0, self.len()).ok()).clone());
+        #[cfg(not(target_os = "macos"))]
+        let home = None;
         Some(crate::code_rule_dsl::facts::vtab::DeviceView {
             block: &chunk.block,
             root: chunk.root,
             view,
             rows: self.len(),
-            pairs: 0,
             #[cfg(target_os = "macos")]
             in_place,
+            home,
         })
     }
     fn columns(&self) -> Vec<String> {
@@ -3412,9 +3675,11 @@ impl Source for Viewed {
             return self.for_rows(&[column], &mut |r, row| each(r, if row[0] >= 1 << 32 { row[0] >> 32 } else { row[0] }));
         }
         let offsets = self.batch.offsets(self.view);
+        let node = matches!(self.view, View::Node) && column == 0;
         for (doc, p) in self.batch.docs.iter().enumerate() {
+            let d = if node { p.file } else { p.key };
             for r in offsets[doc]..offsets[doc + 1] {
-                each(r, i64::from(p.key));
+                each(r, i64::from(d));
             }
         }
     }
@@ -3452,7 +3717,8 @@ impl Viewed {
     /// documents (a kind, a tape node), else in every document.
     fn lookup_docs(&self, column: usize, values: &[i64], only: Option<usize>) -> Option<Vec<usize>> {
         let b = &*self.batch;
-        let kept = |doc: &usize| only.is_none_or(|o| o == *doc);
+        // A lookup kept to a file keeps to its programs too (decision 0431 §4).
+        let kept = |doc: &usize| only.is_none_or(|o| o == *doc || b.docs[*doc].file == b.docs[o].key);
         let mut rows = Vec::new();
         for &v in values {
             if column == self.own() {
@@ -3471,8 +3737,14 @@ impl Viewed {
             } else if matches!(self.view, View::Sibling) && column == 0 {
                 // The row of `a`'s next sibling: a hop along the tape's siblings.
                 rows.extend(b.node(v).and_then(|(doc, local)| b.docs[doc].next_sibling(local).and_then(|s| b.row(self.view, doc, s))));
-            } else if matches!(self.view, View::Node | View::Core) && column == 0 {
+            } else if matches!(self.view, View::Core) && column == 0 {
                 rows.extend(b.doc(v).map_or(0..0, |doc| b.nodes[doc]..b.nodes[doc + 1]));
+            } else if matches!(self.view, View::Node) && column == 0 {
+                // A file's rows, then its programs' (decision 0431 §4).
+                let Ok(file) = u32::try_from(v) else { continue };
+                for doc in b.doc(v).into_iter().chain(b.programs_of(file)) {
+                    rows.extend(b.nodes[doc]..b.nodes[doc + 1]);
+                }
             } else if matches!(self.view, View::Core) && column == 1 {
                 // A tape node of each document that has it as a node; the statement filters `d`.
                 let Ok(t) = u32::try_from(v) else { continue };
@@ -3482,17 +3754,7 @@ impl Viewed {
                     }
                 }
             } else if matches!(self.view, View::Node) && column == 2 {
-                let (Ok(tag), Ok(code)) = (u8::try_from(v / i64::from(KIND_STRIDE)), u16::try_from(v % i64::from(KIND_STRIDE))) else {
-                    continue;
-                };
-                let Some(dialect) = b.dialects.get(tag).filter(|_| v >= 0) else { continue };
-                let atoms: Vec<u32> = dialect.codes.get(&code).map_or(&[][..], Vec::as_slice).iter().map(|&c| kind_atom(tag, c)).collect();
-                for doc in b.of_tag[usize::from(tag)].iter().map(|&d| d as usize).filter(kept) {
-                    let p = &b.docs[doc];
-                    for &kind in &atoms {
-                        rows.extend(p.facts.of_kind(kind).iter().map(|&id| p.local_of_node(id as u32)).filter(|&l| l != NONE).map(|l| b.nodes[doc] + l as usize));
-                    }
-                }
+                rows.extend(b.by_kind(v).iter().filter(|&&(doc, _, _)| kept(&(doc as usize))).map(|&(doc, local, _)| b.nodes[doc as usize] + local as usize));
             } else {
                 return None;
             }
@@ -3557,21 +3819,9 @@ impl Viewed {
                 }
             }
         } else if matches!(self.view, View::Node) && column == 2 {
-            let (Ok(tag), Ok(code)) = (u8::try_from(value / i64::from(KIND_STRIDE)), u16::try_from(value % i64::from(KIND_STRIDE))) else {
-                return true;
-            };
-            let Some(dialect) = b.dialects.get(tag).filter(|_| value >= 0) else { return true };
-            let atoms: Vec<u32> = dialect.codes.get(&code).map_or(&[][..], Vec::as_slice).iter().map(|&c| kind_atom(tag, c)).collect();
-            for doc in b.of_tag[usize::from(tag)].iter().map(|&d| d as usize) {
-                let p = &b.docs[doc];
-                for &kind in &atoms {
-                    for id in p.facts.of_kind(kind) {
-                        let l = p.local_of_node(id as u32);
-                        if l != NONE {
-                            emit(doc, l, id as u32, None, None);
-                        }
-                    }
-                }
+            // The batch's index by kind (`Batch::by_kind`): each match with its local id and tape node.
+            for &(doc, local, x) in b.by_kind(value) {
+                emit(doc as usize, local, x, None, None);
             }
         } else {
             return false;
@@ -3709,14 +3959,14 @@ impl Viewed {
             return g;
         }
         if matches!(place, Place::Docof) {
-            return i64::from(p.key);
+            return i64::from(p.file);
         }
-        let (line, last, col) = p.extra.as_ref().expect("core.rr's lines").place(span);
+        let (line, last, col) = p.extra.as_ref().expect("core.rerail's lines").place(span);
         match place {
             Place::Line => i64::from(line),
             Place::EndLine => i64::from(last),
             Place::Col => i64::from(col),
-            Place::Docof => i64::from(p.key),
+            Place::Docof => i64::from(p.file),
         }
     }
 
@@ -3726,7 +3976,7 @@ impl Viewed {
             let local = i as u32;
             return match (column, place) {
                 (0, _) => p.global(local),
-                (_, Place::Docof) => i64::from(p.key),
+                (_, Place::Docof) => i64::from(p.file),
                 _ => Self::loc_value(p, place, 0, p.span(local), column),
             };
         }
@@ -3761,7 +4011,9 @@ impl Viewed {
         let id = || (at.node)() as usize;
         let parent = at.up;
         match (self.view, column) {
-            (View::Node | View::Core, 0) => i64::from(p.key),
+            // A program's nodes are its file's (decision 0431 §4); `core` keeps to the document underneath.
+            (View::Node, 0) => i64::from(p.file),
+            (View::Core, 0) => i64::from(p.key),
             (View::Core, 1) => id() as i64,
             (View::Node, 2) => self.batch.dialects[p.tag].kind(&p.facts, id() as u32),
             (View::Node, 3) => i64::from(p.facts.start(id() as u32)),
@@ -3796,10 +4048,12 @@ pub fn field_atom(tag: u8, code: u16) -> u32 {
 }
 
 /// Document `key`'s `function_definition` and `class_definition` nodes by byte range (start, end), as ids of
-/// `node`: what W's call summaries name a definition by (`calls::summary::Def`).
-pub fn definitions(key: u32, facts: &Arc<Facts>) -> StoreResult<HashMap<(u32, u32), i64>> {
+/// `node` in the run's shape (`core`: core.rerail's, else T's; a node's id is its rank among the shape's numbered nodes,
+/// so T's ids name other nodes of a run in core.rerail's shape): what W's call summaries name a definition by
+/// (`calls::summary::Def`).
+pub fn definitions(key: u32, facts: &Arc<Facts>, core: bool) -> StoreResult<HashMap<(u32, u32), i64>> {
     let dialect = Dialect::new(crate::code_rule_dsl::facts::core::facts_tag(facts))?;
-    let p = Projected::new(key, Arc::clone(facts), Some(&dialect), Shape::T, false, None);
+    let p = Projected::new(key, Arc::clone(facts), Some(&dialect), if core { Shape::Core } else { Shape::T }, false, None);
     Ok(p.node_ids()
         .filter(|&(_, id, _)| matches!(dialect.name(facts, id), "function_definition" | "class_definition"))
         .map(|(_, id, n)| ((facts.start(id), facts.end(id)), n))
@@ -3815,30 +4069,41 @@ pub fn sources(store: &ContentStore, documents: Vec<Document>) -> StoreResult<Ve
 pub fn shaped(store: &ContentStore, documents: Vec<Document>, projection: &Projection) -> StoreResult<Vec<(&'static str, Arc<dyn Source>)>> {
     let (batch, relations, _, _) = Batch::build(store, documents, projection, &[], &[], false)?;
     let mut out: Vec<(&'static str, Arc<dyn Source>)> =
-        relations.into_iter().map(|(name, r)| (name, as_source(name, r, &batch))).collect();
+        relations.into_iter().map(|(name, r)| (name, as_source(name, Arc::new(r), &batch))).collect();
     out.extend(views(&batch));
     Ok(out)
 }
 
-/// The batch's views: `node`, `child`, `field`, `tape` and the `py.*` families.
-fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> {
-    let mut out: Vec<(&'static str, Arc<dyn Source>)> = Vec::new();
+/// The views a batch of `shape` binds by name (`views`).
+fn named_views(shape: Shape) -> Vec<(&'static str, View)> {
     let mut named = vec![("node", View::Node), ("child", View::Child), ("field", View::Field), ("tape", View::Tape), ("core_node", View::Core), ("node_order", View::Order)];
-    match batch.shape {
+    match shape {
         Shape::T => named.push(("line", View::Line)),
         Shape::Core => named.extend([
             ("line", View::Loc(Place::Line)),
             ("end_line", View::Loc(Place::EndLine)),
             ("col", View::Loc(Place::Col)),
-            // `core.rr`'s `docof(x: loc, d)` is an input (`rr::lower`): nodes' and spans' documents.
+            // `core.rerail`'s `docof(x: loc, d)` is an input (`rr::lower`): nodes' and spans' documents.
             ("docof", View::Loc(Place::Docof)),
             ("ast_depth", View::Depth),
             ("next_sibling", View::Sibling),
         ]),
     }
+    named
+}
+
+/// Whether a batch of `shape` binds a view named `name`.
+pub fn has_view(shape: Shape, name: &str) -> bool {
+    named_views(shape).iter().any(|(n, _)| *n == name)
+}
+
+/// The batch's views: `node`, `child`, `field`, `tape` and the `py.*` families.
+fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> {
+    let mut out: Vec<(&'static str, Arc<dyn Source>)> = Vec::new();
+    let named = named_views(batch.shape);
     // A relation the batch made as rows (`Batch::made`: its spans have places too) is bound in place of the view.
     for (name, view) in named.into_iter().filter(|(name, _)| !batch.made.contains(name)) {
-        out.push((name, Arc::new(Viewed { batch: Arc::clone(batch), view })));
+        out.push((name, Arc::new(Viewed { batch: Arc::clone(batch), view, home: std::sync::OnceLock::new() })));
     }
     for (at, families) in families().iter().enumerate() {
         for (family, &name) in families.names().iter().enumerate() {
@@ -3859,7 +4124,7 @@ impl Batch {
     }
 }
 
-/// T's base relations over `documents` (`sources`) in `projection`'s shape and those of core.rr's the program reads
+/// T's base relations over `documents` (`sources`) in `projection`'s shape and those of core.rerail's the program reads
 /// that T had not (`Extra`), each of `tests`' relations, and each of `sets` (a relation and its set's kind atoms):
 /// `rr_nearest_<set>(n, a)`, the nearest ancestor in the set, `rr_inside_<set>(n, a)`, every one (decision 0036), or
 /// `rr_has_<set>(n, a)`, n in the set and a each of its strict ancestors. Each is made per looked-up node on the host
@@ -3912,7 +4177,8 @@ impl Matchers {
 /// What compiles a program's `ast` matchers (`rel`, the matcher's text, its captures) over its first `.policy`: the
 /// engine's (`waves::policies`), registered at load.
 pub trait AstCompiler: Send + Sync {
-    fn compile(&self, matchers: &[(String, String, Vec<String>)], policies: &[serde_json::Value]) -> Result<Matchers, String>;
+    /// `demand`: per matcher, the matchers whose roots hold every node its rows are read at (`None`: everywhere).
+    fn compile(&self, matchers: &[(String, String, Vec<String>)], demand: &[Option<Vec<usize>>], policies: &[serde_json::Value]) -> Result<Matchers, String>;
 }
 
 static AST_COMPILER: std::sync::OnceLock<&'static dyn AstCompiler> = std::sync::OnceLock::new();
@@ -3923,12 +4189,12 @@ pub fn install_ast_compiler(compiler: &'static dyn AstCompiler) {
 }
 
 /// `matchers` compiled; a program with matchers and no registered compiler fails, naming the first.
-pub fn compile_matchers(matchers: &[(String, String, Vec<String>)], policies: &[serde_json::Value]) -> Result<Matchers, String> {
+pub fn compile_matchers(matchers: &[(String, String, Vec<String>)], demand: &[Option<Vec<usize>>], policies: &[serde_json::Value]) -> Result<Matchers, String> {
     if matchers.is_empty() {
         return Ok(Matchers::default());
     }
     match AST_COMPILER.get() {
-        Some(compiler) => compiler.compile(matchers, policies),
+        Some(compiler) => compiler.compile(matchers, demand, policies),
         None => Err(format!("{}: no compiler of `ast` matchers is registered", matchers[0].0)),
     }
 }
@@ -3943,36 +4209,177 @@ pub fn with_matchers(
     binding: crate::code_rule_dsl::facts::nearest::Binding,
     projection: &Projection,
 ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
-    let built = crate::code_rule_dsl::logic::profile::span(|| "project and intern".into());
-    let metal = matches!(binding, crate::code_rule_dsl::facts::nearest::Binding::Metal);
-    let tapes: Vec<(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)> = if matchers.is_empty() {
-        Vec::new()
-    } else {
-        documents.iter().filter(|d| d.guest.is_none()).filter_map(|d| Some((Arc::clone(&d.facts), d.tape.as_ref()?.0.clone(), d.path.clone()))).collect()
-    };
-    let (batch, relations, match_all, (strings, symbols)) = Batch::build(store, documents, projection, &tests.matches, &tests.markers, metal)?;
-    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, batch.nodes.last().copied().unwrap_or(0) as u64);
-    drop(built);
-    // The batch's relations and views, but none the program derives (`Projection::derived`).
-    let mut out: Vec<(String, Arc<dyn Source>)> =
-        relations.into_iter().filter(|(name, _)| !projection.derived.contains(*name)).map(|(name, r)| (name.to_owned(), as_source(name, r, &batch))).collect();
-    // The `match_all` relations (`preparation::text::TextRelations`): each regex's matches in the batch's spans.
-    out.extend(match_all.into_iter().map(|(name, r)| (name, Arc::new(r) as Arc<dyn Source>)));
-    if !matchers.is_empty() {
-        if let Some(wave) = &matchers.0 {
-            out.extend(wave.matched(&batch, &tapes, binding, &store.atoms_handle())?);
+    Grower::default().sources(store, documents, sets, Some(matchers), tests, binding, projection, false)
+}
+
+/// A chunk's sources that grow by its rounds' documents (decision 0431 §6): the batch is built once, and a round's tape
+/// values and programs are added to it (`Growth`), not built again with it. The batch's relations, the `match_all`
+/// ones and the text tests' are grown by the round's rows (`Relation::grown`: in the same block relations); the ast
+/// matchers' relations are the files' (a round adds none), kept; the views and axes are made over the grown batch.
+#[derive(Default)]
+pub struct Grower {
+    growth: Growth,
+    /// The relations of rows, by name in the order first made, each the last batch's.
+    rels: Vec<(String, Arc<Relation>)>,
+    /// The ast matchers' relations, made with the files.
+    matched: Vec<(String, Arc<dyn Source>)>,
+    /// The batches made: the first's relations are taken as they come (a name twice is bound twice, as before).
+    built: usize,
+    /// Each relation with the rows of the tape values admitted since (decision 0431 §8, `admit`): the chunk's rows,
+    /// then the values', in the same block relation. The chunk's relations (`rels`) stay its own rows.
+    with_values: Vec<(String, Arc<Relation>)>,
+}
+
+impl Grower {
+    /// [`with_matchers`]'s sources, and the grower that adds a round's documents to them.
+    pub fn start(
+        store: &ContentStore,
+        documents: Vec<Document>,
+        sets: &[(String, Vec<i64>)],
+        matchers: &Matchers,
+        tests: &crate::code_rule_dsl::logic::strings::Vocabulary,
+        binding: crate::code_rule_dsl::facts::nearest::Binding,
+        projection: &Projection,
+    ) -> StoreResult<(Vec<(String, Arc<dyn Source>)>, Grower)> {
+        let mut grower = Grower::default();
+        let out = grower.sources(store, documents, sets, Some(matchers), tests, binding, projection, true)?;
+        Ok((out, grower))
+    }
+
+    /// The sources with `documents` added: a round's, past every document the batch holds.
+    pub fn grow(
+        &mut self,
+        store: &ContentStore,
+        documents: Vec<Document>,
+        sets: &[(String, Vec<i64>)],
+        tests: &crate::code_rule_dsl::logic::strings::Vocabulary,
+        binding: crate::code_rule_dsl::facts::nearest::Binding,
+        projection: &Projection,
+    ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
+        self.sources(store, documents, sets, None, tests, binding, projection, true)
+    }
+
+    /// The sources of tape value `document` alone, admitted inside the chunk's fixpoint (decision 0431 §8): projected
+    /// into the chunk's block, its hosts' lines and its strings the growth's, its rows its own, a part of each of the
+    /// chunk's sources (`values::Layered`). A document the batch holds (a value given a place more) has the rows of
+    /// those places alone.
+    pub fn admit(
+        &mut self,
+        store: &ContentStore,
+        document: Document,
+        sets: &[(String, Vec<i64>)],
+        tests: &crate::code_rule_dsl::logic::strings::Vocabulary,
+        binding: crate::code_rule_dsl::facts::nearest::Binding,
+        projection: &Projection,
+    ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
+        self.sources_of(store, vec![document], sets, None, tests, binding, projection, true, true)
+    }
+
+    /// Tape value's relation `name`, its rows admitted (decision 0431 §8): written once, past the chunk's rows of
+    /// `name` and the values' admitted before, in the same block relation (`Relation::grown`), so that the device
+    /// binds the chunk's and the values' rows whole; read as the rows past those (`values::Slice`). A relation the
+    /// chunk makes none of, or one read with its batch (`as_source`), is the value's own.
+    fn admitted(&mut self, name: &str, rows: Relation, batch: &Arc<Batch>) -> Arc<dyn Source> {
+        let at = self.with_values.iter().position(|(n, _)| n == name);
+        let prev = at.map(|i| &self.with_values[i].1).or_else(|| self.rels.iter().find(|(n, _)| n == name).map(|(_, r)| r));
+        let Some(prev) = prev.filter(|p| name != LONG_TEXT_NODES && Source::columns(p.as_ref()) == Source::columns(&rows)) else {
+            return as_source(name, Arc::new(rows), batch);
+        };
+        let start = Source::len(prev.as_ref());
+        let whole = Arc::new(prev.grown(rows));
+        match at {
+            Some(i) => self.with_values[i].1 = Arc::clone(&whole),
+            None => self.with_values.push((name.to_owned(), Arc::clone(&whole))),
+        }
+        Arc::new(values::Slice::new(whole, start))
+    }
+
+    /// The relation `name` with `rows` after its own (the first rows of a name are its own), as one that grows.
+    fn merge(&mut self, name: String, rows: Relation, growing: bool) {
+        match self.rels.iter_mut().find(|(n, _)| *n == name).filter(|_| self.built > 0) {
+            Some((_, r)) => *r = Arc::new(r.grown(rows)),
+            None => self.rels.push((name, Arc::new(if growing { rows.growable() } else { rows }))),
         }
     }
-    let rows_named: BTreeSet<String> = out.iter().map(|(n, _)| n.clone()).collect();
-    // The text tests' relations (decision 0037): the batch's strings that pass each, each string tested once a run.
+
+    #[allow(clippy::too_many_arguments)]
+    fn sources(
+        &mut self,
+        store: &ContentStore,
+        documents: Vec<Document>,
+        sets: &[(String, Vec<i64>)],
+        matchers: Option<&Matchers>,
+        tests: &crate::code_rule_dsl::logic::strings::Vocabulary,
+        binding: crate::code_rule_dsl::facts::nearest::Binding,
+        projection: &Projection,
+        growing: bool,
+    ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
+        self.sources_of(store, documents, sets, matchers, tests, binding, projection, growing, false)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn sources_of(
+        &mut self,
+        store: &ContentStore,
+        documents: Vec<Document>,
+        sets: &[(String, Vec<i64>)],
+        matchers: Option<&Matchers>,
+        tests: &crate::code_rule_dsl::logic::strings::Vocabulary,
+        binding: crate::code_rule_dsl::facts::nearest::Binding,
+        projection: &Projection,
+        growing: bool,
+        alone: bool,
+    ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
+    let built = crate::code_rule_dsl::logic::profile::span(|| "project and intern".into());
+    let metal = matches!(binding, crate::code_rule_dsl::facts::nearest::Binding::Metal);
+    let tapes: Vec<(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)> = match matchers {
+        Some(m) if !m.is_empty() => documents.iter().filter(|d| d.guest.is_none()).filter_map(|d| Some((Arc::clone(&d.facts), d.tape.as_ref()?.0.clone(), d.path.clone()))).collect(),
+        _ => Vec::new(),
+    };
+    let (batch, relations, match_all, from) = Batch::add(&mut self.growth, store, documents, projection, &tests.matches, &tests.markers, metal, alone)?;
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, batch.nodes.last().copied().unwrap_or(0) as u64);
+    drop(built);
+    // The batch's relations, but none the program derives (`Projection::derived`); the `match_all` relations
+    // (`preparation::text::TextRelations`): each regex's matches in the batch's spans.
+    // An admitted value's relations are a part of the chunk's (`admitted`), never merged into its own.
+    let mut own: Vec<(String, Arc<dyn Source>)> = Vec::new();
+    for (name, r) in relations.into_iter().filter(|(name, _)| !projection.derived.contains(*name)) {
+        if alone { own.push((name.to_owned(), self.admitted(name, r, &batch))) } else { self.merge(name.to_owned(), r, growing) }
+    }
+    for (name, r) in match_all {
+        if alone { own.push((name.clone(), self.admitted(&name, r, &batch))) } else { self.merge(name, r, growing) }
+    }
+    if let Some(Matchers(Some(wave))) = matchers {
+        self.matched = wave.matched(&batch, &tapes, binding, &store.atoms_handle())?;
+    }
+    // The text tests' relations (decision 0037): the batch's strings that pass each, each string tested once a run
+    // (a round's, its new strings).
     let text = crate::code_rule_dsl::logic::profile::span(|| "text tests".into());
+    let (strings, symbols) = (&self.growth.strings[from..], &self.growth.atoms[from..]);
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, strings.len() as u64);
-    for ((name, _), rows) in tests.tests.iter().zip(tests.rows(&strings, &symbols)) {
-        let mut r = Relation::new(&["s"]);
-        rows.into_iter().for_each(|s| r.push(&[s]));
-        out.push((name.clone(), Arc::new(r)));
+    let tested: Vec<(String, Relation)> = tests
+        .tests
+        .iter()
+        .zip(tests.rows(strings, symbols))
+        .map(|((name, _), rows)| {
+            let mut r = Relation::new(&["s"]);
+            rows.into_iter().for_each(|s| r.push(&[s]));
+            (name.clone(), r)
+        })
+        .collect();
+    for (name, r) in tested {
+        if alone { own.push((name.clone(), self.admitted(&name, r, &batch))) } else { self.merge(name, r, growing) }
     }
     drop(text);
+    let mut out: Vec<(String, Arc<dyn Source>)> = if alone {
+        own
+    } else {
+        self.built += 1;
+        let mut out: Vec<(String, Arc<dyn Source>)> = self.rels.iter().map(|(name, r)| (name.clone(), as_source(name, Arc::clone(r), &batch))).collect();
+        out.extend(self.matched.iter().map(|(n, s)| (n.clone(), Arc::clone(s))));
+        out
+    };
+    let rows_named: BTreeSet<String> = out.iter().map(|(n, _)| n.clone()).collect();
     let viewing = crate::code_rule_dsl::logic::profile::span(|| "views".into());
     out.extend(views(&batch).into_iter().filter(|(name, _)| !projection.derived.contains(*name)).map(|(name, source)| (name.to_owned(), source)));
     drop(viewing);
@@ -4004,15 +4411,18 @@ pub fn with_matchers(
         let keys: Vec<u32> = batch.docs.iter().map(|p| p.key).collect();
         drop(_nearest);
         stored_spike::run(&db, &read, &keys);
-        return Ok(out_with_within(out, &batch));
+        return Ok(out_with_within(out, &batch, binding));
     }
     // Containment (decision 0050): made per looked-up node, so a program that never reads it pays nothing.
-    Ok(out_with_within(out, &batch))
+    Ok(out_with_within(out, &batch, binding))
+    }
 }
 
 /// `out` with containment's two relations (decision 0050).
-fn out_with_within(mut out: Vec<(String, Arc<dyn Source>)>, batch: &Arc<Batch>) -> Vec<(String, Arc<dyn Source>)> {
-    out.push((WITHIN.to_owned(), Arc::new(within::Within::new(Arc::clone(batch), within::Mode::Tree))));
+/// Containment is solved where the run is bound (a Metal run's on the device, its batch's and its tape values' in one
+/// relation, decision 0431 §8; the host's where the device cannot).
+fn out_with_within(mut out: Vec<(String, Arc<dyn Source>)>, batch: &Arc<Batch>, binding: crate::code_rule_dsl::facts::nearest::Binding) -> Vec<(String, Arc<dyn Source>)> {
+    out.push((WITHIN.to_owned(), Arc::new(within::Within::new(Arc::clone(batch), within::Mode::Tree).bound(binding))));
     out.push((SPAN_WITHIN.to_owned(), Arc::new(within::Within::new(Arc::clone(batch), within::Mode::Span))));
     out
 }

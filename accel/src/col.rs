@@ -127,9 +127,9 @@ struct GateState {
     open: bool,
     /// When it opened.
     at: Option<std::time::Instant>,
-    /// The Metal event a device's command buffer waits on, made when a lane first needs it.
+    /// The event a device's submission waits on, made when a lane first needs it.
     #[cfg(all(feature = "gpu", target_os = "macos"))]
-    event: Option<metal::SharedEvent>,
+    event: Option<rerail_device::device::SharedEvent>,
 }
 
 impl Gate {
@@ -163,16 +163,16 @@ impl Gate {
         Ok((col.clone(), Writer { col, ptr, len }))
     }
 
-    /// Makes `command` wait at its head until the gate opens, unless it is open already: whether it waits. Under the
+    /// Makes `pass` wait at its head until the gate opens, unless it is open already: whether it waits. Under the
     /// gate's lock, so an opening cannot fall between the check and the wait.
     #[cfg(all(feature = "gpu", target_os = "macos"))]
-    pub(crate) fn hold(&self, command: &metal::CommandBufferRef, device: &metal::DeviceRef) -> bool {
+    pub(crate) fn hold(&self, pass: &crate::gpu::join::Pass, device: &rerail_device::device::Device) -> bool {
         let mut s = self.state.lock().unwrap_or_else(|p| p.into_inner());
         if s.open {
             return false;
         }
         let e = s.event.get_or_insert_with(|| device.new_shared_event());
-        command.encode_wait_for_event(e, 1);
+        pass.wait_for_event(e, 1);
         true
     }
 

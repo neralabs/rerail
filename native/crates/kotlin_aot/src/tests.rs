@@ -29,20 +29,40 @@ fn both() -> (&'static rerail_kotlin_parser::Compiled, rerail_kotlin_parser::Com
     (jit, aot)
 }
 
-/// Every corpus file: the ahead-of-time tier 1 writes the JIT's masks, positions and counts;
-/// both tiers ahead of time write the JIT's tape, and refuse where it does.
+/// Every corpus file: the ahead-of-time tier 1 writes the JIT's records, counts, and the masks
+/// tier 2 reads from its words (`BlockNative::masks`, but those tier 2 reads from the bytes:
+/// `records_made`); both tiers ahead of time write the JIT's tape, and refuse where it does. The
+/// JIT's body writes other masks too, which nothing reads; the generated tier 1 makes none of
+/// them (decision 0451).
 #[test]
 #[ignore = "reads RERAIL_KOTLIN_CORPUS: run by name"]
 fn aot_tapes_are_the_jits() {
     let (jit, aot) = both();
-    let files = corpus();
+    // The corpus has no lost comment (`SETTLE m=2`): the texts that have one too.
+    let files: Vec<String> = corpus().into_iter().chain(rerail_kotlin_parser::lost_comment_texts()).collect();
+    let native = rerail_compiler::block_native::BlockNative::lower(&jit.program.block_programs[0]);
+    let unmade = native.records_made();
+    let read: Vec<usize> = native.masks.iter().copied().filter(|o| !unmade.contains(o)).collect();
+    let n = jit.parser.tier1.outputs;
+    let extracts = jit.parser.tier1.extracts.len();
+    assert_eq!(jit.parser.tier1.records.as_ref().map(|t| t.layout), Some(rerail_compiler::records::RecordLayout::Rows), "the records a row a token, from the file's first position");
     let (mut differ, mut tier1_differ, mut taken) = (Vec::new(), Vec::new(), 0);
     for (i, f) in files.iter().enumerate() {
         let mut a = rerail_compiler::native_cpu_block::Batch::new(&aot.parser.tier1, &[f.as_bytes()]);
         let mut j = rerail_compiler::native_cpu_block::Batch::new(&jit.parser.tier1, &[f.as_bytes()]);
         a.call(&aot.parser.tier1);
         j.call(&jit.parser.tier1);
-        if a.out != j.out || a.positions != j.positions || a.counts != j.counts {
+        let masks = (0..a.out.len()).all(|k| !read.contains(&(k % n)) || a.out[k] == j.out[k]);
+        // A file tier 1 refuses (its flag, the count after the extracts'): its records up to the
+        // count, as the JIT's loop stops at the refusal and nothing reads past it.
+        let refused = j.counts.get(extracts).is_some_and(|&t| t != 0);
+        let positions = if refused {
+            let records = 3 * j.counts[0] as usize;
+            a.positions[..records] == j.positions[..records]
+        } else {
+            a.positions == j.positions
+        };
+        if !masks || !positions || a.counts != j.counts {
             tier1_differ.push(i);
         }
         match (aot.parser.image(f.as_bytes()), jit.parser.image(f.as_bytes())) {
@@ -175,5 +195,51 @@ fn structure() {
         }
     }
     eprintln!("  slots a block: {}", passes.slots);
+    // The CPU's form (`BlockNative::cpu_form`): the record pass's starts and lasts left out, the
+    // regions walked; what the CPU's tier 1 runs.
+    let cpu = native.cpu_form();
+    let mut kinds = std::collections::BTreeMap::<String, usize>::new();
+    for i in &cpu.insts {
+        let name = format!("{i:?}");
+        *kinds.entry(name.split(['(', ' ', '{']).next().unwrap_or("").to_string()).or_default() += 1;
+    }
+    eprintln!("  CPU form: {} instructions, {} outputs; by kind: {kinds:?}", cpu.insts.len(), cpu.outputs.len());
     eprintln!("tier 2: {} words, {} lines of machine", jit.words.lines().count(), jit.machine.lines().count());
+    // The records' marks (`Records::marks`): each its output and word, and how many of the
+    // corpus's bytes its output holds at (where `RERAIL_KOTLIN_CORPUS` is set).
+    if let Some(r) = &b.records {
+        let files: Vec<String> = std::env::var("RERAIL_KOTLIN_CORPUS").map(|_| corpus()).unwrap_or_default();
+        let mut bits = vec![0u64; b.outputs.len()];
+        for f in &files {
+            let mut batch = rerail_compiler::native_cpu_block::Batch::new(&jit.parser.tier1, &[f.as_bytes()]);
+            batch.call(&jit.parser.tier1);
+            for (i, w) in batch.out.iter().enumerate() {
+                bits[i % b.outputs.len()] += u64::from(w.count_ones());
+            }
+        }
+        eprintln!("records' marks ({} files): gaps {:#x}, tested only {:#x}", files.len(), r.gaps, r.tested_only);
+        for (k, &(o, w)) in r.marks.iter().enumerate() {
+            let held = bits.get(usize::from(o)).copied().unwrap_or(0);
+            eprintln!("  mark {k}: output {o}, word {w}, {held} bits");
+        }
+    }
+}
+
+/// The ahead-of-time tier 1 alone over the corpus files the grammar parses, `KOTLIN_ROUNDS`
+/// times (50): for a profiler (`xctrace`'s Time Profiler) to say where its time goes.
+#[test]
+#[ignore = "a tool for a profiler: run by name, on an optimized build"]
+fn tier1_alone() {
+    let (jit, aot) = both();
+    let rounds: usize = std::env::var("KOTLIN_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(50);
+    let files = corpus();
+    let ours: Vec<&String> = files.iter().filter(|f| jit.parser.image(f.as_bytes()).is_ok()).collect();
+    let mut batches: Vec<_> = ours.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(&aot.parser.tier1, &[f.as_bytes()])).collect();
+    let at = thread_cpu();
+    for _ in 0..rounds {
+        for b in &mut batches {
+            b.call(&aot.parser.tier1);
+        }
+    }
+    eprintln!("{} files, {rounds} rounds: {:.1} ms CPU a round", ours.len(), (thread_cpu() - at).as_secs_f64() * 1e3 / rounds as f64);
 }

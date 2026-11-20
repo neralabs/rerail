@@ -377,13 +377,11 @@ impl<'a> P<'a> {
             return true;
         }
         // `(T[]){…}`, `(T[n]){…}`: a compound literal's array type.
-        if expr && self.is_ident_at(k + 1) && self.kind_at(k + 2) == T::LBracket {
-            if let Some(e) = self.paren_end(k + 2) {
-                if self.kind_at(e + 1) == T::RParen && self.kind_at(e + 2) == T::LBrace {
+        if expr && self.is_ident_at(k + 1) && self.kind_at(k + 2) == T::LBracket
+            && let Some(e) = self.paren_end(k + 2)
+                && self.kind_at(e + 1) == T::RParen && self.kind_at(e + 2) == T::LBrace {
                     return true;
                 }
-            }
-        }
         // `(T)`: a name alone (C++: or a qualified or template one; `sizeof`'s a type).
         let t = self.peek_at(k + 1);
         if self.cpp && (t.kind == T::ColonColon || t.kind == T::Name && !self.reserved(t.word) && matches!(self.kind_at(k + 2), T::ColonColon | T::Lt)) {
@@ -515,11 +513,10 @@ impl<'a> P<'a> {
 
     /// A primary expression.
     fn primary(&mut self, s: Slot) -> R<N> {
-        if self.cpp {
-            if let Some(n) = self.cpp_primary(s)? {
+        if self.cpp
+            && let Some(n) = self.cpp_primary(s)? {
                 return Ok(n);
             }
-        }
         let t = self.tok();
         match t.kind {
             T::Number => self.leaf_in(K::NumberLiteral, s),

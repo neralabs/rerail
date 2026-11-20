@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""How good the derived relations' size estimates are (Q295), from a run's `RERAIL_SIZES_LOG`.
+"""How good the derived relations' size estimates are (Q290), from a run's `RERAIL_SIZES_LOG`.
 
 Estimates are measured directly here, not through a run's time. A run's time moves about 3% between two runs of
 the same build, and an estimate's error shows in it only through the orders chosen from it.
@@ -12,7 +12,7 @@ A log holds two kinds of tab-separated lines (`plan::prepared::sizes_log`):
 Usage:
   derived_sizes.py LOG                 the estimates against what the run held
   derived_sizes.py LOG --against LOG2  what one run held against what another held, relation by relation: how well
-                                       sizes a run saw would size another corpus's (Q295's "size them from what
+                                       sizes a run saw would size another corpus's (Q290's "size them from what
                                        runs saw")
 """
 import argparse

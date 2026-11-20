@@ -4,7 +4,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Bound while phase 0 runs (`logic::plan::corpus::phase0`), in the run's context: `bootstrap.rr` itself is read by
+/// Bound while phase 0 runs (`logic::plan::corpus::phase0`), in the run's context: `bootstrap.rerail` itself is read by
 /// the builtin reader, and the profiler's roofline measures nothing in it. Its jobs are in phase 0 too.
 #[derive(Clone, Copy, Default)]
 struct InPhase0(bool);
@@ -14,7 +14,7 @@ pub fn in_phase_0() -> crate::code_rule_dsl::logic::profile::Bound {
     crate::code_rule_dsl::logic::profile::bind(InPhase0(true))
 }
 
-/// Whether phase 0 runs here (`bootstrap.rr` and `core.rr` are then read by the builtin reader).
+/// Whether phase 0 runs here (`bootstrap.rerail` and `core.rerail` are then read by the builtin reader).
 pub fn active() -> bool {
     crate::code_rule_dsl::logic::profile::bound::<InPhase0>().0
 }
