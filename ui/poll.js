@@ -62,8 +62,8 @@ let backoff = INTERVAL;
 /** When (`performance.now()`) a failed read last doubled `backoff`. */
 let doubledAt = -Infinity;
 /**
- * When the last read a change asked for began (`performance.now()`, which a changed wall clock does not move), for
- * the pace; a new stream starts it over, and the person's own reads do not count.
+ * When the last read a change asked for began and, once it answered, ended (`performance.now()`, which a changed wall
+ * clock does not move), for the pace; a new stream starts it over, and the person's own reads do not count.
  */
 let lastChangeRead = -Infinity;
 /** The read the pace holds back, if any; the stream opened again after its end, if waiting; two missed beats. */
@@ -853,19 +853,30 @@ function afterRead(asked) {
 /** The tab is in the background: nothing is followed or read until it shows again. */
 const hidden = () => typeof document !== "undefined" && document.hidden;
 
-/** A read a change asked for, counted for the pace. */
+/**
+ * A read a change asked for, counted for the pace from its end, as the poll counted its pause: a pace counted from the
+ * read's start reads every 5 s exactly, which a source that writes once a second meets just before one of its writes
+ * each time, so that write waited the whole pace where the poll's drifting pace met it anywhere.
+ */
 function changeRead() {
   clearTimeout(paceTimer);
   paceTimer = null;
-  lastChangeRead = performance.now();
-  void refresh();
+  const began = (lastChangeRead = performance.now());
+  // Unless a new stream started the pace over meanwhile.
+  void refresh().finally(() => { if (lastChangeRead === began) lastChangeRead = performance.now(); });
 }
 
-/** Read again for a change: at once when the last such read began `INTERVAL` ago or more, else once it is that old. */
+/** Read again for a change: at once when the last such read ended `INTERVAL` ago or more, else once it is that old. */
 function readSoon() {
   const wait = lastChangeRead + INTERVAL - performance.now();
   if (wait <= 0) changeRead();
-  else paceTimer ??= setTimeout(changeRead, wait);
+  else paceTimer ??= setTimeout(paceDue, wait);
+}
+
+/** The pace held a read back: read now, or later if the read the pace counts from ended after the timer was set. */
+function paceDue() {
+  paceTimer = null;
+  readSoon();
 }
 
 /**
