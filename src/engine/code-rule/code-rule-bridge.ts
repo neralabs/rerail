@@ -1329,6 +1329,19 @@ function takeFirstSeen(scan: FirstSightTake, sources: ReadonlyArray<Source | und
 }
 
 /**
+ * The digests `uncaptured` holds for `edits`. A walk's map also holds those of the changes it took for Git's, or dropped
+ * with a worktree being removed (`#separateOwnWrites`): no edit needs their preimages, so no Git is read for them.
+ */
+function batchDigests(edits: readonly CodeRuleEdit[], uncaptured: ReadonlyMap<string, string>): Map<string, string> {
+  const digests = new Map<string, string>();
+  for (const { path } of edits) {
+    const digest = uncaptured.get(path);
+    if (digest !== undefined) digests.set(path, digest);
+  }
+  return digests;
+}
+
+/**
  * Puts in `recovered` each of `paths` (owned by `checkout`) whose Git index or `HEAD` blob has the digest `uncaptured`
  * names for it.
  */
@@ -3551,7 +3564,7 @@ export class CodeRuleBridge {
   ): Promise<CodeRuleEditBatch["edits"]> {
     if (uncaptured.size === 0) return edits;
     const recovered = new Map<string, string>();
-    const unresolved = this.#recoverFromTexts(uncaptured, recovered);
+    const unresolved = this.#recoverFromTexts(batchDigests(edits, uncaptured), recovered);
     for (const [checkout, paths] of this.#byOwningCheckout(discovery.root, unresolved, path => path).owned)
       await recoverFromGit(discovery, checkout, paths, uncaptured, recovered);
     return edits.map(edit => {
