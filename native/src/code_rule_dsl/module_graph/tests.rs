@@ -820,7 +820,19 @@ fn a_rewrite_restoring_length_and_modification_time_is_read_again() {
     assert_eq!(disk_graph(&root, "").unwrap(), ["app/page.tsx"]);
     {
         let settled = SystemTime::now() - Duration::from_secs(3600);
+        // On Windows a summary is cached once the clock has left its change time: each settled
+        // rewrite there takes a change time of its own in the past, as a later walk sees it.
+        let rewrites = std::cell::Cell::new(0_u64);
+        let settle = || {
+            rewrites.set(rewrites.get() + 1);
+            #[cfg(windows)]
+            crate::git_workspace::set_change_time(
+                &root.join("app/a.ts"),
+                settled + Duration::from_secs(rewrites.get()),
+            );
+        };
         rewrite("use server", settled);
+        settle();
         assert_eq!(disk_graph(&root, "").unwrap(), server);
         // The change time is as coarse as a scheduler tick, so a rewrite within the tick of the
         // last one leaves it: the rewrite repeats until the stamp the walk reads moved.
@@ -828,6 +840,7 @@ fn a_rewrite_restoring_length_and_modification_time_is_read_again() {
         (0..10_000)
             .find(|_| {
                 rewrite("use client", settled);
+                settle();
                 stamp() != cached
             })
             .expect("a rewrite moves the stamp");
