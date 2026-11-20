@@ -311,6 +311,13 @@ rustup and cargo-nextest as above, its entry in `farm.json`, `setup`. An ARM VM 
 `test-mac-compiles`' 42 outputs as this Mac's bytes (2026-11-19), so it takes this Mac's compiles
 too. Its CPU is the Mac's when it idles: a VM's vCPUs take nothing while no command runs.
 
+A Mac with OrbStack can use an OrbStack machine instead (`orb create ubuntu:noble NAME`, its
+limits by `orb config set machine.NAME.cpu` and `.memory_mib`, inside OrbStack's own memory
+limit): the same packages and `farm` user, sshd on a port of its own, reached at the machine's
+`.orb.local` name. On the build machine itself such a host takes Linux tests only
+(`"mac_compiles": false`): this Mac's compiles sent to its own VM would gain nothing. Linux on a
+Mac is a guest of macOS directly, never nested inside a Windows VM.
+
 ### Windows hosts
 
 The same PC's Windows side is a host of its own (`"os": "windows"`), for Windows builds and runs
