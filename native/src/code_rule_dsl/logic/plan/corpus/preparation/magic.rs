@@ -382,7 +382,10 @@ impl<'v> Ctx<'v, '_> {
                 Some(t) if is_const(t) => true,
                 Some(Tm::Own(TermRef::Var(x))) => bound.contains(x),
                 Some(Tm::Fresh(n)) => bound.contains(fresh(r, n)),
-                _ => false,
+                Some(_) => false,
+                // A nullary atom is an existence test: it runs with no bindings (ported from cost-classifier-metal-rf's
+                // fix to the tree magic, `a_nullary_guard_is_ready_in_a_demanded_body`).
+                None => !matches!(rest[i], M::True),
             };
             let derived = |i: usize| self.idb.contains(rest[i].positive(v).expect("a positive atom"));
             let joined: Vec<usize> = pos.iter().copied().filter(|&i| !rest[i].vars(r).is_disjoint(&bound)).collect();
