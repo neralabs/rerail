@@ -16,6 +16,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import types
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
@@ -101,6 +102,117 @@ def git_show(repo, rev, path):
         return None
 
 
+def load_libs():
+    libs = {}
+    for mod, kind, blurb, *path in LIBS:
+        src = os.path.join(RS, *path) if path else os.path.join(RS, "lib", mod + ".rerail")
+        libs[mod] = {"kind": kind, "src": read(src), "blurb": blurb}
+    return libs
+
+
+def lib_decl_counts(libs):
+    """The `.decl` and `.edit` declarations in the native library and in the Datalog libraries."""
+    n_native = sum(len(re.findall(r"^\.(?:decl|edit)\s", l["src"], re.M)) for l in libs.values() if l["kind"] == "native")
+    n_datalog = sum(len(re.findall(r"^\.(?:decl|edit)\s", l["src"], re.M)) for m, l in libs.items() if l["kind"] == "datalog")
+    return n_native, n_datalog
+
+
+def add_hand_written(entry, name, rid, hand, totals):
+    entry["h"] = read(hand)
+    totals.hand_rules += 1
+    totals.hand_rr += len("\n".join(l for l in entry["h"].split("\n") if not l.lstrip().startswith("//")))
+    entry["hx"] = {os.path.basename(x)[len(rid) + 1:-3]: read(x)
+                   for x in sorted(glob.glob(os.path.join(RS, "packs", name, rid + ".*.rerail")))}
+
+
+def pack_rule(name, f, shown, totals):
+    """One pack rule's entry: its JSON, its generated view and any hand-written form, adding to `totals`."""
+    doc = json.loads(read(f))
+    rr, u, ug = shown[os.path.basename(f)[:-5]]
+    totals.ungrounded += ug
+    pretty = json.dumps(doc, indent=2, ensure_ascii=False)
+    rid = doc.get("id", os.path.basename(f))
+    entry = {"id": rid, "d": doc.get("description", ""), "m": doc.get("mode", "log"),
+             "j": compact(doc), "r": rr, "u": u, "jl": pretty.count("\n") + 1, "rl": rr.count("\n")}
+    # The hand-written rule: docs/rule-syntax/packs/<pack>/<id>.rerail, plus <id>.<part>.rerail files (a fact table).
+    hand = os.path.join(RS, "packs", name, rid + ".rerail")
+    if os.path.exists(hand):
+        add_hand_written(entry, name, rid, hand, totals)
+    totals.total_json += len(pretty)
+    totals.total_rr += len("\n".join(l for l in rr.split("\n") if not l.lstrip().startswith("//")))  # code only
+    totals.atom_rules += bool(u)
+    return entry
+
+
+def build_packs(out):
+    """Writes out/data/pack-<name>.json for each pack with rules; returns the packs, largest first, and the totals."""
+    packs = []
+    totals = types.SimpleNamespace(total_json=0, total_rr=0, atom_rules=0, n_rules=0, ungrounded=0,
+                                   hand_rules=0, hand_rr=0)   # hand-written pack rules and their size, code only (tables excluded)
+    for pdir in sorted(glob.glob(os.path.join(ROOT, "packs", "*", "rules"))):
+        name = pdir.split(os.sep)[-2]
+        rules = []
+        files = sorted(glob.glob(os.path.join(pdir, "*.json")))
+        shown = display(files) if files else {}
+        for f in files:
+            rules.append(pack_rule(name, f, shown, totals))
+        if not rules:
+            continue
+        totals.n_rules += len(rules)
+        with open(os.path.join(out, "data", f"pack-{name}.json"), "w", encoding="utf-8") as fh:
+            fh.write(compact(rules))
+        rules.sort(key=lambda r: "h" not in r)  # hand-written exemplars first, then the JSON's order
+        packs.append({"name": name, "count": len(rules), "hand": sum("h" in r for r in rules)})
+    packs.sort(key=lambda p: (-p["count"], p["name"]))
+    return packs, totals
+
+
+def data_layer_port(dlre, slug):
+    """The data-layer JSON port of `slug` in the DLRE checkout, candidates first, or "" when there is none."""
+    return next((c for c in (os.path.join(dlre, "packs", "data-layer", d, "rules", f"data-layer-{slug}.json")
+                             for d in ("candidates", ".")) if os.path.exists(c)), "")
+
+
+def add_json_port(entry, views, cand):
+    if os.path.exists(cand):
+        doc = json.loads(read(cand))
+        entry["json"] = compact(doc)
+        views[0]["panes"].append({"title": "Today: JSON port", "src": "json", "lang": "json"})
+        shown = display([cand]).get(os.path.basename(cand)[:-5])
+        if shown:   # a port the translator cannot take gets no generated view
+            entry["gen"] = shown[0]
+            views.append({"label": "JSON port vs generated", "panes": [{"title": "JSON port in today's format", "src": "json", "lang": "json"}, {"title": "Generated .rerail", "src": "gen", "lang": "rr"}]})
+
+
+def add_data_layer(hand_data, hand_meta, dlre, ndl):
+    for key, slug, pyfile in DATA_LAYER:
+        p = os.path.join(RS, "data-layer", slug + ".rerail")
+        if not os.path.exists(p):
+            continue
+        final = read(p)
+        cand = data_layer_port(dlre, slug)
+        entry = {"final": final}
+        views = [{"label": "Final form", "panes": [{"title": slug + ".rerail", "src": "final", "lang": "rr"}]}]
+        add_json_port(entry, views, cand)
+        src = git_show(ndl, NDL_COMMIT, "scripts/" + pyfile)
+        if src:
+            entry["py"] = src
+            views.append({"label": "Python linter vs .rerail", "panes": [{"title": "scripts/" + pyfile, "src": "py", "lang": "text"}, {"title": slug + ".rerail", "src": "final", "lang": "rr"}]})
+        hand_data[key] = entry
+        hand_meta.append({"key": key, "title": slug, "tags": ["data-layer"], "summary": description(final), "views": views})
+
+
+def code_lines(text):
+    return sum(1 for l in text.split("\n") if l.strip() and not l.strip().startswith("//"))
+
+
+def data_layer_sizes(hand_data):
+    """The data-layer examples' Python linter lines and .rerail code lines."""
+    dl_py = sum(e["py"].count("\n") for k, e in hand_data.items() if k not in ("router", "fli") and "py" in e)
+    dl_rr = sum(code_lines(e["final"]) for e in hand_data.values() if "final" in e)
+    return dl_py, dl_rr
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dlre", default=os.path.join(os.path.dirname(ROOT), "Data-layer-rule-expressivity"))
@@ -111,48 +223,10 @@ def main():
     runpy.run_path(os.path.join(HERE, "pages.py"))   # writes intro.html and syntax.html
     os.makedirs(os.path.join(a.out, "data"), exist_ok=True)
 
-    libs = {}
-    for mod, kind, blurb, *path in LIBS:
-        src = os.path.join(RS, *path) if path else os.path.join(RS, "lib", mod + ".rerail")
-        libs[mod] = {"kind": kind, "src": read(src), "blurb": blurb}
-    n_native = sum(len(re.findall(r"^\.(?:decl|edit)\s", l["src"], re.M)) for l in libs.values() if l["kind"] == "native")
-    n_datalog = sum(len(re.findall(r"^\.(?:decl|edit)\s", l["src"], re.M)) for m, l in libs.items() if l["kind"] == "datalog")
+    libs = load_libs()
+    n_native, n_datalog = lib_decl_counts(libs)
 
-    packs, total_json, total_rr, atom_rules, n_rules, ungrounded = [], 0, 0, 0, 0, 0
-    hand_rules, hand_rr = 0, 0   # hand-written pack rules and their size, code only (tables excluded)
-    for pdir in sorted(glob.glob(os.path.join(ROOT, "packs", "*", "rules"))):
-        name = pdir.split(os.sep)[-2]
-        rules = []
-        files = sorted(glob.glob(os.path.join(pdir, "*.json")))
-        shown = display(files) if files else {}
-        for f in files:
-            doc = json.loads(read(f))
-            rr, u, ug = shown[os.path.basename(f)[:-5]]
-            ungrounded += ug
-            pretty = json.dumps(doc, indent=2, ensure_ascii=False)
-            rid = doc.get("id", os.path.basename(f))
-            entry = {"id": rid, "d": doc.get("description", ""), "m": doc.get("mode", "log"),
-                     "j": compact(doc), "r": rr, "u": u, "jl": pretty.count("\n") + 1, "rl": rr.count("\n")}
-            # The hand-written rule: docs/rule-syntax/packs/<pack>/<id>.rerail, plus <id>.<part>.rerail files (a fact table).
-            hand = os.path.join(RS, "packs", name, rid + ".rerail")
-            if os.path.exists(hand):
-                entry["h"] = read(hand)
-                hand_rules += 1
-                hand_rr += len("\n".join(l for l in entry["h"].split("\n") if not l.lstrip().startswith("//")))
-                entry["hx"] = {os.path.basename(x)[len(rid) + 1:-3]: read(x)
-                               for x in sorted(glob.glob(os.path.join(RS, "packs", name, rid + ".*.rerail")))}
-            rules.append(entry)
-            total_json += len(pretty)
-            total_rr += len("\n".join(l for l in rr.split("\n") if not l.lstrip().startswith("//")))  # code only
-            atom_rules += bool(u)
-        if not rules:
-            continue
-        n_rules += len(rules)
-        with open(os.path.join(a.out, "data", f"pack-{name}.json"), "w", encoding="utf-8") as fh:
-            fh.write(compact(rules))
-        rules.sort(key=lambda r: "h" not in r)  # hand-written exemplars first, then the JSON's order
-        packs.append({"name": name, "count": len(rules), "hand": sum("h" in r for r in rules)})
-    packs.sort(key=lambda p: (-p["count"], p["name"]))
+    packs, totals = build_packs(a.out)
 
     hand_meta, hand_data = [], {}
     router_path = os.path.join(RS, "nested-routers.json")
@@ -179,44 +253,19 @@ def main():
                           {"label": "Python linter vs .rerail", "panes": [{"title": "scripts/lint_function_level_imports.py", "src": "py", "lang": "text"}, {"title": "Same meaning as the Python linter .rerail", "src": "b1", "lang": "rr"}]},
                       ]})
 
-    for key, slug, pyfile in DATA_LAYER:
-        p = os.path.join(RS, "data-layer", slug + ".rerail")
-        if not os.path.exists(p):
-            continue
-        final = read(p)
-        cand = next((c for c in (os.path.join(a.dlre, "packs", "data-layer", d, "rules", f"data-layer-{slug}.json")
-                                 for d in ("candidates", ".")) if os.path.exists(c)), "")
-        entry = {"final": final}
-        views = [{"label": "Final form", "panes": [{"title": slug + ".rerail", "src": "final", "lang": "rr"}]}]
-        if os.path.exists(cand):
-            doc = json.loads(read(cand))
-            entry["json"] = compact(doc)
-            views[0]["panes"].append({"title": "Today: JSON port", "src": "json", "lang": "json"})
-            shown = display([cand]).get(os.path.basename(cand)[:-5])
-            if shown:   # a port the translator cannot take gets no generated view
-                entry["gen"] = shown[0]
-                views.append({"label": "JSON port vs generated", "panes": [{"title": "JSON port in today's format", "src": "json", "lang": "json"}, {"title": "Generated .rerail", "src": "gen", "lang": "rr"}]})
-        src = git_show(a.ndl, NDL_COMMIT, "scripts/" + pyfile)
-        if src:
-            entry["py"] = src
-            views.append({"label": "Python linter vs .rerail", "panes": [{"title": "scripts/" + pyfile, "src": "py", "lang": "text"}, {"title": slug + ".rerail", "src": "final", "lang": "rr"}]})
-        hand_data[key] = entry
-        hand_meta.append({"key": key, "title": slug, "tags": ["data-layer"], "summary": description(final), "views": views})
+    add_data_layer(hand_data, hand_meta, a.dlre, a.ndl)
 
     with open(os.path.join(a.out, "data", "hand.json"), "w", encoding="utf-8") as fh:
         fh.write(compact(hand_data))
 
-    def code_lines(text):
-        return sum(1 for l in text.split("\n") if l.strip() and not l.strip().startswith("//"))
-    dl_py = sum(e["py"].count("\n") for k, e in hand_data.items() if k not in ("router", "fli") and "py" in e)
-    dl_rr = sum(code_lines(e["final"]) for e in hand_data.values() if "final" in e)
+    dl_py, dl_rr = data_layer_sizes(hand_data)
     lib_lines = lambda fam: sum(code_lines(l["src"]) for m, l in libs.items() if m.startswith(fam))
     router_pretty = json.dumps(router_json, indent=2, ensure_ascii=False)
-    stats = {"rules": f"{n_rules:,}", "hand_rules": f"{hand_rules:,}", "hand_mb": f"{hand_rr / 1e6:.1f} MB",
+    stats = {"rules": f"{totals.n_rules:,}", "hand_rules": f"{totals.hand_rules:,}", "hand_mb": f"{totals.hand_rr / 1e6:.1f} MB",
              "router_json_lines": str(router_pretty.count("\n") + 1), "router_b1_code": str(code_lines(b1)),
              "dl_py_lines": f"{dl_py:,}", "dl_rr_code": f"{dl_rr:,}",
-             "lib_py_lines": f"{lib_lines('python/'):,}", "lib_tsx_lines": f"{lib_lines('tsx/'):,}", "json_mb": f"{total_json / 1e6:.1f} MB", "rr_mb": f"{total_rr / 1e6:.1f} MB",
-             "atom_rules": f"{atom_rules:,}", "ungrounded": f"{ungrounded:,}", "lib_native": str(n_native), "lib_datalog": str(n_datalog)}
+             "lib_py_lines": f"{lib_lines('python/'):,}", "lib_tsx_lines": f"{lib_lines('tsx/'):,}", "json_mb": f"{totals.total_json / 1e6:.1f} MB", "rr_mb": f"{totals.total_rr / 1e6:.1f} MB",
+             "atom_rules": f"{totals.atom_rules:,}", "ungrounded": f"{totals.ungrounded:,}", "lib_native": str(n_native), "lib_datalog": str(n_datalog)}
 
     def embed(obj):
         return compact(obj).replace("</", "<\\/")
@@ -228,7 +277,7 @@ def main():
                      .replace("@@router_json@@", html.escape(router_pretty)).replace("@@router_b1@@", html.escape(b1.rstrip("\n")))))
     with open(os.path.join(a.out, "index.html"), "w", encoding="utf-8") as fh:
         fh.write(page)
-    print(json.dumps({"rules": n_rules, "packs": len(packs), "hand": len(hand_meta), **stats}))
+    print(json.dumps({"rules": totals.n_rules, "packs": len(packs), "hand": len(hand_meta), **stats}))
 
 
 if __name__ == "__main__":
