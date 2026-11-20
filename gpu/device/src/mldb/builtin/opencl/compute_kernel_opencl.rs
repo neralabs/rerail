@@ -788,6 +788,13 @@ impl ClComputeFunctionLibrary {
             check("clSetKernelArg", unsafe { set_buffer_arg(a, device.0.usm.as_ref(), k.0, 0, out.mem()) })?;
             let one = 1usize;
             check(name, unsafe { (a.enqueue_nd_range_kernel)(q, k.0, 1, std::ptr::null(), &one, &one, 0, std::ptr::null(), std::ptr::null_mut()) })?;
+            // A `synced` device's write reaches the host's pages through a map (`DeviceInner::synced`).
+            if device.0.synced
+                && let Mem::Cl(m) = out.mem()
+            {
+                let mut c = Enqueue { a, usm: None, q, kernels: Vec::new() };
+                c.sync(&[(m, out.length() as usize)], CL_MAP_READ)?;
+            }
             check("clFinish", unsafe { (a.finish)(q) })
         })();
         unsafe { (a.release_command_queue)(q) };
