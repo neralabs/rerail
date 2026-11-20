@@ -250,6 +250,10 @@ moved. Two columns skewed on the same 5 keys (`join_counts_price_a_join_of_two_s
 rows priced, 500,000 made; by fanouts and distinct values, 50,954. With skew in one column only, 256 counters do not
 tell (the error passes half of J), and the price falls back as before.
 
+corpus0 x B-now, one thread, profiling build, the M3 (load 14-30): findings 463 `d067ec2ebf6f`, 950.8 and 952.4 G
+instructions against 1,006.0 and 986.1 G the commit before (4-5% fewer), 6 plans blown up against 7-9, peak RSS
+1,992-2,006 MB; the screens alike (2.97 M rows tested, 93% refused).
+
 Also fixed on the way: the Release-debugging port had added `demand_` to `Body::demand_first`, forcing every demanded
 rule onto its demand and undoing Q59's narrowing (an atom a constant restricts may lead; its test failed).
 
