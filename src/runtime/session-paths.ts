@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import { bundledModelPath } from "../engine/package-root.js";
 
@@ -10,6 +11,11 @@ export interface SessionPaths {
 /** `<workspace>/.rerail/sessions`: the storage root when neither the caller nor `RERAIL_STORAGE_ROOT` names one. */
 export function defaultStorageRoot(workspaceRoot: string): string {
   return join(resolve(workspaceRoot), ".rerail", "sessions");
+}
+
+/** A session's records folder in `storageRoot`, named by its id's SHA-256, so the name tells nothing of the session. */
+export function sessionDirectory(storageRoot: string, sessionId: string): string {
+  return join(storageRoot, createHash("sha256").update(sessionId).digest("hex"));
 }
 
 /**

@@ -1,6 +1,6 @@
 //! The prefilter's per-tape access paths (docs/final-shape/03-architecture.md §6, §16; 05 Phase 3),
 //! adapted from Pulling-it-all-together's anchor store (`matcher/anchors/sql/{store.rs, values.rs,
-//! store/kinds.rs}`), which followed ast-index-spike's `tape_store.py`.
+//! store/kinds.rs}`), which followed the SQL index prototype's `tape_store.py`.
 //!
 //! P kept a private database with its own `file` table holding a second copy of each tape. Here
 //! the rows are keyed by the content store's `tape_objects.tape_id` and cascade from it, so a

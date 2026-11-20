@@ -98,7 +98,7 @@ maintains it from the deltas instead.
 | 4.1 | **A new process maintains from the kept rows**, as a session does: the kept strata's rows are the `__old` rows of `maintain::rewrite`, and an input's delta is its kept rows against its new ones | **built** (`kept_strata::load`, `keep`): a run with no session takes the session's branch, its `Retained` read back from the store's frames (space `cross-maintained`, each relation under its identity) and written back after the run (only frames whose rows or inputs changed). A frame records the digests of the inputs it was derived from (its cone), and is read back only while those inputs' frames hold them: frames are shared by identity across programs. Not for a part whose requests the run answers (phase 0's loads). Test: `a_new_process_maintains_the_cross_file_part_from_the_kept_rows`. **Measured** below |
 | 4.2 | Measure what reading the kept rows costs, against the 3.8 s full run; keep fewer relations (0099) or read lazily if it is more | **done**, below: 0.06 to 0.09 s a run |
 
-Measured 2026-11-10 on 54 of the corpus's files (`_internal`, `l1100_exceptions`, `l2055_lazy_result`), the t28 spike
+Measured 2026-11-10 on 54 of the corpus's files (three of its packages), the t28 spike
 with `RERAIL_SPIKE_PROCESS=1` (no session; the process's own caches of programs and files stay warm). P2's CPU; the
 full run is the old per-stratum cut (`RERAIL_KEPT_PART=off`). Exports equal to the full run's after every edit.
 

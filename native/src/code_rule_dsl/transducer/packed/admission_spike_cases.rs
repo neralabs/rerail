@@ -394,8 +394,8 @@ fn unequal_branch_depths_need_final_deduplication_after_active_bulk_reduction() 
 #[test]
 #[ignore = "decision experiment requires the pinned query catalog and source checkout"]
 fn pinned_catalog_sample_compares_every_pattern_without_omitting_failures() {
-    let query_root = std::path::PathBuf::from(std::env::var("TEMPO_PYTHON_SCM_QUERY_DIR").unwrap());
-    let source_root = std::path::PathBuf::from(std::env::var("TEMPO_ALL_SCM_REPOSITORY").unwrap());
+    let query_root = std::path::PathBuf::from(std::env::var("RERAIL_PACKED_PYTHON_SCM_QUERY_DIR").unwrap());
+    let source_root = std::path::PathBuf::from(std::env::var("RERAIL_PACKED_ALL_SCM_REPOSITORY").unwrap());
     let mut paths = std::fs::read_dir(query_root)
         .unwrap()
         .map(|p| p.unwrap().path())

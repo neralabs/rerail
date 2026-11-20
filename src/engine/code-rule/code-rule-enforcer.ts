@@ -20,9 +20,8 @@ import {
   type NativePackageFactsReader,
   type NativeRepositoryIndexOptions,
 } from "../native/native.js";
-import type { CodeRuleDslCatalog } from "./code-rule-dsl-catalog.js";
+import type { CodeRuleDslCatalog, CompiledCodeRuleDslEntry } from "./code-rule-dsl-catalog.js";
 import {
-  buildSteer,
   type CodeRuleEdit,
   type CodeRuleEditBatch,
   type CodeRuleAuditor,
@@ -67,7 +66,7 @@ import { physicalPath, withinCheckout } from "../catalog/checkout-control.js";
 import { SOURCE_LANGUAGES, SOURCE_NAMES, sourceLanguageOfPath, UNLISTED_TEXT_LANGUAGE } from "./code-rule-languages.js";
 import { binaryPrefix } from "./binary-prefix.js";
 import { IGNORED_DIRECTORIES } from "./ignored-directories.js";
-import { checkoutPathBoundary, SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES, sensitiveByName } from "../path-boundary.js";
+import { SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES, sensitiveByName } from "../path-boundary.js";
 
 export { SOURCE_LANGUAGES };
 
@@ -287,6 +286,8 @@ type PreparedWorkspace = {
   workspace: NativeCodeRuleDslWorkspace;
   version: string;
   provenance: readonly AuditRuleProvenance[];
+  /** The snapshot's compiled rules, whose titles a steer from this workspace names its rules by (`#steerSourceOf`). */
+  codeRules: readonly CompiledCodeRuleDslEntry[];
   /** The storage attach, settled before the workspace's first apply; true when a Git store attached (repository audits then index natively). */
   storage: Promise<boolean>;
   /** Whether a rule's finding in one file can depend on another file (`CompiledCodeRuleDslEntry.crossFile`). */
@@ -1287,7 +1288,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#workspaceEvaluations.set(workspace, emptyEvaluation());
     this.#workspacePackages.set(workspace, new Map());
     const crossFile = snapshot.codeRules.some(rule => rule.crossFile);
-    return { workspace, version: snapshot.version, provenance: snapshot.provenance, storage, crossFile };
+    return { workspace, version: snapshot.version, provenance: snapshot.provenance, codeRules: snapshot.codeRules, storage, crossFile };
   }
 
   #disposeWorkspace(workspace: NativeCodeRuleDslWorkspace): void {
@@ -2525,6 +2526,19 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#responseMode = mode;
   }
 
+  /**
+   * Where each rule of a steer comes from, as the workspace's provenance records it (its `.rerail` rules' included),
+   * with the title its document gives it: what the person's line names it by.
+   */
+  #steerSourceOf(): SteerSourceOf {
+    const provenance = this.#workspace?.provenance ?? this.#catalog.provenance();
+    const codeRules = this.#workspace?.codeRules ?? this.#catalog.snapshot().codeRules;
+    return steerSourceOf(
+      [...provenance, ...this.#catalog.snapshot().rerailRules.map(rule => rule.provenance)],
+      ruleId => codeRules.find(rule => rule.id === ruleId)?.title,
+    );
+  }
+
   async #publish(
     revision: number,
     sourceScope: readonly string[],
@@ -2533,17 +2547,21 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     trigger: SteerTrigger,
     generatedEdit = false,
   ): Promise<void> {
-    if (!this.#publishes(revision, sourceScope, mode)) return;
-    const sourceOf = steerSourceOf([...(this.#workspace?.provenance ?? this.#catalog.provenance()), ...this.#catalog.snapshot().rerailRules.map(rule => rule.provenance)]);
-    await deliverSteer(this.#steerTarget(this.#sessionId!), { revision, sourceScope, violations, trigger, sourceOf, generatedEdit });
+    const sessionId = this.#sessionId;
+    if (sessionId === undefined || !this.#steersNow(mode, revision, sourceScope)) return;
+    const sourceOf = this.#steerSourceOf();
+    await deliverSteer(this.#steerTarget(sessionId), { revision, sourceScope, violations, trigger, sourceOf, generatedEdit });
   }
 
-  /** Whether findings at `revision` for `sourceScope` steer: the audit steers, and no later revision overtook them. */
-  #publishes(revision: number, sourceScope: readonly string[], mode: AuditMode): boolean {
-    if (this.#sessionId === undefined || this.#closing || mode !== "steer") return false;
-    return sourceScope.length === 0
-      ? revision >= this.#revision
-      : sourceScope.every((path) => (this.#versions.get(path) ?? 0) <= revision);
+  /** Whether a steer goes out for `revision` of `sourceScope` in `mode`: the session is open, steering, and nothing newer came. */
+  #steersNow(mode: AuditMode, revision: number, sourceScope: readonly string[]): boolean {
+    return !this.#closing && mode === "steer" && !this.#superseded(revision, sourceScope);
+  }
+
+  /** Whether a newer revision of the edit's sources, or of the whole workspace for an edit with none, came since `revision`. */
+  #superseded(revision: number, sourceScope: readonly string[]): boolean {
+    if (sourceScope.length === 0) return revision < this.#revision;
+    return sourceScope.some((path) => (this.#versions.get(path) ?? 0) > revision);
   }
 
   /** Where this checkout's steers for `sessionId` go. */

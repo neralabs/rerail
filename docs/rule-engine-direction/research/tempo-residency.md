@@ -3,9 +3,9 @@
 The short version: Tempo has real page-allocated, uncompressed caches and real pinning, but its production Metal path still copies every tape on every evaluation. v9np can avoid that copy, but four lines in our spec currently forbid or ignore the residency design (Part D lists them).
 
 Abbreviations used below:
-- **T:** = `/Users/jeremy/orca/workspaces/scale-test-the-re-railer/tempo/`. Branch `jbarnes/scale-test-the-re-railer`, HEAD `d737fad16`. The working tree is clean (`git status` shows nothing), so everything below is committed.
-- **M:** = `/Users/jeremy/orca/workspaces/rerail/Pulling-it-all-together/native/src/`.
-- **S:** = `/Users/jeremy/orca/workspaces/rerail/Pulling-it-all-together/docs/rule-engine-direction/`.
+- **T:** = `scale-test-the-re-railer:tempo/`. Branch `scale-test-the-re-railer`, HEAD `d737fad16`. The working tree is clean (`git status` shows nothing), so everything below is committed.
+- **M:** = `Pulling-it-all-together:native/src/`.
+- **S:** = `Pulling-it-all-together:docs/rule-engine-direction/`.
 
 ---
 
@@ -281,7 +281,7 @@ Same lineage as Tempo, one generation older on the Metal side. This is from a de
 >
 > **20.9 SQL access to tapes.**
 > 1. The transducer vtab (§9) resolves demanded documents to residency handles before `xFilter` dispatch. It never `SELECT`s frames.
-> 2. The pure-SQL binding (§13) and the ast-index-spike techniques read columns through a TVF `tape_column(doc, column)` that returns a blob **pointing into the slab** (`sqlite3_result_blob64` with a no-copy destructor). A statement-scoped residency lease, held by the cursor or function auxiliary data, keeps the bytes valid for the statement's lifetime. The same applies to `source_text`.
+> 2. The pure-SQL binding (§13) and the SQL index prototype techniques read columns through a TVF `tape_column(doc, column)` that returns a blob **pointing into the slab** (`sqlite3_result_blob64` with a no-copy destructor). A statement-scoped residency lease, held by the cursor or function auxiliary data, keeps the bytes valid for the statement's lifetime. The same applies to `source_text`.
 > 3. Uncompressed tape columns are never stored in content-store rows. The captured-SQL laboratory schema is test-only.
 > 4. The FTS5 kind, term and edge indexes stay in SQLite as specified in §5. They are built from the resident columns at publication.
 >

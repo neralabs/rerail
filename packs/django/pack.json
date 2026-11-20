@@ -369,7 +369,7 @@
       "document": "rules/django-practice-get-handler-writes.rerail",
       "title": "Django practice: a GET/HEAD handler that writes rows, itself or through what it calls",
       "group": "Django practice",
-      "on": true,
+      "on": false,
       "examples": {
         "caught": {
           "path": "blog/views.py",
@@ -386,7 +386,7 @@
       "document": "rules/django-practice-host-header-without-get-host.rerail",
       "title": "Django practice: the Host or X-Forwarded-Host header read directly instead of `request.get_host()`",
       "group": "Django practice",
-      "on": true,
+      "on": false,
       "examples": {
         "caught": {
           "path": "shop/views.py",

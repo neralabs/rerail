@@ -509,9 +509,9 @@ counting scheme:
 
 | steps | change |
 | --- | --- |
-| 21, 22 | delete, then restore, `l1400_types/__init__.py` (47 importers) |
-| 23, 24 | delete, then restore, `purity.py` and `lazy_mixin.py` (51 importers each) |
-| 25, 26 | delete, then restore, the whole `l2055_lazy_result` package (24 of 78 files) |
+| 21, 22 | delete, then restore, the types package's `__init__.py` (47 importers) |
+| 23, 24 | delete, then restore, two modules with 51 importers each |
+| 25, 26 | delete, then restore, the whole lazy-result package (24 of 78 files) |
 
 **A fourth algorithm.** *Levels, checked*: levels without counts.
 - **What it keeps.** Each row keeps only its level, and every present row has a derivation from rows below it.
@@ -601,9 +601,9 @@ relation through `based`, compaction and hand-off, and with an output read back 
   | step | change | DRed | levels |
   | --- | --- | ---: | ---: |
   | 20 | an O125 edit (2 files) | 12.2 | **9.1** |
-  | 21 | delete `l1400_types/__init__.py` | 6.4 | 6.4 |
+  | 21 | delete the types package's `__init__.py` | 6.4 | 6.4 |
   | 22 | restore it | **6.1** | 7.0 |
-  | 23 | delete `purity.py`, `lazy_mixin.py` | **9.9** | 11.5 |
+  | 23 | delete the two modules with 51 importers each | **9.9** | 11.5 |
   | 24 | restore them | **10.7** | 12.8 |
   | 25 | delete a 24-file package | **10.0** | 12.3 |
   | 26 | restore it | **12.4** | 13.9 |

@@ -175,7 +175,8 @@ outside this batch.
 
 ## What the pack costs a user
 
-Measured to decide which rules the pack starts on. The decision and its basis are at the end of this section.
+Measured to decide which rules the pack starts on, with all 27 rules; the 2 that now start off for precision were
+among them. The decision and its basis are at the end of this section.
 
 **Method.** A release `rerail-engine` (`cargo build --release --manifest-path native/Cargo.toml --bin rerail-engine`)
 of `main` at `1328a4e386`, on an idle 32-vCPU, 64 GB Linux machine with nothing else running. All 27 rules in one
@@ -230,14 +231,17 @@ With the bound, all 27 rules, idle machine, 16 threads, first run / unchanged / 
 The store's first run peaks at about 1.7 times a run without one, and on the mid-size and large apps a run after an
 edit costs more with the store than without, so the product runs a pack's `.rerail` rules without a store.
 
-**Decision: every rule starts on**, in the mode README.md's table gives it (22 steer, 5 log; no `heldOff`, which is
-for a rule its upstream turns on). From the column without a store, the run the product makes: the whole pack after
-an edit of netbox, the mid-size app, takes 123 s and 4.7 GB, inside the runner's default time and memory limits, so no
-rule is one that cannot finish there; and no rule alone is costly any more (bulk-not-loop's bound removed the only
-outlier). Limits: by default a run may use half the machine's memory, so with less than about 10 GB a run over
-netbox is stopped and its rules reported as not run, and below about 16 GB a run over edx-platform. Open when this
-was written: without a store, netbox stalled at 4 threads, and a 16-thread edx-platform run reported fewer findings
-than a 4-thread one (95, most of them get-handler-writes); both are being fixed in the engine.
+**Decision: 25 of 27 rules start on**, in the mode README.md's table gives them (22 steer, 3 log; no `heldOff`, which
+is for a rule its upstream turns on). Cost turns no rule off. From the column without a store, the run the product
+makes with all 27 rules: the whole pack after an edit of netbox, the mid-size app, takes 123 s and 4.7 GB, inside the
+runner's default time and memory limits, so no rule is one that cannot finish there; and no rule alone is costly any
+more (bulk-not-loop's bound removed the only outlier). Precision turns two off: a rule starts on only when at least 90%
+of its read matches were real, and get-handler-writes (72%, 61 of 85) and host-header-without-get-host (83%, 10 of 12)
+fall below that, so they ship with `"on": false` and log when a repository turns them on. Limits: by default a run may
+use half the machine's memory, so with less than about 10 GB a run over netbox is stopped and its rules reported as
+not run, and below about 16 GB a run over edx-platform. Open when this was written: without a store, netbox stalled at
+4 threads, and a 16-thread edx-platform run reported fewer findings than a 4-thread one (95, most of them
+get-handler-writes); both are being fixed in the engine.
 
 ## Overlap with existing tools (partial)
 

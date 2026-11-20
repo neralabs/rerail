@@ -4,7 +4,7 @@ usage: python3 -I stats.py build <facts.sqlite>        all documents, from scrat
        python3 -I stats.py merge <facts.sqlite> <+|-> <doc id>...
        python3 -I stats.py check <facts.sqlite>        incremental merges equal a one-shot build
 
-This follows ast-index-spike (prior-work history index, section 2.6 and Part 3 item 15):
+This follows the SQL index prototype (prior-work history index, section 2.6 and Part 3 item 15):
 - **Small aggregates, maintained at load and persisted** (`t_kfreq` S178, `efreq` S277, `npost` per lexicon term S229).
   Statistics that lived only in process memory made a reopened store plan differently (S174, S178). Planning here
   previously ran a GROUP BY over every input column on every run.
@@ -21,7 +21,7 @@ This follows ast-index-spike (prior-work history index, section 2.6 and Part 3 i
   - values are grouped within those ranges.
 
 Tables:
-- `stat_docrange(d, lo, hi)`: document d's nodes are lo..hi (tape preorder, ast-index-spike S012).
+- `stat_docrange(d, lo, hi)`: document d's nodes are lo..hi (tape preorder, SQL index prototype S012).
 - `stat_val(tbl, col, val, n, docs, sqd)`: postings of each value of a value column (not a node id or offset). `n` is the
   corpus count, `docs` the documents holding it, and `sqd` the sum over documents of the per-document count squared.
 - `stat_col(tbl, col, rows, ndv, sq, sqd)`:

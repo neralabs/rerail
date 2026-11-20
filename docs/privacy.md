@@ -137,7 +137,9 @@ text in memory (`src/engine/secret-scrub.ts`).
   since they may be passwords.
 
 Hashes, UUIDs, lockfile integrity strings and code are kept. Secrets in unknown formats can still be stored.
-`rerail scrub` covers the database, its pre-update copy, recorded checkouts' ledgers and `daemon.log`.
+`rerail scrub` covers the database, its pre-update copy, recorded checkouts' ledgers and held steers, and `daemon.log`.
+In a records folder it may not list, it covers only the sessions the database records, and its summary names that
+folder.
 
 </details>
 
@@ -157,8 +159,15 @@ Secret-like file names match `SENSITIVE_FILE_NAMES` in `src/engine/path-boundary
 ### Permissions
 
 Rerail's files are private to your user: directories `0700`, files `0600`. Windows has no such modes: a Rerail home
-or a session records folder Rerail makes outside your profile folder gets an access list that only you, SYSTEM and
-Administrators are on.
+Rerail makes outside your profile folder, and a checkout's `.rerail\sessions` it makes there, get an access list that
+only you, SYSTEM and Administrators are on. A `.rerail\sessions` that Git, you or Rerail 0.1.4 made gets one when the
+daemon first opens a session there under which each record is its maker's alone, those already in it included but
+another account's earlier ones, which keep the list they had: an
+account you share the checkout with still records its own sessions there, but lists nothing in it and reads no one
+else's records. What a session writes in its own folder is private from its first byte. Elsewhere, such a folder loses the group's and others' read then, and
+becomes sticky where they may still add to it (`2775` becomes `3731`, `0777` `1733`, `0755` `0711`): no other account
+lists it, one you share it with still records its own sessions there, and none can rename or remove your entries. A root
+`RERAIL_STORAGE_ROOT` names keeps the access list or mode it has.
 
 <details>
 <summary>What is covered and repaired</summary>
@@ -184,7 +193,9 @@ A repository controls its own `.rerail/` folder, so this stops it redirecting yo
 the error and log; the agent continues without Rerail.
 
 Exception: a symlinked or edited `.rerail/sessions/.gitignore` is overwritten with `*`, so a committed `!*` cannot make
-`git add -A` commit your records.
+`git add -A` commit your records. One Rerail cannot overwrite stops the session's records instead. Rerail writes it
+readable by every account (`0644`), since it holds only `*`; one another account's Rerail wrote and you may not read
+is left as it is when that account also owns the `sessions` folder, and rewritten when you own the folder.
 
 </details>
 

@@ -74,7 +74,7 @@ Measured in `research/tape-v8-measurements.md` over 24.2M nodes: CPython 3.13 Li
 
 **Benefits measured against v7:**
 - **Rust random access** to (kind, parent, size, span, named): 113–490 → 23–199 ns. Random span alone: 33–364 → 13–57 ns.
-- **SQL**, using the ast-index-spike pure-SQL technique on SQLite 3.53.2:
+- **SQL**, using the SQL index prototype pure-SQL technique on SQLite 3.53.2:
   - span extraction is 2.7–3.8× faster in columns, and 5.6× interleaved (v7 6.2–9.5 s → v9 1.7–2.5 s);
   - structure queries are no faster, since v7's rec6 is already regular. Time there is dominated by which blob SQLite reloads: interleaved is about 2× faster for single-load anchors (`has`), and columns 3–4× faster for recursive re-joins (`nthChild`);
   - kind+size layout is chosen on the real anchored workload.
@@ -85,7 +85,7 @@ Measured in `research/tape-v8-measurements.md` over 24.2M nodes: CPython 3.13 Li
 
 **Blade stores exactly what tree-sitter-php stored:**
 - **The compiled-view document's tape is the plain tree-sitter-php tape of the view text.** Today nodes over synthetic placeholder segments are dropped, so directive calls have no `function` child. Skipping synthetic text becomes a matcher and evidence concern, applied through the segment map's omit flag (`SegmentMap` flags bit 2).
-- **Errors are stored as tree-sitter emits them, the same way ast-index-spike does:** ERROR nodes carry the ERROR folded code and their real span, and MISSING nodes are zero-width nodes with a MISSING folded code. The Forte primary tape keeps its lexer-error leaves, provided they are generic ERROR nodes in the same form (the ERROR code and a real span) and need no Blade-specific decoding. Any structure Blade stores must be expressible in the generic tape. No grammar-specific tables are allowed.
+- **Errors are stored as tree-sitter emits them, the same way the SQL index prototype does:** ERROR nodes carry the ERROR folded code and their real span, and MISSING nodes are zero-width nodes with a MISSING folded code. The Forte primary tape keeps its lexer-error leaves, provided they are generic ERROR nodes in the same form (the ERROR code and a real span) and need no Blade-specific decoding. Any structure Blade stores must be expressible in the generic tape. No grammar-specific tables are allowed.
 - **The view text, segment map and host errors** are a derivation sidecar keyed by (template digest, via), recomputable from the template.
 
 **Before locking:**
@@ -96,7 +96,7 @@ Measured in `research/tape-v8-measurements.md` over 24.2M nodes: CPython 3.13 Li
 
 ## 4. Documents and sidecars
 
-- **One tape per document.** A file has a primary document and zero or more derived documents (embedded programs, generated views). Each has its own v9np tape in its own grammar: the segment model (ast-index-spike S070). v5's splice into one tape was the rejected design.
+- **One tape per document.** A file has a primary document and zero or more derived documents (embedded programs, generated views). Each has its own v9np tape in its own grammar: the segment model (SQL index prototype S070). v5's splice into one tape was the rejected design.
 - **Document table:** `file_documents`, which exists today (`schema.rs:92`). Each row is `(ordinal, role, via, parent_ordinal, tape_id, source_id, source map, host errors)`.
 - **Source maps:** fixed `(doc_start, parent_start, len, flags)` triples. They are used only to normalise finding locations (§12), to apply host suppressions, and to skip synthetic segments (flag bit 2).
 - **Sidecars**, keyed by tape or template digest, optional and recomputable:
@@ -109,7 +109,7 @@ Measured in `research/tape-v8-measurements.md` over 24.2M nodes: CPython 3.13 Li
 
 Fixed now:
 
-- **5.1 Global kind codes.** Kind tokens in every index use a code space that is unique across languages, so vocabulary statistics never mix languages. ast-index-spike Option B, `lang·1024 + local`, measured −5 to −22% latency and removed foreign hits exactly. Main currently emits language-local tokens (`k{kind:04x}`, `native/src/code_rule_dsl/transducer.rs:525`). SSC's `fts5vocab` reader had to treat counts as estimates because those tokens overlap across dialects (`docs/sql-matcher-fragment-transition.md:225` on its branch).
+- **5.1 Global kind codes.** Kind tokens in every index use a code space that is unique across languages, so vocabulary statistics never mix languages. SQL index prototype Option B, `lang·1024 + local`, measured −5 to −22% latency and removed foreign hits exactly. Main currently emits language-local tokens (`k{kind:04x}`, `native/src/code_rule_dsl/transducer.rs:525`). SSC's `fts5vocab` reader had to treat counts as estimates because those tokens overlap across dialects (`docs/sql-matcher-fragment-transition.md:225` on its branch).
 - **5.2 Kind index.** Contentless FTS5 with positions equal to preorder ordinals. It provides kind frequencies per document and per file through `fts5vocab(…,'row')`, and positions through `'instance'`. Measured: a point lookup takes 0.27 ms and a workspace subset 6.6 ms. Scanning the whole vocabulary takes 348 ms, so it is forbidden at plan time.
 - **5.3 Exact specification:** `spec-indexes.md` Part 2 is normative. Part 1 inventories what exists today. In summary:
 
@@ -520,7 +520,7 @@ Residency classes:
 ### 20.9 SQL access to tapes
 
 1. The transducer vtab (§9) resolves demanded documents to residency handles before `xFilter` dispatch. It never `SELECT`s frames.
-2. The pure-SQL binding (§13) and the ast-index-spike techniques read columns through a TVF `tape_column(doc, column)` that returns a blob **pointing into the slab** (`sqlite3_result_blob64` with a no-copy destructor). A statement-scoped residency lease, held by the cursor or function auxiliary data, keeps the bytes valid for the statement's lifetime. The same applies to `source_text`.
+2. The pure-SQL binding (§13) and the SQL index prototype techniques read columns through a TVF `tape_column(doc, column)` that returns a blob **pointing into the slab** (`sqlite3_result_blob64` with a no-copy destructor). A statement-scoped residency lease, held by the cursor or function auxiliary data, keeps the bytes valid for the statement's lifetime. The same applies to `source_text`.
 3. Uncompressed tape columns are never stored in content-store rows. The captured-SQL laboratory schema is test-only.
 4. The FTS5 kind, term and edge indexes stay in SQLite as specified in §5. They are built from the resident columns at publication.
 

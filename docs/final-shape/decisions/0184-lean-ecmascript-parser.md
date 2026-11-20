@@ -31,7 +31,7 @@ tree-sitter's parse table and its cost competition).
 
 ## Prior work consulted
 
-- **ast-index-spike indexes:** the spike parsed ECMAScript with tree-sitter only. There is no lexer
+- **SQL index prototype indexes:** the spike parsed ECMAScript with tree-sitter only. There is no lexer
   or parser of its own to compare against.
 - **0163, 0169 (the lean Python parser).** **Agrees and follows:** the same crate shape, stage 1,
   keyword hash, writer and oracle. 0169's "no error recovery: one behavior" is kept as is.

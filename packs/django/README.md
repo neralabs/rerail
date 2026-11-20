@@ -54,8 +54,8 @@ independent review of each rule that tried counterexamples against it, which wer
 | `django-practice-clean-field-returns-value` | Steer | a form `clean_<field>()` that can end without returning the cleaned value | 21 (6) | 100% (21 of 21) |
 | `django-practice-modelform-clean-calls-super` | Steer | a `clean()` override on a ModelForm or model formset that never calls the parent's `clean()` | 30 (9) | 100% (30 of 30) |
 | `django-practice-function-decorator-on-method` | Steer | a view decorator put on a method without `method_decorator` | 8 (2) | 100% (8 of 8) |
-| `django-practice-get-handler-writes` | Log | a GET/HEAD handler that writes rows, itself or through what it calls | 122 (12) | 72% (61 of 85 read, a spread sample) |
-| `django-practice-host-header-without-get-host` | Log | the Host or X-Forwarded-Host header read directly instead of `request.get_host()` | 12 (5) | 83% (10 of 12) |
+| `django-practice-get-handler-writes` | Log, starts off | a GET/HEAD handler that writes rows, itself or through what it calls | 122 (12) | 72% (61 of 85 read, a spread sample) |
+| `django-practice-host-header-without-get-host` | Log, starts off | the Host or X-Forwarded-Host header read directly instead of `request.get_host()` | 12 (5) | 83% (10 of 12) |
 | `django-practice-middleware-ignores-streaming` | Steer | middleware reading `response.content` without handling streaming responses | 1 (1) | 100% (1 of 1) |
 | `django-practice-settings-runtime-assignment` | Steer | a runtime write to `django.conf.settings` | 92 (11) | 100% (92 of 92) |
 | `django-practice-settings-module-import` | Steer | an import of the project's settings module instead of `django.conf.settings` | 49 (11) | 100% (49 of 49) |
@@ -71,16 +71,18 @@ A match is real when the file holds the pattern, even if code elsewhere (a calle
 a task class) makes it harmless there; a repository that disagrees turns the rule off. A rule steers where nearly
 every read match was real in that sense. It logs where many matches do not hold the pattern, or where the pattern
 holds but the advised rewrite is often unsafe in ways one file cannot show; each Log rule's details give the reason.
+A rule starts on only when at least 90% of its read matches were real.
 
 ## Starting values and what a run costs
 
-All 27 rules start on, in the mode the table above gives them: 22 steer and 5 log. A repository or checkout can turn
-any of them off or change its mode.
+25 of 27 rules start on, in the mode the table above gives them: 22 steer and 3 log. get-handler-writes (72%) and
+host-header-without-get-host (83%) start off (`"on": false`), because their read-match precision is below 90%; they
+ship in the pack and log when turned on. A repository or checkout can turn any rule on or off or change its mode.
 
 The rules are written in `.rerail`, so they run apart from JSON rules: in the background, once the coding agent's
 writes have settled (no write for 10 seconds, or the end of its turn), and in audits and `rerail scan`. Each run reads
-every Python file of the checkout, so an edit costs a whole run. Measured with all 27 rules on a 32-core machine, 16
-threads:
+every Python file of the checkout, so an edit costs a whole run. Measured with all 27 rules on, the 2 that start off
+included (get-handler-writes is one of the four call-graph rules), on a 32-core machine, 16 threads:
 
 | App | Python files | Time | Peak memory |
 |---|--:|--:|--:|
@@ -930,6 +932,8 @@ never makes, and 24 of the 85 read could not be shown to write. Many real matche
 RFC 9110's allowance for incidental effects covers in spirit and a team may keep. The rule records where GET
 handlers write.
 
+Why it starts off: 61 of the 85 read matches (72%) were real, below the 90% a rule needs to start on.
+
 ### `django-practice-host-header-without-get-host`
 
 Rerail's own rule, not a port. It matches a load of `<x>.META["HTTP_HOST"]`, `<x>.META.get("HTTP_HOST")`,
@@ -956,6 +960,8 @@ header), edx-platform `common/djangoapps/util/cache.py` (cache key), `lms/django
 Why Log: 2 of 12 matches are diagnostics that show the raw header on purpose (an error page, a feedback email), which
 one file cannot tell from a host used to build links or keys; the message says to leave the raw read for logging or
 diagnostics.
+
+Why it starts off: 10 of the 12 read matches (83%) were real, below the 90% a rule needs to start on.
 
 ### `django-practice-middleware-ignores-streaming`
 
