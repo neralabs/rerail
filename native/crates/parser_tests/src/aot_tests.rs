@@ -1,10 +1,9 @@
 //! Tier 2's Rust (`rerail_compiler::rust_stream`, the ahead-of-time backend) against the JIT on every step of two
-//! Bitlex ladders, JSON's (`compiler/bitlex_ladder`) and `.rr`'s (`rr_syntax/bitlex_ladder`), on a probe whose words
-//! edit a node the writer's ops already have (`RETAGGED_ROOT`), and on Kotlin's grammar (`kotlin_parser/kotlin.bitlex`).
-//! Each step's Rust, in format 15 and in format 16 (decision 0434), is built by rustc with the rest of its ladder into one library, each
+//! Bitlex ladders, JSON's (`compiler/bitlex_ladder`) and `.rr`'s (`rr_syntax/bitlex_ladder`), and on probes whose words
+//! edit a node the writer's ops already have (`RETAGGED_ROOT`). Each step's Rust, in format 15 and in format 16 (decision 0434), is built by rustc with the rest of its ladder into one library, each
 //! step a module, run on the JIT's harness, and its tape compared with the JIT's byte for byte.
 
-use rerail_compiler::ladder::{Compiled, Lang, compile_step_as, documents_with, seed};
+use rerail_compiler::ladder::{Compiled, Lang, compile_step, documents_with, seed};
 use rerail_compiler::native_cpu_stream::Entry;
 use rerail_compiler::rust_stream;
 
@@ -14,23 +13,12 @@ struct Ladder {
     steps: fn() -> Vec<(String, String)>,
     alphabet: &'static [u8],
     fixed: fn() -> Vec<String>,
-    /// Sample texts of token kinds the generator has none of (`ladder::Lang::samples`).
-    samples: &'static [(&'static str, &'static [&'static str])],
-    /// Its steps compiled as a rules grammar's parser is (`ladder::compile_step_as`): Kotlin's, as `kotlin_parser`'s.
-    rules: bool,
 }
 
-/// Kotlin's comments (`kotlin_parser/kotlin.bitlex`), with the edge cases of each.
-const KOTLIN_SAMPLES: &[(&str, &[&str])] = &[
-    ("line_comment", &["// c", "//", "// a, (1) é\r", "// /* x", "// \"x"]),
-    ("multiline_comment", &["/* c */", "/**/", "/* a\n b */", "/** x */", "/* // \" */"]),
-];
-
-const LADDERS: [Ladder; 4] = [
-    Ladder { name: "json", steps: || steps(concat!(env!("CARGO_MANIFEST_DIR"), "/../compiler/bitlex_ladder")), alphabet: b"<>();=#^ \nav9~,eE-{}[]\":/*", fixed: json_fixed, samples: &[], rules: false },
-    Ladder { name: "rr", steps: || steps(concat!(env!("CARGO_MANIFEST_DIR"), "/../rr_syntax/bitlex_ladder")), alphabet: b"().,:-=<>!\"`/*#_ \naZ9~;@{}\\", fixed: Vec::new, samples: &[], rules: false },
-    Ladder { name: "kotlin", steps: || vec![("kotlin.bitlex".to_owned(), include_str!("../../kotlin_parser/kotlin.bitlex").to_owned())], alphabet: b"(){}[].,:;=<>!?+-*/\"'`$@ \naxZ09_", fixed: Vec::new, samples: KOTLIN_SAMPLES, rules: true },
-    Ladder { name: "probe", steps: || vec![("retagged-root".to_owned(), RETAGGED_ROOT.to_owned()), ("wrapped-twice".to_owned(), WRAPPED_TWICE.to_owned()), ("folded-chain".to_owned(), FOLDED_CHAIN.to_owned())], alphabet: b"();!? \nvraifus", fixed: probe_fixed, samples: &[], rules: false },
+const LADDERS: [Ladder; 3] = [
+    Ladder { name: "json", steps: || steps(concat!(env!("CARGO_MANIFEST_DIR"), "/../compiler/bitlex_ladder")), alphabet: b"<>();=#^ \nav9~,eE-{}[]\":/*", fixed: json_fixed },
+    Ladder { name: "rr", steps: || steps(concat!(env!("CARGO_MANIFEST_DIR"), "/../rr_syntax/bitlex_ladder")), alphabet: b"().,:-=<>!\"`/*#_ \naZ9~;@{}\\", fixed: Vec::new },
+    Ladder { name: "probe", steps: || vec![("retagged-root".to_owned(), RETAGGED_ROOT.to_owned()), ("wrapped-twice".to_owned(), WRAPPED_TWICE.to_owned()), ("folded-chain".to_owned(), FOLDED_CHAIN.to_owned())], alphabet: b"();!? \nvraifus", fixed: probe_fixed },
 ];
 
 /// A grammar whose words edit nodes the writer's ops already have: a `!` after the top level's lists retags the
@@ -201,10 +189,7 @@ fn build(sources: &[String]) -> Vec<Entry> {
 /// several of format 16's blocks (1,024 nodes each), where the grammar takes them so. With which hold 3,000 nodes or
 /// more.
 fn documents(c: &Compiled, name: &str, ladder: &Ladder) -> (Vec<Vec<u8>>, Vec<bool>) {
-    let mut lang = Lang::of(&c.stmts);
-    for (kind, texts) in ladder.samples {
-        lang.samples.insert((*kind).to_owned(), texts.iter().map(|t| t.as_bytes().to_vec()).collect());
-    }
+    let lang = Lang::of(&c.stmts);
     let (mut docs, _) = documents_with(&lang, seed(name), &|b| c.parser.parse(b).is_ok(), ladder.alphabet);
     docs.extend((ladder.fixed)().into_iter().map(String::into_bytes));
     let accepted: Vec<&Vec<u8>> = docs.iter().filter(|d| d.len() > 2 && c.parser.parse(d).is_ok()).collect();
@@ -260,7 +245,7 @@ fn ladder_steps_rust_tapes_are_the_jits() {
         let mut built: Vec<(String, Compiled, String, String)> = Vec::new();
         for (name, source) in (ladder.steps)().into_iter().filter(|(n, _)| pick.as_deref().is_none_or(|p| p.split(',').filter(|w| !w.is_empty()).any(|w| n.contains(w)))) {
             let t0 = std::time::Instant::now();
-            let c = compile_step_as(&name, &source, ladder.rules);
+            let c = compile_step(&name, &source);
             eprintln!("{} {name}: compiled in {:?}", ladder.name, t0.elapsed());
             let (widths, tag) = c.parser.tier2.widths_tag();
             let (w16, t16) = c.parser.sixteen().expect("a format 16 tier 2").widths_tag();

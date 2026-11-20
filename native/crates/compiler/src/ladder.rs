@@ -467,13 +467,6 @@ pub struct Compiled {
 }
 
 pub fn compile_step(name: &str, source: &str) -> Compiled {
-    compile_step_as(name, source, false)
-}
-
-/// A step compiled as a rules grammar's parser is (`kotlin_parser::compile_text`'s way, `rules`): tier 2 shaped by its
-/// rules (`Shape::Rules`), tier 1's blocks padded for the bytes before (`native_cpu_block::BACK`), the clusters by rule;
-/// else as `compile_step`.
-pub fn compile_step_as(name: &str, source: &str, rules: bool) -> Compiled {
     // `RERAIL_STEP_TIMES`: each phase's time.
     let times = std::env::var_os("RERAIL_STEP_TIMES").is_some();
     let (mut t0, mut c0) = (std::time::Instant::now(), crate::native_cpu_block::thread_cpu());
@@ -490,8 +483,7 @@ pub fn compile_step_as(name: &str, source: &str, rules: bool) -> Compiled {
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
         let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field };
-        let shape = if rules { crate::bitlex_masks::Shape::Rules } else { crate::bitlex_masks::Shape::Auto };
-        crate::bitlex_masks::compile_shaped(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols), shape).unwrap_or_else(|e| panic!("{name}: compiles: {e}"))
+        crate::bitlex_masks::compile_shaped(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols), crate::bitlex_masks::Shape::Auto).unwrap_or_else(|e| panic!("{name}: compiles: {e}"))
     };
     phase("bitlex compile");
     let text = compiled.text();
@@ -500,17 +492,9 @@ pub fn compile_step_as(name: &str, source: &str, rules: bool) -> Compiled {
         eprintln!("{name}:\n{}\n{text}", compiled.machine);
     }
     let program = crate::rir_asm::assemble(&text).unwrap_or_else(|e| panic!("{name}: assembles: {e}\n{text}"));
-    let mut native = crate::native_ir::lower(&program, 0, 0).unwrap_or_else(|e| panic!("{name}: lowers: {e:?}"));
+    let native = crate::native_ir::lower(&program, 0, 0).unwrap_or_else(|e| panic!("{name}: lowers: {e:?}"));
     phase("assemble and lower");
-    let parser = if rules {
-        for b in &mut native.block_programs {
-            b.pad = crate::native_cpu_block::BACK as u16;
-        }
-        crate::native_cpu_stream::Parser::with_cut(&native, &crate::native_cpu_clusters::by_rules(&native))
-    } else {
-        crate::native_cpu_stream::Parser::new(&native)
-    };
-    let parser = parser.unwrap_or_else(|e| panic!("{name}: Cranelift refuses: {e:?}"));
+    let parser = crate::native_cpu_stream::Parser::new(&native).unwrap_or_else(|e| panic!("{name}: Cranelift refuses: {e:?}"));
     phase("Cranelift (tier 1 and tier 2)");
     Compiled { stmts, ids, program, native, parser }
 }
