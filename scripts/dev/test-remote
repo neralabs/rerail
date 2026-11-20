@@ -127,7 +127,9 @@ def tier(host):
     base = farm.shared_base(host)
     if (base.get("guest") or {}).get("on") == "local":
         return 2
-    return 0 if (farm.health(host).get("mbps") or 0) >= FAST_MBPS else 1
+    # The best of the last hour's measurements (`mbps_best`), not the last one: load only lowers it.
+    h = farm.health(host)
+    return 0 if (h.get("mbps_best") or h.get("mbps") or 0) >= FAST_MBPS else 1
 
 
 def wait_for_guest(host):
@@ -411,7 +413,13 @@ def main(argv):
         farm.mark_down(name, "lost during a test run")
         use.release()
         slot.release()
-        here(argv, directory, f"the connection to {name} was lost", remote_only)
+        if not os.environ.get("RERAIL_TEST_REMOTE_RETRIED"):
+            # Once more through the farm, not here: this Mac is the busiest machine in it, and the
+            # lost host is asked again first (`mark_down`), so another takes the command if it is gone.
+            say(f"the connection to {name} was lost: choosing a host again")
+            os.environ["RERAIL_TEST_REMOTE_RETRIED"] = "1"
+            os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)] + ORIGINAL_ARGS)
+        here(argv, directory, f"the connection to {name} was lost again", remote_only)
     if code == 0 and fetches:
         why = fetch(host, fetches)
         if why:
@@ -421,4 +429,5 @@ def main(argv):
 
 
 if __name__ == "__main__":
+    ORIGINAL_ARGS = sys.argv[1:]  # (as given: a lost connection reruns them, `main`)
     main(sys.argv[1:])

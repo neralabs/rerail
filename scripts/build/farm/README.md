@@ -260,7 +260,9 @@ minutes a send), then slower links, then VMs on this Mac; within those, the
 most free slots, then the most spare cores. A slow link only puts a host later; it never takes it
 out ("Health"). Both figures are measured through ssh: the round trip is the least of three (each
 starts an ssh process, which a loaded Mac delays), and the throughput 32 MB through a plain pipe,
-every 10 minutes. They fall when either machine is busy, so a low one is no proof of a slow link. Each command gets its share of its host
+every 10 minutes. They fall when either machine is busy, so a low one is no proof of a slow link:
+the order uses the best throughput of the last hour (`mbps_best`). A PC's 10 MB/s link read 4.6
+to 10.5 in one afternoon, and on its latest figure it fell behind every Mac at each low one. Each command gets its share of its host
 (`farm.cpu_share`: twice the cores over the test slots) as CARGO_BUILD_JOBS, NEXTEST_TEST_THREADS
 and RUST_TEST_THREADS. A command that names Metal, sends a `--tree` (a program built here is a macOS
 one) or fetches a program back (`--fetch`, a build for this Mac) runs on a Mac only; `--os` chooses
@@ -591,10 +593,13 @@ copies cleaned. Nothing waits on one for long, and anything a host cannot do run
   host now, whatever its back-off. Until farm 33 the back-off doubled to 30 minutes and outlived
   a move: hosts that had failed all evening at home showed "unreachable" for half an hour at the
   office while ssh reached them, and agents ran their tests here (2026-11-18).
-- **Lost mid-job.** A compile whose send or run fails there runs here, and the host is marked down
-  when its connection or agent is gone, or a file could not be written there (its disk full:
-  agent code 70; the daemon then drops the agent and forgets what it sent). A test run whose ssh
-  connection drops (exit 255) runs again here.
+- **Lost mid-job.** A compile whose send or run fails there runs here. When its connection or agent
+  is gone, or a file could not be written there (its disk full: agent code 70; the daemon then
+  drops the agent and forgets what it sent), the host's record goes stale (`mark_down`): the next
+  health check probes it at once, and it is down only if that probe fails too. A test run whose
+  ssh connection drops (exit 255) chooses a host again, once, and runs here only if that one is
+  lost too. Until farm 51, one lost connection (a host at a load of 127 missing its keep-alives)
+  took the host out for a back-off and ran the command here, the busiest machine of the farm.
 - **One tree per copy.** A host holds one copy of a checkout, at the checkout's path (its warm
   target directory's paths point there), so two commands of one checkout on one host share it.
   A command finds it idle and sends its tree, or finds it running from the very tree it has (the

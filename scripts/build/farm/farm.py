@@ -23,7 +23,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 50
+VERSION = 51
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -989,6 +989,8 @@ OFF_LINK_SECONDS = 60
 # round trip is taken off its time: at 4 MB a session's start alone halved the rate seen.
 PROBE_BYTES = 32 << 20
 PROBE_SECONDS = 600
+# How long a throughput measurement counts toward the link's best figure (`mbps_best`).
+MBPS_MEMORY_SECONDS = 3600
 
 
 def config_path():
@@ -1072,15 +1074,15 @@ def network_now():
 
 
 def mark_down(name, why):
-    """Records that `name` failed in use (its agent stopped, a file could not be written there): it
-    is not used until its back-off ends, and the next health check asks again."""
+    """Records that `name` failed in use (a test run's connection lost, its agent stopped, a file
+    not written there): its health record is stale, so the next health check probes it at once, and
+    it is down only if that probe fails too (`probe`: two connections). One lost connection on a
+    host at a load of 127 had taken it out for a back-off while it answered (until farm 50)."""
     path = state("health", name)
     h = read_json(path, {})
-    failures = h.get("failures", 0) + 1
-    wait = min(DOWN_SECONDS[0] * 2 ** (failures - 1), DOWN_SECONDS[1])
-    h.update(ok=False, why=why, failures=failures, checked=time.time(), down_until=time.time() + wait, net=network_now())
+    h.update(checked=0, down_until=0, suspect=why)
     write_json(path, h)
-    log(f"{name}: down for {wait} s: {why}")
+    log(f"{name}: checked again at once: {why}")
 
 
 # Prints the host's interface an ssh connection came in on: the one holding the address it was
@@ -1110,9 +1112,10 @@ def probe(host, cfg, fell_back=False, recovered=False):
     name = host["name"]
     previous = read_json(state("health", name), {})
     h = {"checked": time.time(), "ok": False, "failures": previous.get("failures", 0),
-         "mbps": previous.get("mbps"), "mbps_at": previous.get("mbps_at", 0)}
+         "mbps": previous.get("mbps"), "mbps_at": previous.get("mbps_at", 0),
+         "mbps_seen": [s for s in previous.get("mbps_seen", []) if time.time() - s[0] < MBPS_MEMORY_SECONDS]}
     if previous.get("route") != route(name):
-        h["mbps"], h["mbps_at"] = None, 0  # another path: its throughput is not known
+        h["mbps"], h["mbps_at"], h["mbps_seen"] = None, 0, []  # another path: its throughput is not known
     # Free disk: what macOS gives an important write (AVAILABLE_JS), then statvfs's, in KB.
     available = shlex.quote(AVAILABLE_JS)
     # Linux: df alone (no purgeable space), no input to idle on (a server: never attended), the
@@ -1208,6 +1211,11 @@ def probe(host, cfg, fell_back=False, recovered=False):
         timer.cancel()
         h["mbps"] = 0 if killed else round(PROBE_BYTES / (1 << 20) / max(time.time() - started - h["rtt_ms"] / 1000, 0.01), 1)
         h["mbps_at"] = time.time()
+        h["mbps_seen"].append([h["mbps_at"], h["mbps"]])
+    # The link's figure for ordering hosts: the best of the last hour's. Load on either machine only
+    # ever lowers a measurement (a PC's 10 MB/s link read 4.6 to 10.5 in one afternoon), so one low
+    # sample put a host behind every other until the next probe.
+    h["mbps_best"] = max([s[1] for s in h["mbps_seen"]] + [h["mbps"] or 0])
     if link and arrival != link and not recovered and recover(host, arrival):
         return probe(host, cfg, fell_back=fell_back, recovered=True)
     h["route"] = route(name)
