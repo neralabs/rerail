@@ -58,7 +58,7 @@ on:
         default: ""
         type: string
       released:
-        description: "Set by a release run, which starts this run to promote what it published: <name>@<version>:next, space-separated. Leave pack and version empty"
+        description: "The versions a release published, to promote exactly those: <name>@<version>:next, space-separated. A release run sets it; copy it from an expired run to promote by hand. Leave pack and version empty"
         required: false
         default: ""
         type: string
@@ -69,7 +69,9 @@ permissions:
 # GitHub keeps one pending run per group and cancels the older one. Promotions run by hand share one group, so two never
 # move the same pack's `latest` at once, while a promotion can neither cancel a publish queued behind a release run
 # nor be cancelled by one. A release run's promotion waits for its approval, for days if testing takes that long, so
-# it is a group of its own: it holds back neither the next release nor a put-back, and none of them cancels it.
+# it is a group of its own: it holds back neither the next release nor a put-back, and none of them cancels it. It
+# therefore runs beside them once approved: each reads the dist-tags and then moves them, so two approved at once can
+# undo each other. Approve one promotion or put-back at a time and let it finish (docs/release.md, "Promoting").
 concurrency:
   group: ${{ github.event_name == 'workflow_dispatch' && (inputs.released != '' && format('release-packs-promote-{0}', github.run_id) || 'release-packs-promote') || format('release-packs-{0}', github.event.pull_request.number || github.ref) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

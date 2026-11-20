@@ -6,16 +6,18 @@ name: Release
 #
 # A `v*` tag publishes that tarball to npmjs under the dist-tag derived from the tag (releaseChannel in
 # scripts/release/dist-tags.mjs): `v1.2.3` -> next, `v1.2.3-next.N` -> next, `v1.2.3-beta.N` -> beta. Nothing a tag
-# publishes reaches `latest`: a person promotes a version there once it is tested on `next`, with the `latest` input
-# below (docs/release.md, "Promoting"). The tag must equal package.json's version, and the version must not be older
+# publishes reaches `latest` by itself: a plain version's run ends with the promote job, which waits for a person to
+# approve the `release` environment once the version is tested on `next` (docs/release.md, "Promoting"). The tag must
+# equal package.json's version, and the version must not be older
 # than core's `latest`. Merging the Release pull request makes the tag: release-pr.yml tags the version it set
 # (docs/distribution-model.md, "Release channels"). After publishing, the dist-tags job lists core's dist-tags in the
 # run summary and fails if the channel's dist-tag is not the version just published, or, for a `next` release, `next`
 # is older than `latest`.
 #
 # `workflow_dispatch` with no inputs builds and uploads the tarball as a run artifact without publishing, so a build
-# can be installed and checked by hand. With `latest`, it builds nothing and points core's `latest` dist-tag at that
-# released plain version: a newer one promotes it, an older one puts core back. It raises `next` to it as well, should
+# can be installed and checked by hand. With `latest`, for a put-back or a promotion whose approval GitHub failed after
+# 30 days, it builds nothing and points core's `latest` dist-tag at that released plain version: a newer one promotes
+# it, an older one puts core back. It raises `next` to it as well, should
 # `next` be older, so `next` never trails `latest`. It runs behind the same `release`
 # environment approval and with trusted publishing, so no npm login is needed. With `publish`, run from main, it retries
 # a release that failed before publishing: it builds main, checks and publishes it as that version behind the same
@@ -29,8 +31,8 @@ name: Release
 # Once the tarball passes the shrinkwrap check and the managed installs, the github-release job makes the tag's GitHub
 # Release, with the version's CHANGELOG.md section as its notes, beside the npm publish rather than after it: the
 # Release is this repository's, and npm being slow to publish or to serve the version can neither hold it back nor skip
-# it. A version published under `next` gets a pre-release; after a promotion or a put-back, the same job makes the
-# version the repository's latest release.
+# it. A version published under `next` gets a pre-release; after a promotion or a put-back, the promoted-release job
+# makes the version the repository's latest release.
 
 on:
   workflow_dispatch:
@@ -326,7 +328,9 @@ jobs:
   # too), so the wait holds back no other release and no put-back. Run by hand with `latest`, it points `latest` at a released plain version, newer to promote
   # it or older to put core back. It moves only a plain version this repository released (its tag exists) and npm has,
   # and `next` there too should `next` be older, so it never trails `latest`. A release run's promotion approved after a
-  # newer version reached `latest` is refused, so it never moves `latest` back. Trusted publishing, as for publish:
+  # newer version reached `latest` is refused, so it never moves `latest` back. It reads `latest` and then moves it,
+  # beside other releases' promotions and put-backs, so two approved at once can undo each other: approve one at a time
+  # and let it finish (docs/release.md, "Promoting"). Trusted publishing, as for publish:
   # core's trusted publisher on npmjs must allow `npm dist-tag` as well as `npm publish`.
   promote:
     name: Point latest at ${{ inputs.latest || needs.metadata.outputs.version }}

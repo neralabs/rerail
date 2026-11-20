@@ -121,20 +121,28 @@ Each promotion is checked once approved, so a wait of days is safe:
   people on stable would lose it. Approve core's promotion, then re-run the packs' failed job.
 - The tested bytes are what `latest` gets: promoting moves the dist-tag and rebuilds nothing.
 - Several releases can wait at once: each promotion is a run of its own, so the wait holds back no later release.
+- **Approve one promotion or put-back at a time, and let it finish before the next.** Each reads `latest` and then
+  moves it, and they run side by side once approved, so two approved together can undo each other: a promotion
+  approved alongside a put-back can move `latest` past the version just put back.
 
-GitHub fails a job left waiting 30 days for its approval. To promote then, or to put a version back, run the promotion
-by hand, behind the same approval:
+GitHub fails a job left waiting 30 days for its approval. To promote then, run the promotion by hand, behind the same
+approval. For core, name the version:
 
 ```bash
 gh workflow run release.yml --ref main -f latest=<version>
 ```
 
+For the packs, copy the `released` input from the expired **Release packs** run, so exactly what that release published
+is promoted:
+
 ```bash
-gh workflow run release-packs.yml --ref main
+gh workflow run release-packs.yml --ref main -f released="<name>@<version>:next ..."
 ```
 
-With no inputs, the packs' run promotes every released pack version not `latest` yet, less any held; with a pack and
-an older version, it puts that pack back and holds it there. A promotion by hand takes each pack's version on `main`.
+Run with no inputs, the packs' workflow instead promotes every released pack version not `latest` yet, at its version
+on `main`, less any held. That includes any later release still being tested on `next`, so check the versions its plan
+lists before approving. To put a pack back, run it with the pack's id and an older version; it holds the pack there.
+Core's put-back is the `latest` input with an older version.
 
 ### Installer plugins
 
