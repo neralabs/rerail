@@ -11,6 +11,7 @@ import { type RrBudgets, rrBudgets } from "./rr-budgets.js";
 import { type RrChildOutcome, type RrKillReason, runChild, runChildSync } from "./rr-child-process.js";
 
 export type { RrDescription, RrFinding, RrRunRequest } from "../native/native.js";
+export type { RrBudgets } from "./rr-budgets.js";
 export type { RrKillReason } from "./rr-child-process.js";
 
 /** A run of `.rerail` policies (absolute paths, or relative to this process's directory) over the checkout at `root`. */
@@ -26,7 +27,8 @@ export interface RrRun {
 
 export type RrRunOutcome =
   | { status: "completed"; findings: RrFinding[]; failures: { policy: string | null; message: string }[]; files: number; wallMs: number; peakRssBytes: number }
-  | { status: "killed"; reason: RrKillReason; wallMs: number; peakRssBytes: number }
+  /** `budgets`: what the run was given, the one of them it passed named by `reason`. */
+  | { status: "killed"; reason: RrKillReason; wallMs: number; peakRssBytes: number; budgets: RrBudgets }
   | { status: "failed"; message: string };
 
 /** The budgets of a call (`deadlineMs`: the caller's deadline), or the error an override gives. */
@@ -93,7 +95,8 @@ export async function runRerailPolicies(run: RrRun): Promise<RrRunOutcome> {
   const budget = budgets(run.deadlineMs);
   if (budget instanceof Error) return { status: "failed", message: budget.message };
   const outcome = await runChild(runRequest(run), { cwd: resolve(run.root), budgets: budget, signal: run.signal });
-  if (outcome.status !== "completed") return outcome;
+  if (outcome.status === "killed") return { ...outcome, budgets: budget };
+  if (outcome.status === "failed") return outcome;
   const { findings, failures, files } = outcome.value as RrRunResult;
   return { status: "completed", findings, failures, files, wallMs: outcome.wallMs, peakRssBytes: outcome.peakRssBytes };
 }
