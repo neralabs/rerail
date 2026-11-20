@@ -12,7 +12,7 @@
 //     deletes. A version not tagged yet is a release under way (release-pr.yml tags it before this runs), so core is
 //     left alone.
 //   - Core ranges: a pack this run releases that an older core cannot load (core.mjs: a rule held off, a rule in a
-//     language added since) has its core range raised to leave those cores out, in its package.json and in
+//     language added since, an ast rule key added since) has its core range raised to leave those cores out, in its package.json and in
 //     package-lock.json, once core is at the release that first loads it. The description lists each; a pack that needs
 //     it and is not released here is named in a warning, since nothing publishes its package.json. Only a plain
 //     >=<version> range is rewritten: a released pack with any other stops the run, to be raised by hand. A pack released here
@@ -27,7 +27,7 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, posix } from "node:path";
-import { admitsRefusingCore, changelogEntryTypeRefusal, changelogLead, changelogSection, CORE_NAME, coreBeforeFloor, coreFloor, coreTag, coreTagRefusal, heldOffRules, isOpenRange, nextCoreVersion, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages } from "./core.mjs";
+import { admitsRefusingCore, changelogEntryTypeRefusal, changelogLead, changelogSection, CORE_NAME, coreBeforeFloor, coreFloor, coreTag, coreTagRefusal, heldOffRules, isOpenRange, nextCoreVersion, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages, shippedRuleKeys } from "./core.mjs";
 import { coreChanges } from "./core-paths.mjs";
 import { packRuleChanges, packRuleNotes, packRules, releasedPackChangelog } from "./pack-changelog.mjs";
 import { changesetNotes, changesetTypeRefusal, listPacks, readChangesets, ROOT } from "./packs.mjs";
@@ -178,7 +178,7 @@ const core = versionCore();
 function packFloor(id) {
   const directory = `packs/${id}`;
   const packJson = existsSync(join(ROOT, directory, "pack.json")) ? JSON.parse(readText(`${directory}/pack.json`)) : {};
-  return coreFloor(heldOffRules(packJson), shippedLanguages(join(ROOT, directory)));
+  return coreFloor(heldOffRules(packJson), shippedLanguages(join(ROOT, directory)), shippedRuleKeys(join(ROOT, directory)));
 }
 
 /**

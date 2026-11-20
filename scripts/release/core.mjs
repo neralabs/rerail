@@ -257,11 +257,20 @@ export const HELD_OFF_SINCE = "0.1.5";
 
 /**
  * The first core release that reads each language added after 0.1.0: an older core refuses a rule document naming it.
- * Java shipped in 0.1.5; the rest come with the final-shape engine, which no release reads before 0.1.6.
+ * Java shipped in 0.1.5; the rest come with the final-shape engine, which 0.2.0 first releases.
  */
 export const LANGUAGE_SINCE = new Map([
   ["java", "0.1.5"],
-  ...["c", "cpp", "csharp", "css", "eslint-directive", "go", "html", "json", "markdown", "python-format", "rr"].map((id) => [id, "0.1.6"]),
+  ...["c", "cpp", "csharp", "css", "eslint-directive", "go", "html", "json", "markdown", "python-format", "rr"].map((id) => [id, "0.2.0"]),
+]);
+
+/**
+ * The first core release that reads each ast rule key added after 0.1.5 (`AST_RULE_KEYS` in
+ * native/src/code_rule_dsl/compile/ast_rule.rs): an older core refuses a rule document whose ast rule uses it.
+ */
+export const RULE_KEY_SINCE = new Map([
+  ["filePath", "0.2.0"],
+  ["stored", "0.2.0"],
 ]);
 
 /** The ids of the rules a parsed `pack.json` holds off. */
@@ -269,12 +278,26 @@ export function heldOffRules(packJson) {
   return (packJson?.rules ?? []).filter((rule) => rule.heldOff !== undefined).map((rule) => rule.id);
 }
 
+/** Every rule document under `<directory>/rules`, parsed. A document that is not JSON is left out: check 1 reports it. */
+function ruleDocuments(directory) {
+  const rules = join(directory, "rules");
+  if (!existsSync(rules)) return [];
+  return readdirSync(rules, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+    .flatMap((entry) => {
+      try {
+        return [JSON.parse(readFileSync(join(entry.parentPath, entry.name), "utf8"))];
+      } catch {
+        return [];
+      }
+    });
+}
+
 /**
  * Every language the rule documents under `<directory>/rules` name (a query's, a define's or a transform's
  * `language`), sorted. A document that is not JSON names none: the pack validation's check 1 reports it.
  */
 export function shippedLanguages(directory) {
-  const rules = join(directory, "rules");
   const named = new Set();
   // An array's entries are its values too, so one walk over Object.entries covers arrays and objects.
   const collect = (value) => {
@@ -284,25 +307,48 @@ export function shippedLanguages(directory) {
       else collect(child);
     }
   };
-  if (existsSync(rules)) {
-    for (const entry of readdirSync(rules, { recursive: true, withFileTypes: true })) {
-      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-      try {
-        collect(JSON.parse(readFileSync(join(entry.parentPath, entry.name), "utf8")));
-      } catch {
-        // Not JSON: check 1's to report.
-      }
-    }
-  }
+  ruleDocuments(directory).forEach(collect);
   return [...named].sort();
 }
 
 /**
- * The oldest core release that loads a pack holding the rules `heldOff` off and shipping rules in `languages`: the
- * newest of the releases that first read each. Undefined when every core loads it.
+ * The keys of RULE_KEY_SINCE that `rule`, an object of a rule document, uses as the engine reads them: `stored`, a
+ * string beside the `regex` it is about, and `filePath`, a text condition (`regex`, `notRegex` or both).
  */
-export function coreFloor(heldOff, languages) {
-  const since = [...(heldOff.length > 0 ? [HELD_OFF_SINCE] : []), ...languages.flatMap((language) => LANGUAGE_SINCE.get(language) ?? [])];
+function ruleKeysOf(rule) {
+  const condition = rule.filePath;
+  const keys = typeof condition === "object" && condition !== null && !Array.isArray(condition) ? Object.keys(condition) : [];
+  const textCondition = keys.length > 0 && keys.every((key) => key === "regex" || key === "notRegex");
+  return [...(textCondition ? ["filePath"] : []), ...(typeof rule.stored === "string" && Object.hasOwn(rule, "regex") ? ["stored"] : [])];
+}
+
+/**
+ * Every key of RULE_KEY_SINCE that the ast rules of the rule documents under `<directory>/rules` use, sorted. A
+ * utility's name is no rule key (`"utils": { "stored": { … } }` uses no `stored`); a metavariable's, the other name a
+ * document chooses, is upper case and never one. A document that is not JSON uses none: check 1 reports it.
+ */
+export function shippedRuleKeys(directory) {
+  const used = new Set();
+  // `names` is an object of `utils`: its keys are names and only its values are walked as rules.
+  const collect = (value, names) => {
+    if (typeof value !== "object" || value === null) return;
+    if (!names && !Array.isArray(value)) ruleKeysOf(value).forEach((key) => used.add(key));
+    for (const [key, child] of Object.entries(value)) collect(child, !names && !Array.isArray(value) && key === "utils");
+  };
+  for (const document of ruleDocuments(directory)) collect(document, false);
+  return [...used].sort();
+}
+
+/**
+ * The oldest core release that loads a pack holding the rules `heldOff` off and shipping rules in `languages` whose ast
+ * rules use `ruleKeys`: the newest of the releases that first read each. Undefined when every core loads it.
+ */
+export function coreFloor(heldOff, languages, ruleKeys) {
+  const since = [
+    ...(heldOff.length > 0 ? [HELD_OFF_SINCE] : []),
+    ...languages.flatMap((language) => LANGUAGE_SINCE.get(language) ?? []),
+    ...ruleKeys.flatMap((key) => RULE_KEY_SINCE.get(key) ?? []),
+  ];
   return since.sort(semver.rcompare)[0];
 }
 

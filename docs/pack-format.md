@@ -89,8 +89,9 @@ packs/<id>/
 ```
 
 - **`peerDependencies`**: the core range. A pack has no `dependencies`. A pack that ships a rule in a language core first
-  reads in a later release (`LANGUAGE_SINCE` in `scripts/release/core.mjs`: Java, 0.1.5) leaves older cores out
-  from that release on, as for `heldOff` below: they refuse the document and would drop the whole pack. Once core is at
+  reads in a later release (`LANGUAGE_SINCE` in `scripts/release/core.mjs`: Java, 0.1.5), or whose ast rule uses a key
+  core first reads in a later release (`RULE_KEY_SINCE`: `stored` and `filePath`, 0.2.0), leaves older cores out from
+  that release on, as for `heldOff` below: they refuse the document and would drop the whole pack. Once core is at
   that release the pack validation fails a range that admits them, and the Release pull request raises the range of
   each such pack it releases ([release](release.md#release-pull-request)).
 - **`files`**: the pack and its licence records. Validation material never reaches npm.

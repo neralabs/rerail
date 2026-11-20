@@ -160,6 +160,18 @@ describe.runIf(NPM_RUNS)("release-version.mjs, a released pack's core range", ()
     expect(body).not.toContain("Do not merge yet");
   });
 
+  it("raises it for a pack whose ast rule uses a key added since, and not for one with a utility named like it", () => {
+    const repo = repository();
+    const rule = (ast) => ({ mode: "steer", description: "A Python rule.", clauses: [{ forbid: { ast: { language: "python", ...ast } } }] });
+    writeRangedPack(repo, "storing", ">=0.1.0-0", { "storing-one": rule({ rule: { kind: "tuple", has: { regex: "^,$", stored: "the tape keeps the comma" } } }) });
+    writeRangedPack(repo, "naming", ">=0.1.0-0", { "naming-one": rule({ rule: { matches: "stored" }, utils: { stored: { kind: "assignment" } } }) });
+    writeLock(repo, ["storing", "naming"], ">=0.1.0-0");
+    commit(repo, "the packs");
+    releaseVersion(repo);
+    expect([rangeOf(repo, "storing"), lockedRangeOf(repo, "storing")]).toEqual([">=0.2.0-0", ">=0.2.0-0"]);
+    expect([rangeOf(repo, "naming"), lockedRangeOf(repo, "naming")]).toEqual([">=0.1.0-0", ">=0.1.0-0"]);
+  });
+
   it("changes nothing but the range in the package.json it raises", () => {
     const repo = repository();
     writeRangedPack(repo, "javaish", ">=0.1.0-0", { "javaish-one": java });
