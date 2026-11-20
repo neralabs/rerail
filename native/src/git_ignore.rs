@@ -1075,6 +1075,8 @@ pub mod tests {
     use std::cell::{Cell, RefCell};
     use std::time::{Duration, SystemTime};
 
+    // The module is test-only already; the attribute says so again here for `run_state`'s check of the engine's
+    // thread-locals, which reads only the line above each block and would take these for unlisted engine state.
     #[cfg(test)]
     thread_local! {
         /// The volume this thread's readers take in place of the one found.
