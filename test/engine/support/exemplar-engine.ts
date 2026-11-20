@@ -43,7 +43,8 @@ export function nativeRefusingExemplar(native: typeof NativeModule): typeof Nati
             if (unsupported !== undefined) throw new Error(`${unsupported.code}: ${unsupported.reason}`);
             return target.CodeRuleDslRuntime.compile(source, format, capabilities);
           };
-          return new Proxy(target.CodeRuleDslRuntime, { get: (runtime, name) => (name === "compile" ? compile : Reflect.get(runtime, name)) });
+          // The class's own `compile` cannot be replaced through a proxy (it is not configurable): shadow it instead.
+          return Object.create(target.CodeRuleDslRuntime, { compile: { value: compile } }) as typeof target.CodeRuleDslRuntime;
         },
       });
       return wrapped;

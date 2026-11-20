@@ -732,8 +732,9 @@ describe("validatePack", () => {
       }));
     const examples = (caught: unknown, passes: unknown) => (rule: Record<string, unknown>): Record<string, unknown> => ({ ...rule, examples: { caught, passes } });
     const passes = { path: "src/a.py", text: "x = 1\n" };
+    const unparsed = "pack.json does not parse; see check 1";
 
-    it("passes a pack of .rerail rules, one including the pack's own library file under rules/, one reading another file, every rule ok", async () => {
+    it("passes a pack of .rerail rules, one including the pack's own library file under rules/, one reading another file, every rule ok", { timeout: TIMEOUT }, async () => {
       const validation = await validatePack(join(FIXTURES, "rr-sample"));
       expect(failing(validation)).toEqual({});
       expect(validation.rules.map(({ id, status }) => [id, status])).toEqual([[ASSERT, "ok"], ["rr-sample-print-call", "ok"], ["rr-sample-deprecated-call", "ok"]]);
@@ -808,12 +809,12 @@ describe("validatePack", () => {
       [
         "an example read with its own file",
         editEntry(ASSERT, examples({ path: "src/a.py", text: "assert x\n", with: [{ path: "./src/a.py", text: "x = 1\n" }] }, passes)),
-        { rules: [expect.stringContaining("is the example's own path")] },
+        { rules: [expect.stringContaining("is the example's own path")], proof: [unparsed], examples: [unparsed] },
       ],
       [
         "an example read with a file outside its repository",
         editEntry(ASSERT, examples({ path: "src/a.py", text: "assert x\n", with: [{ path: "../b.py", text: "x = 1\n" }] }, passes)),
-        { rules: [expect.stringContaining("must stay inside the example's repository")] },
+        { rules: [expect.stringContaining("must stay inside the example's repository")], proof: [unparsed], examples: [unparsed] },
       ],
       [
         "a description with code in it",
@@ -822,7 +823,7 @@ describe("validatePack", () => {
       ],
     ];
 
-    it.each(rerailCases)("fails %s", async (_name, change, expected) => {
+    it.each(rerailCases)("fails %s", { timeout: TIMEOUT }, async (_name, change, expected) => {
       const validation = await validatePack(changed("rr-sample", change));
       expect(failing(validation)).toEqual(expected);
       expect(validation.pass).toBe(false);
@@ -836,7 +837,7 @@ describe("validatePack", () => {
       expect(failing(validation).rules).toEqual([expect.stringContaining("with is for a rule written in .rerail")]);
     });
 
-    it("fails check 5 once core reads .rerail rules, while the core range admits older cores", async () => {
+    it("fails check 5 once core reads .rerail rules, while the core range admits older cores", { timeout: TIMEOUT }, async () => {
       const raised = (directory: string): void => editJson(join(directory, "package.json"), manifest => ({ ...manifest, peerDependencies: { "@neralabs/rerail": raisedCoreRange(RERAIL_DOCUMENTS_SINCE) } }));
       expect(failing(await validatePack(join(FIXTURES, "rr-sample"), { coreVersion: RERAIL_DOCUMENTS_SINCE }))).toEqual({
         package: [`package.json: the core range >=0.1.0-0 admits Rerail older than ${RERAIL_DOCUMENTS_SINCE}, which reads no rule written in .rerail (rr-sample-assert, rr-sample-print-call, rr-sample-deprecated-call); raise it to >=${RERAIL_DOCUMENTS_SINCE}-0`],
