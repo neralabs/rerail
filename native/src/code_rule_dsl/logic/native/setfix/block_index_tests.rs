@@ -75,7 +75,7 @@ fn a_relations_index_holds_no_table_of_its_own() {
     let rel = InRel::from_flat(rows(n), n, vec![b'i'; 2]);
     let _ = probed(&rel, 1);
     let ix = rel.index(&[0]);
-    assert!(ix.table.is_empty() && ix.ids.is_empty() && ix.order.get().is_none(), "no table, ids or order");
+    assert!(ix.block.is_some() && ix.order.get().is_none(), "its block's index; no order");
 }
 
 /// A relation `Rel` derived of `n` rows `(id % 7, id)`, asked for an order on column 1 too, frozen into an input.
@@ -169,4 +169,23 @@ fn a_frozen_relations_dead_rows_are_its_blocks_and_the_devices() {
     let delta = unsafe { &*dev.facts.block.ptr::<rerail_blocks::relation::Relation>(dev.dead) };
     assert!(std::ptr::eq(delta.dead.as_slice(), own), "the delta reads the same words");
     assert_eq!(probed(&rel, 0), (0..n as i64).filter(|id| id % 7 == 0 && id % 5 != 0).collect::<Vec<_>>());
+}
+
+/// Decision 0450 step 5e: a derived input's order made at its first probe (one with no block index: its rows in
+/// several parts) is in its last part's block directory, as a frozen relation's are; the probe reads it there.
+#[test]
+fn an_order_made_at_a_probe_is_in_the_blocks_directory() {
+    let n = 3000;
+    let k = 2;
+    // Half the rows frozen into a segment, the rest written after it: two parts.
+    let mut rows_ = crate::code_rule_dsl::facts::rows::Rows::frozen(k, rows(n / 2), n / 2);
+    rows_.extend_from_slice(&rows(n)[n..]);
+    let rows_ = rows_.freeze(n);
+    let rel = InRel::held(rows_, n, vec![b'i'; 2], Vec::new());
+    assert!(rel.rows.in_one_block().is_none(), "two parts");
+    let before = rel.rows.last_in_block().unwrap().relation().orders().count();
+    let mut got = Vec::new();
+    rel.probe_each(&[1], &[2000], &mut |row| got.push((row(0), row(1))));
+    assert_eq!(got, vec![(2000 % 7, 2000)]);
+    assert_eq!(rel.rows.last_in_block().unwrap().relation().orders().count(), before + 1, "the order is in the directory");
 }

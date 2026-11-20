@@ -3962,7 +3962,7 @@ impl<'a> RowRef<'a> {
 /// when first probed (`ordered`: printed or not, decision 0186), so an order no probe reaches costs nothing.
 /// Over a relation whose key column `cols[lead]` ascends over its rows (`InRel::keyed`), a probe is that column's
 /// binary search, at most one row, every other key checked by the step (`keyed`): nothing is built.
-pub struct Csr { cols: Vec<usize>, table: HashTable<(u32, u32, u32)>, ids: Vec<u32>, source: bool, sorted: bool, chain: Option<usize>, lead: usize, composite: bool, keyed: bool, ordered: Option<bool>, order: OnceLock<Index>,
+pub struct Csr { cols: Vec<usize>, source: bool, sorted: bool, chain: Option<usize>, lead: usize, composite: bool, keyed: bool, ordered: Option<bool>, order: OnceLock<Index>,
                  /// A whole source's rows in one block relation, probed by that relation's own index there (its number;
                  /// decision 0325 step 5), shared with the device: no host table of its rows. Its buckets' rows are
                  /// candidates, checked against the key by the reader.
@@ -3992,84 +3992,27 @@ impl Csr {
                 if env_set!("RERAIL_SPIKE_INDEX") {
                     eprintln!("O125 order made took {:.3} ms rows={} cols={:?} of {} viewed={}", (thread_cpu() - c0) * 1e3, rel.len(), self.cols, rel.name.get().map_or("?", String::as_str), rel.viewed);
                 }
-                order
+                // Into the directory of the block that holds the relation's last rows, as a frozen relation's orders
+                // (decision 0450 step 5e): this keeps a handle to it.
+                in_block_orders(vec![order], &rel.rows, rel.k, rel.n).pop().expect("the order, in its block or as it was")
             }))),
             None => self.chain.map(|i| &rel.chains[i]),
         }
     }
-    fn build(rel: &InRel, cols: &[usize]) -> Csr {
-        // Each row's key read once (a view's values go through its source), then hashed once.
-        let (k, n) = (cols.len(), rel.len());
-        let mut keys: Vec<i64> = Vec::with_capacity(n * k);
-        for id in 0..n {
-            let row = rel.at(id);
-            keys.extend(cols.iter().map(|&c| row.at(c)));
-        }
-        let key = |id: usize| &keys[id * k..][..k];
-        let hashes: Vec<u64> = (0..n).map(|id| hash_vals(key(id).iter().copied())).collect();
-        // First pass: each key's group (its entry's `.1`, for now) and size; each row's group.
-        let mut table: HashTable<(u32, u32, u32)> = HashTable::new();
-        let mut group = vec![0u32; n];
-        let mut groups = 0u32;
-        for id in 0..n {
-            match table.find_mut(hashes[id], |&(rep, _, _)| key(rep as usize) == key(id)) {
-                Some(e) => {
-                    e.2 += 1;
-                    group[id] = e.1;
-                }
-                None => {
-                    table.insert_unique(hashes[id], (id as u32, groups, 1), |&(rep, _, _)| hashes[rep as usize]);
-                    group[id] = groups;
-                    groups += 1;
-                }
-            }
-        }
-        // Each group's start; then the rows placed by their group, in row order.
-        let mut start = vec![0u32; groups as usize];
-        for e in table.iter() {
-            start[e.1 as usize] = e.2;
-        }
-        let mut at = 0;
-        for s in &mut start {
-            let len = *s;
-            *s = at;
-            at += len;
-        }
-        for e in table.iter_mut() {
-            e.1 = start[e.1 as usize];
-        }
-        let mut ids = vec![0u32; n];
-        for id in 0..n {
-            let g = &mut start[group[id] as usize];
-            ids[*g as usize] = id as u32;
-            *g += 1;
-        }
-        // A dead row (`Rel::based`) is in no key's run: each run keeps its live rows, in order.
-        if !rel.dead.is_empty() {
-            for e in table.iter_mut() {
-                let (s, l) = (e.1 as usize, e.2 as usize);
-                let mut w = s;
-                for r in s..s + l {
-                    if !is_dead(&rel.dead, ids[r]) {
-                        ids[w] = ids[r];
-                        w += 1;
-                    }
-                }
-                e.2 = (w - s) as u32;
-            }
-        }
-        Csr { cols: cols.to_vec(), table, ids, source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None }
-    }
     /// `key` holds the values of `cols`, in order. Its rows of the key; for an index in the block (`block`), its
     /// bucket's rows, a key's candidates, which the reader checks (`exact`).
     fn get<'a>(&'a self, rel: &InRel, key: &[i64]) -> &'a [u32] {
-        if let Some((ib, i)) = &self.block {
-            return ib.relation().group(*i, key.iter().fold(rerail_blocks::SEED, |h, &v| rerail_blocks::mix(h, v)));
-        }
-        self.table.find(hash_vals(key.iter().copied()), |&(rep, _, _)| self.cols.iter().zip(key).all(|(&c, &v)| rel.at(rep as usize).at(c) == v))
-            .map_or(&[], |&(_, start, len)| &self.ids[start as usize..][..len as usize])
+        let _ = rel;
+        // Its index is its block's (decision 0450 step 5e); without one (an empty view) no row has the key.
+        self.block.as_ref().map_or(&[], |(ib, i)| ib.relation().group(*i, key.iter().fold(rerail_blocks::SEED, |h, &v| rerail_blocks::mix(h, v))))
     }
 }
+/// How a derived input's probes of a column set were answered (`InRel::index`), by path: no key, a block index found,
+/// a kept order, a keyed column, a sorted view, a source's own block index, a source's lookup, a composite source, a
+/// selective lead column, a selective chain, a block index built, a lazily sorted order of its own, a source's block
+/// index (filtered view), a view's index in a home of its own (5e), an empty view (no index).
+pub static INDEX_PATHS: [std::sync::atomic::AtomicU64; 15] = [const { std::sync::atomic::AtomicU64::new(0) }; 15];
+
 /// Frozen relations' dead rows handed to their block relation (`in_block_dead`), and those not (they lay in another
 /// block, or it had some).
 pub static DEAD_KEPT: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
@@ -4132,7 +4075,12 @@ fn in_block_orders(idx: Vec<Index>, rows: &Rows, k: usize, n: usize) -> Vec<Inde
             out.push(ix);
             continue;
         }
-        let Some((cols, printed, run)) = ix.into_one(rows, k) else { continue };
+        if ix.runs() == 0 {
+            // No rows: nothing to keep in a block.
+            out.push(ix);
+            continue;
+        }
+        let Some((cols, printed, run)) = ix.into_one(rows, k) else { unreachable!("an order of runs") };
         let given = match run.give(&ib.facts) {
             Ok(given) => given,
             Err(run) => {
@@ -4992,7 +4940,7 @@ impl InRel {
     pub fn index_detail(&self) -> (usize, usize, Vec<(Vec<usize>, usize, usize)>, Vec<(Vec<usize>, usize)>) {
         let set = self.sketches.iter().map(Sketch::bytes).sum::<usize>() + self.dead.capacity() * 8;
         let chains = self.chains.iter().map(|ix| (ix.cols.clone(), ix.runs(), ix.bytes())).collect();
-        let csr = self.idx.lock().map(|m| m.values().map(|c| (c.cols.clone(), c.ids.capacity() * 4 + c.table.capacity() * (12 + 1) + c.order.get().map_or(0, Index::bytes))).collect()).unwrap_or_default();
+        let csr = self.idx.lock().map(|m| m.values().map(|c| (c.cols.clone(), c.order.get().map_or(0, Index::bytes))).collect()).unwrap_or_default();
         (self.k, set, chains, csr)
     }
     pub fn held_bytes(&self) -> (usize, usize, usize) {
@@ -5864,6 +5812,26 @@ impl InRel {
         let i = if build { ib.own_index(&key) } else { ib.found_index(&key) }?;
         Some((ib, i))
     }
+    /// An index on `cols` of this view's rows in a block: a home of no columns and the view's row count (as the
+    /// device's view home, `Part::for_device`), its index built from each row's key read through the view. Dead rows
+    /// are in it, as in every block index; a probe skips them by their bits.
+    fn view_index(&self, cols: &[usize]) -> Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)> {
+        if self.view.is_none() || cols.is_empty() || self.len() == 0 {
+            return None;
+        }
+        assert!(cols.len() <= rerail_blocks::relation::MAX_KEY, "a view's key of {} columns", cols.len());
+        let n = self.len();
+        let home = crate::code_rule_dsl::facts::rows::Part::for_device(0, n).unwrap_or_else(|e| panic!("a view's index home of {n} rows: {e}"));
+        let ib = home.in_block(n as u32);
+        let key: Vec<u16> = cols.iter().map(|&c| c as u16).collect();
+        let hash = |i: u32| {
+            let row = self.at(i as usize);
+            cols.iter().fold(rerail_blocks::SEED, |h, &c| rerail_blocks::mix(h, row.at(c)))
+        };
+        charge(Unit::IndexEntry, n as u64);
+        let i = ib.own_index_hashed(&key, &hash).expect("room for its one index");
+        Some((ib, i))
+    }
     fn index(&self, cols: &[usize]) -> Arc<Csr> {
         let mask = cols.iter().fold(0u64, |m, &c| m | 1 << c);
         let mut idx = self.idx.lock().unwrap();
@@ -5872,39 +5840,43 @@ impl InRel {
             let _index = crate::code_rule_dsl::logic::profile::span(move || (if base { "open: index of a base input" } else { "open: index of a derived input" }).into());
             let (t0, c0) = (Instant::now(), thread_cpu());
             // No key columns: the step reads every row, not an index.
-            let empty = |source, sorted| Csr { cols: cols.to_vec(), table: HashTable::new(), ids: Vec::new(), source, sorted, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None };
+            let path = |i: usize| { INDEX_PATHS[i].fetch_add(1, AtomicOrdering::Relaxed); };
+            let empty = |source, sorted| Csr { cols: cols.to_vec(), source, sorted, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None };
             let m = if cols.is_empty() {
-                empty(false, false)
+                path(0); empty(false, false)
             } else if let Some(b) = self.block_index(cols, false) {
+                path(1);
                 // An index in the relation's block, which the device or an earlier probe built (decision 0450 R2).
                 Csr { block: Some(b), ..empty(false, false) }
             } else if let Some(i) = self.chains.iter().position(|ix| ix.answers(cols)) {
+                path(2);
                 Csr { chain: Some(i), ..empty(false, false) }
             } else if let Some(lead) = self.keyed.as_ref().and_then(|ky| cols.iter().position(|&x| x == ky.col)) {
+                path(3);
                 Csr { keyed: true, lead, ..empty(false, false) }
             } else if let (Some(v), [c]) = (&self.view, cols) && v.ids.is_none() && v.eqs.is_empty() && v.src.sorts_rows(v.cols[*c]) {
-                empty(false, true)
+                path(4); empty(false, true)
             } else if let Some(v) = self.view.as_ref().filter(|v| v.ids.is_none() && v.eqs.is_empty())
                 && let Some((ib, i)) = v.src.own_index(&cols.iter().map(|&c| v.cols[c]).collect::<Vec<_>>())
             {
                 // A whole source held as one block relation to be probed so (`held`): its own index, found or
                 // built there and shared with the device (decision 0325 step 5), not a host table or a lookup a probe.
-                Csr { block: Some((ib, i)), ..empty(false, false) }
+                path(5); Csr { block: Some((ib, i)), ..empty(false, false) }
             } else if let (Some(v), [c]) = (&self.view, cols) && v.src.indexed(v.cols[*c]) && !v.src.sorts_rows(v.cols[*c]) {
                 // (A source's lookup allocates each probe's rows; over a sorted source a filtered view builds its own.)
-                empty(true, false)
+                path(6); empty(true, false)
             } else if let Some(v) = &self.view && cols.len() > 1 && v.ids.is_none() && v.eqs.is_empty() && v.src.composite() {
                 // The source answers every key column at once (the reach index's bitmap test).
-                Csr { composite: true, ..empty(false, false) }
+                path(7); Csr { composite: true, ..empty(false, false) }
             } else if let Some((lead, sorted)) = self.lead(cols) {
                 // A key of several columns, one of them selective in the source's own index (a node column of
                 // `inside_<set>`, `node`, `name`): its candidates, checked against the other keys by the step, not a
                 // hash table of every row.
-                Csr { lead, ..empty(!sorted, sorted) }
+                path(8); Csr { lead, ..empty(!sorted, sorted) }
             } else if let Some((chain, lead)) = self.chain_lead(cols) {
                 // The same for a derived relation: one of its key columns' own chains, kept from the waves that made
                 // it, is selective, so no composite index is built.
-                Csr { chain: Some(chain), lead, ..empty(false, false) }
+                path(9); Csr { chain: Some(chain), lead, ..empty(false, false) }
             } else {
                 // `RERAIL_KEY_PRINTS` (measurement aids): `off` probes the sorted order by its rows, `hash` builds the hash
                 // table of before decision 0112's derived-input order.
@@ -5914,13 +5886,13 @@ impl InRel {
                 if let Some(b) = self.block_index(cols, true).filter(|_| mode == 0) {
                     // A derived relation's rows in their block: its index built there, the one the device finds
                     // (decision 0450 step 5), not an order or table of its own.
-                    Csr { block: Some(b), ..empty(false, false) }
+                    path(10); Csr { block: Some(b), ..empty(false, false) }
                 } else if self.view.is_none() && mode != 2 {
                     // A derived relation's rows are its own: a sorted order on the key columns (dead rows are in
                     // it, as in a kept chain; readers skip them). Its probes give whole keys, so it keeps a print a
                     // row and a probe reads prints, not rows (`runs::print_span`).
                     // It is made on its first probe (`Csr::runs`), unless `RERAIL_LAZY_ORDERS=off` (a measurement aid).
-                    let csr = Csr { ordered: Some(mode != 1), ..empty(false, false) };
+                    path(11); let csr = Csr { ordered: Some(mode != 1), ..empty(false, false) };
                     ORDERS_OPENED.fetch_add(1, AtomicOrdering::Relaxed);
                     static EAGER: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
                     if *EAGER.get_or_init(|| std::env::var("RERAIL_LAZY_ORDERS").is_ok_and(|v| v == "off")) { csr.runs(self); }
@@ -5930,10 +5902,17 @@ impl InRel {
                     && let Some(i) = ib.own_index(&cols.iter().map(|&c| v.cols[c] as u16).collect::<Vec<_>>())
                 {
                     // A whole source in one block relation: that relation's own index, found or built there.
-                    Csr { block: Some((ib, i)), ..empty(false, false) }
+                    path(12); Csr { block: Some((ib, i)), ..empty(false, false) }
+                } else if let Some(b) = self.view_index(cols) {
+                    // A view's key read once a row, its index built in a home of its own in a block (decision 0450 step
+                    // 5e): the view's rows are the tape's, so the home holds none, only the index.
+                    path(13);
+                    Csr { block: Some(b), ..empty(false, false) }
                 } else {
-                    charge(Unit::IndexEntry, self.len() as u64);
-                    Csr::build(self, cols)
+                    // A view of no rows: nothing to index. Any other has its index in a block (`view_index`).
+                    assert_eq!(self.len(), 0, "a view's index in a block of its own: none could be made");
+                    path(14);
+                    empty(false, false)
                 }
             };
             if env_set!("RERAIL_SPIKE_INDEX") {
@@ -6716,7 +6695,7 @@ fn join_rule_with(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, index
 /// that names one probes by it, and the caller presets them (`run_join_collect`).
 fn join_rule_bound(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, index: bool, pre: &[usize]) -> Result<JoinRule> {
     let conn = conn.db();
-    let unindexed = |cols: &[usize]| Arc::new(Csr { cols: cols.to_vec(), table: HashTable::new(), ids: Vec::new(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None });
+    let unindexed = |cols: &[usize]| Arc::new(Csr { cols: cols.to_vec(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None });
     let mut bound: Vec<bool> = Vec::new();
     for &s in pre {
         if bound.len() <= s { bound.resize(s + 1, false) }

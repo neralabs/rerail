@@ -1161,6 +1161,27 @@ impl InBlock {
         self.own_index_if(cols, self.rows as usize, false)
     }
 
+    /// An index on `cols` of a relation of no columns whose key values are read elsewhere (a view's home: decision
+    /// 0450 step 5e), each row's key hash `hash(i)`: found, or built now. `key` names the view's key columns, by which
+    /// it is found again.
+    pub fn own_index_hashed(&self, key: &[u16], hash: &dyn Fn(u32) -> u64) -> Option<usize> {
+        let r = self.relation();
+        if self.dead != 0 || r.base_rows != 0 || key.is_empty() || key.len() > rerail_blocks::relation::MAX_KEY {
+            return None;
+        }
+        let _g = self.facts.ix.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = r.find_index(key, self.rows) {
+            return Some(i);
+        }
+        // SAFETY: under the block's index lock; the room is reserved, then built from the hashes, before it is marked.
+        unsafe {
+            let room = r.try_reserve_index_buckets(&self.facts.block, key, self.rows, self.rows as usize)?;
+            r.build_index_hashed(&room, hash);
+            r.index_built(&room);
+            Some(room.index)
+        }
+    }
+
     fn own_index_if(&self, cols: &[u16], keys: usize, build: bool) -> Option<usize> {
         let r = self.relation();
         if self.dead != 0 || r.base_rows != 0 || cols.is_empty() || cols.len() > rerail_blocks::relation::MAX_KEY {

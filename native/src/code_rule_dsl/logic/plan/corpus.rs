@@ -6854,6 +6854,10 @@ fn run_observed(
                     crate::code_rule_dsl::prof::footprint_mb(),
                 )
             });
+            crate::code_rule_dsl::logic::profile::decision("probe paths", || {
+                let p = &crate::code_rule_dsl::logic::native::setfix::INDEX_PATHS;
+                p.iter().map(|x| x.load(std::sync::atomic::Ordering::Relaxed).to_string()).collect::<Vec<_>>().join(" ")
+            });
             crate::code_rule_dsl::logic::profile::decision("frozen orders", || {
                 let k = &crate::code_rule_dsl::logic::native::setfix::ORDERS_KEPT;
                 let at = |i: usize| k[i].load(std::sync::atomic::Ordering::Relaxed);

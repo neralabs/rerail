@@ -435,9 +435,9 @@ sort again).
 - **Found while measuring: a directory forgotten early.** A first build forgot a relation's whole directory at
   `unindex` when no `Part` but its own held it, hash indexes included. One Metal run of three then lost a whole
   chunk's findings (1,375 of 1,629). The relation's orders are now given back only at its release, as its hash
-  indexes always were. 7 of 7 runs gave 1,629 after that. **Open (R2):** some reader of a directory holds no `Part`
-  of its relation (the device's index by its number, by the sign of it), so `Part::is_unique` was no proof that no one
-  reads it. It should hold one.
+  indexes always were. 7 of 7 runs gave 1,629 after that. **Corrected after 5e:** that loss was not this change's.
+  Step 7's build (d8f645ce4), made before 5b, lost a chunk too in one Metal run of four at load 20 (1,487 findings).
+  Whether the early forget added to it is not known. The loss is open (below, step 5e).
 - hogql cold, profiling, format 15, three pairs against step 7's build each:
   - CPU, load 32-36: 83.1-84.0 B against 83.0-83.5 B. Even.
   - Metal, the final build, seven runs at load 19-24: 75.5-79.2 B, against 76.2-77.2 B for step 7 at load 24-27.
@@ -472,3 +472,24 @@ sort again).
 - Test: `a_frozen_relations_dead_rows_are_its_blocks_and_the_devices`.
 - hogql cold freezes no relation with dead rows (0 either way), so it measures no change: CPU 83.2-83.3 B against
   5c's 83.2-83.3 B at load 57-65; Metal 73.7-74.8 B, 1,629 findings in each run.
+
+## Built (2026-11-19, step 5e: an input's probes keep no table or order of their own)
+
+- How hogql's derived inputs were probed, by path (the profile's "probe paths", main phase): 109 with no key, 23 by
+  a kept order, 43 by a sorted view, 10 by a source's own block index, 61 by a source's lookup, 20 by a selective
+  lead column, 19 by a block index built, **4 by a lazily sorted order of their own and 1 by a host hash table of
+  their own**. Those last two kinds were what R5 still had on the heap. Both are gone:
+  - **A lazy order** (an input whose rows lie in several parts, so it has no block index) goes, once sorted, into the
+    directory of its last part's block, as a frozen relation's orders do (`in_block_orders`). The probe plan keeps a
+    handle.
+  - **A view's index** is built in a home of its own (`view_index`): a relation of no columns and the view's row
+    count in a block (`Part::for_device`, as the device's view home), its hash index built from each row's key read
+    through the view (`Relation::build_index_hashed`, `InBlock::own_index_hashed`). On hogql the one host table was
+    over a view of no rows. `Csr::build`, `Csr::table` and `Csr::ids` are gone: an empty view has no index.
+- What `InRel::idx` keeps is now a probe plan by column set: which path, a block index's number with the part that
+  keeps it, a kept order's number, a lead column. Nothing of the relation's data is in it.
+- Test: `an_order_made_at_a_probe_is_in_the_blocks_directory`.
+- hogql cold, profiling, format 15, load 18-23: CPU 83.2-83.9 B against 5d's 83.6-84.2 B.
+- **Open: on Metal a run can lose a whole chunk's findings.** Of 3 runs of this build, 2 lost one (1,358 and 1,487
+  findings). Of 4 runs each, alternating at the same load, step 7's build lost one (1,487) and 5d's none. It is older
+  than 5b and is not this step's. Being looked into next.

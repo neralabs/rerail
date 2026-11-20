@@ -611,6 +611,18 @@ impl Relation {
     /// # Safety
     /// `room` is this relation's, reserved and not yet built, and nothing reads it meanwhile.
     pub unsafe fn build_index(&self, room: &IndexRoom) {
+        let key = &room.key[..room.ncols];
+        // SAFETY: the caller's.
+        unsafe { self.build_index_hashed(room, &|i| key.iter().fold(crate::SEED, |h, &c| crate::mix(h, self.rows.get(i, c as usize)))) }
+    }
+
+    /// `build_index`, each row's key hash given (`hash(i)` for its row `i`: `SEED` mixed with its key's values, as
+    /// `key_hash`): for a relation whose key values are read elsewhere (a view's home of no columns, decision 0450
+    /// step 5e).
+    ///
+    /// # Safety
+    /// As `build_index`'s.
+    pub unsafe fn build_index_hashed(&self, room: &IndexRoom, hash: &dyn Fn(u32) -> u64) {
         let ix = &self.indexes.as_slice()[room.index];
         let n = room.rows_n as usize;
         // SAFETY: the caller's: the room's spans are ours to write.
@@ -620,8 +632,7 @@ impl Relation {
         };
         offs.fill(0);
         let base = self.base_rows;
-        let key = &room.key[..room.ncols];
-        let bucket: Vec<u32> = (0..n as u32).map(|i| (key.iter().fold(crate::SEED, |h, &c| crate::mix(h, self.rows.get(i, c as usize))) & room.mask) as u32).collect();
+        let bucket: Vec<u32> = (0..n as u32).map(|i| (hash(i) & room.mask) as u32).collect();
         for &b in &bucket {
             offs[b as usize + 1] += 1;
         }
