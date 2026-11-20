@@ -516,22 +516,18 @@ fn cmp_rows<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], a: u32, b: 
 
 /// A run given to its relation's block (`Relation::try_add_order`): its rows listed or a range, its fences, tags and
 /// prints, each a chunk of the block.
-pub(super) struct GivenRun {
-    pub(super) ids: Option<rerail_blocks::relation::Given>,
-    pub(super) range: Option<(u32, u32)>,
-    pub(super) fences: rerail_blocks::relation::Given,
-    pub(super) tags: rerail_blocks::relation::Given,
-    pub(super) prints: rerail_blocks::relation::Given,
-}
+pub(super) struct GivenRun(pub(super) rerail_blocks::relation::GivenOrder);
 
 impl GivenRun {
     /// The run again, its chunks its own (no directory took them).
     pub(super) fn into_run(self, facts: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>, life: crate::code_rule_dsl::facts::rows::Life) -> Run {
-        let ids = match (self.ids, self.range) {
-            (_, Some((lo, hi))) => Ids::Rows(lo, hi),
-            (g, None) => Ids::List(BlockVec::from_chunk(facts, life, g.unwrap_or_default())),
+        use rerail_blocks::relation::{GivenOrder, OrderRows};
+        let GivenOrder { rows, fences, tags, prints } = self.0;
+        let ids = match rows {
+            OrderRows::Range(lo, hi) => Ids::Rows(lo, hi),
+            OrderRows::Listed(g) => Ids::List(BlockVec::from_chunk(facts, life, g)),
         };
-        Run { ids, fences: BlockVec::from_chunk(facts, life, self.fences), tags: BlockVec::from_chunk(facts, life, self.tags), prints: BlockVec::from_chunk(facts, life, self.prints) }
+        Run { ids, fences: BlockVec::from_chunk(facts, life, fences), tags: BlockVec::from_chunk(facts, life, tags), prints: BlockVec::from_chunk(facts, life, prints) }
     }
 }
 
@@ -549,12 +545,13 @@ impl Run {
         fn take<T: rerail_blocks::Pod>(v: BlockVec<T>, facts: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>) -> rerail_blocks::relation::Given {
             v.into_chunk(facts).unwrap_or_else(|_| unreachable!("checked"))
         }
+        use rerail_blocks::relation::{GivenOrder, OrderRows};
         let Run { ids, fences, tags, prints } = self;
-        let (ids, range) = match ids {
-            Ids::List(v) => (Some(take(v, facts)), None),
-            Ids::Rows(lo, hi) => (None, Some((lo, hi))),
+        let rows = match ids {
+            Ids::List(v) => OrderRows::Listed(take(v, facts)),
+            Ids::Rows(lo, hi) => OrderRows::Range(lo, hi),
         };
-        Ok(GivenRun { ids, range, fences: take(fences, facts), tags: take(tags, facts), prints: take(prints, facts) })
+        Ok(GivenRun(GivenOrder { rows, fences: take(fences, facts), tags: take(tags, facts), prints: take(prints, facts) }))
     }
 
     /// The run order `i` of `owner`'s relation's directory is, read where it lies (borrowed: `BlockVec::shared`).

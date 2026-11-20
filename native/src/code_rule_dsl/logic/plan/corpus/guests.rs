@@ -99,7 +99,10 @@ pub(super) fn answered(v: &Version, req: &str) -> (Vec<String>, Vec<String>) {
         }
     }
     (produced, given)
-}pub(super) const DEMAND: &str = "rr_embed_req";
+}
+
+/// `embed`'s demand: a string made a tape value and parsed (decision 0431 §8), answered in the fixpoint.
+pub(super) const DEMAND: &str = "rr_embed_req";
 /// `@parse(g, x)`'s and `@splice(t, n, t2)`'s demands (decision 0058 §4, `rr::lower`).
 pub(super) const PARSE: &str = "rr_parse_req";
 pub(super) const SPLICE: &str = "rr_splice_req";

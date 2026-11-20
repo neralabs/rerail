@@ -177,10 +177,10 @@ fn stretch(pp: &mut Pp, tu: &Tu, tab: &Tab, s: &Stretch, only: Option<&HashSet<u
     for (j, t) in toks.iter().enumerate() {
         if t.is(T::LParen) {
             open.push(j);
-        } else if t.is(T::RParen) {
-            if let Some(o) = open.pop() {
-                close[o] = j as u32;
-            }
+        } else if t.is(T::RParen)
+            && let Some(o) = open.pop()
+        {
+            close[o] = j as u32;
         }
     }
     // The candidates, and each invocation's last token.
@@ -204,12 +204,12 @@ fn stretch(pp: &mut Pp, tu: &Tu, tab: &Tab, s: &Stretch, only: Option<&HashSet<u
     // The outermost: those past every earlier one's reach.
     let mut outer = Vec::new();
     let mut far: i64 = -1;
-    for j in 0..n {
-        if reach[j] != NONE {
+    for (j, &r) in reach.iter().enumerate() {
+        if r != NONE {
             if j as i64 > far {
-                outer.push((j as u32, reach[j]));
+                outer.push((j as u32, r));
             }
-            far = far.max(reach[j] as i64);
+            far = far.max(r as i64);
         }
     }
     // Each expanded alone, and merged with what follows while it asks for it.

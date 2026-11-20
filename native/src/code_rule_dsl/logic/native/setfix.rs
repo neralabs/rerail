@@ -4263,7 +4263,7 @@ fn in_block_orders(idx: Vec<Index>, rows: &Rows, k: usize, n: usize) -> Vec<Inde
         let added = {
             let _g = ib.facts.ix.lock().unwrap_or_else(|e| e.into_inner());
             // SAFETY: under the block's index lock; the chunks are the run's, in this block, written.
-            unsafe { ib.relation().try_add_order(&ib.facts.block, &key, given.ids, given.range, given.fences, given.tags, given.prints) }
+            unsafe { ib.relation().try_add_order(&ib.facts.block, &key, given.0) }
         };
         match added {
             // SAFETY: order `i` was just built in `part`'s relation's directory, which `part` keeps.

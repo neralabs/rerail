@@ -41,10 +41,13 @@ pub fn run_own() -> Option<std::sync::Arc<dyn RunOwn>> {
 
 pub type AnyArc = std::sync::Arc<dyn std::any::Any + Send + Sync>;
 
+/// The place a setting is read (its file, line and column) and the type it is read as.
+type SettingPlace = (&'static str, u32, u32, std::any::TypeId);
+
 /// A run's settings, by the place that reads each, and its own values, by type (decision 0442).
 #[derive(Default)]
 pub struct RunValues {
-    settings: parking_lot::Mutex<std::collections::HashMap<(&'static str, u32, u32, std::any::TypeId), AnyArc>>,
+    settings: parking_lot::Mutex<std::collections::HashMap<SettingPlace, AnyArc>>,
     locals: parking_lot::Mutex<std::collections::HashMap<std::any::TypeId, AnyArc>>,
 }
 
@@ -448,15 +451,17 @@ pub fn holds(job: &Option<std::sync::Arc<dyn RunOwn>>) -> bool {
     same_run && context.is_none_or(|c| CONTEXT.with(|x| x.borrow().same(c)))
 }
 
-/// A run has left this thread (a guard that put it there dropped, `RUN` back as it was): if it has ended (nothing
-/// holds it), this thread's copy of its values (`SEEN`) is dropped now, outside the copy's borrow (a value's drop may
-/// read a run). Kept, they would live until the thread next enters a run or exits, where a value's drop can find the
-/// thread's other locals gone.
+/// A run has left this thread (a guard that put it there dropped, `RUN` back as it was): unless the run back on the
+/// thread is the one it copied, this thread's copy of the run's values (`SEEN`) is dropped now, outside the copy's
+/// borrow (a value's drop may read a run). The copy lives while the thread is in the run, never after: kept, a pool
+/// thread whose job ended before its run did would hold the run's locals and its shared and machine values until it
+/// next entered a run (Q377: a test's store's connections, its database files open after the test), or until it
+/// exited, where a value's drop can find the thread's other locals gone.
 pub fn left_run() {
     let dead = SEEN
         .try_with(|seen| {
             let mut seen = seen.borrow_mut();
-            seen.run.as_ref().is_some_and(|w| w.strong_count() == 0).then(|| std::mem::take(&mut *seen))
+            (seen.run.is_some() && !seen.is_current()).then(|| std::mem::take(&mut *seen))
         })
         .ok()
         .flatten();

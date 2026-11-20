@@ -519,6 +519,16 @@ impl Store {
 }
 
 /// Analysis `A` of `v`, held by `v` (`Version::analyses`): for a reader outside a pipeline (a run's `Placed`).
+/// `v`'s twin (`Version::twin`) holding `v`'s analyses: what an analysis of `v` makes over `v` it makes over this,
+/// so the analysis, held by `v`, does not hold `v` (a cycle, which no drop ends: Q377). The analyses are shared, as
+/// they are of the same rules under the same ids (`Store::adopt`), so none is computed again; none adopted is a
+/// version made over `v` (each is made over a twin), so the twin holds none of `v` either.
+pub fn twin(v: &Arc<Version>) -> Arc<Version> {
+    let t = v.twin();
+    t.analyses().adopt(v.analyses());
+    t
+}
+
 pub fn analysis<A: Analysis>(v: &Arc<Version>) -> Result<Arc<A>> {
     let decided = RefCell::new(Vec::new());
     Cx { v, store: v.analyses(), pass: "reader", decided: &decided, asked: None }.get::<A>()

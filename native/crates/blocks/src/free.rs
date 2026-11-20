@@ -58,7 +58,7 @@ pub unsafe fn pop(base: *mut u8, heads: *const AtomicU64, class: usize) -> Optio
 /// As `pop`; the chunk is the caller's, unread by anyone else, and of `class`'s size.
 #[inline]
 pub unsafe fn push(base: *mut u8, heads: *const AtomicU64, class: usize, off: usize) {
-    debug_assert!(off != 0 && off % (1 << MIN_LOG) == 0, "a chunk at {off}");
+    debug_assert!(off != 0 && off.is_multiple_of(1 << MIN_LOG), "a chunk at {off}");
     // SAFETY: the caller's.
     let head = unsafe { &*heads.add(class) };
     let mut h = head.load(Acquire);
