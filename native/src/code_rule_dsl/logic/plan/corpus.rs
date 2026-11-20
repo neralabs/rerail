@@ -5200,9 +5200,10 @@ fn run_observed_within(
         // The others are read and hashed, whatever the index said: a file may have changed since its stat.
         let rest: Vec<usize> = (0..window.len()).filter(|i| found[*i].is_none()).collect();
         let read: Vec<Option<String>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+            // Each file in the run (`carried`): a pool thread's records are the run's (decision 0442).
             rest
                 .par_iter()
-                .map(|i| {
+                .map(crate::code_rule_dsl::logic::profile::carried("read (pool)", |i: &usize| {
                     let path = &window[*i].1;
                     let _read = crate::code_rule_dsl::logic::profile::span(|| "read".into());
                     // Held from the run's digests (decision 0300): taken here only where this window's texts are kept.
@@ -5217,7 +5218,7 @@ fn run_observed_within(
                     };
                     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, source.len() as u64);
                     Ok(Some(source))
-                })
+                }))
                 .collect::<Result<_>>()
         })?;
         let (rest, texts): (Vec<usize>, Vec<String>) = rest.into_iter().zip(read).filter_map(|(i, t)| t.map(|t| (i, t))).unzip();
