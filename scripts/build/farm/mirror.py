@@ -591,8 +591,12 @@ def connect():
             # The system's Python, whatever started this one: macOS's Local Network privacy keeps
             # another (Homebrew's) from connecting to the hosts ("No route to host").
             python = "/usr/bin/python3" if os.path.exists("/usr/bin/python3") else sys.executable
+            # The daemon is every caller's, so it keeps no caller's own log (`RERAIL_FARM_LOG`):
+            # test-mac-compiles' is in a directory it removes, and the daemon then failed every
+            # send it logged (FileNotFoundError, 2026-11-20).
+            env = {k: v for k, v in os.environ.items() if k != "RERAIL_FARM_LOG"}
             subprocess.Popen(["nice", "-n", "5", python, os.path.join(farm.SHARE, "mirror.py")], start_new_session=True,
-                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
         time.sleep(0.05)
     return None
 
