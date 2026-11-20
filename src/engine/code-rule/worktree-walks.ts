@@ -113,6 +113,11 @@ export interface WorktreeScan {
   readonly startedAt: number;
   /** Subtrees the last read could not read: a source first seen under one keeps no text unless stamped since `startedAt`. */
   readonly baselineRoots: ReadonlySet<string>;
+  /**
+   * What the last read could not read: an EPERM it looked at again and found a denial is a gap again without another look,
+   * so each read looks at the refusals the last one had no room for.
+   */
+  readonly previousErrors: readonly ScanError[];
   /** Filesystem-clock reading taken as the walk began. */
   readonly observedAt: number;
   /**
@@ -837,6 +842,7 @@ export class WorktreeWalks {
       captureChanges: previous !== undefined,
       startedAt: Math.min(...watchers.map(walk => walk.startedAt)),
       baselineRoots: this.#kept.get(root)?.findings.failedRoots ?? new Set(),
+      previousErrors: this.#kept.get(root)?.findings.errors ?? [],
       observedAt: read.observedAt,
       skip: begun.skip,
     };
