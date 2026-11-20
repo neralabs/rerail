@@ -522,6 +522,15 @@ export class CheckoutCodeRuleCatalog implements CodeRuleDslCatalog {
   }
 }
 
+/**
+ * The build of `entry`'s catalog an ask can wait for: the one under way, unless it was asked ahead and this ask is a
+ * call's, which builds its own so the rules it needs move to the line of calls (`CompiledRuleCache.compileOffThread`).
+ */
+function joinedBuild(entry: CheckoutEntry, ahead: boolean): Promise<void> | undefined {
+  const running = entry.building;
+  return running !== undefined && (ahead || !running.ahead) ? running.done : undefined;
+}
+
 /** Whether a checkout may run rules: `ok` only when it is recorded, effectively started, and its repository set up. */
 export type CheckoutEligibility = "ok" | "stopped" | "not-set-up" | "unrecorded";
 
@@ -535,6 +544,8 @@ export interface ConversationRuleSource {
 
 interface CheckoutEntry {
   readonly root: string;
+  /** The build of its catalog off the thread under way (`prepare`), and whether it was asked ahead of any call. */
+  building?: { readonly ahead: boolean; readonly done: Promise<void> } | undefined;
   location: RepositoryIdentityLocation | undefined;
   checkout: CheckoutContext | undefined;
   parents: readonly string[];
@@ -633,9 +644,22 @@ export class CheckoutCatalogs {
     if (this.#closed) return;
     const entry = this.#entry(root);
     if (entry.catalog !== undefined) return;
-    const built = await CheckoutCodeRuleCatalog.built(this.#sourceOf(entry), this.#capabilities, ahead);
-    // Another ask may have built it meanwhile: the first one built stays, the one every lane of the checkout holds.
-    entry.catalog ??= built;
+    await (joinedBuild(entry, ahead) ?? this.#build(entry, ahead));
+  }
+
+  /** `entry`'s catalog built off the thread; while it builds, an ask of the same kind joins it (`joinedBuild`). */
+  async #build(entry: CheckoutEntry, ahead: boolean): Promise<void> {
+    const done = CheckoutCodeRuleCatalog.built(this.#sourceOf(entry), this.#capabilities, ahead).then(built => {
+      // Another ask may have built it meanwhile: the first one built stays, the one every lane of the checkout holds.
+      entry.catalog ??= built;
+    });
+    const building = { ahead, done };
+    entry.building = building;
+    try {
+      await done;
+    } finally {
+      if (entry.building === building) entry.building = undefined;
+    }
   }
 
   /**

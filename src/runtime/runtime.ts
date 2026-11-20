@@ -791,13 +791,11 @@ export type IdleClose =
   | { readonly kind: "ended" };
 
 /**
- * Whether the session of `state` records its rule coverage now: published (unpublished sessions have no session row
- * yet; the session-start ingest records coverage once they do), not closed, and with its evaluator open or failed. While
- * the evaluator opens, the starting checkout's rules build off the daemon's thread; reading them here would build them
- * on it, so the coverage waits for the open, which records it.
+ * Whether the session of `state` records its rule coverage: published (unpublished sessions have no session row yet;
+ * the session-start ingest records coverage once they do) and not closed.
  */
 function recordsCoverage(state: RuntimeSessionState | undefined): state is RuntimeSessionState {
-  return state !== undefined && !state.closed && state.ownerClaim !== undefined && !state.codeRuleOpening;
+  return state !== undefined && !state.closed && state.ownerClaim !== undefined;
 }
 
 /** The bridge option that resumes the session's walks where `suspension` left them; none for a fresh open. */
@@ -1228,7 +1226,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       const sourceSignature = this.#sessions.get(sessionId)?.ruleSync?.sourceSignature;
       const deliveries = await this.#ingestOrDropOwed(event);
       if (event.kind !== "assistant-delta" || event.final
-          || sourceSignature !== this.#sessions.get(sessionId)?.ruleSync?.sourceSignature) this.recordRuleCoverage(sessionId);
+          || sourceSignature !== this.#sessions.get(sessionId)?.ruleSync?.sourceSignature) {
+        await this.#sessionRulesBuilt(sessionId);
+        this.recordRuleCoverage(sessionId);
+      }
       return deliveries;
     });
   }
@@ -1948,6 +1949,18 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     }
   }
 
+  /**
+   * Settles once the rules of the session's checkout are built, compiled off the daemon's thread (`CheckoutCatalogs.prepare`):
+   * at once after the first time. The coverage this event records then reads them as built, and the answer that waits for
+   * it names the session's rules as before, while every other session's events run.
+   */
+  async #sessionRulesBuilt(sessionId: string): Promise<void> {
+    const state = this.#sessions.get(sessionId);
+    if (state === undefined || state.closed) return;
+    // A build that fails here is the coverage's to report, as it builds the rules itself then.
+    await this.#catalogs.prepare(state.checkout.root).catch(() => undefined);
+  }
+
   /** Report loaded sources, never refresh enforcement for presentation metadata. */
   recordRuleCoverage(sessionId: string): void {
     const state = this.#sessions.get(sessionId);
@@ -2163,8 +2176,6 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         return undefined;
       }
       opened.codeRuleReady = true;
-      // Held while the rules were built off the daemon's thread (`recordsCoverage`), the coverage is recorded now.
-      this.recordRuleCoverage(session.sessionId);
       if (this.#deliverBackground !== undefined) {
         // Delivery removes entries from the list, so iterate a snapshot.
         const pendingSteerSnapshot = [...opened.pendingSteers];

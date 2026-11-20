@@ -255,7 +255,7 @@ describe("a session's first edit in a started repository kept inside its folder"
 });
 
 describe("a session that opens", () => {
-  it("compiles none of its own repository's rules on the daemon's thread, and records its rule coverage once they are open", async () => {
+  it("compiles none of its own repository's rules on the daemon's thread, and records their count as its start is answered", async () => {
     const root = await realpath(await temporaryDirectory({ started: false }));
     const databasePath = join(root, "rerail.sqlite");
     const folder = await repository(join(root, "session"));
@@ -267,11 +267,12 @@ describe("a session that opens", () => {
       compiles.onThread = 0;
       compiles.offThreadIds.length = 0;
       await runtime.ingest({ kind: "session-start", eventId: "start", session });
-      await runtime.codeRulesOpened(session.sessionId);
       expect({ onThread: compiles.onThread, offThread: compiles.offThreadIds.includes("rcopen-needle") }).toEqual({ onThread: 0, offThread: true });
       const coverage = sessionDatabaseQuery<{ payload: string }>(root, "SELECT payload_json AS payload FROM events WHERE kind = 'rule-coverage'")
         .map(row => (JSON.parse(row.payload) as { activeRuleCount: number }).activeRuleCount);
       expect(coverage).toEqual([1]);
+      await runtime.codeRulesOpened(session.sessionId);
+      expect(compiles.onThread).toBe(0);
     } finally {
       await runtime.dispose();
     }
