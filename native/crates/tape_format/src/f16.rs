@@ -638,6 +638,18 @@ pub struct Finished {
 
 impl Written {
     /// Its home's bytes: the tape, then its presence.
+    /// Its bytes, where it owns them (a writer's tape, not a placed one): for the writer to write the next tape in
+    /// (`ops::Writer::recycle`).
+    pub fn into_own(self) -> Option<Vec<u8>> {
+        let home = match self {
+            Written::F16(t) => t.buf,
+            Written::F16Z(t) => t.buf,
+        };
+        match home {
+            crate::home::Home::Own(v) => Some(v),
+            crate::home::Home::Placed(_) => None,
+        }
+    }
     pub fn extent(&self) -> &[u8] {
         match self {
             Written::F16(t) => t.extent(),
@@ -789,6 +801,13 @@ pub(crate) trait WriterOps: Sized {
 
 macro_rules! writer_ops {
     ($t:ty) => {
+        writer_ops!($t, |w: $t| <$t>::finish(w));
+    };
+    // `finish` through `&mut`: a writer used again (`ops::Writer::begin`).
+    ($t:ty, again) => {
+        writer_ops!($t, |mut w: $t| <$t>::finish(&mut w));
+    };
+    ($t:ty, $finish:expr) => {
         impl WriterOps for $t {
             fn open(&mut self, number: u32, start: u64) -> usize {
                 <$t>::open(self, number, start)
@@ -809,12 +828,12 @@ macro_rules! writer_ops {
                 <$t>::set_start(self, i, start)
             }
             fn finish(self) -> Result<Finished, String> {
-                <$t>::finish(self)
+                ($finish)(self)
             }
         }
     };
 }
-writer_ops!(Writer);
+writer_ops!(Writer, again);
 #[cfg(any(test, feature = "reference"))]
 writer_ops!(reference::Writer<'_>);
 #[cfg(all(test, target_os = "macos"))]
@@ -2515,6 +2534,80 @@ mod tests {
     #[test]
     fn the_clif_ops_write_the_references_tape() {
         writes_the_references_tape(|lang, source, z, blocks, nodes| Writer::new(lang, source, 3, z, blocks, nodes / 3));
+    }
+
+    /// One writer, used again for every case of `writes_the_references_tape` in turn (`ops::Writer::begin`): its
+    /// parts kept from the document before (16 and 16z, larger and smaller, with a presence a block and without),
+    /// each tape and presence the reference writer's. A byte the ops read before they write shows, as `begin` fills
+    /// every part kept with `FRESH` in tests.
+    #[test]
+    fn a_writer_used_again_writes_the_references_tape() {
+        struct Again {
+            w: Option<Writer>,
+            home: std::rc::Rc<std::cell::RefCell<Option<Writer>>>,
+        }
+        impl WriterOps for Again {
+            fn open(&mut self, number: u32, start: u64) -> usize {
+                self.w.as_mut().unwrap().open(number, start)
+            }
+            fn close(&mut self, end: u64) {
+                self.w.as_mut().unwrap().close(end)
+            }
+            fn leaf(&mut self, number: u32, start: u64, end: u64) -> usize {
+                self.w.as_mut().unwrap().leaf(number, start, end)
+            }
+            fn commit(&mut self) {
+                self.w.as_mut().unwrap().commit()
+            }
+            fn retag(&mut self, i: usize, number: u32) {
+                self.w.as_mut().unwrap().retag(i, number)
+            }
+            fn set_start(&mut self, i: usize, start: u64) {
+                self.w.as_mut().unwrap().set_start(i, start)
+            }
+            fn finish(mut self) -> Result<Finished, String> {
+                let mut w = self.w.take().unwrap();
+                let f = Writer::finish(&mut w);
+                *self.home.borrow_mut() = Some(w);
+                f
+            }
+        }
+        let home = std::rc::Rc::new(std::cell::RefCell::new(None::<Writer>));
+        let used = std::cell::Cell::new(0);
+        writes_the_references_tape(|lang, source, z, blocks, nodes| {
+            let w = match home.borrow_mut().take() {
+                Some(mut w) => {
+                    used.set(used.get() + 1);
+                    w.begin(lang, source, 3, z, blocks, nodes / 3);
+                    w
+                }
+                None => Writer::new(lang, source, 3, z, blocks, nodes / 3),
+            };
+            Again { w: Some(w), home: home.clone() }
+        });
+        assert!(used.get() > 50, "the writer used again: {} times", used.get());
+    }
+
+    /// A tape given back (`ops::Writer::recycle`) is the next document's room: the next tape is written in it, in
+    /// place, and is the tape a new writer writes.
+    #[test]
+    fn a_tape_given_back_is_the_next_tapes_room() {
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k % 300, field: k % 7, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let source = source_of(pos + 2);
+        let mut w = Writer::new(&lang, &source, 0, false, true, nodes.len());
+        by_ops(&mut w, &nodes, 1);
+        let first = Writer::finish(&mut w).expect("the first tape").tape;
+        let want = first.extent().to_vec();
+        let at = first.extent().as_ptr();
+        w.recycle(first);
+        w.begin(&lang, &source, 0, false, true, nodes.len());
+        by_ops(&mut w, &nodes, 1);
+        let again = Writer::finish(&mut w).expect("the second tape").tape;
+        assert_eq!(again.extent(), &want[..], "the tape written in the room given back");
+        assert_eq!(again.extent().as_ptr(), at, "the tape is the room given back");
     }
 
     /// Decision 0434 §6, R15: the writer's ops compiled by the JIT write the reference writer's tape and presence:

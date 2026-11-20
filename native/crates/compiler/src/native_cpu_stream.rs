@@ -8086,13 +8086,13 @@ impl CompiledStream {
     /// `Parser::image16` over tier 1's run `tier1` (a test's), by this tier 2, compiled to write format 16.
     #[cfg(test)]
     pub fn image16_on(&self, bytes: &[u8], tier1: &crate::block::BlockRun, lang: &rerail_tape_format::f16::Lang, numbers: &Numbers, z: bool) -> Result<rerail_tape_format::f16::Written, String> {
-        self.write16(self.tokens(self.records_of(tier1), bytes.len()), bytes, lang, numbers, z, |tape| self.run_raw(bytes, tier1, tape))
+        self.write16(&mut rerail_tape_format::f16::Writer::empty(), self.tokens(self.records_of(tier1), bytes.len()), bytes, lang, numbers, z, |tape| self.run_raw(bytes, tier1, tape))
     }
 
     /// A format 16 run of `source` (`Parser::image16`): the writer made and its room reserved for the tape's nodes and
     /// a guess of the depth, then `call` on the tape that carries it; again with the bound's room where a part was
     /// full (the open nodes past the guess) or the call overflowed tier 2's own room.
-    fn write16(&self, tokens: usize, source: &[u8], lang: &rerail_tape_format::f16::Lang, numbers: &Numbers, z: bool, mut call: impl FnMut(&mut Tape) -> u64) -> Result<rerail_tape_format::f16::Written, String> {
+    fn write16(&self, w: &mut rerail_tape_format::f16::Writer, tokens: usize, source: &[u8], lang: &rerail_tape_format::f16::Lang, numbers: &Numbers, z: bool, mut call: impl FnMut(&mut Tape) -> u64) -> Result<rerail_tape_format::f16::Written, String> {
         use rerail_clif::writer::{fail, part};
         if !self.sixteen {
             return Err("a tier 2 compiled for format 15".into());
@@ -8102,7 +8102,7 @@ impl CompiledStream {
         loop {
             let nodes = tape.room_nodes();
             // With each block's presence, as every other producer's writer (decision 0434 §4, step 6).
-            let mut w = rerail_tape_format::f16::Writer::new(lang, source, self.tag, z, true, nodes);
+            w.begin(lang, source, self.tag, z, true, nodes);
             w.reserve_run(nodes, depth.min(nodes));
             tape.writer = w.state_address();
             tape.numbers = numbers.0.as_ptr();
@@ -8489,11 +8489,18 @@ impl Parser {
     /// guess of the depth; a run that found a part full (the open nodes past the guess, or tier 2's own room past
     /// its guess) runs again with the bound's room. `Err` for a file tier 2 refuses, or a failure of the ops.
     pub fn image16(&self, bytes: &[u8], lang: &rerail_tape_format::f16::Lang, numbers: &Numbers, z: bool) -> Result<rerail_tape_format::f16::Written, String> {
+        self.image16_in(&mut rerail_tape_format::f16::Writer::empty(), bytes, lang, numbers, z)
+    }
+
+    /// `image16` in `w`, a writer the caller keeps from one document to the next (`f16::Writer::begin`), as simdjson's
+    /// caller keeps its parser: no room made or zeroed for a document no larger than one before. A tape given back
+    /// (`f16::Writer::recycle`) is the next one's room.
+    pub fn image16_in(&self, w: &mut rerail_tape_format::f16::Writer, bytes: &[u8], lang: &rerail_tape_format::f16::Lang, numbers: &Numbers, z: bool) -> Result<rerail_tape_format::f16::Written, String> {
         let t2 = self.sixteen().ok_or("no format 16 tier 2 for this parser")?;
         let mut batch = crate::native_cpu_block::Batch::new(&self.tier1, &[bytes]);
         batch.call(&self.tier1);
         let tokens = t2.tokens(self.stream(&batch, t2.starts).1, bytes.len());
-        t2.write16(tokens, bytes, lang, numbers, z, |tape| self.words_raw(t2, &batch, tape))
+        t2.write16(w, tokens, bytes, lang, numbers, z, |tape| self.words_raw(t2, &batch, tape))
     }
 }
 

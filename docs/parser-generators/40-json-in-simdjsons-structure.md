@@ -593,6 +593,21 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 35, done: one writer from one document to the next (decision 0480)
+
+The first of step 34's three changes. Tier 2's format 16 run now writes into a writer the caller keeps, as simdjson's
+caller keeps its parser (`Parser::image16_in`). `Writer::begin` keeps each part's buffer and zeroes no room. Only the
+presence's words, and in 16z the buckets and the LZ4 tables, are set for each document. A tape given back
+(`Writer::recycle`) is the next one's room.
+
+| File | A writer a document | One writer | simdjson |
+|---|---:|---:|---:|
+| `twitter.json`, instructions a byte | 59.9 | 48.7 | 5.8 |
+| `numbers.json` | 56.2 | 44.6 | 14.2 |
+
+Ours against simdjson's time: 13.5× → 9.4× on `twitter.json`. Of what is left on `twitter.json`, in a profile: the
+writer's ops about 66%, the walk (`r0`) 16%, the newline index 13%. The zeroing is gone.
+
 ## Step 34, measured: the simdjson form end to end against simdjson (order item 4)
 
 `json_tests::simdjson_form_against_simdjson` times both on simdjson's own inputs:

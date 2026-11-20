@@ -450,16 +450,25 @@ fn simdjson_form_against_simdjson() {
         let numbers = aot.parser.sixteen().expect("a format 16 tier 2").numbers(&lang);
         let want = jit.parser.image16(f, &lang, &numbers, false).map(|w| w.extent().to_vec()).expect("the JIT's format 16 run");
         assert_eq!(aot.parser.image16(f, &lang, &numbers, false).map(|w| w.extent().to_vec()).ok(), Some(want), "{name}: the Rust's tape is the JIT's");
+        // Ours as simdjson's caller runs simdjson: one writer, kept from one document to the next (simdjson's parser is
+        // kept by `structurals`), each tape given back as the next one's room.
+        let mut w = rerail_tape_format::f16::Writer::empty();
+        let mut ours = || {
+            let t = aot.parser.image16_in(&mut w, f, &lang, &numbers, false).expect("parses");
+            w.recycle(std::hint::black_box(t));
+        };
         // `RERAIL_SPIN`: ours alone, for that many seconds, for a profiler (the process's id printed first).
         if let Some(secs) = std::env::var("RERAIL_SPIN").ok().and_then(|v| v.parse::<u64>().ok()) {
             eprintln!("pid {}", std::process::id());
             let until = std::time::Instant::now() + std::time::Duration::from_secs(secs);
             while std::time::Instant::now() < until {
-                std::hint::black_box(aot.parser.image16(f, &lang, &numbers, false).expect("parses"));
+                ours();
             }
             return;
         }
-        let (oi, on) = measure(&mut || {
+        let (oi, on) = measure(&mut ours);
+        // And with a writer made for each document, as `image16` makes one.
+        let (fi, _) = measure(&mut || {
             std::hint::black_box(aot.parser.image16(f, &lang, &numbers, false).expect("parses"));
         });
         let (si, sn) = measure(&mut || {
@@ -476,6 +485,7 @@ fn simdjson_form_against_simdjson() {
         });
         let b = f.len() as f64;
         println!("{name}\t{}\t{:.2}\t{:.2}\t{:.2}\t{:.2}\t{:.2}\t{:.2}", f.len(), oi / b, si / b, b / on, b / sn, oi / si, on / sn);
+        println!("  of ours, ins a byte: a writer made for each document {:.2}", fi / b);
         println!("  of ours, ins a byte: tier 1 {:.2} ({:.2} ns), the batch made and tier 1 {:.2} ({:.2} ns), the rest {:.2} ({:.2} ns)", t1i / b, t1n / b, bi / b, bn / b, (oi - bi) / b, (on - bn) / b);
     }
 }

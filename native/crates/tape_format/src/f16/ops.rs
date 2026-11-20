@@ -76,6 +76,9 @@ pub struct Writer {
     presence_words: (usize, usize),
     keep_blocks: bool,
     z: bool,
+    /// The tape `finish` gave out: its buffer's address and the bytes of it written (its length before it was cut to
+    /// the tape's), which `recycle` takes back as they are.
+    given: (usize, usize),
     /// A part held at its capacity (a test's: the device's region, which the host does not grow).
     #[cfg(test)]
     fixed: Option<(u32, u64)>,
@@ -89,6 +92,21 @@ impl Writer {
     /// presence where `blocks`. Its parts' room is reserved for `nodes` nodes, their side lists' usual share and the
     /// source's newline index: more nodes grow them.
     pub fn new(lang: &Lang, source: &[u8], tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
+        let mut w = Writer::empty();
+        w.begin(lang, source, tag, z, blocks, nodes);
+        w
+    }
+
+    /// A writer of no document yet, its parts empty: `begin` starts each.
+    pub fn empty() -> Self {
+        Writer { state: Box::default(), parts: Default::default(), presence_words: (0, 0), keep_blocks: false, z: false, given: (0, 0), #[cfg(test)] fixed: None, #[cfg(test)] jit: None }
+    }
+
+    /// The next document, in this writer: as `new`, its parts' buffers kept from the documents before (each grown only
+    /// where it is short, so a writer used again zeroes no room), as simdjson's parser keeps its tape from one document to
+    /// the next. A buffer's bytes are the last document's: the ops write each byte before they read it (in tests every
+    /// part kept is filled with `FRESH`, so a byte read before it is written shows).
+    pub fn begin(&mut self, lang: &Lang, source: &[u8], tag: u8, z: bool, blocks: bool, nodes: usize) {
         let source_len = source.len() as u64;
         let wd = lang.widths;
         let cw = bytes_for(source_len);
@@ -122,7 +140,6 @@ impl Writer {
         let buckets = (4 * count).next_power_of_two().max(64);
         state.zbuckets = buckets as u32;
         let stride = state.stride as usize;
-        let mut parts: [Vec<u8>; part::COUNT] = Default::default();
         let mut lens = [0u64; part::COUNT];
         (lens[part::KINDS as usize], lens[part::PRESENCE as usize], lens[part::LINES as usize]) = (kinds.len() as u64, words as u64, lines.len() as u64);
         if z {
@@ -153,20 +170,51 @@ impl Writer {
             if z { w::LZ_TABLES as usize + 8 } else { 8 },
         ];
         // The kinds' table and the newline index are their parts, made where they are computed.
-        parts[part::KINDS as usize] = kinds;
-        parts[part::LINES as usize] = lines;
-        for (buf, &cap) in parts.iter_mut().zip(&caps) {
-            buf.resize(cap, 0);
+        self.parts[part::KINDS as usize] = kinds;
+        self.parts[part::LINES as usize] = lines;
+        for (k, (buf, &cap)) in self.parts.iter_mut().zip(&caps).enumerate() {
+            // Kept from the document before; in tests made `FRESH`, as a byte the ops read before they write it shows.
+            #[cfg(test)]
+            if k as u32 != part::KINDS && k as u32 != part::LINES {
+                buf.fill(FRESH);
+            }
+            let _ = k;
+            if buf.len() < cap {
+                buf.resize(cap, if cfg!(test) { FRESH } else { 0 });
+            }
         }
-        parts[part::OUT as usize].fill(FRESH);
-        parts[part::SEEN as usize].fill(0xff);
-        let mut wr = Writer { state: Box::new(State::default()), parts, presence_words: (kind_words, field_words), keep_blocks: blocks, z, #[cfg(test)] fixed: None, #[cfg(test)] jit: None };
+        // What the ops read before they write: the presence's words (each node's bits are or-ed in), and in 16z the
+        // seen pieces' buckets (empty) and the LZ4 tables.
+        self.parts[part::PRESENCE as usize][..words * (1 + if blocks { count + 1 } else { 0 })].fill(0);
+        if z {
+            self.parts[part::SEEN as usize][..4 * buckets].fill(0xff);
+            self.parts[part::LZ as usize][..w::LZ_TABLES as usize].fill(0);
+        }
+        (self.presence_words, self.keep_blocks, self.z) = ((kind_words, field_words), blocks, z);
+        #[cfg(test)]
+        {
+            self.fixed = None;
+        }
         for (k, &len) in lens.iter().enumerate() {
-            *wr.part_mut(&mut state, k) = Part { at: 0, cap: 0, len };
+            *self.part_mut(&mut state, k) = Part { at: 0, cap: 0, len };
         }
-        wr.state = state;
-        wr.bind();
-        wr
+        self.state = state;
+        self.bind();
+    }
+
+    /// A tape this writer finished, given back: its bytes are the next document's room (`begin` keeps them), so a writer
+    /// used again allocates no tape.
+    pub fn recycle(&mut self, tape: super::Written) {
+        let Some(mut buf) = tape.into_own() else { return };
+        let (at, written) = std::mem::take(&mut self.given);
+        if buf.as_ptr() as usize != at || written <= self.parts[part::OUT as usize].len() {
+            return;
+        }
+        // SAFETY: the same allocation `finish` gave out (laying the presence did not move it), whose first `written`
+        // bytes were written (each initialized before `finish` cut the length to the tape's), within its capacity.
+        unsafe { buf.set_len(written.min(buf.capacity())) };
+        self.parts[part::OUT as usize] = buf;
+        self.bind();
     }
 
     fn part_mut<'s>(&self, state: &'s mut State, k: usize) -> &'s mut Part {
@@ -408,11 +456,12 @@ impl Writer {
 
     /// The tape and its presence (`w_finish_blocks`, then `w_finish_tail`); `Err` where an op failed, with the
     /// first failure's code (`fail`) and node.
-    pub fn finish(mut self) -> Result<Finished, String> {
+    pub fn finish(&mut self) -> Result<Finished, String> {
         self.finish_ops()?;
         let count = (self.state.n as usize).div_ceil(Z);
         let end = self.len_of(part::OUT);
         let mut out = std::mem::take(&mut self.parts[part::OUT as usize]);
+        self.given = (out.as_ptr() as usize, out.len());
         out.truncate(end);
         finished(out, &self.parts[part::PRESENCE as usize], self.presence_words, self.keep_blocks.then_some(count), self.z)
     }

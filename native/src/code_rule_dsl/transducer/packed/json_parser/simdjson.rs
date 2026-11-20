@@ -144,7 +144,7 @@ fn encode_16(kernel: rerail_simdjson::Kernel, kinds: &rerail_simdjson::Kinds, va
         })?;
         Ok((w, digest, bad))
     };
-    let (w, digest, bad) = match walk(false) {
+    let (mut w, digest, bad) = match walk(false) {
         // Read again as JSONC (comments, trailing commas), as `encode_with` does.
         Err(rerail_simdjson::Refusal::Simdjson(why)) => {
             let t = walk(true).map_err(|_| rerail_simdjson::Refusal::Simdjson(why))?;
