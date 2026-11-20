@@ -37,16 +37,31 @@ export type RrChildRequestOf = (out: string) => RrChildRequest;
 /** The most of a child's stderr kept for a failure's message. */
 const STDERR_TAIL = 4096;
 
-const live = new Set<ChildProcess>();
+/** The children running, each with its temporary directory. */
+const live = new Map<ChildProcess, string>();
 let killsOnExit = false;
 
-/** The children still running are killed as this process exits: none outlives it. */
+/**
+ * The children still running are killed as this process exits, and their temporary directories removed: none outlives
+ * it. (A process killed outright runs no exit handler: its children then end themselves, `rr-child.ts`.)
+ */
 function killLiveOnExit(): void {
   if (killsOnExit) return;
   killsOnExit = true;
   process.once("exit", () => {
-    for (const child of live) child.kill("SIGKILL");
+    for (const [child, directory] of live) {
+      child.kill("SIGKILL");
+      removeDirectory(directory);
+    }
   });
+}
+
+/**
+ * A child's temporary directory removed. On Windows a child just killed may still hold a file in it for a moment, so
+ * removal retries, as Node's `rm` does with `maxRetries`.
+ */
+function removeDirectory(directory: string): void {
+  rmSync(directory, { recursive: true, force: true, maxRetries: 5 });
 }
 
 /**
@@ -163,10 +178,10 @@ export async function runChild(requestOf: RrChildRequestOf, options: RrChildOpti
       env: childEnvironment(options.budgets.threads),
       stdio: ["ignore", "ignore", "pipe", "ipc"],
     });
-    live.add(child);
+    live.set(child, directory);
     return await watch(child, resultFile, options);
   } finally {
-    rmSync(directory, { recursive: true, force: true });
+    removeDirectory(directory);
   }
 }
 
@@ -191,6 +206,6 @@ export function runChildSync(requestOf: RrChildRequestOf, options: Omit<RrChildO
     const stderr = ran.stderr.toString("utf8").slice(-STDERR_TAIL).trim();
     return finished(resultFile, `exited (${ran.signal ?? `code ${ran.status}`})${stderr === "" ? "" : `: ${stderr}`}`, wallMs, 0);
   } finally {
-    rmSync(directory, { recursive: true, force: true });
+    removeDirectory(directory);
   }
 }
