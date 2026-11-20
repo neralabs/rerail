@@ -21,7 +21,7 @@ use super::plan::body::Placed;
 use super::plan::fields::{Fields, FieldsData};
 use super::program_image::manager::{Cx, Pipeline, ProgramPass, ProgramW, RuleOut, RulePass, Select, Step};
 use super::program_image::passes::{PartOf, Retain, SetAnswers};
-use super::program_image::{AtomRef, Builder, Lit, LitRef, PartFields, Rewrite, RuleRef, T, TermRef, Version};
+use super::program_image::{AtomRef, Builder, Lit, LitRef, PartFields, Rewrite, RuleBuilder, RuleRef, T, TermRef, Version};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use crate::code_rule_dsl::logic::program_image::passes::Parts as _;
@@ -65,6 +65,22 @@ enum Out {
     DoneAll(String),
     Done(String, Vec<usize>, usize),
     Gated(usize),
+}
+
+impl Out {
+    /// This part of rule `r`'s rewritten body (`lits` its literals), written to `rb`.
+    fn put<'b, 'p>(&'b self, rb: RuleBuilder<'b, 'p>, v: &Version, r: RuleRef<'_>, lits: &[LitRef<'_>]) -> RuleBuilder<'b, 'p> {
+        match self {
+            Out::Copy(i) => rb.lit(v, r, lits[*i]),
+            Out::DoneAll(done) => rb.atom(done.as_str(), &[T::Int(0)]),
+            Out::Done(done, at, i) => {
+                let args: Vec<TermRef<'_>> = lits[*i].atom().expect("a negated atom").args().collect();
+                let key: Vec<T<'_>> = at.iter().map(|&k| t_of(v, r, args[k])).collect();
+                rb.atom(done.as_str(), &key)
+            }
+            Out::Gated(i) => rb.lit_with(v, r, lits[*i], &mut Gated(v)),
+        }
+    }
 }
 
 /// A gate `gate` makes: its `done` relation, its `ask` (none: the whole relation's gate, `done_N(0)`), the negated
@@ -178,14 +194,13 @@ impl RulePass for GateRules<'_> {
                 outs.push(Out::DoneAll(done));
             } else {
                 let (ask, done) = (format!("ask_{rel}_{ad}"), format!("done_{rel}_{ad}"));
-                // The keys asked about: the rule's literals before the negation.
+                // The keys asked about: the rule's literals before the negation, as the rule is rewritten (`outs`
+                // so far): an earlier negation inside the component gated too, else the ask read it ungated and was
+                // recursive through that negation (`type_root`'s `!typing_sym(h, "Literal"), !annotated_meta(s, a)`).
                 let args: Vec<TermRef<'_>> = a.args().collect();
                 let key: Vec<T<'_>> = at.iter().map(|&k| t_of(v, r, args[k])).collect();
-                let mut rb = out.rule().head(ask.as_str(), &key);
-                for &l in &lits[..i] {
-                    rb = rb.lit(v, r, l);
-                }
-                rb.finish()?;
+                let rb = out.rule().head(ask.as_str(), &key);
+                outs.iter().fold(rb, |rb, o| o.put(rb, v, r, &lits)).finish()?;
                 if !self.made.iter().any(|(d, ..)| *d == done) {
                     self.made.push((done.clone(), Some(ask), rel.to_owned(), cols));
                 }
@@ -196,20 +211,8 @@ impl RulePass for GateRules<'_> {
         if outs.iter().all(|o| matches!(o, Out::Copy(_))) {
             return Ok(Step::Keep);
         }
-        let mut rb = out.rule().head_from(v, r, r.head());
-        for o in &outs {
-            rb = match o {
-                Out::Copy(i) => rb.lit(v, r, lits[*i]),
-                Out::DoneAll(done) => rb.atom(done.as_str(), &[T::Int(0)]),
-                Out::Done(done, at, i) => {
-                    let args: Vec<TermRef<'_>> = lits[*i].atom().expect("a negated atom").args().collect();
-                    let key: Vec<T<'_>> = at.iter().map(|&k| t_of(v, r, args[k])).collect();
-                    rb.atom(done.as_str(), &key)
-                }
-                Out::Gated(i) => rb.lit_with(v, r, lits[*i], &mut Gated(v)),
-            };
-        }
-        rb.finish()?;
+        let rb = out.rule().head_from(v, r, r.head());
+        outs.iter().fold(rb, |rb, o| o.put(rb, v, r, &lits)).finish()?;
         Ok(Step::Written)
     }
     /// The gates' relations, and each `done` fed from its `ask` once what its relation reads inside the component is
