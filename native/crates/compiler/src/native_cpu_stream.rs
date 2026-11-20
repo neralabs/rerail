@@ -230,8 +230,7 @@ impl NodeCol {
 /// Tier 2's entry: `ctx`, the run's end.
 pub type Entry = unsafe extern "C" fn(*const Ctx) -> u64;
 
-/// Keep each tier 2 function's IR (`CompiledStream::ir`), for an ahead-of-time build of the same
-/// code (`clif_rust`).
+/// Keep each tier 2 function's IR (`CompiledStream::ir`), to read it.
 pub static KEEP_IR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// The most a program writes between two `TOKEN`s: nodes, supertypes and returns pushed.
@@ -334,7 +333,7 @@ pub struct CompiledStream {
     /// Of `own_calls`, the calls of a step on the working rows (`TableFns`' `blocks`, `commit`, `uncode`, `finish`, and a
     /// format 16 run's `pass` and `retag`): none in a direct format 16 run (`direct`).
     pub row_calls: usize,
-    /// A format 16 run whose nodes go to the writer's ops at their words, with no row (`rust_stream::direct_keys`).
+    /// A format 16 run whose nodes go to the writer's ops at their words, with no row (`native_cpu_direct::direct_keys`).
     pub direct: bool,
     /// Its functions of clusters (`compile_cut`: one, the token loop's alone), and their tail
     /// calls of each other: one where a jump left its cluster.
@@ -779,8 +778,6 @@ fn lost_leaf(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, wrappin
     f.switch_to_block(done);
 }
 
-/// `Ctx::state`'s slots (`rust_stream` writes `Ctx` field for field).
-pub(crate) const STATE_SLOTS: usize = Mem::COUNT as usize;
 
 /// The fields a rule's function holds in registers (`Cut::held`) and passes to its calls, given
 /// back with their results (`Cut::pass`): none. The whole state stays in memory, read and
@@ -1285,7 +1282,7 @@ fn lazy_mark(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, bw: &crate::native_cp
 /// at a bit, else 0. No loop over bits or bytes. The token's start and end are passed: the
 /// state may be the caller's variables.
 #[allow(clippy::too_many_arguments)]
-fn check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::program::LocalCheck, form: &crate::rust_stream::WordForm, output: usize, bytewise: Option<&crate::native_cpu_bytes::Bytewise<'_>>, start: Value, limit: Value, heads: &mut Vec<(Block, Step)>) -> Value {
+fn check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::program::LocalCheck, form: &crate::native_cpu_direct::WordForm, output: usize, bytewise: Option<&crate::native_cpu_bytes::Bytewise<'_>>, start: Value, limit: Value, heads: &mut Vec<(Block, Step)>) -> Value {
     let (outputs_p, stride, lasts_stride) = ((e.ctx)(f, OUTPUTS), (e.ctx)(f, OUTPUT_STRIDE), (e.ctx)(f, LASTS_STRIDE));
     let (bytes, len) = ((e.ctx)(f, BYTES), (e.ctx)(f, LEN));
     let consts = crate::native_cpu_block::Consts::make(f);
@@ -1363,7 +1360,7 @@ fn check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::program::
 /// token are cut from the test; they reach no earlier place. A token of 16 bytes or fewer is
 /// checked in its arm (`token_check_short`); this is the rest.
 #[allow(clippy::too_many_arguments)]
-fn token_check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::program::LocalCheck, form: &crate::rust_stream::WordForm, start: Value, limit: Value, next: Value, heads: &mut Vec<(Block, Step)>) -> Value {
+fn token_check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::program::LocalCheck, form: &crate::native_cpu_direct::WordForm, start: Value, limit: Value, next: Value, heads: &mut Vec<(Block, Step)>) -> Value {
     use crate::program::LocalOp as L;
     let bytes = (e.ctx)(f, BYTES);
     let consts = crate::native_cpu_block::Consts::make(f);
@@ -1440,7 +1437,7 @@ fn token_check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::pro
 /// A check that reads before its token (decision 0428) loads from `back` bytes before it, and
 /// takes the tokens' ends there (`ended`, `ended_word`).
 #[allow(clippy::too_many_arguments)]
-fn token_check_short(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck, form: &crate::rust_stream::WordForm, bytes: Value, len: Value, start: Value, n: Value, ended: Option<Value>) -> Value {
+fn token_check_short(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck, form: &crate::native_cpu_direct::WordForm, bytes: Value, len: Value, start: Value, n: Value, ended: Option<Value>) -> Value {
     let consts = crate::native_cpu_block::Consts::make(f);
     let (from, pre) = frame_begin(f, start, c.back);
     let at = f.ins().iadd(bytes, from);
@@ -1521,7 +1518,7 @@ struct Back {
 }
 
 /// Op `k`'s byte set's bits over the window (`LocalOp::Bytes`), from its table's classes.
-fn token_bytes(f: &mut FunctionBuilder<'_>, form: &crate::rust_stream::WordForm, consts: &crate::native_cpu_block::Consts, vectors: &[Value], tables: &mut std::collections::HashMap<usize, Vec<Value>>, k: usize) -> Value {
+fn token_bytes(f: &mut FunctionBuilder<'_>, form: &crate::native_cpu_direct::WordForm, consts: &crate::native_cpu_block::Consts, vectors: &[Value], tables: &mut std::collections::HashMap<usize, Vec<Value>>, k: usize) -> Value {
     match form.class_of[&k] {
         (_, 0) => f.ins().iconst(types::I64, 0),
         (ti, bits) => {
@@ -1588,7 +1585,7 @@ fn ended_word(f: &mut FunctionBuilder<'_>, lasts: Value, stride: Value, next: Va
 }
 
 /// Table `ti`'s classes of the window's bytes, a vector each, made once.
-fn token_classes(f: &mut FunctionBuilder<'_>, form: &crate::rust_stream::WordForm, consts: &crate::native_cpu_block::Consts, vectors: &[Value], tables: &mut std::collections::HashMap<usize, Vec<Value>>, ti: usize) -> Vec<Value> {
+fn token_classes(f: &mut FunctionBuilder<'_>, form: &crate::native_cpu_direct::WordForm, consts: &crate::native_cpu_block::Consts, vectors: &[Value], tables: &mut std::collections::HashMap<usize, Vec<Value>>, ti: usize) -> Vec<Value> {
     if let Some(t) = tables.get(&ti) {
         return t.clone();
     }
@@ -1639,7 +1636,7 @@ fn token_carried(c: &crate::program::LocalCheck) -> Vec<usize> {
 #[allow(clippy::too_many_arguments)]
 /// On one vector, the masks of a check's byte sets (`Bytes` ops, by op), made together
 /// (`bitmasks16`): one split of the bytes into nibbles, each table once, one tree of adds.
-fn token_sets(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck, form: &crate::rust_stream::WordForm, consts: &crate::native_cpu_block::Consts, vector: Value, tables: &mut std::collections::HashMap<usize, Vec<Value>>) -> std::collections::HashMap<usize, Value> {
+fn token_sets(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck, form: &crate::native_cpu_direct::WordForm, consts: &crate::native_cpu_block::Consts, vector: Value, tables: &mut std::collections::HashMap<usize, Vec<Value>>) -> std::collections::HashMap<usize, Value> {
     use crate::program::LocalOp as L;
     let sets: Vec<(usize, usize, u8)> = (0..c.ops.len()).filter(|&k| matches!(c.ops[k], L::Bytes(_))).map(|k| (k, form.class_of[&k].0, form.class_of[&k].1)).filter(|&(_, _, bits)| bits != 0).collect();
     let zero16 = {
@@ -1660,7 +1657,7 @@ fn token_sets(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck, form:
 
 /// `made_in`: the byte sets' masks (`token_sets`), where the caller made them.
 #[allow(clippy::too_many_arguments)]
-fn token_window(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck, form: &crate::rust_stream::WordForm, consts: &crate::native_cpu_block::Consts, vectors: &[Value], first: Option<Value>, left: Value, file_left: Value, before: Option<(&[usize], &[Value])>, cin: Option<(&[usize], &[Value])>, back: Option<Back>, made_in: Option<std::collections::HashMap<usize, Value>>) -> Vec<Value> {
+fn token_window(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck, form: &crate::native_cpu_direct::WordForm, consts: &crate::native_cpu_block::Consts, vectors: &[Value], first: Option<Value>, left: Value, file_left: Value, before: Option<(&[usize], &[Value])>, cin: Option<(&[usize], &[Value])>, back: Option<Back>, made_in: Option<std::collections::HashMap<usize, Value>>) -> Vec<Value> {
     use crate::program::LocalOp as L;
     // Each table's classes of the window's bytes, made once.
     let mut tables: std::collections::HashMap<usize, Vec<Value>> = std::collections::HashMap::new();
@@ -1778,7 +1775,7 @@ fn token_window(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck, for
 /// What `local_word` reads: the check's classes, the file, the mask's word `w`; each op's value
 /// at a word (by its distance from `w`), each word's classes and the tables, made once.
 struct LocalWords<'a> {
-    form: &'a crate::rust_stream::WordForm,
+    form: &'a crate::native_cpu_direct::WordForm,
     bytes: Value,
     len: Value,
     w: Value,
@@ -2454,7 +2451,7 @@ fn word_kind(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, word_kinds: &[(u16, u
 }
 
 /// What the node words need to write the tape as it stands at the end (`TableFns`): whether
-/// rows carry marks (`head`, `rust_stream::marks`: a wrap, `WRAPPED`; a dropped row taken out
+/// rows carry marks (`head`, `native_cpu_direct::marks`: a wrap, `WRAPPED`; a dropped row taken out
 /// from among its children, `DROPPED_IN`), the tape's widths, the functions.
 #[derive(Clone, Copy)]
 struct Table<'a> {
@@ -2465,20 +2462,17 @@ struct Table<'a> {
     split: Option<(&'a SplitParts, &'a crate::block_native::BlockNative)>,
     /// The records `TOKEN` makes from each token's start (`Fetch`, page 40).
     fetch: Option<&'a Fetch>,
-    /// A format 16 run whose every node's key is known at its word (`rust_stream::direct_keys`): each node word's key
+    /// A format 16 run whose every node's key is known at its word (`native_cpu_direct::direct_keys`): each node word's key
     /// bits from the words after it, by its place. Each node then goes to the writer's ops at its word, with no row.
     direct: Option<&'a [(u32, u32)]>,
 }
 
-/// A reader whose regions tier 2 splits: its opener and closer (outputs), the closer's last
-/// (its offset, or the output its last is the first bit of), its parts (each its start, its
+/// A reader whose regions tier 2 splits: its opener and closer (outputs), its parts (each its start, its
 /// bytes or its last's output, and its own kind; the shortest first), its content's own kind,
 /// and its closers' own kinds by their first byte.
 pub(crate) struct SplitReader {
     pub(crate) opener: u16,
     pub(crate) closer: u16,
-    pub(crate) off: i8,
-    pub(crate) last: Option<u16>,
     pub(crate) parts: Vec<(u16, u8, Option<u16>, Option<u8>)>,
     pub(crate) content: Option<u8>,
     pub(crate) closers: Vec<(u8, u8)>,
@@ -2601,7 +2595,7 @@ pub(crate) fn split_parts(native: &Structure) -> Result<Option<Box<SplitParts>>,
             let a = &rd.arms[0];
             let mut parts: Vec<(u16, u8, Option<u16>, Option<u8>)> = rd.parts.iter().map(|p| (p.start, p.bytes, p.last, p.kind)).collect();
             parts.sort_by_key(|&(o, n, _, _)| (n, o));
-            SplitReader { opener: a.opener, closer: a.closer, off: a.off, last: a.last, parts, content: rd.content, closers: rd.closers.clone(), tagged: a.retag.or(rd.retag).is_some() }
+            SplitReader { opener: a.opener, closer: a.closer, parts, content: rd.content, closers: rd.closers.clone(), tagged: a.retag.or(rd.retag).is_some() }
         })
         .collect();
     // simdjson's `parse_string`: one reader, its parts of bytes, no kinds of their own.
@@ -3224,7 +3218,7 @@ fn leaf_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: V
     (e.set)(f, Mem::Nodes, n1);
 }
 
-/// A node's word in a direct format 16 run (`Table::direct`), as `rust_stream`'s `open16` and `leaf16`: its number by
+/// A node's word in a direct format 16 run (`Table::direct`): its number by
 /// its key `kf` (its kind, its field above it) and its supertypes' bits, then `w_open` at the token's start (and open
 /// on the stack of open nodes) or, a leaf's (`end`), `w_leaf` with the token's bytes; then `w_commit`. No row. A key
 /// with no number is the ops' failure (`fail::NUMBER`); an op's failure is the writer's, which the host reads.
@@ -4289,7 +4283,7 @@ pub(crate) fn call_own(f: &mut FunctionBuilder<'_>, id: cranelift_module::FuncId
 type OwnFn = (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function);
 
 /// The functions the node words call to keep the table as it stands at the end, as the lean
-/// parser keeps its tape (`rust_stream::node_words` has the same in Rust): each rare, each a
+/// parser keeps its tape: each rare, each a
 /// loop over the table's tail. `shift`: a wrap's (where it wraps more than a leaf, or a node a
 /// supertype names); `unpend`: a close the pending extras outlive; `drop`: a dropped node's.
 struct TableFns {
@@ -4967,8 +4961,8 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     let split = split_parts(native)?;
     // The records `TOKEN` makes from each start (page 40).
     let fetch = fetch_of(native)?;
-    let direct = if sixteen { crate::rust_stream::direct_keys(native, widths_tag.0, widths_tag.1) } else { None };
-    let table = Table { inner: crate::rust_stream::marks(native), w: widths_tag.0, fns: &table_fns, split: split.as_deref().zip(native.block_programs.first()), fetch: fetch.as_deref(), direct: direct.as_deref() };
+    let direct = if sixteen { crate::native_cpu_direct::direct_keys(native) } else { None };
+    let table = Table { inner: crate::native_cpu_direct::marks(native), w: widths_tag.0, fns: &table_fns, split: split.as_deref().zip(native.block_programs.first()), fetch: fetch.as_deref(), direct: direct.as_deref() };
     let passes: Vec<u32> = table_fns.shift.iter().chain(&table_fns.drop).map(|f| f.0.as_u32()).collect();
     let row_fns: Vec<u32> = [&table_fns.blocks, &table_fns.commit, &table_fns.uncode, &table_fns.finish].into_iter().chain(table_fns.sixteen.iter().flat_map(|s| [&s.pass, &s.retag])).map(|f| f.0.as_u32()).collect();
     // The words made as functions of their own (`WordFn`), with a function a grammar rule.
@@ -6200,7 +6194,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                                     // classes of the bytes: the end's mask is the last op's.
                                     let mut both = c.clone();
                                     both.ops.push(crate::program::LocalOp::Bytes(*not_c));
-                                    let form = crate::rust_stream::word_form(&both.ops).map_err(|_| Error::UnsupportedBackend)?;
+                                    let form = crate::native_cpu_direct::word_form(&both.ops).map_err(|_| Error::UnsupportedBackend)?;
                                     let len_v = (env.ctx)(&mut f, LEN);
                                     let at = f.ins().iadd(bytes, start);
                                     let v = f.ins().load(types::I8X16, MemFlags::trusted(), at, 0);
@@ -6825,7 +6819,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                 }
                 Op::Check { check } => {
                     let c = native.local_checks.get(usize::from(check)).cloned().ok_or(Error::UnsupportedBackend)?;
-                    let form = crate::rust_stream::word_form(&c.ops).map_err(|_| Error::UnsupportedBackend)?;
+                    let form = crate::native_cpu_direct::word_form(&c.ops).map_err(|_| Error::UnsupportedBackend)?;
                     // A token's check reads no mask: its function at every token of the kind.
                     let output = if c.token { 0 } else { native.block_programs.first().and_then(|b| b.masks.get(usize::from(c.mask)).copied()).ok_or(Error::UnsupportedBackend)? };
                     // The mask from the bytes where they make it: the check's function reads it
@@ -8516,7 +8510,7 @@ impl CompiledStream {
             code_first: room(nodes + 1, f15),
             super_node: room(supers, rowed),
             super_kind: room(supers, rowed),
-            // The stack of open nodes: the Rust's format 16 run keeps its own here (`rust_stream`'s `open16`).
+            // The stack of open nodes: the Rust's format 16 run keeps its own here.
             open: room(nodes, true),
             returns: room(returns, true),
             counts: [0; 3],
@@ -8535,7 +8529,7 @@ impl CompiledStream {
     /// address, holds for any).
     ///
     /// # Safety
-    /// `entry` must be this program's code (`clif_rust` of `ir`), reading and writing `Ctx` as the
+    /// `entry` must be this program's code , reading and writing `Ctx` as the
     /// JIT's does.
     pub unsafe fn set_entry(&mut self, entry: Entry, frame_shift: u64) {
         self.entry = entry;
@@ -9080,7 +9074,7 @@ impl Parser {
     }
 
     /// The format 16 tier 2 (`sixteen`), to set its entry (`CompiledStream::set_entry`): another backend's code of
-    /// the same program on its harness (`rerail_rr_aot`'s, a test's).
+    /// the same program on its harness (a test's).
     pub fn sixteen_mut(&mut self) -> Option<&mut CompiledStream> {
         self.sixteen()?;
         self.wide.as_mut()?.sixteen.get_mut()?.as_mut()

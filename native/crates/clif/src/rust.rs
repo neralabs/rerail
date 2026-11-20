@@ -1,4 +1,4 @@
-//! Cranelift IR as Rust source (decision 0310: moved here from `rerail_compiler::clif_rust`): the
+//! Cranelift IR as Rust source (decision 0310): the
 //! parser's, for an ahead-of-time build of the same code, each function of the JIT's, tier 1's
 //! (`CompiledBlock::ir`) and tier 2's (`CompiledStream::ir`), as Cranelift is given it, a Rust
 //! function, compiled by rustc and LLVM, so the two builds differ only in the compiler; and the
@@ -165,7 +165,7 @@ pub fn translate(funcs: &[(u32, ir::Function)], entries: &[(u32, &str)], address
         match data {
             Some(words) => {
                 let list: Vec<String> = words.iter().map(|w| format!("{w:#x}")).collect();
-                writeln!(out, "/// The tables the code reads, as the JIT's (`clif_rust::rust_source`).\npub static {n}_DATA: [u64; {}] = [{}];\n", words.len(), list.join(", ")).unwrap();
+                writeln!(out, "/// The tables the code reads, as the JIT's .\npub static {n}_DATA: [u64; {}] = [{}];\n", words.len(), list.join(", ")).unwrap();
             }
             None => writeln!(out, "/// An address of the running process's (set before the first call).\npub static {n}: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);\n").unwrap(),
         }
@@ -1188,8 +1188,7 @@ mod tests {
 
     /// A call whose results are returned as they are is the return's (`returned_call`):
     /// `return f(…)`, so rustc hands its caller's result on, a tail call, where a copy through
-    /// a temporary kept the caller's frame. (Moved from `rr_aot`'s generated source, where no
-    /// function returns a call since the short forms are the loop's arms.)
+    /// a temporary kept the caller's frame.
     #[test]
     fn a_returned_call_is_the_return() {
         let callee = two_entries();

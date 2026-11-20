@@ -5,7 +5,7 @@
 //! - [`reads`]: the tape's primitive reads, format 15's and format 16's, as CLIF functions built
 //!   once (a node's code number, its subtree size, its start and end, its parent, hops over its
 //!   children and siblings), each marked hot or cold.
-//! - [`rust`]: CLIF as Rust source: the parser's for `rr_aot`, and the reads' for the tape crate.
+//! - [`rust`]: CLIF as Rust source: the reads' for the tape crate.
 //! - [`msl`]: CLIF as Metal Shading Language: the reads' for the kernels.
 //! - [`relation`]: a relation's reads (decision 0325), the second family: a value of `rerail_blocks`' rows, a
 //!   dead bit, an index's group, each read through the block's self-relative references.

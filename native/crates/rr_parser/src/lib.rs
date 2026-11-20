@@ -362,7 +362,7 @@ pub mod tests {
         }
     }
 
-    /// Tier 2 writes the table as it stands at the end (`rust_stream::node_words`): a wrap
+    /// Tier 2 writes the table as it stands at the end: a wrap
     /// placed at once, before the node it wraps (a leaf's swap, or a larger node's rows moved,
     /// their parents with them); a dropped node taken out where it is dropped. Chains of wraps,
     /// wraps over large operands and inside them, and comments among them, as the engine's.
@@ -3306,29 +3306,10 @@ mod json_probe {
         eprintln!("{} outputs; stored a block: {stored:?}; totals {:?}", p.outputs.len(), p.totals);
     }
 
-    /// JSON's tier 1 is structured control (0363): its passes' graphs are reducible, every loop
-    /// entered at its head alone, so its Rust form (`clif_rust`) is nested loops, as the lean
-    /// lexer's, with no loop over a label switch (a `goto`'s translation, which rustc compiles to
-    /// a jump table every transition passes).
-    #[test]
-    fn json_tier1_has_no_label_switch() {
-        use rerail_compiler::records::Split;
-        let mut n = rerail_compiler::native_ir::lower(&json_split(Split::Tier2), 0, 0).expect("lowers");
-        for p in &mut n.block_programs {
-            p.pad = rerail_compiler::native_cpu_block::BACK as u16;
-        }
-        rerail_compiler::native_cpu_stream::KEEP_IR.store(true, std::sync::atomic::Ordering::Relaxed);
-        let kept = json_parser(&n);
-        let src = rerail_compiler::clif_rust::rust_source(&kept).expect("to Rust");
-        let switches = src.matches("a dispatch's label is one of its entries").count();
-        assert_eq!(switches, 0, "tier 1 has {switches} loops over a label switch: a loop entered past its head");
-    }
-
     /// JSON's tier 1 by pass (decision 0323's next measure): over JSON's corpus
     /// (`RERAIL_JSON_CORPUS`) under B, each pass's instructions and cycles a byte, the least of
-    /// `RR_ROUNDS`, against simdjson's stage 1 on the same files. `RERAIL_JSON_RUST=<path>`:
-    /// tier 1 written as Rust there (`clif_rust`, the ahead-of-time form), to read its shape;
-    /// `RERAIL_JSON_ASM=<path>`, its machine code.
+    /// `RR_ROUNDS`, against simdjson's stage 1 on the same files. `RERAIL_JSON_ASM=<path>`: its
+    /// machine code.
     #[test]
     #[ignore = "a benchmark: run by hand"]
     fn json_tier1_by_pass() {
@@ -3354,15 +3335,6 @@ mod json_probe {
         // `RERAIL_JSON_CLIF=<path>`: each pass's Cranelift IR, as the JIT was given it.
         if let Ok(path) = std::env::var("RERAIL_JSON_CLIF") {
             std::fs::write(&path, p.tier1.passes.iter().map(|x| x.clif.as_str()).collect::<Vec<_>>().join("\n")).expect("writes");
-        }
-        if let Ok(path) = std::env::var("RERAIL_JSON_RUST") {
-            rerail_compiler::native_cpu_stream::KEEP_IR.store(true, std::sync::atomic::Ordering::Relaxed);
-            let bit = rerail_compiler::native_cpu_lanes::BIT_TEST.swap(true, std::sync::atomic::Ordering::Relaxed);
-            let kept = json_parser(&n);
-            rerail_compiler::native_cpu_lanes::BIT_TEST.store(bit, std::sync::atomic::Ordering::Relaxed);
-            let src = rerail_compiler::clif_rust::rust_source(&kept).unwrap_or_else(|e| panic!("to Rust: {e}"));
-            std::fs::write(&path, &src).expect("writes");
-            eprintln!("tier 1 as Rust: {path}, {} bytes", src.len());
         }
         // `RERAIL_JSON_ONLY=<name>`: that made input alone, no corpus (to trace one input's path).
         let only = std::env::var("RERAIL_JSON_ONLY").ok();

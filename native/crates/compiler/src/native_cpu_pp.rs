@@ -202,7 +202,7 @@ pub struct CompiledPp {
     pub code_bytes: Vec<usize>,
     /// Each word's CLIF instructions in the run's function.
     pub word_insts: Vec<usize>,
-    /// Each function's IR as Cranelift was given it, by its id, where asked for (`rust_source`).
+    /// Each function's IR as Cranelift was given it, by its id, where asked for (`disassemble`).
     pub ir: Vec<(u32, cranelift_codegen::ir::Function)>,
     /// The run's function's id.
     pub run_id: u32,
@@ -310,7 +310,7 @@ impl Lower<'_, '_> {
 
     /// To `cases`' block whose key `x` is (the keys rising, small), else to `default`: a jump
     /// table. Cranelift's code has it as a tree of compares
-    /// (`native_cpu_codegen::switch_trees`, its jump tables' barrier); `clif_rust`'s keeps
+    /// (`native_cpu_codegen::switch_trees`, its jump tables' barrier);
     /// the table. Ends the current block.
     fn switch(&mut self, x: Value, cases: &[(u64, Block)], default: Block) {
         debug_assert!(cases.windows(2).all(|w| w[0].0 < w[1].0));
@@ -6693,49 +6693,8 @@ pub fn compile(program: &Words) -> Result<CompiledPp, Error> {
     compile_kept(program, false)
 }
 
-/// The compiled words' IR as Rust (`clif_rust`): the same functions, compiled by
-/// rustc and LLVM ahead of time. Its entry is `pp_run`, run by `run_aot`; it ends with its
-/// fingerprint, `SOURCE`, so a build runs it only where the words translate to it again.
-pub fn rust_source(program: &Words) -> Result<String, String> {
-    let c = compile_kept(program, true).map_err(|e| format!("{e:?}"))?;
-    let one = crate::clif_rust::translate(&c.ir, &[(c.run_id, "pp_run")], &[])?;
-    let h = crate::clif_rust::fingerprint(&one);
-    Ok(format!("{one}\n/// This source's fingerprint (`clif_rust::fingerprint` of what comes before).\npub const SOURCE: u64 = {h:#x};\n"))
-}
-
-/// The interface an ahead-of-time build shares with the harness that runs it (`run_aot`): the
-/// sizes of the context and of the records it points at, and the refusal reasons. A build
-/// records it, and the host runs a build only where it is the compiler's now, so a build left
-/// stale by a change of the compiler is never handed a context of another layout.
-pub const ABI: u64 = {
-    use std::mem::size_of;
-    let parts = [
-        size_of::<Ctx>(), size_of::<Tok>(), size_of::<Inc>(), size_of::<Want>(), size_of::<EmC>(), size_of::<Bi>(), size_of::<Asked>(),
-        size_of::<FeatureC>(), size_of::<NamedC>(), size_of::<Src>(), size_of::<Def>(), size_of::<Slot>(), size_of::<Frame>(),
-        size_of::<Ex>(), size_of::<DefState>(), size_of::<Sub>(), size_of::<FileC>(), REASONS.len(),
-    ];
-    let mut h = 0xcbf2_9ce4_8422_2325u64;
-    let mut i = 0;
-    while i < parts.len() {
-        h = (h ^ parts[i] as u64).wrapping_mul(0x100_0000_01b3);
-        i += 1;
-    }
-    h
-};
-
-/// `pp_words::run`'s work, by an ahead-of-time build of the words (`rust_source`'s `pp_run`).
-///
-/// # Safety
-/// `entry` must be `rust_source`'s `pp_run` for `program`.
-pub unsafe fn run_aot(entry: unsafe extern "C" fn(u64) -> u64, program: &Words, files: &[File], env: &Env, bounds: &Bounds) -> Result<Expanded, Refused> {
-    // SAFETY: the same ABI: one pointer-sized argument, a 64-bit result.
-    let code = unsafe { std::mem::transmute::<unsafe extern "C" fn(u64) -> u64, unsafe extern "C" fn(*mut Ctx) -> u64>(entry) };
-    // SAFETY: as `CompiledPp::run`'s; the caller vouches the code is the words'.
-    unsafe { pp_words::run_native(program, files, env, bounds, code, REASONS) }
-}
-
 /// The compiled words, their IR and machine code kept (`ir`, `disasm`): to read
-/// Cranelift's code beside rustc's of the same IR (`rust_source`).
+/// Cranelift's code.
 pub fn disassemble(program: &Words) -> Result<CompiledPp, Error> {
     compile_kept(program, true)
 }

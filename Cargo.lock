@@ -3183,7 +3183,6 @@ dependencies = [
  "rerail-c-pp",
  "rerail-compiler",
  "rerail-metal",
- "rerail-pp-aot",
  "rerail-simd8",
  "rerail-tape-format",
 ]
@@ -3562,18 +3561,6 @@ dependencies = [
  "libc",
  "rerail-simdjson",
  "rerail-simdjson-native",
-]
-
-[[package]]
-name = "rerail-kotlin-aot"
-version = "0.1.0"
-dependencies = [
- "libc",
- "rerail-compiler",
- "rerail-kotlin-aot",
- "rerail-kotlin-lean",
- "rerail-kotlin-parser",
- "rerail-simd8",
 ]
 
 [[package]]
@@ -4220,7 +4207,6 @@ name = "rerail-parser-tests"
 version = "0.1.0"
 dependencies = [
  "bitlex",
- "libc",
  "rerail-compiler",
  "rerail-metal",
  "rerail-parser-tests",
@@ -4236,13 +4222,6 @@ version = "0.1.0"
 dependencies = [
  "rerail-simd8",
  "rerail-tape-format",
-]
-
-[[package]]
-name = "rerail-pp-aot"
-version = "0.1.0"
-dependencies = [
- "rerail-compiler",
 ]
 
 [[package]]
@@ -4397,18 +4376,6 @@ dependencies = [
  "unicode-normalization",
  "windows-sys 0.61.2",
  "zstd",
-]
-
-[[package]]
-name = "rerail-rr-aot"
-version = "0.1.0"
-dependencies = [
- "libc",
- "rerail-compiler",
- "rerail-rr-aot",
- "rerail-rr-parser",
- "rerail-rr-syntax",
- "rerail-tape-format",
 ]
 
 [[package]]

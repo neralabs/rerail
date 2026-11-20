@@ -36,7 +36,7 @@ pub fn tier1_builder() -> Result<cranelift_jit::JITBuilder, Box<ModuleError>> {
 /// backend emits every jump table with a speculation barrier (`csel`, then `csdb`, in
 /// `JTSequence`, whatever the settings), and the jump waits for its index. In the C
 /// preprocessing words' return dispatches that barrier was most of their cycles (work queue
-/// Q184, Q186). The IR `clif_rust` is given keeps its tables: LLVM's carry no barrier.
+/// Q184, Q186).
 ///
 /// The index is tested against the table's length (the default past it), then a balanced
 /// tree over the table's runs of one target finds the entry: a 256-entry table of few targets
@@ -239,7 +239,7 @@ pub const SWITCH_TREE_RUNS: usize = 32;
 /// and `csdb` before the indirect branch, always (a Spectre guard, no flag): the barrier keeps
 /// the core from running ahead into the arm, so each token waits for its entry's load. Tier
 /// 1's numbers took 75 cycles a token by the JIT against 17 by the AOT, most samples at the
-/// table's load. The IR keeps the table, as lean keeps its `match` (`clif_rust` writes it as
+/// table's load. The IR keeps the table, as lean keeps its `match` (written as
 /// one, and rustc lowers it so); only the JIT's copy is rewritten, before Cranelift lowers it.
 /// A table whose targets take arguments, or of more runs, is a balanced tree of compares
 /// (`balanced_trees`, Q186): no `br_table` reaches Cranelift's code.

@@ -36,10 +36,8 @@ pub mod native_cpu_pressure;
 // Row programs' Cranelift definer (`block::BlockProgram::rows`, decision 0095 §2).
 pub mod native_cpu_rows;
 pub mod native_cpu_clusters;
+pub mod native_cpu_direct;
 pub mod native_cpu_shape;
-pub mod clif_rust;
-pub mod rust_stream;
-pub mod rust_block;
 pub mod native_cpu_stream;
 pub mod native_cpu_pp;
 pub mod native_cpu_tape;

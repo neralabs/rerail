@@ -169,10 +169,6 @@ hours (scripts/dev/relax/README.md, "How the caches stay bounded").
 - Both build outside every worktree, under `~/Library/Caches`, with the repository's toolchain.
   Don't build them in a worktree's `tmp/`, and don't run binaries from there.
 
-`rerail-rr-aot`'s generated tiers (about 700 KB of Rust) are written by its build script only
-with the `generated` feature, so a workspace build leaves them out. To test them:
-`nice -n 19 cargo test -p rerail-rr-aot --features generated --profile profiling`.
-
 ## Merging branches
 
 Read [docs/merging.md](docs/merging.md) before resolving any merge. In short:

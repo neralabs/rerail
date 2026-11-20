@@ -114,7 +114,7 @@ pub struct CompiledBlock {
     /// (`strip_prefix`, 0389). Empty where there is none, or the passes make it themselves.
     pub prefix: Vec<u8>,
     /// With `native_cpu_stream::KEEP_IR`: each function's IR as Cranelift was given it (its
-    /// `FuncId`), and the entries' ids in order, for an ahead-of-time build (`clif_rust`).
+    /// `FuncId`), and the entries' ids in order.
     pub ir: Vec<(u32, cranelift_codegen::ir::Function)>,
     pub entry_ids: Vec<u32>,
 }
@@ -179,7 +179,7 @@ impl CompiledBlock {
     /// Runs another build of the same code from now on: one entry a pass, as `entries`.
     ///
     /// # Safety
-    /// `entries` must be this program's code (`clif_rust` of `ir`), in `entry_ids`' order.
+    /// `entries` must be this program's code , in `entry_ids`' order.
     pub unsafe fn set_entries(&mut self, entries: Vec<Entry>) {
         assert_eq!(entries.len(), self.entries.len(), "one entry a pass");
         self.entries = entries;
@@ -3769,7 +3769,7 @@ fn rule_args(sig: &cranelift_codegen::ir::Signature, all: [Value; RULE_ARGS]) ->
 }
 
 /// How many of `RULE_ARGS`' a rule's function built with all of them reads once optimized (the
-/// code the backends compile and `clif_rust` writes: no value no instruction reads, no block
+/// code the backends compile: no value no instruction reads, no block
 /// not reached): one past the last it reads. Its signature is then those, and it is built
 /// again.
 fn rule_reads(func: &cranelift_codegen::ir::Function, isa: &dyn cranelift_codegen::isa::TargetIsa) -> usize {
@@ -4317,7 +4317,7 @@ fn file_cols(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
 }
 
 /// The record pass's tables' address, its word table's multiplier and its slots' address, as
-/// constants (`clif_rust` names addresses inside the tables `TABLES`).
+/// constants.
 pub(crate) fn tables_consts(f: &mut FunctionBuilder<'_>, t: &RecordTables) -> (Value, Value, Value) {
     let tables = f.ins().iconst(types::I64, t.words.as_ptr() as i64);
     let mult = f.ins().iconst(types::I64, t.table.mult as i64);
@@ -10139,7 +10139,7 @@ pub const fn lane_bits(stride: u32) -> i64 {
 
 /// A 16-byte compare result (each byte 0 or 0xff) as a mask of `SHORT_STRIDE` bits a lane:
 /// on NEON its 16-bit halves shifted right by four and narrowed (`shrn #4`), lane `i` the
-/// nibble at bit `4 i`; `clif_rust` writes it `vshrn_n_u16`. Else the 16 bits of `bitmask`.
+/// nibble at bit `4 i`. Else the 16 bits of `bitmask`.
 pub fn short_mask(f: &mut FunctionBuilder<'_>, part: Value, weights: Value) -> Value {
     if SHORT_STRIDE != 4 {
         return bitmask(f, &[part], weights);
