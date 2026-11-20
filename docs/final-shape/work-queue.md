@@ -2980,7 +2980,7 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
 - **Waits on the user:** 5b–5e (a complete `clif_msl`, rounds as batches) build out a shape the
   numbers say loses to one core. Question 3 below.
 
-### Q291. (Q249 until 2026-11-19; the hub's Q249 is the typing oracles') A rerun over an edit that adds a request rule states one more about part than a run from scratch
+### Q291. (done) (Q249 until 2026-11-19; the hub's Q249 is the typing oracles') A rerun over an edit that adds a request rule states one more about part than a run from scratch
 
 - **Found**: merging the hub (65e368a0b) into Typing-support. The hub's new
   `program_image::tests::a_request_record_over_an_edit_is_a_run_from_scratchs` failed at its third edit. That edit
@@ -2993,6 +2993,14 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
 - **Done when**: the rerun's whole-step path writes the record into the same parts that a run from scratch does,
   and the test runs again (its `#[ignore]` removed).
 - **Still** (2026-11-19, Typing-support at 049b9aaa6, a Linux farm host): edit 2 differs as found: only the rerun holds `about program #0 ("a")`.
+- **Cause**: the program's own about row (`program`) was stated by `Builder::set_field` alone, the first time a
+  builder stated a field. `set_asked` and the typed edits wrote about rows without it. So a version held it or not
+  by which edits had touched it: the rerun's whole step stated a field over the edited input, and the run from
+  scratch stated none. `differences` compared sets of texts, so it could not show a part held twice either.
+- **Done** (2026-11-19): `set_about_rows` states the program row with the first about row of any kind, so every
+  version that holds about rows holds it, whichever edit wrote them. `differences` counts each text. The test runs
+  again (no `#[ignore]`) and passes, with the logic crate's tests and the engine's image, preparation and planning
+  tests (484, M3).
 
 ## Questions for the user
 
