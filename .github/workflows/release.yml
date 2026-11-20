@@ -22,7 +22,7 @@ name: Release
 # own code is the tag's. How the package is built and its changelog can differ, and the run summary lists every path
 # changed since the tag for whoever approves. A release tag can't move, so without this a failed version is lost.
 #
-# package.yml restores the cargo cache and never saves it: release-cache.yml builds and saves it on main.
+# package.yml's builds start from the compile cache store release-cache.yml saves on main, and save none.
 #
 # Once the tarball passes the shrinkwrap check and the managed installs, the github-release job makes the tag's GitHub
 # Release, with the version's CHANGELOG.md section as its notes, beside the npm publish rather than after it: the
@@ -114,6 +114,10 @@ jobs:
     name: Package
     needs: metadata
     uses: ./.github/workflows/package.yml
+    # package.yml's native builds read main's compile cache store from its runs' artifacts.
+    permissions:
+      contents: read
+      actions: read
 
   # The tarball must ship the npm-shrinkwrap.json the tag's package-lock.json gives (docs/release.md, "Shrinkwrap"):
   # npm installs core's dependencies from it. A missing or stale one fails the release before anything is published.

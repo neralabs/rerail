@@ -40,3 +40,14 @@ checkout's files.
 - The CLI builds, and the wasm build checks.
 - Of the workspace's crates, only these three listed `CARGO_MANIFEST_DIR` in their dep-info (the
   variables rustc records a crate read). Tests still read it; a test build is a checkout's own.
+
+## Amended (2026-11-18): the tests too
+
+Every test binary was still a different binary in every checkout: the tests read `env!("CARGO_MANIFEST_DIR")` and
+`RERAIL_FIXTURES_DIR` as they compiled (110 and 39 places), so a fresh checkout compiled all 57 of them (144 s of a
+cache-warm `cargo test --workspace --no-run` on a build box). They read both as they run, as cargo gives them to the
+test (`std::env::var_os("CARGO_MANIFEST_DIR")`, `fixtures::dir()` behind `fixtures_dir!()`). `oracle!` still reads
+`RERAIL_FIXTURES_DIR` as it compiles, to embed a fixture's text: the build holds the text, not the path. CI checks
+every crate's dep-info after the test build (`scripts/check/ci/path-free-builds.mjs`): none may read
+`CARGO_MANIFEST_DIR`, `CARGO_MANIFEST_PATH` or `RERAIL_ORACLES_DIR` as it compiles, and no source but the fixtures'
+macros reads `RERAIL_FIXTURES_DIR`.

@@ -14,6 +14,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -49,8 +50,14 @@ USER_IDLE_SECONDS = 300
 # A remote step that takes longer than this has stalled: the compile runs here instead.
 COPY_SECONDS = 120
 COMPILE_SECONDS = 900
-# What a crate's build reads as a path must be hashed as it is, not with its checkout stripped.
-VERBATIM = "CARGO_MANIFEST_DIR,CARGO_MANIFEST_PATH,RERAIL_FIXTURES_DIR,RERAIL_ORACLES_DIR"
+# What a crate's build reads as a path must be hashed as it is, not with its checkout stripped. Not
+# RERAIL_FIXTURES_DIR: the tests read it as they run, and as they compile only to embed a fixture's
+# text (`oracle!`, native/src/code_rule_dsl/fixtures.rs), which the key holds; hashed as it is, it made
+# every test binary of every checkout its own (scripts/check/ci/path-free-builds.mjs keeps it so). A
+# hit from another checkout names this checkout's fixtures in its dep-info: sccache writes the
+# dep-info from its own `--emit=dep-info` run of this compile, never from the cache (upstream 81c2834,
+# in build-sccache's BASE), so cargo watches the files this checkout embeds.
+VERBATIM = "CARGO_MANIFEST_DIR,CARGO_MANIFEST_PATH,RERAIL_ORACLES_DIR"
 # Where cargo keeps the crates it downloads: the same files at the same paths on every machine.
 IN_PLACE = (os.path.join(HOME, ".cargo/registry/src"), os.path.join(HOME, ".cargo/git/checkouts"))
 # Variables a remote compile must not see: this machine's jobserver, terminal and farm plumbing.
@@ -271,15 +278,45 @@ def hot_marker(out_dir, crate, extra):
 LINKED = {"proc-macro", "cdylib", "dylib", "bin"}
 
 
+def linked_types(args):
+    """The crate types of a compile, a test harness (`--test`) as `bin`: an executable rustc links."""
+    types = set()
+    for t in values(args, "--crate-type"):
+        types.update(t.split(","))
+    if "--test" in args:
+        types.add("bin")
+    return types
+
+
+def fresh_inode(path):
+    """Replaces the program at `path` with a copy of itself, in a file of its own. The farm's sccache
+    writes a hit's files while its other threads start compilers, each of which holds the file open
+    until it execs: cargo running the program then fails with "Text file busy" (ETXTBSY; twice in an
+    hour on the build boxes, 2026-11-18). The copy is a file only this process wrote and closed. A
+    copy that fails (a full disk, a refused write) keeps the program as the compile wrote it: the
+    compile succeeded, and only this bookkeeping did not."""
+    tmp = f"{path}.farm-{os.getpid()}"
+    try:
+        shutil.copy2(path, tmp)
+        os.replace(tmp, path)
+    except FileNotFoundError:
+        pass  # no program: the compile failed, or wrote none
+    except OSError as e:
+        # The partial copy goes first: it frees the space a full disk needs for the log line.
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        log(f"fresh_inode: {path} kept as written: {e}")
+
+
 def same_in_every_checkout(args, out_dir, crate):
     """Arguments that keep what rustc links (a proc macro's dylib, a build script, the engine's cdylib)
     free of its checkout's and target directory's paths: its install name and the debug map's paths
     to the objects it links. The farm's sccache caches these (`SCCACHE_CACHE_LINKED`), and every crate
     that uses a proc macro hashes its dylib. A cached one's debug map names objects of the target
     directory that compiled it: elsewhere, its own code has no line tables."""
-    types = set()
-    for t in values(args, "--crate-type"):
-        types.update(t.split(","))
+    types = linked_types(args)
     if not types & LINKED or not out_dir:
         return []
     # `<target>/<profile>/deps`: the debug map's paths start at the profile's directory.
@@ -647,12 +684,6 @@ def wrapper(rustc, args):
         if os.path.exists(plain):
             os.execv(plain, [plain, rustc] + args)
         os.execv(rustc, [rustc] + args)
-    # Linux: a program cargo runs (a build script, a binary) is compiled here, never written by the
-    # farm's sccache. Its server writes a hit's files while its other threads start compilers, each of
-    # which holds the file open until it execs, and running the program then fails with "Text file
-    # busy" (ETXTBSY; twice in an hour on the build boxes, 2026-11-18). macOS has no such error.
-    if sys.platform != "darwin" and "bin" in ",".join(values(args, "--crate-type")).split(","):
-        os.execv(rustc, [rustc] + args)
     # Not cargo's probes (`--print`, crate `___`): cargo keeps their output, a failure included, in
     # `target/.rustc_info.json`, and would replay a refusal after its cause was gone.
     if crate != "___" and not any(a == "--print" or a.startswith("--print=") for a in args):
@@ -684,6 +715,14 @@ def wrapper(rustc, args):
     for k in ("CARGO_TARGET_DIR", "CARGO_BUILD_TARGET_DIR"):
         env.pop(k, None)
     sccache_env(env)
+    # A program cargo runs (a build script, a binary, a test harness) gets a file of its own on Linux
+    # (`fresh_inode`); macOS has no "Text file busy". The compile keeps cargo's jobserver descriptors
+    # (`CARGO_MAKEFLAGS` names them), as the exec below does.
+    if sys.platform != "darwin" and "bin" in linked_types(args) and out_dir:
+        code = subprocess.run([SCCACHE, shim(rustc)] + args, env=env, close_fds=False).returncode
+        if code == 0:
+            fresh_inode(os.path.join(out_dir, crate + (codegen(args, "extra-filename") or "")))
+        sys.exit(code)
     os.execve(SCCACHE, [SCCACHE, shim(rustc)] + args, env)
 
 
