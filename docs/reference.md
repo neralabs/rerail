@@ -802,9 +802,9 @@ run at different times from JSON rules.
   `RERAIL_RR_QUIET_MS` replaces the 10-second quiet period. A run stopped at a budget gives each of its rules a
   `budget-exceeded` failure that names the setting to raise; the other rules' results stand.
 - **Which files.** A `.rerail` run reads the files Git lists in the checkout (tracked, and untracked ones Git does
-  not ignore), leaving out folders whose names start with `.` and `target`. It reads no file Git ignores, even
-  where the repository's audits are set not to follow `.gitignore`. Findings in a checkout nested in this one are
-  left to that checkout's own rules.
+  not ignore), leaving out the folders Rerail's own walks never enter (`node_modules`, `dist`, `.git`, `.venv` and the
+  like). It reads no file Git ignores, even where the repository's audits are set not to follow `.gitignore`.
+  Findings in a checkout nested in this one are left to that checkout's own rules.
 
 #### Command reference
 
