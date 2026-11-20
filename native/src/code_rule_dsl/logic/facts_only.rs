@@ -313,8 +313,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan.rs", "OWN_PLANS"),
     ("code_rule_dsl/logic/plan.rs", "OWN_PLANNED"),
     ("code_rule_dsl/logic/plan/keeps.rs", "OWN_OBSERVED"),
-    // Profiling: where a plan is made and the keys planned in a profiled run, for the planning budget's account.
-    ("code_rule_dsl/logic/plan.rs", "PLAN_SITE"),
     ("content_store/reclamation.rs", "EXECUTED_COLLECT_SQL"),
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),
     ("content_store/snapshots.rs", "AFTER_GIT_TREE_TRANSACTION"),
@@ -327,7 +325,7 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     // The session a thread's runs use (decision 0204: the caller's `Handle`, bound for its runs; was `SESSION`, the
     // process's): what it keeps between runs is still a cache to move.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND", "3"),
-    ("code_rule_dsl/logic/plan.rs", "PLANS", "6"),
+    ("code_rule_dsl/logic/plan.rs", "KeptPlans", "6"),
     ("code_rule_dsl/logic/plan.rs", "SESSION_PLANS", "6"),
     ("code_rule_dsl/logic/derived.rs", "MEMO", "6"),
     ("code_rule_dsl/logic/derived.rs", "SESSION_MEMO", "6"),
@@ -393,8 +391,8 @@ fn tables() -> BTreeMap<String, BTreeSet<String>> {
     out
 }
 
-/// Each `static` behind a lock or a cell that holds more than a number or a flag, in the engine's run path:
-/// (file, name).
+/// Each `static` behind a lock or a cell that holds more than a number or a flag, in the engine's run path, and each
+/// value of the run's context that does (a type bound by `bind`, `bind_here`; decision 0442): (file, name).
 fn maps() -> BTreeSet<(String, String)> {
     let mut fs = Vec::new();
     for d in ["code_rule_dsl/logic", "content_store"] {
@@ -406,6 +404,22 @@ fn maps() -> BTreeSet<(String, String)> {
     // A plain number, flag or instant holds no result.
     let plain = regex::Regex::new(r"(Mutex|RwLock|RefCell|OnceLock|LazyLock|Cell)\s*<\s*(\(\s*\)|bool|u8|u16|u32|u64|usize|i32|i64|f64|std::time::Instant|Instant|std::time::Duration|Option<\s*(usize|u64|i64|bool|f64|std::time::Instant)\s*>|\(\s*(Option<usize>|usize|u64|f64)\s*,\s*(usize|u64|f64)\s*\))\s*>").unwrap();
     let mut out = BTreeSet::new();
+    // The run's context: the types bound, and where each is declared with its field.
+    let binds = regex::Regex::new(r"\bbind(?:_here)?\(\s*([A-Z][A-Za-z0-9]*)\(").unwrap();
+    let tuple = regex::Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?struct\s+([A-Z][A-Za-z0-9]*)\((.*)\);").unwrap();
+    let flat = regex::Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(bool|u8|u16|u32|u64|usize|i32|i64|f64|&'static str|Option<\s*(usize|u64|i64|bool|f64)\s*>)\s*$").unwrap();
+    let texts: Vec<(std::path::PathBuf, String)> = fs.iter().map(|f| (f.clone(), std::fs::read_to_string(f).unwrap_or_default())).collect();
+    let bound: BTreeSet<String> = texts.iter().flat_map(|(_, t)| binds.captures_iter(t).map(|c| c[1].to_owned()).collect::<Vec<_>>()).collect();
+    for (f, text) in &texts {
+        for l in text.lines() {
+            if let Some(c) = tuple.captures(l)
+                && bound.contains(&c[1])
+                && !flat.is_match(&c[2])
+            {
+                out.insert((rel(f), c[1].to_owned()));
+            }
+        }
+    }
     for f in fs {
         let text = std::fs::read_to_string(&f).unwrap_or_default();
         let lines: Vec<&str> = text.lines().collect();

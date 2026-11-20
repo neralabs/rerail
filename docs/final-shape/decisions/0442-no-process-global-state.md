@@ -52,6 +52,23 @@ by any caller in the process, so two callers of different trust could not be kep
 
 - The baseline (2026-11-19): 563 statics: 78 stay, 109 run, 9 connection, 41 shared, 326 review.
 - Thread-locals of class Carried are the run's context in thread-locals: they fold into `Run` once it holds the rest.
+  Under way (2026-11-19; moved so far: the profile's switch, directory and stage, and the planner's kept plans and
+  five switches), as follows:
+  - **What they are.** Of the 40, 37 are a value for an extent of a run: a guard sets it and puts the old one back
+    (how deep the run is nested, the phase under way, the batch, the kept plans, the device binding, the profile's
+    switch). Two jobs of one run, in different extents, see different values. So they are not fields of `Run`: a
+    field is the same for every job of the run.
+  - **The run's context** (`rerail_context::bind`, `bound`, `with_bound`): one chain of values by type, on the run's
+    thread beside `RUN`. A guard binds a value for its extent (a node on the chain, popped as it drops); a read
+    takes the nearest binding, else the type's default (a setting, for the ones the environment sets).
+  - **Carried with the run, as one.** `job_run` is the run and this thread's chain; `enter` puts both on the job's
+    thread. So every carry of the run carries the whole context: `run_state`'s, `profile::carried`'s, the stream's
+    queue, `exec`'s launches, a test's thread (`caller`). Before, a pool's parallel item (`profile::carried`) and
+    `exec`'s launches carried the run alone: an item read its pool thread's own device binding, store, waves and
+    chunk.
+  - **Not context:** a job's own buffers of the kept plans and observations (`OWN_PLANS`, `OWN_PLANNED`,
+    `OWN_OBSERVED`), merged into the run's as the job ends: a job's state on its thread (class Call). `RUN` itself
+    stays, holding the chain.
 - Step 3 (the profile), as done:
   - A run's records are the run's (`profile::Records`, a run local). Each thread's shard of them is listed in the run
     it records for. Outside a run nothing keeps them: a test that reads a profile holds a run (`run::scope`, or

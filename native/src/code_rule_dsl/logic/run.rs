@@ -76,7 +76,7 @@ pub struct Record {
 /// this one reach it (`profile::RunOwn`).
 /// A caller with no run (a test's thread) hands its jobs a run of its own on its object (`profile::job_run`).
 pub(in crate::code_rule_dsl) fn carried(c: &mut super::run_state::Capture) {
-    c.part(&["RUN"], super::run_state::Shared(super::profile::job_run(), super::profile::enter));
+    c.part(&["RUN", "CONTEXT"], super::run_state::Shared(super::profile::job_run(), super::profile::enter));
 }
 
 /// The run under way on this thread, if one holds a scope.

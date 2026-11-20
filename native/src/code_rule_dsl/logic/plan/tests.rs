@@ -2381,9 +2381,9 @@ fn a_relation_empty_when_planned_does_not_make_a_cross_product_free() {
     }
     let r = &p.rules[0];
     let _plans = KeepPlans::start(None);
-    let was = explaining(true);
+    let explain = explaining(true);
     let (_, explained) = model.plan_rule_reused(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
-    explaining(was);
+    drop(explain);
     let steps = explained.expect("explained").steps;
     let zero: Vec<&str> = steps.iter().filter(|s| s.rows <= 0.0).map(|s| s.literal.as_str()).collect();
     assert!(zero.is_empty(), "no step is priced at no rows, so no order after the empty relation is free: {zero:?} of {:?}", steps.iter().map(|s| (s.literal.as_str(), s.rows)).collect::<Vec<_>>());
@@ -3015,7 +3015,7 @@ fn the_searchs_own_steps_are_the_records_features() {
     let alone = body::alone(r).unwrap();
     let b = body::nth(&alone, 0);
     // The record made in full, as a profiled run makes it.
-    let was = explaining(true);
+    let explain = explaining(true);
     for first in [None, Some(2)] {
         let got = model.search_steps_against_records(fields, &b, first).unwrap();
         assert!(got.len() >= 2, "the best and a runner-up, delta {first:?}: {}", got.len());
@@ -3030,7 +3030,7 @@ fn the_searchs_own_steps_are_the_records_features() {
             }
         }
     }
-    explaining(was);
+    drop(explain);
     joins::set_pricer(None);
 }
 

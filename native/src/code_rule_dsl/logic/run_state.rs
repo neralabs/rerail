@@ -88,6 +88,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/native/setfix.rs", "GROWN", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
     ("src/code_rule_dsl/logic/native/setfix.rs", "MIXED", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
     ("crates/context/src/lib.rs", "RUN", Carried, ""),
+    ("crates/context/src/lib.rs", "CONTEXT", Carried, ""),
     ("src/code_rule_dsl/logic/native/setfix.rs", "WALKS_WHOLE", Carried, ""),
     ("src/code_rule_dsl/facts/rows.rs", "CHUNK", Carried, ""),
     ("src/code_rule_dsl/logic/native/setfix.rs", "IN_MORSELS", Thread, "the walks this thread ran in morsels, read by tests"),
@@ -104,16 +105,10 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/native/setfix/device.rs", "SUSPENDED", Thread, "this thread's device waves and launches"),
     ("src/code_rule_dsl/logic/native/setfix/device.rs", "TESTS", Thread, "device text tests by pattern: any thread's gives the same"),
     ("src/code_rule_dsl/logic/native/setfix/device.rs", "WAVE", Thread, "this thread's device waves and launches"),
-    ("src/code_rule_dsl/logic/plan.rs", "EXPLAIN_ALWAYS", Carried, ""),
-    ("src/code_rule_dsl/logic/plan.rs", "NO_SHAPES", Carried, ""),
     ("src/code_rule_dsl/logic/plan.rs", "OWN_PLANS", Carried, ""),
     ("src/code_rule_dsl/logic/plan.rs", "OWN_PLANNED", Carried, ""),
-    ("src/code_rule_dsl/logic/plan.rs", "PLANS", Carried, ""),
-    ("src/code_rule_dsl/logic/plan.rs", "PLAN_SITE", Carried, ""),
     ("src/code_rule_dsl/logic/plan.rs", "SEED", Call, "the last priced body's cheapest start, read by the same pricing"),
     ("src/code_rule_dsl/logic/plan.rs", "SESSION_PLANS", Outermost, "a session's plans between its runs: taken and put back by the outermost run"),
-    ("src/code_rule_dsl/logic/plan.rs", "SKEWING", Carried, ""),
-    ("src/code_rule_dsl/logic/plan.rs", "STEP_ROWS", Carried, ""),
     ("src/code_rule_dsl/logic/plan.rs", "WALK_SALT", Call, "the walks' seeds' salt, set while one search repeats its walks (decision 0247)"),
     ("src/code_rule_dsl/logic/plan/choices.rs", "DURABLE", Carried, ""),
     ("src/code_rule_dsl/logic/plan/compose.rs", "CACHE", Thread, "compiled compositions by digest: any thread's gives the same"),
@@ -149,9 +144,6 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/profile.rs", "HELD", Thread, "whether this thread holds the profile's state"),
     ("src/code_rule_dsl/logic/profile.rs", "SHARD", Thread, "this thread's shard of its run's profile records, merged into them as they are read (decision 0442)"),
     ("src/code_rule_dsl/logic/profile.rs", "STACK", Thread, "this thread's open spans; a job opens its span under its caller's (`profile::here`, carried)"),
-    ("src/code_rule_dsl/logic/profile.rs", "STAGE", Carried, ""),
-    ("src/code_rule_dsl/logic/profile.rs", "ON", Carried, "whether the caller's runs are profiled (decision 0442)"),
-    ("src/code_rule_dsl/logic/profile.rs", "DIR", Carried, "where the caller's next profile is written (decision 0442)"),
     ("src/code_rule_dsl/logic/profile.rs", "COMMAND", Outermost, "the command's clocks, on the thread that runs it and its outermost run"),
     ("crates/context/src/lib.rs", "ENGINE", Thread, "whether the engine made this thread (test builds: a read outside any run on it is refused, decision 0442)"),
     ("crates/context/src/lib.rs", "SEEN", Thread, "this thread's copy of the settings its run under way read, held with that run (decision 0442)"),
@@ -323,9 +315,6 @@ const CARRIERS: &[fn(&mut Capture)] = &[
 fn carried_elsewhere(c: &mut Capture) {
     c.copy(&["IN_PHASE_0"], &crate::code_rule_dsl::phase_clock::IN_PHASE_0);
     c.copy(&["WAVES"], &crate::content_store::write_back::WAVES);
-    c.copy(&["STAGE"], &super::profile::STAGE);
-    c.copy(&["ON"], &super::profile::ON);
-    c.cloned(&["DIR"], &super::profile::DIR);
     c.part(&["CURRENT"], Shared(crate::code_rule_dsl::sql_admission::current(), crate::code_rule_dsl::sql_admission::enter_current));
 }
 

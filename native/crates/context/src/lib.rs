@@ -6,7 +6,9 @@
 //! - `RUN`: the run under way on this thread, made and carried by `rerail_logic::run` (and `run_state`, to its jobs);
 //! - `setting`, `local`, `with_local`, `local_if_any`: a run's settings and its own values, by type;
 //! - `Shared` (`shared`, `with_shared`): what a caller shares by design with the runs it hands the object;
-//! - `Machine` (`machine`): the machine's resources, which every `Shared` is made on.
+//! - `Machine` (`machine`): the machine's resources, which every `Shared` is made on;
+//! - `bind`, `bound`, `with_bound`: the run's context, a value by type for an extent of the run (`CONTEXT`), carried
+//!   with the run to its jobs.
 //!
 //! Outside a run, each gives a value of its own that nothing keeps.
 
@@ -20,6 +22,10 @@ thread_local! {
 pub trait RunOwn: Send + Sync {
     /// A tree decoded from a program's version, at `at`.
     fn decoded(&self, at: &'static std::panic::Location<'static>);
+    /// A job's handle (`job_run`): the run, and the context it was taken in. `enter` puts both on the job's thread.
+    fn with_context(&self) -> Option<(&std::sync::Arc<dyn RunOwn>, &Context)> {
+        None
+    }
     /// Its settings and its own values (`setting`, `local`).
     fn values(&self) -> &RunValues;
     /// What its caller shares by design with the other runs it hands the same object (`shared`).
@@ -274,19 +280,47 @@ pub fn shared_here() -> std::sync::Arc<Shared> {
     shared_object().unwrap_or_else(|| outside_a_run("the shared object"))
 }
 
-/// Puts `run` on this thread (a job of it, on another thread) until the guard drops, then what the thread had.
+/// Puts `run` on this thread (a job of it, on another thread) until the guard drops, then what the thread had. A job's
+/// handle (`job_run`) puts its context on the thread too; a run alone leaves the thread's context as it is.
 pub fn enter(run: Option<std::sync::Arc<dyn RunOwn>>) -> impl Drop {
-    struct Back(Option<Option<std::sync::Arc<dyn RunOwn>>>);
+    struct Back(Option<Option<std::sync::Arc<dyn RunOwn>>>, Option<Context>);
     impl Drop for Back {
         fn drop(&mut self) {
             let was = self.0.take().flatten();
+            // The context first, as it was entered last; each dropped outside its cell (a value's drop may read it).
+            let context = self.1.take().and_then(|c| CONTEXT.try_with(|x| x.replace(c)).ok());
+            drop(context);
             // The run that leaves, dropped here: if it was the last holder, the run has ended.
             let left = RUN.try_with(|r| r.replace(was)).ok().flatten();
             drop(left);
             left_run();
         }
     }
-    Back(Some(RUN.try_with(|r| r.replace(run)).ok().flatten()))
+    let (run, context) = match run {
+        Some(job) => match job.with_context() {
+            Some((run, context)) => (Some(std::sync::Arc::clone(run)), Some(context.clone())),
+            None => (Some(job), None),
+        },
+        None => (None, None),
+    };
+    let was_run = RUN.try_with(|r| r.replace(run)).ok().flatten();
+    let was_context = context.and_then(|c| CONTEXT.try_with(|x| x.replace(c)).ok());
+    Back(Some(was_run), was_context)
+}
+
+/// Whether this thread holds `job`'s run and context already (a pool's item run inline on its caller's thread).
+pub fn holds(job: &Option<std::sync::Arc<dyn RunOwn>>) -> bool {
+    let (run, context) = match job.as_ref().map(|j| (j, j.with_context())) {
+        Some((_, Some((run, context)))) => (Some(run), Some(context)),
+        Some((run, None)) => (Some(run), None),
+        None => (None, None),
+    };
+    let same_run = RUN.with(|r| match (r.borrow().as_ref(), run) {
+        (Some(a), Some(b)) => std::ptr::addr_eq(std::sync::Arc::as_ptr(a), std::sync::Arc::as_ptr(b)),
+        (None, None) => true,
+        _ => false,
+    });
+    same_run && context.is_none_or(|c| CONTEXT.with(|x| x.borrow().same(c)))
 }
 
 /// A run has left this thread (a guard that put it there dropped, `RUN` back as it was): if it has ended (nothing
@@ -322,7 +356,127 @@ pub fn within(shared: std::sync::Arc<Shared>) -> impl Drop {
 /// of its own on this thread's object (`shared_here`: on a test's thread, the tests' one). A job runs as its caller
 /// does (decision 0442), whether or not the caller holds a run.
 pub fn job_run() -> Option<std::sync::Arc<dyn RunOwn>> {
-    Some(run_own().unwrap_or_else(|| std::sync::Arc::new(Bare(RunValues::default(), shared_here()))))
+    let run = run_own().unwrap_or_else(|| std::sync::Arc::new(Bare(RunValues::default(), shared_here())));
+    let context = CONTEXT.try_with(|c| c.borrow().clone()).unwrap_or_default();
+    Some(std::sync::Arc::new(InContext(run, context)))
+}
+
+/// A job's handle (`job_run`): the run, and the context the job was made in.
+struct InContext(std::sync::Arc<dyn RunOwn>, Context);
+
+impl RunOwn for InContext {
+    fn decoded(&self, at: &'static std::panic::Location<'static>) {
+        self.0.decoded(at)
+    }
+    fn with_context(&self) -> Option<(&std::sync::Arc<dyn RunOwn>, &Context)> {
+        Some((&self.0, &self.1))
+    }
+    fn values(&self) -> &RunValues {
+        self.0.values()
+    }
+    fn shared(&self) -> &std::sync::Arc<Shared> {
+        self.0.shared()
+    }
+    fn any(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync> {
+        std::sync::Arc::clone(&self.0).any()
+    }
+}
+
+thread_local! {
+    /// The run's context on this thread (decision 0442): a value by type for each extent under way (`bind`), carried
+    /// with the run to its jobs (`job_run`, `enter`).
+    static CONTEXT: std::cell::RefCell<Context> = const { std::cell::RefCell::new(Context(None)) };
+}
+
+/// The run's context: a chain of values by type, the nearest binding first. Shared by the jobs taken in it; a binding
+/// adds a link and leaves the chain it was made on as it was.
+#[derive(Clone, Default)]
+pub struct Context(Option<std::sync::Arc<Link>>);
+
+struct Link {
+    key: std::any::TypeId,
+    value: Box<dyn std::any::Any + Send + Sync>,
+    up: Context,
+}
+
+impl Context {
+    fn find<T: 'static>(&self) -> Option<&T> {
+        let key = std::any::TypeId::of::<T>();
+        let mut at = self.0.as_deref();
+        while let Some(link) = at {
+            if link.key == key {
+                return link.value.downcast_ref::<T>();
+            }
+            at = link.up.0.as_deref();
+        }
+        None
+    }
+
+    fn same(&self, other: &Context) -> bool {
+        match (&self.0, &other.0) {
+            (Some(a), Some(b)) => std::sync::Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+
+    fn with<T: Send + Sync + 'static>(&self, value: T) -> Context {
+        Context(Some(std::sync::Arc::new(Link { key: std::any::TypeId::of::<T>(), value: Box::new(value), up: self.clone() })))
+    }
+}
+
+/// The value of type `T` the run's context binds here (the nearest `bind`), else `T`'s default.
+pub fn bound<T: Clone + Default + Send + Sync + 'static>() -> T {
+    CONTEXT.try_with(|c| c.borrow().find::<T>().cloned()).ok().flatten().unwrap_or_default()
+}
+
+/// `f` of the value of type `T` the run's context binds here, else of `T`'s default. `f` may bind and read the
+/// context: it holds the chain, not the thread's cell.
+pub fn with_bound<T: Default + Send + Sync + 'static, R>(f: impl FnOnce(&T) -> R) -> R {
+    let context = CONTEXT.try_with(|c| c.borrow().clone()).unwrap_or_default();
+    match context.find::<T>() {
+        Some(t) => f(t),
+        None => f(&T::default()),
+    }
+}
+
+/// Binds `value` in the run's context on this thread, and in every job taken here, until the guard drops; then the
+/// context is as it was.
+pub fn bind<T: Send + Sync + 'static>(value: T) -> Bound {
+    let was = CONTEXT.try_with(|c| {
+        let next = c.borrow().with(value);
+        c.replace(next)
+    });
+    Bound(was.ok(), std::marker::PhantomData)
+}
+
+/// Binds `value` for the rest of the extent under way on this thread (an extent's guard dropping takes it with it): a
+/// caller's choice for its runs (the profile's switch, the options for its inputs).
+pub fn bind_here<T: Send + Sync + 'static>(value: T) {
+    let was = CONTEXT.try_with(|c| {
+        let next = {
+            let here = c.borrow();
+            // A binding of the same type at the top is replaced, so that a switch set again and again stays one link.
+            match here.0.as_deref() {
+                Some(top) if top.key == std::any::TypeId::of::<T>() => top.up.with(value),
+                _ => here.with(value),
+            }
+        };
+        c.replace(next)
+    });
+    drop(was);
+}
+
+/// A binding (`bind`): dropped, the run's context on this thread is as it was before. It stays on its thread (not
+/// `Send`): dropped on another, it would set that thread's context.
+#[must_use = "the binding ends when the guard drops"]
+pub struct Bound(Option<Context>, std::marker::PhantomData<*const ()>);
+
+impl Drop for Bound {
+    fn drop(&mut self) {
+        let left = self.0.take().and_then(|was| CONTEXT.try_with(|c| c.replace(was)).ok());
+        drop(left);
+    }
 }
 
 /// What a thread holds for its caller (`caller`): `job_run`'s run.
@@ -513,4 +667,86 @@ pub fn test_run() -> impl Drop {
         }
     }
     Guard(fresh)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Clone, Default, PartialEq, Debug)]
+    struct Depth(usize);
+    #[derive(Clone, Default, PartialEq, Debug)]
+    struct Site(&'static str);
+
+    fn links() -> usize {
+        CONTEXT.with(|c| {
+            let (mut n, mut at) = (0, c.borrow().0.clone());
+            while let Some(l) = at {
+                n += 1;
+                at = l.up.0.clone();
+            }
+            n
+        })
+    }
+
+    #[test]
+    fn a_binding_lasts_its_extent_and_the_nearest_wins() {
+        assert_eq!(bound::<Depth>(), Depth(0), "unbound: the default");
+        {
+            let _one = bind(Depth(1));
+            let _site = bind(Site("plan"));
+            assert_eq!(bound::<Depth>(), Depth(1));
+            {
+                let _two = bind(Depth(2));
+                assert_eq!((bound::<Depth>(), bound::<Site>()), (Depth(2), Site("plan")));
+                assert_eq!(with_bound(|d: &Depth| d.0), 2);
+            }
+            assert_eq!(bound::<Depth>(), Depth(1));
+        }
+        assert_eq!((bound::<Depth>(), links()), (Depth(0), 0));
+    }
+
+    #[test]
+    fn a_job_takes_its_callers_context_and_its_bindings_stay_its_own() {
+        let _test = test_run();
+        let _outer = bind(Depth(3));
+        let job = job_run();
+        let _later = bind(Depth(4));
+        std::thread::spawn(move || {
+            assert_eq!(bound::<Depth>(), Depth(0), "a thread of its own: no context");
+            {
+                let _in = enter(job.clone());
+                assert_eq!(bound::<Depth>(), Depth(3), "the context the job was taken in");
+                assert!(run_own().is_some_and(|r| r.with_context().is_none()), "the run, not the job's handle");
+                assert!(holds(&job));
+                let _own = bind(Depth(9));
+                assert_eq!(bound::<Depth>(), Depth(9));
+                assert!(!holds(&job));
+            }
+            assert_eq!(bound::<Depth>(), Depth(0), "the thread's own again");
+        })
+        .join()
+        .unwrap();
+        assert_eq!(bound::<Depth>(), Depth(4), "the caller's own bindings are untouched");
+    }
+
+    #[test]
+    fn a_run_entered_alone_leaves_the_threads_context() {
+        let _depth = bind(Depth(5));
+        let run: std::sync::Arc<dyn RunOwn> = std::sync::Arc::new(Bare(RunValues::default(), Shared::new()));
+        let _in = enter(Some(run));
+        assert_eq!(bound::<Depth>(), Depth(5));
+    }
+
+    #[test]
+    fn a_choice_set_again_is_one_binding_and_ends_with_its_extent() {
+        {
+            let _extent = bind(Site("outer"));
+            for i in 0..100 {
+                bind_here(Depth(i));
+            }
+            assert_eq!((bound::<Depth>(), links()), (Depth(99), 2));
+        }
+        assert_eq!((bound::<Depth>(), links()), (Depth(0), 0));
+    }
 }

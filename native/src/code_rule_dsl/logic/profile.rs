@@ -44,34 +44,44 @@ pub mod sources;
 pub use roofline::Unit;
 // cratify: `report` is rerail-logic's (it mounts it)
 
-thread_local! {
-    /// Whether the caller's runs are profiled (decision 0442: the caller's choice, `RERAIL_PROFILE` unless it sets
-    /// one; held by its thread and carried to its runs' jobs, `logic::run_state`).
-    pub static ON: std::cell::Cell<bool> = std::cell::Cell::new(std::env::var_os("RERAIL_PROFILE").is_some());
-    /// The directory the caller's next report is written to: `RERAIL_PROFILE`'s, unless it sets one.
-    pub static DIR: std::cell::RefCell<Option<std::path::PathBuf>> = std::cell::RefCell::new(std::env::var_os("RERAIL_PROFILE").map(Into::into));
+/// Whether the caller's runs are profiled (decision 0442: the caller's choice, `RERAIL_PROFILE` unless it binds one),
+/// in the run's context and so in its jobs'.
+#[derive(Clone, Copy)]
+struct On(bool);
+impl Default for On {
+    fn default() -> Self {
+        On(setting(|| std::env::var_os("RERAIL_PROFILE").is_some()))
+    }
+}
+
+/// The directory the caller's next report is written to: `RERAIL_PROFILE`'s, unless it binds one.
+#[derive(Clone)]
+struct Dir(Option<std::path::PathBuf>);
+impl Default for Dir {
+    fn default() -> Self {
+        Dir(setting(|| std::env::var_os("RERAIL_PROFILE").map(Into::into)))
+    }
 }
 
 /// Whether this run is profiled.
 pub fn on() -> bool {
-    ON.with(std::cell::Cell::get)
+    bound::<On>().0
 }
 
-/// Turns profiling of this caller's runs on or off (a test that profiles without the environment variable).
-#[allow(dead_code)]
+/// Turns profiling of this caller's runs on or off (a test that profiles without the environment variable), for the
+/// rest of the extent under way here.
 pub fn set(on: bool) {
-    ON.with(|o| o.set(on));
+    bind_here(On(on));
 }
 
 /// The directory the next report is written to: `RERAIL_PROFILE`'s, unless set (one per rule in a measurement).
 pub fn directory() -> Option<std::path::PathBuf> {
-    DIR.with(|d| d.borrow().clone())
+    bound::<Dir>().0
 }
 
 /// Sets the directory this caller's next report is written to.
-#[allow(dead_code)]
 pub fn set_directory(dir: &Path) {
-    DIR.with(|d| *d.borrow_mut() = Some(dir.to_path_buf()));
+    bind_here(Dir(Some(dir.to_path_buf())));
 }
 
 fn cpu() -> f64 {
@@ -1245,16 +1255,15 @@ pub fn carried<A, R>(name: &'static str, f: impl Fn(A) -> R + Sync + Send) -> im
 }
 
 /// What `carried` carries, for a parallel loop whose items `carried` cannot wrap (`map_init`'s, given the item's
-/// state too): the run under way here and the span open, entered by each item (`Carry::enter`).
+/// state too): the run under way here with its context, and the span open, entered by each item (`Carry::enter`).
 pub struct Carry {
     under: Option<String>,
     run: Option<std::sync::Arc<dyn RunOwn>>,
-    on: bool,
 }
 
 /// The run under way here, for the items a pool thread takes: their records are the run's (decision 0442).
 pub fn carry() -> Carry {
-    Carry { under: here(), run: job_run(), on: on() }
+    Carry { under: here(), run: job_run() }
 }
 
 impl Carry {
@@ -1268,40 +1277,22 @@ impl Carry {
                 self.0.take();
             }
         }
-        let run = InRun::enter(&self.run, self.on);
+        let run = InRun::enter(&self.run);
         let span = (self.under.is_some() && STACK.with(|s| s.lock().opens.is_empty())).then(|| span_at(self.under.as_deref(), || name.to_owned()));
         In(Some(run), span)
     }
 }
 
-/// A pool thread in a run's context for an item (`carried`): the run and its profiling switch; dropped, the thread's
-/// own are back. On a thread already in that run, nothing changes.
-struct InRun(Option<(Option<std::sync::Arc<dyn RunOwn>>, bool)>);
+/// A pool thread in a run's context for an item (`carried`): the run and its context (`job_run`); dropped, the
+/// thread's own are back. On a thread that holds them already (an item run inline by its caller), nothing changes.
+struct InRun(Option<Box<dyn std::any::Any>>);
 
 impl InRun {
-    fn enter(run: &Option<std::sync::Arc<dyn RunOwn>>, on: bool) -> InRun {
-        let same = RUN.with(|r| match (r.borrow().as_ref(), run.as_ref()) {
-            (Some(a), Some(b)) => std::ptr::addr_eq(std::sync::Arc::as_ptr(a), std::sync::Arc::as_ptr(b)),
-            (None, None) => true,
-            _ => false,
-        });
-        if same {
+    fn enter(run: &Option<std::sync::Arc<dyn RunOwn>>) -> InRun {
+        if holds(run) {
             return InRun(None);
         }
-        let was_run = RUN.with(|r| r.replace(run.clone()));
-        let was_on = ON.with(|o| o.replace(on));
-        InRun(Some((was_run, was_on)))
-    }
-}
-
-impl Drop for InRun {
-    fn drop(&mut self) {
-        if let Some((run, on)) = self.0.take() {
-            let left = RUN.with(|r| r.replace(run));
-            ON.with(|o| o.set(on));
-            drop(left);
-            left_run();
-        }
+        InRun(Some(Box::new(enter(run.clone()))))
     }
 }
 
@@ -1491,39 +1482,31 @@ pub fn read_in_waves<T>(f: impl FnOnce() -> T) -> T {
 
 /// Waves are under way until dropped: from a run's first wave (its first chunk) to its last (the cross-file part's
 /// last stratum). SQL before and after is the run's beginning and end, where it may be; inside, it is a hazard.
-/// With the stage this thread's run was at before (`STAGE`).
+/// With the binding of its stage (`Stage`, in the run's context).
 /// The count it added to, so its drop takes it off there on any thread.
-pub struct Waves(Option<std::sync::Arc<WavesUnderWay>>, u8);
+pub struct Waves(Option<std::sync::Arc<WavesUnderWay>>, Option<Bound>);
 
 pub fn waves() -> Waves {
     let count = machine::<WavesUnderWay>();
     count.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    Waves(Some(count), STAGE.with(|s| s.replace(INSIDE)))
+    Waves(Some(count), Some(bind(Stage(INSIDE))))
 }
 
-/// Where this thread's run is (decision 0192), carried to its jobs (`run_state`): no run (`0`), a run before its
+/// Where this thread's run is (decision 0192), in the run's context: no run (`0`), a run before its
 /// first wave (`BEFORE`), or inside the waves (`INSIDE`). Runs on other threads may be in their waves meanwhile (a
 /// typing run beside phase 1): a run before its own may still read, and a thread of a run in its waves may not.
 /// A thread with no run's context (a parallel loop's item) goes by the machine's count (`WavesUnderWay`).
 const BEFORE: u8 = 1;
 const INSIDE: u8 = 2;
-thread_local! {
-    /// Public so that the run's context can carry it (`logic::run_state`, a crate above this one).
-    pub static STAGE: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
-}
+#[derive(Clone, Copy, Default)]
+struct Stage(u8);
 
-pub use rerail_context::{AnyArc, Caller, Machine, caller, job_run, RUN, RunOwn, RunValues, Shared, default_shared, engine_thread, enter, left_run, run_ended, local, local_if_any, machine, misses, run_own, setting, shared, shared_here, shared_object, starter_object, with_local, with_shared, within};
+pub use rerail_context::{AnyArc, Bound, Caller, Machine, bind, bind_here, bound, caller, holds, job_run, with_bound, RUN, RunOwn, RunValues, Shared, default_shared, engine_thread, enter, left_run, run_ended, local, local_if_any, machine, misses, run_own, setting, shared, shared_here, shared_object, starter_object, with_local, with_shared, within};
 
 /// A run starts on this thread (`plan::corpus`): before its first wave, unless it is nested in a run inside its
 /// waves, until the guard drops.
-pub fn run_begins() -> impl Drop {
-    struct Begun(u8);
-    impl Drop for Begun {
-        fn drop(&mut self) {
-            STAGE.with(|s| s.set(self.0));
-        }
-    }
-    Begun(STAGE.with(|s| if s.get() == INSIDE { INSIDE } else { s.replace(BEFORE) }))
+pub fn run_begins() -> Option<Bound> {
+    (bound::<Stage>().0 != INSIDE).then(|| bind(Stage(BEFORE)))
 }
 
 /// Whether a store may be asked here (decision 0104): not while waves are under way for this thread.
@@ -1533,7 +1516,7 @@ pub fn may_read_store() -> bool {
 
 /// Whether waves are under way for this thread: its run's, or, with no run's context here, any run's.
 fn waves_here() -> bool {
-    match STAGE.with(std::cell::Cell::get) {
+    match bound::<Stage>().0 {
         BEFORE => false,
         INSIDE => true,
         _ => machine::<WavesUnderWay>().0.load(std::sync::atomic::Ordering::Relaxed) > 0,
@@ -1804,7 +1787,7 @@ impl Drop for Waves {
     fn drop(&mut self) {
         if let Some(count) = self.0.take() {
             count.0.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-            STAGE.with(|s| s.set(self.1));
+            drop(self.1.take());
         }
     }
 }
