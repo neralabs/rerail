@@ -539,7 +539,7 @@ pub mod refusal {
         ("BYTE", "no word takes the token's byte here"),
         ("WORD", "the token's word is not one this place takes"),
         ("SPAN", "the token's length is not the one this place takes"),
-        ("EMPTY", "a total that must be empty is not"),
+        ("EMPTY", "a total of tier 1's that must be zero is not (`EMPTY`: in JSON, a region left open)"),
         ("END", "the file ends where a token is wanted"),
         ("STRING", "a region not closed, or an escape at the file's end"),
         ("CHECK", "a local check of the token's bytes fails"),

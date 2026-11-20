@@ -605,6 +605,9 @@ These close the five gaps found when the generated JSON Rust was set beside simd
 | An error | a `Code`, after `cold_path()` | `Err(false)` | `refuse(why::…)`, `#[cold]`, its reason returned and named by the host |
 | The source's form | indented, labels named by state | flat, `'b21`, `'m129` | indented, `'token_130: loop`, `break 'to_close_22;` |
 
+The bound's formula, the reasons and the label scheme are the implementer's; 0519 lists what the tests hold and
+what they do not. Open: past 1,024 levels the JIT parses what the Rust refuses (0519, "Open").
+
 ## Step 41, done: the kinds' numbers constants (D7, decision 0516); the tape's reads written directly (0510)
 
 **D7.** A direct run's node numbers are literals at their words, as the lean parser writes a kind's constant and

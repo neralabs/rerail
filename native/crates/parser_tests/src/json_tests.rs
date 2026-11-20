@@ -177,6 +177,18 @@ fn simdjson_forms_trees_are_14_jsons() {
     eprintln!("{} files: {parsed} parsed, {refused} refused, by both forms alike", inputs.len());
 }
 
+/// Values nested `n` deep for each `n`: arrays, objects, and an object's value an array's by turns.
+fn deep_nests(depths: std::ops::Range<usize>) -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+    for n in depths {
+        out.push(format!("{}1{}", "[".repeat(n), "]".repeat(n)).into_bytes());
+        out.push(format!("{}1{}", "{\"a\":".repeat(n), "}".repeat(n)).into_bytes());
+        let (open, close): (String, String) = (0..n).map(|k| if k % 2 == 0 { ("[", "]") } else { ("{\"k\": ", "}") }).unzip();
+        out.push(format!("{open}1{}", close.chars().rev().collect::<String>()).into_bytes());
+    }
+    out
+}
+
 /// `src` with each line's indent and its trailing spaces left out.
 fn flat(src: &str) -> String {
     src.lines().map(str::trim).collect::<Vec<_>>().join("\n") + "\n"
@@ -279,6 +291,10 @@ fn tree_inputs() -> Vec<Vec<u8>> {
     // opened, and values to the side lists (a gap, a length and an inner node's size past 255).
     inputs.push(format!("[{}]", vec!["true"; 3000].join(",")).into_bytes());
     inputs.push(format!("{}1{}", "[".repeat(400), "]".repeat(400)).into_bytes());
+    // At the depth's limit (`DEPTH`, 1,024 calls), arrays and objects and both by turns: the open nodes the writer's
+    // stack is reserved for (`rust_stream::open_bound`, decision 0519), at their most. Not past it: there the JIT
+    // parses what the Rust refuses (0519, "Open").
+    inputs.extend(deep_nests(1022..1025));
     inputs.push(format!("{{{}}}", (0..1500).map(|k| format!("\"k{k}\": [{k}, \"v\\n\"]")).collect::<Vec<_>>().join(",")).into_bytes());
     inputs.push(format!("[{}1,{}\"{}\", [{}]]", " ".repeat(300), "\n".repeat(400), "s".repeat(700), vec!["null"; 300].join(", ")).into_bytes());
     inputs.push(format!("[{}]", (0..1100).map(|k| if k % 97 == 0 { format!("{}{k}", " ".repeat(260)) } else { k.to_string() }).collect::<Vec<_>>().join(",")).into_bytes());
@@ -455,6 +471,26 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     }
     assert_eq!(written, parsed, "every parsed file written in format 16");
     eprintln!("{written} files in format 16 and 16z, the Rust's bytes the JIT's");
+    // Each refusal names its reason (`native_cpu_stream::refusal`, decision 0519): a file the JIT refuses, the Rust
+    // refuses for the reason its word has.
+    let numbers = jit.parser.sixteen().expect("a format 16 tier 2").numbers(&lang);
+    let cases: [(&[u8], &str); 7] = [
+        (b"[1 2]", "BYTE"),
+        (b"{\"a\" 1}", "BYTE"),
+        (b"[tru]", "BYTE"),
+        (b"[01]", "CHECK"),
+        (b"[\"\\q\"]", "BYTE"),
+        // The region left open: tier 1's total of open regions, tested by the rule's first word (`EMPTY`).
+        (b"\"open", "EMPTY"),
+        // An escape at the file's end: the region is open too, and `EMPTY` refuses it first (`STRING` is not reached).
+        (b"[\"\\", "EMPTY"),
+    ];
+    for (f, why) in cases {
+        let text = rerail_compiler::native_cpu_stream::refusal::NAMES.iter().find(|n| n.0 == why).expect("a reason").1;
+        assert!(jit.parser.image(f).is_err(), "{:?}: the JIT refuses it", String::from_utf8_lossy(&f[..f.len().min(20)]));
+        let got = aot.parser.image16(f, &lang, &numbers, false).map(|_| ());
+        assert!(got.as_ref().err().is_some_and(|e| e.contains(text)), "{:?}: refused for {why} ({text}): {got:?}", String::from_utf8_lossy(&f[..f.len().min(20)]));
+    }
 }
 
 /// Page 40, order item 4: the simdjson form end to end against simdjson, on simdjson's own inputs (`RERAIL_JSON_FILES`,
