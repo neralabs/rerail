@@ -1,0 +1,1 @@
+On Windows, Claude Code's hooks start one Node on each event whatever `PATH` Claude Code runs with. Set-up chose the hook entry from its own `PATH`, so where Claude Code's found another Node first, every hook started two. `rerail update` replaces an entry written that way.

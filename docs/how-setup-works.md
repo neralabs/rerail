@@ -391,18 +391,17 @@ recorded by the link `brew upgrade` keeps (`/opt/homebrew/bin/node`), not its ve
 recorded Node is gone (after `nvm uninstall`, say), each falls back to `node` on `PATH`. The status line starts Node
 only on Windows and where you had a status line of your own, which Node runs first
 ([how Claude Code draws it](in-session-surfaces.md#how-claude-code-draws-it)). On Windows Claude Code runs it through
-Git Bash, so its `sh -c` fallback works there. Where
-set-up found another `node` first on `PATH`, or none, Claude Code's hooks on Windows start through `cmd.exe`, which
-runs the recorded Node itself while it exists and `node.exe` from `PATH` once it is gone, so each hook event runs one
-Node rather than two. Set-up writes the `node` entry instead where it finds no `cmd.exe` by its full System32 path, or
-where `cmd.exe` would split a path of the entry: one that holds `%`, `!` or `"`, or one with no space that holds any of
-`& ( ) ^ | < > , ; =`. Its look for `node` on `PATH` ends at the first folder on a server (`\\server\share`), which it
-never opens, since a share that does not answer holds each look for about 21 s, and it writes the `cmd.exe` entry
-there. A drive letter mapped to such a share is looked into: set-up then waits about 21 s once, and each hook event
-afterwards does not. Where the recorded Node is there but cannot start, or the launcher ends in a native crash, the `cmd.exe` entry
+Git Bash, so its `sh -c` fallback works there.
+Claude Code's hooks on Windows start through `cmd.exe`, which runs the recorded Node itself while it exists and
+`node.exe` from `PATH` once it is gone, so each hook event runs one Node whatever `PATH` Claude Code has. Set-up
+writes the `node` entry instead where it finds no `cmd.exe` by its full System32 path, or where `cmd.exe` would split
+a path of the entry: one that holds `%`, `!` or `"`, or one with no space that holds any of `& ( ) ^ | < > , ; =`.
+Claude Code finds that `node` on its own `PATH`, and where that is another Node than the recorded one, the launcher
+starts the recorded one as a second process on each event. Set-up reads no `PATH` to choose the entry. Where the recorded Node is there but cannot start, or the launcher ends in a native crash, the `cmd.exe` entry
 exits 0 with no answer, as the launcher answers for a hook that fails, so Claude Code shows no hook error.
-`rerail update` chooses again from the `PATH` it runs with, and `rerail status` and the dashboard count Claude Code as
-connected in either case, without reading `PATH`.
+Rerail 0.1.5 and earlier wrote the `node` entry wherever set-up's `PATH` found the recorded Node, though Claude Code's
+`PATH` may find another; `rerail update` writes the `cmd.exe` entry over it, and `rerail status` and the dashboard
+count Claude Code as connected with either.
 
 Rerail 0.1.4 and earlier know only the `node` entry. Run `rerail install --remove` before installing one of them:
 its set-up adds its own entry beside each `cmd.exe` one, so every hook runs twice, and its removal leaves the
