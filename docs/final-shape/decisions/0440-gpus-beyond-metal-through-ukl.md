@@ -1232,6 +1232,14 @@ kernel's rows are bound from its reflection, each buffer the zero buffer and eac
 width (`lane::Launch::bytes`). The tests gate on the process's device, not Metal's. The probe of the label
 kernels' compile (Q181) stays a probe of Metal's compiler: its function constants and pipelines are what it times.
 
+**C: the numbering's and the views' probes in UKL (2026-11-19).** The two tests that check the reads written once
+in CLIF against the host's (`the_kernels_id_reads_are_the_hosts`, `the_view_reads_are_the_hosts_rows`,
+`facts/vtab/syntax/tests.rs`) launch UKL kernels on the process's device, each reading its projection's block where
+it lies (`Block::device_buffer`). The views' probe reaches the tape and the lines by their device addresses, words
+of its parameters, as the engine's views do; it runs where buffers have them (not OpenCL 1.2). Both pass on Metal,
+the CPU and OpenCL. Seen on the way: a 16z tape's in-place view reports format 16 there, so the probe's 16z cache
+branch is not reached; it was not before either.
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.

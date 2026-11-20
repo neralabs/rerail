@@ -1740,23 +1740,38 @@ fn an_axis_counts_its_rows_without_its_solve() {
 /// Decision 0353 step 2: the numbering's reads as UKL (`<ukl/reads/ids.h>`, written once in CLIF), run on the device
 /// over a projection's descriptor where it lies in its block, answer what the host's reads (their Rust) answer: for
 /// every tape node, its bit and ranks, the selects, the ids' low bits of nodes and tokens and back, and the order keys
-/// and back. In all three formats, whole and narrowed, a document of more nodes than a granule's slot holds.
+/// and back. In all three formats, whole and narrowed, a document of more nodes than a granule's slot holds. The
+/// kernel is UKL, on the process's device (decision 0440 step C).
 #[cfg(target_os = "macos")]
 #[test]
 fn the_kernels_id_reads_are_the_hosts() {
     use crate::code_rule_dsl::lines::{LineTable, Terminators};
     use crate::code_rule_dsl::tape::{Grammar, TapeImage, formats::Format};
-    use metal::{CompileOptions, Device, MTLResourceOptions, MTLSize};
+    use rerail_gpu::device::ComputeQueue;
+    use rerail_gpu::kernels::{alloc, launch, read};
     if !definition_ids() {
         return;
     }
-    let Some(device) = Device::system_default() else { return };
+    let Some(shared) = rerail_gpu::shared::get() else { return };
     const WIDE: usize = 12;
+    /// The probe's parameters: the descriptor's offset in its block, the nodes.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct IdsP {
+        d: u64,
+        n: u32,
+        pad: u32,
+    }
+    unsafe impl rerail_gpu::Pod for IdsP {}
     const KERNEL: &str = r#"
-kernel void ids_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[buffer(1)]], constant uint& n [[buffer(2)]],
-                      device uint* out [[buffer(3)]], uint x [[thread_position_in_grid]]) {
-    if (x >= n) return;
-    device uint* o = out + x * 12u;
+typedef struct IdsP { uint64_t d; uint32_t n; uint32_t pad; } IdsP;
+UKL_REFLECT_STRUCT(IdsP, d, n, pad)
+DEFINE_KERNEL2(syntax_tests, ids_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, IdsP, p, , RWBUFFER, uint32_t, out, "[n * 12]",
+               GID0, uint32_t, x, )
+{
+    if (x >= p.n) return;
+    uint64_t d = p.d;
+    UKL_GLOBAL uint32_t* o = out + x * 12u;
     o[0] = clif_num_is(b, d, 0u, x);
     o[1] = clif_num_rank(b, d, 0u, x);
     o[2] = clif_num_rank(b, d, 1u, x);
@@ -1765,17 +1780,15 @@ kernel void ids_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[b
     o[5] = clif_num_low_of(b, d, 0u, x);
     o[6] = clif_num_low_of(b, d, 1u, x);
     o[7] = clif_num_order_of(b, d, x);
-    ulong k = clif_num_number_of(b, d, o[5]);
-    o[8] = uint(k); o[9] = uint(k >> 32);
+    uint64_t k = clif_num_number_of(b, d, o[5]);
+    o[8] = (uint32_t)k; o[9] = (uint32_t)(k >> 32);
     o[10] = clif_num_number_of_order(b, d, o[7]);
     o[11] = clif_num_is(b, d, 2u, x);
 }
 "#;
-    let source = format!("#include <metal_stdlib>\nusing namespace metal;\n#include <ukl/reads/ids.h>\n{KERNEL}");
-    let source = rerail_accel::gpu::kernels::msl(&source, "ids_probe").unwrap();
-    let lib = device.new_library_with_source(&source, &CompileOptions::new()).expect("the id reads compile");
-    let pipe = device.new_compute_pipeline_state_with_function(&lib.get_function("ids_probe", None).unwrap()).unwrap();
-    let queue = device.new_command_queue();
+    let source = format!("#include <ukl/backend.h>\n#include <ukl/reads/ids.h>\n{KERNEL}");
+    let program = rerail_gpu::kernels::program("ids_probe.uglykl", Box::leak(source.into_boxed_str())).unwrap_or_else(|e| panic!("the id reads compile: {e}"));
+    let probe = program.function("ids_probe").unwrap();
     let many: String = (0..17_000).map(|i| format!("def f{i}():\n    return {i}\n")).collect();
     let cases: &[(&str, &str)] = &[
         ("python", "import os\nX = 1\n@dec\ndef f(a, b=2):\n    '''doc'''\n    return [x for x in a if x]\n\nclass C(B):\n    def m(self):\n        def inner():\n            pass\n        return inner\n"),
@@ -1800,20 +1813,17 @@ kernel void ids_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[b
                 let block = r.block();
                 let d = block.offset_of(r.desc()) as u64;
                 let n = facts.len() as u32 + 64;
-                let out = device.new_buffer(u64::from(n) * WIDE as u64 * 4, MTLResourceOptions::StorageModeShared);
-                let cmd = queue.new_command_buffer();
-                let enc = cmd.new_compute_command_encoder();
-                enc.set_compute_pipeline_state(&pipe);
-                enc.set_buffer(0, Some(&block.gpu_buffer(&device)), 0);
-                enc.set_bytes(1, 8, (&raw const d).cast());
-                enc.set_bytes(2, 4, (&raw const n).cast());
-                enc.set_buffer(3, Some(&out), 0);
-                enc.dispatch_threads(MTLSize::new(u64::from(n), 1, 1), MTLSize::new(64, 1, 1));
-                enc.end_encoding();
-                cmd.commit();
-                cmd.wait_until_completed();
-                // SAFETY: the kernel wrote WIDE u32s a node, and its command completed.
-                let got = unsafe { std::slice::from_raw_parts(out.contents().cast::<u32>(), n as usize * WIDE) };
+                let out = alloc::<u32>(n as usize * WIDE).unwrap();
+                let mut q = ComputeQueue::new(&shared.queue);
+                launch(&q, probe)
+                    // The projection's block, read where it lies.
+                    .buffer("b", &block.device_buffer(&shared.device).unwrap())
+                    .value("p", &IdsP { d, n, pad: 0 })
+                    .buffer("out", &out)
+                    .run(&[u64::from(n).div_ceil(64)], &[64])
+                    .unwrap_or_else(|e| panic!("{e}"));
+                q.flush().await_().unwrap();
+                let got: Vec<u32> = read(&out, n as usize * WIDE);
                 let h = r.desc();
                 for x in 0..n {
                     // SAFETY: the projection's live descriptor.
@@ -1854,39 +1864,55 @@ kernel void ids_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[b
 fn the_view_reads_are_the_hosts_rows() {
     use crate::code_rule_dsl::lines::{LineTable, Terminators};
     use crate::code_rule_dsl::tape::{Grammar, TapeImage, formats::Format};
-    use metal::{CompileOptions, Device, MTLResourceOptions, MTLSize};
     use ranks::Item;
     use rerail_clif::view::TapeView;
+    use rerail_gpu::device::ComputeQueue;
+    use rerail_gpu::kernels::{alloc, buffer_of, launch, read};
     const WIDE: usize = 16;
+    /// The probe's parameters: the entry's offset in its block, the tape's and the lines' device addresses, the
+    /// projection's nodes and fields.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct ViewP {
+        d: u64,
+        tt: u64,
+        ll: u64,
+        n: u32,
+        nf: u32,
+    }
+    unsafe impl rerail_gpu::Pod for ViewP {}
     const KERNEL: &str = r#"
-// The tape is reached by its GPU address (a pointer in the stage's constants, the buffer made resident): no binding.
-struct Tapes { device const uchar* tt; device const uchar* ll; };
-kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[buffer(1)]], constant uint& n [[buffer(2)]],
-                       constant Tapes& tapes [[buffer(3)]], constant uint* tv [[buffer(4)]], device long* out [[buffer(5)]],
-                       constant uint& nf [[buffer(6)]], uint l [[thread_position_in_grid]]) {
-    if (l >= n) return;
-    device const uchar* tt = tapes.tt;
-    device const uchar* ll = tapes.ll;
-    uint v[29];
-    for (uint k = 0u; k < 29u; k++) v[k] = tv[k];
-    device long* o = out + l * 16u;
-    for (uint c = 0u; c < 5u; c++) o[c] = long(clif_view_node(b, d, tt, v, ll, l, c));
-    for (uint c = 0u; c < 3u; c++) o[5u + c] = l + 1u < n ? long(clif_view_child(b, d, tt, v, ll, l, c)) : 0;
-    for (uint c = 0u; c < 3u; c++) o[8u + c] = l < nf ? long(clif_view_field(b, d, tt, v, ll, l, c)) : 0;
-    for (uint c = 0u; c < 3u; c++) o[11u + c] = long(clif_view_core(b, d, tt, v, ll, l, c));
-    for (uint c = 0u; c < 2u; c++) o[14u + c] = long(clif_view_line(b, d, tt, v, ll, l, c));
+// The tape and the lines are reached by their device addresses (a word each in the parameters, the buffers made
+// resident): no binding.
+typedef struct ViewP { uint64_t d; uint64_t tt; uint64_t ll; uint32_t n; uint32_t nf; } ViewP;
+UKL_REFLECT_STRUCT(ViewP, d, tt, ll, n, nf)
+DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, ViewP, p, , ROBUFFER, uint32_t, tv, "[29]",
+               RWBUFFER, int64_t, out, "[n * 16]", GID0, uint32_t, l, )
+{
+    if (l >= p.n) return;
+    uint64_t d = p.d;
+    uint32_t n = p.n, nf = p.nf;
+    UKL_GLOBAL const uint8_t* tt = (UKL_GLOBAL const uint8_t*)p.tt;
+    UKL_GLOBAL const uint8_t* ll = (UKL_GLOBAL const uint8_t*)p.ll;
+    uint32_t v[29];
+    for (uint32_t k = 0u; k < 29u; k++) v[k] = tv[k];
+    UKL_GLOBAL int64_t* o = out + l * 16u;
+    for (uint32_t c = 0u; c < 5u; c++) o[c] = (int64_t)clif_view_node(b, d, tt, v, ll, l, c);
+    for (uint32_t c = 0u; c < 3u; c++) o[5u + c] = l + 1u < n ? (int64_t)clif_view_child(b, d, tt, v, ll, l, c) : 0;
+    for (uint32_t c = 0u; c < 3u; c++) o[8u + c] = l < nf ? (int64_t)clif_view_field(b, d, tt, v, ll, l, c) : 0;
+    for (uint32_t c = 0u; c < 3u; c++) o[11u + c] = (int64_t)clif_view_core(b, d, tt, v, ll, l, c);
+    for (uint32_t c = 0u; c < 2u; c++) o[14u + c] = (int64_t)clif_view_line(b, d, tt, v, ll, l, c);
 }
 "#;
     let jit = rerail_clif::jit::Reads::new();
     // SAFETY: `view_node`'s signature: the entry, the tape's base, its view, the lines' base, a local, a column.
-    let read = |name: &str| -> extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, u32, u32) -> i64 { unsafe { std::mem::transmute(jit.function(name)) } };
-    let (node, child, field, core_node, line) = (read("view_node"), read("view_child"), read("view_field"), read("view_core"), read("view_line"));
-    let device = Device::system_default();
-    let pipe = device.as_ref().map(|device| {
-        let source = format!("#include <metal_stdlib>\nusing namespace metal;\n#include <ukl/reads/view.h>\n{KERNEL}");
-        let source = rerail_accel::gpu::kernels::msl(&source, "view_probe").unwrap();
-        let lib = device.new_library_with_source(&source, &CompileOptions::new()).expect("the view reads compile");
-        (device.new_compute_pipeline_state_with_function(&lib.get_function("view_probe", None).unwrap()).unwrap(), device.new_command_queue())
+    let read_of = |name: &str| -> extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, u32, u32) -> i64 { unsafe { std::mem::transmute(jit.function(name)) } };
+    let (node, child, field, core_node, line) = (read_of("view_node"), read_of("view_child"), read_of("view_field"), read_of("view_core"), read_of("view_line"));
+    // The process's device, where its buffers have device addresses (OpenCL 1.2's have none: 0440 step C).
+    let probe = rerail_gpu::shared::get().filter(|_| alloc::<u8>(1).ok().and_then(|b| b.device_address()).is_some()).map(|shared| {
+        let source = format!("#include <ukl/backend.h>\n#include <ukl/reads/view.h>\n{KERNEL}");
+        let program = rerail_gpu::kernels::program("view_probe.uglykl", Box::leak(source.into_boxed_str())).unwrap_or_else(|e| panic!("the view reads compile: {e}"));
+        (shared, program.function("view_probe").unwrap())
     });
     let cases: &[(&str, &str)] = &[
         ("python", "import os\nX = 1\n@dec\ndef f(a, b=2):\n    '''doc'''\n    return [x for x in a if x]\n\nclass C(B):\n    def m(self):\n        def inner():\n            pass\n        return inner\n"),
@@ -1954,48 +1980,45 @@ kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[
                     })
                     .collect();
                 assert_eq!(jitted, want, "{at}: the JIT's rows");
-                if let (Some(device), Some((pipe, queue))) = (&device, &pipe) {
+                if let Some((shared, probe)) = probe {
                     let d = block.offset_of(entry.desc()) as u64;
                     // The tape where the device reads it: a test's buffer of its bytes, a word of room past them.
                     let mut bytes = tape.to_vec();
                     bytes.resize(tape.len() + 16, 0);
-                    let tt = device.new_buffer_with_data(bytes.as_ptr().cast(), bytes.len() as u64, MTLResourceOptions::StorageModeShared);
-                    let out = device.new_buffer(u64::from(n.max(1)) * WIDE as u64 * 8, MTLResourceOptions::StorageModeShared);
+                    let tt = buffer_of(&bytes).unwrap();
+                    let out = alloc::<i64>(n.max(1) as usize * WIDE).unwrap();
+                    // Its lines where the device reads them: a test's buffer of their words.
+                    let lb = buffer_of(&words).unwrap();
+                    let (tt_at, lb_at) = (tt.device_address().unwrap(), lb.device_address().unwrap());
                     // A 16z tape's blocks through a cache every thread shares (0353 step 4b): one of a block a
                     // generation, which turns all the time and may find no room (a failure counted: the device
                     // refuses the batch), and one with room.
                     for room in [1u32, 4, 64] {
-                    let cmd = queue.new_command_buffer();
-                    let enc = cmd.new_compute_command_encoder();
-                    enc.set_compute_pipeline_state(pipe);
-                    enc.set_buffer(0, Some(&block.gpu_buffer(device)), 0);
-                    enc.set_bytes(1, 8, (&raw const d).cast());
-                    enc.set_bytes(2, 4, (&raw const n).cast());
-                    // Its lines where the device reads them: a test's buffer of their words.
-                    let lb = device.new_buffer_with_data(words.as_ptr().cast(), 4 * words.len() as u64, MTLResourceOptions::StorageModeShared);
-                    let address = [tt.gpu_address(), lb.gpu_address()];
                     let mut view = view;
                     let spec = rerail_clif::view::cache::Spec::new(3, room, view.columns[3] as usize).with_stats();
-                    let cache = device.new_buffer(spec.bytes() as u64, MTLResourceOptions::StorageModeShared);
+                    let cache = alloc::<u8>(spec.bytes()).unwrap();
                     if view.format == rerail_clif::view::F16Z_FORMAT {
                         // SAFETY: the buffer's bytes, shared with the host, not yet read by the device.
                         spec.init(unsafe { std::slice::from_raw_parts_mut(cache.contents().cast::<u8>(), spec.bytes()) }).unwrap();
-                        let rel = cache.gpu_address().wrapping_sub(tt.gpu_address()) as i64;
+                        let rel = cache.device_address().unwrap().wrapping_sub(tt_at) as i64;
                         (view.side[0], view.side[1], view.columns[3], view.columns[4]) = (rel as u32, (rel >> 32) as u32, spec.entry_bytes() as u32, 1);
                     }
-                    enc.use_resource(&cache, metal::MTLResourceUsage::Read | metal::MTLResourceUsage::Write);
-                    enc.set_bytes(3, 16, address.as_ptr().cast());
-                    enc.use_resource(&tt, metal::MTLResourceUsage::Read);
-                    enc.use_resource(&lb, metal::MTLResourceUsage::Read);
-                    enc.set_bytes(4, std::mem::size_of::<TapeView>() as u64, (&raw const view).cast());
-                    enc.set_buffer(5, Some(&out), 0);
-                    enc.set_bytes(6, 4, (&raw const nf).cast());
-                    enc.dispatch_threads(MTLSize::new(u64::from(n), 1, 1), MTLSize::new(64, 1, 1));
-                    enc.end_encoding();
-                    cmd.commit();
-                    cmd.wait_until_completed();
-                    // SAFETY: the kernel wrote WIDE longs a row, and its command completed.
-                    let got = unsafe { std::slice::from_raw_parts(out.contents().cast::<i64>(), want.len()) };
+                    // SAFETY: a `TapeView` is u32s alone, `#[repr(C)]`.
+                    let view_words = unsafe { std::slice::from_raw_parts((&raw const view).cast::<u32>(), std::mem::size_of::<TapeView>() / 4) };
+                    let tv = buffer_of(view_words).unwrap();
+                    let mut q = ComputeQueue::new(&shared.queue);
+                    launch(&q, probe)
+                        .buffer("b", &block.device_buffer(&shared.device).unwrap())
+                        .value("p", &ViewP { d, tt: tt_at, ll: lb_at, n, nf })
+                        .buffer("tv", &tv)
+                        .buffer("out", &out)
+                        .uses(&tt)
+                        .uses(&lb)
+                        .uses(&cache)
+                        .run(&[u64::from(n).div_ceil(64)], &[64])
+                        .unwrap_or_else(|e| panic!("{e}"));
+                    q.flush().await_().unwrap();
+                    let got: Vec<i64> = read(&out, want.len());
                     // SAFETY: the cache's header, its command completed.
                     let word = |at: i32| unsafe { *cache.contents().cast::<u8>().add(at as usize).cast::<u32>() };
                     if view.format == rerail_clif::view::F16Z_FORMAT {
@@ -2006,7 +2029,7 @@ kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[
                     let failed = word(rerail_clif::view::cache::FAILED);
                     assert!(room == 1 || failed == 0, "{at}: the device's cache with room failed {failed} times");
                     if failed == 0 {
-                        assert_eq!(got, &want[..], "{at}, {room} a generation: the device's rows");
+                        assert_eq!(got, want, "{at}, {room} a generation: the device's rows");
                     }
                     }
                 }

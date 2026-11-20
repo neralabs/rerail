@@ -2,7 +2,6 @@
 //! batch's node records they replace (decision 0032): every node of a batch of stored fixtures. The kernel is UKL,
 //! launched through the device layer (decision 0440 step C): it runs on the process's device, and its source
 //! compiles for every backend this machine has.
-use super::*;
 use crate::code_rule_dsl::language::{self, GrammarDialect};
 use crate::code_rule_dsl::fixtures::{document, temp};
 use crate::code_rule_dsl::residency::slabs::{self, DocTable, DocView};
