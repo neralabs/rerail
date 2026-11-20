@@ -6,7 +6,9 @@
 //! A batch read whole from its first read makes one group, in key order: one relation per relation, as an eager batch.
 
 use super::*;
-use crate::code_rule_dsl::facts::vtab::{DeviceView, ReadRow, RowCells, RowStream};
+#[cfg(target_os = "macos")]
+use crate::code_rule_dsl::facts::vtab::DeviceView;
+use crate::code_rule_dsl::facts::vtab::{ReadRow, RowCells, RowStream};
 use crate::code_rule_dsl::logic::profile;
 use std::ops::Range;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -799,6 +801,7 @@ impl Source for MadeRows {
     fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
         self.target().filter_eq(eqs)
     }
+    #[cfg(target_os = "macos")]
     fn device_view(&self) -> Option<DeviceView<'_>> {
         self.done().and_then(|t| t.device_view())
     }
