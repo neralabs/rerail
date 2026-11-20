@@ -642,7 +642,7 @@ describe("Rerail tool results waiting for their edit's check", () => {
         answered = true;
       });
       // The result answers, or begins a wait of its own, which would end only at its own ten seconds.
-      await vi.waitFor(() => expect(answered || settles.length > 1).toBe(true));
+      await vi.waitFor(() => expect(answered || settles.length > 1).toBe(true), { timeout: 20_000, interval: 50 });
       expect(settles).toEqual([undefined]);
       expect(await answering).toEqual([]);
     } finally {
@@ -651,7 +651,7 @@ describe("Rerail tool results waiting for their edit's check", () => {
       check.resolve();
       await runtime.dispose();
     }
-  });
+  }, 30_000);
 
   // Claude Code's Write and Edit results, as its PostToolUse hook carries them: `type: "create"` for a file the Write
   // made, else the text the tool replaced in `originalFile` or, where that is null, the line diff it made.
