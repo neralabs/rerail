@@ -339,9 +339,18 @@ function listDiscoveryGaps(database: RerailDatabase, sessionId: string, limit: n
     .limit(limit)
     .all()
     .flatMap(({ observedAt, payloadJson }) => {
-      const payload = discoveryGapPayloadSchema.safeParse(JSON.parse(payloadJson));
+      const payload = discoveryGapPayloadSchema.safeParse(parsedRow(payloadJson));
       return payload.success ? [{ ...payload.data, observedAt }] : [];
     });
+}
+
+/** A row's payload, or undefined when its text is no JSON: a read passes over that row and fails on none. */
+function parsedRow(payloadJson: string): unknown {
+  try {
+    return JSON.parse(payloadJson) as unknown;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

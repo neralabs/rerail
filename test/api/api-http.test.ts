@@ -282,6 +282,18 @@ describe("Rerail API over HTTP", () => {
     expect(Object.keys(declared ?? {}).sort()).toEqual(Object.keys(gaps).sort());
   });
 
+  it("lists a session's other places, to a person and to the bridge, when one place's row does not parse", async () => {
+    const place = (path: string) => ({ boundary: "turn" as const, path, reason: `EACCES: permission denied, opendir '/repo/${path}'`, key: JSON.stringify([path, "EACCES"]) });
+    sessionStore.recordDiscoveryGap(SESSION, place("src/a"));
+    database.insert(events).values({ sessionId: SESSION.sessionId, eventId: "source-discovery-gap:bad", kind: "source-discovery-gap", observedAt: 2, payloadJson: "{not json" }).run();
+    sessionStore.recordDiscoveryGap(SESSION, place("src/b"));
+
+    const listed = [{ path: "src/a" }, { path: "src/b" }];
+    expect((await getJson<{ gaps: { discoveryGapPlaces: unknown } }>(`/api/sessions/${SESSION.sessionId}`)).gaps.discoveryGapPlaces).toMatchObject(listed);
+    // The bridge reads the places its session's record holds from the same rows as the workspace opens.
+    expect(sessionStore.discoveryGaps(SESSION.sessionId, 1_001)).toMatchObject(listed);
+  });
+
   it("lists sessions newest first, a page at a time, with their violation counts", async () => {
     sessionStore.openSession({ ...SESSION, sessionId: "session-old" }, 500);
     sessionStore.openSession({ ...SESSION, sessionId: "session-new" }, 2_000);
