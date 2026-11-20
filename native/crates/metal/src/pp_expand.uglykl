@@ -723,8 +723,11 @@ typedef struct PxList {
 } PxList;
 #define ORDER_PLACED (0u)
 // A call's argument: its raw range in the call's parent (`lo..hi`) and its list (0 none, 1 being
-// made, else the list + 2).
+// made, `ARG_FLAT` none needed, else the list + 2).
 typedef struct PxArg { uint32_t lo, hi; uint32_t list; } PxArg;
+// An argument whose names are no macro's, built-in's or call's: its expansion is its raw tokens,
+// read in place where the body uses it (decision 0478 §9), with no list, copy or flatten.
+#define ARG_FLAT (0xffffffffu)
 
 // The lanes where `b` holds, as bits.
 UKL_INLINE uint64_t px_ballot(bool b __UKL_PARAMS) { return (uint64_t)ukl_sg_ballot(b __UKL_ARGS); }
@@ -1698,6 +1701,28 @@ UKL_INLINE void px_pragma_read(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAM
     px_scan(u, a, l, lane __UKL_ARGS);
 }
 
+// Whether the raw tokens `lo..lo + len` of list `p` (or the top level), read in context `slot`,
+// are an argument that expands to itself (`ARG_FLAT`): no name in it a macro's, a built-in's or
+// a call's, as its SCAN would read them (a name the invocation pops refused as there).
+UKL_INLINE bool px_arg_flat(Ux u, Ar a, uint32_t p, uint32_t lo, uint32_t len, uint32_t slot, uint32_t lane __UKL_PARAMS) {
+    bool any = false;
+    for (uint32_t c0 = 0u; c0 < len && !any; c0 += 32u) {
+        uint32_t k = c0 + lane;
+        bool live = false;
+        if (k < len && (par_flags(u, a, p, lo + k) & T_NOEXP) == 0u) {
+            uint32_t g = par_ref(u, a, p, lo + k);
+            if (ref_kind(u, g) == K_IDENTIFIER) {
+                uint64_t key = ref_key(u, g);
+                uint32_t m = visible(u.sorted, u.perm, u.n_rows, u.name_keys, u.values, u.floors, u.n_units, key, slot, a.ctl + 2);
+                if (u.sc.runs != 0u && px_pops_here(u, a.tf, key, slot)) px_refuse(a.ctl, X_PRAGMA);
+                live = m == L_BUILTIN || px_one_token(m) || px_callable(m);
+            }
+        }
+        any = ukl_sg_ballot(live __UKL_ARGS) != 0u;
+    }
+    return !any;
+}
+
 UKL_INLINE void px_call(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
     if (a.lists[l].def == L_PRAGMA) {
         px_pragma(u, a, l, lane __UKL_ARGS);
@@ -1807,6 +1832,10 @@ UKL_INLINE void px_call(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
             todo &= todo - 1u;
             uint32_t qw = ukl_sg_shuffle(q, ((uint16_t)(who)) __UKL_ARGS);
             uint32_t lo = a.args[ab + qw].lo, len = a.args[ab + qw].hi - lo;
+            if (px_arg_flat(u, a, p, lo, len, L->slot, lane __UKL_ARGS)) {
+                if (lane == 0u) ukl_atomic_store(&a.args[ab + qw].list, ARG_FLAT);
+                continue;
+            }
             uint32_t id = 0u, base = 0u;
             if (lane == 0u) {
                 id = ukl_atomic_add(&a.ctl[1], 1u);
@@ -1839,7 +1868,7 @@ UKL_INLINE void px_call(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
         // Each argument's first plain use: the order the serial pass expands them in.
         if (q != NO_PARAM && q < np) {
             uint32_t id = ukl_atomic_load(&a.args[ab + q].list);
-            if (id >= 2u) ukl_atomic_min(&a.lists[id - 2u].order, i);
+            if (id >= 2u && id != ARG_FLAT) ukl_atomic_min(&a.lists[id - 2u].order, i);
         }
     }
     if (lane == 0u) {
@@ -1901,7 +1930,7 @@ UKL_INLINE Role px_role(Ux u, Ar a, PpDef d, UKL_GLOBAL PxList* L, uint32_t i, V
     if (beside) { r.role = R_RAW; r.count = len == 0u ? 1u : len; return r; }
     uint32_t id = ukl_atomic_load(&a.args[L->args + q].list);
     r.role = R_EXP;
-    r.count = id >= 2u ? a.lists[id - 2u].size : 0u;
+    r.count = id == ARG_FLAT ? len : id >= 2u ? a.lists[id - 2u].size : 0u;
     return r;
 }
 
@@ -2035,8 +2064,8 @@ UKL_INLINE Vo px_va_opts(Ux u, Ar a, PpDef d, UKL_GLOBAL PxList* L, uint32_t lan
         }
     }
     if (vo.n > 0u) {
-        uint32_t id = ukl_atomic_load(&a.args[L->args + L->nargs - 1u].list);
-        vo.present = id >= 2u && a.lists[id - 2u].size > 0u;
+        uint32_t q = L->nargs - 1u, id = ukl_atomic_load(&a.args[L->args + q].list);
+        vo.present = id == ARG_FLAT ? !px_arg_empty(a, L, q) : id >= 2u && a.lists[id - 2u].size > 0u;
     }
     return vo;
 }
@@ -2337,7 +2366,18 @@ UKL_INLINE void px_subst(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
             uint32_t dst = ukl_sg_shuffle(off, ((uint16_t)(who)) __UKL_ARGS), spw = ukl_sg_shuffle(sp, ((uint16_t)(who)) __UKL_ARGS);
             uint32_t qw = ukl_sg_shuffle(r.q, ((uint16_t)(who)) __UKL_ARGS), cw = ukl_sg_shuffle(r.count, ((uint16_t)(who)) __UKL_ARGS);
             uint32_t id = ukl_atomic_load(&a.args[L->args + qw].list);
-            px_copy(a, dst, a.lists[id - 2u].base, cw, lane);
+            if (id == ARG_FLAT) {
+                // Its raw tokens, in place in the call's source: their expansion.
+                uint32_t lo = a.args[L->args + qw].lo;
+                for (uint32_t j = lane; j < cw; j += 32u) {
+                    a.tok[dst + j] = par_ref(u, a, L->src, lo + j);
+                    a.tflag[dst + j] = par_flags(u, a, L->src, lo + j) & ~T_PAINT;
+                    a.tchild[dst + j] = 0u;
+                    a.texp[dst + j] = par_exp(a, L->src, lo + j);
+                }
+            } else {
+                px_copy(a, dst, a.lists[id - 2u].base, cw, lane);
+            }
             ukl_sg_barrier();
             if (lane == 0u) a.tflag[dst] = (a.tflag[dst] & ~T_SPACE) | spw;
         }

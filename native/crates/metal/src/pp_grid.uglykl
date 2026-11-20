@@ -90,6 +90,7 @@
         c_[8] = ukl_max(c_[8], c_[0]); c_[9] = ukl_max(c_[9], c_[1]); c_[10] = ukl_max(c_[10], c_[3]);  \
         c_[11] = ukl_max(c_[11], c_[4]); c_[12] = ukl_max(c_[12], c_[5]);                              \
         c_[13] = ukl_max(c_[13], AT(const uint32_t, QCTL)[1]);                                         \
+        c_[14] = ukl_max(c_[14], AT(const uint32_t, VTOTAL)[0]);                                       \
         c_[0] = 0u; c_[1] = 0u; c_[3] = 0u; c_[4] = c_[6]; c_[5] = c_[7];                              \
         AT(uint32_t, QCTL)[1] = 0u; AT(uint32_t, CNT)[1] = 0u;                                         \
     }                                                                                                  \
@@ -132,7 +133,7 @@
     IfFiles fx;                                                                                        \
     fx.ft_keys = AT(const uint64_t, P1_FTKEYS); fx.ft_files = AT(const uint32_t, P1_FTFILES); fx.n_ft = W(N_FT); \
     fx.found_by = AT(const uint32_t, P1_FOUNDBY); fx.unit_file = AT(const uint32_t, P1_UFILE); fx.reqs = AT(PpReq, P1_REQS); \
-    fx.n_reqs = AT(uint32_t, P1_NREQ); fx.req_cap = W(DC); fx.flags = AT(uint32_t, P1_FLAGS);                \
+    fx.n_reqs = AT(uint32_t, P1_NREQ); fx.req_cap = W(RQC); fx.flags = AT(uint32_t, P1_FLAGS);                \
     IfNames nm;                                                                                        \
     nm.bytes = AT(uint8_t, P1_RNAMES); nm.top = AT(uint32_t, P1_RNTOP); nm.cap = W(RNC)
 
@@ -287,12 +288,14 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
         JOB(1, ni, P1_NGAPS, P1_GFIRST, N_GAPS);
         JOB(2, ni, P1_GCOUNT, P1_GRPF, P1_NGRP);
         SCANS(3);
+        // Each room's high water (`P1_NEED`), whether or not it ran out: a settled run's rooms
+        // are sized from it (decision 0478 §8).
+        ONE(x) {
+            UKL_GLOBAL uint32_t* nd_ = AT(uint32_t, P1_NEED);
+            nd_[NEED_DIRS] = ukl_max(nd_[NEED_DIRS], N(N_DIRS)); nd_[NEED_GAPS] = ukl_max(nd_[NEED_GAPS], N(N_GAPS)); nd_[NEED_GROUPS] = ukl_max(nd_[NEED_GROUPS], N(P1_NGRP));
+        }
         if (N(N_DIRS) > W(DC) || N(N_GAPS) > W(GC) || N(P1_NGRP) > W(NQ)) {
-            ONE(x) {
-                UKL_GLOBAL uint32_t* nd_ = AT(uint32_t, P1_NEED);
-                nd_[NEED_DIRS] = N(N_DIRS); nd_[NEED_GAPS] = N(N_GAPS); nd_[NEED_GROUPS] = N(P1_NGRP);
-                ukl_atomic_or(AT(uint32_t, P1_FLAGS), P1_ROOM);
-            }
+            ONE(x) ukl_atomic_or(AT(uint32_t, P1_FLAGS), P1_ROOM);
             break;
         }
         uint32_t nd = N(N_DIRS), ng = N(N_GAPS), nq = N(P1_NGRP);
@@ -368,7 +371,8 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
         EACH(w, nd) p1_line_read(AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), AT(const uint32_t, N_DIRS), AT(const uint32_t, DIR_BASES), AT(const PpDir, ROWS), AT(const uint32_t, P1_GRPF), AT(const uint32_t, P1_TAKEN), AT(uint32_t, LREAD), w);
         BARRIER();
         SCAN(nd, IF_COUNT, IF_AT, IF_TOTAL);
-        if (N(IF_TOTAL) > W(TC)) { ONE(x) { AT(uint32_t, P1_NEED)[NEED_IF_TOP] = N(IF_TOTAL); ukl_atomic_or(AT(uint32_t, P1_FLAGS), P1_ROOM); } break; }
+        ONE(x) AT(uint32_t, P1_NEED)[NEED_IF_TOP] = ukl_max(AT(uint32_t, P1_NEED)[NEED_IF_TOP], N(IF_TOTAL));
+        if (N(IF_TOTAL) > W(TC)) { ONE(x) ukl_atomic_or(AT(uint32_t, P1_FLAGS), P1_ROOM); break; }
         if (N(IF_TOTAL) != 0u) {
             uint32_t nt = N(IF_TOTAL);
             PX_RESET();
@@ -499,7 +503,8 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
         EACH(p, N(N_GAPS)) pe_run_ends(AT(const uint32_t, GAT), AT(const uint32_t, GCOUNTS), AT(const uint32_t, RSTART), AT(const uint32_t, RUNX), AT(const uint32_t, N_GAPS), AT(uint32_t, RUN_END), p);
         BARRIER();
         // The active text past its room: the round again, at P1's next rung.
-        if (N(GTOTAL) > W(TC)) { ONE(x) { AT(uint32_t, P1_NEED)[NEED_TEXT_TOP] = N(GTOTAL); ukl_atomic_or(AT(uint32_t, P1_FLAGS), P1_ROOM); } break; }
+        ONE(x) AT(uint32_t, P1_NEED)[NEED_TEXT_TOP] = ukl_max(AT(uint32_t, P1_NEED)[NEED_TEXT_TOP], N(GTOTAL));
+        if (N(GTOTAL) > W(TC)) { ONE(x) ukl_atomic_or(AT(uint32_t, P1_FLAGS), P1_ROOM); break; }
         EACH(p, N(N_GAPS)) p1_unit_firsts(AT(const uint32_t, SSLOT), AT(const uint32_t, N_GAPS), AT(const uint32_t, FLOORS), W(N_UNITS), AT(uint32_t, P1_UFIRST), p);
         EACH(s, N(GTOTAL)) pe_lookups(files, data, AT(const uint32_t, BASES), AT(const uint64_t, KEYS), AT(const uint32_t, TEXT_NODES), AT(const uint32_t, GAT), AT(const uint32_t, N_GAPS), AT(const uint32_t, GFIRSTS), AT(const uint32_t, SSLOT), AT(const uint32_t, GTOTAL), AT(const uint64_t, SORT_KEYS), AT(const uint32_t, SORT_VA), AT(const uint32_t, N_ROWS), AT(const uint64_t, NAME_KEYS), AT(const uint32_t, VALUES), AT(const uint32_t, FLOORS), W(N_UNITS), AT(uint32_t, LOOKUPS), AT(uint32_t, VBAD), nf, s);
         BARRIER();

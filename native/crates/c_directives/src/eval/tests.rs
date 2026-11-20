@@ -350,6 +350,10 @@ fn why_refused(e: super::rounds::Refused, path: &str) -> &'static str {
 struct Ran {
     runs: usize,
     gpu_seconds: f64,
+    /// Each expansion store's most use over a run's top-level tokens (`ROOM_STORES`), and the
+    /// most over its room.
+    per_top: [f64; rerail_metal::pp_expand::ROOMS],
+    per_cap: [f64; rerail_metal::pp_expand::ROOMS],
 }
 
 /// The units whose main files are `units`' (each its files), settled in batched rounds
@@ -362,6 +366,10 @@ fn settled_many(cfg: &rerail_c_pp::Config, units: &mut [(Box<dyn rerail_c_pp::fi
         if let Ok(x) = &x {
             ran.runs += 1;
             ran.gpu_seconds += x.gpu_seconds;
+            for (k, &(u, c)) in x.room.iter().enumerate() {
+                ran.per_top[k] = ran.per_top[k].max(f64::from(u) / x.caps.top.max(1) as f64);
+                ran.per_cap[k] = ran.per_cap[k].max(f64::from(u) / f64::from(c.max(1)));
+            }
         }
         x
     });
@@ -1392,6 +1400,7 @@ fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_p
         eprintln!("GPU time: {:.1} ms in all over {} runs (units a run: {batches:?}), median {:.3} ms, most {:.3} ms a run", all * 1e3, gpu.len(), gpu[gpu.len() / 2] * 1e3, most * 1e3);
     }
     eprintln!("every round's runs (the batches' rounds and a split's halves; a run again for room inside one not counted): {} runs, {:.1} ms GPU in all", ran.runs, ran.gpu_seconds * 1e3);
+    eprintln!("stores' most use (over the top level's tokens, over the room): {}", rerail_metal::pp_expand::ROOM_STORES.iter().zip(ran.per_top.iter().zip(ran.per_cap)).map(|(n, (t, c))| format!("{n} {t:.3}/{c:.3}")).collect::<Vec<_>>().join(", "));
     eprintln!("the serial pass: {:.1} ms in all", serial_s * 1e3);
     eprintln!("the built-ins in units refused for them: {named:?}");
     assert!(differ.is_empty(), "units unlike the serial pass's: {differ:?}");
@@ -1460,6 +1469,32 @@ fn a_unit_past_its_room_runs_again_larger() {
         same(got.map(|g| show(&g)), Ok("in h end".to_string()), "a line past its room");
         same(show(&want), "in h end".to_string(), "the serial pass");
         assert!(rung > 0, "a line past its room: ran at rung 0");
+    }
+}
+
+/// Decision 0478 §9: an argument with no macro's, built-in's or call's name in it is read in
+/// place where the body uses it, with no list made for it. Used expanded, once and twice, with
+/// `#` and `##` beside, empty, with a painted name in it, with a function-like macro's name
+/// (scanned: not flat), as the last of a variadic call and under `__VA_OPT__`, and through levels
+/// of calls each passing it on.
+#[test]
+fn a_flat_argument_is_read_in_place() {
+    let shapes: &[&str] = &[
+        "#define T(a) [a]\nT(x y z) T( x ) T()\n",
+        "#define D(a) a a\nD(1 + 2) D(  p  q  )\n",
+        "#define S(a) #a a\n#define P(a, b) a##b a b\nS(x  y) P(l, r) P(, r) P(l,)\n",
+        "#define R R(x)\n#define G(a) a R\nG(R) G(z)\n",
+        "#define F(x) x(1)\n#define H(n) <n>\nF(H) F(J)\n",
+        "#define V(a, ...) a __VA_ARGS__ __VA_OPT__(<__VA_ARGS__>)\nV(1) V(1, 2, 3) V(1,)\n",
+        "#define L0(s) s\n#define L1(s) L0(s) L0(s)\n#define L2(s) L1(s) L1((s))\nL2(a b) L2(())\n",
+    ];
+    for text in shapes {
+        let files = [("main.c", *text)];
+        for cpp in [false, true] {
+            let (got, want, _, _) = expanded(&files, cpp);
+            let got = got.unwrap_or_else(|why| panic!("{text:?}: refused {why}"));
+            same(show(&got), show(&want), text);
+        }
     }
 }
 

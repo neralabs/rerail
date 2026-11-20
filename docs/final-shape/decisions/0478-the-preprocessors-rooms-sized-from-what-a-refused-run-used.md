@@ -76,6 +76,26 @@ On Boost.Preprocessor's tests that does not work:
    The corpus's first 1,000 units: 20 runs in all for every round, against one run a unit a
    round (about 1,500) and then 10 batches' runs before.
 
+8. **The first rooms are sized from use.**
+   - P1's rooms for the requests and their names are their own (`Caps::reqs`, `names`; the
+     device reads `RQC`), no longer a share of the directive words'.
+   - P1 writes each room's high water whether or not it ran out, so a run that settles says what
+     it used (`Sizes::used`); the unit's next round starts from twice that (`Caps::from_use`).
+   - The expansion's first rooms are shares of the top level's tokens, from the corpus's most use
+     over it: tokens 0.39, lists and arguments 0.02, queue items 0.05, scratch bytes 0.34, the
+     output 0.64 (measured, `stores' most use` in the corpus test).
+   - The output is a room like the others (`ROOMS` = 7): the lines' and the text's output count
+     (`CTL` 14), so an `#if` line past it runs again larger instead of ending refused.
+   - A room that ran out grows by twice its lack, **at least fourfold**: its count stopped where
+     it ran out, so its need is past it. A room over half used while another ran out doubles.
+     Each try uncovers about one room, so the expansion has 10 tries (`EXP_RUNGS`), not 5; the
+     budget's lease bounds the sizes.
+9. **An argument that expands to itself is read in place.** An argument none of whose names is a
+   macro's, a built-in's or a call's (as its scan would read them) needs no list: `px_call` marks
+   it `ARG_FLAT`, and `SUBST` reads its raw tokens from the call's source where the body uses it
+   expanded, as it does for `#` and `##`. No copy of it is made to scan, and no flatten. On
+   Boost, about half of the arguments' tokens were in such arguments.
+
 ## Requirements (each a test)
 
 | # | Requirement | Test |
@@ -84,6 +104,7 @@ On Boost.Preprocessor's tests that does not work:
 | R2 | The evaluator's tests, the Metal gates, and the corpus slices unchanged: 3,135 units, none refused, 2 launches a round. | the existing tests |
 | R3 | Boost.Preprocessor's tests: no unit unlike the serial pass's; the units refused are counted by reason. | `boost_preprocessor_is_the_serial_passes` |
 | R4 | A batch's rounds: each unit its own serial answer, a unit with an include taking two rounds and the others one, a refusal one unit's alone. | `a_batch_is_its_units` |
+| R5 | A flat argument in place: used once, twice, beside `#` and `##`, empty, painted, as a callee's name, variadic and under `__VA_OPT__`, and passed through levels. | `a_flat_argument_is_read_in_place` |
 
 ## Measured (M1 Max farm host for the checks; this Mac for the runs, 2026-11-19)
 
@@ -94,9 +115,24 @@ Boost.Preprocessor's 64 test files (C as C, the rest as C++), each its own unit:
 - After: 52 units equal to the serial pass's, **none unlike it**. 12 refused for room at the
   device's limit: `arithmetic`, `array`, `seq` and `tuple`, in C, C++ and `.cxx` each.
 
+What the refused units need (one run each with 10 tries and a 3 GB Metal budget, 2026-11-20; the
+default budget is 512 MB, half the 1 GB memory budget):
+
+| Unit | Tokens | Scratch bytes | Arguments | Settles |
+|---|---|---|---|---|
+| `array.c` | 24.3M | 1.5M | 1.2M | yes, at about 600 MB |
+| `arithmetic.c` | 10.3M | 20.1M | 2.2M | yes |
+| `tuple.c` | 35.2M or more | 2.5M | 1.7M | no |
+| `seq.c` | 10.5M | 36.3M | 12.4M or more | no |
+
+Against 6,000 tokens of output each. A token is 16 bytes (its reference, flags, child and
+origin), so the tokens alone are 3 to 10 times the budget: sizing cannot bring them in, only
+reclaiming can. Of `array.c`'s substituted tokens, after §9: flat arguments copied into bodies
+64%, the bodies' own tokens 20%, expanded arguments' copies 15%.
+
 ## Open
 
-- **The 12 refused units.** The expansion keeps the whole expansion tree until the top level's
+- **The 12 refused units** (still refused after §8 and §9, at the budget). The expansion keeps the whole expansion tree until the top level's
   places write it out: every list's tokens stay. Boost's recursions (`BOOST_PP_WHILE`, `REPEAT`,
   `SEQ_FOR_EACH`) copy their state through an argument at each level, so the stores hold the sum of
   every level's copy: 5 million tokens for `array.c`, more than the device's room. The serial pass
