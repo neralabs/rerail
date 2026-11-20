@@ -61,7 +61,7 @@ impl Sparse {
         grown.slots.resize(self.slots.len()*2,[NO_VALUE,0]);
         for e in self.slots.iter().filter(|e| e[0]!=NO_VALUE) {
             let at=grown.slot(e[0]);
-            grown.slots[at]=*e;
+            grown.slots[at] = *e;
             grown.len+=1;
         }
         *self=grown;

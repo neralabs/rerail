@@ -4,6 +4,9 @@ use super::*;
 /// test compiles no grammar through Cranelift.
 const INTERPRETED: Grammars = Grammars { tokens: &tokens::interpreted, read: &crate::interpreted_read };
 
+/// A TU: its name, and its files (each one's path and text, the main file first).
+type Tu<'a> = (String, Vec<(&'a str, &'a [u8])>);
+
 /// The words over a TU of one file, `main.c`.
 fn expand(src: &[u8], cpp: bool) -> Result<Vec<Out>, String> {
     let files = [("main.c", src)];
@@ -392,7 +395,7 @@ fn the_corpus_expands_as_the_lean_pass_does() {
 #[test]
 fn the_compiled_words_are_the_interpreters() {
     let dirs = [("inc", rerail_c_pp::files::DirKind::Angle), ("sys", rerail_c_pp::files::DirKind::System), ("sys2", rerail_c_pp::files::DirKind::System)];
-    let mut tus: Vec<(String, Vec<(&str, &[u8])>)> = EXAMPLES.iter().map(|(n, s)| ((*n).to_owned(), vec![("main.c", s.as_bytes())])).collect();
+    let mut tus: Vec<Tu<'_>> = EXAMPLES.iter().map(|(n, s)| ((*n).to_owned(), vec![("main.c", s.as_bytes())])).collect();
     tus.extend(TUS.iter().map(|(n, f)| ((*n).to_owned(), f.iter().map(|f| (f.0, f.1.as_bytes())).collect())));
     let (mut same, mut differ) = (0, Vec::new());
     {
@@ -421,9 +424,9 @@ fn the_device_words_are_the_interpreters() {
         return;
     }
     let dirs = [("inc", rerail_c_pp::files::DirKind::Angle), ("sys", rerail_c_pp::files::DirKind::System), ("sys2", rerail_c_pp::files::DirKind::System)];
-    let mut tus: Vec<(String, Vec<(&str, &[u8])>)> = EXAMPLES.iter().map(|(n, s)| ((*n).to_owned(), vec![("main.c", s.as_bytes())])).collect();
+    let mut tus: Vec<Tu<'_>> = EXAMPLES.iter().map(|(n, s)| ((*n).to_owned(), vec![("main.c", s.as_bytes())])).collect();
     tus.extend(TUS.iter().map(|(n, f)| ((*n).to_owned(), f.iter().map(|f| (f.0, f.1.as_bytes())).collect())));
-    let all: Vec<(bool, &(String, Vec<(&str, &[u8])>))> = [false, true].into_iter().flat_map(|cpp| tus.iter().map(move |t| (cpp, t))).collect();
+    let all: Vec<(bool, &Tu<'_>)> = [false, true].into_iter().flat_map(|cpp| tus.iter().map(move |t| (cpp, t))).collect();
     let mut io: Vec<_> = all.iter().map(|(_, (_, files))| search(files, &dirs)).collect();
     let mut batch: Vec<(&str, &mut _, bool)> = all.iter().zip(io.iter_mut()).map(|((cpp, (_, files)), io)| (files[0].0, io, *cpp)).collect();
     let runs = pp_words::host_runs();
@@ -509,7 +512,7 @@ fn the_compiled_words_code_counted() {
 #[test]
 fn the_aot_words_are_the_interpreters() {
     let dirs = [("inc", rerail_c_pp::files::DirKind::Angle), ("sys", rerail_c_pp::files::DirKind::System), ("sys2", rerail_c_pp::files::DirKind::System)];
-    let mut tus: Vec<(String, Vec<(&str, &[u8])>)> = EXAMPLES.iter().map(|(n, s)| ((*n).to_owned(), vec![("main.c", s.as_bytes())])).collect();
+    let mut tus: Vec<Tu<'_>> = EXAMPLES.iter().map(|(n, s)| ((*n).to_owned(), vec![("main.c", s.as_bytes())])).collect();
     tus.extend(TUS.iter().map(|(n, f)| ((*n).to_owned(), f.iter().map(|f| (f.0, f.1.as_bytes())).collect())));
     let (mut same, mut differ) = (0, Vec::new());
     if let Some(rerail_pp_aot::Build { run: entry, source, structured: (structured, functions), .. }) = rerail_pp_aot::BUILD {
@@ -608,7 +611,7 @@ fn the_compiled_words_have_their_shape() {
     // No speculation barrier in Cranelift's code (`csdb`, which its Arm jump tables carry):
     // its tables are trees of compares (`native_cpu_codegen::switch_trees`).
     let kept = rerail_compiler::native_cpu_pp::disassemble(p).unwrap();
-    let csdb = kept.code.iter().flat_map(|f| f.chunks_exact(4)).filter(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]]) == 0xd503_229f).count();
+    let csdb = kept.code.iter().flat_map(|f| f.as_chunks::<4>().0).filter(|w| u32::from_le_bytes(**w) == 0xd503_229f).count();
     assert!(kept.code.len() == c.code_bytes.len() && kept.code.iter().all(|f| !f.is_empty()));
     if cfg!(target_arch = "aarch64") {
         assert_eq!(csdb, 0, "a speculation barrier in Cranelift's code");
@@ -702,7 +705,7 @@ fn the_corpus_timed() {
                 let got = expand_tu_with("main.c", &mut search(&files, &[]), cpp, &INTERPRETED, &run_jit);
                 assert_eq!(got, want);
                 // By rustc (where built).
-                let at0 = |cost: &Cell<Cost>, slot: usize, run: &dyn Fn(&Words, &[File], &pp_words::Env, &Bounds) -> Result<pp_words::Expanded, pp_words::Refused>| {
+                let at0 = |cost: &Cell<Cost>, slot: usize, run: &crate::expand::Runner<'_>| {
                     let g = expand_tu_with("main.c", &mut search(&files, &[]), cpp, &INTERPRETED, &|w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| {
                         let mut r = None;
                         let before = cost.get().cycles;
@@ -991,10 +994,15 @@ fn the_corpus_through_the_rungs() {
     assert!(differ.is_empty());
 }
 
+/// What `corpus_on_metal` hands on for each chunk: its TUs (each one's path, and whether C++), and each
+/// one's expansion or why it failed.
+#[cfg(target_os = "macos")]
+type Chunk<'a> = dyn FnMut(&[(std::path::PathBuf, bool)], Vec<Result<Vec<Out>, String>>) + 'a;
+
 /// The corpus's TUs (C and C++), `RERAIL_PP_CHUNK` at a time (512 by default), each chunk one
 /// `expand_tus_with` whose rounds are the device's batches (0408, L4).
 #[cfg(target_os = "macos")]
-fn corpus_on_metal(each: &mut dyn FnMut(&[(std::path::PathBuf, bool)], Vec<Result<Vec<Out>, String>>), batch: &crate::expand::BatchRunner<'_>) {
+fn corpus_on_metal(each: &mut Chunk<'_>, batch: &crate::expand::BatchRunner<'_>) {
     let root = std::env::var("RERAIL_C_CORPUS").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/lean-corpus"));
     let mut tus = Vec::new();
     for (dir, cpp) in [("c", false), ("cpp", true)] {

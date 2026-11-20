@@ -2862,7 +2862,6 @@ mod matcher {
     #[allow(unused_imports)]
     pub(super) use crate::code_rule_dsl::matcher::analysis::RequiredText;
     #[allow(unused_imports)]
-    #[cfg_attr(not(test), allow(unused_imports))]
     pub(super) use crate::code_rule_dsl::matcher::lower::{Axis, Fact, FactFound, MatchTree, Stop, DocumentGate, gated_match_tree, match_tree};
     #[allow(unused_imports)]
     pub(crate) use crate::code_rule_dsl::matcher::analysis::{calls_positive_only, reads_import_targets};
@@ -3632,7 +3631,6 @@ mod tape {
     #[allow(unused_imports)]
     use tree_sitter::{Language, Node as TsNode, TreeCursor};
     #[allow(unused_imports)]
-    #[allow(unused_imports)]
     pub(in crate::code_rule_dsl) use crate::code_rule_dsl::tape::index::IndexImage;
     #[allow(unused_imports)]
     pub(super) use crate::code_rule_dsl::tape::wire::index_span;
@@ -3837,7 +3835,6 @@ mod transducer {
         use std::ops::Range;
         #[allow(unused_imports)]
         use std::sync::Arc;
-        #[allow(unused_imports)]
         #[cfg(test)]
         #[allow(unused_imports)]
         use crate::code_rule_dsl::transducer::packed::literal_anchors::*;
@@ -3867,13 +3864,11 @@ mod transducer {
         #[allow(unused_imports)]
         use rerail_compiler::native_cpu_codegen;
         #[allow(unused_imports)]
-        #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use rerail_compiler::native_cpu_rows;
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::packed_batch::PackedExecution;
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use rerail_compiler::block;
-        #[allow(unused_imports)]
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use rerail_rr_parser as rr_parser;
         #[allow(unused_imports)]
@@ -4787,7 +4782,7 @@ pub(crate) fn install_languages() {
         Ok(snapshot.files.into_iter().map(|f| sql_executor::documents::File { path: f.path, language: f.language, source: f.source }).collect())
     });
     // The candidate compiler's audit of a compiled rule.
-    let _ = rule_api::FRONTIER_AUDIT.set(|rule| prefilter::candidate_frontier_audit(rule).into());
+    let _ = rule_api::FRONTIER_AUDIT.set(prefilter::candidate_frontier_audit);
     // What compiles and launches a span pattern's prefilter (the transducer's block programs).
     facts::span_prefilter::install_span_prefilter(transducer::packed::regex_block::compile_span, transducer::packed::regex_block::launch_spans);
     // What compiles a program's `ast` matchers into the transducer wave facts runs (decision 0106).

@@ -357,7 +357,7 @@ fn cut(p: &Projected, dialect: &Dialect, fold: Fold) -> Cut {
 fn name(p: &Projected, dialect: &Dialect, of: &[u32], up: &[u32], starts: &[u32], g: usize) -> String {
     let f = &*p.facts;
     let l = starts[g];
-    let id = p.node(l as u32);
+    let id = p.node(l);
     let kind = dialect.name(f, id);
     // A wrapper is named by its definition, or by the declaration it exports.
     let inner = |want: fn(&str) -> bool| f.children(id).iter().copied().find(|&c| f.named(c) && want(dialect.name(f, c)));
@@ -685,7 +685,7 @@ impl Table {
         let jumps = [jumped(&rank_starts[0], Item::Node), jumped(&rank_starts[1], Item::Token)];
         let [rs0, rs1] = rank_starts;
         let [re0, re1] = rank_ends;
-        let table = Table {
+        Table {
             starts: placed(b, &starts),
             ends: placed(b, &ends),
             parents: placed(b, &parents),
@@ -702,14 +702,13 @@ impl Table {
             rank_starts: [placed(b, &rs0), placed(b, &rs1)],
             rank_ends: [placed(b, &re0), placed(b, &re1)],
             jumps: [placed(b, &jumps[0]), placed(b, &jumps[1])],
-        };
-        table.describe(r);
-        table
+        }
     }
 
     /// Points the projection's descriptor's table runs at these columns (`rerail_clif::ids::Numbering`), so the reads
-    /// written once find them.
-    fn describe(&self, r: &Ranks) {
+    /// written once find them: the table the projection keeps (`DefIds`), as it is built. A table numbered again (a
+    /// reference, a census) is not described: dropped, it would leave the runs at columns that are gone.
+    pub(super) fn describe(&self, r: &Ranks) {
         use rerail_clif::ids::Run;
         let d = r.desc_mut();
         let set = |run: *mut Run, c: &[u32]| unsafe { Run::set(run, c.as_ptr(), c.len()) };
@@ -771,7 +770,7 @@ impl Table {
     pub fn number_of(&self, r: &Ranks, low: u32) -> Option<(Item, u32)> {
         // SAFETY: as `low_of`.
         let v = unsafe { id_reads::num_number_of(r.desc(), low) };
-        (v != u64::MAX).then(|| (if v >> 32 == 0 { Item::Node } else { Item::Token }, v as u32))
+        (v != u64::MAX).then_some((if v >> 32 == 0 { Item::Node } else { Item::Token }, v as u32))
     }
 
     /// Node number `l`'s order key (`order`), from its number alone (`num_order_of`).

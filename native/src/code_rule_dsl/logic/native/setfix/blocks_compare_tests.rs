@@ -126,7 +126,7 @@ fn blocks_compare_baseline() {
         let mut rel = Rel::new("edge", &types);
         rel.want(&[1]);
         rel.reserve(N);
-        for r in flat.chunks_exact(K) {
+        for r in flat.as_chunks::<K>().0 {
             rel.push(r);
         }
         rel
@@ -161,7 +161,7 @@ fn blocks_compare_baseline() {
     let add = added();
     let next = m.time("one edit: based + push + close", || {
         let mut rel = Rel::based("edge", &types, &kept, Some(&gone)).expect("based");
-        for r in add.chunks_exact(K) {
+        for r in add.as_chunks::<K>().0 {
             rel.push(r);
         }
         InRel::moved(rel)

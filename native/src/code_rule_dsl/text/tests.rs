@@ -124,7 +124,8 @@ fn spans(rng: &mut Lcg, len: usize) -> Vec<Range<usize>> {
 
 /// The tree of `spans`, breadth first.
 fn breadth(rng: &mut Lcg, len: usize) -> Vec<Range<usize>> {
-    let mut out = vec![0..len];
+    let mut out = Vec::with_capacity(400);
+    out.push(0..len);
     let mut at = 0;
     while at < out.len() && out.len() < 400 {
         let span = out[at].clone();

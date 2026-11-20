@@ -242,7 +242,7 @@ fn multiple_consumers_union_their_safe_demands() {
     }
     // A second reader of `result`'s rule, at another key.
     let result = rules(&p, |h| h == "result")[0];
-    let head: Vec<T<'_>> = result.head().args().map(|t| t_of(&p, result, t)).collect();
+    let head: Vec<T<'_>> = result.head().args().map(|t| t_of(result, t)).collect();
     let mut second = b.rule().head("result", &head);
     for l in result.body().filter(|l| l.atom().is_none_or(|a| p.rel_name(a.rel()) != demand)) {
         second = second.lit(&p, result, l);

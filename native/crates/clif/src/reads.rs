@@ -1430,19 +1430,22 @@ fn cache_count(b: &mut B<'_, '_>, cache: Value, offset: i32) {
     cache_add(b, cache, offset, one);
 }
 
+/// A cache entry's filler: given the entry taken, it writes the payload and gives whether it fits.
+pub(crate) type Fill<'f> = &'f dyn Fn(&mut B<'_, '_>, Value) -> Value;
+
 /// The entry of `key` in the rolling cache at `cache` (`view::cache`): looked up in its live generations, head
 /// first, a hit in the oldest copied into the head, an entry another thread writes waited for (`SPIN` times at most);
 /// on a miss, an entry of `size` bytes (an I32: its header and payload) taken from the head's arena, indexed,
 /// `fill`ed (its payload: `fill` gives whether it fits) and completed. A full head turns the spare into the head. After
 /// `TRIES` tries without room, or for a `size` past the cache's most, a failure counted and the dead entry given.
-pub(crate) fn cache_get(b: &mut B<'_, '_>, cache: Value, key: Value, size: Value, fill: &dyn Fn(&mut B<'_, '_>, Value) -> Value) -> Value {
+pub(crate) fn cache_get(b: &mut B<'_, '_>, cache: Value, key: Value, size: Value, fill: Fill<'_>) -> Value {
     cache_lookup(b, cache, key, size, Some(fill))
 }
 
 /// `cache_get`, or with no `fill` an open lookup: it waits for no writer, and on a miss takes an entry of `size`
 /// bytes (none for 0) that its caller writes and completes (`cache_done`); its result an entry and what it found
 /// (`FOUND`, `TAKEN`, `NOT_KEPT`, `PENDING`) in the low bits.
-pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Value, fill: Option<&dyn Fn(&mut B<'_, '_>, Value) -> Value>) -> Value {
+pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Value, fill: Option<Fill<'_>>) -> Value {
     use crate::view::cache as c;
     let open = fill.is_none();
     let gens = cache_load(b, cache, c::GENS);
@@ -1741,7 +1744,7 @@ fn cache_take(
     h: Value,
     slot_mask: Value,
     size: Value,
-    fill: Option<&dyn Fn(&mut B<'_, '_>, Value) -> Value>,
+    fill: Option<Fill<'_>>,
 ) -> Value {
     use crate::view::cache as c;
     let rw = MemFlags::new().with_notrap();

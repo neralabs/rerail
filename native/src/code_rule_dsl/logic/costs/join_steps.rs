@@ -125,19 +125,6 @@ pub fn category(text: &str, words: usize) -> String {
     if s.is_empty() { "none".to_owned() } else { s.join(" ") }
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn a_steps_record_reads_as_categories() {
-        assert_eq!(super::category("postings", 3), "postings");
-        assert_eq!(super::category("scan of the component", 4), "scan of the component");
-        assert_eq!(super::category("lookup on (c0, c2)", 1), "lookup");
-        assert_eq!(super::category("", 3), "none");
-        // As the search names them for a prediction (decision 0354): the same categories.
-        assert_eq!(super::category("range in document on (c1)", 1), super::category("range", 1));
-        assert_eq!(super::category("assign or test", 1), "assign");
-    }
-}
 
 /// Decision 0354, the model's choice: with `RERAIL_JOIN_MODEL=1`, a join model trained on this machine's stored
 /// steps prices every searched line's candidates (`joins::set_pricer`). Until it is trained, and without it, the
@@ -229,4 +216,18 @@ pub fn install_model(db: &Connection, machine: &str) {
 #[cfg(target_os = "macos")]
 fn rerail_forest_gpu_seconds() -> f64 {
     rerail_accel::join_model::gpu_seconds_awaited()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_steps_record_reads_as_categories() {
+        assert_eq!(super::category("postings", 3), "postings");
+        assert_eq!(super::category("scan of the component", 4), "scan of the component");
+        assert_eq!(super::category("lookup on (c0, c2)", 1), "lookup");
+        assert_eq!(super::category("", 3), "none");
+        // As the search names them for a prediction (decision 0354): the same categories.
+        assert_eq!(super::category("range in document on (c1)", 1), super::category("range", 1));
+        assert_eq!(super::category("assign or test", 1), "assign");
+    }
 }

@@ -76,7 +76,7 @@ pub fn message_templates(src: &str) -> Vec<(String, String, String)> {
     let policy = statements
         .iter()
         .find_map(|s| match s.what()? {
-            S::Setting { key, text } if key == "policy" => text.split('"').nth(1).map(str::to_owned),
+            S::Setting { key: "policy", text } => text.split('"').nth(1).map(str::to_owned),
             _ => None,
         })
         .unwrap_or_default();
@@ -1234,14 +1234,12 @@ fn resolve_shared(statements: Vec<Stmt>) -> Result<(SharedFiles, Vec<Stmt>), Err
     Ok((files, own))
 }
 
-/// Each module's statements, without its includes (the graph placed them), read off its stored tape.
-
 /// The phase programs a text's own declarations name (`<phase>__<export>`, as `phases::phase_files` reads them): not
 /// its own phase (`.phase`), a typing program's or the engine's (`typing_`, `rr_`). Phase 0 resolves them with its
 /// includes (`p0_text_phase`), so the run's rule files are listed without reading a module again (decision 0246).
 pub fn phases_named(statements: &[Stmt]) -> Vec<String> {
     let own = statements.iter().find_map(|s| match s.what()? {
-        S::Setting { key, text } if key == "phase" => Some(text.trim().to_owned()),
+        S::Setting { key: "phase", text } => Some(text.trim().to_owned()),
         _ => None,
     });
     let mut out: Vec<String> = statements

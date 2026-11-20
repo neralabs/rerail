@@ -43,7 +43,7 @@ pub fn runs() -> Vec<Vec<u8>> {
     for len in [700usize, 3000, 20_000] {
         let mut v = Vec::with_capacity(len);
         while v.len() < len {
-            let byte = [b'\\', b'"', b'a', b' ', b',', b'\\'][next(6) as usize];
+            let byte = b"\\\"a ,\\"[next(6) as usize];
             let long = next(4) == 0;
             let run = 1 + next(if long { 200 } else { 5 }) as usize;
             v.extend(std::iter::repeat_n(byte, run));
@@ -56,6 +56,9 @@ pub fn runs() -> Vec<Vec<u8>> {
     out.push(long);
     out
 }
+
+/// Each executor's outputs on a file, by its name.
+pub type Runs = Vec<(String, Vec<Vec<u64>>)>;
 
 /// A program's first block program, lowered and compiled once, for runs over many inputs.
 pub struct Executors<'a> {
@@ -80,7 +83,7 @@ impl<'a> Executors<'a> {
 
     /// Every executor's outputs over `bytes`, with the executor's name; none over the launch
     /// budget.
-    pub fn every(&self, bytes: &[u8]) -> Vec<(String, Vec<Vec<u64>>)> {
+    pub fn every(&self, bytes: &[u8]) -> Runs {
         let (out, skipped) = self.run(bytes, true);
         assert!(skipped.is_empty(), "over the launch budget: {skipped:?}");
         out
@@ -89,7 +92,7 @@ impl<'a> Executors<'a> {
     /// Every executor's outputs over `bytes` (the Metal ones when `metal`), without a Metal
     /// executor whose run would take more launches than the budget (`metal_launch_budget`):
     /// those are named in the second list.
-    pub fn run(&self, bytes: &[u8], metal: bool) -> (Vec<(String, Vec<Vec<u64>>)>, Vec<String>) {
+    pub fn run(&self, bytes: &[u8], metal: bool) -> (Runs, Vec<String>) {
         let mut out = vec![("cpu interpreter".to_owned(), self.block.interpret(bytes)), ("cranelift".to_owned(), self.cranelift.run(bytes))];
         let mut skipped = Vec::new();
         if metal {

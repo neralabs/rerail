@@ -6791,6 +6791,9 @@ Open:
   The hub's a85f74caf passes all five. The four corpus tests are ignored with this item.
 - **Do**: rr-align's owners fix them where they arise; the hub takes the fixes at the next roll-up.
 - **Done when**: all four pass, unignored.
+- 2026-11-20, roll-up 19 (after rr-align's merge): all four pass on Linux (spark2), run with `--run-ignored only`,
+  and their ignores are gone. Not run on macOS this time: no engine tests on a Mac while the Metal crashes are
+  open, as an executor there may take the device.
 
 ### Q293. (Q262 on benchmarks-on-integration) The settle-window test's first leg can no longer miss an edit
 
@@ -7975,8 +7978,19 @@ on an M3 or M5:
   `cpp` its fan-out gives 8 tokens for 12,288 (the rung-1 run without `cpp` agrees), so it is ignored with them.
 - **The persistent grid (0468 R5, R6)**: `grid_barriers_see_every_groups_writes` and the grid's scan, segmented scan
   and sort fail at 8 groups: "a barrier failed" (bounded, never hangs). They fail at 1 test thread too.
-- **The AOT words**: `the_aot_words_are_the_interpreters` and `the_words_translate_to_rust` overflow the test
-  thread's 2 MB stack in `rust_source`.
+- **The AOT words** (not the device's; done 2026-11-20): `the_aot_words_are_the_interpreters` and
+  `the_words_translate_to_rust` overflowed the test thread's 2 MB stack in `rust_source`.
+  - The stack: under gdb, 711 frames deep. The structuring recurses once per level of the dominator tree
+    (`Shape::tree`, `within`, `transfer`), through a branch's code built inside `instruction`, whose one big match
+    holds 22 KB a frame in a debug build: 71 of them made 1.5 MB. `instruction` now sends a branch to `branch`
+    (its successors' code by `jump`) and anything else to `operation`, the match, which no longer recurses.
+  - The time: 61 s, every one of them in `Shape::threaded` for the run's function (2,771 blocks). It split nodes
+    3,556 times, its whole budget, before taking a dispatch. Each round recomputed the dominators by Cooper,
+    Harvey and Kennedy's iteration, which takes many passes on an irreducible graph (2 ms a round at 3,000
+    nodes, 40 ms at 6,000). `Order::of` now finds them by Semi-NCA in one pass, and numbers the dominator tree so
+    that `dominates` is one interval test. `the_dominators_are_the_definitions` checks both against the
+    definition on random graphs. The test takes 8.5 s, and so does each c_directives build's `pp.rs`.
+  - Both tests pass on Linux, and their ignores are gone.
 - **The evaluation on one persistent grid (0468 step 5a, roll-up 21)**: at Go-C-and-C-support's own 3997fd0a25,
   each test run alone, every test that runs the whole grid evaluation hangs (past 25 s) or fails with Metal's
   `BackendFailure`. Which test does which varies between runs. Here 11 more are ignored with it: `if_values_`,
@@ -8009,9 +8023,11 @@ on an M3 or M5:
     `#line`, and the unit past its room.
   - **The AOT words' translation recursed past 2 MB.** Writing structured control (`Shape::tree`) recurses as deep
     as the code is nested: the pp words' run is nested 87 deep, which overflowed 2 MB unoptimized and fit in 8 MB.
-    `rerail_clif::rust::translate`, `translate_reads` and `clif_ukl::translate` now run on a thread with a 64 MB
-    stack (`on_translation_stack`; address space, not memory). Both AOT tests pass at the test's 2 MB, and 62 runs
-    equal the interpreter's.
+    `rerail_clif::rust::translate`, `translate_reads` and `clif_ukl::translate` ran on a thread with a 64 MB
+    stack (`on_translation_stack`). Final-shape-quality's 536cc25106 fixed it at its cause (each level's frame small,
+    the dominators in one pass: the AOT words, above), so at the merge of that branch the thread went: it was a
+    thread made outside the one executor (0100 §2, `executors_are_shared`). Both AOT tests pass at the test's 2 MB
+    on Linux without it, and 62 runs equal the interpreter's.
   - **Checked** on the M1 Max: every c_directives test (47; the 16 ignored are corpus, data, measurement or report
     tests), rerail-metal (22, with the OpenCL C 1.2 gate compiled by clang), rerail-gpu on Metal and on the CPU
     backend (24 each), rerail-clif (18), and the compiler's translator tests (23). The corpus and Boost slices are
@@ -8047,6 +8063,9 @@ on an M3 or M5:
   each on the M1 Max, so it is ignored with this item as the reason.
   - **Done when**: a Kotlin step 36 compile takes seconds (0484's aim), or the test has a small grammar with a walk,
     and it is not ignored.
+  - 2026-11-20: it passes on Linux (131 s on spark2), so it was slow, never red. It is no longer ignored. It is in
+    nextest's slow tier (`.config/nextest.toml`): the gate runs it, with 8 minutes allowed, and the quick tier leaves
+    it out. Still open: the compile's time, three compiles of 44 s on spark2.
 
 ### Q349. Cranelift refuses corpus program `0565-mix-seed_205` by 0423's check
 
@@ -8059,6 +8078,24 @@ on an M3 or M5:
   `span(after_odd_run(x), 20) & after(high) & starts(ws)` and `after_odd_run(prev(bs & alpha, 54))`.
 - **Done when**: the program's gated region keeps its vectors inside its branch (or the gate is
   not taken for it), and the corpus test passes whole.
+- **Done** (2026-11-20). The refusal now names the instruction and its block. It showed the ASCII
+  split (`ascii_split`) making `after(high)` (%48, `prev(high) & ~high`) in its non-ASCII arm. The
+  split left a region's members to the region but not the region's own vectors. It leaves both
+  now. Two more faults lay behind that one:
+  - With %48 out of the split, it is made from words (it reads the split's word of `high`). The
+    region's top made only the vectors whose masks are wanted, so %48 was never made, and its
+    reader read a zero. The top makes those made from words too.
+  - An outlined region's function did not get those words either: `call_region` treated a
+    member on the vectors as remade from the bytes even where it is made from words. It passes
+    them in now, as 0423 says.
+  - Both faults read a value never made, which every value's default, `Sym::Known(0)`, turned
+    into a zero. Values start as `Sym::Unmade` now, and reading one panics with the value. An
+    absorbed flag leaf (its bits in the error vector, by design) gives its zero by name in
+    `finish`. A reader in `emit` names the operand it reads too early.
+  - The corpus test writes each differing program's values and CLIF under
+    `RERAIL_CORPUS_CLIF`.
+  - Checked on Linux: rerail-compiler (143), rerail-parser-tests (85, the corpus whole), Kotlin
+    (52), rr_parser (48), JSON, Python, ECMA, Rust, SQL, PHP, rerail-lang and rerail-rr.
 
 ### Q356. (Q331 on investigate-bend-vs-datalog) Native-and-GPU-strata's process-global state, merged before 0442 reached it (d719a840ef, 2026-11-19)
 
@@ -8274,7 +8311,7 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   counts are now checked as they are added each chunk (`layout_broke`, plan.rs), a seed's against `orders`, a
   probe's against `probes` (a line's counts are taken from it when its order is replaced, so they are always its
   running order's), and the replanning paths read what broke there. The test passes un-ignored, with the hub's unit
-  test and the key test; the plan, joins and shapes tests are as before (three were red before: Q378).
+  test and the key test; the plan, joins and shapes tests are as before (three were red before: Q411).
 
 ### Q377. (done) A test's store keeps one object segment open after its test
 
@@ -8307,7 +8344,7 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   - Found by tracking which blocks were mapped and their versions; nothing in the shared object, the machine, the
     tests' object or any pool thread's copy held the image. The test passes un-ignored, three runs in a row on the
     m3. The program-image, prepared-program, normalization, run, profile, observer, workspace, lane and plan tests
-    pass, except the three plan tests that were red before (Q378).
+    pass, except the three plan tests that were red before (Q411).
 
 
 ### Q386. (Q189 on cost-classifier-metal-rf, Q347 on rr-align, Q300 on Typing-support) (done) A loop's stolen halves lose their run where two runs share a pool
@@ -8667,3 +8704,28 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
     is a relation of one row at most (ecd7a4e175, 0361 step 6).
   - Tests: `an_aggregate_inside_a_loading_component_is_gated_per_group`, `a_key_of_no_columns_is_one_row_at_most`.
     The 50 data-layer files with the 57 rule files run to their end (0494 R7).
+
+### Q411. (Q378 on final-shape-serverplan-quality) (done) Three plan tests red after the roll-ups, each from two changes made apart
+
+- **Found** (2026-11-20, at the merge of final-rerail-shape-rr-align 972dc90902; red before it, on the hub):
+  `a_constant_counted_none_when_planned_is_growth_when_it_has_rows`,
+  `the_search_prices_the_steps_past_a_bound_head_as_one_witness` and
+  `a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it`.
+- **Done** (2026-11-20):
+  - The search priced the steps past the head's binding twice, by two mechanisms made on two branches, neither in
+    the other's history: Q146's `witnessed` (13d052bb17), which scales the tail's work by the share of the rows
+    walked that are witnesses, as a fixed order's price does, and Q245 item 5's cut (c30a34fb24), which set a
+    step's rows to the bindings it got. After the cut the rows were the bindings, the share was always all, and Q240's
+    documents no longer led (1 M rows where 1,200 come). The cut is gone and `witnessed` prices the search as it
+    prices a fixed order. Q245 item 5's own case (`a_probe_bounded_by_comparisons_reads_a_range`) passes on it, so the
+    cut added nothing `witnessed` lacked. Its duplicate head mask (`head_bits`, the same as `head_mask`) went with it.
+  - Smoking gun 10's test keyed its constant's count by the declared column name (`r`), which the model never reads:
+    a relation that is neither an input nor derived is read by its positional name (`Model::col`: `c1`). So the
+    count was never seen, and the setup ("about no fragment") was not the one it stated. The test now keys it as the
+    model reads it. Both of its assertions pass: `doc_role` leads with one fragment, and 2,455 are growth that is
+    searched again.
+  - The derived-relation test's second half (Q184, f6efa90478) asserted `o` prepared, but `o` tests a constant on a
+    `values` column, which 0361 (Q297, django-bugs' roll-up 7) plans at run time, as the test's own doc says. The
+    assertion states 0361 now: `o` is not prepared, and `r` is, as `o`'s inferred facts size it.
+  - The plan module's tests pass (90). Along the way: `gate/executor-coverage/packs.tsv` was stale since the merge's
+    `lib/python/references.rr` became `.rerail` and the library's programs counted one more. Blessed.

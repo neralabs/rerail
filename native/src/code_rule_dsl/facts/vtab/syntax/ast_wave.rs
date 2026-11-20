@@ -342,7 +342,9 @@ fn captured_rows(
     // W's steps at the roots and their subtrees' nodes, for its rate in the cost store (decision 0334): what the
     // wave weighs a clause over its budget against. And each tape's CPU, for the profile's captures (t45).
     let measure = w_key.is_some();
-    let per: Vec<StoreResult<(Vec<Vec<i64>>, usize, u64, u64, u128)>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+    // A tape's rows, its roots past the budget, W's steps and nodes, and its CPU (ns).
+    type TapeRun = (Vec<Vec<i64>>, usize, u64, u64, u128);
+    let per: Vec<StoreResult<TapeRun>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
         held
             .par_iter()
             .zip(found.par_iter())

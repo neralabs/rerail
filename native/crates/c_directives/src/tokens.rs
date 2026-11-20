@@ -70,11 +70,11 @@ pub fn read(image: &[u8], src: &[u8]) -> Result<Vec<Tok>, String> {
             bol = true;
             continue;
         }
-        let start = v.start(i) as u32;
+        let start = v.start(i);
         // A byte order mark is no white space.
         let space = start > end && !line_break_before(src, start as usize) && !(start == 3 && src.starts_with(b"\xef\xbb\xbf"));
-        out.push(Tok { kind, start, end: v.end(i) as u32, flags: if bol { BOL } else { 0 } | if space { SPACE } else { 0 } });
-        (bol, end) = (false, v.end(i) as u32);
+        out.push(Tok { kind, start, end: v.end(i), flags: if bol { BOL } else { 0 } | if space { SPACE } else { 0 } });
+        (bol, end) = (false, v.end(i));
     }
     Ok(out)
 }
@@ -156,7 +156,6 @@ mod tests {
         ];
         for cpp in [false, true] {
             for src in cases {
-                let src = src.replace('\u{feff}', "\u{feff}");
                 assert_eq!(check(src.as_bytes(), cpp), Ok(true), "{src:?} (C++ {cpp})");
             }
         }

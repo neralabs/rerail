@@ -625,7 +625,17 @@ fn executors_equal_the_interpreter(metal: bool) {
         for ((f, got), want) in files.iter().zip(got).zip(&want) {
             let case = &cases[f.program];
             if let Some(k) = (0..want.len()).find(|&k| got[k] != want[k]) {
-                differ.entry(format!("{}, {executor}", case.name)).or_insert_with(|| format!("output {k}: {:x?} against {:x?}, {} bytes: {:?}", got[k], want[k], f.bytes.len(), String::from_utf8_lossy(f.bytes)));
+                differ.entry(format!("{}, {executor}", case.name)).or_insert_with(|| {
+                    // `RERAIL_CORPUS_CLIF`: a directory for each differing program's native values and Cranelift's
+                    // function, to read where they part.
+                    if let Some(dir) = std::env::var_os("RERAIL_CORPUS_CLIF") {
+                        let dir = std::path::Path::new(&dir);
+                        let values: String = natives[f.program].insts.iter().enumerate().map(|(x, i)| format!("%{x} = {i:?}\n")).collect();
+                        std::fs::write(dir.join(format!("{}.values", case.name)), values).expect("writes the values");
+                        std::fs::write(dir.join(format!("{}.clif", case.name)), &compiled[f.program].clif).expect("writes the CLIF");
+                    }
+                    format!("output {k}: {:x?} against {:x?}, {} bytes: {:?}", got[k], want[k], f.bytes.len(), String::from_utf8_lossy(f.bytes))
+                });
             }
         }
     }

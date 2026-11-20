@@ -574,7 +574,7 @@ impl ProgramPass for Hide {
             }
         }
         for (_, w) in &removed {
-            if enters(w) && !rules_of(&w.head).iter().any(|r| enters(r)) {
+            if enters(w) && !rules_of(&w.head).iter().any(&enters) {
                 return Ok(false);
             }
         }
@@ -1339,6 +1339,13 @@ fn analyse(rule: &W, base: &HashMap<String, Vec<usize>>, carried: &HashMap<Strin
     facts
 }
 
+
+/// Declares `rel` with `cols` on the staged fields.
+fn declare_columns(b: &mut (impl FieldsMut + ?Sized), rel: &str, cols: &[(String, String)]) {
+    let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+    b.declare(rel, &pairs);
+}
+
 #[cfg(test)]
 mod tests {
     use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
@@ -1544,10 +1551,4 @@ mod tests {
         let outs = rules_of(&v, "out");
         assert!(!outs.is_empty() && outs.iter().all(|r| r.contains("!rr_inside_rr_kind_function_definition(") && !r.contains("rr_in_")), "{outs:#?}");
     }
-}
-
-/// Declares `rel` with `cols` on the staged fields.
-fn declare_columns(b: &mut (impl FieldsMut + ?Sized), rel: &str, cols: &[(String, String)]) {
-    let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-    b.declare(rel, &pairs);
 }

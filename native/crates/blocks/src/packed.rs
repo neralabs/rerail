@@ -820,7 +820,7 @@ mod tests {
             let doc = (next() >> 36) as i64 & 0x0fff_ffff;
             for slot in 0..(next() % 6) as i64 {
                 for index in 0..(10 + next() % 80) as i64 {
-                    let id = doc << 32 | slot << 18 | index * 3;
+                    let id = (doc << 32) | (slot << 18) | (index * 3);
                     rows.push([id, id + 1 + (next() % 4) as i64]);
                 }
             }

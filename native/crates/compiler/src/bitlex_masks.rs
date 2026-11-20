@@ -169,6 +169,13 @@ pub struct Val {
 /// A set of bytes, bit `b` for byte `b`.
 pub type ByteSet = [u64; 4];
 
+/// `into` with `of`'s bytes added.
+fn add_bytes(into: &mut ByteSet, of: &ByteSet) {
+    for (w, o) in into.iter_mut().zip(of) {
+        *w |= o;
+    }
+}
+
 /// The largest delay: the outputs are brought to it by `prev`s, and the executors shift it out.
 pub const MAX_DELAY: u8 = 63;
 
@@ -1178,19 +1185,23 @@ impl Lowering {
         // walk: by induction, with `t = toggle(q)` and the fill `t` a byte before, the hidden
         // byte is `prev(t)`, the opener `q & ~prev(t)`, and the fill
         // `open | (prev(t) & ~q) = q ^ prev(t) = t`.
-        if let ([r], [(o, c)]) = (regions.kinds.as_slice(), inputs.as_slice()) {
-            if r.empty.is_none() && r.or.is_none() && !r.outside && r.bytes == 1 && (o.v, o.d) == (c.v, c.d) {
-                let q = Val { v: clean(self, *o, d)?, d, dirty: false, set: None };
-                let fill = self.carried(q, BlockOp::Toggle);
-                let hidden = self.op(BlockOp::Prev(fill.v, 1));
-                let open = self.op(BlockOp::AndNot(q.v, hidden));
-                for (name, v) in [(regions.hidden.clone(), hidden), (format!("o_{}", r.kind), open), (format!("f_{}", r.kind), fill.v)] {
-                    self.names.insert(name, Val { v, d, dirty: true, set: None });
-                }
-                // A mode of tier 2's states, as a toggle is (`row_modes`).
-                self.toggles.push((fill, q));
-                return Ok(());
+        if let ([r], [(o, c)]) = (regions.kinds.as_slice(), inputs.as_slice())
+            && r.empty.is_none()
+            && r.or.is_none()
+            && !r.outside
+            && r.bytes == 1
+            && (o.v, o.d) == (c.v, c.d)
+        {
+            let q = Val { v: clean(self, *o, d)?, d, dirty: false, set: None };
+            let fill = self.carried(q, BlockOp::Toggle);
+            let hidden = self.op(BlockOp::Prev(fill.v, 1));
+            let open = self.op(BlockOp::AndNot(q.v, hidden));
+            for (name, v) in [(regions.hidden.clone(), hidden), (format!("o_{}", r.kind), open), (format!("f_{}", r.kind), fill.v)] {
+                self.names.insert(name, Val { v, d, dirty: true, set: None });
             }
+            // A mode of tier 2's states, as a toggle is (`row_modes`).
+            self.toggles.push((fill, q));
+            return Ok(());
         }
         // Each kind's opener and closer at `D`; with `or C2`, the closer `C | C2` and `C2`.
         let mut ins = Vec::new();
@@ -3572,9 +3583,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     TokenElem::Word(w) => first[usize::from(w[0]) / 64] |= 1 << (w[0] % 64),
                     TokenElem::Kind(name) => {
                         for r in (0..rows.len()).filter(|&r| &token_rows[r].0 == name) {
-                            for i in 0..4 {
-                                first[i] |= rows[r].first[i];
-                            }
+                            add_bytes(&mut first, &rows[r].first);
                         }
                     }
                     // A token's bytes are the same with or without the mark: tier 2 tests it.
@@ -3761,9 +3770,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 }
                 let both = low.and(m, token_rows[r].1)?;
                 if !low.settled_never(&mut settled, both) {
-                    for i in 0..4 {
-                        first[i] |= rows[r].first[i];
-                    }
+                    add_bytes(&mut first, &rows[r].first);
                 }
             }
             // A row of many bytes (the operators'): each byte the mark is proved apart from left
@@ -3803,9 +3810,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                         TokenElem::Kind(name) => {
                             all_words = false;
                             for r in (0..rows.len()).filter(|&r| &token_rows[r].0 == name) {
-                                for i in 0..4 {
-                                    by[i] |= rows[r].first[i];
-                                }
+                                add_bytes(&mut by, &rows[r].first);
                             }
                         }
                         _ => unreachable!("a simple element"),
@@ -3953,16 +3958,16 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         // A moved kind's byte is its alone: tier 2 switches on a record's kind (its least
         // byte's target), so a row read inside a region, whose bytes may be any, never meets
         // a state there.
-        for r in 0..rows.len() {
+        for (r, row) in rows.iter_mut().enumerate() {
             if moved.iter().any(|&(m, _)| m == r) {
                 continue;
             }
             for &(_, f) in &moved {
-                rows[r].first[usize::from(f) / 64] &= !(1 << (f % 64));
+                row.first[usize::from(f) / 64] &= !(1 << (f % 64));
             }
         }
     }
-    let meets = row_modes(low, &token_rows, &rows, &states, &arms, &mark_kinds)?;
+    let meets = row_modes(low, token_rows, &rows, &states, &arms, &mark_kinds)?;
     // The totals are one flag (`BlockRun::totals`), tested once: `EMPTY 0`.
     let empties = 1;
     // The counts no value reads whose ups and downs are tokens' starts, each of tokens whose text
@@ -4026,8 +4031,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     }
     // Every row's tokens' last bytes: the records' (decision 0428).
     let mut any_last: Option<Val> = None;
-    for r in 0..rows.len() {
-        let x = token_rows[r].2;
+    for &(_, _, x) in &token_rows[..rows.len()] {
         any_last = Some(match any_last {
             Some(y) => low.or(y, x)?,
             None => x,
@@ -4116,7 +4120,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         .collect();
     let shares = |name: &str, b: usize| shared.iter().any(|(n, s)| n == name && s[b]);
     let shared_kinds: Vec<String> = shared.iter().filter(|(_, s)| s.contains(&true)).map(|(n, _)| n.clone()).collect();
-    for b in 0..256 {
+    for (b, kind) in kinds.iter_mut().enumerate() {
         let mut sig: Vec<u16> = lowered.switches.iter().filter(|s| s.offset == 0).map(|s| s.targets[b]).collect();
         sig.extend(mark_kind_names.iter().map(|n| u16::from(starts_kind(n, b)) + u16::from(shares(n, b))));
         let n = classes.len();
@@ -4127,7 +4131,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         if classes.len() > 256 {
             return Err("more than 256 kinds of first byte".into());
         }
-        kinds[b] = k;
+        *kind = k;
     }
     // Numbered so a switch on the kind has few ranges of one target (its compare tree is
     // shallow, as a jump table on the lean lexer's kinds is small): from byte 0's class, each
@@ -4443,7 +4447,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             };
             Some(crate::records::EndRule::Next(at as u16))
         };
-        for b in 0..256usize {
+        for (b, end) in ends.iter_mut().enumerate() {
             // A row read inside a region (`inside`) its reader starts: no byte's rule.
             let these: Vec<usize> = (0..rows.len()).filter(|&r| !low.inside.get(r).copied().unwrap_or(false) && rows[r].first[b / 64] >> (b % 64) & 1 == 1).collect();
             if these.is_empty() {
@@ -4549,7 +4553,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                         rules.len() - 1
                     }
                 };
-                ends[b] = u8::try_from(at).map_err(|_| "more than 256 end rules")?;
+                *end = u8::try_from(at).map_err(|_| "more than 256 end rules")?;
                 continue;
             }
             let ruled: Vec<Option<(bool, Val)>> = these.iter().map(|&r| low.token_rules.get(&token_rows[r].0).copied()).collect();
@@ -4590,7 +4594,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     rules.len() - 1
                 }
             };
-            ends[b] = u8::try_from(at).map_err(|_| "more than 256 end rules")?;
+            *end = u8::try_from(at).map_err(|_| "more than 256 end rules")?;
         }
     }
     // The bytes between tokens, the loop's (stage 2a): with end rules, every token's.
@@ -4669,10 +4673,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         }
         rd.quiet = quiet;
     }
-    let gap = match gap_ends(low, token_rows)? {
-        Some(v) => Some(mask_of_val(v, &mut mark_masks)),
-        None => None,
-    };
+    let gap = gap_ends(low, token_rows)?.map(|v| mask_of_val(v, &mut mark_masks));
     // The gap marks the CPU's token loop reads from the blanks (decision 0430), as the lean
     // lexer's `skip` sets `nl` while it passes them: a mark whose mask `M` holds at the bytes of
     // one class `C` alone (its first bytes), at no byte of a token, and at every byte of `C`
@@ -4875,6 +4876,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
 ///   - the modes the states are entered in follow, from the root's start in mode 0, by the
 ///     arms (a mark takes no bytes), the calls and the returns (the mode is the stream's, not
 ///     the stack's: a return lands in every state the level is called to return to).
+///
 /// A row a state can meet in none of its modes is no candidate at a byte it shares.
 fn row_modes(
     low: &mut Lowering,

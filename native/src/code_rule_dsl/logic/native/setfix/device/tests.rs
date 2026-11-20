@@ -1482,7 +1482,7 @@
         assert_eq!(table_rows(1, 100, true, None, Some(2_848.0)), 100, "never more than the relation holds");
         // Never past every pairing, never empty.
         assert_eq!(table_rows(10, 3, false, None, Some(1e9)), 30);
-        assert_eq!(table_rows(10, 3, false, None, Some(0.0)), 16.min(30));
+        assert_eq!(table_rows(10, 3, false, None, Some(0.0)), 16);
     }
 
     /// A spec's estimates are not the rule: two specs that differ in them alone are one rule (the same digest, under

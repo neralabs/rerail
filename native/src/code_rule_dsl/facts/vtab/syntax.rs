@@ -356,7 +356,7 @@ impl LongTexts {
                 if !f.named(id) || !is_comment_kind(dialect.name(f, id)) || up.is_some_and(|q| is_comment_kind(dialect.name(f, q))) {
                     continue;
                 }
-                if p.local_of_node(id as u32) == NONE {
+                if p.local_of_node(id) == NONE {
                     j += 1;
                     if j == k {
                         return Some(f.text(id).to_owned());
@@ -383,7 +383,7 @@ impl LongTexts {
             let mut values = HashMap::new();
             if let Some(reader) = crate::code_rule_dsl::facts::core::value_reader() {
                 reader.values(&valued.tape, valued.file.as_ref(), true, false, &mut |followed, ordinal, v, _| {
-                    let local = p.local_of_node(ordinal as u32);
+                    let local = p.local_of_node(ordinal);
                     if !followed && local != NONE && let Some(v) = v {
                         values.insert(local, v);
                     }
@@ -866,7 +866,7 @@ impl Numbering {
 
 pub fn numbering(doc: &Document, shape: Shape) -> StoreResult<Numbering> {
     // A document read as text only has no nodes.
-    if doc.facts.len() == 0 {
+    if doc.facts.is_empty() {
         return Ok(Numbering { p: None });
     }
     let tag = crate::code_rule_dsl::facts::core::facts_tag(&doc.facts);
@@ -1023,7 +1023,6 @@ impl Dialect {
     }
 
     pub fn new(tag: u8) -> StoreResult<Self> {
-        
         let dialect = from_tape_tag(tag).ok_or_else(|| StoreError::Invalid(format!("no dialect has tape tag {tag}")))?;
         let catalog = dialect.kinds();
         let values = crate::code_rule_dsl::language::base(crate::code_rule_dsl::language::Family::of(dialect)).reads_values();
@@ -1164,7 +1163,9 @@ impl DefIds {
     /// The ids of `p`'s nodes, and of `tokens` (each token's node, in order), by definition: the granule table.
     fn new(p: &Projected, dialect: &Dialect, tokens: &[u32]) -> Self {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "granules".into());
-        DefIds { table: granules::number(p, dialect, tokens, None) }
+        let table = granules::number(p, dialect, tokens, None);
+        table.describe(p.ranks());
+        DefIds { table }
     }
 }
 
@@ -2326,7 +2327,7 @@ impl Extra {
                 return Err(StoreError::Invalid(format!("{}: no reader of W's values is registered", d.path)));
             };
             reader.values(tape, file.as_ref(), plain, self.static_value, &mut |followed, ordinal, v, names| {
-                let local = p.local_of_node(ordinal as u32);
+                let local = p.local_of_node(ordinal);
                 if local == NONE {
                     return;
                 }
@@ -2377,7 +2378,7 @@ impl Extra {
                     continue;
                 }
                 let whole = f.text(id);
-                let c = match p.local_of_node(id as u32) {
+                let c = match p.local_of_node(id) {
                     NONE => {
                         k += 1;
                         let c = span(ExtraSpan::Comment, k)?;

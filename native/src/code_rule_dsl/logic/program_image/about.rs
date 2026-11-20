@@ -651,7 +651,7 @@ impl Builder<'_> {
     }
     /// Adds gates (`Program::gates`' entries, after the program's): each its key, relation, level, the relations
     /// that must be quiet and the gates it waits on, as `program_facts` writes them.
-    pub(in crate::code_rule_dsl::logic::program_image) fn add_gates(&mut self, gates: &[(String, String, usize, Vec<String>, Vec<String>)]) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn add_gates(&mut self, gates: &[super::fields::GateEntry]) {
         if gates.is_empty() {
             return;
         }

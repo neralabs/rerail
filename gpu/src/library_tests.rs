@@ -487,7 +487,7 @@ fn device_wide_scans_and_compaction() {
             }
         }
 
-        let flags: Vec<u32> = (0..n).map(|i| (vals[i as usize] % 2 == 0) as u32).collect();
+        let flags: Vec<u32> = (0..n).map(|i| vals[i as usize].is_multiple_of(2) as u32).collect();
         let fb = buffer_of(&flags).unwrap();
         let (kept, offsets) = (alloc::<u32>(n as usize).unwrap(), alloc::<u32>(n as usize + 1).unwrap());
         compact_u32(&q, &inb, &fb, &kept, &offsets, n).unwrap();
@@ -548,7 +548,7 @@ fn sort_and_check<K: RadixKey + Ord + std::fmt::Debug + Into<u64> + From<u32>>(q
     let (tk, tv) = (alloc::<K>(keys.len()).unwrap(), alloc::<u32>(keys.len()).unwrap());
     let sorted = radix_sort_pairs::<K>(q, &kb, &vb, &tk, &tv, n, bits).unwrap();
     q.flush().await_().unwrap();
-    assert_eq!(sorted, if bits.div_ceil(8) % 2 == 0 { Sorted::InPlace } else { Sorted::InTemp });
+    assert_eq!(sorted, if bits.div_ceil(8).is_multiple_of(2) { Sorted::InPlace } else { Sorted::InTemp });
     let (rk, rv) = if sorted == Sorted::InPlace { (&kb, &vb) } else { (&tk, &tv) };
     let (got_k, got_v): (Vec<K>, Vec<u32>) = (read(rk, keys.len()), read(rv, keys.len()));
     let mut want: Vec<u32> = values.clone();

@@ -812,7 +812,7 @@ pub(in crate::code_rule_dsl) fn lower_with(policies: &[(String, CompiledCodeRule
         let mut demanded = demand.rule().head_from(from, rule, rule.head());
         // The chunk's documents seed each atom's demand.
         for d in &seeds {
-            demanded = demanded.atom(WAVE, &[T::Var(*d)]);
+            demanded = demanded.atom(WAVE, &[T::Var(d)]);
         }
         for l in rule.body() {
             match (l.view(), atoms.get(&l.node())) {
@@ -933,7 +933,7 @@ fn demand_program(mut rules: Builder<'_>, atoms: usize) -> StoreResult<Option<Ar
             // The seed binds every atom's document: a key the widening unbound is demanded everywhere.
             None => {
                 needed.insert(WAVE.to_owned());
-                rule = rule.atom(WAVE, &r.head().args().map(|t| t_of(&magic, r, t)).collect::<Vec<_>>());
+                rule = rule.atom(WAVE, &r.head().args().map(|t| t_of(r, t)).collect::<Vec<_>>());
             }
         }
         rule.finish().map_err(invalid)?;

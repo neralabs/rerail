@@ -460,7 +460,7 @@ fn decode_roots(roots: RootsEncoded, files: &[TapeDoc]) -> RootsFound {
     }
     let mut sorted = Vec::<()>::with_capacity(written);
     let words = read(&roots.records, written * ROOT_RECORD);
-    for record in words.chunks_exact(ROOT_RECORD) {
+    for record in words.as_chunks::<ROOT_RECORD>().0 {
         let [pass, file, task, start] = roots.items[record[0] as usize];
         let base = bases[file as usize];
         // A pack's record: its member's program, task, label and capture labels.
@@ -1257,7 +1257,7 @@ const MICRO_POOL: usize = 4096;
 /// A SIMD group's lanes on every Apple GPU: the kernels that spread a group's roots over its lanes are written for it
 /// (`simd_roots`), and every pool and stack count here is a multiple of it.
 const SIMD_WIDTH: usize = 32;
-const _: () = assert!(MICRO_POOL % SIMD_WIDTH == 0 && MICRO_DEEP_POOL % SIMD_WIDTH == 0);
+const _: () = assert!(MICRO_POOL.is_multiple_of(SIMD_WIDTH) && MICRO_DEEP_POOL.is_multiple_of(SIMD_WIDTH));
 /// The lanes a micro walk's item (a group of 64 nodes) takes in each tier (`Shape::lanes`): each lane finds the roots
 /// among its share of the group's nodes, and the SIMD group walks all its lanes' roots. The short walks' tiers
 /// take a SIMD group an item: a thread an item gave their dispatches a 32nd of the threads (at s1000, `label_micro_8`
@@ -1418,7 +1418,7 @@ pub(in crate::code_rule_dsl) fn pattern_sources(patterns: &[&PackedPattern], fac
 /// `format` is the batch's tape format, the kernels' function constant (`pattern_pipeline`).
 pub(in crate::code_rule_dsl) fn patterns_ready(sources: &[String], format: u32) -> bool {
     // Each asked, so every one missing is recorded, not only the first.
-    sources.iter().map(|source| rerail_accel::gpu::kernels::ready_function(source, patterns::KERNEL, Some(format)).is_some()).fold(true, |all, ready| all && ready)
+    sources.iter().map(|source| rerail_accel::gpu::kernels::ready_function(source, patterns::KERNEL, Some(format)).is_none()).filter(|&missing| missing).count() == 0
 }
 
 /// One group's pattern kernel, compiled once per distinct source.
@@ -1989,8 +1989,8 @@ fn encode(
         count("mem.nodes", runner.nodes);
         count("mem.labels", plan.labels);
         count("mem.counts", plan.counts);
-        count("mem.scratch_mb", scratch_rows(plan) * words * 4 >> 20);
-        count("mem.counts_mb", tally_rows(plan) * runner.nodes * 4 >> 20);
+        count("mem.scratch_mb", (scratch_rows(plan) * words * 4) >> 20);
+        count("mem.counts_mb", (tally_rows(plan) * runner.nodes * 4) >> 20);
     }
     crate::code_rule_dsl::prof::time("gpu.size", || runner.size(plan))?;
     crate::code_rule_dsl::prof::release();

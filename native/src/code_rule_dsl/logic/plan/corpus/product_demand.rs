@@ -534,12 +534,12 @@ fn check_target(program: &Program<'_>, rel: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The terms of `a`'s arguments in rule `r` of `v`, those at `cols` (all of them: `None`).
-fn args_at<'v>(v: &'v Version, r: RuleRef<'v>, a: AtomRef<'v>, cols: Option<&[usize]>) -> Vec<T<'v>> {
+/// The terms of `a`'s arguments in rule `r`, those at `cols` (all of them: `None`).
+fn args_at<'v>(r: RuleRef<'v>, a: AtomRef<'v>, cols: Option<&[usize]>) -> Vec<T<'v>> {
     let args: Vec<TermRef<'_>> = a.args().collect();
     match cols {
-        Some(cols) => cols.iter().map(|&c| t_of(v, r, args[c])).collect(),
-        None => args.into_iter().map(|t| t_of(v, r, t)).collect(),
+        Some(cols) => cols.iter().map(|&c| t_of(r, args[c])).collect(),
+        None => args.into_iter().map(|t| t_of(r, t)).collect(),
     }
 }
 
@@ -578,15 +578,14 @@ pub(super) fn rewrite(program: &mut Program<'_>, narrow_readers: bool) -> Result
         let products = rewrite_products(&mut strict, products.clone()).map_err(named)?;
         let mut trial = program.clone();
         let mut readers = upstream::start(&mut trial, &products)?;
-        if !readers.is_empty() {
-            if let Ok(products) = rewrite_products(&mut trial, products.clone()) {
+        if !readers.is_empty()
+            && let Ok(products) = rewrite_products(&mut trial, products.clone()) {
                 upstream::propagate(&mut trial, &products, &mut readers)?;
                 let order_witnesses = upstream::restore_order_witnesses(&mut trial, &readers)?;
                 let present_witnesses = nullable::restore(&mut trial)?;
                 *program = trial;
                 return Ok(Rewritten { products, readers, order_witnesses, present_witnesses });
             }
-        }
         *program = strict;
         return Ok(Rewritten { products, readers: BTreeSet::new(), order_witnesses: 0, present_witnesses: 0 });
     }
@@ -682,7 +681,7 @@ fn rewrite_products(program: &mut Program<'_>, mut demanded: BTreeSet<String>) -
                     return Ok(false);
                 }
                 // The product's rule reads its demand first.
-                let (name, guard) = (format!("{PREFIX}{rel}"), args_at(v, r, r.head(), None));
+                let (name, guard) = (format!("{PREFIX}{rel}"), args_at(r, r.head(), None));
                 let mut rb = rewritten(first, v, r, b).atom(name.as_str(), &guard);
                 for l in r.body() {
                     rb = rb.lit(v, r, l);
@@ -701,7 +700,7 @@ fn rewrite_products(program: &mut Program<'_>, mut demanded: BTreeSet<String>) -
                     let a = r.body().nth(*i).and_then(|l| l.atom()).expect("the read");
                     let rel = format!("{PREFIX}{}", v.rel_name(a.rel()));
                     let guard_rel = format!("{PREFIX}{}", v.rel_name(r.head().rel()));
-                    let (head, guard) = (args_at(v, r, a, None), args_at(v, r, r.head(), None));
+                    let (head, guard) = (args_at(r, a, None), args_at(r, r.head(), None));
                     write_demand(v, r, b, &rel, &head, (&guard_rel, &guard), parts)?;
                 }
                 for (rel, rows) in &facts {

@@ -163,7 +163,7 @@ fn an_indirect_launch_runs_the_groups_its_counts_give() {
         .unwrap_or_else(|e| panic!("{e}"));
     q.flush().await_().unwrap();
     let marks: Vec<u32> = read(&out, 2 * N as usize);
-    assert!(marks.iter().all(|&m| m == 1), "every item of the counts' grid once: {:?}", &marks.iter().enumerate().filter(|(_, m)| **m != 1).take(4).collect::<Vec<_>>());
+    assert!(marks.iter().all(|&m| m == 1), "every item of the counts' grid once: {:?}", marks.iter().enumerate().filter(|(_, m)| **m != 1).take(4).collect::<Vec<_>>());
     let s: Vec<u32> = read(&seen, 4);
     assert_eq!((s[0], s[1]), (N.div_ceil(32) * 32, 2), "the grid's size is the counts'");
     assert_eq!(s[2], N.div_ceil(32) - 1, "no group past the counts ran");

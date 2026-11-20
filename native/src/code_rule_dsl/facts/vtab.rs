@@ -864,8 +864,6 @@ pub fn install_forget(forget: Forget) {
     let _ = FORGET.set(forget);
 }
 
-/// The tables registered on each connection that no statement has resolved yet (`register`).
-
 /// Resolves every table registered on `db` and not yet resolved, by preparing a read of it: an authorizer installed
 /// after this does not see SQLite connect them (an authored query's authorizer refuses what it does not name).
 pub fn resolve_tables(db: &Connection) -> Result<()> {

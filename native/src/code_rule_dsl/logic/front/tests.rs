@@ -94,7 +94,7 @@ fn literals_parse_to_t_ast() {
     let r = p.rules().next().unwrap();
     let name = |t: TermRef<'_>| t.var().map(|x| p.text(r.var(x)).to_owned());
     let head: Vec<TermRef<'_>> = r.head().args().collect();
-    assert!(matches!(head[1], TermRef::Call(f, ref args) if p.text(f) == "cat" && args.clone().map(name).collect::<Vec<_>>() == [Some("q".to_owned()), Some("a".to_owned())]), "{}", p.show_rule(r));
+    assert!(matches!(head[1], TermRef::Call(f, ref args) if p.text(f) == "cat" && (*args).map(name).collect::<Vec<_>>() == [Some("q".to_owned()), Some("a".to_owned())]), "{}", p.show_rule(r));
     let body = body(&p, 0);
     assert!(matches!(&body[1], Lit::Atom(a) if a.neg() && p.rel_name(a.rel()) == "g"));
     assert!(matches!(&body[2], Lit::Agg { var, op: crate::code_rule_dsl::logic::program_image::AggRef::Count, over: None, atom } if p.text(r.var(*var)) == "k" && matches!(atom.args().nth(1), Some(TermRef::Wild))));

@@ -746,14 +746,14 @@ impl Placed {
     /// program leaves out of it (where it is some of its version's rules). A sum, so it
     /// does not see the rules' order.
     pub fn digest(&self) -> u64 {
-        let d = match &self.ids {
+        
+        match &self.ids {
             None => self.v.digest(),
             Some(ids) => {
                 let all = self.v.rules().fold(0u64, |a, r| a.wrapping_add(r.hash()));
                 ids.iter().fold(self.v.digest().wrapping_sub(all), |a, &id| a.wrapping_add(self.v.rule(id).map_or(0, |r| r.hash())))
             }
-        };
-        d
+        }
     }
     /// How many rules the program has.
     pub fn len(&self) -> usize {

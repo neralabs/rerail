@@ -88,6 +88,24 @@ pub struct Given {
     pub kept: usize,
 }
 
+/// An order's rows: listed, a chunk of the block (`ORDER`), or the rows `lo..hi` themselves, already in the key's
+/// order (`ORDER_ROWS`).
+#[derive(Clone, Copy, Debug)]
+pub enum OrderRows {
+    Listed(Given),
+    Range(u32, u32),
+}
+
+/// An order given to a relation's directory (`Relation::try_add_order`): its rows, and its fences, tags and prints,
+/// each a chunk of the block written already.
+#[derive(Clone, Copy, Debug)]
+pub struct GivenOrder {
+    pub rows: OrderRows,
+    pub fences: Given,
+    pub tags: Given,
+    pub prints: Given,
+}
+
 structure! {
     pub struct ColStats { pub min: i64, pub max: i64 }
 }
@@ -482,29 +500,37 @@ impl Relation {
         }
     }
 
-    /// Gives this relation a sorted order on `cols` (decision 0478 step 5b): its rows listed (`ids`) or the rows
-    /// `lo..hi` themselves (`range`), and its fences, tags and prints, each a chunk of `block` written already. The
-    /// relation keeps them from now on and gives them back when its indexes are forgotten. Its number; `None` when
-    /// its directory has no room (the chunks are then still the caller's).
+    /// The number of this relation's next directory entry, its directory made first where it has none
+    /// (`ADDED_INDEXES` entries, a chunk of `block`); `None` when the directory is full or `block` has no room.
+    ///
+    /// # Safety
+    /// As `try_reserve_index`'s: this relation's descriptor is the caller's to change.
+    unsafe fn next_entry(&self, block: &Block) -> Option<usize> {
+        if self.indexes.is_empty() {
+            let (at, _) = block.try_alloc_chunk_fit_zeroed(ADDED_INDEXES * size_of::<Index>(), 8)?;
+            let me = std::ptr::from_ref(self).cast_mut();
+            // SAFETY: the caller's.
+            unsafe { Span::set(&raw mut (*me).indexes, block.ptr::<Index>(at), ADDED_INDEXES) };
+            self.flags.fetch_or(ADDED, Release);
+        }
+        let i = self.nindex.load(Relaxed) as usize;
+        (i < self.indexes.len()).then_some(i)
+    }
+
+    /// Gives this relation a sorted order on `cols` (decision 0478 step 5b): `order`'s rows, and its fences, tags
+    /// and prints, each a chunk of `block` written already. The relation keeps them from now on and gives them back
+    /// when its indexes are forgotten. Its number; `None` when its directory has no room (the chunks are then still
+    /// the caller's).
     ///
     /// # Safety
     /// As `try_reserve_index`'s; each chunk lies in `block` and is the caller's to give, written, and nothing writes
     /// it after.
-    pub unsafe fn try_add_order(&self, block: &Block, cols: &[u16], ids: Option<Given>, range: Option<(u32, u32)>, fences: Given, tags: Given, prints: Given) -> Option<usize> {
+    pub unsafe fn try_add_order(&self, block: &Block, cols: &[u16], order: GivenOrder) -> Option<usize> {
         assert!(!cols.is_empty() && cols.len() <= MAX_KEY, "a key of {} columns", cols.len());
-        assert!(ids.is_some() != range.is_some(), "an order's rows listed or a range, one of them");
+        let GivenOrder { rows, fences, tags, prints } = order;
         // SAFETY: the caller's: this relation's descriptor is ours to change.
         unsafe {
-            let me = std::ptr::from_ref(self).cast_mut();
-            if self.indexes.len() == 0 {
-                let (at, _) = block.try_alloc_chunk_fit_zeroed(ADDED_INDEXES * size_of::<Index>(), 8)?;
-                Span::set(&raw mut (*me).indexes, block.ptr::<Index>(at), ADDED_INDEXES);
-                self.flags.fetch_or(ADDED, Release);
-            }
-            let i = self.nindex.load(Relaxed) as usize;
-            if i >= self.indexes.len() {
-                return None;
-            }
+            let i = self.next_entry(block)?;
             let ix = std::ptr::from_ref(&self.indexes.as_slice()[i]).cast_mut();
             (*ix).ncols = 0;
             let mut key = [0u16; MAX_KEY];
@@ -519,29 +545,26 @@ impl Relation {
                 }
             }
             clear(&raw mut (*ix).offs);
-            let ids = ids.unwrap_or_default();
-            match range {
-                Some((lo, hi)) => {
+            let ids = match rows {
+                OrderRows::Range(lo, hi) => {
                     (*ix).ordered = ORDER_ROWS;
-                    (*ix).mask = u64::from(lo) << 32 | u64::from(hi);
+                    (*ix).mask = (u64::from(lo) << 32) | u64::from(hi);
                     clear(&raw mut (*ix).rows);
+                    Given::default()
                 }
-                None => {
+                OrderRows::Listed(ids) => {
                     (*ix).ordered = ORDER;
                     (*ix).mask = 0;
                     Span::set(&raw mut (*ix).rows, block.ptr::<u32>(ids.at), ids.len);
+                    ids
                 }
-            }
+            };
             fn set<T>(block: &Block, dst: *mut Span<T>, g: Given) {
-                // SAFETY: the caller's: `dst` is the entry's, `g` a chunk of `block` (or none).
                 if g.len == 0 {
-                    // SAFETY: as below.
-                    unsafe {
-                        (*dst).off.store(0, Relaxed);
-                        (*dst).len.store(0, Relaxed);
-                    }
+                    clear(dst);
                     return;
                 }
+                // SAFETY: the caller's: `dst` is the entry's, `g` a chunk of `block`.
                 unsafe { Span::set(dst, block.ptr::<T>(g.at), g.len) }
             }
             set(block, &raw mut (*ix).fences, fences);
@@ -577,16 +600,7 @@ impl Relation {
         assert!(!cols.is_empty() && cols.len() <= MAX_KEY, "a key of {} columns", cols.len());
         // SAFETY: the caller's: this relation's descriptor is ours to change.
         unsafe {
-            let me = std::ptr::from_ref(self).cast_mut();
-            if self.indexes.len() == 0 {
-                let (at, _) = block.try_alloc_chunk_fit_zeroed(ADDED_INDEXES * size_of::<Index>(), 8)?;
-                Span::set(&raw mut (*me).indexes, block.ptr::<Index>(at), ADDED_INDEXES);
-                self.flags.fetch_or(ADDED, Release);
-            }
-            let i = self.nindex.load(Relaxed) as usize;
-            if i >= self.indexes.len() {
-                return None;
-            }
+            let i = self.next_entry(block)?;
             let cap = keys.min(n as usize).next_power_of_two().max(1);
             // Chunks the block's free list takes back when the index is forgotten (`forget_indexes`), zeroed as an
             // allocation is.

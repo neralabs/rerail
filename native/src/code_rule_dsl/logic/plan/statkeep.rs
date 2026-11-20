@@ -482,7 +482,7 @@ impl RelStats {
         if width == 0 {
             return;
         }
-        let each = |sign: i64, f: &mut dyn FnMut(&[i64])| (if sign < 0 { minus } else { plus }).chunks_exact(width).for_each(|r| f(r));
+        let each = |sign: i64, f: &mut dyn FnMut(&[i64])| (if sign < 0 { minus } else { plus }).chunks_exact(width).for_each(f);
         self.delta_each((plus.len() / width, minus.len() / width), width, &each);
     }
 

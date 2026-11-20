@@ -70,10 +70,7 @@ impl CodeRuleSqlExecutor {
             .collect();
         for run in &self.executions {
             for name in run.program.declared_names() {
-                if !types.contains_key(&name) {
-                    let columns = run.program.columns_of(&name).unwrap_or_default();
-                    types.insert(name, columns.into_iter().map(|(_, t)| t).collect());
-                }
+                types.entry(name).or_insert_with_key(|name| run.program.columns_of(name).unwrap_or_default().into_iter().map(|(_, t)| t).collect());
             }
         }
         for (name, (_, bound)) in &self.input_shapes {

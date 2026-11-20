@@ -151,7 +151,7 @@ fn a_relation_past_the_width_cap_stops_the_run_or_is_cut() {
         (cut, own.finish().expect("the test's run is the outermost"))
     };
     let report = record.width.incomplete();
-    let error = stopped.err().expect("a relation past the cap stops the run").to_string();
+    let error = stopped.expect_err("a relation past the cap stops the run").to_string();
     assert!(error.contains("`pairs` reached 1000 rows") && error.contains("l(") && error.contains("r("), "the error names the relation and its rule: {error}");
     let out = cut.expect("cut, the run goes on");
     let kept = out.shown()["pairs"].len();
@@ -2475,7 +2475,10 @@ fn a_constant_counted_none_when_planned_is_growth_when_it_has_rows() {
                 model.stats.fan.insert((rel, c), (rows / n).max(1.0));
             }
         }
-        model.stats.memo.insert("doc_role".into(), HashMap::from([(("r".into(), Constant::Int(7)), fragments)]));
+        // Under the column's name as the model reads it (`Model::col`: `c1`, `doc_role` being no input), so that the
+        // count is the one the search prices.
+        let role = model.col("doc_role", 1);
+        model.stats.memo.insert("doc_role".into(), HashMap::from([((role, Constant::Int(7)), fragments)]));
     };
     model.stats.nodes = 300_000.0;
     let r = 0usize;
@@ -2588,8 +2591,8 @@ fn bare_model(p: &Arc<Version>) -> Model {
 /// `(order shown, work)` of `p`'s first rule.
 fn priced_first_rule(model: &Model, p: &Arc<Version>) -> (Vec<String>, f64) {
     let r = 0usize;
-    let (order, work, _) = model.plan_rule(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), None).unwrap();
-    (order.iter().map(|s| lit_at(&p, r, s.at)).collect(), work)
+    let (order, work, _) = model.plan_rule(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(p, r), None).unwrap();
+    (order.iter().map(|s| lit_at(p, r, s.at)).collect(), work)
 }
 
 /// Work queue Q240: past the step that binds the head's last variable the walk needs one witness, and the search
@@ -3369,7 +3372,7 @@ fn a_run_takes_a_prepared_plan_without_searching() {
     let mut given = Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap());
     for (rel, width) in [("child2", 3), ("kind2", 2), ("part", 2)] {
         given.measured(rel, (0..width).map(|c| (format!("c{c}"), [1_000, 300, 4_000, 4_000])), []);
-        given.card.insert(rel.to_owned(), 1_000.0);
+        given.card.insert(rel, 1_000.0);
     }
     inputs.given = Some(given);
     // Atomized inputs, as a corpus run's: their indexes are the vtabs' (no SQL schema read).
@@ -3420,7 +3423,7 @@ fn a_fan_out_the_rows_break_leaves_its_relation_to_the_statistics() {
     let mut given = Stats::empty_of(&f);
     for (rel, width) in [("child2", 3), ("kind2", 2), ("part", 2)] {
         given.measured(rel, (0..width).map(|c| (format!("c{c}"), [1_000, 300, 4_000, 4_000])), []);
-        given.card.insert(rel.to_owned(), 1_000.0);
+        given.card.insert(rel, 1_000.0);
     }
     inputs.given = Some(given);
     inputs.atoms = Some([0; 3]);
@@ -3493,7 +3496,7 @@ fn a_policy_run_takes_its_prepared_plans_and_finds_the_same() {
     .unwrap();
     // The test's run holds the policy run (it joins it), so the plans counted taken are this run's alone.
     let run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
-    let report = crate::code_rule_dsl::tools::run_policies(&[policy.clone()], &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &root, &root.join("out"), &serde_json::Value::Null).unwrap();
     let taken = prepared::run_counts().taken.load(std::sync::atomic::Ordering::Relaxed);
     drop(run);
     let _ = std::fs::remove_dir_all(&root);
@@ -3543,7 +3546,7 @@ fn a_run_finds_a_fanout_its_rows_break_and_finds_the_same() {
     .unwrap();
     // The test's run holds the policy run (it joins it), so the facts counted broken are this run's alone.
     let run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
-    let report = crate::code_rule_dsl::tools::run_policies(&[policy.clone()], &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &root, &root.join("out"), &serde_json::Value::Null).unwrap();
     let broken = shapes::run_broken().facts().len();
     // The probes checked against a fact: none means no line priced by it was counted.
     let checked = shapes::run_broken().1.load(std::sync::atomic::Ordering::Relaxed);
@@ -3585,7 +3588,7 @@ fn a_run_finds_a_key_its_rows_break_where_they_are_written() {
     .unwrap();
     // The test's run holds the policy run (it joins it), so the facts counted broken are this run's alone.
     let run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
-    let report = crate::code_rule_dsl::tools::run_policies(&[policy.clone()], &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &root, &root.join("out"), &serde_json::Value::Null).unwrap();
     let broken = shapes::run_broken().facts().len();
     drop(run);
     let _ = std::fs::remove_dir_all(&root);
@@ -3695,8 +3698,9 @@ fn a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it() {
     assert!(prep.0.contains_key(&line("anc", 1, None)) && prep.0.contains_key(&line("anc", 1, Some(0))), "the recursion, sized by its base rule");
     assert!(prep.0.contains_key(&line("z", 0, None)), "`anc` sized: `z` is prepared");
     // By default no derived relation is sized by an estimate: the recursion `anc`, which no fact sizes, is not, and `z`,
-    // which reads it, is not prepared. `o`'s rule, over the inputs, is; and `r`, as `o`'s facts (inferred from its rule)
-    // size it. (Another program: a version of the same digest holds the prepared plans made above.)
+    // which reads it, is not prepared. `o`'s rule, over the inputs, tests a constant on `kind2`'s `values` column, so it
+    // is planned at run time (0361, Q297), and `r` is prepared, as `o`'s facts (inferred from its rule) size it.
+    // (Another program: a version of the same digest holds the prepared plans made above.)
     drop(_on);
     let v = parse(&format!("{text}.decl apart(x: number)\n")).unwrap();
     let placed = body::Placed::whole(std::sync::Arc::clone(&v));

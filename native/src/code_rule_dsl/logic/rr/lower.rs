@@ -761,13 +761,13 @@ pub fn lower_module_seeded_written(statements: Vec<Stmt>, seeds: &Seeds) -> Resu
             // A test is never the program's (decision 0130): testing mode splices its statements into a program of
             // its own (`rr::testing`).
             S::Test | S::Fixtures => {}
-            S::Setting { key, text } if key == "shape" => {
+            S::Setting { key: "shape", text } => {
                 let Some(heads) = &last_heads else { return Err(Error::Syntax(format!("line {line}: `.shape {text}` follows no rule"))) };
                 for h in heads {
                     shapes.push((crate::code_rule_dsl::logic::front::Shape::parse(h, text).map_err(|m| Error::Syntax(format!("line {line}: {m}")))?, line));
                 }
             }
-            S::Setting { key, text } if key == "layout" => layouts.push((text.to_owned(), line)),
+            S::Setting { key: "layout", text } => layouts.push((text.to_owned(), line)),
             S::Setting { key, text } => l.prog.push_setting(key.to_owned(), text.to_owned()),
             S::Violation(_) => {
                 l.violation(&t, node).map_err(at)?
@@ -793,7 +793,7 @@ pub fn lower_module_seeded_written(statements: Vec<Stmt>, seeds: &Seeds) -> Resu
     }
     for (text, line) in layouts {
         let (rel, facts) = layout(&l.prog, &text).map_err(|m| Error::Syntax(format!("line {line}: `.layout {}`: {m}", text.trim())))?;
-        l.prog.edit(|b| ProgramFields::layouts(b), |x| Field::Layouts(x), |x| crate::code_rule_dsl::logic::front::add_layout(x.entry(rel).or_default(), facts));
+        l.prog.edit(ProgramFields::layouts, |x| Field::Layouts(x), |x| crate::code_rule_dsl::logic::front::add_layout(x.entry(rel).or_default(), facts));
     }
     drop(reading);
     let stated: BTreeSet<String> = l.prog.input_names().into_iter().filter(|r| !seeded.inputs.contains(r)).collect();
@@ -1521,7 +1521,7 @@ fn renamed_fields(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_
     b.fields().set_field(Field::Qualifiers(&keyed(F::qualifiers(v), &to)));
     b.fields().set_field(Field::Tapes(&keyed(F::tapes(v), &to)));
     let natives: BTreeMap<String, _> = F::natives(v).into_iter().map(|(k, mut n)| {
-        n.rename_reads(&to);
+        n.rename_reads(to);
         (to(&k), n)
     }).collect();
     b.fields().set_field(Field::Natives(&natives));
@@ -2350,7 +2350,7 @@ impl Lowerer {
 
     /// What alternative `f` writes says of its variables (`Scan`), replaying the log from `start`; it writes nothing.
     fn scan_alternative(&mut self, start: usize, f: impl FnOnce(&mut Self) -> Result<usize, Error>) -> Result<Scan, Error> {
-        let replay = std::mem::replace(&mut self.replay, Some(start));
+        let replay = self.replay.replace(start);
         let sink = self.open.0.take();
         let off = std::mem::replace(&mut self.off, false);
         let outer = self.scan.replace(Scan::default());
@@ -3633,7 +3633,7 @@ impl Lowerer {
         // after(a, k): a later sibling of a at index k is in S; first(a, j): the first such.
         let after = format!("{RESERVED}prec_after_{label}");
         let first = format!("{RESERVED}prec_first_{label}");
-        let node_int = vec![("a".to_owned(), "node".to_owned()), ("k".to_owned(), "int".to_owned())];
+        let node_int = [("a".to_owned(), "node".to_owned()), ("k".to_owned(), "int".to_owned())];
         self.prog.declare_cols(&after, node_int.iter().map(|(c, t)| (c.to_string(), t.to_string())));
         self.prog.declare_cols(&first, node_int.iter().map(|(c, t)| (c.to_string(), t.to_string())));
         self.prog.declare_cols(&name, [("a", "node"), ("b", "node")]);
@@ -3842,7 +3842,7 @@ impl Lowerer {
         }
         let (n, a) = (self.term_tm(n)?, self.term_tm(a)?);
         let within = crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
-        self.prog.declare_cols(&within, [("n", "node"), ("a", "node")]);
+        self.prog.declare_cols(within, [("n", "node"), ("a", "node")]);
         if !self.prog.has_input(within) {
             self.prog.fields().add_input(within);
         }
@@ -3920,7 +3920,7 @@ impl Lowerer {
         if positions {
             cols.extend(["ordinal", "start", "end"].map(|c| (c.to_owned(), "int".to_owned())));
         }
-        self.prog.declare_cols(&name, cols.iter().map(|(c, t)| (c.to_string(), t.to_string())));
+        self.prog.declare_cols(name, cols.iter().map(|(c, t)| (c.to_string(), t.to_string())));
         let mut head_args: Vec<Tm> = std::iter::once("s".to_owned()).chain(gs.iter().map(|g| format!("g_{g}"))).map(|v| self.var_tm(&v)).collect();
         if positions {
             // The native producer replaces these seed values. They establish dependency and numeric types.
@@ -3935,7 +3935,7 @@ impl Lowerer {
             }
             Ok(())
         });
-        self.prog.set_native(&name, Native::MatchAll { input: input.to_owned(), pattern: re.to_owned(), groups: gs.to_vec(), positions });
+        self.prog.set_native(name, Native::MatchAll { input: input.to_owned(), pattern: re.to_owned(), groups: gs.to_vec(), positions });
     }
 
     /// A clause that is a natively made relation's definition as `print` writes it, whose relation lowering would
@@ -4345,7 +4345,7 @@ impl Lowerer {
             // The scalar fallback treats an uncompiled matcher as false. A literal in
             // a policy must therefore be validated before it reaches that fallback.
             if op == "rx" && let Some(re) = &constant {
-                crate::code_rule_dsl::logic::strings::Matcher::new("rx", &[re.clone()])
+                crate::code_rule_dsl::logic::strings::Matcher::new("rx", std::slice::from_ref(re))
                     .map_err(|e| Error::Syntax(format!("match regex: {e}")))?;
             }
             let s = self.term_tm(s)?;
@@ -4552,7 +4552,7 @@ impl Lowerer {
         // The edge relation's column types (a node, a number, a symbol); nodes where it is declared later.
         let edge_cols = self.prog.columns_of(edge);
         let ty = |c: usize, or: &str| edge_cols.as_ref().and_then(|cols| cols.get(c)).map_or_else(|| or.to_owned(), |(_, t)| t.clone());
-        let cols = vec![("r".to_owned(), ty(0, "node")), ("hit".to_owned(), ty(1, "node")), ("first".to_owned(), ty(2, "int"))];
+        let cols = [("r".to_owned(), ty(0, "node")), ("hit".to_owned(), ty(1, "node")), ("first".to_owned(), ty(2, "int"))];
         self.prog.declare_cols(&rel, cols.iter().map(|(c, t)| (c.to_string(), t.to_string())));
         self.prog.set_native(&rel, Native::DfsFirst { edge: edge.to_owned(), target: target.to_owned(), roots: roots.map(str::to_owned) });
         rel
@@ -4574,7 +4574,7 @@ impl Lowerer {
         p.put_atom(&mut o, edge, &[T::Var("d"), T::Var("e")], false, false);
         p.put_atom(&mut o, own, &[T::Var("e"), T::Wild], false, false);
         self.close(o);
-        let cols = vec![("d".to_owned(), "int".to_owned()), ("c".to_owned(), "int".to_owned()), ("k".to_owned(), "sym".to_owned())];
+        let cols = [("d".to_owned(), "int".to_owned()), ("c".to_owned(), "int".to_owned()), ("k".to_owned(), "sym".to_owned())];
         self.prog.declare_cols(&rel, cols.iter().map(|(c, t)| (c.to_string(), t.to_string())));
         self.prog.set_native(&rel, Native::Components { edge: edge.to_owned(), own: own.to_owned() });
         rel
@@ -4898,8 +4898,7 @@ impl Lowerer {
         // Or left out: a group binding no asked variable (`root(a), (s = a ; within(s, a))` before `kind(s,
         // "string")` asked for s) only narrows what later groups bind, at the cost of its own rows.
         let mut left: BTreeSet<usize> = BTreeSet::new();
-        for k in 0..context.len() {
-            let g = groups[k];
+        for &g in groups.iter().take(context.len()) {
             if whole.contains(&g) || left.contains(&g) || projected.iter().any(|(p, _)| *p == g) {
                 continue;
             }
@@ -5021,10 +5020,7 @@ impl Lowerer {
     /// comparison reads only bound variables.
     fn cmp_ready(&self, c: &LitAt, bound: &BTreeSet<String>) -> bool {
         let L::Cmp { l, op, r } = self.lit(c) else { return false };
-        let unbound = |t: &At| match self.tv(t) {
-            T::Var(x) if op == "=" && !bound.contains(&x) => true,
-            _ => false,
-        };
+        let unbound = |t: &At| matches!(self.tv(t), T::Var(x) if op == "=" && !bound.contains(&x));
         if unbound(&l) {
             self.term_var_set(&r).is_subset(bound)
         } else if unbound(&r) {
