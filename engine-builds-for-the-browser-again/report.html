@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pull request 912 report</title>
+<style>
+/* Base: the team page's tokens, type, layout, figures and tables. */
+/* Layout: a contents rail beside one reading column; every idea is a figure with a caption that says what to notice. */
+:root { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 2px 8px rgba(0,0,0,.04); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: none; color-scheme: light; } }
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 40px; max-width: 1200px; margin: 0 auto;
+  padding-block: 32px 80px; padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px)); }
+nav.toc { position: sticky; top: 24px; align-self: start; font-size: 14px; max-height: calc(100vh - 48px); overflow-y: auto; }
+nav.toc .brand { font-weight: 700; font-size: 15px; margin-bottom: 12px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+nav.toc li { counter-increment: s; }
+nav.toc a { display: block; padding: 5px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; }
+nav.toc a::before { content: counter(s) ". "; opacity: .7; }
+nav.toc a:hover { background: var(--surface2); color: var(--text); }
+nav.toc .theme { margin-top: 16px; }
+nav.toc button { font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+main { min-width: 0; }
+header.hero { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 28px 32px; box-shadow: var(--shadow); }
+.eyebrow { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+h1 { font-size: 34px; line-height: 1.2; margin: 6px 0 10px; text-wrap: balance; }
+h2 { font-size: 26px; line-height: 1.25; margin: 0 0 6px; text-wrap: balance; }
+h3 { font-size: 19px; margin: 34px 0 8px; text-wrap: balance; }
+h4 { font-size: 17px; margin: 0 0 6px; line-height: 1.35; text-wrap: balance; }
+.lede { font-size: 18px; color: var(--muted); margin: 0; max-width: 64ch; }
+section { margin-top: 52px; scroll-margin-top: 20px; }
+.sub { color: var(--muted); margin: 0 0 18px; max-width: 72ch; }
+p { max-width: 72ch; margin: 10px 0; }
+.muted { color: var(--muted); } .small { font-size: 14px; }
+.state { font-size: 14px; color: var(--muted); margin: 10px 0 0; max-width: none; }
+.callout { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 16px 0; max-width: 78ch; }
+.callout strong:first-child { display: block; margin-bottom: 2px; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+th { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; background: var(--surface2); }
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); margin: 14px 0; }
+.table-wrap table tr:last-child td { border-bottom: 0; }
+.numc { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.k { font-weight: 700; min-width: 8.5em; }
+td.n { white-space: nowrap; }
+.tag { margin-left: 6px; font-weight: 600; font-size: 12px; padding: 1px 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); white-space: nowrap; vertical-align: 1px; }
+.tag.new { background: var(--accentsoft); border-color: var(--accent); color: var(--accent); }
+
+/* The words a section needs, defined once */
+.words { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.word { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.word b { display: block; } .word span { font-size: 14.5px; color: var(--muted); }
+
+/* Figures */
+figure.fg { margin: 16px 0 0; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+figure.fg figcaption { font-size: 14px; color: var(--muted); margin-top: 10px; max-width: 86ch; }
+.pns { display: grid; gap: 12px; } .pns.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pn { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: var(--bg); min-width: 0; }
+.pt { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; color: var(--muted); margin-bottom: 6px; }
+.pn.before .pt { color: var(--bad); } .pn.after .pt { color: var(--good); } .pn.mid .pt { color: var(--accent); }
+svg.dg { display: block; width: 100%; height: auto; max-width: 440px; margin: 0 auto; }
+svg.dg.wide { max-width: 840px; }
+svg.dg.narrow { display: none; max-width: 380px; }
+svg.dg.mock { max-width: 420px; margin: 0; }
+svg.defs { position: absolute; }
+.t { font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; fill: var(--text); }
+.t.b { font-weight: 700; } .t.s { font-size: 11px; fill: var(--muted); }
+.t.inv { fill: var(--surface); } .t.acc { fill: var(--accent); }
+.bx { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.bx.good { fill: var(--goodsoft); stroke: var(--good); } .bx.warn { fill: var(--warnsoft); stroke: var(--warn); }
+.bx.acc { fill: var(--accentsoft); stroke: var(--accent); } .bx.info { fill: var(--infosoft); stroke: var(--info); }
+.bx.ghost { fill: none; stroke: var(--muted); stroke-dasharray: 5 4; } .bx.mono { fill: var(--surface2); }
+.bx.accf { fill: var(--accent); stroke: none; }
+.bx.zone { fill: var(--surface2); stroke: none; } .bx.zoneacc { fill: var(--accentsoft); stroke: none; }
+.sq { fill: var(--surface2); stroke: var(--line); stroke-width: .8; }
+.sq.acc { fill: var(--accent); stroke: var(--accent); } .sq.good { fill: var(--good); stroke: var(--good); }
+.sq.draft { fill: none; stroke: var(--muted); stroke-dasharray: 3 2; } .sq.hollow { fill: var(--surface); stroke: var(--line); stroke-width: 1; }
+.ar { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.ar.good { stroke: var(--good); } .ar.acc { stroke: var(--accent); }
+.ar.thin { stroke-width: .7; } .ar.dash { stroke-dasharray: 5 4; }
+line.ar.thin:not(.acc) { stroke: var(--border); stroke-width: 1; }
+.mk { fill: var(--muted); } .mk.bad { fill: var(--bad); } .mk.good { fill: var(--good); } .mk.acc { fill: var(--accent); }
+.nc { fill: var(--accent); }
+.cm { stroke: var(--muted); stroke-width: 1.5; fill: var(--surface); }
+.cm.on { fill: var(--accent); stroke: var(--accent); } .cm.off { stroke-dasharray: 3 2; }
+.bar { fill: var(--accent); } .barrm { fill: var(--before); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13.5px; color: var(--muted); margin: 10px 0 0; align-items: center; }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 16px; height: 10px; border-radius: 3px; display: inline-block; border: 1px solid var(--line); background: var(--surface); }
+.legend .sw.f { background: var(--good); border-color: var(--good); } .legend .sw.a { background: var(--accent); border-color: var(--accent); }
+.legend .sw.r { background: var(--before); border-color: var(--before); } .legend .sw.d { border: 1px dashed var(--muted); background: none; }
+.legend .sw.l { width: 0; height: 12px; border: 0; border-left: 1.5px dashed var(--accent); border-radius: 0; background: none; }
+
+/* Numbers, lists, rules, questions */
+.big { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 18px 0 0; }
+.big div { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--bg); }
+.big b { display: block; font-size: 28px; line-height: 1.15; font-variant-numeric: tabular-nums; } .big span { font-size: 14px; color: var(--muted); }
+.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
+.lesson { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.lesson b { display: block; margin-bottom: 4px; } .lesson span { font-size: 14.5px; color: var(--muted); }
+.facts { margin: 12px 0; padding-left: 20px; } .facts li { margin: 5px 0; max-width: 76ch; }
+.rules { counter-reset: r; list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 8px; }
+.rules li { counter-increment: r; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; max-width: 80ch; }
+.rules li::before { content: counter(r); width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.rl { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 8px; }
+.rl li { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 12px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 11px 14px; }
+.rl .rn { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); padding-top: 4px; white-space: nowrap; }
+.rl .x { display: block; color: var(--muted); font-size: 15px; max-width: 78ch; }
+.asks { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 12px; counter-reset: q; }
+.asks li { counter-increment: q; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow); }
+.asks li::before { content: counter(q); width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 14px; display: grid; place-items: center; }
+.asks h4 { margin: 2px 0 4px; } .asks p { margin: 4px 0; }
+.asks .now { font-size: 14.5px; color: var(--muted); }
+.anat { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 22px; align-items: start; }
+.anat .rules { margin: 0; font-size: 15px; }
+.dec { display: grid; gap: 18px; }
+.dp { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; }
+.dp > .dn { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.dp h4 { margin: 2px 0 4px; } .dp p { margin: 4px 0; }
+.dp ul { margin: 4px 0; padding-left: 20px; } .dp li { margin: 5px 0; max-width: 76ch; }
+.dp .table-wrap { margin: 8px 0 2px; box-shadow: none; }
+.t.n { font-size: 11px; font-weight: 600; }
+.opn { fill: none; stroke: var(--accent); stroke-width: 2; }
+.legend .sw.gs { background: var(--goodsoft); border-color: var(--good); } .legend .sw.ws { background: var(--warnsoft); border-color: var(--warn); }
+.legend .sw.o { border: 2px solid var(--accent); }
+.legend .sw.as { background: var(--accentsoft); border-color: var(--accent); }
+/* The mock-up is drawn narrow, so its small lines are one unit larger than elsewhere. */
+svg.dg.anat .t.s { font-size: 12px; }
+.big a { color: inherit; }
+.ord { display: inline-block; min-width: 26px; padding: 0 6px; margin-right: 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); font-size: 13px; font-variant-numeric: tabular-nums; text-align: center; }
+.sm { display: block; font-size: 13px; color: var(--muted); font-weight: 400; overflow-wrap: anywhere; }
+table.tight { font-size: 14px; } table.tight th, table.tight td { padding: 8px 10px; } table.tight td.k { min-width: 0; }
+dl.gloss { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 8px 16px; margin: 0; }
+dl.gloss dt { font-weight: 600; } dl.gloss dd { margin: 0; color: var(--muted); }
+footer { margin-top: 56px; font-size: 14px; color: var(--muted); }
+footer p { max-width: 86ch; }
+
+@media (max-width: 980px) {
+  .layout { grid-template-columns: 1fr; gap: 16px; padding-block: 16px 60px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  nav.toc { position: static; max-height: none; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+  nav.toc ol { columns: 2; }
+  .layout { display: flex; flex-direction: column; } main { display: contents; }
+  main > header.hero { order: 0; } nav.toc { order: 1; } main > section, main > footer { order: 2; }
+  .pns.c3 { grid-template-columns: 1fr; }
+  .anat { grid-template-columns: 1fr; } svg.dg.mock { margin: 0 auto; }
+}
+@media (max-width: 760px) {
+  svg.dg.wide { display: none; }
+  svg.dg.narrow { display: block; }
+}
+@media (max-width: 680px) {
+  h1 { font-size: 27px; } h2 { font-size: 22px; }
+  header.hero { padding: 20px; }
+  nav.toc ol { columns: 1; }
+  .pns.c2, .three, .words { grid-template-columns: 1fr; }
+  dl.gloss { grid-template-columns: 1fr; gap: 2px; } dl.gloss dd { margin-bottom: 8px; }
+  .rl li { grid-template-columns: 1fr; gap: 2px; }
+  .dp { grid-template-columns: 1fr; gap: 4px; }
+  figure.fg { padding: 10px; }
+  /* Tables become one card per row, each cell named by its column */
+  table.tc, table.tc tbody, table.tc tr, table.tc td { display: block; }
+  table.tc thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  table.tc tr { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  table.tc tr:last-child { border-bottom: 0; }
+  table.tc td { padding: 2px 0; border-bottom: 0; white-space: normal; }
+  table.tc td[data-l]::before { content: attr(data-l) ": "; font-size: 13px; font-weight: 600; color: var(--muted); }
+  table.tc td:first-child { font-weight: 700; font-size: 16px; }
+  table.tc td:first-child::before { content: none; }
+}
+@media print {
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  nav.toc { display: none; } .layout { grid-template-columns: 1fr; max-width: none; padding: 0; }
+  @page { size: Letter; margin: 12mm; }
+  /* A drawing, a card or a table row never splits across two pages; a long table may, between rows. */
+  figure.fg, .lesson, .callout, .rl li, .asks li, svg, .pn, .dp, .word, .big > div, tr, .rules li, .facts li { break-inside: avoid; }
+  .table-wrap { overflow: visible; } thead { display: table-header-group; }
+  /* Print keeps the wide drawings, and the mock-up at a width whose height fits one page. */
+  svg.dg.wide { display: block; } svg.dg.narrow { display: none; }
+  .anat { grid-template-columns: 1fr; } svg.dg.anat { max-width: 400px; margin: 0 auto; }
+  /* Print is denser than the screen: the whole page at 82%, full-width text, no page tint. */
+  body { zoom: 0.82; background: #fff; }
+  p, .sub, .lede, figure.fg figcaption, .facts li, .rules li, .callout, footer p, .rl .x { max-width: none; }
+  .big { grid-template-columns: repeat(4, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  h2, h3, h4, .sub { break-after: avoid; } .sub { break-inside: avoid; }
+  section { margin-top: 26px; }
+  header.hero, .asks li { box-shadow: none; }
+  a { color: inherit; text-decoration: none; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+/* The report's own parts. Risk is an ordered scale, so it is one hue from light to dark, and every use carries its word. */
+:root { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; } }
+:root[data-theme="dark"] { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; } }
+.rk { stroke: none; } .rk.high { fill: var(--r-high); } .rk.med { fill: var(--r-med); }
+.rk.low { fill: var(--r-low); stroke: var(--r-med); stroke-width: 1; } .rk.skim, .rk.was { fill: var(--before); } .rk.now { fill: var(--accent); } .rk.tick { fill: var(--text); }
+.bx.hib { fill: var(--surface2); stroke: var(--r-high); stroke-width: 1.5; }
+.lt { fill: var(--surface); stroke: var(--text); stroke-width: 1.3; }
+.mh { fill: var(--good); } .mt { fill: none; stroke: var(--surface); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ml { fill: var(--surface); stroke: var(--warn); stroke-width: 1.6; } .mlf { fill: var(--warn); }
+/* A check that does not hold yet: an empty dashed ring. */
+.mo { fill: var(--surface); stroke: var(--muted); stroke-width: 1.6; stroke-dasharray: 3 2; }
+.rule { stroke: var(--line); stroke-width: 1; }
+svg.dg.grid { max-width: 470px; } svg.dg.pic { max-width: 380px; margin: 0; }
+/* The flag of an answer changed on purpose: filled for the change of intent, hollow for the others. */
+svg.fl { width: 13px; height: 15px; flex: none; vertical-align: -2px; margin-right: 5px; fill: var(--surface); stroke: var(--warn); stroke-width: 1.7; stroke-linejoin: round; }
+svg.fl.full { fill: var(--warn); }
+.q { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 12px 18px; border-radius: 0 10px 10px 0; margin: 12px 0 10px; }
+.q .ql { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700; color: var(--accent); }
+.q p { font-size: 18px; line-height: 1.4; margin: 3px 0 6px; max-width: 80ch; }
+.q ol { margin: 0; padding-left: 22px; font-size: 15px; } .q li { margin: 1px 0; }
+.rec { margin: 10px 0 0; max-width: 100ch; font-size: 16px; }
+.hero .big { margin-top: 12px; } .hero .big div { padding: 10px 14px; }
+.big b.w { font-size: 21px; } .hero .big span { font-size: 13.5px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface2); white-space: nowrap; }
+.chip i { width: 13px; height: 9px; border-radius: 2px; display: inline-block; }
+.chip svg.fl { margin-right: 0; }
+.chip.high i { background: var(--r-high); } .chip.medium i { background: var(--r-med); } .chip.low i { background: var(--r-low); outline: 1px solid var(--r-med); }
+.chip.intent { border-color: var(--warn); background: var(--warnsoft); } .chip.answer { border-color: var(--warn); }
+.lb { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; border: 1.5px solid var(--text); font-weight: 700; font-size: 13.5px; background: var(--surface); flex: none; }
+/* Part 2: a row per change, three cells joined by arrows. A table, so a screen reader reads it by row and a phone stacks it. */
+table.it { border-collapse: separate; border-spacing: 14px 9px; font-size: 14.5px; line-height: 1.45; }
+table.it th { background: none; padding: 0 2px; border: 0; }
+table.it td { border: 1.2px solid var(--line); border-radius: 9px; padding: 9px 11px; position: relative; }
+table.it td.k { border: 0; padding: 9px 0 0; min-width: 0; font-weight: 400; }
+table.it td.k b { display: block; margin: 5px 0 4px; }
+table.it td.in { background: var(--surface2); }
+table.it td.now { background: var(--goodsoft); border-color: var(--good); }
+table.it tr.intent td.now { background: var(--warnsoft); border-color: var(--warn); }
+table.it tr.intent td:not(.k) { border-width: 2.4px; border-color: var(--warn); }
+table.it td.fo::after, table.it td.now::after { content: ""; position: absolute; left: -12px; top: 50%; margin-top: -5px; border: 5px solid transparent; border-left: 7px solid var(--muted); border-right: 0; }
+.tagx { display: inline-block; font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; background: var(--surface); white-space: nowrap; }
+figure.fg.flat { padding: 4px; } figure.fg.flat figcaption { margin: 6px 12px 10px; }
+/* A drawing beside its text: side by side on a desktop and on paper, stacked on a phone. */
+.duo { display: grid; grid-template-columns: minmax(0, 430px) minmax(0, 1fr); gap: 22px; align-items: start; margin-top: 14px; }
+.duo figure.fg { margin: 0; } .duo > div > :first-child { margin-top: 0; }
+.steps { counter-reset: st; list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 7px; }
+.steps li, .skim { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 14.5px; line-height: 1.45; }
+.steps li { counter-increment: st; }
+.steps li::before { content: counter(st); width: 24px; height: 24px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--line); font-weight: 700; font-size: 13px; display: grid; place-items: center; }
+.steps li.first::before { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.steps .min, .skim .min { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); white-space: nowrap; margin-left: 6px; }
+.steps .x, .skim .x { display: block; color: var(--muted); } .steps b code { white-space: nowrap; }
+#grid figure.fg { max-width: 560px; }
+.steps .rf, .skim .rf { font-size: 11.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); margin-right: 6px; }
+/* What can be skimmed is set apart from the steps: a dashed frame, a grey bar where a step has its number. */
+.skim { border-style: dashed; background: var(--surface2); } .skim .rf { color: var(--muted); }
+.skim i { width: 22px; height: 10px; border-radius: 3px; background: var(--before); margin-top: 7px; }
+.dblock { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; box-shadow: var(--shadow); margin: 12px 0; }
+.dblock h3 { margin: 0 0 4px; font-size: 17.5px; } .dblock p { margin: 4px 0; max-width: none; }
+.dblock .table-wrap { box-shadow: none; } .dblock .pns { margin: 12px 0; }
+.lines { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 7px; }
+.lines > li { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; }
+ol.lines { counter-reset: q; } ol.lines > li { counter-increment: q; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; }
+ol.lines > li::before { content: counter(q); width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+/* Folded parts. A card's summary is its one line in view. */
+details.ev, details.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; }
+details.ev { padding: 2px 14px; } details.ev > summary { cursor: pointer; font-weight: 600; font-size: 14.5px; padding: 7px 0; color: var(--muted); }
+details.ev[open] > summary { border-bottom: 1px solid var(--border); margin-bottom: 8px; color: var(--text); }
+details.ev .table-wrap { box-shadow: none; }
+details.card > summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; gap: 5px 9px; align-items: center; padding: 9px 14px; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary .sx { flex: 1 1 320px; font-size: 15px; }
+details.card > summary::after { content: "+"; font-weight: 700; font-size: 18px; line-height: 1; color: var(--accent); }
+details.card[open] > summary { border-bottom: 1px solid var(--border); } details.card[open] > summary::after { content: "\2212"; }
+.card .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); gap: 20px; align-items: start; padding: 12px 14px 14px; }
+.kv { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 6px 12px; margin: 0; }
+.kv dt { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; padding-top: 3px; }
+.kv dd { margin: 0; font-size: 14.5px; }
+.card figure { margin: 0; } .card figcaption { font-size: 13px; color: var(--muted); margin-top: 6px; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; background: var(--surface2); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+td .src { display: block; font-size: 13px; color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
+@media (max-width: 840px) { .duo { grid-template-columns: 1fr; } .card .two { grid-template-columns: 1fr; } }
+@media (max-width: 680px) {
+  .kv { grid-template-columns: 1fr; gap: 2px; } .kv dd { margin-bottom: 8px; }
+  .dblock { padding: 12px 14px; } .q p { font-size: 17px; }
+  figure.fg.flat { padding: 0; }
+  table.it { border-spacing: 0; } table.it tr { padding: 12px; }
+  table.it td:not(.k) { padding: 8px 10px; margin-top: 6px; }
+  table.it td.k { padding: 0; } table.it td.k b { display: inline; margin: 0 6px; }
+  table.it td.fo::after, table.it td.now::after { content: none; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" class="defs" aria-hidden="true"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk "/></marker><marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk bad"/></marker><marker id="ah-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk good"/></marker><marker id="ah-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk acc"/></marker></defs></svg>
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <div class="brand">Decision report</div>
+  <ol><li><a href="#decision">The decision</a></li>
+<li><a href="#intent">Intent and the gap</a></li>
+<li><a href="#look">Where to look</a></li>
+<li><a href="#grid">Risk and verification</a></li>
+<li><a href="#changes">The changes</a></li>
+<li><a href="#decisions">The decisions</a></li>
+<li><a href="#fits">How it fits</a></li>
+<li><a href="#gaps">Not covered</a></li>
+<li><a href="#asks">Our asks</a></li>
+<li><a href="#evidence">Evidence</a></li>
+</ol>
+  <div class="theme"><button type="button" id="theme-toggle">Light or dark</button></div>
+</nav>
+<main>
+<header class="hero" id="decision">
+  <div class="eyebrow">Decision report &middot; Rerail pull request #912</div>
+  <h1>The engine builds for the browser again, with two build fixes</h1>
+  <div class="q"><div class="ql">1. The one question</div>
+  <p>May the browser build leave out <code>rerail-clif</code>&#x27;s JIT of the reads, and may CI check that build with wasi-sdk?</p>
+  </div>
+  <p class="rec"><b>We recommend:</b> approve it: the engine builds for the browser again and CI checks it, a second checkout builds its own sources, and <code>rerail-blocks</code> builds alone on Windows.</p>
+  <div class="big">
+    <div><b class="w">134 lines</b><span>in 8 files. 65 ship, 62 run in every test run, 7 are tests and text.</span></div><div><b class="w">Standard review</b><span>Touches the CI workflow: a person approves.</span></div><div><b class="w">Waits on Nothing</b><span>No CI run on GitHub yet: not opened.</span></div><div><b class="w">2 not verified</b><span><a href="#gaps">Part 8</a> lists each.</span></div>
+  </div>
+  <p class="state">Read from <a href="https://github.com/neralabs/rerail/pull/912">GitHub</a> on 19 November 2026, at head b681e3a1e.</p>
+</header>
+<section id="intent"><h2>2. Intent, and the gap</h2>
+<figure class="fg flat"><table class="tc it"><colgroup><col style="width:15%"><col style="width:25%"><col style="width:29%"><col style="width:31%"></colgroup><thead><tr><th>Change</th><th>Intended</th><th>Found</th><th>Now</th></tr></thead><tbody><tr><td class="k"><span class="lb">A</span><b>The browser build</b></td><td class="in" data-l="Intended">&quot;The engine library builds for <code>wasm32-wasip1</code>, so a page can run Rerail on files a reader types.&quot; <span class="tagx">docs</span></td><td class="fo" data-l="Found">The check exits 101: 10 errors in <code>region</code>, which has no wasm32 code. <span class="tagx">one check per commit</span></td><td class="now" data-l="Now"><b>Closes the gap</b> and leaves the reads&#x27; JIT out on wasm, and CI checks the target.</td></tr><tr><td class="k"><span class="lb">B</span><b>A shared target folder</b></td><td class="in" data-l="Intended">Each build compiles the sources of the checkout it runs in. <span class="tagx">our reading</span></td><td class="fo" data-l="Found">A second checkout compiles the first one&#x27;s <code>shim.cpp</code>; with the first removed, its build exits 101. <span class="tagx">the report&#x27;s four steps</span></td><td class="now" data-l="Now"><b>Closes the gap</b> and the script reads the folder cargo sets when it runs.</td></tr><tr><td class="k"><span class="lb">C</span><b>One crate on Windows</b></td><td class="in" data-l="Intended">&quot;Windows&#x27; memory calls for blocks and scratch regions&quot; <span class="tagx">code comment</span></td><td class="fo" data-l="Found"><code>cargo test -p rerail-clif</code> on Windows 11 exits 101: E0432, <code>CreateFileMappingW</code> unresolved. <span class="tagx">one build per crate</span></td><td class="now" data-l="Now"><b>Closes the gap</b> and <code>rerail-blocks</code> asks for the feature itself.</td></tr></tbody></table>
+<figcaption>Found on 19 November 2026 on Linux x64 machines and Windows 11 virtual machines, building the engine from source.</figcaption></figure>
+<details class="ev"><summary>Sources at main, and causes</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:42%"><col style="width:42%"></colgroup><thead><tr><th>Change</th><th>Where main states the intent</th><th>The cause, and what was measured</th></tr></thead><tbody><tr><td class="k">A. The browser build</td><td data-l="Where main states the intent"><code>native/wasm/README.md</code> at bf24c778f, its first lines: &quot;The engine library builds for <code>wasm32-wasip1</code>, so a page can run Rerail on files a reader types: the rule explorer beside the rule-syntax site&quot;; its Build section gives <code>cargo check -p rerail-engine --lib --target wasm32-wasip1</code>.</td><td data-l="The cause, and what was measured"><code>rerail-clif</code>&#x27;s default feature <code>ir</code> takes <code>cranelift-jit</code> on every target for <code>rerail_clif::jit</code>, which only tests use. On wasm every other crate takes the stand-in <code>native/wasm/cranelift-jit</code>, so <code>ir</code> alone brought the real JIT and its <code>region</code> into the browser build. No workflow builds this target.</td></tr><tr><td class="k">B. A shared target folder</td><td data-l="Where main states the intent"><code>native/crates/simdjson_native/build.rs</code> at bf24c778f, lines 13 to 15: <code>std::path::Path::new(env!(&quot;CARGO_MANIFEST_DIR&quot;)).join(&quot;src/shim.cpp&quot;)</code>, and the same for the vendored simdjson and <code>kernel.inc</code>.</td><td data-l="The cause, and what was measured"><code>env!</code> fixes the folder when the build script is compiled. Cargo keeps one compiled build script per target folder, so every checkout that shares the folder runs the first checkout&#x27;s copy, with that checkout&#x27;s paths.</td></tr><tr><td class="k">C. One crate on Windows</td><td data-l="Where main states the intent"><code>native/crates/blocks/Cargo.toml</code> at bf24c778f, line 13, above its <code>windows-sys</code> line, which asks for <code>Win32_Foundation</code> and <code>Win32_System_Memory</code> only; <code>src/windows.rs</code> imports <code>CreateFileMappingW</code>.</td><td data-l="The cause, and what was measured"><code>windows-sys</code> declares <code>CreateFileMappingW</code> only with <code>Win32_Security</code>, since it takes security attributes. The engine&#x27;s other crates ask for that feature, and cargo unifies features in one build, so only a build without them fails.</td></tr></tbody></table></div></details>
+</section><section id="look"><h2>3. Where to look</h2>
+<p class="sub">Minutes are our estimate.</p>
+<div class="duo"><figure class="fg"><svg viewBox="0 0 340 277" role="img" aria-label="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Browser build, and its check, low risk, 75 lines; B, Build scripts read their folder, low risk, 47 lines; C, One crate alone on Windows, low risk, 5 lines. Read first: clif/Cargo.toml, simdjson_native/build.rs, blocks/Cargo.toml. To skim: 0 lines of tests and 7 lines of how to build on linux." class="dg map"><text x="4" y="14" class="t b">Code to read</text><text x="336" y="14" text-anchor="end" class="t s">bar: changed lines</text><rect x="4.5" y="24.5" width="19" height="19" rx="5" class="lt"/><text x="14" y="38" text-anchor="middle" class="t b">A</text><rect x="30" y="29" width="14" height="10" rx="2" class="rk low"/><text x="49" y="38" class="t s">Low risk, 75 lines</text><text x="128" y="59" text-anchor="end" class="t s">clif/Cargo.toml</text><g><title>clif/Cargo.toml: 9 changed lines, low risk</title><path d="M134 50h0a2.7 2.7 0 0 1 2.7 2.7v5.6a2.7 2.7 0 0 1 -2.7 2.7h-0z" class="rk low"/></g><text x="141.7" y="59" class="t n">9</text><text x="336" y="59" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="55" r="8.5" class="nc"/><text x="254" y="59" text-anchor="middle" class="t b inv">1</text><text x="128" y="76" text-anchor="end" class="t s">3 other files</text><g><title>3 other files: 66 changed lines, low risk</title><path d="M134 67h15.8a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-15.8z" class="rk low"/></g><text x="158.8" y="76" class="t n">66</text><rect x="4.5" y="90.5" width="19" height="19" rx="5" class="lt"/><text x="14" y="104" text-anchor="middle" class="t b">B</text><rect x="30" y="95" width="14" height="10" rx="2" class="rk low"/><text x="49" y="104" class="t s">Low risk, 47 lines</text><text x="128" y="125" text-anchor="end" class="t s">shim build script</text><g><title>shim build script: 21 changed lines, low risk</title><path d="M134 116h2.3a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-2.3z" class="rk low"/></g><text x="145.3" y="125" class="t n">21</text><text x="336" y="125" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="121" r="8.5" class="nc"/><text x="254" y="125" text-anchor="middle" class="t b inv">2</text><text x="128" y="142" text-anchor="end" class="t s">engine build script</text><g><title>engine build script: 26 changed lines, low risk</title><path d="M134 133h3.8a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-3.8z" class="rk low"/></g><text x="146.8" y="142" class="t n">26</text><rect x="4.5" y="156.5" width="19" height="19" rx="5" class="lt"/><text x="14" y="170" text-anchor="middle" class="t b">C</text><rect x="30" y="161" width="14" height="10" rx="2" class="rk low"/><text x="49" y="170" class="t s">Low risk, 5 lines</text><text x="128" y="191" text-anchor="end" class="t s">blocks/Cargo.toml</text><g><title>blocks/Cargo.toml: 5 changed lines, low risk</title><path d="M134 182h0a2 2 0 0 1 2 2v7a2 2 0 0 1 -2 2h0z" class="rk low"/></g><text x="140.5" y="191" class="t n">5</text><text x="336" y="191" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="187" r="8.5" class="nc"/><text x="254" y="191" text-anchor="middle" class="t b inv">3</text><line x1="4" y1="205" x2="336" y2="205" class="ar thin"/><text x="4" y="225" class="t b">Skim: tests and text</text><text x="128" y="245" text-anchor="end" class="t s">README</text><g><title>How to build on Linux: 7 lines</title><path d="M134 236h0a2.1 2.1 0 0 1 2.1 2.1v6.8a2.1 2.1 0 0 1 -2.1 2.1h-0z" class="rk skim"/></g><text x="141.1" y="245" class="t n">7</text><rect x="4" y="261" width="14" height="10" rx="2" class="rk high"/><text x="22" y="270" class="t s">High</text><rect x="62.8" y="261" width="14" height="10" rx="2" class="rk med"/><text x="80.8" y="270" class="t s">Medium</text><rect x="133" y="261" width="14" height="10" rx="2" class="rk low"/><text x="151" y="270" class="t s">Low risk</text><rect x="214.6" y="261" width="14" height="10" rx="2" class="rk skim"/><text x="232.6" y="270" class="t s">Skim</text></svg>
+<figcaption>Most lines are set-up: the wasi-sdk path and the CI step.</figcaption></figure>
+<div><ol class="steps"><li class="first"><div><span class="rf">Read first</span><b><code>clif/Cargo.toml</code>: the <code>ir</code> feature and the target table</b><span class="min">5 min</span><span class="x">Does any native build lose <code>cranelift-jit</code>, or any wasm build still take it?</span></div></li><li class="first"><div><span class="rf">Read first</span><b><code>simdjson_native/build.rs</code>: <code>main</code>, where the paths are read</b><span class="min">2 min</span><span class="x">Does every path come from the folder cargo gives this run?</span></div></li><li class="first"><div><span class="rf">Read first</span><b><code>blocks/Cargo.toml</code>: the <code>windows-sys</code> features</b><span class="min">1 min</span><span class="x">Does the crate ask for every feature its imports need?</span></div></li><li><div><b><code>lib.rs</code>, <code>env.sh</code>, <code>ci.yml</code> and <code>native/build.rs</code>: the <code>jit</code> gate, the wasi-sdk path, the new step, one rerun line</b><span class="min">5 min</span><span class="x">The step&#x27;s digest and the job it runs in.</span></div></li></ol>
+<div class="skim"><i></i><div><span class="rf">Then skim</span><b>Tests and text</b><span class="min">2 min</span><span class="x">The README&#x27;s new paragraph: how to build on Linux, and that CI checks the build.</span></div></div>
+</div></div>
+</section><section id="grid"><h2>4. Risk against verification</h2>
+<figure class="fg"><svg viewBox="0 0 340 223" role="img" aria-label="The changes by risk, high on top, against six checks. A, Browser build, low risk: independent review holds with a limit. B, Build scripts, low risk: independent review holds with a limit, Windows 11: no new failure holds with a limit. C, Windows crate, low risk: independent review holds with a limit. CI at this head holds with a limit for every change." class="dg grid"><text x="150" y="13" text-anchor="middle" class="t b">1</text><text x="184" y="13" text-anchor="middle" class="t b">2</text><text x="218" y="13" text-anchor="middle" class="t b">3</text><text x="252" y="13" text-anchor="middle" class="t b">4</text><text x="286" y="13" text-anchor="middle" class="t b">5</text><text x="320" y="13" text-anchor="middle" class="t b">6</text><rect x="1" y="20" width="338" height="114" rx="8" class="bx zone"/><rect x="9" y="25" width="14" height="10" rx="2" class="rk low"/><text x="28" y="34" class="t s b">Low risk</text><rect x="8.5" y="42.5" width="19" height="19" rx="5" class="lt"/><text x="18" y="56" text-anchor="middle" class="t b">A</text><text x="34" y="56" class="t b">Browser build</text><g><title>Browser build, fails without the fix: `cargo check -p rerail-engine --lib --target wasm32-wasip1` exits 101 at `main` bf24c778f, 10 errors in `region`, and 0 here. The CI step as written, in a new checkout: exit 0 in 174 s. Over a break only the explorer&#x27;s build compiles, it exits 101; without its new line, and as b00488a1d wrote it, 0.</title><circle cx="150" cy="52" r="8" class="mh"/><path d="M146 52l3 3l5 -6" class="mt"/></g><g><title>Browser build, independent review: No review by another reader yet. The automated reviewer reads it once the pull request opens.</title><circle cx="184" cy="52" r="7.4" class="ml"/><path d="M184 44.6A7.4 7.4 0 0 0 184 59.4Z" class="mlf"/></g><g><title>Browser build, users lose nothing: Native builds resolve as before and `Cargo.lock` is unchanged; `npm run check:native` passes, and the engine&#x27;s library tests fail only the tests `main` fails.</title><circle cx="218" cy="52" r="8" class="mh"/><path d="M214 52l3 3l5 -6" class="mt"/></g><g><title>Browser build, rules scan: nothing new: The automated reviewer&#x27;s rules find nothing new at this head over `main` 6ec384ad9.</title><circle cx="252" cy="52" r="8" class="mh"/><path d="M248 52l3 3l5 -6" class="mt"/></g><g><title>Browser build, Windows 11: no new failure: Windows 11: `rerail-clif`&#x27;s and `rerail-tape-format`&#x27;s tests pass at this head.</title><circle cx="286" cy="52" r="8" class="mh"/><path d="M282 52l3 3l5 -6" class="mt"/></g><g><title>Browser build, CI at this head: No CI run at this head on GitHub yet. The new step ran as written on a Linux x64 machine.</title><circle cx="320" cy="52" r="7.4" class="ml"/><path d="M320 44.6A7.4 7.4 0 0 0 320 59.4Z" class="mlf"/></g><line x1="8" y1="68" x2="332" y2="68" class="ar thin"/><rect x="8.5" y="74.5" width="19" height="19" rx="5" class="lt"/><text x="18" y="88" text-anchor="middle" class="t b">B</text><text x="34" y="88" class="t b">Build scripts</text><g><title>Build scripts, fails without the fix: #901&#x27;s four steps at `main`: the second checkout&#x27;s change never reaches the compiler, and its last build exits 101. Here the change reaches the compiler and the last build exits 0.</title><circle cx="150" cy="84" r="8" class="mh"/><path d="M146 84l3 3l5 -6" class="mt"/></g><g><title>Build scripts, independent review: No review by another reader yet. The automated reviewer reads it once the pull request opens.</title><circle cx="184" cy="84" r="7.4" class="ml"/><path d="M184 76.6A7.4 7.4 0 0 0 184 91.4Z" class="mlf"/></g><g><title>Build scripts, users lose nothing: In a checkout of its own the script names the same files as before; the engine&#x27;s library tests fail only the tests `main` fails.</title><circle cx="218" cy="84" r="8" class="mh"/><path d="M214 84l3 3l5 -6" class="mt"/></g><g><title>Build scripts, rules scan: nothing new: The automated reviewer&#x27;s rules find nothing new at this head over `main` 6ec384ad9: the two edited functions, over its complexity limit of 6 at `main`, are at 6 and 5.</title><circle cx="252" cy="84" r="8" class="mh"/><path d="M248 84l3 3l5 -6" class="mt"/></g><g><title>Build scripts, Windows 11: no new failure: The shim&#x27;s crate is empty on Windows with MSVC: nothing of it runs there. The engine&#x27;s build script ran in every Windows build here.</title><circle cx="286" cy="84" r="7.4" class="ml"/><path d="M286 76.6A7.4 7.4 0 0 0 286 91.4Z" class="mlf"/></g><g><title>Build scripts, CI at this head: No CI run at this head on GitHub yet. The new step ran as written on a Linux x64 machine.</title><circle cx="320" cy="84" r="7.4" class="ml"/><path d="M320 76.6A7.4 7.4 0 0 0 320 91.4Z" class="mlf"/></g><line x1="8" y1="100" x2="332" y2="100" class="ar thin"/><rect x="8.5" y="106.5" width="19" height="19" rx="5" class="lt"/><text x="18" y="120" text-anchor="middle" class="t b">C</text><text x="34" y="120" class="t b">Windows crate</text><g><title>Windows crate, fails without the fix: `cargo test -p rerail-clif` on Windows 11 at `main` bf24c778f: exit 101, E0432 in `rerail-blocks`. Here: exit 0.</title><circle cx="150" cy="116" r="8" class="mh"/><path d="M146 116l3 3l5 -6" class="mt"/></g><g><title>Windows crate, independent review: No review by another reader yet. The automated reviewer reads it once the pull request opens.</title><circle cx="184" cy="116" r="7.4" class="ml"/><path d="M184 108.6A7.4 7.4 0 0 0 184 123.4Z" class="mlf"/></g><g><title>Windows crate, users lose nothing: A feature the engine&#x27;s own build already turned on: the engine&#x27;s build is unchanged.</title><circle cx="218" cy="116" r="8" class="mh"/><path d="M214 116l3 3l5 -6" class="mt"/></g><g><title>Windows crate, rules scan: nothing new: The automated reviewer&#x27;s rules find nothing new at this head over `main` 6ec384ad9.</title><circle cx="252" cy="116" r="8" class="mh"/><path d="M248 116l3 3l5 -6" class="mt"/></g><g><title>Windows crate, Windows 11: no new failure: Windows 11: `rerail-clif` 9 and `rerail-tape-format` 12 tests pass here; `rerail-blocks`, `rerail-clif`, `rerail-compiler` and `rerail-tape-format` check alone, each of which fails at `main`.</title><circle cx="286" cy="116" r="8" class="mh"/><path d="M282 116l3 3l5 -6" class="mt"/></g><g><title>Windows crate, CI at this head: No CI run at this head on GitHub yet. The new step ran as written on a Linux x64 machine.</title><circle cx="320" cy="116" r="7.4" class="ml"/><path d="M320 108.6A7.4 7.4 0 0 0 320 123.4Z" class="mlf"/></g><text x="8" y="153" class="t s">1  fails without the fix</text><text x="168" y="153" class="t s">2  independent review</text><text x="8" y="169" class="t s">3  users lose nothing</text><text x="168" y="169" class="t s">4  rules scan: nothing new</text><text x="8" y="185" class="t s">5  Windows 11: no new failure</text><text x="168" y="185" class="t s">6  CI at this head</text><g><title>holds</title><circle cx="14" cy="209" r="8" class="mh"/><path d="M10 209l3 3l5 -6" class="mt"/></g><text x="28" y="213" class="t s">holds</text><g><title>holds with a limit</title><circle cx="92" cy="209" r="7.4" class="ml"/><path d="M92 201.6A7.4 7.4 0 0 0 92 216.4Z" class="mlf"/></g><text x="106" y="213" class="t s">holds with a limit</text></svg>
+<figcaption>Three small changes, low risk: start at the manifest, where the JIT leaves the browser build.</figcaption></figure>
+<details class="ev"><summary>Each half mark's limit</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:18%"><col style="width:22%"><col style="width:60%"></colgroup><thead><tr><th>Change</th><th>Check</th><th>It holds with this limit</th></tr></thead><tbody><tr><td class="k">A. Browser build</td><td data-l="Check">independent review</td><td data-l="It holds with this limit">No review by another reader yet. The automated reviewer reads it once the pull request opens.</td></tr><tr><td class="k">B. Build scripts</td><td data-l="Check">independent review</td><td data-l="It holds with this limit">No review by another reader yet. The automated reviewer reads it once the pull request opens.</td></tr><tr><td class="k">B. Build scripts</td><td data-l="Check">Windows 11: no new failure</td><td data-l="It holds with this limit">The shim&#x27;s crate is empty on Windows with MSVC: nothing of it runs there. The engine&#x27;s build script ran in every Windows build here.</td></tr><tr><td class="k">C. Windows crate</td><td data-l="Check">independent review</td><td data-l="It holds with this limit">No review by another reader yet. The automated reviewer reads it once the pull request opens.</td></tr><tr><td class="k">A to C</td><td data-l="Check">CI at this head</td><td data-l="It holds with this limit">No CI run at this head on GitHub yet. The new step ran as written on a Linux x64 machine.</td></tr></tbody></table></div></details>
+</section><section id="changes"><h2>5. The changes</h2>
+<p class="sub">Each line opens its card.</p>
+<details class="card"><summary><span class="lb">A</span><b>Browser build, and its check</b><span class="chip low"><i></i>Low risk</span><span class="sx">The browser check: 10 errors at <code>main</code>, none here.</span></summary>
+<div class="two"><dl class="kv">
+<dt>Problem</dt><dd>The browser build the README gives, and the rule explorer&#x27;s build, stop at 10 errors in <code>region</code>, which has no wasm32 code.</dd>
+<dt>Who meets it</dt><dd>Anyone building the rule explorer or a browser build from source at <code>main</code>, every time. No published version has a browser build.</dd>
+<dt>What it does</dt><dd><code>rerail-clif</code> takes <code>cranelift-jit</code> off wasm only and leaves <code>jit</code> out there. <code>env.sh</code> takes a wasi-sdk named by <code>WASI_SDK_PATH</code>. CI&#x27;s fmt and clippy job checks the browser build, and the explorer&#x27;s one-language build.</dd>
+<dt>Risk</dt><dd>Low: off wasm the manifest resolves as before, and the Homebrew path of <code>env.sh</code> is unchanged.</dd>
+<dt>Check</dt><dd>Does any native build lose <code>cranelift-jit</code>, or any wasm build still take it? Is the tarball&#x27;s digest checked before it is used?</dd>
+</dl><figure><svg viewBox="0 0 340 70" role="img" aria-label="Errors in the browser check: 10 at main, 0 with this change." class="dg pic"><text x="4" y="17" class="t b">The browser check</text><text x="74" y="34" text-anchor="end" class="t s">main</text><g><title>The browser check, main: 10 errors</title><path d="M80 24h186a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-186z" class="rk was"/></g><text x="276" y="34" class="t n">10 errors</text><text x="74" y="51" text-anchor="end" class="t s">this change</text><g><title>The browser check, this change: 0 errors</title><path d="M80 41h0a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h0z" class="rk now"/></g><text x="88" y="51" class="t n">0 errors</text></svg><figcaption>Method: The CI step as written, in a new checkout with an empty target folder, once at <code>main</code> and once here, on Linux x64.</figcaption></figure></div></details><details class="card"><summary><span class="lb">B</span><b>Build scripts read their folder</b><span class="chip low"><i></i>Low risk</span><span class="sx">Builds in a second checkout that compile its own shim: 0 of 2 at <code>main</code>, 2 of 2 here.</span></summary>
+<div class="two"><dl class="kv">
+<dt>Problem</dt><dd>With one target folder for two checkouts, the second compiles the first checkout&#x27;s <code>shim.cpp</code>, and fails once the first is removed.</dd>
+<dt>Who meets it</dt><dd>Anyone building two checkouts with one cargo target folder, at each build after the first checkout&#x27;s. No published version has the shim.</dd>
+<dt>What it does</dt><dd>The simdjson build script reads <code>CARGO_MANIFEST_DIR</code> when it runs, not as <code>env!</code> fixed it at its compile. The engine&#x27;s build script names <code>RERAIL_FARM_CONFIG</code>, which it reads, to cargo.</dd>
+<dt>Risk</dt><dd>Low: in a checkout of its own the paths are the same as before.</dd>
+<dt>Check</dt><dd>Does every path the script reads come from the folder cargo gives this run?</dd>
+</dl><figure><svg viewBox="0 0 340 70" role="img" aria-label="Builds in the second checkout that compile its own sources, of the report&#x27;s two: none at main, both with this change." class="dg pic"><text x="4" y="17" class="t b">Second checkout&#x27;s builds</text><text x="74" y="34" text-anchor="end" class="t s">main</text><g><title>Second checkout&#x27;s builds, main: 0 of 2</title><path d="M80 24h0a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h0z" class="rk was"/></g><text x="88" y="34" class="t n">0 of 2</text><text x="74" y="51" text-anchor="end" class="t s">this change</text><g><title>Second checkout&#x27;s builds, this change: 2 of 2</title><path d="M80 41h186a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-186z" class="rk now"/></g><text x="276" y="51" class="t n">2 of 2</text></svg><figcaption>Method: The four steps of #901 as written, once at <code>main</code> and once here, on Linux x64.</figcaption></figure></div></details><details class="card"><summary><span class="lb">C</span><b>One crate alone on Windows</b><span class="chip low"><i></i>Low risk</span><span class="sx">Crates that fail alone on Windows 11 for want of the feature: 4 at <code>main</code>, none here.</span></summary>
+<div class="two"><dl class="kv">
+<dt>Problem</dt><dd><code>rerail-blocks</code> imports <code>CreateFileMappingW</code>, which <code>windows-sys</code> declares only with <code>Win32_Security</code>, so it fails to build alone on Windows, and so does every crate built on it alone.</dd>
+<dt>Who meets it</dt><dd>Anyone building one engine crate alone on Windows, such as <code>cargo test -p rerail-clif</code>. No published version has the crate.</dd>
+<dt>What it does</dt><dd><code>rerail-blocks</code> asks <code>windows-sys</code> for <code>Win32_Security</code> itself.</dd>
+<dt>Risk</dt><dd>Low: the engine&#x27;s other crates ask for the feature, so the engine&#x27;s build had it already.</dd>
+<dt>Check</dt><dd>Does <code>rerail-blocks</code> now ask for every feature its imports need?</dd>
+</dl><figure><svg viewBox="0 0 340 70" role="img" aria-label="Crates under native/crates that fail cargo check alone on Windows 11 for want of the feature: 4 at main, none with this change." class="dg pic"><text x="4" y="17" class="t b">Crates failing alone</text><text x="74" y="34" text-anchor="end" class="t s">main</text><g><title>Crates failing alone, main: 4 crates</title><path d="M80 24h186a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-186z" class="rk was"/></g><text x="276" y="34" class="t n">4 crates</text><text x="74" y="51" text-anchor="end" class="t s">this change</text><g><title>Crates failing alone, this change: none</title><path d="M80 41h0a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h0z" class="rk now"/></g><text x="88" y="51" class="t n">none</text></svg><figcaption>Method: <code>cargo check -p &lt;crate&gt; --all-targets</code> for each crate under <code>native/crates</code>, alone, 4 jobs, on Windows 11 and Linux x64.</figcaption></figure></div></details>
+</section><section id="decisions"><h2>6. The decisions</h2>
+<div class="dblock"><h3>Should the browser build leave out the reads&#x27; JIT, or take the stand-in?</h3>
+<p><b>We chose</b> to leave it out: it only serves tests, which do not run on wasm.</p>
+<p><b>Would change our mind:</b> A maintainer who wants every crate to follow one pattern for the JIT on wasm.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">Leave <code>jit</code> out on wasm <span class='tag new'>chosen</span></td><td data-l="What a user gets">The browser build; nothing on wasm that could only fail there; <code>Cargo.lock</code> unchanged.</td><td data-l="Cost">Two lines of manifest and one <code>cfg</code>.</td><td data-l="What it breaks"><code>rerail-clif</code> differs from the other crates, which take the stand-in.</td></tr><tr><td class="k">The stand-in in <code>rerail-clif</code>, as the other crates</td><td data-l="What a user gets">The browser build, in the same form as the other crates.</td><td data-l="Cost">A new dependency and a change to <code>Cargo.lock</code>.</td><td data-l="What it breaks"><code>jit::Reads::new</code> would compile on wasm and panic at its first call.</td></tr></tbody></table></div><p><b>Evidence.</b> <code>rerail_clif::jit</code> is used by <code>rerail-clif</code>&#x27;s and <code>rerail-tape-format</code>&#x27;s tests and one engine test, never by the engine; the browser check passes here with it left out.</p></details></div>
+<div class="dblock"><h3>Which C toolchain should CI&#x27;s browser check use?</h3>
+<p><b>We chose</b> wasi-sdk 34, pinned by its digest: the same toolchain on every run.</p>
+<p><b>Would change our mind:</b> A maintainer who wants CI to run the README&#x27;s Homebrew steps as written.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">wasi-sdk 34, digest checked <span class='tag new'>chosen</span></td><td data-l="What a user gets">The same clang, wasi-libc and libc++ on every run; <code>env.sh</code> gains a Linux path.</td><td data-l="Cost">A 192 MB download per run.</td><td data-l="What it breaks">Nothing that runs today.</td></tr><tr><td class="k">Homebrew on the runner</td><td data-l="What a user gets">The README&#x27;s steps as written.</td><td data-l="Cost">An LLVM install per run.</td><td data-l="What it breaks">Unpinned formulas can change under the check.</td></tr></tbody></table></div><p><b>Evidence.</b> The step as written passed in a new checkout with an empty target folder on a Linux x64 machine, 174 s at 4 jobs, the download included.</p></details></div>
+</section><section id="fits"><h2>7. How it fits</h2>
+<div class="duo"><figure class="fg"><svg viewBox="0 0 340 292" role="img" aria-label="This pull request stands on main bf24c778f, which it merges. It merges clean with #812, #883, #904 and #909, and the browser check passes merged with #812. Once it lands, the next CI runs of #812 and #909 check their code for the browser target." class="dg fit"><rect x="4" y="4" width="332" height="50" rx="8" class="bx good"/><text x="14" y="23" class="t b">main bf24c778f</text><text x="14" y="38" class="t s">merged into this branch</text><line x1="170" y1="55" x2="170" y2="79" class="ar " marker-end="url(#ah)"/><text x="176" y="71" class="t s">merges</text><rect x="4" y="80" width="332" height="46" rx="8" class="bx acc"/><text x="170" y="100" text-anchor="middle" class="t b">This pull request</text><text x="170" y="116" text-anchor="middle" class="t s">three build fixes, one check</text><line x1="84" y1="127" x2="84" y2="151" class="ar dash" marker-end="url(#ah)"/><line x1="256" y1="127" x2="256" y2="151" class="ar dash" marker-end="url(#ah)"/><text x="90" y="143" class="t s">then checked</text><text x="250" y="143" text-anchor="end" class="t s">then checked</text><rect x="4" y="152" width="160" height="50" rx="8" class="bx good"/><text x="14" y="171" class="t b">#812</text><text x="14" y="186" class="t s">its branch checked</text><rect x="176" y="152" width="160" height="50" rx="8" class="bx good"/><text x="186" y="171" class="t b">#909</text><text x="186" y="186" class="t s">tree watch checked</text><text x="4" y="222" class="t b">Trial merges with open work</text><rect x="4" y="230" width="108" height="58" rx="8" class="bx good"/><text x="12" y="247" class="t b">With #812</text><text x="12" y="263" class="t s">clean merge</text><text x="12" y="277" class="t s">check passes</text><rect x="116" y="230" width="108" height="58" rx="8" class="bx good"/><text x="124" y="247" class="t b">Three others</text><text x="124" y="263" class="t s">#883 #904 #909</text><text x="124" y="277" class="t s">clean merges</text></svg></figure>
+<div><p>Nothing has to merge first, and no open pull request edits these files. #812 needs this for its browser branch to pass a check.</p>
+<p>Any order works. This one first is better: #812&#x27;s and #909&#x27;s next CI runs then check their code for this target.</p>
+<details class="ev"><summary>Trial merges and what merged today</summary><p>This head merges <code>main</code> bf24c778f. b00488a1d merged clean with #812, #883, #904 and #909, and this head with #812. Merged with #812&#x27;s head, the browser check passes, exit 0 in 172 s. #909 edits <code>native/src/tree_watch/</code>, which the check compiles. The twelve pull requests merged today, #865 to #905, edit none of these files.</p></details>
+</div></div>
+</section><section id="gaps"><h2>8. What is not covered</h2>
+<ul class="lines">
+<li><b>The browser engine</b> builds but still stops when it runs: the content store starts a thread for a new store&#x27;s schema, and the browser has none. Its own report follows.</li>
+<li><b>macOS</b> never ran, nor <code>env.sh</code>&#x27;s Homebrew path.</li>
+</ul>
+<details class="ev"><summary>Two limits that stay</summary>
+<p><b>Limits that stay.</b></p>
+<ul class="facts">
+<li><code>cargo clippy -- -D warnings</code> for this target stops on warnings <code>main</code> has: an unused variable in <code>rerail-blocks</code> and four in the engine. No check lints this target.</li>
+<li><code>rerail-logic</code>&#x27;s example <code>versions</code> calls <code>libc::mmap</code> with no Unix gate, so <code>cargo check -p rerail-logic --all-targets</code> fails on Windows 11, at <code>main</code> as here. A dependency line cannot fix it: Windows has no <code>mmap</code>.</li>
+</ul></details>
+</section><section id="asks"><h2>9. What we ask of you</h2>
+<p>We ask no ruling.</p>
+</section><section id="evidence"><h2>10. Evidence</h2>
+<p>The description on GitHub is the record: &quot;How you tested it&quot; holds the runs on <code>main</code> and here.</p>
+<details class="ev"><summary>Runs at this head</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:40%"><col style="width:44%"></colgroup><thead><tr><th>Where</th><th>What ran</th><th>Result</th></tr></thead><tbody><tr><td class="k">Linux x64</td><td data-l="What ran">The new CI step as written, in a new checkout with an empty target folder, at <code>main</code> and here; then merged with #812&#x27;s head</td><td data-l="Result">At <code>main</code> bf24c778f the engine check exits 101, 10 errors in <code>region</code>. Here exit 0 in 174 s; merged with #812, exit 0 in 172 s.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">The CI step over a break only the explorer&#x27;s build compiles: here, here without its new line, and as b00488a1d wrote it</td><td data-l="Result">Exit 101 here, E0308 at the break; exit 0 without the line and at b00488a1d.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">#901&#x27;s four steps as written, at <code>main</code> and here</td><td data-l="Result">At <code>main</code>, step 3 exits 0 without the second checkout&#x27;s line and step 4 exits 101. Here, step 3 stops on that line and step 4 exits 0.</td></tr><tr><td class="k">Windows 11</td><td data-l="What ran"><code>cargo test -p rerail-clif</code> and <code>-p rerail-tape-format</code>, at <code>main</code> and here</td><td data-l="Result">Exit 101 at <code>main</code>, E0432. Here 9 and 12 passed.</td></tr><tr><td class="k">Windows 11 and Linux x64</td><td data-l="What ran"><code>cargo check -p &lt;crate&gt; --all-targets</code> for each of the 45 crates under <code>native/crates</code>, alone, at <code>main</code>; the ones that failed again here</td><td data-l="Result">Linux: 45 pass. Windows: 5 fail at <code>main</code>; the 4 on E0432 pass here; <code>rerail-logic</code>&#x27;s example fails at both.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran"><code>check-rustfmt</code>, <code>npm run check:native</code>, CI&#x27;s Lint and type-check job, <code>rerail-clif</code>, <code>rerail-tape-format</code>, the executors guard test</td><td data-l="Result">All exit 0: 363 files formatted, both clippy runs clean at <code>-D warnings</code>, <code>rerail-clif</code> 9 and <code>rerail-tape-format</code> 12 passed, the guard test passed.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">The engine&#x27;s library tests here; the ones that failed, again at <code>main</code></td><td data-l="Result">2775 passed, 22 failed, 146 ignored; <code>main</code> fails the same 22 on the same machine, 20 of them for pack test data it lacks.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">Rerail&#x27;s reviewer rules at <code>main</code> 6ec384ad9, published and built from <code>main</code>, over this head</td><td data-l="Result">No new finding. Over df944a0d2, two: the edited build-script functions at complexity 8 and 7, now 6 and 5.</td></tr></tbody></table></div></details>
+<details class="ev"><summary>Sources</summary><p>The branch at b681e3a1e and its diff against <code>main</code> bf24c778f, read on 19 November 2026; runs at it, at b00488a1d and at <code>main</code> on Linux x64 machines and Windows 11 virtual machines.</p></details>
+</section>
+<footer><p>A figure we could not source is left out.</p></footer>
+</main>
+</div>
+<script>
+(function () {
+  var root = document.documentElement, key = "pr-report-theme";
+  try { var saved = localStorage.getItem(key); if (saved) root.setAttribute("data-theme", saved); } catch (e) {}
+  document.getElementById("theme-toggle").addEventListener("click", function () {
+    var dark = root.getAttribute("data-theme") === "dark" || (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    var next = dark ? "light" : "dark"; root.setAttribute("data-theme", next);
+    try { localStorage.setItem(key, next); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>
