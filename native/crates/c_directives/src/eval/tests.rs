@@ -62,7 +62,7 @@ fn the_evaluator_is_ukl() {
         assert!(code.is_empty(), "the evaluator's source has MSL `{msl}`: {code:?}");
     }
     assert!(src.contains("#include <ukl/workqueue.h>") && src.contains("#include <ukl/grid.h>"), "UKL's queue and grid");
-    assert!(src.contains("DEFINE_KERNEL2(pp, pp_setup") && src.contains("DEFINE_KERNEL2(pp, px_expand") && src.contains("DEFINE_KERNEL2(pp, pp_check"), "the grid's kernels are UKL's");
+    assert!(src.contains("DEFINE_KERNEL2(pp, pp_setup") && !src.contains("DEFINE_KERNEL2(pp, px_expand") && src.contains("DEFINE_KERNEL2(pp, pp_check"), "the grid's kernels are UKL's");
     let arena = include_str!("../../../metal/src/pp_arena.rs");
     assert!(arena.contains("lane::Command") && !arena.contains("new_compute_command_encoder"), "launched through the lane");
 }
@@ -317,13 +317,13 @@ fn on_device(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, p
         Refused::P1(f) if f & P1_ROOM != 0 => "P1's room",
         Refused::P1(_) => "P1's iterations",
         Refused::Rounds => "past the rounds' bound",
-        Refused::Device(_) => "a device error",
+        Refused::Device(e) => {
+            eprintln!("device error {path}: {e:?}");
+            "a device error"
+        }
     })?;
     if r.answer & X_BUILTIN != 0 {
         return Err("built-ins in an #if");
-    }
-    if r.answer & X_COUNTER != 0 {
-        return Err("__COUNTER__ in a directive");
     }
     if r.answer & X_PRAGMA != 0 {
         return Err("a _Pragma that makes a row");
@@ -452,7 +452,7 @@ fn if_values_are_the_serial_passes() {
         same(chosen.len(), exprs.len(), "the tests' texts");
         assert!(chosen.iter().any(|t| t.starts_with('t')) && chosen.iter().any(|t| t.starts_with('f')), "both values");
         same(got.map(|g| show(&g)), Ok(show(&want)), format!("the tests' text, C++ {cpp}"));
-        same(launches, 4, format!("launches (rung {rung})"));
+        same(launches, LAUNCHES, format!("launches (rung {rung})"));
     }
 }
 
@@ -517,7 +517,7 @@ fn expanded_include_names_are_the_spikes() {
 }
 
 /// R7 of decision 0467: each case §6 lists, refused until step 7, gives the serial pass's
-/// tokens on the device, in C and C++, a round of 4 launches. A call across a stretch's end (its
+/// tokens on the device, in C and C++, a round of 2 launches. A call across a stretch's end (its
 /// arguments over a `#define`, an `#undef`, a conditional, a `#line`, a pragma; nested; an exit
 /// whose `(` follows a directive; in a header), `#line` and line
 /// markers (a line alone, a file, a macro's line and file, in an inactive group, in a header,
@@ -610,25 +610,8 @@ fn the_refused_cases_are_the_serial_passes() {
             }
             let (got, want, rung, launches) = expanded_in(files, cfg, &[("inc", DirKind::Angle)], 0);
             same(got.map(|g| show(&g)), Ok(show(&want)), format!("{what}, C++ {cpp}"));
-            same(launches, 4, format!("{what}: launches (rung {rung})"));
+            same(launches, LAUNCHES, format!("{what}: launches (rung {rung})"));
         }
-    }
-    // `__COUNTER__` in a directive's line is refused by name: its value would count text the
-    // device expands after the directives.
-    for (main, why) in [
-        ("#if __COUNTER__ == 0\n#endif\n", "__COUNTER__ in a directive"),
-        ("#define C __COUNTER__\nC\n#if C\n#endif\n", "__COUNTER__ in a directive"),
-    ] {
-        let m: std::collections::HashMap<String, Vec<u8>> = [("main.c".to_string(), main.as_bytes().to_vec())].into_iter().collect();
-        let mut io = rerail_c_pp::files::Search::new(Vec::new(), move |p: &str| m.get(p).cloned());
-        let cfg = rerail_c_pp::Config::new(crate::pp::options(false));
-        same(on_device(cfg, &mut io, "main.c", false).err(), Some(why), format!("{main:?}"));
-    }
-    // A `_Pragma` that makes a row would need the text expanded inside P1's iterations: the
-    // text's expansion refuses it by name.
-    for main in ["_Pragma(\"once\")\n", "_Pragma(\" push_macro(\\\"X\\\")\")\n", "#define S \"pop_macro(\\\"X\\\")\"\n_Pragma(S)\n"] {
-        let (got, _, _, _) = expanded(&[("main.c", main)], false, 0);
-        same(got.err().map(|r| r & rerail_metal::pp_expand::X_PRAGMA), Some(rerail_metal::pp_expand::X_PRAGMA), format!("{main:?}"));
     }
 }
 
@@ -801,8 +784,8 @@ fn expanded_in(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str, 
     (Ok(spelled), serial.0, x.rung, x.launches)
 }
 
-/// Decision 0460 §4: an evaluation is a fixed handful of launches, `pp_setup`, `px_expand` twice
-/// and `pp_check`, whatever the unit's size: an empty unit, one of thousands of tokens and
+/// Decisions 0460 §4 and 0475 §1: an evaluation is a fixed handful of launches, `pp_setup` (the
+/// text inside its P1 iterations) and `pp_check`, whatever the unit's size: an empty unit, one of thousands of tokens and
 /// definitions, and one that runs again at a larger rung. A grid past the groups the device holds
 /// at once fails its barrier, never hangs, and runs again at half the groups to the same output.
 #[test]
@@ -819,7 +802,7 @@ fn an_evaluation_is_a_fixed_handful_of_launches() {
     for (what, files) in shapes {
         let (got, want, rung, launches) = expanded(files, false, 0);
         same(got.map(|g| show(&g)), Ok(show(&want)), what);
-        same(launches, 4, format!("{what}'s launches (rung {rung})"));
+        same(launches, LAUNCHES, format!("{what}'s launches (rung {rung})"));
     }
     // 4,096 groups of 256 threads: past what any GPU holds at once.
     use rerail_c_pp::files::Search;
@@ -855,6 +838,101 @@ fn part_tokens(part: &rerail_metal::pp_expand::Part, files: &[Vec<u8>], tapes: &
             rerail_metal::pp_eval::phase2(&files[f][views[f].start(i) as usize..views[f].end(i) as usize]).into_owned()
         })
         .collect()
+}
+
+/// R1, R2 and R4 of decision 0475: a text `_Pragma`'s `push_macro`, `pop_macro` and `once` are
+/// rows the iterations read, as the serial pass carries them out. Names after a pop in the text
+/// and in an `#if`; an include after `once` skipped; a pop through a macro, from a macro's operand,
+/// in a header, in an inactive group, nested with `#pragma push_macro`; a diagnostic pragma and a
+/// malformed one making nothing. Each in C and C++, 2 launches. Then the refusals, by name.
+#[test]
+fn pragma_rows_are_the_serial_passes() {
+    use rerail_c_pp::files::DirKind;
+    let shapes: &[(&str, &[(&str, &str)])] = &[
+        ("a pop in the text", &[("main.c", "#define X 1\n_Pragma(\"push_macro(\\\"X\\\")\")\n#undef X\n#define X 2\nX\n_Pragma(\"pop_macro(\\\"X\\\")\")\nX\n#if X == 1\none\n#endif\n")]),
+        ("on one line", &[("main.c", "#define X 1\n_Pragma(\"push_macro(\\\"X\\\")\") X\n#undef X\nX _Pragma(\"pop_macro(\\\"X\\\")\") X\n#ifdef X\ndefined\n#endif\n")]),
+        ("once", &[("main.c", "#include \"h.h\"\n#include \"h.h\"\n#include \"g.h\"\n#include \"g.h\"\nend\n"), ("h.h", "_Pragma(\"once\") h\n"), ("g.h", "g\n_Pragma( \"once\" )\n")]),
+        ("through a macro", &[("main.c", "#define DO(x) _Pragma(#x)\n#define X 1\nDO(push_macro(\"X\"))\n#undef X\nX\nDO(pop_macro(\"X\"))\nX\n")]),
+        (
+            "a macro's operand",
+            &[("main.c", "#define S \"pop_macro(\\\"X\\\")\"\n#define X 1\n#pragma push_macro(\"X\")\n#undef X\nX _Pragma(S) X\n#define D \"GCC diagnostic push\"\n_Pragma(D) ok\n_Pragma(1 2) m\n#define E\n_Pragma(E) m2\n#define W(s) _Pragma(s)\nW(\"once\") w\n")],
+        ),
+        ("in a header", &[("main.c", "#define X 1\n#pragma push_macro(\"X\")\n#define X 2\n#include \"h.h\"\nX\n"), ("h.h", "X\n_Pragma(\"pop_macro(\\\"X\\\")\")\n")]),
+        ("in an inactive group", &[("main.c", "#define X 1\n#pragma push_macro(\"X\")\n#undef X\n#if 0\n_Pragma(\"pop_macro(\\\"X\\\")\")\n#endif\nX\n")]),
+        (
+            "nested with the directives",
+            &[(
+                "main.c",
+                "#define X 1\n#pragma push_macro(\"X\")\n#define X 2\n_Pragma(\"push_macro(\\\"X\\\")\")\n#define X 3\nX\n#pragma pop_macro(\"X\")\nX\n_Pragma(\"pop_macro(\\\"X\\\")\")\nX\n",
+            )],
+        ),
+        (
+            "a pop that decides an include",
+            &[
+                ("main.c", "#define X 1\n#pragma push_macro(\"X\")\n#undef X\n_Pragma(\"pop_macro(\\\"X\\\")\")\n#if X\n#include \"a.h\"\n#endif\nA\n"),
+                ("a.h", "#define A a\n_Pragma(\"push_macro(\\\"A\\\")\")\n#undef A\nA\n_Pragma(\"pop_macro(\\\"A\\\")\")\n"),
+            ],
+        ),
+    ];
+    for (what, files) in shapes {
+        for cpp in [false, true] {
+            let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
+            let (got, want, rung, launches) = expanded_in(files, cfg, &[("inc", DirKind::Angle)], 0);
+            same(got.map(|g| show(&g)), Ok(show(&want)), format!("{what}, C++ {cpp}"));
+            same(launches, LAUNCHES, format!("{what}: launches (rung {rung})"));
+        }
+    }
+    // Refused, by name: a name read inside the invocation that pops it, and two rows of one name
+    // from one invocation.
+    for main in [
+        "#define X 1\n#define P _Pragma(\"pop_macro(\\\"X\\\")\") X\n#pragma push_macro(\"X\")\n#undef X\nP\n",
+        "#define Q _Pragma(\"push_macro(\\\"X\\\")\") _Pragma(\"pop_macro(\\\"X\\\")\")\nQ\n",
+    ] {
+        let (got, _, _, _) = expanded(&[("main.c", main)], false, 0);
+        same(got.err().map(|r| r & rerail_metal::pp_expand::X_PRAGMA), Some(rerail_metal::pp_expand::X_PRAGMA), format!("{main:?}"));
+    }
+    // A row-making `_Pragma` in a directive's line.
+    let m: std::collections::HashMap<String, Vec<u8>> = [("main.c".to_string(), b"#if _Pragma(\"once\") 1\n#endif\n".to_vec())].into_iter().collect();
+    let mut io = rerail_c_pp::files::Search::new(Vec::new(), move |p: &str| m.get(p).cloned());
+    same(on_device(rerail_c_pp::Config::new(crate::pp::options(false)), &mut io, "main.c", false).err(), Some("a _Pragma that makes a row"), "a _Pragma's row in an #if");
+}
+
+/// R3 of decision 0475: `__COUNTER__` in `#if`, `#elif`, an `#include`'s name and `#line`
+/// counts with the text's uses in the serial reading's order: text before and after, two lines,
+/// an arm not read, the text's uses feeding an `#if`, a call whose arguments run over a
+/// directive that counts, a header's uses. Each in C and C++, 2 launches.
+#[test]
+fn counters_in_directives_are_the_serial_passes() {
+    use rerail_c_pp::files::DirKind;
+    let shapes: &[(&str, &[(&str, &str)])] = &[
+        ("text, a line, text", &[("main.c", "a __COUNTER__\n#if __COUNTER__ == 1\nyes\n#endif\nb __COUNTER__\n")]),
+        ("two lines", &[("main.c", "#if __COUNTER__ == 5\nno\n#elif __COUNTER__ == 1\nelif\n#endif\n__COUNTER__\n")]),
+        ("arms not read", &[("main.c", "#if 0\n#if __COUNTER__\n#endif\n#endif\n#if 1\nt\n#elif __COUNTER__\n#endif\n__COUNTER__\n")]),
+        ("the text feeds an #if", &[("main.c", "#define C __COUNTER__\nC C C\n#if C == 3\nthree\n#endif\nC\n")]),
+        ("a call over a directive", &[("main.c", "#define F(x) x\nF(__COUNTER__\n#if __COUNTER__ == 0\nz\n#endif\n) __COUNTER__\n")]),
+        ("#line", &[("main.c", "#define L __COUNTER__\n__COUNTER__ __COUNTER__\n#line L\n__LINE__ __COUNTER__\n")]),
+        (
+            "a header's uses",
+            &[
+                ("main.c", "__COUNTER__\n#include <h1.h>\nafter __COUNTER__\n"),
+                ("inc/h1.h", "in __COUNTER__\n#if __COUNTER__ == 2\ntwo\n#endif\n"),
+            ],
+        ),
+    ];
+    for (what, files) in shapes {
+        for cpp in [false, true] {
+            let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
+            let (got, want, rung, launches) = expanded_in(files, cfg, &[("inc", DirKind::Angle)], 0);
+            same(got.map(|g| show(&g)), Ok(show(&want)), format!("{what}, C++ {cpp}"));
+            same(launches, LAUNCHES, format!("{what}: launches (rung {rung})"));
+        }
+    }
+    // Refused: `#` or `##` of the value (an include's name made of it, the unique-name idiom).
+    use rerail_metal::pp_expand::X_COUNTER_SPELLED;
+    for main in ["#define C(a, b) C2(a, b)\n#define C2(a, b) a ## b\nC(n, __COUNTER__)\n", "#define S(x) S2(x)\n#define S2(x) #x\nS(__COUNTER__)\n"] {
+        let (got, _, _, _) = expanded(&[("main.c", main)], false, 0);
+        same(got.err().map(|r| r & X_COUNTER_SPELLED), Some(X_COUNTER_SPELLED), format!("{main:?}"));
+    }
 }
 
 /// Decision 0460, batching: units expanded in one batch give each its own serial answer. The same
@@ -1082,17 +1160,64 @@ fn batch_stages(units: &[(&rerail_metal::pp_eval::Unit, &rerail_metal::pp_expand
 /// own unit from its main file alone (empty stubs for the headers it does not have), against the
 /// serial pass. The spike is not run: the rounds decide every directive and resolve every
 /// include. Every unit gives the serial pass's tokens, none is refused (a refusal is counted by
-/// reason, then fails the test), and every round is 4 launches. `RERAIL_PP_FIRST` and
+/// reason, then fails the test), and every round is 2 launches. `RERAIL_PP_FIRST` and
 /// `RERAIL_PP_COUNT` choose the files of each language; `RERAIL_PP_STAGES` measures a batch.
 #[test]
 #[ignore = "the corpus (~/orca/rerail-shared/lean-corpus); run in slices"]
 fn the_corpus_preprocesses_on_the_device() {
-    use rerail_c_pp::Config;
-    use rerail_c_pp::files::{DirKind, Search};
-    use rerail_metal::pp_expand::*;
+    use rerail_c_pp::files::DirKind;
     let root = corpus_root();
     let count = std::env::var("RERAIL_PP_COUNT").ok().and_then(|n| n.parse().ok()).unwrap_or(40);
     let first = std::env::var("RERAIL_PP_FIRST").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
+    let mut langs = Vec::new();
+    for (dir, cpp) in [("c", false), ("cpp", true)] {
+        let Ok(rd) = std::fs::read_dir(root.join(dir)) else { continue };
+        let mut paths: Vec<String> = rd.flatten().map(|e| e.path().to_string_lossy().into_owned()).collect();
+        paths.sort();
+        langs.push((paths.into_iter().skip(first).take(count).collect(), cpp));
+    }
+    let r = against_serial(langs, vec![("<stub>".into(), DirKind::After)], true);
+    same(r.refused, std::collections::BTreeMap::new(), "the units refused");
+    assert!(r.same_units == 0 || r.launches == LAUNCHES, "{} launches a round, not {LAUNCHES}", r.launches);
+}
+
+/// Boost.Preprocessor's tests (`RERAIL_PP_BOOST`, else ~/orca/rerail-shared/boost-preprocessor),
+/// each its own unit with the library's headers to include: every unit gives the serial pass's
+/// tokens on the device, none refused, 2 launches a round. The C files as C, the others as C++.
+#[test]
+#[ignore = "Boost.Preprocessor (~/orca/rerail-shared/boost-preprocessor)"]
+fn boost_preprocessor_is_the_serial_passes() {
+    use rerail_c_pp::files::DirKind;
+    let root = std::env::var("RERAIL_PP_BOOST").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/boost-preprocessor"));
+    let only = std::env::var("RERAIL_PP_ONLY").ok();
+    let mut paths: Vec<String> = std::fs::read_dir(root.join("test")).unwrap().flatten().map(|e| e.path().to_string_lossy().into_owned())
+        .filter(|p| [".c", ".cpp", ".cxx"].iter().any(|x| p.ends_with(x)) && only.as_ref().is_none_or(|o| p.contains(o.as_str()))).collect();
+    paths.sort();
+    let (c, cpp): (Vec<String>, Vec<String>) = paths.into_iter().partition(|p| p.ends_with(".c"));
+    let inc = root.join("include").to_string_lossy().into_owned();
+    let r = against_serial(vec![(c, false), (cpp, true)], vec![(inc, DirKind::Angle)], false);
+    same(r.refused, std::collections::BTreeMap::new(), "the units refused");
+    assert!(r.same_units > 0 && r.launches == LAUNCHES, "{} units, {} launches a round", r.same_units, r.launches);
+}
+
+/// The launches of an evaluation's command buffer: `pp_setup` and `pp_check` (decisions 0460 §4,
+/// 0475 §1).
+const LAUNCHES: usize = 2;
+
+/// What `against_serial` found.
+struct Against {
+    same_units: usize,
+    launches: usize,
+    refused: std::collections::BTreeMap<&'static str, usize>,
+}
+
+/// Each language's units (main files) on the device against the serial pass, with the include
+/// search `dirs` (`stub`: a header not found is an empty stub). A unit unlike the serial pass's
+/// panics, naming its first differing token; the refusals are counted by reason.
+fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_pp::files::DirKind)>, stub: bool) -> Against {
+    use rerail_c_pp::Config;
+    use rerail_c_pp::files::Search;
+    use rerail_metal::pp_expand::*;
     let reasons = [
         (X_BUILTIN, "built-ins"),
         (X_PAST_END, "a call past a list's end"),
@@ -1105,21 +1230,19 @@ fn the_corpus_preprocesses_on_the_device() {
         (X_VA_OPT, "#__VA_OPT__"),
         (X_RELEX, "a paste the relexer refuses"),
         (X_SPLICE, "# or ## of a token with a line splice"),
-        (X_COUNTER, "__COUNTER__ in a directive"),
         (X_PRAGMA, "a _Pragma that makes a row"),
+        (X_COUNTER_SPELLED, "# or ## of __COUNTER__'s value"),
         (X_BARRIER, "a grid barrier"),
     ];
     let (mut same_units, mut tokens, mut launches, mut rounds) = (0, 0, 0, 0);
     let mut gpu: Vec<f64> = Vec::new();
     let mut batches: Vec<usize> = Vec::new();
+    let mut serial_s = 0f64;
     let mut refused = std::collections::BTreeMap::<&str, usize>::new();
     let mut named = std::collections::BTreeMap::<String, usize>::new();
-    let stub = |q: &str| std::fs::read(q).ok().or_else(|| q.starts_with("<stub>").then(Vec::new));
-    for (dir, cpp) in [("c", false), ("cpp", true)] {
-        let Ok(rd) = std::fs::read_dir(root.join(dir)) else { continue };
+    let read = move |q: &str| std::fs::read(q).ok().or_else(|| (stub && q.starts_with("<stub>")).then(Vec::new));
+    for (paths, cpp) in langs {
         let builtins = rerail_c_pp::stream::parallel::predefined(&Config::new(crate::pp::options(cpp))).1;
-        let mut paths: Vec<_> = rd.flatten().map(|e| e.path()).collect();
-        paths.sort();
         // Each unit's serial answer and its P1, then every unit of the language in batches.
         struct Entry {
             path: String,
@@ -1127,18 +1250,20 @@ fn the_corpus_preprocesses_on_the_device() {
             d: OnDevice,
         }
         let mut entries = Vec::new();
-        for p in paths.into_iter().skip(first).take(count) {
-            let path = p.to_string_lossy().into_owned();
+        for path in paths {
             let cfg = Config::new(crate::pp::options(cpp));
             let mut serial = Spelled::default();
-            let mut io = Search::new(vec![("<stub>".into(), DirKind::After)], stub);
+            let mut io = Search::new(dirs.clone(), read);
+            let t0 = std::time::Instant::now();
             let mut pp = rerail_c_pp::Pp::new(cfg.clone(), &mut io, &mut serial);
             pp.run(&path);
             drop(pp);
-            let mut io = Search::new(vec![("<stub>".into(), DirKind::After)], stub);
+            serial_s += t0.elapsed().as_secs_f64();
+            let mut io = Search::new(dirs.clone(), read);
             let d = match on_device(cfg, &mut io, &path, cpp) {
                 Ok(u) => u,
                 Err(why) => {
+                    eprintln!("REFUSED {path}: {why}");
                     *refused.entry(why).or_default() += 1;
                     continue;
                 }
@@ -1153,7 +1278,7 @@ fn the_corpus_preprocesses_on_the_device() {
         }
         let parts = match expand_many(&units) {
             Ok(parts) => parts,
-            Err(e) => panic!("{dir}: {e:?}"),
+            Err(e) => panic!("{e:?}"),
         };
         let mut seen: Vec<*const Expanded> = Vec::new();
         for (e, part) in entries.iter().zip(&parts) {
@@ -1182,6 +1307,7 @@ fn the_corpus_preprocesses_on_the_device() {
             if x.refused != 0 {
                 for (bit, why) in reasons {
                     if refused_by & bit != 0 {
+                        eprintln!("REFUSED {path}: {why}");
                         *refused.entry(why).or_default() += 1;
                     }
                 }
@@ -1204,9 +1330,9 @@ fn the_corpus_preprocesses_on_the_device() {
         let all: f64 = gpu.iter().sum();
         eprintln!("GPU time: {:.1} ms in all over {} runs (units a run: {batches:?}), median {:.3} ms, most {:.3} ms a run", all * 1e3, gpu.len(), gpu[gpu.len() / 2] * 1e3, most * 1e3);
     }
+    eprintln!("the serial pass: {:.1} ms in all", serial_s * 1e3);
     eprintln!("the built-ins in units refused for them: {named:?}");
-    same(refused, std::collections::BTreeMap::new(), "the units refused");
-    assert!(same_units == 0 || launches == 4, "{launches} launches a round, not 4");
+    Against { same_units, launches, refused }
 }
 
 /// R7 of decision 0448: calls whose `(` or `)` is past their list's end. The call reads the

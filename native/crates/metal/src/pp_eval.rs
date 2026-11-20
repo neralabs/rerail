@@ -252,8 +252,8 @@ pub struct Front {
     dir_scan: Scan,
 }
 
-/// The stages a run of `pp_setup` ends after (`LAST`): the front, the definitions, the
-/// visibility, or the whole setup (the expansion follows).
+/// The stages a run of `pp_setup` ends after (`LAST`): the front, the definitions, or the whole
+/// setup with P1's iterations and the text inside them (`TO_VIS`), the check after it (`TO_ALL`).
 pub const TO_FRONT: u32 = 1;
 pub const TO_DEFS: u32 = 2;
 pub const TO_VIS: u32 = 3;
@@ -435,8 +435,8 @@ pub fn evaluate(unit: &Unit, nodes: bool) -> Result<Evaluated, Error> {
 }
 
 /// Runs the persistent grid over the arena at `groups` groups, laid out as `l`, in one command
-/// buffer: `pp_setup` to the stage `l` names, and for the whole setup (`TO_ALL`) the expansion
-/// too: `px_expand` twice and `pp_check`. The launches it made and its GPU time in seconds, or
+/// buffer: `pp_setup` to the stage `l` names (the text pass is inside its P1 iterations,
+/// decision 0475), and for the whole setup (`TO_ALL`) `pp_check` after it. The launches it made and its GPU time in seconds, or
 /// `None` where a barrier failed (the grid's groups were not resident together).
 pub fn on_grid(arena: &Arena, unit: &Unit, front: &Front, l: &Lay, groups: u64) -> Result<Option<(usize, f64)>, Error> {
     l.write(&front.lay);
@@ -444,9 +444,6 @@ pub fn on_grid(arena: &Arena, unit: &Unit, front: &Front, l: &Lay, groups: u64) 
     let ran = run_timed(|enc| {
         front.setup(enc, arena, unit, groups);
         if all {
-            for _ in 0..2 {
-                enc.run("px_expand", &[("arena", arena), ("data", front.data(unit)), ("lay", &front.lay)], None, groups);
-            }
             enc.run("pp_check", &[("arena", arena), ("lay", &front.lay)], None, 1);
         }
         Ok(())

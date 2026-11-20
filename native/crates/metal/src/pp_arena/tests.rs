@@ -162,7 +162,7 @@ fn the_source_compiles() {
     if let Some(path) = std::env::var_os("RERAIL_PP_DUMP") {
         std::fs::write(path, rerail_ukl::metal_source("pp_setup", source()).unwrap_or_else(|e| e.to_string())).unwrap();
     }
-    for name in ["pp_setup", "px_expand", "pp_check", "pb_search", "pb_expand", "pd_relex_test", "pb_sort_alone", "pb_barriers_alone"] {
+    for name in ["pp_setup", "pp_check", "pb_search", "pb_expand", "pd_relex_test", "pb_sort_alone", "pb_barriers_alone"] {
         kernel(name);
     }
 }
@@ -195,7 +195,7 @@ fn the_source_is_opencl_c_1_2() {
 #[test]
 fn the_grid_is_the_devices_resident_count() {
     let device = lane::device().unwrap();
-    let local = ["pp_setup", "px_expand"].iter().map(|k| kernel(k).threadgroup_bytes()).max().unwrap();
+    let local = kernel("pp_setup").threadgroup_bytes();
     match device.gpu_cores() {
         Some(cores) => {
             eprintln!("{cores} GPU cores, {local} bytes of threadgroup memory a group: {} groups", groups());

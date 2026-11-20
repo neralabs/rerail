@@ -280,7 +280,7 @@ pub fn groups() -> u64 {
     static G: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *G.get_or_init(|| {
         let Ok(device) = lane::device() else { return GROUPS_UNKNOWN };
-        let local = ["pp_setup", "px_expand"].iter().map(|k| kernel(k).threadgroup_bytes()).max().unwrap_or(0);
+        let local = kernel("pp_setup").threadgroup_bytes();
         device.resident_groups(TG as u32, local).map_or(GROUPS_UNKNOWN, |g| g.min(GROUPS_MOST))
     })
 }
@@ -303,7 +303,7 @@ pub const SLOTS: &[&str] = &[
     "P1_DEPTHN", "N_FT", "P1_FTKEYS", "P1_FTFILES", "P1_FOUNDBY", "P1_MAXDEPTH", "P1_LIVE",
     "P1_MADE", "P1_MADEF", "P1_ENTER", "P1_CAND", "P1_ONCE", "P1_NEWF", "P1_NEWAT", "P1_NNEW", "P1_REQS", "P1_NREQ", "P1_FLAGS", "P1_UFIRST",
     "NC", "DC", "GC", "TC", "P1_UFILE",
-    "RSTART", "RUNX", "RUNTOT", "RUN_END", "CNT", "CNT_CAP", "LB_CAP", "LDELTA", "LKEY", "LVAL", "LVALN", "LHEAD", "LATEST", "LATESTN", "ILINE", "ILINEN", "SLINE", "SLINEN", "LCTL", "IF_COUNT", "IF_FIRST", "IF_KIND", "IF_INST", "SINST", "P1_RNAMES", "P1_RNTOP", "RNC", "IF_AT", "IF_TOTAL", "IF_NODES", "IF_OPS", "IF_VAL", "IF_KEYS", "IF_TRUE", "N_IFOP", "IF_OPKEYS", "IF_OPKINDS", "N_FEAT", "IF_FEATKEYS", "IF_FEATVALS",
+    "RSTART", "RUNX", "RUNTOT", "RUN_END", "CNT", "CNT_CAP", "TR_SK", "TR_NK", "TR_TY", "TO_F", "TO_S", "CU_SLOT", "CU_SUB", "CU_UNIT", "TRN", "LREAD", "LB_CAP", "LDELTA", "LKEY", "LVAL", "LVALN", "LHEAD", "LATEST", "LATESTN", "ILINE", "ILINEN", "SLINE", "SLINEN", "LCTL", "IF_COUNT", "IF_FIRST", "IF_KIND", "IF_INST", "SINST", "P1_RNAMES", "P1_RNTOP", "RNC", "IF_AT", "IF_TOTAL", "IF_NODES", "IF_OPS", "IF_VAL", "IF_KEYS", "IF_TRUE", "N_IFOP", "IF_OPKEYS", "IF_OPKINDS", "N_FEAT", "IF_FEATKEYS", "IF_FEATVALS",
     "THEADS", "DELTA", "DEPTH", "CLOSE", "CLOSE_AT", "CLOSE_TOTAL", "CLOSE_KEYS", "CSORT_KB", "CSORT_VA", "CSORT_VB", "CSORT_HIST",
     "CLOSE_BITS", "CEND", "EHEADS", "REACH", "STATE", "OFLAG", "OID", "OTOTAL", "LISTS", "SLOTS", "CTL", "QCTL", "XFLAG", "XAT",
     "XTOTAL", "XPOS", "XCOVER", "V", "OBASE", "VTOTAL", "OUT", "TOKENS", "ARGS", "WORDS", "SCRATCH", "LIST_CAP", "OUT_CAP", "Q_CAP",
@@ -314,17 +314,26 @@ fn slot(name: &str) -> usize {
 }
 
 /// A run's layout: each slot's store offset in the arena, or its word.
-pub struct Lay(Vec<u32>);
+pub struct Lay(Vec<u32>, Vec<usize>);
 
 impl Lay {
     pub fn new() -> Lay {
-        Lay(vec![0; SLOTS.len()])
+        Lay(vec![0; SLOTS.len()], vec![0; SLOTS.len()])
     }
 
     /// Slot `name` at `b`'s offset.
     pub fn at(&mut self, name: &str, b: &Buf) -> &mut Lay {
         self.0[slot(name)] = u32::try_from(b.at).expect("an arena past 4 GiB");
+        self.1[slot(name)] = b.len;
         self
+    }
+
+    /// The `k` largest stores the layout names, by bytes (`RERAIL_PP_ARENA_LOG`'s report).
+    pub fn largest(&self, k: usize) -> Vec<(&'static str, usize)> {
+        let mut v: Vec<(&'static str, usize)> = SLOTS.iter().copied().zip(self.1.iter().copied()).filter(|s| s.1 > 0).collect();
+        v.sort_by_key(|s| std::cmp::Reverse(s.1));
+        v.truncate(k);
+        v
     }
 
     /// Slot `name` holding `v`.

@@ -165,9 +165,10 @@ UKL_INLINE uint32_t p1_grp_inst(UKL_GLOBAL const uint32_t* grp_first, uint32_t n
 
 // A new instance's groups (its words from `from`, the last iteration's end): its own, nothing
 // else, as the spike's `fresh`.
-UKL_INLINE void p1_grp_init(UKL_GLOBAL const uint32_t* grp_first, uint32_t n, UKL_GLOBAL const uint32_t* n_grp, uint32_t from, UKL_GLOBAL uint32_t* ga, uint32_t q) {
+UKL_INLINE void p1_grp_init(UKL_GLOBAL const uint32_t* grp_first, uint32_t n, UKL_GLOBAL const uint32_t* n_grp, uint32_t from, UKL_GLOBAL uint32_t* ga, UKL_GLOBAL uint32_t* taken, uint32_t q) {
     if (q < from || q >= n_grp[0]) return;
     ga[q] = grp_first[p1_grp_inst(grp_first, n, q)] == q ? 1u : 0u;
+    taken[q] = PP_NONE;
 }
 
 // Directive word `w`'s row, and its instance.
@@ -214,6 +215,17 @@ UKL_INLINE void p1_tests(UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32
         v = defined == (d.kind == K_IFDEF || d.kind == K_ELIFDEF);
     }
     if (v) ukl_atomic_min(&taken[grp_first[i] + d.chain], w - insts[i].dir_first);
+}
+
+// Whether directive word `w`'s line is read (decision 0475 §3): an `#elif` (or `#elifdef`,
+// `#elifndef`) after its chain's taken arm, the last iteration's, is not; every other is.
+UKL_INLINE void p1_line_read(UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32_t* n_nodes, UKL_GLOBAL const uint32_t* n_dirs, UKL_GLOBAL const uint32_t* dir_bases, UKL_GLOBAL const PpDir* rows,
+                             UKL_GLOBAL const uint32_t* grp_first, UKL_GLOBAL const uint32_t* taken, UKL_GLOBAL uint32_t* read, uint32_t w) {
+    if (w >= n_dirs[0]) return;
+    uint32_t i, r = p1_row_of(insts, n_nodes[0], dir_bases, w, &i);
+    PpDir d = rows[r];
+    bool elif = d.kind == K_ELIF || d.kind == K_ELIFDEF || d.kind == K_ELIFNDEF;
+    read[w] = d.chain != NO_CHAIN && elif && taken[grp_first[i] + d.chain] < w - insts[i].dir_first ? 0u : 1u;
 }
 
 // Each group's own flag (its arm taken; group 0 always) and its parent group's word.
