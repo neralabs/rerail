@@ -122,7 +122,7 @@ pub fn define_functions(module: &mut JITModule, items: Vec<(FuncId, Context)>, n
             function.colocated = near && matches!(function.name, cranelift_codegen::ir::ExternalName::User(_));
         }
     }
-    // On the one pool (decision 0100 §2), a share a thread of it.
+    // On the machine's pool (decisions 0100 §2, 0442), a share a thread of it.
     let threads = rerail_context::cores_threads().min(items.len()).max(1);
     let isa = module.isa();
     // The largest first, dealt round the threads.

@@ -591,7 +591,7 @@ impl Flight<'_> {
 /// A thread of the process's own that is no job: a service that waits (a writer on its queue, a sampler on its
 /// clock, a watcher on a signal, a device lane's worker on its batches), so it may not hold one of the pool's threads
 /// (decision 0100 §12: nothing that waits for another long job may itself be a job). Every thread the process makes
-/// outside the one pool is made here, named, and listed while it lives ([`services`]); the engine's source guard
+/// outside the machine's pool is made here, named, and listed while it lives ([`services`]); the engine's source guard
 /// (`executors_are_shared`) refuses a thread made anywhere else. `stack`: its stack's bytes, else the default.
 pub fn service<T: Send + 'static>(name: &str, stack: Option<usize>, f: impl FnOnce() -> T + Send + 'static) -> std::io::Result<std::thread::JoinHandle<T>> {
     let mut b = std::thread::Builder::new().name(name.to_owned());
@@ -749,7 +749,7 @@ fn worker(backend: Arc<dyn Backend>, board: Arc<Scoreboard>) -> std::sync::mpsc:
 }
 
 /// Runs a device lane's host work (`f`: its submission, its results read) on the lanes' own pool, where its parallel
-/// loops stay; the cores' lane runs it in place. On the one pool, a device lane's loop shared its threads with jobs
+/// loops stay; the cores' lane runs it in place. On the machine's pool, a device lane's loop shared its threads with jobs
 /// that wait on that lane: a pool thread waiting inside the loop's join took such a job, which blocked on the lane,
 /// which waited on the join below it, and neither moved. The lanes' pool runs no job that waits on a lane.
 fn lane_host<R>(lane: Lane, f: impl FnOnce() -> R) -> R {

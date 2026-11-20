@@ -5987,7 +5987,7 @@ fn run_observed_within(
         }
     }
     /// The chunk builder (decision 0100 §12): no thread of its own. Each window's files are resolved, each document
-    /// built, and each chunk projected, as a job on the one pool; whichever job ends, or the main thread when it asks
+    /// built, and each chunk projected, as a job on the machine's pool; whichever job ends, or the main thread when it asks
     /// for a chunk, advances the builder: the documents taken in order and cut into chunks, handed on as cut.
     struct Builder<'a, B, P, R> {
         cut: parking_lot::Mutex<Cut>,

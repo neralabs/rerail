@@ -26,7 +26,7 @@ const MADE: [(&str, &str); 7] = [
 /// The sites allowed besides the owners, each with why: a file, the pattern, and how many times it may appear.
 const EXCEPTIONS: [(&str, &str, usize, &str); 6] = [
     ("native/crates/context/src/lib.rs", "ThreadPoolBuilder::new(", 1, "a machine's pool (decision 0442: `Cores`): every job of the machine's callers runs on it; two machines in a process have two"),
-    ("native/src/code_rule_dsl/logic/costs.rs", "ThreadPoolBuilder::new(", 1, "the cost model trains at background QoS on two threads, beside the run; the one pool runs at the user's"),
+    ("native/src/code_rule_dsl/logic/costs.rs", "ThreadPoolBuilder::new(", 1, "the cost model trains at background QoS on two threads, beside the run; the machine's pool runs at the user's"),
     ("forest/src/mldb/plugins/jml/randomforest_procedure.rs", "ThreadPoolBuilder::new(", 2, "the forest's training bounds the bags trained at once; it runs inside the cost model's background pool"),
     ("accel/src/price_bench.rs", "ThreadPoolBuilder::new(", 1, "the price benchmark measures one core alone"),
     ("native/src/build_grammars.rs", "thread::scope(", 1, "the build script's grammars build a thread each; it runs in cargo, not in the engine's process, and links no rerail crate"),
