@@ -988,21 +988,19 @@ mod tests {
     #[test]
     fn a_root_past_the_budget_with_the_spare_room_too_is_refused() {
         let scratch = Scratch::new("spare-past");
-        let [spare, root] = folders_of(&scratch, ["spare", "root"]);
+        let [held, spare, root] = folders_of(&scratch, ["held", "spare", "root"]);
+        folders_of(&scratch, ["root/a"]);
+        let one = vec![String::new()];
         let notices = Arc::new(Notices::default());
-        let budget = just_fits(&[(&spare, vec![String::new()])]);
+        let budget = just_fits(&[(&held, one.clone()), (&spare, one.clone())]);
         let mut backend = Inotify::open_with_budget(Arc::clone(&notices), budget).expect("opens");
-        // One folder more than the whole budget.
-        let mut folders = vec![String::new()];
-        for index in 0..budget {
-            let name = format!("f{index}");
-            std::fs::create_dir(scratch.path(&format!("root/{name}"))).expect("create folder");
-            folders.push(name);
-        }
-        for watched in [&spare, &root] {
+        for watched in [&held, &spare, &root] {
             notices.start(watched);
         }
-        assert!(backend.watch_spare(&spare, &[String::new()]));
+        assert!(backend.watch(&held, &one));
+        assert!(backend.watch_spare(&spare, &one));
+        // One folder more than ending the spare root frees: the held root's room is not spare.
+        let folders = ["", "a"].map(str::to_owned);
         assert!(
             !backend.watch(&root, &folders),
             "it does not fit in the spare room either"
