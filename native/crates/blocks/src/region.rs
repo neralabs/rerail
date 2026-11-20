@@ -1,0 +1,615 @@
+//! Regions of a block, held by handles (decision 0491, after MLDB's memory regions: `MemoryRegionHandleInfo`,
+//! `MutableMemoryRegion::freeze`, `FrozenMemoryRegion::range`, `Manager::pinAccess`).
+//!
+//! A region is a run of `T`s in a block. It is held only through handles, and goes back to its block when the last
+//! one goes, and not before the GPU work that uses it completes. Each handle says what it may do with its type:
+//!
+//! ```text
+//! let mut m = Mutable::<u64>::alloc(&block, n, "edge rows")?;   // allocated: one writer
+//! m.write()[0] = 7;                                            // a CPU write: no reader, no GPU use, may be live
+//! let s: Shared<u64> = m.share();                              // a const handle: reads only (&[T])
+//! m.bind_read(&fence, "probe");                                 // a GPU read, pinned until the fence completes
+//! let f: Frozen<u64> = m.freeze();                              // immutable: read without guards, by any number
+//! let part = f.range(10, 20);                                   // keeps the whole region alive
+//! ```
+//!
+//! What cannot work fails at once, naming the region and where its other use began: two writers, a write while a
+//! read is live (CPU or GPU), a read while a write is, a GPU write of a frozen region, a freeze while it is read or
+//! written, a range past its end. A region's version counts its writes (a CPU write ended, a GPU write completed).
+
+use crate::Block;
+use crate::ledger::Fence;
+use std::marker::PhantomData;
+use std::panic::Location;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::*};
+use std::sync::{Arc, Mutex, MutexGuard};
+
+#[derive(Default)]
+struct Access {
+    reads: Vec<(u64, &'static Location<'static>)>,
+    write: Option<&'static Location<'static>>,
+    gpu_reads: Vec<(u64, &'static str)>,
+    gpu_writes: Vec<(u64, &'static str)>,
+    next: u64,
+}
+
+impl Access {
+    fn id(&mut self) -> u64 {
+        self.next += 1;
+        self.next
+    }
+
+    fn says(&self) -> String {
+        let mut v = Vec::new();
+        if let Some(w) = self.write {
+            v.push(format!("a CPU write from {w}"));
+        }
+        v.extend(self.reads.iter().map(|(_, l)| format!("a CPU read from {l}")));
+        v.extend(self.gpu_reads.iter().map(|(_, op)| format!("a GPU read by {op}")));
+        v.extend(self.gpu_writes.iter().map(|(_, op)| format!("a GPU write by {op}")));
+        v.join(", ")
+    }
+}
+
+/// A run of bytes in a block, and what holds and uses it. A range of another (`root`) shares its root's uses,
+/// version and state, and keeps it alive.
+pub struct Region {
+    block: Arc<Block>,
+    at: usize,
+    len: usize,
+    /// The chunk's bytes it gives back to its block when it goes (`try_alloc_chunk_fit`'s); 0 for a range, or a
+    /// region in a block without a free list (its bytes go with the block).
+    kept: usize,
+    root: Option<Arc<Region>>,
+    name: String,
+    frozen: AtomicBool,
+    version: AtomicU64,
+    access: Mutex<Access>,
+}
+
+fn fail(r: &Region, what: String) -> ! {
+    panic!("region '{}' ({} bytes at {} of its block): {what}", r.top().name, r.len, r.at);
+}
+
+impl Region {
+    fn top(&self) -> &Region {
+        self.root.as_deref().unwrap_or(self)
+    }
+
+    fn lock(&self) -> MutexGuard<'_, Access> {
+        self.top().access.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub fn block(&self) -> &Arc<Block> {
+        &self.block
+    }
+
+    /// Its offset in its block (where the device binds it).
+    pub fn at(&self) -> usize {
+        self.at
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub fn name(&self) -> &str {
+        &self.top().name
+    }
+
+    pub fn is_frozen(&self) -> bool {
+        self.top().frozen.load(Acquire)
+    }
+
+    /// Its writes so far: a CPU write ended, or a GPU write completed.
+    pub fn version(&self) -> u64 {
+        self.top().version.load(Acquire)
+    }
+
+    fn range(self: &Arc<Region>, start: usize, end: usize) -> Arc<Region> {
+        if start > end || end > self.len {
+            fail(self, format!("a range {start}..{end} of {} bytes", self.len));
+        }
+        let root = self.root.clone().unwrap_or_else(|| self.clone());
+        Arc::new(Region {
+            block: self.block.clone(),
+            at: self.at + start,
+            len: end - start,
+            kept: 0,
+            root: Some(root),
+            name: String::new(),
+            frozen: AtomicBool::new(false),
+            version: AtomicU64::new(0),
+            access: Mutex::default(),
+        })
+    }
+
+    #[track_caller]
+    fn begin_read(&self) -> u64 {
+        let mut a = self.lock();
+        if a.write.is_some() || !a.gpu_writes.is_empty() {
+            let says = a.says();
+            drop(a);
+            fail(self, format!("a CPU read from {} while {says}", Location::caller()));
+        }
+        let id = a.id();
+        a.reads.push((id, Location::caller()));
+        id
+    }
+
+    fn end_read(&self, id: u64) {
+        self.lock().reads.retain(|(i, _)| *i != id);
+    }
+
+    #[track_caller]
+    fn begin_write(&self) {
+        let mut a = self.lock();
+        if a.write.is_some() || !a.reads.is_empty() || !a.gpu_reads.is_empty() || !a.gpu_writes.is_empty() {
+            let says = a.says();
+            drop(a);
+            fail(self, format!("a CPU write from {} while {says}", Location::caller()));
+        }
+        a.write = Some(Location::caller());
+        // SAFETY of the ledger's check too: the chunk's bytes are not the GPU's now (R4 of 0487).
+        self.block.ledger().cpu_write(self.at, self.len);
+    }
+
+    fn end_write(&self) {
+        self.lock().write = None;
+        self.top().version.fetch_add(1, AcqRel);
+    }
+
+    /// A GPU use of it by `op`, pinned on `fence` until it completes (the region kept alive with it).
+    fn pin(self: &Arc<Region>, fence: &Fence, op: &'static str, write: bool) -> usize {
+        {
+            let mut a = self.lock();
+            let bad = if write {
+                if self.is_frozen() {
+                    Some("a GPU write of a frozen region".to_string())
+                } else if a.write.is_some() || !a.reads.is_empty() {
+                    Some(format!("a GPU write by {op} while {}", a.says()))
+                } else {
+                    None
+                }
+            } else if a.write.is_some() {
+                Some(format!("a GPU read by {op} while {}", a.says()))
+            } else {
+                None
+            };
+            if let Some(b) = bad {
+                drop(a);
+                fail(self, b);
+            }
+            let id = a.id();
+            if write {
+                a.gpu_writes.push((id, op));
+            } else {
+                a.gpu_reads.push((id, op));
+            }
+            let held = self.clone();
+            fence.on_complete(Box::new(move || {
+                let mut a = held.lock();
+                if write {
+                    a.gpu_writes.retain(|(i, _)| *i != id);
+                    held.top().version.fetch_add(1, AcqRel);
+                } else {
+                    a.gpu_reads.retain(|(i, _)| *i != id);
+                }
+            }));
+        }
+        // Its block's chunks are not freed under it either (0487 R3).
+        if write {
+            fence.writes(&self.block);
+        } else {
+            fence.reads(&self.block);
+        }
+        self.at
+    }
+
+    /// The device buffer to bind it with, and its offset in it.
+    #[cfg(target_os = "macos")]
+    fn buffer(&self, device: &metal::DeviceRef) -> (metal::Buffer, u64) {
+        (self.block.gpu_buffer(device), self.at as u64)
+    }
+
+    fn bytes(&self) -> *mut u8 {
+        self.block.ptr(self.at)
+    }
+}
+
+impl Drop for Region {
+    fn drop(&mut self) {
+        // Nothing can use it now: its guards borrow a handle, and its GPU pins hold it.
+        if self.root.is_none() && self.kept > 0 {
+            self.block.free_chunk_fit(self.at, self.kept);
+        }
+    }
+}
+
+macro_rules! common {
+    ($h:ident) => {
+        impl<T: crate::Pod> $h<T> {
+            /// The `T`s it holds.
+            pub fn len(&self) -> usize {
+                self.r.len / size_of::<T>()
+            }
+
+            pub fn is_empty(&self) -> bool {
+                self.r.len == 0
+            }
+
+            /// What it is: its block, offset, name, version, state.
+            pub fn region(&self) -> &Region {
+                &self.r
+            }
+
+            pub fn version(&self) -> u64 {
+                self.r.version()
+            }
+
+            /// A GPU read of it by `op`, until `fence` completes: its offset in its block's buffer.
+            pub fn bind_read(&self, fence: &Fence, op: &'static str) -> usize {
+                self.r.pin(fence, op, false)
+            }
+
+            /// `bind_read`, with the buffer to bind and its offset.
+            #[cfg(target_os = "macos")]
+            pub fn buffer_read(&self, fence: &Fence, op: &'static str, device: &metal::DeviceRef) -> (metal::Buffer, u64) {
+                self.r.pin(fence, op, false);
+                self.r.buffer(device)
+            }
+
+            fn elems(&self, start: usize, end: usize) -> (usize, usize) {
+                (start * size_of::<T>(), end * size_of::<T>())
+            }
+        }
+    };
+}
+
+/// A region one owner may write until it is frozen. Not `Clone`: its writes need `&mut`.
+pub struct Mutable<T: crate::Pod> {
+    r: Arc<Region>,
+    _t: PhantomData<T>,
+}
+
+/// A const handle of a region, open or frozen: it reads, under a guard while the region may still be written.
+pub struct Shared<T: crate::Pod> {
+    r: Arc<Region>,
+    _t: PhantomData<T>,
+}
+
+/// A frozen region: immutable, read as a slice by any number of holders, without guards.
+pub struct Frozen<T: crate::Pod> {
+    r: Arc<Region>,
+    _t: PhantomData<T>,
+}
+
+common!(Mutable);
+common!(Shared);
+common!(Frozen);
+
+impl<T: crate::Pod> Clone for Shared<T> {
+    fn clone(&self) -> Self {
+        Shared { r: self.r.clone(), _t: PhantomData }
+    }
+}
+
+impl<T: crate::Pod> Clone for Frozen<T> {
+    fn clone(&self) -> Self {
+        Frozen { r: self.r.clone(), _t: PhantomData }
+    }
+}
+
+impl<T: crate::Pod> Mutable<T> {
+    /// `n` zeroed `T`s in `block`, named `name` for what fails: a chunk of its free list (given back when the last
+    /// handle goes), or from its front. `None` when it has no room.
+    pub fn alloc(block: &Arc<Block>, n: usize, name: impl Into<String>) -> Option<Mutable<T>> {
+        let bytes = (n * size_of::<T>()).max(1);
+        let align = align_of::<T>().max(8);
+        let (at, kept) = if block.has_free_list() { block.try_alloc_chunk_fit_zeroed(bytes, align)? } else { (block.try_alloc(bytes, align)?, 0) };
+        let r = Region {
+            block: block.clone(),
+            at,
+            len: n * size_of::<T>(),
+            kept,
+            root: None,
+            name: name.into(),
+            frozen: AtomicBool::new(false),
+            version: AtomicU64::new(0),
+            access: Mutex::default(),
+        };
+        Some(Mutable { r: Arc::new(r), _t: PhantomData })
+    }
+
+    /// Writes it: no other write, no read (CPU or GPU) may be live, and none may begin until the guard goes.
+    #[track_caller]
+    pub fn write(&mut self) -> Write<'_, T> {
+        self.r.begin_write();
+        Write { r: &self.r, _t: PhantomData }
+    }
+
+    /// Reads it: no write may be live.
+    #[track_caller]
+    pub fn read(&self) -> Read<'_, T> {
+        let id = self.r.begin_read();
+        Read { r: &self.r, id, _t: PhantomData }
+    }
+
+    /// A const handle of it.
+    pub fn share(&self) -> Shared<T> {
+        Shared { r: self.r.clone(), _t: PhantomData }
+    }
+
+    /// The `T`s `start..end` as a region of their own, writable, kept with this one: it and this one never write at
+    /// once (their uses are one region's).
+    pub fn range(&self, start: usize, end: usize) -> Mutable<T> {
+        let (a, b) = self.elems(start, end);
+        Mutable { r: self.r.range(a, b), _t: PhantomData }
+    }
+
+    /// A GPU write of it by `op`, until `fence` completes: its offset in its block's buffer.
+    pub fn bind_write(&self, fence: &Fence, op: &'static str) -> usize {
+        self.r.pin(fence, op, true)
+    }
+
+    /// `bind_write`, with the buffer to bind and its offset.
+    #[cfg(target_os = "macos")]
+    pub fn buffer_write(&self, fence: &Fence, op: &'static str, device: &metal::DeviceRef) -> (metal::Buffer, u64) {
+        self.r.pin(fence, op, true);
+        self.r.buffer(device)
+    }
+
+    /// Freezes it: no CPU read or write may be live, and no GPU write queued; GPU reads may be.
+    #[track_caller]
+    pub fn freeze(self) -> Frozen<T> {
+        {
+            let a = self.r.lock();
+            if a.write.is_some() || !a.reads.is_empty() || !a.gpu_writes.is_empty() {
+                let says = a.says();
+                drop(a);
+                fail(&self.r, format!("a freeze from {} while {says}", Location::caller()));
+            }
+        }
+        if self.r.root.is_some() {
+            fail(&self.r, "a freeze of a range (freeze the region it is part of)".into());
+        }
+        self.r.frozen.store(true, Release);
+        Frozen { r: self.r, _t: PhantomData }
+    }
+}
+
+impl<T: crate::Pod> Shared<T> {
+    /// Reads it: no write may be live.
+    #[track_caller]
+    pub fn read(&self) -> Read<'_, T> {
+        let id = self.r.begin_read();
+        Read { r: &self.r, id, _t: PhantomData }
+    }
+
+    pub fn range(&self, start: usize, end: usize) -> Shared<T> {
+        let (a, b) = self.elems(start, end);
+        Shared { r: self.r.range(a, b), _t: PhantomData }
+    }
+}
+
+impl<T: crate::Pod> Frozen<T> {
+    pub fn range(&self, start: usize, end: usize) -> Frozen<T> {
+        let (a, b) = self.elems(start, end);
+        Frozen { r: self.r.range(a, b), _t: PhantomData }
+    }
+
+    /// A const handle of it.
+    pub fn share(&self) -> Shared<T> {
+        Shared { r: self.r.clone(), _t: PhantomData }
+    }
+}
+
+impl<T: crate::Pod> std::ops::Deref for Frozen<T> {
+    type Target = [T];
+    fn deref(&self) -> &[T] {
+        // SAFETY: frozen, nothing writes it (its one writer was consumed, and a GPU write of it fails); it lives as
+        // long as this handle.
+        unsafe { std::slice::from_raw_parts(self.r.bytes().cast::<T>(), self.len()) }
+    }
+}
+
+/// A live CPU read of a region.
+pub struct Read<'a, T: crate::Pod> {
+    r: &'a Arc<Region>,
+    id: u64,
+    _t: PhantomData<T>,
+}
+
+impl<T: crate::Pod> Read<'_, T> {
+    /// The version it reads.
+    pub fn version(&self) -> u64 {
+        self.r.version()
+    }
+}
+
+impl<T: crate::Pod> std::ops::Deref for Read<'_, T> {
+    type Target = [T];
+    fn deref(&self) -> &[T] {
+        // SAFETY: no write is live while this read is (`begin_read`, `begin_write`).
+        unsafe { std::slice::from_raw_parts(self.r.bytes().cast::<T>(), self.r.len / size_of::<T>()) }
+    }
+}
+
+impl<T: crate::Pod> Drop for Read<'_, T> {
+    fn drop(&mut self) {
+        self.r.end_read(self.id);
+    }
+}
+
+/// A live CPU write of a region.
+pub struct Write<'a, T: crate::Pod> {
+    r: &'a Arc<Region>,
+    _t: PhantomData<T>,
+}
+
+impl<T: crate::Pod> std::ops::Deref for Write<'_, T> {
+    type Target = [T];
+    fn deref(&self) -> &[T] {
+        // SAFETY: this write is the region's only use while it lives.
+        unsafe { std::slice::from_raw_parts(self.r.bytes().cast::<T>(), self.r.len / size_of::<T>()) }
+    }
+}
+
+impl<T: crate::Pod> std::ops::DerefMut for Write<'_, T> {
+    fn deref_mut(&mut self) -> &mut [T] {
+        // SAFETY: as `deref`.
+        unsafe { std::slice::from_raw_parts_mut(self.r.bytes().cast::<T>(), self.r.len / size_of::<T>()) }
+    }
+}
+
+impl<T: crate::Pod> Drop for Write<'_, T> {
+    fn drop(&mut self) {
+        self.r.end_write();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::block::kind;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    fn block() -> Arc<Block> {
+        Arc::new(Block::anon(kind::FACTS, 8 << 20).with_free_list())
+    }
+
+    fn fails(f: impl FnOnce()) -> bool {
+        catch_unwind(AssertUnwindSafe(f)).is_err()
+    }
+
+    /// A write while a read is live fails, through any handle; once the read goes it passes.
+    #[test]
+    fn a_write_while_a_read_is_live_fails() {
+        let b = block();
+        let mut m = Mutable::<u64>::alloc(&b, 64, "rows").unwrap();
+        let s = m.share();
+        {
+            let r = s.read();
+            assert!(fails(|| drop(m.write())), "a reader is live");
+            drop(r);
+        }
+        m.write()[3] = 7;
+        assert_eq!(s.read()[3], 7);
+    }
+
+    /// A read while a write is live fails, and so does a second writer (a range of the same region).
+    #[test]
+    fn a_read_or_a_second_write_while_a_write_is_live_fails() {
+        let b = block();
+        let mut m = Mutable::<u64>::alloc(&b, 64, "rows").unwrap();
+        let s = m.share();
+        let mut part = m.range(0, 8);
+        let w = m.write();
+        assert!(fails(|| drop(s.read())), "a write is live");
+        assert!(fails(|| drop(part.write())), "two writers");
+        drop(w);
+        part.write()[0] = 1;
+    }
+
+    /// The CPU may not write a region a queued GPU read or write uses, nor read one a GPU write uses; the GPU may not
+    /// write one a CPU read is live on. Once the fence completes, they pass.
+    #[test]
+    fn cpu_and_gpu_uses_of_a_region_conflict_as_readers_and_writers() {
+        let b = block();
+        let mut m = Mutable::<u32>::alloc(&b, 1024, "index").unwrap();
+        let f = Fence::new();
+        m.bind_read(&f, "probe");
+        let _ = m.read();
+        assert!(fails(|| drop(m.write())), "a GPU read is queued");
+        f.complete();
+        m.write()[0] = 1;
+        let g = Fence::new();
+        m.bind_write(&g, "build");
+        assert!(fails(|| drop(m.read())), "a GPU write is queued");
+        g.complete();
+        let r = m.read();
+        let h = Fence::new();
+        assert!(fails(|| { m.bind_write(&h, "build"); }), "a CPU read is live");
+        drop(r);
+    }
+
+    /// A frozen region is read without guards by any number of holders; a GPU write of it fails, as does a freeze
+    /// while it is read or written.
+    #[test]
+    fn a_frozen_region_reads_without_guards_and_refuses_writes() {
+        let b = block();
+        let mut m = Mutable::<u64>::alloc(&b, 16, "kept").unwrap();
+        m.write()[5] = 42;
+        let s = m.share();
+        let r = s.read();
+        // The freeze consumes `m`, so it is tried on one that is read.
+        let other = Mutable::<u64>::alloc(&b, 16, "other").unwrap();
+        let read = other.share();
+        let live = read.read();
+        assert!(fails(move || drop(other.freeze())), "a read is live");
+        drop(live);
+        drop(r);
+        let f = m.freeze();
+        let g = f.clone();
+        assert_eq!((f[5], g[5]), (42, 42));
+        let fence = Fence::new();
+        assert!(fails(|| { s.r.pin(&fence, "w", true); }), "a GPU write of a frozen region");
+        f.bind_read(&fence, "r");
+    }
+
+    /// A region goes back to its block when its last handle goes, and not before the GPU work that uses it
+    /// completes.
+    #[test]
+    fn a_region_is_freed_with_its_last_handle_after_its_gpu_work() {
+        let b = block();
+        let m = Mutable::<u64>::alloc(&b, 512, "rows").unwrap();
+        let at = m.region().at();
+        let s = m.share();
+        drop(m);
+        let busy = Mutable::<u64>::alloc(&b, 512, "busy").unwrap();
+        assert_ne!(busy.region().at(), at, "a shared handle holds it");
+        let f = Fence::new();
+        s.bind_read(&f, "probe");
+        drop(s);
+        let again = Mutable::<u64>::alloc(&b, 512, "again").unwrap();
+        assert_ne!(again.region().at(), at, "the GPU's read holds it");
+        f.complete();
+        let last = Mutable::<u64>::alloc(&b, 512, "last").unwrap();
+        assert_eq!(last.region().at(), at, "back in its block once the read completed");
+    }
+
+    /// A range keeps its region alive and shares its uses and version; a range past the end fails.
+    #[test]
+    fn a_range_keeps_its_region_and_shares_its_uses() {
+        let b = block();
+        let mut m = Mutable::<u64>::alloc(&b, 512, "rows").unwrap();
+        let at = m.region().at();
+        m.write()[100] = 9;
+        let f = m.freeze();
+        let part = f.range(100, 110);
+        drop(f);
+        assert_eq!(part[0], 9);
+        assert_ne!(Mutable::<u64>::alloc(&b, 512, "x").unwrap().region().at(), at, "the range holds it");
+        assert!(fails(|| drop(part.range(5, 11))), "past its end");
+        assert_eq!(part.region().name(), "rows");
+    }
+
+    /// A region's version counts its writes: a CPU write ended, a GPU write completed.
+    #[test]
+    fn a_write_moves_the_version() {
+        let b = block();
+        let mut m = Mutable::<u64>::alloc(&b, 8, "v").unwrap();
+        assert_eq!(m.version(), 0);
+        m.write()[0] = 1;
+        assert_eq!(m.version(), 1);
+        let f = Fence::new();
+        m.bind_write(&f, "k");
+        assert_eq!(m.version(), 1, "not until it completes");
+        f.complete();
+        assert_eq!(m.share().read().version(), 2);
+    }
+}

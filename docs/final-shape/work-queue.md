@@ -5476,6 +5476,10 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   and the deferrable slabs under a ledger of their own.
 - **Next, step 4:** a chunk's CPU writers (BlockVec, a relation's rows) check the ledger at each write's start (R4).
 - **Then:** Q262's format-16 runs again, 20 at 1,629.
+- **Then (decision 0491, the user, 2026-11-20):** region handles over blocks, MLDB's shape (`rerail_blocks::region`:
+  `Mutable` / `Shared` / `Frozen`, pins, versions, implicit freeing), built. The owners move to them one at a time:
+  `Cells`, a relation's columns and indexes (`BlockVec`, `rows`), the device's handles (`DevRel`, `Held::kept`); then
+  the block itself as the root region.
 
 ### Q263. A relation's statistics kept by delta are on the heap (0450 R5) — done (0450 step 6f)
 

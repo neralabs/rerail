@@ -424,13 +424,15 @@ pub fn of_address(addr: usize) -> Option<Arc<Ledger>> {
 /// (or when dropped: work never committed ran nothing).
 pub struct Fence {
     uses: Mutex<Vec<(Arc<Ledger>, u64, u64)>>,
+    /// What completing it lets go of, before its blocks' uses end: the pins its work holds (`region`).
+    after: Mutex<Vec<Box<dyn FnOnce() + Send>>>,
     done: AtomicBool,
     signal: Condvar,
 }
 
 impl Fence {
     pub fn new() -> Arc<Fence> {
-        Arc::new(Fence { uses: Mutex::new(Vec::new()), done: AtomicBool::new(false), signal: Condvar::new() })
+        Arc::new(Fence { uses: Mutex::new(Vec::new()), after: Mutex::new(Vec::new()), done: AtomicBool::new(false), signal: Condvar::new() })
     }
 
     fn add(&self, ledger: &Arc<Ledger>, access: Access, chunk: Option<(usize, usize)>) {
@@ -452,6 +454,16 @@ impl Fence {
             self.add(&l, Access::Write, None);
         }
         true
+    }
+
+    /// Runs `f` when its work completes (a pin its work holds, let go). Fails on a fence already complete.
+    pub fn on_complete(&self, f: Box<dyn FnOnce() + Send>) {
+        let _uses = self.uses.lock().unwrap_or_else(|e| e.into_inner());
+        if self.done.load(Acquire) {
+            drop(_uses);
+            panic!("block ledger: a pin taken on a fence already complete");
+        }
+        self.after.lock().unwrap_or_else(|e| e.into_inner()).push(f);
     }
 
     /// Its work reads `block`, anywhere in it.
@@ -484,6 +496,11 @@ impl Fence {
             }
             std::mem::take(&mut *uses)
         };
+        // Pins first: a region its work held may go now, its chunk freed while the block's use still holds it.
+        let after = std::mem::take(&mut *self.after.lock().unwrap_or_else(|e| e.into_inner()));
+        for f in after {
+            f();
+        }
         for (ledger, id, epoch) in uses {
             ledger.end(id, epoch);
         }
