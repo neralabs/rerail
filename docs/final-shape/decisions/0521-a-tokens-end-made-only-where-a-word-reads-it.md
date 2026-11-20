@@ -33,7 +33,18 @@ theirs, which the close of their container reads.
   `}` and `]` does, and the tapes equal the JIT's.
 - `aot_tests::grammars_rust_tapes_are_the_jits`: every grammar's Rust writes the JIT's tapes.
 
+## Strings (done after)
+
+- A string copies the end it is given as the last token's (`s.last_end = s.rec_end;`), then makes both again at its
+  parts. The walk takes the copy on, as the last token's end, at the closer's place, and nothing else.
+- An opener's arm (`"`) makes its end only where `end_read` holds. In JSON, none does.
+- The string's copies of the last token's end, at its head and after each content part, are written only where a
+  word after the closer reads them (`end_read_from(closer, last)`). In JSON, none is.
+
+Checked by the JSON test (the tapes equal the JIT's) and the AOT test.
+
 ## Left
 
-- An opener's arm (`"`) still makes its end. The string's loop copies it first (`s.last_end = s.rec_end;`). Whether a
-  word reads that copy is the same walk over the region's words, not done.
+- `s.part_at` stays a field the opener's arm sets and the string reads, where the lean parser passes the place as an
+  argument (`self.string(v)`). Words can come between the arm and the call (an `OPEN`, a field), so the call does not
+  know the opener's place without the field.

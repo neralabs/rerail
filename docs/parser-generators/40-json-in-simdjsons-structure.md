@@ -597,9 +597,10 @@ Rust trees test asserts that the source has none.
 
 | | the lean parser | before | now |
 |---|---|---|---|
-| A punctuation's end | none kept; an end computed where it is written | `s.rec_end = s.start + 1;` in every one-byte arm | only where a word reads it (`end_read`): `}` and `]`, not `,`, `:`, `{`, `[` |
+| A punctuation's end | none kept; an end computed where it is written | `s.rec_end = s.start + 1;` in every one-byte arm | only where a word reads it (`end_read`): `}` and `]`, not `,`, `:`, `{`, `[`, `"` |
+| The last token's end in a string | none | copied at the loop's head and after each content | only where a word after the closer reads it: in JSON, nowhere |
 
-Left: the opener `"` still makes its end, which the string's loop copies first (0521, "Left").
+Left: `s.part_at`, a field where the lean parser passes an argument (0521, "Left").
 
 ## Step 42, done: each word once, one room check, coded refusals, the source laid out (decision 0519)
 

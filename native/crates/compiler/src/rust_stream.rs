@@ -3404,7 +3404,7 @@ fn fetched_arms(x: &Facts<'_>, fx: &Fetched, sw: &ByteSwitch, p: &mut Plan) -> S
         let body = match form {
             // Its end only where a word reads it (`end_read`).
             0 => format!("{}{}{}", if end_read(x, one) { "s.rec_end = s.start + 1;\n" } else { "" }, code_set(x, &[one], a), p.to(one)),
-            1 => format!("s.rec_end = s.start + 1;\n{}s.part_at = s.start + 1;\n{}", code_set(x, &[one], a), p.to(one)),
+            1 => format!("{}{}s.part_at = s.start + 1;\n{}", if end_read(x, one) { "s.rec_end = s.start + 1;\n" } else { "" }, code_set(x, &[one], a), p.to(one)),
             _ => {
                 let r = a;
                 let (mut tests, mut arms) = (String::new(), String::new());
@@ -3589,23 +3589,31 @@ fn known_leaf(x: &Facts<'_>, at: u16, code: u32) -> Result<Option<(String, u16)>
 /// walked twice over: the end itself, and the end a `TOKEN` passes on as the last token's (`last_end`), until a word
 /// makes it again. A word not known to leave both alone reads them; outside a direct run, every end is read.
 fn end_read(x: &Facts<'_>, t: u16) -> bool {
+    end_read_from(x, usize::from(t), false)
+}
+
+/// `end_read` from word `t`, of the last token's end where `last` (a string's copy of it: `part_plan`).
+fn end_read_from(x: &Facts<'_>, t: usize, last: bool) -> bool {
     if !(x.sixteen && x.coded) || x.flagged {
         return true;
     }
     let words = &x.native.structural;
     // (word, the last token's end, not this one's)
     let mut seen: HashSet<(usize, bool)> = HashSet::new();
-    let mut work = vec![(usize::from(t), false)];
+    let mut work = vec![(t, last)];
     while let Some((pc, last)) = work.pop() {
         if pc >= words.len() || !seen.insert((pc, last)) {
             continue;
         }
-        // A string reads this end first, and makes the last one again.
-        if x.fetch.as_ref().is_some_and(|fx| fx.part_at(x, pc)) {
-            if last {
-                continue;
+        // A string copies this end first, as the last token's (`s.last_end = s.rec_end;`), then makes both again
+        // at its parts (a content's end, the closer's): this end on, as the last one, at the closer's place, where
+        // no part came between. The last one in it is made again.
+        if let Some(fx) = x.fetch.as_ref().filter(|fx| fx.part_at(x, pc)) {
+            if !last {
+                let Ok(pf) = part_facts(x, fx, pc) else { return true };
+                work.push((usize::from(past_span(x, pf.closer, 1)), true));
             }
-            return true;
+            continue;
         }
         // The words after, as they run: a call's callee, a return's places, else each word's own (not `succ`, which
         // writes each switch's arms, and so asks this again).
@@ -3778,8 +3786,10 @@ fn part_plan(x: &Facts<'_>, fx: &Fetched, pc: usize) -> Plan {
     // A content part whose words go straight back to this one: they are written here, and the
     // stop found is taken on at once, not found again, as `copy_and_find` handles its stop.
     let room = if x.unchecked { "" } else { "s.room()?;\n" };
+    // The last token's end, kept at each part, only where a word after the closer reads it (`end_read_from`).
+    let keep = if end_read_from(x, usize::from(past_span(x, pf.closer, 1)), true) { "s.last_end = s.rec_end;\n" } else { "" };
     let (content, then) = match straight_to(x, pf.content, pc) {
-        Some(code) => (format!("{code}{room}s.last_end = s.rec_end;\n"), "}\n"),
+        Some(code) => (format!("{code}{room}{keep}"), "}\n"),
         None => (p.to(pf.content), "} else "),
     };
     // The closer is one byte: its place's test of that (`SPAN`) holds, and is not made again.
@@ -3796,8 +3806,7 @@ fn part_plan(x: &Facts<'_>, fx: &Fetched, pc: usize) -> Plan {
     to[0] = pf.part;
     let by_word = arms(&mut p, "s.word()", &to);
     p.code = format!(
-        "{}s.last_end = s.rec_end;
-let at = s.part_at;
+        "{}{keep}let at = s.part_at;
 let (i, closer) = s.part_stop(at)?;
 if i != at {{
 // The bytes before the stop: content (its code read by no word after).
