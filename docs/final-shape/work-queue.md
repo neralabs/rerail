@@ -7083,3 +7083,21 @@ Python process for every batch, though `code_rule_dsl::cpython` computes the sam
 - **To do**: find which `session::current()` a phase's run gets, and whether gctm's in-memory phase can hold its
   kept part in the session. Then run Bend's branch at the cycle cut with `RERAIL_STRATA_LIVE=1` and compare which
   inputs it asks.
+
+### Q362. A partial hit's cone that sees annotations only through `FoldOwn` admits none of them (open)
+
+- **Found** (2026-11-20, on the sync branch after the merges of 2026-11-19 and 2026-11-20): Q77's test
+  `a_partial_hit_makes_only_the_guests_its_cone_can_see` fails at its third edit. `ids(m, x) :- idents(m, x), …`
+  names no guest, but hiding folded `idents`' copies for the annotations back into it (`FoldOwn`, its bound widened
+  to `HIDDEN_KEYS`), so a full run's `ids` holds the annotations' identifiers (`Bar`). The chunk of partial hits
+  runs the cone `{ids}`, which `guests::guests_seen` rightly reads as `Seen::Annotations`, yet its rows lack them.
+- **What was found**: the program has no embed slice (`embed_slice` is `None`: `parsed` asks inside the fixpoint,
+  decision 0431 §8), so no chunk replays the entries' guest requests (`replay` needs a slice) and `seeing` is never
+  applied. A tape value is admitted only when a rule of the cone asks for its parse, and the cone of `ids` asks for
+  none: the request rules come into a cone only through a produced relation it reads (`wanted_cone`'s `requests`),
+  and it reads no `parsed`. Adding `string_annotation` and `parsed` to the cone's batch projection
+  (`cone_projection`) is not enough: the annotations are still never asked for.
+- **Next**: a cone whose `guests_seen` is `Annotations` or more holds the requests that make those guests in a full
+  run (the request rules of `rr_embed_req` for the annotation grammar, with what their bodies read), and its
+  admission is bounded by `seeing`. Then see whether 0431 §8's answer (`kept_guests`, made only in the slice's
+  branch now) is reached in a chunk with no slice. The test is ignored with this item.
