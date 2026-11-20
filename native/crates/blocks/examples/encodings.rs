@@ -427,6 +427,9 @@ struct Dev {
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 type Buf = rerail_device::device::Buffer;
+/// A kernel's launch: the kernel, its buffers by name, its parameters, its threadgroups and their size.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+type Launch<'a> = (&'a rerail_gpu::device::ComputeFunction, &'a [(&'a str, &'a Buf)], P, u64, u64);
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 impl Dev {
@@ -438,9 +441,8 @@ impl Dev {
         program.function(name).unwrap_or_else(|e| panic!("{name}: {e}"))
     }
 
-    /// Runs each of `launches` in order, in one submission, and waits: (kernel, its buffers by name, its parameters,
-    /// its threadgroups and their size).
-    fn submit(&self, launches: &[(&rerail_gpu::device::ComputeFunction, &[(&str, &Buf)], P, u64, u64)]) {
+    /// Runs each of `launches` in order, in one submission, and waits.
+    fn submit(&self, launches: &[Launch<'_>]) {
         let mut q = rerail_gpu::device::ComputeQueue::new(&self.shared.queue);
         for &(f, bufs, p, groups, local) in launches {
             let mut l = rerail_gpu::kernels::launch(&q, f).value("a", &p);
@@ -453,7 +455,7 @@ impl Dev {
     }
 
     /// The best of 6 runs of `before` (on the host, untimed) then `launches`, in ms.
-    fn best(&self, before: &dyn Fn(), launches: &[(&rerail_gpu::device::ComputeFunction, &[(&str, &Buf)], P, u64, u64)]) -> f64 {
+    fn best(&self, before: &dyn Fn(), launches: &[Launch<'_>]) -> f64 {
         let mut b = f64::MAX;
         for _ in 0..6 {
             before();
@@ -584,13 +586,14 @@ fn gpu() {
     let cpu1 = cpu(Some(&one));
     let cpun = cpu(None);
     let gbs = |bytes: usize, ms: f64| bytes as f64 / ms / 1e6;
+    let mib = |bytes: usize| bytes >> 20;
     println!("GPU, {} values under 2^18 (best of 6, warm, buffers kept):", count(n as u64));
-    println!("  scan   plain  {:>8} MB {:>7.2} ms  {:>6.1} GB/s", plain.len() * 4 >> 20, sp, gbs(plain.len() * 4, sp));
-    println!("  scan   packed {:>8} MB {:>7.2} ms  {:>6.1} GB/s of packed bytes ({} bits)", e.data.len() * 8 >> 20, sk, gbs(e.data.len() * 8, sk), e.bits);
-    println!("  scan   grouped{:>8} MB {:>7.2} ms  {:>6.1} GB/s of packed bytes (bits compiled in, 32 a thread)", inter.len() * 4 >> 20, sg, gbs(inter.len() * 4, sg));
+    println!("  scan   plain  {:>8} MB {:>7.2} ms  {:>6.1} GB/s", mib(plain.len() * 4), sp, gbs(plain.len() * 4, sp));
+    println!("  scan   packed {:>8} MB {:>7.2} ms  {:>6.1} GB/s of packed bytes ({} bits)", mib(e.data.len() * 8), sk, gbs(e.data.len() * 8, sk), e.bits);
+    println!("  scan   grouped{:>8} MB {:>7.2} ms  {:>6.1} GB/s of packed bytes (bits compiled in, 32 a thread)", mib(inter.len() * 4), sg, gbs(inter.len() * 4, sg));
     println!("  gather plain  {} reads {:>7.2} ms", count(g), gp);
     println!("  gather packed {} reads {:>7.2} ms", count(g), gk);
-    println!("packing {} values ({} MB in, {} MB out, {} bits):", count(n as u64), plain.len() * 4 >> 20, seq.len() * 4 >> 20, pbits);
+    println!("packing {} values ({} MB in, {} MB out, {} bits):", count(n as u64), mib(plain.len() * 4), mib(seq.len() * 4), pbits);
     println!("  GPU min/max                  {:>7.2} ms", t_mm);
     println!("  GPU pack, CPU layout         {:>7.2} ms  {:>6.1} GB/s read+written", t_seq, gbs(plain.len() * 4 + seq.len() * 4, t_seq));
     println!("  GPU pack, interleaved        {:>7.2} ms  {:>6.1} GB/s", t_inter, gbs(plain.len() * 4 + seq.len() * 4, t_inter));
