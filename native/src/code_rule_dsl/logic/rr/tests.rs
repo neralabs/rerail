@@ -2289,7 +2289,7 @@ roots(k) :- kind(s, "string"), parsed(s, "annotation", r), kind(r, k).
     // ("Li" "st"): each part is a string of its own, and the concatenation is List, from its first part's text.
     assert!(names.contains(&shown_row(&["Li", "5", "5"])), "{names:?}");
     assert_eq!(whole, [["List", "5", "5"]]);
-    // Each root is a `type` (decision 0466 R5): what follows `x:` in a file.
+    // Each root is a `type` (decision 0482 R5): what follows `x:` in a file.
     assert_eq!(roots, [["type"]]);
     // 'Baz' inside "Opt['Baz']": round 2, through the annotation; `ident` does not see inside it.
     assert_eq!(nested, [["Baz"]]);
@@ -2299,7 +2299,7 @@ roots(k) :- kind(s, "string"), parsed(s, "annotation", r), kind(r, k).
 
 /// Decision 0431 §7 (it replaces Q30): a string a rule parses is a tape value, stored with its text behind the run,
 /// so the next run finds it by the text and parses nothing (R6). The host's source is stored, and so is the
-/// annotation's text, as it is (no wrapper). Decision 0466 R6: its tape is stored under the fragment's own tag, and
+/// annotation's text, as it is (no wrapper). Decision 0482 R6: its tape is stored under the fragment's own tag, and
 /// no tape of the text under Python's.
 #[test]
 fn a_run_stores_its_tape_values_by_their_text() {

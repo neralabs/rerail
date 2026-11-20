@@ -155,7 +155,7 @@ fn embedding(host: &Document, name: &str) -> Option<crate::code_rule_dsl::langua
     dialect.embeds().iter().map(|&(via, _)| via).find(|via| via.id() == name)
 }
 
-/// A grammar name's dialect label, and the fragment it parses (decision 0466: from a node kind, its tapes under its
+/// A grammar name's dialect label, and the fragment it parses (decision 0482: from a node kind, its tapes under its
 /// own tag): a fragment the registry declares (decision 0082), or a dialect's label, a whole text.
 fn grammar(name: &str) -> Option<(&'static str, Option<core::Fragment>)> {
     if let Some((dialect, _)) = crate::code_rule_dsl::language::fragment(name) {
@@ -760,7 +760,7 @@ fn embedded(host: &Document, build: &mut dyn FnMut(crate::code_rule_dsl::embed::
     build(root, host.facts.source.as_str())
 }
 
-/// A guest's or value's tree: its facts, its root (0: a fragment's tape is rooted at its start node, decision 0466),
+/// A guest's or value's tree: its facts, its root (0: a fragment's tape is rooted at its start node, decision 0482),
 /// and the facts' digest.
 type Parsed = (Arc<core::Facts>, u32, [u8; 32]);
 

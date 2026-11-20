@@ -94,7 +94,7 @@ pub fn tape_into<T>(src: &[u8], dialect: Dialect, finish: &mut dyn rerail_tape_f
     parse::parse_into(src, dialect, finish)
 }
 
-/// The node kinds a parse may start at (decision 0466): a whole file, or one JSX element alone ([`tape_from_into`]).
+/// The node kinds a parse may start at (decision 0482): a whole file, or one JSX element alone ([`tape_from_into`]).
 pub const STARTS: &[&str] = &["program", "jsx_element", "jsx_self_closing_element"];
 
 /// [`tape_into`] from the node kind `start` (one of [`STARTS`]): its tape's root is one node of that kind over `src`,
@@ -169,7 +169,7 @@ mod tests {
         tape_from_into(src.as_bytes(), Dialect::JavaScript, start, &mut rerail_tape_format::Writer::<rerail_tape_format::Widths>::finish_columns).unwrap()
     }
 
-    /// Decision 0466 R1: a JSX element alone is one root of its kind over the text less blanks, nothing above it.
+    /// Decision 0482 R1: a JSX element alone is one root of its kind over the text less blanks, nothing above it.
     #[test]
     fn a_jsx_fragment_is_rooted_at_its_element() {
         for (src, start, root) in [

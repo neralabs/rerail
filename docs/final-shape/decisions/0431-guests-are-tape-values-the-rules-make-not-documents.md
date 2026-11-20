@@ -7,7 +7,7 @@ the facts that the program produces and not changed next time it's run?". On a g
 parsed string is named by its tape ("do a"); and the split below ("okay, I agree with that"). Supersedes 0055's guest
 documents (§4, "What was built" 3–4) and 0391 (guest keys) but for a file's programs (§4). On a program's node ids,
 §4's second choice, a key of its own from 0391's registry (2026-11-19, the user: "okay, let's try b"). On how a
-rule names a program, by its file and place (§4, Q267's first choice; 2026-11-19, the user: "pick a for the decision").
+rule names a program, by its file and place (§4, Q337's first choice; 2026-11-19, the user: "pick a for the decision").
 Step 3 done (2026-11-19). Step 5 done (2026-11-19): guests 32.1 s and 34.4 s to 0.16 s and 0.33 s, instructions
 2,476 to 2,421 G (CPU) and 2,071 to 1,800 G (Metal), findings unchanged. Keeps 0055's model of a tape as content, 0058 (hiding,
 normalized strings, `@parse`), 0104 (no SQL in the waves), 0353 (blocks never copied), 0426 (format 16, unchanged).
@@ -83,8 +83,8 @@ code may be named by which rules asked for it, or in what order.
    `doc_root`, `guest`) name a program by it, and a batch's lookups keep to one document by it (0329's `lookup_in`).
    Made the file's, every rule reaching a program through `guest(g, …), node(g, …)` lost it. core.rr's `docof` reads
    the places' view, the file's; where a program lowers `docof` as `node`'s projection (T's, `rr::lower::projections`),
-   a program's node has its own key there (Q267).
-   **A program is named by its file and place** (decided 2026-11-19, the user: "pick a for the decision", Q267's
+   a program's node has its own key there (Q337).
+   **A program is named by its file and place** (decided 2026-11-19, the user: "pick a for the decision", Q337's
    first choice). The guest relations that named a program by its key go (`guest`, `doc_role`, `doc_root`): a rule
    reaches a program as it reaches a parsed string, `parsed(at, grammar, root)` at the host node it stands at, then
    `within`, `child` and the views; `node`'s document column is its file's, as `docof` is, and a lookup by document
@@ -255,7 +255,7 @@ keep their meaning, rewritten for `guest_of` and the file's programs where they 
 3. Programs as the file's, done (2026-11-19): HTML, Vue, Blade and Markdown declare their programs, made from the
    file's tape at its load, the batch built once a chunk (`with_matchers`, or the grower where a value may come), a
    program named by its file and place, `node`'s document the file's, the guest relations and `embed` gone (§4, as
-   built; R1, R5, R8). Left (Q268): `@parse` and `@splice` values still made by the slice's rounds; the rule-file
+   built; R1, R5, R8). Left (Q338): `@parse` and `@splice` values still made by the slice's rounds; the rule-file
    language's embeds; the host's parse building the programs it drops.
 4. (Before 3's rest.) 4a, done: a tape value is found by its text's sha and grammar among the tapes the root's last
    runs named, read before the first wave (the run's grammar's with the files', the others' by the tags the program's

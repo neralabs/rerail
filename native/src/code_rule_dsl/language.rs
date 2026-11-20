@@ -460,13 +460,13 @@ fn dialect(lang: GrammarDialect) -> Option<&'static Dialect> {
 }
 
 /// The dialect a file label names (`FileInput.language`, the store's file language).
-/// A fragment grammar the registry declares (decisions 0082, 0466): its dialect, and the node kind its parse starts
+/// A fragment grammar the registry declares (decisions 0082, 0482): its dialect, and the node kind its parse starts
 /// at (Python's `annotation`: a `type`).
 pub fn fragment(name: &str) -> Option<(GrammarDialect, &'static str)> {
     FRAGMENTS.iter().find(|(n, ..)| *n == name).map(|(_, dialect, start, _)| (*dialect, *start))
 }
 
-/// A fragment's tape tag (decision 0466): its tapes are stored under it, never under its dialect's.
+/// A fragment's tape tag (decision 0482): its tapes are stored under it, never under its dialect's.
 pub fn fragment_tag(name: &str) -> Option<u8> {
     FRAGMENTS.iter().find(|(n, ..)| *n == name).map(|(.., tag)| *tag)
 }
@@ -542,7 +542,7 @@ pub fn tape_tag(lang: GrammarDialect) -> Option<u8> {
 }
 
 /// The dialect a persisted tape tag names: a dialect's, or a fragment's (whose tapes are its dialect's kinds,
-/// decision 0466).
+/// decision 0482).
 pub fn from_tape_tag(tag: u8) -> Option<GrammarDialect> {
     let lang = DIALECTS
         .iter()

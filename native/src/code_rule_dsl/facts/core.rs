@@ -218,7 +218,7 @@ pub fn build_with_tape(file: &dyn SourceFile, keep: bool) -> Result<(Built, Opti
     facts_of_image(file, &grammar, image.primary, Terminators::of(language), keep)
 }
 
-/// A fragment's parse (decision 0466): the node kind it starts at, and the tag its tapes are stored under (never its
+/// A fragment's parse (decision 0482): the node kind it starts at, and the tag its tapes are stored under (never its
 /// dialect's).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Fragment {
@@ -234,7 +234,7 @@ impl Fragment {
     }
 }
 
-/// [`build`] of `file` as a fragment (decision 0466): parsed from its start by its dialect's hand-written parser, its
+/// [`build`] of `file` as a fragment (decision 0482): parsed from its start by its dialect's hand-written parser, its
 /// tape's root one node of that kind. `Unparsed` where the parser refuses the text.
 pub fn build_fragment(file: &dyn SourceFile, fragment: Fragment) -> Result<Built, String> {
     use crate::code_rule_dsl::{lines::Terminators, tape::{Grammar, TapeImage}};
@@ -355,7 +355,7 @@ pub fn build_in_wave_with_tape(
     build_in_wave_as(file, None, cache, digest, found, named, keep)
 }
 
-/// [`build_in_wave`] of `file` as a fragment (decision 0466): its tape stored and found under the fragment's tag.
+/// [`build_in_wave`] of `file` as a fragment (decision 0482): its tape stored and found under the fragment's tag.
 pub fn build_fragment_in_wave(
     file: &dyn SourceFile,
     fragment: Fragment,

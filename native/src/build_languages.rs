@@ -79,7 +79,7 @@ struct Entry {
 }
 
 /// A fragment grammar: `name`, as a rule's `sub_tape` or `parsed` names it, is `dialect` parsed from the node kind
-/// `start` by the dialect's hand-written parser (decision 0466): its tape's root is one `start` node, and its tapes
+/// `start` by the dialect's hand-written parser (decision 0482): its tape's root is one `start` node, and its tapes
 /// are stored under `tapeTag`, never a dialect's. That the parser starts there is the engine's test
 /// (`every_fragment_starts_where_its_parser_starts`): the parsers' start lists are theirs, not the registry's.
 #[derive(Deserialize)]
@@ -841,7 +841,7 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
     }
     out.push_str("];\n\n");
 
-    out.push_str("/// The registry's fragment grammars (decisions 0082, 0466): name, dialect, start kind, tape tag.\n");
+    out.push_str("/// The registry's fragment grammars (decisions 0082, 0482): name, dialect, start kind, tape tag.\n");
     out.push_str("const FRAGMENTS: &[(&str, GrammarDialect, &str, u8)] = &[\n");
     for entry in &supported {
         for fragment in &entry.fragments {
@@ -1294,7 +1294,7 @@ mod tests {
         Registry::new("place-none", &[one, supported("two", ".two", 2)]).generate();
     }
 
-    /// Decision 0466: a fragment starts at a node kind and has a tape tag of its own, which no dialect's is.
+    /// Decision 0482: a fragment starts at a node kind and has a tape tag of its own, which no dialect's is.
     #[test]
     fn a_fragment_names_a_start_kind_and_a_tag_of_its_own() {
         let mut one = supported("one", ".one", 1);

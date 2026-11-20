@@ -5486,7 +5486,7 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
 - **Design** (the user, 2026-11-18): strings the rules parse are tape values, their nodes named by the tape ("do
   a"); programs the grammar holds are part of their file ("okay, I agree with that"); format 16 unchanged.
 - **Steps**: 0431's five. Step 1 (the record and the R1–R4 tests, ignored, each failing for its reason) is done.
-  Steps 2 to 5 done (2026-11-19); leftovers in Q268.
+  Steps 2 to 5 done (2026-11-19); leftovers in Q338.
 - **Measured after** (PostHog cold, M3, step 5): guests 0.16 s (CPU binding) and 0.33 s (Metal); instructions 2,421 G
   and 1,800 G (1ca497070: 2,476 G and 2,071 G); findings 29,747, fa0efeaed6ff (0431, "Measured (step 5)").
 - **Done when**: R1–R8 hold, their tests pass unignored, no guest document, key range, embed slice or batch rebuild
@@ -5544,7 +5544,7 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
 - **Done when**: R8's test (`cpu_and_metal_read_the_same_tape_values`) allows no upload for `parsed` (its `q266`), and
   its HTML run (whose library, `html/embeds.rr`, filters `child` and `node` by constants) uploads no more than a run
   over a file with no script.
-### Q267. `docof` lowered as `node`'s projection gives a program's own key
+### Q337. `docof` lowered as `node`'s projection gives a program's own key
 
 - **Seen** (2026-11-19, 0431 step 3): core.rr's `docof(n, d)` of a program's node is its file (`Projected::file`,
   `ViewDoc::file`, `ChunkDoc::file`), but `node(d, n, …)`'s `d` stays the program's own key, which `doc_role`,
@@ -5554,7 +5554,7 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
   place (`parsed(at, grammar, root)`), so `node`'s `d` is the file (0431 §4).
 - **Done when**: `docof` of a program's node is its file in a T program too, with a test.
 
-### Q268. 0431's leftovers after step 3
+### Q338. 0431's leftovers after step 3
 
 - **Seen** (2026-11-19, 0431 step 3 done):
   - `@parse(g, x)` and `@splice` values are still made by the slice's rounds (`embed_slice`, `guests::DEPTH`), which
@@ -5572,7 +5572,7 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
 - **Done when**: no round outside the fixpoint; a file's programs read from its stored tape; the setting's meaning
   decided.
 
-### Q269. A fragment is parsed from a node kind (decision 0466)
+### Q339. A fragment is parsed from a node kind (decision 0482)
 
 - **Asked** (2026-11-19, the user): "we need to allow a parse to start from a given node type ... a Python annotation
   is not a module. It's a type. A JSX document doesn't start with a <html> tag"; tree-sitter-only dialects: "Hand-written
@@ -5581,15 +5581,15 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
   `element`); the registry's fragment start and tag; the engine's fragment parse (no wrapper, no `wrapped_root`); the
   libraries' rules over a `type` root; PostHog's findings.
 - **Done when**: R1–R7 hold and PostHog's findings are unchanged or each change is named.
-- **Done** (2026-11-19). R1–R7 hold (0466 "Tests"). The three parsers start at `type`, `jsx_element` /
+- **Done** (2026-11-19). R1–R7 hold (0482 "Tests"). The three parsers start at `type`, `jsx_element` /
   `jsx_self_closing_element` and `element`. A refused text is one `ERROR` node, so `.on guest_error` still sees it.
   The libraries' rules needed no change: `annotation`, `parsed_in` and `ann_strip` already read a `type` root.
   PostHog on the CPU is unchanged: 29,747 findings, fa0efeaed6ff.
 
-### Q270. A language declares the places its strings embed code (decision 0470)
+### Q340. A language declares the places its strings embed code (decision 0470)
 
 - **Asked** (2026-11-19, the user): choice 2 for "a string we know is HTML": a language declares the embeds at known
-  places. After 0466.
+  places. After 0482.
 - **Steps**: R1–R6's tests; the registry's `places` (schema, checks, generated table); the `call-argument` embedder
   over the batch's tape document (scope table, plain strings, segments); Python's places; an HTML rule over a
   program; PostHog's findings.

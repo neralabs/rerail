@@ -1247,7 +1247,7 @@ impl PartialEq for TapePlace {
 impl Eq for TapePlace {}
 
 /// A document's text as a rule gets it back (`@unparse`): its root's text where its root is not its first node, else
-/// the whole text (a fragment's tape is rooted at its start node, decision 0466).
+/// the whole text (a fragment's tape is rooted at its start node, decision 0482).
 pub fn unparsed(d: &Document) -> &str {
     match d.guest.as_deref() {
         Some(g) if g.root != 0 => d.facts.text(g.root),

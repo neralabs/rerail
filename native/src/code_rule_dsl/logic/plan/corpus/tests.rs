@@ -2021,7 +2021,7 @@ calls(x, d, l) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p),
 "#;
     let (_, on_cpu) = batch_run_on("r8-programs-cpu", &[("a.html", html)], programs, "calls", Binding::Cpu);
     // The programs are the grammar's, made with the batch (§4): their rows are read where they lie, as the file's are,
-    // and a run uploads no more than over a file with no script, but for `parsed`'s rows (Q266), one a script.
+    // and a run uploads no more than over a file with no script, but for `parsed`'s rows (Q310), one a script.
     let ((_, on_metal), bytes) = on_device("r8-programs-metal", &[("a.html", html)], programs, "calls");
     let (_, base) = on_device("r8-programs-none", &[("a.html", "<!doctype html>\n<p>x</p>\n")], programs, "calls");
     assert!(bytes <= base + q266(2), "a file's programs are read where they lie ({bytes} bytes uploaded, {base} with none)");

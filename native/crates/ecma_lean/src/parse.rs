@@ -307,7 +307,7 @@ pub fn parse_into<Out>(src: &[u8], dialect: Dialect, finish: &mut dyn Sink<Out>)
     parse_from(src, dialect, Start::Program, finish)
 }
 
-/// The node kind a parse starts at (decision 0466): a whole file, or one JSX element alone, its root (a fragment).
+/// The node kind a parse starts at (decision 0482): a whole file, or one JSX element alone, its root (a fragment).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Start {
     Program,
@@ -1098,7 +1098,7 @@ impl<'a> P<'a> {
         Ok(())
     }
 
-    /// One JSX element alone, the root (decision 0466): read as where an expression starts, of kind `want` (an element
+    /// One JSX element alone, the root (decision 0482): read as where an expression starts, of kind `want` (an element
     /// with its closing tag, or a self-closing one). No comment lies outside the root: a fragment's tape has one root.
     fn jsx_fragment(&mut self, want: K) -> R<()> {
         let t = self.tok();

@@ -5579,7 +5579,7 @@ fn scala_tapes_from_the_lean_parser_are_tree_sitters() {
     );
 }
 
-/// Decision 0466 R2 against tree-sitter: a `type` fragment's tape is tree-sitter-python's `type` node of the same text
+/// Decision 0482 R2 against tree-sitter: a `type` fragment's tape is tree-sitter-python's `type` node of the same text
 /// written after `x: ` (positions less the prefix's bytes, its field gone), unions too, where the lean parser
 /// refuses such a file and tree-sitter reads it.
 #[test]
@@ -5621,7 +5621,7 @@ fn a_type_fragment_is_tree_sitters_written_annotation() {
     }
 }
 
-/// Decision 0466 R4: every fragment the registry declares starts at a node kind its dialect's hand-written parser
+/// Decision 0482 R4: every fragment the registry declares starts at a node kind its dialect's hand-written parser
 /// parses from (`TreeParser::starts`): no fragment is left to tree-sitter, which has one start rule.
 #[test]
 fn every_fragment_starts_where_its_parser_starts() {
@@ -5633,7 +5633,7 @@ fn every_fragment_starts_where_its_parser_starts() {
     }
 }
 
-/// Decision 0466 R1 through the router: a JSX fragment's tape is one `jsx_element` over its text, read by the lean
+/// Decision 0482 R1 through the router: a JSX fragment's tape is one `jsx_element` over its text, read by the lean
 /// parser; a text it refuses is one `ERROR` over it less blanks (no tree made up); TypeScript starts at no element.
 #[test]
 fn a_fragment_is_parsed_from_its_start_by_its_parser() {
@@ -5655,7 +5655,7 @@ fn a_fragment_is_parsed_from_its_start_by_its_parser() {
     assert!(TapeImage::parse_from(&py, "int", "expression", &|| false).is_none(), "a start no parser lists");
 }
 
-/// Decision 0466 R1 for HTML: an element alone is one `element` over its text, with no `document`, `html` or `body`.
+/// Decision 0482 R1 for HTML: an element alone is one `element` over its text, with no `document`, `html` or `body`.
 #[test]
 fn an_html_fragment_is_one_element() {
     use rerail_tape_format::tape::Tape as _;

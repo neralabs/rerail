@@ -1523,7 +1523,7 @@ only_tree(p) :- doc(d, p, _), syntax_error(d), !cpython_syntax_error(d, _, _).
 
 /// `string_annotation(s)` is each string Ruff's semantic model reads as a type definition (the scope table's), nested
 /// ones included, and `parsed(s, "annotation", root)` its tree, a tape value asked for by `string_annotation`: the
-/// value parsed as the `annotation` fragment, from a `type` (decision 0466), its identifiers `text` rows as a file's
+/// value parsed as the `annotation` fragment, from a `type` (decision 0482), its identifiers `text` rows as a file's
 /// are; a nested string's value is made in the next round. A value the parser refuses (`"not valid (("`, which Ruff
 /// refuses too) is one `ERROR` over the text, with no names. A `Literal` argument is no type definition.
 #[test]
@@ -1565,7 +1565,7 @@ files(p) :- doc(_, p, _).
             &["\"Baz\"", "Baz"],
         ])
     );
-    // Each root is its value's `type`, over the string's value (decision 0466); a refused one's an `ERROR`.
+    // Each root is its value's `type`, over the string's value (decision 0482); a refused one's an `ERROR`.
     assert_eq!(
         set(&got[2]),
         want(&[

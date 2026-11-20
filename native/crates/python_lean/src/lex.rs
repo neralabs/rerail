@@ -237,7 +237,7 @@ pub fn lex_joined(src: &[u8], joins: &[u32]) -> Result<Lexed, Refusal> {
     lex_inside(src, joins, 0)
 }
 
-/// `src` lexed as text inside `outer` brackets (a fragment read as if in parentheses, decision 0466): no NEWLINE,
+/// `src` lexed as text inside `outer` brackets (a fragment read as if in parentheses, decision 0482): no NEWLINE,
 /// INDENT or DEDENT, as inside brackets, and a closer never takes the depth below `outer`.
 pub fn lex_inside(src: &[u8], joins: &[u32], outer: u32) -> Result<Lexed, Refusal> {
     let mut l = Lexer { src, b: block::Blocks::of(src), toks: Vec::with_capacity(src.len() / 3 + 16), extras: Vec::new(), p: 0, depth: 0, indents: vec![0], inside_interpolated_string: false, joins, outer };

@@ -47,7 +47,7 @@ pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Res
     encode_from(grammar, source, "module", budget)
 }
 
-/// [`encode`] from the node kind `start` (decision 0466).
+/// [`encode`] from the node kind `start` (decision 0482).
 pub fn encode_from(grammar: &Grammar, source: &str, start: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_python_lean::Refusal> {
     let Some(ids) = ids() else {
         return Ok(Err("tree-sitter-python lacks a kind or field the lean parser names".into()));

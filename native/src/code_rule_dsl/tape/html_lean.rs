@@ -28,7 +28,7 @@ pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Res
     encode_from(grammar, source, "document", budget).expect("a document is a start")
 }
 
-/// [`encode`] from the node kind `start` (decision 0466): `None` for a kind the parser does not start at.
+/// [`encode`] from the node kind `start` (decision 0482): `None` for a kind the parser does not start at.
 pub fn encode_from(grammar: &Grammar, source: &str, start: &str, budget: &dyn Fn() -> bool) -> Option<Result<Result<TapeImage, String>, rerail_html_lean::Refusal>> {
     let ids = kind_ids();
     let code_of = move |&key: &u32| -> Result<Code, String> {
@@ -51,7 +51,7 @@ impl TreeParser for Lean {
         rerail_html_lean::STARTS
     }
 
-    /// One element (decision 0466). Its scripts and styles are its `raw_text`: a fragment's tape is one image, and no
+    /// One element (decision 0482). Its scripts and styles are its `raw_text`: a fragment's tape is one image, and no
     /// program is made from them (a rule asks for one by its own embed).
     fn parse_from(&self, grammar: &Grammar, source: &str, start: &str, budget: &dyn Fn() -> bool) -> Option<Result<TapeImage, String>> {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "lean HTML parse of a fragment".into());

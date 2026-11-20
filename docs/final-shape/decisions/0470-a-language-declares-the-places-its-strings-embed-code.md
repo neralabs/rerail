@@ -1,7 +1,7 @@
 # 0470. A language declares the places its strings embed code
 
 Status: decided (2026-11-19), by the user: choice 2 of three for "a string we know is HTML": a language declares
-the strings at known places that hold code. Comes after 0466 (a fragment starts at a node kind). Continues 0431 §4
+the strings at known places that hold code. Comes after 0482 (a fragment starts at a node kind). Continues 0431 §4
 (the grammar decides what a file holds as programs).
 
 ## Intro
@@ -75,7 +75,7 @@ A file whose text names no place's last segment (`Markup`, `mark_safe`, `format_
 this embed: one substring search per name settles it.
 
 The parse-time `FileImage::embedding` has no tape document, so it makes no `call-argument` program. 0431 already
-reads a file's programs from the batch, not from the parse (Q268).
+reads a file's programs from the batch, not from the parse (Q338).
 
 ### 5. A place's program stands at its argument, and is not the file's own program
 
@@ -91,7 +91,7 @@ reads a file's programs from the batch, not from the parse (Q268).
 
 Each program is parsed with its dialect's lean parser where one reads it (HTML's), else tree-sitter, as a
 `<script>`'s is (`Parse::read`). A Python string of HTML is a document of nodes, not one element. A place that holds
-a part of a language may name a fragment (0466) in a later step. No place does yet.
+a part of a language may name a fragment (0482) in a later step. No place does yet.
 
 ## Requirements (each with its test before the code)
 

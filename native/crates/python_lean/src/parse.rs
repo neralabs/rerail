@@ -155,7 +155,7 @@ pub enum Relex {
 /// Line ends a text may join before it is refused.
 pub const MAX_JOINS: usize = 64;
 
-/// A node kind a parse may start at (decision 0466): a file's `module`, or a `type` (a string annotation's text, read
+/// A node kind a parse may start at (decision 0482): a file's `module`, or a `type` (a string annotation's text, read
 /// as if in parentheses).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Start {
@@ -2643,7 +2643,7 @@ impl<'a> P<'a> {
 
     // ---- Types.
 
-    /// A `type` alone, the root (decision 0466): what follows `x:` in an annotated assignment, as tree-sitter reads it
+    /// A `type` alone, the root (decision 0482): what follows `x:` in an annotated assignment, as tree-sitter reads it
     /// there (the annotation's rule: a generic's union a `union_type`, any other `|` an expression's). No extra lies
     /// outside the root: a fragment's tape has one root.
     fn type_fragment(&mut self) -> R<()> {

@@ -282,7 +282,7 @@ pub trait TreeParser: Send + Sync {
         false
     }
 
-    /// The node kinds it parses a text from besides a whole file (decision 0466): a fragment's start.
+    /// The node kinds it parses a text from besides a whole file (decision 0482): a fragment's start.
     fn starts(&self) -> &'static [&'static str] {
         &[]
     }
@@ -371,7 +371,7 @@ pub fn tree_parser(dialect: GrammarDialect) -> Option<&'static dyn TreeParser> {
     router.chosen.iter().find(|(lang, _)| *lang == dialect).map(|&(_, i)| router.registered[i].parser)
 }
 
-/// The node kinds `dialect`'s hand-written parser parses a fragment from (decision 0466): none for a dialect only
+/// The node kinds `dialect`'s hand-written parser parses a fragment from (decision 0482): none for a dialect only
 /// tree-sitter parses.
 pub fn starts(dialect: GrammarDialect) -> &'static [&'static str] {
     tree_parser(dialect).map_or(&[], |p| p.starts())
@@ -1572,7 +1572,7 @@ impl TapeImage {
         Some(Self::encode(tree.root_node(), grammar, source, budget))
     }
 
-    /// `source` parsed from the node kind `start` by `grammar`'s hand-written parser (decision 0466): `None` where its
+    /// `source` parsed from the node kind `start` by `grammar`'s hand-written parser (decision 0482): `None` where its
     /// dialect has no parser that starts there. A text the parser refuses is one `ERROR` node over it (`refused`):
     /// no tree is made up for it, and a rule's `.on guest_error` sees it where it stands.
     pub fn parse_from(grammar: &Grammar, source: &str, start: &str, budget: &impl Fn() -> bool) -> Option<Result<FileImage, String>> {
@@ -1581,7 +1581,7 @@ impl TapeImage {
         Some(image.map(|image| FileImage::single(image, source)))
     }
 
-    /// A refused fragment's tape (decision 0466): one `ERROR` node over the text less the blanks at its ends.
+    /// A refused fragment's tape (decision 0482): one `ERROR` node over the text less the blanks at its ends.
     pub fn refused(grammar: &Grammar, source: &str, budget: &impl Fn() -> bool) -> Result<Self, String> {
         let start = source.len() - source.trim_start().len();
         let end = source.trim_end().len().max(start);
