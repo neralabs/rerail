@@ -2792,18 +2792,20 @@ impl Retained {
             let placer = &placer;
             // In the run and under the span open here, on whichever thread runs it: rayon's loops carry neither.
             let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
-            whole.into_par_iter().filter_map(|(rel, k)| {
-                let _in = carry.enter();
-                let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || "a relation's frame, digested and encoded".into());
-                if k.rel.levels_shape().2 {
-                    return None;
-                }
-                let types = frame_types(prog, domains, rel, k.rel.types());
-                let d = held_digest(&Cells::new(atoms, &types), &k.rel)?;
-                // Encoded straight into the write's segments as its rows are read where they lie (Q89).
-                let bytes = was.derived.get(rel).is_none_or(|s| s.digest != d).then(|| held_placed(&k.rel, types.len(), placer));
-                Some((rel, Whole { d, bytes }))
-            }).collect()
+            crate::code_rule_dsl::logic::profile::on_cores(|| {
+                whole.into_par_iter().filter_map(|(rel, k)| {
+                    let _in = carry.enter();
+                    let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || "a relation's frame, digested and encoded".into());
+                    if k.rel.levels_shape().2 {
+                        return None;
+                    }
+                    let types = frame_types(prog, domains, rel, k.rel.types());
+                    let d = held_digest(&Cells::new(atoms, &types), &k.rel)?;
+                    // Encoded straight into the write's segments as its rows are read where they lie (Q89).
+                    let bytes = was.derived.get(rel).is_none_or(|s| s.digest != d).then(|| held_placed(&k.rel, types.len(), placer));
+                    Some((rel, Whole { d, bytes }))
+                }).collect()
+            })
         };
         let mut made = made;
         for scc in sccs {
@@ -3114,10 +3116,12 @@ pub(in crate::code_rule_dsl) fn write_input_frames(store: &ContentStore, was: &I
         use rayon::prelude::*;
         // In the run, on whichever thread runs it: its frames' placement reads the machine's device memory.
         let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
-        inputs.par_iter().map(|(rel, source)| {
-            let _in = carry.enter();
-            one_input(rel, source)
-        }).collect()
+        crate::code_rule_dsl::logic::profile::on_cores(|| {
+            inputs.par_iter().map(|(rel, source)| {
+                let _in = carry.enter();
+                one_input(rel, source)
+            }).collect()
+        })
     };
     // Whether an input's frames were queued: then the derived relations' are queued with the program's hold even
     // when none of theirs changed.

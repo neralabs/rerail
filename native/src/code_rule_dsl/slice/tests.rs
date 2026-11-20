@@ -285,40 +285,42 @@ fn ws_keys(
         .iter()
         .filter(|(policy, compiled)| compiled.inner.clauses.iter().any(|c| names.contains(&format!("{policy}/{}", c.id))))
         .collect::<Vec<_>>();
-    let per_file = files
-        .par_iter()
-        .map(|(path, source)| {
-            let snapshot = json!({
-                "facts": [], "format": "rerail.repository-snapshot/v1", "revision": 0,
-                "files": [{ "language": "python", "path": path, "source": source }],
+    let per_file = crate::code_rule_dsl::logic::profile::on_cores(|| {
+        files
+            .par_iter()
+            .map(|(path, source)| {
+                let snapshot = json!({
+                    "facts": [], "format": "rerail.repository-snapshot/v1", "revision": 0,
+                    "files": [{ "language": "python", "path": path, "source": source }],
+                })
+                .to_string();
+                let (mut keys, mut failed) = (Keys::new(), BTreeSet::new());
+                for (policy, compiled) in &policies {
+                    let result: serde_json::Value = serde_json::from_str(&compiled.evaluate(snapshot.clone(), "report".to_owned()).unwrap()).unwrap();
+                    for v in result["violations"].as_array().unwrap() {
+                        if names.contains(&format!("{policy}/{}", v["clauseId"].as_str().unwrap())) {
+                            keys.insert((
+                                v["ruleId"].as_str().unwrap().to_owned(),
+                                v["code"].as_str().unwrap().to_owned(),
+                                v["path"].as_str().unwrap().to_owned(),
+                                v["span"]["startLine"].as_u64().unwrap() as usize,
+                            ));
+                        }
+                    }
+                    for f in result["failures"].as_array().unwrap() {
+                        if names.contains(&format!("{policy}/{}", f["clauseId"].as_str().unwrap_or_default())) {
+                            failed.insert((
+                                compiled.inner.id.clone(),
+                                f["path"].as_str().unwrap_or_default().to_owned(),
+                                f["code"].as_str().unwrap_or_default().to_owned(),
+                            ));
+                        }
+                    }
+                }
+                (keys, failed)
             })
-            .to_string();
-            let (mut keys, mut failed) = (Keys::new(), BTreeSet::new());
-            for (policy, compiled) in &policies {
-                let result: serde_json::Value = serde_json::from_str(&compiled.evaluate(snapshot.clone(), "report".to_owned()).unwrap()).unwrap();
-                for v in result["violations"].as_array().unwrap() {
-                    if names.contains(&format!("{policy}/{}", v["clauseId"].as_str().unwrap())) {
-                        keys.insert((
-                            v["ruleId"].as_str().unwrap().to_owned(),
-                            v["code"].as_str().unwrap().to_owned(),
-                            v["path"].as_str().unwrap().to_owned(),
-                            v["span"]["startLine"].as_u64().unwrap() as usize,
-                        ));
-                    }
-                }
-                for f in result["failures"].as_array().unwrap() {
-                    if names.contains(&format!("{policy}/{}", f["clauseId"].as_str().unwrap_or_default())) {
-                        failed.insert((
-                            compiled.inner.id.clone(),
-                            f["path"].as_str().unwrap_or_default().to_owned(),
-                            f["code"].as_str().unwrap_or_default().to_owned(),
-                        ));
-                    }
-                }
-            }
-            (keys, failed)
-        })
-        .collect::<Vec<_>>();
+            .collect::<Vec<_>>()
+    });
     per_file.into_iter().fold((Keys::new(), BTreeSet::new()), |(mut keys, mut failed), (k, f)| {
         keys.extend(k);
         failed.extend(f);

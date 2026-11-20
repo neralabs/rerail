@@ -1619,13 +1619,15 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
     let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
     let mut texts: Vec<Option<crate::code_rule_dsl::logic::rr::Text>> = if programs.len() > 1 {
         use crate::code_rule_dsl::logic::rr::{read_parsed, read_seed};
-        let parsed: Vec<_> = programs
-            .par_iter()
-            .map(|text| {
-                let _in = carry.enter();
-                read_seed(text)
-            })
-            .collect();
+        let parsed: Vec<_> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+            programs
+                .par_iter()
+                .map(|text| {
+                    let _in = carry.enter();
+                    read_seed(text)
+                })
+                .collect()
+        });
         // Every program's include graph by one run of phase 0, here, before the reads: each read on the pool then
         // finds its graph kept. Derived there, each was a nested run of its own on the run's store, beside the others
         // (`content store writer is busy`; a memo made under another atom table than its writer's).
@@ -1634,14 +1636,16 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
             // An error is left to the read that meets it, which reports it in its program's place.
             let _ = crate::code_rule_dsl::logic::plan::corpus::phase0::graphs(&seeds);
         }
-        let each: Vec<_> = programs
-            .par_iter()
-            .zip(parsed)
-            .map(|(text, parsed)| {
-                let _in = carry.enter();
-                recorded_on_worker(|| parsed.and_then(|r| read_parsed(r.statements)).map(Some).map_err(|e| in_policy(text, e)))
-            })
-            .collect();
+        let each: Vec<_> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+            programs
+                .par_iter()
+                .zip(parsed)
+                .map(|(text, parsed)| {
+                    let _in = carry.enter();
+                    recorded_on_worker(|| parsed.and_then(|r| read_parsed(r.statements)).map(Some).map_err(|e| in_policy(text, e)))
+                })
+                .collect()
+        });
         each.into_iter().map(|(got, read)| {
             replay(read);
             got
@@ -1749,34 +1753,36 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
             prefetched[i] = Some(f);
         }
     }
-    let each: Vec<_> = programs
-        .par_iter()
-        .zip(&own_only)
-        .zip(texts.par_iter_mut())
-        .zip(&scope_of)
-        .zip(prefetched.into_par_iter())
-        .map(|((((text, &own_only), slot), scope_of), found)| {
-            let _in = carry.enter();
-            recorded_on_worker(|| -> Result<P> {
-            if let Some(read) = read.filter(|_| programs.len() == 1) {
-                return P::of_tree(given(read.clone())?);
-            }
-            if let Some(read) = slot.take() {
-                if let Some(library) = in_scope && let Some(k) = *scope_of {
-                    let _in_scope = crate::code_rule_dsl::logic::profile::span(|| "lower the program in its libraries' scope (decision 0246 §2)".to_owned());
-                    // Its library's relations are the library's, declared there, not in the program: it is handed the
-                    // run's rows (0249) but not checked for its own declarations (`front::declared`).
-                    return P::lowered_in(read, text, library, &scoped[k], images.as_deref(), found, extra);
+    let each: Vec<_> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+        programs
+            .par_iter()
+            .zip(&own_only)
+            .zip(texts.par_iter_mut())
+            .zip(&scope_of)
+            .zip(prefetched.into_par_iter())
+            .map(|((((text, &own_only), slot), scope_of), found)| {
+                let _in = carry.enter();
+                recorded_on_worker(|| -> Result<P> {
+                if let Some(read) = read.filter(|_| programs.len() == 1) {
+                    return P::of_tree(given(read.clone())?);
                 }
-                return P::of_tree(given(read.lower(!own_only)?)?);
-            }
-            if !own_only {
-                return parse(text);
-            }
-            P::of_tree(given(crate::code_rule_dsl::logic::rr::parse_own(text)?)?)
+                if let Some(read) = slot.take() {
+                    if let Some(library) = in_scope && let Some(k) = *scope_of {
+                        let _in_scope = crate::code_rule_dsl::logic::profile::span(|| "lower the program in its libraries' scope (decision 0246 §2)".to_owned());
+                        // Its library's relations are the library's, declared there, not in the program: it is handed the
+                        // run's rows (0249) but not checked for its own declarations (`front::declared`).
+                        return P::lowered_in(read, text, library, &scoped[k], images.as_deref(), found, extra);
+                    }
+                    return P::of_tree(given(read.lower(!own_only)?)?);
+                }
+                if !own_only {
+                    return parse(text);
+                }
+                P::of_tree(given(crate::code_rule_dsl::logic::rr::parse_own(text)?)?)
+                })
             })
-        })
-        .collect();
+            .collect()
+    });
     let mut parsed = each
         .into_iter()
         .map(|(got, read)| {
@@ -2967,9 +2973,9 @@ fn run_handed(
     let mut under_way = Some(rerail_accel::upkeep::run_begins(&files));
     drop(stopping);
     let lifecycle_start = usage();
-    // Library and test callers do not pass through the CLI/Node pool setup.
-    // Initialize before phase 0 or a parallel read can create rayon's default pool.
-    crate::threads::configure(false);
+    // Library and test callers do not pass through the CLI's or Node's setup: the one block policy, before the run's
+    // first block.
+    crate::threads::configure();
     // Whether the native strata may be placed on the device (`plan::placement`, decision 0095), for this run.
     let _device = super::placement::set_device(binding == Binding::Metal);
     // The corpus root and the rule library are watched (decision 0105): what the journal says is unchanged under
@@ -5315,7 +5321,7 @@ fn run_observed_within(
         };
         // The stat index (git's): a file whose stat is the one recorded when its source was last read is that
         // source, and on a memo hit is neither read nor hashed.
-        let stats: Vec<Option<crate::content_store::FileStat>> = window.par_iter().map(|(_, path, _)| stat(path)).collect();
+        let stats: Vec<Option<crate::content_store::FileStat>> = crate::code_rule_dsl::logic::profile::on_cores(|| window.par_iter().map(|(_, path, _)| stat(path)).collect());
         let known: Vec<Option<crate::content_store::SourceId>> = window.iter().zip(&stats).map(|((_, path, _), stat)| stat.and_then(|now| stat_index.source(world::store_path(path), now))).collect();
         let mut content: Vec<Option<memo::Content>> = known.iter().map(|k| k.map(memo::Content::Stored)).collect();
         let mut found: Vec<Option<memo::Found>> = (0..window.len()).map(|_| None).collect();
@@ -5358,30 +5364,32 @@ fn run_observed_within(
         }
         // The others are read and hashed, whatever the index said: a file may have changed since its stat.
         let rest: Vec<usize> = (0..window.len()).filter(|i| found[*i].is_none()).collect();
-        let read: Vec<Option<String>> = rest
-            .par_iter()
-            .map(|i| {
-                let path = &window[*i].1;
-                let _read = crate::code_rule_dsl::logic::profile::span(|| "read".into());
-                // Held from the run's digests (decision 0300): taken here only where this window's texts are kept.
-                if let Some(source) = source_texts.text(&root.join(path), keep) {
-                    return Ok(Some(source));
-                }
-                let source = match std::fs::read_to_string(root.join(path)) {
-                    Ok(source) => source,
-                    // A text file that is not UTF-8 (an image, an archive) is no document: its wave finds it so.
-                    Err(e) if e.kind() == std::io::ErrorKind::InvalidData && text_document(path, label) => return Ok(None),
-                    Err(e) => return Err(Error::Plan(format!("{path}: {e}"))),
-                };
-                crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, source.len() as u64);
-                Ok(Some(source))
-            })
-            .collect::<Result<_>>()?;
+        let read: Vec<Option<String>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+            rest
+                .par_iter()
+                .map(|i| {
+                    let path = &window[*i].1;
+                    let _read = crate::code_rule_dsl::logic::profile::span(|| "read".into());
+                    // Held from the run's digests (decision 0300): taken here only where this window's texts are kept.
+                    if let Some(source) = source_texts.text(&root.join(path), keep) {
+                        return Ok(Some(source));
+                    }
+                    let source = match std::fs::read_to_string(root.join(path)) {
+                        Ok(source) => source,
+                        // A text file that is not UTF-8 (an image, an archive) is no document: its wave finds it so.
+                        Err(e) if e.kind() == std::io::ErrorKind::InvalidData && text_document(path, label) => return Ok(None),
+                        Err(e) => return Err(Error::Plan(format!("{path}: {e}"))),
+                    };
+                    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, source.len() as u64);
+                    Ok(Some(source))
+                })
+                .collect::<Result<_>>()
+        })?;
         let (rest, texts): (Vec<usize>, Vec<String>) = rest.into_iter().zip(read).filter_map(|(i, t)| t.map(|t| (i, t))).unzip();
         if let (true, Some(memo)) = (looking, memo) {
             let _lookup = crate::code_rule_dsl::logic::profile::span(|| "memo lookup".into());
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, texts.iter().map(|t| t.len() as u64).sum());
-            let digests: Vec<[u8; 32]> = texts.par_iter().map(|t| Sha256::digest(t.as_bytes()).into()).collect();
+            let digests: Vec<[u8; 32]> = crate::code_rule_dsl::logic::profile::on_cores(|| texts.par_iter().map(|t| Sha256::digest(t.as_bytes()).into()).collect());
             // A content the store does not hold is new: its source is written with its tape, behind the run.
             // A session's memo is in memory: asked in the waves too.
             let contents: Vec<Option<memo::Content>> = if reading || matches!(memo, memo::Memo::Held(_)) {

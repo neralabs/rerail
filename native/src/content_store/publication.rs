@@ -112,24 +112,26 @@ impl ContentStore {
             )));
         }
         let identities = (|| {
-            publications
-                .par_iter()
-                .map(|publication| {
-                    validate_relative_path(publication.path)?;
-                    if publication.state_id <= 0 {
-                        return Err(StoreError::Invalid(
-                            "overlay state must be positive".to_owned(),
-                        ));
-                    }
-                    validate_tape_payload(publication.tape)?;
-                    let source = HashKey::sha256(publication.source);
-                    Ok((
-                        publication,
-                        source,
-                        publication.tape.map(|tape| HashKey::tape_identity(source, tape.bytes)),
-                    ))
-                })
-                .collect::<StoreResult<Vec<_>>>()
+            rerail_prof::code_rule_dsl::logic::profile::on_cores(|| {
+                publications
+                    .par_iter()
+                    .map(|publication| {
+                        validate_relative_path(publication.path)?;
+                        if publication.state_id <= 0 {
+                            return Err(StoreError::Invalid(
+                                "overlay state must be positive".to_owned(),
+                            ));
+                        }
+                        validate_tape_payload(publication.tape)?;
+                        let source = HashKey::sha256(publication.source);
+                        Ok((
+                            publication,
+                            source,
+                            publication.tape.map(|tape| HashKey::tape_identity(source, tape.bytes)),
+                        ))
+                    })
+                    .collect::<StoreResult<Vec<_>>>()
+            })
         })()?;
         let candidate_identities = publication_candidate_identities(publications);
         // Path identities are hashed once, before any transaction takes the write lock.
@@ -159,42 +161,44 @@ impl ContentStore {
         // Source and tape are always independent Zstandard frames.
         // Hashing, lookup, compression, and validation finish before the transaction starts.
         let mut prepared: Vec<PreparedOverlayPublication<'_>> = (|| {
-            identities
-                .into_par_iter()
-                .zip(existing.into_par_iter())
-                .map(
-                    |((publication, source_hash, tape_hash), (source_id, tape_id))| {
-                        let source_frame = source_id
-                            .is_none()
-                            .then(|| compress_source(publication.source, self.compression_level, file_tag(publication.path, publication.tape.map(|tape| tape.bytes))))
-                            .transpose()?;
-                        let tape_frame = publication
-                            .tape
-                            .filter(|_| tape_id.is_none())
-                            .map(|payload| compress_tape(payload.bytes, self.compression_level))
-                            .transpose()?;
-                        // A stored tape's documents are stored with it: only a new tape's are
-                        // written.
-                        let document_frames = publication
-                            .tape
-                            .filter(|payload| tape_id.is_none() && !payload.documents.is_empty())
-                            .map(|payload| {
-                                compress_documents(payload.documents, self.compression_level)
-                            })
-                            .transpose()?;
-                        Ok((
-                            publication,
-                            source_hash,
-                            source_id,
-                            source_frame,
-                            tape_hash,
-                            tape_id,
-                            tape_frame,
-                            document_frames,
-                        ))
-                    },
-                )
-                .collect::<StoreResult<Vec<_>>>()
+            rerail_prof::code_rule_dsl::logic::profile::on_cores(|| {
+                identities
+                    .into_par_iter()
+                    .zip(existing.into_par_iter())
+                    .map(
+                        |((publication, source_hash, tape_hash), (source_id, tape_id))| {
+                            let source_frame = source_id
+                                .is_none()
+                                .then(|| compress_source(publication.source, self.compression_level, file_tag(publication.path, publication.tape.map(|tape| tape.bytes))))
+                                .transpose()?;
+                            let tape_frame = publication
+                                .tape
+                                .filter(|_| tape_id.is_none())
+                                .map(|payload| compress_tape(payload.bytes, self.compression_level))
+                                .transpose()?;
+                            // A stored tape's documents are stored with it: only a new tape's are
+                            // written.
+                            let document_frames = publication
+                                .tape
+                                .filter(|payload| tape_id.is_none() && !payload.documents.is_empty())
+                                .map(|payload| {
+                                    compress_documents(payload.documents, self.compression_level)
+                                })
+                                .transpose()?;
+                            Ok((
+                                publication,
+                                source_hash,
+                                source_id,
+                                source_frame,
+                                tape_hash,
+                                tape_id,
+                                tape_frame,
+                                document_frames,
+                            ))
+                        },
+                    )
+                    .collect::<StoreResult<Vec<_>>>()
+            })
         })()?;
         let reused_sources = prepared.iter().filter(|item| item.2.is_some()).count();
         let reused_tapes = prepared.iter().filter(|item| item.5.is_some()).count();

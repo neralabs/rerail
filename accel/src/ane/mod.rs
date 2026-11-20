@@ -559,12 +559,14 @@ impl Ane {
                             let (w0, w1) = t.pieces[p];
                             let k = t.k(p);
                             let mut buf = vec![0u16; t.m * k];
-                            buf.par_chunks_mut(k).enumerate().for_each(|(r, out)| {
-                                let g = tile * t.m + r;
-                                if g < total {
-                                    let (a, i) = row_of(g);
-                                    expand(&a.row(i)[w0..w1], out);
-                                }
+                            rerail_context::on_cores(|| {
+                                buf.par_chunks_mut(k).enumerate().for_each(|(r, out)| {
+                                    let g = tile * t.m + r;
+                                    if g < total {
+                                        let (a, i) = row_of(g);
+                                        expand(&a.row(i)[w0..w1], out);
+                                    }
+                                })
                             });
                             buf
                         })
@@ -591,10 +593,12 @@ impl Ane {
                 let tile = first + item;
                 let lo = tile * t.m;
                 let hi = (lo + t.m).min(total);
-                counts[lo * n..hi * n].par_chunks_mut(n).enumerate().for_each(|(r, out)| {
-                    if !add_counts(out, &data[r * stride..r * stride + n]) {
-                        bad.store(true, Ordering::Relaxed);
-                    }
+                rerail_context::on_cores(|| {
+                    counts[lo * n..hi * n].par_chunks_mut(n).enumerate().for_each(|(r, out)| {
+                        if !add_counts(out, &data[r * stride..r * stride + n]) {
+                            bad.store(true, Ordering::Relaxed);
+                        }
+                    })
                 });
                 Ok(())
             })?;

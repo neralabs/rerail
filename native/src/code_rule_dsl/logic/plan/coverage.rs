@@ -578,16 +578,18 @@ fn census() -> &'static (BTreeMap<String, BTreeSet<String>>, usize, usize) {
     CENSUS.get_or_init(|| {
         use rayon::prelude::*;
         let files = shipped();
-        let read: Vec<Option<BTreeMap<String, String>>> = files
-            .par_iter()
-            .map(|f| {
-                let text = std::fs::read_to_string(f).ok()?;
-                let items = rerail_rr_syntax::syntax::Parser::new(&text).and_then(|mut p| p.statements()).ok()?;
-                let mut used = BTreeMap::new();
-                ops_of(&items, &mut used, &f.display().to_string());
-                Some(used)
-            })
-            .collect();
+        let read: Vec<Option<BTreeMap<String, String>>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+            files
+                .par_iter()
+                .map(|f| {
+                    let text = std::fs::read_to_string(f).ok()?;
+                    let items = rerail_rr_syntax::syntax::Parser::new(&text).and_then(|mut p| p.statements()).ok()?;
+                    let mut used = BTreeMap::new();
+                    ops_of(&items, &mut used, &f.display().to_string());
+                    Some(used)
+                })
+                .collect()
+        });
         let unread = read.iter().filter(|r| r.is_none()).count();
         let mut used: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for one in read.into_iter().flatten() {

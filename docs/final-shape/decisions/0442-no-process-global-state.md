@@ -188,10 +188,20 @@ by any caller in the process, so two callers of different trust could not be kep
       values (`SEEN`) is dropped when the run leaves the thread and nothing holds it (`left_run`, `run_ended`), not
       when the thread next enters a run or exits. Kept, a finished run's values (its device leases, its blocks) were
       pinned on an idle pool thread until it ran another run's job.
-  - The CPU job pool is rayon's global pool, the process's. A job carries its caller's run and object, so nothing
-    crosses between callers through it, but two machines in one process share its threads. So the threads' CPU
-    accounts (`THREADS`, `EXITED`, `EXITED_GAPS`) stay with the threads, the process's, and do not move into
-    `Machine`.
+  - **A job pool per machine** (2026-11-19). A machine's pool is its own (`rerail_context::Cores`, a machine value
+    made at its first job, `threads` threads named `rerail-cpu <i>`); rayon's global pool is never built. Rayon's
+    functions reach the pool of the thread they run on, else the global one, so every parallel loop and every rayon
+    call that starts work goes through the machine's entry points: `on_cores(|| …)` (on a pool's thread it runs
+    there; else on the caller's machine's pool, in the caller's run and context, while the caller waits),
+    `cores_spawn`, `cores_spawn_fifo`, `cores_scope`, `cores_threads`. 110 loops in 51 files were put inside them,
+    forest's included (its prediction ran on the caller's thread). `scripts/check/check-machine-pool.py`
+    (pre-commit) refuses a loop or call outside them, `build_global`, and a pool made where its list says no reason.
+  - A program's main thread is one of its machine's pool's (`Machine::here`): the CLI's `main` makes its machine so
+    and hands it to the command (`tools::cli`), and Node's main environment makes its machine so on its first
+    workspace (`environment_machine`; any other environment's pool has threads of its own). Rayon keeps a pool's
+    hold on such a thread, so only the thread that lives as long as the process makes one.
+  - The threads' CPU accounts (`THREADS`, `EXITED`, `EXITED_GAPS`) stay with the threads, the process's: a
+    machine's pool threads are threads of the process, and the accounts measure the process as the OS reports it.
   - Stays, each with its reason in `global-state.txt`:
     - the heap sampler and the footprint sampler (they measure the process, as the OS reports it);
     - `RESERVED` (the process's own mappings, its address space);

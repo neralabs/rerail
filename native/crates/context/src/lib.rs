@@ -6,7 +6,8 @@
 //! - `RUN`: the run under way on this thread, made and carried by `rerail_logic::run` (and `run_state`, to its jobs);
 //! - `setting`, `local`, `with_local`, `local_if_any`: a run's settings and its own values, by type;
 //! - `Shared` (`shared`, `with_shared`): what a caller shares by design with the runs it hands the object;
-//! - `Machine` (`machine`): the machine's resources, which every `Shared` is made on;
+//! - `Machine` (`machine`): the machine's resources, which every `Shared` is made on; among them its job pool
+//!   (`Cores`: `on_cores`, `cores_spawn`, `cores_scope`);
 //! - `bind`, `bound`, `with_bound`: the run's context, a value by type for an extent of the run (`CONTEXT`), carried
 //!   with the run to its jobs.
 //!
@@ -256,6 +257,132 @@ fn machine_slow<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
     let v = run.shared().machine().get::<T>();
     let _ = SEEN.try_with(|seen| seen.borrow_mut().of(&run).machine.insert(std::any::TypeId::of::<T>(), v.clone()));
     v
+}
+
+/// The most threads a machine's pool has: `RERAIL_THREADS`, a whole number of at least 1; else the cores the machine
+/// offers. The process's environment, read once: every machine of the process is the same machine.
+pub fn threads() -> usize {
+    static N: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *N.get_or_init(|| {
+        std::env::var("RERAIL_THREADS")
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .filter(|&n| n >= 1)
+            .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
+    })
+}
+
+/// Whether this is the process's main thread (the one `Machine::here` may hold: it lives as long as the process).
+pub fn is_main_thread() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: no arguments.
+        unsafe { libc::pthread_main_np() == 1 }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: no arguments.
+        unsafe { libc::gettid() == libc::getpid() }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        false
+    }
+}
+
+/// A pool thread's stack: pages are committed only as they are touched, so this is address space, not memory.
+pub const POOL_STACK: usize = 16 << 20;
+
+/// The machine's cores (decision 0442 step 5): its one job pool, [`threads`] threads named `rerail-cpu <i>`, made at
+/// its first job. Every job of a caller on the machine runs on it: the cores' launches, host jobs, and every parallel
+/// loop of the engine (`on_cores`, `cores_spawn`, `cores_scope`). Two machines in one process have two pools; two
+/// callers on one machine share it, each job in its own caller's run.
+#[derive(Default)]
+pub struct Cores(std::sync::OnceLock<rayon::ThreadPool>);
+
+impl Cores {
+    /// The pool, made the first time it is asked for.
+    pub fn pool(&self) -> &rayon::ThreadPool {
+        self.0.get_or_init(|| make_pool(false))
+    }
+}
+
+/// A pool of [`threads`] threads; with `this_thread`, the calling thread its thread 0.
+fn make_pool(this_thread: bool) -> rayon::ThreadPool {
+    let b = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads())
+        .thread_name(|i| format!("rerail-cpu {i}"))
+        .stack_size(POOL_STACK)
+        .start_handler(|_| engine_thread());
+    if this_thread { b.use_current_thread() } else { b }.build().expect("rerail: the machine's job pool")
+}
+
+impl Machine {
+    /// A machine whose pool has the calling thread as its thread 0, so the work this thread does itself, and its
+    /// waits that run other jobs, are the pool's too: a program's main thread, before its first job. The pool's hold
+    /// on the thread is never given back (rayon keeps its registry), so it is made once, by the thread that lives as
+    /// long as the process; any other caller makes a machine with `new`, whose pool's threads are its own and end
+    /// with it.
+    pub fn here() -> std::sync::Arc<Machine> {
+        let machine = Machine::new();
+        let _ = machine.get::<Cores>().0.set(make_pool(true));
+        machine
+    }
+}
+
+/// Whether this thread is one of a pool's: a machine's (its cores), or a pool of the machine's own lanes. There a
+/// parallel loop splits over the thread's own pool, as rayon's functions do.
+/// wasm32 has no threads: there rayon's functions run their work here, so every call is as on a pool's thread.
+fn on_a_pool() -> bool {
+    cfg!(target_family = "wasm") || rayon::current_thread_index().is_some()
+}
+
+/// Runs `f` on the caller's machine's cores ([`Cores`]): every parallel loop of the engine is inside one, so its items
+/// split over the machine's pool. On one of a pool's threads it runs here; else on one of the cores', in this
+/// caller's run and context (`job_run`), while this thread waits.
+pub fn on_cores<R: Send>(f: impl FnOnce() -> R + Send) -> R {
+    if on_a_pool() {
+        return f();
+    }
+    let run = job_run();
+    machine::<Cores>().pool().install(move || {
+        let _in = enter(run);
+        f()
+    })
+}
+
+/// Starts `f` as a job on the caller's machine's cores (on a pool's thread, that pool's). It carries nothing: a job
+/// that reads its caller's run carries it itself (`job_run`).
+pub fn cores_spawn(f: impl FnOnce() + Send + 'static) {
+    if on_a_pool() {
+        rayon::spawn(f);
+    } else {
+        machine::<Cores>().pool().spawn(f);
+    }
+}
+
+/// `cores_spawn`, the job queued first in, first out (a batch's launches in their order).
+pub fn cores_spawn_fifo(f: impl FnOnce() + Send + 'static) {
+    if on_a_pool() {
+        rayon::spawn_fifo(f);
+    } else {
+        machine::<Cores>().pool().spawn_fifo(f);
+    }
+}
+
+/// Runs `op` on this thread with a scope whose jobs run on the caller's machine's cores (on a pool's thread, that
+/// pool's); returns once they have all ended.
+pub fn cores_scope<'s, R>(op: impl FnOnce(&rayon::Scope<'s>) -> R) -> R {
+    if on_a_pool() {
+        rayon::in_place_scope(op)
+    } else {
+        machine::<Cores>().pool().in_place_scope(op)
+    }
+}
+
+/// The threads of the pool a parallel loop of this caller's splits over (`on_cores`).
+pub fn cores_threads() -> usize {
+    if on_a_pool() { rayon::current_num_threads() } else { machine::<Cores>().pool().current_num_threads() }
 }
 
 /// The shared object of the run under way, if one is (for a caller that hands it on).
@@ -792,5 +919,41 @@ mod tests {
             assert_eq!((bound::<Depth>(), links()), (Depth(99), 2));
         }
         assert_eq!((bound::<Depth>(), links()), (Depth(0), 0));
+    }
+
+    /// Whether this thread is one of `machine`'s pool's.
+    fn on_pool_of(machine: &std::sync::Arc<Machine>) -> bool {
+        machine.get::<Cores>().pool().current_thread_index().is_some()
+    }
+
+    #[test]
+    fn a_callers_parallel_work_runs_on_its_own_machines_pool() {
+        // Two machines in one process have two pools: each caller's work is on its own machine's, never the other's.
+        let (a, b) = (Machine::new(), Machine::new());
+        for (mine, other) in [(&a, &b), (&b, &a)] {
+            let _in = within(Shared::on(mine));
+            let seen = on_cores(|| (on_pool_of(mine), on_pool_of(other)));
+            assert_eq!(seen, (true, false));
+            // A loop inside it splits over the same pool.
+            use rayon::prelude::*;
+            let all = on_cores(|| (0..64).into_par_iter().all(|_| on_pool_of(mine) && !on_pool_of(other)));
+            assert!(all, "every item on the caller's machine's pool");
+        }
+    }
+
+    #[test]
+    fn work_on_the_cores_is_in_its_callers_run_and_context() {
+        let machine = Machine::new();
+        let shared = Shared::on(&machine);
+        let _in = within(std::sync::Arc::clone(&shared));
+        let _depth = bind(Depth(5));
+        let (depth, same) = on_cores(|| (bound::<Depth>(), shared_object().is_some_and(|s| std::sync::Arc::ptr_eq(&s, &shared))));
+        assert_eq!((depth, same), (Depth(5), true));
+        // A spawned job runs on the caller's machine's pool, and carries what it reads itself.
+        let (tx, rx) = std::sync::mpsc::channel();
+        let m = std::sync::Arc::clone(&machine);
+        cores_spawn(move || tx.send(on_pool_of(&m)).unwrap());
+        assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(10)), Ok(true));
+        assert_eq!(cores_threads(), threads());
     }
 }

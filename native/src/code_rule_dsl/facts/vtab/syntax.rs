@@ -152,17 +152,19 @@ fn compile_spans(patterns: &[(crate::code_rule_dsl::logic::front::ast::SpanIn, S
     use crate::code_rule_dsl::logic::front::ast::SpanIn;
     use rayon::prelude::*;
     let on = std::env::var("RERAIL_SPAN_PREFILTER").map_or(true, |v| v != "off");
-    patterns
-        .par_iter()
-        .map(|(within, re)| {
-            let compiled = crate::code_rule_dsl::facts::span_prefilter::unfolded(re);
-            let prefilter = match within {
-                SpanIn::Source | SpanIn::Line if on => crate::code_rule_dsl::facts::span_prefilter::compile(&compiled, *within == SpanIn::Line),
-                _ => None,
-            };
-            regex::Regex::new(&compiled).map(|r| (r, prefilter)).map_err(|e| StoreError::Invalid(format!("rx_span: bad regex {re:?}: {e}")))
-        })
-        .collect()
+    crate::code_rule_dsl::logic::profile::on_cores(|| {
+        patterns
+            .par_iter()
+            .map(|(within, re)| {
+                let compiled = crate::code_rule_dsl::facts::span_prefilter::unfolded(re);
+                let prefilter = match within {
+                    SpanIn::Source | SpanIn::Line if on => crate::code_rule_dsl::facts::span_prefilter::compile(&compiled, *within == SpanIn::Line),
+                    _ => None,
+                };
+                regex::Regex::new(&compiled).map(|r| (r, prefilter)).map_err(|e| StoreError::Invalid(format!("rx_span: bad regex {re:?}: {e}")))
+            })
+            .collect()
+    })
 }
 
 impl Projection {

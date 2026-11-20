@@ -3,8 +3,8 @@
 //! **Jobs.** A [`Batch`] is a level's launches: launches that do not read each other's outputs (decision 0095 §5).
 //! The executor runs them as jobs on the lanes' workers:
 //!
-//! - **The cores** are the process's one pool ([`configure`]: [`threads`] threads, `RERAIL_THREADS`, else the
-//!   machine's cores), shared by every executor and by every other job of the process. Each launch placed on the
+//! - **The cores** are the machine's one pool (decision 0442: `rerail_context::Cores`, [`threads`] threads,
+//!   `RERAIL_THREADS`, else the machine's cores), shared by every executor and by every other job of the machine. Each launch placed on the
 //!   cores is a job of its own, so a batch's launches on the cores run on all the pool's threads at once, beside
 //!   every other batch's and every other job. A kernel that splits its work (the reference's parallel loops) splits
 //!   it over the same threads.
@@ -39,44 +39,17 @@ use std::sync::mpsc::Receiver;
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
-/// The process's threads: `RERAIL_THREADS`, a whole number of at least 1; else the cores the machine offers.
-///
-/// It sizes the one pool ([`configure`]): every job of the process's work runs on it, so the process never uses more
-/// threads for its work than this.
-pub fn threads() -> usize {
-    static N: OnceLock<usize> = OnceLock::new();
-    *N.get_or_init(|| {
-        std::env::var("RERAIL_THREADS")
-            .ok()
-            .and_then(|v| v.trim().parse::<usize>().ok())
-            .filter(|&n| n >= 1)
-            .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
-    })
-}
+/// The most threads of the machine's pool (`rerail_context::threads`): `RERAIL_THREADS`, else the machine's cores. Every
+/// job of the machine's work runs on its pool, so it never uses more threads for its work than this.
+pub use rerail_context::threads;
 
-/// Makes the one pool: rayon's global pool, [`threads`] threads named `rerail-cpu <i>`. Every job runs on it: the
-/// cores' launches, host jobs ([`Executor::spawn`]), and every parallel loop and job of the caller's (rayon's
-/// functions reach the global pool).
-///
-/// With `this_thread`, the calling thread is the pool's thread 0, so the work it does itself, and its waits that run
-/// other jobs ([`help_until`]), are the pool's too: a program's main thread, called before any other thread uses the
-/// pool. Without it (a library, a test), the pool's threads are its own. A pool already made stays as it is.
-pub fn configure(this_thread: bool) {
+/// Registers what every block is made by (decision 0342: the one policy), before the first block. The pool is the
+/// machine's (`rerail_context::Cores`), made at its first job: a program's main thread is one of its threads when the
+/// program made its machine there (`Machine::here`).
+pub fn configure() {
     static MADE: OnceLock<()> = OnceLock::new();
-    MADE.get_or_init(|| {
-        // Every block is made by the one policy from here on (decision 0342).
-        crate::blocks::install();
-        let b = rayon::ThreadPoolBuilder::new()
-            .num_threads(threads())
-            .thread_name(|i| format!("rerail-cpu {i}"))
-            .stack_size(POOL_STACK)
-            .start_handler(|_| rerail_context::engine_thread());
-        let _ = if this_thread { b.use_current_thread() } else { b }.build_global();
-    });
+    MADE.get_or_init(crate::blocks::install);
 }
-
-/// A pool thread's stack: pages are committed only as they are touched, so this is address space, not memory.
-const POOL_STACK: usize = 16 << 20;
 
 /// The stack a wait keeps free before it runs another's job on its frames ([`help_once`]).
 const HELP_STACK_MARGIN: usize = 4 << 20;
@@ -685,7 +658,7 @@ pub fn services() -> Vec<String> {
 /// nothing.
 pub fn drop_beside<T: Send + 'static>(x: T) {
     let run = rerail_context::job_run();
-    rayon::spawn(move || {
+    rerail_context::cores_spawn(move || {
         let _run = rerail_context::enter(run);
         drop(x)
     });
@@ -1076,7 +1049,7 @@ impl Executor {
 
     /// Every lane this machine has, with the default prices.
     pub fn new() -> Self {
-        configure(false);
+        configure();
         let present = lanes::present();
         // The device lanes are macOS's: elsewhere the two are all.
         #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
@@ -1122,7 +1095,7 @@ impl Executor {
 
     /// Only the given lanes' backends (tests; a binding that allows only some lanes).
     pub fn with(backends: Vec<Arc<dyn Backend>>) -> Self {
-        configure(false);
+        configure();
         let mut slots = [0; Lane::COUNT];
         for b in &backends {
             slots[b.lane().index()] = if b.lane().is_pool() { threads() } else { 1 };
@@ -1359,7 +1332,7 @@ impl Executor {
                         let (claims, backend) = (Arc::clone(&claims), Arc::clone(b));
                         // The launches run in their submitter's run, on whichever pool thread takes them.
                         let run = rerail_context::job_run();
-                        rayon::spawn_fifo(move || {
+                        rerail_context::cores_spawn_fifo(move || {
                             let _run = rerail_context::enter(run);
                             as_job(if lane == Lane::Sql { "SQL launches" } else { "the cores' launches" }, || claims.serve_host(&*backend))
                         });
@@ -1386,7 +1359,7 @@ impl Executor {
         let board = Arc::clone(&self.board);
         // The job is its caller's run's (decision 0442), on whichever pool thread takes it.
         let run = rerail_context::job_run();
-        rayon::spawn_fifo(move || {
+        rerail_context::cores_spawn_fifo(move || {
             let _run = rerail_context::enter(run);
             board.start(&mut ticket);
             let r = as_job(name, || std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
@@ -1695,14 +1668,15 @@ impl Backend for CpuBackend {
             return Ok((vec![self.join(ks[0])?], Phases::default()));
         }
         let me = std::thread::current().id();
-        let ran: Vec<(Output, f64)> = ks
-            .par_iter()
-            .map(|k| {
-                let c = thread_cpu();
-                let o = self.join(k)?;
-                Ok((o, if std::thread::current().id() == me { 0.0 } else { thread_cpu() - c }))
-            })
-            .collect::<Result<_, String>>()?;
+        let ran: Vec<(Output, f64)> = rerail_context::on_cores(|| {
+            ks.par_iter()
+                .map(|k| {
+                    let c = thread_cpu();
+                    let o = self.join(k)?;
+                    Ok((o, if std::thread::current().id() == me { 0.0 } else { thread_cpu() - c }))
+                })
+                .collect::<Result<_, String>>()
+        })?;
         let worker_cpu = ran.iter().map(|r| r.1).sum();
         Ok((ran.into_iter().map(|r| r.0).collect(), Phases { worker_cpu, ..Phases::default() }))
     }

@@ -2688,10 +2688,12 @@ fn execute_batch_packed_once(
     }
     // A cold process compiles each program once (06 S7: 71 programs, 0.3 s); they compile in
     // parallel.
-    let compiled = crate::code_rule_dsl::prof::time("jit.compile", || programs
-        .par_iter()
-        .map(crate::code_rule_dsl::logic::profile::carried("native compile (pool)", compile_cached))
-        .collect::<Result<Vec<_>, Error>>())?;
+    let compiled = crate::code_rule_dsl::prof::time("jit.compile", crate::code_rule_dsl::logic::profile::on_cores(|| {
+        || programs
+            .par_iter()
+            .map(crate::code_rule_dsl::logic::profile::carried("native compile (pool)", compile_cached))
+            .collect::<Result<Vec<_>, Error>>()
+    }))?;
     let allocation_started = std::time::Instant::now();
     let regions = crate::code_rule_dsl::prof::Stage::start("jit.regions");
     let mut pending = DemandZeroRegion::<PendingRecord>::new(totals.pending as usize)?;
@@ -2916,75 +2918,77 @@ fn execute_batch_packed_once(
         }
     }
     let task_outputs = (|| {
-        spans
-            .into_par_iter()
-            .map(|span| span.iter_mut().map(|(program, context)| {
-                // The queue uses tombstones within a task. Keeping a full
-                // table of tombstones across roots turns each new insert into
-                // a capacity-length probe. These records reference only the
-                // current task's histories and cannot survive its execution.
-                unsafe {
-                    if context.queued_state_quota_limit != 0 {
-                        std::ptr::write_bytes(
-                            context.queued_states,
-                            0,
-                            context.queued_state_quota_limit as usize,
-                        );
+        crate::code_rule_dsl::logic::profile::on_cores(|| {
+            spans
+                .into_par_iter()
+                .map(|span| span.iter_mut().map(|(program, context)| {
+                    // The queue uses tombstones within a task. Keeping a full
+                    // table of tombstones across roots turns each new insert into
+                    // a capacity-length probe. These records reference only the
+                    // current task's histories and cannot survive its execution.
+                    unsafe {
+                        if context.queued_state_quota_limit != 0 {
+                            std::ptr::write_bytes(
+                                context.queued_states,
+                                0,
+                                context.queued_state_quota_limit as usize,
+                            );
+                        }
+                        if context.greedy_entry_quota_limit != 0 {
+                            std::ptr::write_bytes(
+                                context.greedy_entries,
+                                0,
+                                context.greedy_entry_quota_limit as usize,
+                            );
+                        }
                     }
-                    if context.greedy_entry_quota_limit != 0 {
-                        std::ptr::write_bytes(
-                            context.greedy_entries,
-                            0,
-                            context.greedy_entry_quota_limit as usize,
-                        );
+                    context.most_steps = 0;
+                    unsafe { entries[*program](context) };
+                    // The task's steps: its total, or its longest path's or candidate's where that is more (what its
+                    // budget had to hold, decision 0334).
+                    unsafe {
+                        let most = context.most_steps.max(context.current_steps);
+                        (*context.status).reserved = (*context.status).reserved.max(most);
                     }
-                }
-                context.most_steps = 0;
-                unsafe { entries[*program](context) };
-                // The task's steps: its total, or its longest path's or candidate's where that is more (what its
-                // budget had to hold, decision 0334).
-                unsafe {
-                    let most = context.most_steps.max(context.current_steps);
-                    (*context.status).reserved = (*context.status).reserved.max(most);
-                }
-                let status = unsafe { *context.status };
-                if status.error != 0 {
-                    return Ok(TaskPackedOutput {
-                        results: Vec::new(),
-                        captures: Vec::new(),
-                        properties: Vec::new(),
-                        bytes: Vec::new(),
-                    });
-                }
-                Ok(TaskPackedOutput {
-                    results: unsafe {
-                        std::slice::from_raw_parts(context.results, status.result_count as usize)
+                    let status = unsafe { *context.status };
+                    if status.error != 0 {
+                        return Ok(TaskPackedOutput {
+                            results: Vec::new(),
+                            captures: Vec::new(),
+                            properties: Vec::new(),
+                            bytes: Vec::new(),
+                        });
+                    }
+                    Ok(TaskPackedOutput {
+                        results: unsafe {
+                            std::slice::from_raw_parts(context.results, status.result_count as usize)
+                                .to_vec()
+                        },
+                        captures: unsafe {
+                            std::slice::from_raw_parts(
+                                context.final_captures,
+                                status.final_capture_count as usize,
+                            )
                             .to_vec()
-                    },
-                    captures: unsafe {
-                        std::slice::from_raw_parts(
-                            context.final_captures,
-                            status.final_capture_count as usize,
-                        )
-                        .to_vec()
-                    },
-                    properties: unsafe {
-                        std::slice::from_raw_parts(
-                            context.properties,
-                            status.property_count as usize,
-                        )
-                        .to_vec()
-                    },
-                    bytes: unsafe {
-                        std::slice::from_raw_parts(
-                            context.output_bytes,
-                            status.output_byte_count as usize,
-                        )
-                        .to_vec()
-                    },
-                })
-            }).collect::<Result<Vec<_>, Error>>())
-            .collect::<Result<Vec<Vec<_>>, Error>>()
+                        },
+                        properties: unsafe {
+                            std::slice::from_raw_parts(
+                                context.properties,
+                                status.property_count as usize,
+                            )
+                            .to_vec()
+                        },
+                        bytes: unsafe {
+                            std::slice::from_raw_parts(
+                                context.output_bytes,
+                                status.output_byte_count as usize,
+                            )
+                            .to_vec()
+                        },
+                    })
+                }).collect::<Result<Vec<_>, Error>>())
+                .collect::<Result<Vec<Vec<_>>, Error>>()
+        })
     })()?
     .into_iter()
     .flatten()

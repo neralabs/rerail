@@ -228,12 +228,14 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
         // Each job in the run under way here (a pool thread that takes one holds none: decision 0442).
         let carry = crate::code_rule_dsl::logic::profile::carry();
         (|| {
-            jobs.into_par_iter()
-                .map_init(BTreeMap::new, |grammars, job| {
-                    let _in = carry.enter("evaluate job");
-                    work(job, grammars)
-                })
-                .collect()
+            crate::code_rule_dsl::logic::profile::on_cores(|| {
+                jobs.into_par_iter()
+                    .map_init(BTreeMap::new, |grammars, job| {
+                        let _in = carry.enter("evaluate job");
+                        work(job, grammars)
+                    })
+                    .collect()
+            })
         })()
     })
 }
@@ -341,13 +343,15 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
         // Each job in the run under way here (a pool thread that takes one holds none: decision 0442).
         let carry = crate::code_rule_dsl::logic::profile::carry();
         (|| {
-            jobs.into_par_iter()
-                .zip(storage_times.into_par_iter())
-                .map_init(BTreeMap::new, |grammars, job| {
-                    let _in = carry.enter("evaluate job");
-                    work(job, grammars)
-                })
-                .collect()
+            crate::code_rule_dsl::logic::profile::on_cores(|| {
+                jobs.into_par_iter()
+                    .zip(storage_times.into_par_iter())
+                    .map_init(BTreeMap::new, |grammars, job| {
+                        let _in = carry.enter("evaluate job");
+                        work(job, grammars)
+                    })
+                    .collect()
+            })
         })()
     })
 }

@@ -1207,18 +1207,20 @@ impl PartitionData {
 
         // The active features' buckets over the kept rows, each encoded on its own (in parallel), then in one block.
         use rayon::prelude::*;
-        let lists: Vec<Option<(Vec<u32>, i32, i32)>> = self.features.par_iter().map(|f| {
-            if !f.active {
-                return None;
-            }
-            let mut s = MemorySerializer;
-            let mut bl = WritableBucketList::new(num_non_zero, f.buckets.num_buckets as u32, &mut s);
-            for &i in &keep {
-                bl.write(f.buckets.get(self.rows.get_example_num(i)));
-            }
-            let frozen = bl.freeze(&mut s);
-            Some((frozen.storage.data().to_vec(), frozen.entry_bits, frozen.num_buckets))
-        }).collect();
+        let lists: Vec<Option<(Vec<u32>, i32, i32)>> = rerail_context::on_cores(|| {
+            self.features.par_iter().map(|f| {
+                if !f.active {
+                    return None;
+                }
+                let mut s = MemorySerializer;
+                let mut bl = WritableBucketList::new(num_non_zero, f.buckets.num_buckets as u32, &mut s);
+                for &i in &keep {
+                    bl.write(f.buckets.get(self.rows.get_example_num(i)));
+                }
+                let frozen = bl.freeze(&mut s);
+                Some((frozen.storage.data().to_vec(), frozen.entry_bits, frozen.num_buckets))
+            }).collect()
+        });
         let words: usize = lists.iter().flatten().map(|l| l.0.len()).sum();
         let mut block = serializer.allocate_writable_t::<u32>(words.max(1), 4096 /* page aligned */);
         let mut spans = Vec::new();
@@ -1377,18 +1379,20 @@ impl PartitionData {
             return trainer.train_partitioned(feature_vector_sampling, debug_name, features_active).map_err(|e| format!("Error training partition {debug_name}: {e}"));
         }
         use rayon::prelude::*;
-        features_active.par_iter().enumerate().map(|(i, af)| {
-            let mut my_data = self.clone();
-            for f in my_data.features.iter_mut() {
-                f.active = false;
-            }
-            for &f in af {
-                my_data.features[f as usize].active = true;
-            }
-            let mut tree = Tree::new();
-            tree.root = my_data.train(feature_vector_sampling, i as i32, debug_name, 0, max_depth, &mut tree, training_scheme).map_err(|e| format!("Error training tree {i}: {e}"))?;
-            Ok(tree)
-        }).collect()
+        rerail_context::on_cores(|| {
+            features_active.par_iter().enumerate().map(|(i, af)| {
+                let mut my_data = self.clone();
+                for f in my_data.features.iter_mut() {
+                    f.active = false;
+                }
+                for &f in af {
+                    my_data.features[f as usize].active = true;
+                }
+                let mut tree = Tree::new();
+                tree.root = my_data.train(feature_vector_sampling, i as i32, debug_name, 0, max_depth, &mut tree, training_scheme).map_err(|e| format!("Error training tree {i}: {e}"))?;
+                Ok(tree)
+            }).collect()
+        })
     }
 }
 

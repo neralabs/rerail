@@ -76,12 +76,18 @@ impl Default for CodeRuleDslWorkspace {
 
 /// The Node environment's machine (decision 0442). The addon's caller is the environment: it makes one machine and
 /// keeps it in its instance data, so every workspace it makes shares its pool, its CPU slot and its learned model,
-/// each workspace on a shared object of its own. Another environment (a worker thread) has its own.
+/// each workspace on a shared object of its own. Another environment (a worker thread) has its own. The main
+/// environment's lives as long as the process, on its main thread: that thread is one of its pool's
+/// (`Machine::here`), so its own work and its waits are the pool's.
 fn environment_machine(env: &napi::Env) -> Result<Arc<crate::code_rule_dsl::logic::profile::Machine>> {
     if let Some(machine) = env.get_instance_data::<Arc<crate::code_rule_dsl::logic::profile::Machine>>()? {
         return Ok(Arc::clone(machine));
     }
-    let machine = crate::code_rule_dsl::logic::profile::Machine::new();
+    let machine = if crate::code_rule_dsl::logic::profile::is_main_thread() {
+        crate::code_rule_dsl::logic::profile::Machine::here()
+    } else {
+        crate::code_rule_dsl::logic::profile::Machine::new()
+    };
     env.set_instance_data(Arc::clone(&machine), (), |_| {})?;
     Ok(machine)
 }

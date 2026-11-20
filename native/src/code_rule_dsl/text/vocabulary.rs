@@ -315,7 +315,7 @@ impl Searchers {
             out[at] = (0..terms.len() as u32).collect();
         }
         for (at, compiled) in &self.backtracking {
-            let found = terms.par_iter().map(|term| compiled.is_match(term)).collect::<Vec<_>>();
+            let found = crate::code_rule_dsl::logic::profile::on_cores(|| terms.par_iter().map(|term| compiled.is_match(term)).collect::<Vec<_>>());
             undecided[*at] = found.iter().any(Option::is_none);
             out[*at] = found.iter().enumerate().filter(|(_, m)| **m == Some(true)).map(|(i, _)| i as u32).collect();
         }
@@ -334,29 +334,31 @@ impl Searchers {
             let (slot, longest) = (*slot, *longest);
             // A prefix (suffix) literal lies within the first (last) `longest` bytes: only those are searched, and only
             // hits at the edge count (overlapping search is not anchored).
-            let hits = terms
-                .par_iter()
-                .map(|term| {
-                    let edge;
-                    let haystack: &[u8] = match slot {
-                        0 => &term[..term.len().min(longest)],
-                        1 => {
-                            edge = term[term.len().saturating_sub(longest)..].iter().rev().copied().collect::<Vec<_>>();
-                            &edge
-                        }
-                        _ => term,
-                    };
-                    let mut plans = searcher
-                        .try_find_overlapping_iter(haystack)
-                        .expect("an overlapping search of a standard searcher")
-                        .filter(|hit| slot == 2 || hit.start() == 0)
-                        .map(|hit| owners[hit.pattern().as_usize()])
-                        .collect::<Vec<_>>();
-                    plans.sort_unstable();
-                    plans.dedup();
-                    plans
-                })
-                .collect::<Vec<_>>();
+            let hits = crate::code_rule_dsl::logic::profile::on_cores(|| {
+                terms
+                    .par_iter()
+                    .map(|term| {
+                        let edge;
+                        let haystack: &[u8] = match slot {
+                            0 => &term[..term.len().min(longest)],
+                            1 => {
+                                edge = term[term.len().saturating_sub(longest)..].iter().rev().copied().collect::<Vec<_>>();
+                                &edge
+                            }
+                            _ => term,
+                        };
+                        let mut plans = searcher
+                            .try_find_overlapping_iter(haystack)
+                            .expect("an overlapping search of a standard searcher")
+                            .filter(|hit| slot == 2 || hit.start() == 0)
+                            .map(|hit| owners[hit.pattern().as_usize()])
+                            .collect::<Vec<_>>();
+                        plans.sort_unstable();
+                        plans.dedup();
+                        plans
+                    })
+                    .collect::<Vec<_>>()
+            });
             for (i, plans) in hits.into_iter().enumerate() {
                 plans.into_iter().for_each(|at| out[at].push(i as u32));
             }
@@ -364,33 +366,35 @@ impl Searchers {
         for group in &self.groups {
             if let Engine::Each(each) = &group.engine {
                 for (at, compiled) in group.owners.iter().zip(each) {
-                    let found = terms.par_iter().map(|term| compiled.is_match(term)).collect::<Vec<_>>();
+                    let found = crate::code_rule_dsl::logic::profile::on_cores(|| terms.par_iter().map(|term| compiled.is_match(term)).collect::<Vec<_>>());
                     undecided[*at] |= found.iter().any(Option::is_none);
                     out[*at] = found.iter().enumerate().filter(|(_, m)| **m == Some(true)).map(|(i, _)| i as u32).collect();
                 }
                 continue;
             }
-            let hits = terms
-                .par_iter()
-                .map_init(
-                    || regex_automata::PatternSet::new(group.owners.len()),
-                    |set, term| {
-                        set.clear();
-                        let input = regex_automata::Input::new(*term);
-                        let asked_lazily = match &group.engine {
-                            Engine::Dfa(dfa) => regex_automata::dfa::Automaton::try_which_overlapping_matches(&**dfa, &input, set).is_err(),
-                            _ => true,
-                        };
-                        if asked_lazily {
+            let hits = crate::code_rule_dsl::logic::profile::on_cores(|| {
+                terms
+                    .par_iter()
+                    .map_init(
+                        || regex_automata::PatternSet::new(group.owners.len()),
+                        |set, term| {
                             set.clear();
-                            if let Some(regex) = group.lazy() {
-                                regex.which_overlapping_matches(&input, set);
+                            let input = regex_automata::Input::new(*term);
+                            let asked_lazily = match &group.engine {
+                                Engine::Dfa(dfa) => regex_automata::dfa::Automaton::try_which_overlapping_matches(&**dfa, &input, set).is_err(),
+                                _ => true,
+                            };
+                            if asked_lazily {
+                                set.clear();
+                                if let Some(regex) = group.lazy() {
+                                    regex.which_overlapping_matches(&input, set);
+                                }
                             }
-                        }
-                        set.iter().map(|pattern| pattern.as_usize()).collect::<Vec<_>>()
-                    },
-                )
-                .collect::<Vec<_>>();
+                            set.iter().map(|pattern| pattern.as_usize()).collect::<Vec<_>>()
+                        },
+                    )
+                    .collect::<Vec<_>>()
+            });
             for (i, patterns) in hits.into_iter().enumerate() {
                 patterns.into_iter().for_each(|pattern| out[group.owners[pattern]].push(i as u32));
             }

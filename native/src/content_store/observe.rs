@@ -1595,28 +1595,30 @@ pub fn realpaths(paths: &[&Path]) -> Vec<Option<PathBuf>> {
         }
     }
     let dirs: Vec<(&Path, Vec<usize>)> = by_dir.into_iter().collect();
-    let resolved: Vec<Vec<(usize, Option<PathBuf>)>> = dirs
-        .par_iter()
-        .map(|(dir, files)| {
-            let canonical = std::fs::canonicalize(dir).ok();
-            // The names as on disk, and which are symlinks (the listing's entry type: no stat).
-            let names: HashMap<std::ffi::OsString, bool> = match (&canonical, std::fs::read_dir(dir)) {
-                (Some(_), Ok(entries)) => entries.flatten().map(|e| (e.file_name(), e.file_type().is_ok_and(|t| t.is_symlink()))).collect(),
-                _ => HashMap::new(),
-            };
-            files
-                .iter()
-                .map(|&i| {
-                    let name = paths[i].file_name().expect("a file name");
-                    let found = match (&canonical, names.get(name)) {
-                        (Some(c), Some(false)) => Some(c.join(name)),
-                        _ => std::fs::canonicalize(paths[i]).ok(),
-                    };
-                    (i, found)
-                })
-                .collect()
-        })
-        .collect();
+    let resolved: Vec<Vec<(usize, Option<PathBuf>)>> = rerail_prof::code_rule_dsl::logic::profile::on_cores(|| {
+        dirs
+            .par_iter()
+            .map(|(dir, files)| {
+                let canonical = std::fs::canonicalize(dir).ok();
+                // The names as on disk, and which are symlinks (the listing's entry type: no stat).
+                let names: HashMap<std::ffi::OsString, bool> = match (&canonical, std::fs::read_dir(dir)) {
+                    (Some(_), Ok(entries)) => entries.flatten().map(|e| (e.file_name(), e.file_type().is_ok_and(|t| t.is_symlink()))).collect(),
+                    _ => HashMap::new(),
+                };
+                files
+                    .iter()
+                    .map(|&i| {
+                        let name = paths[i].file_name().expect("a file name");
+                        let found = match (&canonical, names.get(name)) {
+                            (Some(c), Some(false)) => Some(c.join(name)),
+                            _ => std::fs::canonicalize(paths[i]).ok(),
+                        };
+                        (i, found)
+                    })
+                    .collect()
+            })
+            .collect()
+    });
     let mut out: Vec<Option<PathBuf>> = vec![None; paths.len()];
     for (i, c) in resolved.into_iter().flatten() {
         out[i] = c;

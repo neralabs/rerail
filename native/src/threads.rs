@@ -6,40 +6,29 @@
 //!                                           chunks cut and projected, the cores' launches
 //! ```
 //!
-//! There is one pool: the executor's (`rerail_accel::exec::configure`), which is rayon's global pool, so every
-//! parallel loop and job of the engine runs on it beside the executor's launches.
+//! A machine has one pool (decision 0442: `rerail_context::Cores`, made on its first job), so every parallel loop and
+//! job of a caller of the machine runs on it beside the executor's launches; two machines in a process have two.
 
 /// The setting: `RERAIL_THREADS`, a whole number of at least 1; else the cores the machine offers.
 pub fn max() -> usize {
     rerail_accel::exec::threads()
 }
 
-/// Makes the one pool, sized to `max`: called before anything uses it (the engine's `main`; Node's registration of
-/// the addon, `lib.rs`, never its constructor). On the process's main thread it is called with `this_thread`, so that
-/// thread is one of the pool's (its own work and its waits are the pool's). A pool already made is left as it is.
-pub fn configure(this_thread: bool) {
-    rerail_accel::exec::configure(this_thread);
+/// Registers what every block is made by before the first block (`rerail_accel::exec::configure`): the engine's
+/// `main`, Node's registration of the addon (`lib.rs`), a run. The pool is the machine's, sized to `max`; the
+/// engine's `main` makes its machine on the main thread (`Machine::here`), so that thread is one of the pool's.
+pub fn configure() {
+    rerail_accel::exec::configure();
 }
 
 /// Whether this is the process's main thread.
-pub fn is_main_thread() -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        // SAFETY: no arguments.
-        unsafe { libc::pthread_main_np() == 1 }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        // SAFETY: no arguments.
-        unsafe { libc::gettid() == libc::getpid() }
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        false
-    }
-}
+pub use crate::code_rule_dsl::logic::profile::is_main_thread;
 
-/// Jobs on the one pool that borrow the caller's data, within [`scope`]: every one has ended when it returns. Each is
+/// The machine whose pool a caller's jobs run on (decision 0442): a program makes one (`Machine::here` on its main
+/// thread) and hands it to its commands.
+pub use crate::code_rule_dsl::logic::profile::Machine;
+
+/// Jobs on the caller's machine's pool that borrow the caller's data, within [`scope`]: every one has ended when it returns. Each is
 /// handed the scope again, to start more.
 pub struct Jobs<'s, 'r>(
     #[cfg(not(target_family = "wasm"))] &'r rayon::Scope<'s>,
@@ -73,7 +62,7 @@ impl<'s> Jobs<'s, '_> {
 pub fn scope<'s, R>(op: impl for<'r> FnOnce(&Jobs<'s, 'r>) -> R) -> R {
     #[cfg(not(target_family = "wasm"))]
     {
-        rayon::in_place_scope(|s| op(&Jobs(s)))
+        crate::code_rule_dsl::logic::profile::cores_scope(|s| op(&Jobs(s)))
     }
     #[cfg(target_family = "wasm")]
     {
@@ -93,7 +82,7 @@ pub(crate) struct Beside<T> {
 /// Frees `value` on the pool, off the caller's thread: freeing a large structure (a program analysis's results for
 /// every rule) is work the caller does not need done before it goes on. It reads no run context, so it carries none.
 pub(crate) fn drop_behind<T: Send + 'static>(value: T) {
-    rayon::spawn(move || drop(value));
+    crate::code_rule_dsl::logic::profile::cores_spawn(move || drop(value));
 }
 
 /// Starts `f` beside the caller ([`Beside`]).
@@ -109,7 +98,7 @@ pub(crate) fn beside<T: Send + 'static>(name: &'static str, f: impl FnOnce() -> 
         *held.0.lock() = Some(r);
     };
     if cfg!(not(target_family = "wasm")) && max() >= 2 {
-        rayon::spawn(run);
+        crate::code_rule_dsl::logic::profile::cores_spawn(run);
     } else {
         let _ = rerail_accel::exec::service(name, None, run);
     }

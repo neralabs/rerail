@@ -420,83 +420,85 @@ impl PackedDemand {
             })
             .collect::<Option<Vec<_>>>()?;
         let packs = self.packs(programs.clone(), &walks);
-        let matches = range
-            .clone()
-            .into_par_iter()
-            .map(crate::code_rule_dsl::logic::profile::carried("demand walks (pool)", |file| {
-                let tape = &self.files[file];
-                let mut frames = Frames::default();
-                let mut records = Vec::new();
-                // The packed programs' matches on this file, by program; a pack whose walk fails
-                // here runs its members alone.
-                let mut packed = std::collections::HashMap::<usize, Vec<RootMatch>>::new();
-                for pack in &packs {
-                    if let Some(found) = self.walk_pack(pack, file, &mut frames, &mut records) {
-                        packed.extend(found);
+        let matches = crate::code_rule_dsl::logic::profile::on_cores(|| {
+            range
+                .clone()
+                .into_par_iter()
+                .map(crate::code_rule_dsl::logic::profile::carried("demand walks (pool)", |file| {
+                    let tape = &self.files[file];
+                    let mut frames = Frames::default();
+                    let mut records = Vec::new();
+                    // The packed programs' matches on this file, by program; a pack whose walk fails
+                    // here runs its members alone.
+                    let mut packed = std::collections::HashMap::<usize, Vec<RootMatch>>::new();
+                    for pack in &packs {
+                        if let Some(found) = self.walk_pack(pack, file, &mut frames, &mut records) {
+                            packed.extend(found);
+                        }
                     }
-                }
-                programs
-                    .clone()
-                    .zip(&walks)
-                    .map(|(program, walk)| {
-                        if let Some(found) = packed.remove(&program) {
-                            return Some(found);
-                        }
-                        let mut found = Vec::new();
-                        // Records the device walked: as the host's walk lists them.
-                        if let (Some(given), true) = (given(program), self.task_grid[file][program]) {
-                            let limit = self.result_limits[program] as usize;
-                            let mut local = 0_u32;
-                            let mut last = None;
-                            for (task, record) in given[file].iter().take(limit) {
-                                local = if last == Some(*task) { local + 1 } else { 0 };
-                                last = Some(*task);
-                                found.push(RootMatch {
-                                    task_ordinal: *task,
-                                    local_ordinal: local,
-                                    start: record.start,
-                                    label: record.label,
-                                    captures: record
-                                        .captures()
-                                        .iter()
-                                        .map(|&(label, node)| RootCapture { label, node, span: tape.transducer_span(node), text: None })
-                                        .collect(),
-                                });
+                    programs
+                        .clone()
+                        .zip(&walks)
+                        .map(|(program, walk)| {
+                            if let Some(found) = packed.remove(&program) {
+                                return Some(found);
                             }
-                            return Some(found);
-                        }
-                        let (Some(walk), true) = (walk, self.task_grid[file][program]) else { return Some(found) };
-                        let anchors = &self.anchors[file][program];
-                        if anchors.is_empty() {
-                            return Some(found);
-                        }
-                        let texts = walk.texts(&self.programs[program], tape)?;
-                        let limit = self.result_limits[program] as usize;
-                        for (task, &start) in anchors.iter().enumerate() {
-                            records.clear();
-                            walk.records(tape, &texts, start, &mut frames, &mut records).ok()?;
-                            for (local, record) in records.iter().enumerate() {
-                                if found.len() >= limit {
-                                    break;
+                            let mut found = Vec::new();
+                            // Records the device walked: as the host's walk lists them.
+                            if let (Some(given), true) = (given(program), self.task_grid[file][program]) {
+                                let limit = self.result_limits[program] as usize;
+                                let mut local = 0_u32;
+                                let mut last = None;
+                                for (task, record) in given[file].iter().take(limit) {
+                                    local = if last == Some(*task) { local + 1 } else { 0 };
+                                    last = Some(*task);
+                                    found.push(RootMatch {
+                                        task_ordinal: *task,
+                                        local_ordinal: local,
+                                        start: record.start,
+                                        label: record.label,
+                                        captures: record
+                                            .captures()
+                                            .iter()
+                                            .map(|&(label, node)| RootCapture { label, node, span: tape.transducer_span(node), text: None })
+                                            .collect(),
+                                    });
                                 }
-                                found.push(RootMatch {
-                                    task_ordinal: task as u32,
-                                    local_ordinal: local as u32,
-                                    start: record.start,
-                                    label: record.label,
-                                    captures: record
-                                        .captures()
-                                        .iter()
-                                        .map(|&(label, node)| RootCapture { label, node, span: tape.transducer_span(node), text: None })
-                                        .collect(),
-                                });
+                                return Some(found);
                             }
-                        }
-                        Some(found)
-                    })
-                    .collect::<Option<Vec<_>>>()
-            }))
-            .collect::<Option<Vec<_>>>()?;
+                            let (Some(walk), true) = (walk, self.task_grid[file][program]) else { return Some(found) };
+                            let anchors = &self.anchors[file][program];
+                            if anchors.is_empty() {
+                                return Some(found);
+                            }
+                            let texts = walk.texts(&self.programs[program], tape)?;
+                            let limit = self.result_limits[program] as usize;
+                            for (task, &start) in anchors.iter().enumerate() {
+                                records.clear();
+                                walk.records(tape, &texts, start, &mut frames, &mut records).ok()?;
+                                for (local, record) in records.iter().enumerate() {
+                                    if found.len() >= limit {
+                                        break;
+                                    }
+                                    found.push(RootMatch {
+                                        task_ordinal: task as u32,
+                                        local_ordinal: local as u32,
+                                        start: record.start,
+                                        label: record.label,
+                                        captures: record
+                                            .captures()
+                                            .iter()
+                                            .map(|&(label, node)| RootCapture { label, node, span: tape.transducer_span(node), text: None })
+                                            .collect(),
+                                    });
+                                }
+                            }
+                            Some(found)
+                        })
+                        .collect::<Option<Vec<_>>>()
+                }))
+                .collect::<Option<Vec<_>>>()
+        })?;
         crate::code_rule_dsl::prof::count("demand.walked", matches.iter().flatten().map(Vec::len).sum());
         Some(RootsExecution::Walked { files: range.len(), programs: programs.len(), matches })
     }
@@ -724,12 +726,14 @@ impl PackedDemand {
             self.backend,
             ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::MetalBackground
         );
-        let sizes = (0..self.files.len())
-            .into_par_iter()
-            .map(crate::code_rule_dsl::logic::profile::carried("demand workspace sizes (pool)", |file| {
-                packed_workspace_size(&self.programs, &self.files[file..=file], &self.anchors[file..=file], &self.result_limits).ok()
-            }))
-            .collect::<Vec<_>>();
+        let sizes = crate::code_rule_dsl::logic::profile::on_cores(|| {
+            (0..self.files.len())
+                .into_par_iter()
+                .map(crate::code_rule_dsl::logic::profile::carried("demand workspace sizes (pool)", |file| {
+                    packed_workspace_size(&self.programs, &self.files[file..=file], &self.anchors[file..=file], &self.result_limits).ok()
+                }))
+                .collect::<Vec<_>>()
+        });
         let bytes = sizes.iter().map(|size| size.map_or(u64::MAX, |(bytes, _)| bytes)).collect::<Vec<_>>();
         let mut ranges = Vec::new();
         let (mut start, mut total, mut counts) = (0, 0_u64, [0_u64; 15]);

@@ -26,7 +26,7 @@ const PAR_MIN: usize = 1 << 16;
 
 /// `f` for each of `0..k`, in parallel when `par`.
 fn each<T: Send>(par: bool, k: usize, f: impl Fn(usize) -> T + Sync + Send) -> Vec<T> {
-    if par { (0..k).into_par_iter().map(f).collect() } else { (0..k).map(f).collect() }
+    if par { rerail_context::on_cores(|| (0..k).into_par_iter().map(f).collect()) } else { (0..k).map(f).collect() }
 }
 
 structure! {
@@ -175,7 +175,7 @@ fn place(plan: &Plan, spec: &Spec, kind: u32) -> (Block, PackStats) {
         Span::set(&raw mut (*p).indexes, ip, plan.indexes.len());
     }
     let write = |(ch, v, d, r): (&Choice, &[i64], &mut [u64], &mut [u64])| crate::col::write(ch, v, d, r);
-    if n * plan.arity >= PAR_MIN { jobs.into_par_iter().for_each(write) } else { jobs.into_iter().for_each(write) }
+    if n * plan.arity >= PAR_MIN { rerail_context::on_cores(|| jobs.into_par_iter().for_each(write)) } else { jobs.into_iter().for_each(write) }
     block.set_root(p);
     let stats = PackStats {
         rows: n,
@@ -198,7 +198,7 @@ pub fn pack(view: &View, spec: &Spec, kind: u32) -> (Block, PackStats) {
                 let cols: &mut [i64] = s.take(n * a);
                 let rows = &view.top.rows;
                 let read = |(c, out): (usize, &mut [i64])| rows.read_col(c, n as u32, out);
-                if n * a >= PAR_MIN { cols.par_chunks_mut(n.max(1)).enumerate().for_each(read) } else { cols.chunks_mut(n.max(1)).enumerate().for_each(read) }
+                if n * a >= PAR_MIN { rerail_context::on_cores(|| cols.par_chunks_mut(n.max(1)).enumerate().for_each(read)) } else { cols.chunks_mut(n.max(1)).enumerate().for_each(read) }
                 (cols, n)
             }
             _ => {
@@ -230,7 +230,7 @@ pub fn pack_open(rel: &crate::relation::Relation, spec: &Spec, kind: u32) -> (Bl
             col.iter().fold((i64::MAX, i64::MIN), |(a, b), &v| (a.min(v), b.max(v)))
         };
         let range: Vec<(i64, i64)> = if n * a >= PAR_MIN {
-            raw.par_chunks_mut(n.max(1)).enumerate().map(read).collect()
+            rerail_context::on_cores(|| raw.par_chunks_mut(n.max(1)).enumerate().map(read).collect())
         } else {
             raw.chunks_mut(n.max(1)).enumerate().map(read).collect()
         };
@@ -257,7 +257,7 @@ pub fn pack_open(rel: &crate::relation::Relation, spec: &Spec, kind: u32) -> (Bl
             }
         };
         if m * a >= PAR_MIN {
-            cols.par_chunks_mut(m.max(1)).enumerate().for_each(gather)
+            rerail_context::on_cores(|| cols.par_chunks_mut(m.max(1)).enumerate().for_each(gather))
         } else {
             cols.chunks_mut(m.max(1)).enumerate().for_each(gather)
         }

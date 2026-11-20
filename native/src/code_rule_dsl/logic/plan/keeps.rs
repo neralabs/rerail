@@ -1437,17 +1437,19 @@ fn estimate(f: Fields<'_>, model: &mut Model, (base, ids_of): (&Placed, &BTreeMa
         let model_now: &Model = model;
         // In the run, on whichever thread prices a relation: its plans read the run's and the object's statistics.
         let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
-        let sums: Vec<(f64, f64)> = each.par_iter().zip(&measured_only).map(|(&i, &measured_only)| {
-            let _in = carry.enter();
-            let (mut rows, mut work) = (0.0, 0.0);
-            for &k in order[i].1.iter().filter(|_| !measured_only) {
-                if let Some((w, n)) = calibrated_rows(f, model_now, &base.body(k)) {
-                    rows += n;
-                    work += w;
+        let sums: Vec<(f64, f64)> = super::super::profile::on_cores(|| {
+            each.par_iter().zip(&measured_only).map(|(&i, &measured_only)| {
+                let _in = carry.enter();
+                let (mut rows, mut work) = (0.0, 0.0);
+                for &k in order[i].1.iter().filter(|_| !measured_only) {
+                    if let Some((w, n)) = calibrated_rows(f, model_now, &base.body(k)) {
+                        rows += n;
+                        work += w;
+                    }
                 }
-            }
-            (rows, work)
-        }).collect();
+                (rows, work)
+            }).collect()
+        });
         for (&i, sum) in each.iter().zip(sums) {
             planned[i] = sum;
         }

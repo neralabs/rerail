@@ -1285,14 +1285,16 @@ impl Carry {
 
 /// A pool thread in a run's context for an item (`carried`): the run and its context (`job_run`); dropped, the
 /// thread's own are back. On a thread that holds them already (an item run inline by its caller), nothing changes.
-struct InRun(Option<Box<dyn std::any::Any>>);
+struct InRun {
+    _entered: Option<Box<dyn std::any::Any>>,
+}
 
 impl InRun {
     fn enter(run: &Option<std::sync::Arc<dyn RunOwn>>) -> InRun {
         if holds(run) {
-            return InRun(None);
+            return InRun { _entered: None };
         }
-        InRun(Some(Box::new(enter(run.clone()))))
+        InRun { _entered: Some(Box::new(enter(run.clone()))) }
     }
 }
 
@@ -1501,7 +1503,7 @@ const INSIDE: u8 = 2;
 #[derive(Clone, Copy, Default)]
 struct Stage(u8);
 
-pub use rerail_context::{AnyArc, Bound, Caller, Machine, bind, bind_here, bound, caller, holds, job_run, with_bound, RUN, RunOwn, RunValues, Shared, default_shared, engine_thread, enter, left_run, run_ended, local, local_if_any, machine, misses, run_own, setting, shared, shared_here, shared_object, starter_object, with_local, with_shared, within};
+pub use rerail_context::{AnyArc, Cores, is_main_thread, cores_scope, cores_spawn, cores_spawn_fifo, cores_threads, on_cores, Bound, Caller, Machine, bind, bind_here, bound, caller, holds, job_run, with_bound, RUN, RunOwn, RunValues, Shared, default_shared, engine_thread, enter, left_run, run_ended, local, local_if_any, machine, misses, run_own, setting, shared, shared_here, shared_object, starter_object, with_local, with_shared, within};
 
 /// A run starts on this thread (`plan::corpus`): before its first wave, unless it is nested in a run inside its
 /// waves, until the guard drops.

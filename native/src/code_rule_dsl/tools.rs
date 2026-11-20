@@ -794,15 +794,16 @@ const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine du
 /// Returns the command's result, and where it cut a relation at the width cap (decision 0394, `RERAIL_WIDEST=cut`) the
 /// message that its results are incomplete: the caller fails the process with it. So too where the engine read state
 /// outside any run (decision 0442, `rerail_context::misses`): a refused read, which took a value of its own.
-pub fn cli(args: &[String]) -> (Result<String, String>, Option<String>) {
+pub fn cli(args: &[String], machine: &std::sync::Arc<crate::threads::Machine>) -> (Result<String, String>, Option<String>) {
     // Decision 0272 (O167): the process ends with its command, before any idle time, so each run serves its waiting
     // join searches at its end, within a share of its CPU (decision 0243). A long-lived caller of `cli_in` leaves
     // them to the idle job.
     crate::code_rule_dsl::logic::plan::joins::drain_at_end(true);
     // Decision 0288: the command's clocks, for its time before its run and after it.
     crate::code_rule_dsl::logic::profile::command_begins();
-    // The process's command, its own caller: what it shares by design is its own (decision 0442).
-    let (out, incomplete) = cli_in(args, &mut Default::default(), &crate::code_rule_dsl::logic::run::Shared::new());
+    // The process's command, its own caller: what it shares by design is its own, on the machine its program made
+    // (decision 0442).
+    let (out, incomplete) = cli_in(args, &mut Default::default(), &crate::code_rule_dsl::logic::profile::Shared::on(machine));
     let (age, after) = crate::code_rule_dsl::logic::profile::command_ends();
     // On stderr: a command's output is its own (`run-rr`'s, `sql`'s: JSON), and a line after it made that unreadable.
     if let (Ok(_), Some(c)) = (&out, after) {

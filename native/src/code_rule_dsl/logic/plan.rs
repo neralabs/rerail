@@ -11228,7 +11228,7 @@ impl<'a> Cells<'a> {
         const PART: usize = 1 << 15;
         if rows.len() / w >= 2 * PART {
             use rayon::prelude::*;
-            return rows.par_chunks(PART * w).map(|part| self.sum_one(part)).reduce(|| 0, u64::wrapping_add);
+            return super::profile::on_cores(|| rows.par_chunks(PART * w).map(|part| self.sum_one(part)).reduce(|| 0, u64::wrapping_add));
         }
         self.sum_one(rows)
     }
@@ -11246,7 +11246,7 @@ impl<'a> Cells<'a> {
             0
         } else if ids >= 2 * PART {
             use rayon::prelude::*;
-            (0..ids).into_par_iter().step_by(PART).map(part).reduce(|| 0, u64::wrapping_add)
+            super::profile::on_cores(|| (0..ids).into_par_iter().step_by(PART).map(part).reduce(|| 0, u64::wrapping_add))
         } else {
             part(0)
         };
