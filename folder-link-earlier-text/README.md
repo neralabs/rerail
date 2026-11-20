@@ -1,6 +1,6 @@
 # Secret-like files reached through links keep only their digest in the ledger
 
-For the pull request of branch `JeanFrancoisGagne/folder-link-earlier-text`, not opened yet, head d4d507b45. [report.html](report.html) is the same report as one page: download it and open it.
+For the pull request of branch `JeanFrancoisGagne/folder-link-earlier-text`, not opened yet, head 78a38570b. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -13,7 +13,7 @@ For the pull request of branch `JeanFrancoisGagne/folder-link-earlier-text`, not
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 530 lines in 10 files: 171 ship, 359 are tests and text | Careful. A maintainer weighs the two changes from `main`. | Nothing. It stands alone on `main` cccb25a8d; nothing needs it. | 2 |
+| 586 lines in 10 files: 171 ship, 415 are tests and text | Careful. A maintainer weighs the two changes from `main`. | Nothing. It stands alone on `main` cccb25a8d; nothing needs it. | 2 |
 
 ## 2. Intent, and the gap
 
@@ -118,6 +118,6 @@ The description on GitHub is the record: "How you tested it" holds the failing t
 | Linux x64 | CI's integration job, at 6640685ca | Exit 0: 22 files, 90 tests passed, 4 skipped. |
 | Linux x64 | The reviewer's rules at `main` cccb25a8d over the diff against it | The reviewer's rules at `main` cccb25a8d over the diff against it: no new Steer, Log or complexity finding, with the published 0.1.5 and with Rerail built from `main`; every function added or edited counts 6 or under. |
 
-**Sources.** The branch at d4d507b45 and its diff against `main` cccb25a8d, read on 19 November 2026; runs at that head on Linux x64 machines and Windows 11 virtual machines; `main`'s source for the comparisons.
+**Sources.** The branch at 78a38570b and its diff against `main` cccb25a8d, read on 19 November 2026; runs at that head on Linux x64 machines and Windows 11 virtual machines; `main`'s source for the comparisons.
 
 </details>
