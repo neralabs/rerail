@@ -8,6 +8,7 @@ if [ -n "${WASI_SDK_PATH:-}" ]; then
   _llvm=$WASI_SDK_PATH/bin
   _sys=$WASI_SDK_PATH/share/wasi-sysroot
   # wasi-sdk keeps the libc++ built for wasm exceptions in a folder of its own, beside its unwinder.
+  # Searched first: the linker takes the first libc++.a on its path, whatever the sysroot's own folder holds.
   _eh="-L native=$_sys/lib/wasm32-wasip1/eh -l static=unwind"
 else
   _eh=
@@ -31,7 +32,7 @@ export CXXFLAGS_wasm32_wasip1="--target=wasm32-wasip1 --sysroot=$_sys -fwasm-exc
 export WASI_SYSROOT=$_sys
 # Link the C and C++ objects' own libc (the sysroot's wasi-libc, newer than the copy Rust bundles: its TLS start
 # `__wasi_init_tp` is not in Rust's), and libc++ for esaxx.
-export CARGO_TARGET_WASM32_WASIP1_RUSTFLAGS="-C link-self-contained=no -C link-arg=$_sys/lib/wasm32-wasip1/crt1-command.o -L native=$_sys/lib/wasm32-wasip1 -l static=c++ -l static=c++abi${_eh:+ $_eh}"
+export CARGO_TARGET_WASM32_WASIP1_RUSTFLAGS="-C link-self-contained=no -C link-arg=$_sys/lib/wasm32-wasip1/crt1-command.o${_eh:+ $_eh} -L native=$_sys/lib/wasm32-wasip1 -l static=c++ -l static=c++abi"
 # SQLite without the extensions the engine never uses (its SQL has no FTS3 or R-tree table; FTS5, JSON and
 # dbstat stay). `-U` after the bundled build's `-D`s; the engine uses neither on any target, so a host build in
 # this shell loses nothing.
