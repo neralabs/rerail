@@ -13,7 +13,7 @@
 //! ```
 //!
 //! A segment and the tail are relations of `rerail_blocks` (columns in doubling chunks), read through the reads
-//! written once (`rerail_clif::relation`: the host's are `rerail_blocks::generated_reads`, the kernels' the same
+//! written once (`rerail_clif::relation`: the host's written directly in `rerail_blocks`, the kernels' the
 //! reads in MSL). They live in shared FACTS blocks (`Facts`): a block holds many relations, leased from the GPU pool
 //! (pinned, a no-copy buffer of the device's), or reserved anonymously where there is none. A block never moves;
 //! a tail whose block is full moves to another, one copy of its rows (as a vector's growth copies them). Every row

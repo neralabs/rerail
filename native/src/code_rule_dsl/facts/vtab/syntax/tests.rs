@@ -1737,6 +1737,96 @@ fn an_axis_counts_its_rows_without_its_solve() {
     }
 }
 
+/// The numbering reads' cases: a projection of each source, in each format, whole, as T and narrowed, with the tape
+/// nodes to read (every one, and 64 past the last).
+fn id_read_cases() -> Vec<(String, Projected, u32)> {
+    use crate::code_rule_dsl::lines::{LineTable, Terminators};
+    use crate::code_rule_dsl::tape::{Grammar, TapeImage, formats::Format};
+    let mut out = Vec::new();
+    let many: String = (0..17_000).map(|i| format!("def f{i}():\n    return {i}\n")).collect();
+    let cases: &[(&str, &str)] = &[
+        ("python", "import os\nX = 1\n@dec\ndef f(a, b=2):\n    '''doc'''\n    return [x for x in a if x]\n\nclass C(B):\n    def m(self):\n        def inner():\n            pass\n        return inner\n"),
+        ("python", &many),
+        ("typescript", "import { a } from 'b';\nexport const App = () => 1;\nclass K { x = 1; m(): number { return this.x; } }\nfunction g(n: number) { if (n) { return n; } }\n"),
+    ];
+    let anchors: BTreeSet<String> = ["call", "call_expression", "function_definition", "method_definition", "class_declaration"].iter().map(|s| (*s).to_owned()).collect();
+    for &(label, source) in cases {
+        let lang = dialect_by_label(label).unwrap();
+        let grammar = Grammar::new(lang).unwrap();
+        let source = Arc::new(source.to_owned());
+        let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
+        for format in Format::ALL {
+            let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
+            let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.clone().in_format(format, source.as_bytes()), lines).unwrap());
+            let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
+            for (shape, narrowed) in [(Shape::Core, false), (Shape::T, false), (Shape::Core, true)] {
+                let p = if narrowed { Projected::anchored(1, Arc::clone(&facts), Some(&dialect), shape, &anchors) } else { Projected::new(1, Arc::clone(&facts), Some(&dialect), shape, false, None) };
+                let at = format!("{label} {} {shape:?}{}", format.name(), if narrowed { " narrowed" } else { "" });
+                out.push((at, p, facts.len() as u32 + 64));
+            }
+        }
+    }
+    out
+}
+
+/// Tape node `x`'s answers by the host's numbering reads (`Numbering::is`, …), as the probes lay them out: its bits,
+/// ranks and selects, the low bits of the node and the token numbered `x`, its order key, and back: the low's item's
+/// number (`u32::MAX` for none), then the item, and the order key's node.
+fn host_id_reads(h: &rerail_clif::ids::Numbering, x: u32) -> [u32; 12] {
+    // SAFETY: the projection's live descriptor.
+    unsafe {
+        let (low0, order) = (h.low_of(0, x), h.order_of(x));
+        let (item, k) = h.number_of(low0).unwrap_or((u32::MAX, u32::MAX));
+        [u32::from(h.is(0, x)), h.rank(0, x), h.rank(1, x), h.select(0, x), h.select(1, x), low0, h.low_of(1, x), order, k, item, h.number_of_order(order), u32::from(h.is(2, x))]
+    }
+}
+
+/// Decision 0517: the numbering's reads written directly in Rust (`Numbering::is`, …) answer what its reads in CLIF
+/// answer, by the JIT: for every tape node, the kernels' probes (`the_kernels_id_reads_are_the_hosts`) and every
+/// item's bit, rank and select, and lows and order keys that are no item's. In all three formats, whole and narrowed.
+#[test]
+fn the_jits_id_reads_are_the_hosts() {
+    if !definition_ids() {
+        return;
+    }
+    let jit = rerail_clif::jit::Reads::new();
+    type Two = extern "C" fn(*const u8, u32, u32) -> u32;
+    type One = extern "C" fn(*const u8, u32) -> u32;
+    type Wide = extern "C" fn(*const u8, u32) -> u64;
+    // SAFETY: each read's signature: the descriptor, then its arguments.
+    let two = |name: &str| -> Two { unsafe { std::mem::transmute(jit.function(name)) } };
+    // SAFETY: as `two`.
+    let one = |name: &str| -> One { unsafe { std::mem::transmute(jit.function(name)) } };
+    let (is, rank, select, low_of) = (two("num_is"), two("num_rank"), two("num_select"), two("num_low_of"));
+    let (order_of, number_of_order) = (one("num_order_of"), one("num_number_of_order"));
+    // SAFETY: as `two`.
+    let number_of: Wide = unsafe { std::mem::transmute(jit.function("num_number_of")) };
+    let wide = |v: Option<(u32, u32)>| v.map_or(u64::MAX, |(i, k)| u64::from(i) << 32 | u64::from(k));
+    let mut tried = 0;
+    for (at, p, n) in id_read_cases() {
+        let r = p.ranks();
+        let (h, d) = (r.desc(), r.numbering());
+        for x in 0..n {
+            let (low0, order) = (low_of(h, 0, x), order_of(h, x));
+            let k = number_of(h, low0);
+            let (item, k) = if k == u64::MAX { (u32::MAX, u32::MAX) } else { ((k >> 32) as u32, k as u32) };
+            let jits = [is(h, 0, x), rank(h, 0, x), rank(h, 1, x), select(h, 0, x), select(h, 1, x), low0, low_of(h, 1, x), order, k, item, number_of_order(h, order), is(h, 2, x)];
+            assert_eq!(host_id_reads(d, x), jits, "{at}: tape node {x}");
+            let (bad_low, bad_key) = (x << 7 | 0xffff_0000, x << 9);
+            // SAFETY: the projection's live descriptor.
+            unsafe {
+                for item in 0..4 {
+                    assert_eq!((u32::from(d.is(item, x)), d.rank(item, x), d.select(item, x)), (is(h, item, x), rank(h, item, x), select(h, item, x)), "{at}: item {item}, tape node {x}");
+                }
+                assert_eq!(wide(d.number_of(bad_low)), number_of(h, bad_low), "{at}: the number of low {bad_low:#x}");
+                assert_eq!(d.number_of_order(bad_key), number_of_order(h, bad_key), "{at}: the node of order key {bad_key:#x}");
+            }
+        }
+        tried += 1;
+    }
+    assert_eq!(tried, 3 * 3 * 3, "every case, format and shape");
+}
+
 /// Decision 0353 step 2: the numbering's reads as MSL (`id_reads.metal`, written once in CLIF), run on the device
 /// over a projection's descriptor where it lies in its block, answer what the host's reads (their Rust) answer: for
 /// every tape node, its bit and ranks, the selects, the ids' low bits of nodes and tokens and back, and the order keys
@@ -1744,8 +1834,6 @@ fn an_axis_counts_its_rows_without_its_solve() {
 #[cfg(target_os = "macos")]
 #[test]
 fn the_kernels_id_reads_are_the_hosts() {
-    use crate::code_rule_dsl::lines::{LineTable, Terminators};
-    use crate::code_rule_dsl::tape::{Grammar, TapeImage, formats::Format};
     use metal::{CompileOptions, Device, MTLResourceOptions, MTLSize};
     if !definition_ids() {
         return;
@@ -1774,70 +1862,30 @@ kernel void ids_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[b
     let lib = device.new_library_with_source(&format!("#include <metal_stdlib>\nusing namespace metal;\n{}{KERNEL}", include_str!("id_reads.metal")), &CompileOptions::new()).expect("the id reads compile");
     let pipe = device.new_compute_pipeline_state_with_function(&lib.get_function("ids_probe", None).unwrap()).unwrap();
     let queue = device.new_command_queue();
-    let many: String = (0..17_000).map(|i| format!("def f{i}():\n    return {i}\n")).collect();
-    let cases: &[(&str, &str)] = &[
-        ("python", "import os\nX = 1\n@dec\ndef f(a, b=2):\n    '''doc'''\n    return [x for x in a if x]\n\nclass C(B):\n    def m(self):\n        def inner():\n            pass\n        return inner\n"),
-        ("python", &many),
-        ("typescript", "import { a } from 'b';\nexport const App = () => 1;\nclass K { x = 1; m(): number { return this.x; } }\nfunction g(n: number) { if (n) { return n; } }\n"),
-    ];
-    let anchors: BTreeSet<String> = ["call", "call_expression", "function_definition", "method_definition", "class_declaration"].iter().map(|s| (*s).to_owned()).collect();
     let mut tried = 0;
-    for &(label, source) in cases {
-        let lang = dialect_by_label(label).unwrap();
-        let grammar = Grammar::new(lang).unwrap();
-        let source = Arc::new(source.to_owned());
-        let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
-        for format in Format::ALL {
-            let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
-            let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.clone().in_format(format, source.as_bytes()), lines).unwrap());
-            let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
-            for (shape, narrowed) in [(Shape::Core, false), (Shape::T, false), (Shape::Core, true)] {
-                let p = if narrowed { Projected::anchored(1, Arc::clone(&facts), Some(&dialect), shape, &anchors) } else { Projected::new(1, Arc::clone(&facts), Some(&dialect), shape, false, None) };
-                let at = format!("{label} {} {shape:?}{}", format.name(), if narrowed { " narrowed" } else { "" });
-                let r = p.ranks();
-                let block = r.block();
-                let d = block.offset_of(r.desc()) as u64;
-                let n = facts.len() as u32 + 64;
-                let out = device.new_buffer(u64::from(n) * WIDE as u64 * 4, MTLResourceOptions::StorageModeShared);
-                let cmd = queue.new_command_buffer();
-                let enc = cmd.new_compute_command_encoder();
-                enc.set_compute_pipeline_state(&pipe);
-                enc.set_buffer(0, Some(&block.gpu_buffer(&device)), 0);
-                enc.set_bytes(1, 8, (&raw const d).cast());
-                enc.set_bytes(2, 4, (&raw const n).cast());
-                enc.set_buffer(3, Some(&out), 0);
-                enc.dispatch_threads(MTLSize::new(u64::from(n), 1, 1), MTLSize::new(64, 1, 1));
-                enc.end_encoding();
-                cmd.commit();
-                cmd.wait_until_completed();
-                // SAFETY: the kernel wrote WIDE u32s a node, and its command completed.
-                let got = unsafe { std::slice::from_raw_parts(out.contents().cast::<u32>(), n as usize * WIDE) };
-                let h = r.desc();
-                for x in 0..n {
-                    // SAFETY: the projection's live descriptor.
-                    let want: [u32; WIDE] = unsafe {
-                        let (low0, order) = (id_reads::num_low_of(h, 0, x), id_reads::num_order_of(h, x));
-                        let k = id_reads::num_number_of(h, low0);
-                        [
-                            id_reads::num_is(h, 0, x),
-                            id_reads::num_rank(h, 0, x),
-                            id_reads::num_rank(h, 1, x),
-                            id_reads::num_select(h, 0, x),
-                            id_reads::num_select(h, 1, x),
-                            low0,
-                            id_reads::num_low_of(h, 1, x),
-                            order,
-                            k as u32,
-                            (k >> 32) as u32,
-                            id_reads::num_number_of_order(h, order),
-                            id_reads::num_is(h, 2, x),
-                        ]
-                    };
-                    assert_eq!(&got[x as usize * WIDE..][..WIDE], &want, "{at}: tape node {x}");
-                }
-                tried += 1;
-            }
+    for (at, p, n) in id_read_cases() {
+        let r = p.ranks();
+        let block = r.block();
+        let d = block.offset_of(r.desc()) as u64;
+        let out = device.new_buffer(u64::from(n) * WIDE as u64 * 4, MTLResourceOptions::StorageModeShared);
+        let cmd = queue.new_command_buffer();
+        let enc = cmd.new_compute_command_encoder();
+        enc.set_compute_pipeline_state(&pipe);
+        enc.set_buffer(0, Some(&block.gpu_buffer(&device)), 0);
+        enc.set_bytes(1, 8, (&raw const d).cast());
+        enc.set_bytes(2, 4, (&raw const n).cast());
+        enc.set_buffer(3, Some(&out), 0);
+        enc.dispatch_threads(MTLSize::new(u64::from(n), 1, 1), MTLSize::new(64, 1, 1));
+        enc.end_encoding();
+        cmd.commit();
+        cmd.wait_until_completed();
+        // SAFETY: the kernel wrote WIDE u32s a node, and its command completed.
+        let got = unsafe { std::slice::from_raw_parts(out.contents().cast::<u32>(), n as usize * WIDE) };
+        for x in 0..n {
+            let want = host_id_reads(r.numbering(), x);
+            assert_eq!(&got[x as usize * WIDE..][..WIDE], &want, "{at}: tape node {x}");
         }
+        tried += 1;
     }
     assert_eq!(tried, 3 * 3 * 3, "every case, format and shape");
 }

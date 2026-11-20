@@ -1,8 +1,8 @@
 //! Cranelift IR as Rust source (decision 0310: moved here from `rerail_compiler::clif_rust`): the
 //! parser's, for an ahead-of-time build of the same code, each function of the JIT's, tier 1's
 //! (`CompiledBlock::ir`) and tier 2's (`CompiledStream::ir`), as Cranelift is given it, a Rust
-//! function, compiled by rustc and LLVM, so the two builds differ only in the compiler; and a
-//! relation's reads (`reads`), for the blocks crate and the numbering's.
+//! function, compiled by rustc and LLVM, so the two builds differ only in the compiler. (The reads
+//! in Rust are written directly: decisions 0510, 0517.)
 //!
 //! A function's graph is structured control (`Shape`); each value a local, a block's
 //! parameters set where a branch goes to it. A vector is NEON's (`uint8x16_t`), each vector
@@ -51,54 +51,6 @@ fn local(t: ir::Type) -> Result<(&'static str, &'static str), String> {
 thread_local! {
     /// The constants that are addresses of the JIT's process (`translate`'s `addresses`).
     static ADDRESSES: std::cell::RefCell<Vec<(i64, i64, String, bool)>> = const { std::cell::RefCell::new(Vec::new()) };
-    /// The functions' style: `None` the parser's (`translate`), else the reads' (`translate_reads`), each
-    /// function's inlining by its id.
-    static READS: std::cell::RefCell<Option<Vec<(u32, bool)>>> = const { std::cell::RefCell::new(None) };
-}
-
-/// Whether the functions are the reads' (`translate_reads`): no pinned register; and function `id`'s
-/// attribute.
-fn read_style(id: u32) -> Option<&'static str> {
-    READS.with(|r| r.borrow().as_ref().map(|hot| if hot.iter().any(|&(f, h)| f == id && h) { "#[inline(always)]" } else { "#[inline(never)]" }))
-}
-
-/// A relation's reads as Rust (decisions 0310, 0325): `funcs` by their user name's index, each with whether it
-/// is hot, the JIT's mark (a hot one `#[inline(always)]`, as the JIT's pass inlines it, a cold one
-/// `#[inline(never)]`); each of `entries` a public function of its name over the descriptor's address. Every load
-/// is an aligned word of the descriptor's block. No addresses, no vectors: plain Rust for every target. (The
-/// tape's reads are written directly, decision 0510.)
-pub fn translate_reads(funcs: &[(u32, ir::Function, bool)], entries: &[(u32, &str)]) -> Result<String, String> {
-    READS.with(|r| *r.borrow_mut() = Some(funcs.iter().map(|(id, _, hot)| (*id, *hot)).collect()));
-    ADDRESSES.with(|a| a.borrow_mut().clear());
-    let result = (|| {
-        let mut out = String::new();
-        for (id, f, _) in funcs {
-            function(&mut out, *id, f).map_err(|e| format!("u0:{id}: {e}"))?;
-        }
-        for &(entry, n) in entries {
-            let f = &funcs.iter().find(|(id, ..)| *id == entry).ok_or("no entry")?.1;
-            let types: Vec<&str> = f.signature.params.iter().map(|p| ty(p.value_type).map(|t| t.0)).collect::<Result<_, _>>()?;
-            // A relation's read: its descriptor's address, every load an aligned word of its block.
-            if types.first() != Some(&"u64") {
-                return Err(format!("{n}: a relation's read takes its descriptor first"));
-            }
-            let params: Vec<String> = types.iter().enumerate().skip(1).map(|(i, t)| format!("a{i}: {t}")).collect();
-            let args: Vec<String> = (1..types.len()).map(|i| format!(", a{i}")).collect();
-            let [ret] = f.signature.returns.as_slice() else { return Err(format!("{n}: a read returns one value")) };
-            let ret = ty(ret.value_type)?.0;
-            writeln!(
-                out,
-                "/// The read `{n}` of the relation (or rows) whose descriptor is at `desc`.\n///\n/// # Safety\n/// `desc` is a live descriptor of its kind in a block, and the read's arguments are in its bounds.\n#[inline(always)]\npub unsafe fn {n}(desc: *const u8{}{}) -> {ret} {{\n    // SAFETY: the caller's.\n    unsafe {{ f{entry}(u64::MAX, desc as u64{}) }}\n}}\n",
-                if params.is_empty() { "" } else { ", " },
-                params.join(", "),
-                args.concat()
-            )
-            .unwrap();
-        }
-        Ok(out)
-    })();
-    READS.with(|r| *r.borrow_mut() = None);
-    result
 }
 
 /// The functions, by their user name's index (`u0:N`, the JIT's `FuncId`), as Rust: each of
@@ -160,13 +112,8 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<bool, String>
     };
     let entry = f.layout.entry_block().ok_or("no entry block")?;
     let params: Vec<String> = dfg.block_params(entry).iter().map(|&v| Ok(format!("a{}: {}", v.as_u32(), local(dfg.value_type(v))?.0))).collect::<Result<_, String>>()?;
-    match read_style(id) {
-        Some(inline) => writeln!(out, "{inline}\nunsafe fn f{id}(len: u64, {}) -> {ret_ty} {{", params.join(", ")).unwrap(),
-        None => {
-            writeln!(out, "#[inline(never)]\nunsafe fn f{id}(pin: u64{}{}) -> {ret_ty} {{", if params.is_empty() { "" } else { ", " }, params.join(", ")).unwrap();
-            out.push_str("    let mut pin = pin;\n");
-        }
-    }
+    writeln!(out, "#[inline(never)]\nunsafe fn f{id}(pin: u64{}{}) -> {ret_ty} {{", if params.is_empty() { "" } else { ", " }, params.join(", ")).unwrap();
+    out.push_str("    let mut pin = pin;\n");
     let absorbed = absorbed(f);
     // Every value a local, declared once.
     let mut declared = std::collections::BTreeMap::new();
@@ -772,7 +719,6 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::Istore8 => format!("unsafe {{ core::ptr::write_unaligned({} as *mut u8, {} as u8) }};", addr(&args[1]), args[0]),
         Opcode::Istore16 => format!("unsafe {{ core::ptr::write_unaligned({} as *mut u16, {} as u16) }};", addr(&args[1]), args[0]),
         Opcode::Istore32 => format!("unsafe {{ core::ptr::write_unaligned({} as *mut u32, {} as u32) }};", addr(&args[1]), args[0]),
-        Opcode::GetPinnedReg if read_style(u32::MAX).is_some() => return Err("a read takes no pinned register".into()),
         Opcode::GetPinnedReg => set("pin".to_string()),
         Opcode::SetPinnedReg => format!("pin = {};", args[0]),
         Opcode::GetStackPointer => set("sp()".to_string()),
@@ -786,11 +732,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
                 ir::ExternalName::User(r) => f.params.user_named_funcs()[*r].index,
                 n => return Err(format!("a call of {n:?}")),
             };
-            let call = if read_style(callee).is_some() {
-                format!("unsafe {{ f{callee}(len, {}) }}", args.join(", "))
-            } else {
-                format!("unsafe {{ f{callee}(pin{}{}) }}", if args.is_empty() { "" } else { ", " }, args.join(", "))
-            };
+            let call = format!("unsafe {{ f{callee}(pin{}{}) }}", if args.is_empty() { "" } else { ", " }, args.join(", "));
             // Its results returned as they are (`returned_call`): the call in the return, so
             // rustc hands its caller's result on (a tail call, no copy through the stack).
             if returned_call(f, inst) {

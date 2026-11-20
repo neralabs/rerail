@@ -58,7 +58,7 @@ pub unsafe fn pop(base: *mut u8, heads: *const AtomicU64, class: usize) -> Optio
 /// As `pop`; the chunk is the caller's, unread by anyone else, and of `class`'s size.
 #[inline]
 pub unsafe fn push(base: *mut u8, heads: *const AtomicU64, class: usize, off: usize) {
-    debug_assert!(off != 0 && off % (1 << MIN_LOG) == 0, "a chunk at {off}");
+    debug_assert!(off != 0 && off.is_multiple_of(1 << MIN_LOG), "a chunk at {off}");
     // SAFETY: the caller's.
     let head = unsafe { &*heads.add(class) };
     let mut h = head.load(Acquire);
@@ -186,13 +186,13 @@ mod tests {
         let a = b.try_alloc_chunk(4096, 64).unwrap();
         unsafe { std::ptr::write_bytes(b.ptr::<u8>(a), 0xab, 4096) };
         b.free_chunk(a, 4096);
-        let zeroed = crate::block::zeroed_bytes();
+        let zeroed = crate::block::zeroed_here();
         assert_eq!(b.try_alloc_chunk_any(4096, 64), Some(a));
         assert_eq!(unsafe { *b.ptr::<u8>(a + 100) }, 0xab, "left as it was");
-        assert_eq!(crate::block::zeroed_bytes(), zeroed, "nothing zeroed");
+        assert_eq!(crate::block::zeroed_here(), zeroed, "nothing zeroed");
         b.free_chunk(a, 4096);
         assert_eq!(b.try_alloc_chunk(4096, 64), Some(a));
         assert_eq!(unsafe { *b.ptr::<u8>(a + 100) }, 0, "zeroed when asked");
-        assert!(crate::block::zeroed_bytes() >= zeroed + 4096, "and counted");
+        assert!(crate::block::zeroed_here() >= zeroed + 4096, "and counted");
     }
 }

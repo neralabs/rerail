@@ -55,9 +55,6 @@ pub mod guests;
 pub mod granules;
 pub mod ranks;
 mod cells;
-/// A projection's numbering's reads, written once in CLIF (`rerail_clif::id_reads`, decision 0353 step 2).
-#[rustfmt::skip]
-pub mod id_reads;
 #[cfg(target_os = "macos")]
 pub mod device_chunk;
 pub mod view_docs;

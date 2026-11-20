@@ -39,3 +39,4 @@ function per CLIF block graph, its locals `v0`, `v1`, … and a checked pointer 
 
 - The relations' and the numbering's reads in Rust are still translated from their CLIF (`rust::translate_reads`).
   They are next, in the same way: written directly, held to the JIT by a test.
+  Done in 0517.

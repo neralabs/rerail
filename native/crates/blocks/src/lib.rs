@@ -28,11 +28,7 @@ pub mod col;
 pub mod deferrable;
 pub mod facts;
 pub mod free;
-/// A relation's reads, generated from their CLIF (decision 0325; `rerail_clif::relation`): what `Rows` and
-/// `Relation` read through, the same reads the kernels' MSL (`relation_reads.metal`) and the JIT make.
-#[rustfmt::skip]
-pub mod generated_reads;
-/// The same reads in MSL, for every kernel that reads a relation in its block (decision 0325).
+/// A relation's reads in MSL (decision 0325), from their CLIF (`rerail_clif::relation`), for every kernel that reads a relation in its block (decision 0325).
 pub const RELATION_READS: &str = include_str!("relation_reads.metal");
 pub mod journal;
 pub mod kept;
@@ -130,11 +126,11 @@ macro_rules! structure {
 
 /// The hash every index and every kernel uses for a key: one value at a time, the same arithmetic in MSL.
 pub const SEED: u64 = 0x243F_6A88_85A3_08D3;
-/// The arithmetic is the read written once (`rel_key_mix`, decision 0325 step 5), which the kernels call too.
+/// The arithmetic is the CLIF's `rel_key_mix` (decision 0325 step 5), which the kernels and the JIT call.
 #[inline(always)]
 pub fn mix(h: u64, v: i64) -> u64 {
-    // SAFETY: `rel_key_mix` reads nothing through its descriptor.
-    unsafe { crate::generated_reads::rel_key_mix(std::ptr::null(), h, v as u64) }
+    let h = (h ^ v as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    h ^ (h >> 29)
 }
 #[inline]
 pub fn key_hash(vals: &[i64]) -> u64 {

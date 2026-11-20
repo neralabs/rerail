@@ -187,29 +187,28 @@ impl Relation {
         self.rows.get(id - self.base_rows, c)
     }
 
-    /// Whether the dead bits mark row `id`: the read written once (`rel_dead`, decision 0325).
+    /// Whether the dead bits mark row `id` (the CLIF's `rel_dead`, decision 0325): none past the bits.
     #[inline]
     pub fn dead_bit(&self, id: u32) -> bool {
-        // SAFETY: a live descriptor; the read checks `id` against the bits' length.
-        unsafe { crate::generated_reads::rel_dead(std::ptr::from_ref(self).cast(), id) != 0 }
+        self.dead.as_slice().get((id >> 6) as usize).is_some_and(|w| w >> (id & 63) & 1 != 0)
     }
 
     #[inline]
-    pub fn index(&self, i: usize) -> &Index {
+    pub fn index_at(&self, i: usize) -> &Index {
         &self.indexes.as_slice()[i]
     }
 
-    /// One relation's rows for a key of hash `h` on index `i`, before liveness and key equality: its bucket, found
-    /// by the read written once (`rel_group`, decision 0325).
+    /// One relation's rows for a key of hash `h` on index `i`, before liveness and key equality: its bucket (the
+    /// CLIF's `rel_group`, decision 0325). None for an index of no buckets.
     #[inline]
     pub fn group(&self, i: usize, h: u64) -> &[u32] {
-        // SAFETY: a live descriptor; index `i` is one of its indexes.
-        let g = unsafe { crate::generated_reads::rel_group(std::ptr::from_ref(self).cast(), i as u32, h) };
-        let (start, len) = ((g >> 32) as usize, (g & 0xffff_ffff) as usize);
-        if len == 0 {
+        let ix = self.index_at(i);
+        let offs = ix.offs.as_slice();
+        if offs.is_empty() {
             return &[];
         }
-        &self.index(i).rows.as_slice()[start..start + len]
+        let b = (h & ix.mask) as usize;
+        &ix.rows.as_slice()[offs[b] as usize..offs[b + 1] as usize]
     }
 
     /// The index whose key is `cols` over its rows `0..rows` (a hashed one: an ordered index holds no buckets), built.
@@ -247,7 +246,7 @@ impl Relation {
         // SAFETY: the caller's: this relation's descriptor is ours to change.
         unsafe {
             let me = std::ptr::from_ref(self).cast_mut();
-            if self.indexes.len() == 0 {
+            if self.indexes.is_empty() {
                 let dir: *mut Index = block.try_alloc_t(ADDED_INDEXES)?;
                 Span::set(&raw mut (*me).indexes, dir, ADDED_INDEXES);
             }
@@ -592,8 +591,8 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
     // Decided against the kills alone: a duplicate dropped here is one of its own rows, never a base row.
     let order: &mut [u32] = scratch.take(m);
     let mut live = 0;
-    for p in 0..m {
-        let i = ids[p] as usize;
+    for (p, &id) in ids[..m].iter().enumerate() {
+        let i = id as usize;
         if (p > 0 && same(p)) || base_live(i) {
             continue;
         }
@@ -813,7 +812,7 @@ impl<'a> View<'a> {
 
     /// `probe`, read in place: both groups filtered and merged as they are walked, no allocation.
     pub fn probe_iter<'k>(&'k self, i: usize, key: &'k [i64]) -> Probe<'k> {
-        let ix = self.top.index(i);
+        let ix = self.top.index_at(i);
         let cols = &ix.key[..ix.ncols as usize];
         let (own, based, exact) = if ix.ordered == 1 {
             let own = leading(self.top, cols, key);
