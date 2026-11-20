@@ -77,7 +77,10 @@ A rule starts on only when at least 90% of its read matches were real.
 
 25 of 27 rules start on, in the mode the table above gives them: 22 steer and 3 log. get-handler-writes (72%) and
 host-header-without-get-host (83%) start off (`"on": false`), because their read-match precision is below 90%; they
-ship in the pack and log when turned on. A repository or checkout can turn any rule on or off or change its mode.
+ship in the pack and log when turned on. To turn one on, use its switch in the On/off column of the Django pack's
+page in the dashboard, or set `on: true` for it with `repository_settings_set` (`PUT /api/repository/settings`) for a
+repository or a checkout ([rule scoping](../../docs/rule-scoping.md#management-surfaces)); the same turns any rule off
+or changes its mode.
 
 The rules are written in `.rerail`, so they run apart from JSON rules: in the background, once the coding agent's
 writes have settled (no write for 10 seconds, or the end of its turn), and in audits and `rerail scan`. Each run reads

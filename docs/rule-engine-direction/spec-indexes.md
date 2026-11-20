@@ -1,6 +1,6 @@
 # Index and statistics specification (engine spec, part: indexes)
 
-Status: draft for the engine spec. All paths are relative to the merged worktree (`Pulling-it-all-together`) unless another ref is named. Spike citations use the prior-work indexes: **DI** is `prior-work/sql-index-prototype-design-index.md` (topic numbers) and **HI** is `prior-work/sql-index-prototype-history-index.md`. Source lines are in the SQL index prototype `DESIGN.md` (D) at `9449260`.
+Status: draft for the engine spec. All paths are relative to the merged worktree (PIAT) unless another ref is named. Spike citations use the prior-work indexes: **DI** is `prior-work/sql-index-prototype-design-index.md` (topic numbers) and **HI** is `prior-work/sql-index-prototype-history-index.md`. Source lines are in the SQL index prototype `DESIGN.md` (D) at `9449260`.
 
 The index layer has one job under decision 0004 (the transducer is the concrete IR). That job is file- and document-level candidate scope plus statistics for plan choice. Finding candidate nodes inside a document is the transducer's work: it scans the kind column. Per-node positional postings in SQL serve only the low-priority pure-SQL fallback.
 

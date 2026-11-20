@@ -1,6 +1,6 @@
 # Engine decision records (final shape)
 
-This continues the series in Pulling-it-all-together's `docs/rule-engine-direction/decisions/`
+This continues the series in PIAT's `docs/rule-engine-direction/decisions/`
 (0001–0007), with the same template and protocol: every record cites the SQL index prototype indexes
 (`prior-work/`) and the lessons ledger there, and says whether it agrees or departs.
 

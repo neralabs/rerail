@@ -1,4 +1,4 @@
-//! Tempo's (G@4c94cf77e) positional search index as copied from `tempo/native/src/content_store.rs`
+//! The predecessor's (G@4c94cf77e) positional search index as copied from `<predecessor>/native/src/content_store.rs`
 //! (types, publication, and the anchor, exact-value and text readers), test-only, for G's literal
 //! anchors and their tests (`transducer::packed::literal_anchors`). W's search index keeps kind
 //! presence only (`search_index.rs`); this one adds G's value and text streams beside W's tables

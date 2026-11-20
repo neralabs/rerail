@@ -1,9 +1,9 @@
-# T5 notes: Tempo tape residency, workspace store, arenas, anchor indexing
+# T5 notes: the predecessor's tape residency, workspace store, arenas, anchor indexing
 
 Research track T5 for the final Rerail rule-engine shape. Read-only extraction.
-Source root (abbreviated `TD/` below): `scale-test-the-re-railer:tempo/docs/`.
-Native source root (abbreviated `TN/`): `scale-test-the-re-railer:tempo/native/src/`.
-Citations are `file:line`. Measurement marks: **M** = measured in the source, **D** = derived/computed from measurements in the source, **A** = aspiration/projection/estimate/target (not measured). "Logical estimate" byte counts from Tempo's profile feature are marked M(est) because the source itself says they are accounting estimates, not allocator/RSS bytes.
+Source root (abbreviated `TD/` below): `<predecessor>/docs/` on a branch of the predecessor repository.
+Native source root (abbreviated `TN/`): `<predecessor>/native/src/` on the same branch.
+Citations are `file:line`. Measurement marks: **M** = measured in the source, **D** = derived/computed from measurements in the source, **A** = aspiration/projection/estimate/target (not measured). "Logical estimate" byte counts from the predecessor's profile feature are marked M(est) because the source itself says they are accounting estimates, not allocator/RSS bytes.
 
 ---
 
@@ -17,7 +17,7 @@ Citations are `file:line`. Measurement marks: **M** = measured in the source, **
 ### What is indexed (current "predicate-aware index", :91-118)
 - Hybrid positional value/structure index, not kind-only and not file-word filter (:95).
 - Spike sections adopted: S073/S256 per-kind distinct-value vocabulary + node-aligned postings; predicate resolved once per distinct value, `(regex, kind)` results cached within the file pass (:97). S163/S166 necessary text constraints derived from regex HIR via `regex-syntax` (min byte length; max length only with both absolute anchors; bounded alternatives for absolute-start literal prefix) (:98). S274/S275 kind/relation-scoped text domain; small values in ordered case-exact vocabulary; large values keep node positions + one 8-Unicode-char prefix posting per node when a predicate requests prefix indexing (:99). S207/S209/S216/S217 concrete Smart-pattern parent paths, reject wrong kinds while climbing, conjunct ordering by estimated positional work, compare vocabulary scan vs checking small candidate domain (:100).
-- In-memory over Tempo's existing tree, not SQL/tape (:102). Vocabulary includes interior spans as well as leaves. Values >256 bytes go to explicit residue with full-text confirmation; domains of ≤8 nodes use direct text checks instead of vocabulary (:102). These cutoffs "select an execution method, not supported input" (:102).
+- In-memory over the predecessor's existing tree, not SQL/tape (:102). Vocabulary includes interior spans as well as leaves. Values >256 bytes go to explicit residue with full-text confirmation; domains of ≤8 nodes use direct text checks instead of vocabulary (:102). These cutoffs "select an execution method, not supported input" (:102).
 - Not added: file-level word filtering, S265 dictionary-trigram, Bloom probes, persistent cross-file dictionaries, replacement matcher (:104).
 - Code: `policy_dsl/anchors.rs` (planning + temporary index), `policy_dsl/anchors/text.rs` (HIR analysis) (:106). `AstMatcher` regex arm holds same `regex::Regex` as `RegexMatcher` (:106).
 - Lifetime: "All file-local positions, vocabularies, and predicate caches are discarded after evaluation" (:118). "No structural index is retained across file evaluations" (:141). Decision: "Build one temporary, borrowed-node index per evaluated file, shared across that file's checks. Drop it after evaluation ... retaining indexes for untouched files has no demonstrated benefit and would worsen resident memory" (:228). Rebuild changed file's index after reparse, no incremental posting surgery (:229).
@@ -87,7 +87,7 @@ Citations are `file:line`. Measurement marks: **M** = measured in the source, **
 ## 3. TD/content-addressed-workspace-store.md (819 lines)
 
 ### Targets (A) (:8-14, :775-782)
-~100 concurrent workspaces mostly identical source; steady-state Tempo RSS < 1 GiB; total store < 10 GB; initial-index worker peak RSS < 500 MiB; edit p95 < 500 ms.
+~100 concurrent workspaces mostly identical source; the predecessor's steady-state RSS < 1 GiB; total store < 10 GB; initial-index worker peak RSS < 500 MiB; edit p95 < 500 ms.
 
 ### Boundary
 - JS never touches DB; Rust owns SQLite, SQL, caches, GC (:22-33). `indexRepositoryAsync()`: Rust owns discovery, path selection, source reads (clean tracked sources from Git ODB; dirty via repo descriptor, no symlinks), batching, publication (:35-41). `applyBufferAsync()` for unsaved/generated content (:41).
@@ -130,7 +130,7 @@ Citations are `file:line`. Measurement marks: **M** = measured in the source, **
 ---
 ## 4. TD/workspace-memory-implementation-plan.md (185 lines)
 
-- Goal: steady-state memory < 1 GiB for full data-layer workload, incremental p95 < 500 ms (:5-6) — A target. Covers Tempo's five residency items + indexed SQL file filter from the scale-test branch (:8-9).
+- Goal: steady-state memory < 1 GiB for full data-layer workload, incremental p95 < 500 ms (:5-6) — A target. Covers the predecessor's five residency items + indexed SQL file filter from the scale-test branch (:8-9).
 - Rules: native ast-grep remains matcher + correctness oracle; **SQL selects candidate files only**; filter may false-positive, never reject a native match; source and tape frames independent (:13-18).
 - Completed investigation includes "Replace resident Tree-sitter trees with validated tapes", "Select a bidirectional `file_check` index" (:24-34).
 - Phase 1.2 tape persistence: versioned binary codec for `TapeImage`; encode all arrays + source-binding metadata; decode without parsing source; reject malformed lengths, noncanonical side tables, wrong grammars, stale source hashes; byte-stability vectors (:51-56).
@@ -197,7 +197,7 @@ Chronological; entries supersede each other. Key facts per entry (all M unless m
   - D: 19,007,624 nodes / 95,697,853 B ≈ **0.199 nodes per source byte** (~5.03 source bytes/node). With 160.38 MB raw tapes (§3) ≈ **8.44 tape bytes per node** (D; mixes two measurements from different docs, same corpus).
 - E43 full prototype corpus: 210,176 files 1.32 GB; indexed 202,130 files, 1.20 GB, 265,511,978 nodes; rejected files > 4 MB; search indexes 737,382,400 B = 2.777 B/node = 0.613 B/source byte; 452.11 CPU-s (:1373-1381). Scala alias failures 4,024 (:1385-1387). Positional value `fts5vocab(instance)` access-path bug (:1403-1406).
   - D: 265.5M nodes / 1.20 GB ≈ 0.22 nodes/source byte.
-- E44 tape format 3: sparse contextual alias overrides for kinds + named flags (:1420-1423). Scala 4,175 files, 45.2 MB, 8,199,956 nodes. 8-part index 203,986 files 1.21 GB 740,618,240 B = 2.770 B/node (:1425-1428). (SQL timings here measure spike, not Tempo — :1416.)
+- E44 tape format 3: sparse contextual alias overrides for kinds + named flags (:1420-1423). Scala 4,175 files, 45.2 MB, 8,199,956 nodes. 8-part index 203,986 files 1.21 GB 740,618,240 B = 2.770 B/node (:1425-1428). (SQL timings here measure spike, not the predecessor — :1416.)
 - E45 Go worktree parity: 12,113 eligible files; 39,995,635 ordered nodes compared; parse 12.10 s (summed), **tape encoding 6.88 s, serialization+decoding 0.13 s, restoration 1.78 s** (:1491-1504). P-256 table (264,216 nodes): parse 86.57 ms, encode 53.91 ms, ser/de 4.35 ms, restore 10.75 ms (:1507-1508). `$F($$$ARGS)` 1,081,460 matches: native 3,285.28 ms vs restored-tape 695.70 ms (:1511-1513).
 - E46 tape format 4: sparse hidden-supertype memberships per visible node from parse cursor (:1527). 5,521 SCM patterns attempted, 5,438 grammar-compatible, all lowered (:1531).
 
@@ -305,12 +305,12 @@ Chronological; entries supersede each other. Key facts per entry (all M unless m
 
 ## 11. TD/distribution-model.md (304 lines)
 
-- Relevance to residency is low. Facts: one customer-neutral local runtime; policy kernel and latency-sensitive evaluation run on the customer machine; network not in evaluation path (:5-7). Local runtime layout `~/.tempo/` with `versions/`, `daemon.json` (:102-111). Multiple profiles keep **separate credentials, policy caches, session storage, diagnostics** under `~/.tempo/profiles/<customer>/<deployment>/`; "Customer data must never be combined implicitly" (:280-284). Policy evaluation needs no network round trip (:276).
+- Relevance to residency is low. Facts: one customer-neutral local runtime; policy kernel and latency-sensitive evaluation run on the customer machine; network not in evaluation path (:5-7). Local runtime layout `~/.<predecessor>/` with `versions/`, `daemon.json` (:102-111). Multiple profiles keep **separate credentials, policy caches, session storage, diagnostics** under `~/.<predecessor>/profiles/<customer>/<deployment>/`; "Customer data must never be combined implicitly" (:280-284). Policy evaluation needs no network round trip (:276).
 - Implication (restating, not designing): the CAS of §3 is "machine-wide" below `TEMPO_HOME` (§3 :253); distribution-model's per-profile separation of caches is not reconciled with machine-wide CAS in either doc (not found).
 - No tape/memory/mmap content (not found).
 
 ---
-## 12. Other Tempo docs (grep pass for pinned / residen / uncompressed / tape cache / TapeDoc / mmap / page-locked / unified memory / eviction / invalidat)
+## 12. The predecessor's other docs (grep pass for pinned / residen / uncompressed / tape cache / TapeDoc / mmap / page-locked / unified memory / eviction / invalidat)
 
 Grep hit counts were dominated by "pinned" meaning *pinned corpus/catalog/toolchain* (e.g. metal-execution-cutover-phase3/4/5 "all 335 pinned patterns compile") — not memory pinning. Relevant passages:
 
@@ -344,17 +344,17 @@ Grep hit counts were dominated by "pinned" meaning *pinned corpus/catalog/toolch
 - No `mlock`, `MTLResidencySet`, `MTLHeap`, huge-page, or "unified memory" code found in TN (grep).
 
 ---
-## 14. Review of PIAT `research/tempo-residency.md` (316 lines): what it got, missed, or got wrong
+## 14. Review of PIAT `research/predecessor-residency.md` (316 lines): what it got, missed, or got wrong
 
-PIAT file: `Pulling-it-all-together:docs/rule-engine-direction/research/tempo-residency.md`. It read Tempo at HEAD `d737fad16`. The checkout is now at `4c94cf77e` (20+ later commits, all transducer/Metal test and perf commits per `git log d737fad16..HEAD`). The residency code paths I checked (content_store cache, metal_backend, metal_register_execution upload, metal_program_backend per-call build) still match PIAT's description.
+PIAT file: `PIAT:docs/rule-engine-direction/research/<predecessor>-residency.md`. It read the predecessor at HEAD `d737fad16`. The checkout is now at `4c94cf77e` (20+ later commits, all transducer/Metal test and perf commits per `git log d737fad16..HEAD`). The residency code paths I checked (content_store cache, metal_backend, metal_register_execution upload, metal_program_backend per-call build) still match PIAT's description.
 
 **Verified correct** (I re-checked against code/docs): the 64 MiB / 32 MiB / 30 s arena cache and its compaction/MADV_DONTNEED/heap fallback (content_store.rs:48-49, :968-1279); row-id cache keys (:968-972); `get_source` returns `to_vec()` (:2342); per-restore SHA-256 re-hash (tape.rs:1153-1159); 44-byte `MetalNode` repack plus whole-source concatenation and `\n` rescan per batch (packed_batch.rs:216-291, metal_batch_abi.rs:34-46); no-copy `MappedRegion` with deallocator plus associated-object retention (metal_backend.rs:169-382); production resident input = private buffer filled through 8 MiB staging blits, rebuilt per call (metal_register_execution.rs:146-160; metal_program_backend.rs:78-94); `METAL_BUFFER_LIMIT` 2e9 ledger; `METAL_EXECUTION_LOCK`; schema version 22; `cache_size −16384`, `wal_autocheckpoint 4096` (content_store.rs:31, :1335-1337); the pinning evidence (213.3 ms queue vs 6.1 ms GPU; 230.5→3.8 ms; 110.6→2.4 ms); the rejected-controls list; `mlock` rejected; `MTLResidencySet` deferred; the tape cache keyed by tape identity is designed, not implemented (shared-sparse-bump-arena-design.md:215, :275).
 
 **Wrong or overstated:**
 1. "**No measurement of resident-input upload cost or of private vs shared storage was found**" (PIAT A.5 :129). Partly wrong. Shared no-copy input residency **was** measured, cold vs warm: E40 "Preparation packs sources and tasks into page-backed mappings. Metal reads those mappings through no-copy shared buffers ... Warm mapped Metal interpretation took 1.47 ms ... The cold-buffer medians were 39.12 ms and 37.26 ms ... persistent mapped inputs removed most measured GPU setup cost" (journal:1253-1279). GPU anchor preparation (compile, packing, mappings, buffer creation) 352.31 ms (:1284), 284.72 ms (:1310), 337.63 ms (:1366). Host buffer allocation + init 93.5 ms vs kernel 26.7 ms (packed-result-throughput-design.md:89-91). What is genuinely absent is a measurement of private-storage + blit versus shared no-copy for the *same* production input, and of the cost of the current per-call private upload. Not found.
-2. A.2 "The cache was too small to get hits" / "Lesson: a TTL cache much smaller than the working set does nothing" (PIAT :20, :65). The source gives a different reason for the 0 hits: "The cache had no hits because this full scan read each tape once" (journal:549). Small size plus TTL is PIAT's inference. The E23 warm run's single hit across 8,478 tapes (:619-620) supports PIAT's reading for *re-scans of a second workspace*. But Tempo's own conclusion pointed at result reuse, not a bigger tape cache (:634-637). See omission 1.
+2. A.2 "The cache was too small to get hits" / "Lesson: a TTL cache much smaller than the working set does nothing" (PIAT :20, :65). The source gives a different reason for the 0 hits: "The cache had no hits because this full scan read each tape once" (journal:549). Small size plus TTL is PIAT's inference. The E23 warm run's single hit across 8,478 tapes (:619-620) supports PIAT's reading for *re-scans of a second workspace*. But the predecessor's own conclusion pointed at result reuse, not a bigger tape cache (:634-637). See omission 1.
 3. A.3 "`FileState` keeps ... `tape` ... resident". This holds only before store publication. After a store publication the code sets `file.tape = None` and keeps `stored` handles (workspace.rs:1309-1323). The memory plan states "Replace resident `FileState` source and tape ownership with store handles", "Expand only the active file during matching", and "It releases resident source and tape data after each evaluation" (workspace-memory-implementation-plan.md:142-143, :170). Phase B's resident tape (phase-b:11) is the pre-store, non-persisted mode.
-4. A.0 headline "Tempo has real page-allocated, uncompressed caches and real pinning". The uncompressed cache is real but bounded to 32 MiB logical with a 30 s TTL. Tempo's stated retention policy is the opposite of keeping uncompressed tapes resident: "**Retain only compressed source after ingestion**" (plan:123), and the CAS "does not retain all compressed frames in RAM" (CAS:695-696). "Pinning" in Tempo means retained mutable `MTLBuffer` workspaces (shared-sparse-bump-arena:176-197, :254-256) plus SQL GC pins (`object_pins`, CAS:620-626). No pinned uncompressed tape store exists in Tempo.
+4. A.0 headline "[The predecessor] has real page-allocated, uncompressed caches and real pinning". The uncompressed cache is real but bounded to 32 MiB logical with a 30 s TTL. The predecessor's stated retention policy is the opposite of keeping uncompressed tapes resident: "**Retain only compressed source after ingestion**" (plan:123), and the CAS "does not retain all compressed frames in RAM" (CAS:695-696). "Pinning" in the predecessor means retained mutable `MTLBuffer` workspaces (shared-sparse-bump-arena:176-197, :254-256) plus SQL GC pins (`object_pins`, CAS:620-626). No pinned uncompressed tape store exists in the predecessor.
 
 **Missed (relevant to residency and the final engine):**
 1. **Result reuse replaces tape residency for warm workspaces.** Schema 5 `local_check_results`, keyed by canonical source + check/catalog identity: "A warm restore does not load a tape when all eligible checks have stored results" (journal:689-701). E26 warm pass over 47 workspaces: "did not decompress a stored tape", peak RSS 499,499,008 (:731-748). Schema 9/10 Git-subtree result segments attach whole clean subtrees with no `FileState`, source read, hash, or tape restore (journal:1066-1093; CAS:43-54). Complete-root reuse fell from 668.59 ms to 34.11 ms (median) (journal:1089-1093). Schema 20 summary-only reopen: 3.17 s (shared-arena:28), and 8.05 s restoring 681,725 evaluations (grid:190). PIAT A.6 cites result reuse in one line but does not connect it to residency.
@@ -364,12 +364,12 @@ PIAT file: `Pulling-it-all-together:docs/rule-engine-direction/research/tempo-re
 5. Metal resource contract and observed RSS: 600 dispatches, 2e9 tracked Metal bytes, **4 GiB application RSS, 1 GiB compiler RSS** (phase5:1639). Observed owned RSS was 3.09–3.59 GB in frozen full runs (handover:23, :33). This conflicts with the CAS/memory-plan 1 GiB steady-state target (CAS:11; plan:5).
 6. M5 Max recommended working set 115,448,725,504 B (metal-optimal-execution-shape.md:27), and "Pack the complete CPython input into one Metal-resident corpus when checked buffer limits permit it" (:275). Phase A measurements were on an M4 Max (phase-a:394), so machines differ across docs.
 7. The Schema 12 FTS index sizes, which form part of the resident and at-rest footprint: kind 1.172 B/node, total 2.998 B/node = 0.595 B/source byte; 19,007,624 nodes for 95.7 MB (journal:1337-1356). Full 1.2 GB corpus: 2.777 B/node, 0.613 B/byte (:1378-1379).
-8. Allocator: Tempo calls `mi_collect(true)` (mimalloc) plus `malloc_zone_pressure_relief` after publication (workspace.rs:75-88). Its daemon-level lesson was "Closing all workspaces did not return most pages to the operating system. The daemon requires runtime eviction and a process boundary" (journal:596-597, :682-683). PIAT cites the 3.3 GiB figure but not the conclusion that a process boundary is mandatory.
+8. Allocator: the predecessor calls `mi_collect(true)` (mimalloc) plus `malloc_zone_pressure_relief` after publication (workspace.rs:75-88). Its daemon-level lesson was "Closing all workspaces did not return most pages to the operating system. The daemon requires runtime eviction and a process boundary" (journal:596-597, :682-683). PIAT cites the 3.3 GiB figure but not the conclusion that a process boundary is mandatory.
 9. "One large cold workspace at a time" scheduler rule and process-wide Metal dispatch lease (shared-sparse-bump-arena:209, :256).
 10. Tape format details beyond v4: format 3 sparse contextual alias overrides (journal:1420-1423); format 4 sparse hidden-supertype memberships (:1527).
 11. Edit-path numbers with store-backed tapes: incremental p50/p95 4.80/77.73 ms (journal:402-403), 2.26/78.82 ms (:332-333), 8.43/86.86 ms (:541-542). By size bucket: the max 718,905 B file took 185–210 ms (:160).
 
-**PIAT's own derived numbers** (Part C footprint table, 59–77 µs × 5,725 cold-load estimate, 4 ms pin extrapolation) are PIAT derivations from spike v9np B/node and Tempo latencies. They are not Tempo measurements. PIAT labels the pin extrapolation as unmeasured, correctly.
+**PIAT's own derived numbers** (Part C footprint table, 59–77 µs × 5,725 cold-load estimate, 4 ms pin extrapolation) are PIAT derivations from spike v9np B/node and the predecessor's latencies. They are not the predecessor's measurements. PIAT labels the pin extrapolation as unmeasured, correctly.
 
 ---
 
@@ -377,7 +377,7 @@ PIAT file: `Pulling-it-all-together:docs/rule-engine-direction/research/tempo-re
 
 ### Q1. Tape caching: forms, sizes, keys, load, pin, share, evict
 
-**Forms that exist in Tempo:**
+**Forms that exist in the predecessor:**
 
 | Form | Where | Encoding / size | Lifetime | Cite |
 |---|---|---|---|---|
@@ -424,7 +424,7 @@ PIAT file: `Pulling-it-all-together:docs/rule-engine-direction/research/tempo-re
 - Store GC: relationship-driven, bounded batches (CAS:610-663).
 
 ### Q2. Pinned-memory uncompressed tapes
-- A pinned uncompressed tape store is **not found** as an implemented Tempo feature.
+- A pinned uncompressed tape store is **not found** as a feature the predecessor implemented.
 - What exists and why:
   - Metal first-use mapping/pinning dominates dispatch latency: 213.3 ms before GPU vs 6.1 ms GPU execution (shared-sparse-bump-arena:29; packed-result-throughput:113-118). Reusing the same `MTLBuffer`s cut host wait from 230.5 to 3.8 ms (:31), and later from 110.6 to 2.4 ms (:260). Persistent mapped inputs: warm 1.47 ms vs cold 39.12 ms (journal:1276-1279). "Prepared mappings remain necessary for low warm latency" (:1312).
 - How Metal reads:
@@ -558,8 +558,8 @@ PIAT file: `Pulling-it-all-together:docs/rule-engine-direction/research/tempo-re
 5. **Before figures for the mutable Metal workspace.** 7.77 GB (shared-sparse-bump-arena:18; packed-result-throughput:120) vs 7.96 GB (shared-sparse-bump-arena:262).
 6. **Who owns a Metal thread.** Shared-arena says "Metal dispatches one worker for each evaluation" (:7) and "one thread for each semantic task" (:468). Sparse grid uses fixed lanes plus an atomic task cursor (:119-131). The later grid cutover deletes `task_cursor` and persistent lanes (metal-production-grid-cutover-design:618). These are three successive designs.
 7. **Bulk-only claim.** The repository loop uses bulk manifests, but `restore_file_storage()` retains individual tape lookup and fetch fallbacks (journal:1137-1139).
-8. **Checkpoint stride in the spike.** 128 in spike S047 prose vs 16 in code/S008 (phase-b:86). Tempo uses 16 (tape.rs:25).
-9. **Cache sharing scope.** The distribution model keeps policy caches and session storage per profile under `~/.tempo/profiles/<customer>/<deployment>/` (distribution-model:280-284). The CAS is machine-wide under `TEMPO_HOME` (CAS:253). Neither doc reconciles the two (not found).
+8. **Checkpoint stride in the spike.** 128 in spike S047 prose vs 16 in code/S008 (phase-b:86). The predecessor uses 16 (tape.rs:25).
+9. **Cache sharing scope.** The distribution model keeps policy caches and session storage per profile under `~/.<predecessor>/profiles/<customer>/<deployment>/` (distribution-model:280-284). The CAS is machine-wide under `TEMPO_HOME` (CAS:253). Neither doc reconciles the two (not found).
 10. **GPU speedup claims.** sha-indexed says "No GPU speedup is established yet" (:286), while journal E40-E42 record warm GPU wins on the exact-literal subset. The sha-indexed historical outline predates those entries.
 
 ### Explicitly not found
