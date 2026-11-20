@@ -2,4 +2,4 @@
 "@neralabs/rerail-pack-python": patch
 ---
 
-Rules that test punctuation or keywords the grammar implies now name the token they test, so they run on the rule engine that leaves those tokens off its syntax trees. What they report is unchanged.
+With Rerail 0.2.0, rules that test punctuation or keywords the grammar implies run again; 0.2.0 skips the previous version's. They report what they did, except that `ruff-ret505` to `ruff-ret508` now span the whole `else` or `elif` clause, not only its keyword.

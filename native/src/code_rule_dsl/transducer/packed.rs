@@ -59,8 +59,8 @@ pub fn reset_metal_execution_metrics() {
 pub fn metal_execution_metrics() -> (usize, usize) {
     device::matcher().map_or((0, 0), |device| device.execution_metrics())
 }
-// The verifier's proofs (05 Phase 4 row 2, from Tempo's transducer, kept under `packed/verify/`
-// and declared here so their `super::` is the program and its opcodes, as in Tempo).
+// The verifier's proofs (05 Phase 4 row 2, from the predecessor's transducer, kept under `packed/verify/`
+// and declared here so their `super::` is the program and its opcodes, as in the predecessor).
 // cratify: `bounded_repeat_proof` is rerail-device-metal's (it mounts it)
 #[path = "packed/verify/closure_proof.rs"]
 pub mod closure_proof;
@@ -77,7 +77,7 @@ pub mod terminal_repeat_proof;
 #[cfg(test)]
 #[path = "packed/verify/backend_parity_tests.rs"]
 pub mod backend_parity_tests;
-// The tree-sitter query front end (05 Phase 4 row 4, from Tempo's `scm.rs`).
+// The tree-sitter query front end (05 Phase 4 row 4, from the predecessor's `scm.rs`).
 #[path = "packed/compile/scm.rs"]
 pub mod scm;
 // W's composite matcher as label passes and programs (06-first-slice S1).

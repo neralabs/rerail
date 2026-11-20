@@ -1,0 +1,216 @@
+.policy "rerail-grammar-node-kinds" revision 2
+.description "Name a grammar's node kinds only on its family's Engine Adapter or in the family's own modules; shared engine code reads them from the adapter."
+.language rust
+.mode log
+.scope include "native/src/**/*.rs"
+.scope exclude "native/src/code_rule_dsl/language/adapter.rs", "native/src/code_rule_dsl/language/adapter/**", "**/*tests.rs", "**/tests/**", "**/test_support.rs", "**/*.generated.rs", "native/src/code_rule_dsl/calls/summary.rs", "native/src/code_rule_dsl/value/structure.rs", "native/src/code_rule_dsl/value/key.rs", "native/src/code_rule_dsl/module_graph.rs", "native/src/code_rule_dsl/import_target/**", "native/src/code_rule_dsl/embed/test_script.rs", "native/src/code_rule_dsl/literal/annotation.rs", "native/src/code_rule_dsl/literal/offsets.rs", "native/src/code_rule_dsl/literal/semantic.rs", "native/src/code_rule_dsl/literal/brace.rs", "native/src/code_rule_dsl/literal/brace/**", "native/src/code_rule_dsl/literal/percent.rs", "native/src/code_rule_dsl/literal/printf.rs", "native/src/code_rule_dsl/literal/printf/**", "native/src/code_rule_dsl/literal/scanf.rs", "native/src/code_rule_dsl/literal/scanf/**", "native/src/code_rule_dsl/literal/eslint_directive.rs", "native/src/code_rule_dsl/matcher/format_args/printf.rs", "native/src/code_rule_dsl/matcher/format_args/scanf.rs", "native/src/code_rule_dsl/suppress/biome.rs", "native/src/code_rule_dsl/suppress/clippy.rs", "native/src/code_rule_dsl/suppress/eslint.rs", "native/src/code_rule_dsl/suppress/noqa.rs", "native/src/code_rule_dsl/suppress/nosec.rs", "native/src/code_rule_dsl/suppress/oxlint.rs", "native/src/code_rule_dsl/suppress/phpcs.rs", "native/src/code_rule_dsl/suppress/phpstan.rs", "native/src/code_rule_dsl/suppress/psalm.rs", "native/src/code_rule_dsl/suppress/ruff.rs", "native/src/code_rule_dsl/suppress/sqlfluff.rs"
+#include "rust/rerail-native.rerail"
+// A grammar's node kinds ("block", "call_expression") are named on the family's Engine Adapter (a *_KINDS constant)
+// or in the family's own modules; shared engine code reads them through with_adapter!. A use of a node kind is a
+// node's kind (`x.kind()`, `.kind().as_ref()`, or a `kind` read from one) tested against a literal:
+//   node.kind() == "block"                                  GRAMMAR_NODE_KIND
+//   match node.kind() { "if_statement" => …, … }            GRAMMAR_NODE_KIND (at the arm's pattern)
+//   matches!(kind, "block" | "body")                        GRAMMAR_NODE_KIND
+//   ["block", "body"].contains(&node.kind())                GRAMMAR_NODE_KIND
+//   node.kind().ends_with("_statement")                     GRAMMAR_NODE_KIND
+//   language.id_for_node_kind("identifier", true)           GRAMMAR_NODE_KIND
+//   kinds.bodies.contains(&node.kind().as_ref())            not reported
+// Not reported in test code, in a function named for a family (fn python_scope), in a match arm on a family's
+// variant (Family::Python => …), or in a family's own module (python.rs, php_view/, ecma_doc.rs). Five shared files
+// dispatch to a family first; there only uses outside their dispatched functions are reported.
+
+// A node kind written as a literal: "block", not "ERROR" (the parser's own).
+.decl kind_literal(n: node)
+kind_literal(n) :- kind(n, "string_literal"), match("\"[A-Za-z_][A-Za-z0-9_]*\"", n), !glob("\"ERROR\"", n).
+
+// kind_read(n): n reads a node's kind: `node.kind()`, `&child.kind().as_ref()`, or the name `kind` in a function that
+// reads one (`let kind = node.kind();`) or takes one (`fn f(kind: &str)`). Asked of the places a use tests.
+.decl kind_read(n: node)
+kind_read(n) :- kind_tested(n), !kind(n, "string_literal"),
+    match("(?s:.*)(?:^|[^A-Za-z0-9_\"])kind\\s*\\(\\s*\\)(?:\\s*\\.\\s*(?:as_ref|as_str)\\s*\\(\\s*\\))?", n).
+kind_read(n) :- kind_tested(n), match("[&*\\s]*kind(?:\\s*\\.\\s*(?:as_ref|as_str)\\s*\\(\\s*\\))?", n),
+    inside(n, f, "function_item"), kind_function(f).
+.decl kind_tested(n: node)  // a comparison's side, or a match's subject
+kind_tested(n) :- compare(e), child(e, n, _).
+kind_tested(n) :- kind(m, "match_expression"), field(m, "value", n).
+.decl kind_function(f: node)
+kind_function(f) :- kind(f, "function_item"), has(f, c, "call_expression"), match("(?s:.*)\\.\\s*kind\\s*\\(\\s*\\)", c).
+kind_function(f) :- kind(f, "function_item"), field(f, "parameters", ps), child(ps, p, _), kind(p, "parameter"),
+    match("kind\\s*:(?s:.*)", p).
+.decl compare(e: node)  // e is `a == b` or `a != b`
+compare(e) :- kind(e, "binary_expression"), (op(e, "==") ; op(e, "!=")).
+
+// kind_use(n): n tests a node's kind against a literal kind.
+.decl kind_use(n: node)
+kind_use(n) :- compare(n), child(n, r, _), kind_read(r), child(n, l, _), kind_literal(l).
+// At each pattern of a match on a kind that names one: `"block" | "body" =>`.
+kind_use(n) :- kind(n, "match_pattern"), has(n, l, "string_literal"), kind_literal(l), child(a, n, _),
+    kind(a, "match_arm"), child(b, a, _), kind(b, "match_block"), child(m, b, _), kind(m, "match_expression"),
+    field(m, "value", r), kind_read(r).
+kind_use(n) :- kind(n, "macro_invocation"),
+    match("matches!\\s*[\\(\\[\\{]\\s*[&*\\s]*(?:[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\(\\s*\\))?\\s*\\.\\s*)*kind(?:\\s*\\(\\s*\\))?(?:\\s*\\.\\s*(?:as_ref|as_str)\\s*\\(\\s*\\))?\\s*,[\\s\\S]*\"[A-Za-z_][A-Za-z0-9_]*\"(?s:.*)", n),
+    child(n, t, _), kind(t, "token_tree"), has(t, i, "identifier"), text(i, "kind").
+kind_use(n) :- kind(n, "call_expression"),
+    match("&?\\[[^\\]]*\"[A-Za-z_][A-Za-z0-9_]*\"[^\\]]*\\]\\s*\\.\\s*contains\\s*\\(\\s*[&*\\s]*(?:[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\(\\s*\\))?\\s*\\.\\s*)*kind(?:\\s*\\(\\s*\\))?(?:\\s*\\.\\s*(?:as_ref|as_str)\\s*\\(\\s*\\))?\\s*\\)", n).
+kind_use(n) :- kind(n, "call_expression"),
+    match("(?s:.*)(?:^|[^A-Za-z0-9_\"])kind\\s*\\(\\s*\\)(?:\\s*\\.\\s*(?:as_ref|as_str)\\s*\\(\\s*\\))?\\s*\\.\\s*(?:ends_with|starts_with|contains|eq|strip_prefix|strip_suffix)\\s*\\(\\s*\"[A-Za-z_][A-Za-z0-9_]*\"\\s*\\)", n).
+// The grammar's own lookups: kind_id("block"), language.id_for_node_kind("identifier", true).
+kind_use(n) :- kind(n, "call_expression"), field(n, "function", f),
+    match("(?s:.*)(?:^|::|\\.)\\s*(?:kind_ids?|id_for_node_kind|kind_to_id)", f),
+    field(n, "arguments", a), has(a, l, "string_literal"), kind_literal(l).
+
+// shared_use(n): a use in shared code: not in test code, a family's function, or a family's match arm.
+.decl shared_use(n: node)
+shared_use(n) :- kind_use(n), !in_native_test(n), !in_family_function(n), !in_family_arm(n).
+.decl in_family_function(n: node)
+in_family_function(n) :- kind_use(n), inside(n, f, "function_item"), field(f, "name", x),
+    match("(?s:.*)(?:^|_)(?:python|ecma|php|blade|vue|rust|sql|javascript|typescript|tsx)(?:_|$)(?s:.*)", x).
+.decl in_family_arm(n: node)
+in_family_arm(n) :- kind_use(n), inside(n, a, "match_arm"), field(a, "pattern", p), has(p, v, "scoped_identifier"),
+    match("(?s:.*)::(?:Python|Ecma|Php|Blade|Vue|Rust|Sql|JavaScript|TypeScript|Tsx)[A-Za-z0-9_]*", v).
+
+// A family's own module: a path part naming a family, alone or with a prefix or suffix (python.rs, php_view/,
+// ecma_doc.rs, phpdoc.rs, arguments_sql.rs).
+.decl family_module(d: number)
+family_module(d) :- doc(d, p, _),
+    match("(?s:.*)(?:^|/)(?:[a-z0-9_]+_)?(?:python|ecma|php|blade|vue|rust|sql|javascript|typescript|tsx)(?:_[a-z0-9_]+|doc)?(?:\\.rs$|/)(?s:.*)", p).
+// The shared files that dispatch to a family first, and their functions that run after the dispatch.
+.decl dispatch_file(path: symbol, file: symbol)
+dispatch_file("native/src/code_rule_dsl/language.rs", "language").
+dispatch_file("native/src/code_rule_dsl/matcher/arguments.rs", "arguments").
+dispatch_file("native/src/code_rule_dsl/matcher/format_args.rs", "format_args").
+dispatch_file("native/src/code_rule_dsl/matcher/resolve.rs", "resolve").
+dispatch_file("native/src/code_rule_dsl/scope/usage.rs", "usage").
+.decl dispatched(file: symbol, f: symbol)
+dispatched("language", "has_module_syntax"). dispatched("language", "is_module_declaration").
+dispatched("language", "has_top_level_await"). dispatched("language", "evaluated_where_defined").
+dispatched("language", "redeclares_commonjs_wrapper"). dispatched("language", "binds_commonjs_wrapper").
+dispatched("language", "jsx_runtime_in_source").
+dispatched("arguments", "syntactic"). dispatched("arguments", "literal_keywords").
+dispatched("format_args", "brace"). dispatched("format_args", "mapping_values"). dispatched("format_args", "named").
+dispatched("format_args", "percent_list"). dispatched("format_args", "percent_operand").
+dispatched("format_args", "plain_literal"). dispatched("format_args", "resolve").
+dispatched("format_args", "sequence_values"). dispatched("format_args", "unparenthesized").
+dispatched("resolve", "is_global_scope_this"). dispatched("resolve", "this_boundary").
+dispatched("resolve", "is_ordinary_function"). dispatched("resolve", "is_strict"). dispatched("resolve", "has_use_strict").
+dispatched("resolve", "is_seen_before"). dispatched("resolve", "imported_name"). dispatched("resolve", "statement_name").
+dispatched("resolve", "from_module"). dispatched("resolve", "dotted").
+dispatched("usage", "dunder_all"). dispatched("usage", "extract_value"). dispatched("usage", "unparenthesized").
+dispatched("usage", "builtin_sequence"). dispatched("usage", "extract").
+// after_dispatch(n): n runs after its file dispatched: in a dispatched function, or (arguments.rs) under
+// `if self.estree …`.
+.decl after_dispatch(n: node)
+after_dispatch(n) :- shared_use(n), docof(n, d), doc(d, p, _), dispatch_file(p, k), inside(n, f, "function_item"),
+    field(f, "name", x), text(x, s), dispatched(k, s).
+after_dispatch(n) :- shared_use(n), docof(n, d), doc(d, p, _), dispatch_file(p, "arguments"),
+    inside(n, i, "if_expression"), field(i, "condition", c), match("(?s:.*)\\bself\\.estree\\b(?s:.*)", c).
+
+.violation GRAMMAR_NODE_KIND(at: node) "Put this grammar node kind on the family's Engine Adapter (a *_KINDS constant, like COMMENT_KINDS) and read it via with_adapter!; if only one family's code runs this, move it to that family's module."
+GRAMMAR_NODE_KIND(n) :- shared_use(n), docof(n, d), !family_module(d), doc(d, p, _), !dispatch_file(p, _).
+GRAMMAR_NODE_KIND(n) :- shared_use(n), docof(n, d), doc(d, p, _), dispatch_file(p, _), !after_dispatch(n).
+
+// The pack's example (packs/rerail/pack.json).
+.test a_kind_comparison_is_reported exactly
+    .fixture "native/src/code_rule_dsl/suppress/rerail.rs" ```
+        fn leading<D: Doc>(node: &Node<'_, D>, source: &str) -> Option<Node<'_, D>> {
+            (node.kind() == "block")
+                .then(|| node.children().find(|child| is_code(child, source)))
+                .flatten()
+        }
+        ```
+    .expect GRAMMAR_NODE_KIND at "native/src/code_rule_dsl/suppress/rerail.rs":2
+.end
+
+.test each_kind_use_is_reported exactly
+    .fixture "native/src/code_rule_dsl/scope/walk.rs" ```
+        fn walk(node: &Node) -> u8 {
+            match node.kind() {
+                "if_statement" => 1,
+                _ => 0,
+            };
+            if matches!(node.kind(), "block" | "body") {}
+            if ["block", "body"].contains(&node.kind()) {}
+            if node.kind().ends_with("_statement") {}
+            let id = language.id_for_node_kind("identifier", true);
+            let kind = node.kind();
+            if kind != "comment" {}
+            if node.kind() == "ERROR" {}
+            0
+        }
+        fn named(kind: &str) -> bool {
+            kind == "string"
+        }
+        fn python_scope(node: &Node) -> bool {
+            node.kind() == "block"
+        }
+        fn family(node: &Node, family: Family) -> bool {
+            match family {
+                Family::Python => node.kind() == "block",
+                _ => false,
+            }
+        }
+        ```
+    .expect GRAMMAR_NODE_KIND at "native/src/code_rule_dsl/scope/walk.rs":3
+    .expect GRAMMAR_NODE_KIND at "native/src/code_rule_dsl/scope/walk.rs":6
+    .expect GRAMMAR_NODE_KIND at "native/src/code_rule_dsl/scope/walk.rs":7
+    .expect GRAMMAR_NODE_KIND at "native/src/code_rule_dsl/scope/walk.rs":8
+    .expect GRAMMAR_NODE_KIND at "native/src/code_rule_dsl/scope/walk.rs":9
+    .expect GRAMMAR_NODE_KIND at "native/src/code_rule_dsl/scope/walk.rs":11
+    .expect GRAMMAR_NODE_KIND at "native/src/code_rule_dsl/scope/walk.rs":16
+.end
+
+// In a file that dispatches first, only uses outside its dispatched functions (and `if self.estree`).
+.test dispatching_files_report_undispatched_uses exactly
+    .fixture "native/src/code_rule_dsl/matcher/arguments.rs" ```
+        fn syntactic(node: &Node) -> bool {
+            node.kind() == "call"
+        }
+        fn other(&self, node: &Node) -> bool {
+            if self.estree {
+                return node.kind() == "CallExpression";
+            }
+            node.kind() == "call"
+        }
+        ```
+    .fixture "native/src/code_rule_dsl/language.rs" ```
+        fn has_module_syntax(node: &Node) -> bool {
+            node.kind() == "import_statement"
+        }
+        fn other(node: &Node) -> bool {
+            node.kind() == "import_statement"
+        }
+        ```
+    .expect GRAMMAR_NODE_KIND at "native/src/code_rule_dsl/matcher/arguments.rs":8
+    .expect GRAMMAR_NODE_KIND at "native/src/code_rule_dsl/language.rs":5
+.end
+
+// The pack's passing example, test code, a family's own module, and the adapter.
+.test adapters_tests_and_family_modules_pass exactly
+    .fixture "native/src/code_rule_dsl/suppress/rerail.rs" ```
+        fn leading<D: Doc>(node: &Node<'_, D>, kinds: Kinds) -> bool {
+            kinds.bodies.contains(&node.kind().as_ref())
+        }
+
+        #[cfg(test)]
+        mod probe {
+            fn t(node: &Node) -> bool {
+                node.kind() == "block"
+            }
+        }
+        ```
+    .fixture "native/src/code_rule_dsl/python/scope.rs" ```
+        fn t(node: &Node) -> bool {
+            node.kind() == "block"
+        }
+        ```
+    .fixture "native/src/code_rule_dsl/ecma_doc.rs" ```
+        fn t(node: &Node) -> bool {
+            node.kind() == "block"
+        }
+        ```
+    .fixture "native/src/code_rule_dsl/language/adapter.rs" ```
+        fn t(node: &Node) -> bool {
+            node.kind() == "block"
+        }
+        ```
+.end

@@ -1,0 +1,1 @@
+In a coding agent's session, `rerail rules approve <id>` and `rerail rules import` are refused, and `rerail rules add` saves a change to one of your approved rules as a copy that runs in Log, so your approved rule keeps running as it was until you approve the copy on its page in the dashboard.

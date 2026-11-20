@@ -7,7 +7,7 @@ Date: 2026-10-26
 An inner plan with no kind (under a field-less `has`, a recursive `has` or a recursive `inside`) was evaluated over every node. Relating every node then decoded every node's parent. Where should such a plan get its candidates, and when are postings better? This affects all three targets, through anchor selection.
 
 ## Prior work consulted
-- ast-index-spike design index, topic 1: preorder plus subtree size. The parent delta and size are in the 6-byte record, so a descendant test is an interval and a parent is one record read (D S012 L313-332, D S047 L2983-3005).
+- SQL index prototype design index, topic 1: preorder plus subtree size. The parent delta and size are in the 6-byte record, so a descendant test is an interval and a parent is one record read (D S012 L313-332, D S047 L2983-3005).
 - Topic 2: no node table, and no per-query node table (D S072 L4241-4285, D S037 L2442-2593). Ordinals and parents are computed per involved parent only, because global windows are 75x slower than decode (D S037). Climb versus descent is a cost question: the rarest anchor plus a size-bounded descent beat a leaf climb, 112 s to 33 s (D S050, D S057).
 - Topic 8: `nera_kids`, a native child walk that reads the tape in place, became the default after the blob-stepping fix (D S058 L3539-3580, D S063 L3737-3770, D S064 L3771-3816).
 - Topic 7: an arbitrary-depth descendant is an interval test with no recursion (D S012).

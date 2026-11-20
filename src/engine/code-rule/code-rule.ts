@@ -5,7 +5,7 @@ import { sensitiveByName } from "../path-boundary.js";
 import type { CodeRuleDialectLabel, CodeRuleLanguageId } from "./code-rule-languages.js";
 import type { CodeRuleDslSemanticAstRuleFields, CodeRuleDslSemanticCompareText, CodeRuleDslSuppress } from "./code-rule-semantic.js";
 import { inlineCode, steerBlock, steerRules, steerText, type SteerFinding, type SteerShell, type SteerTrigger } from "./rerail-steer.js";
-import { steerOrigin, type SteerRuleSource } from "./steer-origin.js";
+import { steerOrigin, steerTitle, type SteerRuleSource } from "./steer-origin.js";
 
 export type CodeRuleDslScalar = boolean | number | string | null;
 export type CodeRuleDslValue = CodeRuleDslScalar | CodeRuleDslValue[] | { [key: string]: CodeRuleDslValue };
@@ -1624,6 +1624,11 @@ export interface CodeRuleAuditor {
   /** The repository's other worktrees (physical) a source walk covers as well as the session folder; none when absent. */
   worktreeRoots?(): readonly string[];
   /**
+   * The folder where Git registers the repository's linked worktrees (`worktrees` in its common Git folder), physical, as
+   * `worktreeRoots` last found it: a change there may add one of them. Undefined when unknown; none when absent.
+   */
+  worktreeRegistry?(): string | undefined;
+  /**
    * The checkouts (physical) whose Git ignore rules the session's checks follow, beside the session folder's own: a
    * change to their exclude files changes what is checked. None beyond the session folder's when absent.
    */
@@ -1748,6 +1753,6 @@ export function buildSteer(
   return {
     content: steerBlock(trigger, findings, shell),
     ruleIds: steerRuleIds(violations),
-    rules: steerRules(findings, ruleId => steerOrigin(ruleId, sourceOf(ruleId))),
+    rules: steerRules(findings, ruleId => steerOrigin(ruleId, sourceOf(ruleId)), ruleId => steerTitle(ruleId, sourceOf(ruleId))),
   };
 }

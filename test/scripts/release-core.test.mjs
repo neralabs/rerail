@@ -14,7 +14,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { changesPackage, coreChanges, lockChangesCore, matrixChanges, publishRetryRefusal, retrySummary, shipsWithCore } from "../../scripts/release/core-paths.mjs";
 import { admitsRefusingCore, CHANGE_TYPES, changelogEntries, changelogEntryFileRefusal, changelogEntryType, changelogEntryTypeRefusal, changelogLead, changelogLeadRefusal, changelogSection, coreBeforeFloor, coreFloor, coreTagRefusal, firstChangelogSection, handWrittenChangelogEntries, HELD_OFF_SINCE, heldOffRules, isOpenRange, LANGUAGE_SINCE, newChangelogEntries, nextCoreVersion, NO_CHANGELOG_ENTRIES, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages, unreleasedChangelogEntries } from "../../scripts/release/core.mjs";
 import { RELEASE_NOTE_WORDS, releaseNoteRefusal } from "../../scripts/release/release-notes.mjs";
-import { compareVersions, distTagReport, nextTrails, parseDistTagList, parseExpectation, previewRefusal, raiseNext } from "../../scripts/release/dist-tags.mjs";
+import { compareVersions, distTagReport, nextTrails, parseDistTagList, parseExpectation, publishRefusal, raiseNext, releaseChannel } from "../../scripts/release/dist-tags.mjs";
 import { linkFolder } from "../support/platform/links.ts";
 import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
@@ -481,12 +481,36 @@ describe("compareVersions and nextTrails", () => {
   });
 });
 
-describe("previewRefusal", () => {
-  it("refuses a preview older than latest, and allows a newer one or one for a package with no latest", () => {
-    expect(previewRefusal("0.1.0-next.5", "next", "0.1.0")).toBe("0.1.0-next.5 is older than latest 0.1.0: a next preview must not trail latest");
-    expect(previewRefusal("0.0.9-beta.1", "beta", "0.1.0")).toBe("0.0.9-beta.1 is older than latest 0.1.0: a beta preview must not trail latest");
-    expect(previewRefusal("0.1.1-next.1", "next", "0.1.0")).toBeNull();
-    expect(previewRefusal("0.1.0-next.1", "next", undefined)).toBeNull();
+describe("releaseChannel", () => {
+  it("publishes a plain version to next, where it waits to be promoted, and a preview to its own channel", () => {
+    expect(releaseChannel("v0.2.0", "0.2.0")).toEqual({ version: "0.2.0", channel: "next" });
+    expect(releaseChannel("v0.2.0-next.1", "0.2.0-next.1")).toEqual({ version: "0.2.0-next.1", channel: "next" });
+    expect(releaseChannel("v0.2.0-beta.1", "0.2.0-beta.1")).toEqual({ version: "0.2.0-beta.1", channel: "beta" });
+  });
+
+  it("refuses a tag that is no release tag, or that disagrees with package.json", () => {
+    expect(() => releaseChannel("v0.2", "0.2.0")).toThrow(/is not vX\.Y\.Z/u);
+    expect(() => releaseChannel("v0.2.0-rc.1", "0.2.0-rc.1")).toThrow(/is not vX\.Y\.Z/u);
+    expect(() => releaseChannel("v0.2.0", "0.1.9")).toThrow(/does not match v0\.2\.0/u);
+  });
+});
+
+describe("publishRefusal", () => {
+  it("refuses a version older than latest, which its channel must not trail", () => {
+    expect(publishRefusal("0.1.0-next.5", "next", { latest: "0.1.0" })).toBe("0.1.0-next.5 is older than latest 0.1.0: a release on next must not trail latest");
+    expect(publishRefusal("0.0.9-beta.1", "beta", { latest: "0.1.0" })).toBe("0.0.9-beta.1 is older than latest 0.1.0: a release on beta must not trail latest");
+  });
+
+  it("refuses a version older than next on next, which would move next back, as a re-run of an older release would", () => {
+    expect(publishRefusal("0.2.0", "next", { latest: "0.1.9", next: "0.2.1" })).toBe("0.2.0 is older than next 0.2.1: publishing it under next would move next back");
+    expect(publishRefusal("0.2.0", "next", { latest: "0.1.9", next: "0.3.0-next.1" })).toMatch(/older than next 0\.3\.0-next\.1/u);
+  });
+
+  it("allows a newer version, the same version again, a beta whatever next holds, and a package with no dist-tags", () => {
+    expect(publishRefusal("0.2.0", "next", { latest: "0.1.9", next: "0.1.9" })).toBeNull();
+    expect(publishRefusal("0.2.0", "next", { latest: "0.1.9", next: "0.2.0" })).toBeNull();
+    expect(publishRefusal("0.2.0-beta.1", "beta", { latest: "0.1.9", next: "0.3.0" })).toBeNull();
+    expect(publishRefusal("0.1.0", "next", {})).toBeNull();
   });
 });
 

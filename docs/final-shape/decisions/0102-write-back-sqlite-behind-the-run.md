@@ -25,7 +25,7 @@ becomes the durable copy that lags behind memory. It is never ahead of memory.
 
 ## Prior work consulted
 
-- **ast-index-spike design index, §4 (statistics).** Planning statistics must survive a restart
+- **SQL index prototype design index, §4 (statistics).** Planning statistics must survive a restart
   (D S124; SORA C7). The index has no design for a background writer: the spike wrote its store once per
   build, and nothing waited on it between waves.
   - **Agrees.** The kept statistics, choices and programs still survive a restart. They reach SQLite

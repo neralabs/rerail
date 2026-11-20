@@ -7,13 +7,15 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { claimName, detached, mergeTrees, type PackInput, planFanout, planUnits, remoteShell, UNIT_BUDGET_S } from "../../../scripts/ship/fanout.js";
+import { claimName, detached, mergeTrees, oneRuleTag, type PackInput, planFanout, planUnits, remoteShell, UNIT_BUDGET_S } from "../../../scripts/ship/fanout.js";
+import type { Candidate } from "../../../scripts/ship/shipbar.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const rules = (n: number): string[] => ["(none)", ...Array.from({ length: n - 1 }, (_, i) => `r${String(i).padStart(3, "0")}`)];
 const python: PackInput = { pack: "python", corpora: ["fixtures", "real"], rules: rules(539), files: ["largest", "median", "small"] };
 const sql: PackInput = { pack: "sql", corpora: ["real"], rules: rules(22), files: ["largest", "median", "small"] };
-const options = { runs: 3, ruleRuns: 2, fileRuns: 3 };
+const options = { runs: 3, ruleRuns: 2, fileRuns: 3, candidates: ["ships"] as Candidate[] };
+const withRr = { ...options, candidates: ["ships", "rr"] as Candidate[] };
 
 describe("planning units", () => {
   it("cuts slice A by repetition, so an A cell's repetitions run on several workers", () => {
@@ -33,6 +35,18 @@ describe("planning units", () => {
     expect(b[0]!.rules![0]).toBe("(none)");
   });
 
+  it("tags each B chunk's own run of rr's empty rule set apart, so chunks of one cell running at once never write the same files", () => {
+    const b = planUnits([python], withRr).filter((u) => u.slice === "B" && u.corpus === "real");
+    expect(b.length).toBeGreaterThan(2);
+    // The chunk holding the empty rule set times it under its plain tag; every other chunk times rr's under its own.
+    const tag = (rules: readonly string[], rep: number): string => (rules.includes("(none)") ? oneRuleTag("rr", "(none)", rep) : oneRuleTag("rr", "(none)", rep, { chunk: rules[0] }));
+    const tags = b.flatMap((u) => [1, 2].map((rep) => tag(u.rules!, rep)));
+    expect(new Set(tags).size).toBe(tags.length);
+    expect(tags.slice(0, 2)).toEqual(["one.rr.(none).1", "one.rr.(none).2"]);
+    expect(oneRuleTag("ships", "r001", 1)).toBe("one.ships.r001.1");
+    expect(oneRuleTag("main", "r001", 2, { confirming: true })).toBe("one-confirm.main.r001.2");
+  });
+
   it("makes one unit per slice C file, on real code", () => {
     expect(planUnits([sql], options).filter((u) => u.slice === "C").map((u) => [u.id, u.corpus, u.label])).toEqual([
       ["C|sql|largest", "real", "largest"],
@@ -43,6 +57,21 @@ describe("planning units", () => {
 
   it("plans no fixtures units for a pack without a fixtures corpus", () => {
     expect(planUnits([sql], options).some((u) => u.corpus === "fixtures")).toBe(false);
+  });
+
+  it("times every candidate in each unit: with the .rerail rewrites, a third side in A, B and C", () => {
+    const est = (o: typeof options, slice: string): number => planUnits([sql], o).filter((u) => u.slice === slice).reduce((sum, u) => sum + u.est, 0);
+    // B and C scale with the sides (main, ships, rr: 3 of 2); A too, but the empty rule set beside it runs on the product sides only.
+    expect(est(withRr, "B") / est(options, "B")).toBeCloseTo(1.5);
+    expect(est(withRr, "C") / est(options, "C")).toBeCloseTo(1.5);
+    expect(est(withRr, "A")).toBeCloseTo(est(options, "A") + 3 * 2 * 1.2);
+    const b = planUnits([python], withRr).filter((u) => u.slice === "B" && u.corpus === "real");
+    expect(Math.max(...b.map((u) => u.est))).toBeLessThanOrEqual(UNIT_BUDGET_S);
+    expect(b.flatMap((u) => u.rules!)).toEqual(python.rules);
+  });
+
+  it("records the candidates every unit measures in the plan", () => {
+    expect(planFanout([sql], ["build-1"], ["0-3"], withRr).candidates).toEqual(["ships", "rr"]);
   });
 });
 

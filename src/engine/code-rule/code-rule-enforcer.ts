@@ -18,7 +18,7 @@ import {
   type NativePackageFactsReader,
   type NativeRepositoryIndexOptions,
 } from "../native/native.js";
-import type { CodeRuleDslCatalog } from "./code-rule-dsl-catalog.js";
+import type { CodeRuleDslCatalog, CompiledCodeRuleDslEntry } from "./code-rule-dsl-catalog.js";
 import {
   buildSteer,
   type CodeRuleEdit,
@@ -285,6 +285,8 @@ type PreparedWorkspace = {
   workspace: NativeCodeRuleDslWorkspace;
   version: string;
   provenance: readonly AuditRuleProvenance[];
+  /** The snapshot's compiled rules, whose titles a steer from this workspace names its rules by (`#steerSourceOf`). */
+  codeRules: readonly CompiledCodeRuleDslEntry[];
   /** The storage attach, settled before the workspace's first apply; true when a Git store attached (repository audits then index natively). */
   storage: Promise<boolean>;
   /** Whether a rule's finding in one file can depend on another file (`CompiledCodeRuleDslEntry.crossFile`). */
@@ -1251,7 +1253,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#workspaceEvaluations.set(workspace, emptyEvaluation());
     this.#workspacePackages.set(workspace, new Map());
     const crossFile = snapshot.codeRules.some(rule => rule.crossFile);
-    return { workspace, version: snapshot.version, provenance: snapshot.provenance, storage, crossFile };
+    return { workspace, version: snapshot.version, provenance: snapshot.provenance, codeRules: snapshot.codeRules, storage, crossFile };
   }
 
   #disposeWorkspace(workspace: NativeCodeRuleDslWorkspace): void {
@@ -2499,6 +2501,20 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#responseMode = mode;
   }
 
+  /**
+   * Where each rule of a steer comes from, as the workspace's provenance records it, with the title its document gives
+   * it: what the person's line names it by.
+   */
+  #steerSourceOf(): SteerSourceOf {
+    const provenance = this.#workspace?.provenance ?? this.#catalog.provenance();
+    const codeRules = this.#workspace?.codeRules ?? this.#catalog.snapshot().codeRules;
+    return ruleId => {
+      const recorded = provenance.find(entry => entry.ruleId === ruleId);
+      if (recorded === undefined || !("source" in recorded)) return undefined;
+      return { ...recorded.source, title: codeRules.find(rule => rule.id === ruleId)?.title };
+    };
+  }
+
   async #publish(
     revision: number,
     sourceScope: readonly string[],
@@ -2507,27 +2523,14 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     trigger: SteerTrigger,
     generatedEdit = false,
   ): Promise<void> {
-    if (this.#sessionId === undefined || this.#closing || mode !== "steer") return;
-    if (
-      sourceScope.length === 0
-        ? revision < this.#revision
-        : sourceScope.some((path) => (this.#versions.get(path) ?? 0) > revision)
-    )
-      return;
+    const sessionId = this.#sessionId;
+    if (sessionId === undefined || !this.#steersNow(mode, revision, sourceScope)) return;
     const scope = sourceScope.map(path => this.#presentPath(path)).sort(compareDeterministicStrings);
     const steerable = violations.filter((violation) => steers(violation.mode)).map(violation => this.#presented(violation));
     if (steerable.length === 0) return;
-    const provenance = this.#workspace?.provenance ?? this.#catalog.provenance();
-    const sourceOf: SteerSourceOf = ruleId => {
-      const recorded = provenance.find(entry => entry.ruleId === ruleId);
-      return recorded !== undefined && "source" in recorded ? recorded.source : undefined;
-    };
-    // Paths are judged in the workspace they are relative to, so a file that links to a secret is judged as one.
-    const boundary = checkoutPathBoundary(this.#workspaceRoot);
-    const secret = new Set(violations.flatMap(({ path, mode }) =>
-      path !== undefined && steers(mode) && boundary.sensitive(path) ? [this.#presentPath(path)] : []));
-    const steer = buildSteer(steerable, trigger, sourceOf, path => secret.has(path) || sensitiveByName(path), this.#steerShell);
-    await this.#steerDelivery.requestSteer(this.#sessionId, "steer", steer.content, {
+    const sourceOf = this.#steerSourceOf();
+    const steer = buildSteer(steerable, trigger, sourceOf, this.#sensitiveIn(violations), this.#steerShell);
+    await this.#steerDelivery.requestSteer(sessionId, "steer", steer.content, {
       revision,
       scope,
       ruleIds: steer.ruleIds,
@@ -2535,6 +2538,28 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       background: true,
       ...(generatedEdit ? { generatedEdit: { violations: steerable, sourceOf } } : {}),
     });
+  }
+
+  /** Whether a steer goes out for `revision` of `sourceScope` in `mode`: the session is open, steering, and nothing newer came. */
+  #steersNow(mode: AuditMode, revision: number, sourceScope: readonly string[]): boolean {
+    return !this.#closing && mode === "steer" && !this.#superseded(revision, sourceScope);
+  }
+
+  /** Whether a newer revision of the edit's sources, or of the whole workspace for an edit with none, came since `revision`. */
+  #superseded(revision: number, sourceScope: readonly string[]): boolean {
+    if (sourceScope.length === 0) return revision < this.#revision;
+    return sourceScope.some((path) => (this.#versions.get(path) ?? 0) > revision);
+  }
+
+  /**
+   * Which steered paths are secret-like, as the session sees them. Paths are judged in the workspace they are relative
+   * to, so a file that links to a secret is judged as one.
+   */
+  #sensitiveIn(violations: readonly CodeRuleViolation[]): (path: string) => boolean {
+    const boundary = checkoutPathBoundary(this.#workspaceRoot);
+    const secret = new Set(violations.flatMap(({ path, mode }) =>
+      path !== undefined && steers(mode) && boundary.sensitive(path) ? [this.#presentPath(path)] : []));
+    return path => secret.has(path) || sensitiveByName(path);
   }
 
   #response(revision: number): CodeRuleResponse {
