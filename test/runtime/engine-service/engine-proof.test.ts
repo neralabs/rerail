@@ -252,23 +252,29 @@ async function answerOrWait(answered: Promise<string>, waits: HeldWaits): Promis
 /**
  * A holder of the pipe `name` that is not an engine, as any local user can create an engine pipe's name first: one
  * instance with no input buffer, which takes one client and never reads, so a write to it waits until the holder ends,
- * 20 s on. With an `answer`, it writes that to the client first. Returns once the instance exists.
+ * which it does once the test ends. With an `answer`, it writes that to the client first. Returns once the instance
+ * exists.
+ *
+ * The script calls .NET only, never a cmdlet: Windows PowerShell finds a cmdlet's module by reading every module on
+ * PSModulePath that it has not read before ("Preparing modules for first use"), so a script that called `Add-Type`
+ * first waited before its pipe existed for as long as the machine's modules take to read. That wait has no bound of its
+ * own and grows with what the machine has installed; the case held it inside its 45 s.
  */
 async function holderThatNeverReads(name: string, answer?: string): Promise<void> {
   const script = [
     "$ErrorActionPreference = 'Stop'",
-    "Add-Type -AssemblyName System.Core",
-    `$pipe = New-Object System.IO.Pipes.NamedPipeServerStream('${name}', [System.IO.Pipes.PipeDirection]::InOut, 1, [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::None, 0, 4096)`,
+    `$pipe = [System.IO.Pipes.NamedPipeServerStream]::new('${name}', [System.IO.Pipes.PipeDirection]::InOut, 1, [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::None, 0, 4096)`,
     "[Console]::Out.WriteLine('listening'); [Console]::Out.Flush()",
     "$pipe.WaitForConnection()",
     ...(answer === undefined ? [] : [
       `$answer = [Convert]::FromBase64String('${Buffer.from(answer, "latin1").toString("base64")}')`,
       "$pipe.Write($answer, 0, $answer.Length); $pipe.Flush()",
     ]),
-    "Start-Sleep -Seconds 20",
+    // Lives until its input closes: the test's end, or the kill after it.
+    "[void][Console]::In.ReadLine()",
   ].join("\n");
   const holder = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
-    stdio: ["ignore", "pipe", "inherit"], windowsHide: true,
+    stdio: ["pipe", "pipe", "inherit"], windowsHide: true,
   });
   children.push(holder);
   expect(await firstLine(holder)).toMatch(/^listening/u);
