@@ -16,27 +16,9 @@ pub fn max() -> usize {
 
 /// Makes the one pool, sized to `max`: called before anything uses it (the engine's `main`; Node's registration of
 /// the addon, `lib.rs`, never its constructor). On the process's main thread it is called with `this_thread`, so that
-/// thread is one of the pool's (its own work and its waits are the pool's), and it is recorded as the main thread
-/// ([`waits_on_bell`]). A pool already made is left as it is.
+/// thread is one of the pool's (its own work and its waits are the pool's). A pool already made is left as it is.
 pub fn configure(this_thread: bool) {
-    if this_thread {
-        let _ = MAIN.set(std::thread::current().id());
-    }
     rerail_accel::exec::configure(this_thread);
-}
-
-/// The process's main thread: the one [`configure`] was called on with `this_thread`. Recorded, not asked of the
-/// system: Windows has no call that says which thread is a process's main one.
-static MAIN: std::sync::OnceLock<std::thread::ThreadId> = std::sync::OnceLock::new();
-
-/// Whether a wait on this thread may sleep on a bell, running no job, while the pool's other threads take the jobs:
-/// the pool has other threads, and this thread is not one of them (a library's caller, a test's) or is the main
-/// thread the pool took in ([`configure`]). On the pool's other threads the wait is a job's (the typing run
-/// `bridge::facts` starts), and it runs the pool's jobs itself: a job that waited running none would hold its pool
-/// thread for the whole nested run, and with 2 threads the main thread and the typing run's both waited for chunks no
-/// thread was left to build. With one thread, the waiter runs them itself.
-pub fn waits_on_bell() -> bool {
-    max() >= 2 && (!rerail_accel::exec::on_pool() || MAIN.get() == Some(&std::thread::current().id()))
 }
 
 /// Jobs on the one pool that borrow the caller's data, within [`scope`]: every one has ended when it returns. Each is

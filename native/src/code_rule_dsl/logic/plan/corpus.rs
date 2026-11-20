@@ -5304,10 +5304,10 @@ fn run_observed(
             }
         }
 
-        /// The main thread's wait for `poll`, under `site`: on the bell, running no job, where it may
-        /// ([`crate::threads::waits_on_bell`]); else running the pool's jobs itself.
+        /// The main thread's wait for `poll`, under `site`: on the bell, running no job, while the pool has other
+        /// threads to take the jobs; with one thread, running them itself (none else would).
         fn main_wait<T>(&self, site: &'static str, poll: impl FnMut() -> Option<T>) -> T {
-            if crate::threads::waits_on_bell() {
+            if crate::threads::max() >= 2 {
                 self.bell.wait_as(site, poll)
             } else {
                 rerail_accel::exec::help_until_as(site, poll)
