@@ -1637,7 +1637,7 @@ pt_tsup_open(n, t) :- type_of(n, t), pt_cls_q(c, t), docof(n, d9), docof(c, e9),
 pt_tsup_open(n, t) :- type_of(n, t), pt_cls_q(c, t), docof(n, d9), docof(c, e9), rr_cx_reach(d9, e9), pt_anc(c, b), pt_basex(b, e), pt_extb(e), !pt_builtin_ref(e, "object").
 .decl pt_type_miss(n: node, u: symbol)
 // u is a supertype of one of n's types and not of another. Every type of a proven n is a subtype of u, so
-// u's candidates are any type's supertypes (no "first" type: a min over symbols has no order, 0476).
+// u's candidates are any type's supertypes (no "first" type: a min over symbols has no order, 0483).
 pt_type_miss(n, u) :- pt_tsub(n, t0, u), type_of(n, t0), type_of(n, t), !pt_tsub(n, t, u).
 .decl proven_type(n: node, u: symbol)
 proven_type(n, u) :- type_of(n, t), pt_tsub(n, t, u), !type_open(n), !pt_type_miss(n, u).
