@@ -802,7 +802,7 @@ function editsApprovedRule(database: RerailDatabase, draft: RuleDraft, session: 
   if (session === undefined) return false;
   const stored = getLibraryRule(database, draft.rule.id);
   if (stored === undefined || !isApproved(database, ruleSubject(draft.rule.id, stored.payloadHash))) return false;
-  let document: RuleDocument;
+  let document: JsonRuleDocument;
   try {
     document = validateLibraryDocument(draft.rule, draft.kind);
   } catch (error) {
