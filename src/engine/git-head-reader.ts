@@ -15,12 +15,14 @@
  * than Git named, a file that is a link, a `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR` or `GIT_OBJECT_DIRECTORY` in the
  * environment, a folder that is not its checkout's top, and an input written less than `settleMs` ago (a write in the
  * same clock tick could leave its stamp unchanged). Before Git 2.42 `git var` names neither the global nor the system
- * file, and every read asks Git. On Windows `stat` names no owner, so there each folder's stamp stands for its owner,
+ * file, and every read asks Git; a `git var` that failed is asked again at the next read, and an include spelled so that
+ * only Git can name its file (`configuredPath`) makes every read ask Git. Any file of these that cannot be read makes the
+ * read ask Git, never answer from what it read before. On Windows `stat` names no owner, so there each folder's stamp stands for its owner,
  * and any change to the checkout's folder, its `.git` entry or its Git folder asks Git again.
  */
 import { constants } from "node:fs";
-import { lstat, stat } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { type FileHandle, lstat, open, stat } from "node:fs/promises";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileStamp } from "./file-stamp.js";
 import { gitHead, gitHome, type GitReadOptions, type GitResult, runGitAsync } from "./git.js";
 import { openNoFollow } from "./no-follow.js";
@@ -59,6 +61,11 @@ interface Stamped {
   readonly settled: boolean;
 }
 
+/** A configuration file Git reads, stamped. */
+interface StampedFile extends Stamped {
+  readonly path: string;
+}
+
 /** The owners Git checks (`safe.directory`) of the checkout's folder, `.git` entry and Git folder, as one string. */
 export type OwnersRead = (paths: readonly string[]) => Promise<string | undefined>;
 
@@ -72,8 +79,6 @@ export interface GitHeadReaderOptions {
 export type GitHeadReader = (cwd: string, options?: GitReadOptions) => Promise<string | undefined>;
 
 const SETTLE_MS = 2_000;
-/** How long a `git var` that named no files stands before it is asked again. */
-const WIDE_FILES_RETRY_MS = 60_000;
 const MAX_SMALL_FILE_BYTES = 64 * 1024;
 const MAX_PACKED_REFS_BYTES = 64 * 1024 * 1024;
 const MAX_CONFIG_BYTES = 1024 * 1024;
@@ -88,6 +93,14 @@ const MOVING_VARIABLES = ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_OBJ
 const REFUSED_REF_PART = /^$|^\.|\.$|\.lock$|\.\.|@\{|[\p{Cc} ~^:?*[\\]/u;
 /** An include section of a configuration file, in any letter case: `[include]` or `[includeIf "..."]`. */
 const INCLUDE_SECTION = /^\s*\[\s*include/imu;
+/**
+ * A configured path only Git can name the file of: empty, another user's home (`~user/`), Git's own prefix (`%(prefix)/`)
+ * or a path with a magic prefix such as `:(optional)`. Git expands these itself (`interpolate_path`), by rules a reader
+ * of its files does not keep, so where a file Git reads is spelled so, Git is asked.
+ */
+const GIT_ONLY_SPELLING = /^(?:$|%\(|:\(|~(?!\/))/u;
+/** `git var`'s exit when Git knows no such variable, as before Git 2.42 for the configuration and attribute files. */
+const UNKNOWN_VARIABLE = 129;
 
 /** `absent` for an error that says nothing is there (or a folder is, as Windows refuses to open one); else undefined. */
 function absence(error: unknown): "absent" | undefined {
@@ -95,11 +108,17 @@ function absence(error: unknown): "absent" | undefined {
   return code === "ENOENT" || code === "EISDIR" || code === "ENOTDIR" ? "absent" : undefined;
 }
 
-/** A small regular file's text, never through a link; `absent` where nothing or a folder is there; else undefined. */
-async function fileText(path: string, maxBytes = MAX_SMALL_FILE_BYTES): Promise<string | undefined> {
+/** How a file is opened: `openNoFollow` refuses a link, `open` follows one. */
+type Opener = (path: string, flags: number) => Promise<FileHandle>;
+
+/**
+ * A small regular file's text, never through a link unless `opener` follows one; `absent` where nothing or a folder is
+ * there; else undefined.
+ */
+async function fileText(path: string, maxBytes = MAX_SMALL_FILE_BYTES, opener: Opener = openNoFollow): Promise<string | undefined> {
   let handle;
   try {
-    handle = await openNoFollow(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+    handle = await opener(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
   } catch (error) {
     return absence(error);
   }
@@ -176,8 +195,10 @@ function packedRefsReader(settleMs: number): PackedRefs {
   const kept = new Map<string, { readonly stamp: string; readonly branches: ReadonlyMap<string, string> }>();
   return async path => {
     const stamped = await stampOf(path, settleMs);
+    // A file that cannot be stamped says nothing of what it holds now: Git answers, never the branches read before.
+    if (stamped === undefined) return undefined;
     const last = kept.get(path);
-    if (stamped === undefined || last?.stamp === stamped.stamp) return last?.branches;
+    if (last?.stamp === stamped.stamp) return last.branches;
     kept.delete(path);
     const branches = packedBranches(await fileText(path, MAX_PACKED_REFS_BYTES));
     if (branches !== undefined && stamped.settled) kept.set(path, { stamp: stamped.stamp, branches });
@@ -210,9 +231,19 @@ async function stampOf(path: string, settleMs: number): Promise<Stamped | undefi
 }
 
 /** Each of `paths` stamped; undefined when one cannot be read. */
-async function stampsOf(paths: readonly string[], settleMs: number): Promise<Stamped[] | undefined> {
+async function stampedFiles(paths: readonly string[], settleMs: number): Promise<StampedFile[] | undefined> {
   const stamps = await Promise.all(paths.map(async path => await stampOf(path, settleMs)));
-  return stamps.every(stamped => stamped !== undefined) ? stamps : undefined;
+  return stamps.every(stamped => stamped !== undefined) ? stamps.map((stamped, at) => ({ path: paths[at]!, ...stamped })) : undefined;
+}
+
+/** `files`' paths and stamps as one string. */
+function filesKey(files: readonly StampedFile[]): string {
+  return files.map(file => `${file.path}\0${file.stamp}`).join("\0");
+}
+
+/** Whether every one of `files` was last changed at least the settle time ago. */
+function allSettled(files: readonly StampedFile[]): boolean {
+  return files.every(file => file.settled);
 }
 
 /**
@@ -229,12 +260,20 @@ async function defaultOwners(paths: readonly string[]): Promise<string | undefin
   }
 }
 
-/** The global and system configuration files `git var` names for this process (Git 2.42 and later); else undefined. */
-async function askWideFiles(cwd: string): Promise<string[] | undefined> {
+/**
+ * What a `git var` said of the files it names: their paths; `unknown` where they cannot be named once for every
+ * checkout, an answer that holds while the daemon runs: Git knows no such variable (before Git 2.42), or names a
+ * relative path (a relative `GIT_CONFIG_GLOBAL`), which each checkout's Git opens in its own folder; undefined where Git
+ * could not answer, which the next question asks again.
+ */
+export type NamedFiles = string[] | "unknown" | undefined;
+
+/** The global and system configuration files `git var` names for this process, as {@link NamedFiles}. */
+async function askWideFiles(cwd: string): Promise<NamedFiles> {
   const named: string[] = [];
   for (const variable of ["GIT_CONFIG_SYSTEM", "GIT_CONFIG_GLOBAL"]) {
     const lines = namedFiles(await gitRun(cwd, ["var", variable]));
-    if (lines === undefined) return undefined;
+    if (!Array.isArray(lines)) return lines;
     named.push(...lines);
   }
   // Git for Windows reads its program data file before the system one.
@@ -244,12 +283,43 @@ async function askWideFiles(cwd: string): Promise<string[] | undefined> {
 
 /**
  * The files a `git var` names, absolute: none where it exits 1 printing nothing, as for `GIT_CONFIG_SYSTEM` under
- * `GIT_CONFIG_NOSYSTEM`; undefined for any other end, as before Git 2.42, which knows no such variable.
+ * `GIT_CONFIG_NOSYSTEM`; `unknown` where Git knows no such variable (its usage, exit 129); undefined for any other end:
+ * Git did not start, or could not run in the folder or read its configuration.
  */
-export function namedFiles(printed: GitResult | undefined): string[] | undefined {
+export function namedFiles(printed: GitResult | undefined): NamedFiles {
+  if (printed?.status === UNKNOWN_VARIABLE) return "unknown";
   if (printed?.status === 1 && printed.stdout.trim() === "") return [];
   if (printed?.status !== 0) return undefined;
-  return printed.stdout.split(/\r?\n/u).filter(line => line !== "").map(line => resolve(line));
+  const lines = printed.stdout.split(/\r?\n/u).filter(line => line !== "");
+  return lines.every(line => isAbsolute(line)) ? lines.map(line => resolve(line)) : "unknown";
+}
+
+/**
+ * `ask`, answered once and kept, but for an answer of undefined or a throw, a failure: no failure is kept, so the next
+ * question asks again, where its own folder or a Git that starts now can answer. Callers that ask at once share one
+ * question.
+ */
+export function keptUnlessFailed<T>(ask: (cwd: string) => Promise<T | undefined>): (cwd: string) => Promise<T | undefined> {
+  let asking: Promise<T | undefined> | undefined;
+  return async cwd => {
+    const question = (asking ??= ask(cwd));
+    let answer: T | undefined;
+    try {
+      answer = await question;
+    } finally {
+      if (answer === undefined && asking === question) asking = undefined;
+    }
+    return answer;
+  };
+}
+
+/**
+ * The file a configured path names, as Git finds it: `~/` in Git's home, a relative path against `base`; undefined for
+ * a spelling only Git can name the file of ({@link GIT_ONLY_SPELLING}).
+ */
+export function configuredPath(value: string, base: string): string | undefined {
+  if (GIT_ONLY_SPELLING.test(value)) return undefined;
+  return value.startsWith("~/") ? join(gitHome(), value.slice(2)) : resolve(base, value);
 }
 
 /** The files the includes of `cwd`'s configuration name, and whether one depends on the branch; undefined when unknown. */
@@ -262,16 +332,16 @@ async function askIncludes(cwd: string, signal: AbortSignal | undefined): Promis
   const printed = await gitRun(cwd, ["config", "--show-origin", "-z", "--get-regexp", String.raw`^include(if\..+)?\.path$`], signal);
   // Exit 1 with nothing printed: no include is set.
   if (printed?.status === 1 && printed.stdout === "") return { paths: [], byBranch: false };
-  return printed?.status === 0 ? includedFiles(printed.stdout.split("\0")) : undefined;
+  return printed?.status === 0 ? includedFiles(cwd, printed.stdout.split("\0")) : undefined;
 }
 
 /** `file:<path>`, then `<key>\n<value>`, for each include; undefined for one Git does not name by a file's path. */
-function includedFiles(fields: readonly string[]): Included | undefined {
+function includedFiles(cwd: string, fields: readonly string[]): Included | undefined {
   const paths: string[] = [];
   let byBranch = false;
   for (let at = 0; at + 1 < fields.length; at += 2) {
     const [key = "", value = ""] = fields[at + 1]!.split("\n");
-    const path = includedPath(fields[at]!, value);
+    const path = includedPath(cwd, fields[at]!, value);
     if (path === undefined) return undefined;
     paths.push(path);
     byBranch = byBranch || key.startsWith("includeif.onbranch:");
@@ -279,10 +349,13 @@ function includedFiles(fields: readonly string[]): Included | undefined {
   return { paths, byBranch };
 }
 
-/** An include's file as Git finds it: `~/` in Git's home, a relative path beside the file that names it. */
-function includedPath(origin: string, value: string): string | undefined {
-  if (!origin.startsWith("file:") || value === "" || value.startsWith("%(")) return undefined;
-  return value.startsWith("~/") ? join(gitHome(), value.slice(2)) : resolve(dirname(origin.slice("file:".length)), value);
+/**
+ * An include's file as Git finds it: a relative path in the folder of the file holding the include. Git prints that
+ * file's path as it opened it, relative to the checkout's top it ran in (`file:.git/config`) for the repository's own.
+ */
+function includedPath(cwd: string, origin: string, value: string): string | undefined {
+  if (!origin.startsWith("file:")) return undefined;
+  return configuredPath(value, resolve(cwd, dirname(origin.slice("file:".length))));
 }
 
 /** Per checkout, the inputs under which Git last named a commit, and that commit's length. */
@@ -349,57 +422,98 @@ export function gitHeadReader(options: GitHeadReaderOptions = {}): GitHeadReader
   };
 }
 
+/** The files a checkout's includes name, stamped, and `HEAD`'s text where an `includeIf "onbranch:"` is set, else empty. */
+interface IncludedRead {
+  readonly files: readonly StampedFile[];
+  readonly branch: string;
+}
+
+/**
+ * What Git named of a checkout's includes, and every input that answer depends on as it was before Git was asked: the
+ * repository's, worktree's, global and system files (`base`, paths and stamps), each included file's stamp, and, where
+ * an `includeIf "onbranch:"` is set, `HEAD`'s text. An included file can hold includes of its own, and an `onbranch`
+ * include is read only on its branch, so each of those moves the files Git reads.
+ */
+interface KeptIncludes {
+  readonly base: string;
+  readonly included: Included;
+  readonly stamps: readonly string[];
+  readonly branch: string;
+}
+
+/** `HEAD`'s text in `gitDir`, which an `includeIf "onbranch:"` depends on; undefined when it cannot be read. */
+async function headText(gitDir: string): Promise<string | undefined> {
+  return await fileText(join(gitDir, "HEAD"));
+}
+
+/** Whether `files` hold, in order, the stamps `stamps` holds. */
+function sameStamps(files: readonly StampedFile[] | undefined, stamps: readonly string[]): files is readonly StampedFile[] {
+  return files !== undefined && files.length === stamps.length && files.every((file, at) => file.stamp === stamps[at]);
+}
+
 /**
  * The configuration files Git reads for a checkout, stamped, as one string. The global and system files are named once
- * per process (`git var`); the repository's files are read for an include section only when their stamp moved, and the
- * files includes name are asked of Git only when one holds one, again only when a stamp moved.
+ * per process (`git var`), asked again after a failure; the repository's files are read for an include section only when
+ * their stamp moved, and the files includes name are asked of Git only when one holds one, again once any input of that
+ * answer moved ({@link KeptIncludes}). What is kept by a stamp is kept only once the stamp has settled: a write in the
+ * same clock tick can leave a stamp as it was.
  */
 function configReader(settleMs: number): (cwd: string, layout: Layout, signal: AbortSignal | undefined) => Promise<Vouch | undefined> {
-  let wide: { readonly at: number; readonly files: Promise<string[] | undefined> } | undefined;
-  const sections = new Map<string, { readonly stamp: string; readonly include: boolean | undefined }>();
-  const includes = new Map<string, { readonly key: string; readonly included: Included }>();
+  const wideNamed = keptUnlessFailed(askWideFiles);
+  const sections = new Map<string, { readonly stamp: string; readonly include: boolean }>();
+  const includes = new Map<string, KeptIncludes>();
 
   const wideFiles = async (cwd: string): Promise<string[] | undefined> => {
-    if (wide === undefined || ((await wide.files) === undefined && Date.now() - wide.at >= WIDE_FILES_RETRY_MS))
-      wide = { at: Date.now(), files: askWideFiles(cwd) };
-    return await wide.files;
+    const named = await wideNamed(cwd);
+    return Array.isArray(named) ? named : undefined;
   };
 
-  /** Whether `path`, stamped `stamp`, holds an include section; its text is read again only when its stamp moved. */
-  const holdsInclude = async (path: string, stamp: string): Promise<boolean | undefined> => {
+  /** Whether `file` holds an include section; its text is read again only when its stamp moved or had not settled. */
+  const holdsInclude = async ({ path, stamp, settled }: StampedFile): Promise<boolean | undefined> => {
     const known = sections.get(path);
     if (known?.stamp === stamp) return known.include;
-    const text = await fileText(path, MAX_CONFIG_BYTES);
-    const include = text === undefined ? undefined : text !== "absent" && INCLUDE_SECTION.test(text);
-    sections.set(path, { stamp, include });
+    // Git reads a configuration file through a link, as `stampOf` stamps it: a global file a dotfiles tool links in.
+    const text = await fileText(path, MAX_CONFIG_BYTES, open);
+    if (text === undefined) return undefined;
+    const include = text !== "absent" && INCLUDE_SECTION.test(text);
+    if (settled) sections.set(path, { stamp, include });
     return include;
   };
 
-  const includedFor = async (cwd: string, base: readonly string[], stamps: readonly Stamped[], signal: AbortSignal | undefined) => {
-    const found = await Promise.all(base.map(async (path, at) => await holdsInclude(path, stamps[at]!.stamp)));
-    if (found.includes(undefined)) return undefined;
-    if (!found.includes(true)) return { paths: [], byBranch: false };
-    const key = stamps.map(stamped => stamped.stamp).join("\0");
+  /** The includes kept for `cwd`, where every input of Git's answer is as it was; else undefined. */
+  const keptIncludes = async (cwd: string, gitDir: string, base: readonly StampedFile[]): Promise<IncludedRead | undefined> => {
     const known = includes.get(cwd);
-    if (known?.key === key) return known.included;
-    const asked = await askIncludes(cwd, signal);
-    if (asked !== undefined) includes.set(cwd, { key, included: asked });
-    return asked;
+    if (known?.base !== filesKey(base)) return undefined;
+    const branch = known.included.byBranch ? await headText(gitDir) : "";
+    const files = await stampedFiles(known.included.paths, settleMs);
+    return branch === known.branch && sameStamps(files, known.stamps) ? { files, branch } : undefined;
+  };
+
+  /** Git's includes for `cwd`, kept once every file they depend on has settled; `HEAD` is read first, as Git reads it after. */
+  const askedIncludes = async (cwd: string, gitDir: string, base: readonly StampedFile[], signal: AbortSignal | undefined) => {
+    const head = await headText(gitDir);
+    const included = head === undefined ? undefined : await askIncludes(cwd, signal);
+    const files = included === undefined ? undefined : await stampedFiles(included.paths, settleMs);
+    if (files === undefined) return undefined;
+    const branch = included!.byBranch ? head! : "";
+    if (allSettled([...base, ...files])) includes.set(cwd, { base: filesKey(base), included: included!, stamps: files.map(file => file.stamp), branch });
+    return { files, branch };
+  };
+
+  const includedFor = async (cwd: string, gitDir: string, base: readonly StampedFile[], signal: AbortSignal | undefined): Promise<IncludedRead | undefined> => {
+    const found = await Promise.all(base.map(holdsInclude));
+    if (found.includes(undefined)) return undefined;
+    if (!found.includes(true)) return { files: [], branch: "" };
+    return (await keptIncludes(cwd, gitDir, base)) ?? (await askedIncludes(cwd, gitDir, base, signal));
   };
 
   return async (cwd, layout, signal) => {
     const named = await wideFiles(cwd);
-    if (named === undefined) return undefined;
-    const base = [join(layout.commonDir, "config"), join(layout.gitDir, "config.worktree"), ...named];
-    const baseStamps = await stampsOf(base, settleMs);
-    const included = baseStamps === undefined ? undefined : await includedFor(cwd, base, baseStamps, signal);
-    const includedStamps = included === undefined ? undefined : await stampsOf(included.paths, settleMs);
-    if (includedStamps === undefined) return undefined;
-    const files = [...base, ...included!.paths];
-    const stamps = [...baseStamps!, ...includedStamps];
-    const branch = included!.byBranch ? await fileText(join(layout.gitDir, "HEAD")) : "";
-    const key = [...files.map((path, at) => `${path}\0${stamps[at]!.stamp}`), `branch\0${String(branch)}`].join("\0");
-    return { key, settled: stamps.every(stamped => stamped.settled) };
+    const base = named === undefined ? undefined : await stampedFiles([join(layout.commonDir, "config"), join(layout.gitDir, "config.worktree"), ...named], settleMs);
+    const included = base === undefined ? undefined : await includedFor(cwd, layout.gitDir, base, signal);
+    if (included === undefined) return undefined;
+    const files = [...base!, ...included.files];
+    return { key: `${filesKey(files)}\0branch\0${included.branch}`, settled: allSettled(files) };
   };
 }
 

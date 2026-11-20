@@ -1,16 +1,22 @@
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-/** The arguments of each Git process Rerail started; the test's own `git` uses `execFileSync`, which is not counted. */
-const started = vi.hoisted(() => ({ git: [] as string[][] }));
+/**
+ * The arguments of each Git process Rerail started; the test's own `git` uses `execFileSync`, which is not counted. A
+ * `git var` of a variable in `failing` fails once, as one in a folder just removed does.
+ */
+const started = vi.hoisted(() => ({ git: [] as string[][], failing: new Set<string>() }));
 vi.mock("node:child_process", async importOriginal => {
   const original = await importOriginal<typeof import("node:child_process")>();
   const spawn = ((file: string, args: readonly string[], ...rest: never[]) => {
-    if (/(^|[\\/])git(\.exe)?$/iu.test(file)) started.git.push([...args]);
-    return original.spawn(file, args, ...rest);
+    if (!/(^|[\\/])git(\.exe)?$/iu.test(file)) return original.spawn(file, args, ...rest);
+    started.git.push([...args]);
+    const variable = args.at(-1) ?? "";
+    if (args.at(-2) !== "var" || !started.failing.delete(variable)) return original.spawn(file, args, ...rest);
+    return original.spawn(file, [...args.slice(0, -2), "-C", join(tmpdir(), "rerail-no-such-folder"), "var", variable], ...rest);
   }) as typeof original.spawn;
   return { ...original, spawn };
 });
@@ -37,6 +43,7 @@ const environment = new Map<string, string | undefined>();
 afterEach(async () => {
   vi.mocked(Date.now).mockRestore();
   clock.aheadMs = 0;
+  started.failing.clear();
   for (const [name, value] of environment) {
     if (value === undefined) delete process.env[name];
     else process.env[name] = value;
@@ -139,4 +146,47 @@ describe("gitCrlfReader", () => {
       expect(answer.git, `GIT_ATTR_SOURCE, call ${time}`).toContain("check-attr");
     }
   }, 30_000);
+
+  it("asks git var for the system attributes file again at the next call after it failed, then answers from Git's files", async () => {
+    const root = await repository("*.txt text eol=crlf\n");
+    const reader = gitCrlfReader();
+    clock.aheadMs += SETTLED_MS;
+    started.failing.add("GIT_ATTR_SYSTEM");
+    const failed = await read(reader, root);
+    expect(failed.rules).toEqual(failed.expected);
+    const again = await read(reader, root);
+    expect(again.rules).toEqual(again.expected);
+    const after = await read(reader, root);
+    expect(after.rules).toEqual(after.expected);
+    expect(after.git).toEqual([]);
+  }, 30_000);
+
+  it("asks nothing of the system attributes file for a checkout whose configuration cannot be named", async () => {
+    const root = await repository("*.txt text eol=crlf\n");
+    const reader = gitCrlfReader();
+    clock.aheadMs += SETTLED_MS;
+    const before = started.git.length;
+    expect(Object.fromEntries(await reader(join(root, "removed"), PATHS))).toEqual({});
+    expect(started.git.slice(before).filter(args => args.includes("GIT_ATTR_SYSTEM"))).toEqual([]);
+    const first = await read(reader, root);
+    expect(first.rules).toEqual(first.expected);
+    expect((await read(reader, root)).git).toEqual([]);
+  }, 30_000);
+
+  it("asks Git on every call while core.attributesFile is spelled so that only Git can name its file", async () => {
+    setVariable("GIT_ATTR_NOSYSTEM", "1");
+    const spellings = ["~rerail-no-such-user/attributes", `~${userInfo().username}/.rerail-no-such-attributes`, "%(prefix)/rerail-no-such-attributes", ":(optional)no-such-attributes"];
+    for (const spelling of spellings) {
+      const root = await repository();
+      git(root, "config", "core.autocrlf", "true");
+      git(root, "config", "core.attributesFile", spelling);
+      const reader = gitCrlfReader();
+      clock.aheadMs += SETTLED_MS;
+      for (const time of [1, 2]) {
+        const answer = await read(reader, root);
+        expect(answer.rules, `${spelling}, call ${time}`).toEqual(answer.expected);
+        expect(answer.git, `${spelling}, call ${time}`).toContain("check-attr");
+      }
+    }
+  }, 60_000);
 });

@@ -12,12 +12,13 @@
  *   attribute is unspecified and no Git is asked.
  *
  * Git is asked on every call, as `gitCrlfPaths` does, where those inputs cannot be named: a variable that moves where Git
- * looks (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE`, `GIT_ATTR_SOURCE`), `attr.tree` set, Git before
- * 2.42, a configuration or attributes file that cannot be stamped, and an input written less than 2 s ago (a write in
- * the same clock tick could leave its stamp unchanged).
+ * looks (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE`, `GIT_ATTR_SOURCE`), `attr.tree` set, a
+ * `core.attributesFile` spelled so that only Git can name its file (`configuredPath`), Git before 2.42, a configuration
+ * or attributes file that cannot be stamped, a `git var` that failed (asked again at the next call), and an input
+ * written less than 2 s ago (a write in the same clock tick could leave its stamp unchanged).
  */
 import { stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { fileStamp } from "./file-stamp.js";
 import {
   crlfRule,
@@ -30,7 +31,14 @@ import {
   lineEndingAttributes,
   runGitAsync,
 } from "./git.js";
-import { checkoutConfiguration, type CheckoutConfiguration, namedFiles } from "./git-head-reader.js";
+import {
+  checkoutConfiguration,
+  type CheckoutConfiguration,
+  configuredPath,
+  keptUnlessFailed,
+  type NamedFiles,
+  namedFiles,
+} from "./git-head-reader.js";
 
 export type GitCrlfReader = (cwd: string, paths: readonly string[], options?: GitReadOptions & { platform?: NodeJS.Platform }) => Promise<Map<string, CrlfRule>>;
 
@@ -38,8 +46,8 @@ export type GitCrlfReader = (cwd: string, paths: readonly string[], options?: Gi
 interface Settings {
   readonly autocrlf: string | undefined;
   readonly coreEol: string | undefined;
-  /** `core.attributesFile`, else Git's default global attributes file; absolute. */
-  readonly globalAttributes: string;
+  /** `core.attributesFile`, else Git's default global attributes file; absolute. Undefined where only Git can name it. */
+  readonly globalAttributes: string | undefined;
   /** `attr.tree` is set: attributes come from a tree, which no file stamp follows. */
   readonly byTree: boolean;
 }
@@ -106,15 +114,18 @@ async function askSettings(cwd: string, signal: AbortSignal | undefined): Promis
   };
 }
 
-/** `core.attributesFile` as Git finds it (`~/` in Git's home), else `git/attributes` in `XDG_CONFIG_HOME` or `~/.config`. */
-function globalAttributesFile(cwd: string, configured: string | undefined): string {
-  if (configured !== undefined && configured !== "") return configured.startsWith("~/") ? join(gitHome(), configured.slice(2)) : resolve(cwd, configured);
+/**
+ * `core.attributesFile` as Git finds it (`configuredPath`: relative to the checkout's top, where Git runs), undefined for
+ * a spelling only Git can name the file of; unset or empty, `git/attributes` in `XDG_CONFIG_HOME` or `~/.config`.
+ */
+function globalAttributesFile(cwd: string, configured: string | undefined): string | undefined {
+  if (configured !== undefined && configured !== "") return configuredPath(configured, cwd);
   const xdg = process.env.XDG_CONFIG_HOME;
   return join(xdg === undefined || xdg === "" ? join(gitHome(), ".config") : xdg, "git", "attributes");
 }
 
-/** The system attributes file `git var` names (Git 2.42 and later), none under `GIT_ATTR_NOSYSTEM`; undefined before. */
-async function askSystemAttributes(cwd: string): Promise<string[] | undefined> {
+/** The system attributes file `git var` names (Git 2.42 and later), none under `GIT_ATTR_NOSYSTEM`, as `NamedFiles`. */
+async function askSystemAttributes(cwd: string): Promise<NamedFiles> {
   return namedFiles(await gitRun(cwd, ["var", "GIT_ATTR_SYSTEM"]));
 }
 
@@ -176,6 +187,7 @@ function withoutGit(held: KeptAttributes | undefined, key: PathKey | undefined):
 /** The settings and attribute files a call found named, and the stamps of those files and of the index. */
 interface Named {
   readonly config: CheckoutConfiguration;
+  readonly named: Settings;
   readonly files: readonly string[];
 }
 
@@ -202,7 +214,8 @@ export function gitCrlfReader(): GitCrlfReader {
   const settings = new Map<string, { readonly key: string; readonly settings: Settings }>();
   const tracked = new Map<string, { readonly index: string; readonly folders: ReadonlySet<string> }>();
   const kept = new Map<string, Kept>();
-  let system: Promise<string[] | undefined> | undefined;
+  // Kept for the daemon's life once Git answered; after a failure the next question, of any checkout, asks again.
+  const systemNamed = keptUnlessFailed(askSystemAttributes);
 
   const settingsFor = async (cwd: string, config: CheckoutConfiguration, signal: AbortSignal | undefined): Promise<Settings | undefined> => {
     const known = settings.get(cwd);
@@ -220,13 +233,21 @@ export function gitCrlfReader(): GitCrlfReader {
     return asked;
   };
 
-  /** The settings and the attribute files beside the folders', for a checkout whose configuration the files name. */
-  const namedFor = async (cwd: string, signal: AbortSignal | undefined) => {
+  /**
+   * The settings and the attribute files beside the folders', for a checkout whose configuration the files name and
+   * whose attribute files they can name: the system file is asked of Git only then, so a checkout Git cannot read
+   * leaves it unasked.
+   */
+  const namedFor = async (cwd: string, signal: AbortSignal | undefined): Promise<Named | undefined> => {
     const config = await checkoutConfiguration(cwd, signal);
-    const named = config === undefined ? undefined : await settingsFor(cwd, config, signal);
-    system ??= askSystemAttributes(cwd);
-    const systemFile = await system;
-    if (config === undefined || named === undefined || named.byTree || systemFile === undefined) return undefined;
+    return config === undefined ? undefined : await filesFor(cwd, config, signal);
+  };
+
+  const filesFor = async (cwd: string, config: CheckoutConfiguration, signal: AbortSignal | undefined): Promise<Named | undefined> => {
+    const named = await settingsFor(cwd, config, signal);
+    if (named === undefined || named.byTree || named.globalAttributes === undefined) return undefined;
+    const systemFile = await systemNamed(cwd);
+    if (!Array.isArray(systemFile)) return undefined;
     return { config, named, files: [join(config.layout.commonDir, "info", "attributes"), named.globalAttributes, ...systemFile] };
   };
 

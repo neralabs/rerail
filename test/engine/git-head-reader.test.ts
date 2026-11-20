@@ -1,18 +1,43 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import type { PathLike } from "node:fs";
+import { mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from "node:fs/promises";
+import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-/** The arguments of each Git process Rerail started; the test's own `git` uses `execFileSync`, which is not counted. */
-const started = vi.hoisted(() => ({ git: [] as string[][] }));
+/**
+ * The arguments of each Git process Rerail started; the test's own `git` uses `execFileSync`, which is not counted. A
+ * `git var` of a variable in `failing` fails once, as one in a folder just removed does; with `oldGit`, every `git var`
+ * asks a variable Git does not know, as before Git 2.42.
+ */
+const started = vi.hoisted(() => ({ git: [] as string[][], failing: new Set<string>(), oldGit: false }));
 vi.mock("node:child_process", async importOriginal => {
   const original = await importOriginal<typeof import("node:child_process")>();
   const spawn = ((file: string, args: readonly string[], ...rest: never[]) => {
-    if (/(^|[\\/])git(\.exe)?$/iu.test(file)) started.git.push([...args]);
-    return original.spawn(file, args, ...rest);
+    if (!/(^|[\\/])git(\.exe)?$/iu.test(file)) return original.spawn(file, args, ...rest);
+    started.git.push([...args]);
+    const variable = args.at(-1) ?? "";
+    if (args.at(-2) !== "var") return original.spawn(file, args, ...rest);
+    if (started.failing.delete(variable)) return original.spawn(file, [...args.slice(0, -2), "-C", join(tmpdir(), "rerail-no-such-folder"), "var", variable], ...rest);
+    return original.spawn(file, started.oldGit ? [...args.slice(0, -1), "GIT_RERAIL_NO_SUCH_VARIABLE"] : args, ...rest);
   }) as typeof original.spawn;
   return { ...original, spawn };
+});
+
+/**
+ * Files whose `stat` fails as an unreadable file's does (EACCES), and files whose stamp holds still through writes, as
+ * on a file system whose clock ticks coarsely: the same inode, size and times, `timeMs` ago.
+ */
+const statFaults = vi.hoisted(() => ({ refused: new Set<string>(), frozen: new Map<string, number>() }));
+vi.mock("node:fs/promises", async importOriginal => {
+  const original = await importOriginal<typeof import("node:fs/promises")>();
+  const stat = (async (path: PathLike, ...rest: never[]) => {
+    if (statFaults.refused.has(String(path))) throw Object.assign(new Error(`EACCES: permission denied, stat '${String(path)}'`), { code: "EACCES" });
+    const info = await original.stat(path, ...rest);
+    const timeMs = statFaults.frozen.get(String(path));
+    return timeMs === undefined ? info : Object.assign(info, { ino: 1, size: 1, mtimeMs: timeMs, ctimeMs: timeMs });
+  }) as typeof original.stat;
+  return { ...original, stat };
 });
 
 import { gitHead } from "../../src/engine/git.js";
@@ -22,6 +47,11 @@ import { removeFolder } from "../support/platform/remove-folder.js";
 const folders: string[] = [];
 const environment = new Map<string, string | undefined>();
 afterEach(async () => {
+  started.failing.clear();
+  started.oldGit = false;
+  statFaults.refused.clear();
+  statFaults.frozen.clear();
+  vi.restoreAllMocks();
   for (const [name, value] of environment) {
     if (value === undefined) delete process.env[name];
     else process.env[name] = value;
@@ -74,6 +104,30 @@ async function commit(cwd: string, text: string): Promise<void> {
 
 /** A reader whose owners never change and whose inputs count as settled at once, so only the files decide. */
 const filesReader = (): GitHeadReader => gitHeadReader({ settleMs: 0, owners: async () => "owner" });
+
+/** `path` with `/` separators, as a configuration file can hold it on any system (a `\` there starts an escape). */
+function slash(path: string): string {
+  return path.replaceAll("\\", "/");
+}
+
+/** A `[rerail] probe = <name>` file at `path`, which `git config --get rerail.probe` names wherever Git reads it. */
+async function probeFile(path: string, name: string, extra = ""): Promise<void> {
+  await writeFile(path, `[rerail]\n\tprobe = ${name}\n${extra}`);
+}
+
+/** Writes `path` so that Git refuses every checkout that reads it, then reads `cwd` once: Git and the reader both. */
+async function broken(reader: GitHeadReader, cwd: string, path: string): Promise<Awaited<ReturnType<typeof read>>> {
+  await writeFile(path, `${await readFile(path, "utf8")}[broken\n`);
+  return await read(reader, cwd);
+}
+
+/** A clock `aheadMs` ahead of the real one, for the reader's settle time: a test moves it on in place of waiting. */
+function aheadClock(): { aheadMs: number } {
+  const clock = { aheadMs: 0 };
+  const realNow = Date.now.bind(Date);
+  vi.spyOn(Date, "now").mockImplementation(() => realNow() + clock.aheadMs);
+  return clock;
+}
 
 describe("gitHeadReader", () => {
   it("names HEAD as gitHead does through commits, branch switches, packed refs, a detached HEAD and an unborn branch, asking Git only at a checkout's first read", async () => {
@@ -225,6 +279,221 @@ describe("gitHeadReader", () => {
       const answer = await read(reader, main);
       expect(answer.head).toBe(answer.expected);
       expect(answer.heads, `read ${time}`).toBe(1);
+    }
+  });
+
+  it("asks Git while packed-refs cannot be stamped, never answering from the branches it read there before", async () => {
+    const { main } = await repository();
+    git(main, "pack-refs", "--all", "--prune");
+    const reader = filesReader();
+    expect((await read(reader, main)).heads).toBe(1);
+    const fromFiles = await read(reader, main);
+    expect(fromFiles.git).toBe(0);
+    expect(fromFiles.head).toBe(fromFiles.expected);
+    // A commit, then every ref packed again: the branch's commit is in packed-refs alone, which no other input follows.
+    await commit(main, "a = 2\n");
+    git(main, "pack-refs", "--all", "--prune");
+    statFaults.refused.add(join(main, ".git", "packed-refs"));
+    for (const time of [1, 2]) {
+      const answer = await read(reader, main);
+      expect(answer.head, `read ${time}`).toBe(answer.expected);
+      expect(answer.heads, `read ${time}`).toBe(1);
+    }
+  });
+
+  const includes: Array<[string, (main: string, root: string) => Promise<string>]> = [
+    ["a relative path, in the folder of the repository's config", async main => {
+      git(main, "config", "include.path", "relative.cfg");
+      return join(main, ".git", "relative.cfg");
+    }],
+    ["a relative path in an included file, in that file's folder", async main => {
+      await mkdir(join(main, ".git", "nested"));
+      await writeFile(join(main, ".git", "nested", "outer.cfg"), "[include]\n\tpath = inner.cfg\n");
+      git(main, "config", "include.path", "nested/outer.cfg");
+      return join(main, ".git", "nested", "inner.cfg");
+    }],
+    ["a path in Git's home (`~/`)", async (_, root) => {
+      await mkdir(join(root, "home"));
+      setVariable("HOME", join(root, "home"));
+      git(join(root, "main"), "config", "include.path", "~/home.cfg");
+      return join(root, "home", "home.cfg");
+    }],
+    ["an includeIf whose gitdir condition holds, with a relative path", async main => {
+      git(main, "config", `includeIf.gitdir/i:${slash(main)}/.path`, "conditional.cfg");
+      return join(main, ".git", "conditional.cfg");
+    }],
+  ];
+  it.each(includes)("asks Git once a file an include names changed: %s", async (name, arrange) => {
+    const { root, main } = await repository();
+    const target = await arrange(main, root);
+    await probeFile(target, name);
+    // Git's own answer: it reads the file the include names.
+    expect(git(main, "config", "--get", "rerail.probe")).toBe(name);
+    const reader = filesReader();
+    expect((await read(reader, main)).head).toBeDefined();
+    expect((await read(reader, main)).git).toBe(0);
+    const refused = await broken(reader, main, target);
+    expect(refused.expected).toBeUndefined();
+    expect(refused.head).toBe(refused.expected);
+  });
+
+  it("asks Git once an include added to an included file later names a file that changed", async () => {
+    const { root, main, worktree } = await repository();
+    const [outer, inner] = [join(root, "outer.cfg"), join(root, "inner.cfg")];
+    await probeFile(outer, "outer");
+    await probeFile(inner, "inner");
+    git(main, "config", "include.path", slash(outer));
+    const reader = filesReader();
+    for (const cwd of [main, worktree]) expect((await read(reader, cwd)).head).toBeDefined();
+    await probeFile(outer, "outer", `[include]\n\tpath = ${slash(inner)}\n`);
+    expect(git(main, "config", "--get", "rerail.probe")).toBe("inner");
+    for (const cwd of [main, worktree]) {
+      const answer = await read(reader, cwd);
+      expect(answer.head).toBe(answer.expected);
+    }
+    for (const cwd of [main, worktree]) expect((await read(reader, cwd)).git).toBe(0);
+    await probeFile(inner, "inner", "[broken\n");
+    for (const cwd of [main, worktree]) {
+      const refused = await read(reader, cwd);
+      expect(refused.expected).toBeUndefined();
+      expect(refused.head).toBe(refused.expected);
+    }
+  });
+
+  it("follows an onbranch include both ways: unread off its branch, and once on it the files it includes in turn", async () => {
+    const { root, main } = await repository();
+    const [onOther, nested] = [join(root, "on-other.cfg"), join(root, "nested.cfg")];
+    await probeFile(nested, "nested");
+    await writeFile(onOther, `[include]\n\tpath = ${slash(nested)}\n`);
+    git(main, "config", "includeIf.onbranch:other.path", slash(onOther));
+    git(main, "branch", "other");
+    const reader = filesReader();
+    expect((await read(reader, main)).head).toBeDefined();
+    // On `main` Git reads neither file: a change to them leaves its answer.
+    expect(git(main, "config", "--default", "none", "--get", "rerail.probe")).toBe("none");
+    const unread = await broken(reader, main, nested);
+    expect(unread.expected).toBeDefined();
+    expect(unread.head).toBe(unread.expected);
+    await probeFile(nested, "nested");
+    git(main, "switch", "--quiet", "other");
+    expect(git(main, "config", "--get", "rerail.probe")).toBe("nested");
+    const switched = await read(reader, main);
+    expect(switched.head).toBe(switched.expected);
+    expect((await read(reader, main)).git).toBe(0);
+    const refused = await broken(reader, main, nested);
+    expect(refused.expected).toBeUndefined();
+    expect(refused.head).toBe(refused.expected);
+  });
+
+  it("reads a configuration file for an include section again until its stamp has settled", async () => {
+    const { root, main } = await repository();
+    const included = join(root, "included.cfg");
+    await probeFile(included, "included");
+    const clock = aheadClock();
+    // The repository's config keeps one stamp through the write below, as in one tick of a coarse clock.
+    statFaults.frozen.set(join(main, ".git", "config"), Date.now());
+    const reader = gitHeadReader({ settleMs: 2_000, owners: async () => "owner" });
+    expect((await read(reader, main)).head).toBeDefined();
+    git(main, "config", "include.path", slash(included));
+    clock.aheadMs += 3_000;
+    expect((await read(reader, main)).head).toBeDefined();
+    expect((await read(reader, main)).git).toBe(0);
+    const refused = await broken(reader, main, included);
+    expect(refused.expected).toBeUndefined();
+    expect(refused.head).toBe(refused.expected);
+  });
+
+  it("asks Git again for the files includes name until every file of that answer has settled", async () => {
+    const { root, main } = await repository();
+    const [outer, inner] = [join(root, "outer.cfg"), join(root, "inner.cfg")];
+    await probeFile(outer, "outer");
+    await probeFile(inner, "inner");
+    git(main, "config", "include.path", slash(outer));
+    const clock = aheadClock();
+    // The included file keeps one stamp through the write below, as in one tick of a coarse clock.
+    statFaults.frozen.set(outer, Date.now());
+    const reader = gitHeadReader({ settleMs: 2_000, owners: async () => "owner" });
+    expect((await read(reader, main)).head).toBeDefined();
+    await probeFile(outer, "outer", `[include]\n\tpath = ${slash(inner)}\n`);
+    clock.aheadMs += 3_000;
+    expect((await read(reader, main)).head).toBeDefined();
+    expect((await read(reader, main)).git).toBe(0);
+    const refused = await broken(reader, main, inner);
+    expect(refused.expected).toBeUndefined();
+    expect(refused.head).toBe(refused.expected);
+  });
+
+  it("reads a configuration file that is a link, as Git does, rather than asking Git on every read", async ({ skip }) => {
+    const { root, main } = await repository();
+    const [target, link] = [join(root, "dotfiles.cfg"), join(root, "global.cfg")];
+    await writeFile(target, "[user]\n\tname = Rerail\n");
+    try {
+      await symlink(target, link);
+    } catch (error) {
+      // Windows makes a symbolic link only for an account that holds the privilege to.
+      if (process.platform === "win32") skip();
+      throw error;
+    }
+    setVariable("GIT_CONFIG_GLOBAL", link);
+    const reader = filesReader();
+    expect((await read(reader, main)).heads).toBe(1);
+    expect((await read(reader, main)).git).toBe(0);
+    const refused = await broken(reader, main, target);
+    expect(refused.expected).toBeUndefined();
+    expect(refused.head).toBe(refused.expected);
+  });
+
+  it("asks Git on every read while an include is spelled so that only Git can name its file", async () => {
+    for (const spelling of [`~${userInfo().username}/.rerail-no-such-include.cfg`, "%(prefix)/rerail-no-such-include.cfg", ":(optional)no-such-include.cfg"]) {
+      const { main } = await repository();
+      git(main, "config", "include.path", spelling);
+      const reader = filesReader();
+      for (const time of [1, 2, 3]) {
+        const answer = await read(reader, main);
+        expect(answer.head, `${spelling}, read ${time}`).toBe(answer.expected);
+        expect(answer.heads, `${spelling}, read ${time}`).toBe(1);
+      }
+    }
+  });
+
+  it("asks Git on every read while git var names a relative global file, which each checkout's Git opens in its own folder", async () => {
+    const { main } = await repository();
+    setVariable("GIT_CONFIG_GLOBAL", "relative-global.cfg");
+    const reader = filesReader();
+    for (const time of [1, 2]) {
+      const answer = await read(reader, main);
+      expect(answer.head, `read ${time}`).toBe(answer.expected);
+      expect(answer.heads, `read ${time}`).toBe(1);
+    }
+    await writeFile(join(main, "relative-global.cfg"), "[broken\n");
+    const refused = await read(reader, main);
+    expect(refused.expected).toBeUndefined();
+    expect(refused.head).toBe(refused.expected);
+  });
+
+  it("asks git var again at the next read after it failed, and then answers from Git's files", async () => {
+    const { main } = await repository();
+    const reader = filesReader();
+    started.failing.add("GIT_CONFIG_SYSTEM");
+    const failed = await read(reader, main);
+    expect(failed.head).toBe(failed.expected);
+    const again = await read(reader, main);
+    expect(again.head).toBe(again.expected);
+    expect(again.heads).toBe(1);
+    expect((await read(reader, main)).git).toBe(0);
+  });
+
+  it("asks git var once where Git knows no such variable, and Git on every read", async () => {
+    const { main } = await repository();
+    started.oldGit = true;
+    const reader = filesReader();
+    const vars = (from: number) => started.git.slice(from).filter(args => args.includes("var")).length;
+    for (const time of [1, 2, 3]) {
+      const before = started.git.length;
+      const answer = await read(reader, main);
+      expect(answer.head, `read ${time}`).toBe(answer.expected);
+      expect(answer.heads, `read ${time}`).toBe(1);
+      expect(vars(before), `read ${time}`).toBe(time === 1 ? 1 : 0);
     }
   });
 });
