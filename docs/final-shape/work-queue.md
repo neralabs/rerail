@@ -3045,6 +3045,16 @@ submitted" now hold device memory at once.
   after it). Open from 0494: the workspace API's owner (`begin_analysis_scope_at`) still acquires as it begins.
   Seen while testing 0494: `scope::sql::tests::reproduces_sqlfluff_rf01_and_al05` failed once in a group run on the
   M3 and passed alone on the M1 Max; not looked into.
+  Measured (ab98, 2026-11-20, the M3, 300 files, strict, `--metal`, 1 GB, load 5–9; working-data/bench-1120/ab98.txt).
+  The A/B first stalled in both arms, past 900 s: the merge's witness cut in the planner's search (c30a34fb2) priced a
+  cross product past a bound head as free (`p155_rr_demand_agg_rr_agg3`, a `node_text` plan), fixed in 960374749f; and a
+  cold kernel store spent minutes building the transducer's interpreter (decision 0507). With both fixed, t81 (no walk)
+  against t82 (the walk): 463 violations every run; 544 G against 554 G instructions, 24 s wall each (means of three);
+  refusals 64, 74, 67 against 65, 88, 34. `has` is walked 6 times a run; row 5's uploads rose from 312 MB (863 calls) to
+  454 MB (949), since strata a keyed `has` kept on the CPU now run on the device and upload their other inputs. So the walk
+  removes no refusals: what remains of (c) is what admission counts. Its `fits` counts every live lease, held rows too,
+  so the refusals are leases a stratum makes past its own reservation (uploads, sorts' scratch, rows put in spare slabs)
+  that `expected()` does not estimate. Next: the refused leases at 1 GB by kind against the reservation they came under.
   (d) a derived relation's frame is still
   encoded into the segments while it is in the chain (`held_placed`, 0.05 s on 300 files), as item 4 was.
 - **Record**: —
