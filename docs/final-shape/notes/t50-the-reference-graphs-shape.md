@@ -420,6 +420,30 @@ unchanged): `rf_in` 6.52 → 5.65 s, `rf_fn_in` 2.00 → 1.87 s. What is left is
 work in `rf_in`'s main lines, about 160 ns a row and step), and the chain `rf_fn_in`/`rf_top`/`rf_owner`, which the
 chain root (the second half) is for.
 
+### Step 4, second part: `within` with both sides bound is a test
+
+With its plan starting from the sites, `rf_in` read `within(n, b)` with both sides bound, and so did the generated
+strata of the program's other rules. Each such check was a probe of `n`'s rows: the rows of every ancestor of `n`,
+made on the first lookup, or the batch's solve, which makes them for every node. Then the probe filtered them for `b`.
+A source can now answer a fully bound row with a test (`Source::holds`). The setfix step asks it when the step reads
+no column of the row (`need` 0, every key exact), and the candidate it gives is never read. `within` in tree mode
+answers with the projection's preorder interval: `n` lies in `a`'s `size`, the interval its made rows are. Nothing
+is made (test `within_with_both_given_is_an_interval_test`, against each node's chain of parents).
+`RERAIL_WITHIN_TEST=off` probes as before (a measurement aid).
+
+The first version read the tape's `subtree_end` through a reader opened for each call. It saved 15 s in the strata
+above and lost about as much in strata that check the same nodes again, where the probe was a hit on rows already
+made (`tscope` 0.21 → 1.62 s, `rf_fcond` 0.10 → 1.42 s). The projection's `size` opens no reader, and that loss is
+gone.
+
+On `all` (m1max, both sides in one session, rows unchanged), instructions retired went 3.677 T → 3.538 T and the
+rules' own CPU 312.9 → 272.0 s. By stratum: `rf_in` 6.56 → 4.32 s, `rf_fn_in` 2.24 → 0.86 s, and the generated
+`pre_379` 10.57 → 2.82 s, `pre_380` 6.23 → 1.29 s, `pre_378` 4.81 → 2.67 s. On s1000: 371.1 G → 349.6 G
+instructions. The hosts were loaded (load 4 to 31 on 10 cores), so wall and CPU moved by 10–40% from one run to the
+next. Instructions are the measure here.
+
+The chain root (`rf_fn_in`/`rf_top`/`rf_owner`), step 4's last part, is next: after this, the chain costs 0.86 + 0.34 + 0.17 s.
+
 ### The rows on `all`: two rules fixed, the rest W's departures from Python
 
 `RERAIL_STAGE_DIFFS=1` listed every differing row. Each kind was cut down to a case of a few lines

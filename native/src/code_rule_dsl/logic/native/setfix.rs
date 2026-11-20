@@ -7203,6 +7203,14 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     else if ix.composite && let Some(v) = &rel.view {
                         let mut eq = [(0usize, 0i64); MAX_KEY];
                         for (j, &c) in ix.cols.iter().enumerate() { eq[j] = (v.cols[c], key[j]); }
+                        // A step that reads no column of the row (every key exact, `need` 0) asks only whether it is
+                        // there: a source's test where it has one (`Source::holds`, `within` with both bound). The
+                        // candidate it gives is never read.
+                        // `RERAIL_WITHIN_TEST=off` (a measurement aid) probes such a step's rows as before.
+                        static TEST: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_WITHIN_TEST").map_or(true, |v| v != "off"));
+                        if need == 0 && *TEST && let Some(h) = v.src.holds(&eq[..ix.cols.len()]) {
+                            return (Rows::Source(v), Cands::Range(0, u32::from(h)));
+                        }
                         let rows = v.src.lookup_all(&eq[..ix.cols.len()]).unwrap_or_default();
                         (Rows::Source(v), Cands::Owned(rows.into_iter().map(|r| r as u32).collect()))
                     }
