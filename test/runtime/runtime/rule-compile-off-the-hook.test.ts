@@ -16,6 +16,7 @@ import { setUpTestRepository } from "../../support/repository-rules.js";
 const compiles = vi.hoisted(() => ({
   onThread: 0,
   offThread: 0,
+  offThreadIds: [] as string[],
   holding: 0,
   hold: undefined as { id: string; released: Promise<void> } | undefined,
 }));
@@ -34,6 +35,7 @@ vi.mock("../../../src/engine/native/native.js", async importOriginal => {
       },
       compileAsync: async (...args: Parameters<typeof engine.compile>) => {
         compiles.offThread += 1;
+        compiles.offThreadIds.push((JSON.parse(args[0]) as { id: string }).id);
         const hold = compiles.hold;
         if (hold !== undefined && args[0].includes(`"id":"${hold.id}"`)) {
           compiles.holding += 1;
@@ -211,6 +213,41 @@ describe("a session's first edit in a repository after the daemon restarts", () 
       await edit.call();
       expect({ onThread: compiles.onThread, offThread: compiles.offThread }).toEqual({ onThread: 0, offThread: 0 });
       expect(ruleIds(await edit.result())).toContain("rcsibling-needle");
+    } finally {
+      await runtime.dispose();
+    }
+  }, 60_000);
+});
+
+describe("a session's first edit in a started repository kept inside its folder", () => {
+  it("finds that repository's rules compiled, built off the daemon's thread as the session opened, and is steered at its result", async () => {
+    const root = await realpath(await temporaryDirectory({ started: false }));
+    const databasePath = join(root, "rerail.sqlite");
+    const folder = await repository(join(root, "session"));
+    await writeFile(join(folder, ".gitignore"), ".scratch/\n");
+    // A clone kept in a folder the session's repository ignores, started on its own, as an agent's work on a dependency is.
+    const nested = await repository(join(folder, ".scratch", "nested"));
+    installNeedlePack(join(root, "packs"), "rcsession", "No NEEDLE in the session's folder");
+    installNeedlePack(join(root, "packs"), "rcnested", "No NEEDLE in the nested clone");
+    setUpTestRepository(folder, { packs: ["rcsession"] }, databasePath);
+    setUpTestRepository(nested, { packs: ["rcnested"] }, databasePath);
+    const runtime = new RerailRuntime({ storageRoot: join(root, "sessions"), databasePath, workspaceRoot: folder, embedder: testEmbedder, autostart: false });
+    const session = { host: "claude-code" as const, sessionId: "nested", cwd: folder };
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "start", session });
+      await runtime.codeRulesOpened(session.sessionId);
+      await runtime.rulesBuiltAhead(session.sessionId);
+      expect(compiles.offThreadIds).toContain("rcnested-needle");
+      compiles.onThread = 0;
+      compiles.offThread = 0;
+
+      const path = join(nested, "api", "x.py");
+      const input = { file_path: path, content: "NEEDLE = 1\n" };
+      await runtime.ingest({ kind: "call", eventId: "w-call", sessionId: session.sessionId, session, toolCallId: "w", toolName: "Write", input });
+      expect({ onThread: compiles.onThread, offThread: compiles.offThread }).toEqual({ onThread: 0, offThread: 0 });
+      await writeFile(path, input.content);
+      const result = await runtime.ingest({ kind: "result", eventId: "w-result", sessionId: session.sessionId, session, toolCallId: "w", toolName: "Write", output: "ok" });
+      expect(ruleIds(result)).toContain("rcnested-needle");
     } finally {
       await runtime.dispose();
     }

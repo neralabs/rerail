@@ -227,6 +227,8 @@ const compiledRules = new CompiledRuleCache();
 
 /** How many of a session's newest rule checks `checkoutsEditedBy` reads for the checkouts they ran in. */
 const EDITED_AUDITS_READ = 500;
+/** How many repositories `checkoutsEditedBy` names at most. */
+const EDITED_REPOSITORIES_READ = 8;
 
 export interface CompiledCodeRuleDslEntry {
   readonly id: string;
@@ -624,7 +626,7 @@ export class CheckoutCatalogs {
    * before it closed or its daemon stopped, and so whose rules its next edits most likely need. A checkout's other
    * worktrees share its repository's rules, so one checkout per repository builds them.
    */
-  checkoutsEditedBy(sessionId: string, limit = 8): string[] {
+  checkoutsEditedBy(sessionId: string, limit = EDITED_REPOSITORIES_READ): string[] {
     const roots = this.database.select({ root: audits.workspaceRoot }).from(audits)
       .where(eq(audits.sessionId, sessionId)).orderBy(desc(audits.startedAt)).limit(EDITED_AUDITS_READ).all()
       .map(row => row.root);

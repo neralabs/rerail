@@ -59,6 +59,9 @@ interface Lane {
   readonly opening: Promise<void>;
 }
 
+/** How many repositories' rules a session builds ahead as it opens (`#aheadRoots`): each may hold hundreds of MB compiled. */
+const BUILT_AHEAD_REPOSITORIES = 8;
+
 function merged(revision: number, responses: readonly CodeRuleResponse[]): CodeRuleResponse {
   return {
     revision,
@@ -103,8 +106,8 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
 
   /**
    * Interrupts the session's earlier runs once, then opens the starting checkout's lane, its rules compiled off the
-   * daemon's thread. Then, without holding the open, builds ahead the rules of the repositories the session's earlier
-   * checks ran in (`rulesBuiltAhead` settles once they are built), so its first edit there after a daemon restart finds
+   * daemon's thread. Beside it, without holding the open, builds ahead the rules of the checkouts the session most
+   * likely edits next (`#aheadRoots`; `rulesBuiltAhead` settles once they are built), so its first edit there finds
    * them compiled.
    */
   async openWorkspace(sessionId: string): Promise<void> {
@@ -115,9 +118,10 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     } catch (error) {
       process.stderr.write(`rerail: policy execution recording failed: ${error instanceof Error ? error.message : String(error)}\n`);
     }
+    // Started first: its compiles take a line of their own, so they run beside the starting checkout's.
+    this.#builtAhead = this.#buildAhead(sessionId);
     await this.#prepare(this.#options.startingCheckout, false);
     await this.#lane(this.#options.startingCheckout)?.opening;
-    this.#builtAhead = this.#buildAhead(sessionId);
   }
 
   /**
@@ -141,7 +145,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   async #buildAhead(sessionId: string): Promise<void> {
     let roots: string[];
     try {
-      roots = this.#options.catalogs.checkoutsEditedBy(sessionId);
+      roots = this.#aheadRoots(sessionId);
     } catch {
       return;
     }
@@ -149,6 +153,31 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
       if (this.#closing) return;
       await this.#prepare(root, true);
     }
+  }
+
+  /**
+   * The checkouts whose rules the session most likely needs next besides its own, one per repository and at most
+   * `BUILT_AHEAD_REPOSITORIES`: those its earlier checks ran in, newest first (`checkoutsEditedBy`), then the started
+   * repositories nested in its checkout, such as a clone kept in an ignored folder. The session's own repository is left
+   * out: its rules are built as the session opens, and its other worktrees share them.
+   */
+  #aheadRoots(sessionId: string): string[] {
+    const starting = this.#options.startingCheckout;
+    const nested = this.#nestedCheckoutsOf(starting).map(path => join(starting, path));
+    const repositories = new Set([this.#repositoryOf(starting)]);
+    const roots: string[] = [];
+    for (const root of [...this.#options.catalogs.checkoutsEditedBy(sessionId), ...nested]) {
+      const repository = this.#repositoryOf(root);
+      if (repositories.has(repository) || roots.length >= BUILT_AHEAD_REPOSITORIES) continue;
+      repositories.add(repository);
+      roots.push(root);
+    }
+    return roots;
+  }
+
+  /** The repository `root` is a checkout of, or `root` itself while it is not recorded. */
+  #repositoryOf(root: string): string {
+    return this.#options.catalogs.checkout(root)?.repositoryKey ?? root;
   }
 
   /** `root`'s catalog built off the thread, while it may run rules and has no lane; a failure is left to its lane's open. */
