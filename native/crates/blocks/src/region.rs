@@ -29,8 +29,13 @@ struct Access {
     reads: Vec<(u64, &'static Location<'static>)>,
     write: Option<&'static Location<'static>>,
     gpu_reads: Vec<(u64, &'static str)>,
-    gpu_writes: Vec<(u64, &'static str)>,
+    gpu_writes: Vec<(u64, &'static str, std::sync::Weak<Fence>)>,
     next: u64,
+    /// The version the host's bytes hold (the block's), and the device's copy's when it has its own (`Mirror`):
+    /// `None` before its first upload. With unified memory there is one copy, and both are the latest once the
+    /// GPU's writes complete.
+    host: u64,
+    device: Option<u64>,
 }
 
 impl Access {
@@ -46,9 +51,20 @@ impl Access {
         }
         v.extend(self.reads.iter().map(|(_, l)| format!("a CPU read from {l}")));
         v.extend(self.gpu_reads.iter().map(|(_, op)| format!("a GPU read by {op}")));
-        v.extend(self.gpu_writes.iter().map(|(_, op)| format!("a GPU write by {op}")));
+        v.extend(self.gpu_writes.iter().map(|(_, op, _)| format!("a GPU write by {op}")));
         v.join(", ")
     }
+}
+
+/// A device's own copy of a region, on a GPU whose memory is not the host's (a discrete GPU): the backend that placed
+/// the region there attaches it (`Region::mirror_on`). Without one the device reads the block's bytes where they are
+/// (unified memory), and coherence is only order: the host waits for the GPU's writes.
+pub trait Mirror: Send + Sync {
+    /// Queues the host's bytes' transfer to the device's copy, ahead of the work encoded after it on `fence`'s
+    /// command buffer.
+    fn upload(&self, host: &[u8], fence: &Fence);
+    /// Transfers the device's copy into the host's bytes, now: the GPU's writes to it have completed.
+    fn download(&self, host: &mut [u8]);
 }
 
 /// A run of bytes in a block, and what holds and uses it. A range of another (`root`) shares its root's uses,
@@ -65,6 +81,7 @@ pub struct Region {
     frozen: AtomicBool,
     version: AtomicU64,
     access: Mutex<Access>,
+    mirror: std::sync::OnceLock<Box<dyn Mirror>>,
 }
 
 fn fail(r: &Region, what: String) -> ! {
@@ -125,16 +142,65 @@ impl Region {
             frozen: AtomicBool::new(false),
             version: AtomicU64::new(0),
             access: Mutex::default(),
+            mirror: std::sync::OnceLock::new(),
         })
+    }
+
+    /// Places it on a device with memory of its own: `mirror` holds the device's copy, uploaded before a kernel reads
+    /// a version it lacks, downloaded by `sync_host` after one writes it. A region's, not a range's; once.
+    pub fn mirror_on(&self, mirror: Box<dyn Mirror>) {
+        if self.root.is_some() || self.top().mirror.set(mirror).is_err() {
+            fail(self, "a second device copy, or one of a range (place the region it is part of)".into());
+        }
+    }
+
+    /// Brings the host's bytes up to its latest version: waits for the GPU's queued writes, then (with a device
+    /// copy) transfers it back. A queued write whose work was never committed fails: the wait would never end.
+    pub fn sync_host(&self) {
+        let writers: Vec<_> = self.lock().gpu_writes.iter().map(|(_, op, f)| (*op, f.clone())).collect();
+        for (op, f) in writers {
+            let Some(f) = f.upgrade() else { continue };
+            if !f.is_committed() {
+                fail(self, format!("a host sync waiting on a GPU write by {op} whose work is not committed"));
+            }
+            f.wait();
+        }
+        let top = self.top();
+        let mut a = self.lock();
+        let latest = top.version.load(Acquire);
+        if a.host < latest {
+            let m = top.mirror.get().expect("a host behind its latest version has a device copy");
+            // SAFETY: no CPU use is live (the host's bytes are behind, so none could begin) and the GPU's writes
+            // completed; the region's bytes are its block's.
+            m.download(unsafe { std::slice::from_raw_parts_mut(top.bytes(), top.len) });
+            a.host = latest;
+        }
+    }
+
+    /// The host's bytes are behind its latest version (a GPU write completed on a device copy), or a GPU write is
+    /// queued: what a CPU use must wait for (`sync_host`).
+    fn host_behind(&self, a: &Access) -> Option<String> {
+        let latest = self.top().version.load(Acquire);
+        if let Some((_, op, _)) = a.gpu_writes.first() {
+            Some(format!("a GPU write by {op} is queued (sync_host first)"))
+        } else if a.host < latest {
+            Some(format!("its host bytes hold version {} of {latest} (sync_host first)", a.host))
+        } else {
+            None
+        }
     }
 
     #[track_caller]
     fn begin_read(&self) -> u64 {
         let mut a = self.lock();
-        if a.write.is_some() || !a.gpu_writes.is_empty() {
+        if a.write.is_some() {
             let says = a.says();
             drop(a);
             fail(self, format!("a CPU read from {} while {says}", Location::caller()));
+        }
+        if let Some(why) = self.host_behind(&a) {
+            drop(a);
+            fail(self, format!("a CPU read from {}: {why}", Location::caller()));
         }
         let id = a.id();
         a.reads.push((id, Location::caller()));
@@ -153,18 +219,24 @@ impl Region {
             drop(a);
             fail(self, format!("a CPU write from {} while {says}", Location::caller()));
         }
+        if let Some(why) = self.host_behind(&a) {
+            drop(a);
+            fail(self, format!("a CPU write from {}: {why}", Location::caller()));
+        }
         a.write = Some(Location::caller());
         // SAFETY of the ledger's check too: the chunk's bytes are not the GPU's now (R4 of 0487).
         self.block.ledger().cpu_write(self.at, self.len);
     }
 
     fn end_write(&self) {
-        self.lock().write = None;
-        self.top().version.fetch_add(1, AcqRel);
+        let mut a = self.lock();
+        a.write = None;
+        // The host's bytes are the latest; a device copy is behind until its next upload.
+        a.host = self.top().version.fetch_add(1, AcqRel) + 1;
     }
 
     /// A GPU use of it by `op`, pinned on `fence` until it completes (the region kept alive with it).
-    fn pin(self: &Arc<Region>, fence: &Fence, op: &'static str, write: bool) -> usize {
+    fn pin(self: &Arc<Region>, fence: &Arc<Fence>, op: &'static str, write: bool) -> usize {
         {
             let mut a = self.lock();
             let bad = if write {
@@ -185,8 +257,19 @@ impl Region {
                 fail(self, b);
             }
             let id = a.id();
+            let top = self.top();
+            let latest = top.version.load(Acquire);
+            if let Some(m) = top.mirror.get()
+                && a.device.is_none_or(|d| d < latest)
+            {
+                // The device's copy is behind: the transfer runs first on the same command buffer. A queued GPU
+                // write of it would be ahead of the host (its version is the device's), so there is none here.
+                // SAFETY: no CPU write is live (checked above); the bytes are the region's.
+                m.upload(unsafe { std::slice::from_raw_parts(top.bytes(), top.len) }, fence);
+                a.device = Some(latest);
+            }
             if write {
-                a.gpu_writes.push((id, op));
+                a.gpu_writes.push((id, op, Arc::downgrade(fence)));
             } else {
                 a.gpu_reads.push((id, op));
             }
@@ -194,8 +277,14 @@ impl Region {
             fence.on_complete(Box::new(move || {
                 let mut a = held.lock();
                 if write {
-                    a.gpu_writes.retain(|(i, _)| *i != id);
-                    held.top().version.fetch_add(1, AcqRel);
+                    a.gpu_writes.retain(|(i, _, _)| *i != id);
+                    let v = held.top().version.fetch_add(1, AcqRel) + 1;
+                    // With a device copy only the device has it; with unified memory there is one copy.
+                    if held.top().mirror.get().is_some() {
+                        a.device = Some(v);
+                    } else {
+                        a.host = v;
+                    }
                 } else {
                     a.gpu_reads.retain(|(i, _)| *i != id);
                 }
@@ -252,13 +341,13 @@ macro_rules! common {
             }
 
             /// A GPU read of it by `op`, until `fence` completes: its offset in its block's buffer.
-            pub fn bind_read(&self, fence: &Fence, op: &'static str) -> usize {
+            pub fn bind_read(&self, fence: &Arc<Fence>, op: &'static str) -> usize {
                 self.r.pin(fence, op, false)
             }
 
             /// `bind_read`, with the buffer to bind and its offset.
             #[cfg(target_os = "macos")]
-            pub fn buffer_read(&self, fence: &Fence, op: &'static str, device: &metal::DeviceRef) -> (metal::Buffer, u64) {
+            pub fn buffer_read(&self, fence: &Arc<Fence>, op: &'static str, device: &metal::DeviceRef) -> (metal::Buffer, u64) {
                 self.r.pin(fence, op, false);
                 self.r.buffer(device)
             }
@@ -321,6 +410,7 @@ impl<T: crate::Pod> Mutable<T> {
             frozen: AtomicBool::new(false),
             version: AtomicU64::new(0),
             access: Mutex::default(),
+            mirror: std::sync::OnceLock::new(),
         };
         Some(Mutable { r: Arc::new(r), _t: PhantomData })
     }
@@ -352,13 +442,13 @@ impl<T: crate::Pod> Mutable<T> {
     }
 
     /// A GPU write of it by `op`, until `fence` completes: its offset in its block's buffer.
-    pub fn bind_write(&self, fence: &Fence, op: &'static str) -> usize {
+    pub fn bind_write(&self, fence: &Arc<Fence>, op: &'static str) -> usize {
         self.r.pin(fence, op, true)
     }
 
     /// `bind_write`, with the buffer to bind and its offset.
     #[cfg(target_os = "macos")]
-    pub fn buffer_write(&self, fence: &Fence, op: &'static str, device: &metal::DeviceRef) -> (metal::Buffer, u64) {
+    pub fn buffer_write(&self, fence: &Arc<Fence>, op: &'static str, device: &metal::DeviceRef) -> (metal::Buffer, u64) {
         self.r.pin(fence, op, true);
         self.r.buffer(device)
     }
@@ -372,6 +462,11 @@ impl<T: crate::Pod> Mutable<T> {
                 let says = a.says();
                 drop(a);
                 fail(&self.r, format!("a freeze from {} while {says}", Location::caller()));
+            }
+            // A frozen region is read on the host without guards: its host bytes must be the latest.
+            if let Some(why) = self.r.host_behind(&a) {
+                drop(a);
+                fail(&self.r, format!("a freeze from {}: {why}", Location::caller()));
             }
         }
         if self.r.root.is_some() {
@@ -477,6 +572,7 @@ mod tests {
     use super::*;
     use crate::block::kind;
     use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::sync::atomic::Ordering::SeqCst;
 
     fn block() -> Arc<Block> {
         Arc::new(Block::anon(kind::FACTS, 8 << 20).with_free_list())
@@ -596,6 +692,88 @@ mod tests {
         assert_ne!(Mutable::<u64>::alloc(&b, 512, "x").unwrap().region().at(), at, "the range holds it");
         assert!(fails(|| drop(part.range(5, 11))), "past its end");
         assert_eq!(part.region().name(), "rows");
+    }
+
+    /// A device with memory of its own (a discrete GPU's), simulated: its copy, and what crossed the bus.
+    #[derive(Default)]
+    struct Discrete {
+        mem: Mutex<Vec<u8>>,
+        ups: AtomicU64,
+        downs: AtomicU64,
+    }
+
+    struct OnDiscrete(Arc<Discrete>);
+
+    impl Mirror for OnDiscrete {
+        fn upload(&self, host: &[u8], _fence: &Fence) {
+            *self.0.mem.lock().unwrap() = host.to_vec();
+            self.0.ups.fetch_add(1, SeqCst);
+        }
+        fn download(&self, host: &mut [u8]) {
+            host.copy_from_slice(&self.0.mem.lock().unwrap());
+            self.0.downs.fetch_add(1, SeqCst);
+        }
+    }
+
+    /// On a device with memory of its own, a kernel's bind uploads the region only when the device's copy is behind;
+    /// after a GPU write the host's bytes are behind, a CPU read or a freeze fails until `sync_host` brings them back.
+    #[test]
+    fn a_device_copy_is_uploaded_when_behind_and_synced_back_after_a_write() {
+        let b = block();
+        let mut m = Mutable::<u64>::alloc(&b, 8, "rows").unwrap();
+        let dev = Arc::new(Discrete::default());
+        m.region().mirror_on(Box::new(OnDiscrete(dev.clone())));
+        m.write()[0] = 7;
+        let f = Fence::new();
+        m.bind_read(&f, "probe");
+        m.bind_read(&f, "probe again");
+        assert_eq!(dev.ups.load(SeqCst), 1, "uploaded once, when behind");
+        assert_eq!(dev.mem.lock().unwrap()[0], 7);
+        f.complete();
+        let g = Fence::new();
+        m.bind_write(&g, "build");
+        assert_eq!(dev.ups.load(SeqCst), 1, "the device is current");
+        dev.mem.lock().unwrap()[0] = 9; // the kernel's write, on the device's copy
+        g.mark_committed();
+        g.complete();
+        assert_eq!(m.version(), 2);
+        assert!(fails(|| drop(m.read())), "the host's bytes are a version behind");
+        m.region().sync_host();
+        assert_eq!(dev.downs.load(SeqCst), 1);
+        assert_eq!(m.read()[0], 9);
+        m.region().sync_host();
+        assert_eq!(dev.downs.load(SeqCst), 1, "nothing to bring back");
+        m.write()[1] = 5;
+        let h = Fence::new();
+        m.bind_read(&h, "probe");
+        assert_eq!(dev.ups.load(SeqCst), 2, "the CPU's write sent before the next read");
+        // A freeze needs the host current.
+        let k = Fence::new();
+        m.bind_write(&k, "build");
+        k.mark_committed();
+        k.complete();
+        assert!(fails(move || drop(m.freeze())), "frozen with its host bytes behind");
+    }
+
+    /// With unified memory there is one copy: a host sync is a wait for the GPU's queued writes, and nothing moves.
+    /// A sync on a write whose work was never committed fails, as the wait would never end.
+    #[test]
+    fn with_unified_memory_a_sync_is_a_wait() {
+        let b = block();
+        let m = Mutable::<u64>::alloc(&b, 8, "rows").unwrap();
+        let g = Fence::new();
+        m.bind_write(&g, "build");
+        assert!(fails(|| drop(m.read())), "a GPU write is queued");
+        assert!(fails(|| m.region().sync_host()), "its work is not committed");
+        g.mark_committed();
+        let done = g.clone();
+        let t = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            done.complete();
+        });
+        m.region().sync_host();
+        assert_eq!(m.read().version(), 1);
+        t.join().unwrap();
     }
 
     /// A region's version counts its writes: a CPU write ended, a GPU write completed.

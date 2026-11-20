@@ -47,6 +47,20 @@ has instead. In MLDB (`block/memory_region.h` and `block/compute_kernel_grid.h`,
 5. **A version counts its writes:** a CPU write guard ended, or a GPU write completed. A read guard gives the version
    it reads.
 6. **A range is a region of its own** that keeps its whole region alive and shares its uses, version and state.
+7. **Each memory space holds a version** (the user, 2026-11-20: "if I run a kernel on a GPU that mutates a block,
+   the GPU handle has access to a different (more recent) epoch than the CPU with a handle to the same block. And we
+   will need to transfer it back to the CPU"). A region has its latest version, and the version its host bytes hold.
+   On a device with memory of its own (a discrete GPU), it also has the version the device's copy holds, kept by a
+   `Mirror` the backend attaches (`Region::mirror_on`):
+   - a CPU write ended: the host holds the latest; the device's copy is behind;
+   - a kernel's bind of a region whose device copy is behind queues its upload first, on the same command buffer;
+   - a GPU write completed: the device holds the latest; the host's bytes are behind;
+   - a CPU read or write, or a freeze, while the host is behind or a GPU write is queued fails, saying to sync;
+   - `sync_host` waits for the queued GPU writes, then downloads when the host is behind (MLDB's
+     `transferToHostSync`). Waiting on a write whose command buffer was never committed fails, as it would never
+     end (`Fence::mark_committed`).
+
+   With unified memory (Apple's) there is one copy: no mirror, nothing moves, and a sync is the wait alone.
 
 ## Requirements, each locked by a test (`region::tests`)
 
@@ -60,12 +74,17 @@ has instead. In MLDB (`block/memory_region.h` and `block/compute_kernel_grid.h`,
 - **R6** A range keeps its region alive and shares its uses; one past the end fails
   (`a_range_keeps_its_region_and_shares_its_uses`).
 - **R7** A write moves the version, a GPU write when it completes (`a_write_moves_the_version`).
+- **R8** A device copy is uploaded only when behind, and after a GPU write the host is behind until `sync_host`
+  brings it back; a read or a freeze before then fails (`a_device_copy_is_uploaded_when_behind_and_synced_back_after_a_write`).
+- **R9** With unified memory a sync is a wait, and a sync on an uncommitted write fails
+  (`with_unified_memory_a_sync_is_a_wait`).
 
 ## Steps
 
 1. **The handles** (built).
 2. **The owners move to them**, one at a time, each with its frees by hand removed: `Cells` (already an `Arc<Block>`
    and a slice), then a relation's columns and indexes (`BlockVec`, `rows`), then the device's handles (`DevRel`,
-   `Held::kept`), whose `Batch` lists then go. A kernel binds a region only through `buffer_read` / `buffer_write`.
+   `Held::kept`), whose `Batch` lists then go. A kernel binds a region only through `buffer_read` / `buffer_write`,
+   and `Batch` marks each command buffer's fence committed as it commits it.
 3. **The block itself as the root region:** `Facts` and the pool's slabs hold their block by handle, so a block's
    frozenness, placement and lifetime are read in the same place as its regions'.

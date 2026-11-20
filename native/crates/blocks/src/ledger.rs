@@ -427,12 +427,14 @@ pub struct Fence {
     /// What completing it lets go of, before its blocks' uses end: the pins its work holds (`region`).
     after: Mutex<Vec<Box<dyn FnOnce() + Send>>>,
     done: AtomicBool,
+    /// Its command buffer is committed: a wait for it ends (`mark_committed`).
+    committed: AtomicBool,
     signal: Condvar,
 }
 
 impl Fence {
     pub fn new() -> Arc<Fence> {
-        Arc::new(Fence { uses: Mutex::new(Vec::new()), after: Mutex::new(Vec::new()), done: AtomicBool::new(false), signal: Condvar::new() })
+        Arc::new(Fence { uses: Mutex::new(Vec::new()), after: Mutex::new(Vec::new()), done: AtomicBool::new(false), committed: AtomicBool::new(false), signal: Condvar::new() })
     }
 
     fn add(&self, ledger: &Arc<Ledger>, access: Access, chunk: Option<(usize, usize)>) {
@@ -506,6 +508,16 @@ impl Fence {
         }
         let _g = self.uses.lock().unwrap_or_else(|e| e.into_inner());
         self.signal.notify_all();
+    }
+
+    /// Its command buffer was committed: its work will complete, so a wait for it ends.
+    pub fn mark_committed(&self) {
+        self.committed.store(true, Release);
+    }
+
+    /// Whether a wait for it ends: committed, or already complete.
+    pub fn is_committed(&self) -> bool {
+        self.committed.load(Acquire) || self.is_complete()
     }
 
     pub fn is_complete(&self) -> bool {
