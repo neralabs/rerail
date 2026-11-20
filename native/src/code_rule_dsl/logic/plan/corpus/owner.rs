@@ -76,7 +76,17 @@ fn open_lock(store: &Path, make: bool) -> std::io::Result<File> {
         // FILE_SHARE_READ | FILE_SHARE_WRITE: not FILE_SHARE_DELETE.
         options.share_mode(0x1 | 0x2);
     }
-    options.open(beside(store, "-owner.lock"))
+    let path = beside(store, "-owner.lock");
+    // A cleanup's removal has the file open for a moment (`remove_lock`): a sharing violation (32), or access denied
+    // (5) while its deletion is pending. Asked again a moment later, the file is there, or gone and made anew.
+    #[cfg(windows)]
+    for _ in 0..20 {
+        match options.open(&path) {
+            Err(error) if matches!(error.raw_os_error(), Some(5 | 32)) => std::thread::sleep(Duration::from_millis(5)),
+            opened => return opened,
+        }
+    }
+    options.open(&path)
 }
 
 /// Whether `file` (locked) is still the lock file at `store`'s path: a cleanup unlinks a lock file last, holding it
@@ -306,14 +316,17 @@ fn remove_store(dir: &Path, store: &Path, files: &[&str]) {
     }
 }
 
-/// `store`'s owner lock taken for a cleanup: `Some(None)` where it has no lock file, `None` where a process owns it.
+/// `store`'s owner lock taken for a cleanup: `Some(None)` where it has no lock file, `None` where a process owns it
+/// or its lock file cannot be opened.
 fn unowned(store: &Path) -> Option<Option<File>> {
     if claims().contains_key(store) {
         return None;
     }
     match open_lock(store, false) {
         Ok(file) => file.try_lock().ok().map(|()| Some(file)),
-        Err(_) => Some(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(None),
+        // Not known to be free: left as it is.
+        Err(_) => None,
     }
 }
 
