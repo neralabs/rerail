@@ -93,6 +93,9 @@ impl Py {
 }
 
 impl BoundFamilies for Py {
+    fn is_made(&self, family: usize) -> bool {
+        if family == 3 { self.argument_rows.get().is_some() } else { self.rows.get().is_some() }
+    }
     fn rows<'b>(&'b self, batch: &'b Batch, family: usize) -> &'b Relation {
         if family == 3 {
             self.arguments(batch)

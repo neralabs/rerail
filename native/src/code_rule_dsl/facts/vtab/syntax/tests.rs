@@ -2050,13 +2050,13 @@ fn a_batch_made_by_group_holds_the_eager_batchs_rows() {
     let (_, eager, _, _) = Batch::build(&store, docs(), &projection, &[], &[], false).unwrap();
     let eager: HashMap<&str, Vec<Vec<i64>>> = eager.iter().map(|(n, r)| (*n, rows(r))).collect();
     // Read whole from the first read: one group.
-    let whole = Batch::new(&store, docs(), &projection, &[], &[], false, None).unwrap();
+    let whole = Batch::new(&store, docs(), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
     for (name, _, s) in made_sources(&whole) {
         assert_eq!(rows(&*s), eager[name], "{name}, read whole");
     }
     assert_eq!(whole.groups(), 1, "a batch read whole makes one group");
     // A probe of each document's key, then a scan: three groups.
-    let probed = Batch::new(&store, docs(), &projection, &[], &[], false, None).unwrap();
+    let probed = Batch::new(&store, docs(), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
     let sources = made_sources(&probed);
     let doc = Arc::clone(&sources.iter().find(|(n, _, _)| *n == "doc").unwrap().2);
     for k in [3, 1] {
@@ -2076,7 +2076,7 @@ fn a_probe_makes_the_document_it_names_alone() {
     let store = ContentStore::open(&temp("probe-one")).unwrap();
     let docs: Vec<Document> = (1..=5).map(|k| document(k, &format!("m{k}.py"), "python", &format!("x{k} = y({k})\n"))).collect();
     let projection = Projection { shape: Shape::Core, reads: Some(["text".to_owned(), "op".to_owned()].into()), ..Projection::core() };
-    let batch = Batch::new(&store, docs, &projection, &[], &[], false, None).unwrap();
+    let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
     let sources = made_sources(&batch);
     assert_eq!(batch.docs.made_count(), 0, "nothing is made before a read");
     let n = batch.docs[2].global(1);
@@ -2087,4 +2087,58 @@ fn a_probe_makes_the_document_it_names_alone() {
     assert_eq!(batch.docs.made_count(), 1, "only the probed document is made");
     assert_eq!(batch.groups(), 1);
     assert!(text.failure().is_none());
+}
+
+/// Decision 0464, R5: a batch given its documents' views' counts and its relations' rows knows every view's and
+/// relation's `len` with no document made; a probe then makes its document alone. A made document whose counts differ
+/// from those given fails, named, and so does a relation whose made rows are not the count given.
+#[test]
+fn a_batch_given_counts_knows_its_row_space_making_nothing() {
+    let store = ContentStore::open(&temp("given-counts")).unwrap();
+    let docs = || -> Vec<Document> {
+        (1..=4).map(|k| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x, y={k}):\n    return g(x)\n\nclass C{k}:\n    pass\n"))).collect()
+    };
+    let reads = ["node", "child", "field", "next_sibling", "text", "op", "line", "doc"];
+    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let lens = |batch: &Arc<Batch>| -> BTreeMap<String, usize> {
+        let mut out: BTreeMap<String, usize> = made_sources(batch).into_iter().map(|(n, _, s)| (n.to_owned(), s.len())).collect();
+        out.extend(views(batch).into_iter().map(|(n, s)| (n.to_owned(), s.len())));
+        out
+    };
+    // The counts, as a batch made eagerly has them.
+    let eager = Batch::new(&store, docs(), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let want = lens(&eager);
+    let counts: HashMap<u32, made::ViewCounts> = eager.view_counts().into_iter().collect();
+    // Every relation's rows, as the run gives them (their kept statistics'), the families' among them.
+    let totals: HashMap<String, usize> = want.iter().map(|(n, &l)| (n.clone(), l)).collect();
+    assert_eq!(counts.len(), 4);
+    // Given them: every `len`, nothing made.
+    let lazy = Batch::new(&store, docs(), &projection, &[], &[], false, None, &counts).unwrap();
+    lazy.give_totals(&totals);
+    assert!(lazy.lazy(), "a batch given every document's counts is made by its reads");
+    assert_eq!(lens(&lazy), want, "the lens, from the counts");
+    assert_eq!(lazy.docs.made_count(), 0, "no document made for the row space or a len");
+    let text = Arc::clone(&made_sources(&lazy).into_iter().find(|(n, _, _)| *n == "text").unwrap().2);
+    let n = lazy.docs[2].global(1);
+    assert!(!text.lookup(0, &[n]).unwrap().is_empty());
+    assert_eq!(lazy.docs.made_count(), 1, "the probe made its document alone");
+    assert!(text.failure().is_none(), "{:?}", text.failure());
+    // A document whose counts are not those given: it fails as it is made, named.
+    let mut wrong = counts.clone();
+    wrong.get_mut(&2).unwrap()[0] += 1;
+    let off = Batch::new(&store, docs(), &projection, &[], &[], false, None, &wrong).unwrap();
+    let text = Arc::clone(&made_sources(&off).into_iter().find(|(n, _, _)| *n == "text").unwrap().2);
+    let _ = text.lookup(0, &[off.docs[1].global(1)]);
+    let failed = text.failure().expect("a document's counts differ");
+    assert!(failed.contains("m2.py") && failed.contains("0464"), "{failed}");
+    // A relation whose rows, every document made, are not the count given: named.
+    let mut wrong = totals.clone();
+    *wrong.get_mut("text").unwrap() += 1;
+    let off = Batch::new(&store, docs(), &projection, &[], &[], false, None, &counts).unwrap();
+    off.give_totals(&wrong);
+    let text = Arc::clone(&made_sources(&off).into_iter().find(|(n, _, _)| *n == "text").unwrap().2);
+    let mut seen = 0;
+    text.for_rows(&[0], &mut |_, _| seen += 1);
+    let failed = text.failure().expect("a relation's rows differ from its count");
+    assert!(failed.contains("text") && failed.contains("0464"), "{failed}");
 }

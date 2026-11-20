@@ -93,3 +93,29 @@ fn r4_a_text_test_has_no_version_after_an_edit() {
     }
     assert!(!unversioned.is_empty(), "the cross part reads the text test, given no version");
 }
+
+/// R5: the documents' table keeps each document's views' counts. A cold run counts and keeps them; after a one-file
+/// edit the corpus batch is given the kept counts of every document but the changed one, and its base relations'
+/// rows by their kept statistics; the outputs are a cold run's.
+#[test]
+fn r5_the_documents_counts_are_kept_and_given_to_the_corpus_batch() {
+    use crate::code_rule_dsl::logic::profile;
+    let mut c = Corpus::new("r5");
+    let row_space = |c: &mut Corpus, store: &str| {
+        profile::set(true);
+        profile::take_decisions();
+        let (_, rows) = c.run_over(store);
+        let made = profile::take_decisions();
+        profile::set(false);
+        let said: BTreeSet<String> = made.into_keys().filter(|(t, _)| t == "the corpus batch's row space (decision 0464)").map(|(_, x)| x).collect();
+        (rows, said)
+    };
+    let (_, cold) = row_space(&mut c, "kept.sqlite");
+    assert!(cold.contains(&format!("0 of {} documents' views' counts kept", FILES.len())), "a cold run keeps none yet: {cold:?}");
+    c.write("b.py", "from a import foo\nfrom a import bar\n\ndef go(y):\n    return foo(y)\n");
+    let (rows, edit) = row_space(&mut c, "kept.sqlite");
+    assert!(edit.contains(&format!("{} of {} documents' views' counts kept", FILES.len() - 1, FILES.len())), "all but the changed file's: {edit:?}");
+    assert!(edit.iter().any(|x| x.ends_with("base relations' rows counted by their kept statistics") && !x.starts_with("0 of")), "the relations' rows by their kept statistics: {edit:?}");
+    let (fresh, _) = row_space(&mut c, "fresh.sqlite");
+    assert_eq!(rows, fresh, "the edit's outputs are a cold run's");
+}

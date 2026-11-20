@@ -5287,16 +5287,18 @@ fn run_observed(
     // chunks are done, from the contents they found (`run_docs`).
     // The documents' table and the statistics kept beside it, read before the first wave in every run that keeps
     // them (decision 0104), a run inside another's waves too: they name no file of this run.
-    let (base_table, mut base_stats_kept): (Option<Vec<retain::BaseDocument>>, BaseStatsKept) = match (base_binds, memo, looking) {
+    // With them, the corpus batch's documents' views' counts (decision 0464).
+    let (base_table, mut base_stats_kept, base_counts): (Option<Vec<retain::BaseDocument>>, BaseStatsKept, retain::BaseCounts) = match (base_binds, memo, looking) {
         (Some(binds), Some(memo::Memo::Stored(_)), true) => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the base relations' table and statistics (decision 0458)".into());
             let counted: Vec<String> = stored.iter().map(|(r, _)| r.clone()).filter(|r| !semijoin.contains(r)).collect();
             let stats = retain::base_stats(store, kept_strata::space(root), binds, &counted)?;
             let table = retain::base_documents(store, kept_strata::space(root), binds)?;
+            let counts = retain::base_counts(store, kept_strata::space(root), binds)?;
             let digest = table.as_ref().map(|(_, d)| *d);
-            (table.map(|(t, _)| t), (digest, stats))
+            (table.map(|(t, _)| t), (digest, stats), counts)
         }
-        _ => (None, (None, HashMap::new())),
+        _ => (None, (None, HashMap::new()), HashMap::new()),
     };
     let base_compare = |now_of: HashMap<String, (i64, Option<memo::Content>)>| -> Result<OldBases> {
         let (Some(_), Some(memo @ memo::Memo::Stored(_)), true) = (base_binds, memo, looking) else { return Ok(None) };
@@ -5756,7 +5758,7 @@ fn run_observed(
                 (!keys.is_empty() && keys.iter().all(|k| held.contains_key(k))).then(|| keys.iter().flat_map(|k| missing_of(&held[k])).collect::<BTreeSet<String>>())
             };
             let narrowed = coned.map(|wanted| cone_projection(&wanted));
-            syntax::with_matchers(&store, docs, &sets, &chunk_matchers, &vocabulary, binding, narrowed.as_deref().unwrap_or(&projection)).map_err(|e| Error::Plan(e.to_string()))
+            syntax::with_matchers(&store, docs, &sets, &chunk_matchers, &vocabulary, binding, narrowed.as_deref().unwrap_or(&projection), &HashMap::new()).map_err(|e| Error::Plan(e.to_string()))
         };
         let now = thread_usage();
         (built, (now.0 - from.0, now.1 - from.1))
@@ -6394,13 +6396,13 @@ fn run_observed(
                     // Made from the entries, the batch is built once, after the last round: no slice reads it between.
                     if replay.is_none() {
                         let _rebuild = crate::code_rule_dsl::logic::profile::span(|| "batch with guests".into());
-                        sources = syntax::with_matchers(&store, docs.clone(), &sets, &chunk_matchers, &vocabulary, binding, &projection).map_err(|e| Error::Plan(e.to_string()))?;
+                        sources = syntax::with_matchers(&store, docs.clone(), &sets, &chunk_matchers, &vocabulary, binding, &projection, &HashMap::new()).map_err(|e| Error::Plan(e.to_string()))?;
                     }
                 }
                 if replay.is_some() && docs.len() > documents_len {
                     let _rebuild = crate::code_rule_dsl::logic::profile::span(|| "batch with guests".into());
                     let narrowed = cone.as_ref().map(|wanted| cone_projection(wanted));
-                    sources = syntax::with_matchers(&store, docs.clone(), &sets, &chunk_matchers, &vocabulary, binding, narrowed.as_deref().unwrap_or(&projection)).map_err(|e| Error::Plan(e.to_string()))?;
+                    sources = syntax::with_matchers(&store, docs.clone(), &sets, &chunk_matchers, &vocabulary, binding, narrowed.as_deref().unwrap_or(&projection), &HashMap::new()).map_err(|e| Error::Plan(e.to_string()))?;
                 }
                 if made.unseen > 0 {
                     let unseen = made.unseen;
@@ -7978,6 +7980,7 @@ fn run_observed(
     // The changed files' documents now, guests with them (decision 0458): a base relation's new version.
     let mut changed_docs: Vec<syntax::Document> = Vec::new();
     let mut corpus_digest = 0u64;
+    let mut corpus_batch: Option<Arc<syntax::Batch>> = None;
     // The corpus batch makes the chunks' projection (decision 0458): a span the cross part reads (a line's `line`,
     // a comment's `col`) is made only where its relation is, and the file-local part names them. Not what makes no
     // span and the cross part does not read: the tree digests (every node's hash), the text tests and the `ast`
@@ -8028,7 +8031,11 @@ fn run_observed(
             [i64::from(d.key), at(0), at(1), at(2), at(3)]
         };
         corpus_digest = all.iter().map(|d| super::row_digest(&words(d))).fold(0u64, u64::wrapping_add);
-        let sources = syntax::with_matchers(&store, all, &sets, &cross_matchers, &cross_vocabulary, binding, &cross_projection).map_err(|e| Error::Plan(e.to_string()))?;
+        // Each document's views' counts as kept, where its contents are those they were counted of (decision 0464).
+        let given: HashMap<u32, syntax::made::ViewCounts> = all.iter().filter_map(|d| base_counts.get(&d.key).filter(|(digest, _)| *digest == d.digest).map(|(_, c)| (d.key, *c))).collect();
+        crate::code_rule_dsl::logic::profile::decision("the corpus batch's row space (decision 0464)", || format!("{} of {} documents' views' counts kept", given.len(), all.len()));
+        let sources = syntax::with_matchers(&store, all, &sets, &cross_matchers, &cross_vocabulary, binding, &cross_projection, &given).map_err(|e| Error::Plan(e.to_string()))?;
+        corpus_batch = sources.iter().find_map(|(_, s)| s.python_batch());
         sources.into_iter().filter(|(r, _)| stored.iter().any(|(s, _)| s == r)).collect()
     };
     // A base relation's digest: its documents', under its name (decision 0458).
@@ -8067,7 +8074,7 @@ fn run_observed(
                 }
                 docs.sort_by_key(|d| d.key);
                 docs.dedup_by_key(|d| d.key);
-                Ok(syntax::with_matchers(&store, docs, &sets, &cross_matchers, &cross_vocabulary, binding, &cross_projection).map_err(|e| Error::Plan(e.to_string()))?.into_iter().collect())
+                Ok(syntax::with_matchers(&store, docs, &sets, &cross_matchers, &cross_vocabulary, binding, &cross_projection, &HashMap::new()).map_err(|e| Error::Plan(e.to_string()))?.into_iter().collect())
             };
             let changed_keys: BTreeSet<i64> = old_docs.iter().chain(changed_docs.iter()).map(|d| i64::from(d.key)).collect();
             let (old_batch, new_batch) = (batch_of(old_docs)?, batch_of(std::mem::take(&mut changed_docs))?);
@@ -8116,6 +8123,30 @@ fn run_observed(
         }
         _ => Versions::new(),
     };
+    // Each base relation's rows, as its kept statistics count them (decision 0464): kept of these documents, or of
+    // the table's and patched by the changed documents' old and new rows. The corpus batch answers its `len` by them,
+    // and fails a relation whose made rows are not them.
+    if let Some(batch) = &corpus_batch {
+        let (table_digest, kept) = &base_stats_kept;
+        let tag = |rel: &str| super::row_digest(&rel.bytes().map(i64::from).collect::<Vec<_>>());
+        let totals: HashMap<String, usize> = stored
+            .iter()
+            .filter_map(|(rel, _)| {
+                let (d, k) = kept.get(rel)?;
+                let rows = if *d == base_digest(rel) {
+                    k.rows()
+                } else if Some(*d) == table_digest.map(|t| t ^ tag(rel)) {
+                    let (old, new) = base_wholes.get(rel)?;
+                    k.rows() - old.as_ref().map_or(0, |s| s.len() as i64) + new.as_ref().map_or(0, |s| s.len() as i64)
+                } else {
+                    return None;
+                };
+                usize::try_from(rows).ok().map(|r| (rel.clone(), r))
+            })
+            .collect();
+        crate::code_rule_dsl::logic::profile::decision("the corpus batch's row space (decision 0464)", || format!("{} of {} base relations' rows counted by their kept statistics", totals.len(), stored.len()));
+        batch.give_totals(&totals);
+    }
     if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
         eprintln!("rerail: base versions: old {:?}, corpus {}, versions {:?}", old_base.as_ref().map(|(c, o)| (c.len(), o.len())), corpus_sources.len(), base_versions.iter().map(|(r, (p, m))| (r.clone(), p.len(), m.len())).collect::<Vec<_>>());
     }
@@ -9508,6 +9539,10 @@ fn run_observed(
                             for (rel, digest, stats) in &base_stats_out {
                                 retain::put_base_stats(store, was, binds, rel, *digest, stats);
                             }
+                        }
+                        // The corpus batch's documents' views' counts (decision 0464), when one was not kept.
+                        if let (Some(binds), Some(batch)) = (base_binds, corpus_batch.as_ref().filter(|b| !b.lazy())) {
+                            retain::put_base_counts(store, was, binds, &batch.kept_counts(), corpus_digest);
                         }
                         crate::code_rule_dsl::logic::profile::decision("the kept part, to the frames (t33 K4)", || format!("{written} rows of what changed queued to the store"));
                     }

@@ -1829,6 +1829,47 @@ pub(in crate::code_rule_dsl) fn base_stats(store: &ContentStore, space: [u8; 32]
     Ok(out)
 }
 
+/// The views' counts of each document of the cross part's corpus batch (decision 0464), kept beside the documents'
+/// table: by key, its digest (`Document::digest`) and its counts, as the batch made or was given them.
+pub(in crate::code_rule_dsl) type BaseCounts = HashMap<u32, ([u8; 32], crate::code_rule_dsl::facts::vtab::syntax::made::ViewCounts)>;
+
+const BASE_COUNTS: &str = "#base-counts";
+
+/// The views' counts the store's frames in `space` keep for the cross part of `binds`; empty when none are kept.
+pub(in crate::code_rule_dsl) fn base_counts(store: &ContentStore, space: [u8; 32], binds: [u8; 32]) -> Result<BaseCounts> {
+    let Some(bound) = kept_read::Bound::of(store, &space).map_err(|e| Error::Plan(e.to_string()))? else { return Ok(HashMap::new()) };
+    let Some(entry) = bound.entry(BASE_COUNTS, &base_documents_ident(&binds), DOCS_PART) else { return Ok(HashMap::new()) };
+    if entry.width() != 9 {
+        return Ok(HashMap::new());
+    }
+    let mut words: Vec<i64> = Vec::with_capacity(entry.len() * 9);
+    entry.each_rows(&mut |r| words.extend_from_slice(r));
+    let mut out = HashMap::with_capacity(entry.len());
+    for r in words.chunks_exact(9) {
+        let (Ok(key), counts) = (u32::try_from(r[0]), [r[5], r[6], r[7], r[8]].map(|c| u32::try_from(c).ok())) else { continue };
+        let [Some(a), Some(b), Some(c), Some(d)] = counts else { continue };
+        let mut digest = [0u8; 32];
+        for (i, w) in r[1..5].iter().enumerate() {
+            digest[i * 8..i * 8 + 8].copy_from_slice(&w.to_le_bytes());
+        }
+        out.insert(key, (digest, [a, b, c, d]));
+    }
+    Ok(out)
+}
+
+/// Queues the views' counts `counts` (key, digest, counts) of the corpus batch's documents, of digest `digest`,
+/// beside the documents' table.
+pub(in crate::code_rule_dsl) fn put_base_counts(store: &ContentStore, was: &InKept, binds: [u8; 32], counts: &[(u32, [u8; 32], crate::code_rule_dsl::facts::vtab::syntax::made::ViewCounts)], digest: u64) {
+    let mut rows: Vec<i64> = Vec::with_capacity(counts.len() * 9);
+    for (key, d, c) in counts {
+        rows.push(i64::from(*key));
+        rows.extend(d.chunks_exact(8).map(|w| i64::from_le_bytes(w.try_into().expect("eight bytes"))));
+        rows.extend(c.iter().map(|&c| i64::from(c)));
+    }
+    let name = KeptRel { name: BASE_COUNTS.to_owned(), ident: base_documents_ident(&binds) };
+    store.queue_kept(was.space, vec![kept_flat(&name, DOCS_PART, digest, Vec::new(), vec![b'i'; 9], rows, counts.len())]);
+}
+
 fn base_stats_name(rel: &str) -> String {
     format!("#base-stats/{rel}")
 }

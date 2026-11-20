@@ -11,11 +11,22 @@ use crate::code_rule_dsl::logic::profile;
 use std::ops::Range;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+/// A document's views' counts (decision 0464): its nodes, fielded nodes, siblings after it and places, as its
+/// projection has them; the documents' table keeps them.
+pub type ViewCounts = [u32; 4];
+
+/// A projection's views' counts.
+pub(super) fn view_counts(p: &Projected) -> ViewCounts {
+    [p.len(), p.fielded(), p.after_siblings(), p.locs()]
+}
+
 /// A batch's documents (decision 0464): each one's projection made on its first read; its key and tag known before.
 pub struct Docs {
     slots: Vec<Slot>,
     keys: Vec<u32>,
     tags: Vec<u8>,
+    /// Each document's views' counts, where given (the documents' table's).
+    given: Vec<Option<ViewCounts>>,
     context: Context,
     /// How many projections are made (R2's tests read it).
     made: AtomicUsize,
@@ -46,12 +57,25 @@ pub(super) struct Context {
 }
 
 impl Docs {
-    /// `documents`, sorted by key and distinct.
-    pub(super) fn new(documents: Vec<Document>, context: Context) -> Self {
-        let keys = documents.iter().map(|d| d.key).collect();
+    /// `documents`, sorted by key and distinct, with the views' counts `given` of some, by key.
+    pub(super) fn new(documents: Vec<Document>, context: Context, given: &HashMap<u32, ViewCounts>) -> Self {
+        let keys: Vec<u32> = documents.iter().map(|d| d.key).collect();
         let tags = documents.iter().map(|d| crate::code_rule_dsl::facts::core::facts_tag(&d.facts)).collect();
+        let given = keys.iter().map(|k| given.get(k).copied()).collect();
         let slots = documents.into_iter().map(|input| Slot { input, made: OnceLock::new() }).collect();
-        Self { slots, keys, tags, context, made: AtomicUsize::new(0) }
+        Self { slots, keys, tags, given, context, made: AtomicUsize::new(0) }
+    }
+    /// Whether every document's views' counts were given: the views' row space is known with none made.
+    pub fn given_all(&self) -> bool {
+        !self.given.is_empty() && self.given.iter().all(Option::is_some)
+    }
+    /// Document `i`'s views' counts: those given, else its projection's (made if it is not).
+    pub fn counts(&self, i: usize) -> ViewCounts {
+        match (self.slots[i].made.get(), self.given[i]) {
+            (Some(m), _) => view_counts(&m.p),
+            (None, Some(c)) => c,
+            (None, None) => view_counts(&self.made(i).p),
+        }
     }
     pub fn len(&self) -> usize {
         self.slots.len()
@@ -110,7 +134,18 @@ impl Docs {
     pub(super) fn made(&self, i: usize) -> &MadeDoc {
         self.slots[i].made.get_or_init(|| {
             self.made.fetch_add(1, Ordering::Relaxed);
-            self.project(i)
+            let made = self.project(i);
+            // Its counts as given (the documents' table's): the views' rows were placed by them.
+            if let Some(given) = self.given[i]
+                && given != view_counts(&made.p)
+            {
+                self.fail(format!(
+                    "{}: its views' counts (nodes, fielded, siblings, places) are {:?}, the documents' table gave {given:?} (decision 0464)",
+                    self.slots[i].input.path,
+                    view_counts(&made.p)
+                ));
+            }
+            made
         })
     }
     /// Document `i`'s projection (decision 0289 §3: in the batch's block), its verdict and its module.
@@ -269,6 +304,8 @@ pub(super) struct Rows {
     pub(super) statics: Vec<&'static str>,
     /// Every document's rows, once every one is made.
     complete: OnceLock<Complete>,
+    /// Each relation's rows as its kept statistics count them (`Batch::give_totals`), where given.
+    counted: OnceLock<Vec<Option<usize>>>,
 }
 
 #[derive(Default)]
@@ -328,10 +365,18 @@ impl ByDocument {
 }
 
 impl Rows {
+    /// Each relation's rows, by name, as its kept statistics count them: given once, before a relation is read.
+    pub(super) fn give_totals(&self, totals: &HashMap<String, usize>) {
+        let _ = self.counted.set(self.names.iter().map(|n| totals.get(n).copied()).collect());
+    }
+    /// Relation `rel`'s rows as given, if they were.
+    fn counted(&self, rel: usize) -> Option<usize> {
+        self.counted.get().and_then(|c| c[rel])
+    }
     pub(super) fn new(documents: usize, names: Vec<String>, template: Vec<Arc<dyn Source>>, statics: Vec<&'static str>) -> Self {
         let state = State { groups: Vec::new(), of: vec![None; documents], totals: vec![0; names.len()] };
         let by = template.iter().map(|t| ByDocument::of(&t.columns())).collect();
-        Self { state: parking_lot::Mutex::new(state), names, template, by, relations: statics.len(), statics, complete: OnceLock::new() }
+        Self { state: parking_lot::Mutex::new(state), names, template, by, relations: statics.len(), statics, complete: OnceLock::new(), counted: OnceLock::new() }
     }
     /// The groups made.
     pub(super) fn groups(&self) -> usize {
@@ -419,7 +464,15 @@ impl Batch {
         self.ensure(&(0..self.docs.len()).collect::<Vec<_>>());
         self.rows.complete.get_or_init(|| {
             let groups = self.rows.state.lock().groups.clone();
-            let concat = (0..self.rows.names.len()).map(|rel| Concat { rel, groups: groups.clone(), template: Arc::clone(&self.rows.template[rel]) }).collect();
+            let concat: Vec<Concat> = (0..self.rows.names.len()).map(|rel| Concat { rel, groups: groups.clone(), template: Arc::clone(&self.rows.template[rel]) }).collect();
+            // Each relation's rows as given (its kept statistics'): its `len` was answered by them.
+            for (rel, c) in concat.iter().enumerate() {
+                if let Some(given) = self.rows.counted(rel)
+                    && given != c.len()
+                {
+                    self.docs.fail(format!("{}: {} rows made, its kept statistics counted {given} (decision 0464)", self.rows.names[rel], c.len()));
+                }
+            }
             Complete { groups, concat }
         })
     }
@@ -647,7 +700,10 @@ impl Source for MadeRows {
         }
     }
     fn len(&self) -> usize {
-        self.target().len()
+        match (self.done(), self.batch.rows.counted(self.rel)) {
+            (None, Some(n)) => n,
+            _ => self.target().len(),
+        }
     }
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
         if let Some(t) = self.done() {
@@ -684,7 +740,10 @@ impl Source for MadeRows {
         self.target().rows_of(columns, out)
     }
     fn estimated_len(&self) -> usize {
-        self.target().estimated_len()
+        match (self.done(), self.batch.rows.counted(self.rel)) {
+            (None, Some(n)) => n,
+            _ => self.target().estimated_len(),
+        }
     }
     fn rows_owned(&self, _g: usize, _owned: &dyn Fn(i64) -> bool) -> Option<Vec<usize>> {
         self.done().and_then(|t| t.rows_owned(_g, _owned))

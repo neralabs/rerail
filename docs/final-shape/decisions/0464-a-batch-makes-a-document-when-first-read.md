@@ -42,9 +42,13 @@ A batch holds its documents unmade, and makes each when it is first read.
 - **The text tests are what they mean.** A text test (0037) is a test of a string: a probe tests the probed
   string (each tested once a run, as now), and a scan lists the batch's strings that pass. Nothing of a test
   changes with an edit, so it has no version (`Plus`, `Minus`).
-- **Counts are kept.** The documents' table (0458) keeps each document's counts: its views' rows and each base
-  relation's rows. A corpus batch given them knows its row space and `len` without making a document; a document
-  it then makes whose counts differ from those given fails, named.
+- **Counts are kept.** The documents' table (0458) keeps each document's views' counts: its nodes, fielded nodes,
+  siblings and places, the projection's own numbers. A base relation's rows are counted by its kept statistics
+  (0458), which an edit patches by the changed documents' old and new rows (decided by the user, 2026-11-19: a
+  group makes its documents' rows together, and no row says which document it is of in every relation). A corpus
+  batch given both knows its row space and `len` without making a document. A document it then makes whose
+  views' counts differ from those given fails, named; a relation whose rows, once every document is made, are not
+  the count given fails, named.
 - **An edit's versions** read the changed documents' rows where their group lies; no relation is read through
   to find them, and no kept statistic is measured again.
 
@@ -60,8 +64,9 @@ Each has its test before the code that meets it.
   relation one `Relation`, in its block.
 - **R4.** A text test's probe answers the probed string, a scan the batch's passing strings; after an edit it
   has no version, and the cross part's results equal a run from scratch.
-- **R5.** The documents' table keeps each document's counts; a corpus batch given them makes no unchanged
-  document for its row space; a made document whose counts differ fails, named.
+- **R5.** The documents' table keeps each document's views' counts; a corpus batch given them and the relations'
+  kept counts makes no unchanged document for its row space or `len`; a made document whose counts differ fails,
+  named, and so does a relation whose made rows are not its count.
 - **R6.** After an edit, a base relation's changed rows are found by group: no read-through, no kept statistic
   measured.
 - **R7.** The 50 data-layer files: 589 outputs equal across the cold run, the edit, the warm run after it and
@@ -78,6 +83,12 @@ Each has its test before the code that meets it.
    probed strings and a scan from the batch's; the edit's versions skip a text test (a decision says so).
    `made_batch_tests::r4_a_text_test_has_no_version_after_an_edit`: a join of two files' `text` tested in the cross
    part, three edits, each equal to a cold run's (it fails with the skip taken out).
-3. The counts kept with the documents' table, and given to the corpus batch. R5.
+3. The counts kept with the documents' table, and given to the corpus batch. R5. Done (2026-11-19): beside the
+   table, `#base-counts` keeps each corpus document's key, digest and views' counts (`retain::put_base_counts`),
+   written when a document's were not given; a run gives the batch those whose digest is the document's now. After
+   the edit's versions the batch is given each base relation's rows by its kept statistics (kept, or patched by the
+   changed documents); a made relation's and a `py_*` family's `len` answer by them until made. Tests:
+   `syntax::tests::a_batch_given_counts_knows_its_row_space_making_nothing` (no document made for any `len`; both
+   mismatches fail, named) and `made_batch_tests::r5_the_documents_counts_are_kept_and_given_to_the_corpus_batch`.
 4. An edit's versions by group; the kept statistics read, not measured. R6.
 5. Measured. R7.
