@@ -368,8 +368,9 @@ struct IndexFile {
     /// What the index's volume lets a stamp tell, found once per reader.
     volume: Volume,
     /// The file's stamp when it was read (`None` inside where there was no file), or `None` where
-    /// that stamp could not tell a later write from it: then the next question compares the
-    /// checksum at the file's end with the one read, and reads the index again when it differs.
+    /// that stamp could not tell a later write from it, or where the read found a file and the
+    /// stamp none, or the other way round: then the next question compares the checksum at the
+    /// file's end with the one read, and reads the index again when it differs.
     stamp: Option<Option<FileStamp>>,
     /// The digest of the bytes the index was decoded from, where they end with no checksum: a
     /// question whose stamp is not kept compares the file's bytes with it in place of the
@@ -388,12 +389,20 @@ impl IndexFile {
         let stamp = volume.keeps(FileStamp::of(&path));
         #[cfg(test)]
         INDEX_READS.with(|reads| reads.set(reads.get() + 1));
+        #[cfg(test)]
+        tests::before_index_read();
         let (file, digest) = match read_unhashed(repository, &path) {
-            Some((file, digest)) => (file, Some(digest)),
+            Some((file, digest)) => (Some(file), Some(digest)),
             None => (open_index(repository, &path)?, None),
         };
         #[cfg(test)]
         tests::after_index_read();
+        // A stamp is kept only where the read found what the stat found: Git can write, move or
+        // remove the index between the two, and a stamp of no file kept with an index read, or
+        // one of a file kept with none, would hold while the file is as stamped and the index read
+        // is not there.
+        let stamp = stamp.filter(|stamp| stamp.is_some() == file.is_some());
+        let file = file.unwrap_or_else(|| no_index(repository, &path));
         Ok(Self {
             stamp,
             path,
@@ -461,19 +470,24 @@ fn trailing_bytes(path: &Path, len: usize) -> Option<Vec<u8>> {
 }
 
 /// `repository`'s index read by its own open, which compares the checksum and reads a shared
-/// index; an empty one where there is no file.
+/// index; `None` where there is no file.
 fn open_index(
     repository: &gix::Repository,
     path: &Path,
-) -> std::result::Result<gix::index::File, String> {
+) -> std::result::Result<Option<gix::index::File>, String> {
     match repository.open_index() {
-        Ok(file) => Ok(file),
-        Err(_) if !path.exists() => Ok(gix::index::File::from_state(
-            gix::index::State::new(repository.object_hash()),
-            path.to_path_buf(),
-        )),
+        Ok(file) => Ok(Some(file)),
+        Err(_) if !path.exists() => Ok(None),
         Err(error) => Err(format!("cannot read Git index: {error}")),
     }
+}
+
+/// The index of a repository with no index file at `path`, as Git reads it: an empty one.
+fn no_index(repository: &gix::Repository, path: &Path) -> gix::index::File {
+    gix::index::File::from_state(
+        gix::index::State::new(repository.object_hash()),
+        path.to_path_buf(),
+    )
 }
 
 /// The index at `path` decoded from one read of its bytes, with their digest, where Git wrote no
@@ -1073,6 +1087,9 @@ pub mod tests {
         /// What runs once, right after this thread's next read of the index file: the whole
         /// index, or the checksum at its end.
         static AFTER_READ: RefCell<Option<Box<dyn FnOnce()>>> = const { RefCell::new(None) };
+        /// What runs once, right before this thread's next read of the whole index file, after
+        /// its stat.
+        static BEFORE_READ: RefCell<Option<Box<dyn FnOnce()>>> = const { RefCell::new(None) };
     }
 
     pub(super) fn volume() -> Option<Volume> {
@@ -1102,6 +1119,12 @@ pub mod tests {
 
     pub(super) fn after_index_read() {
         if let Some(run) = AFTER_READ.with(|after| after.borrow_mut().take()) {
+            run();
+        }
+    }
+
+    pub(super) fn before_index_read() {
+        if let Some(run) = BEFORE_READ.with(|before| before.borrow_mut().take()) {
             run();
         }
     }
@@ -1138,6 +1161,11 @@ pub mod tests {
             AFTER_READ.with(|after| *after.borrow_mut() = Some(Box::new(run)));
             self
         }
+
+        fn before_index_read(self, run: impl FnOnce() + 'static) -> Self {
+            BEFORE_READ.with(|before| *before.borrow_mut() = Some(Box::new(run)));
+            self
+        }
     }
 
     impl Drop for Seams {
@@ -1147,6 +1175,7 @@ pub mod tests {
             ONE_IDENTITY.with(|kept| kept.set(false));
             STAT_REFUSED.with(|kept| kept.set(false));
             AFTER_READ.with(|after| after.borrow_mut().take());
+            BEFORE_READ.with(|before| before.borrow_mut().take());
         }
     }
 
@@ -2139,6 +2168,94 @@ pub mod tests {
             "the index Git wrote is read"
         );
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A checkout ignoring `gen/`, with no index, and its reader on `volume`, opened as Git wrote
+    /// an index tracking `gen/t.py` between the reader's stat, which found no file, and its read,
+    /// which read that index; the index file.
+    fn opened_as_git_wrote_the_index(name: &str, volume: Volume) -> (PathBuf, PathBuf, GitIgnore) {
+        let root = fixture(
+            name,
+            &[(".gitignore", "gen/\n"), ("gen/t.py", ""), ("gen/u", "")],
+        );
+        git(&root, &["init", "--initial-branch=main"]);
+        let (next, index) = (root.join(".git/next-index"), root.join(".git/index"));
+        git_with_index(&root, &next, &["add", "-f", "gen/t.py"]);
+        let landing = (next, index.clone());
+        let _seams = Seams::new()
+            .volume(volume)
+            .before_index_read(move || std::fs::rename(&landing.0, &landing.1).unwrap());
+        let ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        assert_eq!(
+            ignore.index.file.entries().len(),
+            1,
+            "the index Git wrote between the stat and the read"
+        );
+        (root, index, ignore)
+    }
+
+    /// Every volume keeps a stamp of no file, but not one taken before a read that found an index:
+    /// that index removed before the next question reads as no index, as Git reads it.
+    #[test]
+    fn reads_no_index_once_an_index_written_between_its_stat_and_its_read_is_removed() {
+        for volume in [Volume::Unique, Volume::Local, Volume::Remote] {
+            let (root, index, mut ignore) =
+                opened_as_git_wrote_the_index(&format!("appeared-removed-{volume:?}"), volume);
+            std::fs::remove_file(&index).unwrap();
+            assert!(
+                ignore.ignored("gen/t.py", false).unwrap(),
+                "with no index Git tracks nothing ({volume:?})"
+            );
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    /// The same index written over by Git before the next question: the question reads Git's new
+    /// index.
+    #[test]
+    fn reads_the_index_git_writes_over_one_written_between_its_stat_and_its_read() {
+        for volume in [Volume::Unique, Volume::Local, Volume::Remote] {
+            let (root, _, mut ignore) =
+                opened_as_git_wrote_the_index(&format!("appeared-replaced-{volume:?}"), volume);
+            git(&root, &["add", "-f", "gen/u"]);
+            assert!(
+                !ignore.ignored("gen/u", false).unwrap(),
+                "tracked in the index Git wrote over the one read ({volume:?})"
+            );
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    /// The mirror: an index moved away between the stat, which found it, and the read, which found
+    /// no file, then put back before the next question. The file put back has the stamp taken
+    /// (NTFS keeps a moved file's identity, time and size; on Unix the seam takes out the change
+    /// time a move sets), so on each volume that keeps a stamp of a file, the reader keeps none
+    /// of a file it did not read, and the question reads the index put back.
+    #[test]
+    fn reads_the_index_put_back_after_it_was_moved_away_between_its_stat_and_its_read() {
+        for volume in [Volume::Unique, Volume::Local] {
+            let root = fixture(
+                &format!("moved-away-{volume:?}"),
+                &[(".gitignore", "gen/\n"), ("gen/t.py", "")],
+            );
+            git(&root, &["init", "--initial-branch=main"]);
+            git(&root, &["add", "-f", "gen/t.py"]);
+            let (index, away) = (root.join(".git/index"), root.join(".git/away"));
+            settle(&index);
+            let moving = (index.clone(), away.clone());
+            let _seams = Seams::new()
+                .volume(volume)
+                .one_identity()
+                .before_index_read(move || std::fs::rename(&moving.0, &moving.1).unwrap());
+            let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+            assert!(ignore.index.file.entries().is_empty(), "no index was read");
+            std::fs::rename(&away, &index).unwrap();
+            assert!(
+                !ignore.ignored("gen/t.py", false).unwrap(),
+                "tracked in the index put back ({volume:?})"
+            );
+            std::fs::remove_dir_all(root).unwrap();
+        }
     }
 
     /// Git's two writes in the index's time step, the second onto the identity, time and size
