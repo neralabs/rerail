@@ -5418,3 +5418,14 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
 - **Do:** find the stratum whose rows differ in a bad run (a per-chunk count of each head's rows, compared with a
   good run's), then the cause; a test that hits it; the fix.
 - **Done when:** 20 Metal runs of hogql give 1,629 each.
+
+### Q263. A relation's statistics kept by delta are on the heap (0450 R5)
+
+- **Seen** (2026-11-19, closing 0450 step 6): `InRel::stats` and `Rel::stats` (`KeptStats`, decision 0096,
+  `plan::statkeep::RelStats`) keep, per column, an exact map of value to count (`FxHashMap`, at most 256 values) and
+  the planner's sketches (`plan::sketch::Sketch`: an AMS array and levels). They were not in 0450's inventory, so
+  steps 5-6 left them on the heap.
+- **Do:** their arrays in blocks, as step 6c did for setfix's sketches: the exact map as open addressing in a block,
+  the sketch's arrays as block arrays. Their numbers stay the same (the statkeep tests).
+- **Done when:** `RelStats` keeps no heap collection, its tests pass, and hogql gives its 1,629 findings at the same
+  instructions.

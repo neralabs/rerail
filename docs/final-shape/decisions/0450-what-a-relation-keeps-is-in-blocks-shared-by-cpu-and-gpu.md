@@ -546,3 +546,17 @@ sort again).
 - Test: `a_bags_summaries_by_key_are_in_a_block`; the scalars tests pass unchanged.
 - hogql cold, profiling, format 15, load 16-30, seven pairs against 6c: CPU 83.6-86.3 B against 83.4-85.4 B (one pair
   92.4 and 94.3 B, both high); Metal 75.9-81.4 B against 75.8 B, 1,629 in each of 5 runs.
+
+## Built (2026-11-19, step 6e: each row's level in a block), and what R5 still lacks
+
+- Each row's level (decision 0090: `Rel::level`, `InRel::level`) was a heap vector of one `u32` a row. It was not in
+  the inventory, but it is per-row relation data. It is now a block array (`BlockVec<u32>`), written near the rows.
+  A frame's levels are written there once (`from_flat_levels`), and a mark's old prefix too (`delta_since_mark`, as
+  the heap's `to_vec` did before).
+- hogql cold, six pairs against 6d at load 34-46: CPU 84.3-86.7 B against 83.7-85.4 B, within the spread. Metal
+  74.6-76.4 B, 1,629 in each of 3 runs.
+- **What R5 still lacks (found closing step 6, not in the inventory):** `InRel::stats` and `Rel::stats`
+  (`KeptStats`, decision 0096's statistics kept by delta: `statkeep::RelStats`). Each column holds an exact map of
+  value to count (`FxHashMap`, up to 256 values) and `plan::sketch::Sketch`s, all on the heap. Work queue Q263.
+- What stays on `InRel` and is not relation data: its column types, the key sets each order serves (`serves`), its
+  name, its uid, the probe plans (`idx`), the handles to block arrays and orders, and the versions' handles.
