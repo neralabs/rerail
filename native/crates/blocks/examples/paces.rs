@@ -25,7 +25,8 @@
 //!
 //! Usage: `paces [docs] [runs] [dir]`.
 
-#[cfg(target_os = "macos")]
+// The device's joins and residency (macOS and Linux, decision 0440 step C) are its only readers.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use rerail_blocks::block::Block;
 use rerail_blocks::block::kind;
 use rerail_blocks::chunk::{self, DocIn};

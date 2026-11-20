@@ -7,7 +7,8 @@
 //! ```
 
 use rerail_blocks::block::{Block, kind};
-#[cfg(target_os = "macos")]
+// The device's columns (macOS and Linux, decision 0440 step C) are its only readers.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use rerail_blocks::col;
 use rerail_blocks::packed;
 use rerail_blocks::relation::{self, RelW, Relation, Spec, View};

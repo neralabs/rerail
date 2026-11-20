@@ -1930,6 +1930,8 @@ fn every_switch_lowering_reads_is_classified() {
         "RERAIL_RR_LIB",
         // The cost model's file: its estimates steer plan choices, which keep the program's meaning (`plan::run`).
         "RERAIL_COSTS",
+        // The join model (decision 0354): its prices choose among a line's candidate orders, as the cost model's do.
+        "RERAIL_JOIN_MODEL",
         // Keyed through what it adds: the observer's facts (the source files), which the prepared key hashes.
         "RERAIL_SOURCES_PHASE",
         // Where rule images are read from and kept (decision 0246 §6): an image is keyed by its text, its scope and
