@@ -7807,10 +7807,21 @@ on an M3 or M5:
   `cpp` its fan-out gives 8 tokens for 12,288 (the rung-1 run without `cpp` agrees), so it is ignored with them.
 - **The persistent grid (0468 R5, R6)**: `grid_barriers_see_every_groups_writes` and the grid's scan, segmented scan
   and sort fail at 8 groups: "a barrier failed" (bounded, never hangs). They fail at 1 test thread too.
-- **The AOT words**: `the_aot_words_are_the_interpreters` and `the_words_translate_to_rust` overflow the test
-  thread's 2 MB stack in `rust_source`.
+- **The AOT words** (not the device's; done 2026-11-20): `the_aot_words_are_the_interpreters` and
+  `the_words_translate_to_rust` overflowed the test thread's 2 MB stack in `rust_source`.
+  - The stack: under gdb, 711 frames deep. The structuring recurses once per level of the dominator tree
+    (`Shape::tree`, `within`, `transfer`), through a branch's code built inside `instruction`, whose one big match
+    holds 22 KB a frame in a debug build: 71 of them made 1.5 MB. `instruction` now sends a branch to `branch`
+    (its successors' code by `jump`) and anything else to `operation`, the match, which no longer recurses.
+  - The time: 61 s, every one of them in `Shape::threaded` for the run's function (2,771 blocks). It split nodes
+    3,556 times, its whole budget, before taking a dispatch. Each round recomputed the dominators by Cooper,
+    Harvey and Kennedy's iteration, which takes many passes on an irreducible graph (2 ms a round at 3,000
+    nodes, 40 ms at 6,000). `Order::of` now finds them by Semi-NCA in one pass, and numbers the dominator tree so
+    that `dominates` is one interval test. `the_dominators_are_the_definitions` checks both against the
+    definition on random graphs. The test takes 8.5 s, and so does each c_directives build's `pp.rs`.
+  - Both tests pass on Linux, and their ignores are gone.
 - **Done when**: each passes on the M1 Max, or a test states what the M1 Max cannot do (a grid's residency), and
-  none is ignored.
+  none is ignored. (The device's parts wait: no Metal work until the machine's crashes are understood.)
 
 ### Q371. (Q331 on final-rerail-shape-rr-align) Roll-up 13 (Parser-generators-final-shape onto rr-align): what the merge chose, and what stays open
 

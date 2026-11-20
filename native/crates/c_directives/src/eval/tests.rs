@@ -414,9 +414,13 @@ impl rerail_c_pp::sink::Sink for Spelled {
     }
 }
 
+/// A unit expanded on the device (`expanded`): its output spelled, or its refusal bits; the serial
+/// pass's output; the rung it ended at, and its launches.
+type DeviceRun = (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, u32, usize);
+
 /// The unit of `files` (its main file `main.c`) expanded on the device from rung `rung`: its
 /// output spelled, or its refusal bits; and the serial pass's output. `None` where P1 refuses it.
-fn expanded(files: &[(&str, &str)], cpp: bool, rung: u32) -> (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, u32, usize) {
+fn expanded(files: &[(&str, &str)], cpp: bool, rung: u32) -> DeviceRun {
     use rerail_c_pp::files::Search;
     let m: std::collections::HashMap<String, Vec<u8>> = files.iter().map(|(p, s)| (p.to_string(), s.as_bytes().to_vec())).collect();
     let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));

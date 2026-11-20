@@ -75,10 +75,13 @@ pub fn chains(read: &crate::Read, toks: &[Tok]) -> Option<Vec<(u32, u32)>> {
     Some(out)
 }
 
+/// A file's tokens (C++'s where told), or `None` where its lexer refuses it.
+pub type Lexer = dyn Fn(&[u8], bool) -> Option<Vec<tokens::Tok>>;
+
 /// How a TU's files are lexed and their directives read: by the compiled grammars, or (tests) by
 /// their interpreter.
 pub struct Grammars<'a> {
-    pub tokens: &'a dyn Fn(&[u8], bool) -> Option<Vec<tokens::Tok>>,
+    pub tokens: &'a Lexer,
     pub read: &'a dyn Fn(&[u8]) -> Option<crate::Read>,
 }
 
