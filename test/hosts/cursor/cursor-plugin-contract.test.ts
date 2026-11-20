@@ -322,6 +322,26 @@ describe("a Cursor hook while the daemon is not reading", () => {
     return { storage: join(root, "sessions"), common: { conversation_id: "cursor-session", generation_id: "g1", cwd: root, transcript_path: transcript } };
   }
 
+  it("links a steer the transcript's lines found with the answer that found it, so the hook that carries it asks the daemon nothing after its answer", async () => {
+    const { storage, common } = await unreadTranscript();
+    const home = join(String(common.cwd), "home");
+    vi.stubEnv("RERAIL_HOME", home);
+    const daemon = await countingDaemon(home);
+    try {
+      const dashboard = "http://127.0.0.1:4791/?repository=clone%3Aapp&checkout=%2Fwork%2Fapp";
+      const tool = { tool_use_id: "t1", tool_name: "Shell", tool_input: { command: "ls" } };
+      const steer = [delivery("steer", "Remove print.", ["acme:no-print"])];
+      await handleCursorEvent({ ...common, ...tool, hook_event_name: "preToolUse" }, answering(scriptedLoop({ "assistant-message": steer }), { dashboard }), storage);
+
+      // The result's answer links nothing of its own, so it carries no dashboard.
+      const result = await handleCursorEvent({ ...common, ...tool, hook_event_name: "postToolUse", tool_output: "a" }, scriptedLoop({}), storage);
+      expect(JSON.stringify(result)).toContain(`${dashboard}#rule/acme%3Ano-print`);
+      expect(daemon.requests).toEqual([]);
+    } finally {
+      await daemon.close();
+    }
+  });
+
   /** A loop that leaves each event for a daemon that is not reading, as a hook does once one was left untaken. */
   function untakenLoop(): RerailEventLoop & { events: AdapterEvent[] } {
     return { ...scriptedLoop({}), untaken: true };

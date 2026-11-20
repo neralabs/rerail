@@ -1,11 +1,12 @@
 import { mkdir, open, readFile, stat, type FileHandle } from "node:fs/promises";
 import { dirname } from "node:path";
 import { z } from "zod";
-import type { AdapterEvent, AdapterSession, RerailEventLoop } from "../../engine/adapter-contract.js";
+import { answeredFacts, type AdapterEvent, type AdapterSession, type RerailEventLoop } from "../../engine/adapter-contract.js";
 import { createHash } from "node:crypto";
 import { pendingPath, type HookInput, persistPending } from "../../harness/hook-adapter.js";
 import { steers } from "../../engine/catalog/rule-mode.js";
 import { replaceFile } from "../../engine/file-replace.js";
+import { linkedByAnswer } from "../../presentation/session-presentation.js";
 
 const CursorTranscriptStateSchema = z
   .object({
@@ -184,9 +185,10 @@ async function ingestCompleteLines(
     );
     if (event === undefined) continue;
     if (event.kind === "user-prompt") state.latestAssistantText = "";
+    // A steer held for a later hook keeps this answer's links, so that hook's answer need carry none.
     await persistPending(
       pending,
-      (await runtime.ingest(event)).filter((delivery) => steers(delivery.requested)),
+      linkedByAnswer((await runtime.ingest(event)).filter((delivery) => steers(delivery.requested)), answeredFacts(runtime)),
     );
     if (event.kind === "assistant-message") state.latestAssistantText = event.text;
   }
