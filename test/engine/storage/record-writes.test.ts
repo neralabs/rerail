@@ -223,6 +223,31 @@ describe("record writes while another process holds the write lock", () => {
     expect(stderr).toHaveBeenCalledWith(expect.stringContaining("1 records not written"));
   }, 30_000);
 
+  // A steer's receipt and the removal of its kept file after it: the removal, made without the receipt, lost it.
+  it("drop every later write once one is dropped behind waiting writes, until those are made", async () => {
+    const { path } = await stores();
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const { openRecordWriter, flushRecordWrites } = await recordWrites();
+    const writer = openRecordWriter(path);
+    closers.push(() => writer.close());
+    const made: string[] = [];
+    const named = (name: string) => () => { made.push(name); };
+    const holder = holderHere(path);
+    writer.write(named("earlier"), 64 * 1024 * 1024 - 10);
+    writer.write(named("receipt"), 100);
+    writer.write(named("forget"), 0);
+    holder.exec("COMMIT");
+    flushRecordWrites(path);
+    expect(made).toEqual(["earlier"]);
+    expect(stderr).toHaveBeenCalledWith(expect.stringContaining("2 records not written"));
+    // Once what waited is made, a write waits again.
+    holder.exec("BEGIN IMMEDIATE");
+    writer.write(named("later"), 0);
+    holder.exec("COMMIT");
+    flushRecordWrites(path);
+    expect(made).toEqual(["earlier", "later"]);
+  }, 30_000);
+
   it("take no write lock for a rule coverage that has not changed, so it never waits behind the holder", async () => {
     const { path, sessions } = await stores();
     sessions.openSession(session, 1_000);

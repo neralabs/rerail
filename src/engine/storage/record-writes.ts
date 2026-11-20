@@ -115,6 +115,8 @@ class FileRecordWriter {
   #users = 0;
   #waitingBytes = 0;
   #dropped = 0;
+  /** A write was dropped behind the waiting writes: later ones are dropped too until those are made (`#keep`). */
+  #refusing = false;
   #lockWait: AbortController | undefined;
   #transaction: { begin: Database.Statement; commit: Database.Statement; rollback: Database.Statement } | undefined;
 
@@ -195,9 +197,15 @@ class FileRecordWriter {
     return true;
   }
 
+  /**
+   * Keeps `write` until the lock is given back, or drops it past what may wait. Once one is dropped behind waiting writes,
+   * every later one is dropped too until those are made (`#settle`): a write made without one asked before it, such as
+   * the removal of a steer receipt's kept file after the receipt's record, would lose what the dropped one held.
+   */
   #keep(write: RecordWrite, bytes: number): void {
-    if (this.#waiting.length >= MAX_WAITING_WRITES || this.#waitingBytes + bytes > MAX_WAITING_BYTES) {
+    if (this.#refusing || this.#waiting.length >= MAX_WAITING_WRITES || this.#waitingBytes + bytes > MAX_WAITING_BYTES) {
       this.#dropped += 1;
+      this.#refusing = this.#waiting.length > 0;
       return;
     }
     this.#waiting.push({ write, bytes, deadline: performance.now() + BUSY_TIMEOUT_MS });
@@ -258,6 +266,7 @@ class FileRecordWriter {
   }
 
   #settle(): void {
+    this.#refusing = false;
     this.#reportDropped();
     for (const settle of this.#settled.splice(0)) settle();
   }
