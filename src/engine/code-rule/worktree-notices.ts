@@ -112,7 +112,8 @@ export const UNKNOWN_FOLDER = "?";
 
 /**
  * The folder at `root`: its device, file number and birth time (a folder made on Linux may take the file number of one
- * just removed); `""` when none is there.
+ * just removed); `""` when none is there. One made within a tick of the file system's clock (4 ms at Linux's 250 Hz)
+ * after the folder removed there was made takes its birth time too, and reads as that folder.
  */
 export function folderAt(root: string): string {
   try {

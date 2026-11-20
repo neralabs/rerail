@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -244,6 +244,24 @@ describe("WorktreeNotices", () => {
     expect([subject.changed("/w"), subject.watching("/w")]).toEqual([true, true]);
   });
 
+  it("waits as before for a folder made within a tick of the file system's clock after the one removed, whose file number and birth time it takes, and watches one made a tick later at once", () => {
+    const watch = new ScriptedWatch();
+    const clock = { now: 0 };
+    const removed = { isDirectory: () => true, dev: 1n, ino: 2n, birthtimeNs: 1_000n };
+    const folders = new Map([["/tie", removed], ["/later", removed]]);
+    const subject = new WorktreeNotices({ treeWatch: watch, platform: "darwin", now: () => clock.now, folderAt: root => folderIdentity(folders.get(root)!) });
+    for (const root of folders.keys()) {
+      read(subject, root);
+      watch.notice(root, { ended: true });
+    }
+    subject.collect();
+    folders.set("/tie", { ...removed });
+    folders.set("/later", { ...removed, birthtimeNs: 4_001_000n });
+    expect([...folders.keys()].map(root => [subject.changed(root), subject.watching(root)])).toEqual([[true, false], [true, true]]);
+    clock.now = REWATCH_MS;
+    expect([subject.changed("/tie"), subject.watching("/tie")]).toEqual([true, true]);
+  });
+
   it("tries to watch at the next walk a worktree whose folder was gone as its watch would begin, not after the retry", () => {
     const watch = new ScriptedWatch();
     const folders = new Map<string, string>();
@@ -317,16 +335,18 @@ describe("WorktreeNotices", () => {
 });
 
 describe("folderAt", () => {
-  it("tells a folder made again at a path from the one removed there, and gives none for a file or nothing there", async () => {
+  it("tells a folder made at a path from the one that stood there, and gives none for a file or nothing there", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-folder-at-"));
     try {
       const path = join(root, "w");
       await mkdir(path);
       const first = folderAt(path);
       expect([first === "", folderAt(path) === first]).toEqual([false, true]);
-      await removeFolder(path);
+      // Moved away, the folder keeps its file number, so the one made at its path cannot take it. On Linux a folder made
+      // within one tick of the file system's clock after the one there was made and removed takes its file number and
+      // birth time both.
+      await rename(path, join(root, "gone"));
       expect(folderAt(path)).toBe("");
-      // A folder made right after another went may take its file number on Linux.
       await mkdir(path);
       expect([folderAt(path) === "", folderAt(path) === first]).toEqual([false, false]);
       await removeFolder(path);
