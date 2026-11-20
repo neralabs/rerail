@@ -8184,7 +8184,7 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   place.
 - **Done when**: a finding at a `@parse` value's node is refused or placed in its file, with a test either way.
 
-### Q399. Four block tests hang on a Mac's Metal executors, and pass in 0.04 s without them
+### Q399. Four block tests hang on a Mac's Metal executors, and pass in 0.04 s without them (done)
 
 - **Seen** (2026-11-20, after merging the hub to 236ea95371): `rerail-parser-tests`'
   `block_tests::prev_equals_reference_on_every_executor`, `stage1_utf8_equals_std_on_every_executor`,
@@ -8198,3 +8198,16 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   no gated region, so their code is the same.
 - **Next**: on a farm Mac, the first executor `every` reaches that does not return (a print per executor), and whether
   it is the MSL compile or the wait; then bound the launch's GPU time.
+- **Found** (2026-11-20, on an M3): no hang. `prev_equals_reference_on_every_executor` ran 7,290 Metal launches in its
+  240 s, each 25 to 58 ms whatever its input's size, of which the GPU took 0.02 to 0.04 ms. The rest was the kernel
+  store's key (`rerail_accel::gpu::kernels::Key::of`): `rerail_ukl::fingerprint()` hashed the 1.2 MB of carried UKL
+  headers byte by byte at every lookup, 17 ms in a debug build, twice for a fixed kernel (`function_fixed`). It is now
+  computed once by `rerail-ukl`'s build script (`carried.rs`, one list for the crate and the script), to the same value
+  (`the_fingerprint_is_fnv_over_the_carried_files`). A launch takes 0.5 to 1 ms; the 46 block tests pass on the M3 in
+  35 s, the slowest in 21 s.
+- **Found on the way**, in the same crate's tests:
+  - `corpus_cranelift_equals_the_interpreter`: `bee578718a` kept a gated region's vectors out of the ASCII split, and a
+    region vector made from the split's words (`as_words`: 0565's `%48 = %47 & ~%46`, `%46` the non-ASCII class) was
+    then made by no one, so its reader read 0. The region makes such vectors at its start, as it makes the masked ones.
+  - `a_files_start_on_metal_is_the_interpreters`: the serial executor refused a prefix (0335) again (`starts_late`),
+    which Q215 (5670277876) had made it run; a hub merge brought the refusal back. Removed; the test passes on the M3.

@@ -162,3 +162,16 @@ fn a_metal_kernel_takes_the_generated_reads() {
     let both = "#include <ukl/reads/tape.h>\n#include <ukl/reads/tape_z.h>\n";
     assert!(crate::metal_source("both.metal", both).is_err(), "one set of the tape's reads");
 }
+
+/// The fingerprint computed when the crate is compiled is the hash it was computed as at each call: FNV-1a over each
+/// carried file's name and text, each followed by a 0. A changed value would key every stored kernel anew.
+#[test]
+fn the_fingerprint_is_fnv_over_the_carried_files() {
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for (name, text) in HEADERS.iter().chain(LIBRARY) {
+        for b in name.bytes().chain([0]).chain(text.bytes()).chain([0]) {
+            h = (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    assert_eq!(fingerprint(), h);
+}

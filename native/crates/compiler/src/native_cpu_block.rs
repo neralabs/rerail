@@ -1956,8 +1956,10 @@ impl Emit<'_, '_> {
         }
         // Its values on the vectors that a member reads as words (one made from words,
         // `Emit::as_words`): their masks made here, never in a block that skips the region
-        // (decision 0423). The others are made on the vectors where read.
-        let as_words: Vec<usize> = reg.vectors.iter().copied().filter(|&v| self.live[v] && self.masked[v]).collect();
+        // (decision 0423); and those made from words themselves (bit logic over a word the ASCII
+        // split gives, `ascii_split`'s `words`), which no reader makes on the vectors: unmade, a
+        // member read them as 0. The others are made on the vectors where read.
+        let as_words: Vec<usize> = reg.vectors.iter().copied().filter(|&v| self.live[v] && (self.masked[v] || self.as_words[v])).collect();
         for v in as_words {
             self.emit(&mut *f, v);
         }
