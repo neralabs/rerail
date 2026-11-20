@@ -168,7 +168,7 @@ This pull request holds main at 88446abff, the 0.2.0 engine, and needs nothing e
 <details><summary><b>8. What is not covered</b>: 5 not verified, 4 limits that stay</summary>
 
 1. **A worktree's files changed at once** beside another session, a Write there was on time 19 of 20 times on the 0.2.0 engine, `main` 20 of 20; the late one a call later.
-2. **One session, a worktree removed** late on `main` too: its walk's first sight of the worktree, a defect we report separately. One probe: 1 of 152 late here, 3 of 152 on `main`.
+2. **One session, a worktree removed** late on `main` too: its walk's first sight of the worktree (#907). One probe: 1 of 152 late here, 3 of 152 on `main`.
 3. **A worktree walked while gone, then added again** a file written there waits for an unrelated walk, here as on `main`.
 4. **The 10-minute load at this head** did not run. At 0.1.5's code against this change's code then: CPU 43% against 96 to 98% of a core.
 5. **macOS** never ran.
