@@ -566,6 +566,9 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 } else if let Some(h) = w.strip_prefix('w') {
                     let bits = u32::from_str_radix(h, 16).map_err(|_| format!("a bad `without` `{w}`"))?;
                     elems.last_mut().ok_or("a `without` before its element")?.without = bits;
+                } else if let Some(h) = w.strip_prefix('h') {
+                    let bits = u32::from_str_radix(h, 16).map_err(|_| format!("a bad `with` `{w}`"))?;
+                    elems.last_mut().ok_or("a `with` before its element")?.with = bits;
                 } else if let Some(s) = w.strip_prefix('s') {
                     let s: u16 = s.parse().map_err(|_| format!("a bad word `{w}`"))?;
                     let el = elems.last_mut().ok_or("a word before its element")?;

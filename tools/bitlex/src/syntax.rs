@@ -35,6 +35,9 @@ pub enum TokenElem {
     /// after` applied: the bit a token's record holds), as the lean parser asks
     /// `!peek_at(j).nl`.
     Without(String),
+    /// `E with M`: the element holds only at a token with mark `M`'s bit, as the lean parser
+    /// asks `peek_at(j).nl`.
+    With(String),
 }
 
 /// A depth a run counts (`(C)* nest (O to C) …`, Q222), as the lean parsers' forward scans count
@@ -718,8 +721,9 @@ pub enum Stmt {
     /// run of tokens, each one of an element's choices (`|`): a token kind (a name) or a word
     /// (a string), the extras between them skipped. `after`: the token before is one of
     /// `before`'s, or (`after ~E`) none of them, or no token at all. The mark is at the first
-    /// element's token.
-    TokenMark { kind: String, before: Vec<TokenElem>, seq: Vec<Vec<TokenElem>> },
+    /// element's token. `, unless before E …`: none where one of these runs is the tokens from
+    /// the mark's on, as a mark's (`Mark::next`, the unless ones).
+    TokenMark { kind: String, before: Vec<TokenElem>, seq: Vec<Vec<TokenElem>>, next: Vec<(bool, Vec<Vec<TokenElem>>)> },
     /// `hidden KIND …` (in a tree): marks taken where the grammar can take them and skipped
     /// elsewhere. A mark not hidden, where the grammar can not take it, refuses the file.
     Hidden(Vec<String>),
@@ -1154,19 +1158,30 @@ impl P {
             }
         }
     }
+    /// An element's `with M` and `without M`, after its choices of kinds and words.
+    fn with_marks(&mut self, mut c: Vec<TokenElem>) -> R<Vec<TokenElem>> {
+        loop {
+            let with = if self.eat_kw("without") {
+                false
+            } else if self.eat_kw("with") {
+                true
+            } else {
+                return Ok(c);
+            };
+            if !c.iter().all(|x| matches!(x, TokenElem::Kind(_) | TokenElem::Word(_) | TokenElem::Without(_) | TokenElem::With(_))) {
+                return self.err("`with` or `without` after an element of kinds and words");
+            }
+            let m = self.ident()?;
+            c.push(if with { TokenElem::With(m) } else { TokenElem::Without(m) });
+        }
+    }
     /// A run of elements, as a token mark's (`tokens`) or a mark's `before`: each an element of
     /// choices, a `~` or a run; one run at most, never first or last; an `end` only last.
     fn token_seq(&mut self) -> R<Vec<Vec<TokenElem>>> {
         let mut seq = vec![];
         while matches!(self.peek(), Some(Tok::Ident(_) | Tok::Str(_) | Tok::P("~") | Tok::P("("))) {
-            let mut c = self.token_choices()?;
-            // `without M`: of an element of kinds and words.
-            if self.eat_kw("without") {
-                if !c.iter().all(|x| matches!(x, TokenElem::Kind(_) | TokenElem::Word(_))) {
-                    return self.err("`without` after an element of kinds and words");
-                }
-                c.push(TokenElem::Without(self.ident()?));
-            }
+            let c = self.token_choices()?;
+            let c = self.with_marks(c)?;
             seq.push(c);
         }
         let run = |c: &[TokenElem]| matches!(c, [TokenElem::Many(..)]);
@@ -2042,7 +2057,12 @@ impl P {
                 let kind = self.kind()?;
                 self.want_p("=")?;
                 if self.eat_kw("tokens") {
-                    let before = if self.eat_kw("after") { self.token_choices()? } else { vec![] };
+                    let before = if self.eat_kw("after") {
+                        let c = self.token_choices()?;
+                        self.with_marks(c)?
+                    } else {
+                        vec![]
+                    };
                     let seq = self.token_seq()?;
                     // The mark's token is a token of the choices: no `~`, no `end`; an `end` only in
                     // the last element. The one before (`after`) has no `end`; a `~` there holds
@@ -2052,7 +2072,18 @@ impl P {
                     if special(&seq[0]) || ends(&before) || seq[..seq.len() - 1].iter().any(|c| ends(c)) {
                         return self.err("a mark's token of kinds and words, and `end` only last");
                     }
-                    let s = Stmt::TokenMark { kind, before, seq };
+                    let mut next = Vec::new();
+                    while self.eat_p(",") {
+                        self.nls();
+                        self.want_kw("unless")?;
+                        self.want_kw("before")?;
+                        let seq = self.token_seq()?;
+                        if seq[0].iter().any(|c| !matches!(c, TokenElem::Kind(_) | TokenElem::Word(_))) {
+                            return self.err("an `unless before`'s first token of kinds and words");
+                        }
+                        next.push((true, seq));
+                    }
+                    let s = Stmt::TokenMark { kind, before, seq, next };
                     self.end_stmt()?;
                     return Ok(s);
                 }

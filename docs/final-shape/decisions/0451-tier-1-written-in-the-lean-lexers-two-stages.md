@@ -307,3 +307,41 @@ holds `refused: bool`. A total that another reader has (a mark or a tier 2 mask)
 grammar mark's name, or `K_start` for an extra's starts. `rust_block` names a mark's output
 `mark_{name}`, so `mark_acc` replaces `mark6`. The tapes are unchanged: the compiler (130), Kotlin
 (52) and `kotlin_aot` (4) tests pass.
+
+## Item 3, `acc`: an accessor asked at its token (2026-11-19)
+
+`acc` was a mask mark. Its mask asked at every byte whether a `get` or `set` began its line, or
+came after a visibility word that began its line (`acc_word`, over the fills `line_first`,
+`line_mod` and `acc_vis`). The lean parser asks at the token: `declaration_ahead` reads the
+modifiers, and `accessor_ahead` reads `get` or `set`. The line break is `Tok::nl`, which tier 1
+already gives the record: `semi`'s bit, set by the token loop while it skips the blanks (0430).
+
+Now `acc` is a token mark, a question tier 2 asks at the token:
+
+```
+mark acc = tokens "get" | "set" with semi, unless before "get" | "set" "." | ":", unless before "get" "(" ~")"
+mark acc = tokens after "private" | "protected" | "internal" | "public" with semi "get" | "set" without semi, unless …
+```
+
+Two constructs make it work:
+- **`E with M`**, beside 0430's `without M`. The element holds only at a token whose record has
+  mark `M`'s bit, as the lean parser asks `peek_at(j).nl`. It is `TokenElem::with`, text `h{bits}`,
+  and every executor tests it: the reference, the interpreter, Cranelift and the generated Rust.
+  The `after` element takes it too.
+- **A token mark's `unless before`.** These are the mark's entries with `unless` set, as a mask
+  mark's are (`TokenMark::unless`, `patterns_hold`). The reference holds the token mark only
+  where none of the runs follows.
+
+The second definition is for a `get` on its visibility word's line (`without semi`), as
+`acc_vis` was, so the two never hold at one token. A token mark costs one of the 32 mark orders.
+So the definitions are few, and they come after the mask marks, keeping the code's 16 bits for
+the marks that need them.
+
+**Test:** `ladder_tests::a_token_with_a_mark`. A `get` after a line break, or on a `pub`'s line
+after one, is an accessor unless a `.` follows. It checks the reference, the interpreter and
+Cranelift.
+
+**Result:** the compiler (131), Kotlin (52) and `kotlin_aot` (4) tests pass. The corpus is
+unchanged: 448 the same, 43 refused, 0 differ. The block program went from 1,559 operations to
+1,507, and the marks' cone in stage 1 from 512 values to 398. `line_mod`, `acc_vis` and
+`acc_word` are gone.

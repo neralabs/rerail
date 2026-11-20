@@ -94,6 +94,9 @@ pub fn token_mark_rows(out: &mut String, marks: &[crate::program::TokenMark]) {
             if e.without != 0 {
                 let _ = write!(out, " w{:x}", e.without);
             }
+            if e.with != 0 {
+                let _ = write!(out, " h{:x}", e.with);
+            }
             // A run's `ending` (Q225): its kinds, words and keywords.
             if let Some(x) = &e.ending {
                 let _ = write!(out, " ending k{:x}", x.kinds);

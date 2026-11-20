@@ -311,7 +311,6 @@ mask line_first = solid & prev(fill(lf & code, solid))
 escape "a `;` that starts a line" when code & semicolon & line_first
 # No solid byte after it, at the file's last byte.
 escape "a `;` that ends the file" when last_byte & fill(code & semicolon, solid)
-mask line_mod   = fill(line_first & (at_sign | text("private") | text("protected") | text("internal") | text("public")), lf | head_stop)
 # `@Test // c` before a declaration: the annotation takes the line's semicolon, so the comment
 # would be the annotation's, where the lean parser keeps it the declaration's: not read yet.
 mask at_line    = fill(line_first & at_sign, lf)
@@ -320,7 +319,6 @@ escape "a comment on an annotation's line" when (o_line | o_block) & at_line
 # after a property's; not read yet.
 # A getter or setter on a line of its own: a mark a class body's member takes. Elsewhere (a
 # property's at the top level, a call to `get` starting a line in a function) it refuses.
-mask acc_vis    = prev(text("private "), 8) | prev(text("protected "), 10) | prev(text("internal "), 9) | prev(text("public "), 7)
 # A declaration's receiver. From after `fun`, `val` or `var` to its `(`, `:`, `=`, `{` or line
 # end (`decl_run`): its last `.` ends a receiver (`rdot_at`), which starts at the run's first
 # token, past the function's type parameters (`rstart`). A type parameter's bound's `:` is
@@ -343,9 +341,6 @@ escape "a nullable receiver" when code & text("?.") & decl_run
 mask as_kw      = kw_start & text("as") & ~next(w, 2)
 mask as_run     = fill(prev(as_kw, 2), ~(code & (word | dot | text(" ") | text("?"))))
 escape "a dotted type after `as` before a `<`" when code & text("<") & prev(fill(as_run & dot, ~as_run))
-# A property's accessor: its `get` or `set` at a line's start (or after a visibility word
-# there), where no `.` or `:` follows it, and, for `get`, no `(` with arguments.
-mask acc_word   = code & (line_first | line_mod & acc_vis) & (text("get") | text("set")) & ~next(w, 3)
 
 # --- Tokens ------------------------------------------------------------------------------------
 
@@ -456,8 +451,6 @@ mark apart      = ws & code | o_line | o_block
 # where the declaration's name may come: the rule takes it there, and no level ends on it.
 mark recv       = rstart & decl_run, before simple_identifier | backtick_name (simple_identifier | backtick_name | "in" | "." | "<" | ">" | "," | "?" | "*")* "." simple_identifier | backtick_name ~("." | "<" | ">" | "?." | ","), unless before simple_identifier | backtick_name "by"
 mark dotted     = code & dot & decl_run | del_brace, before "." simple_identifier | backtick_name ~("." | "<" | ">" | "?." | ","), before "{"
-# A property's accessor: its `get` or `set` at a line's start (or after a visibility word there).
-mark acc        = acc_word, before "get" | "set", unless before "get" | "set" "." | ":", unless before "get" "(" ~")"
 # A `!` that starts a line before `in` or `is`: a `when` entry's negated test. `named`'s token
 # marks (below) are its other cases.
 mask bang_test  = code & text("!") & prev(fill(lf & code, solid)) & next(text("in") & ~next(w, 2) | text("is") & ~next(w, 2))
@@ -538,6 +531,11 @@ mark named      = tokens simple_identifier "=" | "+=" | "-=" | "*=" | "/=" | "%=
 mark named      = tokens simple_identifier ":"
 # An enum class's `enum`, a soft word elsewhere.
 mark enum_class = tokens "enum" "class"
+# A property's accessor: its `get` or `set` after a line break, or on the line of a visibility
+# word after one, as the lean parser's `declaration_ahead` asks `accessor_ahead` at the token: where
+# no `.` or `:` follows it, and, for `get`, no `(` with arguments.
+mark acc        = tokens "get" | "set" with semi, unless before "get" | "set" "." | ":", unless before "get" "(" ~")"
+mark acc        = tokens after "private" | "protected" | "internal" | "public" with semi "get" | "set" without semi, unless before "get" | "set" "." | ":", unless before "get" "(" ~")"
 
 tree kotlin {
   node source_file whole = (file_at file_annotation semi)* [package_header] [import_list] (statement (semi | ';'))*

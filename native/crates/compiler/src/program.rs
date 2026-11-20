@@ -506,6 +506,9 @@ pub struct TokenElem {
     /// as the lean parser asks `!peek_at(j).nl`: the element holds only where the code has none
     /// of them.
     pub without: u32,
+    /// The marks whose bit the record must hold (`with M`), as the lean parser asks
+    /// `peek_at(j).nl`: the element holds only where the code has all of them.
+    pub with: u32,
 }
 
 /// One side of a run's depth (`TokenElem::nests`): its counter (0 to 3), whether it opens, and
@@ -550,7 +553,7 @@ impl TokenElem {
     pub fn holds(&self, code: Option<u32>) -> bool {
         match code {
             None => self.end,
-            Some(c) => self.takes(c) != self.not && c >> crate::records::MARK_SHIFT & self.without == 0,
+            Some(c) => self.takes(c) != self.not && c >> crate::records::MARK_SHIFT & self.without == 0 && c >> crate::records::MARK_SHIFT & self.with == self.with,
         }
     }
 }

@@ -1407,7 +1407,9 @@ fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: Option<u8>) {
         // A `not` element: none of its choices.
         let t = if el.not { format!("!({t})") } else { t };
         // `without M`: none of the marks' bits in the code (`TokenElem::without`).
-        if el.without != 0 { format!("({t}) && c >> {} & {:#x} == 0", crate::records::MARK_SHIFT, el.without) } else { t }
+        let t = if el.without != 0 { format!("({t}) && c >> {} & {:#x} == 0", crate::records::MARK_SHIFT, el.without) } else { t };
+        // `with M`: all of the marks' bits in the code (`TokenElem::with`).
+        if el.with != 0 { format!("({t}) && c >> {} & {:#x} == {:#x}", crate::records::MARK_SHIFT, el.with, el.with) } else { t }
     };
     // The next record that is no extra, after `at`: past the last, `past`.
     let advance = |past: &str| format!("        let c = loop {{\n            at += 1;\n            if at >= self.n {{ return {past}; }}\n            let c = unsafe {{ *self.codes.add(at * self.rs) }};\n            if {free} {{ break c; }}\n        }};\n");

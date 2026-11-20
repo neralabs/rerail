@@ -1020,8 +1020,12 @@ impl Lowering {
                     self.marks.push((kind.clone(), x, *end));
                     self.mark_exprs.push(at.clone());
                 }
-                Stmt::TokenMark { kind, before, seq } => {
+                Stmt::TokenMark { kind, before, seq, next } => {
                     self.token_marks.insert(self.marks.len(), (before.clone(), seq.clone()));
+                    // Its `unless before`s, entries of its order as a mark's (`Mark::nexts`).
+                    if !next.is_empty() {
+                        self.mark_next.insert(self.marks.len(), next.clone());
+                    }
                     let none = self.leaf(BlockOp::Const(0), false);
                     self.marks.push((kind.clone(), none, false));
                     self.mark_exprs.push(Expr::Empty);
@@ -3344,7 +3348,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                         }
                     }
                     // A token's bytes are the same with or without the mark: tier 2 tests it.
-                    TokenElem::Without(_) => {}
+                    TokenElem::Without(_) | TokenElem::With(_) => {}
                     // Refused by the syntax in a mark's first element.
                     TokenElem::Not(_) | TokenElem::End | TokenElem::Many(..) => return Err("a `~`, an `end` or a run as a token mark's first token".into()),
                 }
@@ -3354,7 +3358,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 _ => None,
             };
             let words = seq[0].iter().map(|c| if let TokenElem::Word(w) = c { Some(w.clone()) } else { None }).collect();
-            marks.push(bitlex_tier2::Mark { settle: None, drop: None, lose: None, lose_flag: 0, ends: false, kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: Some((before, seq)), nexts: vec![], unless: vec![] });
+            marks.push(bitlex_tier2::Mark { settle: None, drop: None, lose: None, lose_flag: 0, ends: false, kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: Some((before, seq)), nexts: low.mark_next.get(&k).cloned().unwrap_or_default(), unless: vec![] });
             continue;
         }
         let mut expr = low.mark_exprs[k].clone();
@@ -3989,17 +3993,21 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             };
             for (offset, names, words, not, end, run, nest_rows, ending_row, without_names) in elems {
                 let (set, except) = kind_set(names)?;
-                // `without M`: mark `M`'s bit in the record's code, so a mark of a mask the code
-                // holds (not a token mark's, which tier 2 tests itself).
-                let mut without = 0u32;
-                for m in without_names {
-                    let k = low.marks.iter().position(|x| &x.0 == m).ok_or_else(|| format!("`without {m}`: no such mark"))?;
+                // `without M`, `with M`: mark `M`'s bit in the record's code, so a mark of a mask
+                // the code holds (not a token mark's, which tier 2 tests itself).
+                let (mut without, mut with) = (0u32, 0u32);
+                for (m, w) in without_names {
+                    let k = low.marks.iter().position(|x| &x.0 == m).ok_or_else(|| format!("`with {m}`: no such mark"))?;
                     if !records || k >= code_marks.min(crate::records::MARKS) || low.token_marks.contains_key(&k) {
-                        return Err(format!("`without {m}`: a mark of a mask whose bit the records hold"));
+                        return Err(format!("`with {m}`: a mark of a mask whose bit the records hold"));
                     }
-                    without |= 1 << k;
+                    if *w {
+                        with |= 1 << k;
+                    } else {
+                        without |= 1 << k;
+                    }
                 }
-                token_read |= without;
+                token_read |= without | with;
                 let mut nests = Vec::new();
                 for (counter, open, ns, ws) in nest_rows {
                     let (kinds, except) = kind_set(ns)?;
@@ -4013,7 +4021,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     }
                     None => None,
                 };
-                out.push(crate::program::TokenElem { offset: *offset, kinds: set, words: words.clone(), except, not: *not, end: *end, run: *run, nests, ending, without });
+                out.push(crate::program::TokenElem { offset: *offset, kinds: set, words: words.clone(), except, not: *not, end: *end, run: *run, nests, ending, without, with });
             }
             tms.push(crate::program::TokenMark { order: *order, elems: out, refuses: *refuses, unless: *unless });
         }

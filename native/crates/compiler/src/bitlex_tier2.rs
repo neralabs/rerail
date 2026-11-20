@@ -147,8 +147,9 @@ enum Pre {
 /// names, its words (strings), whether it is a `~`, whether the file's end takes it, and
 /// whether it is a run of its choices (`program::TokenElem`), a run's depths' sides: each its
 /// counter, whether it opens, its kinds' names and its words (`program::Nest`), and a run's
-/// `ending`'s kinds and words, and the marks it holds without (`without M`: their names).
-pub type TokenElemRow = (i8, Vec<String>, Vec<u16>, bool, bool, bool, Vec<NestRow>, Option<(Vec<String>, Vec<u16>)>, Vec<String>);
+/// `ending`'s kinds and words, and the marks it holds with or without (`with M`, `without M`:
+/// each its name and whether with).
+pub type TokenElemRow = (i8, Vec<String>, Vec<u16>, bool, bool, bool, Vec<NestRow>, Option<(Vec<String>, Vec<u16>)>, Vec<(String, bool)>);
 
 /// One side of a run's depth, as `TokenElemRow` holds it: counter, opens, kinds, words.
 pub type NestRow = (u8, bool, Vec<String>, Vec<u16>);
@@ -1337,7 +1338,8 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         // an entry of the mark's order.
         let none = Vec::new();
         let patterns: Vec<(bool, &Vec<::bitlex::syntax::TokenElem>, &Vec<Vec<::bitlex::syntax::TokenElem>>)> = match &m.tokens {
-            Some((before, seq)) => vec![(false, before, seq)],
+            // A token mark's `unless before`s after its run (`Mark::nexts`).
+            Some((before, seq)) => std::iter::once((false, before, seq)).chain(m.nexts.iter().map(|(unless, seq)| (*unless, &none, seq))).collect(),
             None => m.nexts.iter().map(|(unless, seq)| (*unless, &none, seq)).collect(),
         };
         for (unless, before, seq) in patterns {
@@ -1390,7 +1392,8 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
                         ::bitlex::syntax::TokenElem::Kind(name) => kinds.push(name.clone()),
                         ::bitlex::syntax::TokenElem::Word(w) => words.push(e.string(w)),
                         ::bitlex::syntax::TokenElem::End => end = true,
-                        ::bitlex::syntax::TokenElem::Without(m) => without.push(m.clone()),
+                        ::bitlex::syntax::TokenElem::Without(m) => without.push((m.clone(), false)),
+                        ::bitlex::syntax::TokenElem::With(m) => without.push((m.clone(), true)),
                         ::bitlex::syntax::TokenElem::Not(_) | ::bitlex::syntax::TokenElem::Many(..) => return Err("a `~` or a run inside a `~` or a run".into()),
                     }
                 }

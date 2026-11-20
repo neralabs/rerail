@@ -1663,6 +1663,15 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
             f.ins().brif(x, fail, &[], on, &[]);
             f.switch_to_block(on);
         }
+        // `with M`: a code without one of the marks' bits fails (`TokenElem::with`).
+        if el.with != 0 {
+            let x = f.ins().ushr_imm(c, i64::from(crate::records::MARK_SHIFT));
+            let x = f.ins().band_imm(x, i64::from(el.with));
+            let x = f.ins().icmp_imm(IntCC::Equal, x, i64::from(el.with));
+            let on = f.create_block();
+            f.ins().brif(x, on, &[], fail, &[]);
+            f.switch_to_block(on);
+        }
         let (ok, miss) = (f.create_block(), f.create_block());
         let ok_to = if el.not { miss } else { ok };
         if el.kinds != 0 {

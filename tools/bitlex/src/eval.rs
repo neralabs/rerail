@@ -481,8 +481,11 @@ impl<'a> Ev<'a> {
                 }
                 self.marks.push((kind.clone(), m, *end));
             }
-            Stmt::TokenMark { kind, before, seq } => {
+            Stmt::TokenMark { kind, before, seq, next } => {
                 self.token_marks.insert(self.marks.len(), (before.clone(), seq.clone()));
+                if !next.is_empty() {
+                    self.next.insert(self.marks.len(), next.clone());
+                }
                 self.marks.push((kind.clone(), Mask::zeros(self.n), false));
             }
             Stmt::Error(msg, e) | Stmt::TokenError(msg, e) => {
@@ -1240,7 +1243,7 @@ impl<'a> Ev<'a> {
         let one = |i: usize, c: &TokenElem| match c {
             TokenElem::Kind(k) => &toks[i].kind == k || &lexed[i] == k,
             TokenElem::Word(w) => toks[i].kind.as_bytes() == w.as_slice() || toks[i].soft.as_deref().is_some_and(|s| s.as_bytes() == w.as_slice()),
-            TokenElem::Not(_) | TokenElem::End | TokenElem::Many(..) | TokenElem::Without(_) => false,
+            TokenElem::Not(_) | TokenElem::End | TokenElem::Many(..) | TokenElem::Without(_) | TokenElem::With(_) => false,
         };
         // Each mark's bit at each grammar token, as its record holds it (`TokenElem::Without`):
         // its mask's bits (and its tests') lifted to the next grammar token, its `unless after`
@@ -1261,6 +1264,7 @@ impl<'a> Ev<'a> {
         let names: Vec<&String> = self.marks.iter().map(|(kind, _, _)| kind).collect();
         let without = |t: usize, e: &[TokenElem]| e.iter().all(|c| match c {
             TokenElem::Without(m) => !names.iter().position(|n| *n == m).is_some_and(|k| coded[t][k]),
+            TokenElem::With(m) => names.iter().position(|n| *n == m).is_some_and(|k| coded[t][k]),
             _ => true,
         });
         let is = |t: Option<usize>, e: &[TokenElem]| match (e, t) {
@@ -1279,7 +1283,9 @@ impl<'a> Ev<'a> {
                 let run = follows(g, seq);
                 // `after ~E`: none of `E`'s before, or no token before (the file's first).
                 let after = pre.is_empty() || (g > 0 && is(Some(grammar[g - 1]), pre)) || (g == 0 && matches!(pre.as_slice(), [TokenElem::Not(_)]));
-                if run && after {
+                // `unless before`: none where one of its runs follows.
+                let kept = self.next.get(&k).is_none_or(|n| nexts_hold(n, &|seq| follows(g, seq)));
+                if run && after && kept {
                     before[grammar[g]][k] = true;
                     least[grammar[g]][k] = toks[grammar[g]].start;
                 }

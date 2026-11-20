@@ -450,6 +450,43 @@ tree t {
     assert_eq!(check_documents("without", &c, b"ab() \n", &[], &fixed, &|_, _, _, _| None), None);
 }
 
+/// `with M` and a token mark's `unless before` (0451): an element holds only at a token whose
+/// record has mark `M`'s bit, as the lean parser asks `peek_at(j).nl`; and a token mark holds
+/// nowhere one of its `unless before` runs follows. A `get` after a line break, or on the line of
+/// a `pub` after one, is an accessor unless a `.` follows it. Bitlex's reference and every
+/// executor.
+#[test]
+fn a_token_with_a_mark() {
+    let source = r#"lexer t
+class ws        = ' ' '\n'
+class lf        = '\n'
+class word      = 'a'..'z'
+class punct     = '(' ')' '.'
+mask name       = fill(word, ~word)
+error "a byte no token takes" by tokens when ~ws & ~name & ~punct
+token simple_identifier = start name & ~prev(name) run word
+token punct     = start punct
+keywords simple_identifier { } soft { "get" "pub" }
+keywords punct { "(" ")" "." } required
+skip ws
+mark brk        = lf
+mark acc        = tokens "get" with brk, unless before "get" "."
+mark acc        = tokens after "pub" with brk "get" without brk, unless before "get" "."
+tree t {
+  node source_file whole = (item)*
+  choice item           = accessor | simple_identifier | '(' | ')' | '.'
+  node accessor         = acc 'get'
+  hidden brk
+}
+"#;
+    let c = compile_step("with", source);
+    let fixed = ["a\nget", "a get", "a\npub get", "a pub get", "a\nget.b", "a\npub get.b", "get", "a\n\nget(x)\npub\nget"];
+    let accessor = c.ids.of("accessor");
+    let n: Vec<usize> = fixed.iter().map(|d| reference(&c, d.as_bytes()).unwrap_or_else(|| panic!("{d:?} parses")).iter().filter(|x| x.0 == accessor).count()).collect();
+    assert_eq!(n, [1, 0, 1, 0, 0, 0, 0, 2]);
+    assert_eq!(check_documents("with", &c, b"agetpub(). \n", &[], &fixed, &|_, _, _, _| None), None);
+}
+
 /// A run's `ending (C)` (Q225): the rest is tried only where the run's last token, or the token
 /// before it where it took none, is one of `C`, in Bitlex's reference and every executor.
 #[test]
