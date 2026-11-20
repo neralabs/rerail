@@ -3369,6 +3369,25 @@ impl Model {
         expected.as_ref().and_then(|(_, e)| joins::step_miss(e, steps, SEARCH_WORK))
     }
 
+    /// A mispredicted line, step by step (`RERAIL_JOINS_LOG`, decision 0477's measure of what the counters do not
+    /// price): each step's literal, the rule it was priced by, its rows priced, and the bindings in and rows out it
+    /// made so far (`steps`).
+    fn describe_miss(&self, pf: Fields<'_>, b: &Body<'_>, first: Option<usize>, order: &[Step], steps: &[(u64, u64)]) -> String {
+        let explain = explaining(true);
+        let got = self.explain_order(pf, b, first, order);
+        drop(explain);
+        let Some(x) = got else { return "no explain".into() };
+        x.steps
+            .iter()
+            .enumerate()
+            .map(|(k, st)| {
+                let (i, o) = steps.get(k).copied().unwrap_or_default();
+                format!("[{k}] {} by {} ({}): priced {:.1} rows, made {o} of {i} in", st.literal, st.access, if st.basis.is_empty() { "-" } else { &st.basis }, st.rows)
+            })
+            .collect::<Vec<_>>()
+            .join(" | ")
+    }
+
     fn plan_for_rows_in(&mut self, pf: Fields<'_>, b: &Body<'_>, at: usize, rows: f64, cx: &mut joins::SearchCx) -> Option<Vec<Step>> {
         let rel = b.atom(at).map(|a| b.rel(a).to_owned())?;
         let was = self.stats.delta_rows.insert(rel.clone(), rows.max(1.0));
@@ -9653,6 +9672,7 @@ impl<'a> Run<'a, '_> {
                     if let Some(m) = &miss {
                         joins::count_miss(m);
                         super::profile::decision("mispredicted joins (decision 0203)", || format!("{} (delta at {ai}): {}", b.head_text(), m.describe()));
+                        joins::log(|| format!("mispredicted {} (delta at {ai}): {}; {}", b.head_text(), m.describe(), self.model.describe_miss(pf, &b, Some(ai), &probes[k].2, c)));
                     }
                     joins::flag_slow(key, rule, &probes[k].2, est, work);
                     super::profile::decision("slow joins (decision 0203)", || format!("{} (delta at {ai}): {work:.0} rows of work, priced {est:.0} for its {delta:.0} delta rows", b.head_text()));
@@ -9923,6 +9943,9 @@ impl<'a> Run<'a, '_> {
                         if let Some(m) = &miss {
                             joins::count_miss(m);
                             super::profile::decision("mispredicted joins (decision 0203)", || format!("{}: {}", b.head_text(), m.describe()));
+                            if let Some(steps) = counted.get(line) {
+                                joins::log(|| format!("mispredicted {}: {}; {}", b.head_text(), m.describe(), self.model.describe_miss(pf, &b, Some(cut_lead), &running, steps)));
+                            }
                             self.model.prepared_heavy(&b, &[first, None], &running);
                         }
                         joins::flag_slow(key, rule, &running, est, ran);

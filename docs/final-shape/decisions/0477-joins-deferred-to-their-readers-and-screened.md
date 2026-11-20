@@ -257,6 +257,24 @@ instructions against 1,006.0 and 986.1 G the commit before (4-5% fewer), 6 plans
 Also fixed on the way: the Release-debugging port had added `demand_` to `Body::demand_first`, forcing every demanded
 rule onto its demand and undoing Q59's narrowing (an atom a constant restricts may lead; its test failed).
 
+## What the planner still mispredicts (2026-11-20)
+
+`RERAIL_JOINS_LOG` now prints each mispredicted line step by step (`Model::describe_miss`): each step's literal,
+access, basis, rows priced, and bindings in and rows out made. corpus0 x B-now, one thread, profiling build, the M3:
+7 lines mispredicted (as the plan cache line counts: 6 blown up, 1 over-estimated).
+
+- **6 blown up, 3 rules twice each, one shape** (`xd_..._rr_diagnostic_...`): a deferred join's key relation
+  `xk_...($d)` leads, priced at 3,265 rows (relation size) where it made 21; `fzk_...($d)` tests each (join sketch, 0.91
+  a binding, made 1); then `node($d, $n, ...)` by document is priced at 21 nodes a binding (postings, containment
+  0.012) where it made 1,613. Every document a binding names has nodes; the share of 0.012 is node's documents over the
+  domain's distinct values, the domain taken at the lead's priced rows (0.012 x 3,265 = 39). The join size is not what
+  is missing: `node` is an input (no sketch), and the binding's domain was priced past what it held.
+- **1 over-estimated** (`p278_UP008`): `p278_pos_arg($al, 1, $b)` by `(c1, c2)`, priced at 0.010 rows a binding
+  (observed) where it made 0.0007, its `$b` reached through `text($b, $x)` from `text($nm, $x)`: the chain shape the
+  binding counters would price. The step made 74 rows; the line's work is step 6's 101 k rows, priced right (211 k).
+
+So the counters through several atoms would fix one step of 74 rows; the blow-ups are the containment rule's.
+
 ## Open
 
 - **The device's fused small sorts (at most 2,048 rows) make no screen of their own**: their probes test one where
@@ -264,7 +282,11 @@ rule onto its demand and undoing Q59's narrowing (an atom a constant restricts m
   hash).
 - **Walks driven by a key** (the first step a probe): a screen there belongs to the caller's loop, the scan that
   drives the walks.
-- **Join sizes through several atoms**: the counters price a probe drawn through one atom's column; a binding drawn
-  through several (a three-way join) needs the counters of their joined rows, which nothing keeps.
+- **Join sizes through several atoms** (measured 2026-11-20, below): not built. Where several atoms share the
+  variable, the heavy values price it (the third moment); counters would need a second sign family a column and
+  would rarely tell. Where the variable is reached through another join, the fix would be counters of the bindings
+  where they are made (a hash and an add a binding, sampled 1 in 8 by hash), read by the same estimator. Reopen it
+  where a run's mispredicted lines show that shape.
+- **A containment share from a domain priced past its rows** (below): 6 of corpus0's 7 mispredicted lines.
 - **The deferred step decodes the tree** for every program it runs on (Q186).
 - Whole-pack timing and findings on `scripts/ship/corpora.json` were never compared in Release-debugging.
