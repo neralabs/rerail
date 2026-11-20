@@ -593,14 +593,32 @@ pub struct Placed {
 /// A room of `bytes` (16-byte aligned) for a tape the store loads (decision 0353 step 4a): its slab and its offset
 /// there. The tape is written there once, by its load, and read there by the host and the device; the slab lives as
 /// long as a holder of it does, retired from the residency or not.
+///
+/// A room is a bump of the slab's block (a compare-and-swap), so a tape is placed in the slab tapes go to now
+/// (`TAPE_SLAB`) under a read lock; the residency's lock is taken only to begin the next slab. Every parse worker
+/// places its tapes and line tables here, and with the residency's lock each time they waited on it (0472).
 pub fn tape_room(bytes: usize) -> Result<(Arc<Slab>, usize), Error> {
+    if let Some(slab) = TAPE_SLAB.read().ok().and_then(|slab| slab.clone())
+        && let Some(offset) = slab.room(bytes)
+    {
+        return Ok((slab, offset));
+    }
     let mut state = STATE.0.lock().map_err(|_| Error::BackendFailure)?;
     let (at, offset) = state.room(bytes, &[])?;
     let clock = state.clock;
     state.slabs[at].last_use = clock;
     state.slabs[at].tapes = true;
-    Ok((Arc::clone(&state.slabs[at].slab), offset))
+    let slab = Arc::clone(&state.slabs[at].slab);
+    // Held here, the slab is not retired (`retire` keeps a tapes' slab another holds) while tapes go to it.
+    if let Ok(mut current) = TAPE_SLAB.write() {
+        *current = Some(Arc::clone(&slab));
+    }
+    Ok((slab, offset))
 }
+
+/// The slab `tape_room` places tapes in now: the residency's newest when its last tape was placed. `None` before the
+/// first and after `clear`.
+static TAPE_SLAB: std::sync::RwLock<Option<Arc<Slab>>> = std::sync::RwLock::new(None);
 
 /// Places the misses, keeping the slabs of every document `digests` reads. A document of format 16 or 16z reads its
 /// language's table from its slab: placed with the first document of the language there, after its room. Every
@@ -664,6 +682,9 @@ pub fn clear() {
         state.documents.clear();
         state.sources.clear();
         state.slabs.clear();
+        if let Ok(mut current) = TAPE_SLAB.write() {
+            *current = None;
+        }
         state.pools = [0; 3];
         state.deadline = None;
     }

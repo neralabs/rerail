@@ -226,10 +226,14 @@ impl Grammar {
     /// The grammar of a dialect, built once per process and shared by every document of it: built per document, a
     /// run over 300 files held 61 MB of grammars at its peak (Q74), and built each one's kind table again.
     pub fn embedded(lang: GrammarDialect) -> Result<Arc<Self>, String> {
+        // Read-locked for a grammar built already: every parse worker asks it for each document (0472).
         static GRAMMARS: std::sync::LazyLock<
-            std::sync::Mutex<std::collections::HashMap<GrammarDialect, Arc<Grammar>>>,
+            std::sync::RwLock<std::collections::HashMap<GrammarDialect, Arc<Grammar>>>,
         > = std::sync::LazyLock::new(Default::default);
-        let mut grammars = GRAMMARS.lock().map_err(|_| "grammar cache poisoned")?;
+        if let Some(grammar) = GRAMMARS.read().map_err(|_| "grammar cache poisoned")?.get(&lang) {
+            return Ok(Arc::clone(grammar));
+        }
+        let mut grammars = GRAMMARS.write().map_err(|_| "grammar cache poisoned")?;
         if let Some(grammar) = grammars.get(&lang) {
             return Ok(Arc::clone(grammar));
         }

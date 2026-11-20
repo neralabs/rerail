@@ -25,6 +25,13 @@ Sampled on all, native, on an M1 Max (`sample`, 8 s from the 13th second, the ru
    - Each shard knows every bag's preferred value, written by `register`, whose proof runs once.
    - `Pool::memos` gives each bag's memo, every shard's summed, for the profile's explanation and the tests.
 
+2. **A tape's room is placed without the residency's lock.** A slab's room is a compare-and-swap bump of its block,
+   so `tape_room` places a tape in the slab tapes go to now (`TAPE_SLAB`, under a read lock). It takes the
+   residency's lock only to begin the next slab. `TAPE_SLAB` holds that slab, so it is not retired while tapes go to
+   it, and `clear` drops it.
+3. **`Grammar::embedded`'s cache is read-locked** for a grammar built already: every parse worker asks it for each
+   document.
+
 ## Measured
 
 All, `internal_dead_code`, native, an M1 Max farm host. The rows were ed502024 in every run.
@@ -40,10 +47,22 @@ All, `internal_dead_code`, native, an M1 Max farm host. The rows were ed502024 i
 
 The scalar tests (`-p rerail-logic`, 11) pass.
 
+The parse window (sampled 3–11 s, native all, two runs each, alternating), the pool's samples in mutex waits:
+
+| | Before | After |
+|---|---|---|
+| all of them | 2,257 and 3,209 | 1,358 and 1,616 |
+| `slabs::tape_room` and `Grammar::embedded` | 743 and more | none listed |
+| the store writer's state (`ContentStore::gather`, `pending`) | 1,034–1,362 | 881–1,350 |
+
+The parse workers' CPU is the same (8.3–8.5 s): a thread parked on a lock takes no CPU, so this is parallelism. The
+host's load was 13–33, so the walls say nothing. The residency's and the tapes' placement tests (36) pass.
+
 ## What is next
 
-- **The residency's lock in the parse.** The pool's next mutex waits are `rerail_metal::slabs::tape_room` (743
-  samples): every tape a parse worker places takes the residency's one `Mutex`. Then `Grammar::embedded` and
-  `join_rule_bound`.
+- **The store writer's one lock in the parse.** Every tape a worker queues (`queue_source_and_tape` into the
+  run's one gather) and every look-up of a queued tape (`pending`) takes the writer's state `Mutex`. A gather per
+  worker would remove it, but the other threads' look-ups of a queued tape must still find it.
+- **The parse workers' CPU** is W's reference graph (0466): 6.5 s of the 8.4 s.
 - `cross`' largest strata now run on a core: `reach_edges` 0.69 s and `flow0` 0.63 s, CPU nearly all.
 - `stats` is 1.0 s (it was 1.6–2.5 s), its waits now small.
