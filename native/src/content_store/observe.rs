@@ -2345,6 +2345,43 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// Q219: a root watched through `/./` (`…/q179/./work/r3/corpus-dl`, its files read by that spelling) is told an
+    /// edit under it, as a root spelled plainly is: the edited file is read again, the others trusted.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_root_watched_through_a_dot_reads_an_edit_under_it() {
+        let base = std::env::temp_dir().join(format!("rerail-watch-dot-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("work/root/pkg")).unwrap();
+        let root = base.join(".").join("work/root");
+        assert!(root.to_str().unwrap().contains("/./"), "{root:?}");
+        let files: Vec<PathBuf> = (0..3).map(|i| root.join(format!("pkg/m{i}.py"))).collect();
+        for f in &files {
+            std::fs::write(f, "x = 1\n").unwrap();
+            aged(f);
+        }
+        let store = base.join("store.files");
+        let run = || {
+            let mut o = journal_observer(&store);
+            o.begin();
+            o.watch(std::slice::from_ref(&root));
+            let digests: Vec<[u8; 32]> = files.iter().map(|f| o.digest(f).unwrap()).collect();
+            o.flush();
+            (o.counts, digests)
+        };
+        let (_, digests) = run();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        run();
+        let (second, same) = run();
+        assert_eq!(same, digests);
+        std::fs::write(&files[1], "x = 2\n").unwrap();
+        aged(&files[1]);
+        let (third, after) = run();
+        assert_ne!(after[1], digests[1], "the edit under the dotted root is read ({second}, then {third})");
+        assert_eq!([after[0], after[2]], [digests[0], digests[2]]);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     /// Q189: FSEvents' history can merge a change made just after a run read a path into the path's earlier event,
     /// replayed under an id before the run's cursor: the next run is told nothing. An answer recorded within the
     /// settle window is then checked by `stat`, and the edit read; with no window (as before) it was missed. The merge

@@ -2985,7 +2985,12 @@ given. The run read the edit by another path. Watch a root by its plain absolute
 refuse trust for one that is not plain.
 
 - **Done when**: a test watches a root through `/./` and is told an edit under it.
-- **Record**: —
+- **Record**: (2026-11-19) Not reproduced at HEAD, on the M3: the journal answers a root asked through `/./` with
+  the edit, named under the root as asked (`journal::tests::a_root_spelled_with_a_dot_is_told_an_edit_under_it`),
+  and an observer watching one, its files read by that spelling, reads the edit again and trusts the rest
+  (`observe::tests::a_root_watched_through_a_dot_reads_an_edit_under_it`). Events are matched against the root's
+  canonical form and named under the root as given, and `Path` compares components, which drop a `.` mid-path.
+  The repro's miss predates 0400's answers by arrival and Q221's bound; the tests stay as its guards.
 
 ### Q220. (Q183 on benchmarks-on-integration) The default memory line cuts most chunks of the bench's full shape since the hub's Q55
 
