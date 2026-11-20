@@ -1279,6 +1279,21 @@ device, so a run on OpenCL or the CPU's backend keyed its GPU-lane samples as a 
 device layer's (`Device::name`: the GPU's model, `OpenCL <device>`, or `CPU`; CUDA's the backend's until step E
 reads the driver's). The engine's unused re-export of `METAL_DEVICE` is gone.
 
+**C: done (2026-11-19).** Every hand-written Metal kernel on the product path is UKL, launched through the device
+layer on the process's device: the tape reads, the label passes, the views and ids, the batch runtime with its work
+queue, the block programs, the joins and row programs, accel's GPU lane, and the blocks crate's kernels and labs.
+Each family's tests pass on Metal, on the CPU (OpenCL's SIMD-group rule checked) and on OpenCL. What names Metal
+still:
+
+- **Metal's backend itself:** its compile of a UKL source (`rerail_ukl::metal_source`), its pipelines' archive store
+  and that store's test, the probe of the label kernels' compile (Q181), the driver's allocated size, the Apple9
+  family check of the block programs, and the measure of new command queues in the tape tests' diagnostics.
+- **Step D's:** the generators that write MSL (`clif_msl.rs`, and `c_directives`' test of its words), `pp_on.rs`
+  and `launch.rs`' guards of Metal's dispatch calls.
+- **Left as they are, off the product path:** the tape format 16 spike (`native/lab/tape16`, its own workspace:
+  decision 0156's measures), the Swift GPU probe (`tools/matrix-offload`) and the enqueue experiment's kernels in
+  `docs/rule-engine-direction`: records of measures already taken, not code the engine runs.
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.
