@@ -12,7 +12,8 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { text } from "node:stream/consumers";
 import { promisify } from "node:util";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import Database from "better-sqlite3";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ENTRY_POINTS } from "../src/engine/index.js";
 import { DAEMON_STATE_FILE } from "../src/runtime/index.js";
 import { removeFolder } from "../test/support/platform/remove-folder.js";
@@ -140,6 +141,17 @@ async function holdWriteLock(path: string): Promise<{ release(): Promise<void> }
   };
 }
 
+/** The files with a violation of the rule in the audits the database holds now for `sessionId`. */
+function auditedFiles(sessionId: string): string[] {
+  const database = new Database(join(process.env.RERAIL_HOME!, "rerail.sqlite"), { readonly: true });
+  try {
+    const rows = database.prepare("SELECT violations_json AS violations FROM audits WHERE session_id = ?").all(sessionId) as Array<{ violations: string }>;
+    return rows.flatMap(row => (JSON.parse(row.violations) as Array<{ ruleId: string; path: string }>).filter(violation => violation.ruleId === RULE).map(violation => basename(violation.path)));
+  } finally {
+    database.close();
+  }
+}
+
 beforeAll(async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "rerail-hook-write-lock-")));
   repo = join(root, "app");
@@ -190,6 +202,9 @@ describe("the Claude Code hook while another process holds the database's write 
     }
     expect(clean.post.ms, report).toBeLessThan(free.post.ms + 2_000);
     // The records the daemon took while the lock was held: the session's events and the edit's audit with its violation.
+    // The daemon makes them once its lock wait finds the lock given back, which another process learns only from the
+    // database: the bundle is read once the held edit's audit is there, within twice the waiting write's own 5 s bound.
+    await vi.waitFor(() => expect(auditedFiles(sessionId)).toContain("held_edit.py"), { timeout: 10_000, interval: 20 });
     const bundleFile = join(root, "bundle.json");
     await rerail(["support-bundle", "--session", sessionId, "--output", bundleFile]);
     const bundle = JSON.parse(await readFile(bundleFile, "utf8")) as { session: { audits: Array<{ violations: Array<{ ruleId: string; path: string }> }> } };
