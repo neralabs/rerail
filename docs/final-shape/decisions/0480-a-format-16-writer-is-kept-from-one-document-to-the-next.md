@@ -47,3 +47,9 @@ is gone: `__bzero` went from 1,295 samples to 83.
   equals a new writer's tape.
 - All 34 of `rerail-tape-format`'s tests pass with every kept part filled with `FRESH`. The JSON tests and the AOT
   ladders (JSON, the probes) pass.
+
+## Re-decided by shape (2026-11-20)
+
+The user: no decision by cycles, instructions or time; the generated Rust like simdjson's and the lean parser's. Kept
+by shape: simdjson keeps its `parser`, its buffers allocated once, and the lean parser reserves its columns once
+(`reserve_columns`). The counts above are information, not the reason (page 40, step 38).

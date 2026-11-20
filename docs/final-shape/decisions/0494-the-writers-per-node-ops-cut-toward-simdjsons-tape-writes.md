@@ -104,3 +104,10 @@ What the ops still do at each node, which simdjson's tape writes don't:
 
 A cell's write still loads its column's offset and width, and the side list's count, which it tests. The block's
 room is still found through its table entry and a select on the 16z flag.
+
+## Re-decided by shape (2026-11-20)
+
+The user: no decision by cycles, instructions or time. `w_leaf` as one op is kept: it is the lean parser's `leaf`
+(`open`, then its two writes). The other cuts were chosen by profiles; they are steps inside ops whose shape page 40's
+step 38 replaces (the writer's hot state the walk's, a cursor a column, no commit a node in a direct run, the hot
+visits inline). They are superseded by that order, and the counts above withdrawn as reasons.

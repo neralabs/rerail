@@ -77,3 +77,10 @@ stores each once it is whole (the offsets ascend), and makes both sample lists i
 
 `bits_of` reads the newline words twice, once to count and once to place. A popcount kept by tier 1 (a running count,
 as its extracts have) would take the first read away.
+
+## Re-decided by shape (2026-11-20)
+
+The user: no decision by cycles, instructions or time. Kept by shape: simdjson's stage 1 makes, in its one pass over
+the bytes, every mask stage 2 needs; a second pass over the source for the newlines was a pass neither reference
+makes. §5 is the lean lexer's shape. The profile share and counts above are information, not the reason (page 40,
+step 38).
