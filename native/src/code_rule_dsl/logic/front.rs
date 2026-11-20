@@ -711,7 +711,7 @@ pub fn finish_checks_on(v: &crate::code_rule_dsl::logic::program_image::Version)
 /// value cycles are bounded by what the library's relations guarantee there (`cycles::check_given`).
 pub fn finish_checks_given(v: &crate::code_rule_dsl::logic::program_image::Version, library: Option<&crate::code_rule_dsl::logic::program_image::Version>) -> Result<(), Error> {
     use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
-    use crate::code_rule_dsl::logic::program_image::handles::{Lit, TermRef};
+    use crate::code_rule_dsl::logic::program_image::handles::{AggRef, Lit, TermRef};
     for rule in v.rules() {
         // A computed term is a value, not a pattern: an atom never matches on one (the backends would drop it).
         if let Some(a) = rule.body().filter_map(|l| if let Lit::Atom(a) = l.view() { Some(a) } else { None }).find(|a| a.args().any(|t| matches!(t, TermRef::Call(..)))) {
@@ -720,6 +720,21 @@ pub fn finish_checks_given(v: &crate::code_rule_dsl::logic::program_image::Versi
                 v.rel_name(a.rel()),
                 v.rel_name(rule.head().rel())
             )));
+        }
+    }
+    // A min or max over a symbol would order the symbols by their ids, not their text: refused, as in Soufflé.
+    for rule in v.rules() {
+        for l in rule.body() {
+            let Lit::Agg { op: op @ (AggRef::Min | AggRef::Max), over: Some(o), atom, .. } = l.view() else { continue };
+            let rel = v.rel_name(atom.rel());
+            let cols = v.columns_of(rel).unwrap_or_default();
+            if atom.args().enumerate().any(|(i, t)| matches!(t, TermRef::Var(s) if s == o) && cols.get(i).is_some_and(|(_, ty)| ty == "symbol")) {
+                let op = if matches!(op, AggRef::Min) { "min" } else { "max" };
+                return Err(Error::Syntax(format!(
+                    "{op} over a symbol of {rel} in the rule for {}: symbols have no order an aggregate keeps; compare them with `<`",
+                    v.rel_name(rule.head().rel())
+                )));
+            }
         }
     }
     for (relation, decl) in ProgramFields::lattice(v) {
