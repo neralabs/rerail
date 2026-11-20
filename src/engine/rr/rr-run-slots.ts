@@ -29,10 +29,12 @@ export class RrRunSlots {
   }
 
   /**
-   * `run`, once every run asked for before it has ended. A run aborted while it waits settles at once as `left` and
-   * starts no child; the runs behind it still wait for the run ahead of it.
+   * `run`, once every run asked for before it has ended. A run aborted when asked for, or while it waits, settles at
+   * once as `left` and starts no child; the runs behind it still wait for the run ahead of it.
    */
   async run(run: RrRun): Promise<RrRunEnd> {
+    // An abort listener never fires for a signal aborted already.
+    if (run.signal?.aborted === true) return LEFT_RUN;
     const { promise: aborted, resolve: abort } = Promise.withResolvers<RrRunEnd>();
     run.signal?.addEventListener("abort", () => abort(LEFT_RUN), { once: true });
     const turn = this.#tail.then(() => (run.signal?.aborted === true ? LEFT_RUN : this.#run(run)));

@@ -182,6 +182,19 @@ describe("the .rerail runs of one process", () => {
     runner.runs[1]!.end(COMPLETED);
     expect(await third).toEqual(COMPLETED);
   });
+
+  it("settle a run aborted before it is asked for at once, while another run holds the slot", async () => {
+    const runner = heldRunner();
+    const slots = new RrRunSlots(runner.run);
+    const holding = slots.run({ root: "/a", policies: ["/rules/a.rerail"] });
+    const left = new AbortController();
+    left.abort();
+    expect(await slots.run({ root: "/b", policies: ["/rules/b.rerail"], signal: left.signal })).toEqual({ status: "left" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runner.runs.map(({ run }) => run.root)).toEqual(["/a"]);
+    runner.runs[0]!.end(COMPLETED);
+    expect(await holding).toEqual(COMPLETED);
+  });
 });
 
 describe("the quiet period's setting", () => {
