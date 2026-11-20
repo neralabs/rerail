@@ -5368,8 +5368,8 @@ Open:
   tests in one run, the group one at a time: 54 of 56. A symlinked root's test passed alone. The cap's
   (`more_entries_than_the_cap_lose_the_root`, 16,385 files written) fails alone too: FSEvents told 665 of them in its
   20 s (33 a second; the assertion counts them now), with `fseventsd` at 100% of a core and 18.5 GB resident after
-  172 days up. The host's daemon, not the adapter (the cap's own test, over `Notices`, passes); a restart of
-  `fseventsd` is the host owner's. The changes:
+  172 days up. The host's daemon, not the adapter (the cap's own test, over `Notices`, passes); after the host's owner
+  restarted `fseventsd` (2026-11-19), both pass on the M3, the cap's in 2.0 s. The changes:
   - `fsevents::since_within` waits the caller's bound again, else `WAIT` (or a journal test's settle):
     `wait.unwrap_or(WAIT.max(settle))`.
   - `journal_observer` asks for the journal's answer within the same 5 s it lets the replay settle (it asked 2 s,
