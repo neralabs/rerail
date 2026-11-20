@@ -720,22 +720,28 @@ describe("MCP callers and the agent guard", () => {
 
   // One answer resolves at most 256 distinct paths on disk (CHECKOUT_PATH_RESOLUTIONS in src/engine/path-boundary.ts)
   // across every folder its findings were recorded in, and judges the rest by name. Sessions in `web` and `api` recorded
-  // 256 findings each, the first in `conf/config.py` with `conf` a link to `.aws`; `audits_list`, which judges every
-  // finding of both audits in one answer, withholds that finding in the audit it judges first and serves it whole in the
-  // other, the 257th path.
+  // 256 findings each, the first in `conf/config.py` and the last in `conf2/config.py`, with `conf` and `conf2` links to
+  // `.aws`. `audits_list` judges every finding of both audits in one answer: it withholds both in the audit it judges
+  // first, where `conf2/config.py` is the 256th path, and serves both whole in the other, from the 257th path on. A
+  // lower limit fails the first audit, a higher one the second. `resolutions` repeats the limit on purpose: the boundary
+  // check keeps this file from importing path-boundary.ts, and a new limit fails this case until the case changes too.
   it("resolves at most 256 paths per answer across the folders of its findings, past which it judges by name", async () => {
     const resolutions = 256;
-    const paths = ["conf/config.py", ...Array.from({ length: resolutions - 1 }, (_, n) => `src/f${n}.py`)];
+    const paths = ["conf/config.py", ...Array.from({ length: resolutions - 2 }, (_, n) => `src/f${n}.py`), "conf2/config.py"];
     for (const name of ["web", "api"]) {
       const folder = join(parent, name);
       mkdirSync(folder, { recursive: true });
       secretsBehind(folder, "conf");
+      linkFolder(".aws", join(folder, "conf2"));
       auditFinding(paths, { sessionId: name, folder, checkout: folder });
     }
     const { audits } = (await call("audits_list", {}, from(parent))).result as { audits: Array<{ violations: Array<Record<string, unknown>> }> };
     expect(audits.map(audit => audit.violations.length)).toEqual([resolutions, resolutions]);
-    const first = audits.map(audit => [audit.violations[0]!.path, findingView(audit.violations[0]!)]);
-    expect(first).toEqual([["conf/config.py", "withheld"], ["conf/config.py", "whole"]]);
+    const ends = audits.map(audit => [audit.violations[0]!, audit.violations.at(-1)!].map(violation => [violation.path, findingView(violation)]));
+    expect(ends).toEqual([
+      [["conf/config.py", "withheld"], ["conf2/config.py", "withheld"]],
+      [["conf/config.py", "whole"], ["conf2/config.py", "whole"]],
+    ]);
   });
 
   // Windows opens a folder or a file by its 8.3 short name too (`AWS~1` for `.aws`, `WP-CON~1.PHP` for `wp-config.php`),
