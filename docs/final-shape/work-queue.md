@@ -5405,3 +5405,16 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   (`GROWTH`, 0450 step 7; refusals by device room). (c), the threads'
   coordination; the Metal peak footprint at big chunks (1.36-1.47 GB, the count's
   most 1.15 GB), whose largest rise t49 found in the guests' `ann_ctx` stratum.
+
+### Q262. On Metal a hogql run can lose a whole chunk's findings
+
+- **Seen** (2026-11-19, decision 0450 5b-5e): a cold hogql run under the Metal binding, profiling build, format 15,
+  sometimes gives fewer than its 1,629 findings (1,358, 1,375 and 1,487 seen), with no error and exit 0. The files
+  that lose findings lose all of them, and they are a different set each time (one chunk's). Step 7's build
+  (d8f645ce4), made before 5b, did it too: 1 of 4 runs at load 20 (1,487). Before that its build gave 12 of 12 at
+  load 31-38. The CPU binding has given 1,629 in every run.
+- **Suspect, not shown:** the stages run again after an overflow. Their number differs between runs (96-103, R6 of
+  0450), so a rerun that drops or overwrites rows would lose output by timing.
+- **Do:** find the stratum whose rows differ in a bad run (a per-chunk count of each head's rows, compared with a
+  good run's), then the cause; a test that hits it; the fix.
+- **Done when:** 20 Metal runs of hogql give 1,629 each.
