@@ -22,7 +22,7 @@ import {
   type SteerFinding,
   type SteerShell,
 } from "../../../src/engine/code-rule/rerail-steer.js";
-import { steerOrigin } from "../../../src/engine/code-rule/steer-origin.js";
+import { steerOrigin, steerTitle } from "../../../src/engine/code-rule/steer-origin.js";
 import { installPack, installPackDirectory, thirdPartyPack } from "../../support/installed-packs.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
 import { shellLatitude } from "../../support/steers.js";
@@ -241,6 +241,22 @@ describe("Rerail steer text", () => {
     expect(steerBlock({ kind: "edit" }, findings)).not.toContain("rule pack");
   });
 
+  it("names a rule by its own title, else the title its pack lists, else by nothing so its id stands", () => {
+    const packTitle = "Keep Python functions to 6 or fewer paths";
+    expect(steerTitle("complexity-cyclomatic-python")).toBe(packTitle);
+    expect(steerTitle("complexity-cyclomatic-python", { kind: "pack", packId: "complexity" })).toBe(packTitle);
+    // A copy of a pack's rule, or a rule of yours, goes by the title it was saved with, and by none without one.
+    expect(steerTitle("complexity-cyclomatic-python-copy", { kind: "library_rule", packId: null, title: "Ours" })).toBe("Ours");
+    expect(steerTitle("complexity-cyclomatic-python", { kind: "library_rule", packId: null })).toBeUndefined();
+    expect(steerTitle("wt-no-needle", { kind: "pack", packId: "worktree" })).toBeUndefined();
+    const findings = [finding({ ruleId: "complexity-cyclomatic-python" }), finding({ ruleId: "x" })];
+    expect(steerRules(findings, () => undefined, steerTitle)).toEqual([
+      { id: "complexity-cyclomatic-python", title: packTitle, state: "steered" },
+      { id: "x", state: "steered" },
+    ]);
+    expect(steerBlock({ kind: "edit" }, findings)).not.toContain(packTitle);
+  });
+
   it("gives the person one line per rule, the same line the steer header made, with its link once the rule has one", () => {
     expect(steerHeadlines([
       { id: "a", state: "steered", url: `${DASHBOARD}#rule/a` },
@@ -249,6 +265,18 @@ describe("Rerail steer text", () => {
       { header: "◆ Rerail · a  steered", url: "http://127.0.0.1:4791/#rule/a" },
       { header: "○ Rerail · b  logged", url: undefined },
     ]);
+  });
+
+  it("names each rule in the person's line by its title, on one line and capped, and by its id without one", () => {
+    expect(steerHeadlines([
+      { id: "local:no-shadows", title: "No shadows except\nthe one sheet shadow", state: "steered" },
+      { id: "local:untitled", title: "  ", state: "steered" },
+    ]).map(headline => headline.header)).toEqual([
+      "◆ Rerail · No shadows except the one sheet shadow  steered",
+      "◆ Rerail · local:untitled  steered",
+    ]);
+    const [long] = steerHeadlines([{ id: "r", title: "t".repeat(STEER_NAME_CHARS + 1), state: "steered" }]);
+    expect(long!.header).toBe(`◆ Rerail · ${"t".repeat(STEER_NAME_CHARS - 1)}…  steered`);
   });
 
   it("puts the why? link on the word where the agent can draw one, and prints it after the word where it cannot", () => {

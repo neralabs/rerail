@@ -59,7 +59,7 @@ import { parseSampleSource, SAMPLE_BOUNDARIES } from "../engine/catalog/rule-sch
 import { restorableRule, type DroppedEvents, type RuleMutation } from "./session-state.js";
 import { SessionLanes } from "./session-lanes.js";
 import { rewoundSteer, steerBlock, steerRules, steerShell, subagentSteer, type SteerShell } from "../engine/code-rule/rerail-steer.js";
-import { steerOrigin } from "../engine/code-rule/steer-origin.js";
+import { steerOrigin, steerTitle } from "../engine/code-rule/steer-origin.js";
 import { checkoutPathBoundary } from "../engine/path-boundary.js";
 import { SqliteSessionStore, type SessionAttribution } from "./session-store.js";
 import { isDefaultStorageRoot } from "./session-paths.js";
@@ -2730,7 +2730,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         mechanism: ADAPTER_CAPABILITIES[state.descriptor.host].delivery[match.mode],
         content: steerBlock({ kind: "tool", tool: sampleTool(sample.source) }, findings, steerShell(state.descriptor.host)),
         ruleIds: [match.ruleId],
-        rules: steerRules(findings, steerOrigin),
+        rules: steerRules(findings, steerOrigin, ruleId => match.title ?? steerTitle(ruleId)),
       };
       await this.#append(state, { type: "delivery", delivery });
       deliveries.push(delivery);

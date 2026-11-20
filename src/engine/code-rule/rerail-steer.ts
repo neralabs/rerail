@@ -208,14 +208,25 @@ export function steerBlock(trigger: SteerTrigger, findings: readonly SteerFindin
 
 /**
  * The rules behind `findings`, each once, in first-seen order: what the person's line names (`steerHeadlines`), with
- * the rule's state from its first finding and where it comes from (`origin`, `steerOrigin`'s sentence).
+ * the rule's state from its first finding, where it comes from (`origin`, `steerOrigin`'s sentence) and its title
+ * (`title`, `steerTitle`'s words).
  */
-export function steerRules(findings: readonly SteerFinding[], origin: (ruleId: string) => string | undefined = () => undefined): SteerRule[] {
+export function steerRules(
+  findings: readonly SteerFinding[],
+  origin: (ruleId: string) => string | undefined = () => undefined,
+  title: (ruleId: string) => string | undefined = () => undefined,
+): SteerRule[] {
   const rules = new Map<string, SteerRule>();
   for (const { ruleId, mode } of findings) {
     if (rules.has(ruleId)) continue;
     const source = origin(ruleId);
-    rules.set(ruleId, { id: ruleId, state: mode === "log" ? "logged" : "steered", ...(source === undefined ? {} : { origin: source }) });
+    const named = title(ruleId);
+    rules.set(ruleId, {
+      id: ruleId,
+      ...(named === undefined ? {} : { title: named }),
+      state: mode === "log" ? "logged" : "steered",
+      ...(source === undefined ? {} : { origin: source }),
+    });
   }
   return [...rules.values()];
 }
@@ -246,9 +257,18 @@ export interface SteerHeadline {
   readonly url: string | undefined;
 }
 
+/**
+ * The words a person's line names `rule` by: its title on one line, cut to {@link STEER_NAME_CHARS}, else its id. The
+ * coding agent's steer names the id, which its `rerail feedback` command takes.
+ */
+export function steerRuleName(rule: Pick<SteerRule, "id" | "title">): string {
+  const title = rule.title === undefined ? "" : cappedLine(rule.title);
+  return title === "" ? rule.id : title;
+}
+
 /** The person's headline for each of `rules`, in order: `◆ Rerail · <rule>  steered`, with the rule's link once it has one. */
 export function steerHeadlines(rules: readonly SteerRule[]): SteerHeadline[] {
-  return rules.map(rule => ({ header: `${STEER_GLYPHS[rule.state]} Rerail · ${rule.id}  ${rule.state}`, url: rule.url }));
+  return rules.map(rule => ({ header: `${STEER_GLYPHS[rule.state]} Rerail · ${steerRuleName(rule)}  ${rule.state}`, url: rule.url }));
 }
 
 /** The tool each coding agent starts a subagent with; Pi has none of its own, so Rerail registers `rerail_fix` there. */

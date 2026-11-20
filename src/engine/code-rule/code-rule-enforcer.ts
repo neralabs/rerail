@@ -2517,9 +2517,12 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     const steerable = violations.filter((violation) => steers(violation.mode)).map(violation => this.#presented(violation));
     if (steerable.length === 0) return;
     const provenance = this.#workspace?.provenance ?? this.#catalog.provenance();
+    const codeRules = this.#catalog.snapshot().codeRules;
     const sourceOf: SteerSourceOf = ruleId => {
       const recorded = provenance.find(entry => entry.ruleId === ruleId);
-      return recorded !== undefined && "source" in recorded ? recorded.source : undefined;
+      if (recorded === undefined || !("source" in recorded)) return undefined;
+      const title = codeRules.find(rule => rule.id === ruleId)?.title;
+      return { ...recorded.source, ...(title === undefined ? {} : { title }) };
     };
     // Paths are judged in the workspace they are relative to, so a file that links to a secret is judged as one.
     const boundary = checkoutPathBoundary(this.#workspaceRoot);

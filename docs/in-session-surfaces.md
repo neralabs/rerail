@@ -158,11 +158,12 @@ Block-mode rules steer the same way; blocking is not built yet. Log-mode rules n
 
 ### What you see
 
-One line per rule, `◆ Rerail · <rule id>  steered  ·  why?`, where `why?` opens the rule on your dashboard.
+One line per rule, `◆ Rerail · <rule>  steered  ·  why?`, where `why?` opens the rule on your dashboard.
 
 <details>
-<summary>Mark, link and glyphs</summary>
+<summary>Rule, mark, link and glyphs</summary>
 
+- **Rule:** the rule's title, as the dashboard lists it: the one you gave a rule of yours, or the one its rule pack lists. A rule with neither shows its id. The coding agent's block still names the id, which its `rerail feedback` command takes.
 - **Mark:** the footer's coloured `R E R A I L` where the agent draws colour (Claude Code, OMP); the word in Codex and Cursor.
 - **Link:** `why?` appears only while a daemon answers on a loopback address. With none, or one bound to `0.0.0.0`, the line has no link rather than a dead one.
 - **Glyphs:** `◆ steered`, `○ logged`. Log-mode rules never reach a session, so sessions show `◆` only.
