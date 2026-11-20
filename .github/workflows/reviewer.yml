@@ -18,8 +18,8 @@ on:
   # executed: the reviewer checks the PR out as data and never runs it. Fork PRs never get the model key or
   # the app key, on any trigger: the `same-repo` job below holds neither key and calls the reviewer only when the
   # PR's head repo is this repo. An issue comment's event carries no head repo, so the job asks the API, the same
-  # way for every trigger. (The called workflow's own `gate` job checks review requests and finding-thread replies,
-  # but not a top-level comment command, which would otherwise review a fork PR with both keys.)
+  # way for every trigger. (The called workflow's own `gate` job checks the head repo for review requests and review
+  # comments, but not for a top-level comment command, which would otherwise review a fork PR with both keys.)
   pull_request_target:
     types: [review_requested]
   issue_comment:
@@ -52,8 +52,9 @@ jobs:
     # dependabot-automerge.yml dispatches are not pull_request events.
     # The rest is the called workflow's own `gate` prefilter, repeated here so an event the reviewer would drop never
     # starts this job's runner: a review request counts only for the reviewer team and only from a person, and a
-    # comment only from a person and only when it names the bot or the team. So the bot's own findings and replies,
-    # which are comments too, never start a run. Keep it in step with `gate` at the pinned commit and with `handle` below.
+    # comment (a reply on a finding thread too) only from a person and only when it names the bot or the team. So the
+    # bot's own findings and replies, which are comments too, never start a run. Keep it in step with `gate` at the
+    # pinned commit and with `handle` below.
     if: >-
       ${{
         (github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
