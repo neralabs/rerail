@@ -3815,6 +3815,11 @@ native join it falls back to the planner's whole-rule order.
   or hash a branded name by its text (as `relocate` maps names by their strings), helpers' names included.
 - **Done when**: two fresh stores give the same rules one identity, and a test lowers them on two numberings and
   finds the same keys.
+- **Decided** (2026-11-19, decision 0472): plans do not move across stores. The kept and prepared plans are rows in
+  the project's store, so a new store has none to read whatever the identity; sharing them would carry one project's
+  corpus data to another outside 0442's explicit `Shared`; planning is 1-3% of a cold run's CPU; and every hash over a
+  lowered rule would be re-based on text. A seeded store (an explicit export and import keyed by the rules' text) is
+  0472's open item, not built. Closed.
 
 ### Q186. The node-product rewrite on the version (0393)
 
