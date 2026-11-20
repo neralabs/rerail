@@ -94,13 +94,20 @@ pub const COMBINING: &[&str] = &[
     "RERAIL_NODE_IDS",
     // Identical relations merged (`same_relations`, in combining and again in preparing).
     "RERAIL_SAME",
+    // The passes combining replays to judge an answer as preparation's own demand leaves it (`demanded`), and runs
+    // again in preparing: `simplify` and the reach index.
+    "RERAIL_EXISTENCE_COUNTS",
+    "RERAIL_INLINE_FILTERS",
+    "RERAIL_JOIN_KEYS",
+    "RERAIL_PROJECT_COLUMNS",
+    "RERAIL_REACH_INDEX",
 ];
 
 /// The engine switches read while a program is lowered and prepared (`run_observed`, before the prepared program is
 /// kept): each changes the prepared program, so each is in its key. The run's other switches are not: the key also
 /// keys a session's kept frames, which a diagnostic switch turned on mid-session must not make cold. A switch read in
-/// lowering or preparation is listed here or as changing none, which a test checks
-/// (`every_switch_lowering_reads_is_classified`).
+/// lowering or preparation is listed here, in `COMBINING` (which the prepared key holds through the combined
+/// program's), or as changing none, which a test checks (`every_switch_lowering_reads_is_classified`).
 pub const PREPARING: &[&str] = &[
     // Lowering and its passes.
     "RERAIL_TEXT_NODES",
@@ -110,12 +117,6 @@ pub const PREPARING: &[&str] = &[
     "RERAIL_FACTORIZE",
     "RERAIL_EXPORT_DEMAND",
     "RERAIL_CROSS_MEMO",
-    "RERAIL_REACH_INDEX",
-    // `simplify`.
-    "RERAIL_EXISTENCE_COUNTS",
-    "RERAIL_INLINE_FILTERS",
-    "RERAIL_JOIN_KEYS",
-    "RERAIL_PROJECT_COLUMNS",
     // `run_observed`'s preparation.
     "RERAIL_TEXT_TESTS",
     "RERAIL_DEMAND",
@@ -936,8 +937,11 @@ fn answered_by_function(prog: &front::Program, a: &crate::code_rule_dsl::logic::
 /// demand comes from `same_pair`, which negates `same_leaf`, which reads `value`; without `same_pair`, `unparen`'s
 /// demand joined the two compared nodes by a child's position only, so it, `value`'s request and its answer were
 /// cross-file, and preparation refused the program. The steps are `run_observed`'s before the demand, in its order (the
-/// combined program has none of them yet: on it, the demand made no `unparen` demand rule). None when the demand
-/// cannot change an answer, or when a step fails (preparation then fails, or leaves the demand out).
+/// combined program has none of them yet: on it, the demand made no `unparen` demand rule), then the demand and the
+/// prune after it. Not `hiding::fold_own`: it folds guests' copies for the run's language, which combining does not
+/// know (the prepared key names it). Nor `RERAIL_DEMAND=off`: the demand is replayed under it too, which can only make
+/// an answer eager, so the combined program is not a function of it. None when the demand cannot change an answer, or
+/// when a step fails (preparation then fails, or leaves the demand out).
 fn demanded(prog: &front::Program) -> Option<front::Program> {
     if !demand_reaches_an_answer(prog) {
         return None;
@@ -950,13 +954,13 @@ fn demanded(prog: &front::Program) -> Option<front::Program> {
     let mut p = front::prune(p);
     crate::code_rule_dsl::logic::reach_form::find(&mut p).ok()?;
     let (p, _) = crate::code_rule_dsl::logic::magic::demand_negated_tests(p);
-    crate::code_rule_dsl::logic::magic::demand_bound_columns(p, &Default::default()).ok()
+    crate::code_rule_dsl::logic::magic::demand_bound_columns(p, &Default::default()).ok().map(front::prune)
 }
 
-/// Whether `prog` has its own demand, which preparation applies (not `RERAIL_DEMAND=off`), and an attribute answered by
-/// a function whose answer reads a demanded relation: the demand can change only what reads what it demands.
+/// Whether `prog` has its own demand, and an attribute answered by a function whose answer reads a demanded relation:
+/// the demand can change only what reads what it demands.
 fn demand_reaches_an_answer(prog: &front::Program) -> bool {
-    if prog.demand.is_empty() || std::env::var("RERAIL_DEMAND").is_ok_and(|v| v == "off") {
+    if prog.demand.is_empty() {
         return false;
     }
     let reading = reading_demanded(prog);

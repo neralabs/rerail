@@ -317,10 +317,15 @@ and the cycle never formed.
 
 Combining now also judges an answer in the program as preparation makes it, its own demand included, when the answer
 reads a demanded relation (`answers_where_documents_are`, `demanded`: `run_observed`'s steps before the demand, then
-the demand; on the combined program as it is, the demand made no `unparen` demand rule at all). RUF034 alone has
-`value` eager, as in the pack, and gives the pack's findings. A program whose function answers read no demanded
-relation does no more work. Test: `an_answer_the_programs_demand_puts_across_files_is_eager_alone_as_in_a_pack`
-(refused without it).
+the demand and the prune after it; on the combined program as it is, the demand made no `unparen` demand rule at all).
+RUF034 alone has `value` eager, as in the pack, and gives the pack's findings. A program whose function answers read
+no demanded relation does no more work. Test:
+`an_answer_the_programs_demand_puts_across_files_is_eager_alone_as_in_a_pack` (refused without it).
+
+The combined program is kept under `COMBINING`'s switches alone, so what this replay reads is listed there: the
+switches of `simplify` and of the reach index, which preparing reads again. The replay leaves two things out. It does
+not read `RERAIL_DEMAND`: it replays the demand under `=off` too, which can only make an answer eager, never wrong.
+And it does not fold guests' copies (`hiding::fold_own`), which needs the run's language, unknown when combining.
 
 ## 9. Order
 

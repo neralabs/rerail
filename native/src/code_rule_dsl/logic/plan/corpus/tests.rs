@@ -1706,10 +1706,16 @@ fn every_switch_lowering_reads_is_classified() {
         let b = a + corpus[a..].find(to).unwrap_or_else(|| panic!("corpus.rs has no {to:?} after {from:?}"));
         corpus[a..b].to_owned()
     };
-    // Combining: `combine_read`, what it calls that reads a switch (`scoping::guard`), and the `.rerail` lowering its
-    // `rr::parse` runs (`logic/rr`, `front`). The combined program is kept under `COMBINING` alone.
-    let mut combining = sources(&["logic/rr", "logic/front.rs", "logic/front", "logic/plan/corpus/scoping.rs"]);
+    // Combining: `combine_read`, what it calls that reads a switch (`scoping::guard`), the `.rerail` lowering its
+    // `rr::parse` runs (`logic/rr`, `front`), and the passes it replays to judge an answer as the program's own demand
+    // leaves it (`answers_where_documents_are` through `reading_demanded`: simplify, reach index, demand). The combined
+    // program is kept under `COMBINING` alone.
+    let mut combining = sources(&[
+        "logic/rr", "logic/front.rs", "logic/front", "logic/plan/corpus/scoping.rs", "logic/simplify.rs", "logic/reach_form.rs", "logic/magic.rs",
+        "logic/magic",
+    ]);
     combining.push(("corpus.rs, combine_read".to_owned(), region("\nfn combine_read(", "\n}\n")));
+    combining.push(("corpus.rs, answers_where_documents_are".to_owned(), region("\nfn answers_where_documents_are(", "\n/// A measurement (dev only")));
     // Preparing: `run_observed` up to the prepared program, what it calls that reads a switch (`hiding::fold_own`,
     // memo, session, profile, costs) and the passes. The prepared key holds `PREPARING` and the combined program's
     // key. Not `plan/keeps.rs` and `plan/choices.rs`: what a relation keeps is chosen in `plan::run` and kept under
