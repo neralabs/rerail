@@ -626,15 +626,57 @@ jobs:
       - name: Run fmt, clippy
         run: npm run check:native
 
-      # The engine's browser build (native/wasm/README.md): no other job builds the engine for wasm32-wasip1, so a
-      # change that broke it failed no check. Checks, not builds: the library with its default features, then the
-      # shape a page ships, the rule explorer's (the binary and its library, `headless` and one language, without
-      # `tape-cache` or `dump-cli`), since code gated on those features compiles only there. wasi-sdk brings the
-      # clang, llvm-ar, wasi-libc and libc++ that native/wasm/env.sh takes from Homebrew on macOS. Only when the change
-      # reaches the engine (`rust-engine`), which is also when the target's standard library is installed, and before
-      # the save, so main's store keeps these compiles too.
+      - name: Save the compile cache for later runs
+        if: env.SAVE_WARM == 'true'
+        uses: ./.github/actions/rust-compile-cache/save
+        with:
+          artifact: ${{ steps.compile-cache.outputs.artifact }}
+          dir: ${{ steps.compile-cache.outputs.dir }}
+
+  # The engine's browser build (native/wasm/README.md): no other job builds the engine for wasm32-wasip1, so a change
+  # that broke it failed no check. Checks, not builds: the library with its default features, then the shape a page
+  # ships, the rule explorer's (the binary and its library, `headless` and one language, without `tape-cache` or
+  # `dump-cli`), since code gated on those features compiles only there. wasi-sdk brings the clang, llvm-ar, wasi-libc
+  # and libc++ that native/wasm/env.sh takes from Homebrew on macOS. Gated as rust-windows is, when the change reaches
+  # the engine (`rust-engine`). A job of its own with no compile cache: its failure, or a failed download for it, leaves
+  # what rust-clippy saves as it was. Cold, it took 3 minutes on a 4-core machine.
+  rust-wasm:
+    name: Rust engine (browser build)
+    needs: changes
+    if: >-
+      ${{
+        needs.changes.outputs.rust != 'false' && needs.changes.outputs.rust-engine != 'false' &&
+        needs.changes.outputs.release-pr != 'true' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # The grammars' parsers, which the build scripts compile for the target, are LFS objects.
+      - uses: ./.github/actions/lfs
+
+      - id: rust-toolchain
+        name: Read pinned Rust toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
       - name: Check the engine's browser build (wasm32-wasip1)
-        if: needs.changes.outputs.rust-engine != 'false'
         env:
           RUST_CHANNEL: ${{ steps.rust-toolchain.outputs.channel }}
           WASI_SDK: wasi-sdk-34.0-x86_64-linux
@@ -649,14 +691,6 @@ jobs:
           . native/wasm/env.sh
           cargo check -p rerail-engine --lib --target wasm32-wasip1
           cargo check -p rerail-engine --bin rerail-engine --target wasm32-wasip1 --no-default-features --features headless,lang-python
-
-      # Also when a step above failed: the compiles before it passed, and the next runs start from them.
-      - name: Save the compile cache for later runs
-        if: ${{ !cancelled() && env.SAVE_WARM == 'true' }}
-        uses: ./.github/actions/rust-compile-cache/save
-        with:
-          artifact: ${{ steps.compile-cache.outputs.artifact }}
-          dir: ${{ steps.compile-cache.outputs.dir }}
 
   # The engine's test binaries, compiled once for the legs of the rust job (scripts/check/ci/native-test-legs.mjs): it runs
   # `cargo test --workspace` with that script as cargo's target runner, which records each test binary with the
@@ -2016,6 +2050,7 @@ jobs:
       - build-windows
       - build-macos
       - rust-windows
+      - rust-wasm
       - unit
       - unit-windows
       - ui-e2e

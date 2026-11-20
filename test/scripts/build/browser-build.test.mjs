@@ -1,6 +1,6 @@
 // native/wasm/env.sh, the C and C++ toolchain of the engine's browser build (wasm32-wasip1), and CI's check of that
-// build in ci.yml's rust-clippy job. The check runs `cargo check`, which links nothing, so a wrong link flag passes it:
-// these read env.sh's link line, and the job's steps around the check.
+// build, a job of its own in ci.yml. The check runs `cargo check`, which links nothing, so a wrong link flag passes it:
+// these read env.sh's link line, and the job around the check.
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -35,13 +35,13 @@ describe.skipIf(process.platform === "win32")("env.sh with wasi-sdk", () => {
 });
 
 describe("CI's check of the browser build", () => {
-  const job = parse(readFileSync(CI, "utf8")).jobs["rust-clippy"];
-  const check = job.steps.find((step) => step.run?.includes("--target wasm32-wasip1"));
+  const checks = (step) => step.run?.includes("--target wasm32-wasip1");
+  const job = Object.values(parse(readFileSync(CI, "utf8")).jobs).find((each) => each.steps?.some(checks));
+  const check = job.steps.find(checks);
 
-  it("keeps the job's compiles for later runs when the check or a step before it fails", () => {
-    const save = job.steps.find((step) => step.uses === "./.github/actions/rust-compile-cache/save");
-    expect(job.steps.indexOf(save)).toBeGreaterThan(job.steps.indexOf(check));
-    expect(save.if).toContain("!cancelled()");
+  it("runs in a job with no compile cache, when a change reaches the engine, so it never changes what another job saves", () => {
+    expect(job.steps.filter((step) => step.uses?.startsWith("./.github/actions/rust-compile-cache"))).toEqual([]);
+    expect(job.if).toContain("needs.changes.outputs.rust-engine != 'false'");
   });
 
   it("installs the wasm32-wasip1 standard library only in the check, which runs when a change reaches the engine", () => {
