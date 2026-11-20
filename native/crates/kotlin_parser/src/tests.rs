@@ -1317,3 +1317,38 @@ fn lazy_probe() {
     let blank_bits = rerail_compiler::native_cpu_block::blank_bits(r, &|o| bw.can(o));
     eprintln!("blank marks read by the CPU loop: {blank_bits:b}; records_made {:?}", native.records_made());
 }
+
+/// One grammar compiles to one program, each time (the compiler's maps hash with a fixed seed), and the walk lemmas
+/// (`bitlex_masks::NO_WALK_LEMMAS`: a walk's regions never overlap) change only what tier 2 is proved to need: a
+/// step whose walk they speak of reads each text as without them, the same tape or the same refusal. The step is
+/// the ladder's last, the one it keeps (0422).
+#[test]
+#[ignore = "slow: compiles step 36 three times, ~85 s each on an M1 Max (0422 kept no smaller step); Q331"]
+fn a_step_compiles_to_one_program_and_walk_lemmas_keep_its_tapes() {
+    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/bitlex_ladder/36-no-back-fills.bitlex")).expect("step 36");
+    let with = compile_text(&source).expect("step 36 compiles");
+    assert!(!with.program.block_programs[0].walks.is_empty(), "step 36 has no walk for the lemmas");
+    let again = compile_text(&source).expect("step 36 compiles");
+    assert!(with.words == again.words && with.program.words == again.program.words, "step 36 compiles to two programs");
+    bitlex_compile::NO_WALK_LEMMAS.set(true);
+    let without = compile_text(&source);
+    bitlex_compile::NO_WALK_LEMMAS.set(false);
+    let without = without.expect("step 36 compiles without the walk lemmas");
+    assert!(with.program.words.len() < without.program.words.len(), "the walk lemmas prove nothing in step 36: {} words either way", with.program.words.len());
+    let texts = [
+        "package a\n\nimport b.c\n",
+        "val s = \"a // b\" // c \"d\"\n",
+        "/* \"x\" */ val c = '\"'\n",
+        "val a = 0x1F + 1_000L - 1.5e-3f // \"\n",
+        "val s = \"\"\"raw /* x */ \"\"\"\n",
+        "val s = \"${a + \"b\"}\"\n",
+        "// only\n",
+        "/* open\n",
+        "val s = \"open\n",
+        "val c = '\\n' + '\\'' /* '\" */\n",
+        "fun f() {\n    a(\"x\") /* y */ // z\n}\n",
+    ];
+    for t in texts {
+        assert_eq!(with.parser.image(t.as_bytes()).ok(), without.parser.image(t.as_bytes()).ok(), "{t:?}");
+    }
+}

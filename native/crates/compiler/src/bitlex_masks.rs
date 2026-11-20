@@ -1445,6 +1445,28 @@ impl Lowering {
         }
     }
 
+    /// A prover over this program (`bitlex_prove::Induction`) that knows what the rounds' equations do not show
+    /// alone: a walk's regions (`block::Walk`) hide each other, as the walk opens a region only past the last
+    /// one's closer, so no two of its kinds' fills hold at one place (`NO_WALK_LEMMAS`: not told).
+    fn induction(&self, horizon: u32, conflicts: u32) -> bitlex_prove::Induction {
+        let mut settled = bitlex_prove::Induction::new(&self.program.rounds, horizon, conflicts);
+        #[cfg(any(test, feature = "test-hooks"))]
+        let told = !NO_WALK_LEMMAS.get();
+        #[cfg(not(any(test, feature = "test-hooks")))]
+        let told = true;
+        if told {
+            for walk in &self.program.walks {
+                for (i, a) in walk.kinds.iter().enumerate() {
+                    for b in &walk.kinds[i + 1..] {
+                        // One group's values are at one delay: a place is one lag in both.
+                        settled.add_lemma(vec![(a.fill, 0, true), (b.fill, 0, true)]);
+                    }
+                }
+            }
+        }
+        settled
+    }
+
     /// The operations as the prover reads them (`bitlex_prove`): with a prefix, its value zero.
     /// The prover's positions are the stream's, and every bit of the prefix's lies before the
     /// stream, where its model has no byte in any class and every carried value 0, as the cut
@@ -1474,7 +1496,7 @@ impl Lowering {
     pub fn settled_never(&mut self, prover: &mut bitlex_prove::Induction, x: Val) -> bool {
         let ops = proof_ops(&self.program, &self.prefix);
         let tables = &self.program.tables;
-        let key = bitlex_prove::question(&ops, tables, &self.program.rounds, x.v, x.d, &prover.asker("never"));
+        let key = bitlex_prove::question_given(&ops, tables, &self.program.rounds, x.v, x.d, &prover.asker("never"), prover.given());
         self.proofs.never(key, || prover.never(&ops, tables, x.v, x.d))
     }
 
@@ -1482,7 +1504,7 @@ impl Lowering {
     pub fn settled_first_bytes(&mut self, prover: &mut bitlex_prove::Induction, x: Val) -> ByteSet {
         let ops = proof_ops(&self.program, &self.prefix);
         let tables = &self.program.tables;
-        let key = bitlex_prove::question(&ops, tables, &self.program.rounds, x.v, x.d, &prover.asker("first"));
+        let key = bitlex_prove::question_given(&ops, tables, &self.program.rounds, x.v, x.d, &prover.asker("first"), prover.given());
         self.proofs.bytes(key, || prover.first_bytes(&ops, tables, x.v, x.d))
     }
 
@@ -1491,7 +1513,7 @@ impl Lowering {
     pub fn either_never(&mut self, prover: &mut bitlex_prove::Induction, x: Val) -> bool {
         let ops = proof_ops(&self.program, &self.prefix);
         let tables = &self.program.tables;
-        let key = bitlex_prove::question(&ops, tables, &self.program.rounds, x.v, x.d, &prover.asker("either never"));
+        let key = bitlex_prove::question_given(&ops, tables, &self.program.rounds, x.v, x.d, &prover.asker("either never"), prover.given());
         self.proofs.never(key, || !prover.refutes(&ops, tables, x.v, x.d) && (bitlex_prove::never(&ops, tables, x.v, x.d) || prover.never(&ops, tables, x.v, x.d)))
     }
 
@@ -2927,6 +2949,13 @@ fn mergeable(a: &crate::program::LocalCheck, b: &crate::program::LocalCheck) -> 
     a.back == b.back || a.ops.iter().chain(&b.ops).all(|op| !matches!(op, L::Fill(..)) && !matches!(op, L::Const(c) if *c != 0 && *c != u64::MAX))
 }
 
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    /// Compile with no walk lemmas (`Lowering::induction`), for the tests' oracle: the program they prove smaller
+    /// reads every file as this one does.
+    pub static NO_WALK_LEMMAS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 #[cfg(test)]
 thread_local! {
     /// Compile with tier 1's lasts as before decision 0411, for the tests' oracle.
@@ -2982,8 +3011,8 @@ fn gap_ends(low: &mut Lowering, token_rows: &[(String, Val, Val)]) -> Result<Opt
     for &c in &claims[1..] {
         all = low.or(all, c)?;
     }
-    let prover = bitlex_prove::Induction::new(&low.program.rounds, 8, 100_000);
-    let key = bitlex_prove::question(&low.proof_ops(), &low.program.tables, &low.program.rounds, all.v, all.d, &prover.asker("gap ends"));
+    let prover = low.induction(8, 100_000);
+    let key = bitlex_prove::question_given(&low.proof_ops(), &low.program.tables, &low.program.rounds, all.v, all.d, &prover.asker("gap ends"), prover.given());
     let holds = match low.proofs.known.get(&key) {
         Some(&bitlex_prove::Answer::Never(b)) => b,
         _ => {
@@ -3456,7 +3485,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // check it (or none: everywhere), its mask `A` and its check.
     let mut checks: Vec<(Vec<u16>, Option<u16>, Val, crate::program::LocalCheck)> = Vec::new();
     // With the fixed points' equations and the lemmas proved on the way, kept for every mark.
-    let mut settled = bitlex_prove::Induction::new(&low.program.rounds, 8, 100_000);
+    let mut settled = low.induction(8, 100_000);
     // Where the token loop finds the starts (decision 0177), a mark is no start mask: a mark of
     // one word is its other terms at the token's first byte (none: the word alone), a token mark
     // the word alone, any other its own mask, which the records lift to the next grammar token
@@ -4605,7 +4634,7 @@ fn row_modes(
 ) -> Result<Vec<Vec<bool>>, String> {
     // With the fixed points' equations (a region's carry is its fills' bytes after the openers)
     // where the plain search does not prove it, as the marks' proofs.
-    let mut settled = bitlex_prove::Induction::new(&low.program.rounds, 8, 100_000);
+    let mut settled = low.induction(8, 100_000);
     // A stream a solve found refutes most questions first (`Induction::refutes`): most fail.
     let mut proved = |low: &mut Lowering, v: Val| low.either_never(&mut settled, v);
     // The toggles whose `x` bits are all token starts, at most eight.
@@ -4624,26 +4653,32 @@ fn row_modes(
             modes.push((t, x));
         }
     }
-    // Each row's mode at its start, and its flips: per toggle, `Some(bit)` when fixed.
-    let mut fixed = |low: &mut Lowering, s: Val, v: Val| -> Result<Option<bool>, String> {
+    // Each row's mode at its start, and its flips: per toggle, `Some(bit)` when fixed. Both proved, the row's
+    // start never holds (`s & ~v` and `s & v`): the row is dead, and meets no state.
+    let mut fixed = |low: &mut Lowering, s: Val, v: Val, dead: &mut bool| -> Result<Option<bool>, String> {
         let off = low.andnot(s, v)?;
         let on = low.and(s, v)?;
         Ok(match (proved(low, off), proved(low, on)) {
             (true, false) => Some(true),
             (false, true) => Some(false),
+            (true, true) => {
+                *dead = true;
+                None
+            }
             _ => None,
         })
     };
     let mut need: Vec<Vec<Option<bool>>> = Vec::new();
     let mut flip: Vec<Vec<Option<bool>>> = Vec::new();
-    for (_, s, _) in token_rows {
+    let mut dead: Vec<bool> = vec![false; token_rows.len()];
+    for (r, (_, s, _)) in token_rows.iter().enumerate() {
         let (mut n, mut f) = (Vec::new(), Vec::new());
         for &(t, x) in &modes {
             // The mode before the token: the toggle at its start, less `x` there (the toggle's
             // asked only where `x`'s is fixed: else the mode is free).
-            let xv = fixed(low, *s, x)?;
+            let xv = fixed(low, *s, x, &mut dead[r])?;
             n.push(match xv {
-                Some(b) => fixed(low, *s, t)?.map(|a| a != b),
+                Some(b) => fixed(low, *s, t, &mut dead[r])?.map(|a| a != b),
                 None => None,
             });
             f.push(xv);
@@ -4672,7 +4707,7 @@ fn row_modes(
             flip[r].push(f);
         }
     }
-    let fits = |r: usize, m: u8| need[r].iter().enumerate().all(|(i, n)| n.is_none_or(|n| n == (m >> i & 1 == 1)));
+    let fits = |r: usize, m: u8| !dead[r] && need[r].iter().enumerate().all(|(i, n)| n.is_none_or(|n| n == (m >> i & 1 == 1)));
     // The modes after a row's token, from `m`.
     let after = |r: usize, m: u8| -> Vec<u8> {
         let mut out = vec![m];

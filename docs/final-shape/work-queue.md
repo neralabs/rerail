@@ -7039,3 +7039,34 @@ on an M3 or M5:
   thread's 2 MB stack in `rust_source`.
 - **Done when**: each passes on the M1 Max, or a test states what the M1 Max cannot do (a grid's residency), and
   none is ignored.
+
+### Q331. Roll-up 13 (Parser-generators-final-shape onto rr-align): what the merge chose, and what stays open
+
+- **Merged** (2026-11-20): Parser-generators-final-shape at 91405fc095a, base 6da4cd4692. Theirs' one decision
+  keeps its number (0479: none is used here). Its "follows 0453" now cites 0412, the same decision here. Theirs'
+  README rows 0452–0455 are 0411, 0412, 0402 and 0403 here, so they are dropped.
+- **Taken from theirs**: 0479's walk lemmas. A walk's regions never overlap, and every prover is told so through
+  `Lowering::induction`. Also taken: dead rows (`row_modes`), the compile's step times (`RERAIL_STEP_TIMES`),
+  Kotlin's steps compiled as its parser is (`ladder::compile_step_as`, `Parser::with_cut`), and the AOT test's
+  Kotlin ladder and probes.
+- **Kept from ours**, theirs' change adapted to it:
+  - Fixed-seed maps: ours' Fx (rustc_hash) stays. Theirs' foldhash is dropped from the compiler crate.
+  - 0414's proof cache, with a changed key. A question is now keyed by its cone and asker, plus the lemmas it was
+    told whose values all lie in the cone (`question_given`, sorted and renumbered). A proof told lemmas is not the
+    same question as one told none. `PROOFS_VERSION` is now 2, so cached answers from before are not read.
+  - Theirs' `refuted` (a first solve) is dropped: ours' witnesses refute by evaluation first.
+  - The walk-pair proof in `bitlex_masks` (ours) proves the walk lemmas, so it uses `Induction::new` and is not
+    told them.
+  - Dead rows go into ours' lazy `fixed` and ours' `fits`, beside its inside-reader modes.
+  - `bitlex_tier2` and `grammar`: ours.
+- **Fixed**: `ladder_steps_rust_tapes_are_the_jits` asked for 30 steps taken, a floor from before 0422. The ladders
+  keep 8 steps now, and it fails at ours' tip too. It now asks for every step to be taken, with none refused.
+- **Checked** on the m1max:
+  - the workspace's tests and bins check with no warnings;
+  - Kotlin's tests (51, one more ignored below) and the compiler's `bitlex` tests (9);
+  - `ladder_steps_rust_tapes_are_the_jits`: 8 steps, 1,940 format 16 homes the JIT's;
+  - theirs' `a_step_compiles_to_one_program_and_walk_lemmas_keep_its_tapes` passes, run by name (250 s).
+- **Open**: that test ran on Kotlin's step 09, which 0422 deleted. On step 36 it compiles three times, about 85 s
+  each on the M1 Max, so it is ignored with this item as the reason.
+  - **Done when**: a Kotlin step 36 compile takes seconds (0479's aim), or the test has a small grammar with a walk,
+    and it is not ignored.

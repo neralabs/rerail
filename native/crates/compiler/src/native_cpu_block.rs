@@ -1902,7 +1902,9 @@ impl Emit<'_, '_> {
             .filter(|&m| self.native.outputs.contains(&(m as u16)) || (0..self.native.insts.len()).any(|u| state.plan.region_of[u] != Some(r) && self.native.insts[u].operands().contains(&m)))
             .collect();
         let words: Vec<usize> = state.region_fields[r].iter().map(|&(w, _)| w).collect();
-        // The region's carried bits that came in, ORed.
+        // The region's carried bits that came in, ORed, and the test of them and the gate: made for no value, so the
+        // source location is not the last value's made before (`region_vectors_outside`; Kotlin's `08-templates`).
+        f.set_srcloc(cranelift_codegen::ir::SourceLoc::default());
         let mut carried: Option<Value> = None;
         for &(w, m) in &state.region_fields[r] {
             let bits = f.ins().band_imm(self.packed_in[w], m as i64);
