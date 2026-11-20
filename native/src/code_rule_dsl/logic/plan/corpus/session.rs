@@ -162,7 +162,7 @@ pub(super) fn current() -> Held {
 /// and each base relation's statistics, with the digest of the rows they count. An edit makes the changed files'
 /// documents alone, and the held ones of those paths are the base relations' old versions.
 pub(super) struct HeldCorpus {
-    pub docs: std::collections::HashMap<String, ((memo::Content, i64), Vec<crate::code_rule_dsl::facts::vtab::syntax::Document>)>,
+    pub docs: std::collections::HashMap<String, ((memo::Content, i64), Vec<crate::code_rule_dsl::facts::vtab::syntax::Input>)>,
     pub digest: u64,
     pub stats: std::collections::HashMap<String, (u64, crate::code_rule_dsl::logic::plan::statkeep::RelStats)>,
 }

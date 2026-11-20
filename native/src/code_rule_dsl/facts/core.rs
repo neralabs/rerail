@@ -223,7 +223,7 @@ fn record_parse(file: &dyn SourceFile, reader: &'static str) {
     *crate::code_rule_dsl::logic::profile::local::<Parses>().0.lock().entry((reader, file.language().to_owned())).or_default() += 1;
     // A measurement aid: `RERAIL_PARSE_TRACE` prints where each parse is asked for.
     if std::env::var_os("RERAIL_PARSE_TRACE").is_some() {
-        eprintln!("RERAIL_PARSE_TRACE {reader} {}:\n{}", file.language(), std::backtrace::Backtrace::force_capture());
+        eprintln!("RERAIL_PARSE_TRACE {reader} {} (inside waves: {}):\n{}", file.language(), crate::code_rule_dsl::logic::profile::inside_waves(), std::backtrace::Backtrace::force_capture());
     }
     prof::count("source_tape.parses", 1);
     if prof::on() {
@@ -403,7 +403,13 @@ pub fn build_in_wave_with_tape(
     named: bool,
     keep: bool,
 ) -> Result<(Built, Option<TapeDoc>), String> {
-    build_in_wave_as(file, None, cache, digest, found, named, keep)
+    build_in_wave_as(file, None, Some(cache), digest, found, named, keep)
+}
+
+/// [`build_in_wave_with_tape`] from the stored tape `found` alone, with no store: a document made when first read
+/// (`syntax::Pending`, Q332), whose tape frame was read with the run's and is held, as the store need not be.
+pub fn build_with_frame(file: &dyn SourceFile, found: &crate::content_store::TapeFrame, keep: bool) -> Result<(Built, Option<TapeDoc>), String> {
+    build_in_wave_as(file, None, None, None, Some(found), true, keep)
 }
 
 /// [`build_in_wave`] of `file` as a fragment (decision 0466): its tape stored and found under the fragment's tag.
@@ -415,14 +421,15 @@ pub fn build_fragment_in_wave(
     found: Option<&crate::content_store::TapeFrame>,
     named: bool,
 ) -> Result<Built, String> {
-    build_in_wave_as(file, Some(fragment), cache, digest, found, named, false).map(|(built, _)| built)
+    build_in_wave_as(file, Some(fragment), Some(cache), digest, found, named, false).map(|(built, _)| built)
 }
 
-/// [`build_in_wave_with_tape`], of a whole file or a fragment.
+/// [`build_in_wave_with_tape`], of a whole file or a fragment. With no store (`cache`), a tape not `found` is parsed
+/// and not queued.
 fn build_in_wave_as(
     file: &dyn SourceFile,
     fragment: Option<Fragment>,
-    cache: &crate::content_store::ContentStore,
+    cache: Option<&crate::content_store::ContentStore>,
     digest: Option<[u8; 32]>,
     found: Option<&crate::content_store::TapeFrame>,
     named: bool,
@@ -462,7 +469,10 @@ fn build_in_wave_as(
     // Still queued for the writer: read where it is (gathered, placed, or a compressed frame).
     let kept: Option<crate::content_store::ObjectBytes> = match placed {
         Some(_) => None,
-        None => cache.queued_tape(&key).transpose().map_err(|e| e.to_string())?,
+        None => match cache {
+            Some(cache) => cache.queued_tape(&key).transpose().map_err(|e| e.to_string())?,
+            None => None,
+        },
     };
     let primary = match (placed, kept) {
         (Some(home), _) => {
@@ -495,7 +505,9 @@ fn build_in_wave_as(
             // when it is full or the wave ends, and read there until written (decision 0295 step 5). No wave waits for
             // the writer (decision 0104).
             let canonical = HashKey::from_sha256_digest(digest);
-            cache.queue_source_and_tape(key, canonical, tag, gv, fv, file.source(), tape, named).map_err(|e| e.to_string())?;
+            if let Some(cache) = cache {
+                cache.queue_source_and_tape(key, canonical, tag, gv, fv, file.source(), tape, named).map_err(|e| e.to_string())?;
+            }
             primary
         }
     };

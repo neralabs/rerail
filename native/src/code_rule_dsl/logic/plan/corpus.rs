@@ -5309,6 +5309,9 @@ fn run_observed_within(
     // The tapes of the files the run's waves will load (a phase's, its loads'), read before the first wave (decision
     // 0104), by source: set below, once the memo's entries the waves may find are known.
     let wave_tapes: std::sync::OnceLock<HashMap<crate::content_store::SourceId, crate::content_store::TapeFrame>> = std::sync::OnceLock::new();
+    // Their sources by their text's hash: in the waves, a file named by its digest whose content is one of them is that
+    // source, found in memory (decision 0104).
+    let wave_sources: std::sync::OnceLock<HashMap<crate::content_store::HashKey, crate::content_store::SourceId>> = std::sync::OnceLock::new();
     // The same tapes by their text's hash (Q22), for a file the run knows by its digest alone (no memo, or one named
     // by digest in a wave).
     let mut by_text: HashMap<crate::content_store::HashKey, (crate::content_store::SourceId, crate::content_store::TapeFrame)> = HashMap::new();
@@ -5493,10 +5496,16 @@ fn run_observed_within(
             // In the waves the store is not read, so a content is named by its digest: but a file the stat index
             // knows is that source, as it is before the first wave. Named by its digest instead, every unchanged
             // file of a load (a phase's files) was a content new to the statistics keeper: each run counted all of
-            // them out and in again, decoding every entry (decision 0116, step 3).
+            // them out and in again, decoding every entry (decision 0116, step 3). So is a file whose content is a
+            // source whose tape was read before the first wave (`wave_sources`): one the stat index could not vouch
+            // for, named by its digest, was another content than the documents' table counted, and its document was
+            // made at once (Q332).
             if !reading {
+                let held = wave_sources.get();
                 for &i in &rest {
-                    if let (Some(id), Some(memo::Content::Unstored(_))) = (known[i], content[i]) {
+                    if let Some(memo::Content::Unstored(d)) = content[i]
+                        && let Some(id) = known[i].or_else(|| held.and_then(|h| h.get(&crate::content_store::HashKey::from_sha256_digest(d)).copied()))
+                    {
                         content[i] = Some(memo::Content::Stored(id));
                     }
                 }
@@ -5632,7 +5641,19 @@ fn run_observed_within(
             if let Some(t) = &table {
                 base_table_plan.set(Some(t.plan));
             }
-            let counts = retain::base_counts(store, kept_strata::space(root), binds)?;
+            let mut counts = retain::base_counts(store, kept_strata::space(root), binds)?;
+            // A content counted before the store held it is named by its digest: found stored by it, as the table's
+            // are (`base_compare`), each run (a warm run writes nothing), so that a hit's document is made when first
+            // read where its content is the one counted (Q332).
+            let unstored: Vec<(u32, [u8; 32])> = counts.iter().filter_map(|(k, c)| match c.content { Some(memo::Content::Unstored(d) | memo::Content::Held(d)) => Some((*k, d)), _ => None }).collect();
+            if !unstored.is_empty() {
+                let ids = store.sources_by_hashes(&unstored.iter().map(|(_, d)| crate::content_store::HashKey::from_sha256_digest(*d)).collect::<Vec<_>>()).map_err(|e| Error::Plan(e.to_string()))?;
+                for ((k, _), id) in unstored.into_iter().zip(ids) {
+                    if let (Some(id), Some(c)) = (id, counts.get_mut(&k)) {
+                        c.content = Some(memo::Content::Stored(id));
+                    }
+                }
+            }
             let digest = table.as_ref().map(|t| t.digest);
             (table.map(|t| t.docs), (digest, stats), counts)
         }
@@ -5653,9 +5674,9 @@ fn run_observed_within(
         base_stats_kept = (Some(held.digest), std::mem::take(&mut held.stats));
     }
     // This run's batch, for the session's next run: `None` where a document's content is not known.
-    let mut session_corpus_next: Option<HashMap<String, ((memo::Content, i64), Vec<syntax::Document>)>> = None;
+    let mut session_corpus_next: Option<HashMap<String, ((memo::Content, i64), Vec<syntax::Input>)>> = None;
     // The paths whose documents changed since the session's last run, and their documents then.
-    let mut session_old: Option<(BTreeSet<String>, Vec<syntax::Document>)> = None;
+    let mut session_old: Option<(BTreeSet<String>, Vec<syntax::Input>)> = None;
     let base_compare = |now_of: HashMap<String, (i64, Option<memo::Content>)>| -> Result<OldBases> {
         let (Some(_), Some(memo @ memo::Memo::Stored(_)), true) = (base_binds, memo, looking) else { return Ok(None) };
         let found = (|| -> Result<std::result::Result<(BTreeSet<String>, HashMap<String, OldBase>), String>> {
@@ -5854,6 +5875,7 @@ fn run_observed_within(
                 crate::code_rule_dsl::logic::profile::decision("tapes read before the first wave (Q22)", || format!("{} tapes of {} sources, {:.1} MB", frames.len(), wanted.len(), frames.iter().map(|(_, _, f)| f.len()).sum::<usize>() as f64 / 1048576.0));
             }
             let _ = wave_tapes.set(frames.iter().map(|(s, _, f)| (*s, f.clone())).collect());
+            let _ = wave_sources.set(frames.iter().map(|(s, h, _)| (*h, *s)).collect());
             by_text = frames.into_iter().map(|(source, hash, frame)| (hash, (source, frame))).collect();
             // The texts the rules parse in other grammars (decision 0431 R6): the tags the program's requests name, or
             // every tag where a request's grammar is not a constant. The run's own are `by_text`'s.
@@ -8850,26 +8872,7 @@ fn run_observed_within(
     // A document of `source` made from its tape `frame` (parsed in memory where there is none); `None` for a text file
     // that is not UTF-8, which is no document.
     let doc_of = |key: i64, path: &str, module: Option<Arc<str>>, source: String, frame: Option<&crate::content_store::TapeFrame>| -> Result<Option<syntax::Document>> {
-        let _doc = crate::code_rule_dsl::logic::profile::span(|| "a document from its tape (decision 0458)".into());
-        let document = |facts: Arc<core::Facts>, tape| {
-            let digest = core::digest(&facts);
-            syntax::Document { key: key as u32, path: path.to_owned(), core: format!("/c#core:{path}"), digest, facts, guest: None, module, tape, unpackaged: unpackaged.contains(path) }
-        };
-        if text_document(root, path, label) {
-            return Ok(Some(document(Arc::new(core::text(Arc::new(source))), None)));
-        }
-        let file = core::Source { language: label.to_owned(), source: Arc::new(source) };
-        let built = match (&tapes, frame) {
-            (Some(cache), Some(frame)) if cfg!(feature = "tape-cache") => core::build_in_wave_with_tape(&file, cache, None, Some(frame), true, keep_tapes),
-            _ => core::build_with_tape(&file, keep_tapes),
-        };
-        let (built, tape) = built.map_err(|e| Error::Plan(format!("{path}: {e:?}")))?;
-        let facts = match built {
-            Built::Facts(f) => Arc::new(f),
-            Built::Unparsed => return Err(Error::Plan(format!("{path} did not parse"))),
-        };
-        let tape = tape.filter(|_| keep_tapes).map(|doc| (doc, Arc::new(file) as Arc<dyn crate::code_rule_dsl::facts::core::SourceFile>));
-        Ok(Some(document(facts, tape)))
+        hit_document(&HitBuild { root, label, tapes: tapes.as_ref(), keep_tapes, unpackaged: unpackaged.contains(path) }, key, path, module, source, frame)
     };
     // `docs`' guests, round by round, from the requests their entries kept (`memo::GUESTS`): as a chunk of partial hits
     // makes its own (decision 0225 §2), under the store's keys (decision 0391), so their nodes are those the entries
@@ -8936,11 +8939,12 @@ fn run_observed_within(
         old_base = base_compare(now_of)?;
     }
     // The changed files' documents now, guests with them (decision 0458): a base relation's new version.
-    let mut changed_docs: Vec<syntax::Document> = Vec::new();
+    let mut changed_docs: Vec<syntax::Input> = Vec::new();
     let mut corpus_digest = 0u64;
     let mut corpus_batch: Option<Arc<syntax::Batch>> = None;
-    // The memo hits' documents built from a kept tape, and parsed again; those a session held (`Report::corpus_docs`).
-    let hit_docs_built = (std::sync::atomic::AtomicUsize::new(0), std::sync::atomic::AtomicUsize::new(0));
+    // The memo hits' documents built from a kept tape, and parsed again, made then or when first read (`syntax::Pending`);
+    // those a session held (`Report::corpus_docs`).
+    let hit_docs_built = Arc::new((std::sync::atomic::AtomicUsize::new(0), std::sync::atomic::AtomicUsize::new(0)));
     let mut corpus_held = 0;
     // The corpus batch makes the chunks' projection (decision 0458): a span the cross part reads (a line's `line`,
     // a comment's `col`) is made only where its relation is, and the file-local part names them. Not what makes no
@@ -8974,8 +8978,64 @@ fn run_observed_within(
         let held_docs = session_corpus.as_ref().map(|h| &h.docs);
         let same = |path: &str| held_docs.and_then(|d| d.get(path)).filter(|(was, _)| now_docs.get(path) == Some(was)).map(|(_, docs)| docs);
         let (reused, hits): (Vec<CorpusHit>, Vec<CorpusHit>) = hits.into_iter().partition(|h| same(&h.path).is_some());
-        let reused: Vec<syntax::Document> = reused.iter().flat_map(|h| same(&h.path).into_iter().flatten().cloned()).collect();
+        let reused: Vec<syntax::Input> = reused.iter().flat_map(|h| same(&h.path).into_iter().flatten().cloned()).collect();
         let tapes_of = std::mem::take(&mut *hit_tapes.lock());
+        // Q332: a hit is made when first read (`syntax::Pending`, as decision 0494 makes a document's rows) where the
+        // counts kept beside the documents' table are of the content its file has now: its digest and facts' size are
+        // theirs, so a run that reads none of its rows neither reads its tape nor parses it. Not a hit whose entry asks
+        // for guests, nor one a guest is placed in (a value's host): their guests are made from its tree now.
+        let hosts: std::collections::HashSet<u32> = {
+            let mut hosts = std::collections::HashSet::new();
+            for h in &hits {
+                if !h.rounds.is_empty() || h.values.is_some() {
+                    hosts.insert(h.key as u32);
+                }
+                for rows in h.rounds.iter().map(|(_, _, rows)| rows).chain(h.values.iter()) {
+                    for i in 0..rows.len() {
+                        if let output::Cell::Int(at) = rows.cell(i, 0) {
+                            hosts.insert((at >> 32) as u32);
+                        }
+                    }
+                }
+            }
+            hosts
+        };
+        let run_tape_tag = run_tag.and_then(|t| u8::try_from(t).ok());
+        // A measurement aid: `RERAIL_PARSE_TRACE` names why each hit is made now.
+        let eager = |h: &CorpusHit, why: &dyn Fn() -> String| -> Option<syntax::Input> {
+            if std::env::var_os("RERAIL_PARSE_TRACE").is_some() {
+                eprintln!("RERAIL_PARSE_TRACE eager {} (key {}, {} counts kept): {}", h.path, h.key, base_counts.len(), why());
+            }
+            None
+        };
+        let pending_of = |h: &CorpusHit| -> Option<syntax::Input> {
+            let Ok(key) = u32::try_from(h.key) else { return eager(h, &|| "its key is no document's".into()) };
+            if hosts.contains(&key) {
+                return eager(h, &|| "it hosts guests".into());
+            }
+            let Some((content, now_key)) = now_docs.get(&h.path) else { return eager(h, &|| "not among the run's documents".into()) };
+            let Some(kept) = base_counts.get(&key).filter(|c| *now_key == h.key && c.content.is_some_and(|kept| same_content(kept, *content))) else {
+                return eager(h, &|| format!("its counts are not of its content now: {:?} kept, {content:?} under key {now_key} now", base_counts.get(&key).map(|c| c.content)));
+            };
+            let Some(tag) = (if text_document(root, &h.path, label) { Some(core::TEXT) } else { run_tape_tag }) else { return eager(h, &|| "the run's grammar has no tape tag".into()) };
+            let (root, label, path, module, frame, built) = (root.to_owned(), label.to_owned(), h.path.clone(), h.module.clone(), tapes_of.get(&h.path).cloned(), Arc::clone(&hit_docs_built));
+            let (unpackaged, keep_tapes, at) = (unpackaged.contains(&h.path), keep_tapes, h.key);
+            let make = move || -> std::result::Result<syntax::Document, String> {
+                let source = crate::git_workspace::snapshot::read_to_string(root.join(&path)).map_err(|e| format!("{path}: {e}"))?;
+                if frame.is_some() { &built.0 } else { &built.1 }.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let how = HitBuild { root: &root, label: &label, tapes: None, keep_tapes, unpackaged };
+                hit_document(&how, at, &path, module.clone(), source, frame.as_ref()).map_err(|e| e.to_string())?.ok_or_else(|| format!("{path}: no document (not UTF-8)"))
+            };
+            Some(syntax::Input::Pending(Arc::new(syntax::Pending::new(key, h.path.clone(), tag, kept.digest, kept.size, Box::new(make)))))
+        };
+        let (mut pending, mut eager): (Vec<syntax::Input>, Vec<CorpusHit>) = (Vec::new(), Vec::new());
+        for h in hits {
+            match pending_of(&h) {
+                Some(p) => pending.push(p),
+                None => eager.push(h),
+            }
+        }
+        let hits = eager;
         // The run on each job's thread (`run_state::Carry`, decision 0442): without it a job's tape took a residency
         // (and a 64 MB slab) of a machine of its own.
         let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
@@ -8993,18 +9053,21 @@ fn run_observed_within(
         let mut made: Vec<syntax::Document> = crate::code_rule_dsl::logic::profile::on_cores(|| hits.par_iter().map(hit_doc).collect::<Result<Vec<_>>>())?.into_iter().flatten().collect();
         let (rounds, values): (Vec<_>, Vec<_>) = hits.into_iter().map(|h| (h.rounds, h.values)).unzip();
         with_guests(&mut made, rounds.into_iter().flatten().collect(), values.into_iter().flatten().collect())?;
-        let mut all = std::mem::take(&mut corpus_docs);
-        all.extend(made);
-        let (made, held) = (all.len(), reused.len());
+        let mut all: Vec<syntax::Input> = std::mem::take(&mut corpus_docs).into_iter().chain(made).map(syntax::Input::from).collect();
+        let (made, lazily, held) = (all.len(), pending.len(), reused.len());
+        all.extend(pending);
         corpus_held = held;
-        crate::code_rule_dsl::logic::profile::decision("the corpus batch (decision 0458)", || match held_docs {
-            Some(_) => format!("{made} documents made, {held} held from the session's last run"),
-            None => format!("{made} documents made, none held"),
+        crate::code_rule_dsl::logic::profile::decision("the corpus batch (decision 0458)", || {
+            let lazily = if lazily > 0 { format!(", {lazily} made when first read (Q332)") } else { String::new() };
+            match held_docs {
+                Some(_) => format!("{made} documents made{lazily}, {held} held from the session's last run"),
+                None => format!("{made} documents made{lazily}, none held"),
+            }
         });
         all.extend(reused);
         // A guest two files asked for (a value's askers) is one document, made alike by each.
-        all.sort_by_key(|d| d.key);
-        all.dedup_by_key(|d| d.key);
+        all.sort_by_key(syntax::Input::key);
+        all.dedup_by_key(|d| d.key());
         // A session's change: each path whose content or key is not as its last run's, or which is gone, with the
         // documents that run made of it, the base relations' old version (as the kept route's `old_base` is).
         if let Some(was) = held_docs {
@@ -9013,14 +9076,14 @@ fn run_observed_within(
             session_old = Some((changed, olds));
         }
         if let Some(changed) = old_base.as_ref().map(|(c, _)| c).or(session_old.as_ref().map(|(c, _)| c)) {
-            changed_docs = all.iter().filter(|d| changed.contains(&d.path)).cloned().collect();
+            changed_docs = all.iter().filter(|d| changed.contains(d.path())).cloned().collect();
         }
         // This run's batch, held for the session's next: every document under its path's content, else none.
         if session_binds.is_some() {
-            let mut by_path: HashMap<String, ((memo::Content, i64), Vec<syntax::Document>)> = HashMap::new();
-            let whole = all.iter().all(|d| match now_docs.get(&d.path) {
+            let mut by_path: HashMap<String, ((memo::Content, i64), Vec<syntax::Input>)> = HashMap::new();
+            let whole = all.iter().all(|d| match now_docs.get(d.path()) {
                 Some(content) => {
-                    by_path.entry(d.path.clone()).or_insert_with(|| (*content, Vec::new())).1.push(d.clone());
+                    by_path.entry(d.path().to_owned()).or_insert_with(|| (*content, Vec::new())).1.push(d.clone());
                     true
                 }
                 None => false,
@@ -9029,13 +9092,14 @@ fn run_observed_within(
         }
         // What the base relations are a function of, under the run's plan: their documents (decision 0458). A base
         // relation's digest is theirs, taken here, never its rows' (a scan of every row).
-        let words = |d: &syntax::Document| -> [i64; 5] {
-            let at = |i: usize| i64::from_le_bytes(d.digest[i * 8..i * 8 + 8].try_into().expect("eight bytes"));
-            [i64::from(d.key), at(0), at(1), at(2), at(3)]
+        let words = |d: &syntax::Input| -> [i64; 5] {
+            let digest = d.digest();
+            let at = |i: usize| i64::from_le_bytes(digest[i * 8..i * 8 + 8].try_into().expect("eight bytes"));
+            [i64::from(d.key()), at(0), at(1), at(2), at(3)]
         };
         corpus_digest = all.iter().map(|d| super::row_digest(&words(d))).fold(0u64, u64::wrapping_add);
         // Each document's views' counts as kept, where its contents are those they were counted of (decision 0494).
-        let given: HashMap<u32, syntax::made::ViewCounts> = all.iter().filter_map(|d| base_counts.get(&d.key).filter(|(digest, _)| *digest == d.digest).map(|(_, c)| (d.key, *c))).collect();
+        let given: HashMap<u32, syntax::made::ViewCounts> = all.iter().filter_map(|d| base_counts.get(&d.key()).filter(|c| c.digest == d.digest()).map(|c| (d.key(), c.counts))).collect();
         crate::code_rule_dsl::logic::profile::decision("the corpus batch's row space (decision 0494)", || format!("{} of {} documents' views' counts kept", given.len(), all.len()));
         let sources = syntax::with_matchers(&store, all, &sets, &cross_matchers, &cross_vocabulary, binding, &cross_projection, &given).map_err(|e| Error::Plan(e.to_string()))?;
         corpus_batch = sources.iter().find_map(|(_, s)| s.python_batch());
@@ -9058,7 +9122,7 @@ fn run_observed_within(
     let mut base_stats_out: Vec<(String, u64, super::statkeep::RelStats)> = Vec::new();
     // The changed files' old documents: made from their old sources and tapes (the kept route's `old_base`), or, in a
     // session, the ones its last run made (`session_old`).
-    let old_documents: Option<Vec<syntax::Document>> = match &old_base {
+    let old_documents: Option<Vec<syntax::Input>> = match &old_base {
         Some((changed, olds)) if !corpus_sources.is_empty() && !changed.is_empty() => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the base relations' old documents, made (decision 0458)".into());
             let mut old_docs: Vec<syntax::Document> = Vec::new();
@@ -9076,7 +9140,7 @@ fn run_observed_within(
                 }
             }
             with_guests(&mut old_docs, old_rounds, old_values)?;
-            Some(old_docs)
+            Some(old_docs.into_iter().map(syntax::Input::from).collect())
         }
         Some(_) => None,
         None => session_old.take().filter(|(changed, _)| !corpus_sources.is_empty() && !changed.is_empty()).map(|(_, olds)| olds),
@@ -9084,15 +9148,15 @@ fn run_observed_within(
     let base_versions: Versions = match old_documents {
         Some(old_docs) => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the base relations' versions (decision 0458)".into());
-            let batch_of = |mut docs: Vec<syntax::Document>| -> Result<HashMap<String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>> {
+            let batch_of = |mut docs: Vec<syntax::Input>| -> Result<HashMap<String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>> {
                 if docs.is_empty() {
                     return Ok(HashMap::new());
                 }
-                docs.sort_by_key(|d| d.key);
-                docs.dedup_by_key(|d| d.key);
+                docs.sort_by_key(syntax::Input::key);
+                docs.dedup_by_key(|d| d.key());
                 Ok(syntax::with_matchers(&store, docs, &sets, &cross_matchers, &cross_vocabulary, binding, &cross_projection, &HashMap::new()).map_err(|e| Error::Plan(e.to_string()))?.into_iter().collect())
             };
-            let changed_keys: BTreeSet<i64> = old_docs.iter().chain(changed_docs.iter()).map(|d| i64::from(d.key)).collect();
+            let changed_keys: BTreeSet<i64> = old_docs.iter().chain(changed_docs.iter()).map(|d| i64::from(d.key())).collect();
             let changed_documents: BTreeSet<u32> = changed_keys.iter().filter_map(|&k| u32::try_from(k).ok()).collect();
             let (old_batch, new_batch) = (batch_of(old_docs)?, batch_of(std::mem::take(&mut changed_docs))?);
             let mut versions = Versions::new();
@@ -9164,6 +9228,17 @@ fn run_observed_within(
             })
             .collect();
         crate::code_rule_dsl::logic::profile::decision("the corpus batch's row space (decision 0494)", || format!("{} of {} base relations' rows counted by their kept statistics", totals.len(), stored.len()));
+        if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
+            for (rel, _) in stored.iter().filter(|(r, _)| !totals.contains_key(r)) {
+                let why = match kept.get(rel) {
+                    None => "no kept statistics".to_owned(),
+                    Some((d, _)) if *d == base_digest(rel) => "kept of these documents, rows not a count".to_owned(),
+                    Some((d, _)) if Some(*d) == table_digest.map(|t| t ^ tag(rel)) => format!("kept of the table's documents; versions {}", if base_wholes.contains_key(rel) { "made" } else { "not made" }),
+                    Some(_) => "kept of other documents".to_owned(),
+                };
+                eprintln!("rerail: the corpus batch's rows of {rel}: not counted ({why})");
+            }
+        }
         batch.give_totals(&totals);
     }
     if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
@@ -9579,10 +9654,16 @@ fn run_observed_within(
             }
             // Read off the corpus batch's documents (decision 0458), not the rows the chunks gathered.
             let source = Arc::clone(corpus_sources.get(&rel).ok_or_else(|| Error::Plan(format!("{rel} is not in the corpus batch (it holds {:?})", corpus_sources.keys().collect::<BTreeSet<_>>())))?);
-            let rows = source.len();
             let columns = source.columns();
             let held: BTreeSet<&str> = columns.iter().zip(&values).filter(|(_, v)| v.is_some()).map(|(c, _)| c.as_str()).collect();
             let statistics = (!semijoin.contains(&rel)).then(|| base_statistics(&rel, source.as_ref(), &held));
+            // A text test's rows are its kept statistics' (decision 0494), as its statistics are: its `len` is a scan
+            // of the batch's strings, which made every document (Q332).
+            let text_test = cross_vocabulary.tests.iter().any(|(t, _)| *t == rel);
+            let rows = match statistics.as_ref().and_then(|s| s.first()).filter(|_| text_test) {
+                Some(s) => usize::try_from(s.1).unwrap_or(0),
+                None => source.len(),
+            };
             let source = retain::kept_source_digested(parts.as_deref(), &rel, Arc::clone(&source), base_digest(&rel), &mut input_digests);
             let statistics = statistics.unwrap_or_else(|| {
                 // A semi-join's, kept beside its frame for the next run's kept route (`kept_input_stats`).
@@ -10512,7 +10593,8 @@ fn run_observed_within(
                         }
                         // The corpus batch's documents' views' counts (decision 0494), when one was not kept.
                         if let (Some(binds), Some(batch)) = (base_binds, corpus_batch.as_ref().filter(|b| !b.lazy())) {
-                            retain::put_base_counts(store, was, binds, &batch.kept_counts(), corpus_digest);
+                            let now = run_docs_held.lock().expect("the run's documents");
+                            retain::put_base_counts(store, was, binds, &batch.kept_counts(), &|path| now.get(path).map(|(c, _)| *c), corpus_digest);
                         }
                         crate::code_rule_dsl::logic::profile::decision("the kept part, to the frames (t33 K4)", || format!("{written} rows of what changed queued to the store"));
                     }
@@ -11662,6 +11744,53 @@ impl crate::code_rule_dsl::facts::vtab::Source for Rows {
     }
 }
 
+
+/// What a memo hit's document is built with (`hit_document`): the run's root and grammar, the tapes' store (none for a
+/// document made when first read, `syntax::Pending`, which holds its tape's frame), whether its tape is kept, and
+/// whether its file is one no regular package holds.
+struct HitBuild<'a> {
+    root: &'a Path,
+    label: &'a str,
+    tapes: Option<&'a crate::content_store::ContentStore>,
+    keep_tapes: bool,
+    unpackaged: bool,
+}
+
+/// A memo hit's document of `source` (decision 0458), made from its tape `frame` (parsed in memory where there is
+/// none); `None` for a text file that is not UTF-8, which is no document.
+fn hit_document(how: &HitBuild<'_>, key: i64, path: &str, module: Option<Arc<str>>, source: String, frame: Option<&crate::content_store::TapeFrame>) -> Result<Option<syntax::Document>> {
+    let _doc = crate::code_rule_dsl::logic::profile::span(|| "a document from its tape (decision 0458)".into());
+    let document = |facts: Arc<core::Facts>, tape| {
+        let digest = core::digest(&facts);
+        syntax::Document { key: key as u32, path: path.to_owned(), core: format!("/c#core:{path}"), digest, facts, guest: None, module, tape, unpackaged: how.unpackaged }
+    };
+    if text_document(how.root, path, how.label) {
+        return Ok(Some(document(Arc::new(core::text(Arc::new(source))), None)));
+    }
+    let file = core::Source { language: how.label.to_owned(), source: Arc::new(source) };
+    let built = match (how.tapes, frame) {
+        (Some(cache), Some(frame)) if cfg!(feature = "tape-cache") => core::build_in_wave_with_tape(&file, cache, None, Some(frame), true, how.keep_tapes),
+        (None, Some(frame)) if cfg!(feature = "tape-cache") => core::build_with_frame(&file, frame, how.keep_tapes),
+        _ => core::build_with_tape(&file, how.keep_tapes),
+    };
+    let (built, tape) = built.map_err(|e| Error::Plan(format!("{path}: {e:?}")))?;
+    let facts = match built {
+        Built::Facts(f) => Arc::new(f),
+        Built::Unparsed => return Err(Error::Plan(format!("{path} did not parse"))),
+    };
+    let tape = tape.filter(|_| how.keep_tapes).map(|doc| (doc, Arc::new(file) as Arc<dyn crate::code_rule_dsl::facts::core::SourceFile>));
+    Ok(Some(document(facts, tape)))
+}
+
+/// Whether two contents are one: the same stored source, or the same digest (a content the store does not hold yet,
+/// or held).
+fn same_content(a: memo::Content, b: memo::Content) -> bool {
+    match (a, b) {
+        (memo::Content::Stored(x), memo::Content::Stored(y)) => x == y,
+        (memo::Content::Unstored(x) | memo::Content::Held(x), memo::Content::Unstored(y) | memo::Content::Held(y)) => x == y,
+        _ => false,
+    }
+}
 
 /// Whether the corpus runner reads the file at `path` as text only in a run of `label`'s grammar: it is not of that
 /// grammar, so it is in the run only because a `.scope text` glob reads it (`scoped`), and it has `doc` and the

@@ -742,6 +742,142 @@ pub struct Document {
     pub unpackaged: bool,
 }
 
+/// A document's facts' size: its nodes and its kinds' codes (`Facts::len`, `Facts::code_count`), what its projection
+/// takes of its batch's block (`Projected::bytes_of`). The documents' table keeps it (`retain::BaseCounts`), so a
+/// document made when first read (`Pending`) has its place in the block before it is made.
+pub type FactsSize = [u32; 2];
+
+/// `facts`' size.
+pub fn facts_size(facts: &Facts) -> FactsSize {
+    [u32::try_from(facts.len()).unwrap_or(u32::MAX), u32::try_from(facts.code_count()).unwrap_or(u32::MAX)]
+}
+
+/// What a batch takes of its block for a document of facts of size `size`: its projection's arrays (`Projected::bytes_of`)
+/// and the chunk's copies of the facts' arrays, 22 bytes a node (`Batch::add`).
+fn block_bytes(size: FactsSize) -> usize {
+    Projected::bytes_of(size) + 22 * size[0] as usize + 4096
+}
+
+/// A document made when it is first read (Q332), as decision 0494 makes a document's rows when first read: a memo
+/// hit's, whose key, path, tag, digest and facts' size the documents' table keeps (`retain::BaseCounts`, of the
+/// content the file has now). Its facts and tape are built by `make` (from its kept tape, or parsed) on its first read,
+/// once, whichever batch reads it first; it is shared with the batches it grows into and the session's next run.
+/// A document made whose key or digest is not the table's fails its batch, named (`Docs::input`).
+pub struct Pending {
+    key: u32,
+    path: String,
+    tag: u8,
+    digest: [u8; 32],
+    size: FactsSize,
+    make: Box<dyn Fn() -> Result<Document, String> + Send + Sync>,
+    made: OnceLock<Document>,
+    failed: OnceLock<String>,
+}
+
+impl Pending {
+    pub fn new(key: u32, path: String, tag: u8, digest: [u8; 32], size: FactsSize, make: Box<dyn Fn() -> Result<Document, String> + Send + Sync>) -> Self {
+        Self { key, path, tag, digest, size, make, made: OnceLock::new(), failed: OnceLock::new() }
+    }
+
+    /// The document, made if it is not. One that fails to be made is a text with no node, its failure kept
+    /// (`failure`): the batch reading it fails.
+    fn document(&self) -> &Document {
+        self.made.get_or_init(|| {
+            if std::env::var_os("RERAIL_PARSE_TRACE").is_some() {
+                eprintln!("RERAIL_PARSE_TRACE pending {}:\n{}", self.path, std::backtrace::Backtrace::force_capture());
+            }
+            let made = (self.make)().and_then(|d| {
+                if d.key == self.key && d.digest == self.digest && d.guest.is_none() {
+                    Ok(d)
+                } else {
+                    Err(format!("{}: made when first read, it is not the document the documents' table keeps (key {} for {}, its digest another, Q332)", self.path, d.key, self.key))
+                }
+            });
+            made.unwrap_or_else(|why| {
+                let _ = self.failed.set(why);
+                let facts = Arc::new(crate::code_rule_dsl::facts::core::text(Arc::new(String::new())));
+                Document { key: self.key, path: self.path.clone(), core: format!("/c#core:{}", self.path), digest: self.digest, facts, tape: None, guest: None, module: None, unpackaged: false }
+            })
+        })
+    }
+}
+
+/// One of a batch's documents as it is given: made, or made when first read (`Pending`).
+#[derive(Clone)]
+pub enum Input {
+    Made(Document),
+    Pending(Arc<Pending>),
+}
+
+impl From<Document> for Input {
+    fn from(d: Document) -> Self {
+        Input::Made(d)
+    }
+}
+
+impl Input {
+    pub fn key(&self) -> u32 {
+        match self {
+            Input::Made(d) => d.key,
+            Input::Pending(p) => p.key,
+        }
+    }
+    pub fn path(&self) -> &str {
+        match self {
+            Input::Made(d) => &d.path,
+            Input::Pending(p) => &p.path,
+        }
+    }
+    /// Its digest (`Document::digest`): a pending one's the table's, which its facts are checked against when made.
+    pub fn digest(&self) -> [u8; 32] {
+        match self {
+            Input::Made(d) => d.digest,
+            Input::Pending(p) => p.digest,
+        }
+    }
+    /// Its tape tag (`Facts::tag`).
+    pub fn tag(&self) -> u8 {
+        match self {
+            Input::Made(d) => crate::code_rule_dsl::facts::core::facts_tag(&d.facts),
+            Input::Pending(p) => p.tag,
+        }
+    }
+    /// Its place in its host, a guest's; a pending document is a file's own tree.
+    pub fn guest(&self) -> Option<&Arc<Guest>> {
+        match self {
+            Input::Made(d) => d.guest.as_ref(),
+            Input::Pending(_) => None,
+        }
+    }
+    pub fn size(&self) -> FactsSize {
+        match self {
+            Input::Made(d) => facts_size(&d.facts),
+            Input::Pending(p) => p.size,
+        }
+    }
+    /// The document, made if it is not (`Pending`).
+    pub fn document(&self) -> &Document {
+        match self {
+            Input::Made(d) => d,
+            Input::Pending(p) => p.document(),
+        }
+    }
+    /// Whether its document is made: a pending one once first read.
+    pub fn is_made(&self) -> bool {
+        match self {
+            Input::Made(_) => true,
+            Input::Pending(p) => p.made.get().is_some(),
+        }
+    }
+    /// Why its document could not be made, once it was read.
+    pub fn failure(&self) -> Option<&str> {
+        match self {
+            Input::Made(_) => None,
+            Input::Pending(p) => p.failed.get().map(String::as_str),
+        }
+    }
+}
+
 /// W's values (`Extra`) and the AST patterns' matches (`ast_match`, matched over the tape), which a batch reads off
 /// its documents' tapes.
 const VALUES_TAPED: [&str; 6] = ["value", "static_value", "value_type_of", "value_type", "ast_match", VALUE_REQ];
@@ -1228,8 +1364,13 @@ impl Projected {
     /// What a projection's arrays can take in a block: `core`, `local`, `up`, `low`, the ordinals and the fielded
     /// nodes, none longer than the tape, with room for alignment.
     pub fn bytes(facts: &Facts) -> usize {
+        Self::bytes_of(facts_size(facts))
+    }
+
+    /// `bytes` of facts of size `size` (`FactsSize`), before they are built.
+    pub fn bytes_of(size: FactsSize) -> usize {
         // The views' entry and its codes' table too (`view_docs::ViewEntry`).
-        6 * 4 * facts.len() + 6 * 16 + 8 * facts.code_count() + 256
+        6 * 4 * size[0] as usize + 6 * 16 + 8 * size[1] as usize + 256
     }
 
     /// As `new`, but with `anchors` (`Projection::node_anchors`) a file's nodes are its root and the subtrees of the
@@ -2746,7 +2887,7 @@ impl Batch {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         store: &ContentStore,
-        documents: Vec<Document>,
+        documents: Vec<impl Into<Input>>,
         projection: &Projection,
         matches: &[Arc<regex::Regex>],
         markers: &[String],
@@ -2754,7 +2895,7 @@ impl Batch {
         wave: Option<(Matchers, crate::code_rule_dsl::facts::nearest::Binding)>,
         given: &HashMap<u32, made::ViewCounts>,
     ) -> StoreResult<Arc<Self>> {
-        Self::add(&mut Growth::default(), store, documents, projection, matches, markers, metal, wave, given, false).map(|(batch, _)| batch)
+        Self::add(&mut Growth::default(), store, inputs(documents), projection, matches, markers, metal, wave, given, false).map(|(batch, _)| batch)
     }
 
     /// A batch with every document made, as one group, and that group's rows: the small relations, the `match_all`
@@ -2762,7 +2903,7 @@ impl Batch {
     #[allow(clippy::type_complexity)]
     pub fn build(
         store: &ContentStore,
-        documents: Vec<Document>,
+        documents: Vec<impl Into<Input>>,
         projection: &Projection,
         matches: &[Arc<regex::Regex>],
         markers: &[String],
@@ -2780,7 +2921,7 @@ impl Batch {
     /// Document `doc`'s file (decision 0431 §4): a program's is its file's, any other document's its own key. Read
     /// from its input, so no document is made for it.
     fn file(&self, doc: usize) -> u32 {
-        file_of_input(self.docs.input(doc))
+        self.docs.file(doc)
     }
 
     /// Whether the batch's documents are made by its probes: one given its documents' counts (decision 0494), whose
@@ -2800,9 +2941,13 @@ impl Batch {
         (0..self.docs.len()).map(|i| (self.docs.key(i), self.docs.counts(i))).collect()
     }
 
-    /// `view_counts`, each with its document's digest (`Document::digest`): what the documents' table keeps.
-    pub fn kept_counts(&self) -> Vec<(u32, [u8; 32], made::ViewCounts)> {
-        (0..self.docs.len()).map(|i| (self.docs.key(i), self.docs.input(i).digest, self.docs.counts(i))).collect()
+    /// `view_counts`, each with its document's path, digest (`Document::digest`) and facts' size: what the
+    /// documents' table keeps (`retain::put_base_counts`). No document is made for them but one neither made nor
+    /// given counts.
+    pub fn kept_counts(&self) -> Vec<made::Kept> {
+        (0..self.docs.len())
+            .map(|i| made::Kept { key: self.docs.key(i), path: self.docs.path(i).to_owned(), digest: self.docs.digest(i), counts: self.docs.counts(i), size: self.docs.size(i), file: self.docs.guest(i).is_none() })
+            .collect()
     }
 
     /// Each relation's rows, by name, as its kept statistics count them (decision 0494): a relation's `len` before
@@ -2827,7 +2972,7 @@ impl Batch {
     fn add(
         grown: &mut Growth,
         store: &ContentStore,
-        documents: Vec<Document>,
+        documents: Vec<Input>,
         projection: &Projection,
         matches: &[Arc<regex::Regex>],
         markers: &[String],
@@ -2846,21 +2991,21 @@ impl Batch {
         }
         // A document the growth holds is a tape value given more places (decision 0431 §6): the rows of those alone.
         let holds = |k: u32| grown.values.contains_key(&k) || last.as_ref().is_some_and(|b| b.docs.position(k).is_some());
-        let (held, mut documents): (Vec<Document>, Vec<Document>) = documents.into_iter().partition(|d| holds(d.key));
-        documents.sort_by_key(|d| d.key);
-        if documents.windows(2).any(|w| w[0].key == w[1].key) {
+        let (held, mut documents): (Vec<Input>, Vec<Input>) = documents.into_iter().partition(|d| holds(d.key()));
+        documents.sort_by_key(Input::key);
+        if documents.windows(2).any(|w| w[0].key() == w[1].key()) {
             return Err(StoreError::Invalid("a batch holds a document key twice".into()));
         }
-        if let Some(d) = held.iter().find(|d| !grown.values.contains_key(&d.key)) {
-            return Err(StoreError::Invalid(format!("{}: a document the batch holds, given again, is not a tape value", d.path)));
+        if let Some(d) = held.iter().find(|d| !grown.values.contains_key(&d.key())) {
+            return Err(StoreError::Invalid(format!("{}: a document the batch holds, given again, is not a tape value", d.path())));
         }
         if !alone && !documents.is_empty() && !grown.values.is_empty() {
             return Err(StoreError::Invalid("a chunk's batch grows by a round after a tape value was admitted: the values' rows follow the chunk's (decision 0431 §8)".into()));
         }
-        let tag_of = |d: &Document| crate::code_rule_dsl::facts::core::facts_tag(&d.facts);
+        // A document's tag, size and place are known before it is made (`Pending`).
         for d in &documents {
-            if tag_of(d) != TEXT {
-                grown.dialects.get_or_new(tag_of(d))?;
+            if d.tag() != TEXT {
+                grown.dialects.get_or_new(d.tag())?;
             }
         }
         let dialects = Arc::new(grown.dialects.clone());
@@ -2870,15 +3015,25 @@ impl Batch {
         // block reserves address space, not memory.
         // A batch that grows (decision 0431 §6) projects its later documents into the same block: the gigabyte past
         // its first documents' needs is address space for them.
-        let block = Arc::clone(grown.block.get_or_insert_with(|| cells::block((documents.iter().map(|d| Projected::bytes(&d.facts) + 22 * d.facts.len() + 4096).sum::<usize>() + (1 << 20) + (1 << 30)).next_power_of_two())));
+        let block = Arc::clone(grown.block.get_or_insert_with(|| cells::block((documents.iter().map(|d| block_bytes(d.size())).sum::<usize>() + (1 << 20) + (1 << 30)).next_power_of_two())));
         // Decision 0055: each guest's host. A guest's key is past every file's (`corpus::guests`).
-        grown.host.extend(documents.iter().filter_map(|d| d.guest.as_ref().map(|g| (d.key, g.host))));
-        // W's values on request (decision 0174): the tapes of the documents W reads values of.
+        grown.host.extend(documents.iter().filter_map(|d| d.guest().map(|g| (d.key(), g.host))));
+        // W's values on request (decision 0174): the tapes of the documents W reads values of. A document of a dialect
+        // with values is made for its tape here (`Pending`).
         let added_valued: Vec<Option<Arc<Valued>>> = if projection.derived.contains(VALUE_REQ) {
-            documents
-                .iter()
-                .map(|d| d.tape.clone().filter(|_| dialects.get(tag_of(d)).is_some_and(|x| x.values)).map(|(tape, file)| Arc::new(Valued { tape, file, values: OnceLock::new() })))
-                .collect()
+            let mut valued = Vec::with_capacity(documents.len());
+            for d in &documents {
+                if !dialects.get(d.tag()).is_some_and(|x| x.values) {
+                    valued.push(None);
+                    continue;
+                }
+                let made = d.document();
+                if let Some(why) = d.failure() {
+                    return Err(StoreError::Invalid(why.to_owned()));
+                }
+                valued.push(made.tape.clone().map(|(tape, file)| Arc::new(Valued { tape, file, values: OnceLock::new() })));
+            }
+            valued
         } else {
             Vec::new()
         };
@@ -2935,7 +3090,7 @@ impl Batch {
         }
         // The programs among the documents, by file (decision 0431 §4): a program's file is its guest's (`Guest::file`).
         let mut programs: Vec<(u32, usize)> = (0..n).filter_map(|i| {
-            let file = file_of_input(docs.input(i));
+            let file = docs.file(i);
             (file != docs.key(i)).then_some((file, i))
         }).collect();
         programs.sort_unstable();
@@ -2991,7 +3146,7 @@ impl Batch {
         }
         // A tape value alone: made at once, its rows staged to follow the chunk's; one held given more places, theirs.
         let mut places: Vec<(&Projected, &Document, std::ops::Range<usize>, bool)> = Vec::new();
-        for d in &held {
+        for d in held.iter().map(Input::document) {
             let (Some(guest), Some((value, had, withheld))) = (d.guest.as_deref(), grown.values.get(&d.key)) else { continue };
             if let Made::Tape { places: all } = &guest.made
                 && all.len() > *had
@@ -3008,9 +3163,8 @@ impl Batch {
             }
         }
         for i in 0..batch.docs.len() {
-            let d = batch.docs.input(i);
-            if let Some(Made::Tape { places }) = d.guest.as_deref().map(|g| &g.made) {
-                grown.values.insert(d.key, (Arc::clone(&batch), places.len(), batch.docs.made(i).withheld));
+            if let Some(Made::Tape { places }) = batch.docs.guest(i).map(|g| &g.made) {
+                grown.values.insert(batch.docs.key(i), (Arc::clone(&batch), places.len(), batch.docs.made(i).withheld));
             }
         }
         Ok((batch, Some(made)))
@@ -3574,7 +3728,7 @@ impl Viewed {
 }
 /// `node`'s column `column` over `batch`, counted without reading its rows (decision 0329): its distinct values, the
 /// sum of their counts' squares, and each value's count. A kind's count is its postings' (`of_kind`), a document's its
-/// nodes; `n` is the key (each value once, no counts). `None` for another column.
+/// nodes; `n` is the key (each value once, no counts). `None` for another column (`node_column_counted`).
 pub fn node_column_counts(batch: &Batch, column: usize) -> Option<(i64, i64, Option<Vec<(i64, i64)>>)> {
     let squares = |counts: &[(i64, i64)]| counts.iter().map(|&(_, n)| n * n).sum::<i64>();
     match column {
@@ -3617,6 +3771,11 @@ pub fn node_column_counts(batch: &Batch, column: usize) -> Option<(i64, i64, Opt
         }
         _ => None,
     }
+}
+
+/// Whether `node_column_counts` counts `node`'s column `column`: known before it counts, which makes every document.
+pub fn node_column_counted(column: usize) -> bool {
+    column <= 2
 }
 
 impl Source for Viewed {
@@ -4270,8 +4429,8 @@ pub fn shaped(store: &ContentStore, documents: Vec<Document>, projection: &Proje
 
 /// A document's file (decision 0431 §4), as `Projected::narrowed` sets it: a program's (a guest made with its host,
 /// `Made::Host`) is its guest's `file`, any other document's its own key.
-fn file_of_input(d: &Document) -> u32 {
-    d.guest.as_deref().filter(|g| g.made == Made::Host && g.file != 0).map_or(d.key, |g| g.file)
+fn file_of_input(key: u32, guest: Option<&Guest>) -> u32 {
+    guest.filter(|g| g.made == Made::Host && g.file != 0).map_or(key, |g| g.file)
 }
 
 /// The views a batch of `shape` binds by name (`views`).
@@ -4402,10 +4561,15 @@ pub fn compile_matchers(matchers: &[(String, String, Vec<String>)], demand: &[Op
     }
 }
 
+/// A batch's documents as given, made or pending (`Input`).
+fn inputs(documents: Vec<impl Into<Input>>) -> Vec<Input> {
+    documents.into_iter().map(Into::into).collect()
+}
+
 /// [`with_nearest`], with each of `matchers`' relations over the documents' tapes (decision 0106).
 pub fn with_matchers(
     store: &ContentStore,
-    documents: Vec<Document>,
+    documents: Vec<impl Into<Input>>,
     sets: &[(String, Vec<i64>)],
     matchers: &Matchers,
     tests: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
@@ -4413,7 +4577,7 @@ pub fn with_matchers(
     projection: &Projection,
     given: &HashMap<u32, made::ViewCounts>,
 ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
-    Grower::default().sources_of(store, documents, Some(matchers), tests, binding, projection, given, false).map(|(out, batch)| finish(out, &batch, sets, projection, binding))
+    Grower::default().sources_of(store, inputs(documents), Some(matchers), tests, binding, projection, given, false).map(|(out, batch)| finish(out, &batch, sets, projection, binding))
 }
 
 /// A chunk's sources that grow by its rounds' documents (decision 0431 §6): the batch is made once, and a round's tape
@@ -4435,7 +4599,7 @@ impl Grower {
     #[allow(clippy::too_many_arguments)]
     pub fn start(
         store: &ContentStore,
-        documents: Vec<Document>,
+        documents: Vec<impl Into<Input>>,
         sets: &[(String, Vec<i64>)],
         matchers: &Matchers,
         tests: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
@@ -4444,7 +4608,7 @@ impl Grower {
         given: &HashMap<u32, made::ViewCounts>,
     ) -> StoreResult<(Vec<(String, Arc<dyn Source>)>, Grower)> {
         let mut grower = Grower::default();
-        let (out, batch) = grower.sources_of(store, documents, Some(matchers), tests, binding, projection, given, false)?;
+        let (out, batch) = grower.sources_of(store, inputs(documents), Some(matchers), tests, binding, projection, given, false)?;
         Ok((finish(out, &batch, sets, projection, binding), grower))
     }
 
@@ -4452,13 +4616,13 @@ impl Grower {
     pub fn grow(
         &mut self,
         store: &ContentStore,
-        documents: Vec<Document>,
+        documents: Vec<impl Into<Input>>,
         sets: &[(String, Vec<i64>)],
         tests: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
         binding: crate::code_rule_dsl::facts::nearest::Binding,
         projection: &Projection,
     ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
-        let (out, batch) = self.sources_of(store, documents, None, tests, binding, projection, &HashMap::new(), false)?;
+        let (out, batch) = self.sources_of(store, inputs(documents), None, tests, binding, projection, &HashMap::new(), false)?;
         Ok(finish(out, &batch, sets, projection, binding))
     }
 
@@ -4475,7 +4639,7 @@ impl Grower {
         binding: crate::code_rule_dsl::facts::nearest::Binding,
         projection: &Projection,
     ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
-        let (out, batch) = self.sources_of(store, vec![document], None, tests, binding, projection, &HashMap::new(), true)?;
+        let (out, batch) = self.sources_of(store, vec![Input::from(document)], None, tests, binding, projection, &HashMap::new(), true)?;
         Ok(finish(out, &batch, sets, projection, binding))
     }
 
@@ -4504,7 +4668,7 @@ impl Grower {
     fn sources_of(
         &mut self,
         store: &ContentStore,
-        documents: Vec<Document>,
+        documents: Vec<Input>,
         matchers: Option<&Matchers>,
         tests: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
         binding: crate::code_rule_dsl::facts::nearest::Binding,

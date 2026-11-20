@@ -17,6 +17,17 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// projection has them; the documents' table keeps them.
 pub type ViewCounts = [u32; 4];
 
+/// A document's row of the documents' table's counts (`Batch::kept_counts`, `retain::put_base_counts`): its key, path,
+/// digest, views' counts and facts' size, and whether it is a file's own tree (a guest's path is its host's).
+pub struct Kept {
+    pub key: u32,
+    pub path: String,
+    pub digest: [u8; 32],
+    pub counts: ViewCounts,
+    pub size: FactsSize,
+    pub file: bool,
+}
+
 /// A projection's views' counts.
 pub(super) fn view_counts(p: &Projected) -> ViewCounts {
     [p.len(), p.fielded(), p.after_siblings(), p.locs()]
@@ -36,7 +47,7 @@ pub struct Docs {
 }
 
 struct Slot {
-    input: Document,
+    input: Input,
     made: OnceLock<MadeDoc>,
 }
 
@@ -64,9 +75,9 @@ pub(super) struct Context {
 
 impl Docs {
     /// `documents`, sorted by key and distinct, with the views' counts `given` of some, by key.
-    pub(super) fn new(documents: Vec<Document>, context: Context, given: &HashMap<u32, ViewCounts>) -> Self {
-        let keys: Vec<u32> = documents.iter().map(|d| d.key).collect();
-        let tags = documents.iter().map(|d| crate::code_rule_dsl::facts::core::facts_tag(&d.facts)).collect();
+    pub(super) fn new(documents: Vec<Input>, context: Context, given: &HashMap<u32, ViewCounts>) -> Self {
+        let keys: Vec<u32> = documents.iter().map(Input::key).collect();
+        let tags = documents.iter().map(Input::tag).collect();
         let given = keys.iter().map(|k| given.get(k).copied()).collect();
         let slots = documents.into_iter().map(|input| Arc::new(Slot { input, made: OnceLock::new() })).collect();
         Self { slots, keys, tags, given, context, made: AtomicUsize::new(0) }
@@ -74,7 +85,7 @@ impl Docs {
     /// `prior`'s documents and `documents` (sorted by key, none of `prior`'s), in key order: `prior`'s shared, as
     /// made there (decision 0431 §6), `documents` unmade, with the views' counts `given` of some. Each one's index here
     /// is returned for `prior`'s, in its order.
-    pub(super) fn grown(prior: &Docs, documents: Vec<Document>, context: Context, given: &HashMap<u32, ViewCounts>) -> (Self, Vec<usize>) {
+    pub(super) fn grown(prior: &Docs, documents: Vec<Input>, context: Context, given: &HashMap<u32, ViewCounts>) -> (Self, Vec<usize>) {
         let added = Self::new(documents, context, given);
         let Self { slots: new_slots, keys: new_keys, tags: new_tags, given: new_given, context, .. } = added;
         let n = prior.slots.len() + new_slots.len();
@@ -98,9 +109,11 @@ impl Docs {
         }
         (Self { slots, keys, tags, given, context, made: AtomicUsize::new(0) }, at)
     }
-    /// Whether every document's views' counts were given: the views' row space is known with none made.
+    /// Whether the documents' views' counts were given: the views' row space is known with none made but those
+    /// whose document is made already (an edit's changed ones, `Input::Made`), whose counts are their own
+    /// projection's (`counts`). A batch given none (a cold run's) is not.
     pub fn given_all(&self) -> bool {
-        !self.given.is_empty() && self.given.iter().all(Option::is_some)
+        self.given.iter().any(Option::is_some) && self.given.iter().zip(&self.slots).all(|(g, s)| g.is_some() || s.input.is_made())
     }
     /// Document `i`'s views' counts: those given, else its projection's (made if it is not).
     pub fn counts(&self, i: usize) -> ViewCounts {
@@ -131,9 +144,37 @@ impl Docs {
     pub fn position(&self, key: u32) -> Option<usize> {
         self.keys.binary_search(&key).ok()
     }
-    /// What document `i` is made from: its facts, tape, path and place.
+    /// What document `i` is made from: its facts, tape, path and place, built if it is pending (`Pending`, Q332). One
+    /// that could not be built fails the batch (`failure`).
     pub fn input(&self, i: usize) -> &Document {
-        &self.slots[i].input
+        let input = &self.slots[i].input;
+        let d = input.document();
+        if let Some(why) = input.failure() {
+            self.fail(why.to_owned());
+        }
+        d
+    }
+    /// Document `i`'s place in its host, a guest's; none is built for it.
+    pub fn guest(&self, i: usize) -> Option<&Arc<Guest>> {
+        self.slots[i].input.guest()
+    }
+    /// Document `i`'s file (decision 0431 §4): a program's is its file's, any other document's its own key.
+    pub fn file(&self, i: usize) -> u32 {
+        file_of_input(self.keys[i], self.guest(i).map(|g| &**g))
+    }
+    /// Document `i`'s path, digest and facts' size, as given; none is built for them.
+    pub fn path(&self, i: usize) -> &str {
+        self.slots[i].input.path()
+    }
+    pub fn digest(&self, i: usize) -> [u8; 32] {
+        self.slots[i].input.digest()
+    }
+    pub fn size(&self, i: usize) -> FactsSize {
+        self.slots[i].input.size()
+    }
+    /// How many of the documents given pending (`Pending`) were built.
+    pub fn built_count(&self) -> usize {
+        self.slots.iter().filter(|s| matches!(s.input, Input::Pending(_)) && s.input.is_made()).count()
     }
     /// Document `i`'s projection, made if it is not.
     pub fn get(&self, i: usize) -> Option<&Projected> {
@@ -174,7 +215,7 @@ impl Docs {
             {
                 self.fail(format!(
                     "{}: its views' counts (nodes, fielded, siblings, places) are {:?}, the documents' table gave {given:?} (decision 0494)",
-                    self.slots[i].input.path,
+                    self.slots[i].input.path(),
                     view_counts(&made.p)
                 ));
             }
@@ -183,11 +224,12 @@ impl Docs {
     }
     /// Document `i`'s projection (decision 0289 §3: in the batch's block), its verdict and its module.
     fn project(&self, i: usize) -> MadeDoc {
-        let d = &self.slots[i].input;
+        let d = self.input(i);
         let projection = &*self.context.projection;
         let shape = projection.shape;
         let core = shape == Shape::Core;
-        let tag = self.tags[i];
+        // Its facts' tag: the one given (`tag`), or a text's where it could not be built (`Pending`).
+        let tag = crate::code_rule_dsl::facts::core::facts_tag(&d.facts);
         // A text-only document has no dialect, and no node.
         let dialect = if tag == TEXT { None } else { self.context.dialects.get(tag) };
         // `core.rerail`: a document that does not parse is withheld from the policy (no facts) but its `doc`, path and
@@ -241,7 +283,7 @@ impl Docs {
             }
         }
         if let Some(i) = self.position(k) {
-            if self.slots[i].input.guest.is_some() {
+            if self.slots[i].input.guest().is_some() {
                 return None;
             }
             return self.made(i).p.extra.as_ref().map(|x| Arc::clone(&x.lines));
@@ -1022,8 +1064,14 @@ impl Source for TextTest {
     fn columns(&self) -> Vec<String> {
         vec!["s".to_owned()]
     }
+    /// Its rows as its kept statistics count them where given (`Batch::give_totals`), as a made relation's
+    /// (`MadeRows::len`): a run that only counts them tests no string (Q332). Else every string's.
     fn len(&self) -> usize {
-        self.whole().len()
+        match (self.whole.get(), self.batch.given_rows(&self.tests.tests[self.k].0)) {
+            (Some(w), _) => w.len(),
+            (None, Some(n)) => n,
+            (None, None) => self.whole().len(),
+        }
     }
     fn estimated_len(&self) -> usize {
         match self.whole.get() {
@@ -1032,11 +1080,15 @@ impl Source for TextTest {
             None => self.whole().len(),
         }
     }
+    /// A probed string's row as probed (the whole keeps them first, in their order); a row past them, the whole's.
     fn value(&self, row: usize, column: usize) -> i64 {
-        match self.whole.get() {
-            Some(w) => Source::value(w, row, column),
-            None => self.probed.lock().rows[row],
+        if let Some(w) = self.whole.get() {
+            return Source::value(w, row, column);
         }
+        if let Some(&s) = self.probed.lock().rows.get(row) {
+            return s;
+        }
+        Source::value(self.whole(), row, column)
     }
     fn indexed(&self, column: usize) -> bool {
         column == 0

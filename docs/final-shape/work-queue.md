@@ -5119,6 +5119,28 @@ after the phases went on the run path (0083).
 - **Tests** (2026-11-20): `warm_tests` (the `warm` nextest profile, with the cold-then-warm, R2 new-process, 0494 and
   session tests: `cargo nextest run -p rerail-engine --lib --features test-hooks --profile warm`, 14 tests, about 10 s).
   Its four fail until this item is done, each naming what the warm run did.
+- **Part done** (2026-11-20, the user: "make a memo hit's document lazy, made only when a rule first reads it, as
+  0494 already does for rows"). A warm run over unchanged files now parses, builds and makes nothing (the first two
+  warm tests pass). What it took:
+  - A memo hit's document is `syntax::Input::Pending`, made on its first read from its kept tape (else parsed). Its
+    key, tag, digest and facts' size come from the documents' table's counts (`#base-counts`, now 16 words a row: the
+    content it counted and the facts' size too), when they are of the content the file has now. A made document
+    whose key or digest is not the table's fails its batch, named. A hit that hosts guests is made at once.
+  - The counts' content is matched by stored source or by digest. Inside the waves (phase 1's loads) a file named
+    by its digest whose content is a source whose tape was read before the first wave is that source
+    (`wave_sources`), so phase 1's hits are pending too.
+  - The statistics of a view held in place (`kind`, a view of `node`) are counted when a plan first reads them
+    (`plan::InPlaceView`, a `Deferred` whose `live` statistics `resolve` applies as `live_stats` did): counting them
+    made every document, in a run whose plans never read the view.
+  - An edit's `input_delta::Before` counts its kept rows when first read, after the batch is given its totals.
+  - A batch is lazy when the only documents without counts are made already (an edit's changed ones).
+  - A text test's rows at its binding are its kept statistics' (as its statistics already were), not its `len`.
+  - The warm tests count every run's corpus batch, the phases' too (`Report::phase_runs`), and name each phase's.
+- **Still open**: after a one-file edit, the unchanged files' documents are still made (`a_warm_edit_builds_no_*`,
+  `a_warm_edit_makes_*` fail). In the main run, by the kept frames' write of a text test's input (`retain::
+  write_input_kept`'s digest-only entry reads its `len`, which an edit cannot count without the batch's strings). In
+  phase 1, by `doc`'s and `tape_of`'s statistics: it reads no old source inside the waves, so they have no version
+  and no total (0494 step 4, part 2).
 
 ### Q383. (Q354 here until 2026-11-20; Q288 on phased-facts) `the_view_reads_are_the_hosts_rows` timed out: its kernel's pipeline did not compile in 240 s (done)
 
