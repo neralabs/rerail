@@ -43,6 +43,19 @@ from 689.
    - `expression` is 478 lines, from 850; `disj_operand` is 410, from 735. `tier2_aot.rs` is
      24,480 lines.
 
+4. **A state that only calls makes the call at once** (`Emit::direct_call`). Before, the caller
+   switched on the token, refused what the callee cannot start with, and the callee switched on
+   the same token again. Now a state skips its switch when:
+   - every arm is the same call (its acts, callee and returns);
+   - the state may not end;
+   - the callee's start has an arm on exactly the same tokens, and meets the same rows;
+   - each mark the state tests, the callee tests to the same end.
+
+   Its callee is then entered past its `TOKEN`, where it tests its own marks. This is the lean
+   parser's `self.unary()`, which never peeks first. The verifier accepts the state's shape:
+   `TOKEN`, then the call's code.
+   - Corpus: unchanged (452/39/0). `tier2_aot.rs` is 19,656 lines, from 24,480.
+
 ## What is still apart from the lean parser
 
 - **Seven operand functions.** The lean parser has one `expr(min)`, its minimum level a

@@ -292,6 +292,9 @@ struct Emit<'a> {
     /// `SWITCH` (`at_switch`): found once, before the states are laid out.
     tests_of: Vec<Vec<usize>>,
     at_switch: Vec<bool>,
+    /// Each state whose arms are one call (`Emit::direct_call`): no switch, the call made at once,
+    /// as the lean parser calls `unary()` without peeking first (decision 0492).
+    direct: Vec<bool>,
     /// Each arm's code, once per test before it.
     arm_code: HashMap<(usize, Span, Pre), Place>,
     /// A call's code, by what it does (`CallCode`): a call takes no token, so the arms of one
@@ -963,6 +966,37 @@ impl Emit<'_> {
     }
 
 
+    /// Whether state `s` only calls, so its switch decides nothing its callee's does not: every
+    /// arm is the same call (its acts, callee and returns), the state may not end, the callee's
+    /// start has an arm on each token it has and on no other, meets the same rows, and tests each
+    /// mark the state tests to the same end (a mark arm the callee takes; a refusal it makes).
+    /// Then a token the state refuses, the callee refuses, as the lean parser's `unary()` refuses
+    /// what no operand starts with.
+    fn direct_call(&self, s: usize) -> bool {
+        let mine: Vec<&ArmRow> = self.arms.iter().filter(|a| usize::from(a.from) == s).collect();
+        let Some(first) = mine.first() else { return false };
+        let to = usize::from(first.to);
+        if !self.by_rules || self.states[s].end.is_some() || to == s || !mine.iter().all(|a| a.call && a.to == first.to && a.push == first.push && a.acts == first.acts) {
+            return false;
+        }
+        let mut here: Vec<u16> = mine.iter().map(|a| a.token).collect();
+        let mut there: Vec<u16> = self.arms.iter().filter(|a| usize::from(a.from) == to).map(|a| a.token).collect();
+        here.sort_unstable();
+        there.sort_unstable();
+        if here != there || self.meets[s] != self.meets[to] {
+            return false;
+        }
+        let callee = self.tests_at(to);
+        self.tests_at(s).iter().all(|&(k, at)| {
+            let theirs = callee.iter().find(|t| t.0 == k).map(|t| t.1);
+            match at {
+                AtMark::Arm(_) => matches!(theirs, Some(AtMark::Arm(_))),
+                AtMark::Refuse => theirs == Some(AtMark::Refuse),
+                AtMark::End => false,
+            }
+        })
+    }
+
     /// State `s`'s mark tests, in order: each mark it takes, a test and its arm; each not hidden
     /// that it does not take, and each its level refuses, a refusal; a mark that ends levels,
     /// or one not hidden, where this nested level may end and takes none, its end.
@@ -1047,6 +1081,16 @@ impl Emit<'_> {
         self.push("TOKEN", self.any_mark.map_or(0, |k| k as u8 + 1) | extras, Arg::Num(STARTS));
         // Past the `TOKEN`, where both returns land (`m=0` at it, `m=1` past it).
         self.returned_field(&st);
+        if self.direct[s] {
+            // The call at once: no switch, no mark test (`direct_call`).
+            self.switch_at[s] = self.pc();
+            self.default = REFUSE;
+            let jump = self.pc();
+            self.push("GOTO", 0, Arg::Pc(0));
+            let at = self.arm(mine[0], Span::Last, Pre::None);
+            self.words[jump as usize].2 = Arg::Pc(at);
+            return Ok(());
+        }
         // The marks, in order: each the state takes, a test and a jump to its arm; each not
         // hidden that it does not take, and each its level refuses, a test that refuses. A mark
         // that ends levels (`Mark::ends`), or one not hidden, where this nested level may end
@@ -1342,6 +1386,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         marked: vec![0; states.len()],
         tests_of: tests_of(states, arms, marks),
         at_switch: Vec::new(),
+        direct: Vec::new(),
         arm_code: HashMap::default(),
         call_code: HashMap::default(),
         row_chains: HashMap::default(),
@@ -1356,6 +1401,13 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         if marks.iter().any(|m| m.kind == a.token) || !e.tests_of[to].iter().all(|k| e.tests_of[from].contains(k)) {
             e.at_switch[to] = false;
         }
+    }
+    // A state that only calls: the call at once, its callee entered past its `TOKEN`, where it
+    // tests its marks, as the caller tested none.
+    e.direct = (0..states.len()).map(|s| e.direct_call(s)).collect();
+    for s in (0..states.len()).filter(|&s| e.direct[s]) {
+        let to = arms.iter().find(|a| usize::from(a.from) == s).map(|a| usize::from(a.to)).expect("an arm");
+        e.at_switch[to] = false;
     }
     // The keywords' strings first, in the order of their kinds, as the lean parser numbers its
     // words: a keyword's leaf kind is then its word plus a constant over each run of kinds

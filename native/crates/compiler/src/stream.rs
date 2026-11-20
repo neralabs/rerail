@@ -125,7 +125,9 @@ pub fn validate(program: &Words) -> Result<(), Error> {
         .filter(|&&w| split(w).0 == PUSH)
         .map(|&w| usize::from(split(w).2))
         .collect();
-    // A state: `TOKEN`, a `MARK` and its way (`GOTO` or `STOP`) per mark it tests, `SWITCH`.
+    // A state: `TOKEN`, a `MARK` and its way (`GOTO` or `STOP`) per mark it tests, `SWITCH`; or
+    // a state that only calls (decision 0492): `TOKEN`, then its call's code (its guards, acts,
+    // `PUSH`), or a `GOTO` to it, with no mark test.
     // After the `TOKEN`, a call's field on the node it made (`NODE_FIELD m=4`), where both
     // returns land (`RETURN m=0` at the `TOKEN`, `m=1` past it). A mark that loses (`, loses`)
     // has its `SETTLE m=2` right before its `MARK`, and one that refuses (`, refuses`) its
@@ -144,7 +146,7 @@ pub fn validate(program: &Words) -> Result<(), Error> {
             }
             q += 2;
         }
-        split(words[p]).0 == TOKEN && words.get(q).is_some_and(|&w| split(w).0 == SWITCH)
+        split(words[p]).0 == TOKEN && words.get(q).is_some_and(|&w| split(w).0 == SWITCH || q == p + 1 + usize::from(split(words[p + 1]).0 == NODE_FIELD) && matches!(split(w).0, GOTO | PUSH | OPEN | FLAG | REMEMBER | SETTLE))
     };
     for &p in &returns {
         if !state(p) {
