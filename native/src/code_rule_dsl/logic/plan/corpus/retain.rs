@@ -1056,6 +1056,9 @@ impl Source for Renamed {
     fn columns(&self) -> Vec<String> {
         self.1.clone()
     }
+    fn rows_of_documents(&self, docs: &BTreeSet<u32>) -> Option<Vec<usize>> {
+        self.0.rows_of_documents(docs)
+    }
     fn len(&self) -> usize {
         self.0.len()
     }
@@ -1829,7 +1832,7 @@ pub(in crate::code_rule_dsl) fn base_stats(store: &ContentStore, space: [u8; 32]
     Ok(out)
 }
 
-/// The views' counts of each document of the cross part's corpus batch (decision 0464), kept beside the documents'
+/// The views' counts of each document of the cross part's corpus batch (decision 0474), kept beside the documents'
 /// table: by key, its digest (`Document::digest`) and its counts, as the batch made or was given them.
 pub(in crate::code_rule_dsl) type BaseCounts = HashMap<u32, ([u8; 32], crate::code_rule_dsl::facts::vtab::syntax::made::ViewCounts)>;
 
@@ -2099,6 +2102,9 @@ impl Source for Traced {
         let got = self.inner.lookup_all(equal);
         self.rows_of(&got);
         got
+    }
+    fn rows_of_documents(&self, docs: &BTreeSet<u32>) -> Option<Vec<usize>> {
+        self.inner.rows_of_documents(docs)
     }
     fn doc_column(&self) -> Option<usize> {
         self.inner.doc_column()

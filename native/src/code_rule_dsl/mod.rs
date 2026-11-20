@@ -1764,7 +1764,7 @@ pub(crate) mod logic {
             // Decision 0458 (R1–R5): the cross part reads the base relations off every file's tape.
             #[cfg(test)]
             pub mod cross_views_tests;
-            // Decision 0464: a batch makes a document when first read.
+            // Decision 0474: a batch makes a document when first read.
             #[cfg(test)]
             pub mod made_batch_tests;
             #[cfg(test)]

@@ -45,7 +45,7 @@ use std::sync::{Arc, OnceLock};
 use crate::code_rule_dsl::facts::nearest::Binding;
 
 /// Which containment the rows are.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mode {
     /// Strictly below in the tree.
     Tree,
@@ -658,7 +658,7 @@ impl Within {
         }
         let side = usize::from(row >= OUTER);
         let (k, at) = slot(row - if side == 0 { self.looked_up() } else { OUTER });
-        self.chunks[side][k].get().expect("a row made")[at].load(Ordering::Relaxed)
+        self.chunks[side][k].get().unwrap_or_else(|| panic!("within: row {row} not made (mode {:?}, solvable {}, solved {}, {} made)", self.mode, self.solvable(), self.solved.get().is_some(), self.made.lock().0[side]))[at].load(Ordering::Relaxed)
     }
 
     fn shape(&self) -> Shape {
@@ -731,6 +731,16 @@ impl Within {
 }
 
 impl Source for Within {
+    /// A document's rows are its nodes' (an axis never leaves its document), in the row space `value` reads: the
+    /// batch's solve, where each node row's pairs are its run (decision 0474). The span mode's rows are made by lookup
+    /// and have no such space: `None`.
+    fn rows_of_documents(&self, docs: &std::collections::BTreeSet<u32>) -> Option<Vec<usize>> {
+        if !self.solvable() {
+            return None;
+        }
+        let (start, nodes) = (self.starts(), self.batch.nodes());
+        Some(docs.iter().filter_map(|&k| self.batch.docs.position(k)).flat_map(|i| start[nodes[i]] as usize..start[nodes[i + 1]] as usize).collect())
+    }
     /// Read whole by the device: the batch's solve, its pairs made ids on the device from the chunk block.
     #[cfg(target_os = "macos")]
     fn device_view(&self) -> Option<crate::code_rule_dsl::facts::vtab::DeviceView<'_>> {
@@ -841,6 +851,24 @@ impl Source for Within {
             if column == 0 && self.reads_solved() {
                 let start = self.starts();
                 out.extend(start[row] as usize..start[row + 1] as usize);
+                continue;
+            }
+            // By `a`, where the rows a scan reads are made (the batch's solve, or every node's containers), its
+            // rows are those: in each contained node's run, the pair whose outer node is `a`. A lookup's rows are
+            // then the scan's, as a reader of both (a relation's version, `Before`) takes them.
+            if column == 1 && (self.solved.get().is_some() || self.all.get().is_some()) {
+                let base = self.batch.nodes()[doc];
+                for c in self.contained(doc, local) {
+                    let inner = (base + c as usize) as u32;
+                    let (from, n) = if self.solved.get().is_some() {
+                        let start = self.starts();
+                        (start[inner as usize] as usize, (start[inner as usize + 1] - start[inner as usize]) as usize)
+                    } else {
+                        let (from, n) = self.rows(0, inner);
+                        (from as usize, n as usize)
+                    };
+                    out.extend((from..from + n).filter(|&r| self.pair(r) & 0xffff_ffff == row as u64));
+                }
                 continue;
             }
             let (start, n) = self.rows(column.min(1), row as u32);

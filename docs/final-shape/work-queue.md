@@ -4458,7 +4458,7 @@ after the phases went on the run path (0083).
 
 ### Q288. `the_view_reads_are_the_hosts_rows` timed out: its kernel's pipeline did not compile in 240 s (done)
 
-Found 2026-11-19 while running `syntax::tests` for 0464 (on the M3 and the M1 Max, the same each run).
+Found 2026-11-19 while running `syntax::tests` for 0474 (on the M3 and the M1 Max, the same each run).
 - **What.** The test's `view_probe` kernel calls 16 view reads. `new_library_with_source` returned;
   `new_compute_pipeline_state_with_function` (the backend's compile) had not returned at 240 s.
 - **Why.** One read at a time, cold (Metal caches a pipeline by its source): `view_node` 2 ms, `view_core` 13 ms,

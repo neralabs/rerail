@@ -782,7 +782,7 @@ fn lookups_with_a_bound_document_read_that_document_only() {
 fn python_grammar_verdict_is_demanded_and_shared_across_projections() {
     let store = ContentStore::open(&temp("python-verdict")).unwrap();
     let doc = document(0, "a.py", "python", "print \"legacy\"\n");
-    // A document is made on its batch's first read of it (decision 0464): each batch here reads one relation whole.
+    // A document is made on its batch's first read of it (decision 0474): each batch here reads one relation whole.
     let read = |projection: &Projection, rel: &str| {
         let sources = shaped(&store, vec![doc.clone()], projection).unwrap();
         sources.iter().find(|(n, _)| *n == rel).unwrap_or_else(|| panic!("no {rel}")).1.len()
@@ -807,7 +807,7 @@ fn a_raising_ast_parse_fails_the_batch() {
     for read in ["syntax_error", "cpython_syntax_error", "literal_json", "dump_sha256"] {
         let doc = document(0, "a.py", "python", "x = f\"{y:\\x}\"\n");
         let projection = Projection { reads: Some([read.into()].into()), ..Projection::core() };
-        // The document is made on the first read (decision 0464): the source read reports why it failed.
+        // The document is made on the first read (decision 0474): the source read reports why it failed.
         let sources = shaped(&store, vec![doc], &projection).unwrap();
         let source = &sources.iter().find(|(n, _)| *n == read).unwrap_or_else(|| panic!("no {read}")).1;
         let _ = source.len();
@@ -2032,7 +2032,7 @@ kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[
     assert_eq!(tried, 2 * 3 * 3, "every case, format and shape");
 }
 
-/// Decision 0464, R1 and R3: a batch read whole makes one group, whose relations hold the rows the eager batch's do;
+/// Decision 0474, R1 and R3: a batch read whole makes one group, whose relations hold the rows the eager batch's do;
 /// one whose documents a probe of each made holds the same rows once scanned, over several groups.
 #[test]
 fn a_batch_made_by_group_holds_the_eager_batchs_rows() {
@@ -2070,7 +2070,7 @@ fn a_batch_made_by_group_holds_the_eager_batchs_rows() {
     assert_eq!(probed.groups(), 3, "the scan made the rest as one group");
 }
 
-/// Decision 0464, R2: a probe of a relation by a node makes that node's document alone, its projection and its rows.
+/// Decision 0474, R2: a probe of a relation by a node makes that node's document alone, its projection and its rows.
 #[test]
 fn a_probe_makes_the_document_it_names_alone() {
     let store = ContentStore::open(&temp("probe-one")).unwrap();
@@ -2089,7 +2089,7 @@ fn a_probe_makes_the_document_it_names_alone() {
     assert!(text.failure().is_none());
 }
 
-/// Decision 0464, R5: a batch given its documents' views' counts and its relations' rows knows every view's and
+/// Decision 0474, R5: a batch given its documents' views' counts and its relations' rows knows every view's and
 /// relation's `len` with no document made; a probe then makes its document alone. A made document whose counts differ
 /// from those given fails, named, and so does a relation whose made rows are not the count given.
 #[test]
@@ -2130,7 +2130,7 @@ fn a_batch_given_counts_knows_its_row_space_making_nothing() {
     let text = Arc::clone(&made_sources(&off).into_iter().find(|(n, _, _)| *n == "text").unwrap().2);
     let _ = text.lookup(0, &[off.docs[1].global(1)]);
     let failed = text.failure().expect("a document's counts differ");
-    assert!(failed.contains("m2.py") && failed.contains("0464"), "{failed}");
+    assert!(failed.contains("m2.py") && failed.contains("0474"), "{failed}");
     // A relation whose rows, every document made, are not the count given: named.
     let mut wrong = totals.clone();
     *wrong.get_mut("text").unwrap() += 1;
@@ -2140,5 +2140,5 @@ fn a_batch_given_counts_knows_its_row_space_making_nothing() {
     let mut seen = 0;
     text.for_rows(&[0], &mut |_, _| seen += 1);
     let failed = text.failure().expect("a relation's rows differ from its count");
-    assert!(failed.contains("text") && failed.contains("0464"), "{failed}");
+    assert!(failed.contains("text") && failed.contains("0474"), "{failed}");
 }

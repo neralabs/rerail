@@ -1,7 +1,8 @@
-# 0464: A batch makes a document when first read
+# 0474: A batch makes a document when first read
 
 Status: decided by the user (2026-11-19, Q285: "B: lazy Batch everywhere"). Builds 0458's "a document is made when
-first read" for every batch, the chunks' too. Follows 0353 (a view is a read of the tape) and 0458.
+first read" for every batch, the chunks' too. Follows 0353 (a view is a read of the tape) and 0458. Numbered 0464 until
+2026-11-19 (another branch's 0464 is the program image's).
 
 ## Intro
 
@@ -90,5 +91,15 @@ Each has its test before the code that meets it.
    changed documents); a made relation's and a `py_*` family's `len` answer by them until made. Tests:
    `syntax::tests::a_batch_given_counts_knows_its_row_space_making_nothing` (no document made for any `len`; both
    mismatches fail, named) and `made_batch_tests::r5_the_documents_counts_are_kept_and_given_to_the_corpus_batch`.
-4. An edit's versions by group; the kept statistics read, not measured. R6.
+4. An edit's versions by group; the kept statistics read, not measured. R6. Part 1 done (2026-11-19): a source
+   names a set of documents' rows where it knows where they lie (`Source::rows_of_documents`): a made relation by
+   group (a group of theirs alone, else its routed rows), a view by its documents' offsets, an axis by its nodes'
+   runs in the batch's solve; the wrappers pass it on. An axis's lookup by `a`, once the rows a scan reads are made,
+   gives rows of that scan (each contained node's pair to `a`), not rows made again past `len`: `Before` ranks a
+   lookup's rows among the scan's, and read the old documents' axis at a row made in neither (0458's versions over
+   `within`, reached by no test before). Test: `made_batch_tests::r6_an_edit_reads_no_base_relation_through`
+   (`child`, `field`, `within` read across files; no read-through; the edit's outputs a cold run's). Part 2: the
+   import fixpoint's run lists its files inside another run's waves and reads no old source there (0458's open
+   item), so its `doc` and `tape_of` are counted again; `r6_an_edit_counts_no_kept_statistic_again` is ignored
+   until it reads them with no SQL.
 5. Measured. R7.
