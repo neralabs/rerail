@@ -103,7 +103,7 @@ function hookScript(ws: Workspace, mode: HookMode = "answer"): HookScript {
     // A process it leaves behind in a group of its own, holding its stdout until released (at most a minute, should the
     // test stop first): the command's answer must not wait for it.
     `  if (mode === 'orphan') { const orphan = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(`${released("process.exit(0)")} setTimeout(() => process.exit(0), 60000);`)}], { detached: true, stdio: ['ignore', 'inherit', 'ignore'] }); record({ kind: 'started', event, pid: orphan.pid }); orphan.unref(); return; }`,
-    "  const answer = () => { record({ kind: 'answer', event }); process.stdout.write(JSON.stringify({ note: 'Ask Dana in #storefront before you go on.', status: 'Dana reshapes retry(): ask him first' })); };",
+    "  const answer = () => { record({ kind: 'answer', event }); process.stdout.write(JSON.stringify({ note: 'Ask Dana in #storefront before you go on.', status: 'Dana reshapes retry(): ask them first' })); };",
     `  if (mode === 'held') { ${released("answer()")} } else answer();`,
     "});",
   ].join("\n"));
@@ -263,7 +263,7 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
       await service.settled();
       const [note] = service.pendingNotes("session", ws.repo);
       expect(note!.content).toContain("The user's conflict hook adds: Ask Dana in #storefront before you go on.");
-      expect(footer(ws, "f2")).toMatchObject({ summary: { text: "Dana reshapes retry(): ask him first" } });
+      expect(footer(ws, "f2")).toMatchObject({ summary: { text: "Dana reshapes retry(): ask them first" } });
     });
 
     /**
@@ -376,7 +376,7 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
         await service.settled();
         const deliveries = await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId, text: "Go on." });
         const lines = deliveries.flatMap(delivery => (delivery.conflict === undefined ? [] : [delivery.conflict.text]));
-        expect(lines).toEqual([expect.stringMatching(/ — Dana reshapes retry\(\): ask him first$/u)]);
+        expect(lines).toEqual([expect.stringMatching(/ — Dana reshapes retry\(\): ask them first$/u)]);
       } finally {
         await runtime.dispose();
       }

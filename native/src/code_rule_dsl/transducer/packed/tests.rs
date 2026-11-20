@@ -1822,7 +1822,7 @@
 #[test]
     fn query_independent_fts_feeds_batched_execution_and_scopes_ordinals_to_tapes() {
         let database = std::env::temp_dir().join(format!(
-            "tempo-transducer-anchor-{}-{}.sqlite",
+            "rerail-transducer-anchor-{}-{}.sqlite",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1901,7 +1901,7 @@
         ];
         let programs = [identifier_program("execute"), identifier_program("absent")];
         let database = std::env::temp_dir().join(format!(
-            "tempo-sql-indexed-match-{}-{}.sqlite",
+            "rerail-sql-indexed-match-{}-{}.sqlite",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -2404,7 +2404,7 @@
                 .expect("RERAIL_PACKED_SOURCE_CORPUS must name the SQL index prototype bench/corpus/repos"),
         );
         let database = std::env::temp_dir().join(format!(
-            "tempo-full-fts-{}-{}.sqlite",
+            "rerail-full-fts-{}-{}.sqlite",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -2994,7 +2994,7 @@
         paths.truncate(limit);
         assert!(!paths.is_empty());
         let database = std::env::temp_dir().join(format!(
-            "tempo-fts-benchmark-{}-{}.sqlite",
+            "rerail-fts-benchmark-{}-{}.sqlite",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
