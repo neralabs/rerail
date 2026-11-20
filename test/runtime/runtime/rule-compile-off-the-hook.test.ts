@@ -230,6 +230,23 @@ describe("a session's first edit in a repository after the daemon restarts", () 
       await runtime.dispose();
     }
   }, 60_000);
+
+  it("compiles them on the daemon's thread with an engine built before it could compile off it, and steers that edit as before", async () => {
+    const daemon = await restartedDaemon(true, "rcolder");
+    const { runtime, first } = daemon;
+    compiles.withoutAsync = true;
+    try {
+      compiles.onThread = 0;
+      const edit = daemon.call(runtime, first, join(daemon.sibling, "api", "x.py"), "NEEDLE = 1\n");
+      await edit.call();
+      const result = await edit.result();
+      expect(ruleIds(result), `${JSON.stringify(result)} ${daemon.checks()}`).toContain("rcolder-needle");
+      expect(compiles.onThread).toBeGreaterThan(0);
+    } finally {
+      compiles.withoutAsync = false;
+      await runtime.dispose();
+    }
+  }, 60_000);
 });
 
 describe("a session's first edit in a started repository kept inside its folder", () => {

@@ -263,9 +263,12 @@ function compileOutcome(capabilities: CodeRuleCapabilities, policyId: string, so
   }
 }
 
+/** `compileOutcome` on a thread of Node's worker pool; on the JS thread, as before, with an engine built before `compileAsync`. */
 async function compileOutcomeOffThread(capabilities: CodeRuleCapabilities, policyId: string, sourceText: string): Promise<CompileOutcome> {
   try {
-    return checkedOutcome(await loadNativeBinding().CodeRuleDslRuntime.compileAsync(sourceText, "json", capabilities.json), policyId);
+    const engine = loadNativeBinding().CodeRuleDslRuntime;
+    if (engine.compileAsync === undefined) return compileOutcome(capabilities, policyId, sourceText);
+    return checkedOutcome(await engine.compileAsync(sourceText, "json", capabilities.json), policyId);
   } catch (error) {
     return failedOutcome(error);
   }
