@@ -96,11 +96,11 @@ record; step 0 measures it.
   queries. Mis-estimated intermediates pick bad joins (D S069, S153–S156, POST-S269).
   - **Agrees.** The planner chooses each join's form from measured counts, kept per chunk mix (O143).
   - Brute force is chosen only where the product of a partition's sides is small. It is never a default.
-- **Lessons ledger row 1.** One row per node is fatal. Tempo-metal's one 24-byte task per tuple needed 1.99 GB.
+- **Lessons ledger row 1.** One row per node is fatal. Predecessor-metal's one 24-byte task per tuple needed 1.99 GB.
   - **Agrees.** No task or row object per tuple. Relations are columns, and outputs are sized by a count pass.
 - **Ledger row 26.** Acceptance is structural: work proportional to anchors and results.
   - **Agrees.** Every kernel's work is bounded by its inputs' and outputs' sizes, and the gates measure that.
-- **Tempo-metal's host-driven generations** stopped at 595 dispatches (0027's prior work).
+- **Predecessor-metal's host-driven generations** stopped at 595 dispatches (0027's prior work).
   - **Agrees.** The host does not plan per round. Strata are grouped into device waves (§5). File-local recursion
     runs on the work queue (0027).
 - **Decisions:**

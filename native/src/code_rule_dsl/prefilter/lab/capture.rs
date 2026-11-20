@@ -1,5 +1,5 @@
 //! Diagnostic-only replay inputs, captured before a candidate statement runs (`RERAIL_SQL_PROFILE_DIR`).
-//! From Pulling-it-all-together's `matcher/anchors/sql/capture.rs`: P backed up its whole private
+//! From PIAT's `matcher/anchors/sql/capture.rs`: P backed up its whole private
 //! anchor database; here the capture is a store holding only the statement's tapes' prefilter
 //! rows, the store-wide counts and the vocabulary (`ContentStore::capture_prefilter`). Dropped:
 //! the producer manifest and origins (not in W) and the per-stage graph nodes (decoded relations

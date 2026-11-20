@@ -113,7 +113,7 @@ fn compare_case(
             "early experiment diverged from independent CPU oracle: {name}"
         );
     }
-    // Native QueryCursor does not implement Tempo's host predicates or transforms.
+    // Native QueryCursor does not implement the predecessor's host predicates or transforms.
     // Compare only structural patterns, and only when both run the full root set.
     let native = query
         .filter(|_| {

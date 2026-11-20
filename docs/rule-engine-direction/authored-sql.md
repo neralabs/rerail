@@ -19,7 +19,7 @@ A computation that cannot be stated declaratively becomes an engine producer beh
 
 It is also where DLRE's runtime went: 733 of 760 CPU samples in batch six were in relational evaluation.
 
-Scope: DLRE branch `Data-layer-rule-expressivity` at `d3470da2`, as merged into the Pulling-it-all-together worktree. All paths are relative to the repo root.
+Scope: DLRE branch `Data-layer-rule-expressivity` at `d3470da2`, as merged into the PIAT worktree. All paths are relative to the repo root.
 
 ## 1. Mechanisms by which a rule document can carry SQL or code
 

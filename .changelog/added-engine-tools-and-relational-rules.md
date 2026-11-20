@@ -1,0 +1,1 @@
+In internal testing, `rerail engine dump`, `rerail engine asm` and `rerail engine sql` are the rule engine's text tools (`RERAIL_EXPERIMENTAL_ENGINE_TOOLS`), and a code rule can carry a `relational` clause, SQL over the engine's relations (`RERAIL_EXPERIMENTAL_RELATIONAL_RULES`). Without its variable, `rerail engine` refuses and such a rule does not run.

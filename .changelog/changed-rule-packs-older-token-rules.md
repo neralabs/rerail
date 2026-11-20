@@ -1,1 +1,1 @@
-An installed rule pack published for an earlier Rerail still loads when this Rerail no longer runs a few of its rules, those that test a token parsed files now leave out: each such rule is skipped and reported with the reason, and the pack's next version runs it again.
+The 17 November 2026 versions of the JavaScript, TypeScript, Python and PHP rule packs load in this Rerail with a few rules skipped: those that test punctuation or keywords the grammar implies, which it no longer keeps. Each skipped rule is reported with the reason, and the pack's next version runs it again.

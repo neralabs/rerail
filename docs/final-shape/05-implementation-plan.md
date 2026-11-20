@@ -23,12 +23,12 @@ Status: plan, 2026-10-26.
 
 | Key | Worktree / ref | SHA |
 |---|---|---|
-| N | `rerail/scale-test-the-re-railer` | 17991359 |
+| N | a worktree of this repository (N1562) | 17991359 |
 | D | `rerail/Data-layer-rule-expressivity` | fe4a6707 |
-| P | `rerail/Pulling-it-all-together` | cbee7a03 |
+| P | a worktree of this repository (PIAT) | cbee7a03 |
 | S | `rerail/Shared-structural-execution` | e1ffeaf2 |
 | T | `rerail/Typing-support` (`spikes/datalog-engines/`) | 7ebcffe0 |
-| G | `scale-test-the-re-railer/tempo` (Tempo) | 4c94cf77e (committed HEAD only) |
+| G | `<predecessor>/` on a branch of the predecessor repository (the predecessor) | 4c94cf77e (committed HEAD only) |
 | M | `facts-engine` | 5b0d63a7 |
 | W | wolfeel itself (main) | 5cf4246e |
 
@@ -170,12 +170,12 @@ Check: P's prefilter tests on captured databases; `anchor_lab` steps no worse th
 
 ### Phase 4: transducer runtime (§3, §5, §7; D2, D3, D9, E5–E9, F1, F2)
 
-**Base: N `cr/packed.rs` + `cr/packed/*`.** This is about 24k lines, already ported into Rerail's crate and tape (3cbf7487). It is the only source with all four backends, including **`MetalInterpreter`** (`metal_program_backend::compile_interpreter`, `metal_batch_runtime.metal`), which D9's "interpreted first" needs. Tempo HEAD removed its opcode interpreter.
+**Base: N `cr/packed.rs` + `cr/packed/*`.** This is about 24k lines, already ported into Rerail's crate and tape (3cbf7487). It is the only source with all four backends, including **`MetalInterpreter`** (`metal_program_backend::compile_interpreter`, `metal_batch_runtime.metal`), which D9's "interpreted first" needs. The predecessor's HEAD removed its opcode interpreter.
 
 | Copy | From | To | Adaptations |
 |---|---|---|---|
 | Packed runtime | N `cr/packed.rs`, `cr/packed/` (all files), `cr/native_ir.rs` | `cr/transducer/packed/` | Replaces W `transducer/{jit.rs, metal_backend.rs}`, which are test- or bench-only. Keep W `persist_search_index_batch` and decide `POSITIONAL_INDEX_VERSION` (W 2 vs G 3). |
-| Newer verifier proofs | G `tempo/native/src/policy_dsl/transducer/{cycle_progress.rs, greedy_contract.rs, closure_proof.rs, terminal_repeat_proof.rs, bounded_repeat_proof.rs, execution_shape.rs}` (+ `*_tests.rs`) | `transducer/packed/verify/` | Rebind to the packed `Program`. Add the rule that every op exists on CPU and Metal (F1). |
+| Newer verifier proofs | G `<predecessor>/native/src/policy_dsl/transducer/{cycle_progress.rs, greedy_contract.rs, closure_proof.rs, terminal_repeat_proof.rs, bounded_repeat_proof.rs, execution_shape.rs}` (+ `*_tests.rs`) | `transducer/packed/verify/` | Rebind to the packed `Program`. Add the rule that every op exists on CPU and Metal (F1). |
 | Newer Metal pieces | G `T/{metal_launch.rs, metal_launch_budget.rs, metal_output_pages.rs, metal_typed_output.rs, metal_dynamic_execution.rs, metal_parallel.rs}`; regex G `T/{metal_regex_code.rs, metal_regex_frontier.rs, metal_regex_nfa.metal, value.rs}`, value pooling / NFA scratch (6ae6d7591, f1cd315d1) | `transducer/packed/metal/` | Diff-port against the N base. The 2 GB `METAL_BUFFER_LIMIT` and the 600-launch cap become plan-sized pools within 500 MB (K1, K3). |
 | Front ends | G `T/scm.rs` (tree-sitter query → IR); N `Program::compile_{kind,supertype,regex,ast_grep_pattern}` | `transducer/packed/compile/` | These lower matcher atoms (§12 `ast(...)`) to IR. |
 | Write new (on the copied base) | — | `transducer/packed/` | (a) **Set mode**: KEY labels stop at their first emit, a path is dropped once its labels have all fired, lazy cursors; the oracle becomes finding keys plus Complete/Unknown, not capture parity. (b) **EXISTS/NOT_EXISTS and COUNT barriers.** (c) **Combined hash-consed graph across rules** (fusion, P `spec-fusion.md`). (d) **One plan identity for both bindings**: interpreted runs at once, JIT is compiled in the background and swapped in. (e) **Device-side enqueue** for in-file loops whose bound is not fixed (E9): from G indirect dispatch (`metal_launch.rs:200/241`, `metal_frontier_reduce.rs`) to indirect command buffers. (f) **File-local lattice FIX waves** (I10, R0). (g) **`R[tid]` reads** for regex (§16). (h) **Text dump and assembler** (L2). |
@@ -183,8 +183,8 @@ Check: P's prefilter tests on captured databases; `anchor_lab` steps no worse th
 **Status (2026-10-27): rows 1, 2 and 4 adapted; row 3 placed (`bb4c9605`), its adaptations and the write-new items outstanding.**
 
 - Packed runtime (`5bf45ff0` copy, `a36418d0`): in the module tree under `transducer`; W's bench-only JIT and Metal backends and the `bench-backends` feature removed.
-- Verifier proofs and query front end (`98e96170`, `692ff6ba` copies; next commit): Tempo's cycle-progress and greedy-contract proofs replace N's backward-goto heuristic in `validate`; `scm.rs` compiles tree-sitter queries to programs; F1 is a test that the verifier's opcodes are exactly the Metal interpreter's.
-- Metal pieces (`cf19c0d9` copy, and G's grid executor `b90a7b0a`, `e92c5958`, `faf1c92b`, `be5197b5`, `6dd8ae15`): placed (`bb4c9605`). G's grid executor is `ExecutionBackend::Metal` (`metal_grid_backend`) beside N's `MetalInterpreter`/`MetalJit`, which stay; shared files are 3-way merges over N's base Tempo@176ea093d. The adaptations (plan-sized pools within 500 MB for the 2 GB `METAL_BUFFER_LIMIT` and the 600-launch cap, K1, K3) are done (list step 13, below).
+- Verifier proofs and query front end (`98e96170`, `692ff6ba` copies; next commit): the predecessor's cycle-progress and greedy-contract proofs replace N's backward-goto heuristic in `validate`; `scm.rs` compiles tree-sitter queries to programs; F1 is a test that the verifier's opcodes are exactly the Metal interpreter's.
+- Metal pieces (`cf19c0d9` copy, and G's grid executor `b90a7b0a`, `e92c5958`, `faf1c92b`, `be5197b5`, `6dd8ae15`): placed (`bb4c9605`). G's grid executor is `ExecutionBackend::Metal` (`metal_grid_backend`) beside N's `MetalInterpreter`/`MetalJit`, which stay; shared files are 3-way merges over N's base the predecessor@176ea093d. The adaptations (plan-sized pools within 500 MB for the 2 GB `METAL_BUFFER_LIMIT` and the 600-launch cap, K1, K3) are done (list step 13, below).
 - Placement differs from the table: row 3's modules sit flat in `transducer/packed/`, not in `packed/metal/`. G's files are 3-way merges into files N's base already has at flat paths (`metal_backend.rs`, `metal_launch.rs`, `metal_parallel*`), and `#[path]` keeps G's names. Moving only G's new files into `packed/metal/` would split one merged unit across two directories.
 - Row 1's "keep W `persist_search_index_batch`": kept (`transducer.rs:534`), called from `workspace/storage.rs` and the packed tests. `POSITIONAL_INDEX_VERSION` is W's 3 (decided with row 1).
 
