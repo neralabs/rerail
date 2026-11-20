@@ -82,10 +82,11 @@ let stallTimer = null;
 let stream = null;
 let token = null;
 /**
- * Whether the page reads at the pace because its last stream missed two beats before its first message: something
- * between the browser and the daemon may hold a streamed response until it ends (a proxy or a scanner that buffers
- * responses), so that stream may never bring one. Decided by each stream alone, since a path that held one stream may
- * hand on another's messages (a proxy passes on what it held when the daemon's connection closes). A message ends it.
+ * Whether the page reads at the pace, as the poll did: from when it opens, shows again or changes scope until its
+ * stream's first message, and when its last stream missed two beats before its first message. Something between the
+ * browser and the daemon may hold a streamed response until it ends (a proxy or a scanner that buffers responses), so
+ * that stream may never bring one. Decided by each stream alone, since a path that held one stream may hand on
+ * another's messages (a proxy passes on what it held when the daemon's connection closes). A message ends it.
  */
 let atPace = false;
 /** The activity window's start (`sinceFor`) the last read asked for. */
@@ -897,11 +898,20 @@ function storedAccess() {
  */
 function onMessage({ event, data: next }, first) {
   data.heardAt = Date.now();
-  atPace = false;
+  endPace();
   if (event === "conflicts") mergeAssistCountDue = true;
   if (first) startOver(next);
   else if (asksRead(event, next)) readFor(next);
   else onChange(false);
+}
+
+/** A stream's message ends the pace, and the pace's next read with it, unless a read failed: that one is tried again. */
+function endPace() {
+  if (atPace && !data.disconnected) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+  atPace = false;
 }
 
 /** Read for a message that asked: a new token says the page is behind the daemon until a read begun after it answers. */
@@ -1051,16 +1061,17 @@ function keepPace() {
 }
 
 /**
- * The stream ended, or found no slot: read once, which says whether the daemon answers, and try again after `backoff`,
- * which that read's outcome moves for the next time. The retry waits for no read, so a read that never answers cannot
- * keep the stream closed.
+ * The stream ended, or found no slot: read once unless the page reads at the pace, which says whether the daemon
+ * answers, and try again after `backoff`, which that read's outcome moves for the next time. The retry waits for no
+ * read, so a read that never answers cannot keep the stream closed.
  */
 function changesEnded(controller) {
   if (stream !== controller) return; // ended from here: the tab hid, the scope changed, or two beats were missed
   stream = null;
   clearTimeout(stallTimer);
   retryLater();
-  void refresh();
+  // A page at the pace reads at the retry, as the poll did, and one with no stream to follow so reads once a pace.
+  if (!atPace) void refresh();
 }
 
 /**
@@ -1094,18 +1105,18 @@ function endChanges() {
 }
 
 /**
- * Read now, as the poll did when the page opened, showed again or changed scope, and follow the stream: something
- * between that holds the stream's messages holds its first one too. The read is out before the stream opens, so a page
- * reading at the pace starts no second one.
+ * Read now and at the pace, as the poll did when the page opened, showed again or changed scope, and follow the
+ * stream, whose first message ends the pace: something between that holds the stream's messages holds its first one
+ * too. The read is out before the stream opens, so the stream's look at the pace starts no second one.
  */
 function readAndFollow() {
+  atPace = true;
   void refresh();
   followChanges();
 }
 
 export function startPolling(listener) {
   onChange = listener;
-  atPace = false;
   readAndFollow();
   document.addEventListener("visibilitychange", () => { if (hidden()) endChanges(); else readAndFollow(); });
   // Another tab of this origin stored the capability (the link `rerail manage` opens): read with it now.

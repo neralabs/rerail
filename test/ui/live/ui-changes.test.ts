@@ -173,18 +173,27 @@ describe("the dashboard following the daemon's change stream", () => {
     expect(streams).toHaveLength(1);
   });
 
-  it("reads as the page opens, shows again or changes scope, with no stream message, as through a proxy that holds them", async () => {
+  it("reads as the page opens, shows again or changes scope, and at the pace until the stream's first message, as through a proxy that holds them", async () => {
     expect(readsAtOpen).toContain("/api/repositories");
     expect(data.loaded).toBe(true);
+    await after(5_000);
+    expect(readsOf("/api/repositories")).toBe(1);
+
+    // The stream delivers: its first message reads, and the pace ends.
+    stream().send("t1");
+    await settle();
+    const heard = readsOf("/api/repositories");
+    await after(10_000);
+    expect(readsOf("/api/repositories")).toBe(heard);
 
     setHidden(true);
     setHidden(false);
     await settle();
-    expect(readsOf("/api/repositories")).toBe(1);
+    expect(readsOf("/api/repositories")).toBe(heard + 1);
 
     changeScope({ repository: "A", checkout: "/work/b" });
     await settle();
-    expect(readsOf("/api/repositories")).toBe(2);
+    expect(readsOf("/api/repositories")).toBe(heard + 2);
   });
 
   it("reads a new scope right after the read still out for the old one, though the page reads at the pace", async () => {
@@ -397,13 +406,14 @@ describe("the dashboard following the daemon's change stream", () => {
   });
 
   it("reads at the pace once a stream that never brought a message misses two beats, as through a proxy that buffers it, until one comes", async () => {
+    // Main's pace from the page's first read, while a new stream is tried every two beats.
     await after(12_000);
     expect(streams).toHaveLength(2);
-    expect(readsOf("/api/repositories")).toBe(1);
+    expect(readsOf("/api/repositories")).toBe(2);
 
-    // Main's pace from then, while a new stream is tried every two beats: 10 reads in the first minute.
+    // 11 reads after the first in its first 57 s.
     for (let second = 12; second < 57; second += 5) await after(5_000);
-    expect(readsOf("/api/repositories")).toBe(10);
+    expect(readsOf("/api/repositories")).toBe(11);
     expect(streams).toHaveLength(5);
 
     stream().send("t1");
