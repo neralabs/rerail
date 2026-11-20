@@ -144,31 +144,65 @@ impl RelStats {
     /// a base relation's documents counted off the corpus batch (decision 0458).
     pub(in crate::code_rule_dsl) fn documents_read(&mut self, n: usize, width: usize, value: &dyn Fn(usize, usize) -> i64, from: &[usize], sign: i64) {
         debug_assert_eq!(from.len(), self.cols.len());
-        self.count(n, width, value, sign, None, Some(from))
+        self.count(n, width, &mut |c, each| (0..n).for_each(|r| each(r, value(r, c))), sign, None, Some(from))
+    }
+
+    /// `documents_read` of a source's rows, each column read by the source's walk (`Source::for_rows`: a view's,
+    /// document by document) rather than a row at a time, which a view answers by a rank and a select (Q183): a
+    /// base relation counted off the corpus batch, cold (decision 0458).
+    pub(in crate::code_rule_dsl) fn documents_scanned(&mut self, source: &dyn crate::code_rule_dsl::facts::vtab::Source, from: &[usize], sign: i64) {
+        debug_assert_eq!(from.len(), self.cols.len());
+        let (n, width) = (source.len(), source.columns().len());
+        self.count(
+            n,
+            width,
+            &mut |c, each| {
+                let mut next = 0;
+                source.for_rows(&[c], &mut |r, row| {
+                    debug_assert_eq!(r, next, "a source's walk reads its rows in order");
+                    next = r + 1;
+                    each(r, row[0]);
+                });
+                debug_assert_eq!(next, n, "a source's walk reads every row");
+            },
+            sign,
+            None,
+            Some(from),
+        )
     }
 
     fn rows_of(&mut self, flat: &[i64], width: usize, sign: i64, at: Option<Option<usize>>, from: Option<&[usize]>) {
         if width == 0 || flat.is_empty() {
             return;
         }
-        self.count(flat.len() / width, width, &|r, c| flat[r * width + c], sign, at, from)
+        self.count(flat.len() / width, width, &mut |c, each| (0..flat.len() / width).for_each(|r| each(r, flat[r * width + c])), sign, at, from)
     }
 
-    fn count(&mut self, n: usize, width: usize, value: &dyn Fn(usize, usize) -> i64, sign: i64, at: Option<Option<usize>>, from: Option<&[usize]>) {
+    /// Rows in or out, read a column at a time: `column(c, each)` hands each row's value of column `c`, in row order.
+    fn count(&mut self, n: usize, width: usize, column: &mut dyn FnMut(usize, &mut dyn FnMut(usize, i64)), sign: i64, at: Option<Option<usize>>, from: Option<&[usize]>) {
         if width == 0 || n == 0 {
             return;
         }
+        // The column a row's document is read from: its first, else `at`'s; read once.
+        let keyed = match at {
+            None => Some(0),
+            Some(at) => at,
+        };
+        let mut key = vec![0i64; if keyed.is_some() { n } else { 0 }];
+        if let Some(k) = keyed {
+            column(k, &mut |r, v| key[r] = v);
+        }
         // A row's document (as `doc32` and `document_of` read its first column, else by `at`), and whether `v` names it.
         let of = |r: usize| match at {
-            None => (doc32(value(r, 0)), document_of(value(r, 0))),
+            None => (doc32(key[r]), document_of(key[r])),
             Some(at) => {
-                let d = at.map_or(-1, |c| value(r, c) >> 32);
+                let d = at.map_or(-1, |_| key[r] >> 32);
                 (d, d)
             }
         };
         let names = |v: i64, r: usize| match at {
-            None => names_doc(v, value(r, 0)),
-            Some(at) => at.is_some_and(|c| v >> 32 == value(r, c) >> 32),
+            None => names_doc(v, key[r]),
+            Some(at) => at.is_some_and(|_| v >> 32 == key[r] >> 32),
         };
         self.rows += sign * n as i64;
         // One pass a column: each row's (document, value, whether its `doc32` is 0) is listed; in order (node
@@ -193,8 +227,8 @@ impl RelStats {
             // Whether a document holds a value naming another: its rows mostly come together, so it is looked up
             // once a run of them.
             let mut at: Option<(i64, bool)> = None;
-            for (r, &(d32, doc)) in docs.iter().enumerate() {
-                let v = value(r, c);
+            column(c, &mut |r, v| {
+                let (d32, doc) = docs[r];
                 keys.push((doc, v, d32 == 0));
                 let crosses = !names(v, r);
                 match &mut at {
@@ -206,7 +240,7 @@ impl RelStats {
                         at = Some((doc, crosses));
                     }
                 }
-            }
+            });
             if let Some((d, x)) = at.take() {
                 *crossed.entry(d).or_default() |= x;
             }
@@ -608,6 +642,14 @@ pub mod tests {
         let mut fresh = RelStats::new(names());
         fresh.documents_read(now.len() / 3, 3, &read(&now), &from, 1);
         assert_eq!(placed, fresh);
+        // Read by the source's walk, a column at a time (`documents_scanned`): the same counts, in and out.
+        let source = |rows: &[i64]| crate::code_rule_dsl::facts::vtab::Relation::from_rows(&["n", "k", "name"], &mut rows.chunks_exact(3).map(<[i64]>::to_vec));
+        let mut scanned = RelStats::new(names());
+        scanned.documents_scanned(&source(&all), &from, 1);
+        assert_eq!(scanned, flat);
+        scanned.documents_scanned(&source(&docs[4]), &from, -1);
+        scanned.documents_scanned(&source(&doc(5, 90, 1)), &from, 1);
+        assert_eq!(scanned, fresh);
     }
 
     #[test]

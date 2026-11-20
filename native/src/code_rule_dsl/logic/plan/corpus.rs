@@ -8584,7 +8584,7 @@ fn run_observed_within(
                 Some((d, mut k)) if Some(d) == table_digest.map(|t| t ^ tag(rel)) => base_wholes.get(rel).and_then(|(old, new)| {
                     for (v, sign) in [(old, -1), (new, 1)] {
                         if let Some(v) = v {
-                            k.documents_read(v.len(), width, &|r, c| v.value(r, c), &from, sign);
+                            k.documents_scanned(v.as_ref(), &from, sign);
                         }
                     }
                     (k.rows() == rows).then(|| {
@@ -8599,7 +8599,7 @@ fn run_observed_within(
             let counted = counted.unwrap_or_else(|| {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel}'s statistics off the corpus batch"));
                 let mut k = super::statkeep::RelStats::new(names.clone());
-                k.documents_read(source.len(), width, &|r, c| source.value(r, c), &from, 1);
+                k.documents_scanned(source, &from, 1);
                 if base_binds.is_some() {
                     base_stats_out.push((rel.to_owned(), now, k.clone()));
                 }
