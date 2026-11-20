@@ -158,11 +158,12 @@ Block-mode rules steer the same way; blocking is not built yet. Log-mode rules n
 
 ### What you see
 
-One line per rule, `◆ Rerail · <rule id>  steered  ·  why?`, where `why?` opens the rule on your dashboard.
+One line per rule, `◆ Rerail · <rule>  steered  ·  why?`, where `why?` opens the rule on your dashboard.
 
 <details>
-<summary>Mark, link and glyphs</summary>
+<summary>Rule, mark, link and glyphs</summary>
 
+- **Rule:** the rule's title, as the dashboard lists it: the one you gave a rule of yours, or the one its rule pack lists. A rule with neither shows its id. The coding agent's block still names the id, which its `rerail feedback` command takes.
 - **Mark:** the footer's coloured `R E R A I L` where the agent draws colour (Claude Code, OMP); the word in Codex and Cursor.
 - **Link:** `why?` appears only while a daemon answers on a loopback address. With none, or one bound to `0.0.0.0`, the line has no link rather than a dead one.
 - **Glyphs:** `◆ steered`, `○ logged`. Log-mode rules never reach a session, so sessions show `◆` only.
@@ -176,7 +177,7 @@ Where your line appears, and what happens to a steer found as the turn ends:
 
 - **Claude Code:** under the tool call, after `PostToolUse:<Tool> says:`; two or more lines start on their own line. `why?` is a link in terminals known to draw them ([below](#links-in-the-terminal)), else `why? → <url>`. A turn-end steer goes out at the turn's end: its line for you, and its block for the agent as `Stop hook feedback`, which continues the turn so the agent can act on it. Once a Stop hook, Rerail's or another, has kept the turn going, a steer found when it ends again waits, line and block together, for the agent's next tool call or session start, led as a late steer, so Rerail never keeps a turn going twice.
 - **Codex:** under the tool call (`↳ Hook · …`), plain: `… steered  ·  why? → <url>`. Codex takes a turn-end block as your message, so a turn-end steer shows nothing then: its line and its block ride the next hook carrying context (your next prompt, a tool call, a session start), the block led as a late steer.
-- **Cursor:** no line of Rerail's own; the agent is asked to begin its reply with `… steered  ·  [why?](<url>)`. A turn-end steer waits for the next tool result or session start.
+- **Cursor:** no line of Rerail's own; the agent is asked to begin its reply with `` `◆ Rerail · <rule>  steered`  ·  [why?](<url>) ``, the rule's name as inline code so a title shows as written. A turn-end steer waits for the next tool result or session start.
 - **OMP:** drawn in OMP's theme colours, `why?` a link where the terminal draws them. Ctrl+O expands it to show each rule's source and the block, dimmed. A steer riding an edit's tool result shows right after that call's results, before the next model call; the agent never sees the line. At turn end, the run waits up to 10 seconds for the turn's check, then pending steers continue the run before it reports done. A steer arriving once the session is idle waits for your next message.
 - **Pi:** Pi's default message card, showing the whole block. Turn end as OMP.
 

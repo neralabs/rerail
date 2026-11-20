@@ -61,7 +61,7 @@ import { parseSampleSource, SAMPLE_BOUNDARIES } from "../engine/catalog/rule-sch
 import { restorableRule, type DroppedEvents, type RuleMutation } from "./session-state.js";
 import { SessionLanes } from "./session-lanes.js";
 import { rewoundSteer, steerBlock, steerRules, steerShell, subagentSteer, type SteerShell } from "../engine/code-rule/rerail-steer.js";
-import { steerOrigin } from "../engine/code-rule/steer-origin.js";
+import { steerOrigin, steerTitle } from "../engine/code-rule/steer-origin.js";
 import { checkoutPathBoundary } from "../engine/path-boundary.js";
 import { SqliteSessionStore, type RuleCoverage, type SessionAttribution } from "./session-store.js";
 import { isDefaultStorageRoot } from "./session-paths.js";
@@ -2974,20 +2974,27 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     await this.#append(this.#session(delivery.sessionId), { type: "delivery", delivery });
   }
 
-  async acceptSample(sample: AdapterSample): Promise<void> {
-    const state = this.#session(sample.sessionId);
+  /**
+   * `sample` as the session's content source keeps it: a person's plain message under its event's id, any other sample
+   * under one that also names its boundary and its place in the session.
+   */
+  #sampleItem(state: RuntimeSessionState, sample: AdapterSample): ContentItem {
     const plainUserMessage = sample.source === "user-input" && sample.boundary === "message";
     const id = plainUserMessage ? sample.eventId : `${sample.eventId}:${sample.boundary}:${state.sampleSequence++}`;
-    const owner = sampleOwner(sample.source);
-    const item: ContentItem = {
+    return {
       ref: { source: "host:event", id },
       text: sample.text,
       metadata: {
-        owner,
+        owner: sampleOwner(sample.source),
         session: sample.sessionId,
         fields: { eventId: sample.eventId, sampleSource: sample.source, boundary: sample.boundary },
       },
     };
+  }
+
+  async acceptSample(sample: AdapterSample): Promise<void> {
+    const state = this.#session(sample.sessionId);
+    const item = this.#sampleItem(state, sample);
     state.source.append(item);
     // A result stored without its output leaves its text out of the ledger as well; matching still reads it.
     await this.#append(state, { type: "sample", item: state.withheldResults.has(sample.eventId) ? { ...item, text: "" } : item });
@@ -2997,6 +3004,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const matches = registry.match(sample, { turn: state.turn });
 
     if (matches.length === 0) return;
+    await this.#deliverMatches(state, sample, registry, matches);
+  }
+
+  /** A delivery for each of `matches` on `sample`, recorded and kept for the sample's event. */
+  async #deliverMatches(state: RuntimeSessionState, sample: AdapterSample, registry: ConversationRuleRegistry, matches: readonly RuleMatch[]): Promise<void> {
     const deliveries = state.eventDeliveries.get(sample.eventId) ?? [];
     for (const match of matches) {
       registry.markDelivered([match.ruleId], state.turn);
@@ -3009,7 +3021,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         mechanism: ADAPTER_CAPABILITIES[state.descriptor.host].delivery[match.mode],
         content: steerBlock({ kind: "tool", tool: sampleTool(sample.source) }, findings, steerShell(state.descriptor.host)),
         ruleIds: [match.ruleId],
-        rules: steerRules(findings, steerOrigin),
+        rules: steerRules(findings, steerOrigin, ruleId => steerTitle(ruleId, undefined, match.title)),
       };
       await this.#append(state, { type: "delivery", delivery });
       deliveries.push(delivery);
