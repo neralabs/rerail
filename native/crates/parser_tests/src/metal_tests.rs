@@ -9,7 +9,8 @@ use rerail_compiler::{block, block_native as native_ir};
 use rerail_metal::block_program;
 
 /// Every step's tier 1 on Metal, generated MSL (one lane width, the class planes), equals the
-/// CPU interpreter on every document: outputs and extracted positions. A step whose program has
+/// CPU interpreter on every document: outputs, totals, and the extracted positions of the files
+/// no total refuses. A step whose program has
 /// a prefix (the JSON steps' byte order mark) Metal refuses (0335, 0389): it is refused alone, and
 /// the others are run.
 #[test]
@@ -37,7 +38,10 @@ fn every_step_on_metal_equals_the_interpreter() {
     for (f, got) in files.iter().zip(&run.files) {
         let k = step_of[f.program];
         let want = compiled[k].program.block_programs[0].run_files(&[f.bytes]).remove(0);
-        if got.outputs != want.outputs || got.positions != want.positions {
+        // A file a total refuses goes to the fallback: its positions are read by no one, and
+        // the CPU's stop at the refusal.
+        let taken = want.totals.iter().all(|&t| t == 0);
+        if got.outputs != want.outputs || got.totals != want.totals || taken && got.positions != want.positions {
             differ.push(format!("{}: {:?}", steps[k].0, String::from_utf8_lossy(f.bytes)));
         }
     }
