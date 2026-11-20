@@ -953,10 +953,11 @@ interface SourceDiscovery {
    */
   commandDuringPass: boolean;
   /**
-   * Each file the session folder's last walk could not read, by path, with the calls that may have written it unseen
-   * (`holdMissedFiles`): any call from the last walk that listed every folder before the walks began to miss it, up to
-   * the last walk's start. Another program may let the file go between two walks that miss it, so each call in that
-   * time may have written it.
+   * Each file the session folder's last whole walk could not read, by path, with the calls that may have written it
+   * unseen (`holdMissedFiles`): any call from the last walk that listed every folder before the walks began to miss it,
+   * up to the last walk's start. Another program may let the file go between two walks that miss it, so each call in
+   * that time may have written it. A pass of noticed paths leaves it as it is: it lets no call go (`#finishWholeWalk`),
+   * so a file it could not read keeps every call until a whole walk reads it.
    */
   missedFiles: ReadonlyMap<string, EndedCalls>;
   /** `ToolCallWindows.ends` as the last session folder walk that listed every folder began. */

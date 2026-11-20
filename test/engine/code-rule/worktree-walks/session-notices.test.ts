@@ -21,10 +21,21 @@ const listed = vi.hoisted(() => ({ folders: [] as string[], after: new Map<strin
  * spelling was looked at (realpath).
  */
 const looked = vi.hoisted(() => ({ on: false, paths: [] as string[], inFlight: 0, most: 0, spelled: [] as string[] }));
+/** By absolute path, how many of the next opens fail as Windows fails one while another program holds the file with no sharing. */
+const held = vi.hoisted(() => new Map<string, number>());
 vi.mock("node:fs/promises", async importOriginal => {
   const actual = await importOriginal<typeof FileSystem>();
   return {
     ...actual,
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const path = String(args[0]);
+      const left = held.get(path) ?? 0;
+      if (left > 0) {
+        held.set(path, left - 1);
+        throw Object.assign(new Error(`EBUSY: resource busy or locked, open '${path}'`), { code: "EBUSY" });
+      }
+      return await actual.open(...args);
+    },
     opendir: async (...args: Parameters<typeof actual.opendir>) => {
       const folder = String(args[0]);
       listed.folders.push(folder);
@@ -61,6 +72,7 @@ afterEach(async () => {
   await Promise.all(folders.splice(0).map(async folder => await removeFolder(folder)));
   listed.folders.length = 0;
   listed.after.clear();
+  held.clear();
   Object.assign(looked, { on: false, paths: [], inFlight: 0, most: 0, spelled: [] });
 });
 
@@ -359,6 +371,27 @@ describe("a shell command's result reads the session folder by its change notice
       checkpoints: ["edit", "function"],
       edits: [expect.objectContaining({ path: "src/pkg_0/m.py", generatedText: "eval(z)\n" })],
     })]);
+  });
+
+  // The pass at a command's result reads the paths its notices name, and lets no call of the session go: only a walk of
+  // the whole folder does, keeping for a file it could not read the calls that may have written it. So a write the pass
+  // could not read stays the session's until a walk reads it, which the read error makes the next result's pass.
+  it("checks at the next result, as the session's, a command's write the pass at its own result could not read", async () => {
+    const root = await workspace();
+    const { bridge, audits } = await opened(root, platformWatch());
+    const path = join(root, "src", "pkg_0", "m.py");
+    await command(bridge, "shell-1", async () => {
+      await writeFile(path, "eval(x)\n");
+      held.set(path, 1);
+    });
+    expect(listed.folders).toEqual([]);
+    expect(audits.map(batch => batch.edits.map(edit => ({ path: edit.path, readError: edit.readError })))).toEqual([
+      [{ path: "src/pkg_0/m.py", readError: expect.stringContaining("EBUSY") }],
+    ]);
+    await command(bridge, "shell-2", async () => undefined);
+    expect(audits.at(-1)?.edits).toEqual([expect.objectContaining({ path: "src/pkg_0/m.py", generatedText: "eval(x)\n" })]);
+    // Checked as the session's edit, not recorded as another writer's.
+    expect(audits.at(-1)).not.toHaveProperty("mode");
   });
 
   it("reads a linked file no notice named by its stamp alone, and only it", async () => {
