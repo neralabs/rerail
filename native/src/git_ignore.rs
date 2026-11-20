@@ -658,7 +658,7 @@ impl Volume {
     /// build): remote. The host stamps a file's times by a clock a module cannot read (WASI gives
     /// the system time, not the coarse clock Linux stamps files with), and the standard library
     /// gives no file identity there, so no stamp tells a later file: as on a share, a question
-    /// compares the index's checksum.
+    /// compares the index's checksum, or its bytes' digest where Git wrote none.
     #[cfg(not(any(unix, windows)))]
     fn of(_index: &Path) -> Self {
         Self::Remote
