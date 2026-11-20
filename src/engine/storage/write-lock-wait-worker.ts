@@ -53,19 +53,33 @@ class TryTimes {
 const times = new TryTimes(since);
 /** Sets the pause in progress again to the next try's time; ends it with `true`. */
 let pauseAgain: (end?: boolean) => void = () => undefined;
+/**
+ * How long before a try its timer fires: a timer counts whole milliseconds of its loop's clock and fires up to one late,
+ * where SQLite's own sleep does not, so the thread waits out the last of the pause on the stop word, which the stop
+ * still wakes at once.
+ */
+const TIMER_LEAD_MS = 2;
+
+/** The timer for the next try, `TIMER_LEAD_MS` early. */
+function timerFor(ended: () => void): ReturnType<typeof setTimeout> {
+  return setTimeout(ended, Math.max(0, times.untilNext() - TIMER_LEAD_MS));
+}
 
 /** Ends at the next try's time, which a change of the log moves (`pauseAgain`), or at once at the stop. */
 function pause(): Promise<void> {
   return new Promise(resolve => {
-    let timer = setTimeout(ended, times.untilNext());
+    let timer = timerFor(ended);
     function ended(): void {
       clearTimeout(timer);
       pauseAgain = () => undefined;
+      // The rest of the pause, unless the timer fired past the try's time: `untilNext` then names the try after it.
+      const rest = times.untilNext();
+      if (rest <= TIMER_LEAD_MS) Atomics.wait(stop, 0, 0, rest);
       resolve();
     }
     pauseAgain = end => {
       clearTimeout(timer);
-      timer = end === true ? setTimeout(ended, 0) : setTimeout(ended, times.untilNext());
+      timer = end === true ? setTimeout(ended, 0) : timerFor(ended);
     };
   });
 }
