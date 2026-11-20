@@ -1487,12 +1487,15 @@ impl PendingFindings {
 }
 
 /// What `findings` reads of a program's rules, which it does not see.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct RulesSeen {
     /// Whether a rule makes a `@place` value: only then can a span or loc `at` hold one.
     pub place_values: bool,
     /// Whether a rule reads `guest_policy`.
     pub reads_guest_policy: bool,
+    /// The relations the rules derive: a violation none derives, with no facts and no input, is made of `@place`
+    /// heads alone and has no document's rows to find.
+    pub heads: BTreeSet<String>,
 }
 
 impl RulesSeen {
@@ -1500,6 +1503,7 @@ impl RulesSeen {
         RulesSeen {
             place_values: rules.iter().any(|r| r.head.args.iter().chain(r.body.iter().flat_map(literal_terms)).any(has_place)),
             reads_guest_policy: rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).any(|a| a.rel == GUEST_POLICY),
+            heads: rules.iter().map(|r| r.head.rel.to_string()).collect(),
         }
     }
 }
@@ -5214,8 +5218,23 @@ fn rename_literal(l: &Literal, name: &dyn Fn(&str) -> String) -> Literal {
 /// The file system's answers and their requests (t21 E1).
 pub const FILE_SYSTEM: [(&str, &str); 3] = [("dir_entry", "rr_dir_req"), ("file_line", "rr_file_req"), ("file_digest", "rr_digest_req")];
 
-/// Every answer of a file and its request: the file system's (`FILE_SYSTEM`), then each language's
-/// (`answerers`), one row an answer's relation. A request of several relations has a row for each.
+/// The engine's other answers and their requests: a Git view's revisions, objects and inventory, the analysis
+/// history's scans, and the references' summaries, siblings, files and links. Each request is of several columns,
+/// made by rules (`git.rerail`, `analysis.rerail`, the reference programs).
+pub const ENGINE_ANSWERS: [(&str, &str); 9] = [
+    ("git_view_revision_of", "git_view_revision_request"),
+    ("git_revision_of", "git_revision_request"),
+    ("git_object_of", "git_object_request"),
+    ("git_inventory_child_of", "git_inventory_child_request"),
+    ("analysis_history_of", "analysis_history_lookup"),
+    ("reference_summary_of", "reference_summary_request"),
+    ("reference_siblings_of", "reference_siblings_request"),
+    ("reference_file_of", "reference_file_request"),
+    ("reference_link_of", "reference_link_request"),
+];
+
+/// Every answer of a file and its request: the file system's (`FILE_SYSTEM`), the engine's others (`ENGINE_ANSWERS`),
+/// then each language's (`answerers`), one row an answer's relation. A request of several relations has a row for each.
 pub static WORLD: World = World;
 
 /// `WORLD`'s rows. Made once the languages are installed, and not before: a process whose languages install after
@@ -5225,14 +5244,15 @@ pub struct World;
 
 impl World {
     pub fn iter(&self) -> std::slice::Iter<'static, (&'static str, &'static str)> {
-        static FS: [(&str, &str); 3] = FILE_SYSTEM;
+        static ENGINE: std::sync::OnceLock<Vec<(&'static str, &'static str)>> = std::sync::OnceLock::new();
         static ALL: std::sync::OnceLock<Vec<(&'static str, &'static str)>> = std::sync::OnceLock::new();
+        let engine = || FILE_SYSTEM.into_iter().chain(ENGINE_ANSWERS);
         if !crate::code_rule_dsl::language::answerers_installed() {
-            return FS.iter();
+            return ENGINE.get_or_init(|| engine().collect()).iter();
         }
         ALL.get_or_init(|| {
             let languages = crate::code_rule_dsl::language::answerers().iter().flat_map(|a| a.produces().iter().map(|r| (*r, a.request())));
-            FILE_SYSTEM.into_iter().chain(languages).collect()
+            engine().chain(languages).collect()
         })
         .iter()
     }
@@ -5241,7 +5261,11 @@ impl World {
 /// The request an answer's relation asks by its first column: the file system's, and a language's of one column. A
 /// request of several columns is made by rules (`c_pp_tu_req(tu, spec)`).
 fn world_demand(rel: &str) -> Option<&'static str> {
-    WORLD.iter().find(|(r, _)| *r == rel).map(|(_, d)| *d).filter(|d| crate::code_rule_dsl::language::answerer(d).is_none_or(|a| a.key_width() == 1))
+    // The file system's requests ask by the first column; the engine's other answers' are made by rules.
+    WORLD.iter().find(|(r, _)| *r == rel).map(|(_, d)| *d).filter(|d| match crate::code_rule_dsl::language::answerer(d) {
+        Some(a) => a.key_width() == 1,
+        None => FILE_SYSTEM.iter().any(|(_, f)| f == d),
+    })
 }
 
 fn body_vars(lits: &[Lit]) -> BTreeSet<String> {

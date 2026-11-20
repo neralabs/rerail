@@ -34,6 +34,7 @@
 //! (`git_alias`): a fresh clone or another worktree of the same repository is then not hashed.
 
 #[allow(unused_imports)]
+use crate::git_workspace::snapshot as source;
 use crate::content_store::connection::Cached as _;
 use crate::content_store::RACY_NS;
 use rusqlite::{Connection, params};
@@ -385,7 +386,7 @@ impl Observer {
         // The journal's cookies in a directory of their own: a stream watches it with its roots, and is told every
         // event in it. Beside the store, it was told every write of the store, its outputs and logs (2,596 events in
         // one warm batch's first ask, all of them replayed and dropped).
-        let cookies = path.map(cookie_dir).filter(|d| private_dir(d).is_ok());
+        let cookies = path.map(cookie_dir).filter(|d| super::prepare_cache_directory(d).is_ok());
         let stored_roots: Vec<PathBuf> = db
             .as_ref()
             .map(|k| k.meta.keys().filter(|k| k.starts_with("journal:")).filter_map(|k| k.splitn(3, ':').nth(2)).map(PathBuf::from).collect())
@@ -502,6 +503,7 @@ impl Observer {
 
     /// Reads what the store keeps under `dir` now, before a walk of it reads it a path at a time (`ensure`).
     pub fn preload(&mut self, dir: &Path) {
+        if source::contains(dir) { return; }
         let dir = self.abs(dir);
         self.ensure(&dir);
     }
@@ -671,6 +673,9 @@ impl Observer {
     /// (decision 0105): the answer kept, or for a path its directory's kept listing does not hold, missing.
     pub fn kind(&mut self, path: &Path) -> Kind {
         let path = &self.abs(path);
+        if source::contains(path) {
+            return if source::is_file(path) { Kind::File } else if source::is_dir(path) { Kind::Dir } else { Kind::Missing };
+        }
         if self.is_own(path) {
             return Self::own_stat(path).map_or(Kind::Missing, |(k, _)| k);
         }
@@ -756,6 +761,7 @@ impl Observer {
     /// `path`'s canonical form where the observer can answer for it (`Ok`), else its absolute form, to resolve (`Err`).
     fn canonical_kept(&mut self, path: &Path) -> std::result::Result<Option<PathBuf>, PathBuf> {
         let path = self.abs(path);
+        if source::contains(&path) { return Ok(source::canonicalize(&path).ok()); }
         if self.is_own(&path) {
             // rerail's own file (decision 0284): answered here, and never recorded (`canonical_resolved` is not reached).
             return Ok(std::fs::canonicalize(&path).ok());
@@ -819,6 +825,12 @@ impl Observer {
     /// which needs no observer, so many files are read at once, outside its lock) and then record (`digest_read`).
     pub fn digest_step(&mut self, path: &Path) -> DigestStep {
         let path = &self.abs(path);
+        if source::contains(path) {
+            let Some(blob) = source::blob(path) else { return DigestStep::Answered(None) };
+            let key = blob.key_bytes();
+            if let Some(digest) = self.alias(&key) { return DigestStep::Answered(Some(digest)); }
+            return DigestStep::Read(DigestRead { path: path.clone(), stat: None, started: 0, known: None, blob: Some(key) });
+        }
         if self.is_own(path) {
             return DigestStep::Answered(self.read(path).map(|(_, d)| d));
         }
@@ -832,7 +844,7 @@ impl Observer {
         if kind != Kind::File {
             return DigestStep::Answered(None);
         }
-        let read = |known, blob| DigestStep::Read(DigestRead { path: path.clone(), stat: now, started, known, blob });
+        let read = |known, blob| DigestStep::Read(DigestRead { path: path.clone(), stat: Some(now), started, known, blob });
         if let Some(e) = self.known(path).filter(|e| e.kind == Kind::File && e.holds(&now)) {
             if !self.checks(path) {
                 self.counts.reused += 1;
@@ -868,7 +880,9 @@ impl Observer {
         let (len, digest) = hashed?;
         self.counts.hashed += 1;
         self.counts.bytes += len;
-        self.record_hash(&read.path, read.stat, read.started, digest);
+        if let Some(stat) = read.stat {
+            self.record_hash(&read.path, stat, read.started, digest);
+        }
         if read.known.is_some_and(|k| k != digest) {
             self.counts.mismatched += 1;
         }
@@ -903,6 +917,7 @@ impl Observer {
             return;
         }
         for root in roots {
+            if source::contains(root) { continue; }
             let root = self.outermost(&self.abs(root));
             if self.roots.iter().any(|r| r.asked == self.flushes && under(&root, &r.path)) {
                 continue;
@@ -1455,6 +1470,14 @@ impl Observer {
     /// The bytes of the file at `path` and their sha256 (`None`: not a readable file). Always reads.
     pub fn read(&mut self, path: &Path) -> Option<(Vec<u8>, [u8; 32])> {
         let path = &self.abs(path);
+        if source::contains(path) {
+            let bytes = source::read(path).ok()?;
+            let digest = Sha256::digest(&bytes).into();
+            self.counts.hashed += 1;
+            self.counts.bytes += bytes.len() as u64;
+            if let Some(blob) = source::blob(path) { self.record_alias(&blob.key_bytes(), digest); }
+            return Some((bytes, digest));
+        }
         if self.is_own(path) {
             let bytes = std::fs::read(path).ok().filter(|_| std::fs::metadata(path).is_ok_and(|m| m.is_file()))?;
             let digest: [u8; 32] = Sha256::digest(&bytes).into();
@@ -1490,6 +1513,7 @@ impl Observer {
     /// An entry is a directory when what it names is one, symlinks followed.
     pub fn listing(&mut self, dir: &Path) -> Option<Listing> {
         let dir = &self.abs(dir);
+        if source::contains(dir) { return source::listing(dir).ok().map(Arc::new); }
         let own = self.is_own(dir);
         if !own {
             self.ensure(dir);
@@ -1613,10 +1637,42 @@ impl Observer {
         found
     }
 
+    /// One dependency list per shape in a family of immutable records named
+    /// `family:<shape hash>:<result key>`. Each seek skips the other values of that shape.
+    pub fn run_record_samples(&self, family: &str) -> Vec<Vec<u8>> {
+        if !super::hazards::may_read_store() { return Vec::new(); }
+        let Some(db) = self.db.as_ref().and_then(|k| k.reader.as_ref()) else { return Vec::new() };
+        let Ok(mut seek) = db.prepare_cached("SELECT key,consulted FROM run_record WHERE key >= ?1 AND key < ?2 ORDER BY key LIMIT 1")
+            else { return Vec::new() };
+        let mut lower = format!("{family}:");
+        let upper = format!("{family};");
+        let mut lists = Vec::new();
+        while let Ok((key, list)) = seek.query_row((&lower, &upper), |r| Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))) {
+            let Some((group, _)) = key.rsplit_once(':') else { break };
+            lower = format!("{group};");
+            lists.push(list);
+        }
+        lists
+    }
+
+    /// Read an immutable result even if another process published it after an earlier miss.
+    pub fn stored_run_record(&self, key: &str) -> Option<(Vec<u8>, Vec<u8>)> {
+        if !super::hazards::may_read_store() { return None; }
+        self.db.as_ref()?.reader.as_ref()?.prepare_cached("SELECT consulted,outputs FROM run_record WHERE key=?1").ok()?
+            .query_row([key], |r| Ok((r.get(0)?, r.get(1)?))).ok()
+    }
+
     /// Keeps a run's record under `key`, replacing the last: in memory now, in the store behind the run.
     pub fn put_run_record(&mut self, key: &str, consulted: &[u8], outputs: &[u8]) {
         if let Some(k) = self.db.as_mut() {
             k.records.insert(key.to_owned(), (consulted.to_owned(), outputs.to_owned()));
+        }
+        self.store_run_record(key, consulted, outputs);
+    }
+
+    /// Queue a durable result. The store controls the lifetime of versioned results.
+    pub fn store_run_record(&self, key: &str, consulted: &[u8], outputs: &[u8]) {
+        if let Some(k) = self.db.as_ref() {
             let (key, consulted, outputs) = (key.to_owned(), consulted.to_owned(), outputs.to_owned());
             k.writer.send(move |db| {
                 let _ = db.execute_cached("INSERT OR REPLACE INTO run_record VALUES (?1, ?2, ?3)", params![key, consulted, outputs]);
@@ -2019,15 +2075,6 @@ fn cursor_key(root: &Path, volume: [u8; 16]) -> String {
 }
 
 /// Where the observer of the store at `path` writes the journal's cookies: `<store>.cookies`, holding nothing else.
-/// A folder of the observer's, created private to the user (`0700`) where it is absent.
-fn private_dir(dir: &Path) -> std::io::Result<()> {
-    let mut builder = std::fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
-    builder.create(dir)
-}
-
 fn cookie_dir(path: &Path) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
     name.push(".cookies");
@@ -2053,13 +2100,13 @@ pub struct Swept {
 ///   names of one directory (`/var/…`, `/private/var/…`), all but the one with the newest cursor;
 /// - an answer, a canonical form or a Git file list under no root kept: every path the observer reads is under a
 ///   root (`watch_above`), so one under none is of a name no run uses;
-/// - a whole-run cutoff's record (`reuse::CUTOFF`) that names no plan `live` says is live (a run of another build,
-///   whose manifests the content store no longer keeps), and one from before records named their plans.
+/// - a revision constant after the last manifest that owns its derivation goes away;
+/// - other planned records (including constants, cone rounds and cutoffs) once none of their plans is live.
 ///
 /// - a row of the observer's own journal (decision 0400) under no root kept, or `LIST_KEEP` generations old: the
 ///   floor moves up with it, and a record from before it is not answered (`changed_since`).
 ///
-/// Then the WAL is folded into the database and truncated. Other records (`constants:`, `cone-rounds:`) stay.
+/// Then the WAL is folded into the database and truncated.
 pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Result<Swept> {
     let mut swept = Swept::default();
     if !path.exists() {
@@ -2128,6 +2175,9 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
                 // before they did.
                 if key.starts_with(CUTOFF) || PLANNED.iter().any(|p| key.starts_with(p)) {
                     let lists = decode_lists(consulted).unwrap_or_default();
+                    if key.starts_with("constants:") && let Some(owner) = lists.iter().flat_map(|l| l.chunks_exact(3)).find(|c| c[0] == "constants-owner") {
+                        return !unhex(&owner[2]).is_some_and(|plan| live(&plan));
+                    }
                     return !lists.iter().flat_map(|l| l.chunks_exact(3)).filter(|c| c[0] == "plan" && c[1].is_empty()).filter_map(|c| unhex(&c[2])).any(|plan| live(&plan));
                 }
                 // A cutoff's record from before they were prefixed: its key alone, a digest.
@@ -2274,7 +2324,8 @@ pub enum DigestStep {
 /// A file `Observer::digest` reads: hashed with no observer (`hash`), then recorded (`Observer::digest_read`).
 pub struct DigestRead {
     path: PathBuf,
-    stat: Stat,
+    /// Git objects have no filesystem stat.
+    stat: Option<Stat>,
     started: i64,
     /// The digest kept for it, which the read checks.
     known: Option<[u8; 32]>,
@@ -2290,7 +2341,7 @@ impl DigestRead {
 
     /// The file's bytes, for a caller that keeps them (a run's one read of its sources, decision 0300).
     pub fn read(&self) -> Option<Vec<u8>> {
-        std::fs::read(&self.path).ok()
+        source::read(&self.path).ok()
     }
 
     /// `bytes`' length and digest, as `hash` gives a file's.
@@ -2299,8 +2350,13 @@ impl DigestRead {
     }
 
     /// The file's stat as it was before the read: the bytes are its content while the file's stat is this.
-    pub fn stat(&self) -> &Stat {
-        &self.stat
+    pub fn stat(&self) -> Option<&Stat> {
+        self.stat.as_ref()
+    }
+
+    /// Git placements with this key can share an immutable read.
+    pub fn blob_key(&self) -> Option<[u8; 40]> {
+        self.blob
     }
 }
 
@@ -2721,8 +2777,13 @@ mod tests {
 
     /// A path's canonical form is resolved once: under a root the journal says is unchanged, the next run answers it
     /// with no `realpath`, and a symlink retargeted under the root is resolved again.
+    #[cfg(any(unix, windows))]
     #[test]
     fn a_canonical_path_is_resolved_again_only_where_the_journal_names_a_change() {
+        #[cfg(unix)]
+        use std::os::unix::fs::symlink as symlink_file;
+        #[cfg(windows)]
+        use std::os::windows::fs::symlink_file;
         let base = std::env::temp_dir().join(format!("rerail-canonical-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let root = base.join("root");
@@ -2731,7 +2792,13 @@ mod tests {
             std::fs::write(root.join(format!("pkg/m{i}.py")), "x = 1\n").unwrap();
         }
         let link = root.join("pkg/alias.py");
-        std::os::unix::fs::symlink("m0.py", &link).unwrap();
+        let created = symlink_file("m0.py", &link);
+        #[cfg(windows)]
+        if created.as_ref().is_err_and(|e| e.raw_os_error() == Some(1314)) {
+            std::fs::remove_dir_all(&base).unwrap();
+            return;
+        }
+        created.unwrap();
         let store = base.join("store.files");
         let asked = [root.join("pkg/m1.py"), link.clone(), root.join("pkg/../pkg/m2.py")];
         let run = || {
@@ -2740,21 +2807,25 @@ mod tests {
             o.watch(std::slice::from_ref(&root));
             let got: Vec<Option<PathBuf>> = asked.iter().map(|p| o.canonical(p)).collect();
             o.flush();
-            (o.counts, got)
+            (o.counts, got, o.roots.iter().any(|r| r.trusted))
         };
-        let (first, got) = run();
+        let (first, got, _) = run();
         assert_eq!(first.resolved, 3, "{first}");
         let real = std::fs::canonicalize(&root).unwrap();
         assert_eq!(got, vec![Some(real.join("pkg/m1.py")), Some(real.join("pkg/m0.py")), Some(real.join("pkg/m2.py"))]);
         std::thread::sleep(std::time::Duration::from_millis(300));
         run();
-        let (second, same) = run();
+        let (second, same, trusted_root) = run();
         // The path through `..` is resolved each time: it is not a name its directory's listing holds.
-        assert_eq!((second.resolved, second.trusted), (1, 2), "nothing changed: {second}");
+        if trusted_root {
+            assert_eq!((second.resolved, second.trusted), (1, 2), "nothing changed: {second}");
+        } else {
+            assert_eq!((second.resolved, second.trusted), (3, 0), "no journal cursor: {second}");
+        }
         assert_eq!(same, got);
         std::fs::remove_file(&link).unwrap();
-        std::os::unix::fs::symlink("m2.py", &link).unwrap();
-        let (third, after) = run();
+        symlink_file("m2.py", &link).unwrap();
+        let (third, after, _) = run();
         assert!(third.resolved >= 2, "the retargeted symlink is resolved again: {third}");
         assert_eq!(after[1], Some(real.join("pkg/m2.py")));
         let _ = std::fs::remove_dir_all(&base);

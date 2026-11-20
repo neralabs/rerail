@@ -72,6 +72,7 @@ import { installedPackDirectories, loadRuleCatalog } from "../engine/catalog/rul
 import { RERAIL_PUBLISHER, rulePackPublisher, rulePackShortName } from "../engine/catalog/rule-packs.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES, seedRerailDatabase } from "./seed.js";
 import { runAuditCommand } from "./audit-cli.js";
+import { deleteNamedAnalysisScope } from "../engine/native/analysis-scope.js";
 import { describeRemoteStatus, runRemoteCommand } from "./remote-cli.js";
 import { RemoteOutbox } from "../runtime/remote-outbox.js";
 import { runRuleDraftCommand } from "./rule-draft.js";
@@ -279,7 +280,8 @@ function usage(): string {
     "",
     internalTesting(`Not part of the ${packageManifest(packageRoot).version} release:`),
     "  rerail scan --session <id> [--scope repository|git-diff] [--wait] [--json]   experimental: the daemon needs RERAIL_EXPERIMENTAL_REPOSITORY_SCAN=1",
-    "  rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--rules-ref <ref>] [--pack <id>]... [--path <p>]... [--paths-from <file>] [--json] [--fail-on-violations] [--no-send]   experimental: needs RERAIL_EXPERIMENTAL_HEADLESS_SCAN=1",
+    "  rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--revision <commit-or-tree> --analysis-scope <name>] [--rules-ref <ref>] [--pack <id>]... [--rr <file>]... [--path <p>]... [--paths-from <file>] [--json] [--fail-on-violations] [--no-send]   experimental: needs RERAIL_EXPERIMENTAL_HEADLESS_SCAN=1",
+    "  rerail scope delete <name> [--store <file>]   experimental: needs RERAIL_EXPERIMENTAL_HEADLESS_SCAN=1",
     "  rerail remote add <url> [--name <name>] [--label <machine label>] (--token-stdin | --token-file <file>) [--no-content]   experimental: add and push need RERAIL_EXPERIMENTAL_REMOTE_SINK=1",
     "  rerail remote list|status [--json]",
     "  rerail remote remove <name|url>",
@@ -830,6 +832,7 @@ function isVersionIndependentCommand(args: readonly string[]): boolean {
   if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset", "scrub", "merge-assist", "support-bundle", "feedback", "remote"].includes(command ?? "")) return true;
   // A headless `scan` (no `--session`) runs in this process, so it scans with the package invoked.
   if (command === "scan") return !commandArgs.includes("--session");
+  if (command === "scope") return true;
   if (command === "daemon") return commandArgs[1] === "stop";
   return command === "update" && commandArgs[1] === "status";
 }
@@ -979,6 +982,17 @@ async function runProjectCommand(command: string, args: readonly string[], { hom
     case "stop":
       return await runRepositoryCommand(command, args, { home, packageRoot, updater });
     case "state": return runStateCommand(args);
+    // Internal testing: a headless scan's analysis scopes.
+    case "scope": {
+      requireExperiment("HEADLESS_SCAN");
+      const [action, name, flag, path] = args;
+      if (action !== "delete" || !name?.trim() || (args.length !== 2 && !(args.length === 4 && flag === "--store" && path))) {
+        throw new Error("Usage: rerail scope delete <name> [--store <file>]");
+      }
+      const { store, hadMembers } = await deleteNamedAnalysisScope(defaultRerailDatabasePath(), name, path);
+      process.stdout.write(hadMembers ? `Released scope ${JSON.stringify(name)} in ${store}.\n` : `No published ownership for scope ${JSON.stringify(name)} in ${store}.\n`);
+      return 0;
+    }
     // Internal testing: `scan`, explicit full-repository and git-diff audits. Whether `settings` ships is still open.
     case "scan":
     case "settings":

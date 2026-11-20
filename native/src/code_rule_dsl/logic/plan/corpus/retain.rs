@@ -1455,6 +1455,16 @@ impl InKept {
     pub(in crate::code_rule_dsl) fn derived_digest(&self, rel: &str) -> Option<u64> {
         self.derived.get(rel).map(|s| s.digest)
     }
+
+    /// Whether `other` holds the same kept rows: a revision's rounds (`corpus`, `cone_rounds::On::alternate`) are
+    /// written into its space too only where they differ.
+    pub(super) fn same_rows(&self, other: &Self) -> bool {
+        // By digests: an input's documents are its digest (`FramedDocs` holds them as read), a derived relation its own.
+        self.inputs.len() == other.inputs.len()
+            && self.inputs.iter().all(|(rel, (digest, _))| other.inputs.get(rel).is_some_and(|(d, _)| d == digest))
+            && self.derived.len() == other.derived.len()
+            && self.derived.iter().all(|(rel, s)| other.derived.get(rel).is_some_and(|o| o.digest == s.digest))
+    }
 }
 
 /// The digest of `read` a derived relation records (t33 K4): as `known` has it (an input as the run bound it, a
@@ -2358,6 +2368,13 @@ impl Retained {
             entry.each_rows(&mut |rows| out.extend(rows.chunks_exact(width.max(1)).filter(|r| take(r)).map(<[i64]>::to_vec)));
         }
         Ok(Ok(Some(out)))
+    }
+
+    /// Another fact space needs the rows that the current space kept without reading.
+    pub(super) fn admit_for_copy(&mut self, store: &ContentStore, program: &Placed, relations: &[String]) -> Result<bool> {
+        if !self.admit(store, program, relations)? { return Ok(false); }
+        self.rels.extend(self.late.take());
+        Ok(true)
     }
 
     /// Derived relation `rel`'s rows, as held or read back from the frames.

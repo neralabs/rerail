@@ -43,6 +43,7 @@ import { openToOthers, type AccessReader } from "../engine/storage/private-files
 import { holdHomeDaemonLock } from "../engine/native/home-daemon-lock.js";
 import { acquireMainInstance } from "../engine/native/main-instance.js";
 import { currentRerailBuild, isMainRerailBuild } from "../engine/native/rerail-build.js";
+import { collectAnalysisCaches, settleAnalysisScopeReleases } from "../engine/native/analysis-scope.js";
 
 export const DEFAULT_DAEMON_HOST = "127.0.0.1";
 export const DEFAULT_DAEMON_PORT = 4737;
@@ -464,6 +465,7 @@ function daemonMergeAssist(database: () => RerailDatabase): { mergeAssist?: Merg
 }
 
 export class RerailDaemon {
+  #scopeReleaseTimer: ReturnType<typeof setInterval> | undefined;
   readonly host: string;
   readonly port: number;
   readonly url: string;
@@ -605,6 +607,21 @@ export class RerailDaemon {
       await daemon.#announce(remembered);
       daemon.#startCheckoutPruning();
       daemon.#startProvenanceMove();
+      let collecting = false;
+      const releaseScopes = async () => {
+        if (collecting) return;
+        collecting = true;
+        try {
+          try { settleAnalysisScopeReleases(databasePath); }
+          catch (error) { process.stderr.write(`rerail: analysis scope release failed: ${String(error)}\n`); }
+          await collectAnalysisCaches(databasePath);
+        }
+        catch (error) { process.stderr.write(`rerail: analysis cache collection failed: ${String(error)}\n`); }
+        finally { collecting = false; }
+      };
+      void releaseScopes();
+      daemon.#scopeReleaseTimer = setInterval(releaseScopes, 5_000);
+      daemon.#scopeReleaseTimer.unref();
       return daemon;
     } catch (error) {
       await closeAfterFailedStart(started, stores);
@@ -752,6 +769,7 @@ export class RerailDaemon {
     clearInterval(this.#recordCheck);
     // A write in flight lands before the state file is removed below, never after.
     await this.#recordChecked;
+    clearInterval(this.#scopeReleaseTimer);
     try {
       this.#provenanceMove?.stop.abort();
       await this.#provenanceMove?.done;

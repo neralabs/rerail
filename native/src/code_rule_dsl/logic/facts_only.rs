@@ -31,6 +31,9 @@ const FACT_STORE: &[&str] = &[
     "tape_objects",
     "file_documents",
     "object_pins",
+    // Physical segments holding stored object bytes and relation frames.
+    "object_segments",
+    "frame_segments",
     "store_state",
     // The store's identity (RER-131): its atoms and connections belong to this store only.
     "store_identity",
@@ -49,6 +52,20 @@ const FACT_STORE: &[&str] = &[
     // The archive of aged sources and tapes (decision 0450 step 4): their bytes, compressed.
     "object_archive",
     "workspace_overlay",
+    "analysis_scope_manifest",
+    "analysis_scope_snapshot",
+    "analysis_scope_generation",
+    "analysis_directory_acquisition",
+    "analysis_scope_workspace_snapshot",
+    "analysis_scope_collect",
+    "analysis_scope_release",
+    // Pending acquisitions and the scope, run, and snapshot facts published together on success.
+    "analysis_scope_pending",
+    "analysis_history_scope",
+    "analysis_scope_run",
+    "analysis_run_workspace_snapshot",
+    // Index of each history scope's stop ancestors, populated on insert and removed by foreign-key cascade.
+    "analysis_history_ancestor",
     "node",
     "tape",
     "node_type",
@@ -190,6 +207,17 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/strings.rs", "FUNCTORS"),
     ("code_rule_dsl/logic/strings/functions.rs", "PY_REPR"),
     ("code_rule_dsl/logic/strings/functions.rs", "TO_PRECISION"),
+    // Registered functions for reference extraction and store record replay.
+    ("code_rule_dsl/logic/plan/corpus/reference_facts.rs", "SUMMARIZE"),
+    ("content_store/record.rs", "KINDS"),
+    // Execution state scoped to the evaluation or the native plan currently being compiled.
+    ("code_rule_dsl/logic/strings/git.rs", "GIT_EVALUATION"),
+    ("code_rule_dsl/logic/native/setfix/device.rs", "OWN_TEXTS"),
+    // The open allocation block for relation rows.
+    ("code_rule_dsl/logic/native/setfix/rows.rs", "OPEN"),
+    // Per-thread decode instrumentation and the record replay test's log.
+    ("code_rule_dsl/logic/program_image/version.rs", "DECODED"),
+    ("content_store/record.rs", "LOG"),
     // The rule being compiled: the step that first bound each slot, for a refusal's message.
     ("code_rule_dsl/logic/native/setfix/device.rs", "BINDER"),
     // This thread's run's binding (CPU or Metal).
@@ -353,6 +381,8 @@ const STATE: &[(&str, &str)] = &[
     // Each database file's identity, read once a file: a registry, as CANONICAL is.
     ("content_store/atoms.rs", "IDENTITIES"),
     ("content_store/atoms.rs", "MEMORY"),
+    // Explicit arena ownership for open in-memory SQL connections.
+    ("content_store/atoms.rs", "MEMORY_ARENAS"),
     ("content_store/atoms.rs", "REGISTRY"),
     ("content_store/compression.rs", "ENCODER"),
     ("content_store/connection.rs", "ALL_CONNECTIONS"),
@@ -374,6 +404,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix/device.rs", "TESTS"),
     // A switch: testing mode's store (decision 0130).
     ("code_rule_dsl/logic/plan/corpus.rs", "STORE"),
+    // The invoking audit's store path while its inventory program runs.
+    ("code_rule_dsl/logic/plan/corpus.rs", "THREAD_STORE"),
     // Phase 1's runs within one batch of policies over one tree, dropped with it: nothing kept past the batch.
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "BATCH"),
     // With them, the memo plans of the batch's runs so far, by root (O-store-single-program): dropped with the batch.
@@ -442,7 +474,6 @@ const STATE: &[(&str, &str)] = &[
 /// Maps (file, static) that are caches not yet facts, with the 0104 step that moves each.
 const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "CONSULTED", "1"),
-    ("code_rule_dsl/logic/strings/git.rs", "STATE", "1"),
     ("code_rule_dsl/logic/rr.rs", "LIBRARIES", "2"),
     ("code_rule_dsl/logic/rr.rs", "PARSED", "2"),
     ("code_rule_dsl/logic/rr.rs", "PROGRAMS", "2"),

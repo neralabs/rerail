@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { realpath as realpathAsync } from "node:fs/promises";
+import { isUtf8 } from "node:buffer";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 /** True when `candidate` is `root` or below it; canonicalize both first when symlinked identity matters. */
@@ -81,6 +82,33 @@ export async function storedPathAsync(path: string): Promise<string> {
   }
 }
 
+/** A text-only caller must never open a different checkout through a lossy conversion of the physical path. */
+export function textRealPath(path: string): string {
+  const bytes = realpathSync.native(path, { encoding: "buffer" });
+  if (!isUtf8(bytes)) throw new Error(`Checkout path is not valid UTF-8: ${JSON.stringify(path)}`);
+  return bytes.toString();
+}
+
+/** The stored Unix scope spelling from analysis_scope::directory_in. Captured keys are never opened as paths. */
+export function storedScopeDirectory(path: string): string {
+  if (process.platform === "win32") return storedPath(path);
+  const { existing, missing } = existingAncestor(path);
+  const base = realpathSync.native(existing, { encoding: "buffer" });
+  const bytes = missing.length === 0 ? base : Buffer.concat([base, Buffer.from((base.at(-1) === 47 ? "" : "/") + missing.join("/"))]);
+  const text = bytes.toString();
+  if (!text.includes("\uFFFD")) return text;
+  const components = [];
+  let start = 0;
+  for (;;) {
+    const end = bytes.indexOf(47, start);
+    const part = bytes.subarray(start, end === -1 ? bytes.length : end);
+    const name = part.toString();
+    components.push(name.includes("\uFFFD") ? `./${part.toString("hex")}` : name);
+    if (end === -1) return components.join("/");
+    start = end + 1;
+  }
+}
+
 /**
  * `path` resolved from its deepest ancestor `realpath` resolves, with the names below that ancestor as `path` spells
  * them: a part not yet created, and a part the system refuses to resolve. On Windows the native realpath refuses a file
@@ -126,4 +154,17 @@ function isLink(path: string): boolean {
   } catch {
     return true;
   }
+}
+
+/** `path`'s deepest existing ancestor, and the names below it as `path` spells them. */
+function existingAncestor(path: string): { existing: string; missing: string[] } {
+  let existing = resolve(path);
+  const missing: string[] = [];
+  while (!existsSync(existing)) {
+    const parent = dirname(existing);
+    if (parent === existing) break;
+    missing.unshift(basename(existing));
+    existing = parent;
+  }
+  return { existing, missing };
 }

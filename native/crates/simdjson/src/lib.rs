@@ -549,6 +549,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     #[ignore = "a measurement: run by name with RERAIL_TAPE_RUN"]
+    #[cfg(target_os = "macos")]
     fn tape_cost() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let (mut files, mut work) = (Vec::new(), vec![root]);
@@ -719,6 +720,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     #[ignore = "a measurement: run by name with --nocapture"]
+    #[cfg(target_os = "macos")]
     fn shape_costs() {
         let retired = || {
             let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };

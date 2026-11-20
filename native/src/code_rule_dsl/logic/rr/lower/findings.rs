@@ -182,8 +182,12 @@ impl<P: FieldsMut + ?Sized> Findings<'_, P> {
         let atom = |rel: &str, args: Vec<Term>| Literal::Atom(Atom { rel: rel.to_owned().into(), args: args.into(), neg: false, gated: false });
         // Whether a rule makes a `@place` value: only then can a span or loc `at` hold one.
         let place_values = seen.place_values;
+        let inputs = self.prog.input_names();
         for f in std::mem::take(&mut violations) {
-            self.diagnostics(&policy, &f)?;
+            // A violation made of direct `@place` heads alone has no document's rows: its document reads stay out of
+            // the plan.
+            let at_document = !f.places || seen.heads.contains(&f.name) || self.prog.states_facts(&f.name) || inputs.contains(&f.name);
+            self.diagnostics(&policy, &f, at_document)?;
             let code_col = match f.code {
                 FindingCode::Column(i) => Some(i),
                 _ => None,
@@ -200,8 +204,10 @@ impl<P: FieldsMut + ?Sized> Findings<'_, P> {
             } else {
                 vec![atom("docof", vec![v("rr_v0"), v("rr_d")]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild]), atom("line", vec![v("rr_v0"), v("rr_l")]), atom("col", vec![v("rr_v0"), v("rr_c")])]
             };
-            self.write(Rule { head: head.clone(), body: std::iter::once(atom(&f.name, cols.clone())).chain(at).chain(scoped.iter().cloned()).collect() });
-            if !f.node && place_values {
+            if at_document {
+                self.write(Rule { head: head.clone(), body: std::iter::once(atom(&f.name, cols.clone())).chain(at).chain(scoped.iter().cloned()).collect() });
+            }
+            if at_document && !f.node && place_values {
                 let of = |g: &str| Term::Call(g.to_owned().into(), [v("rr_v0")].into());
                 let mut found = head.clone();
                 found.args.make_mut()[3] = of(PLACE_PATH);
@@ -431,17 +437,19 @@ impl<P: FieldsMut + ?Sized> Findings<'_, P> {
         self.diagnostic_rule(policy, &finding, &[Term::Int(0)], Term::Int(0), body, true)
     }
 
-    pub(super) fn diagnostics(&mut self, policy: &str, finding: &Violation) -> Result<(), Error> {
+    pub(super) fn diagnostics(&mut self, policy: &str, finding: &Violation, at_document: bool) -> Result<(), Error> {
         let cols: Vec<Term> = (0..finding.arity).map(|i| v(&format!("rr_v{i}"))).collect();
-        let mut body = vec![atom(&finding.name, cols.clone())];
-        if finding.node {
-            body.push(atom("node", vec![v("rr_d"), cols[0].clone(), Term::Wild, Term::Wild, Term::Wild]));
-        } else {
-            body.push(atom("docof", vec![cols[0].clone(), v("rr_d")]));
+        if at_document {
+            let mut body = vec![atom(&finding.name, cols.clone())];
+            if finding.node {
+                body.push(atom("node", vec![v("rr_d"), cols[0].clone(), Term::Wild, Term::Wild, Term::Wild]));
+            } else {
+                body.push(atom("docof", vec![cols[0].clone(), v("rr_d")]));
+            }
+            body.push(atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild]));
+            body.push(atom("line", vec![cols[0].clone(), v("rr_l")]));
+            self.diagnostic_rule(policy, finding, &cols, cols[0].clone(), body, false)?;
         }
-        body.push(atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild]));
-        body.push(atom("line", vec![cols[0].clone(), v("rr_l")]));
-        self.diagnostic_rule(policy, finding, &cols, cols[0].clone(), body, false)?;
         if finding.places {
             let mut args = vec![v("rr_p"), v("rr_l")];
             args.extend(cols.iter().skip(1).cloned());

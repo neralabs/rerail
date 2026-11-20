@@ -44,6 +44,7 @@ test-hooks = ["rerail-program-image/test-hooks", "rerail-facts/test-hooks", "rer
 [dependencies]
 # `\\?\` free canonical paths on Windows (std's are verbatim, which `/`-joined text and text comparisons break).
 dunce = "=1.0.5"
+libc = "0.2.189"
 arc-swap = "=1.9.3"
 base64 = "=0.22.1"
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
@@ -112,11 +113,9 @@ cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 cranelift-jit-wasm = { path = "../../wasm/cranelift-jit" }
-libc = "0.2.189"
 
 [target.'cfg(unix)'.dependencies]
 mimalloc = { version = "=0.1.52", default-features = false }
-libc = "0.2.189"
 
 [target.'cfg(not(any(windows, target_family = "wasm")))'.dependencies]
 tikv-jemallocator = { version = "=0.7.0", features = ["disable_initial_exec_tls"] }

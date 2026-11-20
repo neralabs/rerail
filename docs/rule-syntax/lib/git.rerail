@@ -1,0 +1,137 @@
+// Repository-qualified Git facts. A program derives a request for each key it needs.
+// Example: git_revision_request(r, "HEAD") :- git_root_repo(r).
+//          git_object_request(r, c) :- git_revision(r, "HEAD", c).
+// See docs/rule-syntax/git.md.
+#include "git/messages.rerail"
+
+.decl git_location_of(repo: symbol, view: symbol, role: symbol, encoding: symbol, value: symbol)
+.input git_location_of
+.decl git_repository_dir(repo: symbol, path: symbol)
+git_repository_dir(r, p) :- git_location_of(r, _, "common-dir", "text", p).
+.decl git_worktree(view: symbol, path: symbol)
+git_worktree(v, p) :- git_location_of(_, v, "worktree", "text", p).
+
+.decl git_revision_request(repo: symbol, expression: symbol) extensible
+.decl git_object_request(repo: symbol, oid: symbol) extensible
+.decl git_view_revision_request(view: symbol, expression: symbol) extensible
+git_view_revision_request(v, expr) :- git_root_view(r, v), git_revision_request(r, expr).
+
+.decl git_view_revision(view: symbol, expression: symbol, oid: symbol)
+git_view_revision(v, expr, oid) :- git_view_revision_request(v, expr), git_view_revision_of(v, expr, oid, "ok").
+
+.decl git_view_revision_error(view: symbol, expression: symbol, reason: symbol)
+git_view_revision_error(v, expr, reason) :- git_view_revision_request(v, expr), git_view_revision_of(v, expr, _, reason), reason != "ok".
+
+.decl git_revision(repo: symbol, expression: symbol, oid: symbol)
+git_revision(r, expr, oid) :- git_revision_request(r, expr), git_root_view(r, v), git_view_revision(v, expr, oid).
+
+.decl git_revision_error(repo: symbol, expression: symbol, reason: symbol)
+git_revision_error(r, expr, reason) :- git_revision_request(r, expr), git_root_view(r, v), git_view_revision_error(v, expr, reason).
+git_revision_error(r, expr, "repository-not-open") :- git_revision_request(r, expr), !git_root_repo(r).
+
+.decl git_object_error(repo: symbol, oid: symbol, reason: symbol)
+git_object_error(r, oid, reason) :- git_object_of(r, oid, "error", _, reason, _, _, _).
+
+// Successful records are immutable, keyed by authorized repository, object ID and decoder version.
+.decl git_record_key(repo: symbol, oid: symbol, version: symbol)
+git_record_key(r, oid, "git-record-4") :- git_root_repo(r), git_object_request(r, oid).
+
+.decl git_record(repo: symbol, oid: symbol, version: symbol, field: symbol, position: number, first: symbol, second: symbol, value: number, offset: number)
+git_record(r, oid, v, field, pos, a, b, n, o) :-
+    git_record_key(r, oid, v), git_object_of(r, oid, field, pos, a, b, n, o), field != "error", field != "storage".
+.cache git_record by git_record_key
+
+.decl git_object_kind(repo: symbol, oid: symbol, kind: symbol)
+git_object_kind(r, oid, kind) :- git_record(r, oid, _, "kind", _, kind, _, _, _).
+
+.decl git_commit(repo: symbol, commit: symbol, tree: symbol)
+git_commit(r, c, t) :- git_record(r, c, _, "tree", _, t, _, _, _).
+
+.decl git_parent(repo: symbol, commit: symbol, position: number, parent: symbol)
+git_parent(r, c, i, p) :- git_record(r, c, _, "parent", i, p, _, _, _).
+
+.decl git_message(repo: symbol, commit: symbol, text: symbol)
+git_message(r, c, msg) :- git_record(r, c, _, "message", _, msg, _, _, _).
+
+.decl git_subject(repo: symbol, commit: symbol, text: symbol)
+git_subject(r, c, subject) :- git_message(r, c, msg), subject = @replace_all(msg, "[\r\n][\\s\\S]*$", "").
+
+.decl git_message_bytes(repo: symbol, commit: symbol, hex: symbol)
+git_message_bytes(r, c, bytes) :- git_record(r, c, _, "message-bytes", _, bytes, _, _, _).
+
+.decl git_message_encoding(repo: symbol, commit: symbol, hex: symbol)
+git_message_encoding(r, c, bytes) :- git_record(r, c, _, "encoding", _, bytes, _, _, _).
+
+.decl git_signature_bytes(repo: symbol, commit: symbol, role: symbol, hex: symbol)
+git_signature_bytes(r, c, role, bytes) :- git_record(r, c, _, "signature-bytes", _, role, bytes, _, _).
+
+.decl git_author(repo: symbol, commit: symbol, name: symbol, email: symbol, seconds: number, offset_seconds: number)
+git_author(r, c, name, mail, secs, offset) :- git_record(r, c, _, "author", _, name, mail, secs, offset).
+
+.decl git_committer(repo: symbol, commit: symbol, name: symbol, email: symbol, seconds: number, offset_seconds: number)
+git_committer(r, c, name, mail, secs, offset) :- git_record(r, c, _, "committer", _, name, mail, secs, offset).
+
+.decl git_signature_time(repo: symbol, commit: symbol, role: symbol, seconds: number, offset_seconds: number)
+git_signature_time(r, c, "author", secs, offset) :- git_author(r, c, _, _, secs, offset).
+git_signature_time(r, c, "committer", secs, offset) :- git_committer(r, c, _, _, secs, offset).
+git_signature_time(r, c, role, secs, offset) :- git_record(r, c, _, "signature-bytes", _, role, _, secs, offset).
+
+.decl git_header(repo: symbol, commit: symbol, position: number, name: symbol, hex: symbol)
+git_header(r, c, i, name, value) :- git_record(r, c, _, "header", i, name, value, _, _).
+
+.decl git_header_bytes(repo: symbol, commit: symbol, position: number, hex_name: symbol, hex_value: symbol)
+git_header_bytes(r, c, i, name, value) :- git_record(r, c, _, "header-bytes", i, name, value, _, _).
+
+.decl git_tree_entry(repo: symbol, tree: symbol, name: symbol, mode: number, target: symbol)
+git_tree_entry(r, t, name, mode, target) :- git_record(r, t, _, "entry", _, name, target, mode, _).
+
+.decl git_tree_entry_bytes(repo: symbol, tree: symbol, hex_name: symbol, mode: number, target: symbol)
+git_tree_entry_bytes(r, t, hex_name, mode, target) :- git_record(r, t, _, "entry-bytes", _, hex_name, target, mode, _).
+
+.decl git_tag_target(repo: symbol, tag: symbol, kind: symbol, target: symbol)
+git_tag_target(r, tag, kind, target) :- git_record(r, tag, _, "target", _, target, kind, _, _).
+
+.decl git_blob_digest(repo: symbol, blob: symbol, sha256: symbol)
+git_blob_digest(r, b, digest) :- git_record(r, b, _, "content", _, digest, _, _, _).
+
+// A walk asks for tree objects only and exposes the reached tree IDs.
+.decl git_tree_walk_request(repo: symbol, tree: symbol) extensible
+.decl git_tree_member(repo: symbol, root: symbol, tree: symbol)
+git_tree_member(r, t, t) :- git_tree_walk_request(r, t).
+git_object_request(r, t) :- git_tree_member(r, _, t).
+git_tree_member(r, root, child) :-
+    git_tree_member(r, root, t), git_tree_entry(r, t, _, 16384, child).
+git_tree_member(r, root, child) :-
+    git_tree_member(r, root, t), git_tree_entry_bytes(r, t, _, 16384, child).
+
+.decl git_tree_walk_error(repo: symbol, root: symbol, tree: symbol, reason: symbol)
+git_tree_walk_error(r, root, t, reason) :-
+    git_tree_member(r, root, t), git_object_error(r, t, reason).
+git_tree_walk_error(r, root, t, "not-a-tree") :-
+    git_tree_member(r, root, t), git_object_kind(r, t, kind), kind != "tree".
+git_tree_walk_error(r, root, t, "non-UTF-8-path") :-
+    git_tree_member(r, root, t), git_tree_entry_bytes(r, t, _, _, _).
+
+.decl git_tree_walk_complete(repo: symbol, root: symbol)
+git_tree_walk_complete(r, root) :-
+    git_tree_walk_request(r, root), git_object_kind(r, root, "tree"),
+    !git_tree_walk_error(r, root, _, _).
+
+// The reachable object set is finite. Its size bounds the depth of any valid Git tree.
+.decl git_tree_depth_bound(repo: symbol, root: symbol, bound: number)
+git_tree_depth_bound(r, root, n) :-
+    git_tree_walk_request(r, root), n = count : { git_tree_member(r, root, tree) } - 1.
+
+.decl git_tree_placement(repo: symbol, root: symbol, path: symbol, tree: symbol, depth: number)
+git_tree_placement(r, root, "", root, 0) :- git_tree_walk_request(r, root), git_object_kind(r, root, "tree").
+git_tree_placement(r, root, @join(path, name), child, d + 1) :-
+    git_tree_placement(r, root, path, t, d), git_tree_entry(r, t, name, 16384, child),
+    git_object_kind(r, child, "tree"), git_tree_depth_bound(r, root, bound), d < bound.
+
+.decl git_tree_directory(repo: symbol, root: symbol, path: symbol, tree: symbol)
+git_tree_directory(r, root, path, t) :- git_tree_placement(r, root, path, t, _).
+
+.decl git_tree_file(repo: symbol, root: symbol, path: symbol, mode: number, blob: symbol)
+git_tree_file(r, root, @join(path, name), mode, b) :-
+    git_tree_directory(r, root, path, t), git_tree_entry(r, t, name, mode, b),
+    mode >= 32768, mode < 36864.

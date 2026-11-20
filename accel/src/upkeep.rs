@@ -657,6 +657,14 @@ pub fn forget_file(file: &std::path::Path) {
     drop(gone);
 }
 
+/// Retire jobs for stores that their owner is about to remove. Call after closing
+/// the users of those stores. Wait for a step that already took a job out of the list.
+pub fn retire_files_under(directory: &std::path::Path) {
+    let _stepping = STEPPING.lock().unwrap_or_else(|p| p.into_inner());
+    JOBS.lock().unwrap_or_else(|p| p.into_inner())
+        .retain(|entry| !entry.job.file().is_some_and(|file| file.starts_with(directory)));
+}
+
 /// Starts the scheduler's thread, once (when the settings have it on).
 pub fn start() {
     SCHEDULER.get_or_init(|| {

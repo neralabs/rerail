@@ -419,6 +419,71 @@ mod tests {
     use super::*;
     use std::sync::atomic::AtomicBool;
 
+    #[test]
+    fn removal_waits_for_maintenance_with_an_active_wal_reader() {
+        use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+        // A job that holds a WAL reader on the store, as a collector's poll does (the frame collector's was, before
+        // kept facts retired it, 0456).
+        struct ReadWal {
+            path: PathBuf,
+            reader: Option<Connection>,
+            reading: Option<SyncSender<()>>,
+            finish: Receiver<()>,
+        }
+        impl Job for ReadWal {
+            fn file(&self) -> Option<PathBuf> { Some(self.path.clone()) }
+            fn name(&self) -> String { "test WAL retirement".to_owned() }
+            fn due(&mut self) -> Due {
+                if self.reading.is_none() { return Due::No; }
+                if self.reader.is_none() {
+                    self.reader = Some(Connection::open_with_flags(&self.path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX).unwrap());
+                }
+                Due::Urgent
+            }
+            fn step(&mut self, _: &Slice) -> Result<Step, String> {
+                let db = self.reader.as_ref().expect("the job opened its reader");
+                db.execute_batch("BEGIN").unwrap();
+                let read = || db.query_row("SELECT generation FROM analysis_scope_generation WHERE scope = 'test'", [], |row| row.get::<_, i64>(0)).unwrap();
+                assert_eq!(read(), 2);
+                self.reading.take().unwrap().send(()).unwrap();
+                self.finish.recv_timeout(Duration::from_secs(5)).unwrap();
+                assert_eq!(read(), 2);
+                db.execute_batch("ROLLBACK").unwrap();
+                Ok(Step::Done)
+            }
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("store.sqlite");
+        drop(ContentStore::open_images(&path).unwrap());
+        let db = Connection::open(&path).unwrap();
+        db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;
+            INSERT INTO analysis_scope_generation VALUES ('test', 1);
+            PRAGMA wal_checkpoint(TRUNCATE);
+            UPDATE analysis_scope_generation SET generation = 2 WHERE scope = 'test'").unwrap();
+        assert!(std::fs::metadata(directory.path().join("store.sqlite-wal")).unwrap().len() > 32);
+        let (entered, active) = sync_channel(0);
+        let (release, finish) = sync_channel(0);
+        let _job = rerail_accel::upkeep::register(Box::new(ReadWal { path: path.clone(), reader: None, reading: Some(entered), finish }));
+        std::thread::scope(|threads| {
+            threads.spawn(rerail_accel::upkeep::run_now);
+            active.recv_timeout(Duration::from_secs(5)).unwrap();
+            let (started, removing) = sync_channel(0);
+            let (retired, removed) = sync_channel(0);
+            let directory = directory.path();
+            threads.spawn(move || {
+                started.send(()).unwrap();
+                rerail_accel::upkeep::retire_files_under(directory);
+                retired.send(()).unwrap();
+            });
+            removing.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert!(removed.recv_timeout(Duration::from_millis(30)).is_err());
+            release.send(()).unwrap();
+            removed.recv_timeout(Duration::from_secs(5)).unwrap();
+        });
+        db.close().unwrap();
+        directory.close().unwrap();
+    }
+
     fn file(dir: &Path, auto: &str) -> PathBuf {
         let p = dir.join(format!("upkeep-{auto}.sqlite"));
         let db = Connection::open(&p).unwrap();

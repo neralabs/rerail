@@ -3640,23 +3640,35 @@ fn host_rules_and_item_globals_agree_across_paths_and_revisions() {
 
 #[test]
 fn index_labels_a_basename_by_its_longest_listed_suffix_shorter_than_the_basename() {
-    let workspace = CodeRuleDslWorkspace::new();
-    let mut task = super::index::WorkspaceIndexTask::for_test(
-        StdArc::clone(&workspace.state),
-        StdArc::clone(&workspace.closed),
-        u32::MAX,
-    );
-    task.options.source_languages = [(".php", "php"), (".blade.php", "blade")]
-        .into_iter()
-        .map(|(extension, label)| (extension.to_owned(), label.to_owned()))
-        .collect();
-    let label = |path: &str| task.source_language(path);
-    assert_eq!(label("views/x.blade.php").as_deref(), Some("blade"));
-    assert_eq!(label("views/X.Blade.PHP").as_deref(), Some("blade"));
-    assert_eq!(label("app/Kernel.php").as_deref(), Some("php"));
-    // Suffix-only basenames have no extension, as the host's `languageOfPath` reads them.
-    assert_eq!(label("views/.blade.php").as_deref(), Some("php"));
-    assert_eq!(label("app/.php"), None);
+    let registry = crate::git_workspace::snapshot::SourceLanguages {
+        suffixes: [(".php", "php"), (".blade.php", "blade")].map(|(suffix, label)| (suffix.to_owned(), label.to_owned())).into(),
+        names: [(".npmignore".to_owned(), "text".to_owned())].into(),
+    };
+    let cases = [
+        ("a.php", Some("php")),
+        ("app/Http/Kernel.php", Some("php")),
+        ("A.PHP", Some("php")),
+        ("resources/views/page.blade.php", Some("blade")),
+        ("deep/nested/dir/Page.Blade.PHP", Some("blade")),
+        ("archive.v1.blade.php", Some("blade")),
+        ("blade.php", Some("php")),
+        ("x.blade.php.bak", None),
+        ("page.phtml", None),
+        (".php", None),
+        ("dir/.php", None),
+        (".blade.php", Some("php")),
+        (".npmignore", Some("text")),
+        ("pkg/.NPMIGNORE", Some("text")),
+        ("a.npmignore", None),
+    ];
+    let paths: Vec<_> = cases.iter().map(|(path, _)| (*path).to_owned()).collect();
+    let root = tempfile::tempdir().unwrap();
+    let labels = crate::code_rule_dsl::logic::plan::corpus::source_languages::classify(
+        root.path(), std::path::Path::new(":memory:"), None, &paths, &registry,
+    ).unwrap();
+    for (path, expected) in cases {
+        assert_eq!(labels.get(path).map(String::as_str), expected, "{path}");
+    }
 }
 
 #[test]

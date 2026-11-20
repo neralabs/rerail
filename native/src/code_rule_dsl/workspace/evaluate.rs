@@ -562,6 +562,7 @@ pub fn evaluate_file(
     budget: &MatchBudget,
     restored: &mut Option<tape::TapeDoc>,
 ) -> Result<Metrics> {
+    crate::code_rule_dsl::prof::count("workspace.file_evaluations", 1);
     let mut metrics = Metrics {
         files: 1,
         avoided_tape_reads: usize::from(file.selector_skipped),
@@ -1324,6 +1325,7 @@ pub(super) fn encode_tape(
     closed: &AtomicBool,
     metrics: &mut Metrics,
 ) -> Result<std::result::Result<(), LocalFailure>> {
+    crate::code_rule_dsl::prof::count("workspace.source_parses", 1);
     // Parser and the only native tree are scoped to this one source revision.
     // Neither can overlap with the restored document during selection.
     let interrupted = || closed.load(Ordering::Relaxed) || matcher_budget_exhausted();

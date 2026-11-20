@@ -35,7 +35,7 @@ async function repository(files: Record<string, string>): Promise<string> {
   roots.push(root);
   git(root, "init", "--quiet");
   for (const [path, text] of Object.entries(files)) await writeFile(join(root, path), text);
-  git(root, "add", ".");
+  git(root, "add", "--", ...Object.keys(files));
   git(root, "commit", "--quiet", "-m", "seed");
   return root;
 }
@@ -51,6 +51,23 @@ async function partialClone(): Promise<{ clone: string; oid: string }> {
 }
 
 describe("readGitBlobs", () => {
+  it("reads HEAD and index blobs from the requested checkout when a caller supplies another Git directory and index", async () => {
+    const root = await repository({ "a.py": "selected" });
+    const other = await repository({ "a.py": "other" });
+    const head = git(root, "rev-parse", "HEAD").trim(), blob = git(root, "rev-parse", ":a.py").trim();
+    vi.stubEnv("GIT_DIR", join(other, ".git"));
+    vi.stubEnv("GIT_COMMON_DIR", join(other, ".git"));
+    vi.stubEnv("GIT_WORK_TREE", other);
+    vi.stubEnv("GIT_INDEX_FILE", join(other, ".git", "index"));
+    vi.stubEnv("GIT_OBJECT_DIRECTORY", join(other, ".git", "objects"));
+    try {
+      expect(await gitHead(root)).toBe(head);
+      expect((await readGitBlobIds(root, [":a.py"])).get(":a.py")).toBe(blob);
+      expect((await readGitBlobs(root, [":a.py"], { maxBlobBytes: 20 })).get(":a.py")?.toString()).toBe("selected");
+      expect(process.env.GIT_DIR).toBe(join(other, ".git"));
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it("keeps every blob it was asked for when another in the batch is larger than the limit", async () => {
     const root = await repository({ "big.py": "x".repeat(5_000), "small.py": "print(1)\n" });
     await writeFile(join(root, "small.py"), "print(2)\n");
@@ -72,7 +89,7 @@ describe("readGitBlobIds", () => {
     const root = await repository({ "a b.py": "1\n", "x blob": "2\n" });
     await mkdir(join(root, "dir"));
     await writeFile(join(root, "dir", "c.py"), "3\n");
-    git(root, "add", ".");
+    git(root, "add", "--", "dir/c.py");
     git(root, "commit", "--quiet", "-m", "more");
     const spaced = git(root, "rev-parse", "HEAD:a b.py").trim();
     const ids = await readGitBlobIds(root, [
@@ -145,7 +162,7 @@ describe("gitHead and headMovedOnlyByCommits", () => {
     git(root, "commit", "--quiet", "--allow-empty", "--amend", "-m", "two again");
     expect(await headMovedOnlyByCommits(root, seed)).toBe(true);
     const committed = (await gitHead(root))!;
-    git(root, "reset", "--quiet", "--hard", seed);
+    git(root, "reset", "--quiet", "--soft", seed);
     expect(await headMovedOnlyByCommits(root, committed)).toBe(false);
     // A commit after the move does not hide it.
     git(root, "commit", "--quiet", "--allow-empty", "-m", "three");
@@ -952,7 +969,7 @@ describe("gitUnmergedReader", () => {
     const root = await repository({ "seed.py": "1\n" });
     await mkdir(join(root, "src"));
     await writeFile(join(root, "src", "a.py"), "1\n");
-    git(root, "add", ".");
+    git(root, "add", "--", "src/a.py");
     git(root, "commit", "--quiet", "-m", "source");
     git(root, "branch", "first");
     git(root, "branch", "second");
@@ -1010,7 +1027,7 @@ describe("gitUnmergedReader", () => {
     const root = await repository({ "a.py": "1\n" });
     await mkdir(join(root, "src"));
     await writeFile(join(root, "src", "b.py"), "1\n");
-    git(root, "add", ".");
+    git(root, "add", "--", "src/b.py");
     git(root, "commit", "--quiet", "-m", "source");
     git(root, "branch", "first");
     git(root, "branch", "second");

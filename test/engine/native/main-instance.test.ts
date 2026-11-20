@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -120,12 +120,15 @@ describe("the single main instance", () => {
     vi.stubEnv("USERPROFILE", home);
     const mainStore = join(mainContentStoreDirectory(), "content-v1.sqlite");
     const checkoutStore = join(home, "checkout", ".rerail", "content-v1.sqlite");
+    await mkdir(mainContentStoreDirectory(), { recursive: true });
+    if (process.platform !== "win32") await chmod(mainContentStoreDirectory(), 0o755);
 
     expect(() => assertContentStoreOwner(mainStore)).toThrow(/belongs to the main Rerail daemon/);
     assertContentStoreOwner(checkoutStore);
 
     const lease = acquireMainInstance(build);
     leases.push(lease);
+    if (process.platform !== "win32") expect((await stat(mainContentStoreDirectory())).mode & 0o7777).toBe(0o700);
     assertContentStoreOwner(mainStore);
     lease.release();
     expect(() => assertContentStoreOwner(mainStore)).toThrow(/belongs to the main Rerail daemon/);

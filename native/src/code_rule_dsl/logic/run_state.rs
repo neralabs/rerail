@@ -65,6 +65,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/budget.rs", "BUDGET_COUNTDOWN", Call, "the state of one call in progress on this thread"),
     ("src/code_rule_dsl/budget.rs", "MATCH_BUDGET", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/budget.rs", "STEP_COUNTDOWN", Call, "the state of one call in progress on this thread"),
+    ("src/code_rule_dsl/calls/closure/reference_bindings.rs", "READS", Call, "records the table lookups of the binding contribution currently computed on this thread"),
     ("src/code_rule_dsl/calls/mod.rs", "EVALUATION", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/calls/mod.rs", "FILE_CALLS", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/calls/rust.rs", "ITEMS", Call, "the state of one call in progress on this thread, set and read within it"),
@@ -128,6 +129,9 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/plan/choices.rs", "DURABLE", Carried, ""),
     ("src/code_rule_dsl/logic/plan/compose.rs", "CACHE", Thread, "compiled compositions by digest: any thread's gives the same"),
     ("src/code_rule_dsl/logic/plan/corpus.rs", "PREPARED", Thread, "prepared programs by key: any thread's gives the same program"),
+    ("src/git_snapshot.rs", "STORAGE_BATCH", Carried, ""),
+    ("src/git_snapshot.rs", "REPOSITORY", Thread, "a worker-local gix handle keyed by view and pack epoch"),
+    ("src/code_rule_dsl/logic/plan/corpus.rs", "THREAD_STORE", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus.rs", "RUNS_UNDER_WAY", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus/maintain.rs", "BY_LEVELS", Thread, "counts of this thread's own runs, which a test reads beside others (decision 0204)"),
     ("src/code_rule_dsl/logic/plan/corpus/phases.rs", "HANDED_DOWN", Carried, ""),
@@ -154,6 +158,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/profile.rs", "WARM_SCOPE", Thread, "the warm check's mark of the transaction a store writer has open on this thread; its commit hook runs on it"),
     ("src/code_rule_dsl/logic/program_image/version.rs", "DECODED", Thread, "the trees this thread decoded (0281 step 4), counted by a check around a run on the same thread"),
     ("src/code_rule_dsl/logic/rr.rs", "READS", Call, "the libraries read while `recording` runs; a job records its own and hands them back (`rr::recorded_on_worker`)"),
+    ("src/code_rule_dsl/logic/strings/git.rs", "GIT_EVALUATION", Carried, ""),
     ("src/code_rule_dsl/logic/strings/functions.rs", "CACHE", Thread, "compiled regexes by pattern: any thread's gives the same"),
     ("src/code_rule_dsl/matcher/binding.rs", "FOLLOWING", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/matcher/d_anchors/sql/corpus.rs", "CURRENT", Call, "the state of one call in progress on this thread, set and read within it"),
@@ -312,6 +317,8 @@ const CARRIERS: &[fn(&mut Capture)] = &[
 
 /// The carried thread-locals of the crates below this one, which cannot name [`Capture`].
 fn carried_elsewhere(c: &mut Capture) {
+    c.copy(&["STORAGE_BATCH"], &crate::git_workspace::snapshot::STORAGE_BATCH);
+    c.part(&["GIT_EVALUATION"], Shared(super::strings::git::current(), super::strings::git::enter));
     c.copy(&["IN_PHASE_0"], &crate::code_rule_dsl::phase_clock::IN_PHASE_0);
     c.copy(&["WAVES"], &crate::content_store::write_back::WAVES);
     c.copy(&["STAGE"], &super::profile::STAGE);

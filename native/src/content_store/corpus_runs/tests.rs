@@ -22,6 +22,760 @@ fn source_ids_round_trip_as_delta_varints() {
 }
 
 #[test]
+fn analysis_scope_keeps_a_shared_manifest_until_the_last_owner_is_deleted() {
+    let (_path, store) = store("analysis-scope");
+    let grammar = 1;
+    let format = 1;
+    let now = 100;
+    let plan = [1; 32];
+    let nested = [2; 32];
+    let root = "/virtual/repository";
+    for name in ["named:review", "named:release"] {
+        store.record_scoped_corpus_run(root, &[], grammar, format, plan, &[nested], None, None, now, Some(name)).unwrap();
+    }
+    let policy = CorpusPolicy { backstop_secs: 0, missing_secs: 0, ..CorpusPolicy::default() };
+    store.keep_corpus_runs(&policy, now + 1).unwrap();
+    assert_eq!(store.live_plans().unwrap(), HashSet::from([plan, nested]));
+
+    store.delete_analysis_scope("named:review").unwrap();
+    store.keep_corpus_runs(&policy, now + 1).unwrap();
+    assert_eq!(store.live_plans().unwrap(), HashSet::from([plan, nested]));
+    assert!(store.corpus_run_of(root).unwrap().is_some());
+
+    store.delete_analysis_scope("named:release").unwrap();
+    store.keep_corpus_runs(&policy, now + 1).unwrap();
+    assert!(store.live_plans().unwrap().is_empty());
+    assert!(store.corpus_run_of(root).unwrap().is_none());
+}
+
+#[test]
+fn deleting_an_analysis_scope_rejects_an_active_runs_late_manifest() {
+    let (_path, store) = store("analysis-scope-generation");
+    let name = "named:review";
+    let active = store.begin_analysis_scope(name).unwrap();
+    store.delete_analysis_scope(name).unwrap();
+    let root = "/virtual/repository";
+    let plan = [1; 32];
+    assert!(!store.record_corpus_run_retaining(root, &[], 1, 1, plan, &[], None, None, 100, None, Some(&active)).unwrap());
+    assert!(store.corpus_run_of(root).unwrap().is_none());
+    let next = store.begin_analysis_scope(name).unwrap();
+    assert!(store.record_corpus_run_retaining(root, &[], 1, 1, plan, &[], None, None, 101, None, Some(&next)).unwrap());
+}
+
+#[test]
+fn releasing_one_use_names_compacts_generations_and_never_revives_a_stale_owner() {
+    let (path, store) = store("named-scope-generation-compaction");
+    // Earlier binaries could advance a scope's generation independently of the acquisition sequence.
+    let db = store.connection.lock().unwrap();
+    db.execute("INSERT INTO analysis_scope_generation VALUES ('named:legacy',10000)", []).unwrap();
+    drop(db);
+    let old = store.begin_analysis_scope("named:legacy").unwrap();
+    let serialized = serde_json::to_vec(&old).unwrap();
+    store.delete_analysis_scope("named:legacy").unwrap();
+    for n in 0..100 {
+        let scope = format!("named:once-{n}");
+        store.begin_analysis_scope(&scope).unwrap();
+        store.delete_analysis_scope(&scope).unwrap();
+    }
+    let reopened = ContentStore::open(&path).unwrap();
+    let db = reopened.connection.lock().unwrap();
+    assert_eq!(db.query_row("SELECT count(*) FROM analysis_scope_generation WHERE scope GLOB 'named:*'", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+    drop(db);
+    let fresh = reopened.begin_analysis_scope("named:legacy").unwrap();
+    let stale: crate::content_store::analysis_scope::AnalysisOwner = serde_json::from_slice(&serialized).unwrap();
+    let publish = |owner| reopened.record_corpus_run_retaining("/repo", &[], 1, 1, [7; 32], &[], None, None, 100, None, Some(owner)).unwrap();
+    assert!(!publish(&stale));
+    assert!(publish(&fresh));
+    reopened.delete_analysis_scope("named:legacy").unwrap();
+    let again = reopened.begin_analysis_scope("named:legacy").unwrap();
+    assert!(!publish(&fresh));
+    assert!(publish(&again));
+}
+
+#[test]
+fn a_numbered_parent_stop_compacts_only_fully_covered_directory_generations() {
+    use crate::content_store::analysis_scope::{self, AnalysisRun, Publication, RunSource};
+    let (file, store) = store("directory-generation-compaction");
+    let parent = file.parent().unwrap().canonicalize().unwrap().join("project");
+    let child = parent.join("0");
+    let scope = |dir: &std::path::Path, home| analysis_scope::directory_in(dir, Some(home));
+    let begin = |dir: &std::path::Path, home, id: &str, control| {
+        let mut run = AnalysisRun::begin_at(ContentStore::open(&file).unwrap(), &scope(dir, home), id, control).unwrap();
+        run.select_source(RunSource::directory(dir)).unwrap();
+        run
+    };
+    let count = |table: &str| store.connection.lock().unwrap()
+        .query_row(&format!("SELECT count(*) FROM {table} WHERE scope GLOB 'cwd:*'"), [], |row| row.get::<_, i64>(0)).unwrap();
+    for i in 0..30 {
+        begin(&parent.join(i.to_string()), "home", "one-use", 10).finish(true).unwrap();
+    }
+    let mut delayed = begin(&child, "home", "delayed", 10);
+    let saved = serde_json::to_vec(&delayed.owner).unwrap();
+    let active = parent.join("active");
+    let mut future = begin(&active, "home", "future", 21);
+    let mut overtaken = begin(&active, "home", "older-on-same-path", 9);
+    let mut elsewhere = begin(&child, "other", "other-home", 10);
+    store.delete_directory_analysis_scopes(&parent, Some("20:stop:home")).unwrap();
+    assert_eq!(count("analysis_scope_generation"), 2);
+    assert_eq!(count("analysis_scope_run"), 0);
+    assert_eq!(count("analysis_directory_acquisition"), 2);
+    delayed.finish(true).unwrap();
+    overtaken.finish(true).unwrap();
+    assert_eq!(delayed.publication, Some(Publication::Released));
+    assert_eq!(overtaken.publication, Some(Publication::Released));
+    let mut late = begin(&child, "home", "late", 20);
+    late.finish(true).unwrap();
+    assert_eq!(late.publication, Some(Publication::Released));
+    assert_eq!(count("analysis_scope_generation"), 2);
+    future.finish(true).unwrap();
+    elsewhere.finish(true).unwrap();
+    let reopened = ContentStore::open(&file).unwrap();
+    let mut fresh = begin(&child, "home", "new-watch", 21);
+    let stale: analysis_scope::AnalysisOwner = serde_json::from_slice(&saved).unwrap();
+    assert!(!stale.current(&reopened.connection.lock().unwrap()).unwrap());
+    reopened.delete_directory_analysis_scopes(&parent, Some("20:stop:home")).unwrap();
+    fresh.finish(true).unwrap();
+    let mut ids: Vec<_> = reopened.completed_analysis_runs().unwrap().into_iter().map(|run| run.scan_id).collect();
+    ids.sort();
+    assert_eq!(ids, ["future", "new-watch", "other-home"]);
+    // First delivery by a previous binary executes this insert before it removes memberships.
+    let db = reopened.connection.lock().unwrap();
+    db.execute("INSERT OR IGNORE INTO analysis_scope_release(id,scope,before) VALUES ('30:later:home',?1,30)",
+        [scope(&parent, "home")]).unwrap();
+    drop(db);
+    assert_eq!(count("analysis_scope_generation"), 1);
+    assert_eq!(count("analysis_directory_acquisition"), 1);
+}
+
+#[test]
+fn directory_generation_compaction_preserves_an_unobserved_legacy_acquisition() {
+    use crate::content_store::analysis_scope;
+    let (file, store) = store("legacy-directory-generation");
+    let parent = file.parent().unwrap().canonicalize().unwrap().join("project");
+    let scope = analysis_scope::directory(&parent.join("child"));
+    let old = store.begin_analysis_scope_at(&scope, 21).unwrap();
+    {
+        let db = store.connection.lock().unwrap();
+        // An older caller can acquire a larger control generation without publishing anything.
+        db.execute("INSERT OR IGNORE INTO analysis_scope_generation VALUES (?1,0)", [&scope]).unwrap();
+    }
+    let observed = store.begin_analysis_scope_at(&scope, 10).unwrap();
+    store.delete_directory_analysis_scopes(&parent, Some("20:stop")).unwrap();
+    let reopened = ContentStore::open(&file).unwrap();
+    {
+        let db = reopened.connection.lock().unwrap();
+        assert!(old.current(&db).unwrap());
+        assert!(!observed.current(&db).unwrap());
+        assert_eq!(db.query_row("SELECT count(*) FROM analysis_directory_acquisition", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+    }
+    reopened.delete_directory_analysis_scopes(&parent, None).unwrap();
+    let db = reopened.connection.lock().unwrap();
+    assert_eq!(db.query_row("SELECT count(*) FROM analysis_scope_generation WHERE scope=?1", [&scope], |row| row.get::<_, i64>(0)).unwrap(), 0);
+    drop(db);
+    let new = reopened.begin_analysis_scope_at(&scope, 21).unwrap();
+    let db = reopened.connection.lock().unwrap();
+    assert!(new.current(&db).unwrap());
+    assert!(!old.current(&db).unwrap());
+}
+
+#[test]
+fn replaying_a_directory_analysis_scope_release_keeps_a_later_run() {
+    use crate::content_store::analysis_scope;
+    let (_path, store) = store("analysis-scope-release-replay");
+    let directory = std::path::Path::new("/virtual/repository");
+    let name = analysis_scope::directory(directory);
+    let active = store.begin_analysis_scope(&name).unwrap();
+    store.delete_directory_analysis_scopes(directory, Some("stop-1")).unwrap();
+    let next = store.begin_analysis_scope(&name).unwrap();
+    store.delete_directory_analysis_scopes(directory, Some("stop-1")).unwrap();
+    let plan = [1; 32];
+    let root = "/virtual/repository";
+    assert!(!store.record_corpus_run_retaining(root, &[], 1, 1, plan, &[], None, None, 100, None, Some(&active)).unwrap());
+    assert!(store.record_corpus_run_retaining(root, &[], 1, 1, plan, &[], None, None, 101, None, Some(&next)).unwrap());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn directory_releases_distinguish_raw_bytes_from_the_replacement_character() {
+    use crate::content_store::analysis_scope::{self, AnalysisRun, RunSource};
+    use std::{ffi::OsStr, os::unix::{ffi::OsStrExt, fs::symlink}};
+    let (db_path, store) = store("scope-byte-paths");
+    let base = tempfile::tempdir().unwrap();
+    let parent = base.path();
+    let raw = parent.join(OsStr::from_bytes(b"repo-\xff"));
+    let unicode = parent.join("repo-\u{fffd}");
+    let raw_link = parent.join("first");
+    let unicode_link = parent.join("second");
+    for (dir, link) in [(&raw, &raw_link), (&unicode, &unicode_link)] {
+        std::fs::create_dir(dir).unwrap();
+        symlink(dir, link).unwrap();
+    }
+    let publish = |scope: &str, dir: &std::path::Path, id: &str| {
+        let mut run = AnalysisRun::begin_at(ContentStore::open(&db_path).unwrap(), scope, id, 1).unwrap();
+        run.set_directory_scope(dir);
+        run.select_source(RunSource::directory(dir)).unwrap();
+        assert!(store.record_corpus_run_retaining(id, &[], 1, 1, [7; 32], &[], None, None, 1, None, Some(&run.owner)).unwrap());
+        run.finish(true).unwrap();
+    };
+    let legacy = format!("cwd:home:{}", unicode.display());
+    publish(&legacy, &unicode_link, "legacy");
+    publish(&analysis_scope::directory_in(&raw_link, Some("home")), &raw_link, "raw");
+    publish(&analysis_scope::directory_in(&unicode_link, Some("home")), &unicode_link, "unicode");
+    let survivors = || {
+        let mut ids: Vec<_> = store.completed_analysis_runs().unwrap().into_iter().map(|row| row.scan_id).collect();
+        ids.sort();
+        ids
+    };
+    store.delete_directory_analysis_scopes(&raw_link, Some("2:one:home")).unwrap();
+    assert_eq!(survivors(), ["legacy", "unicode"]);
+    assert!(!analysis_scope::existing_directory_ownership(&db_path, &raw_link, "home").unwrap());
+    assert!(analysis_scope::existing_directory_ownership(&db_path, &unicode_link, "home").unwrap());
+    store.delete_directory_analysis_scopes(&unicode_link, Some("3:two:home")).unwrap();
+    assert_eq!(survivors(), ["legacy"]);
+    store.delete_directory_analysis_scopes(parent, Some("4:parent:home")).unwrap();
+    assert!(survivors().is_empty());
+}
+
+#[test]
+fn analysis_scope_stop_distinguishes_discovery_before_and_after_it() {
+    use crate::content_store::analysis_scope;
+    let (_path, store) = store("analysis-scope-stop-order");
+    let directory = std::path::Path::new("/virtual/repository");
+    let name = analysis_scope::directory(directory);
+    let newer = store.begin_analysis_scope_at(&name, 200).unwrap();
+    let publish = |owner| store.record_corpus_run_retaining("/virtual/repository", &[], 1, 1, [1; 32], &[], None, None, 100, None, Some(owner)).unwrap();
+    assert!(publish(&newer));
+    store.delete_directory_analysis_scopes(directory, Some("150:stop")).unwrap();
+    let old_discovery = store.begin_analysis_scope_at(&name, 100).unwrap();
+    assert!(!publish(&old_discovery));
+    assert!(store.corpus_run_of("/virtual/repository").unwrap().is_some());
+}
+
+#[test]
+fn analysis_scope_only_publishes_staged_memberships_on_success() {
+    use crate::content_store::analysis_scope::AnalysisRun;
+    let (path, store) = store("analysis-scope-publish");
+    let check = ContentStore::open(&path).unwrap();
+    let mut run = AnalysisRun::begin(store, "named:review", "test").unwrap();
+    let root = "/virtual/repository";
+    assert!(check.record_corpus_run_retaining(root, &[], 1, 1, [1; 32], &[], None, None, 100, None, Some(&run.owner)).unwrap());
+    run.finish(false).unwrap();
+    assert!(check.corpus_run_of(root).unwrap().is_none());
+    let mut run = AnalysisRun::begin(ContentStore::open(&path).unwrap(), "named:review", "test-2").unwrap();
+    assert!(check.record_corpus_run_retaining(root, &[], 1, 1, [1; 32], &[], None, None, 101, None, Some(&run.owner)).unwrap());
+    run.owner.warn("injected writer failure".into());
+    run.finish(true).unwrap();
+    assert!(check.corpus_run_of(root).unwrap().is_none());
+    let mut run = AnalysisRun::begin(ContentStore::open(&path).unwrap(), "named:review", "test-3").unwrap();
+    assert!(check.record_corpus_run_retaining(root, &[], 1, 1, [1; 32], &[], None, None, 102, None, Some(&run.owner)).unwrap());
+    run.finish(true).unwrap();
+    assert!(check.corpus_run_of(root).unwrap().is_some());
+    check.delete_analysis_scope("named:review").unwrap();
+    assert!(check.corpus_run_of(root).unwrap().is_none());
+}
+
+#[test]
+fn a_publication_error_rolls_back_history_and_its_ancestor_index_before_retry() {
+    use crate::content_store::analysis_scope::{AnalysisRun, RunSource};
+    let (path, store) = store("scope-history-rollback");
+    let directory = path.parent().unwrap().join("work");
+    let scope = crate::content_store::analysis_scope::directory(&directory);
+    let mut run = AnalysisRun::begin(ContentStore::open(&path).unwrap(), &scope, "scan").unwrap();
+    run.select_source(RunSource::Directory(directory.to_str().unwrap().to_owned())).unwrap();
+    let counts = || {
+        store.connection.lock().unwrap().query_row("SELECT
+            (SELECT count(*) FROM analysis_scope_pending),
+            (SELECT count(*) FROM analysis_history_scope WHERE scope=?1),
+            (SELECT count(*) FROM analysis_scope_run WHERE scope=?1),
+            EXISTS(SELECT 1 FROM analysis_history_ancestor WHERE scope=?1)", [&scope],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, bool>(3)?))).unwrap()
+    };
+    store.connection.lock().unwrap().execute_batch("CREATE TRIGGER fail_fixture BEFORE INSERT ON analysis_scope_run
+        BEGIN SELECT RAISE(ABORT,'interrupted fixture'); END;").unwrap();
+    assert!(run.finish(true).is_err());
+    assert_eq!(counts(), (1, 0, 0, false));
+    store.connection.lock().unwrap().execute_batch("DROP TRIGGER fail_fixture").unwrap();
+    run.finish(true).unwrap();
+    assert_eq!(counts(), (0, 1, 1, true));
+    store.delete_analysis_scope(&scope).unwrap();
+    assert_eq!(counts(), (0, 0, 0, false));
+}
+
+#[test]
+fn concurrent_analysis_runs_order_snapshots_and_isolate_staging() {
+    use crate::content_store::{analysis_scope::AnalysisRun, GitTree, HashKey};
+    let (path, store) = store("scope-acquisitions");
+    let scope = "cwd:/virtual/project";
+    let begin = |scope: &str| AnalysisRun::begin_at(ContentStore::open(&path).unwrap(), scope, "client-id", 7).unwrap();
+    let mut older = begin(scope);
+    let mut newer = begin(scope);
+    let mut abandoned = begin("named:independent");
+    let tree = HashKey::git_sha1([5; 20]);
+    store.put_git_trees_bulk(&[GitTree { id: tree, prefix: String::new(), entries: Vec::new() }]).unwrap();
+    let snapshots = [1, 2].map(|version| store.put_snapshot(tree, version, HashKey::sha256(b"grammar"), 1).unwrap());
+    for (owner, snapshot) in [(&older.owner, snapshots[0]), (&newer.owner, snapshots[1]), (&abandoned.owner, snapshots[0])] {
+        store.own_analysis_snapshot(owner, "workspace", snapshot).unwrap();
+    }
+    let manifests = |membership: &str| {
+        let db = store.connection.lock().unwrap();
+        db.prepare("SELECT r.path FROM analysis_scope_manifest a JOIN corpus_manifests m USING(manifest_id)
+            JOIN corpus_roots r USING(root_id) WHERE a.scope=?1 ORDER BY r.path").unwrap()
+            .query_map([membership], |row| row.get::<_, String>(0)).unwrap().collect::<Result<Vec<_>, _>>().unwrap()
+    };
+    for (owner, private) in [(&abandoned.owner, "/aborted"), (&newer.owner, "/kept")] {
+        for root in [private, "/shared"] {
+            store.record_corpus_run_retaining(root, &[], 1, 1, [1; 32], &[], None, None, 100, None, Some(owner)).unwrap();
+        }
+    }
+    assert_eq!(manifests(abandoned.owner.membership()), ["/aborted", "/shared"]);
+    assert_eq!(manifests(newer.owner.membership()), ["/kept", "/shared"]);
+    abandoned.finish(false).unwrap();
+    assert!(manifests(abandoned.owner.membership()).is_empty());
+    assert_eq!(manifests(newer.owner.membership()), ["/kept", "/shared"]);
+    assert!(store.corpus_run_of("/aborted").unwrap().is_none());
+    newer.finish(true).unwrap();
+    older.finish(true).unwrap();
+    assert_eq!(manifests(scope), ["/kept", "/shared"]);
+    let db = store.connection.lock().unwrap();
+    let rows = db.prepare("SELECT scope,snapshot_id FROM analysis_scope_workspace_snapshot").unwrap()
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+    assert_eq!(rows, [(scope.to_owned(), snapshots[1].0)]);
+}
+
+#[test]
+fn analysis_scope_rejects_finished_and_foreign_run_owners() {
+    use crate::content_store::analysis_scope::AnalysisRun;
+    let (path, first_store) = store("scope-closed-owner");
+    let (other_path, second_store) = store("scope-foreign-owner");
+    let scope = "named:review";
+    let mut first = AnalysisRun::begin(ContentStore::open(&path).unwrap(), scope, "client").unwrap();
+    let mut second = AnalysisRun::begin(ContentStore::open(&other_path).unwrap(), scope, "client").unwrap();
+    let publish = |store: &ContentStore, owner: &_| store.record_corpus_run_retaining(
+        "/root", &[], 1, 1, [1; 32], &[], None, None, 100, None, Some(owner)).unwrap();
+    assert!(!publish(&second_store, &first.owner), "an owner cannot write to another store's identical staging key");
+    first.finish(true).unwrap();
+    assert!(!publish(&first_store, &first.owner), "an async worker cannot stage new rows after finish");
+    assert!(publish(&second_store, &second.owner));
+    second.finish(true).unwrap();
+}
+
+#[test]
+fn named_scope_release_requires_the_registered_store_and_revokes_an_unfinished_run() {
+    use crate::content_store::analysis_scope::{AnalysisRun, RunSource, release_named_scope};
+    let (first_path, first) = store("scope-release-first");
+    let (second_path, second) = store("scope-release-replacement");
+    let mut unfinished = AnalysisRun::begin(ContentStore::open(&first_path).unwrap(), "named:test", "pending").unwrap();
+    unfinished.select_source(RunSource::directory(std::path::Path::new("/repo"))).unwrap();
+    let mut published = AnalysisRun::begin(ContentStore::open(&second_path).unwrap(), "named:test", "keep").unwrap();
+    published.select_source(RunSource::directory(std::path::Path::new("/repo"))).unwrap();
+    published.finish(true).unwrap();
+    assert!(release_named_scope(&second_path, "test", &[first.identity()]).is_err());
+    assert_eq!(second.completed_analysis_runs().unwrap().len(), 1);
+    assert_eq!(release_named_scope(&first_path, "test", &[first.identity()]).unwrap(), (first.identity(), false));
+    unfinished.finish(true).unwrap();
+    assert_eq!(unfinished.publication.unwrap().as_str(), "released");
+    assert!(first.completed_analysis_runs().unwrap().is_empty());
+    assert_eq!(release_named_scope(&second_path, "test", &[second.identity()]).unwrap(), (second.identity(), true));
+    assert_eq!(release_named_scope(&second_path, "test", &[]).unwrap(), (second.identity(), false));
+}
+
+#[test]
+fn completed_analysis_runs_survive_restart_and_scope_deletion_preserves_shared_snapshots() {
+    use crate::content_store::{analysis_scope::{AnalysisRun, RunSource}, GitTree, HashKey};
+    let (path, store) = store("scope-run-history");
+    let tree = HashKey::git_sha1([9; 20]);
+    store.put_git_trees_bulk(&[GitTree { id: tree, prefix: String::new(), entries: Vec::new() }]).unwrap();
+    let snapshot = store.put_snapshot(tree, 1, HashKey::sha256(b"grammar"), 1).unwrap();
+    let source = RunSource::Git { repository: "repo".into(), tree: "tree".into(), commit: None };
+    let begin = |scope: &str| {
+        let mut run = AnalysisRun::begin(ContentStore::open(&path).unwrap(), scope, "caller-id").unwrap();
+        run.select_source(source.clone()).unwrap();
+        store.own_analysis_snapshot(&run.owner, "workspace", snapshot).unwrap();
+        run
+    };
+    for scope in ["named:a", "named:a", "named:b"] {
+        let mut run = begin(scope);
+        let worker = run.owner.clone();
+        run.finish(true).unwrap();
+        assert!(!worker.warn("late warning".into()));
+        run.finish(false).unwrap();
+        assert_eq!(run.publication_warning(), None);
+        assert_eq!(run.publication.unwrap().as_str(), "published");
+    }
+    begin("named:aborted").finish(false).unwrap();
+    let mut warned = begin("named:warned");
+    warned.owner.warn("could not retain".into());
+    warned.finish(true).unwrap();
+    assert!(!warned.owner.warn("later warning".into()));
+    assert_eq!(warned.publication_warning().as_deref(), Some("could not retain"));
+    let mut stale = begin("named:stale");
+    store.delete_analysis_scope("named:stale").unwrap();
+    stale.finish(true).unwrap();
+    let fresh = ContentStore::open(&path).unwrap();
+    let rows = fresh.completed_analysis_runs().unwrap();
+    assert_eq!(rows.iter().map(|r| r.scope.as_str()).collect::<Vec<_>>(), ["named:a", "named:a", "named:b"]);
+    assert!(rows.windows(2).all(|p| p[0].acquisition < p[1].acquisition));
+    assert!(rows.iter().all(|r| r.scan_id == "caller-id" && r.commit.is_none() && r.snapshot == Some(snapshot.0)));
+    fresh.delete_analysis_scope("named:a").unwrap();
+    let rows = fresh.completed_analysis_runs().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!((rows[0].scope.as_str(), rows[0].snapshot), ("named:b", Some(snapshot.0)));
+}
+
+#[test]
+fn adding_analysis_history_preserves_previous_manifest_owners_without_fabricating_runs() {
+    let (path, store) = store("scope-history-upgrade");
+    for scope in ["named:legacy", "cwd:/repo:one", "cwd:home:/repo:two", r"cwd:C:\checkout"] {
+        let owner = store.begin_analysis_scope(scope).unwrap();
+        store.record_corpus_run_retaining("/repo", &[], 1, 1, [1; 32], &[], None, None, 100, None, Some(&owner)).unwrap();
+    }
+    drop(store);
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch("DROP TRIGGER analysis_runs_end_generation; DROP TRIGGER analysis_runs_stop_directory;
+        DROP TABLE analysis_run_workspace_snapshot; DROP TABLE analysis_scope_run; DROP TABLE analysis_history_scope;").unwrap();
+    drop(db);
+    let upgraded = ContentStore::open(&path).unwrap();
+    let pending = crate::content_store::analysis_scope::AnalysisRun::begin(ContentStore::open(&path).unwrap(), "named:pending-only", "live").unwrap();
+    let records = upgraded.analysis_records(true, true).unwrap();
+    assert!(records.runs.is_empty());
+    assert_eq!(records.scopes.iter().map(|(s,v)| (s.as_str(), v.as_str())).collect::<Vec<_>>(), [
+        ("cwd:/repo:one", "/repo:one"), (r"cwd:C:\checkout", r"C:\checkout"),
+        ("cwd:home:/repo:two", "/repo:two"), ("named:legacy", "legacy"),
+    ]);
+    drop(pending);
+    upgraded.delete_analysis_scope("named:legacy").unwrap();
+    assert_eq!(upgraded.analysis_records(true, false).unwrap().scopes.len(), 3);
+}
+
+#[test]
+fn an_offline_scope_store_returns_read_errors_on_a_new_worker() {
+    let area = tempfile::tempdir().unwrap();
+    let mount = area.path().join("mounted");
+    std::fs::create_dir(&mount).unwrap();
+    let file = mount.join("store.sqlite");
+    let store = ContentStore::open(&file).unwrap();
+    crate::content_store::connection::release_all_at(&file);
+    let offline = area.path().join("offline");
+    std::fs::rename(&mount, &offline).unwrap();
+    std::thread::scope(|threads| threads.spawn(|| {
+        assert!(store.directory_release_cutoff(area.path(), "home").is_err());
+        assert!(store.completed_analysis_runs().is_err());
+        assert!(store.analysis_snapshot_due(1).is_err());
+    }).join().unwrap());
+    std::fs::rename(offline, mount).unwrap();
+    assert!(store.completed_analysis_runs().unwrap().is_empty());
+}
+
+#[test]
+#[cfg(unix)]
+fn collection_keeps_the_database_it_verified_after_its_path_changes() {
+    let area = tempfile::tempdir().unwrap();
+    let mount = area.path().join("mounted");
+    std::fs::create_dir(&mount).unwrap();
+    let file = mount.join("store.sqlite");
+    let reader = ContentStore::open(&file).unwrap();
+    let lease = reader.hold_collection().unwrap();
+    let id = reader.identity();
+    let collector = ContentStore::open_for_collection(&file, &[id]).unwrap();
+    assert!(collector.try_collect().unwrap().is_none());
+    std::fs::rename(&mount, area.path().join("original")).unwrap();
+    std::fs::create_dir(&mount).unwrap();
+    let other = rusqlite::Connection::open(&file).unwrap();
+    other.execute("CREATE TABLE unrelated(value TEXT)", []).unwrap();
+    let rows = collector.completed_analysis_runs().unwrap();
+    assert!(rows.is_empty());
+    let sidecar = mount.join("store.sqlite.collection.lock");
+    assert!(collector.try_collect().is_err());
+    assert!(!sidecar.exists());
+    std::fs::write(&sidecar, []).unwrap();
+    assert!(matches!(collector.try_collect(), Err(crate::content_store::StoreError::Invalid(message)) if message.contains("collection lock changed")));
+    assert!(ContentStore::open_for_collection(&file, &[]).is_err());
+    assert_eq!(other.query_row("SELECT count(*) FROM sqlite_schema", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+    drop(other);
+    std::fs::rename(&mount, area.path().join("replacement")).unwrap();
+    std::fs::rename(area.path().join("original"), &mount).unwrap();
+    assert!(collector.try_collect().unwrap().is_none());
+    drop(lease);
+    assert!(collector.try_collect().unwrap().is_some());
+}
+
+#[test]
+fn stopping_a_directory_uses_its_indexed_history_after_upgrade() {
+    let (path, original) = store("indexed-stop-history");
+    drop(original);
+    let db = rusqlite::Connection::open(&path).unwrap();
+    // Set up the previous schema, including a trigger with the old name.
+    db.execute_batch("DROP TRIGGER analysis_history_index_scope; DROP TRIGGER analysis_runs_stop_directory;
+        DROP TABLE analysis_history_ancestor;
+        CREATE TRIGGER analysis_runs_stop_directory AFTER INSERT ON analysis_scope_release BEGIN SELECT 1; END;").unwrap();
+    let insert = |scope: &str, value: &str, ancestors: &[&str]| {
+        db.execute("INSERT INTO analysis_history_scope VALUES (?,?,?)", (scope, value, serde_json::to_string(ancestors).unwrap())).unwrap();
+        db.execute("INSERT INTO analysis_scope_run(scope,acquisition,acquired_at,scan_id) VALUES (?,1,1,'past')", [scope]).unwrap();
+    };
+    insert("cwd:h:/pkg/src", "/pkg/src", &["cwd:h:/pkg", "cwd:h:/pkg/src"]);
+    insert("cwd:/pkg/src", "/pkg/src", &["cwd:/pkg", "cwd:/pkg/src"]);
+    insert("cwd:other:/pkg", "/pkg", &["cwd:other:/pkg"]);
+    insert("cwd:h:/pkg2", "/pkg2", &["cwd:h:/pkg2"]);
+    db.execute("INSERT INTO analysis_scope_run(scope,acquisition,acquired_at,scan_id) VALUES ('cwd:h:/pkg/src',2,11,'new')", []).unwrap();
+    drop(db);
+    let upgraded = ContentStore::open(&path).unwrap();
+    let db = upgraded.connection.lock().unwrap();
+    // Exercise the generation index with a real candidate on both sides of the measurement.
+    db.execute("INSERT INTO analysis_scope_generation VALUES ('cwd:h:/pkg/src',1)", []).unwrap();
+    db.execute("INSERT INTO analysis_directory_acquisition VALUES ('cwd:h:/pkg/src',11)", []).unwrap();
+    let stop = || {
+        db.execute_batch("SAVEPOINT history_delivery").unwrap();
+        let mut statement = db.prepare("INSERT INTO analysis_scope_release(id,scope,before) VALUES ('10:test:h','cwd:h:/pkg',10)").unwrap();
+        statement.execute([]).unwrap();
+        let steps = statement.get_status(rusqlite::StatementStatus::VmStep);
+        let survivors: Vec<String> = db.prepare("SELECT scope FROM analysis_scope_run WHERE scope GLOB 'cwd:*' ORDER BY scope").unwrap()
+            .query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+        assert_eq!(survivors, ["cwd:h:/pkg/src", "cwd:h:/pkg2", "cwd:other:/pkg"]);
+        db.execute_batch("ROLLBACK TO history_delivery; RELEASE history_delivery").unwrap();
+        steps
+    };
+    let baseline = stop();
+    db.execute_batch("WITH RECURSIVE names(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM names WHERE n<1000)
+        INSERT INTO analysis_history_scope SELECT 'named:'||n,CAST(n AS TEXT),'[]' FROM names;
+        INSERT INTO analysis_scope_run(scope,acquisition,acquired_at,scan_id)
+        SELECT scope,1,1,'other' FROM analysis_history_scope WHERE scope GLOB 'named:*';
+        INSERT INTO analysis_scope_generation SELECT 'cwd:elsewhere:/'||value,1 FROM analysis_history_scope WHERE scope GLOB 'named:*';
+        INSERT INTO analysis_directory_acquisition SELECT scope,1 FROM analysis_scope_generation WHERE scope GLOB 'cwd:elsewhere:*';").unwrap();
+    let populated = stop();
+    assert!(populated <= baseline + 20, "stop grew from {baseline} to {populated} SQLite instructions");
+}
+
+#[test]
+fn numbered_directory_stops_keep_one_cutoff_per_directory() {
+    use crate::content_store::analysis_scope;
+    let (_path, store) = store("scope-high-water");
+    let parent = std::path::Path::new("/virtual/project");
+    let child = parent.join("pkg");
+    for (dir, id) in [(parent, "10:a"), (&*child, "30:b"), (parent, "20:c"), (parent, "10:a")] {
+        store.delete_directory_analysis_scopes(dir, Some(id)).unwrap();
+    }
+    for (dir, generation, expected) in [(parent, 19, false), (parent, 21, true), (&*child, 21, false), (&*child, 31, true)] {
+        let owner = store.begin_analysis_scope_at(&analysis_scope::directory(dir), generation).unwrap();
+        let db = store.connection.lock().unwrap();
+        assert_eq!(owner.current(&db).unwrap(), expected);
+    }
+    let db = store.connection.lock().unwrap();
+    assert_eq!(db.query_row("SELECT count(*) FROM analysis_scope_release", [], |r| r.get::<_, i64>(0)).unwrap(), 2);
+}
+
+#[test]
+fn a_parent_receipt_replaces_covered_children_and_survives_replay() {
+    use crate::content_store::analysis_scope;
+    let (file, store) = store("scope-parent-receipt");
+    let parent = file.parent().unwrap().canonicalize().unwrap().join("project[1]");
+    let sibling = parent.with_file_name("project[1]-other");
+    let child = parent.join("0");
+    let ahead = parent.join("ahead");
+    for i in 0..30 {
+        store.delete_directory_analysis_scopes(&parent.join(i.to_string()), Some(&format!("10:old-{i}:home"))).unwrap();
+    }
+    for (dir, receipt) in [(&ahead, "40:newer:home"), (&child, "10:elsewhere:other"), (&sibling, "10:sibling:home")] {
+        store.delete_directory_analysis_scopes(dir, Some(receipt)).unwrap();
+    }
+    let qualified = analysis_scope::directory_in(&child, Some("home"));
+    let unqualified = analysis_scope::directory(&child);
+    let old = store.begin_analysis_scope_at(&qualified, 18).unwrap();
+    let old_legacy = store.begin_analysis_scope_at(&unqualified, 0).unwrap();
+    store.delete_directory_analysis_scopes(&parent, Some("20:parent:home")).unwrap();
+    drop(store);
+    let reopened = ContentStore::open(&file).unwrap();
+    let fresh_legacy = reopened.begin_analysis_scope_at(&unqualified, 0).unwrap();
+    let fresh = reopened.begin_analysis_scope_at(&qualified, 21).unwrap();
+    let still_stopped = reopened.begin_analysis_scope_at(&analysis_scope::directory_in(&ahead, Some("home")), 35).unwrap();
+    reopened.delete_directory_analysis_scopes(&child, Some("10:old-0:home")).unwrap();
+    let receipts = |db: &rusqlite::Connection| db.prepare("SELECT id FROM analysis_scope_release ORDER BY id").unwrap()
+        .query_map([], |row| row.get::<_, String>(0)).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+    let db = reopened.connection.lock().unwrap();
+    // An earlier binary checks just the exact scope, then attempts this same insert.
+    assert_eq!(db.execute("INSERT OR IGNORE INTO analysis_scope_release(id,scope,before) VALUES ('10:old-1:home',?1,10)",
+        [analysis_scope::directory_in(&parent.join("1"), Some("home"))]).unwrap(), 0);
+    assert_eq!(receipts(&db), ["10:elsewhere:other", "10:sibling:home", "20:parent:home", "40:newer:home"]);
+    for owner in [&old, &old_legacy, &still_stopped] { assert!(!owner.current(&db).unwrap()); }
+    for owner in [&fresh, &fresh_legacy] { assert!(owner.current(&db).unwrap()); }
+    drop(db);
+    let volume = parent.ancestors().last().unwrap();
+    reopened.delete_directory_analysis_scopes(volume, Some("50:root:home")).unwrap();
+    reopened.delete_directory_analysis_scopes(&ahead, Some("40:newer:home")).unwrap();
+    let db = reopened.connection.lock().unwrap();
+    assert_eq!(receipts(&db), ["10:elsewhere:other", "50:root:home"]);
+}
+
+#[test]
+fn upgrading_directory_receipts_preserves_both_legacy_cutoffs() {
+    use crate::content_store::analysis_scope;
+    let (file, store) = store("scope-parent-receipt-upgrade");
+    let parent = file.parent().unwrap().join("project");
+    let child = parent.join("child");
+    let sibling = parent.join("covered");
+    let bare_child = analysis_scope::directory(&child);
+    let early = store.begin_analysis_scope_at(&bare_child, 5).unwrap();
+    let middle = store.begin_analysis_scope_at(&bare_child, 5).unwrap();
+    let late = store.begin_analysis_scope_at(&bare_child, 5).unwrap();
+    {
+        let db = store.connection.lock().unwrap();
+        db.execute_batch("DROP TRIGGER analysis_skip_covered_directory_stop; DROP TRIGGER analysis_release_directory_generation").unwrap();
+        // Before compaction, an older child stop could arrive after its parent. It fenced
+        // a later set of unqualified writers even though its control generation was lower.
+        for (dir, id, cutoff, acquired) in [
+            (&parent, "20:parent:home", 20, early.acquisition),
+            (&child, "10:child:home", 10, middle.acquisition),
+            (&sibling, "12:covered:home", 12, early.acquisition),
+        ] {
+            db.execute("INSERT INTO analysis_scope_release(id,scope,before) VALUES (?1,?2,?3)",
+                (id, analysis_scope::directory_in(dir, Some("home")), cutoff)).unwrap();
+            db.execute("UPDATE analysis_scope_release SET legacy_acquisition=?2 WHERE id=?1", (id, acquired)).unwrap();
+        }
+    }
+    drop(store);
+    let reopened = ContentStore::open(&file).unwrap();
+    {
+        let db = reopened.connection.lock().unwrap();
+        let ids = db.prepare("SELECT id FROM analysis_scope_release ORDER BY id").unwrap()
+            .query_map([], |row| row.get::<_, String>(0)).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_eq!(ids, ["10:child:home", "20:parent:home"]);
+        assert!(!early.current(&db).unwrap());
+        assert!(!middle.current(&db).unwrap());
+        assert!(late.current(&db).unwrap());
+        // An older writer deletes its exact, lower cutoff before trying to insert its
+        // delivery. The covering parent will reject that insert. Keep the stronger fence.
+        let qualified_child = analysis_scope::directory_in(&child, Some("home"));
+        db.execute("DELETE FROM analysis_scope_release WHERE scope=?1 AND before<11", [&qualified_child]).unwrap();
+        assert_eq!(db.execute("INSERT OR IGNORE INTO analysis_scope_release(id,scope,before) VALUES ('11:delayed:home',?1,11)",
+            [&qualified_child]).unwrap(), 0);
+        assert!(!middle.current(&db).unwrap());
+        assert!(late.current(&db).unwrap());
+    }
+    reopened.delete_directory_analysis_scopes(&parent, Some("21:renewed:home")).unwrap();
+    let db = reopened.connection.lock().unwrap();
+    assert!(!late.current(&db).unwrap());
+    assert_eq!(db.query_row("SELECT count(*) FROM analysis_scope_release", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+}
+
+#[test]
+fn a_numbered_home_stop_revokes_older_unqualified_directory_writers_once() {
+    use crate::content_store::analysis_scope::{self, AnalysisRun, RunSource};
+    let (path, store) = store("scope-legacy-pending-stop");
+    let parent = std::path::Path::new("/virtual/project");
+    let child = parent.join("pkg");
+    let begin = |home, generation, id| {
+        let scope = analysis_scope::directory_in(&child, home);
+        let mut run = AnalysisRun::begin_at(ContentStore::open(&path).unwrap(), &scope, id, generation).unwrap();
+        run.select_source(RunSource::directory(&child)).unwrap();
+        assert!(store.record_corpus_run_retaining(id, &[], 1, 1, [7; 32], &[], None, None, 100, None, Some(&run.owner)).unwrap());
+        run
+    };
+    begin(None, 0, "published").finish(true).unwrap();
+    let mut old = begin(None, 0, "old");
+    let mut newer = begin(None, 11, "higher-generation");
+    let mut other = begin(Some("other"), 5, "other-home");
+    let mut qualified = begin(Some("home"), 5, "qualified");
+    store.delete_directory_analysis_scopes(parent, Some("10:stop:home")).unwrap();
+    let mut fresh = begin(None, 0, "after-delivery");
+    store.delete_directory_analysis_scopes(parent, Some("10:stop:home")).unwrap();
+    for r in [&mut old, &mut newer, &mut other, &mut qualified, &mut fresh] { r.finish(true).unwrap(); }
+    let mut scans: Vec<_> = store.completed_analysis_runs().unwrap().into_iter().map(|r| r.scan_id).collect();
+    scans.sort();
+    assert_eq!(scans, ["after-delivery", "higher-generation", "other-home"]);
+    for id in ["old", "qualified", "published"] {
+        assert!(store.corpus_run_of(id).unwrap().is_none(), "{id} still has a manifest");
+    }
+    for id in &scans {
+        assert!(store.corpus_run_of(id).unwrap().is_some(), "{id} lost its manifest");
+    }
+}
+
+#[test]
+fn analysis_scope_keeps_each_directory_policy_sets_latest_manifest_under_pressure() {
+    let (_path, store) = store("analysis-scope-pressure");
+    let root = "/virtual/repository";
+    let old = [1; 32];
+    let latest = [2; 32];
+    let other = [3; 32];
+    let independent = [4; 32];
+    for (scope, plan, set) in [("cwd:/one", old, [0; 32]), ("cwd:/one", latest, [0; 32]), ("cwd:/two", other, [0; 32]), ("cwd:/one", independent, [9; 32])] {
+        let source = store.put_source(&plan, &[]).unwrap();
+        store.record_scoped_corpus_run(root, &[source], 1, 1, plan, &[], Some(plan), Some(set), 100, Some(scope)).unwrap();
+    }
+    let policy = CorpusPolicy { protected_runs: 0, low_water: 0, high_water: 0, backstop_secs: 0, missing_secs: 0, ..CorpusPolicy::default() };
+    store.keep_corpus_runs(&policy, 101).unwrap();
+    assert_eq!(store.live_plans().unwrap(), HashSet::from([latest, other, independent]));
+}
+
+#[test]
+fn directory_manifest_protection_follows_its_own_successful_acquisitions() {
+    use crate::content_store::analysis_scope::AnalysisRun;
+    let (path, store) = store("scope-manifest-order");
+    let begin = |scope: &str| AnalysisRun::begin_at(ContentStore::open(&path).unwrap(), scope, "scan", 7).unwrap();
+    let record = |run: &AnalysisRun, plan: [u8; 32]| {
+        let source = store.put_source(&plan, &[]).unwrap();
+        store.record_corpus_run_retaining("/repo", &[source], 1, 1, plan, &[], Some(plan), Some([0; 32]),
+            100, None, Some(&run.owner)).unwrap();
+    };
+    let scope = "cwd:/repo";
+    let old = [1; 32];
+    let latest = [2; 32];
+    let mut older = begin(scope);
+    let mut newer = begin(scope);
+    record(&newer, latest);
+    newer.finish(true).unwrap();
+    record(&older, old);
+    older.finish(true).unwrap();
+    let mut aborted = begin(scope);
+    record(&aborted, old);
+    aborted.finish(false).unwrap();
+    let mut other = begin("named:other");
+    record(&other, old);
+    other.finish(true).unwrap();
+    store.delete_analysis_scope("named:other").unwrap();
+    let policy = CorpusPolicy { protected_runs: 0, low_water: 0, high_water: 0, backstop_secs: 0, missing_secs: 0, ..CorpusPolicy::default() };
+    store.keep_corpus_runs(&policy, 101).unwrap();
+    assert_eq!(store.live_plans().unwrap(), HashSet::from([latest]));
+}
+
+#[test]
+fn migrating_directory_membership_freezes_the_existing_manifest_order() {
+    let (path, store) = store("scope-manifest-upgrade");
+    for plan in [[1; 32], [2; 32]] {
+        store.record_scoped_corpus_run("/repo", &[], 1, 1, plan, &[], None, Some([0; 32]), 100, Some("cwd:/repo")).unwrap();
+    }
+    drop(store);
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch("CREATE TEMP TABLE old_rows AS SELECT scope,manifest_id,acquired_at FROM analysis_scope_manifest;
+        DROP TABLE analysis_scope_manifest;
+        CREATE TABLE analysis_scope_manifest (
+            scope TEXT NOT NULL, manifest_id INTEGER NOT NULL REFERENCES corpus_manifests(manifest_id) ON DELETE CASCADE,
+            acquired_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(scope,manifest_id)
+        ) STRICT, WITHOUT ROWID;
+        INSERT INTO analysis_scope_manifest SELECT * FROM old_rows").unwrap();
+    drop(db);
+    let store = ContentStore::open(&path).unwrap();
+    let db = store.connection.lock().unwrap();
+    let rows = db.prepare("SELECT a.acquisition,a.recorded_run,m.last_run FROM analysis_scope_manifest a
+        JOIN corpus_manifests m USING(manifest_id) ORDER BY a.recorded_run").unwrap()
+        .query_map([], |row| Ok((row.get::<_, i64>(0)?,row.get::<_, i64>(1)?,row.get::<_, i64>(2)?))).unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>().unwrap();
+    assert_eq!(rows, [(0, 1, 1), (0, 2, 2)]);
+}
+
+#[test]
+fn analysis_scope_cache_keys_distinguish_parser_and_tape_versions() {
+    let (_path, store) = store("analysis-scope-tape-version");
+    let bytes = b"x = 1\n";
+    let source = store.put_source(bytes, &[]).unwrap();
+    let original = store.put_tape(source, 1, 2, 3, b"old tape").unwrap();
+    assert_eq!(store.tape_by_source(source, 1, 2, 3).unwrap(), Some(original));
+    assert_eq!(store.tape_by_source(source, 1, 4, 3).unwrap(), None);
+    assert_eq!(store.tape_by_source(source, 1, 2, 4).unwrap(), None);
+    let new = store.put_tape(source, 1, 4, 3, b"new tape").unwrap();
+    assert_ne!(original, new);
+}
+
+#[test]
 fn the_last_runs_are_protected_and_history_is_kept_to_the_low_water_mark() {
     // Root 1 churns every file each run: sources 1-2, 3-4, 5-6, 7-8, 9-10 (newest first below).
     let ms: Vec<Manifest> = (0..5).map(|k| manifest(10 - k, 1, 100, &[2 * (5 - k) - 1, 2 * (5 - k)])).collect();
@@ -368,7 +1122,8 @@ fn only_protected_runs_keep_plans_and_a_dead_process_holds_nothing() {
     assert_eq!(manifests, 3, "under the high-water mark every manifest is kept");
     assert_eq!(plans.map(live), [Some(0), Some(0), Some(1)], "only the protected run's plan is live");
     // A process that has exited: its hold is an orphan.
-    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap()).arg("--help")
+        .stdout(std::process::Stdio::null()).spawn().unwrap();
     let pid = child.id();
     child.wait().unwrap();
     store.hold_corpus_plan(plans[0], &format!("corpus-run:{pid}:0:0"), 9_000).unwrap();

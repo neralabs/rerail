@@ -1,5 +1,7 @@
-import { afterAll } from "vitest";
-import { execFileSync } from "node:child_process";
+import { afterAll, inject } from "vitest";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { createInterface } from "node:readline";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -15,7 +17,9 @@ const priorGitConfig = { GIT_CONFIG_NOSYSTEM: process.env.GIT_CONFIG_NOSYSTEM, G
 // fails the run rather than leaving the person's coding agents pointing at a folder that is about to be deleted.
 const realSettingsLeaks = watchRealAgentSettings(homedir(), tmpdir());
 const rerailHome = mkdtempSync(join(tmpdir(), "rerail-vitest-home-"));
-const contentStoreDirectory = mkdtempSync(join(tmpdir(), "rerail-vitest-store-"));
+// On Windows the stores live under one root the global setup made (`windows-store-cleanup.ts`), which removes it.
+const windowsStoreRoot = process.platform === "win32" ? inject("windowsStoreRoot") : undefined;
+const contentStoreDirectory = mkdtempSync(join(windowsStoreRoot ?? tmpdir(), "rerail-vitest-store-"));
 const userHome = mkdtempSync(join(tmpdir(), "rerail-vitest-user-"));
 
 process.env.RERAIL_HOME = rerailHome;
@@ -46,13 +50,17 @@ for (const name of Object.keys(process.env)) {
  * parent until the worker exits, after which nothing would ever stop it. Windows launches through the native binding
  * and has no `ps`; it is not checked.
  */
-function strandedDaemons(): Array<{ pid: number; home: string }> {
+async function strandedDaemons(): Promise<Array<{ pid: number; home: string }>> {
   if (process.platform === "win32") return [];
   const stranded: Array<{ pid: number; home: string }> = [];
-  for (const line of execFileSync("ps", ["-A", "-o", "pid=,ppid=,command="], { encoding: "utf8" }).split("\n")) {
+  const ps = spawn("ps", ["-A", "-o", "pid=,ppid=,command="], { stdio: ["ignore", "pipe", "inherit"] });
+  const exited = once(ps, "close");
+  for await (const line of createInterface({ input: ps.stdout })) {
     const match = /^\s*(\d+)\s+(\d+)\s+.*[\\/]dist[\\/]daemon\.js --state-file (.+?)(?: --|$)/u.exec(line);
     if (match !== null && Number(match[2]) === process.pid) stranded.push({ pid: Number(match[1]), home: dirname(match[3]!) });
   }
+  const [code] = await exited;
+  if (code !== 0) throw new Error(`ps exited with code ${code}`);
   return stranded;
 }
 
@@ -84,7 +92,7 @@ afterAll(async () => {
     if (leaked.length > 0) {
       throw new Error(`A test wrote temp folders into the real coding agent settings: ${leaked.join(", ")}. Restore them with rerail install --refresh, and move the test's home with stubUserHome.`);
     }
-    const stranded = strandedDaemons();
+    const stranded = await strandedDaemons();
     if (stranded.length > 0) {
       for (const daemon of stranded) await stopProcess(daemon.pid);
       throw new Error(`Test file left ${stranded.length} Rerail daemon(s) running (stopped now): ${stranded.map(daemon => `pid ${daemon.pid} in ${daemon.home}`).join(", ")}`);
@@ -98,7 +106,7 @@ afterAll(async () => {
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
     }
-    await removeFolders([rerailHome, contentStoreDirectory, userHome]);
+    await removeFolders([rerailHome, userHome, ...(windowsStoreRoot === undefined ? [contentStoreDirectory] : [])]);
   }
 });
 

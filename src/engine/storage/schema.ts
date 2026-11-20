@@ -198,6 +198,31 @@ export const checkouts = sqliteTable(
   table => [index("checkouts_clone").on(table.cloneId), index("checkouts_repository").on(table.repositoryKey)],
 );
 
+/** A stop committed before the daemon can release the checkout's cache. */
+export const analysisScopeReleases = sqliteTable("analysis_scope_releases", {
+  id: text("id").primaryKey(),
+  directory: text("directory").notNull(),
+  nextAttemptAt: integer("next_attempt_at").notNull().default(0),
+}, table => [index("analysis_scope_releases_due").on(table.nextAttemptAt, table.id)]);
+
+/** An unproven store can receive a release later, without holding up the stop. */
+export const analysisScopeReleaseProbes = sqliteTable("analysis_scope_release_probes", {
+  releaseId: text("release_id").notNull(),
+  directory: text("directory").notNull(),
+  store: text("store").notNull(),
+  nextAttemptAt: integer("next_attempt_at").notNull(),
+  attempts: integer("attempts").notNull().default(0),
+  lastError: text("last_error"),
+}, table => [
+  primaryKey({ columns: [table.releaseId, table.store] }),
+  index("analysis_scope_release_probes_due").on(table.nextAttemptAt, table.releaseId, table.store),
+]);
+
+export const analysisScopeGeneration = sqliteTable("analysis_scope_generation", {
+  singleton: integer("singleton").primaryKey(),
+  generation: integer("generation").notNull(),
+});
+
 /**
  * Set-up offered the dashboard's review in a repository that was not set up yet. While the row stands, the set-up
  * the person makes in the dashboard is the review's, and set-up carries on at its confirm question until Rerail is

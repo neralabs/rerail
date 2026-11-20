@@ -24,6 +24,8 @@ pub mod aggregate_demand {
     use std::collections::{BTreeMap, BTreeSet};
 }
 pub mod from_tape;
+mod git_policy;
+pub use git_policy::GitPolicyInputs;
 pub mod images;
 pub mod module_image;
 pub use rerail_rr::code_rule_dsl::logic::rr::lower;
@@ -153,7 +155,13 @@ pub fn library() -> PathBuf {
         .map(PathBuf::from)
         // From the checkout's root, with no `..` in the path: a path the engine reads is named one way, so the file
         // observer keeps one answer and one journal root for each directory (`native/../docs` and `docs` were two).
-        .unwrap_or_else(|| rerail_store::source_tree::root().map_or_else(|| PathBuf::from("docs/rule-syntax/lib"), |root| root.join("docs/rule-syntax/lib")))
+        .unwrap_or_else(rerail_store::source_tree::rule_library)
+}
+
+/// The directory whose include resolution is part of a program read. Preserve a missing root as a distinct input.
+pub fn library_root() -> PathBuf {
+    let path = library();
+    path.canonicalize().or_else(|_| std::path::absolute(&path)).unwrap_or(path)
 }
 
 /// A program's `.rerail` text. Its `#include`s name library files (decision 0089), read as `parse_file` reads them:
@@ -846,6 +854,17 @@ pub(in crate::code_rule_dsl) fn graph_image(store: Option<&crate::content_store:
     Some(bytes.into_owned())
 }
 
+/// A process can first read this graph for a different store. Keep it where this reader can find it on restart.
+pub(in crate::code_rule_dsl) fn retain_graph_image(store: Option<&crate::content_store::ContentStore>, key: crate::content_store::HashKey, encode: impl FnOnce() -> Vec<u8>) {
+    let Some(store) = store else { return };
+    if images::shipped().is_some_and(|bundle| bundle.get(key).is_some()) { return; }
+    if let Ok(Some(id)) = store.source_by_alias(key) {
+        renew_image(store, id);
+    } else {
+        keep_graph_image(Some(store), key, encode());
+    }
+}
+
 /// Keeps a graph's image (`graph_image`) where none is kept under its key yet. A seed's key names the seed, not the
 /// files its graph reached, so an edited library gives the same key another graph: the store's alias holds one
 /// image, and the first stays. A run then finds it does not hold (`Graph::holds`) and derives the graph, as without
@@ -1134,7 +1153,7 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, append
 }
 
 /// `program` as a version, opened from the image the store keeps of it (`encode_program`).
-fn version_of(program: &Program) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
+pub fn version_of(program: &Program) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     let bytes = encode_program(program).map_err(Error::Syntax)?;
     super::program_image::Version::open(&bytes).map_err(Error::Syntax)
 }
@@ -1416,7 +1435,7 @@ fn builtin_resolve(statements: Vec<syntax::Statement>) -> Result<(Files, Vec<syn
     if t_shape {
         seen.push(core);
     } else {
-        visit(&core, &mut out, &mut read_files, &mut seen, false)?;
+        visit(&core, &mut out, &mut read_files, &mut seen, false, &mut |_, _| {})?;
     }
     for (item, line) in includes {
         let syntax::Item::Include(name) = item else { unreachable!("an include") };
@@ -1424,7 +1443,7 @@ fn builtin_resolve(statements: Vec<syntax::Statement>) -> Result<(Files, Vec<syn
         if !path.exists() {
             return Err(Error::Syntax(format!("line {line}: #include {name:?}: no such file in the library")));
         }
-        visit(&path, &mut out, &mut read_files, &mut seen, true)?;
+        visit(&path, &mut out, &mut read_files, &mut seen, true, &mut |_, _| {})?;
     }
     Ok((out, own))
 }
@@ -1542,24 +1561,57 @@ pub const LIBRARY_DERIVED: [&str; 3] = ["embed", "embed_value", "load"];
 const ENGINE_FILES: [&str; 1] = ["components.rerail"];
 
 pub fn read_file(path: &Path) -> Result<(std::sync::Arc<super::program_image::Version>, Vec<LibraryFile>), Error> {
+    read_file_after(path, None)
+}
+
+pub fn read_file_after(path: &Path, inspected: Option<&[LibraryFile]>) -> Result<(std::sync::Arc<super::program_image::Version>, Vec<LibraryFile>), Error> {
+    let read = inspect_file_after(path, inspected)?;
+    Ok((read.program, read.files))
+}
+
+/// A rule file's program as `inspect_file_after` reads it: its version, the library files it read, and, for a policy
+/// read from a Git view, the inputs its include graph is kept under.
+pub struct ReadProgram {
+    pub program: std::sync::Arc<super::program_image::Version>,
+    pub files: Vec<LibraryFile>,
+    pub git: Option<GitPolicyInputs>,
+}
+
+/// A repeated inspection in the same catalog can use the reader's current in-process program.
+/// Execution attaches the inspected graph to its destination store, including after collection.
+pub fn inspect_file_after(path: &Path, inspected: Option<&[LibraryFile]>) -> Result<ReadProgram, Error> {
+    if let Some(root) = crate::git_workspace::snapshot::view_root(path) {
+        return git_policy::read(&root, path);
+    }
+    let (program, files) = read_worktree_file(path, inspected)?;
+    Ok(ReadProgram { program, files, git: None })
+}
+
+fn read_worktree_file(path: &Path, inspected: Option<&[LibraryFile]>) -> Result<(std::sync::Arc<super::program_image::Version>, Vec<LibraryFile>), Error> {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
-    static PROGRAMS: OnceLock<Mutex<HashMap<PathBuf, (Vec<LibraryFile>, std::sync::Arc<super::program_image::Version>)>>> = OnceLock::new();
+    static PROGRAMS: OnceLock<Mutex<HashMap<(PathBuf, PathBuf), (Vec<LibraryFile>, std::sync::Arc<super::program_image::Version>)>>> = OnceLock::new();
     let key = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     let cache = PROGRAMS.get_or_init(Default::default);
-    if let Some((files, program)) = cache.lock().expect("the program cache").get(&key)
-        && files.iter().all(|file| LibraryFile::now(&file.path) == *file)
-    {
+    let library = library_root();
+    let entry = (key.clone(), library.clone());
+    let cached = cache.lock().expect("the program cache").get(&entry)
+        .filter(|(files, _)| crate::code_rule_dsl::prof::time("rr.inspect.inputs", || LibraryFile::inputs_match(files))).cloned();
+    if let Some((files, program)) = cached {
+        if inspected != Some(files.as_slice()) {
+            retain_current_read(&key, &library, &files, &program);
+        }
+        files.iter().for_each(noted);
         crate::code_rule_dsl::prof::count("rr.program_reused", 1);
-        return Ok((program.clone(), files.clone()));
+        return Ok((program, files));
     }
     // Decision 0275: rederived until a key hits. The file's sha (by its `stat` while that holds), then the entry kept
     // under its path and sha, taken while every file it read still reads as recorded (by `stat`, then sha).
-    let kept = kept_program(&key);
+    let kept = kept_program(&key, &library);
     if let Some((_, _, Some((program, files)))) = &kept {
         crate::code_rule_dsl::prof::count("rr.program_stored", 1);
         files.iter().for_each(noted);
-        cache.lock().expect("the program cache").insert(key.clone(), (files.clone(), program.clone()));
+        cache.lock().expect("the program cache").insert(entry, (files.clone(), program.clone()));
         return Ok((program.clone(), files.clone()));
     }
     // The kept statements alone copied from the process's (`read_shared`): each policy copied its libraries whole,
@@ -1573,7 +1625,7 @@ pub fn read_file(path: &Path) -> Result<(std::sync::Arc<super::program_image::Ve
         super::plan::corpus::combined::record_version(&store, "a rule file's program", &entry, &files, &program, &[]);
         super::plan::corpus::combined::read_before_the_run(entry);
     }
-    cache.lock().expect("the program cache").insert(key, (files.clone(), program.clone()));
+    cache.lock().expect("the program cache").insert(entry, (files.clone(), program.clone()));
     Ok((program, files))
 }
 
@@ -1628,31 +1680,51 @@ pub fn kept_header_found(src: &str) -> Option<std::sync::Arc<super::program_imag
 /// (`kept_program`): for the tests of decision 0275.
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn kept_program_found(path: &Path) -> Option<(std::sync::Arc<super::program_image::Version>, Vec<LibraryFile>)> {
-    kept_program(path).and_then(|(_, _, found)| found)
+    kept_program(path, &library_root()).and_then(|(_, _, found)| found)
 }
 
-/// The entry of the rule file at `path` (canonical): its key, the store it is kept in, and its program and read
-/// record when the store keeps one that still holds (`combined::lookup_read`). `None` where there is no file to key
-/// by, or the program is phase 0's own (its builtin reader).
-#[allow(clippy::type_complexity)]
-fn kept_program(path: &Path) -> Option<([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>, Option<(std::sync::Arc<super::program_image::Version>, Vec<LibraryFile>)>)> {
-    use super::plan::corpus::{combined, phases};
-    if !cfg!(feature = "tape-cache") || super::plan::corpus::phase0::active() {
-        return None;
+/// Attach an inspected program to the store selected by its consumer. The inputs belong to that inspection.
+pub fn retain_read_program(path: &Path, library: &Path, files: &[LibraryFile], program: &std::sync::Arc<super::program_image::Version>) {
+    if LibraryFile::inputs_match(files) {
+        retain_current_read(path, library, files, program);
     }
+}
+
+fn retain_current_read(path: &Path, library: &Path, files: &[LibraryFile], program: &std::sync::Arc<super::program_image::Version>) {
+    use super::plan::corpus::combined;
+    let Some(sha) = files.iter().find(|file| file.path == path).and_then(|file| file.sha256) else { return };
+    let Some((key, Some(store))) = rule_file_store(path, library, &sha) else { return };
+    let Ok(_held) = crate::code_rule_dsl::prof::time("rr.inspect.collection_lease", || store.hold_collection()) else { return };
+    crate::code_rule_dsl::prof::time("rr.inspect.settle", || store.settle(&combined::queued(&key)));
+    if !combined::retains_read(&store, &key, files).unwrap_or(false) {
+        combined::record_version(&store, "a rule file's program", &key, files, program, &[]);
+    }
+    combined::read_before_the_run(key);
+}
+
+fn rule_file_store(path: &Path, library: &Path, sha: &[u8; 32]) -> Option<([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>)> {
+    use super::plan::corpus::{combined, phases};
+    if !cfg!(feature = "tape-cache") || super::plan::corpus::phase0::active() { return None; }
+    Some((combined::rule_file_key(path, library, sha), crate::code_rule_dsl::prof::time("rr.inspect.store", phases::reading_store)))
+}
+
+/// The entry of the rule file at `path` and the program whose recorded inputs still hold.
+#[allow(clippy::type_complexity)]
+fn kept_program(path: &Path, library: &Path) -> Option<([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>, Option<(std::sync::Arc<super::program_image::Version>, Vec<LibraryFile>)>)> {
+    use super::plan::corpus::combined;
     let sha = super::plan::corpus::observe(|o| o.digest(path))?;
-    let key = combined::rule_file_key(path, &sha);
-    let Some(store) = phases::reading_store() else { return Some((key, None, None)) };
-    let found = {
-        // Read while collection is held off, as a combined program's is (`combine_stored`).
+    let (key, store) = rule_file_store(path, library, &sha)?;
+    let found = if let Some(store) = &store {
         let _held = store.hold_collection().ok()?;
         store.settle(&combined::queued(&key));
-        combined::lookup_read(&store, &key, &Default::default()).ok().flatten()
+        combined::lookup_read(store, &key, &Default::default()).ok().flatten()
+    } else {
+        None
     };
     if found.is_some() {
         combined::read_before_the_run(key);
     }
-    Some((key, Some(store), found))
+    Some((key, store, found))
 }
 
 /// A file's program from its modules' statements (`program`): its names checked, its own rules grounded, and lowered,
@@ -1664,10 +1736,10 @@ pub fn lower_files(path: &Path, statements: Files) -> Result<std::sync::Arc<supe
 
 /// `lower_files`, with the unreached clauses of included files dropped first (`drop`) or lowered too.
 pub fn lower_files_dropping(path: &Path, statements: Files, drop: bool) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
-    let key = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let key = crate::git_workspace::snapshot::canonicalize(path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     check_names(&statements, false)?;
     // The file's own rules grounded (`refuse_ungrounded`), its includes' `fix` relations given.
-    let own_path = path.canonicalize().unwrap_or_else(|_| path.to_owned());
+    let own_path = key.clone();
     let given: BTreeSet<String> = statements.iter().filter(|(p, _)| *p != own_path).flat_map(|(_, s)| check::fix_relations(s)).collect();
     for (_, own) in statements.iter().filter(|(p, _)| *p == own_path) {
         refuse_ungrounded(own, &given)?;
@@ -2005,8 +2077,12 @@ fn noted(file: &LibraryFile) {
 }
 
 impl LibraryFile {
+    pub(in crate::code_rule_dsl) fn inputs_match(files: &[Self]) -> bool {
+        files.iter().all(Self::unchanged)
+    }
+
     /// Whether the file still reads as recorded: the same bytes, or still no file.
-    pub(in crate::code_rule_dsl) fn unchanged(&self) -> bool {
+    pub fn unchanged(&self) -> bool {
         Self::now(&self.path) == *self
     }
 }
@@ -2019,6 +2095,14 @@ pub fn read(path: &Path) -> Result<(Vec<syntax::Statement>, LibraryFile), Error>
 fn read_shared(path: &Path) -> Result<(std::sync::Arc<Vec<syntax::Statement>>, LibraryFile), Error> {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex, OnceLock};
+    if crate::git_workspace::snapshot::contains(path) {
+        use sha2::Digest as _;
+        let bytes = crate::git_workspace::snapshot::read_bounded(path, 1024 * 1024)
+            .map_err(|error| Error::Syntax(format!("{}: {error}", path.display())))?;
+        let file = LibraryFile { path: path.to_owned(), sha256: Some(sha2::Sha256::digest(&bytes).into()) };
+        let src = String::from_utf8(bytes).map_err(|error| Error::Syntax(format!("{}: {error}", path.display())))?;
+        return Ok((Arc::new(stored_statements(path, src)?), file));
+    }
     // Each file's statements, kept for the process by its path and bytes' digest: programs that include one library
     // (the Python pack's files) parse it once, not once per program. Phase 0's observer gives the digest by a `stat`
     // while the file is unchanged, so a kept file is not read again. Held shared: a reader copies what it keeps.
@@ -2058,8 +2142,10 @@ pub type Files = Vec<(PathBuf, Vec<syntax::Statement>)>;
 
 /// `path` and what it includes, each once (`seen`), includes first, added to `out`; every library file read or
 /// probed, to `read_files`. An `included` file's `.output`s are left out, as are those of what it includes.
-fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: &mut Vec<PathBuf>, included: bool) -> Result<(), Error> {
-    let path = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+fn visit(requested: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: &mut Vec<PathBuf>, included: bool, resolved: &mut impl FnMut(&Path, &Path)) -> Result<(), Error> {
+    use crate::git_workspace::snapshot as source;
+    let path = source::canonicalize(requested).map_err(|e| Error::Syntax(format!("{}: {e}", requested.display())))?;
+    resolved(requested, &path);
     if seen.contains(&path) {
         return Ok(());
     }
@@ -2072,9 +2158,20 @@ fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: 
     }
     for (item, line) in includes {
         let syntax::Item::Include(name) = item else { unreachable!("an include") };
+        let pinned = source::contains(&path);
+        if pinned && Path::new(&name).is_absolute() {
+            return Err(Error::Syntax(format!("{}:{line}: #include {name:?} must be relative for a Git policy", path.display())));
+        }
         let in_library = library().join(&name);
         let beside = path.parent().map(|d| d.join(&name)).unwrap_or_default();
-        let found = if in_library.exists() {
+        let bundled = if pinned {
+            in_library.canonicalize().ok().is_some_and(|file| {
+                library().canonicalize().is_ok_and(|root| file.starts_with(root))
+            })
+        } else {
+            in_library.exists()
+        };
+        let found = if bundled {
             in_library
         } else {
             let miss = LibraryFile { path: in_library, sha256: None };
@@ -2082,10 +2179,10 @@ fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: 
             read_files.push(miss);
             beside
         };
-        if !found.exists() {
+        if !source::is_file(&found) || pinned && !bundled && !source::contains(&found) {
             return Err(Error::Syntax(format!("{}:{line}: #include {name:?}: no such file", path.display())));
         }
-        visit(&found, out, read_files, seen, true)?;
+        visit(&found, out, read_files, seen, true, resolved)?;
     }
     out.push((path, rest));
     Ok(())
@@ -2203,19 +2300,26 @@ fn probe(library: &Path, name: &str, target: &Path, files: &mut Vec<LibraryFile>
 
 /// `program` for phase 0's own reads.
 fn builtin_program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
+    builtin_program_resolved(path, &mut |_, _| {})
+}
+
+fn builtin_program_resolved(path: &Path, resolved: &mut impl FnMut(&Path, &Path)) -> Result<(Files, Vec<LibraryFile>), Error> {
     let (mut out, mut read_files) = (Vec::new(), Vec::new());
     // `core.rerail` is every program's prelude (the base relations and built-ins), included or not; except a program in
     // T's shape (decision 0046), which declares its base relations itself (`doc` among them), and whose libraries
     // read only the relations both shapes have.
-    let t_shape = read(&path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?)?
+    let t_shape = read(&crate::git_workspace::snapshot::canonicalize(path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?)?
         .0
         .iter()
         .any(|(item, _)| matches!(item, syntax::Item::Decl { name, .. } if name == "doc"));
     if !t_shape {
-        visit(&library().join("core.rerail"), &mut out, &mut read_files, &mut Vec::new(), false)?;
+        visit(&library().join("core.rerail"), &mut out, &mut read_files, &mut Vec::new(), false, resolved)?;
     }
-    let mut seen = vec![library().join("core.rerail").canonicalize().map_err(|e| Error::Syntax(format!("core.rerail: {e}")))?];
-    visit(path, &mut out, &mut read_files, &mut seen, false)?;
+    let prelude = library().join("core.rerail");
+    let core = prelude.canonicalize().map_err(|e| Error::Syntax(format!("core.rerail: {e}")))?;
+    resolved(&prelude, &core);
+    let mut seen = vec![core];
+    visit(path, &mut out, &mut read_files, &mut seen, false, resolved)?;
     Ok((out, read_files))
 }
 
