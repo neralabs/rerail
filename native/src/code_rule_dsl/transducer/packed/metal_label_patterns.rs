@@ -25,7 +25,8 @@ typedef struct Ctx { UKL_GLOBAL const uint8_t* s; DocView d; UKL_TABLE_SPACE con
 // A pattern pass (its roots: its rule at `root` in `roots`, `LANES` threads a group of 64 nodes) or a fact's
 // findings on a file (at `root` in `facts`: a thread a row, or a word of its bits); its threads from `threadStart`.
 typedef struct Item { uint32_t pattern,target,root,constraintStart,constraintCount,threadStart; } Item;
-// A constraint: a variable (or, for a fact, its node) and the label it must hold.
+// A constraint: a variable and the label it must hold; a fact item's first is (its file, whether its findings are
+// bits), then a (0, label) a slot.
 typedef struct Pair { uint32_t x,y; } Pair;
 // The label passes' shape (`label_passes.uglykl`'s), of which these kernels read the first fields.
 typedef struct Shape { uint32_t nodeCount,words,resultArena,taskCount,itemCount,targetCount,round,finish,recursive,lastLevel,fileCount,steps,profile,queue,budget,lanes,frames; } Shape;

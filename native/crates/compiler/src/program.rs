@@ -533,6 +533,11 @@ pub struct TokenElem {
     /// The bytes the record's token may begin with (`starting "B"`, a gap pattern's only): a
     /// set of 256 bits, none for no test. The lean lexer's `asi` reads the byte after a comment.
     pub first: [u64; 4],
+    /// The marks (bits of the records' marks) that take a record as one of the kinds: a kind
+    /// whose first byte another token's starts too has its rows' starts as a mark bit of the
+    /// code, read as tier 2's `ROW` reads a row's start, and `kinds` holds only the classes of
+    /// the bytes no other token starts.
+    pub rows: u32,
 }
 
 /// One side of a run's depth (`TokenElem::nests`): its counter (0 to 3), whether it opens, and
@@ -570,7 +575,8 @@ impl TokenElem {
         let kind = code & 0xff;
         let word = crate::records::word_of(code);
         let keyword = word > 0 && self.except.contains(&((word - 1) as u16));
-        (kind < 64 && self.kinds >> kind & 1 == 1 && !keyword) || (word > 0 && self.words.contains(&((word - 1) as u16)))
+        let row = code >> crate::records::MARK_SHIFT & self.rows != 0;
+        ((kind < 64 && self.kinds >> kind & 1 == 1 || row) && !keyword) || (word > 0 && self.words.contains(&((word - 1) as u16)))
     }
 
     /// Whether the record's first byte is one the element takes (`TokenElem::first`).

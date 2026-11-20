@@ -69,7 +69,10 @@ pub(super) fn answered(v: &Version) -> (Vec<String>, Vec<String>) {
         }
     }
     (produced, given)
-}pub(super) const DEMAND: &str = "rr_embed_req";
+}
+
+/// `embed`'s demand: a string made a tape value and parsed (decision 0431 §8), answered in the fixpoint.
+pub(super) const DEMAND: &str = "rr_embed_req";
 /// `@parse(g, x)`'s and `@splice(t, n, t2)`'s demands (decision 0058 §4, `rr::lower`).
 pub(super) const PARSE: &str = "rr_parse_req";
 pub(super) const SPLICE: &str = "rr_splice_req";
@@ -194,6 +197,13 @@ fn first_key(parts: &[&[u8]], range: Range) -> (u32, u32, u32, [u8; 32]) {
     (base, span, u32::from_le_bytes(hash[..4].try_into().expect("4 bytes")) % span, identity)
 }
 
+/// The key of a file of another grammar that a run reads for its programs (decision 0470 step 2): a hidden one, by
+/// its path, claimed as a guest's is, so no guest takes it.
+pub(super) fn hidden_file_key(keys: &GuestKeys, path: &str) -> u32 {
+    let (base, span, first, identity) = first_key(&[b"host-file", path.as_bytes()], Range::Hidden);
+    keys.key(identity, base, span, first, path)
+}
+
 /// Which keys a document takes (`key`).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Range {
@@ -308,10 +318,6 @@ impl Seen {
     }
 }
 
-/// The guests `v`'s rules can see. A variable reaches a guest's document only from a guest relation (scoped,
-/// `hiding`): every other base read is bounded below `ANNOTATION_KEYS`, or below `HIDDEN_KEYS` where an annotation's
-/// copies were folded in. So a program that reads no guest relation sees annotations only where a comparison is
-/// against the widened bound, and the other guests (other grammars, values) never.
 /// The tape tags of the grammars `v`'s requests name (decision 0431 R6: the tags whose tapes a run reads before its
 /// first wave); `None` where a request's grammar is not a constant, so any grammar may be asked.
 pub(super) fn grammar_tags(v: &crate::code_rule_dsl::logic::program_image::Version) -> Option<std::collections::BTreeSet<i64>> {
@@ -334,11 +340,20 @@ pub(super) fn grammar_tags(v: &crate::code_rule_dsl::logic::program_image::Versi
     Some(tags)
 }
 
-pub(super) fn guests_seen(v: &crate::code_rule_dsl::logic::program_image::Version) -> Seen {
+/// Whether `t` is a document bound `combining::FoldOwn` widened to take the annotations in (above `ANNOTATION_KEYS`):
+/// a rule compared with it reads the annotations' documents, which only their requests (`DEMAND`) make.
+pub(super) fn widened(t: crate::code_rule_dsl::logic::program_image::TermRef<'_>) -> bool {
     use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, HIDDEN_KEYS};
-    use crate::code_rule_dsl::logic::program_image::{Lit, TermRef};
+    matches!(t, crate::code_rule_dsl::logic::program_image::TermRef::Int(n) if n > i64::from(ANNOTATION_KEYS) && (n <= i64::from(HIDDEN_KEYS) || n > i64::from(ANNOTATION_KEYS) << 32))
+}
+
+/// The guests `v`'s rules can see. A variable reaches a guest's document only from a guest relation (scoped,
+/// `hiding`): every other base read is bounded below `ANNOTATION_KEYS`, or below `HIDDEN_KEYS` where an annotation's
+/// copies were folded in. So a program that reads no guest relation sees annotations only where a comparison is
+/// against the widened bound, and the other guests (other grammars, values) never.
+pub(super) fn guests_seen(v: &crate::code_rule_dsl::logic::program_image::Version) -> Seen {
+    use crate::code_rule_dsl::logic::program_image::Lit;
     let entry = |rel: &str| READS.contains(&rel) || super::hiding::ENTRIES.iter().any(|(r, ..)| *r == rel);
-    let widened = |t: TermRef<'_>| matches!(t, TermRef::Int(n) if n > i64::from(ANNOTATION_KEYS) && (n <= i64::from(HIDDEN_KEYS) || n > i64::from(ANNOTATION_KEYS) << 32));
     let mut seen = Seen::Code;
     for r in v.rules() {
         for l in r.body() {
@@ -551,8 +566,9 @@ impl Guests {
             digest,
             facts,
             guest: Some(Arc::new(Guest { host: 0, file: 0, at: 0, grammar: grammar_name.to_owned(), role: role.to_owned(), root, place: none.clone(), in_file: none, made: Made::Tape { places: vec![here] } })),
-            // A tape value is no module's: its text is a string's, not a file's.
+            // A tape value is no module's, and no package's: its text is a string's, not a file's.
             module: None,
+            unpackaged: false,
             tape: None,
         }))
     }
@@ -666,6 +682,7 @@ impl Guests {
             facts,
             guest: Some(Arc::new(Guest { host: host_key, file, at, grammar: label.to_owned(), role: role.to_owned(), root, place, in_file, made: Made::Host })),
             module: host.module.clone(),
+            unpackaged: host.unpackaged,
             tape,
         }))
     }
@@ -695,6 +712,7 @@ impl Guests {
             guest: Some(Arc::new(Guest { host: 0, file: 0, at: 0, grammar: grammar_name.to_owned(), role: "value".to_owned(), root, place: Placement::At([0, 0]), in_file: Placement::At([0, 0]), made })),
             // A value is no module's: its text is a rule's, not a file's.
             module: None,
+            unpackaged: false,
             tape: None,
         }))
     }

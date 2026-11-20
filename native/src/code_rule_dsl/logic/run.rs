@@ -8,7 +8,6 @@
 //!
 //! It holds:
 //! - its limits and what it met of them (`width`, decision 0462);
-//! - the trees it decoded from versions (`Version::program`), for the check that a maintained run decodes none;
 //! - its settings (`setting`: each read once by the run, as it first needs it; decision 0442) and its own values by
 //!   type (`local`: a measurement's sums, a log, a batch), where the process kept them in statics.
 

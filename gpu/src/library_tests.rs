@@ -664,3 +664,172 @@ fn hash_tables_build_and_probe() {
     keys.dedup();
     assert_eq!(keys.len(), 64, "{}: each slot holds a distinct key", crate::device::backend());
 }
+
+/// A grid's control words, zero (`ukl/grid.h`).
+fn grid_ctl() -> crate::device::Buffer {
+    buffer_of(&[0u32; 3]).unwrap()
+}
+
+/// R6 of decision 0468: 10,000 grid barriers in a row, at 1, 8 and 32 groups, each round's reads seeing every
+/// group's writes before it, and no barrier failed.
+#[test]
+#[ignore = "Q367: a grid barrier fails at 8 groups on the M1 Max, as at Go-C-and-C-support's own ce2c4019c83; run with --ignored on an M3 or M5"]
+fn grid_barriers_see_every_groups_writes() {
+    let Some((p, mut q)) = setup() else { return };
+    let lsz = 256u32.min(crate::device::max_threadgroup());
+    for groups in [1u32, 8, 32] {
+        let rounds = 5_000u32;
+        let (ctl, slots, out) = (grid_ctl(), alloc::<u32>((groups * lsz) as usize).unwrap(), buffer_of(&vec![0u32; groups as usize]).unwrap());
+        launch(&q, p.function("t_grid_barrier").unwrap())
+            .value("args", &TestArgs { n: rounds, w: groups })
+            .buffer("ctl", &ctl)
+            .buffer("slots", &slots)
+            .buffer("out", &out)
+            .run(&[groups as u64], &[lsz as u64])
+            .unwrap();
+        q.flush().await_().unwrap();
+        let c: Vec<u32> = read(&ctl, 3);
+        let wrong: Vec<u32> = read(&out, groups as usize);
+        assert_eq!(c[2], 0, "{}: {groups} groups: a barrier failed", crate::device::backend());
+        assert_eq!(c[1], 4 * rounds, "{}: {groups} groups: the barriers' generation (two a barrier)", crate::device::backend());
+        assert!(wrong.iter().all(|&w| w == 0), "{}: {groups} groups: reads before the barrier's writes: {wrong:?}", crate::device::backend());
+    }
+}
+
+/// R6: a grid past what the device holds at once fails its barrier (the failure word set), never hangs: the groups
+/// that run wait their bound, and those that start after see the failure and end.
+#[test]
+fn a_grid_past_residency_fails_its_barrier() {
+    let Some((p, mut q)) = setup() else { return };
+    let lsz = 1024u32.min(crate::device::max_threadgroup());
+    let groups = 4096u32;
+    let (ctl, slots, out) = (grid_ctl(), alloc::<u32>((groups * lsz) as usize).unwrap(), buffer_of(&vec![0u32; groups as usize]).unwrap());
+    let start = std::time::Instant::now();
+    launch(&q, p.function("t_grid_barrier").unwrap())
+        .value("args", &TestArgs { n: 1, w: groups })
+        .buffer("ctl", &ctl)
+        .buffer("slots", &slots)
+        .buffer("out", &out)
+        .run(&[groups as u64], &[lsz as u64])
+        .unwrap();
+    q.flush().await_().unwrap();
+    let c: Vec<u32> = read(&ctl, 3);
+    eprintln!("{}: {groups} groups of {lsz}: failed {} after {:?}", crate::device::backend(), c[2], start.elapsed());
+    assert_eq!(c[2], 1, "{}: a grid of {groups} groups of {lsz} met its barrier", crate::device::backend());
+}
+
+/// R5 of decision 0468: the grid's exclusive scan equals the host's from 0 to 10^6 values, across tile and share
+/// boundaries, at 1, 8 and 32 groups, its count read on the device.
+#[test]
+#[ignore = "Q367: a grid barrier fails at 8 groups on the M1 Max, as at Go-C-and-C-support's own ce2c4019c83; run with --ignored on an M3 or M5"]
+fn the_grid_scan_equals_the_host() {
+    let Some((p, mut q)) = setup() else { return };
+    let mut rng = Rng(41);
+    let lsz = 256u32.min(crate::device::max_threadgroup());
+    for groups in [1u32, 8, 32] {
+        for n in [0u32, 1, 255, 256, 257, 8 * 256 + 3, 65_537, 1_000_000] {
+            let vals: Vec<u32> = (0..n).map(|_| if n % 2 == 1 { rng.next() as u32 } else { rng.below(5) as u32 }).collect();
+            // The buffers have room past the count: the scan reads `count`, not their length.
+            let cap = n + 100;
+            let mut padded = vals.clone();
+            padded.resize(cap as usize, 7);
+            let (ctl, count, inb, out, sums) = (grid_ctl(), buffer_of(&[n]).unwrap(), buffer_of(&padded).unwrap(), alloc::<u32>(cap as usize + 1).unwrap(), alloc::<u32>(groups as usize + 1).unwrap());
+            launch(&q, p.function("t_grid_scan").unwrap())
+                .value("args", &TestArgs { n: cap, w: groups })
+                .buffer("ctl", &ctl)
+                .buffer("count", &count)
+                .buffer("in", &inb)
+                .buffer("out", &out)
+                .buffer("sums", &sums)
+                .run(&[groups as u64], &[lsz as u64])
+                .unwrap();
+            q.flush().await_().unwrap();
+            assert_eq!(read::<u32>(&ctl, 3)[2], 0, "{}: {groups} groups, {n}: a barrier failed", crate::device::backend());
+            let got: Vec<u32> = read(&out, n as usize + 1);
+            let mut run = 0u32;
+            for i in 0..=n as usize {
+                assert_eq!(got[i], run, "{}: {groups} groups, scan of {n}, at {i}", crate::device::backend());
+                if i < n as usize {
+                    run = run.wrapping_add(vals[i]);
+                }
+            }
+        }
+    }
+}
+
+/// R5: the grid's segmented scans (add and max) equal the host's from 0 to 10^6 values, heads dense and sparse, at
+/// 1, 8 and 32 groups.
+#[test]
+#[ignore = "Q367: a grid barrier fails at 8 groups on the M1 Max, as at Go-C-and-C-support's own ce2c4019c83; run with --ignored on an M3 or M5"]
+fn the_grid_segmented_scans_equal_the_host() {
+    let Some((p, mut q)) = setup() else { return };
+    let mut rng = Rng(43);
+    let lsz = 256u32.min(crate::device::max_threadgroup());
+    for groups in [1u32, 8, 32] {
+        for n in [0u32, 1, 255, 257, 8 * 256 + 3, 65_537, 1_000_000] {
+            for op in [0u32, 1] {
+                let vals: Vec<u32> = (0..n).map(|_| rng.below(1000) as u32).collect();
+                let every = [2u64, 50, 100_000][rng.below(3) as usize];
+                let heads: Vec<u32> = (0..n).map(|_| u32::from(rng.below(every) == 0)).collect();
+                let (ctl, count, inb, hb, out, sums) = (grid_ctl(), buffer_of(&[n]).unwrap(), buffer_of(&vals).unwrap(), buffer_of(&heads).unwrap(), alloc::<u32>(n as usize).unwrap(), alloc::<u32>(2 * groups as usize).unwrap());
+                launch(&q, p.function("t_grid_seg").unwrap())
+                    .value("args", &TestArgs { n: n.max(1), w: groups | op << 16 })
+                    .buffer("ctl", &ctl)
+                    .buffer("count", &count)
+                    .buffer("in", &inb)
+                    .buffer("heads", &hb)
+                    .buffer("out", &out)
+                    .buffer("sums", &sums)
+                    .run(&[groups as u64], &[lsz as u64])
+                    .unwrap();
+                q.flush().await_().unwrap();
+                assert_eq!(read::<u32>(&ctl, 3)[2], 0, "{}: {groups} groups, {n}: a barrier failed", crate::device::backend());
+                let got: Vec<u32> = read(&out, n as usize);
+                let mut run = 0u32;
+                for i in 0..n as usize {
+                    run = if heads[i] != 0 || i == 0 { vals[i] } else if op == 0 { run.wrapping_add(vals[i]) } else { run.max(vals[i]) };
+                    assert_eq!(got[i], run, "{}: {groups} groups, op {op}, segmented scan of {n}, at {i}", crate::device::backend());
+                }
+            }
+        }
+    }
+}
+
+/// R5: the grid's sort is stable and equals the host's from 0 to 10^6 keys, at 8 to 64 bits, at 1, 8 and 32 groups.
+#[test]
+#[ignore = "Q367: a grid barrier fails at 8 groups on the M1 Max, as at Go-C-and-C-support's own ce2c4019c83; run with --ignored on an M3 or M5"]
+fn the_grid_sort_is_stable_and_equals_the_host() {
+    let Some((p, mut q)) = setup() else { return };
+    if crate::device::max_threadgroup() < 256 {
+        return;
+    }
+    let mut rng = Rng(47);
+    for groups in [1u32, 8, 32] {
+        for (n, bits) in [(0u32, 8u32), (1, 8), (1023, 16), (1025, 24), (70_001, 40), (1_000_000, 64)] {
+            let keys: Vec<u64> = (0..n).map(|_| rng.next() & if bits == 64 { !0 } else { (1u64 << bits) - 1 } & if rng.below(2) == 0 { 0xff } else { !0 }).collect();
+            let tiles = n.div_ceil(1024).max(1);
+            let (ctl, count, kb, vb, k2, v2) = (grid_ctl(), buffer_of(&[n]).unwrap(), buffer_of(&keys).unwrap(), alloc::<u32>(n as usize).unwrap(), alloc::<u64>(n as usize).unwrap(), alloc::<u32>(n as usize).unwrap());
+            let (hist, sums) = (alloc::<u32>(256 * tiles as usize + 1).unwrap(), alloc::<u32>(groups as usize + 1).unwrap());
+            launch(&q, p.function("t_grid_sort").unwrap())
+                .value("args", &TestArgs { n: n.max(1), w: groups | bits << 16 })
+                .buffer("ctl", &ctl)
+                .buffer("count", &count)
+                .buffer("keys", &kb)
+                .buffer("values", &vb)
+                .buffer("keys2", &k2)
+                .buffer("values2", &v2)
+                .buffer("hist", &hist)
+                .buffer("sums", &sums)
+                .run(&[groups as u64], &[256])
+                .unwrap();
+            q.flush().await_().unwrap();
+            assert_eq!(read::<u32>(&ctl, 3)[2], 0, "{}: {groups} groups, {n}: a barrier failed", crate::device::backend());
+            let even = bits.div_ceil(8) % 2 == 0;
+            let (gk, gv): (Vec<u64>, Vec<u32>) = if even { (read(&kb, n as usize), read(&vb, n as usize)) } else { (read(&k2, n as usize), read(&v2, n as usize)) };
+            let mut want: Vec<u32> = (0..n).collect();
+            want.sort_by_key(|&i| keys[i as usize]);
+            assert_eq!(gv, want, "{}: {groups} groups, sort of {n} by {bits} bits: the order", crate::device::backend());
+            assert!(gk.iter().zip(&want).all(|(k, &i)| *k == keys[i as usize]), "{}: {groups} groups, {n}: the keys", crate::device::backend());
+        }
+    }
+}

@@ -260,6 +260,13 @@ const SLAB_BUFFERS: [&str; crate::slabs::MAX_SLABS] = ["s0", "s1", "s2", "s3"];
 #[derive(Default)]
 pub struct RepeatedLaunches(pub std::sync::atomic::AtomicUsize);
 
+/// Whether a program starts a file's stream late: a prefix (decision 0335), its positions
+/// (`prefix`) and the token loop's first state past it. `run_batch` generates it (opcode 18);
+/// the serial path (`block_serial`) does not yet, and refuses it there.
+pub(crate) fn starts_late(p: &BlockNative) -> bool {
+    p.insts.iter().any(|i| matches!(i, BlockInst::Prefix(..))) || p.records.as_ref().is_some_and(|r| !r.prefix.is_empty())
+}
+
 /// What `program` needs that generated UKL lacks (decision 0202's `metal-form` list), if any: a
 /// `run_batch` of it is refused. A fixed point (`rounds`) is the CPU's for now: each lane would run
 /// its rounds in its own frame, within `block::MAX_ROUNDS`, to the same values. A `back_fill`

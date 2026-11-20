@@ -1,7 +1,8 @@
 # 0481: A store flushes at the OS's pace; tests flush nothing
 
-Status: accepted (2026-11-19). Q361. Follows 0266 (blocks in mmap files), 0402/0456 (kept facts), 0440 (the
-deferrable tier).
+Status: accepted (2026-11-19). Q361. Follows 0266 (blocks in mmap files), 0402/0456 (kept facts), 0295 (the
+deferrable tier; cited as 0440 on Typing-support-final-shape, whose tree has no 0440). Numbered 0474 there; 0481
+here (roll-up 14).
 
 ## Intro
 
@@ -41,7 +42,7 @@ the disk to have the bytes before the run goes on.
 
 4. **A synced block syncs the pages it wrote**: `msync` over `used`, rounded to a page, not the reservation.
 
-5. **One exception: a GPU-wrapped slab on macOS** (0440) still writes itself back with its msync/`mincore` loop in
+5. **One exception: a GPU-wrapped slab on macOS** (0295) still writes itself back with its msync/`mincore` loop in
    every mode. The OS never writes wired pages back, so without it the bytes would not reach the file at all.
 
 ## What `Os` and `None` give up

@@ -709,6 +709,28 @@ fn the_planners_passes_over_a_version_hold() {
     assert!(super::passes::normalize(&two).is_err());
 }
 
+/// A version's analyses are dropped with it (decision 0281 §2), the forms made over it among them: its normal form and
+/// that form's stated-apart form are made over twins (`manager::twin`), so neither holds the version it is held by, and
+/// the version, with the image it reads in place, goes with its last holder (Q377).
+#[test]
+fn a_version_with_its_normal_and_apart_forms_drops_with_its_last_holder() {
+    use super::manager::analysis;
+    use super::passes::{ApartForm, NormalForm};
+    let p = crate::code_rule_dsl::logic::rr::parse_version(
+        ".decl e(x: number)\n.input e\n.decl a(x: number)\n.decl b()\na(x) :- e(x).\nb() :- a(_).\na(1).\n.output a, b\n",
+    )
+    .unwrap();
+    let (normal, apart) = {
+        let n = analysis::<NormalForm>(&p).unwrap();
+        let a = analysis::<ApartForm>(&n.v).unwrap();
+        (Arc::downgrade(&n.v), Arc::downgrade(&a.v))
+    };
+    let held = Arc::downgrade(&p);
+    assert!(analysis::<NormalForm>(&p).is_ok_and(|n| Arc::ptr_eq(&n.v, &normal.upgrade().unwrap())), "the form is held, made once");
+    drop(p);
+    assert_eq!((held.strong_count(), normal.strong_count(), apart.strong_count()), (0, 0, 0), "the version and its forms are gone");
+}
+
 /// A rule rewritten as it is copied keeps what the rewrite does not change, records its source, and takes more
 /// literals after; a fold keeps every source.
 #[test]
@@ -1701,7 +1723,6 @@ fn asked_of(v: &Arc<Version>, asked: &super::about::Asked) -> Arc<Version> {
 /// last run's record of that step on, so the run's output states the record a run from scratch states. An edit that
 /// adds a request's rule runs the step whole, its record carried from its input.
 #[test]
-#[ignore = "Q358: the rerun states one about part more than a run from scratch, at the edit adding a request rule"]
 fn a_request_record_over_an_edit_is_a_run_from_scratchs() {
     use super::manager::{Pipeline, Ran, rebase};
     let fresh = |v: &Arc<Version>| Version::open(v.fold().unwrap().base_bytes().unwrap()).unwrap();
@@ -1740,9 +1761,9 @@ fn a_request_record_over_an_edit_is_a_run_from_scratchs() {
 
 /// A stored run is read where the store placed it (decision 0394): its images, its analyses' rows and its facts in
 /// one segment, uncompressed, read there mapped, and each version opened over the mapping, not decompressed, hashed
-/// or copied. An image a store held inline (as stores kept a prepared program's before decision 0464) is moved there by
-/// the keep. Its
-/// request record is kept with its steps (decision 0393), so a rerun in a new process over an edit states a run from
+/// or copied. An image stored before the run (a prepared program's, `store_encoded`) is in a segment from its write,
+/// as every source is (store floor 7), and is read there before the keep and after it. Its request record is kept
+/// with its steps (decision 0393), so a rerun in a new process over an edit states a run from
 /// scratch's.
 #[test]
 fn a_stored_run_is_read_in_place() {
@@ -1765,13 +1786,13 @@ fn a_stored_run_is_read_in_place() {
         let digest: [u8; 32] = Sha256::digest(bytes).into();
         store.put_source(bytes, &[image_key(&digest)]).unwrap();
         let held = |store: &ContentStore| store.sources_by_alias_in_place(&[image_key(&digest)]).unwrap().remove(0).expect("the input's image held");
-        assert!(!held(&store).in_place(), "an older store's image, held inline");
+        assert!(held(&store).in_place(), "a prepared program's image is in a segment from its write");
         let mut p = Pipeline::keeping("test", v0.clone());
         p.get::<super::analyses::Needed>().unwrap();
         p.rules(&mut RenameAll { from: "e", to: "e2", needs: false, seen: 0 });
         let run = p.done().unwrap();
         StoredRuns(&store).keep(&key, &run).unwrap();
-        assert!(held(&store).in_place(), "the keep moved the input's image into the segment");
+        assert!(held(&store).in_place(), "the keep left the input's image in place");
         // Kept again under the same key: its facts kept once, no error.
         StoredRuns(&store).keep(&key, &run).unwrap();
         drop(store);

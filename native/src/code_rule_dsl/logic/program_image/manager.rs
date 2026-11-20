@@ -519,6 +519,16 @@ impl Store {
 }
 
 /// Analysis `A` of `v`, held by `v` (`Version::analyses`): for a reader outside a pipeline (a run's `Placed`).
+/// `v`'s twin (`Version::twin`) holding `v`'s analyses: what an analysis of `v` makes over `v` it makes over this,
+/// so the analysis, held by `v`, does not hold `v` (a cycle, which no drop ends: Q377). The analyses are shared, as
+/// they are of the same rules under the same ids (`Store::adopt`), so none is computed again; none adopted is a
+/// version made over `v` (each is made over a twin), so the twin holds none of `v` either.
+pub fn twin(v: &Arc<Version>) -> Arc<Version> {
+    let t = v.twin();
+    t.analyses().adopt(v.analyses());
+    t
+}
+
 pub fn analysis<A: Analysis>(v: &Arc<Version>) -> Result<Arc<A>> {
     let decided = RefCell::new(Vec::new());
     Cx { v, store: v.analyses(), pass: "reader", decided: &decided, asked: None }.get::<A>()
@@ -1335,6 +1345,12 @@ impl<'s> Pipeline<'s> {
     pub fn new(name: &'static str, v: Arc<Version>) -> Pipeline<'s> {
         let asked = AskedByRule::of(&v);
         Pipeline { name, input: v.clone(), v, decided: RefCell::new(Vec::new()), stages: Vec::new(), failed: None, keep: false, last: Vec::new(), kept: Vec::new(), keyed: None, asked, asked_again: false }
+    }
+    /// A pipeline whose last step states the request record itself (a part's fields, `passes::PartOf`): the record is
+    /// not carried by rule, nor stated again after each step (Q180). Restated after a step, the record is a layer of
+    /// its own that the last step's states again (a part made a view, the record's overlay and its fields' overlay).
+    pub fn stating_record(name: &'static str, v: Arc<Version>) -> Pipeline<'s> {
+        Pipeline { asked: None, ..Pipeline::new(name, v) }
     }
     /// A pipeline whose steps are keyed and kept in `steps` (0281 §6). A step's key is a chain: the input version's
     /// identity (`identity`), the pipeline's name and the engine build, then for each step so far its pass's `NAME`,

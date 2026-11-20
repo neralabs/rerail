@@ -40,6 +40,7 @@ use crate::code_rule_dsl::facts::producers::python::families as py;
                     facts,
                     guest: None,
                     module: None,
+                    unpackaged: false,
                     tape: None,
                 }
             })

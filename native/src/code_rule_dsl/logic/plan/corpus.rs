@@ -2467,10 +2467,22 @@ fn wanted_cone(local: &lower::Lowered, wanted: &BTreeSet<String>) -> lower::Lowe
         // `parsed` holds the request that asks for it, and its context (decision 0431 §8).
         let about = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::program_image::About>(&v).expect("a version's about rows are read");
         let requests: Vec<(String, String)> = about.answers.iter().map(|(req, by)| (v.rel_name(*by).to_owned(), v.rel_name(*req).to_owned())).collect();
+        // A rule whose bound `FoldOwn` widened reads the annotations' documents, which their requests make (`DEMAND`,
+        // answered in the fixpoint): it reads the request too. Without it, `ids(m, x) :- idents(m, x)` over the
+        // widened `idents` had no annotation in a cone of its own, where a full run's `names` asked for them.
+        let demand = v.rel(guests::DEMAND).map(|_| guests::DEMAND.to_owned());
         let cone = closure(&|cone| {
             v.rules()
                 .filter(|r| cone.contains(v.rel_name(r.head().rel())))
-                .flat_map(|r| r.body().filter_map(|l| match l.view() { Lit::Atom(a) | Lit::Agg { atom: a, .. } => Some(v.rel_name(a.rel()).to_owned()), _ => None }).collect::<Vec<_>>())
+                .flat_map(|r| {
+                    r.body()
+                        .filter_map(|l| match l.view() {
+                            Lit::Atom(a) | Lit::Agg { atom: a, .. } => Some(v.rel_name(a.rel()).to_owned()),
+                            Lit::Cmp { l, r, .. } if guests::widened(l) || guests::widened(r) => demand.clone(),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                })
                 .chain(requests.iter().filter(|(by, _)| cone.contains(by)).map(|(_, req)| req.clone()))
                 .collect()
         });
@@ -3449,7 +3461,7 @@ fn run_observed_within(
             // The observer's facts: each source file of the run's grammar, its module, and its content's digest (read
             // only where the observer cannot vouch for it).
             // A Python file's module is the name its package root gives it (`package_root_modules`), as imports name it.
-            let renamed = package_root_modules(root, &files);
+            let (renamed, _) = package_root_modules(root, &files);
             let of_label: Vec<&String> = files.iter().filter(|p| crate::code_rule_dsl::language::label_of_path(p) == Some(label)).collect();
             // The run's one read of each (decision 0300): the bytes are held for phase 1's and this run's builders.
             let digests = world::bytes_digests_held(&of_label.iter().map(|p| root.join(p)).collect::<Vec<_>>(), Some(&own_sources));
@@ -3585,6 +3597,10 @@ fn run_observed_within(
     // header (`.h`, C++'s by its suffix) is parsed as C, not read as text.
     let library_paths: std::collections::HashSet<&str> = libraries.iter().map(|(p, _)| p.as_str()).collect();
     let text_document = |path: &str, label: &str| text_document(path, label) && !library_paths.contains(path);
+    // A file the run reads for the programs it holds (`.embedded on`, decision 0470 step 2): parsed in its own grammar,
+    // under a hidden key, so the run's rules see its programs in their language and none of its own nodes.
+    let embedded = embedded_on(&*v);
+    let host = |path: &str| embedded && embeds_label(path, label);
     // Taken once the files are listed: phase 1, run while they are, is a run of its own, with its session and plans.
     // Plans are kept across this run's chunks (decision 0038), and a session's across its runs (decision 0090 step 5).
     let across = session::generation();
@@ -3610,12 +3626,15 @@ fn run_observed_within(
     // And the tree's Python files named by their package roots, not their paths (`package_root_modules`): `doc` and
     // `pkg` then agree with the imports that name them. A file's memoised rows hold its `doc` row, so the memo is
     // keyed by these names too (below).
-    let renamed_modules: BTreeMap<String, String> = if t.is_none() {
+    // The Python files no regular package holds (core.rerail's `unpackaged`), which memoised `doc` rows key on too.
+    let (renamed_modules, unpackaged): (BTreeMap<String, String>, BTreeSet<String>) = if t.is_none() {
         let tree: Vec<String> = docs.iter().map(|(_, p)| p.clone()).filter(|p| !given_modules.contains_key(p)).collect();
         package_root_modules(root, &tree)
     } else {
-        BTreeMap::new()
+        (BTreeMap::new(), BTreeSet::new())
     };
+    // The memo keys fold the folders in for a program that reads them only (`memo::with_unpackaged`).
+    let reads_unpackaged = v.declares("unpackaged");
     given_modules.extend(renamed_modules.iter().map(|(p, m)| (p.clone(), Arc::from(m.as_str()))));
     // Declarations and dependency summaries, as `declared_ret` facts (`corpus::typing`).
     let mut typed = TypingReport::default();
@@ -3735,6 +3754,13 @@ fn run_observed_within(
         Some(cache) => cache.guest_keys().map_err(|e| Error::Plan(e.to_string()))?,
         None => crate::content_store::guest_keys::GuestKeys::in_memory(),
     };
+    // A host file the run reads for its programs takes a hidden key (decision 0470 step 2): none of its own nodes is
+    // shown, as no document of another grammar is (0058).
+    for (key, path) in docs.iter_mut() {
+        if host(path) {
+            *key = i64::from(guests::hidden_file_key(&guest_keys, path));
+        }
+    }
     // `shortlex_min<>` orders the run's symbols by their text: the store's atoms (decision 0108).
     crate::code_rule_dsl::logic::native::declare("shortlex_min", Arc::new(crate::code_rule_dsl::logic::native::ShortlexMin(store.atoms_handle())));
     let db = {
@@ -4700,10 +4726,15 @@ fn run_observed_within(
     // (`plan_digest`: the engine build, the grammar, the node ids' scheme), as what it keeps counts those entries:
     // another build's keeper counted entries this build's plan does not hold, so it could not count a file out
     // (Q71), and its counts are of rows this build may make otherwise.
-    let memo_whole = memo::plan_digest(&memo::with_modules(memo::with_tree_demand(memo_program, memo_tree_stats), &renamed_modules));
+    let unpackaged_folders: BTreeSet<&str> = if reads_unpackaged {
+        unpackaged.iter().map(|p| p.rsplit_once('/').map_or("", |(dir, _)| dir)).collect()
+    } else {
+        BTreeSet::new()
+    };
+    let memo_whole = memo::plan_digest(&memo::with_unpackaged(memo::with_modules(memo::with_tree_demand(memo_program, memo_tree_stats), &renamed_modules), &unpackaged_folders));
     // The frames' space: the plan without the program (decision 0225 §2), so an entry made before a rule's edit is
     // read for the relations the edit did not reach (`memo_ids`).
-    let memo_program = memo::with_modules(memo::with_tree_demand(memo_space, memo_tree_stats), &renamed_modules);
+    let memo_program = memo::with_unpackaged(memo::with_modules(memo::with_tree_demand(memo_space, memo_tree_stats), &renamed_modules), &unpackaged_folders);
     // The memo plan's parts: a plan that differs between two runs of the same tree misses every entry.
     if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
         let hex = |d: &[u8; 32]| d[..4].iter().map(|b| format!("{b:02x}")).collect::<String>();
@@ -5696,7 +5727,7 @@ fn run_observed_within(
     };
     // The matchers a chunk runs (decision 0106). A chunk's documents keep their tapes for them, and for a program that
     // reads W's values, f-string trees or string annotations (`syntax::taped`).
-    let demand = matchers::demanded_by_roots(head, &matchers);
+    let demand = matchers::demanded_by_roots(source, matchers);
     let narrowed = demand.iter().filter(|by| by.is_some()).count();
     if narrowed > 0 {
         crate::code_rule_dsl::logic::profile::decision("ast matchers bound only at other matchers' roots (decision 0459)", || {
@@ -5738,12 +5769,13 @@ fn run_observed_within(
         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, source.len() as u64);
         // A file of no grammar is here because `.scope text` reads it (`scoped`): text only, no tree, its lines W's
         // for a file of no language (`core::text`).
-        if text_document(path, label) {
+        if text_document(path, label) && !host(path) {
             let facts = Arc::new(core::text(Arc::new(source)));
             let digest = core::digest(&facts);
-            return Ok((source_id, content_digest, syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None, module, tape: None }));
+            return Ok((source_id, content_digest, syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None, module, tape: None, unpackaged: unpackaged.contains(path) }));
         }
-        let file = core::Source { language: label.to_owned(), source: Arc::new(source) };
+        let own = if host(path) { crate::code_rule_dsl::language::label_of_path(path).unwrap_or(label) } else { label };
+        let file = core::Source { language: own.to_owned(), source: Arc::new(source) };
         // Tapes kept across runs where the run has the persistent store (`tape_cache`).
         let built = match &tapes {
             // The closure sees `&tapes`, not that it is `None` without `tape-cache`: said here so the store's
@@ -5796,7 +5828,7 @@ fn run_observed_within(
         let digest_span = crate::code_rule_dsl::logic::profile::span(|| "digest".into());
         let digest = core::digest(&facts);
         drop(digest_span);
-        Ok((source_id, content_digest, syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None, module, tape }))
+        Ok((source_id, content_digest, syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None, module, tape, unpackaged: unpackaged.contains(path) }))
     };
     // Files resolved a window at a time (`resolve`), so a window's sources are all the builder holds unparsed: one
     // window at a time, in order, each a job of its own, and each file's tree and facts then built as a job.
@@ -5858,7 +5890,8 @@ fn run_observed_within(
     // A chunk keeps its documents where its rules read guests: its slice, its fixpoint's parses, or a guest relation
     // its rules read (a file's programs are made with the batch, and the memo files their rows by their files).
     // And where the cross part reads base relations: they are read off every file's document (decision 0458).
-    let keep_docs = slice.is_some() || !stored.is_empty() || parsing || local_seen == guests::Seen::All;
+    // Under `.embedded on` too: the files' programs in the run's language are what it reads (decision 0470 step 2).
+    let keep_docs = slice.is_some() || !stored.is_empty() || parsing || local_seen == guests::Seen::All || embedded;
     // A chunk's projection, and the programs its files hold (made with it), for the documents it keeps.
     let project = |mut docs: Vec<syntax::Document>| -> (Result<(Sources, Vec<syntax::Document>)>, (f64, f64)) {
         let from = thread_usage();
@@ -8415,7 +8448,7 @@ fn run_observed_within(
         let _doc = crate::code_rule_dsl::logic::profile::span(|| "a document from its tape (decision 0458)".into());
         let document = |facts: Arc<core::Facts>, tape| {
             let digest = core::digest(&facts);
-            syntax::Document { key: key as u32, path: path.to_owned(), core: format!("/c#core:{path}"), digest, facts, guest: None, module, tape }
+            syntax::Document { key: key as u32, path: path.to_owned(), core: format!("/c#core:{path}"), digest, facts, guest: None, module, tape, unpackaged: unpackaged.contains(path) }
         };
         if text_document(path, label) {
             return Ok(Some(document(Arc::new(core::text(Arc::new(source))), None)));
@@ -8584,7 +8617,10 @@ fn run_observed_within(
     if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
         eprintln!("rerail: base versions: old {:?}, corpus {}, versions {:?}", old_base.as_ref().map(|(c, o)| (c.len(), o.len())), corpus_sources.len(), base_versions.iter().map(|(r, (p, m))| (r.clone(), p.len(), m.len())).collect::<Vec<_>>());
     }
-    given_deltas.extend(base_versions.iter().map(|(rel, v)| (rel.clone(), v.clone())));
+    for (rel, v) in &base_versions {
+        given_deltas.insert(rel.clone(), v.clone());
+        crate::code_rule_dsl::logic::plan::corpus::maintain::shape::input_from_owners();
+    }
     // Each base relation the cross part reads: its columns as the corpus batch has them, and which of them it names
     // (`stored`). The rows are the batch's; none is gathered.
     for (rel, names) in stored.iter().filter(|_| !corpus_sources.is_empty()) {
@@ -8752,6 +8788,7 @@ fn run_observed_within(
                         let plus = added.map_or_else(none, |a| crate::code_rule_dsl::logic::native::component::InRel::picked(a, patch.plus, names()));
                         let minus = crate::code_rule_dsl::logic::native::component::InRel::picked(Arc::clone(&k.source), patch.minus, names());
                         given_deltas.insert(rel.clone(), (plus, minus));
+                        crate::code_rule_dsl::logic::plan::corpus::maintain::shape::input_from_owners();
                     }
                     exports.borrow_mut().install(&rel, width, source);
                 }
@@ -9014,6 +9051,19 @@ fn run_observed_within(
             // Read off the corpus batch's documents (decision 0458), not the rows the chunks gathered.
             let source = Arc::clone(corpus_sources.get(&rel).ok_or_else(|| Error::Plan(format!("{rel} is not in the corpus batch")))?);
             base_sources.insert(rel.clone(), retain::kept_source_digested(parts.as_deref(), &rel, source, base_digest(&rel), &mut input_digests));
+        }
+    }
+    // A base relation the cross part reads that no chunk held a row of (a run whose files hold no program reads no
+    // `rr_program` row): known empty, as with no documents (above), and still bound.
+    if !docs.is_empty() {
+        let unheld: Vec<&String> = split.base.iter().filter(|rel| !base_sources.contains_key(*rel) && !REFERENCE_RELATIONS.contains(&rel.as_str()) && !repository.iter().any(|(r, _, _)| r == *rel)).collect();
+        for rel in unheld {
+            if cross_inputs.iter().any(|(r, _)| r == rel) {
+                continue;
+            }
+            let Some(columns) = projection.columns(rel) else { continue };
+            let empty = crate::code_rule_dsl::logic::native::component::columns_source(columns.iter().map(|name| (*name).to_owned()).collect(), vec![Some(Vec::new()); columns.len()]);
+            base_sources.insert(rel.clone(), empty);
         }
     }
     // What the memo entries written by this run hold (t31 A2): the largest relations, and any join pushed into the
@@ -9847,7 +9897,7 @@ fn run_observed_within(
                         }
                     }
                     if std::env::var_os("RERAIL_KEPT_BYTES").is_some() {
-                        // Decision 0364's required shape, so far in this process (`maintain::shape`).
+                        // Decision 0364's required shape, so far in this run (`maintain::shape`).
                         eprintln!("SHAPE {:?}", maintain::shape::now());
                         for (kind, rows, values, levels, index) in next.held() {
                             eprintln!("KEPT {kind}: {rows} rows, values {:.2} MB, levels {:.2} MB, sets and indexes {:.2} MB", values as f64 / 1e6, levels as f64 / 1e6, index as f64 / 1e6);
@@ -10965,13 +11015,53 @@ pub struct CorpusFiles {
     /// Files of no grammar: after `scoped`, those a `.scope text` glob reads as text (`ProgramFields::text_globs`),
     /// with the files of a grammar it matches (a `.md` file is Markdown's, and text to a run of another grammar).
     pub text: Vec<String>,
+    /// Whether the program reads the files that hold its language's programs (`.embedded on`, decision 0470 step 2);
+    /// set by `scoped`. Off by default.
+    pub embedded: bool,
+    /// The root the paths are under: a place embedding's host is read only where its text names a place.
+    pub root: std::path::PathBuf,
+}
+
+/// Whether `path`'s dialect embeds `label`'s (decision 0470 step 2): its file holds programs a run of `label` reads
+/// under `.embedded on`.
+pub(crate) fn embeds_label(path: &str, label: &str) -> bool {
+    use crate::code_rule_dsl::language;
+    language::label_of_path(path)
+        .filter(|own| *own != label)
+        .and_then(language::dialect_by_label)
+        .is_some_and(|d| d.embeds().iter().any(|&(_, e)| language::label(e) == Some(label)))
+}
+
+/// Whether the program says `.embedded on`: its run reads the files that hold its language's programs.
+pub(crate) fn embedded_on(prog: &(impl ProgramFields + ?Sized)) -> bool {
+    prog.setting_values("embedded").iter().any(|v| v.trim().trim_matches('"') == "on")
+}
+
+/// Whether a host file of a place embedding holds a program of `label` (decision 0470 §4): its text names a place's
+/// last segment. An embedding of whole elements (an HTML file's scripts) holds one wherever its file has them.
+fn names_a_place(root: &Path, path: &str, label: &str) -> bool {
+    use crate::code_rule_dsl::language;
+    let Some(dialect) = language::label_of_path(path).and_then(language::dialect_by_label) else { return false };
+    let places: Vec<&str> = dialect.embed_places().iter().filter(|(_, e, ..)| language::label(*e) == Some(label)).map(|(_, _, callee, _)| callee.rsplit('.').next().unwrap_or(callee)).collect();
+    let whole = dialect.embeds().iter().any(|&(via, e)| language::label(e) == Some(label) && !dialect.embed_places().iter().any(|(v, ..)| *v == via));
+    if whole {
+        return true;
+    }
+    std::fs::read(root.join(path)).is_ok_and(|text| places.iter().any(|p| memchr::memmem::find(&text, p.as_bytes()).is_some()))
 }
 
 impl CorpusFiles {
-    /// The run's documents: the language's files, then the text ones, in path order.
+    /// The run's documents: the language's files, then the text ones, in path order; under `.embedded on`, also the
+    /// files that hold its programs (decision 0470 step 2).
     /// A file of `label`'s grammar a `.scope text` glob also matches is parsed, not read as text as well.
     fn of(mut self, label: &str) -> Vec<String> {
         let mut files = self.by_label.remove(label).unwrap_or_default();
+        if self.embedded {
+            let root = self.root.clone();
+            for paths in self.by_label.values() {
+                files.extend(paths.iter().filter(|p| embeds_label(p, label) && names_a_place(&root, p, label)).cloned());
+            }
+        }
         files.extend(self.text.into_iter().filter(|p| crate::code_rule_dsl::language::label_of_path(p) != Some(label)));
         files.sort();
         files.dedup();
@@ -11048,6 +11138,7 @@ pub fn run_dialects_in(files: &dyn Fn() -> Result<CorpusFiles>, prog: &(impl Pro
 /// A scope entry taken from a policy option (`.scope dirs option("…")`) reads the option's values, from the run's
 /// `options`. A file of no grammar is read, as text only, when a `.scope text` glob matches it and a scope selects it.
 fn scoped(mut found: CorpusFiles, prog: &(impl ProgramFields + ?Sized), options: &serde_json::Value) -> CorpusFiles {
+    found.embedded = embedded_on(prog);
     let globs = prog.text_globs();
     let text_glob = |p: &String| globs.iter().any(|g| crate::code_rule_dsl::logic::strings::test("glob", p, g));
     found.text.retain(text_glob);
@@ -11159,17 +11250,26 @@ fn git_files(root: &Path) -> Option<(Vec<String>, usize)> {
 /// hosts send). Below a source root the two differ: `src/shop/base.py` is `shop.base`, which `from shop.base import
 /// Base` names, not `src.shop.base`. A file in no package (a script, or a folder of the root without `__init__.py`)
 /// keeps its path's name, as does one whose names keep a dot.
-pub(in crate::code_rule_dsl) fn package_root_modules(root: &Path, paths: &[String]) -> BTreeMap<String, String> {
+///
+/// Also the Python files no regular package holds: a file of the root, or one whose folder has no `__init__.py`
+/// (core.rerail's `unpackaged`). Ruff names such a file's module by its stem and resolves no relative import from it.
+pub(in crate::code_rule_dsl) fn package_root_modules(root: &Path, paths: &[String]) -> (BTreeMap<String, String>, BTreeSet<String>) {
     let mut packages: HashMap<String, bool> = HashMap::new();
     let mut is_package = |dir: &str| *packages.entry(dir.to_owned()).or_insert_with(|| root.join(dir).join("__init__.py").is_file());
-    let mut out = BTreeMap::new();
+    let (mut out, mut unpackaged) = (BTreeMap::new(), BTreeSet::new());
     for p in paths.iter().filter(|p| p.ends_with(".py") || p.ends_with(".pyi")) {
-        let Some((dir, _)) = p.rsplit_once('/') else { continue };
+        let Some((dir, _)) = p.rsplit_once('/') else {
+            unpackaged.insert(p.clone());
+            continue;
+        };
         // Climbs while each folder holds an `__init__.py`; `top` is the package root's first segment's index.
         let segments: Vec<&str> = dir.split('/').collect();
         let mut top = segments.len();
         while top > 0 && is_package(&segments[..top].join("/")) {
             top -= 1;
+        }
+        if top == segments.len() {
+            unpackaged.insert(p.clone());
         }
         if top == segments.len() || top == 0 {
             // In no package, or the root's own folders are packages up to the tree's root: the path's name.
@@ -11180,7 +11280,7 @@ pub(in crate::code_rule_dsl) fn package_root_modules(root: &Path, paths: &[Strin
             out.insert(p.clone(), m);
         }
     }
-    out
+    (out, unpackaged)
 }
 
 /// The corpus's files under `root`, relative and in path order: Python's (`.py`), Rust's (`.rs`) and rule files
@@ -11251,7 +11351,7 @@ pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
             *files = files.iter().step_by(n).cloned().collect();
         }
     }
-    Ok(CorpusFiles { by_label, text })
+    Ok(CorpusFiles { by_label, text, embedded: false, root: root.to_path_buf() })
 }
 
 /// A relation's column statistics (`syntax::statistics`: rows, ndv, sq, sqd) measured over `first` rows, scaled to

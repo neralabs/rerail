@@ -61,9 +61,10 @@ calls(n, x) :- kind(n, "call"), field(n, "function", c), text(c, x), def(_, x).
     let out = dir.join("out");
     let run = |chunk_nodes: usize, store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(format!("store-{store}.sqlite"))));
-        let before = crate::code_rule_dsl::logic::plan::body::NORMALIZED.load(std::sync::atomic::Ordering::Relaxed);
+        // The run's own scope, held here: what it normalized is the run's count (decision 0442), read before it ends.
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         let report = super::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, chunk_nodes).unwrap();
-        let normalized = crate::code_rule_dsl::logic::plan::body::NORMALIZED.load(std::sync::atomic::Ordering::Relaxed) - before;
+        let normalized = crate::code_rule_dsl::logic::plan::run_counts().normalized.load(std::sync::atomic::Ordering::Relaxed);
         (report.chunks, normalized, crate::code_rule_dsl::logic::plan::output::shown(&out, "calls").unwrap())
     };
     // The process's first run of the program does more than any later one (its images made): a warm-up, then
@@ -906,6 +907,8 @@ lone(f) :- unused(f), !used(f), def(f, q), !imp(_, q).
     use crate::code_rule_dsl::typing::file_local::Binding;
     let run_on = |store: &str, binding: Binding| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+        // The run's own scope, held here: the maintain mode's count is the run's (decision 0442), read before it ends.
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         let moded = crate::code_rule_dsl::logic::plan::mode_strata();
         let report = super::run(&text, &dir, None, &out, "program", binding, 1 << 18).unwrap();
         let rows = ["unused", "lone"].map(|r| crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap());
@@ -1028,6 +1031,8 @@ named(n, @dot(q, q)) :- uses(n, f), def(f, q).
     let out = dir.join("out");
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+        // The run's own scope, held here: the maintain mode's count is the run's (decision 0442), read before it ends.
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         let before = crate::code_rule_dsl::logic::plan::mode_strata();
         super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
         let rows = ["fanout", "most", "named"].map(|r| {
@@ -1421,6 +1426,46 @@ fn modules_are_named_from_their_package_roots_and_relative_imports_of_any_depth_
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// `unpackaged(d)` holds for a Python file no regular package holds: one at the tree's root, or in a folder with no
+/// `__init__.py`. Ruff names such a file by its stem and resolves no relative import in it, and
+/// `python/references.rerail` does the same, from this fact alone, so its file-local part reads no other document. A
+/// folder that gains an `__init__.py` makes its files packaged in the next run (the memo keys on the folders).
+#[test]
+fn a_python_file_no_package_holds_is_unpackaged() {
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("unpackaged");
+    let _ = std::fs::remove_dir_all(&base);
+    let src = base.join("tree");
+    for (path, text) in [
+        ("top.py", "x = 1\n"),
+        ("loose/x.py", "x = 1\n"),
+        ("pkg/__init__.py", ""),
+        ("pkg/m.py", "x = 1\n"),
+        ("pkg/sub/n.py", "x = 1\n"),
+    ] {
+        let p = src.join(path);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    }
+    let rule = base.join("unpackaged.rerail");
+    std::fs::write(
+        &rule,
+        ".language python\n.scope include \"**/*.py\"\n\
+         .decl loose(p: symbol)\nloose(p) :- unpackaged(d), doc(d, p, _).\n.output loose\n",
+    )
+    .unwrap();
+    let program = crate::code_rule_dsl::logic::settings::program_text(&rule).unwrap();
+    let out = base.join("out");
+    let run = || {
+        let _ = std::fs::remove_dir_all(&out);
+        super::run(&program, &src, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        crate::code_rule_dsl::logic::plan::output::shown(&out, "loose").unwrap_or_default()
+    };
+    assert_eq!(run(), [["loose/x.py"], ["pkg/sub/n.py"], ["top.py"]]);
+    std::fs::write(src.join("loose/__init__.py"), "").unwrap();
+    assert_eq!(run(), [["pkg/sub/n.py"], ["top.py"]]);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// A request's context is every literal beside it (`rr::lower`'s `request_context`): `type_ctx(r) :- type_ctx(s),
 /// str_node(s), parsed(s, "annotation", r)` asks to parse the strings in a type context, not every string of the
 /// file. Its context was the inputs alone (`str_node`), and a module of 111k string pairs (netbox's `un_locode.py`)
@@ -1739,7 +1784,8 @@ fn programs_hidden_alone_keep_their_attribute_copies_declared() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("token-copies");
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("src/a.py"), "def f(x: int) -> int:\n    if x is not None:\n        return 1\n    return 0\n").unwrap();
-    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/data-layer/packs/data-layer/candidates/datalog/authored");
+    // Pack test data (`packs/data-layer/upstream/lint/`, not in git since 5e0b69a104): pulled, or the test says so.
+    let rules = crate::code_rule_dsl::test_support::pack_test_data("packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/datalog/authored");
     let programs: Vec<String> = ["data-layer-schema-bootstrap-contracts.rerail", "data-layer-unresolved-forward-refs.rerail", "data-layer-versioned-merged-identity.rerail"]
         .iter()
         .map(|r| crate::code_rule_dsl::logic::settings::program_text(&rules.join(r)).unwrap())
@@ -1973,9 +2019,8 @@ fn every_switch_lowering_reads_is_classified() {
     ]);
     combining.push(("corpus.rs, combine_tail".to_owned(), region("\nfn combine_tail(", "\n}\n")));
     combining.push(("corpus.rs, the combine's tail".to_owned(), region("\nenum Tail {", "\n/// The programs `programs` linked into one")));
-    // The link: `combine_linked_as`, its modes, `combine_linked_spliced` and the splice (`combine_spliced`), up to the
-    // runner's given relations (`GIVEN`; `merge_and_drop_repeats`, which followed it, went with #508).
-    combining.push(("corpus.rs, combine_linked_as".to_owned(), region("\nfn combine_linked_as<", "\npub const GIVEN:")));
+    // The link: `combine_linked_as`, its modes, `combine_linked_spliced` and the splice (`combine_spliced`).
+    combining.push(("corpus.rs, combine_linked_as".to_owned(), region("\nfn combine_linked_as<", "Ok((all, Tail::Many { hide, policies, kept }))")));
     // Preparing: `run_observed` up to the prepared program, what it calls that reads a switch (`combining::FoldOwn`,
     // memo, session, profile, costs) and the passes. The prepared key holds `PREPARING` and the combined program's
     // key. Not `plan/keeps.rs` and `plan/choices.rs`: what a relation keeps is chosen in `plan::run` and kept under

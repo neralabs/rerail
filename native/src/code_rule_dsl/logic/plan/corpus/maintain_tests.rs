@@ -73,6 +73,8 @@ impl Session {
         let out = self.dir.join("out");
         let _ = std::fs::remove_dir_all(&out);
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(self.dir.join("kept.sqlite")));
+        // The run's own scope, held here: its shape is the run's count (decision 0442), read before it ends.
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         let (before, levels) = (shape::now(), maintain::strata_by_levels());
         let report = {
             let _bound = self.handle.bind();
@@ -88,6 +90,9 @@ impl Session {
         let out = self.dir.join("out-kept");
         let _ = std::fs::remove_dir_all(&out);
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(self.dir.join("kept-frames.sqlite")));
+        // The run's own scope, as the session's run holds it: its shape is the run's count (decision 0442). Without
+        // it the test's thread read a fresh count each time, every one 0, and R2's assertions held of nothing.
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         let (before, levels) = (shape::now(), maintain::strata_by_levels());
         let report = super::run(&self.program, &self.dir.join("src"), None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
         let (shape, by_levels) = (shape::since(before), maintain::strata_by_levels() - levels);
@@ -199,8 +204,10 @@ fn r1_r2_an_edit_holds_no_maintenance_relation_and_copies_no_rows() {
     }
 }
 
-/// R1 in the source: no engine code outside tests names a maintenance relation. The names live in one list
-/// (`maintain::shape::MAINTENANCE_SUFFIXES`), which this reads.
+/// R2 in a new process: its inputs' deltas are found by their changed documents, never by every row. A base relation
+/// keeps no rows, only its documents' digest (0458 step 4), so its delta is its changed documents' old and new rows,
+/// given beside it (`input_delta::Before`, `shape::inputs_from_owners`); a kept input's is its changed documents'
+/// rows hashed (`retain::document_delta_except`, `shape::inputs_hashed`).
 #[test]
 fn r2_a_new_process_hashes_only_the_changed_documents_rows_of_its_inputs() {
     let mut s = kinds("r2-kept");
@@ -209,9 +216,11 @@ fn r2_a_new_process_hashes_only_the_changed_documents_rows_of_its_inputs() {
         s.write(file, body);
         let ran = s.run_kept();
         assert_eq!(ran.rows, s.fresh(), "R10: after {what}, the kept run's outputs are a fresh run's");
-        // Its last run's documents are a frame of the part's space (`retain::write_run_docs`): an input's rows of the
-        // documents as they were are not read again, only the changed documents' rows are hashed.
-        assert!(ran.shape.inputs_hashed > 0, "R2: after {what}, the inputs' deltas are found by their documents");
+        assert!(
+            ran.shape.inputs_from_owners + ran.shape.inputs_hashed > 0,
+            "R2: after {what}, the inputs' deltas are found by their documents ({:?})",
+            ran.shape
+        );
         assert_eq!(ran.shape.inputs_hashed_whole, 0, "R2: after {what}, no input's every row is hashed, only the changed documents' ({} inputs)", ran.shape.inputs_hashed);
         // Its changed inputs' old rows of the unchanged documents are their new rows, read in place
         // (`retain::OldInput`, 0353): only the changed documents' rows are read from the frames.
@@ -236,6 +245,8 @@ fn r2_a_new_process_reads_its_kept_rows_in_place() {
     }
 }
 
+/// R1 in the source: no engine code outside tests names a maintenance relation. The names live in one list
+/// (`maintain::shape::MAINTENANCE_SUFFIXES`), which this reads.
 #[test]
 fn r1_the_engine_source_names_no_maintenance_relation() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic");
@@ -322,21 +333,21 @@ fn r4_a_changed_read_s_delta_leads_its_line() {
 
 /// R4 with readers: a stratum derived again past θ hands its readers its delta against its kept rows, and a reader
 /// maintained over that delta has versions of its own for the strata above it. On the O125 replay, `cls_q` derived
-/// again past θ, and so did `type_of`. Its reader `type_first`, a `min` over it, was maintained and stopped:
+/// again past θ, and so did `type_of`. Its reader `type_first`, a `min` over it (a `min` over a node here: one over a symbol is refused), was maintained and stopped:
 /// "type_of has no version".
 const AGAIN_THEN_MAINTAINED: &str = r#"
 .decl def(n: node, q: symbol)
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl edge(a: symbol, b: symbol)
 edge(a, b) :- kind(n, "import_statement"), field(n, "name", t), text(t, b), docof(n, d), doc(d, _, a).
-.decl a(q: symbol)
-a(q) :- def(_, q), q = "m0.f0".
+.decl a(n: node, q: symbol)
+a(n, q) :- def(n, q), q = "m0.f0".
 .decl b(q: symbol, m: symbol)
-b(q, m) :- a(q), edge(m, _).
+b(q, m) :- a(_, q), edge(m, _).
 .decl c(m: symbol)
 c(m) :- b(_, m).
-.decl first(q: symbol)
-first(q) :- a(_), q = min q2 : { a(q2) }.
+.decl first(n: node)
+first(n) :- a(_, _), n = min n2 : { a(n2, _) }.
 .output c
 .output first
 "#;

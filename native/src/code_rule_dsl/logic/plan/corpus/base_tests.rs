@@ -1143,22 +1143,25 @@ fn a_stratum_whose_rules_join_nothing_keeps_its_facts() {
 #[test]
 fn a_copy_of_an_inputs_columns_is_a_view_of_it() {
     let dir = corpus("input-view", &[TREE]);
-    // The counts are a run's (decision 0442): read in a run the test holds, which the corpus runs join.
-    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     let program = ".decl kind(n: node, k: symbol)\nkind(n, k) :- node(_, n, k, _, _).\n\
                    .decl kinds(k: symbol)\nkinds(k) :- node(_, _, k, _, _).\n\
                    .decl calls(s: number, k: symbol)\ncalls(s, k) :- kind(n, \"call\"), node(_, n, _, s, _), kinds(k), k = \"call\".\n\
                    .output calls\n";
-    let before = crate::code_rule_dsl::logic::plan::input_views();
-    let viewed = run(&dir, program, &["calls"]);
-    let held = crate::code_rule_dsl::logic::plan::input_views() - before;
-    assert!(held >= 1, "kind is a view of node: {held}");
+    // Each run's own scope, held here: the views it held are the run's count (decision 0442), read before it ends.
+    let scope = || crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    let viewed = {
+        let _run = scope();
+        let viewed = run(&dir, program, &["calls"]);
+        let held = crate::code_rule_dsl::logic::plan::input_views();
+        assert!(held >= 1, "kind is a view of node: {held}");
+        viewed
+    };
     let copied = {
         let _copy = super::switches::set(&[("RERAIL_COPY_VIEWS", "1")]);
-        let before = crate::code_rule_dsl::logic::plan::input_views();
+        let _run = scope();
         std::fs::remove_dir_all(dir.join(".out")).ok();
         let got = run(&dir, program, &["calls"]);
-        assert_eq!(crate::code_rule_dsl::logic::plan::input_views(), before, "RERAIL_COPY_VIEWS derives it");
+        assert_eq!(crate::code_rule_dsl::logic::plan::input_views(), 0, "RERAIL_COPY_VIEWS derives it");
         got
     };
     assert_eq!(viewed, copied);

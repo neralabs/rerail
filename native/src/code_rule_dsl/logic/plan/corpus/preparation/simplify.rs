@@ -2739,9 +2739,11 @@ impl ProgramPass for DropUnread {
     }
 }
 
-/// `simplify::location_column`: whether column `c` of derived relation `rel` holds a location. `rules` are `rel`'s, by
-/// its head (`ProjectAll` indexes them once: a scan of every rule for each relation and column was quadratic in the
-/// program).
+/// Whether column `c` of derived relation `rel` holds a location, as the split takes one (`file_local::split`'s base
+/// locations): declared a node, or filled by every rule from a node column, or a document column, of a base relation
+/// it reads. A location through another derived relation's number column is not seen (none is projected today: such
+/// a column holds a document key only where it is filled from one). `rules` are `rel`'s, by its head (`ProjectAll`
+/// indexes them once: a scan of every rule for each relation and column was quadratic in the program).
 fn location_column(v: &Version, f: &Fields<'_>, rel: &str, rules: &[RuleRef<'_>], c: usize) -> bool {
     if f.column_type(rel, c) == Some("node") {
         return true;
@@ -2804,6 +2806,15 @@ fn columns_read(v: &Version) -> HashMap<String, Option<BTreeSet<usize>>> {
     read
 }
 
+/// **Columns no reader reads go** (decision 0098 §1: `count only`, inferred). A derived relation whose column is `_` in
+/// every atom that reads it, positive or negated, keeps only its other columns: its rows become their projection, so
+/// a reader that asks only whether a row exists (`!r($x, _)`, `r($x, _)`) reads one row per key, not every row the
+/// rules make. The rows the readers see are the same: the column decides nothing they test.
+/// Not projected: kept relations (outputs, inputs, lattices, natives and what they read, facts, demand, gates),
+/// answered and nullary ones, and a relation an aggregate reads (a count, a sum or a string join counts its rows, which
+/// a projection would merge). One column at least stays. Dropping a head column can leave its variable named once in
+/// the body, made `_` there, which can free another relation's column: so it repeats until nothing changes.
+///
 /// One round of `project_unread_columns`: each relation projected on the columns its readers read (and a location),
 /// where that drops one, all in one rewrite of the program. Within a round one relation's projection decides nothing
 /// of another's: the columns read are the round's (`columns_read`), and a projection drops only arguments no reader

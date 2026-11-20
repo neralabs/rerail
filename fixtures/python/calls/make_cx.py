@@ -153,8 +153,8 @@ rep('tsub(t, x) :- tname(t), cls_q(c, t), anc(c, b), basex(b, e), builtin_ref(e,
 rep('.decl tsup_open(t: symbol)', '.decl tsup_open(n: node, t: symbol)')
 rep('tsup_open(t) :- tname(t), cls_q(c, t), anc(c, b), base_open(b).', f'tsup_open(n, t) :- {C}, base_open(b).')
 rep('tsup_open(t) :- tname(t), cls_q(c, t), anc(c, b), basex(b, e), extb(e), !builtin_ref(e, "object").', f'tsup_open(n, t) :- {C}, basex(b, e), extb(e), !builtin_ref(e, "object").')
-rep('type_miss(n, u) :- type_first(n, t0), tsub(t0, u), type_of(n, t), !tsub(t, u).', 'type_miss(n, u) :- type_first(n, t0), tsub(n, t0, u), type_of(n, t), !tsub(n, t, u).')
-rep('proven_type(n, u) :- type_first(n, t), tsub(t, u),', 'proven_type(n, u) :- type_first(n, t), tsub(n, t, u),')
+rep('type_miss(n, u) :- type_of(n, t0), tsub(t0, u), type_of(n, t), !tsub(t, u).', 'type_miss(n, u) :- type_of(n, t0), tsub(n, t0, u), type_of(n, t), !tsub(n, t, u).')
+rep('proven_type(n, u) :- type_of(n, t), tsub(t, u),', 'proven_type(n, u) :- type_of(n, t), tsub(n, t, u),')
 rep('possible_type(n, u) :- type_of(n, t), tsub(t, u).', 'possible_type(n, u) :- type_of(n, t), tsub(n, t, u).')
 rep('possible_open(n) :- type_of(n, t), tsup_open(t).', 'possible_open(n) :- type_of(n, t), tsup_open(n, t).')
 assert not [l for l in s.split('\n') if 'tname' in l and not l.startswith('//')]

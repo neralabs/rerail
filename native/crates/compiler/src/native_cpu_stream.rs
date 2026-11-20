@@ -1969,14 +1969,20 @@ fn elem_test(f: &mut FunctionBuilder<'_>, c: Value, el: &crate::program::TokenEl
     }
     let (ok, miss) = (f.create_block(), f.create_block());
     let ok_to = if el.not { miss } else { ok };
-    if el.kinds != 0 {
+    if el.kinds != 0 || el.rows != 0 {
         let kind = f.ins().band_imm(c, 0xff);
         let small = f.ins().icmp_imm(IntCC::UnsignedLessThan, kind, 64);
         let set = f.ins().iconst(types::I64, el.kinds as i64);
         let bit = f.ins().ushr(set, kind);
         let bit = f.ins().band_imm(bit, 1);
         let zero = f.ins().iconst(types::I64, 0);
-        let bit = f.ins().select(small, bit, zero);
+        let mut bit = f.ins().select(small, bit, zero);
+        // A kind of a shared first byte: its rows' start's mark bit (`TokenElem::rows`).
+        if el.rows != 0 {
+            let r = f.ins().ushr_imm(c, i64::from(crate::records::MARK_SHIFT));
+            let r = f.ins().band_imm(r, i64::from(el.rows));
+            bit = f.ins().bor(bit, r);
+        }
         let other = f.create_block();
         if el.except.is_empty() {
             f.ins().brif(bit, ok_to, &[], other, &[]);
