@@ -1,12 +1,13 @@
-//! rerail's forest: MLDB's Metal random forest trainer (`mldb/`, copied from mldbai/mldb@e3caed6f, branch
+//! rerail's forest: MLDB's random forest trainer (`mldb/`, copied from mldbai/mldb@e3caed6f, branch
 //! opencl-random-forests), training and predicting on the device, and the cost model built on it (`cost_model`).
-//! macOS only (Metal); elsewhere the crate is empty.
+//! The device is Metal on macOS and CUDA on Linux (`device`, decision 0440); elsewhere the crate is empty.
 //!
 //! The kernels are one C source (`mldb/plugins/jml/randomforest_kernels_common.h`) written against UKL's shims; the
-//! build step preprocesses `randomforest_kernels.metal` with the Metal shim into Metal source, compiled once per
-//! process on the shared device (`gpu::shared`; randomforest_kernels_metal.rs).
+//! build step preprocesses `randomforest_kernels_ukl.h` with the Metal shim into Metal source; on CUDA it is
+//! preprocessed at run time for the device's architecture. Either is compiled once per process on the shared device
+//! (`gpu::shared`; randomforest_kernels_metal.rs).
 
-#![cfg(target_os = "macos")]
+#![cfg(any(target_os = "macos", target_os = "linux"))]
 
 // The copied host sources, each translated to Rust where it sits (upstream paths under `mldb/`).
 #[path = "mldb/utils/fixed_point_accum.rs"]
@@ -41,12 +42,14 @@ pub mod randomforest_types;
 pub mod randomforest_kernels;
 #[path = "mldb/plugins/jml/randomforest_recursive.rs"]
 pub mod randomforest_recursive;
-#[path = "mldb/builtin/metal/compute_kernel_metal.rs"]
-pub mod compute_kernel_metal;
+// The device layer: `rerail-gpu` (decision 0440), under the names the forest's code uses.
+pub use rerail_gpu::{compute_kernel, compute_kernel_grid, device};
+#[cfg(target_os = "linux")]
+pub use rerail_gpu::compute_kernel_cuda;
+#[cfg(target_os = "macos")]
+pub use rerail_gpu::compute_kernel_metal;
 #[path = "mldb/plugins/jml/randomforest_kernels_metal.rs"]
 pub mod randomforest_kernels_metal;
-#[path = "mldb/block/compute_kernel_grid.rs"]
-pub mod compute_kernel_grid;
 #[path = "mldb/plugins/jml/randomforest_kernels_grid.rs"]
 pub mod randomforest_kernels_grid;
 #[path = "mldb/plugins/jml/randomforest.rs"]
@@ -59,51 +62,15 @@ pub mod randomforest_predict;
 #[path = "mldb/plugins/jml/testing/rf_kernel_test.rs"]
 mod rf_kernel_test;
 
-pub use randomforest_kernels_metal::{function, library, KERNELS, SOURCE};
+pub use randomforest_kernels_metal::{function, library, KERNELS};
+#[cfg(target_os = "macos")]
+pub use randomforest_kernels_metal::SOURCE;
 
 pub mod cost_model;
 
-/// The process's one Metal device and command queue. They are made here, in the lowest crate that uses Metal, so
-/// that the forest's training and prediction and the engine's every submission (`rerail_accel::gpu::shared`, which
-/// takes them from here) share one queue: one order of command buffers, no queue apart (decision 0100 §2).
+/// The process's device and queue (`rerail_gpu::shared`), where the engine takes them from (`rerail_accel`).
 pub mod gpu {
-    pub mod shared {
-        use std::sync::OnceLock;
-
-        pub struct Shared {
-            pub device: metal::Device,
-            pub queue: metal::CommandQueue,
-            /// The queue of work committed ahead that waits on an event (the forest's armed prediction): a command
-            /// buffer waiting on an event holds back the ones its queue commits after it, so it is not `queue`.
-            pub waiting: metal::CommandQueue,
-        }
-
-        static SHARED: OnceLock<Option<Shared>> = OnceLock::new();
-
-        /// The process's device and queue once something opened them (`get`), without opening them: what a report
-        /// of the device's memory reads, so a run that does no device work never opens it to say so.
-        pub fn opened() -> Option<&'static Shared> {
-            SHARED.get().and_then(Option::as_ref)
-        }
-
-        /// The process's device and queue: `None` without a Metal device.
-        pub fn get() -> Option<&'static Shared> {
-            SHARED
-                .get_or_init(|| {
-                    // A measurement aid: `RERAIL_DEVICE_TRACE` prints where the process first opens the device.
-                    if std::env::var_os("RERAIL_DEVICE_TRACE").is_some() {
-                        eprintln!("RERAIL_DEVICE_TRACE the device opened at:\n{}", std::backtrace::Backtrace::force_capture());
-                    }
-                    objc::rc::autoreleasepool(|| {
-                        let device = metal::Device::system_default()?;
-                        let queue = device.new_command_queue();
-                        let waiting = device.new_command_queue();
-                        Some(Shared { device, queue, waiting })
-                    })
-                })
-                .as_ref()
-        }
-    }
+    pub use rerail_gpu::shared;
 }
 
 /// The process's user + system CPU seconds.

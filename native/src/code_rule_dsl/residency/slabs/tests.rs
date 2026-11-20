@@ -201,7 +201,7 @@ fn the_device_reads_every_format_as_the_document_does() {
     use crate::code_rule_dsl::tape::formats::Format;
     use crate::code_rule_dsl::transducer::packed::metal_backend::{MappedBuffer, pipeline_named};
     use metal::MTLSize;
-    let tape = format!("{}{}{}", msl(), include_str!("../../transducer/packed/metal_tape_reads_z.metal"), include_str!("../../transducer/packed/metal_tape.metal"));
+    let tape = format!("{}{}{}", msl(), "#include <ukl/reads/tape_z.h>\n", include_str!("../../transducer/packed/device_tape.h"));
     const FIELDS: usize = 14;
     const KERNEL: &str = r#"
 inline uint tape_global(DocView d,uint i){return i==TAPE_NONE?TAPE_NONE:d.node_base+i;}
@@ -213,7 +213,7 @@ kernel void tape_conformance(device const DocView* docs [[buffer(0)]],device con
  o[0]=tape_kind(s,d,i);o[1]=tape_field(s,d,i);o[2]=tape_flags(s,d,i);
  o[3]=tape_global(d,tape_parent(s,d,i));o[4]=tape_global(d,tape_next(s,d,i));o[5]=tape_global(d,tape_next_named(s,d,i));
  o[6]=tape_child_count(s,d,i);o[7]=d.node_base+i+tape_size(s,d,i);o[8]=tape_start(s,d,i);o[9]=tape_end(s,d,i);
- o[10]=tape_global(d,tape_first_child(s,d,i));o[11]=tape_code(s,d,i).classCount;
+ o[10]=tape_global(d,tape_first_child(s,d,i));o[11]=tape_code(s,d,i)->classCount;
  uint line=tape_line(s,d,tape_start(s,d,i));o[12]=line;o[13]=tape_line_start(s,d,line);
 }
 "#;
@@ -259,7 +259,7 @@ kernel void tape_conformance(device const DocView* docs [[buffer(0)]],device con
             _ => rerail_clif::view::F16Z_FORMAT,
         };
         assert!(table.views.iter().all(|view| view.format == expected_format), "{format:?} placed as format {expected_format}");
-        // The device reads the presence where the tape's home holds it (decision 0434 §4, step 6), 16 and 16z alike.
+        // The device reads the presence where the tape's home holds it (decision 0426 §4, step 6), 16 and 16z alike.
         assert!(table.views.iter().all(|view| (view.presence != 0) == (format != Format::F15)), "{format:?}: the views name the presence");
         assert_eq!(table.cache.is_some(), format == Format::F16Z, "a cache for 16z tapes alone");
         if format != Format::F15 {

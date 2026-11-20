@@ -1,5 +1,5 @@
 //! The views' reads as CLIF functions, written once (decision 0353 step 4c): a view's row is a read of the tape and
-//! of its projection's numbering, never a relation made of it. The kernels (the MSL backend: `view_reads.metal`) and
+//! of its projection's numbering, never a relation made of it. The kernels (the UKL backend: `<ukl/reads/view.h>`) and
 //! the JIT read the views through them; the host's `Viewed` answers the same rows, which a test checks.
 //!
 //! A read takes the document's entry (`ViewDoc`, in its batch's block beside the projection's numbering, which it
@@ -60,7 +60,7 @@ pub const PLACED_AT: u32 = 2;
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ViewRow {
     pub entry: u64,
-    /// Device addresses: `device const uchar*` in the kernels.
+    /// Device addresses: `UKL_GLOBAL const uint8_t*` in the kernels.
     pub tape: u64,
     pub lines: u64,
     pub rows: [u32; VIEWS.len()],
@@ -118,47 +118,48 @@ pub const CORE_COLUMNS: u32 = 3;
 pub const LINE_COLUMNS: u32 = 2;
 pub const LOC_COLUMNS: u32 = 2;
 
-/// The entry's MSL: `struct ViewDoc`, each field's offset and the size asserted against this definition's.
-pub fn msl() -> String {
+/// The entry in UKL: `struct ViewDoc`, each field's offset and the size asserted against this definition's.
+#[cfg(feature = "ir")]
+pub fn ukl() -> String {
     use std::mem::offset_of;
     let fields: [(&str, &str, usize); 18] = [
-        ("uint", "key", offset_of!(ViewDoc, key)),
-        ("uint", "tag", offset_of!(ViewDoc, tag)),
-        ("uint", "preorder", offset_of!(ViewDoc, preorder)),
-        ("uint", "nodes", offset_of!(ViewDoc, nodes)),
+        ("uint32_t", "key", offset_of!(ViewDoc, key)),
+        ("uint32_t", "tag", offset_of!(ViewDoc, tag)),
+        ("uint32_t", "preorder", offset_of!(ViewDoc, preorder)),
+        ("uint32_t", "nodes", offset_of!(ViewDoc, nodes)),
         ("Run", "numbering", offset_of!(ViewDoc, numbering)),
         ("Run", "kinds", offset_of!(ViewDoc, kinds)),
         ("Run", "fields", offset_of!(ViewDoc, fields)),
         ("Run", "places", offset_of!(ViewDoc, places)),
-        ("uint", "tokens", offset_of!(ViewDoc, tokens)),
-        ("uint", "own_text", offset_of!(ViewDoc, own_text)),
-        ("uint", "ends", offset_of!(ViewDoc, ends)),
-        ("uint", "source_len", offset_of!(ViewDoc, source_len)),
+        ("uint32_t", "tokens", offset_of!(ViewDoc, tokens)),
+        ("uint32_t", "own_text", offset_of!(ViewDoc, own_text)),
+        ("uint32_t", "ends", offset_of!(ViewDoc, ends)),
+        ("uint32_t", "source_len", offset_of!(ViewDoc, source_len)),
         ("Run", "lines", offset_of!(ViewDoc, lines)),
-        ("uint", "placement", offset_of!(ViewDoc, placement)),
-        ("uint", "pad", offset_of!(ViewDoc, pad)),
-        ("long", "delta", offset_of!(ViewDoc, delta)),
-        ("uint", "within_lo", offset_of!(ViewDoc, within_lo)),
-        ("uint", "within_hi", offset_of!(ViewDoc, within_hi)),
+        ("uint32_t", "placement", offset_of!(ViewDoc, placement)),
+        ("uint32_t", "pad", offset_of!(ViewDoc, pad)),
+        ("int64_t", "delta", offset_of!(ViewDoc, delta)),
+        ("uint32_t", "within_lo", offset_of!(ViewDoc, within_lo)),
+        ("uint32_t", "within_hi", offset_of!(ViewDoc, within_hi)),
     ];
     let mut s = format!(
-        "struct ViewRow {{\n    ulong entry;\n    device const uchar* tape;\n    device const uchar* lines;\n    uint rows[{}];\n    uint view[{}];\n}};\n\
-         struct ViewDir {{\n    device const uchar* chunk;\n    uint ndocs;\n    uint pad;\n    device const ViewRow* rows;\n}};\n",
+        "#include <ukl/backend.h>\ntypedef struct ViewRow {{\n    uint64_t entry;\n    UKL_GLOBAL const uint8_t* tape;\n    UKL_GLOBAL const uint8_t* lines;\n    uint32_t rows[{}];\n    uint32_t view[{}];\n}} ViewRow;\n\
+         typedef struct ViewDir {{\n    UKL_GLOBAL const uint8_t* chunk;\n    uint32_t ndocs;\n    uint32_t pad;\n    UKL_GLOBAL const ViewRow* rows;\n}} ViewDir;\n",
         VIEWS.len(),
         std::mem::size_of::<crate::view::TapeView>() / 4,
     );
-    s += &format!("static_assert(sizeof(ViewRow) == {}, \"ViewRow: size\");\n", std::mem::size_of::<ViewRow>());
-    s += &format!("static_assert(__builtin_offsetof(ViewRow, view) == {}, \"ViewRow.view\");\n", std::mem::offset_of!(ViewRow, view));
-    s += &format!("static_assert(sizeof(ViewDir) == {}, \"ViewDir: size\");\n", std::mem::size_of::<ViewDir>());
-    s += &format!("static_assert(__builtin_offsetof(ViewDir, rows) == {}, \"ViewDir.rows\");\n", std::mem::offset_of!(ViewDir, rows));
-    s += "struct ViewDoc {\n";
+    s += &format!("UKL_STATIC_ASSERT(sizeof(ViewRow) == {}, \"ViewRow: size\");\n", std::mem::size_of::<ViewRow>());
+    s += &format!("UKL_STATIC_ASSERT(__builtin_offsetof(ViewRow, view) == {}, \"ViewRow.view\");\n", std::mem::offset_of!(ViewRow, view));
+    s += &format!("UKL_STATIC_ASSERT(sizeof(ViewDir) == {}, \"ViewDir: size\");\n", std::mem::size_of::<ViewDir>());
+    s += &format!("UKL_STATIC_ASSERT(__builtin_offsetof(ViewDir, rows) == {}, \"ViewDir.rows\");\n", std::mem::offset_of!(ViewDir, rows));
+    s += "typedef struct ViewDoc {\n";
     for (ty, name, _) in fields.iter() {
         s += &format!("    {ty} {name};\n");
     }
-    s += "};\n";
-    s += &format!("static_assert(sizeof(ViewDoc) == {}, \"ViewDoc: size\");\n", std::mem::size_of::<ViewDoc>());
+    s += "} ViewDoc;\n";
+    s += &format!("UKL_STATIC_ASSERT(sizeof(ViewDoc) == {}, \"ViewDoc: size\");\n", std::mem::size_of::<ViewDoc>());
     for (_, name, at) in fields.iter() {
-        s += &format!("static_assert(__builtin_offsetof(ViewDoc, {name}) == {at}, \"ViewDoc.{name}\");\n");
+        s += &format!("UKL_STATIC_ASSERT(__builtin_offsetof(ViewDoc, {name}) == {at}, \"ViewDoc.{name}\");\n");
     }
     s
 }
@@ -547,5 +548,93 @@ pub fn loc_col(b: &mut B<'_, '_>) -> Value {
 #[cfg(feature = "ir")]
 pub fn loc_docof(b: &mut B<'_, '_>) -> Value {
     b.loc(Place::Docof)
+}
+
+/// No row: a parent probe's end (`view_child_first`, `view_child_next`, `view_number`).
+pub const NO_ROW: u32 = u32::MAX;
+
+impl B<'_, '_> {
+    /// The `child` row of the first numbered node from tape node `c` on, `c` and each sibling after it within
+    /// `end` (`tape_next_in`), or `NO_ROW`: numbered node `l`'s row is `l - 1`. The loop ends: each sibling is past
+    /// the last, and `tape_next_in` gives none at `end` (decision 0427's reads stay within the tape).
+    fn numbered_from(&mut self, c: Value, end: Value) -> Value {
+        let (head, test, step, found, done) = (self.f.create_block(), self.f.create_block(), self.f.create_block(), self.f.create_block(), self.f.create_block());
+        self.f.append_block_param(head, I32);
+        self.f.append_block_param(done, I32);
+        self.f.ins().jump(head, &[c.into()]);
+        self.f.switch_to_block(head);
+        let c = self.f.block_params(head)[0];
+        let none = self.f.ins().icmp_imm(IntCC::Equal, c, i64::from(NO_ROW));
+        let no = self.c32(i64::from(NO_ROW));
+        self.f.ins().brif(none, done, &[no.into()], test, &[]);
+        self.f.switch_to_block(test);
+        let numbering = self.follow(self.tape, at::NUMBERING);
+        let node = self.c32(0);
+        let is = self.call_at("num_is", numbering, &[node, c]);
+        let numbered = self.f.ins().icmp_imm(IntCC::NotEqual, is, 0);
+        self.f.ins().brif(numbered, found, &[], step, &[]);
+        self.f.switch_to_block(found);
+        let numbering = self.follow(self.tape, at::NUMBERING);
+        let node = self.c32(0);
+        let l = self.call_at("num_rank", numbering, &[node, c]);
+        let row = self.f.ins().iadd_imm(l, -1);
+        self.f.ins().jump(done, &[row.into()]);
+        self.f.switch_to_block(step);
+        let next = self.call_tape("tape_next_in", &[c, end]);
+        self.f.ins().jump(head, &[next.into()]);
+        self.f.switch_to_block(done);
+        self.f.block_params(done)[0]
+    }
+}
+
+/// `view_child_first(l)`: the `child` row of numbered node `l`'s first child (its first numbered tape child), or
+/// `NO_ROW` (decision 0353 step 4c: a probe of `child` by its parent, off the tape, with no index of the view).
+/// For a node other than the root: a numbered node's parent is its tape parent where that is numbered, so its
+/// children are its numbered tape children. The root's are also the nodes under unnumbered ones (a narrowed
+/// projection): a probe of the root scans its document's rows instead.
+pub fn child_first(b: &mut B<'_, '_>) -> Value {
+    let l = b.arg(0);
+    let x = b.tape_node(l);
+    let end = b.call_tape("tape_end_of", &[x]);
+    let c = b.call_tape("tape_first_child", &[x]);
+    b.numbered_from(c, end)
+}
+
+/// `view_child_next(i)`: the `child` row of the next child of the parent of `child` row `i` (numbered node `i +
+/// 1`'s next numbered tape sibling), or `NO_ROW`. For a child of a parent other than the root (`view_child_first`).
+pub fn child_next(b: &mut B<'_, '_>) -> Value {
+    let i = b.arg(0);
+    let l = b.f.ins().iadd_imm(i, 1);
+    let x = b.tape_node(l);
+    let p = b.call_tape("tape_parent", &[x]);
+    let root = b.f.ins().icmp_imm(IntCC::Equal, p, i64::from(NO_ROW));
+    b.either(I32, root, |b| b.c32(i64::from(NO_ROW)), |b| {
+        let end = b.call_tape("tape_end_of", &[p]);
+        let c = b.call_tape("tape_next_in", &[x, end]);
+        b.numbered_from(c, end)
+    })
+}
+
+/// `view_number(low)`: the numbered node whose id's low 32 bits are `low` (its document's: the key is the caller's
+/// to match), or `NO_ROW`: `low` itself where ids are local ids, else the numbering's inverse (`num_number_of`,
+/// a node's, not a token's).
+pub fn number(b: &mut B<'_, '_>) -> Value {
+    let low = b.arg(0);
+    let preorder = b.word_at(I32, b.tape, at::PREORDER);
+    let local = b.f.ins().icmp_imm(IntCC::NotEqual, preorder, 0);
+    let n = b.word_at(I32, b.tape, at::NODES);
+    let l = b.either(I32, local, |_| low, |b| {
+        let numbering = b.follow(b.tape, at::NUMBERING);
+        let found = b.call_at("num_number_of", numbering, &[low]);
+        // A node's: item 0 in the high word.
+        let item = b.f.ins().ushr_imm(found, 32);
+        let node = b.f.ins().icmp_imm(IntCC::Equal, item, 0);
+        let number = b.f.ins().ireduce(I32, found);
+        let no = b.c32(i64::from(NO_ROW));
+        b.f.ins().select(node, number, no)
+    });
+    let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, l, n);
+    let no = b.c32(i64::from(NO_ROW));
+    b.f.ins().select(inside, l, no)
 }
 }

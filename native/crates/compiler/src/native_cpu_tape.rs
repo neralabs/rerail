@@ -462,7 +462,7 @@ pub fn finish(f: &mut FunctionBuilder<'_>, p: &[Value], x: Image<'_>, heads: &mu
 /// An op of the format 16 writer in tier 2's module: its id and signature.
 pub type OpRef = (cranelift_module::FuncId, cranelift_codegen::ir::Signature);
 
-/// The writer's ops tier 2 calls (decision 0434 §6, R17), defined in its module
+/// The writer's ops tier 2 calls (decision 0426 §6, R17), defined in its module
 /// (`rerail_clif::writer::define_ops`): the node words' and the passes' calls.
 pub struct Ops {
     pub open: OpRef,
@@ -512,7 +512,7 @@ const OPEN_AT: i32 = (std::mem::offset_of!(rerail_clif::writer::State, open) + s
 const BAD: i32 = std::mem::offset_of!(rerail_clif::writer::State, bad) as i32;
 
 /// `(desc, rows, size_c, numbers, snode, skind, supers, from, to, keep)`: nodes `from..to` passed
-/// to the format 16 writer's ops at `desc` (decision 0434 §6, R17), in preorder: before each
+/// to the format 16 writer's ops at `desc` (decision 0426 §6, R17), in preorder: before each
 /// node, and at `to`, the ops' open nodes whose subtrees end there closed at their ends (the
 /// bottom one, the root, kept where `keep`); each node opened with its number (`numbers` by its
 /// slot key, as `commit` keys it) and start, then committed. Nothing where the ops already

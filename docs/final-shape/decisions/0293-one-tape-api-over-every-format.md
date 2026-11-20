@@ -193,7 +193,7 @@ This record is steps 2, 3 and 4, and the API they need.
    placed, its source, its code table at a fixed width and its line starts: nothing per node beside the tape.
    - **Placed as stored:** format 15's image, format 16's tape, or a 16z tape as stored, read through its batch's
      cache of decoded blocks (decision 0353 step 4b; a block's four pieces decoded into a cache entry as a format 16
-     tape of one block, decision 0434 §3). Until 2026-11-18 a 16z tape was laid out as the format 16 tape it is the
+     tape of one block, decision 0426 §3). Until 2026-11-18 a 16z tape was laid out as the format 16 tape it is the
      blocks of (`Tape16Z::unblock_into`, then `decode_into` with 0336 §5's pieces decoded where they lie and 0336
      §8's on the GPU): a copy, now gone. `f16::placement` says where a format 16 tape's arrays, side lists
      and part starts lie, checked as `Tape16::from_bytes` checks them; the device's view (`DocView`) names them.

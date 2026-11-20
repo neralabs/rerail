@@ -204,15 +204,38 @@ impl Relation {
     /// A delta of `base` with no rows of its own whose dead bits are `words` (row `id` dead when bit `id` of them is
     /// set): a relation's kills of the rows it shares, read beside them where they lie (decision 0325: the device
     /// skips a dead row by its bit, `rel_dead`). `None` when the block cannot hold it.
+    /// Its dead bits are a chunk of their own, so a delta replaced when they change goes back whole
+    /// (`release_kills`).
     pub fn try_kills<'b>(block: &'b Block, spec: &Spec, base: &Relation, words: &[u64]) -> Option<&'b Relation> {
         let rel = Relation::try_create(block, spec, Some(base))?;
-        let w: *mut u64 = block.try_alloc_t(words.len().max(1))?;
+        let Some(at) = block.try_alloc_chunk(Relation::kills_bytes(words.len()), 64) else {
+            // SAFETY: just made in `block`; no one has it.
+            unsafe { rel.release(block) };
+            return None;
+        };
+        let w: *mut u64 = block.ptr(at);
         // SAFETY: `w` holds `words.len()` words, just allocated in `block`, as `rel` is.
         unsafe {
             std::ptr::copy_nonoverlapping(words.as_ptr(), w, words.len());
             Span::set(&rel.dead, w, words.len());
         }
         Some(rel)
+    }
+
+    /// The chunk a kills delta's `n` dead words take (`try_kills`).
+    fn kills_bytes(n: usize) -> usize {
+        n.max(1) * size_of::<u64>()
+    }
+
+    /// Gives a kills delta (`try_kills`) back to the block's free list: its dead bits' chunk, then itself
+    /// (`release`). Returns the bytes given to the OS with them.
+    ///
+    /// # Safety
+    /// It is a delta `try_kills` made in `block`, and no one reads it after (its last holder's).
+    pub unsafe fn release_kills(&self, block: &Block) -> usize {
+        let dead = self.dead.as_slice();
+        let given = block.free_chunk(block.offset_of(dead.as_ptr()), Relation::kills_bytes(dead.len()));
+        given + unsafe { self.release(block) }
     }
 
     /// Gives its chunks back to the block's free list (decision 0342), when the block keeps one. Returns the bytes

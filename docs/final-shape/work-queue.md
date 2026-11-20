@@ -1539,7 +1539,7 @@ pass.
   next in `rerail-device-metal` on Q252. `cargo clippy -p rerail-engine --lib --tests` runs to the end (rc 0, 1,527
   warnings); the 6 `sql_admission` tests pass.
 
-### Q252. (Q218 on final-rerail-shape-rr-align) metal_join's `Words` made a `&mut [u32]` from `&self`, over a buffer the GPU writes too
+### Q329. (Q218 on final-rerail-shape-rr-align; Q252 here until 2026-11-19, the hub's Q252 is its Metal parity tests) metal_join's `Words` made a `&mut [u32]` from `&self`, over a buffer the GPU writes too
 
 - **Found** (2026-11-19, by clippy's `mut_from_ref`, deny by default): `Words::slice_mut(&self) -> &mut [u32]` over
   the shared Metal buffer, called by `set` and `get` and `zeroed`. `Words` are shared through `Rc` (a stratum's
@@ -1551,7 +1551,7 @@ pass.
   submission, or read after its command buffers completed), so none outlives an access. The device tests
   (`rerail-logic` 17, `rerail-device-metal` 11, on the M1 Max) pass.
 
-### Q253. (withdrawn) A run of one program then all 317 on one store seemed to give B101 rows of another scope
+### Q330. (withdrawn; Q253 here until 2026-11-19, the hub's Q253 is the journal's bound) A run of one program then all 317 on one store seemed to give B101 rows of another scope
 
 - **Withdrawn** (2026-11-19): not the engine's. The extra 194 rows were `B101.csv`, which a run of B101's program
   alone writes. The full set writes this finding as `p0_B101.csv`, and h1 has those rows in full. Both runs had
@@ -2374,13 +2374,13 @@ where the rest goes (a sample of the run), before reading the wave's CPU totals 
 
 Asked 2026-11-18 (the user): every parser writes 15, 16 and 16z incrementally on the CPU and the GPU, with no
 intermediate node format, as a switch over common abstractions; then "go ahead with block major; we output both the
-tape and a separate kinds/fields structure; for each block, optionally, a kinds/fields structure". Decision 0434
+tape and a separate kinds/fields structure; for each block, optionally, a kinds/fields structure". Decision 0426
 holds the design, its requirements (R1–R12) and its steps.
 
 - **Keep**: tapes read in place (no decoding but 16z's per-block placement); one compile and one entry point for
   16 and 16z; every read written once in CLIF; format 15 untouched until dropped.
-- **Done when**: 0434's requirement tests pass and no format 16 run makes a format 15 column, image or tape.
-- **Steps**: 0434 §Steps 1–6.
+- **Done when**: 0426's requirement tests pass and no format 16 run makes a format 15 column, image or tape.
+- **Steps**: 0426 §Steps 1–6.
 - **Done** (2026-11-18, step 1, b5fbb9ed5): block-major format 16, the reads in CLIF on every backend, the writer's
   ops with the 16z sink and the presence.
 - **Done** (2026-11-18, step 2, first part): `retag` and `set_start` in the ops; every lean parser takes a `Sink`, and
@@ -3196,6 +3196,87 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
 - **Waits on the user:** 5b–5e (a complete `clif_msl`, rounds as batches) build out a shape the
   numbers say loses to one core. Question 3 below.
 
+### Q325. (Q271 on final-rerail-shape until 2026-11-19; Q187 where written, Q218 until the first hub merge, Q250 until the second; the hub's Q187 is `parser_tests`) The label kernels' time follows `label_formula`'s (file, formula) pairs
+
+- **Found** (2026-11-18, 0424): the label passes' walk steps fell from 65.8 M to 19.8 M (internal_dead_code)
+  and 19.3 M to 7.4 M (public_api_triples). `label_micro_8` + `label_micro` went from 80.9 to 66.7 ms and from
+  61.1 to 68.2 ms. Each seeded `all` adds a level its readers wait for (public_api_triples' `label_micro_8`
+  dispatches 96 → 144), and a pass still visits every 64-node group to read its root mask.
+- **Done when**: a pass launches over only the groups its domain has members in, and the levels seeds add are
+  merged where their readers allow, with the kernels' time measured pinned before and after.
+- **Done** (2026-11-18, decision 0425), in part:
+  - The levels seeds added are gone. Demand is a formula a pass's anchor reads (`Domain::Within`), not a seed
+    label. Formula groups fell 28,622 → 20,786–22,520 (internal_dead_code) and 16,874–17,616 → 12,109
+    (public_api_triples). Formula images fell 584–624 → 280–320 and 244–376 → 96–136. Rows are the same.
+    `label_formula`'s time did not fall (95–98 → 91–95 ms, 94–99 → 94–98 ms, load 74–91).
+  - Launching over the groups with members is not built. On this line the micro walks take 8–13 ms (`label_micro`
+    no longer runs), so that would save at most those 8–13 ms.
+- **Now**: `label_formula` takes 90–130 ms, about 5 µs per (file, formula) pair, and evaluates each pair apart. Formulas
+  of one level share tests.
+- **Done when**: a level's formulas over a file are evaluated together, sharing their common subsets, with
+  `label_formula` measured pinned before and after.
+- **Done** (2026-11-18, decision 0419): measured, and not the default. Evaluating a file's formulas together
+  (`RERAIL_FORMULA_FUSED=1`) took internal_dead_code's label GPU time from 83–95 to 165–175 ms, and public_api_triples'
+  from 71–79 to 105–112 ms. The groups of one file's formulas overlap their latency, and the shared tests are shared
+  already (`label_leaves`, identical formulas once). The time was latency: the step formulas, with a chain's reach as
+  the long pole (now read by blocks: 96.8 → 54.6 ms), and every level once per chunk (now a chunk below the credible
+  growth makes the next 4×: 82–98 → 77–84 ms, 89–94 → 67–82 ms). 0425's times were taken under the default memory
+  line (14–17 chunks).
+- **Closed** (2026-11-18, 0419's follow-up): with the line lifted, fewer or larger chunks did not lower the label GPU
+  time beyond noise (one chunk at a time with a 1M-node cap: 84–107 ms against 70–130 ms). A chunk's measured growth
+  is noise (16–113 MB whatever its nodes), so no finer sizing rule was adopted. Gathering concurrent chunks' label runs
+  is not built, since its prize is fewer runs and 0386 keeps each job's wave its own.
+
+### Q326. (Q281 on final-rerail-shape until 2026-11-19) `label_leaves` is most of the label passes' GPU time (done)
+
+- **Found** (2026-11-19, 0447): with `label_formula`'s floor gone, `label_leaves` takes 32.2 ms of internal_dead_code's
+  50.7 ms of GPU time at s1000 (`RERAIL_GPU_ENCODER_TIMES`): 12 encoders of about 2.7 ms each, against 16.8 ms for
+  every formula.
+- **Done when:** what a leaves pass spends its time on is measured, and either changed with rows the same as native,
+  or recorded as its work.
+- **Closed** (2026-11-19, 0449): a thread a word with no atomics, and a code read once for each block of 8 tests. The
+  leaves passes went from 31.5–39.6 to 7.8–8.0 ms, and the GPU total from 55.5–59.5 to 42.0–45.3 ms, with the rows
+  the same.
+
+### Q324. (Q270 on final-rerail-shape until 2026-11-19) The children of members read a chain of child reads on one thread per member
+
+- **Found** (2026-11-18, 0437): with a chain's reach at the dispatch floor, op 9 (the children of members,
+  `tape_first_child` then `tape_next` per member) is `label_formula`'s largest step in one-formula mode: 103 ms over
+  224 passes at s1000, 461 µs a pass. A member's children are a chain of dependent reads, so a member with many
+  children holds its thread.
+- **Direction:** children of F are a chain's reach with `through` empty, but its blockers are every non-member below a
+  member, a size read each, and its levels follow how deeply members nest. Measure that against spreading a member's
+  children over the lanes (its child count, `tape_child_count`, and `tape_child`).
+- **Done when:** op 9's pass is near the dispatch floor (about 100 µs), with the rows the same as native.
+- **Closed** (2026-11-19, 0457, was 0440): the cost was not the shape but the read. `tape_next` searches for the parent at each
+  hop. The walks take the parent's end once and hop by `tape_next_in`. The op-9 formulas went from 431–846 µs to
+  133–212 µs, at the leaf-only floor, with the rows the same as native.
+
+### Q318. (Q252 on final-rerail-shape until 2026-11-19; Q220 until the hub merge) A chain's reach climbs a node at a time in each (file, formula) group
+
+- **Found** (2026-11-18, 0419): `label_formula`'s time is its steps (64–70 ms of 65–79 ms at s1000). A chain's reach
+  (`REACH_CHAIN`) takes about 1.1 ms a pass, against 23–68 µs for the other steps. Each thread decides 32 nodes in a
+  row, a tape parent read each, and climbs where a parent is before its block. Adding dispatches does not fit the
+  launch budget, so the fix stays inside the group.
+- **Direction:** reached(n) is `from` at n's nearest ancestor that is in `from` or not in `through`. Every node can find that
+  ancestor by pointer doubling: log(depth) rounds with barriers, and no tape read in the rounds. The jump pointers
+  are a file's nodes: threadgroup memory holds them only for small files, well under 32 KB a group, so larger files'
+  go to device memory, coalesced.
+- **Done when:** `REACH_CHAIN` is node-parallel within the group, with the rows the same and the step's time measured
+  before and after.
+- **Closed** (2026-11-18, 0437): not by pointer doubling but through the hot `tape_size` accessor (the user: "I
+  think this is mostly fixed by using an accessor"). The reach is descendant images, a level each time a member sits
+  below a blocker. A chain's pass went from 0.8–6.8 ms to 22–225 µs, with the rows the same as native.
+
+### Q317. (Q251 on final-rerail-shape until 2026-11-19; Q219 until the hub merge) A level's fact constraints are uploaded rows (done)
+
+- **Found** (2026-11-18, Q325's measurements): `Runner::level` uploaded the facts' `(node, label)` pairs once per
+  pattern kernel group, the same buffer each time: 32 MB (8.1 M words) on 15 fixtures. Fixed: once a level (0425).
+- **Left**: the upload itself is a copy of the facts' rows (AGENTS.md, 0353).
+- **Done when**: `Pass::Fact` reads the fact's relation in its block, and the upload is gone.
+- **Done** (2026-11-19, 0446): the findings are written once into the batch's fact block (`FactRows::block`), and
+  the CPU's passes and the pattern kernels read them there. The upload and both host copies are gone.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
@@ -3417,8 +3498,16 @@ inventory of today's copies (12 sites, marked `copy (0353 step N)`) and the plan
    checked on the device). Done but for the chunk's `low` column, which goes with step 4.
 3. Then steps 3 (CPU views on the tape), 4 (GPU views on the tape: the 660.8 MB a run), 5 (axes written once),
    6 (in-place writes and indexes), 7 (the transducer's packed batch, its owners'), 8 (0325 step 7), 9 (prices).
+4. Step 5 is built for the batch's solve (2026-11-18, 0353 step 5): the axis's ids written once into a relation of
+   its own in a run's block, with room for its two indexes, read in place by the CPU and the device. hogql 16z:
+   copies 125.9 MB a run against 792.4 MB, refusals at run time 2 a run against 5–22, findings 1,629. Left: `has`'s
+   probe on the device (with 4b's parent probes), then step 6.
 
 Q86 (step 6's prices) waits for step 4: most of what it prices goes.
+
+Q68 after step 5: the refusals that remain on hogql are 2 a run (binding tables, one index of 0.8 M rows). The
+device-budget failures surfaced as a bare `BackendFailure`: a `String` error turned into `Error` loses its text
+(`compiler::Error::from`), so a refusal names no cause; naming it is part of Q68.
 
 ### Q58. 0325's FACTS blocks raise a CPU run's footprint, and the memory line cuts a third more chunks
 
@@ -3576,7 +3665,7 @@ Q86 (step 6's prices) waits for step 4: most of what it prices goes.
   block is given back only with its last part (0325, step 2's open item).
 
 
-### Q90. (Q90 at Native-and-GPU-strata d0224e02d) Parked strata resumed on another thread are refused to the CPU
+### Q90. (Q90 at Native-and-GPU-strata d0224e02d) Parked strata resumed on another thread are refused to the CPU — done 2026-11-18
 
 A stratum whose device joins wait for the wave (`setfix::device::submit`) keeps its encoded runs in its thread's
 `SUSPENDED`. A job run while its thread waited (`Stream::wait` helps the pool) can join a wave that thread had open
@@ -3592,6 +3681,17 @@ always a refusal.
 - Route a parked member back to the thread that holds its submission, or flush that wave before the job hands its
   members back (the job's mark taken before the thread's open wave, not after).
 - **Done when**: no hogql run has the refusal, findings unchanged over 20 runs.
+- **Done** (2026-11-18): a job is a scope of the thread's wave (`lanes::wave::enter`). Its floor is where the
+  thread's launches and deferred submissions stood when it began; inside it `flush` runs only what lies past the
+  floor, and a device submission joins an open wave only if that wave was opened past it (`opened_in_scope`). The
+  device's open waves are a stack (`setfix::device::WAVE`), each flushed by number. So a job's strata always open the
+  job's own wave, `deferred_since(mark)` holds, and they are flushed and resumed on the thread that holds them; the
+  thread's own wave stays for it. Test: `a_job_flushes_its_own_submissions_and_not_its_threads`. hogql: 2, 5 and 8
+  such refusals in three 16z runs before; none in 24 after (21 format 15, three 16z), findings 1,629 in each.
+- **Superseded** (2026-11-18, at the merge of the hub's ffc390de8): decision 0386 makes a job's wave its own, which
+  covers the floor's case and more. Every pool job runs in a `lanes::wave::Scope`, which sets the thread's queued,
+  deferred and open submissions aside and puts them back as it leaves. So the floor, `opened_in_scope` and the stack
+  of waves are gone. The test is kept on the `Scope`.
 
 ### Q68. The shared cache returns a crate built against another version of a vendored crate
 
@@ -5123,7 +5223,7 @@ a device join, `metal_join.rs` `index`, with `base_rows` 2,436,104,195. A loop o
 in `Relation::index_built`, from a wave's `Batch::finish`): the store through the descriptor's `indexes` span,
 whose offset word was data. Both runs saw a relation's descriptor overwritten with row values.
 
-- **Cause (0403, "Q265")**: the device's row writers (`view_expand`, `rows_copy` into a relation, the lattice's
+- **Cause (0427, "Q265")**: the device's row writers (`view_expand`, `rows_copy` into a relation, the lattice's
   held rows) stored through `rows_at` with no bound. A row past the chunks its relation holds finds a chunk offset
   of 0, so its address is the column's directory, and the write goes over it and the descriptors after it
   (`the_devices_row_writer_stays_in_its_rows` shows the address). The host sizes each write against the `DevRel`'s
@@ -5142,7 +5242,7 @@ whose offset word was data. Both runs saw a relation's descriptor overwritten wi
 - **Which it was**: `rows_put` refused nothing in 540 runs, and every device part's chunks cover its rows. The
   crashes stopped with the walk bounds and the dead entry: 533 clean since, against 2 in about 245 before. The
   garbage words look like ORed bits more than row values. So the label marks are the likely writer; both chains are
-  bounded now, which no run can tell apart from here (0403, "Open").
+  bounded now, which no run can tell apart from here (0427, "Open").
 - **The torn read alone does not do it**: an engine with the dead entry undone (the exhausted read back on the entry
   as found, everything else at `e949b985b`) ran 12 runs with a 1 MB cache (10 to 16 million failed reads each) and
   180 at the usual size: no node past a batch, no row refused, no crash, every run 1629 findings. So a torn value
@@ -5150,7 +5250,7 @@ whose offset word was data. Both runs saw a relation's descriptor overwritten wi
   the writes they fed are bounded where they are made; the guards count (`gpu.node_past_batch`, the refusal), so a
   run that still reaches one names it. 600 runs on `engine-q125d` (the guards) since: none reached one.
 
-### Q266. (Q126 on Native-and-GPU-strata until 2026-11-18; Q187 on oscar until 2026-11-18) Source reads at a node's span, held to the source (0403's open part) — done 2026-11-18
+### Q266. (Q126 on Native-and-GPU-strata until 2026-11-18; Q187 on oscar until 2026-11-18) Source reads at a node's span, held to the source (0427's open part) — done 2026-11-18
 
 `tape_start` is held to the source's length (the view's `source_len`, now set by every format's view from the
 tape's header), and `tape_end` between the start and the source's end. So every kernel's text read at a span
@@ -5189,15 +5289,15 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
   its index was built"), from a host stream stratum's job. The other 8 found 1,629, as 16z (1 run) and 15 (1 run)
   did. The failing run's log was replaced by the next run's, so the relation and the bytes that changed are not
   known; `tmp/hogql/loop16.sh` now stops at a panic and prints it.
-- **What differs from Q265's runs**: format 16 is 0434's block-major tape (oscar), read by the views and the label
+- **What differs from Q265's runs**: format 16 is 0426's block-major tape (oscar), read by the views and the label
   kernels through `block_column`; Q265's 600 clean runs were 16z on strata's own layout. Oscar never had the guard,
   so whether oscar's format 16 wrote over a descriptor before the merge is not known either.
 - **Do**: catch one with its message (the bytes changed say which writer: ORed bits are label marks, row values a
-  row writer), then bound that writer where it writes (0403).
+  row writer), then bound that writer where it writes (0427).
 - **Not caught again** in 52 more runs (28 of format 16 alone, then 24 of 16z and 16 in turn, the failing run's
   order; three at a time, 2026-11-18).
 - **A hole found meanwhile**: oscar's scans in the label kernels (0396's `scan_marks`, `sibling_pass`) marked and
-  tallied start and capture nodes without 0403's node bound, which the merge ported onto strata's `MARK`/`TALLY`
+  tallied start and capture nodes without 0427's node bound, which the merge ported onto strata's `MARK`/`TALLY`
   callers only. Those are Q265's likely writer (ORed bits, atomic adds at a node's offset). They are bounded now; a
   node past the batch is counted (`gpu.node_past_batch`) and its passes run on the interpreter, so a run that
   reaches one names it.
@@ -5547,20 +5647,7 @@ Found 2026-11-18, measuring 0364 over the O125 replay (`maintain-measure.sh cold
   outputs and engine under the host's `$TMPDIR`, outside the checkout.
 - **Record**: this entry.
 
-### Q216. (Q123 on Native-and-GPU-strata at 903627c46) Spans' places read by the `Loc` views (0353 step 3, row 7)
-
-Where `Extra` makes spans (`source`, `src_line`, `src_line_lf`, `tape_line`, a regex's matches, comments, `rx_span`),
-it also makes `line`, `end_line`, `col` and `docof` rows for every node and token, and `Batch::made` binds those in
-place of the views: copies of tape answers. The views already cover the whole source and its lines
-(`Locs::positions`, `ExtraSpan::Line`).
-- **Do**: write the other spans' byte ranges once into the batch's block where `Extra` makes them (a derived fact),
-  and have `View::Loc` read them past its own positions (`local_of` maps a span id there through
-  `granules::span_of`); then `Extra` makes no place rows, and `made` binds no place relation.
-- **Check**: the view's rows equal the rows made today, for a program reading each span relation.
-- **Done when**: no place row is made for a node or token in core.rerail's shape.
-
-
-### Q217. (Q124 on Native-and-GPU-strata at 903627c46) The device's `str_cmp` of made texts loses rows under load
+### Q217. (Q124 on Native-and-GPU-strata until 2026-11-18; Q185 on oscar until 2026-11-18) The device's `str_cmp` of made texts loses rows under load — done 2026-11-18
 
 `device::parity::parity_random_texts` (seeded, deterministic cases) differed in 2 of 16 full runs (2026-11-17), each
 time a different case, each a `str_cmp` over a made text (`cat`, `sql_replace` into the arena): #216 (device 6
@@ -5571,6 +5658,14 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   not taken; a made text read by the next dispatch before its write is visible.
 - **Do**: find which (count the stage's reruns and the arena's fill in a failing run), then fix it at its cause.
 - **Done when**: 60 runs, six at a time, all pass.
+- **Done** (2026-11-18, at `3200d8871`): 300 runs of `parity_random_texts` (120 six at a time, 180 twelve at a
+  time; `tmp/gpu/q124/six.sh`), each running all 1,200 cases on the device with no refusal (`--nocapture`), all
+  equal to the CPU's. What ended it is not proven: no build of the old commit was made to tell. The likeliest is
+  `683d9f62e` (Q265): before it, a device row's stores went through `rows_at`, 8 bytes whatever its column's width
+  and unbounded by its chunks, so stores made in parallel could overwrite their neighbours in whatever order the
+  threads ran. The two suspects above were read and hold: a full arena's text sets `TEXTFN_FULL` and `complete`
+  runs the stage again from its first text function in a new batch's arena; and the join's passes are one serial
+  encoder, each dispatch seeing the last's writes.
 
 ### Q225. (Q179 on cost-classifier-metal-rf) (done) The combine's tail lost a merge's renamed reader (`DropRepeated` left the record by place)
 
@@ -6095,3 +6190,145 @@ Open:
     `git ls-files --cached --others --exclude-standard`), so the fixtures stay here. The six files they read are
     upstream ruff copies, byte-equal at 236fc98d2~1 and in the hub's worktree (#191 added Rerail's own fixtures,
     not these): placed from git history, sent with `--tree packs/python/upstream/ruff/fixtures`, both pass on Linux.
+
+### Q319. (Q258 on final-rerail-shape until 2026-11-19) Red after the merge of the hub's ffc390de8: four planner tests and the hub's test targets
+
+At the merge of `jeremybarnes/final-shape-serverplan-quality` (ffc390de8) into this branch, 2026-11-18. The hub's own
+test targets did not compile at ffc390de8, so its lib tests had not run there. Three causes were fixed at the merge:
+- `rerail-engine`'s lib tests: `rr::tests` read `Version::layouts` as a field (now `ProgramFields::layouts`).
+- `rerail-device-metal`'s lib tests: `typing::file_local::tests` called `push_local_joins`, the tree form that 0276
+  step 6 removed (the test now checks the version's pass alone), and `push_equal_columns`, private to the crate
+  that the device crate mounts the tests over (now `pub`).
+- 16 planner tests failed on "a space's kept facts: No such file or directory". The test stores' template copied
+  its folders' files and not their folders. The kept facts are a folder a space (0401), so every copy's rows named
+  blocks it lacked. `test_store::clone_dir` now copies folders too.
+
+Four tests are still red. None reads code this branch or oscar changed (`corpus.rs` is the hub's exactly):
+- `plan::corpus::tests::every_switch_lowering_reads_is_classified`: `corpus.rs has no "Ok((all, Tail::Many { hide,
+  policies }))" after "\nfn combine_linked_as<"`. The test reads the source text the hub changed.
+- `plan::corpus::tests::the_run_after_a_cold_one_writes_nothing`: the warm run writes "the kept plans" (0387) and
+  `observer_meta`.
+- `plan::corpus::maintain_tests::r7_the_recheck_order_is_priced`: 2 recheck lines unpriced after a use is added.
+- `plan::corpus::tests::a_header_edit_asks_again_only_for_the_units_that_read_it`: Q223's, the journal's timing.
+
+Two slow ones timed out at 240 s at load 40–70 (`phase0::tests::bootstrap_resolves_as_the_builtin_reader_does`,
+`rr::tests::library_modules_link_to_the_lowering_of_them_together`).
+- **Do**: the hub's owners fix them where they arise; this branch takes the fixes at its next merge of the hub.
+
+### Q320. (Q259 on final-rerail-shape until 2026-11-19) hogql retires 10-20% more instructions than at 0353 step 5, after the merges of oscar and the hub
+
+First filed as a 5-8 times rise. That compared debug builds with profiling builds; build against build it is smaller,
+and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 findings every time:
+- Format 15: 71-82 B at step 5 (c3e855c09), 86-90 B at the tip (9ae441f5b).
+- 16z: 107-112 B at step 5, 120-124 B at the tip. System time doubles: 1.1-1.7 s against 2.3-4.1 s.
+- Debug builds (16z) do not show it: 650 B at step 5, 617-621 B at the hub's merge. The debug numbers are not the
+  product's cost.
+- **Where** (format 15 forced, interleaved, three runs each): step 5 71 B, 47ac05ff2 (before oscar) 69-70 B, the tip
+  82-92 B. It came with oscar's merge, which brought the hub's 47785e475 (Q55: the chunks in flight share the run's
+  headroom). Chunk sizes went from 262,144 nodes to about 11,000, run 3 at once: hogql's 2.6 M nodes are 90 chunks
+  against 32. Each stratum and matcher wave runs once a chunk, so 7,032 stratum runs against 2,255 and 119 matcher
+  launches against 46, and the host's per-run costs grow with them. 0365's anchors are not it (RERAIL_ANCHORS=off:
+  83-84 B).
+- **Why the chunks stay small**: the next chunk is sized by the most bytes a node measured this run (7,917, set by
+  one chunk that added 110 MB), not the latest. Peak footprint fell, 1,194 MB to 865 MB.
+- **Step 5's size no longer fits Metal**: at RERAIL_CHUNK_NODES=262144 the tip's label wave holds 887-1,044 MB of the
+  driver against the 512 MB budget, and the run stops (0382 §6; django-bugs' Q245). Before 1f88389be those refusals
+  ran the waves on the CPU unseen (39-59 a run), so step 5's 71 B already carried them.
+- **Attributed** (t49 §3, with the settings applied; an earlier "correction" here came from runs where my script
+  passed none): chunk size is the whole rise. With the Metal budget at 4 GB, 262,144-node chunks retire 71-72 B on
+  Metal, against 86-87 B at the default sizing and 69-70 B before oscar's merge. They peak at 2.2-2.5 GB against 0.9 GB.
+- **Do**: Q322, which lets chunks be large without a guess.
+
+### Q321. (Q260 on final-rerail-shape until 2026-11-19) A Metal buffer refused by the driver's count, with idle buffers holding the room, stopped hogql
+
+- **Seen**: hogql in format 15 at the default 512 MB budget, after 1f88389be came in with oscar's merge (decision
+  0382 §6: the AST matcher wave's failed Metal run stops the run). 6 runs in 9 stopped on "the ast matcher wave
+  failed on Metal: BackendCapacity". `MappedBuffer`'s allocation (`rerail_metal::runtime::owned_allocation`) refused a
+  buffer under 1 MB for `metal_label_passes`' supertypes: the driver held 525-533 MB. Of that, relational work's
+  pool held 48-166 MB idle, and about 110 MB was in no ledger. The pool trims its idle buffers by the ledgers'
+  count (`make_room`), which still left them room. Before 0382 §6 the wave ran on the CPU after this refusal, unseen.
+- **Done**, in two steps. (1) 9ae441f5b: the refusal makes room by the driver's count first (`make_device_room`: idle
+  buffers least recently returned, then the residency's slabs). Not enough: each call left 1-2 MB, another thread's
+  lease took it, and 2 profiling runs of 6 still stopped. (2) The pool trims its idle buffers against the larger of
+  the two counts (`idle_room`: the ledgers', or the driver's less the idle buffers), at every return. The idle buffers
+  stay out of the driver's room, and the refusal's room making never runs. hogql: format 15 8 runs of 8, 16z 4 of 4,
+  1,629 findings. Tests: `the_driver_count_makes_room_from_idle_buffers`, `idle_buffers_give_way_to_buffers_no_ledger_counts`
+  (fails without step 2).
+- **Open**: what the 110 MB no ledger counts is (kernels' buffers, the kernel store's?). django-bugs' Q245 (a big
+  chunk's wave refused at 1 and 4 GB) may be this refusal.
+
+### Q322. (Q261 on final-rerail-shape until 2026-11-19) One memory budget counted by what the engine writes; blocks grown in place; chunks grown (t49)
+
+- **Seen** (t49): on unified memory the engine keeps two budgets with two measures, the footprint (the run's 1 GB
+  line) and the driver's lengths (Metal's 512 MB). Neither is what the engine writes, and each sees the other's memory.
+  Row blocks are leased whole (64 MB or 16 MB): about 70 MB of rows hold 260-290 MB of the Metal budget, and no-copy
+  wraps of memory already held count again (about 150 MB). The footprint misses pages the GPU writes into a wrap. So
+  chunks are guessed small, and big ones, the cheap ones (71-72 B against 86-87 B on hogql), are refused.
+- **Do**, in t49 §6's order:
+  1. One budget counted by bytes written (blocks' used, leases' written ends, the heap's live bytes); the pool's idle
+     buffers within it.
+  2. Row blocks reserved large, wrapped once, grown in place, their tails released.
+  3. Chunks grown from small by the latest measure in that count.
+- **Done** (decision 0435, 2026-11-18): 1 and 3. A `Device::May` block is host memory, the Metal checks weigh only
+  the device's own buffers, one count (`rerail_accel::budget::written`) against one limit, chunks sized by
+  `plan/corpus/sizing.rs`. hogql: Metal 79-82 B to 72-73 B (16-19 chunks, no stop), the CPU unchanged at 87 B.
+- **Open**: why a 4,096-node first chunk makes 20-30 negation-split strata (`pre_k`) where 65,536 makes 11, and
+  1-5 B more on the CPU (the two first-chunk runs at one size also differ, 127 against 154 strata); 2 (row blocks
+  reserved large and grown in place, tails released); the Metal peak footprint at big chunks
+  (1.36-1.47 GB, the count's most 1.15 GB), whose largest rise t49 found in the guests' `ann_ctx` stratum.
+
+### Q323. (Q262 on final-rerail-shape until 2026-11-19) Four observer tests fail: the settle window's, and Q189's listings
+
+- **Same four as Q250** (seen on final-rerail-shape; joined at the merge of CUDA-support, 2026-11-19). The
+  journal's bound fix is in both; one entry closes both.
+
+- **Found** (2026-11-19, on CUDA-support): `rerail-store`'s tests did not compile. A merge (the settle window,
+  Q179, with Q184's bound) left two of the journal test's `since` calls without `settle`, and the replay's wait
+  took `WAIT.max(settle)` in place of the caller's bound. Both are fixed on CUDA-support. The journal's tests pass
+  again, Q221's bound of nothing included.
+- **Open**: `observe::tests::an_answer_recorded_within_the_settle_window_is_checked_though_the_journal_names_nothing`
+  fails with or without the bound's fix. With no window (`settle_ns = 0`) it expects the journal's silence trusted
+  and the edit missed; the observer instead forgets both answers as changed and hashes the file again (`0 trusted by
+  the journal (2 forgotten as changed)`, `1 files hashed`).
+- **Also open**, failing with or without the bound's fix, hidden while the tests did not compile: Q189's listing
+  tests `a_small_root_is_checked_by_listings_not_stats`, `a_listing_names_an_edited_file_and_no_other` and
+  `a_directory_that_cannot_be_listed_names_what_it_held` (the last: `0 directories listed`, 9 stats where it
+  expects none).
+- **Keep**: Q179's window (an answer recorded within it is checked though the journal names nothing); Q184's bound;
+  Q189's listings (a small root checked by listing its directories, not by a stat a file).
+- **Done when**: the four pass, or an assertion is shown to state a behaviour the observer no longer has on
+  purpose, and is changed with the reason.
+
+### Q327. (Q283 on final-rerail-shape until 2026-11-19) A level's formulas as phases: the pushes' chains are the time (0461; done in 0463)
+
+- **Found** (2026-11-19, 0461): `label_phase` runs a level's word steps and one-hop pushes in one dispatch a phase
+  for the whole batch. Its word steps cost about 32 µs a dispatch, but its pushes are chains within a thread: up to 7
+  dependent hops for a format 16 parent, and one hop for each child. On s1000 it does not beat `label_formula`, so it
+  stays behind `RERAIL_FORMULA_PHASES=1`.
+- **Next**, in this order:
+  1. spread a phase's members over its SIMD group (`simd_roots`, as `label_micro`'s roots), then measure big1 and
+     s1000;
+  2. range steps (descendants, following, reaches: ops 8, 10, 11, 15, 16, 23–25) as scans between blocks, so a
+     level runs on one kernel;
+  3. then compare a level's phases with 0459's size classes, and remove the loser.
+- **Done** (2026-11-19, 0463): the parents once a batch (`label_parents`), the range steps as scans and the climbs, so
+  every formula runs on `label_phase`; `label_formula` and 0459's size classes are removed. The SIMD spread was not
+  built: the pushes are under 1 ms once a parent is one load. Left: `label_leaves` (7.4–11 ms on s1000), the
+  epilogue (2–3 ms), and a descendant scan in one dispatch (decoupled look-back).
+
+### Q328. (Q284 on final-rerail-shape until 2026-11-19) After 0465: the parse workers, the serial phases, and small label runs
+
+- **Found** (2026-11-19, 0465), on all (3,089 files, 9.6 M nodes; about 20 s on an M1 Max):
+  - the parse workers take 13.4 s of CPU (4.3 ms a file);
+  - the run uses 3.3–3.6 of 10 cores, with 13–48 s of its threads ready and no core;
+  - the run's thread spends 8–10 s in serial phases: cross 2.7–5.1 s, stats 2.1–2.5 s (400,000–800,000
+    involuntary switches), combine 2.2–3.0 s;
+  - the large program's label runs are 283 runs with a median of 6 files, where s1000's were 6 runs with a median of
+    36. Each run pays its fixed costs.
+- **Next**, in order:
+  1. Why the pool oversubscribes its cores, and the parse workers' CPU a file.
+  2. `stats`' switches, `cross`' `public_best_*` waits, `combine`'s fixpoint waits.
+  3. Trace where the small label runs come from, then batch them to a chunk's size.
+  4. A cold first Metal run of all exited 1 (its log was lost). Reproduce it with a fresh binary path.
+
+

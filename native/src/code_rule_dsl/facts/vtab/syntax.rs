@@ -3398,8 +3398,9 @@ impl Batch {
         };
         let mut docs: Vec<Projected> = Vec::with_capacity(documents.len());
         // The batch's block: what the projections can take, the chunk's copies of the facts' arrays (4 bytes a node for
-        // each of `parent`, `start`, `end`, `kind`, `core.rerail`'s places; `field`'s 2), its tables, and the axes' pairs
-        // read whole (`put_pairs`, up to 1 GB). The block reserves address space, not memory.
+        // each of `parent`, `start`, `end`, `kind`, `core.rerail`'s places; `field`'s 2), its tables, and the starts of the
+        // axes the device solves (4 bytes a node; their rows are relations of their own, decision 0353 step 5). The
+        // block reserves address space, not memory.
         let block = cells::block((documents.iter().map(|d| Projected::bytes(&d.facts) + 22 * d.facts.len() + 4096).sum::<usize>() + (1 << 20) + (1 << 30)).next_power_of_two());
         // Decision 0055: each document's role, root and tape; each guest's place, and its nodes' host nodes. A guest's
         // key is past every file's (`corpus::guests`), so its host is projected first and its lines are known.
@@ -3766,7 +3767,7 @@ impl Batch {
         Some(i)
     }
     /// The document index and node of id `n`.
-    fn node(&self, n: i64) -> Option<(usize, u32)> {
+    pub fn node(&self, n: i64) -> Option<(usize, u32)> {
         let doc = self.doc(n >> 32)?;
         let local = self.docs[doc].local_of((n & 0xffff_ffff) as u32)?;
         (n >= 0 && local < self.docs[doc].len()).then_some((doc, local))
@@ -3944,7 +3945,6 @@ impl Source for Viewed {
             root: chunk.root,
             view,
             rows: self.len(),
-            pairs: 0,
             #[cfg(target_os = "macos")]
             in_place,
         })
@@ -4630,7 +4630,8 @@ impl Matchers {
 /// What compiles a program's `ast` matchers (`rel`, the matcher's text, its captures) over its first `.policy`: the
 /// engine's (`waves::policies`), registered at load.
 pub trait AstCompiler: Send + Sync {
-    fn compile(&self, matchers: &[(String, String, Vec<String>)], policies: &[serde_json::Value]) -> Result<Matchers, String>;
+    /// `demand`: per matcher, the matchers whose roots hold every node its rows are read at (`None`: everywhere).
+    fn compile(&self, matchers: &[(String, String, Vec<String>)], demand: &[Option<Vec<usize>>], policies: &[serde_json::Value]) -> Result<Matchers, String>;
 }
 
 static AST_COMPILER: std::sync::OnceLock<&'static dyn AstCompiler> = std::sync::OnceLock::new();
@@ -4641,12 +4642,12 @@ pub fn install_ast_compiler(compiler: &'static dyn AstCompiler) {
 }
 
 /// `matchers` compiled; a program with matchers and no registered compiler fails, naming the first.
-pub fn compile_matchers(matchers: &[(String, String, Vec<String>)], policies: &[serde_json::Value]) -> Result<Matchers, String> {
+pub fn compile_matchers(matchers: &[(String, String, Vec<String>)], demand: &[Option<Vec<usize>>], policies: &[serde_json::Value]) -> Result<Matchers, String> {
     if matchers.is_empty() {
         return Ok(Matchers::default());
     }
     match AST_COMPILER.get() {
-        Some(compiler) => compiler.compile(matchers, policies),
+        Some(compiler) => compiler.compile(matchers, demand, policies),
         None => Err(format!("{}: no compiler of `ast` matchers is registered", matchers[0].0)),
     }
 }

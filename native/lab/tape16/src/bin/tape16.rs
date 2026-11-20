@@ -1762,7 +1762,7 @@ fn cmd_f16(path: &str) {
     }
 }
 
-/// Decision 0434 §6: 16z's pieces by compressor, HC 9 against lower levels and LZ4's fast one (`zlevel.rs`).
+/// Decision 0426 §6: 16z's pieces by compressor, HC 9 against lower levels and LZ4's fast one (`zlevel.rs`).
 fn cmd_zlevel(path: &str) {
     let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
     let mut by_tag: BTreeMap<u8, Vec<&capture::File>> = BTreeMap::new();
@@ -1779,7 +1779,7 @@ fn cmd_zlevel(path: &str) {
     }
 }
 
-/// Decision 0434 §5 (step 5): 16z's pieces as LZ4 sequences of node-range matches, against HC 9 (`zlevel.rs`).
+/// Decision 0426 §5 (step 5): 16z's pieces as LZ4 sequences of node-range matches, against HC 9 (`zlevel.rs`).
 fn cmd_zrange(path: &str) {
     let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
     let mut by_tag: BTreeMap<u8, Vec<&capture::File>> = BTreeMap::new();
@@ -1796,7 +1796,7 @@ fn cmd_zrange(path: &str) {
     }
 }
 
-/// Decision 0434 §6: the writer's ops in CLIF against the reference writer, on every file (`zlevel.rs`).
+/// Decision 0426 §6: the writer's ops in CLIF against the reference writer, on every file (`zlevel.rs`).
 fn cmd_zops(path: &str) {
     let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
     let mut by_tag: BTreeMap<u8, Vec<&capture::File>> = BTreeMap::new();

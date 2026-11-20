@@ -12,7 +12,7 @@ const OPCODES: [u8; 25] = [
 
 #[test]
 fn the_verifier_and_the_metal_interpreter_share_one_opcode_set() {
-    let source = include_str!("../metal_batch_runtime.metal");
+    let source = include_str!("../batch_runtime.uglykl");
     let (_, rest) = source.split_once("/*OP_SWITCH_BEGIN*/switch(op){").expect("the step switch");
     let (switch, _) = rest.split_once("/*OP_SWITCH_END*/").expect("the step switch's end");
     let mut metal = std::collections::BTreeSet::new();

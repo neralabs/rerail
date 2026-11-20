@@ -295,7 +295,7 @@ impl Drop for MetalWorkspaceLease {
     }
 }
 
-const BATCH_ENTRY: &str = include_str!("metal_batch_runtime.metal");
+const BATCH_ENTRY: &str = include_str!("batch_runtime.uglykl");
 /// The tape's reads and readers (decision 0310), before the runtime: every batch reads its documents in the
 /// batch's chunk block through the tape view (decision 0032), with no node records: the document table's entry as
 /// generated (`slabs::msl`, decision 0289 §4), the reads written once (decision 0310), then the readers.
@@ -305,10 +305,10 @@ static RESIDENT_PREFIX: std::sync::LazyLock<String> = std::sync::LazyLock::new(|
 
 fn prefix(defines: &str) -> String {
     format!(
-        "{defines}#include <metal_stdlib>\nusing namespace metal;\n{}{}{}",
+        "{defines}{}{}{}",
         crate::code_rule_dsl::residency::slabs::msl(),
-        include_str!("metal_tape_reads_z.metal"),
-        include_str!("metal_tape.metal")
+        "#include <ukl/reads/tape_z.h>\n",
+        include_str!("device_tape.h")
     )
 }
 
@@ -461,7 +461,7 @@ fn kernel_source(
             .find("/*OUTPUT_END*/")
             .expect("Metal runtime has an output-call end marker")
             + "/*OUTPUT_END*/".len();
-        source.replace_range(output_begin..output_end, "jit_apply_output(outputContext)");
+        source.replace_range(output_begin..output_end, "jit_apply_output(&outputContext)");
     } else {
         source = source
             .replace("/*OP_SWITCH_BEGIN*/", "")
@@ -495,72 +495,95 @@ fn opcode_bodies() -> Result<std::collections::BTreeMap<u8, &'static str>, Error
     Ok(bodies)
 }
 
-const JIT_CONTEXT: &str = "JitContext context={&nodes,children,supertypes,words,longs,values,strings,nfaStates,nfaData,nfaRanges,luaInstructions,luaMembers,valueWork,stringBytes,source,assertions,assertionData,captures,cursors,repeats,queuedStates,greedyEntries,pending,results,&lineStarts,task,file,program,node,&evaluation,&globalArenas,valueBase,valueCapacity,&status,&path,&pendingCount,&captureCount,&cursorCount,&repeatCount,&resultCount,&candidateHead,&localOrdinal,&keep,&advance};";
-const JIT_OUTPUT_CONTEXT: &str = "JitOutputContext outputContext={assertionData,program,task,file,&nodes,captures,raw.captureStart,raw.captureCount,finalCaptures,&finalCaptureCount,&captureBefore,outputStorage,&propertyCount,&outputByteCount,source,&lineStarts,values,nfaStates,nfaData,nfaRanges,valueWork,resultIndex,&resultProperties,&dynamicProperties,&outputSteps,&evaluation,&sharedEvaluation,&globalArenas,valueBase,valueCapacity};";
+/// The JIT's context of a step (`jit_support`): the task's buffers and tables, and its state, which a step reads
+/// and writes through these pointers (UKL is C: no references).
+const JIT_CONTEXT: &str = "JitContext context={nodes,children,supertypes,words,longs,values,strings,nfaStates,nfaData,nfaRanges,luaInstructions,luaMembers,valueWork,stringBytes,source,assertions,assertionData,captures,cursors,repeats,queuedStates,greedyEntries,pending,results,lineStarts,task,file,program,node,evaluation,globalArenas,valueBase,valueCapacity,status,&path,&pendingCount,&captureCount,&cursorCount,&repeatCount,&resultCount,&candidateHead,&localOrdinal,&keep,&advance};";
+const JIT_OUTPUT_CONTEXT: &str = "JitOutputContext outputContext={assertionData,program,task,file,nodes,captures,raw.captureStart,raw.captureCount,finalCaptures,&finalCaptureCount,&captureBefore,outputStorage,&propertyCount,&outputByteCount,source,lineStarts,values,nfaStates,nfaData,nfaRanges,valueWork,resultIndex,&resultProperties,&dynamicProperties,&outputSteps,evaluation,sharedEvaluation,globalArenas,valueBase,valueCapacity};";
+
+/// The JIT's state of a task that a step changes, by name and type: a step works on copies under the names the
+/// opcode bodies use (as in `run_task_in`), written back when it finishes. A step that stops the task (`return
+/// false`) writes nothing back: the task ends there, as the interpreter's `return` ends it.
+const JIT_STATE: [(&str, &str); 10] = [
+    ("Path", "path"),
+    ("uint32_t", "pendingCount"),
+    ("uint32_t", "captureCount"),
+    ("uint32_t", "cursorCount"),
+    ("uint32_t", "repeatCount"),
+    ("uint32_t", "resultCount"),
+    ("uint32_t", "candidateHead"),
+    ("uint32_t", "localOrdinal"),
+    ("bool", "keep"),
+    ("bool", "advance"),
+];
 
 fn jit_support(
     bodies: &std::collections::BTreeMap<u8, &'static str>,
     programs: &[Program],
 ) -> Result<String, Error> {
     let mut source = String::from(
-        "struct JitContext{thread const NodeTable* nodes;device const uchar* children;device const Supertype* supertypes;device const ulong* longs;device const ValueRecord* values;device const StringRecord* strings;device const NfaState* nfaStates;device const uint* nfaData;device const NfaRange* nfaRanges;device const LuaInstruction* luaInstructions;device const LuaMember* luaMembers;device uint* valueWork;device const uchar* stringBytes;device const uchar* source;device const Assertion* assertions;device const uint* assertionData;device Link* captures;device Link* cursors;device RepeatLink* repeats;device Path* pending;device Result* results;thread const LineTable* lineStarts;Task task;File file;Program program;Node node;device Evaluation* evaluation;device GlobalArenas* globalArenas;uint valueBase;uint valueCapacity;device Status* status;thread Path* path;thread uint* pendingCount;thread uint* captureCount;thread uint* cursorCount;thread uint* repeatCount;thread uint* resultCount;thread uint* candidateHead;thread uint* localOrdinal;thread bool* keep;thread bool* advance;};template<uint OP> __attribute__((noinline)) bool jit_step(thread JitContext& context,uint mode,uint operand){thread const NodeTable& nodes=*context.nodes;device const uchar* children=context.children;device const Supertype* supertypes=context.supertypes;device const ulong* longs=context.longs;device const ValueRecord* values=context.values;device const StringRecord* strings=context.strings;device const NfaState* nfaStates=context.nfaStates;device const uint* nfaData=context.nfaData;device const NfaRange* nfaRanges=context.nfaRanges;device const LuaInstruction* luaInstructions=context.luaInstructions;device const LuaMember* luaMembers=context.luaMembers;device uint* valueWork=context.valueWork;device const uchar* stringBytes=context.stringBytes;device const uchar* source=context.source;device const Assertion* assertions=context.assertions;device const uint* assertionData=context.assertionData;device Link* captures=context.captures;device Link* cursors=context.cursors;device RepeatLink* repeats=context.repeats;device Path* pending=context.pending;device Result* results=context.results;thread const LineTable& lineStarts=*context.lineStarts;Task task=context.task;File file=context.file;Program program=context.program;Node node=context.node;device Evaluation& evaluation=*context.evaluation;device GlobalArenas& globalArenas=*context.globalArenas;uint valueBase=context.valueBase,valueCapacity=context.valueCapacity;device Status& status=*context.status;thread Path& path=*context.path;thread uint& pendingCount=*context.pendingCount;thread uint& captureCount=*context.captureCount;thread uint& cursorCount=*context.cursorCount;thread uint& repeatCount=*context.repeatCount;thread uint& resultCount=*context.resultCount;thread uint& candidateHead=*context.candidateHead;thread uint& localOrdinal=*context.localOrdinal;bool keep=*context.keep,advance=*context.advance;constexpr uint op=OP;",
+        "typedef struct JitContext{UKL_PRIVATE const NodeTable* nodes;UKL_GLOBAL const uint8_t* children;UKL_GLOBAL const Supertype* supertypes;UKL_GLOBAL const uint32_t* words;UKL_GLOBAL const uint64_t* longs;UKL_GLOBAL const ValueRecord* values;UKL_GLOBAL const StringRecord* strings;UKL_GLOBAL const NfaState* nfaStates;UKL_GLOBAL const uint32_t* nfaData;UKL_GLOBAL const NfaRange* nfaRanges;UKL_GLOBAL const LuaInstruction* luaInstructions;UKL_GLOBAL const LuaMember* luaMembers;UKL_GLOBAL uint32_t* valueWork;UKL_GLOBAL const uint8_t* stringBytes;UKL_GLOBAL const uint8_t* source;UKL_GLOBAL const Assertion* assertions;UKL_GLOBAL const uint32_t* assertionData;UKL_GLOBAL Link* captures;UKL_GLOBAL Link* cursors;UKL_GLOBAL RepeatLink* repeats;UKL_GLOBAL QueuedState* queuedStates;UKL_GLOBAL GreedyEntry* greedyEntries;UKL_GLOBAL Pending* pending;UKL_GLOBAL Result* results;UKL_PRIVATE const LineTable* lineStarts;Task task;File file;Program program;Node node;UKL_GLOBAL Evaluation* evaluation;UKL_GLOBAL GlobalArenas* globalArenas;uint32_t valueBase;uint32_t valueCapacity;UKL_GLOBAL Status* status;UKL_PRIVATE Path* path;UKL_PRIVATE uint32_t* pendingCount;UKL_PRIVATE uint32_t* captureCount;UKL_PRIVATE uint32_t* cursorCount;UKL_PRIVATE uint32_t* repeatCount;UKL_PRIVATE uint32_t* resultCount;UKL_PRIVATE uint32_t* candidateHead;UKL_PRIVATE uint32_t* localOrdinal;UKL_PRIVATE bool* keep;UKL_PRIVATE bool* advance;} JitContext;",
     );
-    for (index, (opcode, body)) in bodies.iter().enumerate() {
-        source.push_str(if index == 0 {
-            "if constexpr("
-        } else {
-            "else if constexpr("
-        });
+    // The names an opcode body reads, from the context (`run_task_in`'s, which the bodies are written in).
+    let unpack = "UKL_PRIVATE const NodeTable* nodes=context->nodes;UKL_GLOBAL const uint8_t* children=context->children;UKL_GLOBAL const Supertype* supertypes=context->supertypes;UKL_GLOBAL const uint32_t* words=context->words;UKL_GLOBAL const uint64_t* longs=context->longs;UKL_GLOBAL const ValueRecord* values=context->values;UKL_GLOBAL const StringRecord* strings=context->strings;UKL_GLOBAL const NfaState* nfaStates=context->nfaStates;UKL_GLOBAL const uint32_t* nfaData=context->nfaData;UKL_GLOBAL const NfaRange* nfaRanges=context->nfaRanges;UKL_GLOBAL const LuaInstruction* luaInstructions=context->luaInstructions;UKL_GLOBAL const LuaMember* luaMembers=context->luaMembers;UKL_GLOBAL uint32_t* valueWork=context->valueWork;UKL_GLOBAL const uint8_t* stringBytes=context->stringBytes;UKL_GLOBAL const uint8_t* source=context->source;UKL_GLOBAL const Assertion* assertions=context->assertions;UKL_GLOBAL const uint32_t* assertionData=context->assertionData;UKL_GLOBAL Link* captures=context->captures;UKL_GLOBAL Link* cursors=context->cursors;UKL_GLOBAL RepeatLink* repeats=context->repeats;UKL_GLOBAL QueuedState* queuedStates=context->queuedStates;UKL_GLOBAL GreedyEntry* greedyEntries=context->greedyEntries;UKL_GLOBAL Pending* pending=context->pending;UKL_GLOBAL Result* results=context->results;UKL_PRIVATE const LineTable* lineStarts=context->lineStarts;Task task=context->task;File file=context->file;Program program=context->program;Node node=context->node;UKL_GLOBAL Evaluation* evaluation=context->evaluation;UKL_GLOBAL GlobalArenas* globalArenas=context->globalArenas;uint32_t valueBase=context->valueBase,valueCapacity=context->valueCapacity;UKL_GLOBAL Status* status=context->status;";
+    let copy_in: String = JIT_STATE.iter().map(|(ty, name)| format!("{ty} {name}=*context->{name};")).collect();
+    let copy_out: String = JIT_STATE.iter().map(|(_, name)| format!("*context->{name}={name};")).collect();
+    // One step function an opcode the programs use, its body the interpreter's case.
+    let mut used = std::collections::BTreeSet::new();
+    let mut lowered = Vec::with_capacity(programs.len());
+    for program in programs {
+        let native = native_ir::lower(program).map_err(|_| Error::BackendFailure)?;
+        for block in &native.structural {
+            let (opcode, _, _) = block.operation.encoded();
+            if !bodies.contains_key(&opcode) {
+                return Err(Error::InvalidOpcode(usize::from(block.position)));
+            }
+            if opcode != TEXT && opcode != ASSERT {
+                used.insert(opcode);
+            }
+        }
+        lowered.push(native);
+    }
+    for opcode in &used {
+        let body = bodies[opcode];
         source.push_str(&format!(
-            "OP=={opcode}u){{{}}}",
+            "UKL_COLD bool jit_step_{opcode}(UKL_PRIVATE JitContext* context,uint32_t mode,uint32_t operand){{{unpack}{copy_in}const uint32_t op={opcode}u;(void)op;{{{}}}{copy_out}return true;}}",
             body.strip_suffix("break;")
                 .unwrap_or(body)
                 .replace("return;", "return false;")
         ));
     }
-    source.push_str("else{return false;}*context.keep=keep;*context.advance=advance;return true;}");
     for (program_index, program) in programs.iter().enumerate() {
         for value in 0..program.value_programs.len() {
             source.push_str(&format!(
-                "__attribute__((noinline)) bool jit_value_{program_index}_{value}(thread JitContext& context){{uint outcome=evaluate_text(context.values,context.strings,context.nfaStates,context.nfaData,context.nfaRanges,context.luaInstructions,context.luaMembers,context.valueWork,context.stringBytes,context.source,context.program,context.node,context.task,{value}u,context.path->steps,*context.evaluation,*context.globalArenas,context.valueBase,context.valueCapacity);if(outcome==2u){{context.status->error=6u;return false;}}if(outcome==3u){{context.status->error=4u;return false;}}if(outcome==4u){{context.status->error=2u;return false;}}*context.keep=outcome==1u;return true;}}"
+                "UKL_COLD bool jit_value_{program_index}_{value}(UKL_PRIVATE JitContext* context){{uint32_t outcome=evaluate_text(context->values,context->strings,context->nfaStates,context->nfaData,context->nfaRanges,context->luaInstructions,context->luaMembers,context->valueWork,context->stringBytes,context->source,context->program,context->node,context->task,{value}u,&context->path->steps,context->evaluation,context->globalArenas,context->valueBase,context->valueCapacity);if(outcome==2u){{context->status->error=6u;return false;}}if(outcome==3u){{context->status->error=4u;return false;}}if(outcome==4u){{context->status->error=2u;return false;}}*context->keep=outcome==1u;return true;}}"
             ));
         }
         for capture in 0..program.capture_programs.len() {
             source.push_str(&format!(
-                "__attribute__((noinline)) bool jit_capture_{program_index}_{capture}(thread JitContext& context){{uint outcome=evaluate_assertion(context.assertions[context.program.captureStart+{capture}u],context.assertionData,context.captures,context.path->captures,context.task,context.file,context.program,*context.nodes,context.supertypes,context.source,context.strings,context.stringBytes,context.values,context.nfaStates,context.nfaData,context.nfaRanges,context.luaInstructions,context.luaMembers,context.valueWork,*context.lineStarts,context.path->steps,*context.evaluation,*context.globalArenas,context.valueBase,context.valueCapacity);if(outcome==2u){{context.status->error=6u;return false;}}if(outcome==3u){{context.status->error=4u;return false;}}if(outcome==4u){{context.status->error=2u;return false;}}*context.keep=outcome==1u;return true;}}"
+                "UKL_COLD bool jit_capture_{program_index}_{capture}(UKL_PRIVATE JitContext* context){{uint32_t outcome=evaluate_assertion(context->assertions[context->program.captureStart+{capture}u],context->assertionData,context->captures,context->path->captures,context->task,context->file,context->program,context->nodes,context->supertypes,context->source,context->strings,context->stringBytes,context->values,context->nfaStates,context->nfaData,context->nfaRanges,context->luaInstructions,context->luaMembers,context->valueWork,context->lineStarts,&context->path->steps,context->evaluation,context->globalArenas,context->valueBase,context->valueCapacity);if(outcome==2u){{context->status->error=6u;return false;}}if(outcome==3u){{context->status->error=4u;return false;}}if(outcome==4u){{context->status->error=2u;return false;}}*context->keep=outcome==1u;return true;}}"
             ));
         }
     }
-    source.push_str("struct JitOutputContext{device const uint* assertionData;Program program;Task task;File file;thread const NodeTable* nodes;device const Link* captures;uint head;uint captureCount;device FinalCapture* finalCaptures;thread uint* finalCount;thread uint* captureStart;device uchar* storage;thread uint* propertyCount;thread uint* byteCount;device const uchar* source;thread const LineTable* lineStarts;device const ValueRecord* values;device const NfaState* nfaStates;device const uint* nfaData;device const NfaRange* nfaRanges;device uint* valueWork;uint resultIndex;thread uint* resultProperties;thread uint* dynamicProperties;thread uint* steps;device Evaluation* evaluation;device Evaluation* sharedEvaluation;device GlobalArenas* globalArenas;uint valueBase;uint valueCapacity;};");
+    source.push_str("typedef struct JitOutputContext{UKL_GLOBAL const uint32_t* assertionData;Program program;Task task;File file;UKL_PRIVATE const NodeTable* nodes;UKL_GLOBAL const Link* captures;uint32_t head;uint32_t captureCount;UKL_GLOBAL FinalCapture* finalCaptures;UKL_PRIVATE uint32_t* finalCount;UKL_PRIVATE uint32_t* captureStart;UKL_GLOBAL uint8_t* storage;UKL_PRIVATE uint32_t* propertyCount;UKL_PRIVATE uint32_t* byteCount;UKL_GLOBAL const uint8_t* source;UKL_PRIVATE const LineTable* lineStarts;UKL_GLOBAL const ValueRecord* values;UKL_GLOBAL const NfaState* nfaStates;UKL_GLOBAL const uint32_t* nfaData;UKL_GLOBAL const NfaRange* nfaRanges;UKL_GLOBAL uint32_t* valueWork;uint32_t resultIndex;UKL_PRIVATE uint32_t* resultProperties;UKL_PRIVATE uint32_t* dynamicProperties;UKL_PRIVATE uint32_t* steps;UKL_GLOBAL Evaluation* evaluation;UKL_GLOBAL Evaluation* sharedEvaluation;UKL_GLOBAL GlobalArenas* globalArenas;uint32_t valueBase;uint32_t valueCapacity;} JitOutputContext;");
     for program_index in 0..programs.len() {
         source.push_str(&format!(
-            "__attribute__((noinline)) uint jit_output_{program_index}(thread JitOutputContext& c){{return apply_output(c.assertionData,c.program,c.task,c.file,*c.nodes,c.captures,c.head,c.captureCount,c.finalCaptures,*c.finalCount,*c.captureStart,c.storage,*c.propertyCount,*c.byteCount,c.source,*c.lineStarts,c.values,c.nfaStates,c.nfaData,c.nfaRanges,c.valueWork,c.resultIndex,*c.resultProperties,*c.dynamicProperties,*c.steps,*c.evaluation,*c.sharedEvaluation,*c.globalArenas,c.valueBase,c.valueCapacity);}}"
+            "UKL_COLD uint32_t jit_output_{program_index}(UKL_PRIVATE JitOutputContext* c){{return apply_output(c->assertionData,c->program,c->task,c->file,c->nodes,c->captures,c->head,c->captureCount,c->finalCaptures,c->finalCount,c->captureStart,c->storage,c->propertyCount,c->byteCount,c->source,c->lineStarts,c->values,c->nfaStates,c->nfaData,c->nfaRanges,c->valueWork,c->resultIndex,c->resultProperties,c->dynamicProperties,c->steps,c->evaluation,c->sharedEvaluation,c->globalArenas,c->valueBase,c->valueCapacity);}}"
         ));
     }
-    source.push_str(
-        "uint jit_apply_output(thread JitOutputContext& context){switch(context.task.program){",
-    );
+    source.push_str("UKL_INLINE uint32_t jit_apply_output(UKL_PRIVATE JitOutputContext* context){switch(context->task.program){");
     for program_index in 0..programs.len() {
-        source.push_str(&format!(
-            "case {program_index}u:return jit_output_{program_index}(context);"
-        ));
+        source.push_str(&format!("case {program_index}u:return jit_output_{program_index}(context);"));
     }
     source.push_str("default:return 2u;}}");
-    for (program_index, program) in programs.iter().enumerate() {
+    for (program_index, (program, native)) in programs.iter().zip(&lowered).enumerate() {
         source.push_str(&format!(
-            "__attribute__((noinline)) bool jit_program_{program_index}(thread JitContext& context){{switch(context.path->pc){{"
+            "UKL_COLD bool jit_program_{program_index}(UKL_PRIVATE JitContext* context){{switch(context->path->pc){{"
         ));
-        let native = native_ir::lower(program).map_err(|_| Error::BackendFailure)?;
         for block in &native.structural {
             let pc = block.position;
             let (opcode, mode, operand) = block.operation.encoded();
-            if !bodies.contains_key(&opcode) {
-                return Err(Error::InvalidOpcode(usize::from(pc)));
-            }
             if opcode == TEXT {
-                source.push_str(&format!(
-                    "case {pc}u:return jit_value_{program_index}_{operand}(context);"
-                ));
+                source.push_str(&format!("case {pc}u:return jit_value_{program_index}_{operand}(context);"));
             } else if opcode == ASSERT && !program.tree_sitter_query {
                 // An ordinary program tests the capture predicate where it asserts it, on the captures so far, as the
                 // CPU's (`ASSERT`); a tree-sitter query's are tested on its candidates at the task's end.
@@ -568,31 +591,12 @@ fn jit_support(
             } else if opcode == ASSERT {
                 source.push_str(&format!("case {pc}u:return true;"));
             } else {
-                source.push_str(&format!(
-                    "case {pc}u:return jit_step<{opcode}u>(context,{mode}u,{operand}u);"
-                ));
+                source.push_str(&format!("case {pc}u:return jit_step_{opcode}(context,{mode}u,{operand}u);"));
             }
         }
-        source.push_str("default:context.status->error=5u;return false;}}");
+        source.push_str("default:context->status->error=5u;return false;}}");
     }
-    Ok(source
-        .replace("device Path* pending", "device Pending* pending")
-        .replace(
-            "device const Supertype* supertypes;device const ulong* longs",
-            "device const Supertype* supertypes;device const uint* words;device const ulong* longs",
-        )
-        .replace(
-            "device RepeatLink* repeats;device Pending* pending",
-            "device RepeatLink* repeats;device QueuedState* queuedStates;device GreedyEntry* greedyEntries;device Pending* pending",
-        )
-        .replace(
-            "device const Supertype* supertypes=context.supertypes;device const ulong* longs",
-            "device const Supertype* supertypes=context.supertypes;device const uint* words=context.words;device const ulong* longs",
-        )
-        .replace(
-            "device RepeatLink* repeats=context.repeats;device Pending* pending",
-            "device RepeatLink* repeats=context.repeats;device QueuedState* queuedStates=context.queuedStates;device GreedyEntry* greedyEntries=context.greedyEntries;device Pending* pending",
-        ))
+    Ok(source)
 }
 
 fn jit_kernel_source(programs: &[Program]) -> Result<String, Error> {
@@ -600,15 +604,15 @@ fn jit_kernel_source(programs: &[Program]) -> Result<String, Error> {
     let mut dispatch = String::from("switch(task.program){");
     for program_index in 0..programs.len() {
         dispatch.push_str(&format!(
-            "case {program_index}u:if(!jit_program_{program_index}(context))return;break;"
+            "case {program_index}u:if(!jit_program_{program_index}(&context))return;break;"
         ));
     }
-    dispatch.push_str("default:status.error=5u;return;}");
+    dispatch.push_str("default:status->error=5u;return;}");
     Ok(format!("{}{}", *TAPE_PREFIX, kernel_source("", Some(&dispatch), &jit_support(&bodies, programs)?, JIT_CONTEXT, JIT_OUTPUT_CONTEXT)))
 }
 
 const INTERPRETER_FETCH: &str =
-    "uint word=words[program.wordStart+path.pc];op=word&255u;mode=(word>>8u)&255u;operand=word>>16u;";
+    "uint32_t word=words[program.wordStart+path.pc];op=word&255u;mode=(word>>8u)&255u;operand=word>>16u;";
 
 /// The interpreter over resident tapes (the label passes'), compiled once (until the residency's
 /// drop releases it with the other pipelines' caches: it is held by the label runs' callers).
@@ -650,13 +654,11 @@ pub(in crate::code_rule_dsl) fn compile_sweep_cached() -> Result<ComputePipeline
     // (A program's route marks its labels as it publishes: `label_mark` in `run_task_in`.)
     let source = edit(
         source,
-        "device const uint* bits=(device const uint*)(values+1);return ((bits[(kind-16384u)*words+node/32u]>>(node%32u))&1u)!=0u;",
-        "device atomic_uint* bits=(device atomic_uint*)(values+1);return ((atomic_load_explicit(&bits[(kind-16384u)*words+node/32u],memory_order_relaxed)>>(node%32u))&1u)!=0u;",
+        "UKL_GLOBAL const uint32_t* bits=(UKL_GLOBAL const uint32_t*)(values+1);return ((bits[(kind-16384u)*words+node/32u]>>(node%32u))&1u)!=0u;",
+        "UKL_GLOBAL uint32_t* bits=(UKL_GLOBAL uint32_t*)(values+1);return ((ukl_atomic_load(&bits[(kind-16384u)*words+node/32u])>>(node%32u))&1u)!=0u;",
     );
-    let begin = source.find("kernel void run_batch(").expect("the runtime has run_batch") + "kernel void run_batch(".len();
-    let end = begin + source[begin..].find("uint tid [[thread_position_in_grid]]){").expect("run_batch's thread position");
-    let kernel = include_str!("metal_label_sweep.metal").replace("/*PARAMETERS*/", &source[begin..end]);
-    let pipeline = rerail_metal::runtime::pipeline_named_fixed(&format!("{source}\n{kernel}"), "label_sweep", None)?;
+    // The sweep's kernel takes the batch's rows (`run_batch`'s), after the runtime it runs tasks with.
+    let pipeline = rerail_metal::runtime::pipeline_named_fixed(&format!("{source}\n{}", include_str!("label_sweep.uglykl")), "label_sweep", None)?;
     *cached = Some(pipeline.clone());
     Ok(pipeline)
 }

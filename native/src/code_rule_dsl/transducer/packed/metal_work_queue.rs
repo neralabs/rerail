@@ -1,17 +1,16 @@
-//! The device work queue (list step 17, decision 0027): device-side enqueue on Metal. A
-//! persistent dispatch's workers take items from a queue and push the items their work creates;
-//! idle workers take those up, across every threadgroup, so the device, not the host, decides
-//! what runs next and how long the loop lasts. `metal_work_queue.metal` is prepended to a kernel
-//! that uses it (`wq_take`, `wq_push`, `wq_done`, `wq_idle`).
+//! The device work queue (list step 17, decision 0027): device-side enqueue, on the process's device (decision
+//! 0440 step C). A persistent dispatch's workers take items from a queue and push the items their work creates;
+//! idle workers take those up, across every threadgroup, so the device, not the host, decides what runs next and
+//! how long the loop lasts. A kernel that uses it includes `<ukl/workqueue.h>` (`ukl_wq_take`, `ukl_wq_push`,
+//! `ukl_wq_done`, `ukl_wq_idle`).
 //!
-//! Metal promises no progress between threadgroups, so no worker waits on another without a
+//! A GPU promises no progress between threadgroups, so no worker waits on another without a
 //! bound (the source says how). The dispatch is sized to what the device keeps resident; a
 //! worker that has polled long enough for nothing exits, and if items remain once all have, the
 //! host launches the same dispatch again over the same queue (`run`).
 use super::*;
-use metal::{ComputeCommandEncoderRef, MTLSize};
+use rerail_metal::lane;
 
-pub(in crate::code_rule_dsl) const SOURCE: &str = include_str!("metal_work_queue.metal");
 /// A worker group's threads.
 pub(in crate::code_rule_dsl) const WIDTH: u64 = 256;
 /// At most this many worker groups: about what an M-series GPU keeps resident.
@@ -74,44 +73,34 @@ pub(in crate::code_rule_dsl) struct Ran {
     pub(in crate::code_rule_dsl) phases: [f64; 7],
 }
 
-/// Runs `pipeline` (its buffers set by `bind`) over `queue` until no item is active: one launch,
-/// or more where every worker exited with items left.
-pub(in crate::code_rule_dsl) fn run(
-    device: &Device,
-    pipeline: &metal::ComputePipelineState,
+/// Runs `kernel` (its arguments bound by `bind`) over `queue` until no item is active: one launch, or more where
+/// every worker exited with items left.
+pub(in crate::code_rule_dsl) fn run<'a>(
+    kernel: &'a lane::Kernel,
     queue: &Queue,
     groups: u64,
     label: &str,
-    bind: impl Fn(&ComputeCommandEncoderRef),
+    bind: impl for<'c> Fn(lane::Launch<'c, 'a>) -> lane::Launch<'c, 'a>,
 ) -> Result<Ran, Error> {
-    use super::metal_backend::launch::{command_times, host_seconds};
+    use super::metal_backend::launch::host_seconds;
     let _scope = super::metal_backend::launch::LaunchScope::enter();
     let mut phases = [0.0f64; 7];
     let started = host_seconds();
-    let commands = super::blocks::queue(device)?;
-    phases[1] += host_seconds() - started;
     let mut gpu = 0.0;
     for launch in 1..=LAUNCHES {
         let at = host_seconds();
-        let command = commands.new_command_buffer();
-        command.set_label(label);
-        let encoder = command.new_compute_command_encoder();
-        encoder.set_label(label);
-        encoder.set_compute_pipeline_state(pipeline);
-        bind(encoder);
-        encoder.checked_dispatch_thread_groups(command, MTLSize::new(groups, 1, 1), MTLSize::new(WIDTH, 1, 1));
-        encoder.end_encoding();
-        let committed = host_seconds();
-        phases[2] += committed - at;
-        commit_checked(command)?;
-        wait_checked(command)?;
-        let woke = host_seconds();
-        let [kernel, start, end] = command_times(command);
-        phases[3] += (kernel - committed).max(0.0);
-        phases[4] += (start - kernel).max(0.0);
-        phases[5] += (end - start).max(0.0);
-        phases[6] += (woke - end).max(0.0);
-        gpu += end - start;
+        let mut command = lane::Command::new(label);
+        bind(command.launch(kernel, label)).groups([groups, 1, 1], [WIDTH, 1, 1]);
+        phases[2] += host_seconds() - at;
+        let times = command.run()?;
+        let [scheduled, start, end] = times.host;
+        if end > 0.0 {
+            phases[3] += (scheduled - times.committed).max(0.0);
+            phases[4] += (start - scheduled).max(0.0);
+            phases[6] += (times.committed + times.wall - end).max(0.0);
+        }
+        phases[5] += times.device;
+        gpu += times.device;
         let [_, _, active, overflow] = queue.control();
         if overflow != 0 {
             return Err(Error::BackendCapacity);

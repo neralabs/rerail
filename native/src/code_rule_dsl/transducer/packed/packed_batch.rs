@@ -1322,7 +1322,7 @@ fn status_error(status: &TaskStatus, work_limit: u32) -> Option<Error> {
         4 if work_limit < super::MAX_WORK_PER_TASK as u32 => Error::OverBudget,
         4 => Error::WorkLimit,
         7 => Error::InvalidOperand(status.program_counter as usize),
-        // A mark or a tally of a node past the batch's (decision 0462): not written.
+        // A mark or a tally of a node past the batch's (decision 0427): not written.
         9 => Error::BackendFailure,
         _ => Error::BackendFailure,
     })

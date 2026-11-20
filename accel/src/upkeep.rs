@@ -385,7 +385,7 @@ pub struct Conditions {
     pub low_power: bool,
     /// `NSProcessInfoThermalState`: 0 nominal, 1 fair, 2 serious, 3 critical.
     pub thermal: u8,
-    /// The process's physical footprint, bytes.
+    /// The process's physical footprint, bytes (Linux: its resident memory).
     pub footprint: usize,
 }
 
@@ -397,7 +397,8 @@ pub fn allowed(c: &Conditions, idle_twice: bool, s: &Settings) -> (bool, bool) {
     (true, idle)
 }
 
-/// The CPU ticks of all cores so far: (busy, total).
+/// The CPU ticks of all cores so far: (busy, total). (0, 0) where they are not read, which `read_conditions`
+/// takes as busy.
 pub fn cpu_ticks() -> (u64, u64) {
     #[cfg(target_os = "macos")]
     unsafe {
@@ -421,7 +422,19 @@ pub fn cpu_ticks() -> (u64, u64) {
         libc::vm_deallocate(task, info as libc::vm_address_t, (count as usize * std::mem::size_of::<libc::integer_t>()) as libc::vm_size_t);
         (busy, total)
     }
-    #[cfg(not(target_os = "macos"))]
+    // /proc/stat's first line, every core's: user, nice, system, idle, iowait, irq, softirq, steal (guest time is
+    // in user's already). Busy is all but idle and iowait: a core waiting on I/O runs nothing.
+    #[cfg(target_os = "linux")]
+    {
+        let Ok(stat) = std::fs::read_to_string("/proc/stat") else { return (0, 0) };
+        let t: Vec<u64> = stat.lines().next().unwrap_or("").split_whitespace().skip(1).take(8).filter_map(|v| v.parse().ok()).collect();
+        if t.len() < 5 {
+            return (0, 0);
+        }
+        let total: u64 = t.iter().sum();
+        (total - t[3] - t[4], total)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     (0, 0)
 }
 
@@ -501,7 +514,7 @@ pub fn heat() -> (bool, u8) {
     (false, 0)
 }
 
-/// The process's physical footprint, bytes.
+/// The process's physical footprint, bytes (Linux: its resident memory).
 pub fn footprint() -> usize {
     #[cfg(target_os = "macos")]
     unsafe {
@@ -511,7 +524,15 @@ pub fn footprint() -> usize {
         }
         0
     }
-    #[cfg(not(target_os = "macos"))]
+    // Linux has no footprint: its resident pages (/proc/self/statm's second figure) are the nearest.
+    #[cfg(target_os = "linux")]
+    {
+        let statm = std::fs::read_to_string("/proc/self/statm").unwrap_or_default();
+        let pages: usize = statm.split_whitespace().nth(1).and_then(|v| v.parse().ok()).unwrap_or(0);
+        // SAFETY: sysconf reads a constant.
+        pages * unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(0) as usize
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     0
 }
 

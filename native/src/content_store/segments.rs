@@ -242,7 +242,9 @@ impl SegmentWriter {
         let file = self.dir.join(format!("w-{}-{n}.seg", std::process::id()));
         #[cfg(target_os = "macos")]
         let open = Open::Mapped(rerail_accel::gpu::shared::lease_deferrable_host(kind::JOURNAL, bytes, &file).map_err(StoreError::Invalid)?);
-        #[cfg(all(unix, not(target_os = "macos")))]
+        #[cfg(target_os = "linux")]
+        let open = Open::Mapped(rerail_blocks::deferrable::Deferrable::create(&file, kind::JOURNAL, bytes, true, None)?);
+        #[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]
         let open = Open::Mapped(rerail_blocks::deferrable::Deferrable::create(&file, kind::JOURNAL, bytes, true)?);
         #[cfg(not(unix))]
         let open = Open::Memory(rerail_blocks::alloc::host(kind::JOURNAL, bytes.next_multiple_of(rerail_blocks::block::PAGE)), file);

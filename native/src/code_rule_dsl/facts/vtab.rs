@@ -57,8 +57,6 @@ pub struct DeviceView<'a> {
     pub root: usize,
     pub view: u32,
     pub rows: usize,
-    /// An axis's pairs in the block (`device_chunk::VIEW_AXIS`), else 0.
-    pub pairs: usize,
     /// Where a stage reads the view in place (decision 0353 step 4d), when it can: nothing makes its rows.
     #[cfg(target_os = "macos")]
     pub in_place: Option<ViewInPlace>,

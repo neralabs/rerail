@@ -61,7 +61,7 @@ thread_local! {
 
 /// The writer's ops (`writer::OPS`) as Rust: `translate_reads` of a relation's family, but each load a plain one.
 /// The ops' loads are of the region's parts, each in its part by the host's reservations before the op (decision
-/// 0434 §6); the parts are buffers of their own, so no one span bounds them as `ld` bounds a tape's.
+/// 0426 §6); the parts are buffers of their own, so no one span bounds them as `ld` bounds a tape's.
 pub fn translate_ops(funcs: &[(u32, ir::Function, bool)], entries: &[(u32, &str)]) -> Result<String, String> {
     CHECKED.with(|c| c.set(false));
     let out = translate_reads(funcs, entries, crate::reads::Family::Relation);

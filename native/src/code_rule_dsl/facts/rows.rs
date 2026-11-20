@@ -631,7 +631,7 @@ pub fn anon_in_block(k: usize, vals: &[i64]) -> InBlock {
         }
     }
     let at = facts.block.offset_of(rel);
-    InBlock { facts, at, rows: rows as u32, dead: 0, part: None }
+    InBlock { facts, at, rows: rows as u32, dead: 0, kills: None, part: None }
 }
 
 /// A relation of `k` values a row, 8 bytes each, read in their order.
@@ -835,6 +835,16 @@ impl Part {
         Ok(part)
     }
 
+    /// Stores row `id`'s value `v` in column `c`.
+    ///
+    /// # Safety
+    /// Row `id` is within the rows reserved, and no reader reads it until it is claimed (`written`).
+    #[inline]
+    pub unsafe fn put(&self, id: u32, c: usize, v: i64) {
+        // SAFETY: as the caller says.
+        unsafe { self.rel().rows.put(id, c, v) }
+    }
+
     /// How long its rows live: the blocks it is in.
     pub fn life(&self) -> Life {
         self.life
@@ -884,6 +894,17 @@ impl Part {
         Part::new(Life::Run, k, rows)
     }
 
+    /// A relation of `k` columns living `life` long, room for `rows` rows alone in a block, and past them for
+    /// `indexes` indexes of its own over its rows, one for each key its readers probe it by (`Rows::with_index_room`'s
+    /// part; an axis's, by `n` and by `a`, decision 0353 step 5): a key past them copies the relation
+    /// (`DevIndex::moved`). The room is the block's address space: its pages are taken as an index is written.
+    pub fn with_index_room(life: Life, k: usize, rows: usize, indexes: usize) -> Part {
+        let cap = rows.next_power_of_two().max(1);
+        let index = 4 * (cap + 1) + 4 * rows.max(1) + 64;
+        let extra = indexes.max(1) * index + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64;
+        Part::try_new_with(life, k, rows, extra, false).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"))
+    }
+
     /// `for_writes` alone in a block with `room` bytes past its rows' (decision 0384 step 5): a relation the device
     /// goes on writing round after round (a lattice head, its held rows updated in place, its new keys' rows past
     /// them), its rows' chunks and its key map growing in the block (`reserve`), never moved. Its block reserves
@@ -909,17 +930,6 @@ impl Part {
         unsafe { self.rel().rows.claim_reserved(n) };
     }
 
-    /// Row `i`'s value in column `c` written where it lies: a derived value put in its place (a device fold's text
-    /// made its symbol).
-    ///
-    /// # Safety
-    /// Row `i` is reserved, and no reader or other writer touches it meanwhile.
-    pub unsafe fn put(&self, i: u32, c: usize, v: i64) {
-        debug_assert!(!self.capped(), "a capped part is never written");
-        // SAFETY: the caller's.
-        unsafe { self.rel().rows.put(i, c, v) };
-    }
-
     /// Its indexes forgotten (`Relation::forget_indexes`): its rows' values were changed in place (a lattice's fold,
     /// decision 0384 step 5).
     ///
@@ -939,7 +949,7 @@ impl Part {
     /// This relation where it lies, `rows` of it, for a reader or writer that binds its block (the device): it keeps
     /// the relation's chunks as the part does.
     pub fn in_block(&self, rows: u32) -> InBlock {
-        InBlock { facts: self.facts.clone(), at: self.rel_at(), rows, dead: 0, part: Some(self.clone()) }
+        InBlock { facts: self.facts.clone(), at: self.rel_at(), rows, dead: 0, kills: None, part: Some(self.clone()) }
     }
 
     /// Its rows' descriptor's offset in its block: what a writer's `rows_at` takes.
@@ -1130,9 +1140,8 @@ pub struct Rows {
 // (decision 0353).
     /// Every part merged into one, made once for a reader that binds one relation (`in_block`).
     merged: std::sync::OnceLock<Part>,
-    /// The dead rows' delta of that one relation (`in_block_dead`), its descriptor's offset: kept while its dead bits
-    /// are the relation's.
-    kills: Mutex<Option<usize>>,
+    /// The dead rows' delta of that one relation (`in_block_dead`): kept while its dead bits are the relation's.
+    kills: Mutex<Option<Arc<Kills>>>,
     /// The rows its tail held when it was taken as the writer of a frozen relation's (`shared`): given back free at
     /// them when these rows are dropped with none written past them (a run abandoned, its relation not kept).
     took: Option<Took>,
@@ -1154,6 +1163,26 @@ impl Drop for Took {
     }
 }
 
+/// A relation's dead rows' delta in its block (`Rows::in_block_dead`, `Relation::try_kills`): given back to the
+/// block's free list when its last holder drops it, the rows that made it or a reader bound to it (`InBlock::kills`).
+/// A relation whose dead rows change with no row added (`setfix::Levels`) makes a delta each time; before, each one
+/// stayed in the block as long as the block did (Q178).
+pub struct Kills {
+    /// Its descriptor's offset in its base's block.
+    at: usize,
+    /// The relation it is a delta of, and its block: kept while it is.
+    base: Part,
+}
+
+impl Drop for Kills {
+    fn drop(&mut self) {
+        let block = &self.base.facts().block;
+        // SAFETY: `try_kills` made it in `block`, which `base` keeps, and this was its last holder.
+        let given = unsafe { (*block.ptr::<Relation>(self.at)).release_kills(block) };
+        GIVEN_BACK.fetch_add(given, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// Where a relation's rows lie for a reader that binds its block (the device, decision 0325): the block, kept while
 /// this lives, and the relation's descriptor's offset in it.
 #[derive(Clone)]
@@ -1163,6 +1192,8 @@ pub struct InBlock {
     pub rows: u32,
     /// The offset of a delta of it whose dead bits mark its dead rows (`Relation::try_kills`); 0 when none is.
     pub dead: usize,
+    /// That delta, held while this lives (a device's read of it, `DevRel::in_block`): not given back meanwhile.
+    pub kills: Option<Arc<Kills>>,
     /// The relation read, held while this lives: its chunks are not given back meanwhile (decision 0342). `None`
     /// for one no `Part` holds (`anon_in_block`'s).
     pub part: Option<Part>,
@@ -1247,10 +1278,7 @@ impl Rows {
     /// probed by its own indexes, not host tables (decision 0325 step 5). The room is the block's address space: its
     /// pages are taken as an index is written.
     pub fn with_index_room(k: usize, life: Life, rows: usize, indexes: usize) -> Rows {
-        let cap = rows.next_power_of_two().max(1);
-        let index = 4 * (cap + 1) + 4 * rows.max(1) + 64;
-        let extra = indexes.max(1) * index + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64;
-        let part = Part::try_new_with(life, k, rows, extra, false).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"));
+        let part = Part::with_index_room(life, k, rows, indexes);
         Rows { k, life, hint: rows, tail: Some(part), ..Rows::default() }
     }
 
@@ -1447,12 +1475,13 @@ impl Rows {
     /// and kept while these rows are). `None` for no rows.
     pub fn in_block(&self) -> Option<InBlock> {
         let (one, rows) = self.one()?;
-        Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows, dead: 0, part: Some(one.clone()) })
+        Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows, dead: 0, kills: None, part: Some(one.clone()) })
     }
 
     /// `in_block`, with the rows `dead` marks (bit `id`, as setfix keeps them) dead in it: a delta of the one
     /// relation in its block, no rows of its own, whose dead bits are these (kept, and made again when the dead rows
-    /// are others). `None` for no rows, or when the block cannot hold the delta.
+    /// are others: the one before goes back to the block once no reader holds it). `None` for no rows, or when the
+    /// block cannot hold the delta.
     pub fn in_block_dead(&self, dead: &[u64]) -> Option<InBlock> {
         let (one, rows) = self.one()?;
         let block = &one.facts.block;
@@ -1462,15 +1491,17 @@ impl Rows {
         // these (Q173: the device's subtraction of a head's rows read the old bits, and some runs' findings differed).
         // SAFETY: `at` is a delta's descriptor in `one`'s block, which `one` keeps.
         let fresh = |at: usize| unsafe { (*block.ptr::<Relation>(at)).dead.as_slice() == dead };
-        let at = match *kills {
-            Some(at) if fresh(at) => at,
+        let k = match &*kills {
+            Some(k) if fresh(k.at) => k.clone(),
             _ => {
                 let at = block.offset_of(Relation::try_kills(block, &spec(self.k), one.rel(), dead)?);
-                *kills = Some(at);
-                at
+                let k = Arc::new(Kills { at, base: one.clone() });
+                // (the one before goes here, unless a reader still holds it)
+                *kills = Some(k.clone());
+                k
             }
         };
-        Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows, dead: at, part: Some(one.clone()) })
+        Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows, dead: k.at, kills: Some(k), part: Some(one.clone()) })
     }
 
     /// The rows as one relation, and how many rows a reader binding it reads (ids from 0): the one part, a
@@ -1926,6 +1957,24 @@ mod tests {
         assert_eq!(bits(&all), [0b1111], "every row killed");
         let back = rows.in_block_dead(&[0b0010]).expect("a delta");
         assert_eq!(bits(&back), [0b0010], "rows brought back");
+        assert_eq!(bits(&first), [0b0101], "a delta a reader holds is kept as it was");
+    }
+
+    /// Q178: a delta whose dead bits are no longer the relation's goes back to its block once no reader holds it, so a
+    /// relation whose dead rows keep changing takes the room of two deltas, not one a change.
+    #[test]
+    fn a_dead_rows_delta_replaced_goes_back_to_its_block() {
+        let mut rows = Rows::new(1);
+        rows.extend_from_slice(&(0..256).collect::<Vec<i64>>());
+        let words = |i: u64| [i, !i, i << 1, i >> 1];
+        let mut at = std::collections::BTreeSet::new();
+        for i in 1..200 {
+            let b = rows.in_block_dead(&words(i)).expect("a delta");
+            assert_eq!(unsafe { (*b.facts.block.ptr::<Relation>(b.dead)).dead.as_slice() }, words(i));
+            at.insert(b.dead);
+        }
+        // (a few, not two: the block is shared, and another test's relation may take a chunk given back)
+        assert!(at.len() <= 10, "{} deltas' room taken for 199 changes: the ones replaced were not given back", at.len());
     }
 
     /// Decision 0384 step 4: a relation's derived array lies in its relation's block, grows and is cloned there, and

@@ -266,7 +266,7 @@ unsafe extern "C" fn flush_events(sink: *mut Sink) {
     }
 }
 
-/// `src` walked by `kernel` for format 16 (decision 0434): no column is written; each node's event (`EV_OPEN`, its
+/// `src` walked by `kernel` for format 16 (decision 0426): no column is written; each node's event (`EV_OPEN`, its
 /// code id and start; `EV_LEAF`, its code id, start and end; `EV_CLOSE` and its end; three words each) is given to
 /// `on` in preorder, a window of them at a time, with the codes numbered so far. The walk never edits a node it
 /// gave. `jsonc` reads the file as JSONC (`tape_jsonc_with`). The source's SHA-256, or why it has no tape: then `on`
@@ -589,10 +589,16 @@ mod tests {
         let kinds = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, comment: 12, key_field: 1, value_field: 2 };
         let run = std::env::var("RERAIL_TAPE_RUN").unwrap_or_default();
         let kernel = kernel_under_test();
-        let retired = || {
-            let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
-            unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
-            info.ri_instructions
+        let retired = || -> u64 {
+            // (macOS's count; 0 on a Linux host, which builds these tests too)
+            #[cfg(target_os = "macos")]
+            {
+                let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
+                unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
+                info.ri_instructions
+            }
+            #[cfg(not(target_os = "macos"))]
+            0
         };
         let mut n = 0usize;
         let mut best = u64::MAX;
@@ -722,10 +728,16 @@ mod tests {
     #[ignore = "a measurement: run by name with --nocapture"]
     #[cfg(target_os = "macos")]
     fn shape_costs() {
-        let retired = || {
-            let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
-            unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
-            info.ri_instructions
+        let retired = || -> u64 {
+            // (macOS's count; 0 on a Linux host, which builds these tests too)
+            #[cfg(target_os = "macos")]
+            {
+                let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
+                unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
+                info.ri_instructions
+            }
+            #[cfg(not(target_os = "macos"))]
+            0
         };
         let kinds = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, comment: 12, key_field: 1, value_field: 2 };
         let kernel = kernel_under_test();

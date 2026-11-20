@@ -68,9 +68,9 @@ pub fn aligned(length: usize) -> usize {
 pub use rerail_clif::view::TapeView as DocView;
 const _: () = assert!(std::mem::size_of::<DocView>() == 124);
 
-/// The MSL of `DocView`, for the kernels that read documents in place (`metal_tape.metal`).
+/// The MSL of `DocView`, for the kernels that read documents in place (`device_tape.h`).
 pub fn msl() -> String {
-    rerail_clif::view::msl()
+    rerail_clif::view::ukl()
 }
 
 /// A slab: a chunk block over a lease of the pool, and its identity. Its rooms are the block's
@@ -78,8 +78,8 @@ pub fn msl() -> String {
 pub struct Slab {
     pub id: u64,
     block: rerail_blocks::Block,
-    /// The lease's buffer, as kernels bind it (the block's backing's own).
-    buffer: metal::Buffer,
+    /// The lease's buffer, as kernels bind it (the block's backing's own): the device layer's.
+    buffer: rerail_device::device::Buffer,
     /// The languages' code tables placed in it, once each (decision 0336 §7): by key (`Table`), the table's offset
     /// and length.
     tables: Mutex<HashMap<u32, (usize, usize)>>,
@@ -99,11 +99,12 @@ impl Slab {
         // The device first: making it installs the one block policy (decision 0342), without which no block is a
         // device slab (`alloc::plain` refuses `Device::Must`). A process that leases a slab before anything else
         // touched the device (the parser crate's tests) had every lease refused as over capacity.
-        let device = crate::METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
+        crate::METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
+        let device = &rerail_device::shared::get().ok_or(Error::UnsupportedBackend)?.device;
         // From the one block policy (decision 0342): a device slab, room made within the Metal budget.
         let need = rerail_blocks::alloc::Need { kind: rerail_blocks::block::kind::CHUNK, bytes, writes: rerail_blocks::alloc::Writes::Once, device: rerail_blocks::alloc::Device::Must, ..rerail_blocks::alloc::Need::SLAB };
         let block = rerail_blocks::alloc::block(&need).map_err(|_| Error::BackendCapacity)?;
-        let buffer = block.gpu_buffer(device);
+        let buffer = block.device_buffer(device).map_err(|_| Error::BackendCapacity)?;
         Ok(Slab { id, block, buffer, tables: Mutex::default() })
     }
 
@@ -131,8 +132,13 @@ impl Slab {
         unsafe { std::slice::from_raw_parts(self.host().add(at), len) }
     }
 
-    /// Its buffer, as kernels bind it.
+    /// Its buffer, as Metal's kernels not yet on the device layer bind it (decision 0440 step C moves each).
     pub fn buffer(&self) -> &metal::Buffer {
+        self.buffer.metal().expect("a slab's buffer is Metal's while the residency is")
+    }
+
+    /// Its buffer in the device layer, as UKL kernels bind it on every backend.
+    pub fn device_buffer(&self) -> &rerail_device::device::Buffer {
         &self.buffer
     }
 
@@ -317,7 +323,7 @@ pub fn zcache_failed(cache: &metal::Buffer) -> u32 {
     zcache_counts(cache).failed
 }
 
-/// A cache's counts once its batch's kernels are done, the cache checked (`Spec::check`, decision 0462).
+/// A cache's counts once its batch's kernels are done, the cache checked (`Spec::check`, decision 0427).
 fn zcache_counts(cache: &metal::Buffer) -> rerail_clif::view::cache::Counts {
     // SAFETY: the cache's shared buffer, all of it; its batch's kernels are done.
     rerail_clif::view::cache::Counts::checked(unsafe { std::slice::from_raw_parts(cache.contents().cast::<u8>(), cache.length() as usize) })

@@ -173,3 +173,33 @@
 
 #define FOREACH_QUAD(Fn, ...) \
     FOREACH_QUAD_N(Fn, COUNT_ARGS(__VA_ARGS__), __VA_ARGS__)
+
+// A kernel's threadgroup storage (Rerail, decision 0440): a `SHARED, Type, Name, Count` row declares
+// `Type Name[Count]` in threadgroup memory in the kernel's own scope (Metal allows it nowhere else), and the body
+// gets a pointer to it. A shim defines GEN_SHARED_DECL_SHARED; every other kind of row declares nothing.
+#define GEN_SHARED_DECL_ROBUFFER(Type, Name, Bounds)
+#define GEN_SHARED_DECL_RWBUFFER(Type, Name, Bounds)
+#define GEN_SHARED_DECL_WOBUFFER(Type, Name, Bounds)
+#define GEN_SHARED_DECL_CONSTBUFFER(Type, Name, Bounds)
+#define GEN_SHARED_DECL_ARGS(Type, Name, Bounds)
+#define GEN_SHARED_DECL_LITERAL(Type, Name, Bounds)
+#define GEN_SHARED_DECL_RWLOCAL(Type, Name, Bounds)
+#define GEN_SHARED_DECL_TUNEABLE(Type, Name, Bounds)
+#define GEN_SHARED_DECL_GID0(Type, Name, Bounds)
+#define GEN_SHARED_DECL_GID1(Type, Name, Bounds)
+#define GEN_SHARED_DECL_GID2(Type, Name, Bounds)
+#define GEN_SHARED_DECL_GSZ0(Type, Name, Bounds)
+#define GEN_SHARED_DECL_GSZ1(Type, Name, Bounds)
+#define GEN_SHARED_DECL_GSZ2(Type, Name, Bounds)
+#define GEN_SHARED_DECL_LID0(Type, Name, Bounds)
+#define GEN_SHARED_DECL_LID1(Type, Name, Bounds)
+#define GEN_SHARED_DECL_LID2(Type, Name, Bounds)
+#define GEN_SHARED_DECL_LSZ0(Type, Name, Bounds)
+#define GEN_SHARED_DECL_LSZ1(Type, Name, Bounds)
+#define GEN_SHARED_DECL_LSZ2(Type, Name, Bounds)
+#define GEN_SHARED_DECL_TGID0(Type, Name, Bounds)
+#define GEN_SHARED_DECL_TGID1(Type, Name, Bounds)
+#define GEN_SHARED_DECL_TGID2(Type, Name, Bounds)
+#define GEN_SHARED_DECL_LANE(Type, Name, Bounds)
+#define GEN_SHARED_DECL_NLANES(Type, Name, Bounds)
+#define GEN_SHARED_DECL2(Access, Type, Name, Bounds) CALL2_A(GEN_SHARED_DECL_, Access, Type, Name, Bounds)

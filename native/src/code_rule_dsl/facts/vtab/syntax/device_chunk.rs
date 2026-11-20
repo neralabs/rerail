@@ -83,9 +83,8 @@ pub const VIEW_NODE: u32 = 0;
 pub const VIEW_CHILD: u32 = 1;
 pub const VIEW_FIELD: u32 = 2;
 pub const VIEW_CORE: u32 = 3;
-/// A kind-set axis or containment read whole (`Within`): its batch's solve, as pairs of node rows (inner << 32 |
-/// outer) copied into the chunk, each made the two nodes' ids.
-pub const VIEW_AXIS: u32 = 4;
+// 4 was a kind-set axis read whole, its pairs copied into the chunk and made ids here. Its solve writes a relation of
+// ids of its own now (decision 0353 step 5), read where it lies; the number stays unused, so the others keep theirs.
 /// `core.rerail`'s places of nodes and spans (`View::Loc`): their first line, last line, start column and document.
 pub const VIEW_LOC_LINE: u32 = 5;
 pub const VIEW_LOC_END: u32 = 6;
@@ -125,18 +124,6 @@ pub fn device_view(view: View) -> Option<u32> {
         View::Line => VIEW_LINE,
         _ => return None,
     })
-}
-
-/// `pairs` copied into the chunk: their offset in the block, or `None` when its reservation cannot hold them.
-// copy (0353 step 5): an axis's pairs copied into the chunk. It goes: the solve writes its answer once,
-// as ids, into a relation in the chunk block (decision 0353).
-pub fn put_pairs(chunk: &Chunk, pairs: &[u64]) -> Option<usize> {
-    static PAIRS: rerail_prof::copies::Site = rerail_prof::copies::Site::new(6, "5", "an axis's pairs put into the chunk (put_pairs)");
-    let p: *mut u64 = chunk.block.try_alloc_t(pairs.len().max(1))?;
-    PAIRS.copied(8 * pairs.len());
-    // SAFETY: `p` holds `pairs.len()` items, just allocated in the block.
-    unsafe { std::ptr::copy_nonoverlapping(pairs.as_ptr(), p, pairs.len()) };
-    Some(chunk.block.offset_of(p))
 }
 
 /// A batch's chunk block, and its root's offset in it.

@@ -3180,7 +3180,10 @@ dependencies = [
  "parking_lot",
  "rayon",
  "rerail-blocks",
+ "rerail-device",
  "rerail-forest",
+ "rerail-gpu",
+ "rerail-ukl",
  "rustc-hash",
  "sha2 0.10.9",
 ]
@@ -3193,6 +3196,8 @@ dependencies = [
  "libc",
  "metal",
  "rayon",
+ "rerail-device",
+ "rerail-ukl",
  "windows-sys 0.61.2",
 ]
 
@@ -3273,6 +3278,17 @@ version = "0.1.0"
 dependencies = [
  "rerail-simd8",
  "rerail-tape-format",
+]
+
+[[package]]
+name = "rerail-device"
+version = "0.1.0"
+dependencies = [
+ "block",
+ "libc",
+ "metal",
+ "objc",
+ "rerail-ukl",
 ]
 
 [[package]]
@@ -3413,6 +3429,7 @@ dependencies = [
  "rerail-ecma-lean",
  "rerail-facts",
  "rerail-go-lean",
+ "rerail-gpu",
  "rerail-html-lean",
  "rerail-java-lean",
  "rerail-kotlin-lean",
@@ -3546,11 +3563,12 @@ name = "rerail-forest"
 version = "0.1.0"
 dependencies = [
  "block",
- "cc",
  "libc",
  "metal",
  "objc",
  "rayon",
+ "rerail-gpu",
+ "rerail-ukl",
  "sha2 0.10.9",
 ]
 
@@ -3561,6 +3579,20 @@ dependencies = [
  "rerail-simd8",
  "rerail-tape-format",
  "unicode-ident",
+]
+
+[[package]]
+name = "rerail-gpu"
+version = "0.1.0"
+dependencies = [
+ "block",
+ "libc",
+ "lz4-sys",
+ "metal",
+ "objc",
+ "rerail-blocks",
+ "rerail-device",
+ "rerail-ukl",
 ]
 
 [[package]]
@@ -4235,6 +4267,7 @@ dependencies = [
  "rerail-blocks",
  "rerail-clif",
  "rerail-compiler",
+ "rerail-device",
  "rerail-metal",
  "rerail-prof",
  "serde",
@@ -4676,8 +4709,8 @@ version = "0.1.0"
 dependencies = [
  "lz4-sys",
  "memchr",
- "metal",
  "rerail-clif",
+ "rerail-gpu",
  "rerail-simd8",
  "sha2 0.11.1",
 ]
@@ -4722,6 +4755,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-clif",
  "rerail-compiler",
  "rerail-facts",
@@ -4752,6 +4786,14 @@ dependencies = [
  "unicode-normalization",
  "windows-sys 0.61.2",
  "zstd",
+]
+
+[[package]]
+name = "rerail-ukl"
+version = "0.1.0"
+dependencies = [
+ "rerail-c-lean",
+ "rerail-c-pp",
 ]
 
 [[package]]
@@ -4803,6 +4845,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-compiler",
  "rerail-facts",
  "rerail-lang",

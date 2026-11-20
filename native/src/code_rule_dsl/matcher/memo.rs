@@ -282,7 +282,7 @@ pub(super) fn nodes_of_kinds(
     kinds: &std::collections::BTreeSet<u16>,
 ) -> Vec<u32> {
     let tape = file.root().get_doc();
-    // None of the kinds in the tape's presence (decision 0434 §4, step 6): no index is built to find none.
+    // None of the kinds in the tape's presence (decision 0426 §4, step 6): no index is built to find none.
     if !kinds.iter().any(|&kind| tape.may_have_kind(kind)) {
         return Vec::new();
     }

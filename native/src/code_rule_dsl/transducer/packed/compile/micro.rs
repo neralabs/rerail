@@ -7,7 +7,7 @@
 //! from one start with a few frames on a stack: a frame is a forked path, or a move's remaining
 //! candidates (children, descendants, following siblings), so the stack grows with the program's
 //! nesting, not with a node's fan-out. On Metal it is one thread per (pass, start), with no task
-//! list built on the host (`label_micro` in `metal_label_passes.metal`, the same walk).
+//! list built on the host (`label_micro` in `label_passes.uglykl`, the same walk).
 //!
 //! The walk's outputs are the interpreter's, as a label reads them: a roots label is the starts that
 //! emit (the walk stops at the first), a targets label every node captured on a path that emits. A

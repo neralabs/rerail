@@ -138,7 +138,7 @@ fn every_format_reads_the_same_facts_off_the_tape() {
     }
 }
 
-/// Decision 0434 §4, step 6: a parsed tape's home holds its presence after it; the store keeps the two as one, and a
+/// Decision 0426 §4, step 6: a parsed tape's home holds its presence after it; the store keeps the two as one, and a
 /// tape read back from the store answers each block's kinds as the parse's did, by the same read where it lies
 /// (`tape_has_kind`). Format 16 and 16z alike: the stored frame is the tape's bytes as they are, and its presence is
 /// read there unloaded.

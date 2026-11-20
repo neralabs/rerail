@@ -62,7 +62,7 @@ pub enum Set {
     Reached { step: Step, named: bool, from: Box<Set> },
 }
 
-/// A walk's anchor as the device evaluates it (`label_formula`, decision 0365): `Set` in postfix over a stack of node
+/// A walk's anchor as the device evaluates it (`label_phase`, decisions 0365, 0463): `Set` in postfix over a stack of node
 /// sets, a word an operation (`op | arg << 8`), `depth` the stack's slots (an axis step's output a slot past its
 /// input), and the labels it reads (by index, past `DERIVED_CLASS_BASE`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -76,7 +76,7 @@ pub struct DeviceFormula {
     pub texts: Vec<String>,
 }
 
-/// `DeviceFormula`'s operations (`label_formula` in `metal_label_passes.metal`). A test pushes a set; `AND` and
+/// `DeviceFormula`'s operations (`label_phase` in `label_passes.uglykl`, compiled by `phase_program`). A test pushes a set; `AND` and
 /// `OR` combine the top `arg` sets; an axis step replaces the top set (a chain the top two: through, then to); `arg`
 /// of a step is whether its nodes are named.
 pub mod device_ops {
@@ -308,7 +308,8 @@ impl Set {
                         let through = if named { Set::and(vec![(**through).clone(), is_named.clone()]) } else { (**through).clone() };
                         let through = through.emit(formula)?;
                         formula.words.push(word(REACH_CHAIN, 0));
-                        slots.max(1 + through).max(3)
+                        // From, through, the reach, and the device's level (0437).
+                        slots.max(1 + through).max(4)
                     }
                 };
                 if named {
@@ -338,6 +339,45 @@ impl Set {
             Set::Class(class) if class >= DERIVED_CLASS_BASE && unknown(class - DERIVED_CLASS_BASE) => Set::All,
             test => test,
         })
+    }
+
+    /// This set with each label it reads (from `DERIVED_CLASS_BASE`) renamed by `map` (a clause's labels in its wave).
+    pub fn relabelled(self, map: &dyn Fn(u16) -> u16) -> Self {
+        self.map_tests(&|test| match test {
+            Set::Class(class) if class >= DERIVED_CLASS_BASE => Set::Class(map(class)),
+            test => test,
+        })
+    }
+
+    /// This set with each text test read as every node: a superset, with no slot of the program it came from (a
+    /// slot is its program's, so another walk's anchor would read its own row there; decision 0425).
+    pub fn texts_dropped(self) -> Self {
+        self.map_tests(&|test| match test {
+            Set::Text(_) => Set::All,
+            test => test,
+        })
+    }
+
+    /// The labels this set reads (from `DERIVED_CLASS_BASE`), as their ids.
+    pub fn labels(&self) -> Vec<u16> {
+        let found = std::cell::RefCell::new(Vec::new());
+        self.clone().map_tests(&|test| {
+            if let Set::Class(class) = test
+                && class >= DERIVED_CLASS_BASE
+            {
+                found.borrow_mut().push(class);
+            }
+            test
+        });
+        let mut found = found.into_inner();
+        found.sort_unstable();
+        found.dedup();
+        found
+    }
+
+    /// The conjunction of `parts`, flattened (`All` dropped).
+    pub fn all_of(parts: Vec<Self>) -> Self {
+        Self::and(parts)
     }
 
     /// This set with `f` applied to each of its tests (the sets with no operand), its steps kept.
@@ -1216,7 +1256,7 @@ pub mod tests {
         let image = Set::targets(&inside, Set::All).unwrap().device().unwrap();
         assert_eq!((image.words, image.depth), (vec![class, d::REACH_DESCENDANT], 2));
         let image = Set::targets(&chain, Set::Kind(7)).unwrap().device().unwrap();
-        assert_eq!((image.words, image.depth), (vec![d::KIND | 7 << 8, class, d::REACH_CHAIN], 3));
+        assert_eq!((image.words, image.depth), (vec![d::KIND | 7 << 8, class, d::REACH_CHAIN], 4));
         let named = [w(SUPERTYPE, label), word(CHILD, NAMED, 0), w(CAPTURE, 0), w(EMIT, 1)];
         let image = Set::targets(&named, Set::All).unwrap().device().unwrap();
         assert_eq!((image.words, image.depth), (vec![class, d::PARENT, d::FLAGS | u32::from(NAMED) << 8, d::AND | 2 << 8], 2));

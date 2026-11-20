@@ -486,7 +486,7 @@ impl MappedBuffer {
                     device.max_buffer_length()
                 );
             }
-            rerail_prof::count("capacity.metal_pool_driver", 1);
+            rerail_prof::count("capacity.metal_longest_buffer", 1);
             if rerail_prof::on() {
                 // What the driver held then, and the pool's own part of it (the most seen).
                 let mut stages = rerail_prof::stages();
@@ -549,7 +549,7 @@ impl MappedBuffer {
                     std::panic::Location::caller()
                 );
             }
-            rerail_prof::count("capacity.metal_pool_driver", 1);
+            rerail_prof::count("capacity.metal_longest_buffer", 1);
             if rerail_prof::on() {
                 // What the driver held then, and the pool's own part of it (the most seen).
                 let mut stages = rerail_prof::stages();

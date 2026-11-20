@@ -2645,7 +2645,7 @@ fn roots_past_max_visited_nodes_are_not_matched_in_native_and_workspace() {
     }
 }
 
-/// Decision 0434 §4, step 6: a clause none of whose root kinds the document's presence holds is ruled out before any
+/// Decision 0426 §4, step 6: a clause none of whose root kinds the document's presence holds is ruled out before any
 /// node is read; a clause whose root kinds it holds runs as before; a document where every clause is ruled out builds
 /// no anchor index and visits no node.
 #[test]

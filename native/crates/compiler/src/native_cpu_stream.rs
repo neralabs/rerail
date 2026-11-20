@@ -103,7 +103,7 @@ pub struct Ctx {
     /// Tier 1's records' layout (`records::RecordLayout`): the bytes from a token's start,
     /// last or code to the next token's (4 in columns, 12 in rows).
     record_stride: u64,
-    /// A format 16 run's (decision 0434 §6, R17; `CompiledStream::sixteen`): the writer's state, its ops'
+    /// A format 16 run's (decision 0426 §6, R17; `CompiledStream::sixteen`): the writer's state, its ops'
     /// argument; each slot key's number in the language's table (`Numbers`). Null in a format 15 run.
     writer: *mut u8,
     numbers: *const u32,
@@ -246,7 +246,7 @@ pub struct Bounds {
 }
 
 /// A language's numbers by tier 2's slot keys (`native_cpu_tape::id_slots`, as `native_cpu_tape::commit` keys a
-/// node): what a format 16 run passes each node's number by (decision 0434 §6, R17). `u32::MAX` where the
+/// node): what a format 16 run passes each node's number by (decision 0426 §6, R17). `u32::MAX` where the
 /// language's table has none for the key.
 pub struct Numbers(Vec<u32>);
 
@@ -2019,7 +2019,7 @@ impl Table<'_> {
         f.switch_to_block(done);
     }
 
-    /// Nodes `from..to` final: their codes (`native_cpu_tape::commit`). In a format 16 run (decision 0434 §6,
+    /// Nodes `from..to` final: their codes (`native_cpu_tape::commit`). In a format 16 run (decision 0426 §6,
     /// R17), `to` is the commit point: the nodes from the last passed up to the commit point before it are passed
     /// to the ops (`pass`). A commit point is final only where no word reaches before it, and one word does: a
     /// fold of the root's two leaves retags the first, which is the commit point before the second's
@@ -3355,7 +3355,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
     compile_with(native, cut, widths, tag, false)
 }
 
-/// `compile_at`; where `sixteen`, the run writes format 16 by the writer's ops (decision 0434 §6, R17): at each
+/// `compile_at`; where `sixteen`, the run writes format 16 by the writer's ops (decision 0426 §6, R17): at each
 /// commit point it passes the nodes before the last one to the ops (`native_cpu_tape::pass`), at `ACCEPT` the rest,
 /// and it writes no format 15 image (no codes, no image's end). Its run takes the writer (`Parser::image16`).
 pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, widths: rerail_tape_format::Widths, tag: u8, sixteen: bool) -> Result<CompiledStream, Error> {
@@ -6616,7 +6616,7 @@ impl Parser {
     }
 
     /// The format 16 tape (16z where `z`) of `bytes` in `lang`, written by tier 2 as it parses, through the
-    /// writer's ops (decision 0434 §6, R17): no format 15 image is made. `numbers`: `lang`'s numbers by the format
+    /// writer's ops (decision 0426 §6, R17): no format 15 image is made. `numbers`: `lang`'s numbers by the format
     /// 16 tier 2's keys (`CompiledStream::numbers`). The writer's room is reserved for the bound's nodes and a
     /// guess of the depth; a run that found a part full (the open nodes past the guess, or tier 2's own room past
     /// its guess) runs again with the bound's room. `Err` for a file tier 2 refuses, or a failure of the ops.

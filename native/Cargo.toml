@@ -222,6 +222,8 @@ metal = "0.33.0"
 rerail-metal = { path = "crates/metal" }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
+# The tape's views run as UKL kernels, launched through the device layer (decision 0440 step C).
+rerail-gpu = { path = "../gpu" }
 # Per-thread buffer ledgers for the engine's tests (`rerail_metal::test_pool`).
 rerail-metal = { path = "crates/metal", features = ["test-hooks"] }
 rerail-device-metal = { path = "crates/device_metal", default-features = false, features = ["test-hooks"] }

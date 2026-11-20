@@ -1,4 +1,4 @@
-//! Format 16 written by the writer's ops in CLIF (decision 0434 §6), through their Rust (`generated_writer`): the
+//! Format 16 written by the writer's ops in CLIF (decision 0426 §6), through their Rust (`generated_writer`): the
 //! host's region, each part its own buffer, named in the state by its offset from the state's address. Before each
 //! op the host reserves what the op can need, as a `Vec` reserves before a push, so an op never finds a part full:
 //! a full part is the device's failure, whose document is parsed again on the host.
@@ -20,7 +20,7 @@ macro_rules! call {
     }};
 }
 
-/// The ops compiled by the JIT (decision 0434 §6, R15), a test's: what `Writer` calls in place of their Rust.
+/// The ops compiled by the JIT (decision 0426 §6, R15), a test's: what `Writer` calls in place of their Rust.
 #[cfg(test)]
 pub(super) struct Jit {
     _module: rerail_clif::jit::Writer,
@@ -66,7 +66,7 @@ const ZBLOCK_MAX: usize = 4 * PIECE_MAX + w::lz4_bound(PIECE_MAX as u64) as usiz
 /// What a fresh byte of the tape's buffer holds: in tests not zero, so a byte the ops do not write shows.
 const FRESH: u8 = if cfg!(test) { 0xa5 } else { 0 };
 
-/// Format 16 or 16z written in one pass as a parser goes (decision 0434 §2), by the writer's ops in CLIF (§6)
+/// Format 16 or 16z written in one pass as a parser goes (decision 0426 §2), by the writer's ops in CLIF (§6)
 /// through their Rust: `f16::Writer`. Its API and its bytes are the hand-written reference writer's
 /// (`reference::Writer`, whose doc says what each op writes where), which the tests check it against (R13, R16).
 pub struct Writer {
@@ -283,7 +283,7 @@ impl Writer {
     }
 
     /// Room for a run of up to `nodes` nodes, `depth` open at once, whose ops code calls itself, with no host
-    /// between them to reserve (tier 2's words, decision 0434 §6, R17): each block's share as `open` reserves it,
+    /// between them to reserve (tier 2's words, decision 0426 §6, R17): each block's share as `open` reserves it,
     /// and room for every block made final as `reserve_final` does. A part found full after it is the run's
     /// failure (`fail::FULL`), and the run goes again with more room.
     pub fn reserve_run(&mut self, nodes: usize, depth: usize) {
@@ -378,7 +378,7 @@ impl Writer {
         i
     }
 
-    /// The nodes so far final but for the open ones (`w_commit`): no edit reaches before them (decision 0434 §2).
+    /// The nodes so far final but for the open ones (`w_commit`): no edit reaches before them (decision 0426 §2).
     pub fn commit(&mut self) {
         let blocks = (self.state.n as usize / Z).saturating_sub(self.state.frontier as usize / Z);
         self.reserve_final(blocks);
@@ -497,39 +497,60 @@ impl Lz {
     }
 }
 
-/// The ops in MSL on the device (decision 0434 §6, R15), a test's: the calls are recorded, then replayed by one
+/// The ops in UKL on the process's device (decision 0426 §6, R15; decision 0440), a test's: the calls are recorded, then replayed by one
 /// thread of a kernel over the region in one buffer, the state at its start and each part at its offset from it, as
 /// the host names them. The device's region does not grow: each part gets the room the host's run of the same calls
 /// reserved (sizing it from bounds is tier 2's, R17).
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(test)]
 pub(super) mod device {
     use super::{FRESH, Writer, State, Z, finished, part};
     use crate::f16::{Finished, Lang};
-    use metal::{CompileOptions, Device, MTLResourceOptions, MTLSize};
 
     /// The kernel: the calls `c` (an op and up to three arguments each) through the ops, then `finish`.
     const REPLAY: &str = r#"
-kernel void replay(device uchar* r [[buffer(0)]], device const ulong* c [[buffer(1)]], constant uint& n [[buffer(2)]],
-                   device uint* out [[buffer(3)]], uint id [[thread_position_in_grid]]) {
-    if (id != 0u) return;
-    device const uchar* t = r;
-    for (uint k = 0u; k < n; k++) {
-        device const ulong* e = c + 4u * k;
-        switch (uint(e[0])) {
-            case 0u: clif_w_open(t, 0ul, uint(e[1]), e[2]); break;
+#include <ukl/reads/writer.h>
+
+typedef struct ReplayArgs {
+    uint32_t n;
+    uint32_t pad;
+} ReplayArgs;
+UKL_REFLECT_STRUCT(ReplayArgs, n, pad)
+
+DEFINE_KERNEL2(tests, replay,
+               ARGS,     ReplayArgs, args, ,
+               RWBUFFER, uint8_t,    r,    "[bytes]",
+               ROBUFFER, uint64_t,   c,    "[4 * n]",
+               RWBUFFER, uint32_t,   out,  "[1]",
+               GID0,     uint32_t,   id,   )
+{
+    if (id != 0u)
+        return;
+    UKL_GLOBAL const uint8_t* t = r;
+    for (uint32_t k = 0u; k < args.n; k++) {
+        ROBUFFER(uint64_t) e = c + 4u * k;
+        switch ((uint32_t)e[0]) {
+            case 0u: clif_w_open(t, 0ul, (uint32_t)e[1], e[2]); break;
             case 1u: clif_w_close(t, 0ul, e[1]); break;
-            case 2u: clif_w_leaf(t, 0ul, uint(e[1]), e[2], e[3]); break;
+            case 2u: clif_w_leaf(t, 0ul, (uint32_t)e[1], e[2], e[3]); break;
             case 3u: clif_w_commit(t, 0ul); break;
-            case 4u: clif_w_retag(t, 0ul, uint(e[1]), uint(e[2])); break;
-            default: clif_w_set_start(t, 0ul, uint(e[1]), e[2]); break;
+            case 4u: clif_w_retag(t, 0ul, (uint32_t)e[1], (uint32_t)e[2]); break;
+            default: clif_w_set_start(t, 0ul, (uint32_t)e[1], e[2]); break;
         }
     }
     out[0] = clif_w_finish(t, 0ul);
 }
 "#;
 
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct ReplayArgs {
+        n: u32,
+        pad: u32,
+    }
+    // SAFETY: two u32s, `repr(C)`, as the kernel's `ReplayArgs`.
+    unsafe impl rerail_gpu::Pod for ReplayArgs {}
+
     pub(in crate::f16) struct DeviceOps {
-        device: Device,
         /// The host's run of the calls, for the room each part needs; and the writer as made, for the region.
         host: Writer,
         made: Writer,
@@ -537,8 +558,8 @@ kernel void replay(device uchar* r [[buffer(0)]], device const ulong* c [[buffer
     }
 
     impl DeviceOps {
-        pub(in crate::f16) fn new(device: &Device, lang: &Lang, source: &[u8], tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
-            DeviceOps { device: device.clone(), host: Writer::new(lang, source, tag, z, blocks, nodes), made: Writer::new(lang, source, tag, z, blocks, nodes), calls: Vec::new() }
+        pub(in crate::f16) fn new(lang: &Lang, source: &[u8], tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
+            DeviceOps { host: Writer::new(lang, source, tag, z, blocks, nodes), made: Writer::new(lang, source, tag, z, blocks, nodes), calls: Vec::new() }
         }
         pub(in crate::f16) fn open(&mut self, number: u32, start: u64) -> usize {
             self.calls.push([0, number.into(), start, 0]);
@@ -574,9 +595,7 @@ kernel void replay(device uchar* r [[buffer(0)]], device const ulong* c [[buffer
                 *at = end;
                 end = (end + self.host.parts[k].len()).next_multiple_of(64);
             }
-            let region = self.device.new_buffer(end as u64, MTLResourceOptions::StorageModeShared);
-            // SAFETY: the buffer is `end` bytes, shared with the host, and no command uses it yet.
-            let bytes = unsafe { std::slice::from_raw_parts_mut(region.contents().cast::<u8>(), end) };
+            let mut bytes = vec![0u8; end];
             let mut state = *self.made.state;
             for (k, &at) in offsets.iter().enumerate() {
                 let len = self.host.parts[k].len();
@@ -597,28 +616,25 @@ kernel void replay(device uchar* r [[buffer(0)]], device const ulong* c [[buffer
             }
             // SAFETY: the state is plain integers (`repr(C)`), and the region starts with its room.
             unsafe { std::ptr::write_unaligned(bytes.as_mut_ptr().cast::<State>(), state) };
-            let source = format!("#include <metal_stdlib>\nusing namespace metal;\n{}{REPLAY}", crate::WRITER_MSL);
-            let lib = self.device.new_library_with_source(&source, &CompileOptions::new()).expect("the writer's ops compile in MSL");
-            let pipe = self.device.new_compute_pipeline_state_with_function(&lib.get_function("replay", None).expect("the kernel")).expect("its pipeline");
+            use rerail_gpu::kernels::{alloc, buffer_of, launch, read};
+            let program = rerail_gpu::kernels::program("tape_writer_replay", REPLAY).unwrap_or_else(|e| panic!("{}: the writer's ops in UKL: {e}", rerail_gpu::device::backend()));
+            let shared = rerail_gpu::shared::get().expect("a device");
+            let mut q = rerail_gpu::device::ComputeQueue::new(&shared.queue);
             let n = self.calls.len() as u32;
             // At least one call's room: a buffer is never empty.
             self.calls.push([0; 4]);
-            let calls = self.device.new_buffer_with_data(self.calls.as_ptr().cast(), 32 * self.calls.len() as u64, MTLResourceOptions::StorageModeShared);
-            let result = self.device.new_buffer(4, MTLResourceOptions::StorageModeShared);
-            let queue = self.device.new_command_queue();
-            let cmd = queue.new_command_buffer();
-            let enc = cmd.new_compute_command_encoder();
-            enc.set_compute_pipeline_state(&pipe);
-            enc.set_buffer(0, Some(&region), 0);
-            enc.set_buffer(1, Some(&calls), 0);
-            enc.set_bytes(2, 4, (&raw const n).cast());
-            enc.set_buffer(3, Some(&result), 0);
-            enc.dispatch_threads(MTLSize::new(1, 1, 1), MTLSize::new(1, 1, 1));
-            enc.end_encoding();
-            cmd.commit();
-            cmd.wait_until_completed();
-            // SAFETY: the command completed; the kernel wrote the result's u32 and the region.
-            let r = unsafe { *result.contents().cast::<u32>() };
+            let calls: Vec<u64> = self.calls.iter().flatten().copied().collect();
+            let (region, cb, result) = (buffer_of(&bytes).unwrap(), buffer_of(&calls).unwrap(), alloc::<u32>(1).unwrap());
+            launch(&q, program.function("replay").unwrap())
+                .value("args", &ReplayArgs { n, pad: 0 })
+                .buffer("r", &region)
+                .buffer("c", &cb)
+                .buffer("out", &result)
+                .run(&[1], &[1])
+                .unwrap();
+            q.flush().await_().unwrap();
+            let r = read::<u32>(&result, 1)[0];
+            let bytes: Vec<u8> = read(&region, end);
             let state: State = unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<State>()) };
             if r != 0 {
                 return Err(format!("the writer's ops failed on the device: {r:#x} at node {}", state.bad_node as i32));

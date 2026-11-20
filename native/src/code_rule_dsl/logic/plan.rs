@@ -13137,7 +13137,10 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     // and documents' inputs, in SQL.
     let native_out: BTreeSet<String> = if atoms {
         // `finding` too, when the nodes and documents it is decoded with are bound in place (`finding_rows`).
-        let in_place = |r: &str| r != "finding" || ["node", "doc"].iter().all(|t| crate::code_rule_dsl::facts::vtab::bound_source(db, t).is_some());
+        // Only the findings form (`finding(key, n)`) is decoded with them: a `finding` of another shape is an output
+        // like any other.
+        let findings_form = |r: &str| r == "finding" && f0.columns(r).is_none_or(|c| c.len() == 2);
+        let in_place = |r: &str| !findings_form(r) || ["node", "doc"].iter().all(|t| crate::code_rule_dsl::facts::vtab::bound_source(db, t).is_some());
         written.iter().filter(|r| in_place(r) && run.native_rels.contains(*r) && !run.inputs.contains(r.as_str()) && super::native::component::held(db, r).is_some()).cloned().collect()
     } else {
         BTreeSet::new()
@@ -13467,7 +13470,7 @@ fn decoded_outputs(
             })
         };
         let text_cols: Vec<bool> = domains.iter().map(|d| *d == lower::Domain::Name).collect();
-        let held = if native.contains(rel) && rel == "finding" {
+        let held = if native.contains(rel) && findings_form {
             super::native::component::finding_rows(db)?.map(|rows| rows.into_iter().map(|(c, p, at)| vec![SqlValue::Text(c), SqlValue::Text(p), SqlValue::Integer(at)]).collect())
         } else if native.contains(rel) {
             super::native::component::output_rows(db, rel, &text_cols)?

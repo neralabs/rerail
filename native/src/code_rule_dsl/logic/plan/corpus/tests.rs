@@ -495,7 +495,7 @@ unused(f) :- def(f, _), !used(f).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Decision 0434 §4, step 6: a run's parses are stored with their presences after them, each tape's home as one: a
+/// Decision 0426 §4, step 6: a run's parses are stored with their presences after them, each tape's home as one: a
 /// tape read back from the store holds its document's kinds.
 #[test]
 fn a_runs_tapes_are_stored_with_their_presences() {
@@ -525,6 +525,38 @@ fn a_runs_tapes_are_stored_with_their_presences() {
         let presence = crate::code_rule_dsl::tape::stored_presence(&bytes, tag as u8).unwrap_or_else(|| panic!("{file}'s presence, stored with its tape"));
         assert_eq!(presence.has_kind(u32::MAX, function), body.starts_with("def"), "{file}: its document's kinds");
     }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A `finding` of another shape than the findings form (`finding(key, n)`) is an output like any other: held in the
+/// cross-file part, where no nodes or documents are bound, it is read where it is held, not from a table nothing
+/// wrote ("no such table: finding" on internal_dead_code's `finding(category, symbol, n)`).
+#[test]
+fn a_finding_of_three_columns_held_cross_file_is_read_where_it_is() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("finding3");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "def f():\n    pass\n").unwrap();
+    std::fs::write(dir.join("b.py"), "from a import f\ndef g():\n    pass\n").unwrap();
+    let rule = dir.join("finding.rerail");
+    std::fs::write(&rule, r#"
+.decl def(n: node, q: symbol)
+def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
+.decl imp(n: node, q: symbol)
+imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
+.decl used(f: node)
+used(f) :- imp(_, q), def(f, q).
+.decl finding(category: symbol, q: symbol, n: node)
+finding("unused", q, f) :- def(f, q), !used(f).
+.output finding
+"#).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let rows = crate::code_rule_dsl::logic::plan::output::shown(&out, "finding").unwrap();
+    let names: Vec<&str> = rows.iter().map(|row| row[1].as_str()).collect();
+    assert!(rows.iter().all(|row| row.len() == 3 && row[0] == "unused"), "{rows:?}");
+    assert!(names.iter().any(|q| q.ends_with("g")) && !names.iter().any(|q| q.ends_with(".f")), "g is unused, f is imported: {rows:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -2025,16 +2057,3 @@ fn reads_of(v: &crate::code_rule_dsl::logic::program_image::Version, head: &str)
     v.heads_and_reads().into_iter().filter(|(h, _)| h == head).flat_map(|(_, reads)| reads.into_iter().map(|(_, r)| r)).collect()
 }
 
-/// Q180: a chunk is sized by what it added to the host's footprint. The device's slabs and buffers, bounded by the
-/// Metal budget on top of the overall one (decision 0126), are not a chunk's: counted, Metal's chunks were cut at
-/// half to a third of the CPU's.
-#[test]
-fn a_chunks_growth_leaves_out_the_devices_memory() {
-    use super::host_added_mb;
-    // [footprint, lifetime peak, device MB] at the chunk's start and at its end.
-    assert_eq!(host_added_mb([1_000, 1_000, 0], [1_300, 1_300, 0]), 300, "no device: the footprint's growth");
-    assert_eq!(host_added_mb([1_000, 1_000, 100], [1_700, 1_700, 500]), 300, "the device's 400 MB more left out");
-    assert_eq!(host_added_mb([1_000, 2_000, 100], [1_200, 2_000, 150]), 150, "under the old peak: the footprint now");
-    assert_eq!(host_added_mb([1_000, 1_000, 100], [1_900, 2_600, 300]), 1_400, "past the old peak: the peak");
-    assert_eq!(host_added_mb([1_000, 1_000, 400], [900, 900, 300]), 1, "shrunk: at least 1");
-}
