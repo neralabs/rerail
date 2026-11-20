@@ -206,9 +206,12 @@ describe("gitCrlfReader", () => {
     }
   }, 60_000);
 
-  it("answers no path whose check-attr output was cut before its three attributes, so none is kept", () => {
-    // Output cut at the timeout: `b.txt` got its `text` and no `crlf` or `eol`, which a `.gitattributes` may set.
-    const cut = "a.txt\0text\0set\0a.txt\0crlf\0unspecified\0a.txt\0eol\0crlf\0b.txt\0text\0unset\0b.txt\0crlf\0";
-    expect([...lineEndingAttributesFrom(cut)]).toEqual([["a.txt", { text: "set", crlf: "unspecified", eol: "crlf" }]]);
+  it("answers no path whose check-attr output was cut before its three attributes and the NUL closing the last, so none is kept", () => {
+    const whole = "a.txt\0text\0set\0a.txt\0crlf\0unspecified\0a.txt\0eol\0crlf\0";
+    // Output cut at the timeout: `b.txt` got its `text` and no `crlf` or `eol`, which a `.gitattributes` may set; or its
+    // `eol` value was cut before its closing NUL, before any of it or inside it (`cr` of `crlf`).
+    for (const cut of ["b.txt\0text\0unset\0b.txt\0crlf\0", "b.txt\0text\0set\0b.txt\0crlf\0unspecified\0b.txt\0eol\0", "b.txt\0text\0set\0b.txt\0crlf\0unspecified\0b.txt\0eol\0cr"]) {
+      expect([...lineEndingAttributesFrom(`${whole}${cut}`)], JSON.stringify(cut)).toEqual([["a.txt", { text: "set", crlf: "unspecified", eol: "crlf" }]]);
+    }
   });
 });

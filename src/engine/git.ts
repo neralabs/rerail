@@ -1471,30 +1471,32 @@ function crlfRule(attributes: LineEndingAttributes, config: LineEndingConfig, pl
   return textGetsCrlf(config, platform) ? declared : undefined;
 }
 
+/** The attributes `lineEndingAttributes` asks `check-attr` for, each of which it prints for every path it answers. */
+const LINE_ENDING_ATTRIBUTES = ["text", "crlf", "eol"] as const;
+
 /**
  * The `text`, `crlf` and `eol` attributes of each of `paths` (relative to `cwd`), by one `git check-attr --stdin`; empty
  * without Git, outside a repository or past the timeout.
  */
 async function lineEndingAttributes(cwd: string, paths: readonly string[], signal: AbortSignal | undefined): Promise<Map<string, LineEndingAttributes>> {
   const chunks: Buffer[] = [];
-  await streamGit(cwd, ["check-attr", "-z", "--stdin", "text", "crlf", "eol"], {
+  await streamGit(cwd, ["check-attr", "-z", "--stdin", ...LINE_ENDING_ATTRIBUTES], {
     input: paths.map(path => `${path}\0`).join(""), onData: chunk => chunks.push(chunk), signal,
   });
   return lineEndingAttributesFrom(Buffer.concat(chunks).toString("utf8"));
 }
 
-/** The attributes `lineEndingAttributes` asks `check-attr` for, each of which it prints for every path it answers. */
-const LINE_ENDING_ATTRIBUTES = ["text", "crlf", "eol"] as const;
-
 /**
  * `check-attr -z`'s output, `<path> NUL <attribute> NUL <value> NUL` once per path and attribute, by path: only the
- * paths whose three attributes all arrived. Output cut at the timeout leaves its last path partly read, which says
- * nothing of the attributes that did not arrive, so that path is not answered, as the paths after it are not.
+ * paths whose three attributes all arrived, each value with its closing NUL. Output cut at the timeout leaves its last
+ * path partly read, which says nothing of the attributes or the end of a value that did not arrive, so that path is not
+ * answered, as the paths after it are not.
  */
 function lineEndingAttributesFrom(output: string): Map<string, LineEndingAttributes> {
   const values = new Map<string, Map<string, string>>();
   const fields = output.split("\0");
-  for (let at = 0; at + 2 < fields.length; at += 3) {
+  // A value's closing NUL arrived where a field follows it: the empty one after the output's last NUL, at the least.
+  for (let at = 0; at + 3 < fields.length; at += 3) {
     const byName = values.get(fields[at]!) ?? new Map<string, string>();
     values.set(fields[at]!, byName.set(fields[at + 1]!, fields[at + 2]!));
   }
