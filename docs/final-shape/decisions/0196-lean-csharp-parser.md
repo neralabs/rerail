@@ -28,7 +28,7 @@ refused, and tree-sitter reads it with its own recovery. There are no modes.
 
 ## Prior work consulted
 
-- **ast-index-spike indexes:** the spike's sample corpus (`ast-index-sample-corpus`) holds
+- **SQL index prototype indexes:** the spike's sample corpus (`ast-index-sample-corpus`) holds
   `runtime` and `PowerShell`. 820 of their files are one of the oracle's sets below.
 - **0195 (lean Java), 0193 (lean Rust), 0178 (lean ECMAScript), 0163 and 0169 (lean Python), 0181
   (their profile).** **Agrees and follows:** the same crate shape, stage 1, keyword hash, writer,
@@ -119,7 +119,7 @@ refuses goes to tree-sitter-c-sharp.
 tree-sitter's, line by line. Its sets:
 
 - **ast-index corpus:** 881 files of `runtime` and `PowerShell` (61 with tree-sitter errors).
-- **Stored repositories:** 640 files of 69 repositories (`~/nera/sampo-repos`, 12 a repository,
+- **Stored repositories:** 640 files of 69 repositories (a local corpus, 12 a repository,
   by `tmp/corpus/extract.sh`; 23 with tree-sitter errors).
 - **Cut and edited:** 500 of those files (250 of each set), each cut at 3 places and with 3 lines
   cut short in the middle.

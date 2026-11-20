@@ -452,7 +452,7 @@ Each step is measured on the 84 files (Jedi agreement, CPU, RSS) before the next
 
 ## Prior work consulted
 
-**ast-index-spike design index:**
+**SQL index prototype design index:**
 - §17: semantic edges are "a separate layer keyed by symbols" (D S020 L2049-2058). This decision is that layer,
   as phases. Cross-file resolution was out of scope there.
 - §7: transitive closure belongs to the caller, with a bound, and "a derived edge table may be legitimate"

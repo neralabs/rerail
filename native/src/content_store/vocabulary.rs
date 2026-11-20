@@ -91,7 +91,7 @@ pub fn install(db: &Connection) -> Result<()> {
             let matched: Vec<&str> = sets[at]
                 .1
                 .iter()
-                // The probe's byte tests reject most terms before the regex runs (ast-index-spike
+                // The probe's byte tests reject most terms before the regex runs (SQL index prototype
                 // S163/S169: derived probes as top-level conjuncts).
                 .filter(|(_, probe, regex)| probe.allows(term) && regex.is_match(term))
                 .map(|(expression, _, _)| expression.as_str())

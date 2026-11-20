@@ -89,7 +89,7 @@ let spec = derived::value("join spec", |d| { digest_atom(d, head); d.u64(at); /*
 
 ## Prior work consulted
 
-- **ast-index-spike, design index D S012 L313-332:** "preorder plus subtree size (a nested interval)" is the `a`
+- **SQL index prototype, design index D S012 L313-332:** "preorder plus subtree size (a nested interval)" is the `a`
   side of every axis. The ancestor walk is the `n` side. It is the same evidence as for 0050.
 - **History index §6** ("a per-file cost turned into a per-row cost"): the eager axes were a per-node cost paid for
   rows never read.

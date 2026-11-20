@@ -119,7 +119,7 @@ run? They were built one at a time.
 | Kept strata and a session's kept part (0077, 0101) | `kept_strata.rs`, `retain.rs` | every derived relation's rows and digest are kept for the next run | relation, across runs |
 | The per-file memo (0146) | `memo.rs` | each file's exports and the base rows the cross part reads are kept | file, across runs |
 
-Unmerged and relevant, on `jeremybarnes/Data-layer-rule-expressivity`:
+Unmerged and relevant, on `Data-layer-rule-expressivity`:
 - **31aea1a9a, 3d47054af, 4e0774680.** Which kept relations' rows a run loads: everything the views among them read,
   followed through views. Native answers count as inputs that can change. This is the block this decision changes,
   so it is merged first.

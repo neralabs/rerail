@@ -164,7 +164,7 @@ The win arrives when `state-flow-project` also moves to narrow inputs and the tr
 
 **Withdrawn:** an earlier version of this section made the index opt-in (`RERAIL_AST_SQL_INDEX`). It compared whole runs with and without the index, and concluded the index was a net loss. That was wrong twice over:
 
-- **The index is not optional.** The anchor index (kind postings, value postings) is how the engine identifies and matches the correct anchors. Anchors are chosen as the rarest mandatory concrete variable, with a value anchor before kind (ast-index-spike design index topics 3 and 5, "kidx" and "vidx is mandatory"; D S049-S054, S151, S053). It is built every time, and nothing can turn it off. The opt-in was reverted.
+- **The index is not optional.** The anchor index (kind postings, value postings) is how the engine identifies and matches the correct anchors. Anchors are chosen as the rarest mandatory concrete variable, with a value anchor before kind (SQL index prototype design index topics 3 and 5, "kidx" and "vidx is mandatory"; D S049-S054, S151, S053). It is built every time, and nothing can turn it off. The opt-in was reverted.
 - **Whole-run CPU mixes construction with execution.** Parsing, tape building and index publication are construction costs. Execution is the matching and querying that run over what was built. Performance comparisons report execution only, with construction on its own line if at all.
 
 What the stack sample (type-safety, full corpus, index on) does show is the publication path's cost. These are fixed inside the index, not by skipping it:

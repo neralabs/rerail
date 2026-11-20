@@ -32,7 +32,7 @@ refused, and tree-sitter reads it with its own recovery.
 
 ## Prior work consulted
 
-- **ast-index-spike indexes:** the spike's sample corpus (`ast-index-sample-corpus`) holds 4,326
+- **SQL index prototype indexes:** the spike's sample corpus (`ast-index-sample-corpus`) holds 4,326
   Markdown files under 400 KB; the oracle's sets are drawn from them.
 - **0200 (lean CSS), 0199 (lean HTML), 0198 (lean PHP), 0196, 0195, 0193, 0163, 0181.** **Agrees and
   follows:** the same crate shape, writer and oracle. "No error recovery: one behavior" is kept as

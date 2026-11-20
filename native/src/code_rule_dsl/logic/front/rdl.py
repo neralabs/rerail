@@ -684,7 +684,7 @@ def tarjan(nodes, edges):
 class Stats:
     """The corpus statistics the planner prices plans with, read from the tables stats.py builds at ingestion
     (`stat_*` in the facts database) in one statement. Nothing is counted at plan time: a GROUP BY over every input
-    column on every run was 0.7 s of planning here, and ast-index-spike found that statistics held only by the
+    column on every run was 0.7 s of planning here, and the SQL index prototype found that statistics held only by the
     process plan differently in each process (S174, S178). Statistics whose fingerprint (row counts) doesn't match
     the facts are refused, so a plan is never priced on statistics of other data."""
     def __init__(self, db, prog):
@@ -1062,7 +1062,7 @@ def sql_select(prog, head, order, delta_at=None, rec=set(), tables=None):
             seed_from = frm[0][0] + "".join(f" CROSS JOIN {f}" for f, c in frm[1:]) if frm else ""
             seed_where = " AND ".join(first_conds + [x for _, c in frm[1:] for x in c] + where) or "1"
             ctes.append(f"seed{k} AS (SELECT DISTINCT {seed_sel} FROM {seed_from} WHERE {seed_where})")
-            # The seed's columns are threaded through the walk (ast-index-spike S050 `_path_threaded`), so the walk's
+            # The seed's columns are threaded through the walk (SQL index prototype S050 `_path_threaded`), so the walk's
             # output is the extended row and nothing joins back to the seed.
             cols = ", ".join(seed_cols)
             wcols = ", ".join(f"w.{v}" for v in seed_cols)

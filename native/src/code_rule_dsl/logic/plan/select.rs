@@ -509,7 +509,7 @@ impl Model {
                             predicates: conds.into_iter().flatten().chain(wh.drain(..)).collect(),
                         }],
                     ));
-                    // The seed's columns are threaded through the walk (ast-index-spike S050 `_path_threaded`), so the
+                    // The seed's columns are threaded through the walk (SQL index prototype S050 `_path_threaded`), so the
                     // walk's output is the extended row and nothing joins back to the seed.
                     let threaded = |alias: &str| seed_cols.iter().map(|v| (col(alias, v), None)).collect::<Vec<_>>();
                     let with = |alias: &str, extra: Vec<Expr>| threaded(alias).into_iter().chain(extra.into_iter().map(|e| (e, None))).collect::<Vec<_>>();

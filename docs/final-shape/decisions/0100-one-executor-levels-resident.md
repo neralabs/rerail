@@ -41,7 +41,7 @@ The level's CPU strata run meanwhile.
 
 ## Prior work consulted
 
-- **ast-index-spike design index, §19 GPU/SIMD.** Nothing was designed or measured for a GPU. Set-based decoding is
+- **SQL index prototype design index, §19 GPU/SIMD.** Nothing was designed or measured for a GPU. Set-based decoding is
   a prefix sum (D S053), and row bookkeeping dominates per-touch cost (D S152).
   - **Agrees.** Every device kernel here is columnar: counted, then scattered.
 - **Design index §3–4.** Mis-estimated intermediates pick bad joins (D S069, S153–S156).

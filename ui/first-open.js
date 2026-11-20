@@ -18,7 +18,7 @@ import { violationOutcomes } from "./derive.js";
 
 /**
  * The repository's state, first match wins: no repository in the URL, one the daemon does not know, not set up,
- * stopped, no rule added (Jeff's decision 2: no banner, the empty block is the message), rules but no session yet
+ * stopped, no rule added (decision 2: no banner, the empty block is the message), rules but no session yet
  * (the welcome banner), and sessions have run (no banner; the page is the answer).
  * @param {RepositoryFacts} facts
  * @returns {FirstOpenState}
@@ -59,7 +59,7 @@ export function overviewBody({ ruleCount, sessionsEver, topCount }) {
 }
 
 /**
- * Violations steered X of Y (Jeff's decision 1): Y every distinct violation in range, X those recorded by an audit in
+ * Violations steered X of Y (decision 1): Y every distinct violation in range, X those recorded by an audit in
  * Steer mode while their rule was on Steer or Block (distinct less the ones recorded in Log mode, the audit's or the
  * rule's), less those whose steer the coding agent declined: the tile opens History by rule's Steered chip, which
  * counts a declined violation under Declined only. `rerails` counts steer deliveries, which can

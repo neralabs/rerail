@@ -178,7 +178,7 @@ not pin. A check should cite full ids; an abbreviated one is accepted, and gives
 - **Decision 0090**: changes propagate as deltas. *Agrees* (§5).
 - **Decision 0064**: recording reads per row cost +60%. *Respected*: artifact reads are per entry, hundreds at
   most, as phase 0's file reads are (t23 §4).
-- **ast-index-spike history §2.16(d)**: key by what a thing is a function of. *Agrees*: an entry by its inputs, a
+- **SQL index prototype history §2.16(d)**: key by what a thing is a function of. *Agrees*: an entry by its inputs, a
   Git answer by the object id.
 - **Lessons ledger #14**: each file owns its rows. *Agrees*: each entry owns its rows.
 

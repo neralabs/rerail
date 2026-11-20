@@ -29,7 +29,7 @@ refused, and tree-sitter reads it with its own recovery.
 
 ## Prior work consulted
 
-- **ast-index-spike indexes:** the spike's sample corpus (`ast-index-sample-corpus`) holds 1,044
+- **SQL index prototype indexes:** the spike's sample corpus (`ast-index-sample-corpus`) holds 1,044
   HTML files across its repositories; they are the oracle's two sets.
 - **0195 (Java and C# become product languages).** **Followed:** the same registration steps, done
   for three languages at once (below).

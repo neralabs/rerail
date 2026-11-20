@@ -2,11 +2,11 @@
 
 Read-only investigation, 2026-10-25. Sources:
 
-- SSC `jeremy/sql-capture-demand-spikes` at `b87eba3b`, plus its uncommitted fragment pivot in the worktree named after Moti's sql-set-composition branch.
+- SSC `sql-capture-demand-spikes` at `b87eba3b`, plus its uncommitted fragment pivot in the worktree named after the sql-set-composition branch.
 - DLRE as merged into `Pulling-it-all-together`.
-- N1562 `jbarnes/sql-rerailer` at `8b6576f0`.
-- Moti's `sql-dl60`, `facts-engine` and `facts-plan`.
-- The ast-index-spike decision indexes (`docs/rule-engine-direction/prior-work/`).
+- N1562 `sql-rerailer` at `8b6576f0`.
+- The `sql-dl60`, `facts-engine` and `facts-plan` branches.
+- The SQL index prototype decision indexes (`docs/rule-engine-direction/prior-work/`).
 
 Line counts are `wc -l` of the Rust files, tests included unless stated otherwise.
 
@@ -28,7 +28,7 @@ Measured evidence says the boundary is in the wrong place:
 
 - **DLRE first-50 full run:** anchor selection takes 537 s and index preparation 137 s, against 58 s of actual AST matching. The whole run is 958.6 s, against 125.8 s for the pre-SQL native path.
 - **SSC's own pivot:** native fragments behind one batched vtab ran at native cost, 287.5 ms against 288.2 ms. The SQL state-machine emitters it removed ran at about 3x native.
-- **ast-index-spike:**
+- **SQL index prototype:**
   - SQL per-row machinery costs 110 ns/node, and recursive climbs 765 ns/touch (design index topic 19, D S152).
   - Moving the child walk into a native table function gave about 390x on the hot query (topic 8, D S058/S062).
   - A query-as-data interpreter in SQL was 12x slower (history index dead end D73).
@@ -71,7 +71,7 @@ Legend:
 | `demand.rs`, `file_guard.rs` | 522 | Demand propagation and file guards | Mixed | — | Demand-to-the-transducer is **S** (it becomes the demand relation). In-file guards are **T** |
 | `parse_facts.rs`, `parse_export.rs`, `format_facts.rs` | about 430+ | Parse and format facts | Yes | — | **T+** (sub-document switch, extension 7) |
 | `planner_stats.rs`, `physical.rs`, `job.rs`, `shared_job.rs` | 693 | Statistics read, physical plan, job batching, sharing | No; planning | Superseded by N1562 `query/plan/` (workstream scan) | **S**, taken from N1562 instead |
-| `sql/frames*`, `sql/emit*`, `sql/fused`, `sql/large`, `sql/exec.rs`, `sql/lower.rs`, `sql/lower/` | about 18k | The frame/stage set-composition executor (Moti's base) | Yes | Retired by its author at about 3x native. It encodes an interpreter in SQL (D73) | **D** |
+| `sql/frames*`, `sql/emit*`, `sql/fused`, `sql/large`, `sql/exec.rs`, `sql/lower.rs`, `sql/lower/` | about 18k | The frame/stage set-composition executor (The facts-engine stream's base) | Yes | Retired by its author at about 3x native. It encodes an interpreter in SQL (D73) | **D** |
 | `sql/nodes.rs` | 1,164 | `node` vtab, one row per tape node | Yes | Per-node rows cost 110 ns/node of SQL machinery (spike topic 19). The old callback engine took 1,141 s against 10 s native | **D** as an execution path. A narrow node relation survives only for the pure-SQL fallback (an address-based TVF in the style of `nera_kids`, topic 8) |
 | `sql/terminals/` | 2,571 | Batched native terminal matches behind a vtab | Yes | Works; one xFilter per batch | **T**. Merge into the transducer vtab boundary |
 | `sql/nearest.rs`, `sql/recursion.rs`, `sql/texts.rs`, `sql/shapes.rs`, `sql/skip.rs`, `sql/scan.rs` | about 2.6k | Nearest enclosing ancestor, recursion, text access, shape choice, skip | Yes | — | **T** (nearest is **T+**, extension 4). Shape choice is **S** (planner) |
@@ -103,7 +103,7 @@ Legend:
 | `query/plan/` (`mod`, `identity`, `scope`, `grouping`, `semantics`, `utility`) | 1,396 | Semantic plan identities, exact candidate-scope identities, grouping by identical scope, utility dedup by semantic identity | No; planning | **S**. Keep as `engine/plan/`. Utility dedup now dedups transducer sub-programs |
 | `transducer/sql_backend.rs` | 2,903 | The `rerail_matches` vtab | Boundary | **Keep, reshaped.** Use narrow typed outputs per section 4 instead of one 35-column union. Report estimated rows from statistics, not a constant 100,000. Add demand through `sqlite3_vtab_in` |
 
-### 2.4 Moti's branches
+### 2.4 the facts-engine stream's branches
 
 | Item | Lines | Verdict |
 |---|---|---|
@@ -111,7 +111,7 @@ Legend:
 | `facts-engine` `content_store/facts_memo.rs` | — | **S** (storage). A content-hash memo of per-document outputs. It fits caching transducer outputs per (document digest, program digest) |
 | `facts-plan` Y1 (maintained reference graph, 72 MB, 0.7/2.4 ms p50/p95 per edit) and Y2 (rules as local queries over it) | — | **S**. These are the cross-file relations the SQL layer composes over. Per-document reference extraction feeding Y1 is **T** |
 
-### 2.5 ast-index-spike
+### 2.5 SQL index prototype
 
 - **In SQL:** everything structural. This was forced by C1, no native code on PG/MariaDB (design index topic 8).
 - **Native, on SQLite only:** decode scalars, then the `nera_kids` table function as the default. That gave 493.6 s → 153.5 s on a 3 MB sweep, and about 390x on the hot query once it took an address rather than a value.
@@ -198,7 +198,7 @@ The binding is one `xFilter` per (program group, batch). Programs are grouped by
 | `engine/relations/` | Contract catalog for `t_*`, `fact_*` and graph relations | DLRE `producers/` |
 | `engine/fallback/` | Pure-SQL binding: transducer program lowered to specialised SQL (low priority) | SSC `sql/relational/` emitter core |
 | `engine/findings/` | Consolidation (`findings-contract.md`) | unchanged; absorbs N1562 `compact_output_sql.rs` |
-| deleted | SSC frames/emit/fused/large/exec and state-machine `outcomes`; Moti's frame engine; SSC `nodes.rs` as an execution path; DLRE authored-SQL relational machinery; DLRE in-file anchor SQL lowering; memo, continuation and peak SQL machinery | — |
+| deleted | SSC frames/emit/fused/large/exec and state-machine `outcomes`; the facts-engine stream's frame engine; SSC `nodes.rs` as an execution path; DLRE authored-SQL relational machinery; DLRE in-file anchor SQL lowering; memo, continuation and peak SQL machinery | — |
 
 ## 6. Share of effort
 
@@ -207,7 +207,7 @@ The binding is one `xFilter` per (program group, batch). Programs are grouped by
 | SSC `sql/` | about 89k | about 45k (relational core and outcomes structure) | about 41k (frames/emit/exec, state-machine emitters, memo SQL) | about 3k |
 | DLRE anchors-sql + relational | about 14.5k | about 5.5k (in-file anchors) + extraction | about 5k (authored-SQL machinery) | about 2.5k (file scope, reachability/forest, producers) |
 | N1562 `query/` | about 11k | about 7k (in-file `RelationNode`s) | about 1k (`compact_output_sql`) | about 3k (plan, cross-file nodes) |
-| Moti frame engine | about 12.6k (overlaps SSC base) | — | about 12.6k | — |
+| Facts-engine frame engine | about 12.6k (overlaps SSC base) | — | about 12.6k | — |
 
 Overall, about 85–90% of the SQL-lowering code computes tape-local things, or exists only to reproduce exact operational semantics, and belongs in T, T+ or D. Measured effort follows the same split:
 

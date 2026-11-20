@@ -286,7 +286,7 @@ parity twin, as `LEG_083_SOUND` does, never in its place.
 
 - **The first rule that reads types** (step 1's end-to-end rule): `docs/rule-syntax/data-layer/leg-083-typed.rr`.
   - **What it does.** LEG-083 counts every `x.resolve()` as an eager lazy terminal, by name; at the data layer's
-    October commit all its findings are pathlib paths or lookups (`data-layer/upstream/LEG-083.md`). This rule
+    October commit all its findings are pathlib paths or lookups (the LEG-083 port note, removed; at 7efcac9c67). This rule
     counts a `resolve()` or `resolve_async()` with no arguments only when its receiver may be a `LazyResult` or a
     `LazySeq` (`possible_type`). It reports a function that reaches one through calls in its own file.
   - **Fixture.** `typing::oracle_tests::leg_083_typed_counts_resolve_by_the_receivers_type` pins it on

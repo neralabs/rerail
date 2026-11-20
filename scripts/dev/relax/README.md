@@ -79,7 +79,7 @@ live session would otherwise find its std's files changed under it.
 
 ## The fork
 
-The fork is [neralabs/relax](https://github.com/neralabs/relax) (private for now), branch
+The fork is a patched checkout of [makepad/relax](https://github.com/makepad/relax), not public, branch
 `rerail`. `rerail.patch` is `git diff` from its first commit (the std items) to its last;
 `std.patch` is the first commit alone. To change the fork: commit on `rerail`, push, regenerate
 the patch (`git diff <std commit> rerail > scripts/dev/relax/rerail.patch`), run the build

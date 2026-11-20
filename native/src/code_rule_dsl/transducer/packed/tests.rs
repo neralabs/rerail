@@ -2397,11 +2397,11 @@
     }
 
 #[test]
-    #[ignore = "full ast-index-spike source corpus indexing benchmark"]
+    #[ignore = "full SQL index prototype source corpus indexing benchmark"]
     fn benchmark_full_fts_source_corpus() {
         let corpus = PathBuf::from(
             std::env::var("RERAIL_PACKED_SOURCE_CORPUS")
-                .expect("RERAIL_PACKED_SOURCE_CORPUS must name ast-index-spike bench/corpus/repos"),
+                .expect("RERAIL_PACKED_SOURCE_CORPUS must name the SQL index prototype bench/corpus/repos"),
         );
         let database = std::env::temp_dir().join(format!(
             "tempo-full-fts-{}-{}.sqlite",
@@ -2596,17 +2596,17 @@
     }
 
     #[test]
-    #[ignore = "full ast-index-spike tree-sitter query oracle benchmark"]
+    #[ignore = "full SQL index prototype tree-sitter query oracle benchmark"]
     fn benchmark_tree_sitter_query_oracle() {
         use tree_sitter::StreamingIterator;
 
         let query_root = PathBuf::from(
             std::env::var("RERAIL_PACKED_QUERY_CORPUS")
-                .expect("RERAIL_PACKED_QUERY_CORPUS must name ast-index-spike bench/corpus/queries"),
+                .expect("RERAIL_PACKED_QUERY_CORPUS must name the SQL index prototype bench/corpus/queries"),
         );
         let source_root = PathBuf::from(
             std::env::var("RERAIL_PACKED_SOURCE_CORPUS")
-                .expect("RERAIL_PACKED_SOURCE_CORPUS must name ast-index-spike bench/corpus/repos"),
+                .expect("RERAIL_PACKED_SOURCE_CORPUS must name the SQL index prototype bench/corpus/repos"),
         );
         let languages: &[(&str, SupportLang, &[&str])] = &[
             ("python", SupportLang::Python, &["py"]),
@@ -2828,11 +2828,11 @@
     }
 
 #[test]
-    #[ignore = "full ast-index-spike tree-sitter query corpus audit"]
+    #[ignore = "full SQL index prototype tree-sitter query corpus audit"]
     fn audit_tree_sitter_query_corpus() {
         let query_root = PathBuf::from(
             std::env::var("RERAIL_PACKED_QUERY_CORPUS")
-                .expect("RERAIL_PACKED_QUERY_CORPUS must name ast-index-spike bench/corpus/queries"),
+                .expect("RERAIL_PACKED_QUERY_CORPUS must name the SQL index prototype bench/corpus/queries"),
         );
         let languages = [
             ("python", SupportLang::Python),

@@ -5,7 +5,7 @@
 # not a hard link of Relax; a closure built in a closure no longer fails E0310 behind an impl
 # Trait capturing two lifetimes; a build script's rerun key holds the native outputs it reaches,
 # not the receipt's path, so an engine edit reruns no other script: see the patch). rerail.patch is the fork's commits, kept on
-# the `rerail` branch of neralabs/relax (private) (git diff of the std commit to the last). It installs to ~/.local/share/rerail-relax, outside
+# the `rerail` branch of a patched makepad/relax checkout (git diff of the std commit to the last). It installs to ~/.local/share/rerail-relax, outside
 # every worktree:
 #
 #   v/<version>/   the patched source tree of one version, never changed once built. The binary

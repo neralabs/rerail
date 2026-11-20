@@ -205,7 +205,7 @@ Each step is measured on the 84 files with typeshed, and the git step also on th
 
 ## Prior work consulted
 
-- **The ast-index-spike indexes:**
+- **The SQL index prototype indexes:**
   - S124: incremental indexing allows no corpus-wide statistic. Agrees.
   - S134: an incremental load must return its dead rows. Agrees (§6).
   - The linter survey's F3 (a fixed cost per file, all-or-nothing cache invalidation) and F6 (path scoping is a

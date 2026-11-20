@@ -26,7 +26,7 @@ refused, and tree-sitter reads it with its own recovery.
 
 ## Prior work consulted
 
-- **ast-index-spike indexes:** the spike's sample corpus (`ast-index-sample-corpus`) holds 2,009
+- **SQL index prototype indexes:** the spike's sample corpus (`ast-index-sample-corpus`) holds 2,009
   CSS files under 400 KB; the oracle's two sets are drawn from them.
 - **0199 (lean HTML), 0198 (lean PHP), 0196, 0195, 0193, 0178, 0163, 0169, 0181.** **Agrees and
   follows:** the same crate shape, writer and oracle. "No error recovery: one behavior" is kept as

@@ -30,7 +30,7 @@ refused, and tree-sitter reads it with its own recovery.
 
 ## Prior work consulted
 
-- **ast-index-spike indexes:** the spike's sample corpus (`ast-index-sample-corpus`) holds
+- **SQL index prototype indexes:** the spike's sample corpus (`ast-index-sample-corpus`) holds
   `elasticsearch` and `spring-framework`. 700 of their files are one of the oracle's sets below.
 - **0193 (lean Rust), 0178 (lean ECMAScript), 0163 and 0169 (lean Python), 0181 (their profile).**
   **Agrees and follows:** the same crate shape, stage 1, keyword hash, writer, batched token
@@ -132,7 +132,7 @@ tree-sitter's, line by line. Its sets:
 
 - **Corpus:** 1,507 files.
   - 700 come from the ast-index sample corpus (`elasticsearch`, `spring-framework`).
-  - 807 come from 85 of the stored repositories (`~/nera/sampo-repos`, by `tmp/corpus/extract.sh`,
+  - 807 come from 85 of the stored repositories (a local corpus, by `tmp/corpus/extract.sh`,
     12 a repository).
   - 7 of the files have tree-sitter errors.
 - **Cut and edited:** 513 of those files, each cut at 3 places and with 3 lines cut short in the

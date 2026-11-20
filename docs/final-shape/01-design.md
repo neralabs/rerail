@@ -40,7 +40,7 @@ Every set-at-a-time form won, in every substrate:
 | Typing-support `rdl` | one Datalog AST, Selinger-planned from SQL statistics, native strata in waves over an arena | 14.0 s (plain SQL) → 1.48–1.67 s; beats Ascent; within 1–1.5× of the per-file resolver's resolution phases, while resolving more |
 | Typing lattice | semi-naive waves | `type_of` in 10–11 ms over 1.2M nodes; naive rounds take 282–404 ms |
 | Typing scopes | tape column pass | `enclosing` in 4 ms, against 4.5 s (SQL recursion) and 5.3 s (Soufflé) |
-| ast-index-spike | structure lowered to set queries over the tape, rarest anchor | 112 → 33 s, 1.05 rows per answer (topic 3) |
+| SQL index prototype | structure lowered to set queries over the tape, rarest anchor | 112 → 33 s, 1.05 rows per answer (topic 3) |
 
 The conclusion is about shape, not completion:
 
@@ -188,8 +188,8 @@ Strata and relations stay resident between operators; nothing is written to SQLi
   - propagate semi-naive deltas through the strata;
   - stop at interfaces whose digest is unchanged.
 
-  This is Typing's interface cutoff (123 instead of 408 modules on an interface edit, 1 on a body edit) and Moti's read-set memo with early cutoff, both derived from the program rather than hand-written.
-- Moti's measured shape for the maintained graph is 0.53 / 3.76 / 8.62 ms p50/p95/p99, exact on 1,151 checks. His layering (base, cluster overlays, worktree deltas) is the storage form for maintained relations across worktrees.
+  This is Typing's interface cutoff (123 instead of 408 modules on an interface edit, 1 on a body edit) and the facts-engine stream's read-set memo with early cutoff, both derived from the program rather than hand-written.
+- The facts-engine stream's measured shape for the maintained graph is 0.53 / 3.76 / 8.62 ms p50/p95/p99, exact on 1,151 checks. Its layering (base, cluster overlays, worktree deltas) is the storage form for maintained relations across worktrees.
 - On Metal, the plan's command buffer is pre-encoded and reused; empty operators cost about 3.5 µs.
 
 **Outer SQL.**
@@ -202,18 +202,18 @@ Strata and relations stay resident between operators; nothing is written to SQLi
 
 | Component | From | Retired |
 |---|---|---|
-| Tape, documents, `Origin`, embedded guests, allowances/blind files, adapters, suppressions | main (incl. Timo's embedded guests, allowances and package facts) | — |
+| Tape, documents, `Origin`, embedded guests, allowances/blind files, adapters, suppressions | main (incl. the embedded guests, allowances and package facts) | — |
 | Anchor index store, 32-file publication, statistics-chosen anchors | PIAT/DLRE `matcher/anchors/sql`, DLRE S1/S4 | anchor selection as SQL stage programs |
 | Statistics at ingestion, fingerprint, `fts5vocab` | Typing `stats.py`, spike, N1562/SSC readers | seeded constant statistics (N1562) |
-| Datalog front end, stratifier, magic sets (with multi-column adornments still to do) | Typing `rdl` | DLRE authored `relational` SQL; Moti's hand-written query bodies |
+| Datalog front end, stratifier, magic sets (with multi-column adornments still to do) | Typing `rdl` | DLRE authored `relational` SQL; the facts-engine stream's hand-written query bodies |
 | Planner, feedback, replanning | Typing rounds 2–7; fusion.md cost model; PIAT §15–16 rewrites | — |
 | Hash-consing, tries, conjunct ordering, regex interning | M2 prototype; SSC `producers/prefix.rs`, `matcher/factor.rs` | per-root scalar `AstMatcher` in production (kept as oracle) |
 | CPU set engine and lattices | Typing `sqlite-ext/setfix.rs` arena engine, `lattice/` | — |
 | Metal executor | metal-enqueue design; Tempo kernels, IR encoding, verifier, budget harness | per-path generation frontier with continuation frames |
 | Kernel encoding and oracle | Tempo IR, N1562 `packed/` interpreter and JIT | unbounded `FORK`/`DESCEND`/`REPEAT` execution |
 | Vtab boundary | N1562 typed vtabs, SSC demand handles | 35-column match table, whole-catalog and per-scope rendered CTE networks (`relational_ir.rs`), `MATERIALIZED` fences, SSC `cohort.rs` |
-| Incremental maintenance | Moti Y1 read sets and layering, Typing interface cutoff, `facts_memo.rs` | differential-dataflow maintenance (6–7 GB floor), recompute per edit (5–70 s) |
-| Gates and tooling | DLRE full-repository runner and CPU attribution, Moti replay, Typing goldens, anchor lab, SSC hardware counters | exact-oracle parity (0001) |
+| Incremental maintenance | Facts-engine Y1 read sets and layering, Typing interface cutoff, `facts_memo.rs` | differential-dataflow maintenance (6–7 GB floor), recompute per edit (5–70 s) |
+| Gates and tooling | DLRE full-repository runner and CPU attribution, facts-engine replay, Typing goldens, anchor lab, SSC hardware counters | exact-oracle parity (0001) |
 
 ## 8. Decisions this requires
 

@@ -115,7 +115,7 @@ to the measured cost.
   for Datalog*, PPDP 2021): counting per tuple, with the incremental program generated beside the base one. The
   driver here generates it per stratum, when reached, which is the departure: their whole-program generation is the
   cost 0116 measured.
-- **The spike's ledger** (`docs/rule-engine-direction/prior-work/ast-index-spike-history-index.md`):
+- **The spike's ledger** (`docs/rule-engine-direction/prior-work/sql-index-prototype-history-index.md`):
   - *Process-held state:* "`Store.attach` rebuilds; fingerprint check" (DH L3319-3343). And "An in-memory vocabulary
     silently fell back after reopen: 'Storing data in memory... is dishonest'" (DH L2185-2189). The session-only
     counted exports are this trap: a new process silently took the slow route. Step 1 keeps the state in the store

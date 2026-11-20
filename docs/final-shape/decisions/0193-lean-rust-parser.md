@@ -28,7 +28,7 @@ refused, and tree-sitter reads it with its own recovery.
 
 ## Prior work consulted
 
-- **ast-index-spike indexes:** the spike parsed Rust with tree-sitter only. Its sample corpus
+- **SQL index prototype indexes:** the spike parsed Rust with tree-sitter only. Its sample corpus
   (`ast-index-sample-corpus`, the `rust-lang/rust` checkout) is one of the oracle's sets below.
 - **0163, 0169 (lean Python), 0178 (lean ECMAScript), 0181 (their profile).** **Agrees and
   follows:** the same crate shape, stage 1, keyword hash, writer, batched token buffer (16 tokens a
@@ -127,7 +127,7 @@ tree-sitter's, line by line. Its sets:
 
 - **Corpus:** 2,022 files.
   - 693 come from the ast-index sample corpus (`rust-lang/rust`).
-  - 1,329 come from 103 of the stored repositories (`~/nera/sampo-repos`, by `tmp/corpus/extract.sh`).
+  - 1,329 come from 103 of the stored repositories (a local corpus, by `tmp/corpus/extract.sh`).
   - 51 of the files have tree-sitter errors.
 - **Cut and edited:** 288 of those files, each cut at 3 places and with 3 lines cut short in the
   middle.

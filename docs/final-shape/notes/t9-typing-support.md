@@ -3,9 +3,9 @@
 Research track T9 for the final Rerail rule-engine shape. Read-only extraction; nothing was built or run.
 
 Source roots (abbreviated below):
-- `DE/` = `/Users/jeremy/orca/workspaces/rerail/Typing-support/spikes/datalog-engines/`
-- `NC/` = `/Users/jeremy/orca/workspaces/rerail/Typing-support/native/src/code_rule_dsl/calls/`
-- `MEM` = `/Users/jeremy/.claude/projects/-Users-jeremy-orca-rerail/memory/typing-approximate-inference.md`
+- `DE/` = `Typing-support:spikes/datalog-engines/`
+- `NC/` = `Typing-support:native/src/code_rule_dsl/calls/`
+- `MEM` = an agent-session memory note on approximate type inference (not in this repository)
 
 Citations are `file:line`. Measurement marks: **M** = measured in the source; **D** = derived/computed in the source
 from measurements; **A** = aspiration, estimate, projection or recommendation (not measured). "CPU" means user (+sys
@@ -167,7 +167,7 @@ contains material RESULTS dates "since round 4" (ingestion statistics, per-wave 
   Plan-time statistics 0.03–0.05 s vs 0.7–1.4 s before; identical plans (**M**, `DE/rdl/RESULTS.md:461-462`).
 - `ANALYZE` stays in the exporter for SQLite's own index choices, but the planner does not read `sqlite_stat1`: "Its
   averages are exactly the uniform card/NDV estimate that misplanned `resolves`" (`DE/rdl/RESULTS.md:470-471`).
-- Mapping to ast-index-spike (`DE/rdl/RESULTS.md:449-457`): `t_kfreq`/`t_efreq` (S178, S277) → `stat_kind`/`stat_edge`
+- Mapping to the SQL index prototype (`DE/rdl/RESULTS.md:449-457`): `t_kfreq`/`t_efreq` (S178, S277) → `stat_kind`/`stat_edge`
   (equal the exporter's Rust-computed totals: 113/113 kinds, 872/872 edges); `npost` (S229) → `stat_val`; process-
   memory statistics planned differently per process (S174, S178) → persisted `stat_col`; `_merge_kind_freq` one-shot
   = incremental (DH L8706-8708) → `stats.py merge/check`; `_prime_corpus_constants` (S259) → one statement; attach
@@ -215,7 +215,7 @@ contains material RESULTS dates "since round 4" (ingestion statistics, per-wave 
 - DP over subsets of the join literals (positive atoms and `nearest`), keeping the cheapest order per subset, with
   filters closed as early as possible; the first literal (anchor) must be an atom; with `first=` (a semi-naive delta
   or probe), only orders anchored on that atom (`:733-734`). "Bodies here have at most ten join literals" (`:719`).
-- The anchor = "ast-index-spike's rarest mandatory concrete variable (DESIGN S049–S050), generalised to joins"
+- The anchor = "SQL index prototype's rarest mandatory concrete variable (DESIGN S049–S050), generalised to joins"
   (`DE/rdl/RESULTS.md:31-32`). Greedy order was myopic: `lookup` 92 s, plan 9.7M → subset DP (`DE/rdl/RESULTS.md:64`).
 - Chosen plans round 2 (`DE/rdl/RESULTS.md:44-54`): `lookup` local anchored on `text($n,$x)`, climb, est. 3.6M;
   fallback on `modnode`, 72k; `assigns` on `field($a,"right",$r)`, 57k; `defines_fn/class` on `kind`, 43k/6.6k;

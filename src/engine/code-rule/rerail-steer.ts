@@ -339,7 +339,7 @@ function linkedLine(header: string, url: string | undefined, word: string, style
 
 /**
  * The one line the person sees for an in-flight conflict a note surfaces: `◆ Rerail · your edit overlaps PR #398
- * (Tim): model.rs  ·  open`, `open` linking its card on the Merge Assist page once the adapter knows the dashboard.
+ * (Sam): model.rs  ·  open`, `open` linking its card on the Merge Assist page once the adapter knows the dashboard.
  */
 export function conflictLine({ text, url }: ConflictNotice, style: HeadlineLinkStyle, mark?: string): string {
   return linkedLine(`${STEER_GLYPHS.steered} Rerail · ${text}`, url, "open", style, mark);

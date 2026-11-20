@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Generate data-layer/lazy-architecture.tables.rerail from the linter's module-level constants.
 
-  python3 data-layer/gen-lazy-architecture.py           write the table
-  python3 data-layer/gen-lazy-architecture.py --check   exit 1 if the table differs from the linter
+  DATA_LAYER_REPO=<checkout> python3 data-layer/gen-lazy-architecture.py           write the table
+  DATA_LAYER_REPO=<checkout> python3 data-layer/gen-lazy-architecture.py --check   exit 1 if the table differs from the linter
 
 Every module-level constant of scripts/lint_lazy_architecture.py that is a string, or a set, frozenset or tuple of
 strings (unions of other such constants and "a" + "b" concatenations included), becomes facts
@@ -10,7 +10,7 @@ strings (unions of other such constants and "a" + "b" concatenations included), 
 """
 import ast, os, subprocess, sys
 
-REPO = "/Users/jeremy/orca/workspaces/data-layer-base-audit"
+REPO = os.environ.get("DATA_LAYER_REPO") or sys.exit("set DATA_LAYER_REPO to a checkout of the data-layer repository")
 COMMIT = "2b1504adc4291daaf080b2e932962b134da1a69a"
 SCRIPT = "scripts/lint_lazy_architecture.py"
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lazy-architecture.tables.rerail")

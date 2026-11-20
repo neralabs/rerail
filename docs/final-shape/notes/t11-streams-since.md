@@ -5,9 +5,9 @@ Research track T11. Read-only notes; nothing was built, run, or benchmarked.
 ## Conventions
 
 - Worktree roots (all paths below are relative to these):
-  - **DLRE** = `/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity` (HEAD `b1d36739` "test: require schema reuse, scope isolation and bounded completed rows").
-  - **N1562** = `/Users/jeremy/orca/workspaces/rerail/scale-test-the-re-railer` (HEAD `e481c192` "TDD-RED: packetize expanded relational navigation").
-  - **SSC** = `/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition` (HEAD `b3e97cd4` "Define transition from matcher continuations to shared execution plans").
+  - **DLRE** = the `Data-layer-rule-expressivity` worktree (HEAD `b1d36739` "test: require schema reuse, scope isolation and bounded completed rows").
+  - **N1562** = the `scale-test-the-re-railer` worktree (HEAD `e481c192` "TDD-RED: packetize expanded relational navigation").
+  - **SSC** = the `sql-set-composition` worktree (HEAD `b3e97cd4` "Define transition from matcher continuations to shared execution plans").
 - Citations are `file:line` (line numbers of the files at those HEADs).
 - Tags: **M** = a measured number reported by the source; **D** = a decision the source records (keep/reject/selected); **A** = an assertion, proposal, or design requirement that the source does not claim to have measured or implemented.
 - Journal citations for DLRE use the current line numbers of `docs/data-layer-performance-journal.md` (removed; at 7efcac9c67). The `d3470da2..HEAD` diff adds two blocks: lines 3695–4253 and 4261–5056 (verified with `git diff -U0`; the hunks are `+3695,559` and `+4261,796`). Lines 4254–4260 ("Future entries") predate the range.
@@ -157,7 +157,7 @@ Earlier history inside the diff range, in order:
 - Each variant keeps the production positional FTS declaration and complete value-posting bytes, and passes statistics, rollback, replacement, and pinned-SQLite-reader checks (`:151-153`).
 - The 32-file trace shows 7 host submissions and 46 SQLite internal completions. Per-file shows 224 host submissions and 295 internal completions. The 2,336 trigger entries are not host submissions. FTS still maintains per-document metadata inside a host batch (`:168-171`) **M**.
 - **D** (`:173-174`): publish 32-file packets with the existing triggers, positional index, and 1-MiB cache. Do not promote grouped statistics (the gain overlaps trial variance and adds maintenance) or larger caches (they raise residency without a consistent win). The replicated tiny file cannot predict the repository gain (`:166`).
-- WP4 constraints (`recovery-plan:159-170`): keep the ast-index-spike positional FTS layout and exact value postings; keep deletion, replacement, pinned old versions, rollback, and retry. "Retain SQL ownership of statistics. Do not replace indexed values with an always-resident Rust index." "No per-rule index rebuild."
+- WP4 constraints (`recovery-plan:159-170`): keep the SQL index prototype positional FTS layout and exact value postings; keep deletion, replacement, pinned old versions, rollback, and retry. "Retain SQL ownership of statistics. Do not replace indexed values with an always-resident Rust index." "No per-rule index rebuild."
 
 ### 1.9 Spike S5: schema fan-out and template reuse
 

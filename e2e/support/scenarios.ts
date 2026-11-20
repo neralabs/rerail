@@ -488,7 +488,7 @@ function storedConflict(conflict: Omit<Conflict, "kind" | "status" | "dismissal"
  * on an open card, so the open ones carry the links it must refuse.
  */
 function storefrontConflicts(now: number): StoredConflict[] {
-  const mine = side({ label: "This branch", ref: "main", author: "tbelanger", summary: "Round the order total to cents." });
+  const mine = side({ label: "This branch", ref: "main", author: "akim", summary: "Round the order total to cents." });
   return [
     storedConflict({
       id: OPEN_CONFLICT_ID, shortId: "c4a7e1", quiet: false, question: "src/cart/cart.ts#1-3",
@@ -498,26 +498,26 @@ function storefrontConflicts(now: number): StoredConflict[] {
         hunk: "@@ -1,3 +1,3 @@\n export function total(prices: number[]): number {\n-  return prices.reduce((sum, price) => sum + price, 0);\n+  return Math.round(prices.reduce((sum, price) => sum + price, 0));\n",
       },
       theirs: side({
-        label: "PR #398", ref: "refs/pull/398/head", author: "Tim", summary: HOSTILE_TEXT, url: OPEN_PR_URL,
+        label: "PR #398", ref: "refs/pull/398/head", author: "Sam", summary: HOSTILE_TEXT, url: OPEN_PR_URL,
         tip: { at: isoAt(now - 4 * HOUR), pushed: true }, location: "src/cart/cart.ts:2",
         hunk: `@@ -1,3 +1,3 @@\n-  return prices.reduce((sum, price) => sum + price, 0);\n+  return prices.reduce((sum, price) => sum + price, 0); // ${HOSTILE_TEXT}\n`,
       }),
       evidence: ["Both change src/cart/cart.ts lines 1–3."],
       detectedAt: isoAt(now - 3 * HOUR),
-      summary: "PR #398 (Tim) is changing function total",
+      summary: "PR #398 (Sam) is changing function total",
     }, "src/cart/cart.ts"),
     storedConflict({
       id: "conflict:package-lock.json#10-14:bump-react", shortId: "5d02b9", quiet: true, question: "package-lock.json#10-14",
       title: "package-lock.json",
       mine: { ...mine, summary: "edits package-lock.json", location: "package-lock.json:12" },
       theirs: side({
-        label: "jbarnes/bump-react", ref: "refs/heads/jbarnes/bump-react", author: "jbarnes", summary: "Bump react to 19.2.0", url: OTHER_REPOSITORY_URL,
+        label: "jdoe/bump-react", ref: "refs/heads/jdoe/bump-react", author: "jdoe", summary: "Bump react to 19.2.0", url: OTHER_REPOSITORY_URL,
         tip: { at: isoAt(now - 2 * HOUR), pushed: false }, location: "package-lock.json:12",
         hunk: "@@ -12 +12 @@\n-      \"version\": \"19.1.0\",\n+      \"version\": \"19.2.0\",\n",
       }),
       evidence: ["Both change package-lock.json lines 10–14."],
       detectedAt: isoAt(now - HOUR),
-      summary: "jbarnes/bump-react (jbarnes) is changing package-lock.json",
+      summary: "jdoe/bump-react (jdoe) is changing package-lock.json",
     }, "package-lock.json"),
     storedConflict({
       id: "conflict:CHANGELOG.md#3-5:pr402", shortId: "7b19d4", quiet: true, question: "CHANGELOG.md#3-5",
@@ -539,7 +539,7 @@ function storefrontConflicts(now: number): StoredConflict[] {
       theirs: side({ label: HOSTILE_TEXT, ref: "refs/pull/391/head", author: HOSTILE_TEXT, summary: "Log payments", url: SCRIPT_URL }),
       evidence: ["Both change src/checkout/payment.ts lines 1–3."],
       detectedAt: isoAt(now - 5 * HOUR),
-      dismissal: { name: "tbelanger", at: isoAt(now - 2 * HOUR) },
+      dismissal: { name: "akim", at: isoAt(now - 2 * HOUR) },
       summary: "PR #391 (Ana) is changing function pay",
     }, "src/checkout/payment.ts"),
   ];

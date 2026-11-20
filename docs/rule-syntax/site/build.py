@@ -1,6 +1,7 @@
 """Build the Rerail logic syntax page: out/index.html and out/data/*.json.
 
     ENGINE=<rerail-engine> python3 docs/rule-syntax/site/build.py [--dlre <Data-layer-rule-expressivity worktree>] [--ndl <data-layer checkout>]
+        [--yaml-rev <data-layer revision with the earlier YAML port>]
 
 The generated view of each JSON rule is the engine's translator (decision 0175, `rerail-engine translate-json
 --display`); ENGINE defaults to the worktree's target/profiling/rerail-engine.
@@ -64,7 +65,6 @@ DATA_LAYER += [(s, s, f"lint_{s.replace('-', '_')}.py") for s in """
 DATA_LAYER += [("versioned-merged-identity", "versioned-merged-identity", "check_versioned_merged_identity.py"),
                ("cached-pure-lazy-allowlist", "cached-pure-lazy-allowlist", "verify_cached_pure_lazy_allowlist.py")]
 NDL_COMMIT = "2b1504adc4291daaf080b2e932962b134da1a69a"
-PR2539 = "origin/jeremy/serverplan-architecture-integration"
 
 
 def read(p):
@@ -103,6 +103,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dlre", default=os.path.join(os.path.dirname(ROOT), "Data-layer-rule-expressivity"))
     ap.add_argument("--ndl", default=os.path.join(os.path.dirname(os.path.dirname(ROOT)), "data-layer-base-audit"))
+    ap.add_argument("--yaml-rev", help="the data-layer revision that holds the earlier YAML port of function-level-imports")
     ap.add_argument("--out", default=os.path.join(HERE, "out"))
     a = ap.parse_args()
     runpy.run_path(os.path.join(HERE, "pages.py"))   # writes intro.html and syntax.html
@@ -165,7 +166,7 @@ def main():
                       ]})
 
     fli1, fli2 = read(os.path.join(RS, "function-level-imports.b1.rerail")), read(os.path.join(RS, "function-level-imports.b2.rerail"))
-    yaml = git_show(a.ndl, PR2539, "scripts/lint_specs/lint_function_level_imports.yaml") or "# The earlier YAML port is not available in this checkout\n"
+    yaml = (a.yaml_rev and git_show(a.ndl, a.yaml_rev, "scripts/lint_specs/lint_function_level_imports.yaml")) or "# The earlier YAML port is not available in this checkout\n"
     py = git_show(a.ndl, NDL_COMMIT, "scripts/lint_function_level_imports.py") or "# The Python linter is not available in this checkout\n"
     hand_data["fli"] = {"yaml": yaml, "b1": fli1, "b2": fli2, "py": py}
     hand_meta.append({"key": "fli", "title": "function-level-imports", "tags": ["data-layer", "ratchet"],

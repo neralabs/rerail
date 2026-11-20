@@ -281,7 +281,7 @@ Normative output: spec §21 + decision 0005 (§21 text is in t1). These notes co
   - Base facts are per file, owned by `bundle_key`, keyed by content hash + cache_version, and deleted and rewritten in one transaction. "Persist query results only when measurement shows a query is expensive."
   - Skinny EAV → typed per-family tables: 500 files **47.1 s → 18.0 s** (M).
   - **Tip shortfalls:** catalog relations inlined as CTEs everywhere (never shared); `materialized` only a CTE hint; dependency-cone tables created but never read; `SqliteProjectFactCache` has no callers; `DerivedFactSpec` rejected on the declarative path; `lint_function_transitive_summary` rebuilt in full on every save.
-- **Moti facts-engine** (`685db3f7`):
+- **Facts-engine** (`685db3f7`):
   - derived relations are SQL views in SCHEMA.md (`py_owner`, `py_function`, `py_call`, `cg_def`, …), read with include_str;
   - **memo per clause**, keyed (content hash, plan digest, schema version[, path]), content-pure clauses path-free;
   - plan digest = blake3(engine version, schema, rewrites, rule, inputs, physical plans);
@@ -375,7 +375,7 @@ Sources: Tempo `e95613625` docs and code; N1562 `c674f4b6`. Predates spec-transd
   - count/scan/scatter output, no atomics.
   - **Tempo's execution unit is already cross-file batched.**
 - Determinism: errors per task; a failed task publishes nothing; an incomplete result is never a negative (:112).
-- Tempo's IR is canonical and newer; N1562's is an older copy plus `packed/**` ported from Landing v3/v4 (:114-117).
+- Tempo's IR is canonical and newer; N1562's is an older copy plus `packed/**` ported from the predecessor repository's v3/v4 (:114-117).
 
 ### N1562's lowering (§0.2) — the anti-pattern
 - Tree relations (inside/has/precedes/follows/stopBy) were lowered to **SQL over navigation-edge rows**:
@@ -433,7 +433,7 @@ Sources: Tempo `e95613625` docs and code; N1562 `c674f4b6`. Predates spec-transd
 
 ## research/sql-vs-transducer.md (222 lines, read in full)
 
-Sources: SSC `b87eba3b` + its uncommitted fragment pivot, DLRE merged, N1562 `8b6576f0`, Moti's sql-dl60, facts-engine, facts-plan, spike indexes. Dated 2026-10-25.
+Sources: SSC `b87eba3b` + its uncommitted fragment pivot, DLRE merged, N1562 `8b6576f0`, sql-dl60, facts-engine, facts-plan, spike indexes. Dated 2026-10-25.
 
 ### Verdict (§0)
 - **About 85–90% of SQL-lowering code computes tape-local, per-document things** (or only reproduces exact operational semantics): T, T+ or D. About 10% is legitimately SQL: file-level candidate scope, cross-file composition, cross-file closures, stats-driven planning, consolidation (:37).
@@ -465,7 +465,7 @@ Sources: SSC `b87eba3b` + its uncommitted fragment pivot, DLRE merged, N1562 `8b
   - `compact_output_sql.rs` → D;
   - `query/plan/` (identity, scope, grouping, utility dedup) → **S, kept as `engine/plan/`**;
   - `sql_backend.rs` → reshaped boundary.
-- Moti: sql-dl60 frame engine → D; facts-engine `facts_memo` → S (storage of outputs per (doc digest, program digest)); facts-plan Y1/Y2 → S, with per-document extraction feeding Y1 → T.
+- Facts-engine: sql-dl60 frame engine → D; facts-engine `facts_memo` → S (storage of outputs per (doc digest, program digest)); facts-plan Y1/Y2 → S, with per-document extraction feeding Y1 → T.
 - The spike's linter analysis: **77 of 99 rules are single-file**; the caller composes anti-join/count/closure around structural fragments (:119).
 
 ### IR extensions named (§3), mostly absorbed into spec-transducer

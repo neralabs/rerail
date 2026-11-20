@@ -251,7 +251,7 @@ pending pre-lock measurements**, never accepted.
 **Requirements from the discussion** (P session 2026-10-25):
 - The format must be completely regular. v4 to v7 were irregular in intermediate versions (overflow
   pairs, sorted flag lists, alias tables), and it doesn't work unless it is regular.
-- ast-index-spike experimented with multiple trees for different ranges within a file. That has to
+- SQL index prototype experimented with multiple trees for different ranges within a file. That has to
   be taken into account (embedded documents, Blade, Vue).
 - Don't overload the tape with things only associated with the source structure. Per-file alias
   string tables, the digest and length header, and Blade's omissions are kept off the tape: in
@@ -260,9 +260,9 @@ pending pre-lock measurements**, never accepted.
 - Blade stores nothing more or less than the tree-sitter-php tape it replaced. Today its
   compiled-view tape drops nodes over synthetic placeholder segments, so a directive call has no
   `function` child. Proposed fix: the plain tree-sitter-php tape, with omission through the segment
-  map in `file_documents`. Error spans stay in the tape as tree-sitter emits them, as ast-index-spike does. It
+  map in `file_documents`. Error spans stay in the tape as tree-sitter emits them, as the SQL index prototype does. It
   is fine for Blade to store something compatible with the generic structure, in a generic way.
-- Tapes must stay processable in SQL with ast-index-spike techniques. A format change has to show
+- Tapes must stay processable in SQL with the SQL index prototype techniques. A format change has to show
   clear benefits; a size increase (8 → 11 B/node, about 30%) was not acceptable, hence v9np.
 - Tempo keeps cached, pinned, page-allocated uncompressed tapes and source (§ residency, O5). The
   at-rest format and the resident page format should be designed together.
@@ -983,7 +983,7 @@ S8 measures these with interleaved arms. Where the memory goes is the first ques
 ## O31. Per-node structures beside the tape
 
 Closed (2026-11-02). The user's ruling: only per-node structures stored in the database must go
-(ast-index-spike: "nothing may *store* one row per node"). None is: S7's store, 322,472 nodes,
+(SQL index prototype: "nothing may *store* one row per node"). None is: S7's store, 322,472 nodes,
 peaks at `derivation_inputs` with 0.12 rows/node. `no_relation_stores_a_row_per_node` and S7 now
 assert at most 0.25 rows/node per table. The in-memory structures the linter first listed
 (`TapeDoc`'s records, `Facts`, the facts vtab's projection, `MetalNode`, Forte's and literal
@@ -2700,7 +2700,7 @@ definitions whose digest changed, and base rows changed under `(document, preord
 
 **Closure:** the distributions recorded in 0083, and the symbol key's form decided.
 
-**Measured** (2026-11-08) on `data-layer-gruel-main` (13,088 `.py` files, 218,046 definitions), last 224 non-merge
+**Measured** (2026-11-08) on the data-layer repository (13,088 `.py` files, 218,046 definitions), last 224 non-merge
 commits, with Python's `ast` standing in for the tape (`ast` has fewer nodes than tree-sitter; the ratios are what
 count). The tool is a dev script, not engine code.
 - **The commits are bulk.**
