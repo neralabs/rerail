@@ -22,8 +22,8 @@ select-for-update-outside-atomic read the ATOMIC_REQUESTS setting wherever the p
 files through the call graph of `python/calls`: get-handler-writes (from a GET handler to the writes it reaches),
 dispatch-in-atomic-request (from a view to the dispatches it reaches), select-for-update-outside-atomic (from a lock up
 to the callers that run it outside a transaction) and sync-orm-reached-from-async (from an `async def` to the queries
-it reaches). These four are the slowest: on the largest apps a run takes hours. Each rule's details below list what it
-misses.
+it reaches). These four do the most work across files ([what a run costs](#starting-values-and-what-a-run-costs)).
+Each rule's details below list what it misses.
 
 Each rule is proven three ways: by its cases in `cases/<id>/`, where a line ending in `# caught` must be reported and no
 other line may be, run by the rule file's own test (`.test cases exactly`, which reads the case directory as one
@@ -71,6 +71,30 @@ A match is real when the file holds the pattern, even if code elsewhere (a calle
 a task class) makes it harmless there; a repository that disagrees turns the rule off. A rule steers where nearly
 every read match was real in that sense. It logs where many matches do not hold the pattern, or where the pattern
 holds but the advised rewrite is often unsafe in ways one file cannot show; each Log rule's details give the reason.
+
+## Starting values and what a run costs
+
+All 27 rules start on, in the mode the table above gives them: 22 steer and 5 log. A repository or checkout can turn
+any of them off or change its mode.
+
+The rules are written in `.rerail`, so they run apart from JSON rules: in the background, once the coding agent's
+writes have settled (no write for 10 seconds, or the end of its turn), and in audits and `rerail scan`. Each run reads
+every Python file of the checkout, so an edit costs a whole run. Measured with all 27 rules on a 32-core machine, 16
+threads:
+
+| App | Python files | Time | Peak memory |
+|---|--:|--:|--:|
+| linkding | 229 | 13 to 15 s | 0.8 GB |
+| netbox | 1,298 | 123 s | 4.7 GB |
+| edx-platform | 4,459 | 251 s | 7.7 GB |
+
+With fewer threads a run takes longer. A run may use at most half the machine's memory, and at most 8 GiB, so on a
+machine with less than about 10 GB of memory a run over a mid-size app like netbox is stopped at that limit; so is
+a run that passes its time limit. A stopped run reports each of its rules as not run (`budget-exceeded`, naming the
+setting to raise); other rules' results stand. To raise the limits, set `RERAIL_RR_MEMORY_MB`,
+`RERAIL_RR_DEADLINE_MS` or `RERAIL_RR_THREADS` for Rerail
+([Rules written in .rerail](../../docs/reference.md#rules-written-in-rerail)). How these figures were measured is in
+[NOTES-django.md](NOTES-django.md#what-the-pack-costs-a-user).
 
 ## Rule details
 
