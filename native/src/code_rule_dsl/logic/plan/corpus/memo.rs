@@ -41,11 +41,13 @@ pub(super) fn outputs_alone(rel: &str) -> bool {
 /// running the slice. Not an output: they are no relation of the file-local part.
 pub(super) const GUESTS: &str = "guests:";
 
-/// The `lines` key of an entry's tape values asked inside the fixpoint (decision 0431 §8): each `(at, grammar)` a
-/// rule of the file asked to parse. A chunk of partial hits whose cone sees guests but asks none (a rule reading a
-/// relation hiding widened to annotations, `FoldOwn`) admits them before its run, as far as the cone sees them: no
-/// entry keeps a base relation's rows (decision 0458 step 4), so the values are made again, not read from the entry.
-/// Under `GUESTS`, so it is no output; no round (`guest_round` is `None`).
+/// The `lines` key of the requests an entry's chunk's fixpoint answered with tape values at a string of its file, or of
+/// a value it asked for (decision 0431 §8: `rr_embed_req`'s rows, the string node and its grammar), each once, in the
+/// order answered. No entry keeps a base relation's rows (decision 0458 step 4), so the values are made again from
+/// them, as the fixpoint admitted them (`Guests::admit`), each tape found by its text among the root's last runs' and
+/// its source named in the manifest (0431 R6): by a hit, for its document in the corpus batch, and by a chunk of
+/// partial hits whose cone sees guests but asks none (a rule reading a relation hiding widened to annotations,
+/// `FoldOwn`), before its run. Under `GUESTS`, so it is no output; no round (`guest_round` is `None`).
 pub(super) const VALUES: &str = "guests:values";
 
 /// An entry's `outputs` key for round `round`'s lines of slice relation `rel`.

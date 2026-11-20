@@ -5285,6 +5285,8 @@ fn run_observed_within(
         path: String,
         module: Option<Arc<str>>,
         rounds: Vec<(usize, String, output::Rows)>,
+        /// The requests its entry kept that its chunk's fixpoint answered with tape values (`memo::VALUES`).
+        values: Option<output::Rows>,
     }
     // The memo hits' tapes, by path, where the cross part reads base relations (decision 0458): read with the misses'
     // (before the first wave, or from those read then), and its document made from it once the chunks are done.
@@ -6711,12 +6713,13 @@ fn run_observed_within(
         got: Outcome,
         host_of: HashMap<i64, i64>,
         askers: HashMap<i64, Vec<i64>>,
+        /// The requests the fixpoint answered with tape values (`memo::VALUES`): each string node and grammar, in
+        /// the order answered.
+        answered: Vec<(i64, String)>,
         totals_add: Vec<(String, usize, Vec<(String, i64, i64, i64, i64)>)>,
         export_rows: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>,
         /// The slice's request lines of each round, for the entries (`memo::GUESTS`).
         slice_rounds: Vec<BTreeMap<String, Arc<output::Rows>>>,
-        /// The tape values its fixpoint asked, `(at, grammar)`, for the entries (`memo::VALUES`).
-        asked: Vec<(i64, String)>,
         /// Its documents, its guests' with them, for the corpus batch the cross part reads its base relations off
         /// (decision 0458); none where the cross part reads none.
         documents: Vec<syntax::Document>,
@@ -7035,8 +7038,8 @@ fn run_observed_within(
                 values.add(&[key, (at >> 32) as u32], made_rows);
             }
         }
-        // What the fixpoint asks, for the entries (`memo::VALUES`).
-        let mut asked: Vec<(i64, String)> = Vec::new();
+        // Each request answered with a value, in order: the chunk's entries keep them (`memo::VALUES`).
+        let mut answered: Vec<(i64, String)> = Vec::new();
         let mut parse_answer = |req: &str, rows: &[Vec<i64>]| -> Result<Vec<(String, Vec<Vec<i64>>)>> {
             let (Some((made, docs)), Some(values), Some(grower)) = (kept_guests.as_mut(), values.as_ref(), grower.as_mut()) else {
                 return Err(Error::Plan(format!("{req}: a request, and no one to answer it")));
@@ -7049,7 +7052,6 @@ fn run_observed_within(
             for row in rows {
                 let &[at, g] = &row[..] else { continue };
                 let Some(grammar) = atoms.value(g as _).map_err(|e| Error::Plan(e.to_string()))? else { continue };
-                asked.push((at, grammar.to_string()));
                 let key = match made.admit(docs, at, &grammar, &guest_parses).map_err(Error::Plan)? {
                     guests::Got::New(d) => {
                         values_admitted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -7058,6 +7060,7 @@ fn run_observed_within(
                     guests::Got::Placed(key, _) => key,
                     guests::Got::Not => continue,
                 };
+                answered.push((at, grammar.to_string()));
                 let doc = docs.iter().find(|d| d.key == key).cloned().ok_or_else(|| Error::Plan(format!("tape value {key} is not the chunk's")))?;
                 let made_rows = grower.admit(&store, doc, &sets, &vocabulary, binding, admit_projection.as_deref().unwrap_or(&projection)).map_err(|e| Error::Plan(e.to_string()))?;
                 // `parsed` is an input too (a program's rows, the batch's): its rows are bound as the value's part, as
@@ -7119,7 +7122,7 @@ fn run_observed_within(
         }
         crate::code_rule_dsl::logic::native::forget_inputs(db);
         let held = crate::code_rule_dsl::facts::rows::chunk_held_most().unwrap_or(0);
-        Ok(Evaluated { got, host_of, askers, totals_add, export_rows, slice_rounds, asked, documents, held, written: Default::default() })
+        Ok(Evaluated { got, host_of, askers, answered, totals_add, export_rows, slice_rounds, documents, held, written: Default::default() })
     };
     // A chunk's relations go in blocks of its own, given back with it (Q58): not in blocks every chunk at once
     // shares, which a few rows of each kept whole and the memory line counted whole.
@@ -7247,6 +7250,8 @@ fn run_observed_within(
                         }
                         // Its document, for the corpus batch (decision 0458): made from its tape once the chunks are done, its
                         // guests from the requests its entry kept, round by round (moved out: nothing else reads them).
+                        // Its tape values' requests (`memo::VALUES`): not an output.
+                        let values = entry.outputs.remove(memo::VALUES).map(|(_, rows)| rows);
                         if !stored.is_empty() {
                             let keys: Vec<String> = entry.outputs.keys().filter(|k| memo::guest_round(k).is_some()).cloned().collect();
                             let rounds = keys.into_iter().filter_map(|k| {
@@ -7254,7 +7259,7 @@ fn run_observed_within(
                                 let (round, rel) = memo::guest_round(&k)?;
                                 Some((round, rel.to_owned(), rows))
                             }).collect();
-                            corpus_hits.push(CorpusHit { key: entry.key, path: path.clone(), module: module.clone(), rounds });
+                            corpus_hits.push(CorpusHit { key: entry.key, path: path.clone(), module: module.clone(), rounds, values });
                         }
                         // Gathered by relation across the batch's hits: one statement per relation below, not one per row.
                         let _gather = crate::code_rule_dsl::logic::profile::span(|| "export rows gathered".into());
@@ -7395,7 +7400,7 @@ fn run_observed_within(
         phase("wait", statements.count());
         statements.enter("local");
         let Ctx { chunk_nodes_built, chunk_docs, chunk_own, at_once, mut chunk_partials, cone } = ctx;
-        let Evaluated { got, host_of, askers, totals_add, export_rows, slice_rounds, asked, documents, held, written } = ev;
+        let Evaluated { got, host_of, askers, answered, totals_add, export_rows, slice_rounds, documents, held, written } = ev;
         corpus_docs.extend(documents);
         for (rel, rows, measured) in &totals_add {
             totals.add(rel, *rows, measured);
@@ -7559,20 +7564,30 @@ fn run_observed_within(
                 }
             }
         }
-        // Each file's tape values asked inside the fixpoint (`memo::VALUES`), each once: at the location of the file's
-        // node that holds the string, as a chunk of partial hits admits them again.
-        if memoised && !asked.is_empty() {
-            let mut by_file: HashMap<i64, (output::Rows, std::collections::HashSet<(i64, String)>)> = HashMap::new();
-            for (at, grammar) in asked {
-                for d in owners(at).into_iter().filter(|d| entries.contains_key(d)) {
+        // The requests the fixpoint answered with tape values (decision 0431 §8), each kept once by the files that own
+        // its string (a value's, by its askers), in the order answered: a hit's corpus document and a chunk of partial
+        // hits make the values from them. One asked at no document, or at another chunk's, leaves the chunk unmemoised:
+        // an entry would lack a value its file reads.
+        if attributable && !answered.is_empty() {
+            let mut by_file: HashMap<i64, (output::Rows, std::collections::HashSet<(i64, &str)>)> = HashMap::new();
+            for (at, grammar) in &answered {
+                let files = owners(*at);
+                if files.is_empty() || !files.iter().all(|d| entries.contains_key(d)) {
+                    memo_why.insert(format!("a tape value: {}", if files.is_empty() { "asked at no document" } else { "asked at another chunk's document" }));
+                    attributable = false;
+                    break;
+                }
+                for d in files {
                     let (rows, seen) = by_file.entry(d).or_insert_with(|| (output::Rows::new(vec![output::col::INT, output::col::TEXT]), Default::default()));
-                    if seen.insert((at, grammar.clone())) {
-                        rows.push(&[output::Cell::Int(at), output::Cell::Text(&grammar)]);
+                    if seen.insert((*at, grammar.as_str())) {
+                        rows.push(&[output::Cell::Int(*at), output::Cell::Text(grammar)]);
                     }
                 }
             }
-            for (d, (rows, _)) in by_file {
-                entries.get_mut(&d).expect("filtered").outputs.insert(memo::VALUES.to_owned(), (Vec::new(), rows));
+            if attributable {
+                for (d, (rows, _)) in by_file {
+                    entries.get_mut(&d).expect("checked").outputs.insert(memo::VALUES.to_owned(), (Vec::new(), rows));
+                }
             }
         }
         native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("local:{k}")));
@@ -8825,10 +8840,7 @@ fn run_observed_within(
     // `docs`' guests, round by round, from the requests their entries kept (`memo::GUESTS`): as a chunk of partial hits
     // makes its own (decision 0225 §2), under the store's keys (decision 0391), so their nodes are those the entries
     // name.
-    let with_guests = |docs: &mut Vec<syntax::Document>, kept: Vec<(usize, String, output::Rows)>| -> Result<()> {
-        if slice.is_none() {
-            return Ok(());
-        }
+    let guest_rounds = |made: &mut guests::Guests, docs: &mut Vec<syntax::Document>, kept: Vec<(usize, String, output::Rows)>| -> Result<()> {
         let mut rounds: Vec<BTreeMap<String, Arc<output::Rows>>> = Vec::new();
         for (r, rel, rows) in kept {
             if rounds.len() <= r {
@@ -8837,12 +8849,47 @@ fn run_observed_within(
             let round = rounds[r].entry(rel).or_insert_with(|| Arc::new(output::Rows::new(rows.types().to_vec())));
             Arc::make_mut(round).append(&rows);
         }
-        let mut made = guests::Guests::new(label, projection.shape, Arc::clone(&guest_keys));
         for round in &rounds {
             // `make` adds what the round asks for to `docs` (decision 0431): the keys it made or gave a place more.
             if made.make(guests::requests(round), docs, &guest_parses).map_err(Error::Plan)?.is_empty() {
                 break;
             }
+        }
+        Ok(())
+    };
+    // And the tape values the chunks' fixpoints admitted (`memo::VALUES`), in the order answered, as `Guests::admit`
+    // made them: each tape found by its text among the root's last runs' and its source named (decision 0431 R6). A
+    // string inside a value waits for that value.
+    let with_guests = |docs: &mut Vec<syntax::Document>, kept: Vec<(usize, String, output::Rows)>, values: Vec<output::Rows>| -> Result<()> {
+        if slice.is_none() && values.is_empty() {
+            return Ok(());
+        }
+        let mut made = guests::Guests::new(label, projection.shape, Arc::clone(&guest_keys));
+        if slice.is_some() {
+            guest_rounds(&mut made, docs, kept)?;
+        }
+        let mut pending: Vec<(i64, String)> = Vec::new();
+        for rows in &values {
+            for i in 0..rows.len() {
+                if let (output::Cell::Int(at), output::Cell::Text(grammar)) = (rows.cell(i, 0), rows.cell(i, 1)) {
+                    pending.push((at, grammar.to_owned()));
+                }
+            }
+        }
+        while !pending.is_empty() {
+            let before = pending.len();
+            let mut waiting = Vec::new();
+            for (at, grammar) in pending {
+                if docs.iter().any(|d| d.key == (at >> 32) as u32) {
+                    made.admit(docs, at, &grammar, &guest_parses).map_err(Error::Plan)?;
+                } else {
+                    waiting.push((at, grammar));
+                }
+            }
+            if waiting.len() == before {
+                break;
+            }
+            pending = waiting;
         }
         Ok(())
     };
@@ -8905,7 +8952,8 @@ fn run_observed_within(
             doc_of(h.key, &h.path, h.module.clone(), source, tapes_of.get(&h.path))
         };
         let mut made: Vec<syntax::Document> = crate::code_rule_dsl::logic::profile::on_cores(|| hits.par_iter().map(hit_doc).collect::<Result<Vec<_>>>())?.into_iter().flatten().collect();
-        with_guests(&mut made, hits.into_iter().flat_map(|h| h.rounds).collect())?;
+        let (rounds, values): (Vec<_>, Vec<_>) = hits.into_iter().map(|h| (h.rounds, h.values)).unzip();
+        with_guests(&mut made, rounds.into_iter().flatten().collect(), values.into_iter().flatten().collect())?;
         let mut all = std::mem::take(&mut corpus_docs);
         all.extend(made);
         let (made, held) = (all.len(), reused.len());
@@ -8975,16 +9023,19 @@ fn run_observed_within(
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the base relations' old documents, made (decision 0458)".into());
             let mut old_docs: Vec<syntax::Document> = Vec::new();
             let mut old_rounds: Vec<(usize, String, output::Rows)> = Vec::new();
+            let mut old_values: Vec<output::Rows> = Vec::new();
             for (path, old) in olds {
                 let source = String::from_utf8(old.bytes.to_vec()).map_err(|e| Error::Plan(format!("{path}: {e}")))?;
                 old_docs.extend(doc_of(old.key, path, given_modules.get(path).cloned(), source, old.frame.as_ref())?);
                 for (k, (_, rows)) in old.entry.iter().flat_map(|e| &e.outputs) {
                     if let Some((round, rel)) = memo::guest_round(k) {
                         old_rounds.push((round, rel.to_owned(), rows.clone()));
+                    } else if k == memo::VALUES {
+                        old_values.push(rows.clone());
                     }
                 }
             }
-            with_guests(&mut old_docs, old_rounds)?;
+            with_guests(&mut old_docs, old_rounds, old_values)?;
             Some(old_docs)
         }
         Some(_) => None,
