@@ -10,9 +10,9 @@ The rules share three new libraries:
 
 | file | lines | what |
 |---|---|---|
-| `lib/python/naming.rr` | 180 | case classes (lower, upper, camel, mixed, acronym, dunder); `pep8-naming.ignore-names` globs, with Ruff's defaults and `extend-ignore-names`; decorators with a call taken off (`dec_target`) and typing decorators (`typing_dec`); class/static methods by qualified name and by the `classmethod-decorators` / `staticmethod-decorators` options; Ruff's `function_type::classify` with `is_metaclass` (yes / maybe / no); first parameter; Store-context names and their scope; assignments that make a type; import aliases |
-| `lib/python/docstrings.rr` | 170 | includes `naming.rr`. Ruff's definitions (MemberKind) and their visibility (the package path, `_` names, `__all__` bindings, setters and deleters); `pydocstyle.ignore-decorators`; `doc_missing`, the shared condition of D100-D107; the docstring (first statement, a plain str literal; one string for the D2xx-D4xx rules; a non-blank body); its body, prefix, quotes and summary line; its lines, blank lines, leading whitespace, source spans and indentation |
-| `lib/python/docstrings-sections.rr` | 144 | section headers in the Google and NumPy conventions: Ruff's section names, header detection (leading words, `:` suffix, underline, end of paragraph, RST directive bodies skipped, the previous-section subsection tests, resolved exactly without recursion), the convention (the option, set once, or Ruff's per-docstring guess), section extents, the first content line, dashed underlines |
+| `lib/python/naming.rerail` | 180 | case classes (lower, upper, camel, mixed, acronym, dunder); `pep8-naming.ignore-names` globs, with Ruff's defaults and `extend-ignore-names`; decorators with a call taken off (`dec_target`) and typing decorators (`typing_dec`); class/static methods by qualified name and by the `classmethod-decorators` / `staticmethod-decorators` options; Ruff's `function_type::classify` with `is_metaclass` (yes / maybe / no); first parameter; Store-context names and their scope; assignments that make a type; import aliases |
+| `lib/python/docstrings.rerail` | 170 | includes `naming.rerail`. Ruff's definitions (MemberKind) and their visibility (the package path, `_` names, `__all__` bindings, setters and deleters); `pydocstyle.ignore-decorators`; `doc_missing`, the shared condition of D100-D107; the docstring (first statement, a plain str literal; one string for the D2xx-D4xx rules; a non-blank body); its body, prefix, quotes and summary line; its lines, blank lines, leading whitespace, source spans and indentation |
+| `lib/python/docstrings-sections.rerail` | 144 | section headers in the Google and NumPy conventions: Ruff's section names, header detection (leading words, `:` suffix, underline, end of paragraph, RST directive bodies skipped, the previous-section subsection tests, resolved exactly without recursion), the convention (the option, set once, or Ruff's per-docstring guess), section extents, the first content line, dashed underlines |
 
 The 39 rules have 771 lines, comments and directives included: 15 to 50 lines each. `python3 site/check_rr.py`
 prints `ok`.
@@ -117,12 +117,12 @@ at the column too.
 
 ## Duplicates to merge
 
-- `typing_dec(f, x)` (`naming.rr`, now used by both D and N rules) is close to `typing_sym(e, x)` in
-  `lib/python/typing.rr` (another batch), applied to a decorator.
-- `doc_expr(o, e)` (`docstrings.rr`) and `py_docstring(o, e)` (`typing.rr`) both find the first-statement
+- `typing_dec(f, x)` (`naming.rerail`, now used by both D and N rules) is close to `typing_sym(e, x)` in
+  `lib/python/typing.rerail` (another batch), applied to a decorator.
+- `doc_expr(o, e)` (`docstrings.rerail`) and `py_docstring(o, e)` (`typing.rerail`) both find the first-statement
   docstring. `doc_expr` also rejects bytes, f-strings and mixed concatenations, as Ruff's pydocstyle does.
-- `doc_stub(d)` (`docstrings.rr`) and `stub_file(d)` (`typing.rr`) are the same.
-- `doc_exports` / `doc_listed` (`docstrings.rr`) read `__all__` bindings only. pyflakes's `all_entry` also
+- `doc_stub(d)` (`docstrings.rerail`) and `stub_file(d)` (`typing.rerail`) are the same.
+- `doc_exports` / `doc_listed` (`docstrings.rerail`) read `__all__` bindings only. pyflakes's `all_entry` also
   counts `.extend` / `.append`, which F822 wants and visibility does not. A shared `all_entry(s, x, how)` with the
   form would serve both.
 

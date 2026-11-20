@@ -58,6 +58,10 @@ use std::ops::Range;
 
 /// How a program's text was read: tree-sitter's tree, or a lean parser's tape of it, which is the
 /// tape that tree encodes to (decision 0198). Either spans the program's text.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "one a program read, moved once into its document: a box would be an allocation more for each"
+)]
 pub enum Parse {
     Tree(tree_sitter::Tree),
     /// The whole text's tape: the placeholders the program's segments omit are still in it
@@ -163,11 +167,14 @@ pub trait Embedder: Send + Sync {
     }
 }
 
-static EMBEDDERS: std::sync::OnceLock<Vec<(crate::code_rule_dsl::language::Via, &'static dyn Embedder)>> =
-    std::sync::OnceLock::new();
+static EMBEDDERS: std::sync::OnceLock<
+    Vec<(crate::code_rule_dsl::language::Via, &'static dyn Embedder)>,
+> = std::sync::OnceLock::new();
 
 /// The engine's embedders, by `Via`; the first call holds.
-pub fn install_embedders(embedders: Vec<(crate::code_rule_dsl::language::Via, &'static dyn Embedder)>) {
+pub fn install_embedders(
+    embedders: Vec<(crate::code_rule_dsl::language::Via, &'static dyn Embedder)>,
+) {
     let _ = EMBEDDERS.set(embedders);
 }
 
@@ -180,4 +187,3 @@ pub fn embedder(via: crate::code_rule_dsl::language::Via) -> &'static dyn Embedd
         .map(|(_, embedder)| *embedder)
         .unwrap_or_else(|| panic!("no embedder registered for {via:?}"))
 }
-

@@ -1,9 +1,5 @@
 use crate::Error;
-#[allow(unused_imports)]
-use crate::launch::{CheckedComputeEncoder, commit_checked, wait_checked};
-use metal::{
-    Buffer, ComputePipelineState, Device, MTLResourceOptions,
-};
+use metal::{Buffer, Device, MTLResourceOptions};
 use std::mem::size_of_val;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -22,22 +18,60 @@ use crate::launch;
 pub fn metal_buffer_limit() -> usize {
     rerail_accel::budget::metal()
 }
-#[cfg(not(any(test, feature = "test-hooks")))]
-static METAL_BUFFER_BYTES: AtomicUsize = AtomicUsize::new(0);
-/// The most `METAL_BUFFER_BYTES` has held.
-#[cfg(not(any(test, feature = "test-hooks")))]
-static METAL_BUFFER_PEAK: AtomicUsize = AtomicUsize::new(0);
+/// The device's state on this machine (decision 0442: the machine's): the pool's ledger and the most it held, the
+/// bytes of private buffers and the allocations' lock. The compiled pipelines are the store of compiled kernels'
+/// (`rerail_accel::gpu::kernels`, decision 0395).
+/// A reservation holds the ledger it charged, so its drop on any thread goes back to it.
+#[derive(Default)]
+pub(crate) struct DeviceState {
+    /// The pool's ledger and its most (a test build's are its thread's: `test_pool`).
+    #[cfg(not(any(test, feature = "test-hooks")))]
+    pool: Arc<AtomicUsize>,
+    #[cfg(not(any(test, feature = "test-hooks")))]
+    peak: Arc<AtomicUsize>,
+    private: AtomicUsize,
+    allocation: Mutex<()>,
+}
+
+pub(crate) fn state() -> Arc<DeviceState> {
+    rerail_context::machine::<DeviceState>()
+}
 
 /// The pool's ledger: the bytes reserved now.
 #[cfg(not(any(test, feature = "test-hooks")))]
-fn pool() -> &'static AtomicUsize {
-    &METAL_BUFFER_BYTES
+fn pool() -> Arc<AtomicUsize> {
+    Arc::clone(&state().pool)
 }
 
 /// The most the pool's ledger has held.
 #[cfg(not(any(test, feature = "test-hooks")))]
-fn pool_peak() -> &'static AtomicUsize {
-    &METAL_BUFFER_PEAK
+fn pool_peak() -> Arc<AtomicUsize> {
+    Arc::clone(&state().peak)
+}
+
+/// Whether the driver refuses a buffer of `length` more: past the device's largest buffer, or past the OS's working
+/// set for the device (`recommendedMaxWorkingSetSize`) with what the driver holds. Not past the Metal budget: the
+/// driver's figure counts every buffer Metal knows of, the no-copy wraps of the run's host blocks (row blocks, tapes,
+/// journals) with them, which are the host budget's pages, not device memory the budget bounds. Compared with the
+/// budget, a 1-node wave's buffer was refused with 337 MB of a 2 GB budget free (the driver at 3.7 GB, the pool's own
+/// at 1.7 GB; t62, Q203). The budget is the pool's ledger and leases, checked where they are reserved (`acquire`,
+/// `make_room`).
+fn driver_refuses(device: &metal::DeviceRef, length: usize) -> bool {
+    let length = length as u64;
+    let driver = driver_bytes(device);
+    if rerail_prof::on() && driver.saturating_add(length) > metal_buffer_limit() as u64 {
+        rerail_prof::count("capacity.driver_past_budget", 1);
+    }
+    length > device.max_buffer_length() || driver.saturating_add(length) > working_set(device)
+}
+
+/// The OS's working set for the device: what it can hold resident at once.
+fn working_set(device: &metal::DeviceRef) -> u64 {
+    #[cfg(any(test, feature = "test-hooks"))]
+    if let Some(bytes) = test_pool::working_set() {
+        return bytes;
+    }
+    device.recommended_max_working_set_size()
 }
 
 /// What the driver has allocated for the device, beside the pool's own reservations.
@@ -77,6 +111,16 @@ pub fn buffer_free() -> usize {
     metal_buffer_limit().saturating_sub(pool().load(Ordering::Acquire))
 }
 
+/// The bytes of `metal_buffer_limit()` a reservation can have now (`BufferReservation::acquire`): past the pool's
+/// ledger, the relational leases and reservations (`gpu::shared::bound_bytes`), less nothing for idle buffers, which
+/// room is made of. Sized from `buffer_free` instead, a matcher wave's workspace was three quarters of the budget
+/// while the chunk's row blocks held 275-384 MB of it: refused at every size, split down to one tape, then failed
+/// (Q203). A test's ledger is its thread's: as `acquire`, the pool's leases are not counted there.
+pub fn buffer_room() -> usize {
+    let bound = if cfg!(any(test, feature = "test-hooks")) { 0 } else { rerail_accel::gpu::shared::bound_bytes() };
+    metal_buffer_limit().saturating_sub(pool().load(Ordering::Acquire) + bound)
+}
+
 /// The bytes of Metal buffers alive now (their reservations), in MB.
 pub fn reserved_mb() -> usize {
     pool().load(Ordering::Acquire) >> 20
@@ -87,25 +131,18 @@ pub fn peak_mb() -> usize {
     pool_peak().load(Ordering::Acquire) >> 20
 }
 
-/// What the Metal driver says it has allocated for the device, in MB.
+/// What the Metal driver says it has allocated for the device, in MB: none where nothing opened the device (it is
+/// not opened to read it).
 pub fn driver_mb() -> usize {
-    crate::METAL_DEVICE.as_ref().map_or(0, |device| (device.current_allocated_size() >> 20) as usize)
+    rerail_accel::gpu::shared::opened_device().map_or(0, |device| (device.current_allocated_size() >> 20) as usize)
 }
-static METAL_PRIVATE_BYTES: AtomicUsize = AtomicUsize::new(0);
-static METAL_ALLOCATION_LOCK: Mutex<()> = Mutex::new(());
 static PRIVATE_RESERVATION_KEY: u8 = 0;
 const METAL_UPLOAD_CHUNK_BYTES: usize = 8 * 1024 * 1024;
-
-pub fn available_buffer_bytes(device: &Device) -> usize {
-    let reserved = pool().load(Ordering::Acquire);
-    let driver = usize::try_from(driver_bytes(device)).unwrap_or(usize::MAX);
-    metal_buffer_limit().saturating_sub(reserved.max(driver))
-}
 
 pub fn buffer_usage() -> (usize, usize) {
     (
         pool().load(Ordering::Acquire),
-        METAL_PRIVATE_BYTES.load(Ordering::Acquire),
+        state().private.load(Ordering::Acquire),
     )
 }
 
@@ -142,7 +179,9 @@ fn retain_buffer_owner<T: 'static>(buffer: &metal::BufferRef, owner: T) {
 
 struct BufferReservation {
     bytes: usize,
-    ledger: &'static AtomicUsize,
+    ledger: Arc<AtomicUsize>,
+    /// The machine's device state it counts its private bytes in.
+    on: Arc<DeviceState>,
     private: bool,
     /// Admitted to the tests' weighted bound (`test_pool`).
     #[cfg(any(test, feature = "test-hooks"))]
@@ -152,15 +191,21 @@ struct BufferReservation {
 }
 
 impl BufferReservation {
-    fn acquire(bytes: usize, ledger: &'static AtomicUsize, limit: usize) -> Result<Self, Error> {
+    fn acquire(bytes: usize, ledger: Arc<AtomicUsize>, limit: usize) -> Result<Self, Error> {
         // The device pool's ledger shares the one Metal budget with the pool's live leases (the residency's slabs,
         // the device blocks, relational work: 0266 §16), so a reservation counts them; room is made in the pool's one
         // order (idle buffers, then the residency's least recently used slabs).
-        let pooled = std::ptr::eq(ledger, pool());
+        let pooled = Arc::ptr_eq(&ledger, &pool());
+        // One account (Q203): the pool's leases and the admissions' reservations not yet leased (`bound_bytes`), as
+        // `make_room` counts them; counting the leases alone, a reservation took room a stratum had been admitted to.
+        // A test's ledger is its thread's, the pool's leases the process's: tests are bounded by `test_pool`.
+        let bound = || if pooled && !cfg!(any(test, feature = "test-hooks")) { rerail_accel::gpu::shared::bound_bytes() } else { 0 };
+        // Drawn from this thread's admission (a wave's workspace, admitted as a stratum's tables are): its room was
+        // made when it was admitted.
+        let drawn = pooled && rerail_accel::gpu::shared::draw_reserved(bytes);
         let take = || {
-            // A test's ledger is its thread's, the pool's leases the process's: tests are bounded by `test_pool`.
-            let live = if pooled && !cfg!(any(test, feature = "test-hooks")) { rerail_accel::gpu::shared::held_bytes().0 } else { 0 };
-            ledger.try_update(Ordering::AcqRel, Ordering::Acquire, |used| used.checked_add(bytes).filter(|next| *next + live <= limit))
+            let bound = if drawn { 0 } else { bound() };
+            ledger.try_update(Ordering::AcqRel, Ordering::Acquire, |used| used.checked_add(bytes).filter(|next| drawn || *next + bound <= limit))
         };
         let previous = take()
             .or_else(|used| if pooled && rerail_accel::gpu::shared::make_room(bytes) { take() } else { Err(used) })
@@ -200,6 +245,7 @@ impl BufferReservation {
         Ok(Self {
             bytes,
             ledger,
+            on: state(),
             private: false,
             #[cfg(any(test, feature = "test-hooks"))]
             admitted: pooled,
@@ -213,7 +259,7 @@ impl BufferReservation {
     }
 
     fn private(mut self) -> Self {
-        METAL_PRIVATE_BYTES.fetch_add(self.bytes, Ordering::AcqRel);
+        self.on.private.fetch_add(self.bytes, Ordering::AcqRel);
         self.private = true;
         self
     }
@@ -227,7 +273,7 @@ impl Drop for BufferReservation {
             test_pool::release(self.bytes);
         }
         if self.private {
-            METAL_PRIVATE_BYTES.fetch_sub(self.bytes, Ordering::AcqRel);
+            self.on.private.fetch_sub(self.bytes, Ordering::AcqRel);
         }
     }
 }
@@ -285,6 +331,65 @@ impl MappedRegion {
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), region.pointer.as_ptr(), bytes.len());
         }
         Ok(region)
+    }
+}
+
+/// A buffer of the device layer's over an anonymous mapping of the host's (decision 0440 step C): what
+/// [`MappedBuffer`] is to Metal, on every backend. Its whole length is reserved against the buffer budget, and
+/// untouched pages stay unmapped, so it costs what is written to it. The kernels read and write it in place (the
+/// device layer's `wrap_host_memory`, no copy). Its holder waits for every command that uses it before dropping it:
+/// a command holds the buffer, not the mapping.
+pub struct HostMapped {
+    region: Arc<MappedRegion>,
+    buffer: rerail_device::device::Buffer,
+}
+
+impl HostMapped {
+    /// `count` values of `T`, zero (pages unwritten until used).
+    #[track_caller]
+    pub fn zeroed<T>(count: usize) -> Result<Self, Error> {
+        let bytes = count.checked_mul(std::mem::size_of::<T>()).ok_or(Error::BackendCapacity)?;
+        Self::over(MappedRegion::zeroed(bytes)?)
+    }
+
+    /// A buffer holding `values` (at least a page long).
+    #[track_caller]
+    pub fn from_slice<T: Copy>(values: &[T]) -> Result<Self, Error> {
+        // SAFETY: the values' bytes, all initialized (`Copy` records of the batch's ABI).
+        let bytes = unsafe { std::slice::from_raw_parts(values.as_ptr().cast::<u8>(), size_of_val(values)) };
+        Self::over(MappedRegion::new(bytes)?)
+    }
+
+    fn over(region: MappedRegion) -> Result<Self, Error> {
+        let device = crate::lane::device()?;
+        // SAFETY: the mapping is held with the buffer, and its holder waits for the commands that use it.
+        let buffer = unsafe { rerail_device::device::wrap_host_memory(device, region.pointer.as_ptr(), region.length) }.map_err(|e| {
+            if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+                eprintln!("TEMPO_HOST_MAPPED_REJECT bytes={} error={e}", region.length);
+            }
+            Error::BackendCapacity
+        })?;
+        Ok(Self { region: Arc::new(region), buffer })
+    }
+
+    /// The buffer, as kernels bind it.
+    pub fn buffer(&self) -> &rerail_device::device::Buffer {
+        &self.buffer
+    }
+
+    /// The buffer as Metal's kernels not yet on the device layer bind it (decision 0440 step C moves each).
+    pub fn metal(&self) -> &metal::Buffer {
+        self.buffer.metal().expect("a mapped buffer on Metal")
+    }
+
+    /// Its bytes as the host writes them.
+    pub fn host(&self) -> *mut u8 {
+        self.region.pointer.as_ptr()
+    }
+
+    /// Its length in bytes (page-rounded).
+    pub fn byte_length(&self) -> usize {
+        self.region.length
     }
 }
 
@@ -402,15 +507,6 @@ impl PrivateInputUpload {
 }
 
 impl MappedBuffer {
-    /// A residency slab (PIAT §20.2, §20.4): `length` bytes, page-rounded, of an anonymous mapping
-    /// with one retained no-copy shared buffer over it. Untouched pages stay unmapped, so a slab
-    /// costs what is written to it; its whole length is reserved against the buffer budget.
-    #[track_caller]
-    pub fn slab(length: usize) -> Result<Self, Error> {
-        let device = crate::METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
-        Self::from_mapping(device, Arc::new(MappedRegion::zeroed(length)?))
-    }
-
     /// The buffer's bytes as the host writes them.
     pub fn host(&self) -> *mut u8 {
         self.buffer.contents().cast()
@@ -438,11 +534,9 @@ impl MappedBuffer {
             rerail_prof::count_named(format!("alloc_kb.{}", std::panic::Location::caller()), mapping.length >> 10);
         }
         // A lock over no data: a panic elsewhere while it was held leaves nothing to distrust.
-        let _allocation = METAL_ALLOCATION_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if mapping.length as u64 > device.max_buffer_length()
-            || driver_bytes(device)
-                .saturating_add(mapping.length as u64)
-                > metal_buffer_limit() as u64
+        let st_ = state();
+        let _allocation = st_.allocation.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if driver_refuses(device, mapping.length)
         {
             if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
                 eprintln!(
@@ -453,7 +547,7 @@ impl MappedBuffer {
                     device.max_buffer_length()
                 );
             }
-            rerail_prof::count("capacity.metal_pool_driver", 1);
+            rerail_prof::count("capacity.metal_longest_buffer", 1);
             if rerail_prof::on() {
                 // What the driver held then, and the pool's own part of it (the most seen).
                 let mut stages = rerail_prof::stages();
@@ -504,11 +598,9 @@ impl MappedBuffer {
         storage: MTLResourceOptions,
     ) -> Result<Self, Error> {
         // A lock over no data: a panic elsewhere while it was held leaves nothing to distrust.
-        let _allocation = METAL_ALLOCATION_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if length as u64 > device.max_buffer_length()
-            || driver_bytes(device)
-                .saturating_add(length as u64)
-                > metal_buffer_limit() as u64
+        let st_ = state();
+        let _allocation = st_.allocation.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if driver_refuses(device, length)
         {
             if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
                 eprintln!(
@@ -519,7 +611,7 @@ impl MappedBuffer {
                     std::panic::Location::caller()
                 );
             }
-            rerail_prof::count("capacity.metal_pool_driver", 1);
+            rerail_prof::count("capacity.metal_longest_buffer", 1);
             if rerail_prof::on() {
                 // What the driver held then, and the pool's own part of it (the most seen).
                 let mut stages = rerail_prof::stages();
@@ -699,76 +791,9 @@ pub fn evaluation_scope() -> launch::LaunchScope {
 /// (`rerail_accel::gpu::kernels`, decision 0395).
 pub fn drop_pipelines() {
     rerail_accel::gpu::kernels::release();
-    if let Ok(mut kernels) = crate::block_program::serial::KERNELS.lock() {
+    if let Ok(mut kernels) = crate::block_program::serial::kernels().0.lock() {
         kernels.clear();
     }
-}
-
-pub fn pipeline_named(source: &str, name: &str) -> Result<ComputePipelineState, Error> {
-    pipeline_named_constant(source, name, None)
-}
-
-/// [`pipeline_named`] of an interpreter's fixed source (the same for every rule set): recorded for the kernels the
-/// engine ships compiled (`rerail_accel::gpu::kernels::pipeline_fixed`, decision 0395).
-pub fn pipeline_named_fixed(source: &str, name: &str, constant: Option<u32>) -> Result<ComputePipelineState, Error> {
-    crate::device()?;
-    Ok(rerail_accel::gpu::kernels::pipeline_fixed(source, name, constant))
-}
-
-/// `source`'s pipeline `name` when a form of it is at hand (made by this process, or archived); otherwise `None`
-/// at once, and its compile behind the caller or left to maintenance (`rerail_accel::gpu::kernels::ready_behind`):
-/// a caller with another form of the work (a pipeline compiled before, the interpreter) runs that meanwhile instead
-/// of waiting on the compiler (decision 0012).
-pub fn pipeline_ready(source: &str, name: &str) -> Option<ComputePipelineState> {
-    crate::device().ok()?;
-    rerail_accel::gpu::kernels::ready_behind(source, name, None)
-}
-
-/// `source`'s pipeline `name` (with `constant` at function constant 0), compiled on this thread unless this
-/// process or the store has it (decision 0395). A kernel that does not compile is fatal.
-pub fn pipeline_named_constant(
-    source: &str,
-    name: &str,
-    constant: Option<u32>,
-) -> Result<ComputePipelineState, Error> {
-    crate::device()?;
-    // A measurement's sources (`RERAIL_METAL_DUMP=<dir>`): each library's source, by its digest, and the pipelines
-    // made of it, to compile apart and cold (`scripts/dev/metal/compile-time.swift`; the system's shader cache keeps
-    // a compile by its code, so a comment added to the source still finds it).
-    if let Some(dir) = std::env::var_os("RERAIL_METAL_DUMP") {
-        use sha2::Digest as _;
-        let digest: [u8; 32] = sha2::Sha256::digest(source.as_bytes()).into();
-        let stem = std::path::Path::new(&dir).join(digest[..6].iter().map(|b| format!("{b:02x}")).collect::<String>());
-        if !stem.with_extension("metal").exists() {
-            let _ = std::fs::write(stem.with_extension("metal"), source);
-        }
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(stem.with_extension("pipelines")) {
-            use std::io::Write as _;
-            let _ = writeln!(f, "{name} {}", constant.map_or(-1, i64::from));
-        }
-    }
-    let started = std::time::Instant::now();
-    let made = rerail_accel::gpu::kernels::made_here();
-    let pipeline = rerail_accel::gpu::kernels::pipeline(source, name, constant);
-    // The wall of a pipeline this thread made (compiled, or loaded from the store's archive), in the profile: in all,
-    // and by kernel.
-    if rerail_accel::gpu::kernels::made_here() > made {
-        let ms = started.elapsed().as_millis() as usize;
-        rerail_prof::count("metal.compile_ms", ms);
-        rerail_prof::count("metal.compiles", 1);
-        if rerail_prof::on() {
-            rerail_prof::count_named(format!("metal.compile_ms.{name}"), ms);
-        }
-    }
-    #[cfg(any(test, feature = "test-hooks"))]
-    COMPILED_HERE.set(COMPILED_HERE.get() + (rerail_accel::gpu::kernels::made_here() - made) as usize);
-    Ok(pipeline)
-}
-
-#[cfg(any(test, feature = "test-hooks"))]
-thread_local! {
-    /// Pipelines this thread compiled (the process's cache is shared with every other test's).
-    static COMPILED_HERE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
@@ -776,15 +801,41 @@ pub fn pipeline_cache_len() -> usize {
     rerail_accel::gpu::kernels::held()
 }
 
-/// The pipelines this thread has compiled, not found in the cache: a test's own, whatever other tests compile.
+/// The kernels this thread has made, not found in the process's memory (on any backend: `rerail_accel`'s
+/// `made_here`): a test's own, whatever other tests make.
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn pipelines_compiled_here() -> usize {
-    COMPILED_HERE.get()
+    rerail_accel::gpu::kernels::made_here() as usize
 }
 
 #[cfg(test)]
 mod memory_budget_tests {
     use super::*;
+
+    /// Q203: the run's host pages wrapped for the device (row blocks, tapes: no-copy buffers) are the host budget's,
+    /// not device memory the Metal budget bounds. With the driver holding them past the budget, a buffer within the
+    /// budget is still given; the driver's figure refuses only past the OS's working set for the device.
+    #[test]
+    fn host_pages_wrapped_past_the_budget_leave_the_budgets_buffers() {
+        let Some(device) = crate::METAL_DEVICE.as_ref() else { return };
+        test_pool::measure_driver();
+        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+        let len = (metal_buffer_limit() + (64 << 20)).div_ceil(page) * page;
+        // An anonymous mapping, never touched: the host's pages, wrapped as a run's row blocks are.
+        let host = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANON, -1, 0) };
+        assert_ne!(host, libc::MAP_FAILED);
+        let wrap = device.new_buffer_with_bytes_no_copy(host.cast_const(), len as u64, MTLResourceOptions::StorageModeShared, None);
+        assert!(driver_bytes(device) > metal_buffer_limit() as u64, "the driver counts the wrap: {} MB", driver_bytes(device) >> 20);
+        let given = MappedBuffer::zeroed::<u8>(device, 1 << 20);
+        assert!(given.is_ok(), "a 1 MB buffer within the budget, the driver at {} MB of a {} MB budget", driver_bytes(device) >> 20, metal_buffer_limit() >> 20);
+        drop(given);
+        // Past the working set the driver's figure refuses.
+        test_pool::set_working_set(Some(driver_bytes(device) + (1 << 19)));
+        assert_eq!(MappedBuffer::zeroed::<u8>(device, 1 << 20).err(), Some(Error::BackendCapacity), "past the working set");
+        test_pool::set_working_set(None);
+        drop(wrap);
+        unsafe { libc::munmap(host, len) };
+    }
 
     /// What relational work may still lease counts its own leases (held and idle in the pool), not only the
     /// buffer pool's reservations: a wave of device joins that checks it stops once its leases fill it.
@@ -847,22 +898,22 @@ mod memory_budget_tests {
 
     #[test]
     fn reservations_enforce_aggregate_limit_and_release_on_drop() {
-        static LEDGER: AtomicUsize = AtomicUsize::new(0);
-        let first = BufferReservation::acquire(60, &LEDGER, 100).unwrap();
+        let ledger = Arc::new(AtomicUsize::new(0));
+        let first = BufferReservation::acquire(60, Arc::clone(&ledger), 100).unwrap();
         assert!(matches!(
-            BufferReservation::acquire(41, &LEDGER, 100),
+            BufferReservation::acquire(41, Arc::clone(&ledger), 100),
             Err(Error::BackendCapacity)
         ));
-        let second = BufferReservation::acquire(40, &LEDGER, 100).unwrap();
+        let second = BufferReservation::acquire(40, Arc::clone(&ledger), 100).unwrap();
         assert!(matches!(
-            BufferReservation::acquire(usize::MAX, &LEDGER, 100),
+            BufferReservation::acquire(usize::MAX, Arc::clone(&ledger), 100),
             Err(Error::BackendCapacity)
         ));
-        assert_eq!(LEDGER.load(Ordering::Acquire), 100);
+        assert_eq!(ledger.load(Ordering::Acquire), 100);
         drop(first);
-        let third = BufferReservation::acquire(60, &LEDGER, 100).unwrap();
+        let third = BufferReservation::acquire(60, Arc::clone(&ledger), 100).unwrap();
         drop((second, third));
-        assert_eq!(LEDGER.load(Ordering::Acquire), 0);
+        assert_eq!(ledger.load(Ordering::Acquire), 0);
     }
 
     #[test]
@@ -972,24 +1023,24 @@ mod memory_budget_tests {
 
     #[test]
     fn owned_metal_reference_keeps_its_budget_reservation() {
-        static LEDGER: AtomicUsize = AtomicUsize::new(0);
+        let ledger = Arc::new(AtomicUsize::new(0));
         let device = Device::system_default().unwrap();
         for storage in [
             MTLResourceOptions::StorageModePrivate,
             MTLResourceOptions::StorageModeShared,
         ] {
             let reservation =
-                Arc::new(BufferReservation::acquire(16_384, &LEDGER, 16_384).unwrap());
+                Arc::new(BufferReservation::acquire(16_384, Arc::clone(&ledger), 16_384).unwrap());
             let weak = Arc::downgrade(&reservation);
             let buffer =
                 MappedBuffer::owned_allocation(&device, 16_384, reservation, storage).unwrap();
             let retained = buffer.buffer.clone();
             drop(buffer);
             assert!(weak.upgrade().is_some());
-            assert_eq!(LEDGER.load(Ordering::Acquire), 16_384);
+            assert_eq!(ledger.load(Ordering::Acquire), 16_384);
             drop(retained);
             assert!(weak.upgrade().is_none());
-            assert_eq!(LEDGER.load(Ordering::Acquire), 0);
+            assert_eq!(ledger.load(Ordering::Acquire), 0);
         }
     }
 

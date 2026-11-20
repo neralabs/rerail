@@ -50,9 +50,9 @@ async function setRepository(key, verb) {
   const name = data.repositories.find(r => r.repositoryKey === key)?.name ?? (data.repository?.repositoryKey === key ? data.repository.name : "this repo");
   try {
     const { body: { repository } } = await send("POST", `/api/repository/${verb}`, { repository: key, scope: "repository" });
-    toast(verb === "stop" ? `Rerail stopped in ${repository.name}. Your rules and history are kept.`
-      : repository.setUp ? `Rerail started in ${repository.name}.`
-        : `Rerail started in ${repository.name}. Add rule packs to run rules here.`);
+    toast(verb === "stop" ? `Rerail stopped in every checkout of ${repository.name}. Your rules and history are kept.`
+      : repository.setUp ? `Rerail started in every checkout of ${repository.name}.`
+        : `Rerail started in every checkout of ${repository.name}. Add rule packs to run rules here.`);
   } catch (error) {
     toast(failed(`Couldn’t ${verb} Rerail in ${name}`, error));
   }

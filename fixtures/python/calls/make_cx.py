@@ -1,5 +1,5 @@
-"""Writes calls_cx.rr from calls.rr (decision 0076, O114): usage `make_cx.py calls.rr calls_cx.rr`, run in
-native/src/code_rule_dsl/typing/programs. Each rewrite names the text it replaces and fails when calls.rr no longer has
+"""Writes calls_cx.rerail from calls.rerail (decision 0076, O114): usage `make_cx.py calls.rerail calls_cx.rerail`, run in
+native/src/code_rule_dsl/typing/programs. Each rewrite names the text it replaces and fails when calls.rerail no longer has
 it."""
 import re, sys
 src, dst = sys.argv[1], sys.argv[2]
@@ -12,8 +12,8 @@ def rep(old, new, count=1):
         sys.exit(f"expected {count} of {old!r}, found {n}")
     s = s.replace(old, new)
 
-rep('#include "python/conditions.rr"\n', '''#include "python/conditions.rr"
-// The import closure, components.rr's (the engine adds it to a program that reads it): rr_cx_reach(d, e), e is in
+rep('#include "python/conditions.rerail"\n', '''#include "python/conditions.rerail"
+// The import closure, components.rerail's (the engine adds it to a program that reads it): rr_cx_reach(d, e), e is in
 // d's closure; rr_cx_sees(d, q), q is a module of d's closure.
 ''')
 
@@ -93,6 +93,8 @@ rep('extb(e) :- basex(_, e), qn(e, q), !qknown(q).',
     '.decl xknown(e: node, q: symbol)\nxknown(e, q) :- basex(_, e), qn(e, q), qv(m9, q, _, _), ' + R.format(a='e', b='m9') + '.')
 rep('ext_import(s, x) :- rifrom(s, x, m, _), !isqmod(m).', 'ext_import(s, x) :- rifrom(s, x, m, _), docof(s, d9), !rr_cx_sees(d9, m).')
 rep('ext_import(s, x) :- ribind(s, x, q), !rifrom(s, x, _, _), !isqmod(q).', 'ext_import(s, x) :- ribind(s, x, q), !rifrom(s, x, _, _), docof(s, d9), !rr_cx_sees(d9, q).')
+rep('run_import(s, x) :- rifrom(s, x, m, _), isqmod(m).', 'run_import(s, x) :- rifrom(s, x, m, _), docof(s, d9), rr_cx_sees(d9, m).')
+rep('run_import(s, x) :- ribind(s, x, q), !rifrom(s, x, _, _), isqmod(q).', 'run_import(s, x) :- ribind(s, x, q), !rifrom(s, x, _, _), docof(s, d9), rr_cx_sees(d9, q).')
 rep('.decl tqv(q: symbol, k: symbol, v: node)', '.decl tqv(m: node, q: symbol, k: symbol, v: node)')
 rep('tqv(@dot(q, x), k, v) :- modname(m, q), tbv(m, x, k, v).', 'tqv(m, @dot(q, x), k, v) :- modname(m, q), tbv(m, x, k, v).')
 rep('tbv(s, x, k, v) :- ibind(s, x, q), tqv(q, k, v).', 'tbv(s, x, k, v) :- ibind(s, x, q), tqv(m9, q, k, v), ' + R.format(a='s', b='m9') + '.')
@@ -151,16 +153,16 @@ rep('tsub(t, x) :- tname(t), cls_q(c, t), anc(c, b), basex(b, e), builtin_ref(e,
 rep('.decl tsup_open(t: symbol)', '.decl tsup_open(n: node, t: symbol)')
 rep('tsup_open(t) :- tname(t), cls_q(c, t), anc(c, b), base_open(b).', f'tsup_open(n, t) :- {C}, base_open(b).')
 rep('tsup_open(t) :- tname(t), cls_q(c, t), anc(c, b), basex(b, e), extb(e), !builtin_ref(e, "object").', f'tsup_open(n, t) :- {C}, basex(b, e), extb(e), !builtin_ref(e, "object").')
-rep('type_miss(n, u) :- type_first(n, t0), tsub(t0, u), type_of(n, t), !tsub(t, u).', 'type_miss(n, u) :- type_first(n, t0), tsub(n, t0, u), type_of(n, t), !tsub(n, t, u).')
-rep('proven_type(n, u) :- type_first(n, t), tsub(t, u),', 'proven_type(n, u) :- type_first(n, t), tsub(n, t, u),')
+rep('type_miss(n, u) :- type_of(n, t0), tsub(t0, u), type_of(n, t), !tsub(t, u).', 'type_miss(n, u) :- type_of(n, t0), tsub(n, t0, u), type_of(n, t), !tsub(n, t, u).')
+rep('proven_type(n, u) :- type_of(n, t), tsub(t, u),', 'proven_type(n, u) :- type_of(n, t), tsub(n, t, u),')
 rep('possible_type(n, u) :- type_of(n, t), tsub(t, u).', 'possible_type(n, u) :- type_of(n, t), tsub(n, t, u).')
 rep('possible_open(n) :- type_of(n, t), tsup_open(t).', 'possible_open(n) :- type_of(n, t), tsup_open(n, t).')
 assert not [l for l in s.split('\n') if 'tname' in l and not l.startswith('//')]
 
 assert not [l for l in s.split('\n') if 'qknown' in l and not l.startswith('//')]
-hdr = '''// calls_cx.rr: calls.rr with every cross-file lookup a function of the reader's import closure (decision 0076, O114),
-// so its fixpoint can be memoised per import component. Generated from calls.rr by
-// fixtures/python/calls/make_cx.py; edit calls.rr and regenerate. What differs:
+hdr = '''// calls_cx.rerail: calls.rerail with every cross-file lookup a function of the reader's import closure (decision 0076, O114),
+// so its fixpoint can be memoised per import component. Generated from calls.rerail by
+// fixtures/python/calls/make_cx.py; edit calls.rerail and regenerate. What differs:
 // - a module's bindings (`qv`, `tqv`, `qopen`) are keyed by the module, and a reader sees those of its closure
 //   (`rr_cx_reach`); "is q a module" is `rr_cx_sees`;
 // - attribute lookups are keyed by the node that asks (`asks`, `fv`, `attr_open`), not by the class asked, and

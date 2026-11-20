@@ -1,7 +1,7 @@
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
-use crate::code_rule_dsl::test_support::*;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::matcher::{FileScopeSlot, TABLE_BUILDS, UtilLimit};
+use crate::code_rule_dsl::test_support::*;
 // cratify: a re-export of rerail-engine's, which its facades of this module make
 use ast_grep_language::LanguageExt;
 use napi::Result;
@@ -1952,7 +1952,8 @@ fn dotted_directory_and_file_names_keep_their_segments() {
 
 #[test]
 fn file_conditions_match_ruffs_module_rules() {
-    let root = std::path::Path::new(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/scope");
+    let root =
+        std::path::Path::new(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/scope");
     let expected: Value = serde_json::from_str(
         &std::fs::read_to_string(root.join("ruff-rules.expected.json"))
             .expect("ruff-rules.expected.json"),
@@ -2042,7 +2043,8 @@ fn starts(result: &Value) -> std::collections::BTreeSet<u64> {
 
 #[test]
 fn module_paths_qualify_like_ruff() {
-    let root = std::path::Path::new(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/scope");
+    let root =
+        std::path::Path::new(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/scope");
     let expected: Value = serde_json::from_str(
         &std::fs::read_to_string(root.join("modules.expected.json"))
             .expect("modules.expected.json"),
@@ -2089,7 +2091,8 @@ fn module_paths_qualify_like_ruff() {
 
 #[test]
 fn language_options_declare_the_globals_eslint_declares() {
-    let root = std::path::Path::new(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("ecma/scope");
+    let root =
+        std::path::Path::new(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("ecma/scope");
     let expected: Value = serde_json::from_str(
         &std::fs::read_to_string(root.join("eslint.expected.json")).expect("eslint.expected.json"),
     )
@@ -2132,7 +2135,8 @@ fn language_options_declare_the_globals_eslint_declares() {
 
 #[test]
 fn port_shaped_rules_report_what_eslint_reports_under_language_options() {
-    let root = std::path::Path::new(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("ecma/scope");
+    let root =
+        std::path::Path::new(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("ecma/scope");
     let expected: Value = serde_json::from_str(
         &std::fs::read_to_string(root.join("eslint-rules.expected.json"))
             .expect("eslint-rules.expected.json"),
@@ -2404,7 +2408,8 @@ from pdb import set_trace
 
 #[test]
 fn relative_text_imports_match_ruffs_t100() {
-    let root = std::path::Path::new(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/scope");
+    let root =
+        std::path::Path::new(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/scope");
     let expected: Value = serde_json::from_str(
         &std::fs::read_to_string(root.join("ruff-rules.expected.json"))
             .expect("ruff-rules.expected.json"),
@@ -2985,7 +2990,8 @@ fn a_gate_that_does_not_hold_keeps_the_querys_captures() {
 
 #[test]
 fn version_gates_match_ruffs_b905() {
-    let root = std::path::Path::new(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/scope");
+    let root =
+        std::path::Path::new(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/scope");
     let expected: Value = serde_json::from_str(
         &std::fs::read_to_string(root.join("ruff-rules.expected.json"))
             .expect("ruff-rules.expected.json"),
@@ -3029,7 +3035,8 @@ fn version_gates_match_ruffs_b905() {
 
 #[test]
 fn seen_before_matches_ruffs_seen_module() {
-    let root = std::path::Path::new(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/scope");
+    let root =
+        std::path::Path::new(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/scope");
     let expected: Value = serde_json::from_str(
         &std::fs::read_to_string(root.join("ruff-rules.expected.json"))
             .expect("ruff-rules.expected.json"),

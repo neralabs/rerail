@@ -1,6 +1,6 @@
-//! The `.rr` text as written: tokens, and statements before lowering (`lower`) or checking (`check`).
+//! The `.rerail` text as written: tokens, and statements before lowering (`lower`) or checking (`check`).
 //!
-//! Soufflé's grammar, with the additions `docs/rule-syntax/lib/core.rr` lists: patterns (``n ~ `…` ``), named regex
+//! Soufflé's grammar, with the additions `docs/rule-syntax/lib/core.rerail` lists: patterns (``n ~ `…` ``), named regex
 //! groups in `match`, `must`/`may` heads, `.violation` with `fix` lines, `=> edits`, `join … by … sep`, and
 //! `ordered by` on a declaration. The policy directives (`.policy`, `.mode`, `.scope`, …) are settings: each is kept
 //! as its text, up to the end of its line. Two JSON forms stay for what has no Datalog form yet: the matcher term
@@ -104,7 +104,7 @@ pub fn unescape(body: &str) -> Result<String, String> {
     Ok(out)
 }
 
-/// A string as an `.rr` literal, read back by `unescape` as the same string.
+/// A string as an `.rerail` literal, read back by `unescape` as the same string.
 pub fn quote(s: &str) -> String {
     // Most strings need no escape: copied whole.
     if !s.chars().any(|c| matches!(c, '"' | '\\') || c.is_control()) {
@@ -844,7 +844,7 @@ impl<'s> Parser<'s> {
                 _ => Kind::Setting,
             };
             self.open(kind);
-            match tape::directive(&d).filter(|_| kind != Kind::Setting) {
+            match tape::directive(d).filter(|_| kind != Kind::Setting) {
                 // A directive's `.word` is implied by its kind, but `.input` and `.output`, which share one.
                 // Under a kind whose tail may hold any punctuation (a declaration's, a functor's
                 // modifiers), a `.` is not implied anywhere: its `.` is stored, its word implied.
@@ -1454,7 +1454,7 @@ impl<'s> Parser<'s> {
                 self.close();
                 return Ok(Term::Call { name, functor: true, args });
             }
-            Tok::Id(s) if s == "_" => (Term::Wild, Kind::Wildcard),
+            Tok::Id("_") => (Term::Wild, Kind::Wildcard),
             Tok::Id(s) if s == "count" && self.is_p_at(1, ":") => return self.aggregate(s.to_owned()),
             // `min (a, b)`: a call, unless a `:` follows the parentheses (`min (a + b) : { … }`).
             Tok::Id(s) if matches!(s, "min" | "max" | "sum" | "product" | "mean" | "join") && self.is_p_at(1, "(") => return self.call_or_aggregate(s.to_owned()),

@@ -7,7 +7,7 @@ packs/python/upstream/ruff: fixtures/ and fixtures.expected.json, Ruff 0.16.9).
 <upstream dir> holds fixtures/ and fixtures.expected.json (`git archive main packs/python/upstream/ruff`). Each
 rule (every one the expectations name, or the CODEs given; all of its generated files, where main splits it) runs
 alone over the fixtures, as run_main_pack.sh runs
-it: the engine's `logic` command, under the caps (capped.sh: 2 minutes, 2 GB), RERAIL_SQL_STRICT=1, the repo's .rr
+it: the engine's `logic` command, under the caps (capped.sh: 2 minutes, 2 GB), RERAIL_SQL_STRICT=1, the repo's .rerail
 library. A finding is (path, line, column), the column from 1 as Ruff counts it. One line per rule:
 
     <code> <ok|differs|failed> expected=<n> got=<n> missing=<n> extra=<n>  <first few differences>
@@ -28,7 +28,7 @@ pack = os.path.join(here, "..", "packs", "python-main")
 def rule_files(code):
     """The generated files of one code: one, or several where main splits a rule (F811's per-case policies)."""
     prefix = f"ruff-{code.lower()}-"
-    return sorted(os.path.join(pack, n) for n in os.listdir(pack) if n.startswith(prefix) and n.endswith(".rr"))
+    return sorted(os.path.join(pack, n) for n in os.listdir(pack) if n.startswith(prefix) and n.endswith(".rerail"))
 
 
 def run(engine, rrs, fixtures):
@@ -73,7 +73,7 @@ def main():
         want = {(f["path"], f["line"], f["column"]) for f in expected["findings"] if f["rule"] == code}
         rrs = rule_files(code)
         if not rrs:
-            print(f"{code} failed  no generated rule ruff-{code.lower()}-*.rr", flush=True)
+            print(f"{code} failed  no generated rule ruff-{code.lower()}-*.rerail", flush=True)
             continue
         got, error = run(engine, rrs, os.path.join(upstream, "fixtures"))
         if got is None:

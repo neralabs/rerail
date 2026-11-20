@@ -101,11 +101,10 @@ pub fn single_field(kind: &str, field: &str) -> bool {
     let names = |key: &str| -> BTreeSet<String> { grammar[key].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect() };
     let (inline, supertypes) = (names("inline"), names("supertypes"));
     fn aliased(e: &Value, out: &mut BTreeSet<String>) {
-        if e["type"] == "ALIAS" && e["named"] == true {
-            if let Some(v) = e["value"].as_str() {
+        if e["type"] == "ALIAS" && e["named"] == true
+            && let Some(v) = e["value"].as_str() {
                 out.insert(v.to_owned());
             }
-        }
         if let Some(c) = e.get("content") {
             aliased(c, out);
         }

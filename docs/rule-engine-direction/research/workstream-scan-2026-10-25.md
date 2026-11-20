@@ -11,14 +11,14 @@ The scan was read-only. Each section is measured against `docs/rule-engine-direc
 | SSC worktree (branch `jeremy/sql-capture-demand-spikes`, uncommitted: −3,753 lines plus new `fragments.rs`) | `docs/sql-matcher-fragment-transition.md`: "generic SQL state machine is a rejected compiler architecture"; native matcher fragments behind one batched vtab filter | SQL composes typed relations; native fragments own sequential semantics | Converges (README §4, principle 1; HI D73). Still holds "exact work charges" open |
 | Moti `facts-plan` (7 commits past `facts-engine`, tip `9a901915`, 10-23) | `docs/facts/DECISION-CROSSFILE.md`; Y1 maintained reference graph; Y2 local queries | Not "which engine" but a maintained compact reference graph plus rules rewritten as local queries | Converges with authored-sql.md (engine-owned shared relations). New, decision-relevant evidence for per-edit cross-file rules |
 | Moti `facts-engine`, `sql-dl60`, `sql-set-composition` | Nothing new | — | — |
-| Tempo Metal (`nera-landing-2/ner-1562-scale-test-the-re-railer`, 6 commits `a091aa063..e95613625`) | Fixes to terminal ownership, retirement and containment | The full-corpus run still fails | Still on the old `policy_dsl` transducer. Full run 701.9 s, about 2 GB tracked, 577 dispatches against a 600 limit, failing on containment memory |
+| Tempo Metal (`scale-test-the-re-railer`, 6 commits `a091aa063..e95613625`) | Fixes to terminal ownership, retirement and containment | The full-corpus run still fails | Still on the old `policy_dsl` transducer. Full run 701.9 s, about 2 GB tracked, 577 dispatches against a 600 limit, failing on containment memory |
 | ast-index-spike | No new commits (origin tip `9449260`) | — | — |
 | PR 2539 | OPEN, last update 2026-08-12 | — | — |
-| Other branches | `tbelanger/rule-pack-generators` (4 files), plus one-line touches in `jeffreysnell/eslint-test-set` and `ggiangi/ner-1854` | Pack generation | Not engine execution |
+| Other branches | `tbelanger/rule-pack-generators` (4 files), plus one-line touches in `jeffreysnell/eslint-test-set` and one of ggiangi's branches | Pack generation | Not engine execution |
 
 ## DLRE
 
-**New numbers.** From `docs/data-layer-performance-journal.md` ("Full-repository measurement reset"), first-50 rules over 9,021 files:
+**New numbers.** From `docs/data-layer-performance-journal.md` (removed; at 7efcac9c67) ("Full-repository measurement reset"), first-50 rules over 9,021 files:
 
 | | Passing pre-SQL reference | Last SQL run | Current |
 |---|---|---|---|

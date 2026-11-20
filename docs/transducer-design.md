@@ -261,7 +261,7 @@ without semantic adaptation.
 The encoding tests read the example words from this document and check one-word encoding and its boundaries:
 
 ```bash
-python3 test/docs/test_transducer_design.py
+node --test test/docs/transducer-design.test.mjs
 ```
 
 The test-only interpreter in `native/src/code_rule_dsl/transducer.rs` implements every instruction above,

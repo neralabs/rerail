@@ -10,13 +10,19 @@
 //   node scripts/release/shrinkwrap-pack.mjs check <tarball> [package-root]
 import { execFileSync } from "node:child_process";
 import { rmSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { SHRINKWRAP_FILE, shrinkwrapProblem, shrinkwrapText } from "./shrinkwrap.mjs";
 
-/** The text of the shrinkwrap packed in `tarball`, or undefined when it has none. */
+/**
+ * The text of the shrinkwrap packed in `tarball`, or undefined when it has none. tar runs in the tarball's folder and
+ * gets its bare name: GNU tar, first on PATH in Git Bash on Windows, reads the `C:` of an absolute path as a remote
+ * host and finds no archive, and the tars of Windows and macOS have no `--force-local` to turn that off.
+ */
 function packedShrinkwrap(tarball) {
+  const path = resolve(tarball);
   try {
-    return execFileSync("tar", ["-xzOf", tarball, `package/${SHRINKWRAP_FILE}`], {
+    return execFileSync("tar", ["-xzOf", basename(path), `package/${SHRINKWRAP_FILE}`], {
+      cwd: dirname(path),
       encoding: "utf8",
       maxBuffer: 64 * 1024 * 1024,
       stdio: ["ignore", "pipe", "pipe"],

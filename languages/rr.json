@@ -7,7 +7,7 @@
     {
       "label": "rr",
       "variant": "Rr",
-      "suffixes": [".rr"],
+      "suffixes": [".rerail"],
       "parser": "rr",
       "grammar": "native:rr",
       "tapeTag": 13

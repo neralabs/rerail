@@ -183,6 +183,7 @@ pub struct Token {
     pub end: u32,
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum Built {
     Facts(Facts),
     /// The parser stopped at a limit (`file_tape` returned `None`).
@@ -339,7 +340,7 @@ fn queued_image(stored: &crate::content_store::ObjectBytes, grammar: &Arc<crate:
         return TapeImage::from_home((*home).clone(), grammar);
     }
     crate::code_rule_dsl::prof::count("tape.queued_read_apart", 1);
-    static APART: rerail_prof::copies::Site = rerail_prof::copies::Site::new(15, "4a", "a queued tape not in a room, read into a vector (queued_image)");
+    const APART: rerail_prof::copies::Site = rerail_prof::copies::Site::new(17, "4a", "a queued tape not in a room, read into a vector (queued_image)");
     APART.time(|| (TapeImage::from_bytes(stored, grammar), stored.len()))
 }
 
@@ -547,7 +548,7 @@ pub(crate) fn build_cached_source(file: &dyn SourceFile, cache: &crate::content_
 }
 
 /// [`build_cached_source`], with the tape the facts were read off (decision 0106).
-pub(crate) fn build_cached_with_tape(
+pub fn build_cached_with_tape(
     file: &dyn SourceFile,
     cache: &crate::content_store::ContentStore,
     known: Option<crate::content_store::SourceId>,
@@ -678,7 +679,7 @@ fn holding(tape: Arc<crate::code_rule_dsl::tape::formats::DocTape>, source: Arc<
 /// The tape tag of a text-only document's facts (`text`): no dialect has it.
 pub const TEXT: u8 = u8::MAX;
 
-/// The facts of a file read as text only (core.rr's `.scope text`): its source and lines, no tree. Its lines are W's
+/// The facts of a file read as text only (core.rerail's `.scope text`): its source and lines, no tree. Its lines are W's
 /// for a file with no grammar (`Terminators::Eslint`: `\r\n`, `\r`, `\n`, U+2028, U+2029).
 pub fn text(source: Arc<String>) -> Facts {
     let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::Terminators::Eslint));
@@ -1027,7 +1028,7 @@ pub fn digest(f: &Facts) -> [u8; 32] {
 
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
-/// The relations a program in `core.rr`'s shape declares (the engine's names, decision 0141, less those decision
+/// The relations a program in `core.rerail`'s shape declares (the engine's names, decision 0141, less those decision
 /// 0174's rewrite adds), as the rule language reads them; registered at load (`install_core_names`). Empty without one.
 pub fn core_names() -> &'static std::collections::BTreeSet<String> {
     static EMPTY: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
@@ -1036,7 +1037,7 @@ pub fn core_names() -> &'static std::collections::BTreeSet<String> {
 
 static CORE_NAMES: std::sync::OnceLock<fn() -> &'static std::collections::BTreeSet<String>> = std::sync::OnceLock::new();
 
-/// Registers what reads `core.rr`'s names (once, at load).
+/// Registers what reads `core.rerail`'s names (once, at load).
 pub fn install_core_names(names: fn() -> &'static std::collections::BTreeSet<String>) {
     let _ = CORE_NAMES.set(names);
 }
@@ -1066,21 +1067,21 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         // W's f-string trees (`facts::vtab::syntax::fstring`).
         "fstring_piece" => &["n", "i", "kind", "v"],
         "fstring_template" => &["n", "marker", "v"],
-        // CPython's verdict (`facts::vtab::syntax::cpython`; core.rr's `syntax_error(d, l, msg)`).
+        // CPython's verdict (`facts::vtab::syntax::cpython`; core.rerail's `syntax_error(d, l, msg)`).
         "cpython_syntax_error" => &["d", "l", "msg"],
         // Ruff's string annotations and their trees (`facts::vtab::syntax::annotation`).
         "string_annotation" => &["s"],
         "parsed" => &["s", "grammar", "root"],
         // W's pythonAst `literal_json` (`facts::vtab::syntax::cpython`).
         "literal_json" => &["n", "v"],
-        // core.rr's @py_unparse(n) and @ast_dump(n), and W's hashes of dumps (`facts::vtab::syntax::cpython`).
+        // core.rerail's @py_unparse(n) and @ast_dump(n), and W's hashes of dumps (`facts::vtab::syntax::cpython`).
         "cpython_unparse" | "cpython_ast_dump" => &["n", "s"],
         "dump_sha256" => &["n", "h"],
         "body_sha256" | "signature_sha256" => &["f", "h"],
         "intval" => &["n", "v"],
         "op_at" => &["n", "i", "s"],
         "op" | "op_t" => &["n", "s"],
-        // `core.rr`'s (`facts::vtab::syntax`, decision 0046).
+        // `core.rerail`'s (`facts::vtab::syntax`, decision 0046).
         "syntax_error" => &["d", "l", "msg"],
         "spread" | "rr_long_text_node" => &["n"],
         "next_sibling" => &["a", "b"],
@@ -1101,7 +1102,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "token_before" | "token_after" => &["x", "t"],
         "end_point" => &["n", "p"],
         "tree_digest" | "def_digest" => &["n", "s"],
-        // core.rr's tokens (`facts::vtab::syntax::tree`).
+        // core.rerail's tokens (`facts::vtab::syntax::tree`).
         "prev_token" => &["n", "s"],
         "token" | "rr_token_anon" => &["p", "i", "s", "start", "end_"],
         "rr_token_named" => &["p", "i", "c", "start", "end_"],
@@ -1131,6 +1132,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "package_field" => &["dir", "key", "v"],
         "package_for" => &["path", "dir"],
         "pkg" => &["d", "p"],
+        "unpackaged" => &["d"],
         "path_part" | "file_name" => &["d", "s"],
         "tape" => &["n", "par", "size", "depth"],
         "core_node" => &["d", "t", "n"],
@@ -1142,7 +1144,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) => &["s"],
         // An `ast` matcher's matched nodes (decision 0106).
         rel if rel.starts_with(ast_matches::PREFIX) => ast_matches::columns(rel),
-        // A `match_all` regex's matches (`logic::strings::as_relations`, `facts::vtab::syntax::Extra`).
+        // A `match_all` regex's matches (`preparation::text::TextRelations`, `facts::vtab::syntax::Extra`).
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::MATCHES) => &["sp", "m"],
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::GROUPS) => &["sp", "m", "g", "gsp"],
         // A registered family's lazy relations (`facts::vtab::syntax::Families`: Python's `py.*`).
@@ -1154,31 +1156,33 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
 /// The executor of a binding (the run's lanes: every lane under the device binding, the cores' otherwise), registered
 /// at load (`install_executors`); without one, a fresh executor of the machine's lanes, made only then (making it
 /// compiles the GPU's kernels and builds the Neural Engine's lane).
-pub fn executor_for(device: bool) -> &'static rerail_accel::Executor {
-    static OWN: std::sync::OnceLock<rerail_accel::Executor> = std::sync::OnceLock::new();
+pub fn executor_for(device: bool) -> std::sync::Arc<rerail_accel::Executor> {
+    /// The machine's executor where none is registered (decision 0442: the machine's).
+    #[derive(Default)]
+    struct Own(std::sync::OnceLock<std::sync::Arc<rerail_accel::Executor>>);
     match EXECUTORS.get() {
         Some(executor) => executor(device),
-        None => OWN.get_or_init(rerail_accel::Executor::new),
+        None => std::sync::Arc::clone(crate::code_rule_dsl::logic::profile::machine::<Own>().0.get_or_init(|| std::sync::Arc::new(rerail_accel::Executor::new()))),
     }
 }
 
-static EXECUTORS: std::sync::OnceLock<fn(bool) -> &'static rerail_accel::Executor> = std::sync::OnceLock::new();
+static EXECUTORS: std::sync::OnceLock<fn(bool) -> std::sync::Arc<rerail_accel::Executor>> = std::sync::OnceLock::new();
 
 /// Registers the run's executors (once, at load).
-pub fn install_executors(executor: fn(bool) -> &'static rerail_accel::Executor) {
+pub fn install_executors(executor: fn(bool) -> std::sync::Arc<rerail_accel::Executor>) {
     let _ = EXECUTORS.set(executor);
 }
 
 /// The relations CPython's facts bind (the corpus's names for the verdict, `ast.unparse`, `ast.dump` and their
 /// hashes) and their columns: base relations the planner reads by name.
 pub mod cpython_relations {
-    /// The relation the corpus binds for CPython's verdict (core.rr's `syntax_error(d, l, msg)`).
+    /// The relation the corpus binds for CPython's verdict (core.rerail's `syntax_error(d, l, msg)`).
     pub const SYNTAX_ERROR: &str = "cpython_syntax_error";
     /// W's `literal_json` (`cpython::literal`).
     pub const LITERAL_JSON: &str = "literal_json";
-    /// core.rr's `@py_unparse(n)` (`cpython::unparse`).
+    /// core.rerail's `@py_unparse(n)` (`cpython::unparse`).
     pub const UNPARSE: &str = "cpython_unparse";
-    /// core.rr's `@ast_dump(n)` (`cpython::dump`).
+    /// core.rerail's `@ast_dump(n)` (`cpython::dump`).
     pub const AST_DUMP: &str = "cpython_ast_dump";
     /// W's `dump_sha256`, `body_sha256` and `signature_sha256` (`cpython::dump`).
     pub const DUMP_SHA256: &str = "dump_sha256";

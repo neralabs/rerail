@@ -82,13 +82,17 @@ packs/<id>/
   "license": "Apache-2.0 AND MIT",
   "repository": { "type": "git", "url": "git+https://github.com/neralabs/rerail.git", "directory": "packs/typescript" },
   "files": ["pack.json", "rules", "licenses", "LICENSE", "NOTICE", "README.md"],
-  "peerDependencies": { "@neralabs/rerail": ">=0.1.0-0 <0.2.0" },
+  "peerDependencies": { "@neralabs/rerail": ">=0.1.0-0" },
   "peerDependenciesMeta": { "@neralabs/rerail": { "optional": true } },
   "publishConfig": { "access": "public" }
 }
 ```
 
-- **`peerDependencies`**: the core range. A pack has no `dependencies`.
+- **`peerDependencies`**: the core range. A pack has no `dependencies`. A pack that ships a rule in a language core first
+  reads in a later release (`LANGUAGE_SINCE` in `scripts/release/core.mjs`: Java, 0.1.5) leaves older cores out
+  from that release on, as for `heldOff` below: they refuse the document and would drop the whole pack. Once core is at
+  that release the pack validation fails a range that admits them, and the Release pull request raises the range of
+  each such pack it releases ([release](release.md#release-pull-request)).
 - **`files`**: the pack and its licence records. Validation material never reaches npm.
 - **`repository`**: this repository and the pack's directory. `publishConfig.access` is `public`, like core.
 - **`private`**: `true` makes a pack that is never published. It needs no `publishConfig`; `false` is refused (a
@@ -97,7 +101,9 @@ packs/<id>/
 <details>
 <summary>Why these fields</summary>
 
-- The peer range is a declaration, not an import. The `-0` admits core's prereleases (`0.1.0-next.0`).
+- The peer range is a declaration, not an import. It names the oldest core the pack fits and no newest, so a core
+  release never leaves installed packs out by its version alone; a pack whose rules need a newer core raises the
+  oldest. The `-0` admits core's prereleases (`0.1.0-next.0`).
 - Rerail's catalog enforces the range: an installed pack whose range excludes the active core is left out
   ([rule packs](rule-packs.md#installing-packs)). npm doesn't, since core is never installed beside the packs in
   `$RERAIL_HOME/packs`.
@@ -126,7 +132,7 @@ packs/<id>/
   "id": "typescript",
   "name": "TypeScript",
   "category": "language",
-  "covers": "typescript-eslint and @vitest/eslint-plugin rules for safe, idiomatic TypeScript and Vitest tests.",
+  "covers": "Linter-equivalent to typescript-eslint 8.70.1 and @vitest/eslint-plugin 1.6.27, for safe, idiomatic TypeScript and Vitest tests.",
   "reason": "matches TypeScript",
   "match": {
     "any": [
@@ -150,7 +156,7 @@ packs/<id>/
 - **`honourSuppressionComments`** (optional, default `true`): whether its rules honour their linters' suppression
   comments.
 - **`rules`**: the pack's rules. Each entry has an `id` ([Rule ids](#rule-ids)), a `document` (required,
-  `rules/<id>.json`), a `title` and `group`, and optional `mode`, `on` and `examples`.
+  `rules/<id>.json`), a `title` and `group`, and optional `mode`, `on`, `heldOff` and `examples`.
 
 <details>
 <summary>Field details</summary>
@@ -161,7 +167,9 @@ packs/<id>/
   this. A pack's README opens with `# Rerail rule pack: <name>`, and a published pack has a row in
   [the packs table](rule-packs.md#the-packs).
 - **`covers`** says what the rules are for and where they come from. It gives no rule counts and nothing on which
-  start on; the dashboard shows both beside it.
+  start on; the dashboard shows both beside it. A pack that ports linters opens with
+  `Linter-equivalent to <Tool> <version>, for <purpose>.` ([linter-equivalent](rule-packs.md#linter-equivalent)). A
+  test checks that every pinned version (`upstream/<tool>/gates.yaml`) appears.
 - **`category`** drives the kind chips of the dashboard's rule pack catalog, which lists languages, then frameworks,
   then repository packs.
 - **`match` signals:**
@@ -187,6 +195,12 @@ packs/<id>/
   - `mode` is the rule mode the pack starts the rule in; otherwise the document's. Ports use it for upstream's
     warning level (below).
   - `on` (default `true`) is whether the pack starts the rule on.
+  - `heldOff` is one line saying why a reviewer holds the rule off though upstream turns it on: its steer would do
+    harm. It needs `"on": false`. Set-up never turns a held-off rule on from the repository's lint config, by a
+    linter's defaults, a preset, a prefix, a group or the rule's own name; it notes what would have, with the reason
+    ([rule scoping](rule-scoping.md#the-repositorys-own-lint-config)). A person can still turn the rule on. Cores
+    before 0.1.5 refuse the field, so once core is at 0.1.5 the pack validation fails a pack using it whose core range
+    admits an older core, and the Release pull request raises the range of each such pack it releases to `>=0.1.5-0`.
   - `examples` is `{ "caught": { "path"?, "text" }, "passes": { … } }`. A code rule's examples need a `path` inside
     the rule's scope, which decides the file's language; a conversation rule's have none. The complexity pack has one
     pair per rule.
@@ -198,8 +212,10 @@ as its document, with no `format`. It steers on the coding agent's session rathe
 `tool:Bash`, the command as the call's `input.command`), and the sampled text otherwise. Its schema has no
 `description`, so check 8 leaves it out; say what it does in the pack's README.
 
-Internal testing: conversation rules in a pack, as every conversation rule; Rerail 0.1.0 releases code rules only. See
-[Internal testing](../README.md#internal-testing).
+Internal testing: conversation rules in a pack, as every conversation rule; Rerail 0.1.0 releases code rules only. The
+daemon checks none unless `RERAIL_EXPERIMENTAL_CONVERSATION_RULES=1` is set for it, nor does Pi for a Pi session running
+Rerail in process unless it is set for Pi. See
+[Internal testing](internal-testing.md).
 
 </details>
 
@@ -269,7 +285,7 @@ It records the language families, the engine capabilities, the pinned tools and,
 It records:
 
 - the language family, or the families for a pack whose ports span languages (complexity's
-  `["python", "ecma", "php", "blade", "rust", "vue"]`);
+  `["python", "ecma", "php", "blade", "rust", "vue", "java"]`);
 - the engine capabilities the pack declares, with exemptions and their evidence;
 - the pinned tools;
 - per ported rule: the upstream tool and rule it reproduces, how findings compare (`line` or `line+column`), and the

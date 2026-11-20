@@ -1,7 +1,7 @@
 //! The whole-program analyses over a version (decision 0173, stage 2 step 2), each relation by its id: the strata
-//! (`front::strata`), what the outputs need (`front::needed`), the projections (`plan::projections`), and whether
-//! the composed path accepts the program (`compose::accepts`). Each reads the rules by their heads and the other
-//! fields by `About`, and is checked against its tree form on the pack programs (`tests`).
+//! (`strata`), what the outputs need (`needed`), the projections (`plan::projections`), and whether the composed
+//! path accepts the program (`compose::accepts`). Each reads the rules by their heads and the other fields by
+//! `About`.
 //!
 //! The strata come in an order of ids, where the tree form's come in an order of names: each is dependencies first.
 //! `components_by_name` gives them in the tree form's order, for a reader whose output follows it.
@@ -21,7 +21,9 @@ pub struct Strata {
     pub edges: Edges,
 }
 
-/// The strata (`front::strata`): an error if a negation or a non-monotone aggregate closes a cycle.
+/// The program's components, dependencies first, and its dependency edges: T's `strata`, with aggregation in
+/// recursion named apart from negation, and allowed into a lattice head it is monotone in (`count`/`max` into a
+/// `max` lattice, `min` into a `min` lattice). An error if a negation or a non-monotone aggregate closes a cycle.
 pub fn strata(v: &Version, about: &About) -> Result<Strata, Error> {
     let (derived, edges, aggs) = components(v, about);
     let sccs = tarjan(v.rel_end() as usize, &derived, &edges);
@@ -31,8 +33,8 @@ pub fn strata(v: &Version, about: &About) -> Result<Strata, Error> {
     }
 }
 
-/// Every component that a negation or a non-monotone aggregate closes a cycle in, one error each
-/// (`front::unstratified`; `strata` stops at the first).
+/// Every component that a negation or a non-monotone aggregate closes a cycle in, one error each (`strata` stops at
+/// the first): a caller that drops what made each cycle (demand's split, decision 0048) drops them all in one round.
 pub fn unstratified(v: &Version, about: &About) -> Vec<Error> {
     let (derived, edges, aggs) = components(v, about);
     let sccs = tarjan(v.rel_end() as usize, &derived, &edges);
@@ -140,7 +142,8 @@ fn tarjan(n: usize, nodes: &[RelId], edges: &Edges) -> Vec<Vec<RelId>> {
     sccs
 }
 
-/// The relations `roots` read, directly or through other rules or natives, the roots included (`front::needed`).
+/// The relations `roots` read, directly or through other rules or natives, the roots included (`Prune`'s, from the
+/// outputs).
 /// Indexed by relation id.
 pub fn needed(v: &Version, about: &About, roots: impl IntoIterator<Item = RelId>) -> Vec<bool> {
     let mut need = vec![false; v.rel_end() as usize];
@@ -160,7 +163,7 @@ pub fn needed(v: &Version, about: &About, roots: impl IntoIterator<Item = RelId>
 }
 
 /// The relations whose one rule's body is a single positive atom of distinct variables, wildcards and integers,
-/// with the integers' columns (`plan::projections`). Sorted by relation.
+/// with the integers' columns. Sorted by relation.
 pub fn projections(v: &Version) -> Vec<(RelId, Vec<(usize, i64)>)> {
     let mut seen = vec![false; v.rel_end() as usize];
     let mut out = Vec::new();

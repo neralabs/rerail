@@ -71,11 +71,11 @@ fn private_dir(dir: &Path) -> std::io::Result<()> {
     b.create(dir)
 }
 
-/// The bytes of the store's segments on disk (the memo's, the frames', the tapes' and sources'): the directories
+/// The bytes of the store's segments on disk (the memo's, the tapes' and sources', the atoms', the kept facts'): the directories
 /// beside its file, as the store's disk budget counts them.
 pub(super) fn segment_bytes(database: &Path) -> u64 {
     let mut bytes = 0;
-    for suffix in [".memo", ".frames", ".objects", ".atoms", ".facts"] {
+    for suffix in [".memo", ".objects", ".atoms", ".facts"] {
         let mut dir = database.as_os_str().to_owned();
         dir.push(suffix);
         let Ok(entries) = std::fs::read_dir(PathBuf::from(dir)) else { continue };
@@ -197,17 +197,18 @@ impl Done {
     }
     /// The writer's half: its pages written back and its state frozen (`Sealed::write_back`; a block no device
     /// wrapped stays mapped, its readers reading on), or (no mapping) its bytes written as one file. Once.
-    fn write_back(self) -> StoreResult<Done> {
+    fn write_back(self, flush: rerail_blocks::block::Flush) -> StoreResult<Done> {
         match self {
             #[cfg(unix)]
             Done::Mapped(sealed, reader) => {
                 let path = sealed.path().to_owned();
-                let frozen = sealed.write_back()?;
+                let frozen = sealed.write_back(flush)?;
                 drop(reader);
                 Ok(Done::Written(frozen, path))
             }
             #[cfg(not(unix))]
             Done::Memory(frozen, path) => {
+                let _ = flush;
                 std::fs::write(&path, frozen.bytes(0, frozen.used()))?;
                 Ok(Done::Written(frozen, path))
             }
@@ -252,7 +253,9 @@ impl SegmentWriter {
         let file = self.dir.join(format!("w-{}-{n}.seg", std::process::id()));
         #[cfg(target_os = "macos")]
         let open = Open::Mapped(rerail_accel::gpu::shared::lease_deferrable_host(kind::JOURNAL, bytes, &file).map_err(StoreError::Invalid)?);
-        #[cfg(all(unix, not(target_os = "macos")))]
+        #[cfg(target_os = "linux")]
+        let open = Open::Mapped(rerail_blocks::deferrable::Deferrable::create(&file, kind::JOURNAL, bytes, true, None)?);
+        #[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]
         let open = Open::Mapped(rerail_blocks::deferrable::Deferrable::create(&file, kind::JOURNAL, bytes, true)?);
         #[cfg(not(unix))]
         let open = Open::Memory(rerail_blocks::alloc::host(kind::JOURNAL, bytes.next_multiple_of(rerail_blocks::block::PAGE)), file);
@@ -314,11 +317,12 @@ impl SealedSegments {
     pub fn is_empty(&self) -> bool {
         self.placed.is_empty()
     }
-    /// Writes every segment back that is not yet (the writer's half; again after a failure, only those left).
-    pub(super) fn write_back(&mut self) -> StoreResult<()> {
+    /// Writes every segment back that is not yet (the writer's half; again after a failure, only those left), as the
+    /// store's `flush` says (decision 0481).
+    pub(super) fn write_back(&mut self, flush: rerail_blocks::block::Flush) -> StoreResult<()> {
         for d in &mut self.done {
             match d.take() {
-                Some(segment) => *d = Some(segment.write_back()?),
+                Some(segment) => *d = Some(segment.write_back(flush)?),
                 None => return Err(StoreError::Invalid("a memo segment whose write-back failed".into())),
             }
         }
@@ -357,13 +361,34 @@ impl Drop for SealedSegments {
 }
 
 /// `entries` (each an image, its document key and content digest) in new segments of `dir`, written back.
-pub(super) fn write_segments(dir: &Path, entries: &[(&[u8], i64, &[u8; 32])]) -> StoreResult<SealedSegments> {
+pub(super) fn write_segments(dir: &Path, entries: &[(&[u8], i64, &[u8; 32])], flush: rerail_blocks::block::Flush) -> StoreResult<SealedSegments> {
     let mut w = SegmentWriter::new(dir, entries.len(), rerail_blocks::journal::reserve_for(entries.len(), entries.iter().map(|e| e.0.len()), ALIGN));
     for (bytes, key, digest) in entries {
         w.put(bytes.len(), *key, digest, |out| out.copy_from_slice(bytes))?;
     }
     let mut segments = w.seal();
-    segments.write_back()?;
+    segments.write_back(flush)?;
     Ok(segments)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_underestimated_batch_grows_segment_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut writer = SegmentWriter::new(dir.path(), 1, ALIGN);
+        for value in 0..32u64 {
+            let bytes = value.to_le_bytes();
+            writer.put(bytes.len(), value as i64, &[0; 32], |out| out.copy_from_slice(&bytes)).unwrap();
+        }
+        let mut segments = writer.seal();
+        let files = segments.files().len();
+        assert!(files <= 6, "expected at most 6 segments for 32 small entries, got {files}");
+        segments.write_back(rerail_blocks::block::Flush::Synced).unwrap();
+        for value in 0..32u64 {
+            assert_eq!(segments.entry(value as usize).bytes(), value.to_le_bytes());
+        }
+    }
+}

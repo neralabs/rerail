@@ -1,6 +1,5 @@
 //! One ledger for a session's owner, workers, failed executions, and recovery SQL.
 use parking_lot::Mutex;
-use std::cell::RefCell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 
@@ -22,20 +21,12 @@ pub struct Ledger {
     measure_vm_steps: AtomicBool,
     vm_steps: AtomicU64,
 }
-thread_local! {static CURRENT:RefCell<Option<Arc<Ledger>>>=const{RefCell::new(None)};}
+/// The ledger this caller's SQL is admitted by (`Ledger::enter`), in the run's context: a job works within its
+/// caller's allowance.
+#[derive(Clone, Default)]
+struct Admitting(Option<Arc<Ledger>>);
 pub fn current() -> Option<Arc<Ledger>> {
-    CURRENT.with(|v| v.borrow().clone())
-}
-/// While the guard lives, this thread's SQL is admitted by `ledger` (another thread's, `current`): a job on another
-/// thread works within its caller's allowance (`logic::run_state`).
-pub fn enter_current(ledger: Option<Arc<Ledger>>) -> impl Drop {
-    struct Entered(Option<Arc<Ledger>>);
-    impl Drop for Entered {
-        fn drop(&mut self) {
-            CURRENT.with(|v| v.replace(self.0.take()));
-        }
-    }
-    Entered(CURRENT.with(|v| v.replace(ledger)))
+    crate::code_rule_dsl::logic::profile::bound::<Admitting>().0
 }
 fn available(s: &State) -> usize {
     s.limit.map_or(usize::MAX, |limit| {
@@ -149,11 +140,10 @@ impl Ledger {
             }
             previous
         };
-        let prior = CURRENT.with(|v| v.replace(Some(self.clone())));
         Ok(Scope {
             ledger: self.clone(),
             previous,
-            prior,
+            _admitting: crate::code_rule_dsl::logic::profile::bind(Admitting(Some(self.clone()))),
         })
     }
     pub fn reserve(self: &Arc<Self>, count: usize) -> Result<Arc<Reservation>, String> {
@@ -185,7 +175,7 @@ impl Ledger {
         if reserved || recovery && s.stopped {
             return s.used + s.reserved <= limit;
         }
-        if !s.stopped && s.used + s.reserved + s.recovery + 1 <= limit {
+        if !s.stopped && s.used + s.reserved + s.recovery < limit {
             true
         } else {
             s.stopped = true;
@@ -202,12 +192,11 @@ impl Drop for Measurement<'_> {
 pub struct Scope {
     ledger: Arc<Ledger>,
     previous: usize,
-    prior: Option<Arc<Ledger>>,
+    _admitting: crate::code_rule_dsl::logic::profile::Bound,
 }
 impl Drop for Scope {
     fn drop(&mut self) {
         self.ledger.state.lock().recovery = self.previous;
-        CURRENT.with(|v| v.replace(self.prior.take()));
     }
 }
 pub struct Reservation {

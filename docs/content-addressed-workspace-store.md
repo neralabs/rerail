@@ -50,10 +50,10 @@ the file, so the new store starts empty.
 store missing any object (new, or lacking an index this build added) takes the exclusive lock and
 applies the DDL; a new store also gets `auto_vacuum=INCREMENTAL`.
 
-`PRAGMA user_version` is the compatibility floor, `SCHEMA_VERSION` (5). A build refuses a store
+`PRAGMA user_version` is the compatibility floor, `SCHEMA_VERSION` (7). A build refuses a store
 whose floor is newer than its own. Additive changes such as indexes never raise it.
 
-The renamed file is `STORE_FILE_NAME`, now `content-v6.sqlite`. The old file is neither migrated nor
+The renamed file is `STORE_FILE_NAME`, now `content-v9.sqlite`. The old file is neither migrated nor
 deleted.
 
 Tests: `newer_compatibility_floor_is_refused`,
@@ -135,9 +135,11 @@ signed 64-bit lanes, each eight digest bytes read with `i64::from_be_bytes`. SHA
 
 ## Objects
 
-Each source and tape is stored once. A scan's sources and tapes are kept uncompressed in segment files beside the
-store (`content-v6.sqlite.objects/`), read in place; the row points at its range and holds no bytes. Other writes keep
-an independent compressed frame in the row, checked on every read.
+Each source and tape is stored once, uncompressed, in segment files beside the store (`content-v9.sqlite.objects/`),
+and read in place; the row points at its range and holds no bytes. Check results, call summaries and tree pages are
+kept the same way (floor 8). A scan gathers its files into a few large
+segments; any other write (a publication, a snapshot, a single put) writes one segment of its own objects before its
+transaction, which numbers it and inserts the rows. Each read checks the range's length against the row.
 
 - **`source_objects`:** each source under its SHA-256.
 - **`tape_objects`:** one syntax tape per source and grammar.
@@ -260,7 +262,10 @@ gitlink (submodule) is recorded as a nested path, not descended into.
   on one commit share a snapshot. `publish_snapshot` registers the workspace in the snapshot's own
   transaction and requires a published root tree (test: `snapshots_require_a_published_root_tree`).
 - **`workspaces`:** root, repository (Git common directory), owner (`rerail:<pid>:<worktree>`),
-  snapshot, lease and state (1 active, 2 retiring).
+  snapshot, lease and state (1 active, 2 ended and aged, 3 released).
+- **`store_sessions`:** one row per durable owner (decision 0450 §2): a workspace, keyed by its
+  root; a corpus lane; a pin's owner. It records the latest generation, when it was last registered or renewed, and, once it
+  ended, when and how many bytes its snapshot and overlay held.
 
 A clean file's committed blob is its alias, found without reading the file (`clean_source_alias`).
 Before a restore, `holds_blob_bytes` confirms the worktree still holds the blob's bytes: one `lstat`
@@ -293,13 +298,13 @@ Scan budgets: [Reference](reference.md#scan-and-settings-controls). Result pages
 - **`candidate_catalogs`:** a rule catalog's identity, a SHA-256 over the code-rule catalog, grammar
   set, scanner version and tape format (`CandidateCatalogIdentity`).
 - **`candidate_checks`:** one clause of a catalog, by rule (policy hash) and clause key.
-- **`context_check_results(source_id, context_hash_id, check_id, codec_id, raw_length, frame)`:**
-  per-file results. The context (`file_context`) is all non-content inputs: path, language, Python
-  module, nearest `package.json` and any calls-closure stamp (`result_context`).
-- **`local_check_results(source_id, check_id, ...)`:** still in the schema and still collected, but
-  never written.
+- **`context_check_results(source_id, context_hash_id, check_id, seg, seg_at, seg_len)`:**
+  per-file results, a file's call summary among them. The result's bytes are in an object segment, as
+  they are, and read there. The context (`file_context`) is all non-content inputs: path, language,
+  Python module, nearest `package.json` and any calls-closure stamp (`result_context`). A result whose
+  segment is gone makes the file's results a miss.
 
-`LocalResultCache` keeps up to 32 MiB of decoded results per process.
+`LocalResultCache` keeps up to 32 MiB of results per process, as the segments hold them.
 
 </details>
 
@@ -376,7 +381,7 @@ decode gets an incomplete set, leaving the backlog.
 `publish_overlay_files` publishes 1 to `MAX_PUBLICATION_BATCH` (64) files of one workspace, doing
 all it can outside the write lock.
 
-Hashing, lookups and compression run without the lock. An object pass and a relationship pass then
+Hashing, lookups and writing the objects' segment run without the lock. An object pass and a relationship pass then
 write under it.
 
 Publication alone does not make results reusable: a repository index restores only under a
@@ -402,7 +407,8 @@ collection between read and write can delete rows the pass relied on; the next p
 Publication fails after eight incomplete passes.
 
 **Relationship pass.** It writes overlay rows, new result-context hashes and `context_check_results`,
-chunked to SQLite's variable limit, in at most ten statements. Under the write lock it first checks
+chunked to SQLite's variable limit, in at most ten statements. The results' bytes go first into one
+segment of the pass's, which its transaction numbers and which is named once it commits. Under the write lock it first checks
 every prepared path, source, tape, catalog and check ID is still current
 (`relationship_references_current`); otherwise the whole publication restarts, at most eight times.
 
@@ -433,7 +439,15 @@ path (`shared_content_store`). Every 30 seconds the thread:
 - builds search indexes.
 
 Collection starts at 7 GiB; from 9 GiB new sources, tapes and search indexes are refused. A closed
-workspace stops being renewed, so its lease expires and collection retires it.
+workspace stops being renewed, so its lease expires and its session ends. Its snapshot and
+overlay are then aged, not dropped (decision 0450 step 3). They are kept while the workspaces that
+ended after it hold together at most 384 MiB, and for at most 30 days, the oldest released first.
+A workspace registered again over its root is live again; its old overlay goes.
+
+What only aged owners hold is archived by upkeep after collection (decision 0450 step 4): each
+source or tape is compressed into one zstd frame in `object_archive`, and its row's `seg` becomes
+-2. Compaction then frees its bytes from its segment. A reader that meets an archived row places it
+back in a new segment first, then reads it there.
 
 <details>
 <summary>Capacity thresholds</summary>
@@ -455,9 +469,11 @@ Database relationships are the only liveness authority; there are no reference c
 `collect(now, batch)` takes at most `MAX_COLLECTION_BATCH` (256) rows per statement, in one
 `BEGIN IMMEDIATE` transaction, in this order:
 
-1. Expired `object_pins`.
-2. Workspaces whose lease expired become retiring; their overlay rows go, then the workspace and its
+1. Workspaces whose lease expired end (state 2), and a pin owner whose last pin lapsed ends; their
+   sessions record when and how many bytes. Ended workspaces past the age budget are released
+   (state 3): their overlay rows go, then the workspace, its session and its
    `completed_workspace_revisions` row.
+2. Expired `object_pins`, except a source's or tape's whose owner is aged.
 3. The files of one snapshot no workspace references, then the snapshot once empty.
 4. Tapes no snapshot file, overlay, pin or `file_documents.document_tape_id` references. A deleted
    primary tape takes its `file_documents` rows, search index set and FTS document with it, so a
@@ -485,10 +501,10 @@ caller.
 
 Each process bounds its caches and connections; `release_memory()` frees them.
 
-- **Read cache:** up to 32 MiB of decompressed sources and tapes, 30-second sliding lifetime.
 - **`LocalResultCache`:** up to 32 MiB of decoded results.
 - **Connections:** 1 MiB SQLite page cache each.
-- **`release_memory()`** clears both caches and closes idle connections.
+- **`release_memory()`** clears the result cache and closes idle connections. Sources and tapes need no cache: they
+  are read where they lie in their segments.
 
 <details>
 <summary>How the read cache maps memory</summary>

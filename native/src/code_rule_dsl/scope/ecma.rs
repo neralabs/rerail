@@ -6,9 +6,9 @@ use super::{
     Binding, BuildError, Builder, Form, Grammar, NodeRef, ScopeKind, ScopeTable, Site, TYPE, VALUE,
 };
 use crate::code_rule_dsl::identifier::ecma_name;
-use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::literal::eslint_directive::Directive;
+use crate::code_rule_dsl::tree::Tree;
 use ast_grep_core::{Doc, Node};
 use std::collections::HashMap;
 use std::sync::{LazyLock, OnceLock};
@@ -233,7 +233,6 @@ fn script(dialect: GrammarDialect) -> &'static Script {
 }
 
 type Visit = Result<(), BuildError>;
-
 
 fn field<'r, D: Doc>(node: &Node<'r, D>, id: u16) -> Option<Node<'r, D>> {
     if id == 0 {
@@ -484,7 +483,10 @@ impl Visitor<'_, '_> {
             Tag::Module => self.module(node)?,
             Tag::AmbientDeclaration => {
                 // `declare global { ... }` is the only form with a bare block.
-                match node.named().find(|child| self.tag(child) == Tag::StatementBlock) {
+                match node
+                    .named()
+                    .find(|child| self.tag(child) == Tag::StatementBlock)
+                {
                     Some(body) => {
                         self.builder
                             .push(ScopeKind::GlobalAugmentation, node.range());
@@ -708,7 +710,9 @@ impl Visitor<'_, '_> {
     /// The type a `type` field's annotation holds, without its `:`.
     fn annotation<D: Doc>(&self, node: &Node<'_, D>) -> Option<NodeRef> {
         let annotation = field(node, self.fields().ty)?;
-        let mut inner = annotation.named().filter(|child| self.tag(child) != Tag::Comment);
+        let mut inner = annotation
+            .named()
+            .filter(|child| self.tag(child) != Tag::Comment);
         Some(match (inner.next(), inner.next()) {
             (Some(ty), None) => NodeRef::of(&ty),
             _ => NodeRef::of(&annotation),
@@ -841,7 +845,9 @@ impl Visitor<'_, '_> {
         self.builder.push(ScopeKind::Block, node.range());
         let left = field(node, fields.left);
         // `using` and `await using` bind in the loop head as `let` and `const` do.
-        let declared = node.tokens().find(|token| matches!(token.kind().as_ref(), "var" | "let" | "const" | "using"));
+        let declared = node
+            .tokens()
+            .find(|token| matches!(token.kind().as_ref(), "var" | "let" | "const" | "using"));
         if let Some(left) = &left {
             let site = site(Form::For, node);
             match declared.map(|keyword| keyword.kind() == "var") {
@@ -902,11 +908,13 @@ impl Visitor<'_, '_> {
         }
         // Parameter decorators run in the scope around the method (typescript-eslint's class
         // visitor), before its own.
-        let parameter_decorators = node.named()
+        let parameter_decorators = node
+            .named()
             .filter(|child| child.kind() == "formal_parameters")
             .flat_map(|parameters| parameters.named().collect::<Vec<_>>())
             .flat_map(|parameter| {
-                parameter.named()
+                parameter
+                    .named()
                     .filter(|child| child.kind() == "decorator")
                     .collect::<Vec<_>>()
             })

@@ -240,6 +240,8 @@ fn a_scan_walked_in_morsels_makes_one_walks_rows_and_cuts_within_its_budget() {
     if crate::threads::max() < 2 {
         return;
     }
+    // A run of its own: the rows left read in order are the run's count (decision 0442).
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     // Chains of three: 0 → 1 → 2, 3 → 4 → 5, …: 40,000 edges, each node reaching at most two others.
     let edges: Vec<String> = (0..60_000).filter(|i| i % 3 != 2).map(|i| format!("({i}, {})", i + 1)).collect();
     let setup = |db: &Connection| {
@@ -247,7 +249,10 @@ fn a_scan_walked_in_morsels_makes_one_walks_rows_and_cuts_within_its_budget() {
     };
     let input = format!("t:b:{}:{}:ii", hex("edge"), hex("c0, c1"));
     closure::semi_naive_here(true);
-    let spec = format!("name mors\nrel path ii\njoin 0 0 {}", hex(&format!("pos d0 v0 v1\npos {input} v1 v2\nhead v0 v2")));
+    // The scan is of `edge`, the probe of `path`'s delta, whose waves keep its orders: the scan is sorted by their
+    // key (decision 0294). An input's probes go to its block's hash index (decision 0478 step 5), for which no scan
+    // is sorted.
+    let spec = format!("name mors\nrel path ii\njoin 0 0 {}", hex(&format!("pos {input} v0 v1\npos d0 v1 v2\nhead v0 v2")));
     let rows = |db: &Connection| -> Vec<(i64, i64)> { pairs(db, "SELECT DISTINCT c0, c1 FROM path ORDER BY c0, c1") };
     let unlimited = |whole: bool| {
         let db = connection();

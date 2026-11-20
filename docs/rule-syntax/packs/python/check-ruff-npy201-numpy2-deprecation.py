@@ -1,4 +1,4 @@
-"""Checks that ruff-npy201-numpy2-deprecation.members.rr round-trips: rebuilding each clause's names, NEW
+"""Checks that ruff-npy201-numpy2-deprecation.members.rerail round-trips: rebuilding each clause's names, NEW
 transform (the replacement's last segment), fallback exemption and message from the table gives the JSON's; and
 the shared fallback list is the set of replacements."""
 import importlib.util, json, os, re

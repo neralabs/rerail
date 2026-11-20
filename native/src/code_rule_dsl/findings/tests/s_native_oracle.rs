@@ -117,14 +117,15 @@ impl<'a> Native<'a> {
         let wall = Instant::now();
         let started = super::cpu_ns();
         let roots_before = matcher::roots_matched();
-        let compile_before = phase_clock::ANCHOR_COMPILE.load(Ordering::Relaxed);
+        let compile_before = phase_clock::clocks().anchor_compile.load(Ordering::Relaxed);
         let preparing = super::cpu_ns();
         let (plans, by_matcher) = (&self.plans, &self.by_matcher);
         self.corpus
             .prepare(plans)
             .expect("prepare native oracle anchors");
         let prepare_total = super::cpu_ns().saturating_sub(preparing);
-        let compile_ns = phase_clock::ANCHOR_COMPILE
+        let compile_ns = phase_clock::clocks()
+            .anchor_compile
             .load(Ordering::Relaxed)
             .saturating_sub(compile_before);
         let prepare_ns = prepare_total.saturating_sub(compile_ns);
@@ -260,6 +261,7 @@ impl<'a> Native<'a> {
 }
 
 /// P's `anchor_plans` over the policy's AST clauses, with each P plan keyed by its W plan.
+#[allow(clippy::type_complexity)]
 fn anchor_plans(
     rule: &crate::code_rule_dsl::model::CompiledCodeRule,
 ) -> (

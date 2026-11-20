@@ -6,12 +6,12 @@
 //! A macro's tokens are not parsed: a macro invocation whose expansion may call a function of the
 //! crate is `Open` (`macro_may_call`), so a call there is left open, never absent.
 
-use crate::code_rule_dsl::tree::Tree;
 use super::names::Name;
 use super::summary::{self, Def, OPEN, Summary};
 use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::scope::rust::{UseHead, UsePath, glob_visible, resolve_index, use_path};
 use crate::code_rule_dsl::scope::{Binding, Form, Reference, ScopeTable};
+use crate::code_rule_dsl::tree::Tree;
 use ast_grep_core::{Doc, Node};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};

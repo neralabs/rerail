@@ -22,13 +22,11 @@ pub fn capture(
     source: &Connection,
     context: serde_json::Value,
 ) -> Result<Option<PathBuf>> {
-    static DIRECTORY: LazyLock<Option<PathBuf>> =
-        LazyLock::new(|| std::env::var_os("RERAIL_SQL_FAILURE_DIR").map(PathBuf::from));
     static NEXT: AtomicUsize = AtomicUsize::new(0);
-    let Some(directory) = DIRECTORY.as_ref() else {
+    let Some(directory) = rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_SQL_FAILURE_DIR").map(PathBuf::from)) else {
         return Ok(None);
     };
-    std::fs::create_dir_all(directory).map_err(super::io_error)?;
+    std::fs::create_dir_all(&directory).map_err(super::io_error)?;
     let stem = format!(
         "failure-{}-{}",
         std::process::id(),

@@ -132,7 +132,10 @@ impl Grammar {
 
     /// The grammar a `parse.grammar` name selects.
     pub fn named(name: &str) -> Option<Self> {
-        Self::all().iter().copied().find(|grammar| grammar.name() == name)
+        Self::all()
+            .iter()
+            .copied()
+            .find(|grammar| grammar.name() == name)
     }
 
     /// The registered grammar `name` names, which a part of the engine reads by name (`formatArgs`' styles).
@@ -241,7 +244,7 @@ impl LiteralGrammar for Chars {
         for (at, c) in text.char_indices() {
             root.children.push(
                 PNode::new(grammar, "char", at, at + c.len_utf8())
-                    .with_value(Value::Str(c.to_string().into())),
+                    .with_value(Value::Str(c.to_string())),
             );
         }
         root
@@ -374,13 +377,7 @@ pub static NEXT_TREE: AtomicUsize = AtomicUsize::new(0);
 
 impl SubTree {
     /// Flattens `root` over `text`. `offset` shifts every node range (see `SubSource`).
-    pub fn new(
-        grammar: Grammar,
-        text: String,
-        offset: usize,
-        root: PNode,
-        map: HostMap,
-    ) -> Self {
+    pub fn new(grammar: Grammar, text: String, offset: usize, root: PNode, map: HostMap) -> Self {
         let mut nodes: Vec<Rec> = Vec::new();
         let mut values = Vec::new();
         // The last child linked so far, per node.
@@ -511,9 +508,7 @@ impl SubTree {
     }
 
     /// The root's children in order, each its kind's name and its value.
-    pub fn root_children(
-        &self,
-    ) -> impl Iterator<Item = (&'static str, Option<&Value>)> + '_ {
+    pub fn root_children(&self) -> impl Iterator<Item = (&'static str, Option<&Value>)> + '_ {
         let grammar = self.lang.0;
         let mut at = self.nodes.first().map_or(NONE, |root| root.first);
         std::iter::from_fn(move || {
@@ -788,12 +783,5 @@ pub enum Parsed {
     /// Not a string this grammar reads.
     NotString,
 }
-
-
-
-
-
-
-
 
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

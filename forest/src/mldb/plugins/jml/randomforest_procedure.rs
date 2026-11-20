@@ -242,27 +242,29 @@ pub fn bag_counts(num_rows: usize, bag: usize, config: &RandomForestProcedureCon
     use rayon::prelude::*;
     let per = num_rows / num_partitions;
     let stretches: Vec<(usize, usize)> = (0..num_partitions).map(|i| (per * i, if i == num_partitions - 1 { num_rows } else { per * (i + 1) })).collect();
-    let parts: Vec<Vec<u32>> = stretches.par_iter().enumerate().map(|(i, &(first, last))| {
-        let n = last - first;
-        if !config.sample_feature_vectors {
-            return vec![1; n];
-        }
-        let seed = 245 + (bag * num_partitions) as u32 + i as u32;
-        let mut in_training = vec![false; n];
-        let mut order: Vec<usize> = (0..n).collect();
-        Mt19937::new(seed).shuffle(&mut order);
-        // As upstream's `i < numRowsInPartition * trainprop`: ceil(n * prop) rows.
-        let kept = ((n as f64 * config.feature_vector_sampling_prop as f64).ceil() as usize).min(n);
-        for &k in &order[..kept] {
-            in_training[k] = true;
-        }
-        let mut myrng = random_forest_rng(seed ^ 0x9E37_79B9);
-        let mut w = vec![0u32; n];
-        for _ in 0..n {
-            w[myrng.below(n)] += 1;
-        }
-        w.iter().zip(&in_training).map(|(&c, &t)| if t { c } else { 0 }).collect()
-    }).collect();
+    let parts: Vec<Vec<u32>> = rerail_context::on_cores(|| {
+        stretches.par_iter().enumerate().map(|(i, &(first, last))| {
+            let n = last - first;
+            if !config.sample_feature_vectors {
+                return vec![1; n];
+            }
+            let seed = 245 + (bag * num_partitions) as u32 + i as u32;
+            let mut in_training = vec![false; n];
+            let mut order: Vec<usize> = (0..n).collect();
+            Mt19937::new(seed).shuffle(&mut order);
+            // As upstream's `i < numRowsInPartition * trainprop`: ceil(n * prop) rows.
+            let kept = ((n as f64 * config.feature_vector_sampling_prop as f64).ceil() as usize).min(n);
+            for &k in &order[..kept] {
+                in_training[k] = true;
+            }
+            let mut myrng = random_forest_rng(seed ^ 0x9E37_79B9);
+            let mut w = vec![0u32; n];
+            for _ in 0..n {
+                w[myrng.below(n)] += 1;
+            }
+            w.iter().zip(&in_training).map(|(&c, &t)| if t { c } else { 0 }).collect()
+        }).collect()
+    });
     for ((first, _), part) in stretches.iter().zip(parts) {
         counts[*first..*first + part.len()].copy_from_slice(&part);
     }
@@ -409,7 +411,7 @@ const DEVICE_BAG_MIN_ROWS: f64 = 256.0;
 /// on the device, and the draw's settings. `None` when the host should draw: too few rows for a bag's total to stay
 /// near 1 (the fixed-point accumulators hold under 2), or a row heavy enough to push it there alone.
 struct DeviceBags {
-    base: metal::Buffer,
+    base: crate::device::Buffer,
     keep24: u32,
     sample: u32,
     scale: f32,
@@ -434,7 +436,7 @@ impl DeviceBags {
         }
         let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
         Ok(Some(DeviceBags {
-            base: crate::compute_kernel_metal::transfer_to_device_immutable(&shared.device, &base),
+            base: crate::device::transfer_to_device_immutable(&shared.device, &base),
             keep24: ((prop * (1u32 << 24) as f64).ceil() as u32).min(1 << 24),
             sample,
             scale: (1.0 / expected) as f32,
@@ -445,7 +447,7 @@ impl DeviceBags {
     fn draw(&self, partition: &FeatureSamplingTrainerPartition, num_examples: usize, b: usize) -> Result<TreeRows, String> {
         use crate::compute_kernel_grid::ComputeKernelArgument::{Buffer as B, Float, Int};
         let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
-        let decoded = crate::compute_kernel_metal::alloc_uninitialized_array_sync::<crate::randomforest_types::RowWeights>(&shared.device, num_examples);
+        let decoded = crate::device::alloc_uninitialized_array_sync::<crate::randomforest_types::RowWeights>(&shared.device, num_examples);
         partition.launch("bagRows", &[
             ("numExamples", Int(num_examples as i64)),
             ("seed", Int(bag_seed(b) as i64)),
@@ -596,19 +598,21 @@ pub fn train_forest_compacted(all_data: &PartitionData, config: &RandomForestPro
     let pool = rayon::ThreadPoolBuilder::new().num_threads(config.feature_vector_samplings.clamp(1, MAX_BAGS_AT_ONCE)).build().map_err(|e| e.to_string())?;
     use rayon::prelude::*;
     let bags: Vec<Result<Vec<Tree>, String>> = pool.install(|| {
-        (0..config.feature_vector_samplings).into_par_iter().map(|b| {
-            let debug_name = format!("bag {b}");
-            let (mut data, samplings) = bag(all_data, b, config).map_err(|e| format!("error training {debug_name}: {e}"))?;
-            data.set_categorical_subsets(config.categorical_subsets);
-            if config.min_leaf_examples > 1 {
-                data.fs = Arc::new(DatasetFeatureSpace { min_leaf_examples: config.min_leaf_examples, ..(*data.fs).clone() });
-            }
-            let trees = data.train_multiple_samplings(b as i32, &debug_name, config.max_depth, &samplings, config.training_scheme).map_err(|e| format!("error training {debug_name}: {e}"))?;
-            if trees.len() != samplings.len() {
-                return Err(format!("{debug_name}: {} trees for {} samplings", trees.len(), samplings.len()));
-            }
-            Ok(trees)
-        }).collect()
+        rerail_context::on_cores(|| {
+            (0..config.feature_vector_samplings).into_par_iter().map(|b| {
+                let debug_name = format!("bag {b}");
+                let (mut data, samplings) = bag(all_data, b, config).map_err(|e| format!("error training {debug_name}: {e}"))?;
+                data.set_categorical_subsets(config.categorical_subsets);
+                if config.min_leaf_examples > 1 {
+                    data.fs = Arc::new(DatasetFeatureSpace { min_leaf_examples: config.min_leaf_examples, ..(*data.fs).clone() });
+                }
+                let trees = data.train_multiple_samplings(b as i32, &debug_name, config.max_depth, &samplings, config.training_scheme).map_err(|e| format!("error training {debug_name}: {e}"))?;
+                if trees.len() != samplings.len() {
+                    return Err(format!("{debug_name}: {} trees for {} samplings", trees.len(), samplings.len()));
+                }
+                Ok(trees)
+            }).collect()
+        })
     });
     let mut trees = Vec::with_capacity(total);
     for b in bags {
@@ -620,7 +624,7 @@ pub fn train_forest_compacted(all_data: &PartitionData, config: &RandomForestPro
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute_kernel_metal::transfer_to_host_sync;
+    use crate::device::transfer_to_host_sync;
     use crate::randomforest::tests::deep_dataset;
     use crate::randomforest::{compare_trees, FeatureSamplingTrainerKernel};
     use crate::randomforest_recursive::decode_rows;
@@ -795,9 +799,9 @@ mod tests {
         let (prop, keep24) = (0.3f64, ((0.3 * (1u32 << 24) as f64).ceil() as u32));
         let sum: f64 = base.iter().map(|b| b[0] as f64).sum();
         let scale = (1.0 / (sum * prop)) as f32;
-        let base_buf = crate::compute_kernel_metal::transfer_to_device_immutable(&shared.device, &base);
-        let out = crate::compute_kernel_metal::alloc_uninitialized_array_sync::<[f32; 2]>(&shared.device, n);
-        let mut q = crate::compute_kernel_metal::MetalComputeQueue::new(&shared.queue);
+        let base_buf = crate::device::transfer_to_device_immutable(&shared.device, &base);
+        let out = crate::device::alloc_uninitialized_array_sync::<[f32; 2]>(&shared.device, n);
+        let mut q = crate::device::ComputeQueue::new(&shared.queue);
         for b in [0usize, 1, 57] {
             use crate::compute_kernel_grid::ComputeKernelArgument::{Buffer as B, Float, Int};
             let k = crate::randomforest_kernels_grid::kernel("bagRows").unwrap();
@@ -805,7 +809,7 @@ mod tests {
             k.enqueue(&[("numExamples", Int(n as i64)), ("seed", Int(bag_seed(b) as i64)), ("keep24", Int(keep24 as i64)), ("sample", Int(1)), ("scale", Float(scale as f64)), ("baseRows", B(&base_buf)), ("decodedRowsOut", B(&out))], &[n as u32], &mut ctx).unwrap();
             drop(ctx);
             q.flush().await_().unwrap();
-            let got = crate::compute_kernel_metal::transfer_to_host_sync::<[f32; 2]>(&out, n);
+            let got = crate::device::transfer_to_host_sync::<[f32; 2]>(&out, n);
             let (mut kept, mut counted, mut total) = (0usize, 0u64, 0f64);
             for e in 0..n {
                 let c = bag_count(bag_seed(b), e as u32, keep24, 1);

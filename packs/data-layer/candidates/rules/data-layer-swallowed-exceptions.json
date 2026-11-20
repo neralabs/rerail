@@ -3,7 +3,7 @@
   "id": "data-layer-swallowed-exceptions",
   "revision": 1,
   "mode": "steer",
-  "description": "Candidate port of nera-data-layer swallowed_exceptions at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "description": "Candidate port of the data-layer repository's swallowed_exceptions at 2b1504adc4291daaf080b2e932962b134da1a69a.",
   "scope": {
     "include": [
       "api/**/*.py",

@@ -15,7 +15,8 @@ and not serialized. This could be done by analysis or explicitly in the program.
 - **Mostly by analysis.** The relations that expand and then narrow are mostly ones the converter and the engine
   make (`rr_agg*`, `fl*`, `demand_*`), which no author would annotate. So the planner should decide, per derived
   relation, whether to store it, recompute it inside its readers, or restrict it by demand.
-- **An annotation is an override:** Soufflé's `inline` / `no_inline`, `magic` / `no_magic`.
+- **An annotation is an override:** Soufflé's `inline` / `no_inline`, `magic` / `no_magic`. (`sorted`, decision
+  0456 K7, is a layout: the relation's rows kept in canonical order.)
 
 **How to read this record.** First what the Python pack shows. Then the options and when each wins, the decision
 proposed, and what is built.

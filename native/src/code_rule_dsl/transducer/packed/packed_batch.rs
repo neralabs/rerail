@@ -181,15 +181,17 @@ fn contains_rows(needles: &[&[u8]], files: &[&TapeDoc], starts: &[usize], words:
         })
         .collect::<Vec<_>>();
     let literals = scan::Batch::of(plans);
-    let per_file: Vec<Vec<Option<Vec<u64>>>> = files
-        .par_iter()
-        .map(|tape| {
-            let len = tape.transducer_len();
-            let candidates: Vec<u32> = (0..len as u32).collect();
-            let span = |node: u32| tape.transducer_span(node);
-            literals.bits(&scan::Nodes { text: tape.transducer_source(), len, candidates: &candidates, span: &span })
-        })
-        .collect();
+    let per_file: Vec<Vec<Option<Vec<u64>>>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+        files
+            .par_iter()
+            .map(|tape| {
+                let len = tape.transducer_len();
+                let candidates: Vec<u32> = (0..len as u32).collect();
+                let span = |node: u32| tape.transducer_span(node);
+                literals.bits(&scan::Nodes { text: tape.transducer_source(), len, candidates: &candidates, span: &span })
+            })
+            .collect()
+    });
     for (at, needle) in needles.iter().enumerate() {
         let plan = distinct.binary_search(needle).expect("a needle of the batch");
         let row = &mut rows[at * words..(at + 1) * words];
@@ -351,7 +353,7 @@ impl PackedBatch {
         materialize_tasks: bool,
         layout: Layout,
     ) -> Result<Self, Error> {
-        static PACKED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(11, "7", "the transducer's packed batch: sources and line starts (PackedBatch)");
+        const PACKED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(11, "7", "the transducer's packed batch: sources and line starts (PackedBatch)");
         let copying = PACKED.start();
         let batch = Self::build_tapes_in(programs, files, anchors, materialize_tasks, layout);
         copying.done(batch.as_ref().map_or(0, |b| b.source.len() + std::mem::size_of_val(b.line_starts.as_slice())));
@@ -1322,7 +1324,7 @@ fn status_error(status: &TaskStatus, work_limit: u32) -> Option<Error> {
         4 if work_limit < super::MAX_WORK_PER_TASK as u32 => Error::OverBudget,
         4 => Error::WorkLimit,
         7 => Error::InvalidOperand(status.program_counter as usize),
-        // A mark or a tally of a node past the batch's (decision 0427): not written.
+        // A mark or a tally of a node past the batch's (decision 0463): not written.
         9 => Error::BackendFailure,
         _ => Error::BackendFailure,
     })

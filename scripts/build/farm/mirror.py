@@ -9,6 +9,7 @@ outputs come back on the stream. One scan of a directory serves every compile th
 it. Every file the compile read (its dep-info) must be as it is here, or the caller compiles here.
 """
 import hmac
+import hashlib
 import json
 import os
 import secrets
@@ -303,6 +304,19 @@ def top(root, test):
         return [os.path.join(root, f) for f in os.listdir(root) if test(f)]
     except OSError:
         return []
+
+
+def fingerprint(roots):
+    """The tree `roots` (as a job's) hold here now: a hash of each file's path and stat. Two commands
+    of one checkout whose fingerprints are the same run from one copy on a host (`farm.CopyUse`)."""
+    h = hashlib.sha256()
+    for root, kind in roots:
+        files = checkout_files(root) if kind == "checkout" else tree(root)
+        for p in sorted(files):
+            st = stat(p)
+            if st is not None:
+                h.update(f"{p}\0{st[0]}\0{st[1]}\0{st[2]}\n".encode())
+    return h.hexdigest()
 
 
 def needed(job, since):

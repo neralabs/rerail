@@ -4,9 +4,9 @@
 //!   compiled directive grammar's tape (`rerail_c_directives`), the lean scan where it refuses the
 //!   file (`Directives`).
 //! - **Mode (b)**, `c_pp_tu_req(tu, spec)`: a translation unit preprocessed under a configuration, by
-//!   `rerail_c_pp::Pp` (`Units`). `spec` is the configuration as rules write it (`c/env.rr`'s `c_cfg_spec`).
+//!   `rerail_c_pp::Pp` (`Units`). `spec` is the configuration as rules write it (`c/env.rerail`'s `c_cfg_spec`).
 //!
-//! The rules that read them are `docs/rule-syntax/lib/c/preprocess.rr`. Positions are the files' bytes (a
+//! The rules that read them are `docs/rule-syntax/lib/c/preprocess.rerail`. Positions are the files' bytes (a
 //! directive's is its `#`'s, as mode (a)'s `c_directive` start); `line` is from 1.
 
 use crate::code_rule_dsl::language::{Answerer, Cell, Reader};
@@ -120,7 +120,7 @@ pub struct Units;
 const UNIT_RELATIONS: &[&str] = &["c_pp_read", "c_pp_included", "c_pp_include_wanted", "c_pp_cond_taken", "c_pp_active", "c_pp_expansion", "c_pp_diag"];
 
 /// A configuration, read from its spec: items, each a tag and fields, every field `n:text` with `n` the text's
-/// length in characters (`c/env.rr`'s `c_cfg_item`):
+/// length in characters (`c/env.rerail`'s `c_cfg_item`):
 ///
 /// | tag | fields | from |
 /// |---|---|---|
@@ -304,8 +304,9 @@ impl Answerer for Units {
             }
         }
         if wanted("c_pp_expansion") {
-            for (id, name, df, da, f, at, parent) in &facts.expansions {
-                out("c_pp_expansion", &[int(*id), text(name), path(*df), int(*da), path(*f), int(*at), int(*parent)]);
+            for e in &facts.expansions {
+                let ((df, da), (f, at)) = (e.defined, e.called);
+                out("c_pp_expansion", &[int(e.id), text(&e.name), path(df), int(da), path(f), int(at), int(e.parent)]);
             }
         }
         if wanted("c_pp_diag") {
@@ -317,7 +318,7 @@ impl Answerer for Units {
 }
 
 /// The answerer of `c_cc_file_req(path)`: a `compile_commands.json`'s entries (decision 0327, "Configuration is
-/// facts"). The rules that make configurations of them are `docs/rule-syntax/lib/c/compile-commands.rr`.
+/// facts"). The rules that make configurations of them are `docs/rule-syntax/lib/c/compile-commands.rerail`.
 pub struct CompileCommands;
 
 const CC_RELATIONS: &[&str] = &["c_compile_command", "c_compile_arg"];

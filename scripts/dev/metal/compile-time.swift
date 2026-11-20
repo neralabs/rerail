@@ -1,10 +1,11 @@
 // A Metal kernel's compile, timed: its library's (from source) and its pipeline's (the GPU backend's).
 //
-// The engine writes each library's source it compiles, and the pipelines it made from it, into a directory with
-// `RERAIL_METAL_DUMP=<dir>` (`rerail_metal::runtime::pipeline_named_constant`). This compiles one of them apart:
+// The store of compiled kernels (decision 0395, `rerail_accel::gpu::kernels`; `RERAIL_METAL_KERNELS`, by default
+// ~/Library/Caches/rerail/metal-kernels) keeps each library's source by its digest (`src/<digest>.metal`), and each
+// run's wanted pipelines (`<tag>/wanted/<run>`: pipeline, library, kernel, constant). This compiles one apart:
 //
 //   swiftc -O scripts/dev/metal/compile-time.swift -o "$TMPDIR/metal-compile-time"   # once, outside the tree
-//   "$TMPDIR/metal-compile-time" DIR/<digest>.metal label_micro 1016 [FROM TO]...
+//   "$TMPDIR/metal-compile-time" STORE/src/<digest>.metal label_micro 1016 [FROM TO]...
 //
 // The third argument is function constant 0 (the label kernels' `tape_format`), or -1 for none. The system's
 // shader cache keeps a pipeline by its code, so a second compile of the same code (a comment added does not

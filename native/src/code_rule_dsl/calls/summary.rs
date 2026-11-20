@@ -16,11 +16,11 @@
 //! returned: open, though that usually calls it); one a later unconditional binding of its scope
 //! replaces is `SHADOWED` (the name, read once the scope ran, is no longer it).
 
-use crate::code_rule_dsl::tree::Tree;
 use super::names::Name;
 use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::{Binding, Form, Import, ScopeKind, ScopeTable};
+use crate::code_rule_dsl::tree::Tree;
 use ast_grep_core::{Doc, Node};
 use foldhash::{HashMap, HashMapExt};
 
@@ -312,13 +312,13 @@ impl Summary {
         let module = Some(reader.u32()?).filter(|id| *id != u32::MAX);
         let open_sites = reader.u8()? != 0;
         let source_bytes = reader.u32()?;
-        let names = (0..reader.count(4)?)
+        let texts = (0..reader.count(4)?)
             .map(|_| {
                 let len = reader.u32()? as usize;
-                let text = std::str::from_utf8(reader.take(len)?).ok()?;
-                Some(Name::new(family, text))
+                std::str::from_utf8(reader.take(len)?).ok()
             })
             .collect::<Option<Vec<_>>>()?;
+        let names = Name::new_all(family, texts);
         let known = |id: u32| (id as usize) < names.len();
         if module.is_some_and(|id| !known(id)) {
             return None;

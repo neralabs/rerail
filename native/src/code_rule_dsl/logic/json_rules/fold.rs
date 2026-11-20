@@ -26,7 +26,7 @@ pub fn reserved(lib: &std::path::Path) -> Set {
             let p = e.path();
             if p.is_dir() {
                 stack.push(p);
-            } else if p.extension().is_some_and(|x| x == "rr")
+            } else if p.extension().is_some_and(|x| x == "rerail")
                 && let Ok(text) = std::fs::read_to_string(&p)
             {
                 names.extend(findall(&decl, &text));
@@ -288,8 +288,8 @@ pub fn fold(px: &Patterns, rs: &mut Rules, prog: &mut Program, allowed: Option<&
     };
     let mut gone = Set::new();
     let mut news: Vec<(usize, Vec<(usize, Vec<String>)>)> = Vec::new();
-    for fi in 0..fams.len() {
-        let f = fams[fi].clone();
+    for fam in fams.iter_mut() {
+        let f = fam.clone();
         let (ms, plan, name) = (&f.members, &f.plan, &f.name);
         let first = &info[&ms[0]];
         let mut taken: Set = Set::new();
@@ -307,7 +307,7 @@ pub fn fold(px: &Patterns, rs: &mut Rules, prog: &mut Program, allowed: Option<&
             v
         };
         let key = fresh("q", &mut taken);
-        fams[fi].key = key.clone();
+        fam.key = key.clone();
         let mut cols: Vec<Vec<String>> = Vec::new();
         let mut colvar: Vec<(Vec<String>, String)> = Vec::new();
         let keyvals: Vec<String> = ms.iter().map(|m| format!("\"{}\"", f.keys[m])).collect();

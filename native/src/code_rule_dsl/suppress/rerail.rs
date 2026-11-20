@@ -23,12 +23,12 @@
 //! kinds it is read by (`Adapter::COMMENT_KINDS`, `PREAMBLE_KINDS` and `BODY_KINDS`).
 
 use crate::code_rule_dsl::embed::segments::FileRanges;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::origin::InFile;
 use crate::code_rule_dsl::tape::{TapeDoc, tape_doc};
 use ast_grep_core::{AstGrep, Doc, Node};
 use std::ops::Range;
-use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// The directive's name.
 const DIRECTIVE: &str = "rerail-ignore";
@@ -109,7 +109,9 @@ impl RerailIgnores {
 
     /// Each directive's covered range and the code rules it names.
     pub fn covers(&self) -> impl Iterator<Item = (&Range<usize>, &[String])> {
-        self.covers.iter().map(|cover| (&cover.range, cover.rules.as_slice()))
+        self.covers
+            .iter()
+            .map(|cover| (&cover.range, cover.rules.as_slice()))
     }
 
     /// Whether any directive of the file names `rule`.
@@ -139,11 +141,14 @@ struct Kinds {
 impl Kinds {
     /// The kinds of the family of `dialect`.
     fn of(dialect: GrammarDialect) -> Self {
-        { let pack = language_pack::pack(Family::of(dialect)); Self {
-            comments: pack.comment_kinds(),
-            preamble: pack.preamble_kinds(),
-            bodies: pack.body_kinds(),
-        } }
+        {
+            let pack = language_pack::pack(Family::of(dialect));
+            Self {
+                comments: pack.comment_kinds(),
+                preamble: pack.preamble_kinds(),
+                bodies: pack.body_kinds(),
+            }
+        }
     }
 
     fn comment<D: Doc>(self, node: &Node<'_, D>) -> bool {

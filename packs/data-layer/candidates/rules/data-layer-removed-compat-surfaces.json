@@ -3,7 +3,7 @@
   "id": "data-layer-removed-compat-surfaces",
   "revision": 1,
   "mode": "block",
-  "description": "Port of nera-data-layer removed_compat_surfaces at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "description": "Port of the data-layer repository's removed_compat_surfaces at 2b1504adc4291daaf080b2e932962b134da1a69a.",
   "scope": {
     "include": [
       "data_layer/**/*.py",

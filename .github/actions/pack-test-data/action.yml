@@ -4,20 +4,19 @@ description: >-
   packs/<pack>/upstream/<tool>/) into the checkout: for each selected tool-pack, the archive its test-data.lock names by
   sha256 (CONTRIBUTING.md, "Pack test data"), verified against the lock and extracted, with a pull request's publish/
   laid over it (`fixtures:pull`), and the real-code samples archive its samples.lock names, when it has one, verified
-  and extracted under .rerail/pack-data/samples/. The archives come from the Actions cache, keyed by the locks, and
-  reach it from s3://nera-test-fixtures/rerail/archives/ under the repository's OIDC read role. Nothing is derived here:
-  a pin change reaches CI only as the archives and locks the upstream bump's pull request commits. Use it right after
-  `actions/checkout`, once per tool-pack or once for all of them, in one of two kinds of job. The fetching job
-  (`fetch: "true"`) only fills the cache: it looks the key up without restoring it and, on a miss, pulls the archives
-  from S3 and saves them; it needs `id-token: write` and `contents: read` (a reusable workflow's caller must grant
-  them too), restores no cache entry and runs nothing but this commit's scripts/s3/pack-fixtures.mjs, and runs only for
-  pushes and same-repository pull requests, since
-  GitHub gives a fork's or Dependabot's pull request no OIDC token. The AWS credentials reach the pull step alone, never
-  the job's environment. The consuming job (`fetch: "false"`) restores the cache entry the fetching job of the same
-  workflow run saved, verifies each archive against its lock and extracts it; it holds no `id-token`, never assumes a
-  role and never saves, and a miss fails. So a job with `id-token: write` never extracts a cache entry, whoever wrote
-  it, and a job that extracts one, or runs upstream's code (the generators), holds no token to mint.
-  Consumers verify what they restore.
+  and extracted under .rerail/pack-data/samples/. The archives come from s3://nera-test-fixtures/rerail/archives/ under
+  the repository's OIDC read role and travel between the jobs of one workflow run as an artifact named by the locks.
+  Nothing is derived here: a pin change reaches CI only as the archives and locks the upstream bump's pull request
+  commits. Use it right after `actions/checkout`, once per tool-pack or once for all of them, in one of two kinds of
+  job. The fetching job (`fetch: "true"`) pulls the archives from S3 and uploads them as the run's artifact; it needs
+  `id-token: write` and `contents: read` (a reusable workflow's caller must grant them too), downloads no artifact and
+  runs nothing but this commit's scripts/s3/pack-fixtures.mjs, and runs only for pushes and same-repository pull
+  requests, since GitHub gives a fork's or Dependabot's pull request no OIDC token. The AWS credentials reach the pull
+  step alone, never the job's environment. The consuming job (`fetch: "false"`) downloads the artifact the fetching job
+  of the same workflow run uploaded, verifies each archive against its lock and extracts it; it holds no `id-token`,
+  never assumes a role and never uploads, and a missing artifact fails. So a job with `id-token: write` never extracts
+  what another job wrote, and a job that extracts it, or runs upstream's code (the generators), holds no token to mint.
+  Consumers verify what they download. A consuming job may run on Windows: an artifact is the same on every OS.
 
 inputs:
   pack:
@@ -30,20 +29,18 @@ inputs:
     default: ""
   fetch:
     description: >-
-      "true": the fetching job. Look the key up without restoring it; on a miss, download the archives from S3 under
-      the read role (the job needs `id-token: write`) and save them to the cache. Nothing from the cache reaches the
-      checkout. "false": the consuming job. Restore the cache entry an earlier job of the same workflow run saved with
-      "true", verify and extract it; a miss fails, and the job needs no `id-token`.
+      "true": the fetching job. Download the archives from S3 under the read role (the job needs `id-token: write`) and
+      upload them as this run's artifact. "false": the consuming job. Download the artifact a job of the same workflow
+      run uploaded with "true", verify and extract it; a missing artifact fails, and the job needs no `id-token`.
     required: false
     default: "true"
 
 outputs:
   archives:
     description: >-
-      One line per archive this run used, `<pack> <tool> <kind> <sha256>` (kind test-data or samples): the pull's, or,
-      for a fetching job whose key the cache holds (it runs no pull), the locks the key names. Replay a run from it
-      (docs/upstream.md, "Replay a commit").
-    value: ${{ steps.pull.outputs.archives || steps.entry.outputs.archives }}
+      One line per archive this run used, `<pack> <tool> <kind> <sha256>` (kind test-data or samples). Replay a run from
+      it (docs/upstream.md, "Replay a commit").
+    value: ${{ steps.pull.outputs.archives }}
 
 runs:
   using: composite
@@ -55,10 +52,10 @@ runs:
         node-version: "24"
         package-manager-cache: false
 
-    # The key names the locked sha256s alone, so it changes exactly when an archive does. The cache command also writes
-    # the `archives` they are, which a fetching job that hits the cache (and so runs no pull) reports.
+    # The name names the locked sha256s alone, so it changes exactly when an archive does, and a consuming job finds the
+    # artifact of the fetching call with the same pack and tool.
     - id: entry
-      name: Key the cache by the test-data locks
+      name: Name the archives by the test-data locks
       shell: bash
       env:
         PACK: ${{ inputs.pack }}
@@ -74,31 +71,20 @@ runs:
           appendFileSync(process.env.GITHUB_OUTPUT, `key=${key}\npaths<<EOF\n${paths.join("\n")}\nEOF\n`);
         '
 
-    # The fetching job only asks whether the entry exists: what a cache entry holds never reaches a job with a token.
-    - id: cache
-      name: Restore the locked archives (fetching, only look them up)
-      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+    # The paths are checkout-relative under .rerail/pack-data/archives/, so the artifact extracts at the checkout's root
+    # on either OS. A missing artifact fails the step: the fetching job of this run must have uploaded it.
+    - name: Download the archives a fetching job uploaded
+      if: inputs.fetch != 'true'
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
       with:
-        path: ${{ steps.entry.outputs.paths }}
-        key: ${{ steps.entry.outputs.key }}
-        lookup-only: ${{ inputs.fetch == 'true' }}
-
-    # A job that does not fetch (fetch: "false") holds no OIDC token, so the cache must already hold the archives: saved
-    # by the job of this run that fetched them, or by an earlier run.
-    - name: Require the archives a fetching job saved
-      if: inputs.fetch != 'true' && steps.cache.outputs.cache-hit != 'true'
-      shell: bash
-      env:
-        KEY: ${{ steps.entry.outputs.key }}
-      run: |
-        echo "::error::the Actions cache holds no $KEY: this job does not fetch the test data (fetch: \"false\"), so the job that fetches it (.github/actions/pack-test-data with the same pack and tool, and fetch: \"true\") must run first in this workflow run"
-        exit 1
+        name: ${{ steps.entry.outputs.key }}
+        path: .
 
     # The role reads the bucket; it is assumed with the job's OIDC token, so no AWS secret is stored here. The
     # credentials are this step's outputs, not exported, so only the pull step below holds them.
     - id: credentials
       name: Assume the test data read role
-      if: inputs.fetch == 'true' && steps.cache.outputs.cache-hit != 'true'
+      if: inputs.fetch == 'true'
       uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
       with:
         role-to-assume: arn:aws:iam::696860996542:role/github-actions-test-fixtures-read
@@ -106,13 +92,11 @@ runs:
         output-credentials: true
         output-env-credentials: false
 
-    # Consuming: every archive was restored into the cache directory and verifies against its lock, so the pull reads no
-    # S3 (and has no credentials to). Fetching, on a miss: nothing was restored, so the pull downloads each archive from
-    # S3 (or reads the copy an earlier pull of this job downloaded) and verifies it before anything is extracted. A
-    # fetching job whose key the cache holds skips this step and the next.
+    # Consuming: every archive was downloaded into the archive directory and verifies against its lock, so the pull
+    # reads no S3 (and has no credentials to). Fetching: the pull downloads each archive from S3 (or reads the copy an
+    # earlier pull of this job downloaded) and verifies it before anything is extracted.
     - id: pull
-      name: Verify and extract the archives (fetching, from S3 on a miss)
-      if: inputs.fetch != 'true' || steps.cache.outputs.cache-hit != 'true'
+      name: Verify and extract the archives (fetching, from S3)
       shell: bash
       env:
         PACK: ${{ inputs.pack }}
@@ -128,9 +112,33 @@ runs:
         if [ -n "$TOOL" ]; then args+=(--tool "$TOOL"); fi
         node scripts/s3/pack-fixtures.mjs pull "${args[@]}"
 
-    - name: Save the archives
-      if: inputs.fetch == 'true' && steps.cache.outputs.cache-hit != 'true'
-      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+    # Only this call's archives, at their checkout-relative paths, so each artifact holds what its name says even when
+    # an earlier call of the job left others in the archive directory.
+    - name: Stage the archives
+      if: inputs.fetch == 'true'
+      shell: bash
+      env:
+        KEY: ${{ steps.entry.outputs.key }}
+        PATHS: ${{ steps.entry.outputs.paths }}
+      run: |
+        set -euo pipefail
+        stage="$RUNNER_TEMP/pack-test-data/$KEY"
+        rm -rf "$stage"
+        while IFS= read -r path; do
+          [ -n "$path" ] || continue
+          mkdir -p "$stage/$(dirname "$path")"
+          cp "$path" "$stage/$path"
+        done <<< "$PATHS"
+
+    - name: Upload the archives
+      if: inputs.fetch == 'true'
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
-        path: ${{ steps.entry.outputs.paths }}
-        key: ${{ steps.entry.outputs.key }}
+        name: ${{ steps.entry.outputs.key }}
+        path: ${{ runner.temp }}/pack-test-data/${{ steps.entry.outputs.key }}/
+        include-hidden-files: true
+        if-no-files-found: error
+        overwrite: true
+        retention-days: 3
+        # The archives are zstd already.
+        compression-level: 0

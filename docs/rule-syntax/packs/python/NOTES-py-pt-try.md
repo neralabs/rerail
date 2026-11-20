@@ -1,8 +1,8 @@
 # NOTES: py-pt-try (Ruff flake8-pytest-style PT0xx and tryceratops TRY)
 
 37 rules, hand-written from the rerail.policy/v1 JSON and Ruff 0.16.9's source (the commit the JSON was written
-from). Two new libraries: `lib/python/exceptions.rr` (Ruff's view of a call, handlers, raises, logging calls) and
-`lib/python/pytest.rr` (fixture and mark decorators, parametrize names, `with pytest.raises/warns` blocks, the
+from). Two new libraries: `lib/python/exceptions.rerail` (Ruff's view of a call, handlers, raises, logging calls) and
+`lib/python/pytest.rerail` (fixture and mark decorators, parametrize names, `with pytest.raises/warns` blocks, the
 fixture-body walk, ComparableExpr). `python3 site/check_rr.py` reports nothing in these files.
 
 ## How the rules were scored
@@ -38,7 +38,7 @@ The rules read Ruff's settings for these plugins, with Ruff's names and defaults
 | `warns-extend-require-match-for` | empty | PT030 |
 
 The `*-require-match-for` lists are globs over the qualified name, written as Ruff prints it (`ValueError`,
-`socket.error`). pytest.rr holds the defaults and the glob test (`pytest_broad`).
+`socket.error`). pytest.rerail holds the defaults and the glob test (`pytest_broad`).
 
 ## Rules
 
@@ -84,7 +84,7 @@ The `*-require-match-for` lists are globs over the qualified name, written as Ru
 
 There are 58 snapshot variants. All of them have 0 FP and 0 FN, by line and by column. The column TP can exceed
 the line TP because two findings can share a line. The rules are 1000 lines in all. The libraries add 349
-lines (pytest.rr 180, exceptions.rr 169).
+lines (pytest.rerail 180, exceptions.rerail 169).
 
 Where the JSON and the tool differ, the rules follow Ruff's source. The messages keep the JSON's wording and fill
 in its `$X` placeholders. Some codes had several clauses in the JSON: PT001, PT006, PT007, PT011, PT012, PT013,
@@ -93,7 +93,7 @@ message is picked per case.
 
 ## Approximations (no counterexample in the fixtures)
 
-- **a1. Qualified names.** Names resolve through names.rr's `sym_of`. It gives "builtins.X" both for an unshadowed
+- **a1. Qualified names.** Names resolve through names.rerail's `sym_of`. It gives "builtins.X" both for an unshadowed
   builtin and for an explicit `import builtins; builtins.X`. Ruff's QualifiedName prints these as "X" and
   "builtins.X". The default patterns (PT011, PT030) and TRY002/TRY004 match only the first. So
   `pytest.raises(builtins.ValueError)` is PT011 here but not in Ruff.
@@ -101,7 +101,7 @@ message is picked per case.
   match when they have the same kinds, operators and children, compared in order. Parentheses, comments, spacing
   and quotes are ignored. An implicit concatenation is one string (`"ab"` is `"a" "b"`). A float compares by value
   (`1.0` is `1.00`). The kinds of string stay apart (`b"a"` and `f"a"` are not `"a"`). An implicit concatenation
-  that mixes f-string and plain pieces was not checked. When lib/python/compare.rr lands, its `cmp_same` should
+  that mixes f-string and plain pieces was not checked. When lib/python/compare.rerail lands, its `cmp_same` should
   replace `pytest_same` (see "Duplicates to merge").
 - **a3. Empty f-strings.** An f-string is empty when it has no text and every field is a plain `''` (`f""`,
   `f"{''}"`). A nested f-string field, such as `f"{f''}"`, is not seen as empty.
@@ -123,8 +123,8 @@ message is picked per case.
 
 ## Library and core changes
 
-1. **names.rr `builtin`**: the builtin table lacks 32 of Python 3.13's exception classes. TRY004 needs four of
-   them (MemoryError, ReferenceError, SyntaxError, SystemError: 4 FNs). exceptions.rr carries the list as
+1. **names.rerail `builtin`**: the builtin table lacks 32 of Python 3.13's exception classes. TRY004 needs four of
+   them (MemoryError, ReferenceError, SyntaxError, SystemError: 4 FNs). exceptions.rerail carries the list as
    `exc_more_builtin` and resolves a name from it when nothing in the file binds it. That fallback should become
    rows of `builtin`:
    `BaseExceptionGroup BlockingIOError BrokenPipeError BytesWarning ChildProcessError ConnectionAbortedError
@@ -134,7 +134,7 @@ message is picked per case.
    StopAsyncIteration SyntaxError SyntaxWarning SystemError TabError UnboundLocalError UnicodeTranslateError
    UnicodeWarning`.
    Once they are there, drop `exc_more_builtin` and the second `exc_qual` rule.
-2. **ast.rr `unparen`** takes a parenthesized expression's child 0. When a comment comes first, that child is the
+2. **ast.rerail `unparen`** takes a parenthesized expression's child 0. When a comment comes first, that child is the
    comment:
    ```
    assert (
@@ -144,13 +144,13 @@ message is picked per case.
    ```
    This was PT018's one FN. The proposed rule:
    `unparen(e, m) :- kind(e, "parenthesized_expression"), child(e, i, _), !kind(i, "comment"), unparen(i, m).`
-   exceptions.rr has the fixed form as `exc_unparen`. PT015 and PT018 use it. Every user of unparen has the same
+   exceptions.rerail has the fixed form as `exc_unparen`. PT015 and PT018 use it. Every user of unparen has the same
    gap.
 
 ## Harness gaps (rrlab)
 
 - **`join` captures a rule variable named `s`.** The generated `rrjoinN_*` rules use `s` themselves. A
-  `join … : { … }` in a rule whose own variable is `s` fails to type-check. pytest.rr avoids `s` there.
+  `join … : { … }` in a rule whose own variable is `s` fails to type-check. pytest.rerail avoids `s` there.
 - **`(?s)` is not mapped** onto std::regex, so `match("(?s).*\\s.*", v)` matches nothing. The rules write
   `[\\s\\S]*` instead, which means the same thing in both dialects.
 
@@ -159,12 +159,12 @@ message is picked per case.
 These have the same meaning as relations in other batches' new libraries. They are kept under this batch's
 prefixes for now.
 
-- exceptions.rr `exc_qual` ≈ ruff.rr `ruff_qual`. ruff.rr also models rebinding order.
-- exceptions.rr `exc_call` ≈ ruff.rr `call_q`.
-- exceptions.rr `exc_arg` ≈ ruff.rr `ruff_arg`.
-- pytest.rr `pytest_str` ≈ pyflakes.rr `plain_str`.
-- ruff-try300's private `may_effect` ≈ ruff.rr's `effect`/`pure` (contains_effect).
-- pytest.rr `pytest_same` (ComparableExpr) ≈ compare.rr `cmp_same` / `cmp_same_ask`, once that library
+- exceptions.rerail `exc_qual` ≈ ruff.rerail `ruff_qual`. ruff.rerail also models rebinding order.
+- exceptions.rerail `exc_call` ≈ ruff.rerail `call_q`.
+- exceptions.rerail `exc_arg` ≈ ruff.rerail `ruff_arg`.
+- pytest.rerail `pytest_str` ≈ pyflakes.rerail `plain_str`.
+- ruff-try300's private `may_effect` ≈ ruff.rerail's `effect`/`pure` (contains_effect).
+- pytest.rerail `pytest_same` (ComparableExpr) ≈ compare.rerail `cmp_same` / `cmp_same_ask`, once that library
   lands. PT014 should then use it and drop `pytest_atom`, `pytest_kid`, `pytest_pair` and
   `pytest_differ`.
-- ruff-pt015's private `always_false` ≈ the falsy half of ruff-classes.rr's `truth`/`truth_of` (Truthiness).
+- ruff-pt015's private `always_false` ≈ the falsy half of ruff-classes.rerail's `truth`/`truth_of` (Truthiness).

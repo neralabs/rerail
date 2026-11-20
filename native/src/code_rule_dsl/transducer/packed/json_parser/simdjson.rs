@@ -55,7 +55,7 @@ pub fn encode_with(route: Option<rerail_simdjson::Kernel>, grammar: &Grammar, so
         return Ok(Err("tree-sitter-json lacks a kind or field simdjson's tape names".into()));
     };
     let src = source.as_bytes();
-    // A run that stores format 16 or 16z: the kernel's walk gives its nodes to format 16's ops (decision 0426).
+    // A run that stores format 16 or 16z: the kernel's walk gives its nodes to format 16's ops (decision 0434).
     if let Some(kernel) = route
         && let Some(image) = encode_16(kernel, kinds, *value, source, budget)?
     {
@@ -109,9 +109,9 @@ fn encode_16(kernel: rerail_simdjson::Kernel, kinds: &rerail_simdjson::Kinds, va
     use crate::code_rule_dsl::tape::f16;
     let Some((lang, tag, z)) = formats::run_16(GrammarDialect::Json) else { return Ok(None) };
     let src = source.as_bytes();
-    let walk = |jsonc: bool| -> Result<(f16::Writer<'static>, [u8; 32], Option<String>), Refusal> {
+    let walk = |jsonc: bool| -> Result<(f16::Writer, [u8; 32], Option<String>), Refusal> {
         // About a node for every 8 bytes: the writer grows past it.
-        let mut w = f16::Writer::new(lang, src, tag, z, false, src.len() / 8 + 16);
+        let mut w = f16::Writer::new(lang, src, tag, z, true, src.len() / 8 + 16);
         let mut numbers: Vec<u32> = Vec::new();
         let mut bad: Option<String> = None;
         let digest = rerail_simdjson::events_with(kernel, src, kinds, jsonc, |codes, words| {
@@ -156,7 +156,7 @@ fn encode_16(kernel: rerail_simdjson::Kernel, kinds: &rerail_simdjson::Kinds, va
     let why = match bad {
         Some(why) => why,
         None => match w.finish() {
-            Ok(f) => return Ok(Some(TapeImage::written_16(f.tape, GrammarDialect::Json, source, Some(digest), budget))),
+            Ok(f) => return Ok(Some(TapeImage::written_16(f, GrammarDialect::Json, source, Some(digest), budget))),
             Err(why) => why,
         },
     };
@@ -216,9 +216,14 @@ impl TreeParser for Simdjson {
                 crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::SourceByte, source.len() as u64);
                 Some(image.map(|image| FileImage::single(image, source)).map_err(TemplateError::Encode))
             }
+            // A file simdjson refuses (a number past its range, nesting past 1,024) is read as MSVC's parser reads it
+            // (`fallback::Fallback`: the Bitlex parser, then tree-sitter-json past trailing commas), and one that
+            // refuses too goes to tree-sitter-json. Straight to tree-sitter-json, an exponent's `+` (`1e+21`), which
+            // its grammar refuses, was an error in a file that also held `-9223372036854778000`.
             Err(why) => {
-                crate::code_rule_dsl::logic::profile::decision("JSON parse", || format!("a file simdjson refused ({why}): tree-sitter-json"));
-                None
+                drop(span);
+                crate::code_rule_dsl::logic::profile::decision("JSON parse", || format!("a file simdjson refused ({why}): the Bitlex parser, else tree-sitter-json"));
+                super::fallback::Fallback.parse(grammar, source, budget)
             }
         }
     }

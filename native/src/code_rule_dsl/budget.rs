@@ -82,7 +82,9 @@ pub fn matcher_budget_exhausted() -> bool {
 }
 
 /// Whether some poll found this thread's budget exhausted; never polls. What decides, after work
-/// ends, whether it was cut short: work that finished unpolled is complete.
+/// ends, whether it was cut short: work that finished unpolled is complete. Inlined into the
+/// matcher's crate (rerail-w), whose memo asks it of every answer it keeps.
+#[inline]
 pub fn matcher_budget_observed() -> bool {
     MATCH_BUDGET.with(|budget| {
         budget
@@ -125,9 +127,31 @@ pub fn pass_deadline_unpolled() {
     });
 }
 
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    /// The matcher calls this thread spent (`matcher_call_budget_exhausted`), for tests.
+    static MATCHER_CALLS: Cell<u64> = const { Cell::new(0) };
+}
+
+/// The matcher calls this thread has spent since `reset_matcher_calls`: what a work budget counts, one call at a
+/// time.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn matcher_calls() -> u64 {
+    MATCHER_CALLS.get()
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn reset_matcher_calls() {
+    MATCHER_CALLS.set(0);
+}
+
 /// `matcher_budget_exhausted` for matcher entry points: polls every `BUDGET_CHECK_INTERVAL`
-/// calls, so a spent budget is noticed at most that many calls late.
+/// calls, so a spent budget is noticed at most that many calls late. Inlined into the matcher's
+/// crate (rerail-w), which calls it for every matcher call.
+#[inline]
 pub fn matcher_call_budget_exhausted() -> bool {
+    #[cfg(any(test, feature = "test-hooks"))]
+    MATCHER_CALLS.set(MATCHER_CALLS.get() + 1);
     let countdown = BUDGET_COUNTDOWN.get();
     if countdown > 0 {
         BUDGET_COUNTDOWN.set(countdown - 1);
@@ -142,6 +166,8 @@ pub fn matcher_call_budget_exhausted() -> bool {
 
 /// `matcher_budget_exhausted` for one step of a loop: polls every `STEP_CHECK_INTERVAL` steps
 /// counted across calls, so many short loops spend what one long loop of their steps does.
+/// Inlined into the matcher's crate (rerail-w), whose loops call it a step.
+#[inline]
 pub fn step_budget_exhausted() -> bool {
     let countdown = STEP_COUNTDOWN.get();
     if countdown > 0 {

@@ -10,7 +10,9 @@ target/
 coverage/
 .DS_Store
 __pycache__/
-.rerail/
+# Rerail's local files (content store, pack data, runtimes); the packs the repository runs on itself are tracked.
+**/.rerail/*
+!/.rerail/packs.json
 /tmp/
 
 # Local secrets, such as the Bedrock API key for model testing. An example file stays committable.

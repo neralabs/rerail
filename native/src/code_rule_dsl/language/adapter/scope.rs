@@ -4,12 +4,15 @@ use super::{Adapter, Refusal};
 
 use crate::code_rule_dsl::matcher::{ScopeName, Unresolved, file_module, file_source_type_for};
 use crate::code_rule_dsl::module_path::ModulePath;
+use crate::code_rule_dsl::scope::flow::Defined;
 use crate::code_rule_dsl::scope::options::{
     DEFAULT_PYTHON_MINOR, EsGlobals, LanguageOptions, PythonOptions,
 };
-use crate::code_rule_dsl::scope::flow::Defined;
 use crate::code_rule_dsl::scope::usage::{Steps, Usage};
-use crate::code_rule_dsl::scope::{Access, Binding, BuildError, Builder, Directives, Form, Lookup, Reading, Reference, ScopeKind, ScopeTable};
+use crate::code_rule_dsl::scope::{
+    Access, Binding, BuildError, Builder, Directives, Form, Lookup, Reading, Reference, ScopeKind,
+    ScopeTable,
+};
 use crate::code_rule_dsl::value::NodeRef;
 use ast_grep_core::{Doc, Node};
 use std::borrow::Cow;
@@ -212,14 +215,20 @@ pub trait ScopeRules {
     }
 
     /// The value node of the constant `node` fetches, by the file's `names` (`value.follow`).
-    fn constant<D: Doc>(names: &crate::code_rule_dsl::scope::NameTable, node: &Node<'_, D>) -> Option<NodeRef> {
+    fn constant<D: Doc>(
+        names: &crate::code_rule_dsl::scope::NameTable,
+        node: &Node<'_, D>,
+    ) -> Option<NodeRef> {
         let _ = (names, node);
         None
     }
 
     /// Whether `resolves` holds of `node` by the family's own reading (PHP's names and variable flow); `None`
     /// where the shared reading decides.
-    fn resolves<D: Doc>(resolves: &crate::code_rule_dsl::matcher::Resolves, node: &Node<'_, D>) -> Option<bool> {
+    fn resolves<D: Doc>(
+        resolves: &crate::code_rule_dsl::matcher::Resolves,
+        node: &Node<'_, D>,
+    ) -> Option<bool> {
         let _ = (resolves, node);
         None
     }

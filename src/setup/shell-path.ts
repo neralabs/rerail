@@ -5,18 +5,22 @@
  * when PATH lacks it, so a file sourced twice (`.bash_profile` sourcing `.bashrc`) adds it once. Windows: the user
  * `Path` in `HKCU\Environment`, keeping its registry value kind so `%VAR%` entries stay unexpanded.
  *
- * Nothing is written when the running PATH has the directory already: the person manages it. `RERAIL_MODIFY_PATH=0`
- * turns the whole step off (dotfile managers; the test suite).
- *
  * Set-up records in the Rerail home that it handled PATH (`launcherPathMarker`). `rerail update` adds the entry only
  * where no set-up ever did, so a block the person took out by hand stays out; `rerail setup` run again adds it back.
+ *
+ * Once that record exists, nothing is written when the running PATH has the directory already: the person manages it.
+ * Before it does, the running PATH says nothing about a new terminal: the shell an uninstall ran in keeps the
+ * directory after the block is gone. `RERAIL_MODIFY_PATH=0` turns the whole step off (dotfile managers; the test
+ * suite).
  */
-import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { chmod, copyFile, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { userInfo } from "node:os";
-import { delimiter, join, resolve, win32 } from "node:path";
-import { shellQuote } from "../harness/setup-screens.js";
+import { delimiter, join, resolve } from "node:path";
+import { spawnSync } from "../engine/child-process.js";
+import { makeRerailHome } from "../engine/storage/private-files.js";
+import { windowsPowerShell } from "../engine/system-programs.js";
+import { shellWord } from "../engine/command-line.js";
 import { writeTextFile } from "./harness-registration.js";
 
 const BLOCK_START = "# >>> rerail >>>";
@@ -40,7 +44,7 @@ export function launcherPathMarker(rerailHome: string): string {
 /** Record `change` as PATH handled, unless it failed (the next run tries again) or the run was dry. */
 export async function recordLauncherPath(rerailHome: string, change: LauncherPathChange, dryRun = false): Promise<void> {
   if (dryRun || change.status === "failed") return;
-  await mkdir(rerailHome, { recursive: true });
+  makeRerailHome(rerailHome);
   await writeFile(launcherPathMarker(rerailHome), `${JSON.stringify({ handledAt: new Date().toISOString() })}\n`);
 }
 
@@ -60,10 +64,15 @@ export interface LauncherPathOptions {
   loginShell?: string | null;
   platform?: NodeJS.Platform;
   dryRun?: boolean;
+  /**
+   * A set-up recorded PATH as handled in this Rerail home (`launcherPathMarker`). Only then does a running PATH that
+   * has the directory mean the person manages it.
+   */
+  handledBefore?: boolean;
 }
 
 export type LauncherPathChange =
-  /** `RERAIL_MODIFY_PATH=0`, or the running PATH has the directory already. */
+  /** `RERAIL_MODIFY_PATH=0`, or PATH was handled before and the running PATH has the directory already. */
   | { status: "skipped" }
   /** Every startup file (or the Windows user Path) names the directory already. */
   | { status: "unchanged"; locations: string[] }
@@ -100,25 +109,40 @@ function onRunningPath(binDir: string, env: NodeJS.ProcessEnv, platform: NodeJS.
 export async function addLauncherToPath(options: LauncherPathOptions): Promise<LauncherPathChange> {
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
-  if (env.RERAIL_MODIFY_PATH === "0" || onRunningPath(options.binDir, env, platform)) return { status: "skipped" };
+  if (leftToPerson(options, env, platform)) return { status: "skipped" };
   try {
     if (platform === "win32") return windowsUserPath(options.binDir, options.dryRun === true ? "check" : "add", env, options.home);
-    const files = startupFiles(options.home, env, options.loginShell === undefined ? accountLoginShell() : options.loginShell);
-    const changed: string[] = [];
-    for (const file of files) {
-      const existing = await readText(file.path);
-      const text = addBlock(existing?.text ?? "", file.block(options.binDir));
-      if (text === (existing?.text ?? "")) continue;
-      changed.push(file.path);
-      if (options.dryRun !== true) {
-        if (existing !== undefined) await backUp(file.path);
-        await writeTextFile(file.path, text, existing ?? { exists: false, mode: 0o644 }, false);
-      }
-    }
-    return changed.length === 0 ? { status: "unchanged", locations: files.map(file => file.path) } : { status: "changed", locations: changed };
+    return await addToStartupFiles(options, env);
   } catch (error) {
     return { status: "failed", reason: error instanceof Error ? error.message : String(error) };
   }
+}
+
+/** `RERAIL_MODIFY_PATH=0`, or a set-up recorded PATH and the running PATH has the directory already. */
+function leftToPerson(options: LauncherPathOptions, env: NodeJS.ProcessEnv, platform: NodeJS.Platform): boolean {
+  return env.RERAIL_MODIFY_PATH === "0" || (options.handledBefore === true && onRunningPath(options.binDir, env, platform));
+}
+
+/** Put the block in each startup file the login shell reads. Throws on a file it cannot read or write. */
+async function addToStartupFiles(options: LauncherPathOptions, env: NodeJS.ProcessEnv): Promise<LauncherPathChange> {
+  const files = startupFiles(options.home, env, options.loginShell === undefined ? accountLoginShell() : options.loginShell);
+  const changed: string[] = [];
+  for (const file of files) {
+    if (await addBlockToFile(file.path, file.block(options.binDir), options.dryRun === true)) changed.push(file.path);
+  }
+  return changed.length === 0 ? { status: "unchanged", locations: files.map(file => file.path) } : { status: "changed", locations: changed };
+}
+
+/** Whether `path` needs `block`; writes it, backing up the file first, unless `dryRun`. */
+async function addBlockToFile(path: string, block: string, dryRun: boolean): Promise<boolean> {
+  const existing = await readText(path);
+  const text = addBlock(existing?.text ?? "", block);
+  if (text === (existing?.text ?? "")) return false;
+  if (!dryRun) {
+    if (existing !== undefined) await backUp(path);
+    await writeTextFile(path, text, existing ?? { exists: false, mode: 0o644 }, false);
+  }
+  return true;
 }
 
 /** Take out what `addLauncherToPath` wrote, from every startup file it may have used. Never throws. */
@@ -177,7 +201,7 @@ interface StartupFile {
 }
 
 function posixBlock(binDir: string): string {
-  const quoted = shellQuote(binDir, "linux");
+  const quoted = shellWord("posix", binDir);
   return [
     BLOCK_START,
     "# The `rerail` launcher, added by `rerail setup`; `rerail install --remove` takes it out.",
@@ -289,11 +313,10 @@ $key.SetValue('Path', $next, $kind)
 
 function windowsUserPath(binDir: string, mode: "check" | "add" | "check-remove" | "remove", env: NodeJS.ProcessEnv, home: string): LauncherPathChange {
   // By absolute path, from the home folder: Windows looks in the current folder (the repository) before PATH.
-  const powershell = win32.join(env.SystemRoot || String.raw`C:\Windows`, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const result = spawnSync(
-    powershell,
+    windowsPowerShell(env),
     ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Buffer.from(WINDOWS_SCRIPT, "utf16le").toString("base64")],
-    { cwd: home, env: { ...env, RERAIL_PATH_ENTRY: binDir, RERAIL_PATH_MODE: mode }, encoding: "utf8", timeout: 30_000, windowsHide: true },
+    { cwd: home, env: { ...env, RERAIL_PATH_ENTRY: binDir, RERAIL_PATH_MODE: mode }, encoding: "utf8", timeout: 30_000 },
   );
   const answer = (result.stdout ?? "").trim().split(/\r?\n/u).pop();
   if (result.status !== 0 || (answer !== "changed" && answer !== "unchanged")) {

@@ -1,8 +1,8 @@
 //! Containment read off the tree, made per looked-up node (decision 0050), in two modes:
 //!
-//! - **`within(n, a)`** (`Mode::Tree`, the language's built-in, `core.rr`): `n` is strictly below `a`. The
+//! - **`within(n, a)`** (`Mode::Tree`, the language's built-in, `core.rerail`): `n` is strictly below `a`. The
 //!   containers of `n` are its ancestors; the nodes `a` holds are its subtree, a preorder interval.
-//! - **`span_within(inner, outer)`** (`Mode::Span`, what `simplify::span_containment` makes of two span
+//! - **`span_within(inner, outer)`** (`Mode::Span`, what `simplify::SpanContainment` makes of two span
 //!   comparisons): `outer`'s span holds `inner`'s, in one document. Exactly the pairs of `node(d, inner, _, s, e), node(d, outer, _, s2, e2),
 //! s2 <= s, e <= e2`, read off the tree instead of compared for every pair of a file's nodes:
 //!
@@ -13,7 +13,7 @@
 //! - **The nodes it holds** (`outer` bound): its subtree, its ancestors with the same span, and the
 //!   document's nodes of zero width inside its span.
 //!
-//! - **The kind-set axes** (`Mode::Axis`, `core.rr`'s `nearest`, `inside` and `has`; decisions 0036 and 0057): `rr_nearest_<set>(n, a)`, `a` the nearest strict ancestor of `n` of a kind in
+//! - **The kind-set axes** (`Mode::Axis`, `core.rerail`'s `nearest`, `inside` and `has`; decisions 0036 and 0057): `rr_nearest_<set>(n, a)`, `a` the nearest strict ancestor of `n` of a kind in
 //!   the set; `rr_inside_<set>(n, a)`, every such ancestor; `rr_has_<set>(n, a)`, `n` of a kind in the set and `a`
 //!   each of its strict ancestors. The same climbs and subtree intervals, filtered by the set.
 //!
@@ -383,7 +383,7 @@ impl Within {
         start.push(len);
         // A derived fact like a rule's head, in a run's block alone, with room for an index by each column (strata
         // probe an axis by `n` and by `a`), as the device's solve writes it.
-        let rows = Part::for_writes_indexed(2, len as usize, 2);
+        let rows = Part::with_index_room(crate::code_rule_dsl::facts::rows::Life::Run, 2, len as usize, 2);
         let mut at = 0u32;
         for v in 0..n {
             let id = self.batch.id(v);
@@ -770,7 +770,6 @@ impl Source for Within {
     }
     /// Read whole by the device: the batch's solve, the relation it was written into, where it lies (decision 0353
     /// step 5).
-    #[cfg(target_os = "macos")]
     fn in_block(&self) -> Option<crate::code_rule_dsl::facts::rows::InBlock> {
         self.solvable().then(|| self.solved_rows().in_block(self.solved_rows().len()))
     }
@@ -782,9 +781,8 @@ impl Source for Within {
     /// length, and the solve made for that count alone held 780 MB of a PostHog run's 2.5 GB peak.
     fn len(&self) -> usize {
         if self.solvable() {
-            // Solved, its relation's rows; else counted from the tree, not solved for a count.
-            if let Some(s) = self.solved.get() {
-                return s.rows.len() as usize;
+            if self.solved.get().is_some() {
+                return self.solved_rows().len() as usize;
             }
             return self.shape().rows as usize;
         }

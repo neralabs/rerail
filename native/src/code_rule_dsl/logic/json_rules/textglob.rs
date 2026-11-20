@@ -270,27 +270,24 @@ pub fn text_test(rx: &str, subject: &str) -> Result<Option<String>, String> {
     let i = if ci { "i" } else { "" };
     let gc: Vec<char> = g.chars().collect();
     let n = gc.len();
-    if g.starts_with("**") && g.ends_with("**") && n > 4 {
-        if let Some(l) = plain(&gc[2..n - 2])?
+    if g.starts_with("**") && g.ends_with("**") && n > 4
+        && let Some(l) = plain(&gc[2..n - 2])?
             && !l.is_empty()
         {
             return Ok(Some(format!("{i}contains({}, {subject})", quote(&l))));
         }
-    }
-    if g.ends_with("**") && n > 2 {
-        if let Some(l) = plain(&gc[..n - 2])?
+    if g.ends_with("**") && n > 2
+        && let Some(l) = plain(&gc[..n - 2])?
             && !l.is_empty()
         {
             return Ok(Some(format!("{i}prefix({}, {subject})", quote(&l))));
         }
-    }
-    if g.starts_with("**") && n > 2 {
-        if let Some(l) = plain(&gc[2..])?
+    if g.starts_with("**") && n > 2
+        && let Some(l) = plain(&gc[2..])?
             && !l.is_empty()
         {
             return Ok(Some(format!("{i}suffix({}, {subject})", quote(&l))));
         }
-    }
     Ok(Some(format!("{i}glob({}, {subject})", quote(&g))))
 }
 

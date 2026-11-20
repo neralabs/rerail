@@ -1,31 +1,38 @@
 import { realpath } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
 import { ADAPTER_CAPABILITIES, type AdapterDelivery, type AdapterSession, type RerailHost } from "../engine/adapter-contract.js";
 import {
   presentationDaemonSchema,
-  presentationResponseSchema,
+  presentationReadSchema,
   rulesDashboardUrl,
+  sessionHudSchema,
+  type PresentationRead,
+  type PresentedSession,
   type RulesDashboardScope,
-  type sessionResponseSchema,
-} from "../api/session-contracts.js";
+} from "../api/presentation-contracts.js";
 import { withinCheckout } from "../engine/catalog/checkout-control.js";
-import { DAEMON_STATE_FILE, daemonAccessHeaders, daemonFetch, ownProcessAlive, readDaemonState, type DaemonState } from "../runtime/daemon-control.js";
+import {
+  DAEMON_STATE_FILE, daemonAccessHeaders, daemonFetch, readDaemonState, recordedDaemonAlive, recordedDaemonStatus, recordedDaemonStatusForEvent,
+  type DaemonState, type RecordedDaemon,
+} from "../runtime/daemon-control.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
-import type { PresentationPresence } from "../engine/storage/schema.js";
-import { ruleUrl, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
+import type { PresentationPresence } from "../engine/storage/presentation-presence.js";
+import { cappedLine, ruleUrl, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
+import { conflictUrl } from "../engine/merge-assist/conflict-note.js";
 import { colourDepth, RERAIL_MARK_TEXT, rerailMark, stateMark, type TerminalEnv } from "./rerail-mark.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 
-export type { PresentationPresence } from "../engine/storage/schema.js";
+export type { PresentationPresence } from "../engine/storage/presentation-presence.js";
 
 /**
  * The footer's state (design A1f): on here, not on here (stopped in this checkout, or never started; the ambient
  * footer draws nothing then, only reads on demand say so), not set up (started, but the repository has no rules
- * configured yet), not running (no live daemon), starting (on, but this session's start is not recorded yet), or on
- * but missing what it needs to count (a session that does not match).
+ * configured yet), not running (no live daemon), not answering (the live daemon took the read but gave no answer in
+ * time), starting (on, but this session's start is not recorded yet), or on but missing what it needs to count (a
+ * session that does not match).
  */
-export type PresentationStatus = "on" | "not-on-here" | "not-set-up" | "not-running" | "starting" | "unavailable";
+export type PresentationStatus = "on" | "not-on-here" | "not-set-up" | "not-running" | "not-answering" | "starting" | "unavailable";
 
 export interface PresentationCounts {
   /** Rules on for this session; null when coverage is unknown. */
@@ -75,7 +82,7 @@ const MAX_RESPONSE_BYTES = 1_048_576;
 const terminalText = (value: string): string => value.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "");
 
 const STATUS_MARKS: Record<PresentationStatus, string> = {
-  on: "●", starting: "●", unavailable: "●", "not-on-here": "○", "not-set-up": "○", "not-running": "✕",
+  on: "●", starting: "●", unavailable: "●", "not-answering": "●", "not-on-here": "○", "not-set-up": "○", "not-running": "✕",
 };
 /** Between the footer's items (plan §3): single spaces, so a stacked footer stays short. */
 const ITEM_SEPARATOR = " · ";
@@ -136,11 +143,46 @@ function unavailable(
   return presentation({ status, items: [{ text: reason, url: null }], presence, repositoryState });
 }
 
-/** Validate responses with the same contracts used by the daemon, without opening a database. */
+/**
+ * The daemon took the read but gave no answer within `READ_TIMEOUT_MS`, or its engine said nothing in time to the proof
+ * that comes before any read on Windows (`readableDaemon`): it is busy, not gone, so telling the person to start it is
+ * wrong.
+ */
+class NotAnswering extends Error {}
+
+/**
+ * How a reader asks what may be made of the recorded daemon: as a command or the status line does, within the proof's
+ * limit (`recordedDaemonStatus`), or as a hook does before its event (`recordedDaemonStatusForEvent`).
+ */
+type DaemonStatusRead = (state: DaemonState) => Promise<RecordedDaemon>;
+
+/**
+ * Whether the daemon `state` records may be read now (`status`): false when it is gone. One whose engine stayed silent
+ * to the proof runs but is busy: it is sent nothing, and this throws `NotAnswering`.
+ */
+async function readableDaemon(state: DaemonState, status: DaemonStatusRead = recordedDaemonStatus): Promise<boolean> {
+  const recorded = await status(state);
+  if (recorded === "silent") throw new NotAnswering("The Rerail daemon's engine did not answer in time");
+  return recorded === "alive";
+}
+
+/**
+ * Validate responses with the same contracts used by the daemon, without opening a database. Throws `NotAnswering`
+ * once the read's time runs out, whatever the transport threw then.
+ */
 async function get<Schema extends z.ZodType>(daemon: Pick<VerifiedDaemon, "origin" | "state">, path: string, schema: Schema): Promise<z.infer<Schema>> {
-  const response = await daemonFetch(daemon.state)(new URL(path, daemon.origin), {
-    headers: daemonAccessHeaders(daemon.state), signal: AbortSignal.timeout(READ_TIMEOUT_MS), redirect: "error",
-  });
+  const signal = AbortSignal.timeout(READ_TIMEOUT_MS);
+  try {
+    return await readAnswer(daemon, new URL(path, daemon.origin), schema, signal);
+  } catch (error) {
+    throw signal.aborted ? new NotAnswering("The Rerail daemon did not answer in time", { cause: error }) : error;
+  }
+}
+
+async function readAnswer<Schema extends z.ZodType>(
+  daemon: Pick<VerifiedDaemon, "state">, url: URL, schema: Schema, signal: AbortSignal,
+): Promise<z.infer<Schema>> {
+  const response = await daemonFetch(daemon.state)(url, { headers: daemonAccessHeaders(daemon.state), signal, redirect: "error" });
   if (!response.ok || response.body === null) throw new Error("Rerail read unavailable");
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -160,14 +202,26 @@ async function get<Schema extends z.ZodType>(daemon: Pick<VerifiedDaemon, "origi
   return schema.parse(JSON.parse(Buffer.concat(chunks, size).toString("utf8")));
 }
 
+/** The longest conflict line the footer shows: as long as the conflict hook's status may be. */
+const FOOTER_CONFLICT_CHARS = 90;
+
+/**
+ * Merge Assist's footer segment, linked to the conflict's card: `◐ <line>` for the newest open one, cut to
+ * {@link FOOTER_CONFLICT_CHARS}, with `(+N)` for the others open.
+ */
+function conflictSegment(dashboard: URL, { conflicts, summary }: NonNullable<z.infer<typeof sessionHudSchema>["mergeAssist"]>): SessionPresentation["parts"][number] {
+  return { text: `◐ ${cappedLine(summary.text, FOOTER_CONFLICT_CHARS)}${conflicts > 1 ? ` (+${conflicts - 1})` : ""}`, url: conflictUrl(dashboard.href, summary.id) };
+}
+
 /**
  * `R E R A I L ● 26 rules · worktree · 2 to approve`, with each rule overlay in force in the checkout after the count
- * (linked to its pack page), what runs in Log waiting for a person's approval (linked to Overview, which lists it), and
- * `steered N×` only once Rerail has steered in this session (A1f).
+ * (linked to its pack page), what runs in Log waiting for a person's approval (linked to Overview, which lists it),
+ * `steered N×` only once Rerail has steered in this session (A1f), and Merge Assist's segment while the checkout has an
+ * open conflict that is not quiet (`conflictSegment`).
  */
 function onPresentation(
   origin: URL,
-  { session, hud }: z.infer<typeof sessionResponseSchema>,
+  { session, hud }: PresentedSession,
   scope: RulesDashboardScope | null,
   presence: PresentationPresence,
   health: string[],
@@ -186,6 +240,11 @@ function onPresentation(
   if ((hud.awaitingApproval ?? 0) > 0) items.push({ text: `${hud.awaitingApproval} to approve`, url: rulesDashboardUrl(origin, scope) });
   if (hud.steeringCount === null) items.push({ text: "steering unavailable", url: sessionUrl });
   else if (hud.steeringCount > 0) items.push({ text: `steered ${hud.steeringCount}×`, url: sessionUrl });
+  if (hud.mergeAssist !== undefined) {
+    const dashboard = new URL(rulesDashboardUrl(origin, scope));
+    dashboard.hash = "";
+    items.push(conflictSegment(dashboard, hud.mergeAssist));
+  }
   items.push(...health.map(text => ({ text, url: null })));
   return presentation({
     status: "on", brandUrl: sessionUrl, items, presence, repositoryState: "started",
@@ -205,13 +264,21 @@ export async function dashboardOrigin(cwd: string): Promise<string | undefined> 
 
 /**
  * Deliveries with each of their rules linked to its page on `cwd`'s dashboard, scoped to its repository: the link the
- * person's `why?` opens. The runtime records no link; each coding agent's adapter links the rules as it hands them over,
- * and without a dashboard leaves them unlinked.
+ * person's `why?` opens; and the conflict a note surfaces linked to its card on the Merge Assist page (`open`). The
+ * runtime records no link; each coding agent's adapter links them as it hands them over, and without a dashboard
+ * leaves them unlinked.
  */
 export async function linkDeliveries<Delivery extends AdapterDelivery>(deliveries: readonly Delivery[], cwd: string | undefined): Promise<Delivery[]> {
-  const dashboard = cwd === undefined ? undefined : await steerDashboard(cwd);
+  // Hooks call this on every event, and most events deliver nothing: only a rule or a conflict to link is worth asking
+  // the daemon.
+  const links = deliveries.some(delivery => delivery.rules.length > 0 || delivery.conflict !== undefined);
+  const dashboard = cwd === undefined || !links ? undefined : await steerDashboard(cwd);
   if (dashboard === undefined) return deliveries.map(delivery => ({ ...delivery }));
-  return deliveries.map(delivery => ({ ...delivery, rules: delivery.rules.map(rule => ({ ...rule, url: ruleUrl(dashboard, rule.id) })) }));
+  return deliveries.map(delivery => ({
+    ...delivery,
+    rules: delivery.rules.map(rule => ({ ...rule, url: ruleUrl(dashboard, rule.id) })),
+    ...(delivery.conflict === undefined ? {} : { conflict: { ...delivery.conflict, url: conflictUrl(dashboard, delivery.conflict.id) } }),
+  }));
 }
 
 /**
@@ -253,7 +320,7 @@ async function dashboardScope(daemon: VerifiedDaemon): Promise<RulesDashboardSco
  * simplify, or keep off generated or vendored files.
  */
 async function healthItems(
-  { audit: run }: z.infer<typeof sessionResponseSchema>, nativeOk: boolean, workspace: string,
+  { audit: run }: PresentedSession, nativeOk: boolean, workspace: string,
 ): Promise<string[]> {
   const items = nativeOk ? [] : ["engine unavailable"];
   const counted = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
@@ -313,17 +380,38 @@ function notOnHere(presence: PresentationPresence, onDemand: boolean): SessionPr
 }
 
 /**
- * A state file records intent, not liveness: the recorded pid must still exist and the listener must
- * answer `/healthz` as that same pid before any caller is handed a URL.
+ * A state file records intent, not liveness: the recorded daemon must still be alive (`recordedDaemonAlive`) and the
+ * listener must answer `/healthz` as that same pid before any caller is handed a URL.
  */
 async function liveHealth(daemon: VerifiedDaemon): Promise<z.infer<typeof healthSchema> | undefined> {
-  if (!ownProcessAlive(daemon.state.pid)) return undefined;
+  if (!(await recordedDaemonAlive(daemon.state))) return undefined;
   try {
     const health = await get(daemon, "/healthz", healthSchema);
     return health.pid === daemon.state.pid ? health : undefined;
   } catch {
     return undefined;
   }
+}
+
+/**
+ * The hosts a footer reads a daemon on: loopback's. One bound anywhere else gets no read and its links are drawn
+ * nowhere, since a browser should not be sent there.
+ */
+export const FOOTER_DAEMON_HOSTS: readonly string[] = ["127.0.0.1", "[::1]", "localhost"];
+
+/** Whether `origin`, the URL `state` records, is one a footer reads: loopback, http or pinned https, and bare. */
+function isFooterDaemonOrigin(origin: URL, state: DaemonState): boolean {
+  return isFooterDaemonTransport(origin, state) && FOOTER_DAEMON_HOSTS.includes(origin.hostname) && isBareOrigin(origin);
+}
+
+/** http, or https with the certificate's fingerprint recorded for Rerail's clients to pin. */
+function isFooterDaemonTransport({ protocol }: URL, state: DaemonState): boolean {
+  return protocol === "http:" || (protocol === "https:" && state.tlsFingerprint256 !== undefined);
+}
+
+/** No credentials, path, query or fragment: nothing a stale or planted locator could carry. */
+function isBareOrigin({ username, password, pathname, search, hash }: URL): boolean {
+  return [username, password, search, hash].every(part => part === "") && pathname === "/";
 }
 
 /**
@@ -336,12 +424,7 @@ async function verifyDaemon(cwd: string): Promise<VerifiedDaemon | string> {
   const state = await readDaemonState(join(defaultRerailHome(), DAEMON_STATE_FILE));
   if (state === undefined) return "daemon unavailable";
   const origin = new URL(state.url);
-  const secure = origin.protocol === "https:" && state.tlsFingerprint256 !== undefined;
-  if ((origin.protocol !== "http:" && !secure) || !["127.0.0.1", "[::1]", "localhost"].includes(origin.hostname)
-      || origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash) {
-    return "daemon unavailable";
-  }
-  return { workspace, state, origin };
+  return isFooterDaemonOrigin(origin, state) ? { workspace, state, origin } : "daemon unavailable";
 }
 
 /**
@@ -370,24 +453,55 @@ export async function readRulesDashboard({ cwd }: RulesDashboardRequest): Promis
  * ask this first.
  */
 export async function readRepositoryState(cwd: string, host: RerailHost): Promise<RepositoryStartState | null> {
+  // A hook's start check, before its event: it waits for a busy daemon's engine pipe as main's hook did.
+  const state = await daemonRepositoryState(cwd, host, recordedDaemonStatusForEvent);
+  return state === "not-answering" ? null : state;
+}
+
+/**
+ * What `/rerail` says of a repository without a session: its start state, `not-answering` where the live daemon gave no
+ * answer in time, or null where no daemon runs (`/rerail` says not running).
+ */
+export type SummaryState = RepositoryStartState | "not-answering" | null;
+
+/**
+ * Like `readRepositoryState`, but says `not-answering` when the live daemon gave no answer in time (`NotAnswering`), and
+ * asks the recorded daemon's state through `status`.
+ */
+async function daemonRepositoryState(cwd: string, host: RerailHost, status: DaemonStatusRead = recordedDaemonStatus): Promise<SummaryState> {
   try {
     const daemon = await verifyDaemon(cwd);
-    if (typeof daemon === "string" || !ownProcessAlive(daemon.state.pid)) return null;
-    const response = await get(daemon, `/api/presentation?${new URLSearchParams({ repository: daemon.workspace, host })}`, presentationResponseSchema);
+    if (typeof daemon === "string" || !(await readableDaemon(daemon.state, status))) return null;
+    const response = await get(daemon, `/api/presentation?${presentationQuery(cwd, daemon, { host })}`, presentationReadSchema);
     return response.repositoryState;
-  } catch {
-    return null;
+  } catch (error) {
+    return error instanceof NotAnswering ? "not-answering" : null;
   }
 }
 
-const NOT_RUNNING = "not running";
+/**
+ * What a hook and the status line ask `/api/presentation` about `cwd`: `repository`, the folder as its real path gives
+ * it, and on Windows `spelling`, the folder as spelt, where the two differ and the daemon reads it
+ * ({@link DaemonState.readsSpelling}). Rerail 0.1.4 saved a stop for a folder outside Git under the folder as spelt, a
+ * mapped drive letter included, and the daemon's start check reads that key only when it gets the spelling.
+ */
+function presentationQuery(cwd: string, daemon: VerifiedDaemon, query: Record<string, string>): URLSearchParams {
+  const spelling = resolve(cwd);
+  const spelt = process.platform === "win32" && spelling !== daemon.workspace && daemon.state.readsSpelling === true;
+  return new URLSearchParams({ repository: daemon.workspace, ...query, ...(spelt ? { spelling } : {}) });
+}
+
+/** Why no daemon answered in a started checkout: none is running, or the live one gave no answer in time. */
+type Silence = "not-running" | "not-answering";
+const SILENCE_TEXT: Record<Silence, string> = { "not-running": "not running", "not-answering": "not answering" };
+const NOT_RUNNING = SILENCE_TEXT["not-running"];
 
 /**
- * No daemon answered. Nothing autostarts where Rerail is off, so that is only "not running" in a started
- * checkout; elsewhere the caller's own reading of the start state says "not on here".
+ * No daemon answered. Nothing autostarts where Rerail is off, so that is only `silence` (not running, or not
+ * answering) in a started checkout; elsewhere the caller's own reading of the start state says "not on here".
  */
 async function withoutDaemon(
-  startState: PresentationRequest["startState"], presence: PresentationPresence, onDemand: boolean,
+  startState: PresentationRequest["startState"], presence: PresentationPresence, onDemand: boolean, silence: Silence,
 ): Promise<SessionPresentation> {
   let state: RepositoryStartState | undefined;
   try {
@@ -395,7 +509,14 @@ async function withoutDaemon(
   } catch {
     state = undefined;
   }
-  if (state === undefined || state === "started") return unavailable("not-running", NOT_RUNNING, presence);
+  return silentDaemonPresentation(state, presence, onDemand, silence);
+}
+
+/** {@link withoutDaemon} for a start state already read; undefined when it could not be. */
+function silentDaemonPresentation(
+  state: RepositoryStartState | undefined, presence: PresentationPresence, onDemand: boolean, silence: Silence,
+): SessionPresentation {
+  if (state === undefined || state === "started") return unavailable(silence, SILENCE_TEXT[silence], presence);
   if (state === "not-set-up") return presentation({
     status: "not-set-up", items: [{ text: NOT_SET_UP, url: null }, { text: SET_UP_HINT, url: null }], presence, repositoryState: state,
   });
@@ -403,19 +524,29 @@ async function withoutDaemon(
 }
 
 /**
+ * The ambient footer of a session once its daemon has stopped, as `readPresentation` draws it with no daemon to ask:
+ * `not running` where Rerail is started or `state` is unknown, and nothing where it is not on. The stopping daemon
+ * leaves it for the surfaces it keeps drawn ahead of time (`claude-status-files.ts`).
+ */
+export function stoppedDaemonPresentation(state: RepositoryStartState | undefined): SessionPresentation {
+  return silentDaemonPresentation(state, "compact", false, "not-running");
+}
+
+/**
  * The repository state `/rerail` shows without a session: the live daemon's answer, else the caller's local
- * reading. A started checkout with no daemon answering stays null, which `/rerail` reports as not running.
+ * reading. A started checkout with no daemon answering stays null, or `not-answering` where the daemon is alive.
  */
 export async function readSummaryState(
   cwd: string, host: RerailHost, startState: NonNullable<PresentationRequest["startState"]>,
-): Promise<RepositoryStartState | null> {
-  const answered = await readRepositoryState(cwd, host);
-  if (answered !== null) return answered;
+): Promise<SummaryState> {
+  const fromDaemon = await daemonRepositoryState(cwd, host);
+  if (fromDaemon !== null && fromDaemon !== "not-answering") return fromDaemon;
+  // In a started checkout, or one whose state cannot be read, what the daemon gave decides: nothing, or no answer in time.
   try {
     const local = await startState();
-    return local === undefined || local === "started" ? null : local;
+    return local === undefined || local === "started" ? fromDaemon : local;
   } catch {
-    return null;
+    return fromDaemon;
   }
 }
 
@@ -424,19 +555,17 @@ function isPresentationRequest(sessionId: unknown, host: RerailHost, cwd: unknow
     && typeof cwd === "string" && isAbsolute(cwd);
 }
 
-type PresentationResponse = z.infer<typeof presentationResponseSchema>;
+type PresentationResponse = PresentationRead;
 type AnsweredSession = NonNullable<NonNullable<PresentationResponse["context"]>["session"]>;
-/** A live daemon of this checkout, and what it answered for the session. */
-type LiveResponse = { daemon: VerifiedDaemon; response: PresentationResponse };
+/** A live daemon, the checkout it was asked about, and what it answered for the session. */
+type LiveResponse = { daemon: Pick<VerifiedDaemon, "origin" | "workspace">; response: PresentationResponse };
 
 /** The daemon's answer for the session; undefined when no live daemon of this checkout answers as itself. */
 async function readLiveResponse({ sessionId, host, cwd, onDemand = false }: PresentationRequest): Promise<LiveResponse | undefined> {
   // The `/api/presentation` response proves liveness; it must not pay for a second probe.
   const daemon = await verifyDaemon(cwd);
-  if (typeof daemon === "string" || !ownProcessAlive(daemon.state.pid)) return undefined;
-  const response = await get(daemon, `/api/presentation?${new URLSearchParams({
-    repository: daemon.workspace, host, sessionId, onDemand: String(onDemand),
-  })}`, presentationResponseSchema);
+  if (typeof daemon === "string" || !(await readableDaemon(daemon.state))) return undefined;
+  const response = await get(daemon, `/api/presentation?${presentationQuery(cwd, daemon, { host, sessionId, onDemand: String(onDemand) })}`, presentationReadSchema);
   const context = response.context;
   return context === undefined || context.daemon.pid !== daemon.state.pid ? undefined : { daemon, response };
 }
@@ -471,6 +600,17 @@ async function answeredPresentation(answer: LiveResponse, request: PresentationR
   return await answeredSessionPresentation(context.session, context.daemon.native.ok, answer, request);
 }
 
+/**
+ * The ambient footer that a daemon's own answer for a session comes to, with no request made: what `readPresentation`
+ * draws while the daemon at `origin` answers. `response` is its `presentation_get` answer for `request`, whose `cwd`
+ * is the folder it was asked about.
+ */
+export async function answeredSessionFooter(
+  origin: URL, response: PresentationRead, request: Pick<PresentationRequest, "sessionId" | "host" | "cwd">,
+): Promise<SessionPresentation> {
+  return await answeredPresentation({ daemon: { origin, workspace: await realpath(request.cwd) }, response }, request);
+}
+
 /** Passive session reads: never start a daemon, mutate discovery, or open a writable database. */
 export async function readPresentation(request: PresentationRequest): Promise<SessionPresentation> {
   const { sessionId, host, cwd, startState } = request;
@@ -479,12 +619,13 @@ export async function readPresentation(request: PresentationRequest): Promise<Se
   let presence: PresentationPresence | undefined;
   try {
     const answer = await readLiveResponse(request);
-    if (answer === undefined) return await withoutDaemon(startState, "compact", onDemand);
+    if (answer === undefined) return await withoutDaemon(startState, "compact", onDemand, "not-running");
     presence = answer.response.presence;
     return await answeredPresentation(answer, request);
-  } catch {
-    // The locator named a live process, but nothing answered as the daemon.
-    return presence !== undefined ? unavailable("not-running", NOT_RUNNING, presence) : await withoutDaemon(startState, "compact", onDemand);
+  } catch (error) {
+    if (presence !== undefined) return unavailable("not-running", NOT_RUNNING, presence);
+    // The locator named a live process, but nothing answered as the daemon: none listens, or it is busy.
+    return await withoutDaemon(startState, "compact", onDemand, error instanceof NotAnswering ? "not-answering" : "not-running");
   }
 }
 

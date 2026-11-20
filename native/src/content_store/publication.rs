@@ -1,14 +1,15 @@
 //! Bulk overlay publication: object preparation, identity resolution, and the publish transaction.
 
 use super::connection::retry_busy;
-use super::compression::{compress_source, compress_tape, file_tag};
-use super::objects::{compress_documents, validate_tape_payload};
+use super::object_segments::{CODEC_RAW, Placing};
+use super::objects::validate_tape_payload;
+use super::segments::Place;
 use super::relationships::{
     execute_relationship_pass, prepare_relationship_pass, relationship_references_current,
 };
 use super::rows::{hash_params, validate_relative_path};
 use super::{
-    BusyRetries, CODEC_ZSTD, CandidateClause, ContentStore, HashKey, MAX_PUBLICATION_BATCH,
+    BusyRetries, CandidateClause, ContentStore, HashKey, MAX_PUBLICATION_BATCH,
     OverlayFilePublication, PublicationResult, STRING_CLAUSE_KEY, STRING_PATH, SourceId,
     StoreError, StoreResult, StoredFile, TapeId, TapePayload, WorkspaceId,
 };
@@ -111,7 +112,7 @@ impl ContentStore {
                 "overlay publication batch must contain 1 to {MAX_PUBLICATION_BATCH} files"
             )));
         }
-        let identities = (|| {
+        let identities = rerail_prof::code_rule_dsl::logic::profile::on_cores(|| {
             publications
                 .par_iter()
                 .map(|publication| {
@@ -126,11 +127,13 @@ impl ContentStore {
                     Ok((
                         publication,
                         source,
-                        publication.tape.map(|tape| HashKey::tape_identity(source, tape.bytes)),
+                        publication
+                            .tape
+                            .map(|tape| HashKey::tape_identity(source, tape.bytes)),
                     ))
                 })
                 .collect::<StoreResult<Vec<_>>>()
-        })()?;
+        })?;
         let candidate_identities = publication_candidate_identities(publications);
         // Path identities are hashed once, before any transaction takes the write lock.
         let path_hashes = publications
@@ -156,50 +159,18 @@ impl ContentStore {
             (existing, path_ids, interned)
         };
         let initial_objects = existing.clone();
-        // Source and tape are always independent Zstandard frames.
-        // Hashing, lookup, compression, and validation finish before the transaction starts.
-        let mut prepared: Vec<PreparedOverlayPublication<'_>> = (|| {
-            identities
-                .into_par_iter()
-                .zip(existing.into_par_iter())
-                .map(
-                    |((publication, source_hash, tape_hash), (source_id, tape_id))| {
-                        let source_frame = source_id
-                            .is_none()
-                            .then(|| compress_source(publication.source, self.compression_level, file_tag(publication.path, publication.tape.map(|tape| tape.bytes))))
-                            .transpose()?;
-                        let tape_frame = publication
-                            .tape
-                            .filter(|_| tape_id.is_none())
-                            .map(|payload| compress_tape(payload.bytes, self.compression_level))
-                            .transpose()?;
-                        // A stored tape's documents are stored with it: only a new tape's are
-                        // written.
-                        let document_frames = publication
-                            .tape
-                            .filter(|payload| tape_id.is_none() && !payload.documents.is_empty())
-                            .map(|payload| {
-                                compress_documents(payload.documents, self.compression_level)
-                            })
-                            .transpose()?;
-                        Ok((
-                            publication,
-                            source_hash,
-                            source_id,
-                            source_frame,
-                            tape_hash,
-                            tape_id,
-                            tape_frame,
-                            document_frames,
-                        ))
-                    },
-                )
-                .collect::<StoreResult<Vec<_>>>()
-        })()?;
+        // Each source and tape not stored yet is placed, as it is, in the pass's segment (`place_missing_objects`).
+        let mut prepared: Vec<PreparedOverlayPublication<'_>> = identities
+            .into_iter()
+            .zip(existing)
+            .map(|((publication, source_hash, tape_hash), (source_id, tape_id))| {
+                (publication, source_hash, source_id, None, tape_hash, tape_id, None, None)
+            })
+            .collect();
         let reused_sources = prepared.iter().filter(|item| item.2.is_some()).count();
         let reused_tapes = prepared.iter().filter(|item| item.5.is_some()).count();
-        let compressed_sources = prepared.len() - reused_sources;
-        let compressed_tapes = prepared
+        let written_sources = prepared.len() - reused_sources;
+        let written_tapes = prepared
             .iter()
             .filter(|item| item.0.tape.is_some() && item.5.is_none())
             .count();
@@ -252,10 +223,11 @@ impl ContentStore {
                         "overlay publication was cancelled".to_owned(),
                     ));
                 }
-                prepare_missing_object_frames(
+                let mut placing = place_missing_objects(
                     &mut prepared,
                     &current_objects,
-                    self.compression_level,
+                    &self.database_path,
+                    self.connection.flush(),
                 )?;
                 let object_pass = prepare_object_pass(
                     &prepared,
@@ -265,7 +237,7 @@ impl ContentStore {
                 )?;
                 // The loop above polls cancellation before the first attempt; a retry polls again.
                 let mut retry = false;
-                let (elapsed, statement_count) = retry_busy(busy, || {
+                let (elapsed, statement_count, seg) = retry_busy(busy, || {
                     if std::mem::replace(&mut retry, true) && cancelled() {
                         return Err(StoreError::Invalid(
                             "overlay publication was cancelled".to_owned(),
@@ -280,6 +252,8 @@ impl ContentStore {
                     #[cfg(test)]
                     let _write_lock = super::WriteLockSection::enter();
                     let started = Instant::now();
+                    // The pass's segment, numbered here: its rows name it as `seg` 0 (`prepare_object_pass`).
+                    let seg = placing.number(&transaction)?;
                     let statement_count = execute_object_pass(&transaction, &object_pass)?;
                     if statement_count > 10 {
                         return Err(StoreError::Invalid(format!(
@@ -291,8 +265,13 @@ impl ContentStore {
                     Ok((
                         u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
                         statement_count,
+                        seg,
                     ))
                 })?;
+                placing.name(seg)?;
+                if let Some(seg) = seg {
+                    numbered(&mut prepared, seg);
+                }
                 transaction_nanoseconds = transaction_nanoseconds.saturating_add(elapsed);
                 object_transaction_nanoseconds =
                     object_transaction_nanoseconds.saturating_add(elapsed);
@@ -389,7 +368,10 @@ impl ContentStore {
         )?;
         #[cfg(any(test, feature = "test-hooks"))]
         run_publication_test_hook(&BEFORE_RELATIONSHIP_WRITE_HOOK);
-        let (elapsed, statement_count, current) = retry_busy(busy, || {
+        // The results' bytes, as they are, in one segment of the pass's (decision 0450 step 2): numbered in its
+        // transaction, named once it commits; a pass that does not commit leaves no file.
+        let mut placing = Placing::write(&self.database_path, &relationship_pass.result_bytes(), self.connection.flush())?;
+        let (elapsed, statement_count, current, seg) = retry_busy(busy, || {
             if cancelled() {
                 return Err(StoreError::Invalid(
                     "overlay publication was cancelled".to_owned(),
@@ -416,9 +398,11 @@ impl ContentStore {
                     u64::try_from(transaction_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
                     0,
                     false,
+                    None,
                 ));
             }
-            execute_relationship_pass(&transaction, &relationship_pass)?;
+            let seg = placing.number(&transaction)?;
+            execute_relationship_pass(&transaction, &relationship_pass, &placing, seg)?;
             let statement_count = relationship_pass.statement_count();
             if cancelled() {
                 return Err(StoreError::Invalid(
@@ -430,8 +414,10 @@ impl ContentStore {
                 u64::try_from(transaction_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
                 statement_count,
                 true,
+                seg,
             ))
         })?;
+        placing.name(seg)?;
         if !current {
             if stale_relationship_retries >= 8 {
                 return Err(StoreError::Invalid(
@@ -476,8 +462,8 @@ impl ContentStore {
             reconciliation_passes,
             reused_sources,
             reused_tapes,
-            compressed_sources,
-            compressed_tapes,
+            written_sources,
+            written_tapes,
         })
     }
 }
@@ -486,12 +472,13 @@ type PreparedOverlayPublication<'a> = (
     &'a OverlayFilePublication<'a>,
     HashKey,
     Option<SourceId>,
-    Option<Vec<u8>>,
+    // Where the source is placed, the tape, and the sources and tapes of the documents derived from a tape not stored
+    // yet: `seg` 0 is the pass's segment, numbered in its transaction.
+    Option<Place>,
     Option<HashKey>,
     Option<TapeId>,
-    Option<Vec<u8>>,
-    // The source and tape frames of the documents derived from a tape not stored yet.
-    Option<Vec<(Vec<u8>, Vec<u8>)>>,
+    Option<Place>,
+    Option<Vec<(Place, Place)>>,
 );
 
 struct PreparedObjectPass {
@@ -524,31 +511,78 @@ fn encode_json(value: &impl serde::Serialize, name: &str) -> StoreResult<String>
         .map_err(|error| StoreError::Invalid(format!("{name} cannot be encoded: {error}")))
 }
 
-fn prepare_missing_object_frames(
+/// The sources and tapes `prepared` needs stored that `stored_objects` lacks and no earlier pass placed: written, as
+/// they are, in one segment (the pass's), each given its place there (`seg` 0 until the pass's transaction numbers
+/// it, `numbered`).
+fn place_missing_objects(
     prepared: &mut [PreparedOverlayPublication<'_>],
     stored_objects: &[(Option<SourceId>, Option<TapeId>)],
-    compression_level: i32,
-) -> StoreResult<()> {
-    for (
-        (publication, _, _, source_frame, _, _, tape_frame, document_frames),
-        (source_id, tape_id),
-    ) in prepared.iter_mut().zip(stored_objects)
-    {
-        if source_id.is_none() && source_frame.is_none() {
-            *source_frame = Some(compress_source(publication.source, compression_level, file_tag(publication.path, publication.tape.map(|tape| tape.bytes)))?);
+    database: &std::path::Path,
+    flush: rerail_blocks::block::Flush,
+) -> StoreResult<Placing> {
+    // (file, which: 0 source, 1 tape, 2 + document), in the order written.
+    let mut bytes: Vec<&[u8]> = Vec::new();
+    let mut slots: Vec<(usize, usize)> = Vec::new();
+    for (index, ((publication, _, _, source, _, _, tape, documents), (source_id, tape_id))) in prepared.iter().zip(stored_objects).enumerate() {
+        if source_id.is_none() && source.is_none() {
+            bytes.push(publication.source);
+            slots.push((index, 0));
         }
-        if let Some(tape) = publication.tape
+        if let Some(payload) = publication.tape
             && tape_id.is_none()
         {
-            if tape_frame.is_none() {
-                *tape_frame = Some(compress_tape(tape.bytes, compression_level)?);
+            if tape.is_none() {
+                bytes.push(payload.bytes);
+                slots.push((index, 1));
             }
-            if document_frames.is_none() && !tape.documents.is_empty() {
-                *document_frames = Some(compress_documents(tape.documents, compression_level)?);
+            if documents.is_none() {
+                for document in payload.documents {
+                    bytes.push(document.source);
+                    bytes.push(document.tape);
+                }
+                slots.push((index, 2));
             }
         }
     }
-    Ok(())
+    let placing = Placing::write(database, &bytes, flush)?;
+    let mut at = 0;
+    for (index, which) in slots {
+        let item = &mut prepared[index];
+        match which {
+            0 => item.3 = Some(placing.place(0, at)),
+            1 => item.6 = Some(placing.place(0, at)),
+            _ => {
+                let n = item.0.tape.map_or(0, |payload| payload.documents.len());
+                item.7 = Some((0..n).map(|d| (placing.place(0, at + 2 * d), placing.place(0, at + 2 * d + 1))).collect());
+                at += 2 * n;
+                continue;
+            }
+        }
+        at += 1;
+    }
+    Ok(placing)
+}
+
+/// Once a pass's transaction committed, numbering its segment `seg`: the places it gave (`seg` 0) are in that segment.
+fn numbered(prepared: &mut [PreparedOverlayPublication<'_>], seg: i64) {
+    let fix = |place: &mut Place| {
+        if place.seg == 0 {
+            place.seg = seg;
+        }
+    };
+    for item in prepared {
+        item.3.iter_mut().for_each(fix);
+        item.6.iter_mut().for_each(fix);
+        for (source, tape) in item.7.iter_mut().flatten() {
+            fix(source);
+            fix(tape);
+        }
+    }
+}
+
+/// A place's `seg`, `seg_at` and `seg_len`, as a pass's rows bind them.
+fn place_values(place: Place) -> [rusqlite::types::Value; 3] {
+    [place.seg.into(), (place.at as i64).into(), (place.len as i64).into()]
 }
 
 fn prepare_object_pass(
@@ -620,23 +654,21 @@ fn prepare_object_pass(
             }
         }
         if source_id.is_none() {
-            let frame = source_frame
-                .as_ref()
-                .ok_or(StoreError::Vanished("source"))?;
-            source_rows.push((*source_hash, publication.source.len(), frame.clone()));
+            let place = source_frame.ok_or(StoreError::Vanished("source"))?;
+            source_rows.push((*source_hash, publication.source.len(), place));
         }
         if let (Some(payload), Some(hash)) = (publication.tape, *tape_hash)
             && tape_id.is_none()
         {
-            let frame = tape_frame.as_ref().ok_or(StoreError::Vanished("tape"))?;
+            let place = tape_frame.ok_or(StoreError::Vanished("tape"))?;
             hashes.insert(hash);
-            tape_rows.push((*source_hash, hash, payload, frame.clone()));
+            tape_rows.push((*source_hash, hash, payload, place));
             // The tape's derived documents: each an ordinary source and tape, and its row.
             if !payload.documents.is_empty() {
                 let frames = document_frames
                     .as_ref()
                     .ok_or(StoreError::Vanished("derived document"))?;
-                for (index, (document, (document_source_frame, document_tape_frame))) in
+                for (index, (document, &(document_source_place, document_tape_place))) in
                     payload.documents.iter().zip(frames).enumerate()
                 {
                     let document_source = HashKey::sha256(document.source);
@@ -646,7 +678,7 @@ fn prepare_object_pass(
                     source_rows.push((
                         document_source,
                         document.source.len(),
-                        document_source_frame.clone(),
+                        document_source_place,
                     ));
                     tape_rows.push((
                         document_source,
@@ -658,7 +690,7 @@ fn prepare_object_pass(
                             bytes: document.tape,
                             documents: &[],
                         },
-                        document_tape_frame.clone(),
+                        document_tape_place,
                     ));
                     document_rows.push((
                         *source_hash,
@@ -716,17 +748,18 @@ fn prepare_object_pass(
         "source aliases",
     )?;
 
+    // A place's `seg` 0 is the pass's segment, the newest the transaction registered (`Placing::number`).
     let mut source_sql =
-        String::from("WITH input(algorithm,lane0,lane1,lane2,lane3,raw_length,frame) AS (VALUES ");
-    let mut source_values = Vec::with_capacity(source_rows.len() * 7);
+        String::from("WITH input(algorithm,lane0,lane1,lane2,lane3,raw_length,seg,seg_at,seg_len) AS (VALUES ");
+    let mut source_values = Vec::with_capacity(source_rows.len() * 9);
     if source_rows.is_empty() {
-        source_sql.push_str("(0,0,0,0,0,0,NULL)) SELECT 0,0,0,0,NULL,0 WHERE 0");
+        source_sql.push_str("(0,0,0,0,0,0,0,0,0)) SELECT 0,0,0,0,NULL,0,0,0,0 WHERE 0");
     } else {
-        for (index, (hash, raw_length, frame)) in source_rows.into_iter().enumerate() {
+        for (index, (hash, raw_length, place)) in source_rows.into_iter().enumerate() {
             if index != 0 {
                 source_sql.push(',');
             }
-            source_sql.push_str("(?,?,?,?,?,?,?)");
+            source_sql.push_str("(?,?,?,?,?,?,?,?,?)");
             source_values.extend(
                 hash_params(hash)
                     .into_iter()
@@ -739,29 +772,30 @@ fn prepare_object_pass(
                     })?
                     .into(),
             );
-            source_values.push(frame.into());
+            source_values.extend(place_values(place));
         }
         source_sql.push_str(
-            ") INSERT OR IGNORE INTO source_objects(canonical_hash_id,raw_length,codec_id,frame,created_generation) \
-             SELECT h.hash_id,i.raw_length,? ,i.frame,(SELECT generation FROM store_state WHERE singleton=1) \
+            ") INSERT OR IGNORE INTO source_objects(canonical_hash_id,raw_length,codec_id,frame,created_generation,seg,seg_at,seg_len) \
+             SELECT h.hash_id,i.raw_length,? ,x'',(SELECT generation FROM store_state WHERE singleton=1),\
+             CASE WHEN i.seg=0 THEN (SELECT max(seg) FROM object_segments) ELSE i.seg END,i.seg_at,i.seg_len \
              FROM input i JOIN hashes h INDEXED BY hashes_by_prefix ON h.algorithm_id=i.algorithm AND h.lane0=i.lane0 \
              AND h.lane1=i.lane1 AND h.lane2=i.lane2 AND h.lane3=i.lane3",
         );
-        source_values.push(CODEC_ZSTD.into());
+        source_values.push(CODEC_RAW.into());
     }
 
     let mut tape_sql = String::from(
-        "WITH input(source_algorithm,source_lane0,source_lane1,source_lane2,source_lane3,tape_algorithm,tape_lane0,tape_lane1,tape_lane2,tape_lane3,grammar_id,grammar_version,format_version,raw_length,frame) AS (VALUES ",
+        "WITH input(source_algorithm,source_lane0,source_lane1,source_lane2,source_lane3,tape_algorithm,tape_lane0,tape_lane1,tape_lane2,tape_lane3,grammar_id,grammar_version,format_version,raw_length,seg,seg_at,seg_len) AS (VALUES ",
     );
-    let mut tape_values = Vec::with_capacity(tape_rows.len() * 15);
+    let mut tape_values = Vec::with_capacity(tape_rows.len() * 17);
     if tape_rows.is_empty() {
-        tape_sql.push_str("(0,0,0,0,0,0,0,0,0,0,0,0,0,0,NULL)) SELECT 0,0,0,0,0,0,0,0,0 WHERE 0");
+        tape_sql.push_str("(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)) SELECT 0,0,0,0,0,0,0,0,0,0,0,0 WHERE 0");
     } else {
-        for (index, (source, hash, payload, frame)) in tape_rows.into_iter().enumerate() {
+        for (index, (source, hash, payload, place)) in tape_rows.into_iter().enumerate() {
             if index != 0 {
                 tape_sql.push(',');
             }
-            tape_sql.push_str("(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+            tape_sql.push_str("(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
             tape_values.extend(
                 hash_params(source)
                     .into_iter()
@@ -782,13 +816,13 @@ fn prepare_object_pass(
                     })?
                     .into(),
             );
-            tape_values.push(frame.into());
+            tape_values.extend(place_values(place));
         }
         tape_sql.push_str(
-            ") INSERT OR IGNORE INTO tape_objects(source_id,canonical_hash_id,grammar_id,grammar_version,tape_format_version,codec_id,raw_length,frame,created_generation) \
+            ") INSERT OR IGNORE INTO tape_objects(source_id,canonical_hash_id,grammar_id,grammar_version,tape_format_version,codec_id,raw_length,frame,created_generation,seg,seg_at,seg_len) \
              SELECT so.source_id,th.hash_id,i.grammar_id,i.grammar_version,i.format_version,\
-             CASE WHEN substr(i.frame,1,4)=x'28B52FFD' THEN 1 ELSE 0 END,i.raw_length,i.frame,\
-             (SELECT generation FROM store_state WHERE singleton=1) FROM input i \
+             0,i.raw_length,x'',(SELECT generation FROM store_state WHERE singleton=1),\
+             CASE WHEN i.seg=0 THEN (SELECT max(seg) FROM object_segments) ELSE i.seg END,i.seg_at,i.seg_len FROM input i \
              JOIN hashes sh INDEXED BY hashes_by_prefix ON sh.algorithm_id=i.source_algorithm AND sh.lane0=i.source_lane0 \
              AND sh.lane1=i.source_lane1 AND sh.lane2=i.source_lane2 AND sh.lane3=i.source_lane3 \
              JOIN source_objects so ON so.canonical_hash_id=sh.hash_id \
@@ -877,10 +911,7 @@ fn prepare_object_pass(
     })
 }
 
-fn execute_object_pass(
-    transaction: &Connection,
-    pass: &PreparedObjectPass,
-) -> StoreResult<usize> {
+fn execute_object_pass(transaction: &Connection, pass: &PreparedObjectPass) -> StoreResult<usize> {
     let mut statements = 0;
     transaction.prepare_cached(
         "WITH input AS (SELECT CAST(json_extract(value,'$[0]') AS INTEGER) algorithm,\

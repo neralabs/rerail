@@ -213,7 +213,7 @@ impl ContentStore {
             } else {
                 connection.execute_batch(
                     "INSERT INTO capture.tape_objects SELECT t.tape_id, t.source_id, t.canonical_hash_id, t.grammar_id, \
-                       t.grammar_version, t.tape_format_version, t.codec_id, 0, x'', t.created_generation, 0, 0, 0 \
+                       t.grammar_version, t.tape_format_version, t.codec_id, 0, x'', t.created_generation, -1, 0, 0 \
                        FROM temp.capture_tapes c JOIN main.tape_objects t USING(tape_id);",
                 )?;
             }

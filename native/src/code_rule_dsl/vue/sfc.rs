@@ -1,8 +1,8 @@
 //! Vue single-file component block metadata, matching compiler-sfc 3.5.43.
 
+use crate::code_rule_dsl::embed::host::HostNode;
 use crate::code_rule_dsl::language::GrammarDialect;
 use std::ops::Range;
-use crate::code_rule_dsl::embed::host::HostNode;
 
 /// One top-level SFC block as compiler-sfc 3.5.43 reads it.
 pub struct Block<'t> {
@@ -57,9 +57,7 @@ pub fn blocks<'t>(root: HostNode<'t>, source: &'t str) -> Vec<Block<'t>> {
                 .named_children()
                 .find(|n| n.kind() == "start_tag" || n.kind() == "self_closing_tag")?;
             let tag = start.named_child(0)?;
-            let end = node
-                .named_children()
-                .find(|n| n.kind() == "end_tag");
+            let end = node.named_children().find(|n| n.kind() == "end_tag");
             let content = start.end_byte()..end.map_or(node.end_byte(), |n| n.start_byte());
             Some(Block {
                 node,

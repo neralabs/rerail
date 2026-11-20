@@ -24,6 +24,19 @@ const astRule = (
 const astIssues = (document: object) =>
   (codeRuleSchema.safeParse(document).error?.issues ?? []).map(issue => ({ path: issue.path.slice(4).join("."), message: issue.message }));
 
+describe("a token test's stored note", () => {
+  // The engine's compiler asks why a token the grammar may leave out is stored where a rule tests it (RER-131); the
+  // shipped packs' rules say so beside the regex, so a schema that refuses the key skips their whole pack.
+  it("is taken beside a regex, in a rule and a relation, and refused without one", () => {
+    const note = "optional modifiers: stored";
+    expect(astIssues(astRule("typescript", { regex: "^static$", stored: note }))).toEqual([]);
+    expect(astIssues(astRule("typescript", { kind: "class_body", has: { regex: "^static$", stored: note, stopBy: "neighbor" } }))).toEqual([]);
+    expect(astIssues(astRule("typescript", { kind: "identifier", stored: note }))).toEqual([
+      { path: "rule", message: "stored says why a token a regex tests is stored: it needs a regex." },
+    ]);
+  });
+});
+
 describe("codeRuleMessageVariables", () => {
   it("recognizes engine-supported braced capture references", () => {
     expect(codeRuleMessageVariables("${NAME} $$$ {IGNORED} $$$${MULTI} \\${ESCAPED}")).toEqual(["NAME", "MULTI", "ESCAPED"]);

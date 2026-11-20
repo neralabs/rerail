@@ -1,0 +1,434 @@
+#!/usr/bin/python3
+"""A host's end of the farm's dashboard (scripts/build/farm/dashboard): one long-lived process per
+host, started over one ssh connection (or here, for this Mac), that prints a JSON line of the
+machine's state every PERIOD seconds and answers each `ping ID` line on its input at once (the
+round trip through the connection).
+
+Cheap by construction: it sleeps between samples; the counters are read where the system keeps
+them (/proc on Linux; mach's processor ticks, vm_stat and netstat on macOS); one `ps` a sample for
+the split of the CPU between the farm's processes and the machine's own; the GPU every 2 samples,
+the free disk macOS gives an important write every 20, docker (Linux) every 5. Each line says
+what the sampler itself used (`probe_cpu`, of one core), so its cost shows on the dashboard.
+
+    sampler [--local]       (--local: this Mac, the build machine: its farm share is Rerail's builds)
+
+A line: {"t", "os", "cores", "cpu": {"busy", "farm", "fleet", "probe", "other"} (fractions of all
+cores), "load", "mem": {...bytes}, "gpu": {...}, "disk": {...bytes}, "net": {"rx", "tx"} (bytes a
+second), "jobs": [...], "compiles", "fleet_jobs", "idle_s", "probe_cpu"}.
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+import threading
+import time
+
+PERIOD = 3.0
+LOCAL = "--local" in sys.argv
+LINUX = sys.platform.startswith("linux")
+OUT = threading.Lock()
+# What the farm's agent's text starts with (farm-agent's docstring), and this sampler's.
+AGENT_MARK = "A host's end of the farm's live mirror"
+SAMPLER_MARK = "A host's end of the farm's dashboard"
+# This Mac's share of the farm: Rerail's builds and test runs (by their programs' names).
+BUILD_COMMS = {"cargo", "rustc", "sccache", "cargo-nextest", "relax", "farm-rustc", "rustc-wrapper", "ld", "clang", "cc"}
+
+
+def emit(obj):
+    with OUT:
+        sys.stdout.write(json.dumps(obj, separators=(",", ":")) + "\n")
+        sys.stdout.flush()
+
+
+def pings():
+    for line in sys.stdin:
+        if line.startswith("ping "):
+            emit({"pong": line.split()[1]})
+    os._exit(0)
+
+
+def run(argv, timeout=10):
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, timeout=timeout).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+# ---- CPU ticks: (busy, total) over all cores
+
+if LINUX:
+    TICK = os.sysconf("SC_CLK_TCK")
+
+    def cpu_ticks():
+        t = [int(v) for v in open("/proc/stat").readline().split()[1:9]]
+        return sum(t) - t[3] - t[4], sum(t)
+else:
+    import ctypes
+    import ctypes.util
+    _libc = ctypes.CDLL(ctypes.util.find_library("c"))
+    _libc.mach_host_self.restype = ctypes.c_uint
+    _libc.mach_task_self.restype = ctypes.c_uint
+
+    class _Timebase(ctypes.Structure):
+        _fields_ = [("numer", ctypes.c_uint32), ("denom", ctypes.c_uint32)]
+    _tb = _Timebase()
+    _libc.mach_timebase_info(ctypes.byref(_tb))
+    TIMEBASE = _tb.numer / _tb.denom / 1e9  # mach time units to seconds
+
+    def cpu_ticks():
+        n, info, count = ctypes.c_uint(), ctypes.POINTER(ctypes.c_int)(), ctypes.c_uint()
+        # PROCESSOR_CPU_LOAD_INFO = 2: per core user, system, idle, nice
+        if _libc.host_processor_info(_libc.mach_host_self(), 2, ctypes.byref(n), ctypes.byref(info), ctypes.byref(count)):
+            return 0, 0
+        busy = total = 0
+        for c in range(n.value):
+            u, s, i, ni = (info[c * 4 + k] & 0xFFFFFFFF for k in range(4))
+            busy += u + s + ni
+            total += u + s + i + ni
+        _libc.vm_deallocate(_libc.mach_task_self(), ctypes.cast(info, ctypes.c_void_p), count.value * 4)
+        return busy, total
+
+
+# ---- processes: {pid: (ppid, cpu seconds with its exited children's, rss bytes, name)}
+
+def processes():
+    out = {}
+    if LINUX:
+        for p in os.listdir("/proc"):
+            if not p.isdigit():
+                continue
+            try:
+                raw = open(f"/proc/{p}/stat").read()
+            except OSError:
+                continue
+            name = raw[raw.index("(") + 1:raw.rindex(")")]
+            f = raw[raw.rindex(")") + 2:].split()
+            # fields after the name: state ppid ... utime(11) stime(12) cutime(13) cstime(14) ... rss(21);
+            # with the children it reaped, so a compile that ran and ended between samples counts.
+            out[int(p)] = (int(f[1]), sum(int(x) for x in f[11:15]) / TICK, int(f[21]) * 4096, name)
+        return out
+    # libproc, not ps (a `ps -A` costs 60 ms of CPU here): each process's parent and name, and its
+    # CPU with its reaped children's and its resident memory (only for this user's processes:
+    # the farm's; the others' CPU is in the machine's total).
+    n = _libc.proc_listallpids(None, 0)
+    pids = (ctypes.c_int * (n + 64))()
+    n = _libc.proc_listallpids(pids, ctypes.sizeof(pids))
+    short, usage = ctypes.create_string_buffer(64), (ctypes.c_uint64 * 40)()
+    for pid in pids[:n]:
+        if pid <= 0 or _libc.proc_pidinfo(pid, 13, 0, short, 64) != 64:  # PROC_PIDT_SHORTBSDINFO
+            continue
+        ppid = int.from_bytes(short.raw[4:8], "little")
+        name = short.raw[16:32].split(b"\0", 1)[0].decode(errors="replace")
+        cpu = rss = 0
+        if _libc.proc_pid_rusage(pid, 2, usage) == 0:  # RUSAGE_INFO_V2, after its 16-byte uuid
+            cpu = (usage[2] + usage[3] + usage[12] + usage[13]) * TIMEBASE
+            rss = usage[8]
+        out[pid] = (ppid, cpu, rss, name)
+    return out
+
+
+KIND = {}  # pid -> (kind, job): "agent" (a test or Relax command, or the mirror), "probe", or None
+
+
+def args_of(pid):
+    if LINUX:
+        try:
+            return open(f"/proc/{pid}/cmdline", "rb").read().replace(b"\0", b" ").decode(errors="replace")
+        except OSError:
+            return ""
+    return run(["ps", "-ww", "-o", "args=", "-p", str(pid)])
+
+
+def classify(pid, name):
+    """What process `pid` is to the farm (looked at once, its arguments read only for a Python)."""
+    if pid in KIND:
+        return KIND[pid]
+    kind = (None, None)
+    if "ython" in name:
+        a = args_of(pid)
+        if SAMPLER_MARK in a[:400]:
+            kind = ("probe", None)
+        elif AGENT_MARK in a[:400]:
+            job = None
+            at = a.rfind(" exec {")
+            if at >= 0:
+                try:
+                    j = json.loads(a[at + 6:].strip())
+                    argv = j.get("argv") or []
+                    relax = bool(argv) and os.path.basename(argv[0]) in ("relax", "relax-linux")
+                    job = {"kind": "windows" if j.get("windows") else "relax" if relax else "test", "cmd": " ".join(os.path.basename(argv[0:1][0]) if i == 0 else x
+                                                                                  for i, x in enumerate(argv))[:160],
+                           "checkout": os.path.basename(j.get("map", [""])[0] or "")}
+                except (ValueError, IndexError, AttributeError):
+                    job = {"kind": "test", "cmd": "?"}
+            kind = ("agent", job)
+    KIND[pid] = kind
+    return kind
+
+
+def container_pids(ids):
+    """Linux: the pids in the containers `ids` (their cgroup names the container's id)."""
+    if not ids:
+        return set()
+    out = set()
+    for p in os.listdir("/proc"):
+        if p.isdigit():
+            try:
+                cg = open(f"/proc/{p}/cgroup").read()
+            except OSError:
+                continue
+            if any(i in cg for i in ids):
+                out.add(int(p))
+    return out
+
+
+def docker_ids():
+    """Linux: (the farm's compile container's id, the fleet's job containers' ids)."""
+    xc = run(["docker", "ps", "-q", "--no-trunc", "--filter", "name=^rerail-farm-xc$"], 5).split()
+    fleet = run(["docker", "ps", "-q", "--no-trunc", "--filter", "label=fleet.job"], 5).split()
+    return xc, fleet
+
+
+# ---- memory, GPU, disk, network, input idle
+
+def memory():
+    if LINUX:
+        m = {}
+        for line in open("/proc/meminfo"):
+            k, v = line.split(":", 1)
+            m[k] = int(v.split()[0]) * 1024
+        total, avail = m["MemTotal"], m.get("MemAvailable", m["MemFree"])
+        return {"total": total, "available": avail, "used": total - avail, "swap_used": m.get("SwapTotal", 0) - m.get("SwapFree", 0)}
+    total = MEMSIZE
+    text = run(["vm_stat"])
+    page = int(re.search(r"page size of (\d+)", text).group(1)) if "page size of" in text else 16384
+    v = {k.strip(): int(n) * page for k, n in re.findall(r"^([^:]+):\s+(\d+)\.", text, re.M)}
+    # Available as Activity Monitor counts it: free, inactive and purgeable pages, the speculative ones.
+    avail = v.get("Pages free", 0) + v.get("Pages inactive", 0) + v.get("Pages speculative", 0) + v.get("Pages purgeable", 0)
+    return {"total": total, "available": min(avail, total), "used": max(total - avail, 0),
+            "compressed": v.get("Pages occupied by compressor", 0), "wired": v.get("Pages wired down", 0)}
+
+
+MEMSIZE = 0 if LINUX else int(run(["sysctl", "-n", "hw.memsize"]) or 0)
+
+
+def gpu():
+    if LINUX:
+        out = run(["nvidia-smi", "--query-gpu=name,utilization.gpu,memory.used,memory.total,power.draw,temperature.gpu",
+                   "--format=csv,noheader,nounits"], 5).strip().splitlines()
+        if not out:
+            return None
+        w = [x.strip() for x in out[0].split(",")]
+        num = lambda s: float(s) if re.fullmatch(r"[\d.]+", s or "") else None
+        return {"name": w[0], "util": num(w[1]), "mem_used": (num(w[2]) or 0) * 2**20 if num(w[2]) is not None else None,
+                "mem_total": (num(w[3]) or 0) * 2**20 if num(w[3]) is not None else None, "power_w": num(w[4]), "temp_c": num(w[5])}
+    text = run(["ioreg", "-r", "-c", "IOAccelerator", "-d", "1", "-w", "0"], 5)
+    m = re.search(r'"PerformanceStatistics" = \{([^}]*)\}', text)
+    if not m:
+        return None
+    s = dict((k, int(v)) for k, v in re.findall(r'"([^"]+)"=(\d+)', m.group(1)))
+    model = re.search(r'"model" = "([^"]+)"', text)
+    return {"name": model.group(1) if model else "GPU", "util": s.get("Device Utilization %"),
+            "mem_used": s.get("In use system memory"), "mem_alloc": s.get("Alloc system memory")}
+
+
+AVAILABLE_JS = ('ObjC.import("Foundation"); var r = Ref(); $.NSURL.fileURLWithPath($.NSHomeDirectory())'
+                '.getResourceValueForKeyError(r, $.NSURLVolumeAvailableCapacityForImportantUsageKey, null); String(r[0].js)')
+
+
+def disk(important):
+    st = os.statvfs(os.path.expanduser("~"))
+    d = {"total": st.f_blocks * st.f_frsize, "free": st.f_bavail * st.f_frsize}
+    if important is not None:
+        d["important"] = important
+    return d
+
+
+def important_free():
+    if LINUX:
+        return None
+    try:
+        return int(float(run(["osascript", "-l", "JavaScript", "-e", AVAILABLE_JS], 10).strip()))
+    except ValueError:
+        return None
+
+
+def net_bytes():
+    """(received, sent) bytes over the non-loopback interfaces so far."""
+    rx = tx = 0
+    if LINUX:
+        for line in open("/proc/net/dev").readlines()[2:]:
+            name, rest = line.split(":", 1)
+            if name.strip() == "lo" or name.strip().startswith(("docker", "veth", "br-")):
+                continue
+            f = rest.split()
+            rx += int(f[0])
+            tx += int(f[8])
+        return rx, tx
+    seen = set()
+    for line in run(["netstat", "-ib", "-n"]).splitlines()[1:]:
+        w = line.split()
+        # The <Link#n> line of each interface holds its counters (once per interface).
+        if len(w) >= 10 and w[2].startswith("<Link") and w[0] not in seen and not w[0].startswith(("lo", "gif", "stf", "utun", "anpi", "awdl", "llw", "bridge")):
+            seen.add(w[0])
+            try:
+                rx += int(w[6])
+                tx += int(w[9])
+            except ValueError:
+                pass
+    return rx, tx
+
+
+def input_idle():
+    if LINUX:
+        return None
+    m = re.search(r'"HIDIdleTime" = (\d+)', run(["ioreg", "-c", "IOHIDSystem", "-d", "4"], 5))
+    return int(m.group(1)) / 1e9 if m else None
+
+
+# A WSL machine: Windows' own view of the whole machine (WSL's VM included), from one typeperf
+# that stays running and prints a line every PERIOD (no process started per sample).
+WSL = LINUX and "microsoft" in os.uname().release.lower()
+WINDOWS = {}
+
+
+def windows_counters():
+    import glob
+    env = dict(os.environ)
+    socks = sorted(glob.glob("/run/WSL/*_interop"), key=lambda p: int(os.path.basename(p).split("_")[0]))
+    if socks and not env.get("WSL_INTEROP"):
+        env["WSL_INTEROP"] = socks[0]
+    ps = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+    try:
+        WINDOWS["mem_total"] = int(subprocess.run([ps, "-NoProfile", "-Command", "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory"],
+                                                  env=env, cwd="/mnt/c", capture_output=True, text=True, timeout=60).stdout.strip())
+        p = subprocess.Popen(["/mnt/c/Windows/System32/typeperf.exe", r"\Processor(_Total)\% Processor Time",
+                              r"\Memory\Available Bytes", "-si", str(int(PERIOD))], env=env, cwd="/mnt/c",
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return
+    for line in p.stdout:
+        w = [x.strip().strip('"') for x in line.strip().split('","')]
+        try:
+            WINDOWS.update(busy=float(w[1]) / 100, mem_avail=int(float(w[2])), t=time.time())
+        except (IndexError, ValueError):
+            pass
+
+
+def self_seconds():
+    """The CPU this sampler and the commands it ran used so far."""
+    t = os.times()
+    return t.user + t.system + t.children_user + t.children_system
+
+
+def load():
+    if LINUX:
+        return float(open("/proc/loadavg").read().split()[0])
+    return os.getloadavg()[0]
+
+
+def cpu_name():
+    if LINUX:
+        # The machine's model (DMI's product name), else the first core type lscpu names.
+        try:
+            return open("/sys/devices/virtual/dmi/id/product_name").read().strip()
+        except OSError:
+            pass
+        for line in run(["lscpu"]).splitlines():
+            if line.lower().startswith("model name"):
+                return line.split(":", 1)[1].strip()
+        return run(["uname", "-m"]).strip()
+    return run(["sysctl", "-n", "machdep.cpu.brand_string"]).strip()
+
+
+def main():
+    threading.Thread(target=pings, daemon=True).start()
+    if WSL:
+        threading.Thread(target=windows_counters, daemon=True).start()
+    cores = os.cpu_count() or 1
+    me = os.getpid()
+    prev_ticks, prev_procs, prev_net, prev_t = cpu_ticks(), processes(), net_bytes(), time.time()
+    prev_self = self_seconds()
+    i, g, imp, idle, xc, fleet = 0, None, None, None, [], []
+    model = cpu_name()
+    while True:
+        time.sleep(PERIOD)
+        i += 1
+        now = time.time()
+        dt = max(now - prev_t, 0.001)
+        ticks = cpu_ticks()
+        db, dtot = ticks[0] - prev_ticks[0], ticks[1] - prev_ticks[1]
+        busy = db / dtot if dtot > 0 else 0.0
+        procs = processes()
+        if LINUX and i % 5 == 1:
+            xc, fleet = docker_ids()
+        xc_pids, fleet_pids = (container_pids(xc), container_pids(fleet)) if LINUX else (set(), set())
+        # Each process's CPU in the period; the farm's are its agents' trees (or here Rerail's builds).
+        children = {}
+        for pid, (ppid, _, _, _) in procs.items():
+            children.setdefault(ppid, []).append(pid)
+        farm_pids, probe_pids, jobs, compiles = set(), set(), [], 0
+        roots = []
+        for pid, (ppid, _, _, name) in procs.items():
+            if LOCAL:
+                if name in BUILD_COMMS:
+                    farm_pids.add(pid)
+                continue
+            kind, job = classify(pid, name)
+            if kind == "probe":
+                probe_pids.add(pid)
+            elif kind == "agent":
+                roots.append((pid, job))
+        for pid, job in roots:
+            tree, stack = set(), [pid]
+            while stack:
+                p = stack.pop()
+                if p in tree:
+                    continue
+                tree.add(p)
+                stack += children.get(p, [])
+            farm_pids |= tree
+            cpu = sum(max(procs[p][1] - prev_procs.get(p, (0, 0))[1], 0) for p in tree if p in procs) / dt
+            rss = sum(procs[p][2] for p in tree if p in procs)
+            if job:
+                jobs.append(dict(job, cpu=round(cpu, 2), rss=rss, pid=pid))
+            else:
+                compiles += sum(1 for p in tree if procs[p][3] in ("rustc", "cc", "clang", "c++"))
+        farm_pids |= xc_pids
+        compiles += sum(1 for p in xc_pids if procs.get(p, (0, 0, 0, ""))[3] == "rustc")
+
+        def share(pids):
+            return sum(max(procs[p][1] - prev_procs.get(p, (0, 0))[1], 0) for p in pids if p in procs) / dt / cores
+        farm, fleet_share, probe = share(farm_pids), share(fleet_pids), share(probe_pids | {me})
+        # The machine's ticks are the measure; the processes' shares only split it (a process
+        # reaped into a parent first seen this period can be counted twice).
+        known = farm + fleet_share + probe
+        if known > busy > 0:
+            farm, fleet_share, probe = (x * busy / known for x in (farm, fleet_share, probe))
+        nb = net_bytes()
+        if i % 2 == 1:
+            g = gpu()
+        if i % 20 == 1:
+            imp = important_free()
+        if not LINUX and i % 10 == 1:
+            idle = input_idle()
+        mem = memory()
+        mem["farm_rss"] = sum(procs[p][2] for p in farm_pids if p in procs)
+        self_cpu = self_seconds()
+        emit({"t": now, "os": "linux" if LINUX else "macos", "cores": cores, "model": model,
+              "cpu": {"busy": round(busy, 4), "farm": round(farm, 4), "fleet": round(fleet_share, 4), "probe": round(probe, 4),
+                      "other": round(max(busy - farm - fleet_share - probe, 0), 4)},
+              "load": round(load(), 2), "mem": mem, "gpu": g, "disk": disk(imp),
+              "net": {"rx": (nb[0] - prev_net[0]) / dt, "tx": (nb[1] - prev_net[1]) / dt},
+              "jobs": jobs, "compiles": compiles, "fleet_jobs": len(fleet), "idle_s": idle,
+              "windows": dict(WINDOWS) if WINDOWS.get("t", 0) > now - 3 * PERIOD else None,
+              "probe_cpu": round((self_cpu - prev_self) / dt, 4)})
+        prev_ticks, prev_procs, prev_net, prev_t, prev_self = ticks, procs, nb, now, self_cpu
+        # Forget processes gone.
+        for pid in [p for p in KIND if p not in procs]:
+            del KIND[pid]
+
+
+if __name__ == "__main__":
+    main()

@@ -14,6 +14,8 @@ found. You are not the approver: the person is. You make sure they know what the
 
 - **A rule you wrote in this session** (`/rerail-create`, Write). The read-back is the audit: the person read the card and said
   yes. Approve right after adding it.
+- **Rules you suggested and added in this session** (`/rerail-create`, Suggest). The approval list is the audit: it quotes
+  everything each rule tells the agent. Approve the ones the person says yes to, and only those.
 - **Anything else waiting**: a rule someone else wrote into `.rerail/rules/`, one a branch committed, one in the library you did
   not write, a pack installed from a folder or from a third party. `rerail rules approve` with no name lists what waits here.
   Audit each one as below, then ask.
@@ -75,4 +77,5 @@ Approve exactly what you audited: if the content changed since you read it, read
 `● <id> is approved and steers from the next edit.` On 2, reply `● <id> stays in Log: Rerail records it and tells no one.`
 
 Never approve a rule the person has not said yes to in this session, never approve several on one yes unless the person said
-"all of them" after seeing each card, and never approve to make a steer you dislike go away: tune or turn off the rule instead.
+"all of them" after seeing each card (or each block of Suggest's approval list), and never approve to make a steer you
+dislike go away: tune or turn off the rule instead.

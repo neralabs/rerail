@@ -47,7 +47,7 @@ fn answered_by(req: &str) -> (&'static [&'static str], &'static [&'static str]) 
     }
 }
 
-/// The requests program `v` derives that its fixpoint answers (decision 0431 §8, Q268): each of `DEMANDS` a rule
+/// The requests program `v` derives that its fixpoint answers (decision 0431 §8, Q325): each of `DEMANDS` a rule
 /// derives, with what it answers (`answered`), where that is read. A relation is one request's answer (`answers::gate`):
 /// a producer's that two requests' rules read is the first's.
 pub(super) fn answering(v: &Version) -> BTreeMap<String, (Vec<String>, Vec<String>)> {
@@ -107,7 +107,7 @@ pub(super) const SPLICE: &str = "rr_splice_req";
 pub(super) const DEMANDS: [&str; 3] = [DEMAND, PARSE, SPLICE];
 /// The relations a rule reads guests and values through (`rr::lower`'s guest relations): a program none of whose
 /// needed rules reads one makes no guest.
-pub(super) const READS: [&str; 10] = ["parsed", "sub_tape", "rr_program", "tape_of", "host_node", "guest_of", "guest_place", "parse_of", "unparse_of", "splice_of"];
+pub(in crate::code_rule_dsl) const READS: [&str; 10] = ["parsed", "sub_tape", "rr_program", "tape_of", "host_node", "guest_of", "guest_place", "parse_of", "unparse_of", "splice_of"];
 /// Every relation a request is read from: a run with a rule deriving one makes guests.
 pub(in crate::code_rule_dsl) const REQUESTS: [&str; 3] = DEMANDS;
 /// The engine's relations a combined run shares across its programs (`corpus::combine` prefixes no program's): the
@@ -331,10 +331,6 @@ impl Seen {
     }
 }
 
-/// The guests `v`'s rules can see. A variable reaches a guest's document only from a guest relation (scoped,
-/// `hiding`): every other base read is bounded below `ANNOTATION_KEYS`, or below `HIDDEN_KEYS` where an annotation's
-/// copies were folded in. So a program that reads no guest relation sees annotations only where a comparison is
-/// against the widened bound, and the other guests (other grammars, values) never.
 /// The tape tags of the grammars `v`'s requests name (decision 0431 R6: the tags whose tapes a run reads before its
 /// first wave); `None` where a request's grammar is not a constant, so any grammar may be asked.
 pub(super) fn grammar_tags(v: &crate::code_rule_dsl::logic::program_image::Version) -> Option<std::collections::BTreeSet<i64>> {
@@ -357,11 +353,20 @@ pub(super) fn grammar_tags(v: &crate::code_rule_dsl::logic::program_image::Versi
     Some(tags)
 }
 
-pub(super) fn guests_seen(v: &crate::code_rule_dsl::logic::program_image::Version) -> Seen {
+/// Whether `t` is a document bound `combining::FoldOwn` widened to take the annotations in (above `ANNOTATION_KEYS`):
+/// a rule compared with it reads the annotations' documents, which only their requests (`DEMAND`) make.
+pub(super) fn widened(t: crate::code_rule_dsl::logic::program_image::TermRef<'_>) -> bool {
     use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, HIDDEN_KEYS};
-    use crate::code_rule_dsl::logic::program_image::{Lit, TermRef};
+    matches!(t, crate::code_rule_dsl::logic::program_image::TermRef::Int(n) if n > i64::from(ANNOTATION_KEYS) && (n <= i64::from(HIDDEN_KEYS) || n > i64::from(ANNOTATION_KEYS) << 32))
+}
+
+/// The guests `v`'s rules can see. A variable reaches a guest's document only from a guest relation (scoped,
+/// `hiding`): every other base read is bounded below `ANNOTATION_KEYS`, or below `HIDDEN_KEYS` where an annotation's
+/// copies were folded in. So a program that reads no guest relation sees annotations only where a comparison is
+/// against the widened bound, and the other guests (other grammars, values) never.
+pub(super) fn guests_seen(v: &crate::code_rule_dsl::logic::program_image::Version) -> Seen {
+    use crate::code_rule_dsl::logic::program_image::Lit;
     let entry = |rel: &str| READS.contains(&rel) || super::hiding::ENTRIES.iter().any(|(r, ..)| *r == rel);
-    let widened = |t: TermRef<'_>| matches!(t, TermRef::Int(n) if n > i64::from(ANNOTATION_KEYS) && (n <= i64::from(HIDDEN_KEYS) || n > i64::from(ANNOTATION_KEYS) << 32));
     let mut seen = Seen::Code;
     for r in v.rules() {
         for l in r.body() {
@@ -446,7 +451,7 @@ impl Guests {
         Ok(got)
     }
 
-    /// `@parse`'s or `@splice`'s value (`request`), asked inside the chunk's fixpoint (decision 0431 §8, Q268): made and
+    /// `@parse`'s or `@splice`'s value (`request`), asked inside the chunk's fixpoint (decision 0431 §8, Q325): made and
     /// added to `docs`, or `None` where it was asked before, made before (its askers then grow), or makes no value.
     pub(super) fn admit_value(&mut self, docs: &mut Vec<Document>, request: Request, parses: &Parses<'_>) -> Result<Option<Document>, String> {
         if !self.asked.insert(request.clone()) {
@@ -536,8 +541,9 @@ impl Guests {
             digest,
             facts,
             guest: Some(Arc::new(Guest { host: 0, file: 0, at: 0, grammar: grammar_name.to_owned(), role: role.to_owned(), root, place: none.clone(), in_file: none, made: Made::Tape { places: vec![here] } })),
-            // A tape value is no module's: its text is a string's, not a file's.
+            // A tape value is no module's, and no package's: its text is a string's, not a file's.
             module: None,
+            unpackaged: false,
             tape: None,
         }))
     }
@@ -661,6 +667,7 @@ impl Guests {
             facts,
             guest: Some(Arc::new(Guest { host: host_key, file, at, grammar: label.to_owned(), role: role.to_owned(), root, place, in_file, made: Made::Host })),
             module: host.module.clone(),
+            unpackaged: host.unpackaged,
             tape,
         }))
     }
@@ -690,6 +697,7 @@ impl Guests {
             guest: Some(Arc::new(Guest { host: 0, file: 0, at: 0, grammar: grammar_name.to_owned(), role: "value".to_owned(), root, place: Placement::At([0, 0]), in_file: Placement::At([0, 0]), made })),
             // A value is no module's: its text is a rule's, not a file's.
             module: None,
+            unpackaged: false,
             tape: None,
         }))
     }

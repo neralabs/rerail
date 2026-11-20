@@ -441,9 +441,7 @@ pub fn drop_dead_columns(px: &Patterns, prog: &mut Program, entries: &[usize], h
         let (text, cs) = calls_in(prog, e);
         let mut rest = masked(px, &text).into_bytes();
         for (a, b, ..) in &cs {
-            for k in *a..=*b {
-                rest[k] = b' ';
-            }
+            rest[*a..=*b].fill(b' ');
         }
         let rest = String::from_utf8_lossy(&rest).into_owned();
         let mut direct = upper_vars(px, &rest);

@@ -1,9 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { codeRuleSchema, loadNativeBinding } from "../../../src/engine/index.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const native = loadNativeBinding();
 const caps = readFileSync(new URL("../../../native/src/code_rule_dsl/capabilities.json", import.meta.url), "utf8");
@@ -118,5 +119,5 @@ it.each([false, true])("invalidates source reads without evidence, including evi
     const removed = JSON.parse(await workspace.applyAsync(JSON.stringify({ revision: 3, files: [], removed: ["settings.py"] }))).evaluation;
     expect(removed).toMatchObject(evaluate(rule, [initial[0]!]));
     expect(removed.violations[0].variables.row.text).toBeNull();
-  } finally { workspace.close(); if (root) rmSync(root, { recursive: true, force: true }); }
+  } finally { workspace.close(); if (root) removeFolderSync(root); }
 });

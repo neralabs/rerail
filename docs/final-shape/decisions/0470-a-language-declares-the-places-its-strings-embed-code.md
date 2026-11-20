@@ -75,7 +75,7 @@ A file whose text names no place's last segment (`Markup`, `mark_safe`, `format_
 this embed: one substring search per name settles it.
 
 The parse-time `FileImage::embedding` has no tape document, so it makes no `call-argument` program. 0431 already
-reads a file's programs from the batch, not from the parse (Q268).
+reads a file's programs from the batch, not from the parse (Q325).
 
 ### 5. A place's program stands at its argument, and is not the file's own program
 
@@ -166,4 +166,3 @@ At step 2 (no `.embedded` setting, so the run's files are as before): 29,747 fin
 - R7: `a_run_reads_the_files_holding_its_programs_only_when_asked` (an HTML run over a Python file's Markup string
   and a JavaScript run over an HTML file's script, each with and without `.embedded on`).
 - Lean parsers read a file that embeds code: `a_file_that_embeds_code_is_read_by_its_lean_parser`.
-

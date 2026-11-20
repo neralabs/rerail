@@ -1,7 +1,7 @@
 //! Dependency-directed invalidation of live join plans. Slot zero is a relation's row count;
 //! slot c + 1 is column c's distribution (NDV, fanout and complete value frequencies).
 use super::body::Body;
-use super::{Constant, Literal, Model, Rule, Step, Term, near};
+use super::{Constant, Model, Step, near};
 use crate::code_rule_dsl::logic::program_image::TermRef;
 use std::collections::{BTreeMap, HashMap};
 
@@ -95,11 +95,10 @@ impl Watch {
     }
     pub fn rows(&mut self, rel: usize, rows: i64) {
         let old = self.rows[rel].replace(rows);
-        if old.is_none_or(|old| (old == 0) != (rows == 0)) {
-            if let Some(version) = self.versions[rel].first() {
+        if old.is_none_or(|old| (old == 0) != (rows == 0))
+            && let Some(version) = self.versions[rel].first() {
                 for &p in &version.readers { self.dirty[p] = true; }
             }
-        }
     }
     pub fn delta(&mut self, rel: usize, rows: i64) {
         self.deltas[rel] = rows;
@@ -145,10 +144,9 @@ pub mod tests {
     use super::*;
     #[test]
     fn only_affected_active_plans_reconsider_their_signatures() {
-        let program = crate::code_rule_dsl::logic::rr::parse(
+        let made = crate::code_rule_dsl::logic::rr::parse_version(
             ".decl a(x:number,y:number)\n.decl b(x:number)\n.decl c(x:number)\n.decl p(x:number)\n.decl q(x:number)\np(x) :- a(x,_), b(x).\nq(x) :- c(x).\n").unwrap();
         let rels = BTreeMap::from([("a".into(),0),("b".into(),1),("c".into(),2)]);
-        let made = super::super::body::made(&program.rules).unwrap();
         let probes = vec![(super::super::body::nth(&made,0),0),(super::super::body::nth(&made,1),0)];
         let mut w = Watch::new(&rels,&probes);
         assert!(!w.take(0), "empty deltas defer planning, including the first wave");

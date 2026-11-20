@@ -1,6 +1,6 @@
 # 0495. A rule file holds its JSON objects, regexes and patterns as programs
 
-Status: decided (2026-11-20), by the user: "Do it now", for Q268 item 4 (the rule-file language declares no embeds).
+Status: decided (2026-11-20), by the user: "Do it now", for Q325 item 4 (the rule-file language declares no embeds).
 Continues 0431 §4 (a file's programs are its grammar's declaration), 0466 (a fragment starts at a node kind, by a
 hand-written parser) and 0470 (a language declares the places its strings hold code).
 
@@ -73,7 +73,7 @@ nodes stand at the file's bytes. It is a program per place, at the leaf.
 - Step 3: `python-pattern`, `pattern` (`embed::rule_pattern`), and the tape verdict.
 - **Found on the way (Q385)**: under `.embedded on`, a host file's own nodes are shown. Hiding runs only for a program
   that makes guests. Running it for `.embedded on` too hides the programs with the host: a program node's document is
-  its host's hidden key (Q267), and annotations need that document bound. Left open, with an ignored test.
+  its host's hidden key (Q324), and annotations need that document bound. Left open, with an ignored test.
 
 ## Requirements (each with its test before the code)
 

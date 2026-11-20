@@ -6,9 +6,9 @@
 //! literal_json(n, v)                 W's pythonAst `literal_json` of expression node n: `json.dumps(ast.literal_eval(
 //!                                    node), sort_keys=True, separators=(",", ":"))` of the `ast` node at n's span
 //!                                    whose class n's kind is (W's `KINDS`); no row where either raises
-//! cpython_unparse(n, s)              core.rr's @py_unparse(n): `ast.unparse` of the `ast` expression (keyword, arg,
+//! cpython_unparse(n, s)              core.rerail's @py_unparse(n): `ast.unparse` of the `ast` expression (keyword, arg,
 //!                                    alias) at n's span whose class n's kind is
-//! cpython_ast_dump(n, s)             core.rr's @ast_dump(n): `ast.dump(node, include_attributes=False)` of the
+//! cpython_ast_dump(n, s)             core.rerail's @ast_dump(n): `ast.dump(node, include_attributes=False)` of the
 //!                                    `ast` node at n's span whose class n's kind is
 //! dump_sha256(n, h)                  W's `dump_sha256`: sha256 of that dump (lowercase hex)
 //! body_sha256(f, h)                  W's `body_sha256` of def f: of `ast.dump(ast.Module(body=f.body, type_ignores=[]))`
@@ -16,7 +16,7 @@
 //!                                    dump(ast.Tuple(elts=type_params))`
 //! ```
 //!
-//! `cpython_syntax_error` is core.rr's `syntax_error(d, l, msg)` of a Python document under the name the converter
+//! `cpython_syntax_error` is core.rerail's `syntax_error(d, l, msg)` of a Python document under the name the converter
 //! gives it: both read the tape's one cached verdict (`Facts::python_syntax`, `python_syntax::error`); the tape's
 //! `syntax_error(d)` (an ERROR or MISSING node) is apart. Where `ast.parse` raises no `SyntaxError` but another
 //! exception (a format spec's `UnicodeDecodeError`), a batch reading any of these relations for that document fails,

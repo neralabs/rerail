@@ -3,7 +3,7 @@
 Status: decided (2026-11-19), by the user: "we need to allow a parse to start from a given node type. For example, a
 Python annotation is not a module. It's a type. A JSX document doesn't start with a <html> tag. And so on." For
 dialects that only tree-sitter parses: "Hand-written parsers only". Comes before 0431's next step, embeds a language
-declares at known places (Q268, the user's choice 2).
+declares at known places (Q325, the user's choice 2).
 
 Amends 0082 §1 (a fragment's start symbol). Uses 0431's tape values.
 

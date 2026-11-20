@@ -245,7 +245,13 @@ fn blank_lines<D: Doc>(
     // The lines strictly inside `stretch` (between two leaves) whose text is all space.
     let blank_in = |stretch: Range<usize>| {
         let (first, last) = (lines.line(stretch.start), lines.line(stretch.end));
-        (first + 1..last).filter(|&line| source.get(lines.start(line)..lines.end(line)).is_some_and(|text| text.chars().all(is_space))).count()
+        (first + 1..last)
+            .filter(|&line| {
+                source
+                    .get(lines.start(line)..lines.end(line))
+                    .is_some_and(|text| text.chars().all(is_space))
+            })
+            .count()
     };
     let mut blank = 0;
     // Where the walk last left: the node's start (before) or end (after), then each leaf's far
@@ -280,10 +286,13 @@ fn blank_lines<D: Doc>(
         };
         current = next;
     }
-    Some(blank + blank_in(match side {
-        Side::Before => gap.start..at,
-        Side::After => at..gap.end,
-    }))
+    Some(
+        blank
+            + blank_in(match side {
+                Side::Before => gap.start..at,
+                Side::After => at..gap.end,
+            }),
+    )
 }
 
 /// Space between tokens: what the grammars' extras pass over (Unicode white space, and the

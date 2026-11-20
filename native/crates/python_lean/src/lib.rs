@@ -506,7 +506,7 @@ pub fn tape(src: &[u8]) -> Result<Tape, Refusal> {
 }
 
 /// [`tape`], the parser's writer writing to `finish`'s target and finished by it: format 15's columns (`tape`), or
-/// format 16 written by its ops as the parse goes (`Writer::finish_16`, decision 0426).
+/// format 16 written by its ops as the parse goes (`Writer::finish_16`, decision 0434).
 pub fn tape_into<T>(src: &[u8], finish: &mut dyn rerail_tape_format::Sink<T>) -> Result<T, Refusal> {
     module_into(src, finish, lex::lex_joined)
 }

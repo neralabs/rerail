@@ -6,8 +6,9 @@
 //! chunk once, and each row its own 16 low bits. Every other column is kept as narrow as its values let it, exactly:
 //! `Low16` (every value in its row's chunk), `I32`, or `I64`. A group is cut into tiles of 256 rows.
 
-use super::join::{Held, Pass, compile, queue};
-use super::shared;
+use super::join::{Held, Pass, Pipe, pipeline};
+use rerail_device::device::Buffer;
+use std::sync::Arc;
 
 /// How a gathered column is held on the device.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,7 +38,7 @@ pub struct Resident {
 const TILE: usize = 256;
 
 /// `values` (as `T`, each exactly) written into a pooled buffer.
-fn packed<T: Copy>(_device: &metal::Device, values: impl ExactSizeIterator<Item = T>) -> Result<Held, String> {
+fn packed<T: Copy>(values: impl ExactSizeIterator<Item = T>) -> Result<Held, String> {
     Held::of(values)
 }
 
@@ -46,7 +47,7 @@ impl Resident {
     /// the lead's chunks (`rows_sort`), then per column one gather in that order, its form from the gathered
     /// values (each in its row's chunk; its span), and one pass writing it into its buffer.
     pub fn new(columns: &[&[i64]], rows: usize) -> Result<Self, String> {
-        let device = &shared::get().ok_or("no Metal device")?.device;
+        super::join::device()?;
         let lead = columns.first().ok_or("a relation of no columns")?;
         let chunks: Vec<i64> = lead[..rows].iter().map(|&v| v >> 16).collect();
         let sorted = crate::rows::sort(&chunks);
@@ -71,13 +72,13 @@ impl Resident {
             let (min, max) = crate::rows::span(&v).unwrap_or((0, 0));
             let (form, buffer) = if low16 {
                 bytes += 2 * rows;
-                (Form::Low16, packed(device, v.iter().map(|&x| x as u16))?)
+                (Form::Low16, packed(v.iter().map(|&x| x as u16))?)
             } else if min >= i64::from(i32::MIN) && max <= i64::from(i32::MAX) {
                 bytes += 4 * rows;
-                (Form::I32, packed(device, v.iter().map(|&x| x as i32))?)
+                (Form::I32, packed(v.iter().map(|&x| x as i32))?)
             } else {
                 bytes += 8 * rows;
-                (Form::I64, packed(device, v.iter().copied())?)
+                (Form::I64, packed(v.iter().copied())?)
             };
             forms.push(form);
             buffers.push(buffer);
@@ -90,11 +91,11 @@ impl Resident {
             group_list,
             forms,
             bytes,
-            tiles: packed(device, tiles.into_iter())?,
+            tiles: packed(tiles.into_iter())?,
             tile_count,
-            highs: packed(device, highs.into_iter())?,
+            highs: packed(highs.into_iter())?,
             columns: buffers,
-            perm: packed(device, perm.into_iter())?,
+            perm: packed(perm.into_iter())?,
         })
     }
 }
@@ -115,39 +116,31 @@ pub struct Joined {
 /// scan of the threads' counts between: the pairs in order, sized exactly. For a plain equi-join the sort and probe
 /// (`metal_sort`) does only the pairs' work; the tile is for pairs a key cannot find (containment, order).
 pub fn tile_join(left: &Resident, lkeys: &[usize], right: &Resident, rkeys: &[usize]) -> Result<Joined, String> {
-    let queue = queue()?;
-    let command = queue.new_command_buffer();
-    let pass = Pass::new(command);
+    let pass = Pass::new()?;
     let job = TileJob::count(&pass, left, lkeys, right, rkeys)?;
-    pass.end();
-    let mut gpu = super::join::commit_wait(command)?;
-    let command = queue.new_command_buffer();
-    let pass = Pass::new(command);
+    let mut gpu = pass.commit_wait()?;
+    let pass = Pass::new()?;
     let job = job.scatter(&pass, left, lkeys, right, rkeys)?;
-    pass.end();
     if job.total > 0 {
-        gpu += super::join::commit_wait(command)?;
+        gpu += pass.commit_wait()?;
     }
     Ok(Joined { pairs: job.pairs(), gpu_seconds: gpu, compared: job.compared })
 }
 
-/// A tile join encoded into a caller's passes (several in one command buffer each, decision 0100 §5): its count
-/// pass first, then, once that command buffer completed and the pairs are counted, its scatter.
+/// A tile join encoded into a caller's passes (several in one submission each, decision 0100 §5): its count
+/// pass first, then, once that submission completed and the pairs are counted, its scatter.
 pub struct TileJob {
     tiles: usize,
     threads: usize,
     tiles_buf: Held,
     highs_buf: Held,
-    unused: Held,
     _counts: Held,
     offsets: Held,
-    /// The scan's count: read by the device, so held as long as the job (a dropped lease is the pool's to hand out).
-    _n: Held,
-    scatter_pipe: metal::ComputePipelineState,
+    scatter_pipe: Arc<Pipe>,
     out: Option<Held>,
-    /// What the pairs' sort reads and writes, until its command buffer completed.
+    /// What the pairs' sort reads and writes, until its submission completed.
     keep: Vec<Held>,
-    /// The pairs (after the count's command buffer completed and `scatter`).
+    /// The pairs (after the count's submission completed and `scatter`).
     pub total: usize,
     /// The pairs of rows the kernel compares: the brute force's work.
     pub compared: u64,
@@ -155,8 +148,8 @@ pub struct TileJob {
 
 impl TileJob {
     /// The count pass of the join of `left` and `right` on their key columns, encoded into `pass`.
-    pub fn count(pass: &Pass<'_>, left: &Resident, lkeys: &[usize], right: &Resident, rkeys: &[usize]) -> Result<TileJob, String> {
-    shared::get().ok_or("no Metal device")?;
+    pub fn count(pass: &Pass, left: &Resident, lkeys: &[usize], right: &Resident, rkeys: &[usize]) -> Result<TileJob, String> {
+    super::join::device()?;
     if lkeys.is_empty() || lkeys.len() != rkeys.len() || lkeys.len() > 3 || lkeys[0] != 0 || rkeys[0] != 0 || left.forms[0] != Form::Low16 || right.forms[0] != Form::Low16 {
         return Err("a tile join takes one to three keys, each side's key 0 its column 0".into());
     }
@@ -179,131 +172,135 @@ impl TileJob {
         }
     }
     let ty = |f: Form| match f {
-        Form::Low16 => "ushort",
-        Form::I32 => "int",
-        Form::I64 => "long",
+        Form::Low16 => "uint16_t",
+        Form::I32 => "int32_t",
+        Form::I64 => "int64_t",
     };
     let full = |side: char, g: usize, f: Form, row: &str| match f {
-        Form::Low16 => format!("((high << 16) | long({side}{g}[{row}]))"),
-        Form::I32 => format!("long({side}{g}[{row}])"),
+        Form::Low16 => format!("((high << 16) | (int64_t){side}{g}[{row}])"),
+        Form::I32 => format!("(int64_t){side}{g}[{row}]"),
         _ => format!("{side}{g}[{row}]"),
     };
     let k = lkeys.len();
-    let lcols: String = lkeys.iter().enumerate().map(|(i, &c)| format!(", device const {}* l{i} [[buffer({})]]", ty(left.forms[c]), 3 + i)).collect();
-    let rcols: String = rkeys.iter().enumerate().map(|(i, &c)| format!(", device const {}* r{i} [[buffer({})]]", ty(right.forms[c]), 3 + k + i)).collect();
-    let n = 3 + 2 * k;
+    let rows: String = lkeys
+        .iter()
+        .enumerate()
+        .map(|(i, &c)| format!("               ROBUFFER, {}, l{i}, \"[left rows]\",\n", ty(left.forms[c])))
+        .chain(rkeys.iter().enumerate().map(|(i, &c)| format!("               ROBUFFER, {}, r{i}, \"[right rows]\",\n", ty(right.forms[c]))))
+        .collect();
     // Stage the right keys; compare. Each key 16 bits when both sides hold it in the chunk's terms
     // (`Low16`), else 64.
     let narrow: Vec<bool> = (0..k).map(|i| left.forms[lkeys[i]] == Form::Low16 && right.forms[rkeys[i]] == Form::Low16).collect();
-    let (mut stage, mut decl, mut mine) = (String::new(), String::new(), String::new());
+    let (mut stage, mut shared_rows, mut mine) = (String::new(), String::new(), String::new());
     let mut test = String::from("true");
     for i in 0..k {
         let (lf, rf) = (left.forms[lkeys[i]], right.forms[rkeys[i]]);
-        let ty = if narrow[i] { "ushort" } else { "long" };
-        decl.push_str(&format!("    threadgroup {ty} s{i}[256];\n"));
+        let ty = if narrow[i] { "uint16_t" } else { "int64_t" };
+        shared_rows.push_str(&format!("               SHARED, {ty}, s{i}, 256,\n"));
         let (r, l) = if narrow[i] { (format!("r{i}[rs + j]"), format!("l{i}[lrow]")) } else { (full('r', i, rf, "rs + j"), full('l', i, lf, "lrow")) };
-        stage.push_str(&format!("        if (j < rc) {{ s{i}[t] = {r}; }}\n"));
-        mine.push_str(&format!("    {ty} mine{i} = live ? {l} : 0;\n"));
+        stage.push_str(&format!("    if (j < rc) {{ s{i}[t] = {r}; }}\n"));
+        mine.push_str(&format!("  {ty} mine{i} = live ? ({ty}){l} : ({ty})0;\n"));
         test.push_str(&format!(" && s{i}[q] == mine{i}"));
     }
+    let lp: String = (0..k)
+        .map(|i| format!(", UKL_GLOBAL const {}* l{i}", ty(left.forms[lkeys[i]])))
+        .chain((0..k).map(|i| format!(", UKL_GLOBAL const {}* r{i}", ty(right.forms[rkeys[i]]))))
+        .collect();
+    let la: String = (0..k).map(|i| format!(", l{i}")).chain((0..k).map(|i| format!(", r{i}"))).collect();
+    let tgp: String = (0..k).map(|i| format!(", UKL_LOCAL {}* s{i}", if narrow[i] { "uint16_t" } else { "int64_t" })).collect();
+    let tga: String = (0..k).map(|i| format!(", s{i}")).collect();
+    let common = super::join::COMMON;
     let src = format!(
-        r#"#include <metal_stdlib>
-using namespace metal;
-struct JoinTile {{ uint ls; uint lc; uint rs; uint rc; }};
+        r#"{common}
+// A tile join's tile: its left rows (first, count) and its group's right rows.
+typedef struct JoinTile {{ uint32_t ls; uint32_t lc; uint32_t rs; uint32_t rc; }} JoinTile;
 
-static inline void pairs(uint tg, uint t, device const JoinTile* tiles, device const long* highs{lp}, device const uint* offsets, device const uint* lperm, device const uint* rperm, device uint* out, device uint* counts, bool write{tgp}) {{
-    JoinTile tile = tiles[tg];
-    long high = highs[tg];
-    bool live = t < tile.lc;
-    uint lrow = tile.ls + min(t, tile.lc - 1);
-{mine}    uint n = 0;
-    uint at = write ? offsets[tg * 256 + t] : 0;
-    for (uint base = 0; base < tile.rc; base += 256) {{
-        uint j = base + t;
-        uint rc = tile.rc;
-        uint rs = tile.rs;
-{stage}        threadgroup_barrier(mem_flags::mem_threadgroup);
-        uint m = min(256u, rc - base);
-        for (uint q = 0; q < m; q++) {{
-            if (live && {test}) {{
-                if (write) {{ out[2 * (at + n)] = lperm[lrow]; out[2 * (at + n) + 1] = rperm[rs + base + q]; }}
-                n++;
-            }}
-        }}
-        threadgroup_barrier(mem_flags::mem_threadgroup);
+// A thread's left row against its group's right rows, staged 256 at a time: counted, or written at its offset.
+UKL_INLINE void tile_pairs(uint32_t tg, uint32_t t, UKL_GLOBAL const JoinTile* tiles, UKL_GLOBAL const int64_t* highs{lp},
+                           UKL_GLOBAL const uint32_t* offsets, UKL_GLOBAL const uint32_t* lperm, UKL_GLOBAL const uint32_t* rperm,
+                           UKL_GLOBAL uint32_t* out, UKL_GLOBAL uint32_t* counts, bool write{tgp})
+{{
+  JoinTile tile = tiles[tg];
+  int64_t high = highs[tg];
+  bool live = t < tile.lc;
+  uint32_t lrow = tile.ls + ukl_min(t, tile.lc - 1u);
+{mine}  uint32_t n = 0u;
+  uint32_t at = write ? offsets[tg * 256u + t] : 0u;
+  for (uint32_t base = 0u; base < tile.rc; base += 256u) {{
+    uint32_t j = base + t;
+    uint32_t rc = tile.rc;
+    uint32_t rs = tile.rs;
+{stage}    ukl_tg_barrier();
+    uint32_t m = ukl_min(256u, rc - base);
+    for (uint32_t q = 0u; q < m; q++) {{
+      if (live && {test}) {{
+        if (write) {{ out[2u * (at + n)] = lperm[lrow]; out[2u * (at + n) + 1u] = rperm[rs + base + q]; }}
+        n++;
+      }}
     }}
-    if (!write) counts[tg * 256 + t] = n;
+    ukl_tg_barrier();
+  }}
+  if (!write) counts[tg * 256u + t] = n;
 }}
 
-kernel void tile_count(device const JoinTile* tiles [[buffer(0)]], device const long* highs [[buffer(1)]], constant uint* unused [[buffer(2)]]{lcols}{rcols},
-                       device uint* counts [[buffer({n})]], uint tg [[threadgroup_position_in_grid]], uint t [[thread_index_in_threadgroup]]) {{
-{decl}    pairs(tg, t, tiles, highs{la}, counts, counts, counts, counts, counts, false{tga});
+DEFINE_KERNEL2(join, tile_count,
+               ROBUFFER, JoinTile, tiles, "[groups]",
+               ROBUFFER, int64_t, highs, "[groups]",
+{rows}               RWBUFFER, uint32_t, counts, "[256 * groups]",
+{shared_rows}               TGID0, uint32_t, tg, ,
+               LID0, uint32_t, t, )
+{{
+  tile_pairs(tg, t, tiles, highs{la}, counts, counts, counts, counts, counts, false{tga});
 }}
 
-kernel void tile_scatter(device const JoinTile* tiles [[buffer(0)]], device const long* highs [[buffer(1)]], constant uint* unused [[buffer(2)]]{lcols}{rcols},
-                         device const uint* offsets [[buffer({n})]], device const uint* lperm [[buffer({n1})]], device const uint* rperm [[buffer({n2})]], device uint* out [[buffer({n3})]],
-                         uint tg [[threadgroup_position_in_grid]], uint t [[thread_index_in_threadgroup]]) {{
-{decl}    pairs(tg, t, tiles, highs{la}, offsets, lperm, rperm, out, out, true{tga});
+DEFINE_KERNEL2(join, tile_scatter,
+               ROBUFFER, JoinTile, tiles, "[groups]",
+               ROBUFFER, int64_t, highs, "[groups]",
+{rows}               ROBUFFER, uint32_t, offsets, "[256 * groups + 1]",
+               ROBUFFER, uint32_t, lperm, "[left rows]",
+               ROBUFFER, uint32_t, rperm, "[right rows]",
+               RWBUFFER, uint32_t, out, "[2 * pairs]",
+{shared_rows}               TGID0, uint32_t, tg, ,
+               LID0, uint32_t, t, )
+{{
+  tile_pairs(tg, t, tiles, highs{la}, offsets, lperm, rperm, out, out, true{tga});
 }}
 
-kernel void rows_scan(device const uint* counts [[buffer(0)]], device uint* offsets [[buffer(1)]], constant uint* n [[buffer(2)]],
-                      uint t [[thread_index_in_threadgroup]]) {{
-    uint per = (n[0] + 255) / 256;
-    uint lo = min(n[0], t * per), hi = min(n[0], lo + per);
-    uint s = 0;
-    for (uint k = lo; k < hi; k++) s += counts[k];
-    threadgroup uint part[256];
-    part[t] = s;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    uint base = 0;
-    for (uint k = 0; k < t; k++) base += part[k];
-    for (uint k = lo; k < hi; k++) {{ offsets[k] = base; base += counts[k]; }}
-    if (t == 255) offsets[n[0]] = base;
-}}
-"#,
-        lp = (0..k).map(|i| format!(", device const {}* l{i}", ty(left.forms[lkeys[i]]))).chain((0..k).map(|i| format!(", device const {}* r{i}", ty(right.forms[rkeys[i]])))).collect::<String>(),
-        la = (0..k).map(|i| format!(", l{i}")).chain((0..k).map(|i| format!(", r{i}"))).collect::<String>(),
-        n1 = n + 1,
-        n2 = n + 2,
-        n3 = n + 3,
-        tgp = (0..k).map(|i| format!(", threadgroup {}* s{i}", if narrow[i] { "ushort" } else { "long" })).collect::<String>(),
-        tga = (0..k).map(|i| format!(", s{i}")).collect::<String>(),
+"#
     );
     let variant: String = (0..k).map(|i| format!("{:?}{:?}{}", left.forms[lkeys[i]], right.forms[rkeys[i]], narrow[i])).collect();
-    let pipe = |name: &str| shared::pipeline(&format!("tile {variant} {name}"), || compile(&src, name));
-    let (count, prefix, scatter) = (pipe("tile_count")?, pipe("rows_scan")?, pipe("tile_scatter")?);
+    let pipe = |name: &str| pipeline(&format!("tile {variant}"), name, || src.clone());
+    let (count, prefix, scatter) = (pipe("tile_count")?, super::join::fixed("rows_scan")?, pipe("tile_scatter")?);
     let threads = tiles.len() * TILE;
     let tiles_buf = Held::of(tiles.iter().copied())?;
     let highs_buf = Held::of(highs.iter().copied())?;
-    let unused = Held::new(4)?;
     let counts = Held::new(4 * threads)?;
     let offsets = Held::new(4 * (threads + 1))?;
     // SAFETY: the offsets' last word, the total, is read after completion; with no tiles nothing writes it.
     unsafe { *offsets.buffer.contents().cast::<u32>().add(threads) = 0 };
-    let nbuf = Held::of([threads as u32].into_iter())?;
-    let mut inputs: Vec<&metal::BufferRef> = vec![&tiles_buf.buffer, &highs_buf.buffer, &unused.buffer];
-    inputs.extend(lkeys.iter().map(|&c| &*left.columns[c].buffer));
-    inputs.extend(rkeys.iter().map(|&c| &*right.columns[c].buffer));
+    let mut inputs: Vec<&Buffer> = vec![&tiles_buf.buffer, &highs_buf.buffer];
+    inputs.extend(lkeys.iter().map(|&c| &left.columns[c].buffer));
+    inputs.extend(rkeys.iter().map(|&c| &right.columns[c].buffer));
     if !tiles.is_empty() {
         let mut with = inputs;
         with.push(&counts.buffer);
         pass.run(&count, &with, &[], &[], tiles.len());
-        pass.run(&prefix, &[&counts.buffer, &offsets.buffer, &nbuf.buffer], &[], &[], 1);
+        pass.run(&prefix, &[&counts.buffer, &offsets.buffer], &[threads as u32], &[], 1);
     }
-    // Every buffer the passes read is the job's until its command buffers completed.
-    Ok(TileJob { tiles: tiles.len(), threads, tiles_buf, highs_buf, unused, _counts: counts, offsets, _n: nbuf, scatter_pipe: scatter, out: None, keep: Vec::new(), total: 0, compared })
+    // Every buffer the passes read is the job's until its submissions completed.
+    Ok(TileJob { tiles: tiles.len(), threads, tiles_buf, highs_buf, _counts: counts, offsets, scatter_pipe: scatter, out: None, keep: Vec::new(), total: 0, compared })
     }
 
-    /// The scatter, encoded into `pass`, once the count's command buffer completed (the same sides and keys).
-    pub fn scatter(mut self, pass: &Pass<'_>, left: &Resident, lkeys: &[usize], right: &Resident, rkeys: &[usize]) -> Result<TileJob, String> {
+    /// The scatter, encoded into `pass`, once the count's submission completed (the same sides and keys).
+    pub fn scatter(mut self, pass: &Pass, left: &Resident, lkeys: &[usize], right: &Resident, rkeys: &[usize]) -> Result<TileJob, String> {
         // SAFETY: `threads + 1` offsets, written by the scan (or zeroed), read after completion.
         self.total = unsafe { *self.offsets.buffer.contents().cast::<u32>().add(self.threads) } as usize;
         let out = Held::new(8 * self.total)?;
         if self.total > 0 {
-            let mut with: Vec<&metal::BufferRef> = vec![&self.tiles_buf.buffer, &self.highs_buf.buffer, &self.unused.buffer];
-            with.extend(lkeys.iter().map(|&c| &*left.columns[c].buffer));
-            with.extend(rkeys.iter().map(|&c| &*right.columns[c].buffer));
-            with.extend([&*self.offsets.buffer, &*left.perm.buffer, &*right.perm.buffer, &*out.buffer]);
+            let mut with: Vec<&Buffer> = vec![&self.tiles_buf.buffer, &self.highs_buf.buffer];
+            with.extend(lkeys.iter().map(|&c| &left.columns[c].buffer));
+            with.extend(rkeys.iter().map(|&c| &right.columns[c].buffer));
+            with.extend([&self.offsets.buffer, &left.perm.buffer, &right.perm.buffer, &out.buffer]);
             pass.run(&self.scatter_pipe, &with, &[], &[], self.tiles);
         }
         self.out = Some(out);
@@ -312,7 +309,7 @@ kernel void rows_scan(device const uint* counts [[buffer(0)]], device uint* offs
 
     /// The scattered pairs sorted into the kernel's order (left row, then right row) on the device, encoded into
     /// `pass` after `scatter`: `left_rows` and `right_rows` are the sides' host rows, which bound the sort's key.
-    pub fn sort(mut self, pass: &Pass<'_>, left_rows: usize, right_rows: usize) -> Result<TileJob, String> {
+    pub fn sort(mut self, pass: &Pass, left_rows: usize, right_rows: usize) -> Result<TileJob, String> {
         let bits = |n: usize| usize::BITS - n.saturating_sub(1).leading_zeros();
         if let Some(out) = self.out.take() {
             let sorted = Held::new(8 * self.total)?;
@@ -324,7 +321,7 @@ kernel void rows_scan(device const uint* counts [[buffer(0)]], device uint* offs
     }
 
     /// The pairs, (left host row, right host row), in tile order (in row order after `sort`): after the scatter's
-    /// command buffer completed.
+    /// submission completed.
     pub fn pairs(&self) -> Vec<(u32, u32)> {
         let Some(out) = &self.out else { return Vec::new() };
         // SAFETY: `2 * total` words, written by the scatter.

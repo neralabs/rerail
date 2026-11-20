@@ -116,7 +116,7 @@ fn domains(name: &str) -> (&'static [usize], &'static [usize]) {
         // Decision 0431: a string's parsed nodes are its file's rows.
         "guest_of" | "guest_place" => (&[1], &[]),
         "str_part" | "str_part_word" => (&[0, 3], &[]),
-        "doc" | "pkg" | "path_part" | "file_name" | "source" | "src_line" | "split_line"
+        "doc" | "pkg" | "unpackaged" | "path_part" | "file_name" | "source" | "src_line" | "split_line"
         | "lf_line" | "line_count" | "syntax_error" | "tape_of" => (&[], &[0]),
         // A program's document underneath is its file's shard's.
         "rr_program" => (&[], &[1]),
@@ -350,8 +350,8 @@ impl Source for Family {
             let mut rows = vec![];
             for &v in values {
                 let encoded = if location { v >> 32 } else { v };
-                if let Ok(key) = u32::try_from(encoded) {
-                    if let Some((p, base)) = self.get(key) {
+                if let Ok(key) = u32::try_from(encoded)
+                    && let Some((p, base)) = self.get(key) {
                         rows.extend(
                             p.source
                                 .lookup(c, &[v])?
@@ -359,7 +359,6 @@ impl Source for Family {
                                 .map(|r| self.probe(key, p, base, r)),
                         )
                     }
-                }
             }
             Some(rows)
         } else {

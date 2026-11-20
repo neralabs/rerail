@@ -168,7 +168,7 @@
 
     #[test]
     fn a_policy_targets_rr_files_through_the_shipped_capabilities() {
-        // `capabilities.json` names `rr` (`native:rr`), so a clause over `.rr` files compiles
+        // `capabilities.json` names `rr` (`native:rr`), so a clause over `.rerail` files compiles
         // against the engine's own tree (decision 0061) and reads its kinds.
         let compiled = compile_document_with(
             clause_document(json!({
@@ -180,7 +180,7 @@
         )
         .unwrap_or_else(|error| panic!("{}", error.reason));
         let source = "a(x) :- b(x).\n";
-        let result = evaluate_file(&compiled, "rr", "rules.rr", source);
+        let result = evaluate_file(&compiled, "rr", "rules.rerail", source);
         assert_eq!(matched_texts(&result, source), ["a(x)"], "{result}");
     }
 

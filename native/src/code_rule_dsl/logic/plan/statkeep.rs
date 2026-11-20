@@ -27,13 +27,128 @@ use super::sketch::Sketch;
 /// Values a column's exact map holds at most; past it the map is dropped for the sketch (0096 §1).
 const EXACT: usize = 256;
 
+/// A column's exact counts, value → count, in a block (decision 0478 R5, Q338): open addressing, each slot
+/// `[value, count]`. A count is never 0 (a value whose count goes back to 0 is taken out, the slots after it shifted
+/// back), so a count of 0 is an empty slot. It starts at 16 slots and doubles past half full.
+#[derive(Clone, Default)]
+struct Exact {
+    slots: crate::code_rule_dsl::facts::rows::BlockVec<[i64; 2]>,
+    len: usize,
+}
+impl Exact {
+    fn home(&self, v: i64) -> usize {
+        (super::sketch::mix_of(v) as usize) & (self.slots.len() - 1)
+    }
+    /// The slot holding `v`, or the empty one it would go in.
+    fn slot(&self, v: i64) -> usize {
+        let m = self.slots.len() - 1;
+        let mut at = self.home(v);
+        while self.slots[at][1] != 0 && self.slots[at][0] != v {
+            at = (at + 1) & m;
+        }
+        at
+    }
+    fn room(&mut self) {
+        if !self.slots.is_empty() && 2 * (self.len + 1) <= self.slots.len() {
+            return;
+        }
+        let mut grown = Exact { slots: Default::default(), len: 0 };
+        grown.slots.resize((2 * self.slots.len()).max(16), [0, 0]);
+        for e in self.slots.iter().filter(|e| e[1] != 0) {
+            let at = grown.slot(e[0]);
+            grown.slots[at] = *e;
+            grown.len += 1;
+        }
+        *self = grown;
+    }
+    /// `v`'s count set to `n` (0: taken out).
+    fn insert(&mut self, v: i64, n: i64) {
+        if n == 0 {
+            self.add(v, -self.get(v));
+            return;
+        }
+        self.room();
+        let at = self.slot(v);
+        if self.slots[at][1] == 0 {
+            self.len += 1;
+        }
+        self.slots[at] = [v, n];
+    }
+    fn get(&self, v: i64) -> i64 {
+        if self.len == 0 { 0 } else { self.slots[self.slot(v)][1] }
+    }
+    /// `d` added to `v`'s count; a count back at 0 is taken out.
+    fn add(&mut self, v: i64, d: i64) {
+        if d == 0 {
+            return;
+        }
+        self.room();
+        let at = self.slot(v);
+        if self.slots[at][1] == 0 {
+            self.slots[at] = [v, d];
+            self.len += 1;
+            return;
+        }
+        self.slots[at][1] += d;
+        if self.slots[at][1] != 0 {
+            return;
+        }
+        // Taken out: each entry after it in its run moves back into the hole when its home allows.
+        self.len -= 1;
+        let m = self.slots.len() - 1;
+        let (mut hole, mut at) = (at, (at + 1) & m);
+        self.slots[hole] = [0, 0];
+        while self.slots[at][1] != 0 {
+            let home = self.home(self.slots[at][0]);
+            if (at.wrapping_sub(home) & m) >= (at.wrapping_sub(hole) & m) {
+                self.slots[hole] = self.slots[at];
+                self.slots[at] = [0, 0];
+                hole = at;
+            }
+            at = (at + 1) & m;
+        }
+    }
+    fn len(&self) -> usize {
+        self.len
+    }
+    fn iter(&self) -> impl Iterator<Item = (i64, i64)> + '_ {
+        self.slots.iter().filter(|e| e[1] != 0).map(|e| (e[0], e[1]))
+    }
+    fn values(&self) -> impl Iterator<Item = i64> + '_ {
+        self.iter().map(|(_, n)| n)
+    }
+}
+impl FromIterator<(i64, i64)> for Exact {
+    fn from_iter<I: IntoIterator<Item = (i64, i64)>>(pairs: I) -> Self {
+        let mut e = Exact::default();
+        for (v, n) in pairs {
+            e.insert(v, n);
+        }
+        e
+    }
+}
+/// Equal when they count the same values alike, wherever their slots put them.
+impl PartialEq for Exact {
+    fn eq(&self, other: &Self) -> bool {
+        self.len == other.len && self.iter().all(|(v, n)| other.get(v) == n)
+    }
+}
+impl Eq for Exact {}
+impl std::fmt::Debug for Exact {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut pairs: Vec<(i64, i64)> = self.iter().collect();
+        pairs.sort_unstable();
+        f.debug_map().entries(pairs).finish()
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Column {
     sqd: i64,
     local_ndv: i64,
     /// Documents counted in that hold a value naming another document.
     crossing: i64,
-    exact: Option<FxHashMap<i64, i64>>,
+    exact: Option<Exact>,
     sketch: Sketch,
     /// `paired`: the 0096 sketch of each (document, value) pair's count, whose `sq` is the column's `sqd`.
     pairs: Option<Sketch>,
@@ -91,7 +206,7 @@ fn summed(pairs: &mut Vec<(i64, i64)>) {
 impl RelStats {
     /// No rows yet, of these columns.
     pub(in crate::code_rule_dsl) fn new(columns: Vec<String>) -> Self {
-        let cols = columns.iter().map(|_| Column { exact: Some(FxHashMap::default()), ..Column::default() }).collect();
+        let cols = columns.iter().map(|_| Column { exact: Some(Exact::default()), ..Column::default() }).collect();
         RelStats { columns, rows: 0, partial: false, cols }
     }
 
@@ -350,11 +465,8 @@ impl RelStats {
                         if over {
                             return;
                         }
-                        let e = exact.entry(row[c]).or_default();
-                        *e += sign;
-                        if *e == 0 {
-                            exact.remove(&row[c]);
-                        } else if exact.len() > EXACT {
+                        exact.add(row[c], sign);
+                        if exact.len() > EXACT {
                             over = true;
                         }
                     });
@@ -389,11 +501,7 @@ impl RelStats {
         }
         if let Some(exact) = &mut col.exact {
             for &(v, k) in values {
-                let e = exact.entry(v).or_default();
-                *e += sign * k;
-                if *e == 0 {
-                    exact.remove(&v);
-                }
+                exact.add(v, sign * k);
             }
             if exact.len() > EXACT {
                 col.exact = None;
@@ -436,7 +544,7 @@ impl RelStats {
     /// Column `c`'s count of each value, while it has few enough to keep them exactly (`EXACT`).
     /// Column `c`'s exact map taken out as (value, count) pairs, to be mapped and put back (`put_exact`).
     pub(in crate::code_rule_dsl) fn take_exact(&mut self, c: usize) -> Option<Vec<(i64, i64)>> {
-        self.cols.get_mut(c)?.exact.take().map(|e| e.into_iter().collect())
+        self.cols.get_mut(c)?.exact.take().map(|e| e.iter().collect())
     }
 
     /// Column `c`'s exact map from (value, count) pairs.
@@ -447,7 +555,7 @@ impl RelStats {
     }
 
     pub(in crate::code_rule_dsl) fn exact(&self, c: usize) -> Option<impl Iterator<Item = (i64, i64)> + '_> {
-        self.cols.get(c)?.exact.as_ref().map(|e| e.iter().map(|(v, n)| (*v, *n)))
+        self.cols.get(c)?.exact.as_ref().map(Exact::iter)
     }
 
     /// Bytes `encode` takes, near enough (the exact maps and sketches dominate).
@@ -475,11 +583,11 @@ impl RelStats {
                 None => int(out, -1),
                 Some(e) => {
                     int(out, e.len() as i64);
-                    let mut pairs: Vec<(&i64, &i64)> = e.iter().collect();
+                    let mut pairs: Vec<(i64, i64)> = e.iter().collect();
                     pairs.sort();
                     for (v, k) in pairs {
-                        int(out, *v);
-                        int(out, *k);
+                        int(out, v);
+                        int(out, k);
                     }
                 }
             }
@@ -523,7 +631,7 @@ impl RelStats {
             let exact = if e < 0 {
                 None
             } else {
-                let mut m = FxHashMap::default();
+                let mut m = Exact::default();
                 for _ in 0..e {
                     let v = int(at)?;
                     m.insert(v, int(at)?);
@@ -543,6 +651,39 @@ impl RelStats {
 }
 
 #[cfg(test)]
+mod exact_tests {
+    use super::Exact;
+
+    /// Decision 0478 R5 (Q338): a column's exact counts are slots in a block, and stay a value → count map under
+    /// adds and takes-out in any order, whatever the growth and the shifts after a value taken out.
+    #[test]
+    fn a_columns_exact_counts_are_slots_in_a_block() {
+        let mut e = Exact::default();
+        let mut want = std::collections::BTreeMap::<i64, i64>::new();
+        let mut x = 12345u64;
+        for step in 0..20_000 {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            let v = (x % 300) as i64 - 150;
+            let d = if step % 3 == 0 { -1 } else { 1 };
+            e.add(v, d);
+            let n = want.entry(v).or_default();
+            *n += d;
+            if *n == 0 {
+                want.remove(&v);
+            }
+            assert_eq!(e.len(), want.len());
+        }
+        assert!(e.slots.facts().is_some(), "its slots in a block");
+        let mut got: Vec<(i64, i64)> = e.iter().collect();
+        got.sort_unstable();
+        assert_eq!(got, want.into_iter().collect::<Vec<_>>());
+        assert_eq!(e.iter().collect::<Exact>(), e);
+    }
+}
+
+#[cfg(test)]
 pub mod tests {
     use super::RelStats;
     use crate::code_rule_dsl::facts::vtab::syntax;
@@ -557,7 +698,7 @@ pub mod tests {
     fn measured(docs: &[Vec<i64>]) -> Vec<(String, i64, i64, i64, i64)> {
         let mut cols = vec![Vec::new(); 3];
         for d in docs {
-            for row in d.chunks_exact(3) {
+            for row in d.as_chunks::<3>().0 {
                 for (c, v) in row.iter().enumerate() {
                     cols[c].push(*v);
                 }
@@ -712,8 +853,8 @@ pub mod tests {
             flat.extend([first, i % 4, other]);
         }
         // One document's rows alone, in order (no sort), and its rows reversed (sorted).
-        let one: Vec<i64> = flat.chunks_exact(3).filter(|r| r[0] == 3 || r[0] >> 32 == 3).flatten().copied().collect();
-        let reversed: Vec<i64> = one.chunks_exact(3).rev().flatten().copied().collect();
+        let one: Vec<i64> = flat.as_chunks::<3>().0.iter().filter(|r| r[0] == 3 || r[0] >> 32 == 3).flatten().copied().collect();
+        let reversed: Vec<i64> = one.as_chunks::<3>().0.iter().rev().flatten().copied().collect();
         // Many values in one column: past the exact map's bound.
         let wide: Vec<i64> = (0..700i64).flat_map(|i| [5 << 32 | i, i % 3, i]).collect();
         let names = || vec!["x".to_owned(), "k".into(), "y".into()];

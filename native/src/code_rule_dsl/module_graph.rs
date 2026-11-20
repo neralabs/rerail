@@ -160,10 +160,9 @@ fn summary_of<D: Doc>(root: &Node<'_, D>) -> Summary {
             if !(dynamic || function.kind() == "identifier" && function.text() == "require") {
                 continue;
             }
-            let first = call.field("arguments").and_then(|arguments| {
-                arguments
-                    .first_code()
-            });
+            let first = call
+                .field("arguments")
+                .and_then(|arguments| arguments.first_code());
             specifiers.extend(
                 first
                     .filter(|first| first.kind() == "string")
@@ -177,12 +176,10 @@ fn summary_of<D: Doc>(root: &Node<'_, D>) -> Summary {
 
 /// A directive's text: an expression statement that is only a string literal (comments aside).
 fn directive<D: Doc>(statement: &Node<'_, D>) -> Option<String> {
-    let mut named = statement
-        .named_code();
+    let mut named = statement.named_code();
     let string = named.next().filter(|child| child.kind() == "string")?;
     named.next().is_none().then(|| literal(&string)).flatten()
 }
-
 
 /// A string literal's text between its quotes.
 fn literal<D: Doc>(string: &Node<'_, D>) -> Option<String> {
@@ -595,8 +592,8 @@ impl Stamp {
 type CachedSummary = (Stamp, Arc<Summary>);
 
 /// Summaries of files on disk, by absolute path, across calls.
-static DISK_SUMMARIES: LazyLock<Mutex<HashMap<PathBuf, CachedSummary>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+#[derive(Default)]
+struct DiskSummaries(Mutex<HashMap<PathBuf, CachedSummary>>);
 /// The disk cache is dropped whole beyond this many entries.
 const MAX_CACHED_SUMMARIES: usize = 200_000;
 /// A file modified less than this long before it is read is not cached: a rewrite within the
@@ -640,7 +637,8 @@ pub fn on_disk(
     let mut hits = Vec::with_capacity(sources.len());
     let mut misses = Vec::new();
     {
-        let cache = DISK_SUMMARIES.lock();
+        let held_ = crate::code_rule_dsl::logic::profile::shared::<DiskSummaries>();
+        let cache = held_.0.lock();
         for (relative, absolute, metadata) in sources {
             let path = join(folder, &relative);
             // The overlay's text replaces this source's below; disk's is not read.
@@ -688,7 +686,8 @@ pub fn on_disk(
         files.insert(path, summary);
     }
     if !read.is_empty() {
-        let mut cache = DISK_SUMMARIES.lock();
+        let held_ = crate::code_rule_dsl::logic::profile::shared::<DiskSummaries>();
+        let mut cache = held_.0.lock();
         if cache.len() > MAX_CACHED_SUMMARIES {
             cache.clear();
         }
@@ -742,7 +741,7 @@ pub(crate) fn summarize_bounded(path: &str, source: &str) -> Option<Summary> {
 /// canonical path lies below the root's, so a symlink on the way leads nowhere outside the
 /// workspace.
 pub fn config_on_disk(root: &Path, folder: &str) -> Config {
-    let Ok(canonical_root) = root.canonicalize() else {
+    let Ok(canonical_root) = dunce::canonicalize(root) else {
         return Config::default();
     };
     let read = |path: &str| {
@@ -759,7 +758,7 @@ pub fn config_on_disk(root: &Path, folder: &str) -> Config {
         if !metadata.is_file() || metadata.len() > MAX_SOURCE_BYTES {
             return None;
         }
-        let file = file.canonicalize().ok()?;
+        let file = dunce::canonicalize(file).ok()?;
         file.starts_with(&canonical_root)
             .then(|| std::fs::read_to_string(file).ok())
             .flatten()

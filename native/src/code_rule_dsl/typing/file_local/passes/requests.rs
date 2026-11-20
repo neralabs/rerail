@@ -349,7 +349,7 @@ impl ProgramPass for RequestsFileLocal {
         let input = Arc::clone(w.input());
         let b = w.derive()?;
         if every_node {
-            b.add_input("node");
+            b.fields().add_input("node");
         }
         // Two rules narrowed to one body are one rule (a request's, the tree's `seen`), serving both rules' readers:
         // each rule written with its head and the input rules it came from, so the request record follows
@@ -416,7 +416,7 @@ impl ProgramPass for RequestsFileLocal {
         if !asked.is_empty() {
             let heads: Vec<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
             let old = crate::code_rule_dsl::logic::front::readers_of_heads(&asked, &heads);
-            b.set_asked(&crate::code_rule_dsl::logic::front::carried_record(&asked, &old, written.iter().map(|(h, from)| (h.as_str(), from.as_slice()))));
+            b.fields().set_asked(&crate::code_rule_dsl::logic::front::carried_record(&asked, &old, written.iter().map(|(h, from)| (h.as_str(), from.as_slice()))));
         }
         Ok(())
     }

@@ -1,0 +1,204 @@
+#!/usr/bin/python3
+"""This Mac's disk floor (farm 35): when its free disk falls under `local_min_free_gb` (default 200),
+Rerail's build outputs go, the least recently built first, until `local_min_free_gb` + 100 GB is
+free. The farm's wrapper starts it (`farm.guard_disk`, at most every 2 minutes, from any Rerail
+build); by hand:
+
+    scripts/build/farm/free-local [--dry-run] [--floor GB]
+
+(`--floor` in place of the configuration's: with `--dry-run`, what it would remove at that floor)
+
+Only Rerail's cargo target directories the farm saw a build in (`farm.tidy` records them), and
+only what a build makes again; never one a cargo build is running in (its profile's `.cargo-lock`
+is held while the removal runs). In order, each stage over the targets least recently built first,
+until enough is free:
+
+  1. a profile's `incremental` state, in targets not built for 30 minutes (each crate then
+     compiles whole once: about a minute for the engine);
+  2. profiles but `debug` (`profiling`, `release`, other targets' triples), in targets not built
+     for 2 hours;
+  3. whole targets not built for 12 hours (the worktree's next build is a full one, mostly from
+     the farm's compiler cache).
+
+What it removes is logged in the farm's state (`free-local.log`) and said in a notification. When
+Rerail's builds are not what fills the disk, it says how much it could not free.
+
+Why: `clean-target` removes what no current build uses, about 540 GB a day here, but keeps every
+worktree's current builds, without a cap: 30 worktrees' targets of 15 to 90 GB each, while
+everything else on the disk left about 120 GB free. Agents' builds then filled it (2026-11-18).
+The farm's hosts had this floor already (farm-agent `free`); this Mac did not.
+"""
+import fcntl
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import farm  # noqa: E402
+
+GOAL_MARGIN_GB = 100
+STAGES = [
+    ("incremental state", 0.5),
+    ("profiles but debug", 2),
+    ("whole target", 12),
+]
+LOG = farm.state("free-local.log")
+NOTIFY_SECONDS = 3600
+
+
+def say(message):
+    line = f"free-local: {message}"
+    print(line, flush=True)
+    with open(LOG, "a") as f:
+        f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + line + "\n")
+
+
+def free_gb():
+    """The free disk macOS gives an important write (what is free, and what it purges for it)."""
+    try:
+        out = subprocess.run(["osascript", "-l", "JavaScript", "-e", farm.AVAILABLE_JS],
+                             capture_output=True, text=True, timeout=20).stdout.strip()
+        return int(float(out)) / 1e9
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        st = os.statvfs(farm.HOME)
+        return st.f_bavail * st.f_frsize / 1e9
+
+
+def targets():
+    """Rerail's target directories the farm saw builds in: (last built, path), least recent first.
+    From the records `farm.tidy` keeps, and the cleaner's logs of before them."""
+    seen = {}
+    records = os.path.dirname(farm.state("targets", "x"))
+    for name in os.listdir(records):
+        p = os.path.join(records, name)
+        try:
+            seen[open(p).read().strip()] = os.path.getmtime(p)
+        except OSError:
+            pass
+    tidy = os.path.dirname(farm.state("tidy", "x"))
+    for name in os.listdir(tidy):
+        if not name.endswith(".log"):
+            continue
+        p = os.path.join(tidy, name)
+        try:
+            m = re.findall(r" in (/\S+) \(\d{4}-", open(p, errors="replace").read())
+        except OSError:
+            continue
+        if m:
+            seen.setdefault(m[-1], os.path.getmtime(p))
+    out = []
+    for path, when in seen.items():
+        # A cargo target directory of a Rerail checkout, and nothing else.
+        if os.path.isfile(os.path.join(path, "CACHEDIR.TAG")) and farm.is_rerail(farm.checkout_of(path)):
+            out.append((when, path))
+    return sorted(out)
+
+
+def profiles(target):
+    """cargo's profile directories under `target` (`debug`, `profiling`, `<triple>/debug`)."""
+    out = []
+    for first in sorted(os.listdir(target)):
+        a = os.path.join(target, first)
+        if os.path.isdir(os.path.join(a, ".fingerprint")):
+            out.append(a)
+        elif os.path.isdir(a):
+            out += [os.path.join(a, s) for s in sorted(os.listdir(a)) if os.path.isdir(os.path.join(a, s, ".fingerprint"))]
+    return out
+
+
+def blocks(path):
+    out = subprocess.run(["du", "-sk", path], capture_output=True, text=True).stdout.split()
+    return int(out[0]) * 1024 if out else 0
+
+
+def remove(path, profile, dry):
+    """Removes `path` (in `profile`, or the profile itself) while no cargo build runs there: the
+    bytes freed, or None when a build holds the profile."""
+    lock_path = os.path.join(profile, ".cargo-lock")
+    lock = open(lock_path, "a+") if os.path.exists(lock_path) else None
+    try:
+        if lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                return None
+        size = blocks(path)
+        if not dry:
+            # Renamed aside first: a removal cut short leaves no half a profile to build in.
+            aside = f"{path}.free-local-{os.getpid()}"
+            os.rename(path, aside)
+            shutil.rmtree(aside, ignore_errors=True)
+        return size
+    finally:
+        if lock:
+            lock.close()
+
+
+def candidates(stage, target):
+    """What `stage` removes of `target`: (path, its profile)."""
+    if stage == "incremental state":
+        return [(os.path.join(p, "incremental"), p) for p in profiles(target) if os.path.isdir(os.path.join(p, "incremental"))]
+    if stage == "profiles but debug":
+        return [(p, p) for p in profiles(target) if os.path.relpath(p, target) != "debug"]
+    return [(p, p) for p in profiles(target)]
+
+
+def main(argv):
+    dry = "--dry-run" in argv
+    cfg = farm.config()
+    floor = float(argv[argv.index("--floor") + 1]) if "--floor" in argv else cfg.get("local_min_free_gb", 200)
+    goal = floor + GOAL_MARGIN_GB
+    lock = farm.Lock(farm.state("free-local.lock"), blocking=False)
+    if not lock.held:
+        return
+    free = free_gb()
+    if free >= floor:
+        if dry:
+            print(f"free-local: {free:.0f} GB free, not under {floor:.0f}: nothing to do (--floor to see a plan)")
+        return
+    say(f"{free:.0f} GB free, under {floor}: freeing Rerail's builds to {goal}{' (dry run)' if dry else ''}")
+    freed, done = 0, []
+    now = time.time()
+    for stage, idle_hours in STAGES:
+        for when, target in targets():
+            if free >= goal:
+                break
+            if now - when < idle_hours * 3600:
+                continue
+            for path, profile in candidates(stage, target):
+                if free >= goal:
+                    break
+                got = remove(path, profile, dry)
+                if got is None:
+                    say(f"{path}: a cargo build is running there: kept")
+                    continue
+                freed += got
+                if got < 50e6:
+                    continue
+                free = free_gb() if not dry else free + got / 1e9
+                where = os.path.relpath(path, os.path.dirname(farm.checkout_of(target)))
+                done.append(f"{stage}, {where}: {got / 1e9:.1f} GB")
+                say(f"{'would remove' if dry else 'removed'} {done[-1]} (built {(now - when) / 3600:.1f} h ago); {free:.0f} GB free")
+        if free >= goal:
+            break
+    if free >= goal:
+        summary = f"freed {freed / 1e9:.0f} GB of Rerail's builds ({len(done)} removals); {free:.0f} GB free"
+    else:
+        summary = (f"freed {freed / 1e9:.0f} GB of Rerail's builds and found no more it may remove; {free:.0f} GB free, "
+                   f"under {goal}: the rest of the disk is other data, or builds made in the last 30 minutes")
+    say(summary)
+    stamp = farm.state("free-local.notified")
+    try:
+        recent = now - os.path.getmtime(stamp) < NOTIFY_SECONDS
+    except OSError:
+        recent = False
+    if not dry and (not recent or free < floor):
+        open(stamp, "w").close()
+        farm.notify(f"This Mac's disk: {summary}")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

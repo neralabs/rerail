@@ -163,7 +163,7 @@ fn states(src: &str) -> (usize, String) {
 fn remembered_words_share_their_states() {
     // Three words, each a variable that a wrap gives back its own kind: written once per word,
     // each word's state before its wrap acts apart (its tail, the same, is merged); remembered,
-    // one state, the wrap naming the level's word's kind (`as word`). In `.rr` the copies
+    // one state, the wrap naming the level's word's kind (`as word`). In `.rerail` the copies
     // differ further on (a reading at an aggregate's `:`), so every state between does.
     let copies = format!("tree t {{\n  node root = (item)*\n  choice item nested = a as v (wrap w f as a {TEN}) | b as v (wrap w f as b {TEN}) | c as v (wrap w f as c {TEN})\n}}");
     let one = format!("tree t {{\n  node root = (item)*\n  choice item nested = a as v (wrap w f as a {TEN})\n}}");

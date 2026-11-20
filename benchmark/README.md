@@ -13,6 +13,11 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   `--rules`, `--backlog`, `--sessions`), serves the daemon's API over it, and times what the dashboard reads: each history
   read computed and repeated, one poll while a session keeps committing, recording one repository audit, and how long
   `/healthz` waits while dashboard tabs poll (`--tabs`, `--seconds`).
+- `status-line.ts` (`just rerail-status-line`) runs the built Claude Code status line (`dist/hosts/claude/claude-status.js`)
+  against a stand-in daemon, as Claude Code runs it every five seconds in each session, alternating with `node -e 0`. It
+  reports each run's wall time, its own CPU time, peak resident memory and the modules it loads, and what that comes to
+  per session at a five-second refresh. `--shell` starts it through Git Bash on Windows (sh elsewhere), as Claude Code
+  does; `--script` times another build, such as a release's.
 - `steer-strategy.ts` (`just rerail-steer-strategy`) runs a real harness on one task per host × strategy × trial and
   compares the code-rule steer strategies (`message`, `rewind`, `subagent`). See [Steer strategies](#steer-strategies).
 

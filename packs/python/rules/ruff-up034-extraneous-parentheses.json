@@ -433,123 +433,13 @@
                               "all": [
                                 {
                                   "not": {
-                                    "any": [
-                                      {
-                                        "kind": "parenthesized_expression"
-                                      },
-                                      {
-                                        "kind": "tuple"
-                                      },
-                                      {
-                                        "kind": "list"
-                                      },
-                                      {
-                                        "kind": "set"
-                                      },
-                                      {
-                                        "kind": "dictionary"
-                                      },
-                                      {
-                                        "kind": "argument_list"
-                                      },
-                                      {
-                                        "kind": "subscript"
-                                      },
-                                      {
-                                        "kind": "generator_expression"
-                                      },
-                                      {
-                                        "kind": "list_comprehension"
-                                      },
-                                      {
-                                        "kind": "set_comprehension"
-                                      },
-                                      {
-                                        "kind": "dictionary_comprehension"
-                                      },
-                                      {
-                                        "kind": "interpolation"
-                                      },
-                                      {
-                                        "kind": "string"
-                                      },
-                                      {
-                                        "kind": "concatenated_string"
-                                      },
-                                      {
-                                        "kind": "tuple_pattern"
-                                      },
-                                      {
-                                        "kind": "list_pattern"
-                                      },
-                                      {
-                                        "kind": "dict_pattern"
-                                      },
-                                      {
-                                        "kind": "class_pattern"
-                                      }
-                                    ]
+                                    "matches": "bracket"
                                   }
                                 },
                                 {
                                   "inside": {
                                     "stopBy": {
-                                      "any": [
-                                        {
-                                          "kind": "parenthesized_expression"
-                                        },
-                                        {
-                                          "kind": "tuple"
-                                        },
-                                        {
-                                          "kind": "list"
-                                        },
-                                        {
-                                          "kind": "set"
-                                        },
-                                        {
-                                          "kind": "dictionary"
-                                        },
-                                        {
-                                          "kind": "argument_list"
-                                        },
-                                        {
-                                          "kind": "subscript"
-                                        },
-                                        {
-                                          "kind": "generator_expression"
-                                        },
-                                        {
-                                          "kind": "list_comprehension"
-                                        },
-                                        {
-                                          "kind": "set_comprehension"
-                                        },
-                                        {
-                                          "kind": "dictionary_comprehension"
-                                        },
-                                        {
-                                          "kind": "interpolation"
-                                        },
-                                        {
-                                          "kind": "string"
-                                        },
-                                        {
-                                          "kind": "concatenated_string"
-                                        },
-                                        {
-                                          "kind": "tuple_pattern"
-                                        },
-                                        {
-                                          "kind": "list_pattern"
-                                        },
-                                        {
-                                          "kind": "dict_pattern"
-                                        },
-                                        {
-                                          "kind": "class_pattern"
-                                        }
-                                      ]
+                                      "matches": "bracket"
                                     },
                                     "matches": "tuple-start"
                                   }
@@ -567,62 +457,7 @@
                       "all": [
                         {
                           "not": {
-                            "any": [
-                              {
-                                "kind": "parenthesized_expression"
-                              },
-                              {
-                                "kind": "tuple"
-                              },
-                              {
-                                "kind": "list"
-                              },
-                              {
-                                "kind": "set"
-                              },
-                              {
-                                "kind": "dictionary"
-                              },
-                              {
-                                "kind": "argument_list"
-                              },
-                              {
-                                "kind": "subscript"
-                              },
-                              {
-                                "kind": "generator_expression"
-                              },
-                              {
-                                "kind": "list_comprehension"
-                              },
-                              {
-                                "kind": "set_comprehension"
-                              },
-                              {
-                                "kind": "dictionary_comprehension"
-                              },
-                              {
-                                "kind": "interpolation"
-                              },
-                              {
-                                "kind": "string"
-                              },
-                              {
-                                "kind": "concatenated_string"
-                              },
-                              {
-                                "kind": "tuple_pattern"
-                              },
-                              {
-                                "kind": "list_pattern"
-                              },
-                              {
-                                "kind": "dict_pattern"
-                              },
-                              {
-                                "kind": "class_pattern"
-                              }
-                            ]
+                            "matches": "bracket"
                           }
                         },
                         {
@@ -635,122 +470,12 @@
                             {
                               "has": {
                                 "stopBy": {
-                                  "any": [
-                                    {
-                                      "kind": "parenthesized_expression"
-                                    },
-                                    {
-                                      "kind": "tuple"
-                                    },
-                                    {
-                                      "kind": "list"
-                                    },
-                                    {
-                                      "kind": "set"
-                                    },
-                                    {
-                                      "kind": "dictionary"
-                                    },
-                                    {
-                                      "kind": "argument_list"
-                                    },
-                                    {
-                                      "kind": "subscript"
-                                    },
-                                    {
-                                      "kind": "generator_expression"
-                                    },
-                                    {
-                                      "kind": "list_comprehension"
-                                    },
-                                    {
-                                      "kind": "set_comprehension"
-                                    },
-                                    {
-                                      "kind": "dictionary_comprehension"
-                                    },
-                                    {
-                                      "kind": "interpolation"
-                                    },
-                                    {
-                                      "kind": "string"
-                                    },
-                                    {
-                                      "kind": "concatenated_string"
-                                    },
-                                    {
-                                      "kind": "tuple_pattern"
-                                    },
-                                    {
-                                      "kind": "list_pattern"
-                                    },
-                                    {
-                                      "kind": "dict_pattern"
-                                    },
-                                    {
-                                      "kind": "class_pattern"
-                                    }
-                                  ]
+                                  "matches": "bracket"
                                 },
                                 "all": [
                                   {
                                     "not": {
-                                      "any": [
-                                        {
-                                          "kind": "parenthesized_expression"
-                                        },
-                                        {
-                                          "kind": "tuple"
-                                        },
-                                        {
-                                          "kind": "list"
-                                        },
-                                        {
-                                          "kind": "set"
-                                        },
-                                        {
-                                          "kind": "dictionary"
-                                        },
-                                        {
-                                          "kind": "argument_list"
-                                        },
-                                        {
-                                          "kind": "subscript"
-                                        },
-                                        {
-                                          "kind": "generator_expression"
-                                        },
-                                        {
-                                          "kind": "list_comprehension"
-                                        },
-                                        {
-                                          "kind": "set_comprehension"
-                                        },
-                                        {
-                                          "kind": "dictionary_comprehension"
-                                        },
-                                        {
-                                          "kind": "interpolation"
-                                        },
-                                        {
-                                          "kind": "string"
-                                        },
-                                        {
-                                          "kind": "concatenated_string"
-                                        },
-                                        {
-                                          "kind": "tuple_pattern"
-                                        },
-                                        {
-                                          "kind": "list_pattern"
-                                        },
-                                        {
-                                          "kind": "dict_pattern"
-                                        },
-                                        {
-                                          "kind": "class_pattern"
-                                        }
-                                      ]
+                                      "matches": "bracket"
                                     }
                                   },
                                   {
@@ -766,62 +491,7 @@
                         {
                           "inside": {
                             "stopBy": {
-                              "any": [
-                                {
-                                  "kind": "parenthesized_expression"
-                                },
-                                {
-                                  "kind": "tuple"
-                                },
-                                {
-                                  "kind": "list"
-                                },
-                                {
-                                  "kind": "set"
-                                },
-                                {
-                                  "kind": "dictionary"
-                                },
-                                {
-                                  "kind": "argument_list"
-                                },
-                                {
-                                  "kind": "subscript"
-                                },
-                                {
-                                  "kind": "generator_expression"
-                                },
-                                {
-                                  "kind": "list_comprehension"
-                                },
-                                {
-                                  "kind": "set_comprehension"
-                                },
-                                {
-                                  "kind": "dictionary_comprehension"
-                                },
-                                {
-                                  "kind": "interpolation"
-                                },
-                                {
-                                  "kind": "string"
-                                },
-                                {
-                                  "kind": "concatenated_string"
-                                },
-                                {
-                                  "kind": "tuple_pattern"
-                                },
-                                {
-                                  "kind": "list_pattern"
-                                },
-                                {
-                                  "kind": "dict_pattern"
-                                },
-                                {
-                                  "kind": "class_pattern"
-                                }
-                              ]
+                              "matches": "bracket"
                             },
                             "matches": "tuple-start"
                           }

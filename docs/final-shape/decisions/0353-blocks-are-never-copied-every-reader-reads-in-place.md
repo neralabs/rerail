@@ -6,6 +6,8 @@ the same linear data"; "it must be clear EVERYWHERE that blocks NEVER get copied
 "What it replaces". Follows 0140 (the tape is the engine's bytes), 0266 (blocks), 0293 (one tape API, read in place),
 0310 (reads written once, three backends) and 0325 (relations are blocks).
 
+Amended between memory domains by 0440 §7.2 (the user, 2026-11-18): within one domain (a host's RAM and its unified GPUs) this holds as written; between domains (a discrete GPU's memory, another host) a block is copied as the same bytes, never into another data structure, and the engine keeps the copies coherent.
+
 ## Intro
 
 **The problem.** The engine holds its data in blocks: each document's tape, and every relation the rules derive
@@ -371,18 +373,19 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 2 | Gone (step 2): definition ids by node, `DefIds::low`, `order`, `back`. The granule table answers them. | — | — | Done |
 | 3 | The chunk block's node columns: `core`, `up`, `fielded`, `low`, `start`, `end`, `kind`, `field`, and the canonical code copy. `low` is made by one scan of the granule table. `core`, `up` and `fielded` are made here from the rank index and the walk, now that the host holds no arrays of them. | `device_chunk.rs`, `build` (`made`, `made_in_order`, `put`) | 22 bytes a node; 0.07 s a run | Step 4 |
 | 4 | Views expanded into device relations | `metal_join.rs`, `expand_view`; `device.rs`, `resident` | 660.8 MB, 111.5 ms a run | Step 4 |
-| 5 | Views, flat relations and names uploaded from the host | `metal_join.rs`, `DevRel::upload`; `device.rs`, `resident`, `texts` | 7.4 MB, 22.1 ms a run | Steps 4, 6 |
+| 5 | Views and flat relations uploaded from the host. Symbols' names no longer (0478 step 2e, 2026-11-19: every text kernel reads them through the atoms directory; `texts` and `DevText` are deleted) | `metal_join.rs`, `DevRel::upload`; `device.rs`, `resident` | 7.4 MB, 22.1 ms a run (with the names) | Steps 4, 6 |
 | 6 | Gone (step 5, 2026-11-18): an axis's pairs copied into the chunk, then expanded to ids. The solve writes ids once into a relation of its own, which every reader reads where it lies; `put_pairs` and `VIEW_AXIS` are deleted. `has` is still made per looked-up node and uploaded (row 5) until its probe climbs the tape | — | — | Done |
 | 7 | `core.rr`'s and the vtab's per-node rows: tape answers (`line`, `end_line`, `col`, `docof`, `visit_index`, `doc_root`, `host_node`) and eager derived values (`text`, `parts`, `words`, `intval`, `op_t`) | `syntax.rs` `node rows`, `NodeRows`; `core_rr`; `tree.rs`; `guests.rs` | 0.45–0.49 s of CPU a run | Step 3 |
 | 8 | The CPU's head rows, staged in `Fresh`, merged by `extend_from_slice`, then pushed into the relation | `setfix.rs`, `Fresh` | Every row a CPU stratum derives | Step 6 |
-| 9 | A second key's index copies the relation (`DevIndex::moved`); a relation over several blocks merged for the device (`in_block`) | `metal_join.rs`; `facts/rows.rs` | Q85 counts them | Step 6 |
+| 9 | A second key's index copies the relation (`DevIndex::moved`); a relation of many parts merged for the device (`in_block`). Since 0384 (steps 1–8, 2026-11-18) a relation is one relation or a chain of continuations read in place, so the merge is left only where a part is appended after another relation's rows (`append_part`, counted), with a chain's newest two segments compacted past `MAX_SEGMENTS` | `metal_join.rs`; `facts/rows.rs` | Q85 counts them; 0 merges on cold 300-file runs | Step 6 |
 | 10 | A device fixpoint's total copied into a run's block at its end | `device.rs` (0325 step 4) | Each recursive stratum's rows | Step 6 |
 | 11 | The transducer's packed batch: 44 bytes a node, and its child lists | `PackedBatch::nodes` (0293 "Interim") | Each matched batch | Step 7 |
 | 12 | Findings, frames and memo entries copied into rows of their own | The output, frames and memo stores | Not yet measured | Step 8 (0325 step 7) |
-| 13 | The transducer's residency: every tape it reads copied into slabs of its own, and documents copied between slabs | `residency::slabs::admit_docs`, `insert`'s `place`; `rerail_metal::slabs::gather` | Each tape a Metal batch reads | Step 7 |
+| 13 | The transducer's residency: every tape it reads copied into slabs of its own. (Documents copied between slabs, `gather`, are gone, 0471: a batch reads each document in its own slab, by the slabs' GPU addresses.) | `residency::slabs::admit_docs`, `insert`'s `place` | Each tape a Metal batch reads | Step 7 |
 | 14 | Found 2026-11-17: the line starts copied into the chunk block for the `line` and `Loc` views, and the spans past a document's nodes beside them; a guest's places made there. Both views read in place where the batch's tapes are on the device (step 4d); the copies are the fallback of a batch whose tapes are not, or with a guest placed by pieces or segments | `device_chunk.rs`, `fill_lines`, `fill_locs` | 4 bytes a line, 8 a span, each batch that makes the views | Step 4 |
-| 15 | Found 2026-11-18: a parser's tape copied into its room (`place_stored`); a queued tape not in a room read into a vector (`queued_image`) | `tape.rs`, `place_stored`; `facts/core.rs`, `queued_image` | 4.1 MB a run on hogql 16z | Step 4a |
 | 15 | Gone (step 4b, 2026-11-18): a 16z tape's blocks laid out as format 16. `DocTape::in_place`'s copy went first (the CPU reads 16z in place); then the transducer's residency's (`unblock_into` into its slab, for the kernels: the label and program kernels read the stored bytes through the batch's cache), and a 16z batch's views made on the device (they are read in place through a cache). `unblock_into` is deleted. | — | — | Done |
+| 16 | Gone (0446, 2026-11-19): a label level's fact rows, uploaded as `(node, label)` pairs for the pattern kernels (`Pass::Fact`). The host writes the findings once into the batch's fact block, and the CPU and the kernels read them there | — | — | Done |
+| 17 | Found 2026-11-18: a parser's tape copied into its room (`place_stored`); a queued tape not in a room read into a vector (`queued_image`) | `tape.rs`, `place_stored`; `facts/core.rs`, `queued_image` | 4.1 MB a run on hogql 16z | Step 4a |
 
 ## The plan
 
@@ -404,7 +407,7 @@ Each step ends with:
      hogql, 16z, the Metal binding, cold (load 38): 792.4 MB and 0.90 s of CPU in all. Row 4, views expanded on the
      device, 472.1 MB (the axis's, with row 6's 143.0 MB of pairs in the chunk: step 5); row 3, the chunk's node
      columns, 71.8 MB and 0.26 s; row 7, the per-node rows, 13.5 MB and 0.46 s; rows 8 to 10 (step 6), 71.8 MB; row 5,
-     uploads, 9.0 MB and 0.15 s; row 13, tapes copied into slabs, 6.8 MB; row 15, 4.1 MB. Row 11 copies nothing in
+     uploads, 9.0 MB and 0.15 s; row 13, tapes copied into slabs, 6.8 MB; row 17, 4.1 MB. Row 11 copies nothing in
      this run (its batches are resident).
    - 0289, 0293 and 0325 point here where this supersedes them.
 2. **Node identity in place.**
@@ -488,14 +491,11 @@ Each step ends with:
          against 119.7–128.3 B (noise); the Metal binding, 1 pair at load 45, 102.7 B against 112.9 B, peak
          1,207 MB against 1,289 MB. Checks: the JIT's reads of a 16z tape of 6 blocks equal `F16Z`'s, node by
          node, and the JIT executor's outputs over one equal format 15's.
-       - One decoder (2026-11-18): the tape crate's `F16Z` decodes a block with `tape_lz4`, the reads' LZ4 decoder
-         (`z_lz4`, which `tape_z_block` inlines for the JIT and the kernels) translated by the Rust backend, into its
-         thread's two blocks, then reads them with the generated format 16 reads. `lz4_sys` only compresses (the
-         writer). The Rust backend checks a load against the tape's bytes when it is read-only and not aligned (the
-         tape's own); the decoder's loads of its slot (a match's copies) are bounded by the decoder itself
-         (decision 0403), and a read that takes an address (`tape_lz4`'s destination) is `unsafe`. The kernels'
-         MSL leaves `tape_lz4` out (`HOST_ONLY`). Check: `the_reads_decoder_decodes_what_lz4_compressed` (400
-         blocks of literals and matches at every offset, a block cut short); hogql 16z, findings 1,629.
+       - The tape crate's `F16Z` still decodes with `lz4_sys` into its thread's two blocks, then reads them with the
+         generated format 16 reads: the same block, decoded by a second decoder. Built once (f9451f0dd: `tape_lz4`,
+         the CLIF decoder translated by the Rust backend, its slot's loads bounded by the decoder) and taken out
+         again the same day: decision 0434 (the Oscar worktree) rewrites 16z as four pieces a block, and this
+         branch stays off the 16 and 16z paths until it lands. The one decoder is redone on 0434's form then.
        - The device's views read a 16z batch in place (2026-11-18; `views.refused.z_on_device` gone): the join
          kernels include the reads with the 16z case (`metal_tape_reads_z.metal`); a batch whose tapes are 16z
          gets one cache (`device_chunk::zcache_spec`), which every stage that reads its views shares, resident
@@ -530,10 +530,10 @@ Each step ends with:
          when the batch's directory goes, the statistics mode's with `RERAIL_ZCACHE_STATS=1`.
        - A 16z tape is stored as it is (2026-11-18, the user: "the 16z format is designed to be able to decompress
          blocks, not tapes. I don't want to pay for a full tape decompression, just blocks."): its frame in the
-         store is its bytes (`CODEC_RAW` inline, as in a segment), never a zstd frame of the whole tape
-         (`compress_tape`, for a tape the engine keeps as it is: `set_tapes_kept_as_is`, MAGIC16Z). A load is
-         then the exact bytes, and a reader decodes only the blocks it reads. The other formats keep zstd frames.
-         Check: `the_device_reads_every_format_as_the_document_does` reads each tape's codec in the store.
+         store is its bytes, never a zstd frame of the whole tape. A load is then the exact bytes, and a reader
+         decodes only the blocks it reads. Since 2026-11-19 every tape and source, of every format, is stored as it
+         is in a segment, and no row holds bytes (0295 step 5, floor 7). Check:
+         `the_device_reads_every_format_as_the_document_does` reads each tape's row in the store.
        - The transducer's kernels (done 2026-11-18): the residency places a 16z tape as stored (`place`: its bytes
          as the store holds them, no decompression since a 16z tape's frame is raw), its `DocView` the tape's 16z view with its columns
          where the tape lies in the document. A batch's table (`DocTable`) makes one cache for its 16z documents
@@ -564,7 +564,7 @@ Each step ends with:
            its poll advanced the builder, which rang the bell it waited on whether or not anything moved. It
            rings only when a step moved (`corpus::Builder::advance`).
          - hogql cold, the Metal binding, profiling builds, load 8–55: 16z, findings 1,629 in 72 runs (one more
-           run panicked, Q253), 99–117 B instructions, median 105 B; format 15, 1,629 in 32 runs, 65–75 B,
+           run panicked, Q265), 99–117 B instructions, median 105 B; format 15, 1,629 in 32 runs, 65–75 B,
            median 73 B (the runs that compiled the kernels apart: 135 B and 93 B). Statistics on: 2,187 decodes
            for 2,820 blocks, 18.7 M hits, no failure, no duplicate.
        - The kernels' part, decided (user, 2026-11-18): "a generic rolling GPU cache to amortize the cost": an LRU
@@ -688,7 +688,7 @@ Each step ends with:
        cut: containment's room 8 rows a node), it filled the budget: refusals rose from 5–38 to 23–52 a run.
      - On the device: `axis_count` and the scan (one submission), the total read, then `axis_write` writes each row's
        two ids (`global_of`) through `view_put`, the writer written once, bounded by the relation's chunks
-       (decision 0403). The starts (node row → first row) stay in the chunk; on the CPU, a vector beside the
+       (decision 0463). The starts (node row → first row) stay in the chunk; on the CPU, a vector beside the
        relation.
      - On the CPU: the climb counts, then writes `batch.id` of each side into the same kind of relation.
      - Every reader reads it in place: `value` and `documents_of` through `Part::get`, the device through
