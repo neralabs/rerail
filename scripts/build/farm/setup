@@ -23,7 +23,7 @@ if [ -n "$installed" ] && [ "$installed" -gt "$mine" ] && [ -z "$force" ]; then
   exit 1
 fi
 mkdir -p "$share/bin" "$config"
-for f in farm.py mirror.py guest.py guests rustc-wrapper farm-rustc farm-cc farm-agent status diagnose free-local dashboard sampler; do
+for f in farm.py mirror.py guest.py guests rustc-wrapper farm-rustc farm-cc farm-agent status diagnose free-local dashboard sampler sampler.ps1; do
   install -m 0755 "$here/$f" "$share/$f.tmp" && mv "$share/$f.tmp" "$share/$f"
 done
 install -m 0755 "$here/../../dev/clean-target" "$share/clean-target.tmp" && mv "$share/clean-target.tmp" "$share/clean-target"

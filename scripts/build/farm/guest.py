@@ -88,11 +88,14 @@ def update(name, **values):
 
 
 def placement(g):
-    """The machine a guest runs on, as the dashboard names it: this Mac, a farm host, or (WSL, whose
-    machine has no entry of its own) none."""
+    """The machine a guest runs on, as the dashboard names it: this Mac, or a farm host (for WSL,
+    the Windows host whose `windows_ssh` is the guest's `on`); None when it has no entry."""
     if g["on"] == "local":
         return "this Mac"
-    return g["on"] if farm.entry(g["on"]) else None
+    if farm.entry(g["on"]):
+        return g["on"]
+    # WSL: its Windows machine's entry (the one reached at the guest's `on`).
+    return next((h["name"] for h in farm.hosts() if h.get("windows_ssh") == g["on"]), None)
 
 
 def on_parent(g, script, timeout=60):

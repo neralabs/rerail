@@ -325,7 +325,10 @@ The same PC's Windows side is a host of its own (`"os": "windows"`), for Windows
 of the tests: `scripts/dev/test-remote --os windows -- cargo nextest run ...` (or `--host`). Its
 entry names the machine's Linux entry (`"shares"`) and its farm directory on the Windows drive as
 WSL mounts it (`"windows_dir": "/mnt/c/rf"`); ssh reaches it through the same WSL (a second ssh
-name for it). Then:
+name for it), and Windows itself through its own sshd (`"windows_ssh"`: the dashboard's sampler,
+and a WSL guest's start and stop). Name the machine after its Windows entry (`pc1`) and its WSL
+after it (`pc1-linux`): the PC is the host, its WSL a VM on it. When the WSL is a guest, a
+Windows job starts it first (about 10 s). Then:
 
 - One copy of a checkout per machine: the mirror sends to the Linux side's (WSL's own disk), and
   before a Windows command the agent brings the Windows drive's copy up to it: the files changed
@@ -339,7 +342,8 @@ name for it). Then:
   ended by their command line (`taskkill /T`).
 - Linux and Windows share the machine's test slots, so what is queued decides how many of each
   run; the CPU is the scheduler's, and WSL hands memory back as it idles (`autoMemoryReclaim`).
-  The dashboard shows Windows' view of the whole machine on the machine's card.
+  The machine's card on the dashboard is Windows' (`sampler.ps1`, in Windows' own PowerShell over
+  `windows_ssh`), and its WSL's card is that of a VM on it.
 
 On Windows, once, as an administrator: Visual Studio Build Tools 2022 (the C++ workload, x64 and
 ARM64 tools, the Windows 11 SDK, CMake, Clang), long paths on (`LongPathsEnabled`), the farm's
@@ -612,11 +616,14 @@ scripts/build/farm/dashboard [--port 8740] [--open]      # then http://127.0.0.1
 
 A live page of each enabled host and this Mac, with five minutes of history:
 
-- What the machine is: a chip (macOS, Linux, or Windows + Linux for a Windows PC or VM whose Linux
-  is WSL), and a line with the system's name and version, its architecture, what runs it (WSL, a
-  VM) and the Windows hosts it also takes jobs as. Memory is in GiB, as the systems' settings
-  count it; a Linux VM's is its VM's limit, and a Windows machine's row says what is installed
-  and what the firmware keeps (an integrated GPU's share).
+- A card per machine or VM, each with its one system: a chip (macOS, Linux or Windows) and the
+  system's name, version and architecture. A VM (a guest, or a PC's WSL) names the machine it
+  runs on, and is listed on that machine's card. A Windows card is Windows' own view, from
+  `sampler.ps1` over its `windows_ssh` (Windows has no Python): live while its WSL is stopped. It
+  runs in sshd's PowerShell, which keeps its input, so it has no pings (its round trip is the
+  probe's) and ends itself every 10 minutes for the next. Memory is in GiB, as the systems'
+  settings count it; a VM's is its limit, and a machine's says what the firmware keeps (an
+  integrated GPU's share).
 - CPU, split by who uses it: the farm (the trees under its agents: test commands, Relax
   sessions, the mirror; on a Linux host also the Mac-compile container; on this Mac, Rerail's
   builds), the fleet's jobs (their containers), the machine's own load, and idle. The split

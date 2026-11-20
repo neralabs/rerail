@@ -127,7 +127,11 @@ def choose(named, oses, roots):
             return None, None, None, f"{named} is a {farm.host_os(host)} host, and this command runs on {' or '.join(oses)} (--os)"
         h = farm.health(host, fresh=True)
         if not h.get("ok") and h.get("guest") in ("stopped", "starting") and guest.request_start(host):
-            say(f"{named}: starting the guest (guest.py; up to {guest.START_SECONDS // 60} min)")
+            base = guest.spec(host)[0]
+            what = "its guest " + base["name"] if base["name"] != named else "the guest"
+            if farm.host_os(host) == "windows" and base["name"] != named:
+                what = f"{base['name']}, its WSL (which runs its Windows jobs)"
+            say(f"{named}: starting {what} (guest.py; up to {guest.START_SECONDS // 60} min)")
             h = wait_for_guest(host)
         if not h.get("ok"):
             return None, None, None, f"{named} is not usable: {h.get('why')}"
@@ -212,7 +216,7 @@ def choose(named, oses, roots):
             order = sorted(stopped_guests(oses), key=lambda g: (farm.shared_base(g)["guest"]["on"] == "local", -g.get("cores", 0)))
             starting = next(([g] for g in order if guest.request_start(g)), [])
             if starting:
-                say("starting " + ", ".join(f"{g['name']} (a guest on {farm.shared_base(g)['guest']['on']})" for g in starting)
+                say("starting " + ", ".join(f"{g['name']} (a guest on {guest.placement(farm.shared_base(g)['guest']) or farm.shared_base(g)['guest']['on']})" for g in starting)
                     + f": it takes the command once it is up, unless a slot frees first (up to {guest.START_SECONDS // 60} min)")
         if not said and candidates:
             say("every test slot of every usable host is taken"
