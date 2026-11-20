@@ -227,13 +227,16 @@ impl<'a> VerifiedFiles<'a> {
             .is_some_and(|file| file.blob == blob && ChangeStamp::of(file) == *stamp)
     }
 
-    /// The remembered files, read from the store when first needed; a store that cannot be read
-    /// remembers none, which costs a read of each file.
+    /// The remembered files, read from the store when first needed: those remembered within the
+    /// last 30 days. A store or a clock that cannot be read remembers none, which costs a read of
+    /// each file.
     fn known(&mut self) -> &mut HashMap<i64, VerifiedWorktreeFile> {
         let (store, worktree) = (self.store, &self.worktree);
         self.known.get_or_insert_with(|| {
+            let now = crate::content_store::unix_seconds().ok();
             store
-                .and_then(|store| store.verified_worktree_files(worktree).ok())
+                .zip(now)
+                .and_then(|(store, now)| store.verified_worktree_files(worktree, now).ok())
                 .unwrap_or_default()
                 .into_iter()
                 .map(|file| (file.path, file))

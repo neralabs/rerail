@@ -3,31 +3,56 @@
 //! restore takes such a file without a read while it keeps all three
 //! (`git_workspace::VerifiedFiles`).
 //!
-//! They are the rows of a relation, kept in the store's frames as every relation's rows are and
-//! written by the store's writer (`queue_frames`), with no table of their own (decisions 0103 and
-//! 0104). One space holds them. Each worktree's files are one part of `verified_worktree_file`,
-//! and part 0 of `verified_worktree` names each such part with when it was last written, so the
-//! files of a worktree no restore writes for 30 days are forgotten at a later write.
+//! They are the rows of two relations in one space of the store's frames, written by the store's
+//! writer (`queue_frames`), with no table of their own. Whether a row still proves its file is
+//! decided in Rust, by `git_workspace::VerifiedFiles`. Each worktree has its own part of each
+//! relation: its files in `verified_worktree_file`, and when a restore last wrote them in
+//! `verified_worktree`. A save writes only its own worktree's parts, so two saves of two
+//! worktrees, from one process or two, keep each other's, and it forgets the parts of worktrees
+//! no restore wrote for 30 days, found among the parts the store holds.
 
-use super::frames::{Put, Rel, Rows};
+use super::frames::{Admitted, Put, Rel, Rows};
 use super::{ContentStore, HashKey, MAX_COLLECTION_BATCH, StoreResult};
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
-/// How long a remembered file stays without being hashed again, in seconds: after it, a file
-/// proven by its row alone is read once more, and the rows of a worktree no restore reaches go.
+/// How long a remembered file proves its file without a read, in seconds: an older row proves
+/// nothing, so the file is read once more and its row written again, and the parts of a worktree
+/// no restore writes for this long go at another worktree's save.
 const VERIFIED_FILE_SECONDS: i64 = 30 * 24 * 60 * 60;
 
-/// The relations' names, each with the columns its identity names: a change of the columns is
-/// another relation, whose rows are hashed again.
-const FILES: (&str, &str) = (
-    "verified_worktree_file",
-    "path key, volume, file id (2), change time, blob algorithm, blob lanes (4), verified at",
-);
-const WORKTREES: (&str, &str) = ("verified_worktree", "part, written at");
+/// A relation of this space: its name and its columns, every one an integer. Its identity is the
+/// digest of both, and its rows are as wide as its columns, so a change of the columns is another
+/// relation, whose rows are hashed again.
+struct Relation {
+    name: &'static str,
+    columns: &'static [&'static str],
+}
 
-/// The columns of a `verified_worktree_file` row, every one an integer.
-const FILE_WIDTH: usize = 11;
+const FILES: Relation = Relation {
+    name: "verified_worktree_file",
+    columns: &[
+        "path key",
+        "volume",
+        "file id bytes 0 to 7",
+        "file id bytes 8 to 15",
+        "change time",
+        "blob algorithm",
+        "blob lane 0",
+        "blob lane 1",
+        "blob lane 2",
+        "blob lane 3",
+        "verified at",
+    ],
+};
+const WORKTREES: Relation = Relation {
+    name: "verified_worktree",
+    columns: &["written at"],
+};
+
+/// The columns of a `verified_worktree_file` row.
+const FILE_WIDTH: usize = FILES.columns.len();
 
 /// An integer column, in the engine's codes for a frame's value types.
 const INTEGER: u8 = b'i';
@@ -52,19 +77,22 @@ pub fn worktree_path_key(path: &str) -> i64 {
 }
 
 impl ContentStore {
-    /// The files of the worktree whose root is `worktree` that restores remembered.
+    /// The files of the worktree whose root is `worktree` that restores remembered within
+    /// `VERIFIED_FILE_SECONDS` before `now` (Unix seconds).
     pub fn verified_worktree_files(
         &self,
         worktree: &str,
+        now: i64,
     ) -> StoreResult<Vec<VerifiedWorktreeFile>> {
-        let rows = self.verified_rows(worktree_part(worktree))?;
+        let rows = self.verified_rows(worktree_part(worktree), now - VERIFIED_FILE_SECONDS)?;
         Ok(rows.into_values().map(|(file, _)| file).collect())
     }
 
     /// Remembers `files` of the worktree whose root is `worktree`, verified at `now` (Unix
     /// seconds), each replacing the row of its path. The worktree's rows older than
-    /// `VERIFIED_FILE_SECONDS` are forgotten, and so are the rows of worktrees not written for
-    /// that long. Handed to the store's writer: the restore does not wait for the write.
+    /// `VERIFIED_FILE_SECONDS` are forgotten, and so are the parts of at most
+    /// `MAX_COLLECTION_BATCH` worktrees not written for that long. Handed to the store's writer:
+    /// the restore does not wait for the write.
     pub fn remember_verified_worktree_files(
         &self,
         worktree: &str,
@@ -73,47 +101,56 @@ impl ContentStore {
     ) -> StoreResult<()> {
         let part = worktree_part(worktree);
         let since = now - VERIFIED_FILE_SECONDS;
-        let mut kept = self.verified_rows(part)?;
-        kept.retain(|_, (_, verified)| *verified >= since);
+        let mut kept = self.verified_rows(part, since)?;
         kept.extend(files.iter().map(|file| (file.path, (file.clone(), now))));
-        let mut written = self.written_worktrees()?;
-        written.insert(part, now);
-        let old: Vec<i64> = written
-            .iter()
-            .filter(|(_, at)| **at < since)
-            .map(|(old, _)| *old)
-            .take(MAX_COLLECTION_BATCH)
-            .collect();
-        written.retain(|other, _| !old.contains(other));
         let files_rows = kept.values().flat_map(|(file, at)| file_row(file, *at));
-        let worktree_rows = written.iter().flat_map(|(part, at)| [*part, *at]);
         let puts = vec![
-            put(FILES, part, files_rows.collect(), FILE_WIDTH),
-            put(WORKTREES, 0, worktree_rows.collect(), 2),
+            put(&FILES, part, files_rows.collect()),
+            put(&WORKTREES, part, vec![now]),
         ];
-        let gone = old.into_iter().map(|old| (rel(FILES), old)).collect();
+        let old = self.old_worktrees(part, since)?;
+        let gone = old
+            .into_iter()
+            .flat_map(|old| [(rel(&FILES), old), (rel(&WORKTREES), old)])
+            .collect();
         self.queue_frames(space(), puts, gone, None);
         Ok(())
     }
 
-    /// The worktree's rows in part `part`, by path key, each with when it was verified.
-    fn verified_rows(&self, part: i64) -> StoreResult<BTreeMap<i64, (VerifiedWorktreeFile, i64)>> {
-        let rows = self.stored_rows(FILES, part)?;
+    /// The rows of part `part` verified at `since` or later, by path key, each with when it was
+    /// verified.
+    fn verified_rows(
+        &self,
+        part: i64,
+        since: i64,
+    ) -> StoreResult<BTreeMap<i64, (VerifiedWorktreeFile, i64)>> {
+        let rows = self.stored_rows(&FILES, part)?;
         Ok(rows
             .chunks_exact(FILE_WIDTH)
-            .map(|row| (row[0], (verified_file(row), row[10])))
+            .filter(|row| row[FILE_WIDTH - 1] >= since)
+            .map(|row| (row[0], (verified_file(row), row[FILE_WIDTH - 1])))
             .collect())
     }
 
-    /// Each worktree's part, with when it was last written.
-    fn written_worktrees(&self) -> StoreResult<BTreeMap<i64, i64>> {
-        let rows = self.stored_rows(WORKTREES, 0)?;
-        Ok(rows.chunks_exact(2).map(|row| (row[0], row[1])).collect())
+    /// The parts of at most `MAX_COLLECTION_BATCH` worktrees other than `part`'s that the store
+    /// holds and no restore wrote at `since` or later. A part whose write time cannot be read
+    /// (its frame's bytes are gone) is among them: no restore can read its files either.
+    fn old_worktrees(&self, part: i64, since: i64) -> StoreResult<Vec<i64>> {
+        let worktrees = rel(&WORKTREES);
+        let parts = self.stored_frame_parts(&space(), &worktrees)?;
+        let written = self.admit_parts_stored(&space(), &worktrees, &parts)?;
+        let old = |other: &&i64| **other != part && written_at(written.get(other)) < since;
+        Ok(parts
+            .iter()
+            .filter(old)
+            .take(MAX_COLLECTION_BATCH)
+            .copied()
+            .collect())
     }
 
     /// The rows of `relation`'s part `part`, flat, as queued or stored: none when it has no
-    /// frame there.
-    fn stored_rows(&self, relation: (&str, &str), part: i64) -> StoreResult<Vec<i64>> {
+    /// frame there or its bytes cannot be read.
+    fn stored_rows(&self, relation: &Relation, part: i64) -> StoreResult<Vec<i64>> {
         let frame = self.admit_parts_stored(&space(), &rel(relation), &[part])?;
         let Some(frame) = frame.get(&part) else {
             return Ok(Vec::new());
@@ -122,26 +159,36 @@ impl ContentStore {
     }
 }
 
+/// When a restore last wrote a worktree's files, as its `verified_worktree` frame holds it: the
+/// earliest time there is where it has no frame whose rows can be read.
+fn written_at(frame: Option<&Arc<Admitted>>) -> i64 {
+    let rows = frame.and_then(|frame| frame.rows().ok());
+    let first = rows.and_then(|rows| rows.rows.first().copied());
+    first.unwrap_or(i64::MIN)
+}
+
 /// The space of the store's verified worktree files.
 fn space() -> [u8; 32] {
     Sha256::digest(b"rerail.space/v1\0verified worktree files\0").into()
 }
 
 /// A relation of this space, its identity the digest of its name and columns.
-fn rel((name, columns): (&str, &str)) -> Rel {
+fn rel(relation: &Relation) -> Rel {
     let mut identity = Sha256::new();
     identity.update(b"rerail.relation/v1\0");
-    identity.update(name.as_bytes());
-    identity.update(b"\0");
-    identity.update(columns.as_bytes());
+    identity.update(relation.name.as_bytes());
+    for column in relation.columns {
+        identity.update(b"\0");
+        identity.update(column.as_bytes());
+    }
     Rel {
-        name: name.to_owned(),
+        name: relation.name.to_owned(),
         ident: identity.finalize().into(),
     }
 }
 
-/// The part of `verified_worktree_file` that holds the files of the worktree whose root is
-/// `worktree`: positive, since part 0 is a whole relation's and a negative part a delta's.
+/// The part of each relation that holds the worktree whose root is `worktree`: positive, since
+/// part 0 is a whole relation's and a negative part a delta's.
 fn worktree_part(worktree: &str) -> i64 {
     let mut digest = Sha256::new();
     digest.update(b"worktree\0");
@@ -156,9 +203,10 @@ fn first_eight(digest: [u8; 32]) -> i64 {
     i64::from_be_bytes(bytes)
 }
 
-/// A frame of `rows` (`width` integers each) for `relation`'s part `part`, its digest that of
-/// its rows.
-fn put(relation: (&str, &str), part: i64, rows: Vec<i64>, width: usize) -> Put {
+/// A frame of `rows` for `relation`'s part `part`, as wide as its columns, its digest that of its
+/// rows.
+fn put(relation: &Relation, part: i64, rows: Vec<i64>) -> Put {
+    let width = relation.columns.len();
     let digest = rows
         .iter()
         .fold(0xcbf2_9ce4_8422_2325_u64, |digest, value| {

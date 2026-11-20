@@ -872,6 +872,15 @@ impl ContentStore {
         Ok(parts)
     }
 
+    /// The parts of `rel` in `space` the store's file holds, past the snapshot, whether or not their bytes can be read
+    /// (queued writes are not among them).
+    pub fn stored_frame_parts(&self, space: &[u8; 32], rel: &Rel) -> StoreResult<Vec<i64>> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut st = connection.prepare_cached("SELECT part FROM frames WHERE space = ?1 AND rel = ?2 AND ident = ?3 ORDER BY part")?;
+        let parts = st.query_map(params![&space[..], rel.name, &rel.ident[..]], |row| row.get(0))?;
+        Ok(parts.collect::<Result<_, _>>()?)
+    }
+
     /// Forgets every frame of `space` and its count of runs: the space of a program no run will run again.
     pub fn drop_frame_space(&self, space: &[u8; 32]) -> StoreResult<usize> {
         if let Some(snapshot) = self.snapshot() {

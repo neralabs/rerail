@@ -2859,33 +2859,52 @@ fn a_store_folder_that_is_a_symlink_is_not_followed_when_tightening() {
     assert_eq!(mode_of(&elsewhere.join(STORE_FILE_NAME)), 0o600);
 }
 
-/// A restore's memory of a worktree's verified files: one row per worktree and path, a later
-/// hash replacing an earlier one, kept when the store closes and opens again, a row 30 days old
-/// forgotten at its worktree's next write, and a worktree no restore wrote for 30 days forgotten
-/// at any write.
-#[test]
-fn verified_worktree_files_are_kept_by_worktree_and_path_and_forgotten_when_old() {
-    let (path, store) = store("verified-files");
-    let file = |path: &str, changed: i64| VerifiedWorktreeFile {
+/// A file a restore remembered, as these cases make one: its path's key and its change time.
+fn remembered_file(path: &str, changed: i64) -> VerifiedWorktreeFile {
+    VerifiedWorktreeFile {
         path: worktree_path_key(path),
         volume: u64::MAX,
         file_id: [9; 16],
         changed,
         blob: HashKey::git_sha1([7; 20]),
-    };
+    }
+}
+
+/// How many worktrees' files the store's file holds: its frames of `verified_worktree_file`, one
+/// a worktree.
+fn verified_worktrees_stored(path: &std::path::Path) -> i64 {
+    let connection = Connection::open(path).unwrap();
+    connection
+        .query_row(
+            "SELECT count(*) FROM frames WHERE rel = 'verified_worktree_file'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
+const DAY: i64 = 24 * 60 * 60;
+
+/// A restore's memory of a worktree's verified files: one row per worktree and path, a later
+/// hash replacing an earlier one, kept when the store closes and opens again. A row 30 days old
+/// proves nothing, so its file is read again, and goes at its worktree's next write; the files of
+/// a worktree no restore wrote for 30 days go at another worktree's write.
+#[test]
+fn verified_worktree_files_are_kept_by_worktree_and_path_and_forgotten_when_old() {
+    let (path, store) = store("verified-files");
+    let file = remembered_file;
     let sorted = |mut files: Vec<VerifiedWorktreeFile>| {
         files.sort_by_key(|file| file.path);
         files
     };
-    let day = 24 * 60 * 60;
     store
-        .remember_verified_worktree_files("/a", &[file("x.py", 1), file("y.py", 2)], 100 * day)
+        .remember_verified_worktree_files("/a", &[file("x.py", 1), file("y.py", 2)], 100 * DAY)
         .unwrap();
     store
-        .remember_verified_worktree_files("/b", &[file("x.py", 3)], 100 * day)
+        .remember_verified_worktree_files("/b", &[file("x.py", 3)], 100 * DAY)
         .unwrap();
     store
-        .remember_verified_worktree_files("/a", &[file("x.py", 4)], 110 * day)
+        .remember_verified_worktree_files("/a", &[file("x.py", 4)], 110 * DAY)
         .unwrap();
 
     // A restart: the store closed, this process's copy of its frames forgotten, and opened again.
@@ -2893,33 +2912,141 @@ fn verified_worktree_files_are_kept_by_worktree_and_path_and_forgotten_when_old(
     forget_frames_snapshot(path.to_str().unwrap());
     let store = ContentStore::open(&path).unwrap();
     assert_eq!(
-        sorted(store.verified_worktree_files("/a").unwrap()),
+        sorted(store.verified_worktree_files("/a", 110 * DAY).unwrap()),
         sorted(vec![file("x.py", 4), file("y.py", 2)]),
         "a later hash of a file replaces its row, and the rows outlive the store's close"
     );
     assert_eq!(
-        store.verified_worktree_files("/b").unwrap(),
+        store.verified_worktree_files("/b", 110 * DAY).unwrap(),
         vec![file("x.py", 3)]
+    );
+    assert_eq!(
+        store.verified_worktree_files("/a", 131 * DAY).unwrap(),
+        vec![file("x.py", 4)],
+        "a row 31 days old proves nothing: its file is read again"
     );
 
     store
-        .remember_verified_worktree_files("/c", &[], 131 * day)
+        .remember_verified_worktree_files("/c", &[], 131 * DAY)
         .unwrap();
+    store.written().unwrap();
     assert_eq!(
-        sorted(store.verified_worktree_files("/a").unwrap()),
-        sorted(vec![file("x.py", 4), file("y.py", 2)]),
-        "a worktree written 21 days ago keeps its rows"
-    );
-    assert!(
-        store.verified_worktree_files("/b").unwrap().is_empty(),
-        "a worktree no restore wrote for 31 days is forgotten"
+        verified_worktrees_stored(&path),
+        2,
+        "a worktree no restore wrote for 31 days is forgotten: /a's and /c's stay"
     );
     store
-        .remember_verified_worktree_files("/a", &[], 131 * day)
+        .remember_verified_worktree_files("/a", &[], 131 * DAY)
         .unwrap();
     assert_eq!(
-        store.verified_worktree_files("/a").unwrap(),
+        store.verified_worktree_files("/a", 110 * DAY).unwrap(),
         vec![file("x.py", 4)],
         "a row 31 days old goes at its worktree's next write"
     );
+}
+
+/// Two saves of two worktrees in one wave, as two processes on one store make them: each reads
+/// the store before the other's write lands, and neither drops the other's worktree, so both go
+/// once no restore wrote them for 30 days.
+#[test]
+fn two_saves_in_one_wave_keep_each_others_worktree() {
+    let (path, store) = store("verified-files-race");
+    // Another process's handle: the same file by another name, so a writer of its own.
+    let another = path.parent().unwrap().join("another");
+    fs::create_dir_all(&another).unwrap();
+    let other_path = another.join("..").join(path.file_name().unwrap());
+    let other = ContentStore::open(&other_path).unwrap();
+    let file = [remembered_file("x.py", 1)];
+    {
+        let _waves = write_back::run_waves();
+        store
+            .remember_verified_worktree_files("/a", &file, 100 * DAY)
+            .unwrap();
+        other
+            .remember_verified_worktree_files("/b", &file, 100 * DAY)
+            .unwrap();
+    }
+    store.written().unwrap();
+    other.written().unwrap();
+    assert_eq!(verified_worktrees_stored(&path), 2);
+    store
+        .remember_verified_worktree_files("/c", &[], 131 * DAY)
+        .unwrap();
+    store.written().unwrap();
+    assert_eq!(
+        verified_worktrees_stored(&path),
+        1,
+        "both worktrees no restore wrote for 31 days are forgotten, and /c's stays"
+    );
+    // The other name's connections closed, so its folder can go with the database's.
+    drop(other);
+    connection::release_all_at(&other_path);
+}
+
+/// A worktree whose frames' bytes cannot be read (their segment gone) proves no file, and its
+/// part is forgotten at another worktree's save, not kept for good.
+#[test]
+fn a_worktree_whose_frame_segment_is_gone_is_forgotten_at_another_save() {
+    let (path, store) = store("verified-files-lost");
+    let file = [remembered_file("x.py", 1)];
+    store
+        .remember_verified_worktree_files("/a", &file, 100 * DAY)
+        .unwrap();
+    store.written().unwrap();
+    drop(store);
+    forget_frames_snapshot(path.to_str().unwrap());
+    let segments = std::path::PathBuf::from(format!("{}.frames", path.display()));
+    for entry in fs::read_dir(&segments).unwrap() {
+        let entry = entry.unwrap().path();
+        if entry.is_file() {
+            fs::remove_file(entry).unwrap();
+        }
+    }
+    let store = ContentStore::open(&path).unwrap();
+    assert!(
+        store
+            .verified_worktree_files("/a", 100 * DAY)
+            .unwrap()
+            .is_empty()
+    );
+    store
+        .remember_verified_worktree_files("/b", &file, 101 * DAY)
+        .unwrap();
+    store.written().unwrap();
+    assert_eq!(
+        verified_worktrees_stored(&path),
+        1,
+        "/a's part is forgotten, and /b's stays"
+    );
+}
+
+/// A save forgets the parts of at most `MAX_COLLECTION_BATCH` worktrees no restore wrote for 30
+/// days, and a later save the rest.
+#[test]
+fn a_save_forgets_at_most_a_batch_of_old_worktrees() {
+    let (path, store) = store("verified-files-batch");
+    {
+        // One wave: no save in it reads the parts the others queued.
+        let _waves = write_back::run_waves();
+        for worktree in 0..=MAX_COLLECTION_BATCH {
+            store
+                .remember_verified_worktree_files(&format!("/w{worktree}"), &[], 100 * DAY)
+                .unwrap();
+        }
+    }
+    store.written().unwrap();
+    store
+        .remember_verified_worktree_files("/c", &[], 131 * DAY)
+        .unwrap();
+    store.written().unwrap();
+    assert_eq!(
+        verified_worktrees_stored(&path),
+        2,
+        "one old worktree is left for the next save, beside /c"
+    );
+    store
+        .remember_verified_worktree_files("/c", &[], 131 * DAY)
+        .unwrap();
+    store.written().unwrap();
+    assert_eq!(verified_worktrees_stored(&path), 1);
 }
