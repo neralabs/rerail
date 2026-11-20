@@ -42,6 +42,7 @@ import guest  # noqa: E402
 HERE = os.path.dirname(os.path.realpath(__file__))
 HISTORY = 100          # samples kept: 5 minutes at 3 s
 PING_SECONDS = 2
+REFRESH_SECONDS = 20   # the configuration read again: hosts added, removed, enabled or not
 STALE_SECONDS = 12     # no sample for this long: the machine's connection is shown as lost
 SAMPLER = os.path.join(HERE, "sampler")
 WINDOWS_SAMPLER = os.path.join(HERE, "sampler.ps1")
@@ -95,7 +96,12 @@ class Machine:
 
     def run(self):
         backoff = 5
-        while True:
+        while not getattr(self, "gone", False):
+            if self.host is not None and not self.host.get("enabled", True):
+                with self.lock:
+                    self.connected, self.error = False, "disabled in the configuration"
+                time.sleep(3)
+                continue
             # A guest that is not running is not asked (an ssh to it would fail, or start it).
             g = self.host is not None and self.guest()
             if g and g["state"] != "running":
@@ -228,13 +234,15 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
 
 
-def main(argv):
-    port = int(argv[argv.index("--port") + 1]) if "--port" in argv else 8740
-    MACHINES.append(Machine(LOCAL))
-    # One card a machine or VM; none for an entry that takes no jobs (a Windows VM's WSL 1, there
-    # for its Windows side). A guest's card comes after its machine's.
-    hosts = [h for h in farm.hosts() if h.get("enabled", True) and (h.get("tests", True) or h.get("mirror", True))]
-    parents = {h["name"]: Machine(h["name"], h).parent(Machine(h["name"], h).guest()) for h in hosts}
+def layout():
+    """The cards' order from the configuration as it is now: one a machine or VM, a guest's after its
+    machine's; disabled hosts too (marked, not sampled); none for an entry that takes no jobs (a
+    Windows VM's WSL 1, there for its Windows side)."""
+    hosts = [h for h in farm.hosts() if h.get("tests", True) or h.get("mirror", True)]
+    parents = {}
+    for h in hosts:
+        m = Machine(h["name"], h)
+        parents[h["name"]] = m.parent(m.guest())
     order = [LOCAL] + [h["name"] for h in hosts if not parents[h["name"]]]
     for h in hosts:
         if parents[h["name"]]:
@@ -243,10 +251,39 @@ def main(argv):
                 at += 1
             order.insert(at + 1, h["name"])
     by_name = {h["name"]: h for h in hosts}
-    for name in order[1:]:
-        MACHINES.append(Machine(name, by_name[name]))
-    for m in MACHINES:
-        threading.Thread(target=m.run, daemon=True).start()
+    return [(n, by_name[n]) for n in order[1:]]
+
+
+def refresh():
+    """MACHINES as the configuration says now: a host added gets its card and sampler, one removed
+    loses them, a host's entry is read afresh (enabled or not). Every REFRESH_SECONDS."""
+    while True:
+        try:
+            have = {m.name: m for m in MACHINES[1:]}
+            new = []
+            for name, h in layout():
+                m = have.pop(name, None)
+                if m is None:
+                    m = Machine(name, h)
+                    threading.Thread(target=m.run, daemon=True).start()
+                m.host = h
+                new.append(m)
+            for m in have.values():
+                m.gone = True
+                if m.proc and m.proc.poll() is None:
+                    m.proc.kill()
+            MACHINES[1:] = new
+        except Exception as e:  # noqa: BLE001 (a dashboard keeps going)
+            print(f"dashboard: the configuration could not be read: {e}", file=sys.stderr, flush=True)
+        time.sleep(REFRESH_SECONDS)
+
+
+def main(argv):
+    port = int(argv[argv.index("--port") + 1]) if "--port" in argv else 8740
+    MACHINES.append(Machine(LOCAL))
+    threading.Thread(target=MACHINES[0].run, daemon=True).start()
+    threading.Thread(target=refresh, daemon=True).start()
+    time.sleep(0.5)
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     url = f"http://127.0.0.1:{port}/"
     print(f"dashboard: {url} ({len(MACHINES)} machines; ^C ends it, and the samplers with it)", flush=True)
@@ -368,7 +405,8 @@ function osLine(m) {
 function card(m, all) {
   const d = m.last, f = m.farm || {}, gs = m.guest;
   let status, color;
-  if (m.connected) { status = "connected"; color = "var(--good)"; }
+  if (f.enabled === false) { status = "disabled"; color = "var(--muted)"; }
+  else if (m.connected) { status = "connected"; color = "var(--good)"; }
   else if (gs && gs.state !== "running") { status = gs.state; color = STATE_COLOR[gs.state] || "var(--muted)"; }
   else { status = "not connected"; color = "var(--bad)"; }
   let html = `<div class="top"><div><span class="name">${esc(m.name)}</span> ${osChip(m)} <span class="model">${esc(d ? d.model || "" : "")}</span></div>` +
@@ -382,6 +420,7 @@ function card(m, all) {
   if (mine.length) html += `<div class="row"><span class="lab">Guests</span><ul class="gl" style="margin:0">` +
     mine.map(o => `<li><b>${esc(o.name)}</b> ${osChip(o)} ` + (o.guest ? `(${esc(KIND[o.guest.kind] || o.guest.kind)}): ${guestLine(o.guest)}`
       : `(WSL): <i class="dot" style="background:${o.connected ? "var(--good)" : "var(--bad)"}"></i>${o.connected ? "running" : "not connected"} · always on`) + `</li>`).join("") + "</ul></div>";
+  if (f.enabled === false) return html + `<div class="why">disabled in the configuration: the farm sends it nothing</div>`;
   if (gs && gs.state !== "running") return html;
   if (!m.local) {
     const ok = f.ok;
