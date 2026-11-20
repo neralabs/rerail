@@ -2229,6 +2229,34 @@ describe("CodeRuleBridge", () => {
       expect(await told("session-2")).toEqual([]);
     });
 
+    // `git worktree remove` takes a worktree's folder before Git stops listing the worktree, so a walk that began with the
+    // worktree listed can find its folder gone, or on Windows its delete pending, when it reads it. The folder went with
+    // the worktree: no place anyone can act on.
+    it.each([
+      ["gone", (worktree: string, root: string) => async (): Promise<void> => { git(root, "worktree", "remove", worktree); }],
+      ["its delete pending, as Windows refuses it", (worktree: string) => async (): Promise<void> => { throw refusal("lstat", worktree); }],
+    ])("records no place of a worktree whose folder its walk finds %s, removed since the walk listed it", async (_name, removal) => {
+      const root = await twoBranches();
+      const { worktree, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
+      const onDiscoveryGaps = vi.fn();
+      const audit = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+      const bridge = gapBridge(root, { ...auditor(audit), ...extra }, { worktreeWalkGapMs: 0, onDiscoveryGaps });
+      await bridge.openWorkspace("session-1");
+      await bridge.checkpoint("turn");
+      await bridge.settleWorktreeWalk();
+      const removed = removal(worktree, root);
+      discovery.lstats.set(worktree, [async () => {
+        roots.length = 0;
+        await removed();
+      }]);
+      for (let turn = 0; turn < 2; turn += 1) {
+        await bridge.checkpoint("turn");
+        await bridge.settleWorktreeWalk();
+      }
+      expect(discovery.lstats.get(worktree)).toEqual([]);
+      expect(toldPaths(onDiscoveryGaps)).toEqual([]);
+    });
+
     it("reads the files it held in a folder as deleted when the folder refused it with EPERM and was gone by the look, as when its lstat finds it gone", async () => {
       const root = await workspace();
       const sub = join(root, "src", "sub");

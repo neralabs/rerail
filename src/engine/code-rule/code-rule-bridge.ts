@@ -3219,8 +3219,13 @@ export class CodeRuleBridge {
     worktrees.walkedFrom = walk.observedAt;
     for (const worktree of walk.worktrees) worktrees.fresh.delete(worktree);
     worktrees.baselineRoots = scan.failedRoots;
-    worktrees.gaps = scanGaps(scan.errors);
-    worktrees.unread = scan.unread;
+    // `git worktree remove` takes the worktree's folder before Git stops listing it, so a walk that began with it listed
+    // can find the folder gone, or its delete pending, which fails the walk there. A worktree gone since the walk began
+    // (`#applyWalk`) took its folders and files with it: nothing the walk could not read there is a place.
+    const gone = new Set([...walk.worktrees].filter(worktree => !worktrees.roots.has(worktree)));
+    const stays = (path: string): boolean => !gone.has(path) && !underBaselineRoot(gone, path);
+    worktrees.gaps = scanGaps(scan.errors.filter(error => stays(error.path)));
+    worktrees.unread = new Map([...scan.unread].filter(([path]) => stays(path)));
     this.#listLateAgain(discovery, scan.lateListings);
   }
 
