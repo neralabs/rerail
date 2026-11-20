@@ -2132,6 +2132,25 @@ describe("CodeRuleBridge", () => {
       }
     });
 
+    it("keeps the session folder a gap, with the files it held, when its own listing refuses it with EPERM, whatever a look at it would find", async () => {
+      for (const look of ["going", "gone"] as const) {
+        const root = await workspace();
+        await writeFile(join(root, "src", "a.py"), "a = 1\n");
+        const observations: SourceObservationCache = new Map();
+        const onDiscoveryGaps = vi.fn();
+        const bridge = gapBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps, observations });
+        await bridge.openWorkspace(`session-${look}`);
+        await bridge.checkpoint("turn");
+        const denial = denyFolder(root, "EPERM");
+        discovery.accesses.set(root, Array.from({ length: 5 }, () => (look === "gone" ? gone("access", root) : deletePending(root))));
+        await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(`.: ${denial}`));
+        expect(onDiscoveryGaps.mock.calls).toEqual([[[toldGap(".", denial, "EPERM")]]]);
+        expect([...observations.get(root)?.keys() ?? []].filter(path => path.endsWith(".py"))).toEqual(["src/a.py"]);
+        discovery.directories.delete(root);
+        discovery.accesses.delete(root);
+      }
+    });
+
     it(`tells none of the refusals past the first ${MAX_TOLD_AT_ONCE} in path order, which it had no room to look at, though the record has room: removed by the next walk, they are never told`, async () => {
       const root = await workspace();
       const folders = Array.from({ length: MAX_TOLD_AT_ONCE + 5 }, (_, index) => join(root, "src", `a${String(index).padStart(3, "0")}`));
