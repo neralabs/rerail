@@ -5625,5 +5625,10 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   1. Why the pool oversubscribes its cores, and the parse workers' CPU a file.
   2. `stats`' switches, `cross`' `public_best_*` waits, `combine`'s fixpoint waits.
   3. Trace where the small label runs come from, then batch them to a chunk's size.
+     **Done** (0471): they were a wave halved until its files shared a slab (`gather` found no room). A batch now
+     reads each document in its own slab; 78 runs on all, one a wave. The cold run's exit was the device joins'
+     caches, capped per thread: now one cap for every thread's.
   4. A cold first Metal run of all exited 1 (its log was lost). Reproduce it with a fresh binary path.
+     **Done** (0471): the panic of a one-file wave the budget had no room for, the device joins' caches holding
+     127 MB; two cold runs of a new binary passed.
 

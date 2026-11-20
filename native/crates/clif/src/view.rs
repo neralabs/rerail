@@ -3,12 +3,13 @@
 //! host), its format, its widths. One definition: the device's `DocView` is this, and its MSL is
 //! written from it ([`ukl`]), with each field's offset asserted against Rust's.
 
-/// A document's view (120 bytes, u32s; the device's `DocView`, `device_tape.h`).
+/// A document's view (124 bytes, u32s; the device's `DocView`, `device_tape.h`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TapeView {
-    /// The document's first byte in its batch's chunk block (the device's; 0 on the host): every
-    /// offset below counts from it, so a copy into another block changes `at` alone (0289 §4).
+    /// The document's first byte from its batch's bound block (the device's; 0 on the host), with `at_high` an i64:
+    /// every offset below counts from it. A document in another slab of the batch is reached by the difference of
+    /// the slabs' GPU addresses (decision 0353 step 4, 0471), so a batch reads its documents where they lie.
     pub at: u32,
     pub nodes: u32,
     pub node_base: u32,
@@ -47,14 +48,28 @@ pub struct TapeView {
     pub line_base: u32,
     /// Where the stored tape starts.
     pub tape: u32,
+    /// `at`'s high word (`at` and this, an i64: `TapeView::offset`).
+    pub at_high: u32,
 }
-const _: () = assert!(std::mem::size_of::<TapeView>() == 120);
+const _: () = assert!(std::mem::size_of::<TapeView>() == 124);
+
+impl TapeView {
+    /// The document's first byte from its batch's bound block: `at` and `at_high`, an i64.
+    pub fn offset(&self) -> i64 {
+        (u64::from(self.at_high) << 32 | u64::from(self.at)) as i64
+    }
+
+    /// Sets the document's first byte from its batch's bound block (`offset`).
+    pub fn set_offset(&mut self, offset: i64) {
+        (self.at, self.at_high) = (offset as u32, (offset >> 32) as u32);
+    }
+}
 
 /// The view in UKL: `struct TapeView`, `DocView` its name in the kernels, and each field's offset and
 /// the size asserted against this definition's, so the kernels cannot read a layout of their own.
 pub fn ukl() -> String {
     use std::mem::offset_of;
-    let fields: [(&str, &str, usize); 20] = [
+    let fields: [(&str, &str, usize); 21] = [
         ("uint32_t", "at", offset_of!(TapeView, at)),
         ("uint32_t", "nodes", offset_of!(TapeView, nodes)),
         ("uint32_t", "node_base", offset_of!(TapeView, node_base)),
@@ -75,6 +90,7 @@ pub fn ukl() -> String {
         ("uint32_t", "source_base", offset_of!(TapeView, source_base)),
         ("uint32_t", "line_base", offset_of!(TapeView, line_base)),
         ("uint32_t", "tape", offset_of!(TapeView, tape)),
+        ("uint32_t", "at_high", offset_of!(TapeView, at_high)),
     ];
     let mut s = String::from("#include <ukl/backend.h>\ntypedef struct TapeView {\n");
     for (ty, name, _) in fields.iter() {

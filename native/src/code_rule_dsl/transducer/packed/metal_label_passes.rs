@@ -1733,12 +1733,14 @@ fn interpret_only() -> bool {
     false
 }
 
-/// `Error::BackendCapacity`, counted by where it was raised (`capacity.<line>` in the profile's stages): which bound a
-/// run that fell back to the CPU met.
+/// `Error::BackendCapacity`, counted by where it was raised (`capacity.<file>:<line>` in the profile's stages): which
+/// bound split the wave. Called, not passed (`ok_or_else(|| capacity())`): passed as a function, its caller is
+/// `FnOnce::call_once`'s line in core.
 #[track_caller]
 fn capacity() -> Error {
     if crate::code_rule_dsl::prof::on() {
-        crate::code_rule_dsl::prof::count_named(format!("capacity.label_passes:{}", std::panic::Location::caller().line()), 1);
+        let at = std::panic::Location::caller();
+        crate::code_rule_dsl::prof::count_named(format!("capacity.{}:{}", at.file().rsplit('/').next().unwrap_or(""), at.line()), 1);
     }
     Error::BackendCapacity
 }
@@ -2314,7 +2316,7 @@ fn tapes(
     }
     // The documents resident, gathered into one block (decision 0289 §4), one table over them.
     let table = crate::code_rule_dsl::prof::time("residency.docs", || crate::code_rule_dsl::residency::slabs::admit_docs(files))?;
-    let table = crate::code_rule_dsl::residency::slabs::DocTable::one_block(table).ok_or_else(capacity)?;
+    let table = crate::code_rule_dsl::residency::slabs::DocTable::new(table).ok_or_else(|| capacity())?;
     if table.nodes != files.iter().map(TapeDoc::transducer_len).sum::<usize>() {
         return Err(Error::BackendFailure);
     }
@@ -2352,7 +2354,15 @@ impl Runner<'_> {
     fn bind_slabs(&self, encoder: &metal::ComputeCommandEncoderRef, slot: Option<u64>) {
         let Some(slot) = slot else { return };
         encoder.set_buffer(slot, Some(self.block()), 0);
-        // The 16z documents' cache, which their reads reach from the block by the views' offsets, and write.
+        self.make_resident(encoder);
+    }
+
+    /// What the batch's reads reach from the block by the views' offsets: its other slabs (read; decision 0353 step
+    /// 4, 0471) and the 16z documents' cache (read and written).
+    fn make_resident(&self, encoder: &metal::ComputeCommandEncoderRef) {
+        for slab in &self.tapes.table.slabs {
+            encoder.use_resource(slab.buffer(), metal::MTLResourceUsage::Read);
+        }
         if let Some(cache) = &self.tapes.table.cache {
             encoder.use_resource(cache, metal::MTLResourceUsage::Read | metal::MTLResourceUsage::Write);
         }
@@ -3381,7 +3391,7 @@ impl Runner<'_> {
         let lease = &mut workspace.lease;
         let generation = lease.generation;
         let span = u32::try_from(prepared.task_count + 1).map_err(|_| capacity())? * 2;
-        lease.generation = lease.generation.checked_add(span).ok_or_else(capacity)?;
+        lease.generation = lease.generation.checked_add(span).ok_or_else(|| capacity())?;
         let stamp = |evaluations: &[MetalEvaluation]| {
             let mut evaluations = evaluations.to_vec();
             evaluations.iter_mut().for_each(|evaluation| evaluation.generation = generation);
@@ -3478,6 +3488,7 @@ impl Runner<'_> {
         for (index, buffer) in buffers.iter().enumerate() {
             encoder.set_buffer(index as u64, Some(buffer), 0);
         }
+        self.make_resident(encoder);
         let width = state.thread_execution_width().max(1);
         encoder.checked_dispatch_threads(&self.command, MTLSize::new(lanes, 1, 1), MTLSize::new(width.min(lanes), 1, 1));
         encoder.end_encoding();
@@ -3988,6 +3999,7 @@ impl Runner<'_> {
         for (index, buffer) in buffers.iter().enumerate() {
             encoder.set_buffer(index as u64, Some(buffer), 0);
         }
+        self.make_resident(encoder);
         let lanes = lanes_count as u64;
         let width = self.engine.pipeline().thread_execution_width().max(1);
         encoder.checked_dispatch_threads(&self.command, MTLSize::new(lanes, 1, 1), MTLSize::new(width.min(lanes), 1, 1));

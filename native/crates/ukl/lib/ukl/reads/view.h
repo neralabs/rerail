@@ -11,7 +11,7 @@ typedef struct ViewRow {
     UKL_GLOBAL const uint8_t* tape;
     UKL_GLOBAL const uint8_t* lines;
     uint32_t rows[9];
-    uint32_t view[30];
+    uint32_t view[31];
 } ViewRow;
 typedef struct ViewDir {
     UKL_GLOBAL const uint8_t* chunk;

@@ -10,9 +10,9 @@
 //!   the block's allocations, at 16 bytes; a slab is append-only until it is retired whole: no
 //!   compaction. A recycled slab holds its last lease's bytes, so the block zeroes each room as it
 //!   hands it out; a new one reads zero.
-//! - **A batch reads one block** (`gather`): a batch whose documents are in several slabs has them
-//!   copied into one, each a contiguous range, and the residency then finds them there, so the next
-//!   batch over them copies nothing. Kernels bind that one block.
+//! - **A batch reads its documents where they lie** (`DocTable::new`): it binds its first
+//!   document's slab, makes its other slabs resident, and reaches a document in another slab by the
+//!   slabs' GPU addresses (decision 0353 step 4, 0471). Nothing is copied between slabs.
 //! - **A resident document** is keyed by its tape's SHA-256 (the store's canonical hash, which
 //!   covers the format version). It holds, in one slab: the v9np image byte-identical to its
 //!   frame's content (columns at 16-byte offsets, format 11), the source's UTF-8 bytes, and what a
@@ -66,7 +66,7 @@ pub fn aligned(length: usize) -> usize {
 /// document's first node in a batch's numbering, set by the batch's document table (`DocTable`). The tape is read
 /// where it lies, format 15's columns or format 16's arrays (decision 0293): nothing per node is derived beside it.
 pub use rerail_clif::view::TapeView as DocView;
-const _: () = assert!(std::mem::size_of::<DocView>() == 120);
+const _: () = assert!(std::mem::size_of::<DocView>() == 124);
 
 /// The MSL of `DocView`, for the kernels that read documents in place (`device_tape.h`).
 pub fn msl() -> String {
@@ -176,20 +176,6 @@ pub struct Resident {
 }
 
 impl Resident {
-    /// This document copied into `slab` at `to` (its `len` bytes of room there, 16-byte aligned):
-    /// its view's `at` moved with it, its parts being offsets from there. Its language's table is the slab's
-    /// (`table_at`, placed before the copy).
-    fn copied(&self, slab: &Arc<Slab>, to: usize, table_at: Option<usize>) -> Resident {
-        // SAFETY: `to..to + len` is a room of `slab` given to this copy alone; the source range is
-        // this document's, written at admission and never again.
-        unsafe { std::ptr::copy_nonoverlapping(self.slab.host().add(self.at), slab.host().add(to), self.len) };
-        let mut view = DocView { at: to as u32, ..self.view };
-        if let Some(at) = table_at {
-            view.codes = codes_offset(to, at);
-        }
-        Resident { digest: self.digest, slab: Arc::clone(slab), view, at: to, len: self.len, bytes: self.bytes, tape_length: self.tape_length, table: self.table }
-    }
-
     /// Its code table's bytes: its own, or its slab's table of its language.
     pub fn code_bytes(&self) -> &[u8] {
         let len = 24 * self.view.code_count as usize;
@@ -261,7 +247,11 @@ pub fn source_slabs(sources: &[Arc<ResidentSource>]) -> Option<(Vec<Arc<Slab>>, 
 /// batch's numbering, and the one block they are in (decision 0289 §4), `None` for no documents.
 pub struct DocTable {
     pub views: Vec<DocView>,
+    /// The block the batch binds: its first document's slab. Each view's offset counts from it.
     pub block: Option<Arc<Slab>>,
+    /// The batch's other slabs, which its kernels make resident (`use_resource`): their documents are reached from
+    /// the block by the slabs' GPU addresses (decision 0353 step 4, 0471).
+    pub slabs: Vec<Arc<Slab>>,
     pub nodes: usize,
     /// The documents, held for the batch's life.
     pub documents: Vec<Arc<Resident>>,
@@ -341,37 +331,42 @@ impl DocTable {
         self.views.iter().all(|view| view.format == first).then_some(first)
     }
 
-    /// The table of `documents`, in order, in one slab (`gather`): `None` when they cannot be.
-    pub fn one_block(documents: Vec<Arc<Resident>>) -> Option<Self> {
-        Self::new(gather(documents).ok()?)
-    }
-
-    /// The table of `documents`, in order, or `None` when they are not all in one slab.
+    /// The table of `documents`, in order, read where they lie: in the first one's slab (the block), or in another
+    /// slab of the batch, reached by the slabs' GPU addresses (decision 0353 step 4, 0471). Nothing is copied. Before,
+    /// a batch over several slabs was copied into one (`gather`); with the residency full of tapes' homes that copy
+    /// found no room, and each wave was halved until its files shared a slab (0466's small label runs). `None` for a
+    /// batch past the u32 numbering.
     pub fn new(documents: Vec<Arc<Resident>>) -> Option<Self> {
         let block = documents.first().map(|document| Arc::clone(&document.slab));
-        if documents.iter().any(|document| Some(document.slab.id) != block.as_ref().map(|block| block.id)) {
-            return None;
+        let mut slabs: Vec<Arc<Slab>> = Vec::new();
+        for document in &documents {
+            if Some(document.slab.id) != block.as_ref().map(|block| block.id) && !slabs.iter().any(|slab| slab.id == document.slab.id) {
+                slabs.push(Arc::clone(&document.slab));
+            }
         }
+        // A kernel's reads take a document at the block's address plus its offset (`tape_doc`).
+        let address = block.as_ref().map_or(0, |b| b.buffer().gpu_address());
         let mut views = Vec::with_capacity(documents.len());
         let mut nodes = 0usize;
         let (mut source, mut lines) = (0usize, 0usize);
         for document in &documents {
-            views.push(DocView {
+            let mut view = DocView {
                 node_base: u32::try_from(nodes).ok()?,
                 source_base: u32::try_from(source).ok()?,
                 line_base: u32::try_from(lines).ok()?,
                 ..document.view
-            });
+            };
+            let first = (document.slab.buffer().gpu_address() as i64).wrapping_sub(address as i64).wrapping_add(i64::from(document.view.at));
+            view.set_offset(first);
+            views.push(view);
             nodes += document.view.nodes as usize;
             source += document.view.source_len as usize;
             lines += document.view.line_count as usize;
         }
         u32::try_from(nodes).ok()?;
         u32::try_from(source).ok()?;
-        // A kernel's reads take a document at its block's address plus its `at` (`tape_doc`).
-        let address = block.as_ref().map_or(0, |b| b.buffer().gpu_address());
-        let cache = zcache_for(&mut views, |v| address + u64::from(v.at))?;
-        Some(Self { views, block, nodes, documents, cache })
+        let cache = zcache_for(&mut views, |v| address.wrapping_add(v.offset() as u64))?;
+        Some(Self { views, block, slabs, nodes, documents, cache })
     }
 }
 
@@ -652,78 +647,6 @@ pub fn insert(digests: &[[u8; 32]], parts: Vec<Placement<'_>>) -> Result<(), Err
         state.documents.insert(digest, Arc::new(document));
     }
     Ok(())
-}
-
-/// `documents` in one slab, in order: those not in it already are copied there (a contiguous range
-/// each), and the residency finds them there from now on, so a later batch over them copies
-/// nothing. The newest slab when the copies fit in it, else a new one holding them all.
-pub fn gather(documents: Vec<Arc<Resident>>) -> Result<Vec<Arc<Resident>>, Error> {
-    let Some(first) = documents.first() else { return Ok(documents) };
-    if documents.iter().all(|document| document.slab.id == first.slab.id) {
-        return Ok(documents);
-    }
-    let _gather = rerail_prof::Stage::start("residency.gather");
-    let mut state = STATE.0.lock().map_err(|_| Error::BackendFailure)?;
-    let keep: Vec<u64> = documents.iter().map(|document| document.slab.id).collect();
-    // Each document's range, and each language's table once (whether or not the slab holds it: a little room spare).
-    let room = |documents: &mut dyn Iterator<Item = &Arc<Resident>>| {
-        let mut tables: Vec<Table> = Vec::new();
-        let mut bytes = 0;
-        for document in documents {
-            bytes += aligned(document.len);
-            if let Some(table) = document.table.filter(|table| !tables.contains(table)) {
-                tables.push(table);
-                bytes += aligned(table.len);
-            }
-        }
-        bytes
-    };
-    let newest = state.slabs.last().map(|entry| entry.slab.id);
-    let outside = room(&mut documents.iter().filter(|document| Some(document.slab.id) != newest));
-    let target = match state.slabs.last().and_then(|last| last.slab.room(outside).map(|offset| (Arc::clone(&last.slab), offset))) {
-        Some(found) => found,
-        None => {
-            // A new slab for every document: none of them is in it yet.
-            let (at, offset) = state.room(room(&mut documents.iter()), &keep)?;
-            (Arc::clone(&state.slabs[at].slab), offset)
-        }
-    };
-    let (slab, mut to) = target;
-    let mut gathered = Vec::with_capacity(documents.len());
-    let mut copied = 0usize;
-    for document in documents {
-        if document.slab.id == slab.id {
-            gathered.push(document);
-            continue;
-        }
-        // Its language's table in the slab: held, or copied there from the document's.
-        let table_at = document.table.map(|table| match slab.table(table.key) {
-            Some(at) => at,
-            None => {
-                let at = to;
-                slab.put_table(table.key, at, document.code_bytes());
-                state.pools[2] += aligned(table.len);
-                to += aligned(table.len);
-                at
-            }
-        });
-        // copy (0353 step 7): a document copied between slabs, for a batch that reads one slab (row 13).
-        static GATHERED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(13, "7", "documents copied between slabs (residency gather)");
-        let moved = Arc::new(GATHERED.time(|| (document.copied(&slab, to, table_at), document.len)));
-        to += aligned(document.len);
-        copied += document.len;
-        // The residency finds it here now; the slab it was in may be retired once no batch reads it.
-        if state.documents.get(&document.digest).is_some_and(|held| Arc::ptr_eq(held, &document)) {
-            state.documents.insert(document.digest, Arc::clone(&moved));
-        }
-        gathered.push(moved);
-    }
-    let clock = state.clock;
-    if let Some(entry) = state.slabs.iter_mut().find(|entry| entry.slab.id == slab.id) {
-        entry.last_use = clock;
-    }
-    rerail_prof::count("residency.gathered_kb", copied >> 10);
-    Ok(gathered)
 }
 
 /// The pool's evictor (`rerail_accel::gpu::shared::set_evictor`): retires the least recently used
