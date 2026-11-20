@@ -1,7 +1,7 @@
 //! A test's plans as one dense automaton table, for the device's text tests (`metal_join`'s `row_text`, its
 //! `ROW_VERDICT` and `ROW_TEST` ops).
 //!
-//! The device answers a text test once per symbol not yet in the verdict cache (decision 0468 step 2d), and once
+//! The device answers a text test once per symbol not yet in the verdict cache (decision 0478 step 2d), and once
 //! per row for a made text, a SIMD group per text, by composing each byte's
 //! transition function over a chunk of 32 bytes at a time (decision 0038's chunked matching). So it needs the plans
 //! as one deterministic automaton with few states (each a byte, at most 255), whose final state alone says whether
@@ -24,7 +24,7 @@ use std::sync::Arc;
 /// The most states a table holds (a state is a byte in the device's scratch).
 pub const MAX_STATES: usize = 255;
 
-/// A dense automaton: its bytes (`bytes()`, in the automata block, decision 0468 step 2c) are the byte classes
+/// A dense automaton: its bytes (`bytes()`, in the automata block, decision 0478 step 2c) are the byte classes
 /// (256), then `next` (`states` rows of `classes`), then the end-of-text transition per state, then whether each state
 /// accepts (all bytes).
 #[derive(Clone, Copy, Debug)]
@@ -77,7 +77,7 @@ fn plans_key(plans: &[Arc<Lowered>]) -> String {
     plans.iter().map(|p| p.key.0.as_str()).collect::<Vec<_>>().join(",")
 }
 
-/// The id of the test of `plans` (any of them matching), for its verdicts in the rolling cache (decision 0468 step
+/// The id of the test of `plans` (any of them matching), for its verdicts in the rolling cache (decision 0478 step
 /// 2d): the same for the CPU's matcher of those plans and the device's table of them. Nothing is built for it.
 pub fn test_id(plans: &[Arc<Lowered>]) -> Option<u32> {
     super::automata::id(&format!("test:{}", plans_key(plans)))
@@ -175,7 +175,7 @@ fn build(plans: &[Arc<Lowered>]) -> Result<(Vec<u8>, [u32; 3]), String> {
 /// byte k is a match ending, or in reverse starting, at k).
 #[derive(Clone, Copy, Debug)]
 pub struct Replacer {
-    /// Where the automata block holds its bytes (decision 0468 step 2c).
+    /// Where the automata block holds its bytes (decision 0478 step 2c).
     pub automaton: super::automata::Automaton,
     /// The larger table's states: a SIMD group's scratch holds two rows of them per lane.
     pub states: u32,

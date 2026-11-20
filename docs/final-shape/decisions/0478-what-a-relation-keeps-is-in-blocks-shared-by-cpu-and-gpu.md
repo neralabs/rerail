@@ -1,4 +1,4 @@
-# 0468. What a relation keeps is in blocks, the same for the CPU and the GPU
+# 0478. What a relation keeps is in blocks, the same for the CPU and the GPU
 
 Date: 2026-11-19 (0450 on Native-and-GPU-strata until the merge into investigate-bend-vs-datalog, 2026-11-19). Status: decided (user, 2026-11-19, on Q261); built in steps below.
 
@@ -382,7 +382,7 @@ that size came from the cache's first use, a 16z block decoded, and nothing else
 - **R7's check**: `scripts/check/check-no-relation-maps.py` (pre-commit, beside `check-no-block-copies.py`)
   refuses a commit that adds a `static`, thread-local or process-wide, whose type holds a collection, in the
   engine's data paths, unless it or the line above names it `state: bookkeeping`, `state: not relation data`, or
-  `state (0468 step N)`.
+  `state (0478 step N)`.
 - Tests: `a_stages_growth_is_read_as_filed_never_as_the_threads_ran` (plan.rs, beside 0444's R1);
   `a_relation_moved_for_an_index_lives_until_its_batch_is_done` (below).
 - **Found while measuring: step 3 gave back a relation the GPU was building an index into.** When a relation's

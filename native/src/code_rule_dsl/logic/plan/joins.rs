@@ -263,7 +263,7 @@ pub(super) struct Memo {
     /// Proposals a one-shot process holds until its run ends (`propose`, `drain`): its line, orders, walked work.
     held: Vec<(PlanKey, Vec<(Vec<StoredStep>, f64)>, Option<f64>)>,
     /// A device stage's rows out per row of its input's space, by rule (its spec's hash) and stage, as last filed:
-    /// its next run's space is guessed from it (decision 0468 step 7, was the device's thread-local `GROWTH`).
+    /// its next run's space is guessed from it (decision 0478 step 7, was the device's thread-local `GROWTH`).
     growth: FxHashMap<(u64, usize), f64>,
 }
 
@@ -322,7 +322,7 @@ fn write_filed(op: Op) {
     }
 }
 
-/// A device stage's growth as filed (decision 0468 step 7): rows out per row of its input's space, by its rule's
+/// A device stage's growth as filed (decision 0478 step 7): rows out per row of its input's space, by its rule's
 /// spec hash and the stage.
 pub fn growth(rule: u64, stage: usize) -> Option<f64> {
     read(|m| m.growth.get(&(rule, stage)).copied())

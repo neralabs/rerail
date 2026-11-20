@@ -57,7 +57,7 @@ pub struct Interner {
     stored: stored::Stored,
     base: Sym,
     /// The pending atoms (`base` on), in atoms blocks of the stored chain's format in anonymous memory, each twice
-    /// the last (decision 0468 step 2a): every string, its end, its hash and the table from hash to id inside its
+    /// the last (decision 0478 step 2a): every string, its end, its hash and the table from hash to id inside its
     /// block, where any reader reads it. A block may begin below `base`: its atoms stored since are read in the
     /// store's chain, and a block wholly stored is let go.
     pending: Vec<rerail_blocks::atoms::AtomsW>,
@@ -94,7 +94,7 @@ impl Interner {
         self.pending.iter().map(rerail_blocks::atoms::AtomsW::region).collect()
     }
 
-    /// Every atom this process holds as runs where their blocks hold them, with the blocks (decision 0468 step 2b):
+    /// Every atom this process holds as runs where their blocks hold them, with the blocks (decision 0478 step 2b):
     /// the store's chain below `base`, then the pending blocks. A directory of them (`AtomsDir`) is read by the atoms
     /// reads written once in CLIF (`atoms_at`, `atoms_len`), on the host and the device alike. The runs hold the ids
     /// held now: a reader that keeps the blocks reads them while atoms are interned and stored after.
@@ -294,7 +294,7 @@ pub struct Atoms {
     guest_keys: Arc<super::guest_keys::GuestKeys>,
     /// Its atoms reserved by components not yet retired (`reserving`).
     reserved: ReservedSet,
-    /// What these atoms keep of their texts (decision 0468 steps 2d, 2e): verdicts and texts, shared as the atoms are.
+    /// What these atoms keep of their texts (decision 0478 steps 2d, 2e): verdicts and texts, shared as the atoms are.
     kept: std::sync::OnceLock<Kept>,
     /// Held (the lock file, exclusively locked) while this process may give out pending ids.
     /// Lock order: `lease`, then `reader`, then `state`.
@@ -365,7 +365,7 @@ type ReservedSet = Arc<parking_lot::Mutex<std::collections::BTreeSet<Sym>>>;
 /// Reservations nest: a component this thread runs while its own waits (a job the wait runs, such as another
 /// component's, while a join's morsels finish) reserves its atoms as its own, and the waiting one's reservation
 /// goes on when it ends.
-/// What a store's atoms keep of their texts (decision 0468 steps 2d and 2e): the one rolling cache of
+/// What a store's atoms keep of their texts (decision 0478 steps 2d and 2e): the one rolling cache of
 /// `rerail_clif::view::cache`, in a block of its own, read and written through the reads written once in CLIF by the
 /// CPU and the kernels alike. It holds the text tests' verdicts (`verdict_get`, `verdict_put`: an entry 64 symbols of
 /// one test) and the text functions' texts (`text_find`, `text_open`: an entry a text, by its functions and its
@@ -379,7 +379,7 @@ pub struct Kept {
 /// A generation's entries (verdicts' and texts'), and its arena's bytes: its pages taken as entries are written.
 pub const KEPT_ENTRIES: u32 = 1 << 16;
 pub const KEPT_ARENA: usize = 16 << 20;
-/// The longest text kept (decision 0468 step 2e): a longer one is made each time it is read.
+/// The longest text kept (decision 0478 step 2e): a longer one is made each time it is read.
 pub const TEXT_MOST: usize = 4096;
 // The entry layout the kernels read a kept text by (`metal_join`'s `row_text`: its bytes at 12, its payload at 16),
 // and the most they keep.

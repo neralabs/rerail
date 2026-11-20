@@ -1,4 +1,4 @@
-//! Decision 0474's requirements over whole runs, one test each (R1–R3 are `facts::vtab::syntax`'s, over batches):
+//! Decision 0494's requirements over whole runs, one test each (R1–R3 are `facts::vtab::syntax`'s, over batches):
 //! a batch makes a document when first read. A requirement is not dropped or weakened here without the user.
 
 use crate::code_rule_dsl::typing::file_local::Binding;
@@ -89,7 +89,7 @@ fn r4_a_text_test_has_no_version_after_an_edit() {
         let made = profile::take_decisions();
         profile::set(false);
         let versioned: BTreeSet<String> = made.keys().filter(|(t, _)| t == "the base relations' versions (decision 0458)").map(|(_, x)| x.clone()).collect();
-        unversioned.extend(versioned.into_iter().filter(|x| x.ends_with("a text test, no version (decision 0474)")));
+        unversioned.extend(versioned.into_iter().filter(|x| x.ends_with("a text test, no version (decision 0494)")));
         let (_, fresh) = c.run_over(&format!("fresh{i}.sqlite"));
         assert_eq!(rows, fresh, "edit {i} ({file}): the outputs are a cold run's");
     }
@@ -111,7 +111,7 @@ fn r5_the_documents_counts_are_kept_and_given_to_the_corpus_batch() {
         let (_, rows) = c.run_over(store);
         let made = profile::take_decisions();
         profile::set(false);
-        let said: BTreeSet<String> = made.into_keys().filter(|(t, _)| t == "the corpus batch's row space (decision 0474)").map(|(_, x)| x).collect();
+        let said: BTreeSet<String> = made.into_keys().filter(|(t, _)| t == "the corpus batch's row space (decision 0494)").map(|(_, x)| x).collect();
         (rows, said)
     };
     let (_, cold) = row_space(&mut c, "kept.sqlite");
@@ -173,7 +173,7 @@ fn r6_an_edit_reads_no_base_relation_through() {
 /// R6: after an edit, each base relation's changed rows are found by group (the changed documents made as one, whose
 /// rows are theirs): none is read through, and no kept statistic is counted again; the outputs are a cold run's.
 #[test]
-#[ignore = "0474 step 4: the import fixpoint's run lists its files inside another run's waves and reads no old source there (0458's open item), so its doc and tape_of are counted again"]
+#[ignore = "0494 step 4: the import fixpoint's run lists its files inside another run's waves and reads no old source there (0458's open item), so its doc and tape_of are counted again"]
 fn r6_an_edit_counts_no_kept_statistic_again() {
     use crate::code_rule_dsl::logic::profile;
     let mut c = Corpus::new("r6");

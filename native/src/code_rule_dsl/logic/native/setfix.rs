@@ -4076,7 +4076,7 @@ impl Csr {
 /// (a maintained relation's, `Rel::based`); kept as they were, their arrays in another block or the directory full.
 pub static ORDERS_KEPT: [std::sync::atomic::AtomicU64; 3] = [const { std::sync::atomic::AtomicU64::new(0) }; 3];
 
-/// A frozen relation's orders `idx` (rows `rows`, `n` of `k` values) in its block (decision 0468 step 5b, the user's
+/// A frozen relation's orders `idx` (rows `rows`, `n` of `k` values) in its block (decision 0478 step 5b, the user's
 /// choice): each that holds every row, merged into one run, its arrays handed to the directory of the relation that
 /// holds its last rows (`Relation::try_add_order`), where any reader finds it by its key, the device too. What is
 /// returned are handles to them, which read them there (`Run::in_block`) and keep that relation. An order read in
@@ -4150,7 +4150,7 @@ pub fn unindex(conn: &Connection, tables: &[String]) {
         if let Some(rel) = derived.get_mut(t).and_then(Arc::get_mut) {
             rel.chains = Vec::new();
             *rel.idx.get_mut().unwrap() = HashMap::default();
-            // Its orders lie in its block's directory (decision 0468 step 5b), given back with the relation's other chunks
+            // Its orders lie in its block's directory (decision 0478 step 5b), given back with the relation's other chunks
             // when it is released (`Relation::release`).
         }
     }
@@ -5899,7 +5899,7 @@ impl InRel {
             Arc::new(Csr { cols: cols.to_vec(), table: HashTable::new(), ids: Vec::new(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: Some(false), order: OnceLock::new(), block: None, then: Some(c) })
         }).clone()
     }
-    /// Its rows' index on `cols` in their block (decision 0468 step 5, R2): the one the device finds and builds, over
+    /// Its rows' index on `cols` in their block (decision 0478 step 5, R2): the one the device finds and builds, over
     /// every row, dead ones too (a reader skips them by its dead bits, as the device reads a delta's). Built now when
     /// `build` and none is; `None` for a view, rows in several parts, or a block with no room for it.
     fn block_index(&self, cols: &[usize], build: bool) -> Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)> {
@@ -5923,7 +5923,7 @@ impl InRel {
             let m = if cols.is_empty() {
                 empty(false, false)
             } else if let Some(b) = self.block_index(cols, false) {
-                // An index in the relation's block, which the device or an earlier probe built (decision 0468 R2).
+                // An index in the relation's block, which the device or an earlier probe built (decision 0478 R2).
                 Csr { block: Some(b), ..empty(false, false) }
             } else if let Some(i) = self.chains.iter().position(|ix| ix.answers(cols)) {
                 Csr { chain: Some(i), ..empty(false, false) }
@@ -5959,7 +5959,7 @@ impl InRel {
                 let mode = rerail_prof::code_rule_dsl::logic::profile::setting(|| match std::env::var("RERAIL_KEY_PRINTS").as_deref() { Ok("off") => 1, Ok("hash") => 2, _ => 0 });
                 if let Some(b) = self.block_index(cols, true).filter(|_| mode == 0) {
                     // A derived relation's rows in their block: its index built there, the one the device finds
-                    // (decision 0468 step 5), not an order or table of its own.
+                    // (decision 0478 step 5), not an order or table of its own.
                     Csr { block: Some(b), ..empty(false, false) }
                 } else if self.view.is_none() && mode != 2 {
                     // A derived relation's rows are its own: a sorted order on the key columns (dead rows are in
@@ -6431,7 +6431,7 @@ pub enum Step {
     /// interned; no value (NULL), no binding.
     /// `texts`: for a node read (`syntax::NODE_READS`), the run's binding of the long-text nodes it reads through
     /// (`functions::node_read`).
-    /// `kept`: the id its text is kept by in the store's rolling cache (decision 0468 step 2e), by its symbol, when it
+    /// `kept`: the id its text is kept by in the store's rolling cache (decision 0478 step 2e), by its symbol, when it
     /// is a text function of a symbol whose other arguments are constants (as the device keeps it).
     Func { name: &'static str, kinds: &'static [crate::code_rule_dsl::logic::strings::functions::Kind], args: Vec<Key>, out: usize, bind: bool,
         texts: Option<NodeTexts>, kept: Option<u32> },
@@ -6441,7 +6441,7 @@ pub enum Step {
     DocOf { out: usize, n: Key, bind: bool },
     /// `@op(s, p) = want`, a text test (`strings::TESTS`) of symbol `s`'s name: by `matcher` when the pattern is a
     /// constant that compiles (once, with the spec), else by `strings::test` of symbol `p`'s name.
-    /// A text test; `test`, its id for its verdicts in the store's rolling cache (decision 0468 step 2d), when its
+    /// A text test; `test`, its id for its verdicts in the store's rolling cache (decision 0478 step 2d), when its
     /// patterns are constants.
     Test { op: &'static str, s: Key, p: Key, matcher: Option<Arc<crate::code_rule_dsl::logic::strings::Matcher>>, test: Option<u32>, want: bool },
     /// `a` is (`want`) or is not one of the constants `set` (`@equals(x, {…})`, `@in(x, {…})` once lowered).
@@ -6500,7 +6500,7 @@ impl JoinRule {
     }
 }
 
-/// The id function `name`'s text is kept by in the store's rolling cache (decision 0468 step 2e): a text function the
+/// The id function `name`'s text is kept by in the store's rolling cache (decision 0478 step 2e): a text function the
 /// device makes too (`caps::device_fn`), of a text, its other arguments constants. The chain is one step, named as the
 /// device names it (`text::automata::text_functions`).
 fn kept_text(name: &str, kinds: &[crate::code_rule_dsl::logic::strings::functions::Kind], args: &[Key]) -> Option<u32> {
@@ -7829,7 +7829,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             Step::Ne { a, b } => if val(slots, *a) != val(slots, *b) { go(cx, i + 1, slots) },
             Step::Func { name, kinds, args, out, bind, texts, kept } => {
                 use crate::code_rule_dsl::logic::strings::functions::{eval, node_read, Kind};
-                // A text kept for its symbol (decision 0468 step 2e), the CPU's or the device's.
+                // A text kept for its symbol (decision 0478 step 2e), the CPU's or the device's.
                 let keep = kept.and_then(|f| u32::try_from(val(slots, args[0])).ok().filter(|_| !matches!(args[0], Key::Const(_))).map(|s| (f, s)));
                 let found = keep.and_then(|(f, s)| cx.syms.atoms.kept().text(f, s));
                 let value = if let Some(t) = found {
@@ -7879,7 +7879,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             Step::Test { op, s, p, matcher, test, want } => {
                 let v = val(slots, *s);
                 let hit = match (matcher, test, u32::try_from(v)) {
-                    // The verdict kept for the symbol, else made and kept (decision 0468 step 2d).
+                    // The verdict kept for the symbol, else made and kept (decision 0478 step 2d).
                     (Some(m), Some(t), Ok(sym)) => {
                         let verdicts = cx.syms.atoms.kept();
                         match verdicts.get(*t, sym) {

@@ -132,13 +132,13 @@ pub const READS: &[Read] = &[
     Read { family: Family::View, name: "view_child_first", params: &[I32], ret: I32, hot: false, body: crate::view_reads::child_first },
     Read { family: Family::View, name: "view_child_next", params: &[I32], ret: I32, hot: false, body: crate::view_reads::child_next },
     Read { family: Family::View, name: "view_number", params: &[I32], ret: I32, hot: false, body: crate::view_reads::number },
-    // An atom's string in a directory of runs of atoms (decision 0468 step 2b): the descriptor is an `AtomsDirRoot`.
+    // An atom's string in a directory of runs of atoms (decision 0478 step 2b): the descriptor is an `AtomsDirRoot`.
     Read { family: Family::Relation, name: "atoms_len", params: &[I32], ret: I32, hot: true, body: crate::atoms_reads::atoms_len },
     Read { family: Family::Relation, name: "atoms_at", params: &[I32], ret: I64, hot: true, body: crate::atoms_reads::atoms_at },
-    // A text test's verdict for a symbol in the one rolling cache (decision 0468 step 2d): the descriptor is the cache.
+    // A text test's verdict for a symbol in the one rolling cache (decision 0478 step 2d): the descriptor is the cache.
     Read { family: Family::Relation, name: "verdict_get", params: &[I32, I32], ret: I32, hot: false, body: crate::verdict_reads::verdict_get },
     Read { family: Family::Relation, name: "verdict_put", params: &[I32, I32, I32], ret: I32, hot: false, body: crate::verdict_reads::verdict_put },
-    // A text function's text of a symbol in the same cache (decision 0468 step 2e): found, or taken for its length
+    // A text function's text of a symbol in the same cache (decision 0478 step 2e): found, or taken for its length
     // and written by its caller, then completed.
     Read { family: Family::Relation, name: "text_find", params: &[I32, I32], ret: I64, hot: false, body: crate::verdict_reads::text_find },
     Read { family: Family::Relation, name: "text_open", params: &[I32, I32, I32], ret: I64, hot: false, body: crate::verdict_reads::text_open },

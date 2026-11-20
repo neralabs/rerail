@@ -190,7 +190,7 @@ impl Stored {
         self.at(id)?.str(id)
     }
 
-    /// The ids read, as a directory's runs (decision 0468 step 2b): each view's from its first id to the next's, at
+    /// The ids read, as a directory's runs (decision 0478 step 2b): each view's from its first id to the next's, at
     /// most to the end below which ids are read here.
     pub(crate) fn runs(&self, below: Sym) -> Vec<(rerail_blocks::atoms::Run, std::sync::Arc<rerail_blocks::block::Block>)> {
         let end = self.end.min(below);

@@ -382,13 +382,13 @@ fn a_commit_past_a_blocks_room_starts_the_next() {
     let ids = store.intern_atoms(&words.iter().map(String::as_str).collect::<Vec<_>>()).unwrap();
     store.immediate_transaction(|_| Ok(())).unwrap();
     assert!(!store.atoms.pending());
-    assert!(store.atoms.state.read().atoms.pending.is_empty(), "the pending atoms' blocks, wholly stored, let go (decision 0468 step 2a)");
+    assert!(store.atoms.state.read().atoms.pending.is_empty(), "the pending atoms' blocks, wholly stored, let go (decision 0478 step 2a)");
     let rows = blocks(&path);
     assert!(rows.len() == 1 && rows[0].0.starts_with('b') && (rows[0].1, rows[0].2) == (1, 70_002 + cap), "one base: {rows:?}");
     for i in [0, 69_999] {
         assert_eq!(store.atom(&words[i]).unwrap(), Some(ids[i]), "read through the base here");
     }
-    // Decision 0468 step 2b: every atom read through the directory, by the reads written once in CLIF, is the
+    // Decision 0478 step 2b: every atom read through the directory, by the reads written once in CLIF, is the
     // store's: across the base, and the pending blocks of atoms interned since.
     let more: Vec<String> = (0..300).map(|i| format!("x{i}")).collect();
     let more_ids = store.intern_atoms(&more.iter().map(String::as_str).collect::<Vec<_>>()).unwrap();
@@ -770,7 +770,7 @@ fn a_forked_processs_unnamed_atoms_queue_no_write() {
     assert_eq!(stored(&path), ["", "a", "b", "c"], "nothing stored at the close");
 }
 
-/// Decision 0468 step 2a: the run's pending atoms are in atoms blocks, the stored chain's format, each string where
+/// Decision 0478 step 2a: the run's pending atoms are in atoms blocks, the stored chain's format, each string where
 /// a block holds it (a device reads it there): none in a heap buffer. The chain grows past its first block, every
 /// atom is found by its string and read by its id, and the blocks of atoms stored since are let go.
 #[test]

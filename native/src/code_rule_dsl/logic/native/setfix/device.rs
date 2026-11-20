@@ -112,13 +112,13 @@ enum Kind {
     /// An atom over the component's own relation `rel` (recursion, `fixpoint`): its last round's new rows
     /// (`delta`) or all of them, kept on the device by the rounds (`Own`).
     Own { rel: usize, delta: bool, cols: Vec<usize> },
-    /// A text test of a symbol by its table, its verdicts in the store's one rolling cache (decision 0468 step 2d).
+    /// A text test of a symbol by its table, its verdicts in the store's one rolling cache (decision 0478 step 2d).
     Verdict { table: Arc<crate::code_rule_dsl::text::table::Table>, test: u32 },
     /// A stage that reads names (`str_cmp`, a cat compared): its symbols' bytes read in place through the batch's
-    /// atoms directory (decision 0468 step 2e).
+    /// atoms directory (decision 0478 step 2e).
     Names,
     /// A made text per row (`mj::ROWTEXT`: a cat, a regex's replacement, a text function, a text test of one), a SIMD
-    /// group a row, its symbols' bytes read in place (decision 0468 step 2e), with its automaton; `kept`, the id its
+    /// group a row, its symbols' bytes read in place (decision 0478 step 2e), with its automaton; `kept`, the id its
     /// text is kept by in the one rolling cache (`mj::ROW_KEPT`), with the source symbol (0 when it keeps none).
     RowText { auto: RowAuto, kept: u32 },
     /// The rule's steps past the one that binds the head (`setfix::tail`): an atom over `rel` (by its key columns
@@ -142,7 +142,7 @@ fn makes_text(mode: u32) -> bool {
     mode == mj::ROWTEXT
 }
 
-/// Whether a stage of `mode` reads symbols' texts (through the batch's atoms directory, decision 0468 step 2e): a made
+/// Whether a stage of `mode` reads symbols' texts (through the batch's atoms directory, decision 0478 step 2e): a made
 /// text, a text op, `str_cmp`. Each has a counter word for what it finds the host's.
 fn reads_names(mode: u32) -> bool {
     matches!(mode, mj::ROWTEXT | mj::TEXTOP | mj::STRCMP)
@@ -174,7 +174,7 @@ pub(in crate::code_rule_dsl) fn text_fns_id(chain: &str) -> Option<u32> {
     crate::code_rule_dsl::text::automata::text_functions(chain)
 }
 
-/// What a text function stage `d` of `x` keeps its text by (decision 0468 step 2e): when `x` is an input column's
+/// What a text function stage `d` of `x` keeps its text by (decision 0478 step 2e): when `x` is an input column's
 /// symbol, or a kept text of one (`kept`'s, by its slot), and every other argument a constant, the chain of functions
 /// from that symbol (`step` the last, its constants in it) and its id. The stage then looks its text up by (id,
 /// source symbol, key 7) in the one rolling cache, and keeps what it makes (`mj::ROW_KEPT`).
@@ -660,7 +660,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
             Step::Test { op, s, matcher, want, .. } => {
                 // A text test with constant patterns, of a slot an input relation's column bound (a symbol): its
                 // verdict read from the store's one rolling cache, else made by the test's automaton over the symbol's
-                // bytes where the atoms blocks hold them, and kept there (decision 0468 step 2d).
+                // bytes where the atoms blocks hold them, and kept there (decision 0478 step 2d).
                 let Some(m) = matcher else { return Err(format!("the text test @{op} of a pattern that is not a constant has no device form")) };
                 let Key::Slot(x) = *s else { return Err(format!("the text test @{op} of a constant has no device form")) };
                 if origin.get(x).cloned().flatten().is_none() {
@@ -826,7 +826,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 i += 1;
             }
             Step::Func { name: name @ ("replace_all" | "rx_replace"), args, out, bind: true, .. } if args.len() == 3 && matches!(args[0], Key::Slot(_)) => {
-                // A regex's replacement in a symbol's text (read in place, decision 0468 step 2e) or a made text (an
+                // A regex's replacement in a symbol's text (read in place, decision 0478 step 2e) or a made text (an
                 // arena text, a held cat's): per row, a SIMD group a row, 32 bytes at a time (`ROWTEXT`), into the
                 // arena.
                 let konst = |k: Key| match k {
@@ -1225,7 +1225,7 @@ fn placed(rel: &Arc<InRel>) -> Option<(crate::code_rule_dsl::facts::rows::InBloc
 
 /// The device's handle to `rel`'s columns `need` and `cols`, its index by `cols` (none when it has no keys), and
 /// where each of its columns lies in the handle (`mj::NONE`: not held). Nothing is kept of it between strata
-/// (decision 0468 steps 1 and 3): rows in a block, and a view read in place, are read where they lie, their indexes
+/// (decision 0478 steps 1 and 3): rows in a block, and a view read in place, are read where they lie, their indexes
 /// found in their blocks (or built there by `batch`); a copy (rows uploaded, a view made on the device) is made for
 /// this stratum, holding only the columns it reads, and its index built with it. A stratum in flight holds its own.
 #[allow(clippy::type_complexity)]
@@ -1257,7 +1257,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
     };
     let (dev, held): (mj::DevRel, Vec<usize>) = match made.as_ref().and_then(|d| Some((d.view, d.in_place.clone()?, d.home.clone()?))) {
         // A view the views' reads answer is read in place (decision 0353 step 4d): its relation of no columns, which
-        // the view's source holds, keeps its indexes (decision 0468 step 3); every column is the view's own.
+        // the view's source holds, keeps its indexes (decision 0478 step 3); every column is the view's own.
         Some((view, v, home)) => {
             let ncols = rel.view.as_ref().map_or(0, |view| view.src.columns().len());
             let dev = mj::DevRel::view_in(home, ncols, n, v).map_err(|e| format!("{e:?}: a view of {n} rows read in place"))?;
@@ -1363,7 +1363,7 @@ pub fn column_stats(cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStat
         .iter()
         .map(|c| {
             let StatColumn::Rel(rel, col) = c else { return None };
-            // A relation in its block: its column where it lies (decision 0468 step 1). Any other's is gathered.
+            // A relation in its block: its column where it lies (decision 0478 step 1). Any other's is gathered.
             let (b, ncols) = placed(rel)?;
             let at = owner_col(rel, *col);
             (at < ncols).then(|| mj::DevRel::in_block(&b, ncols).ok().map(|d| (Rc::new(d), at))).flatten()
@@ -1405,7 +1405,7 @@ fn column_values(rel: &InRel, col: usize) -> Vec<i64> {
 }
 
 /// Regex `regex`'s automata for its replacements on the device (`text::table::Replacer`), where the automata block
-/// holds them (decision 0468 step 2c), and their states. Refused for a regex the device has no automata for.
+/// holds them (decision 0478 step 2c), and their states. Refused for a regex the device has no automata for.
 fn automata(regex: &str) -> Result<(Rc<mj::DevBytes>, u32), String> {
     let r = crate::code_rule_dsl::text::table::replacer(regex).map_err(|e| format!("replace_all has no device form: {e}"))?;
     Ok((Rc::new(mj::DevBytes::of(&r.automaton).map_err(|e| format!("{e:?}"))?), r.states))
@@ -1496,7 +1496,7 @@ impl<'p> Run<'p> {
         let s = &self.plan.stages[k];
         match &s.kind {
             Kind::Atom { .. } | Kind::Own { .. } if s.desc.mode == mj::JOIN => {
-                // The component's own rounds' growth, else the stage's as filed before its chunk (decision 0468 step 7).
+                // The component's own rounds' growth, else the stage's as filed before its chunk (decision 0478 step 7).
                 let seen = own.get(&(self.plan.key, k)).copied().or_else(|| crate::code_rule_dsl::logic::plan::joins::growth(self.plan.key, k));
                 table_rows(cap_in, nr, s.desc.nkeys == 0 && cap_in == 1, seen, self.plan.est.get(k).copied().flatten())
             }
@@ -2256,7 +2256,7 @@ struct Own {
     delta: HashMap<usize, Rc<mj::DevRel>>,
     sorts: HashMap<(usize, bool, Vec<usize>), Rc<mj::DevIndex>>,
     /// The growths its rounds saw (`counted`), by rule and stage: a round's next is guessed from them, in the
-    /// component's own order, before the run's memo as filed (decision 0468 step 7).
+    /// component's own order, before the run's memo as filed (decision 0478 step 7).
     growth: HashMap<(u64, usize), f64>,
 }
 

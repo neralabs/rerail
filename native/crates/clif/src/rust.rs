@@ -869,7 +869,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::Istore8 => format!("unsafe {{ core::ptr::write_unaligned({} as *mut u8, {} as u8) }};", addr(&args[1]), args[0]),
         Opcode::Istore16 => format!("unsafe {{ core::ptr::write_unaligned({} as *mut u16, {} as u16) }};", addr(&args[1]), args[0]),
         Opcode::Istore32 => format!("unsafe {{ core::ptr::write_unaligned({} as *mut u32, {} as u32) }};", addr(&args[1]), args[0]),
-        // A rolling cache's words (decision 0353 step 4b, 0468 step 2d), shared with other threads and the device: u32s,
+        // A rolling cache's words (decision 0353 step 4b, 0478 step 2d), shared with other threads and the device: u32s,
         // sequentially consistent as CLIF's atomics are.
         Opcode::AtomicLoad | Opcode::AtomicStore | Opcode::AtomicRmw | Opcode::AtomicCas if u != "u32" && op != Opcode::AtomicStore => {
             return Err(format!("an atomic of {u}"));

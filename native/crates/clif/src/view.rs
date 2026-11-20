@@ -133,7 +133,7 @@ pub mod z {
 
 /// A rolling cache (decision 0353 step 4b, the user's design): a key (a u64) to an entry, in `gens` generations,
 /// each a hash index (u32 slots: an entry's number plus one), its entries' offsets by number, and a bump arena of
-/// entries of any size up to the cache's most (decision 0468 step 2e: a generation is full when its index or its
+/// entries of any size up to the cache's most (decision 0478 step 2e: a generation is full when its index or its
 /// arena is, so the bound is in bytes too). Of the
 /// generations, `gens - 1` are live at an epoch `E` (the head, `E`, and the frozen ones behind it, `E - 1` ...) and
 /// one, `E + 1`, is a spare, cleared ahead. A lookup looks in the live ones, head first; a miss computes its entry
@@ -315,7 +315,7 @@ pub mod cache {
         }
 
         /// `init` of a `buf` whose bytes are zero already (fresh anonymous memory): only the header, the stamps and
-        /// the guard written, so the pages of entries never taken are never touched (decision 0468 step 2d).
+        /// the guard written, so the pages of entries never taken are never touched (decision 0478 step 2d).
         pub fn init_zeroed(&self, buf: &mut [u8]) -> Result<(), String> {
             if buf.len() < self.bytes() || !self.slots.is_power_of_two() || self.gens < 3 {
                 return Err(format!("a cache of {} bytes for {self:?}", buf.len()));

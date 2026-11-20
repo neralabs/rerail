@@ -65,7 +65,7 @@ pub(in crate::code_rule_dsl) const AGG_SUM: u32 = 1;
 pub(in crate::code_rule_dsl) const AGG_MIN: u32 = 2;
 pub(in crate::code_rule_dsl) const AGG_MAX: u32 = 3;
 /// A function of symbols' names, each a slot or a constant (keys 0 and 1), their texts read in place through the
-/// batch's atoms directory (decision 0468 step 2e), its value into `bind_slot[0]`: by `agg[0]`, `NAMES_CMP` (`str_cmp`) or `NAMES_LEN` (`strlen`).
+/// batch's atoms directory (decision 0478 step 2e), its value into `bind_slot[0]`: by `agg[0]`, `NAMES_CMP` (`str_cmp`) or `NAMES_LEN` (`strlen`).
 pub(in crate::code_rule_dsl) const STRCMP: u32 = 6;
 pub(in crate::code_rule_dsl) const NAMES_CMP: u32 = 0;
 pub(in crate::code_rule_dsl) const NAMES_LEN: u32 = 1;
@@ -113,10 +113,10 @@ pub(in crate::code_rule_dsl) const ROW_TEST: u32 = 3;
 /// symbol, its replacement key 4's.
 pub(in crate::code_rule_dsl) const ROW_MAP: u32 = 4;
 /// A text test of a symbol (key 0) by its table, its verdict read from and kept in the one rolling cache (decision
-/// 0468 step 2d): the symbol's bytes read through the atoms directory where a verdict is not kept yet.
+/// 0478 step 2d): the symbol's bytes read through the atoms directory where a verdict is not kept yet.
 pub(in crate::code_rule_dsl) const ROW_VERDICT: u32 = 5;
 /// With a text function (`ROW_MAP`, `ROW_REPLACE`) of constant arguments of a symbol, or a chain of them: its text kept
-/// in the one rolling cache (decision 0468 step 2e) by the functions' id (`P[5]`) and the source symbol (key 7). A
+/// in the one rolling cache (decision 0478 step 2e) by the functions' id (`P[5]`) and the source symbol (key 7). A
 /// kept text is copied into the arena; one made is kept, up to `atoms::TEXT_MOST` bytes.
 pub(in crate::code_rule_dsl) const ROW_KEPT: u32 = 1 << 9;
 pub(in crate::code_rule_dsl) const TEXTFN_LOWER: u32 = 0;
@@ -862,7 +862,7 @@ static inline bool txt_same(Txt x, uint xs, Txt y, uint ys, uint n) {
     return true;
 }
 
-// Symbol v's bytes where the atoms blocks hold them, through the atoms directory D (decision 0468 step 2e): a value
+// Symbol v's bytes where the atoms blocks hold them, through the atoms directory D (decision 0478 step 2e): a value
 // no atom of D's is (no symbol, or one interned after D was made) reads as empty and sets `unheld` (the stratum then
 // runs on the host).
 static inline device const uchar* sym_text(device const uchar* D, long v, thread uint& len, thread bool& unheld) {
@@ -1347,7 +1347,7 @@ kernel void row_text(device const long* L [[buffer(0)]], device const long* R [[
     uint op = s.agg[0] & 15;
     bool want = ((s.agg[0] >> 8) & 1) != 0;
     if (op == 5) {
-        // A text test of a symbol, its verdict in the one rolling cache VC (decision 0468 step 2d): each lane looks
+        // A text test of a symbol, its verdict in the one rolling cache VC (decision 0478 step 2d): each lane looks
         // up a row's, 32 rows at once; then the group walks table G over each missed symbol's bytes (read through
         // the atoms directory D), 32 bytes at a time, and keeps the verdict. A value no atom holds (negative) fails.
         uint test = P[5];
@@ -1393,7 +1393,7 @@ kernel void row_text(device const long* L [[buffer(0)]], device const long* R [[
             if (lane == 0) counts[row] = uint(v == want);
             continue;
         }
-        // A text kept by (functions P[5], source symbol key 7) in the rolling cache VC (`ROW_KEPT`, decision 0468
+        // A text kept by (functions P[5], source symbol key 7) in the rolling cache VC (`ROW_KEPT`, decision 0478
         // step 2e): one lane looks it up (an entry's offset from VC, what it found in the low bits); a kept text is
         // copied into the arena.
         bool keeps = (s.agg[0] & (1u << 9)) != 0;
@@ -2084,7 +2084,7 @@ impl DevRel {
         Ok(dev)
     }
 
-    /// `view`, its indexes in `home` (the view's own relation of no columns, which its source holds: decision 0468
+    /// `view`, its indexes in `home` (the view's own relation of no columns, which its source holds: decision 0478
     /// step 3), so a stratum finds the indexes any stratum before it built there.
     pub(in crate::code_rule_dsl) fn view_in(home: crate::code_rule_dsl::facts::rows::Part, cols: usize, rows: usize, view: crate::code_rule_dsl::facts::vtab::ViewInPlace) -> Result<DevRel, Error> {
         let mut dev = DevRel::of_part(home, 0, rows)?;
@@ -2205,7 +2205,7 @@ impl DevRel {
     }
 }
 
-/// An atoms directory for the device (decision 0468 step 2b): its spans GPU addresses, the atoms blocks they reach
+/// An atoms directory for the device (decision 0478 step 2b): its spans GPU addresses, the atoms blocks they reach
 /// (each its wrap, made resident by `use_resource` where a kernel reads through it), and the atoms it holds, below
 /// `end`. Kept with the blocks until its batch's work completes.
 pub(in crate::code_rule_dsl) struct DevAtoms {
@@ -2250,7 +2250,7 @@ impl DevAtoms {
     }
 }
 
-/// The store's one rolling cache on the device (decision 0468 steps 2d, 2e: the text tests' verdicts, the text
+/// The store's one rolling cache on the device (decision 0478 steps 2d, 2e: the text tests' verdicts, the text
 /// functions' texts): its block's wrap and the cache's offset in it.
 pub(in crate::code_rule_dsl) struct DevKept {
     cache: (metal::Buffer, u64),
@@ -2522,7 +2522,7 @@ fn sized_min() -> usize {
 }
 
 /// An automaton the device reads (a test's table, a regex's replacement automata) where the automata block holds it
-/// (decision 0468 step 2c): the block's no-copy wrap, bound at the automaton's offset. Nothing is uploaded, and no
+/// (decision 0478 step 2c): the block's no-copy wrap, bound at the automaton's offset. Nothing is uploaded, and no
 /// thread keeps it: a command buffer that binds it keeps the wrap.
 #[derive(Clone)]
 pub(in crate::code_rule_dsl) struct DevBytes {
@@ -2627,10 +2627,10 @@ pub(in crate::code_rule_dsl) struct Batch {
     arena_cap: usize,
     /// The indexes its work builds, marked built when it is done.
     building: Vec<Building>,
-    /// The atoms directory its text kernels read symbols' bytes through (decision 0468 step 2e), made the first
+    /// The atoms directory its text kernels read symbols' bytes through (decision 0478 step 2e), made the first
     /// time a stage reads a symbol's text and made again when the store's atoms have grown past it.
     atoms: Option<std::rc::Rc<DevAtoms>>,
-    /// The store's one rolling cache, for the verdicts and texts its text kernels keep (decision 0468 step 2e).
+    /// The store's one rolling cache, for the verdicts and texts its text kernels keep (decision 0478 step 2e).
     kept: Option<std::rc::Rc<DevKept>>,
     /// The relations its work writes in their blocks, each with its rows' `needed` before (decision 0463): a row
     /// its kernels could not write, past the chunks its relation holds, fails the batch, named.
@@ -2986,7 +2986,7 @@ impl Batch {
         } else {
             self.dummy.buffer.to_owned()
         };
-        // A text op's or `str_cmp`'s symbols read through the batch's atoms directory (decision 0468 step 2e).
+        // A text op's or `str_cmp`'s symbols read through the batch's atoms directory (decision 0478 step 2e).
         let reads_names = matches!(stage.mode, STRCMP | TEXTOP);
         let atoms = self.atoms.clone().filter(|_| reads_names);
         if reads_names && atoms.is_none() {
@@ -3082,7 +3082,7 @@ impl Batch {
     }
 
     /// A mode 10 stage (`ROWTEXT`) from `left` into `out`: `row_text` (a SIMD group a row, its symbols' bytes read
-    /// through the batch's atoms directory, decision 0468 step 2e), its automaton `auto` (a replacement's or a test's,
+    /// through the batch's atoms directory, decision 0478 step 2e), its automaton `auto` (a replacement's or a test's,
     /// in the automata block), and `id`: a test's (its verdicts) or the functions' (their texts, `ROW_KEPT`) in the
     /// batch's rolling cache; then its rows scattered.
     #[allow(clippy::too_many_arguments)]

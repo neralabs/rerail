@@ -14824,7 +14824,7 @@ mod ordered_tests {
         joins::clear();
     }
 
-    /// Decision 0468 step 7: a device stage's growth (rows out per row in, which sizes its next run's space) is read as
+    /// Decision 0478 step 7: a device stage's growth (rows out per row in, which sizes its next run's space) is read as
     /// filed before its chunk's window began, never as a chunk beside it or the chunk's own strata ran, by the
     /// threads' timing; a chunk's growths are filed whatever order its threads wrote them in, each its most.
     #[test]

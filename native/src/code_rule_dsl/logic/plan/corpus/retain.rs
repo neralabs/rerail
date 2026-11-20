@@ -2193,7 +2193,7 @@ pub(in crate::code_rule_dsl) fn base_stats(store: &ContentStore, space: [u8; 32]
     Ok(out)
 }
 
-/// The views' counts of each document of the cross part's corpus batch (decision 0474), kept beside the documents'
+/// The views' counts of each document of the cross part's corpus batch (decision 0494), kept beside the documents'
 /// table: by key, its digest (`Document::digest`) and its counts, as the batch made or was given them.
 pub(in crate::code_rule_dsl) type BaseCounts = HashMap<u32, ([u8; 32], crate::code_rule_dsl::facts::vtab::syntax::made::ViewCounts)>;
 

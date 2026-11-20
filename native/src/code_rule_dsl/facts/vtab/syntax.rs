@@ -55,7 +55,7 @@ use core_rr::Family;
 pub mod guests;
 pub mod granules;
 pub mod ranks;
-/// A batch's documents and rows, each made when first read (decision 0474).
+/// A batch's documents and rows, each made when first read (decision 0494).
 pub mod made;
 mod cells;
 /// A projection's numbering's reads, written once in CLIF (`rerail_clif::id_reads`, decision 0353 step 2).
@@ -578,7 +578,7 @@ fn as_source(name: &str, rows: Arc<dyn Source>, batch: &Arc<Batch>) -> Arc<dyn S
     if name == LONG_TEXT_NODES { Arc::new(LongTexts::new(rows, batch)) } else { rows }
 }
 
-/// The batch's relations, each over its groups (`made::MadeRows`, decision 0474), but those of the batch's own the
+/// The batch's relations, each over its groups (`made::MadeRows`, decision 0494), but those of the batch's own the
 /// program derives (`Projection::derived`): each name, whether it is one of the batch's own, and its source.
 pub fn made_sources(batch: &Arc<Batch>) -> Vec<(&str, Option<&'static str>, Arc<dyn Source>)> {
     let rows = &batch.rows;
@@ -2321,7 +2321,7 @@ impl Projected {
 
 /// One wave's documents, sorted by key, and the row offsets of the views.
 pub struct Batch {
-    /// Its documents, each one's projection made on its first read (decision 0474), shared with the batches it grows
+    /// Its documents, each one's projection made on its first read (decision 0494), shared with the batches it grows
     /// into (`Growth`, decision 0431 §6). Their keys (`Docs::keys`, ascending) are the index a node's document is
     /// searched in (Q220).
     pub docs: made::Docs,
@@ -2330,13 +2330,13 @@ pub struct Batch {
     valued: Vec<Option<Arc<Valued>>>,
     pub dialects: Arc<Dialects>,
     /// The views' row offsets by document: nodes, children, fielded nodes, siblings, and nodes and spans
-    /// (`Projected::locs`), counted (decision 0474).
+    /// (`Projected::locs`), counted (decision 0494).
     offsets: made::Offsets,
     /// The documents of each tape tag, ascending: a probe by kind reads its language's documents alone (a batch's
     /// programs, decision 0431 §4, are documents of other languages).
     of_tag: [Vec<u32>; 256],
     /// The `node` view's rows by kind, one index for each tape tag the batch has documents of (`of_tag`), made at the
-    /// first lookup of one of its kinds over that tag's documents alone (Q183; decision 0474: a program's language
+    /// first lookup of one of its kinds over that tag's documents alone (Q183; decision 0494: a program's language
     /// stays unmade).
     kinds: Vec<(u8, OnceLock<KindRows>)>,
     shape: Shape,
@@ -2360,9 +2360,9 @@ pub struct Batch {
     metal: bool,
     atoms: Arc<crate::content_store::atoms::Atoms>,
     wave: Option<(Matchers, crate::code_rule_dsl::facts::nearest::Binding)>,
-    /// The rows made, by group (decision 0474).
+    /// The rows made, by group (decision 0494).
     rows: made::Rows,
-    /// Each relation's rows, by name, as its kept statistics count them (`give_totals`, decision 0474).
+    /// Each relation's rows, by name, as its kept statistics count them (`give_totals`, decision 0494).
     given_rows: OnceLock<HashMap<String, usize>>,
     /// What every group of the batch, and of the batches it grows into, makes its rows with (`Shared`).
     shared: Arc<parking_lot::Mutex<Shared>>,
@@ -2384,7 +2384,7 @@ pub(super) struct Shared {
 
 /// What a chunk's batch keeps to grow by a round's documents (decision 0431 §6): the batch it grew last, whose
 /// documents the next one's first are (shared, made), its block, which the later documents are projected into, and
-/// what its groups share (`Shared`: strings, atoms, producers). A batch grows once complete (decision 0474: each
+/// what its groups share (`Shared`: strings, atoms, producers). A batch grows once complete (decision 0494: each
 /// relation is one block relation that each group goes on in, so the chunk's rows are a prefix the next round's and
 /// the values' follow, as the device binds them whole).
 #[derive(Default)]
@@ -2506,7 +2506,7 @@ pub trait Families: Send + Sync {
 pub trait BoundFamilies: Send + Sync {
     /// The rows of the `family`th relation over `batch`'s documents.
     fn rows<'b>(&'b self, batch: &'b Batch, family: usize) -> &'b Relation;
-    /// Whether the `family`th relation's rows are made (a `len` before then is the count given, decision 0474).
+    /// Whether the `family`th relation's rows are made (a `len` before then is the count given, decision 0494).
     fn is_made(&self, family: usize) -> bool;
     /// The families as their own type, for the family's other readers (Python's candidates and demand).
     fn as_any(&self) -> &dyn std::any::Any;
@@ -2584,7 +2584,7 @@ impl Source for FamilySource {
         families()[self.at].columns()[self.family].iter().map(|c| (*c).to_owned()).collect()
     }
     fn len(&self) -> usize {
-        // The rows as their kept statistics count them, until they are made (decision 0474); then checked by them.
+        // The rows as their kept statistics count them, until they are made (decision 0494); then checked by them.
         let given = self.batch.given_rows(families()[self.at].names()[self.family]);
         let made = self.batch.families[self.at].as_ref().is_none_or(|b| b.is_made(self.family));
         match given {
@@ -2592,7 +2592,7 @@ impl Source for FamilySource {
             _ => {
                 let len = self.rows().len();
                 if let Some(n) = given.filter(|&n| n != len) {
-                    self.batch.docs.fail(format!("{}: {len} rows made, its kept statistics counted {n} (decision 0474)", families()[self.at].names()[self.family]));
+                    self.batch.docs.fail(format!("{}: {len} rows made, its kept statistics counted {n} (decision 0494)", families()[self.at].names()[self.family]));
                 }
                 len
             }
@@ -3386,10 +3386,10 @@ impl NodeRows {
 pub static BATCHES: parking_lot::Mutex<Vec<(Vec<u32>, std::sync::Weak<Batch>)>> = parking_lot::Mutex::new(Vec::new());
 
 impl Batch {
-    /// The batch of `documents` (their keys distinct), none of them made (decision 0474): a document's projection is
+    /// The batch of `documents` (their keys distinct), none of them made (decision 0494): a document's projection is
     /// made on its first read, its rows in a group with those the read needs (`ensure`). What a group makes is named
     /// here, by an empty group's relations. `wave` runs the program's `ast` matchers over a group's tapes. `given`:
-    /// documents' views' counts, by key, as the documents' table keeps them (decision 0474), which the views' row
+    /// documents' views' counts, by key, as the documents' table keeps them (decision 0494), which the views' row
     /// space is counted from where given; a document made whose counts differ fails, named.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -3425,13 +3425,13 @@ impl Batch {
         Ok((batch, made.relations, made.matched, vocabulary))
     }
 
-    /// Whether the batch's documents are made by its probes: one given its documents' counts (decision 0474), whose
+    /// Whether the batch's documents are made by its probes: one given its documents' counts (decision 0494), whose
     /// row space is known without making them. Its text tests are then probed, not scanned.
     pub fn lazy(&self) -> bool {
         self.docs.given_all()
     }
 
-    /// Each document's views' counts, by key: the documents' table keeps them (decision 0474). A document neither made
+    /// Each document's views' counts, by key: the documents' table keeps them (decision 0494). A document neither made
     /// nor given counts is made for them.
     pub fn view_counts(&self) -> Vec<(u32, made::ViewCounts)> {
         (0..self.docs.len()).map(|i| (self.docs.key(i), self.docs.counts(i))).collect()
@@ -3442,7 +3442,7 @@ impl Batch {
         (0..self.docs.len()).map(|i| (self.docs.key(i), self.docs.input(i).digest, self.docs.counts(i))).collect()
     }
 
-    /// Each relation's rows, by name, as its kept statistics count them (decision 0474): a relation's `len` before
+    /// Each relation's rows, by name, as its kept statistics count them (decision 0494): a relation's `len` before
     /// every document is made. Once every one is, a relation whose rows are not its count fails, named.
     pub fn give_totals(&self, totals: &HashMap<String, usize>) {
         self.rows.give_totals(totals);
@@ -3454,7 +3454,7 @@ impl Batch {
         self.given_rows.get().and_then(|t| t.get(rel).copied())
     }
 
-    /// The batch `grown` holds with `documents` added (decision 0431 §6), none of them made (decision 0474). The batch
+    /// The batch `grown` holds with `documents` added (decision 0431 §6), none of them made (decision 0494). The batch
     /// it grew last is made complete first: each of its relations is one block relation, which this one's groups go on
     /// in, so its rows are a prefix the device binds with the rest. The batch made holds every document, the earlier
     /// ones' shared, as made there. `alone`: a tape value admitted inside a chunk's fixpoint (decision 0431 §8), a
@@ -3646,7 +3646,7 @@ impl Batch {
         Ok((batch, Some(made)))
     }
 
-    /// The rows of the documents `group` (indexes, ascending), made together (decision 0474): the batch's small
+    /// The rows of the documents `group` (indexes, ascending), made together (decision 0494): the batch's small
     /// relations (`doc`, `pkg`, `syntax_error`, `text`, `intval`, `op`), those of core.rr's the program reads that T
     /// had not (`Extra`), the `match_all` relations among them (of the batch's regexes) apart, and the `ast`
     /// matchers'. A text-only document (`core::TEXT`) has the document's relations and its text's, and no node. Its
@@ -4017,7 +4017,7 @@ impl Batch {
         Ok(made::Made { relations, matched, waved, read: made, strings_from })
     }
 
-    /// How many groups of documents the batch has made rows of (decision 0474).
+    /// How many groups of documents the batch has made rows of (decision 0494).
     pub fn groups(&self) -> usize {
         self.rows.groups()
     }
@@ -4032,7 +4032,7 @@ impl Batch {
     pub fn chunk(&self) -> &device_chunk::Chunk {
         self.chunk.get_or_init(|| device_chunk::build(self))
     }
-    /// The view's rows' offsets by document, from each document's count of them (decision 0474): made on the first
+    /// The view's rows' offsets by document, from each document's count of them (decision 0494): made on the first
     /// read, every document's projection made for it.
     fn offsets(&self, view: View) -> &[usize] {
         // Each document's counts: those given (the documents' table's), else its made projection's.
@@ -4153,7 +4153,7 @@ impl Batch {
 struct Viewed {
     batch: Arc<Batch>,
     view: View,
-    /// The view's relation of no columns, its indexes' block, for a view the device reads in place (decision 0468 step
+    /// The view's relation of no columns, its indexes' block, for a view the device reads in place (decision 0478 step
     /// 3): made the first time it is read there. `None` inside when no block could be had.
     home: std::sync::OnceLock<Option<crate::code_rule_dsl::facts::rows::Part>>,
 }
@@ -4241,7 +4241,7 @@ pub fn node_column_counts(batch: &Batch, column: usize) -> Option<(i64, i64, Opt
 
 impl Source for Viewed {
     fn python_batch(&self)->Option<Arc<Batch>> {Some(Arc::clone(&self.batch))}
-    /// A view's rows are in document order (decision 0474): a document's lie at its offset, counted.
+    /// A view's rows are in document order (decision 0494): a document's lie at its offset, counted.
     fn rows_of_documents(&self, docs: &BTreeSet<u32>) -> Option<Vec<usize>> {
         let offsets = self.batch.offsets(self.view);
         Some(docs.iter().filter_map(|&k| self.batch.docs.position(k)).flat_map(|i| offsets[i]..offsets[i + 1]).collect())
@@ -4928,7 +4928,7 @@ pub trait AstWave: Send + Sync {
     /// How many matchers the wave runs.
     fn len(&self) -> usize;
     /// Each matcher's relation over `tapes` (each a batch document's facts, tape and path, its projection `at`): its
-    /// matched nodes, and the captures it binds, staged (a batch's group goes on in its block relation, decision 0474).
+    /// matched nodes, and the captures it binds, staged (a batch's group goes on in its block relation, decision 0494).
     fn matched(
         &self,
         tapes: &[(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)],
@@ -4995,7 +4995,7 @@ pub fn with_matchers(
 
 /// A chunk's sources that grow by its rounds' documents (decision 0431 §6): the batch is made once, and a round's tape
 /// values and programs are added to it (`Growth`), not built again with it. Each of the batch's relations is one
-/// block relation (decision 0474), which the round's groups go on in (`Relation::grown`), its rows read through the
+/// block relation (decision 0494), which the round's groups go on in (`Relation::grown`), its rows read through the
 /// round's batch (`made::MadeRows`); the views and axes are made over the grown batch.
 #[derive(Default)]
 pub struct Grower {
@@ -5100,10 +5100,10 @@ impl Grower {
         drop(built);
         let Some(made) = made else {
             // The batch's relations, the `match_all` relations (`logic::strings::as_relations`: each regex's matches in
-            // the batch's spans) and the `ast` matchers', made by group (decision 0474), but none the program derives.
+            // the batch's spans) and the `ast` matchers', made by group (decision 0494), but none the program derives.
             let mut out: Vec<(String, Arc<dyn Source>)> = made_sources(&batch).into_iter().map(|(name, _, source)| (name.to_owned(), source)).collect();
             // The text tests' relations (decision 0037): each a test of a string, which a probe asks of the probed
-            // strings and a scan of the batch's (decision 0474), each string tested once a run.
+            // strings and a scan of the batch's (decision 0494), each string tested once a run.
             let tested: Vec<Arc<made::TextTest>> = (0..tests.tests.len()).map(|k| Arc::new(made::TextTest::new(&batch, k, tests, store.atoms_handle(), self.tested.get(k).map(|t| &**t)))).collect();
             out.extend(tests.tests.iter().zip(&tested).map(|((name, _), t)| (name.clone(), Arc::clone(t) as Arc<dyn Source>)));
             self.tested = tested;

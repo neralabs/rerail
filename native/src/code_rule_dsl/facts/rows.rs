@@ -503,7 +503,7 @@ pub struct BlockVec<T: rerail_blocks::Pod> {
     cap: usize,
     /// The bytes its chunk keeps (what `Block::free_chunk_fit` takes back); 0 for a borrowed one (`shared`).
     kept: usize,
-    /// A borrowed one's relation, whose directory owns its chunk (decision 0468 step 5b): kept while it lives.
+    /// A borrowed one's relation, whose directory owns its chunk (decision 0478 step 5b): kept while it lives.
     owner: Option<Part>,
     _t: std::marker::PhantomData<T>,
 }
@@ -524,7 +524,7 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
         BlockVec { facts: None, ptr: std::ptr::NonNull::dangling(), life: Life::Run, at: 0, len: 0, cap: 0, kept: 0, owner: None, _t: std::marker::PhantomData }
     }
 
-    /// The `len` `T`s at `at` of `owner`'s block, which `owner`'s relation keeps (its directory's: decision 0468 step
+    /// The `len` `T`s at `at` of `owner`'s block, which `owner`'s relation keeps (its directory's: decision 0478 step
     /// 5b), read where they lie: borrowed, never given back by this, and never written (a write moves them first).
     ///
     /// # Safety
@@ -1749,7 +1749,7 @@ impl Rows {
     }
 
     /// The relation that holds its last rows, in its block, whatever its parts: where its sorted orders' directory
-    /// is (decision 0468 step 5b). Its rows are that part's own, not the relation's.
+    /// is (decision 0478 step 5b). Its rows are that part's own, not the relation's.
     pub fn last_in_block(&self) -> Option<InBlock> {
         let p = self.parts().last()?;
         Some(p.in_block(p.len()))

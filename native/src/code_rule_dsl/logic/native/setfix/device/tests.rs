@@ -416,7 +416,7 @@
         assert_eq!(got[1].1, got[0].1, "the device's counts per step are the CPU's");
     }
 
-    /// Decision 0468 R3: a text test on the device reads and keeps its verdicts in the store's one rolling cache, the
+    /// Decision 0478 R3: a text test on the device reads and keeps its verdicts in the store's one rolling cache, the
     /// CPU's too. A verdict the CPU put there before the run (that `zzz` passes `@prefix(_, "foo")`) is the one the
     /// device takes; each other symbol's verdict the device made is there for the CPU after, a long name's (past a
     /// chunk of 32 bytes) among them.
@@ -457,7 +457,7 @@
     }
 
     /// A text function of a symbol keeps its text in the one rolling cache by (functions, symbol), a chain of them by
-    /// its source symbol (decision 0468 step 2e): after a run every name's text is there, the CPU's own, and a run
+    /// its source symbol (decision 0478 step 2e): after a run every name's text is there, the CPU's own, and a run
     /// again reads them back with the same rows.
     #[test]
     fn text_functions_keep_their_texts_in_the_one_cache() {
@@ -528,7 +528,7 @@
         assert_eq!(run(true), cpu, "the kept texts read back are the CPU's");
     }
 
-    /// A literal test of a bound pattern, its symbols read in place (decision 0468 step 2e): a pattern holding the set
+    /// A literal test of a bound pattern, its symbols read in place (decision 0478 step 2e): a pattern holding the set
     /// separator is no set, so the stratum runs on the host, named, and its rows are the CPU's.
     #[test]
     fn a_bound_pattern_holding_the_set_separator_runs_on_the_host() {
@@ -953,7 +953,7 @@
                     assert_eq!(r.refused.is_none(), on_device, "{case}: {r:?}");
                     if on_device {
                         assert!(r.made > 2000 && r.arena_reruns >= 1, "{case}: texts made in an arena that filled once: {r:?}");
-                        // Symbols' texts read in place through the atoms directory (decision 0468 step 2e): no names
+                        // Symbols' texts read in place through the atoms directory (decision 0478 step 2e): no names
                         // uploaded, no per-symbol table made.
                         assert_eq!((r.per_symbol, r.upload_by[super::profile::UPLOAD_NAMES].0), (0, 0), "{case}: symbols read in place: {r:?}");
                     }
@@ -1014,7 +1014,7 @@
         }
     }
 
-    /// Decision 0261, with 0468 step 1: the device's column statistics read a relation in its block where it lies,
+    /// Decision 0261, with 0478 step 1: the device's column statistics read a relation in its block where it lies,
     /// keeping nothing of it, and are the same as over the values gathered on the host.
     #[test]
     fn column_statistics_read_a_relation_in_its_block_in_place() {
@@ -1035,10 +1035,10 @@
         let rel = InRel::from_flat(rows.clone(), n, vec![b'i'; 2]);
         assert!(rel.in_block().is_some(), "a flat relation's rows lie in a block");
         let cols = [StatColumn::Rel(&rel, 0), StatColumn::Rel(&rel, 1)];
-        // Decision 0468 step 1: a relation in its block is read where it lies, with nothing made resident first.
+        // Decision 0478 step 1: a relation in its block is read where it lies, with nothing made resident first.
         let (read, in_place) = super::column_stats(&cols, 16).expect("the device");
         assert_eq!(in_place, 2);
-        assert_eq!(std::sync::Arc::strong_count(&rel), 1, "the read keeps no handle to the relation (decision 0468 R1)");
+        assert_eq!(std::sync::Arc::strong_count(&rel), 1, "the read keeps no handle to the relation (decision 0478 R1)");
         // The same statistics as the columns' values gathered on the host.
         let (c0, c1): (Vec<i64>, Vec<i64>) = (rows.iter().step_by(2).copied().collect(), rows.iter().skip(1).step_by(2).copied().collect());
         let (of_values, in_place) = super::column_stats(&[StatColumn::Values(&c0), StatColumn::Values(&c1)], 16).expect("the device");
@@ -1201,7 +1201,7 @@
         let src = Arc::clone(&all.iter().find(|(n, s)| *n == "node" && s.python_batch().is_some()).expect("node").1);
         assert!(src.device_view().is_some_and(|d| d.in_place.is_none()), "made on the device");
         let rel = InRel::over_source(Arc::clone(&src), vec![b'i'; src.columns().len()]);
-        // Encoded into a batch a refusal drops uncommitted: nothing ran it, and nothing of it is kept (decision 0468
+        // Encoded into a batch a refusal drops uncommitted: nothing ran it, and nothing of it is kept (decision 0478
         // step 3: a copy is made at each stratum, never cached).
         let mut refused = mj::Batch::new().expect("the device");
         let mut rep = super::Report::default();
@@ -1221,7 +1221,7 @@
         let _ = std::fs::remove_file(&store_path);
     }
 
-    /// Decision 0468 step 3 (R4): a view read in place keeps its indexes in a block of its own, which the view's
+    /// Decision 0478 step 3 (R4): a view read in place keeps its indexes in a block of its own, which the view's
     /// source holds (its chunk's life), not in a thread's cache: a stratum on another thread, in another batch, finds
     /// the index the first built, and builds none.
     #[test]

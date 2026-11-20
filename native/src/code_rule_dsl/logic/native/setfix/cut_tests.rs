@@ -250,7 +250,7 @@ fn a_scan_walked_in_morsels_makes_one_walks_rows_and_cuts_within_its_budget() {
     let input = format!("t:b:{}:{}:ii", hex("edge"), hex("c0, c1"));
     closure::semi_naive_here(true);
     // The scan is of `edge`, the probe of `path`'s delta, whose waves keep its orders: the scan is sorted by their
-    // key (decision 0294). An input's probes go to its block's hash index (decision 0468 step 5), for which no scan
+    // key (decision 0294). An input's probes go to its block's hash index (decision 0478 step 5), for which no scan
     // is sorted.
     let spec = format!("name mors\nrel path ii\njoin 0 0 {}", hex(&format!("pos {input} v0 v1\npos d0 v1 v2\nhead v0 v2")));
     let rows = |db: &Connection| -> Vec<(i64, i64)> { pairs(db, "SELECT DISTINCT c0, c1 FROM path ORDER BY c0, c1") };

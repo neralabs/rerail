@@ -59,7 +59,7 @@ structure! {
         /// (`ORDER`), `rows` is every row in the key's order, and `offs` is empty.
         pub offs: Span<u32>,
         pub rows: Span<u32>,
-        /// A sorted order's (`ORDER`, `ORDER_ROWS`; decision 0468 step 5b): the leading column's value at every
+        /// A sorted order's (`ORDER`, `ORDER_ROWS`; decision 0478 step 5b): the leading column's value at every
         /// `FENCE`th row of the order, each row's tag (an order tagged by its lead's hash), each row's key print (an
         /// order probed by whole keys). Empty when the order keeps none.
         pub fences: Span<i64>,
@@ -73,7 +73,7 @@ structure! {
 
 /// `Index::ordered`: a hashed index (buckets of rows).
 pub const HASHED: u32 = 0;
-/// `Index::ordered`: a sorted order whose rows are listed in `rows`, sorted by the key (decision 0468 step 5b).
+/// `Index::ordered`: a sorted order whose rows are listed in `rows`, sorted by the key (decision 0478 step 5b).
 pub const ORDER: u32 = 2;
 /// `Index::ordered`: a sorted order of the rows `lo..hi` themselves, already in the key's order (`mask` holds
 /// `lo << 32 | hi`), so no list of them is kept.
@@ -349,7 +349,7 @@ impl Relation {
         found
     }
 
-    /// The sorted order on `cols` over `rows` rows (decision 0468 step 5b), built: its number.
+    /// The sorted order on `cols` over `rows` rows (decision 0478 step 5b), built: its number.
     pub fn find_order(&self, cols: &[u16], rows: u32) -> Option<usize> {
         let n = (self.nindex.load(Acquire) as usize).min(self.indexes.len());
         let ix = self.indexes.as_slice();
@@ -380,7 +380,7 @@ impl Relation {
         }
     }
 
-    /// Gives this relation a sorted order on `cols` (decision 0468 step 5b): its rows listed (`ids`) or the rows
+    /// Gives this relation a sorted order on `cols` (decision 0478 step 5b): its rows listed (`ids`) or the rows
     /// `lo..hi` themselves (`range`), and its fences, tags and prints, each a chunk of `block` written already. The
     /// relation keeps them from now on and gives them back when its indexes are forgotten. Its number; `None` when
     /// its directory has no room (the chunks are then still the caller's).

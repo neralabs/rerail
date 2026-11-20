@@ -4807,12 +4807,12 @@ after the phases went on the run path (0083).
 - **Done when**: a warm run reads its unchanged files' batch rows where they lie (or never makes them), parses no
   unchanged file, and ep2's warm edit is back near 19 G and 200 MB.
 - **Record**: open; the phased-facts branch's (0458 Open), measured here.
-- **Taken by** 0474 (phased-facts, the user 2026-11-19: "B: lazy Batch everywhere"): a batch makes a document when
+- **Taken by** 0494 (phased-facts, the user 2026-11-19: "B: lazy Batch everywhere"): a batch makes a document when
   first read, its row space from kept counts; steps 1-4 there, ep2's numbers by its step 5.
 
 ### Q354. (Q288 on phased-facts) `the_view_reads_are_the_hosts_rows` timed out: its kernel's pipeline did not compile in 240 s (done)
 
-Found 2026-11-19 while running `syntax::tests` for 0474 (on the M3 and the M1 Max, the same each run).
+Found 2026-11-19 while running `syntax::tests` for 0494 (on the M3 and the M1 Max, the same each run).
 - **What.** The test's `view_probe` kernel calls 16 view reads. `new_library_with_source` returned;
   `new_compute_pipeline_state_with_function` (the backend's compile) had not returned at 240 s.
 - **Why.** One read at a time, cold (Metal caches a pipeline by its source): `view_node` 2 ms, `view_core` 13 ms,
@@ -5946,8 +5946,8 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   than the tests expect, after 0281 step 6c named them by content). None reads `finish` or a version's fields.
 - **Done when**: each list names what it lists once, and the strings tests assert by content, not number.
 - **On Native-and-GPU-strata** (its Q237, merged at d719a840ef, 2026-11-19):
-  - **Done** (2026-11-19, with 0468 step 2e's CPU texts): the strings tests name each test by what it matches; the
-  lists' other entries had been cut meanwhile, and `device.rs`'s `AUTOMATA` and `TESTS` (gone with 0468 steps 2c and
+  - **Done** (2026-11-19, with 0478 step 2e's CPU texts): the strings tests name each test by what it matches; the
+  lists' other entries had been cut meanwhile, and `device.rs`'s `AUTOMATA` and `TESTS` (gone with 0478 steps 2c and
   2d) are cut from `facts_only::STATE` and `run_state::STATE`. All five pass.
 
 ### Q238. (Q106 on Typing-support-final-shape at 4ea96a066) Relax's JIT refuses `sha2`'s `sha512h` inline asm
@@ -6688,9 +6688,9 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   `src` it never uses; `rr/testing.rs:371` imports `ProgramFields` unused in a build without test-hooks. Left to
   that track's owner to say which are unfinished. The merge also left `the_journal_names_what_changed_since_its_cursor`
   not compiling: two of its calls lacked the `settle` argument the other side added; given `SETTLE`, as the calls
-  beside them (0468 step 2a's commit). It and `an_answer_recorded_within_the_settle_window_is_checked_though_the_
+  beside them (0478 step 2a's commit). It and `an_answer_recorded_within_the_settle_window_is_checked_though_the_
   journal_names_nothing` then fail: each expects `since_within`'s `wait` bound to act, and nothing reads it.
-- **Found** (2026-11-19, 0468 step 2d's device runs): one hogql Metal run in five of that build stopped with
+- **Found** (2026-11-19, 0478 step 2d's device runs): one hogql Metal run in five of that build stopped with
   `the ast matcher wave failed on Metal: BackendCapacity` (0382 §6 stops the run; peak 1,539 MB against 1,474-1,497 MB
   in the others); none in five interleaved runs of step 2c's build. The ast wave does not run text tests; the verdict
   stage's device memory is a few KB a stage (a directory block, wraps of blocks the run holds). Not yet known whether
@@ -6702,9 +6702,9 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
 - **Open**: on Metal, a chunk's held bytes still differ between runs (one chunk 19-50 MB): a chunk's device strata
   run in pool jobs on ~18 threads, and each thread's `RESIDENT` entry of a relation read in place holds its `Part`
   until that thread's next device stratum. The user asked (2026-11-19) why the device caches relations at all, and
-  set the rule: decision 0468 (one block structure for the CPU and the GPU, no pointer-chasing Rust structure).
+  set the rule: decision 0478 (one block structure for the CPU and the GPU, no pointer-chasing Rust structure).
   Step 1 done: the held bytes are the same in every run. Still differing: a chunk's bytes written on Metal
-  (`GROWTH`, 0468 step 7; refusals by device room). (c), the threads'
+  (`GROWTH`, 0478 step 7; refusals by device room). (c), the threads'
   coordination; the Metal peak footprint at big chunks (1.36-1.47 GB, the count's
   most 1.15 GB), whose largest rise t49 found in the guests' `ann_ctx` stratum.
 
@@ -6712,24 +6712,24 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
 
 - **Seen**: the merge of Native-and-GPU-strata d719a840ef brought statics written before decision 0442 reached that
   branch. `check-no-global-state.py` lists them in `global-state.txt` by where they go, and the list is to shrink:
-  `text/automata.rs::AUTOMATA` (shared: the automata block, decision 0468 step 2e; its `Automaton::bytes` reads are
+  `text/automata.rs::AUTOMATA` (shared: the automata block, decision 0478 step 2e; its `Automaton::bytes` reads are
   `&'static`, so the move gives the reads the shared object's lifetime), `facts/rows.rs::MOVED` and
   `setfix.rs::ORDERS_KEPT` (run: a profile's counts, onto `run_counts()`), `accel/src/budget.rs::MOST` and
   `accel/src/gpu/join.rs::SAID` (machine). `joins.rs`' `SEED` moved to a run's setting in the merge itself.
 - **Do**: move each where its class says, and cut its line.
 - **Done when**: none of the five is in `global-state.txt`.
 
-### Q355. 0474's lazy batch makes 773 of a chunk run's documents twice (done)
+### Q355. 0494's lazy batch makes 773 of a chunk run's documents twice (done)
 
 Found 2026-11-19 merging phased-facts (10d3b38139) here: `leg-083-typed` on the 901 files, profiling build, the M1 Max.
 - **What.** Under `a chunk evaluated`, the batch's documents' rows were made for 2,145 documents (901 files and their
-  guests) before 0474; after it, `node rows` 2,918 calls and `tree document rows` 1,674 (901 files), the AST wave
+  guests) before 0494; after it, `node rows` 2,918 calls and `tree document rows` 1,674 (901 files), the AST wave
   14 times for 8 chunk batches (1,021 MB allocated, 558 MB before), 0.6-1.2 s more CPU.
 - **Not why.** Concurrent first reads racing in `Batch::ensure`: a claim on a group's documents while it is made left
   every count the same.
 - **Why** (2026-11-20). The guest rounds (decision 0055, `corpus.rs`, "batch with guests"): a round that asks for new
   guests builds the chunk's batch again, its files and the guests, and the next round reads it. Eager, the batch
-  before was made whole and so was this one; lazy (0474), the round before had made the files' rows and projections,
+  before was made whole and so was this one; lazy (0494), the round before had made the files' rows and projections,
   and the new batch made them again. Every file of a chunk with guests: 773.
 - **Fix.** `syntax::grown`: the batch built again takes the batch before's groups (`Batch::take_groups`), shared, its
   documents being the new one's first, the same, made the same way (projection, regexes, markers, matchers); and makes

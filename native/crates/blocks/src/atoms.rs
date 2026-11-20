@@ -143,7 +143,7 @@ fn slots(cap: u64) -> u64 {
 }
 
 /// An open atoms block: its one writer. In a file, the store's atoms lease holder's; in anonymous memory, a process's
-/// pending atoms (decision 0468 step 2a), never written to a file.
+/// pending atoms (decision 0478 step 2a), never written to a file.
 pub struct AtomsW {
     block: std::sync::Arc<Block>,
     raw: Raw,
@@ -176,7 +176,7 @@ impl AtomsW {
     }
 
     /// A new block in anonymous memory for ids from `first`, with room for `cap` atoms and `bytes_cap` bytes of
-    /// strings: a process's pending atoms (decision 0468 step 2a). Its pages are taken as atoms are appended.
+    /// strings: a process's pending atoms (decision 0478 step 2a). Its pages are taken as atoms are appended.
     pub fn anon(first: u32, cap: u32, bytes_cap: u64) -> AtomsW {
         let block = Block::anon(kind::ATOMS, Self::need(cap, bytes_cap));
         AtomsW {
@@ -471,7 +471,7 @@ impl AtomRead for AtomsV {
     }
 }
 
-/// A run of atoms where a block holds it, as a directory lists it (decision 0468 step 2b): ids `first..end` are read
+/// A run of atoms where a block holds it, as a directory lists it (decision 0478 step 2b): ids `first..end` are read
 /// in it; its atom `id`'s string ends at `ends[id - from]`, and begins where the one before ends (`0` for `from`'s).
 #[derive(Clone, Copy, Debug)]
 pub struct Run {
@@ -515,7 +515,7 @@ impl AtomsV {
 }
 
 structure! {
-    /// A directory's entry (decision 0468 step 2b): a run of atoms, `first..end`, its block's first id (`from`), and
+    /// A directory's entry (decision 0478 step 2b): a run of atoms, `first..end`, its block's first id (`from`), and
     /// spans to the block's `ends` and `strings` whose offsets are in the reader's address space: the host's, or the
     /// device's (its buffers' GPU addresses).
     pub struct DirEntry {
@@ -529,7 +529,7 @@ structure! {
 }
 
 structure! {
-    /// A directory of runs of atoms (decision 0468 step 2b), sorted by first id and not overlapping: the store's chain
+    /// A directory of runs of atoms (decision 0478 step 2b), sorted by first id and not overlapping: the store's chain
     /// below the process's pending atoms, then theirs. The atoms reads (`atoms_at`, `atoms_len`, in CLIF) take its
     /// address and find an id's run by a binary search.
     pub struct AtomsDirRoot {
@@ -538,7 +538,7 @@ structure! {
     }
 }
 
-/// A directory of runs of atoms in a block of its own (decision 0468 step 2b), its spans written for one address
+/// A directory of runs of atoms in a block of its own (decision 0478 step 2b), its spans written for one address
 /// space.
 pub struct AtomsDir {
     block: Block,
@@ -627,7 +627,7 @@ pub unsafe fn str_in<'a>(dir: *const u8, id: u32) -> Option<&'a [u8]> {
 
 #[cfg(test)]
 mod tests {
-    /// Decision 0468 step 2b: an id's string read through the directory, by the reads written once in CLIF (their
+    /// Decision 0478 step 2b: an id's string read through the directory, by the reads written once in CLIF (their
     /// generated Rust), is the block's own, in every run: a run that begins past its block's first id (a pending
     /// block whose first atoms were stored since) too. Id 0 is the empty string; an id no run holds has none.
     #[test]

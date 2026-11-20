@@ -1,4 +1,4 @@
-//! The device's automata in one block (decision 0468 step 2c): each text test's table (`table::Table`) and each
+//! The device's automata in one block (decision 0478 step 2c): each text test's table (`table::Table`) and each
 //! regex's replacement automata (`table::Replacer`), written once where they are made, with an index from a key's
 //! hash to its slot in the same block. The kernels bind the block's no-copy wrap at an automaton's offset: no upload,
 //! no thread's map of device buffers. A refusal (a plan the device has no table for) is kept too, with why.
@@ -23,7 +23,7 @@ pub const ALIGN: usize = 256;
 const EMPTY: u32 = 0;
 const MADE: u32 = 1;
 const REFUSED: u32 = 2;
-/// A key named only: its slot is an id (a text test's, for its verdicts: decision 0468 step 2d).
+/// A key named only: its slot is an id (a text test's, for its verdicts: decision 0478 step 2d).
 const NAMED: u32 = 3;
 
 /// A slot: its key's hash, its key (bytes in the block), its value (an automaton's bytes, or a refusal's message),
@@ -163,7 +163,7 @@ pub fn get_or_make(key: &str, make: impl FnOnce() -> Result<(Vec<u8>, [u32; 4]),
     a.read(k, state)
 }
 
-/// The id a chain of text functions keeps its texts by in a store's rolling cache (decision 0468 step 2e): a chain is
+/// The id a chain of text functions keeps its texts by in a store's rolling cache (decision 0478 step 2e): a chain is
 /// its steps from a symbol, each `/{function}{constants:?}` (the rule's function name, its other arguments' constants:
 /// symbols' ids, numbers), the CPU's and the device's named alike.
 pub fn text_functions(chain: &str) -> Option<u32> {
@@ -200,7 +200,7 @@ pub fn id(key: &str) -> Option<u32> {
 mod tests {
     use super::*;
 
-    /// Decision 0468 step 2c: an automaton is written once into the block, where every later ask finds it, from any
+    /// Decision 0478 step 2c: an automaton is written once into the block, where every later ask finds it, from any
     /// thread; a refusal is kept with why.
     #[test]
     fn an_automaton_is_made_once_into_the_block_and_found_there() {

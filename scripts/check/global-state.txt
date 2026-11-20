@@ -128,7 +128,7 @@ native/src/code_rule_dsl/logic/json_rules/translate.rs::E	stays	a constant
 native/src/code_rule_dsl/logic/lanes.rs::NEXT	stays	a ticket counter: append-only
 native/src/code_rule_dsl/logic/lanes.rs::RAN	stays	a test's own counter (`lanes.rs`'s inline test module, which the file filter cannot leave out by name)
 native/src/code_rule_dsl/logic/native/setfix.rs::ONCE	stays	a hook registered once
-native/src/code_rule_dsl/logic/native/setfix.rs::ORDERS_KEPT	run	where frozen relations' orders were kept, a profile's count (decision 0468 step 5b)
+native/src/code_rule_dsl/logic/native/setfix.rs::ORDERS_KEPT	run	where frozen relations' orders were kept, a profile's count (decision 0478 step 5b)
 native/src/code_rule_dsl/logic/native/setfix/device.rs::TICKETS	stays	a ticket counter: append-only
 native/src/code_rule_dsl/logic/native/setfix/device.rs::WAVES	stays	an id counter: append-only, unique across threads
 native/src/code_rule_dsl/logic/native/setfix/level.rs::NEXT	stays	an id counter: append-only
@@ -262,7 +262,7 @@ native/src/code_rule_dsl/tape/tokens.rs::BY_DIALECT	stays	computed once from the
 native/src/code_rule_dsl/tape/tokens.rs::KEPT	stays	computed once from the engine's own files
 native/src/code_rule_dsl/tape/vue_lean.rs::IDS	stays	computed once from the engine's own files
 native/src/code_rule_dsl/text.rs::NAMES	stays	counter names leaked once each (`&'static str`), from the engine's own text productions: an append-only interner of the engine's names
-native/src/code_rule_dsl/text/automata.rs::AUTOMATA	shared	the text tests' and replacers' automata block (decision 0468 step 2e): Q331 moves it onto the shared object
+native/src/code_rule_dsl/text/automata.rs::AUTOMATA	shared	the text tests' and replacers' automata block (decision 0478 step 2e): Q331 moves it onto the shared object
 native/src/code_rule_dsl/transducer/packed/compile/matcher.rs::NAMES	stays	names leaked once each (`&'static str`), from the engine's own fallback reasons: an append-only interner of the engine's names
 native/src/code_rule_dsl/transducer/packed/device.rs::MATCHER	stays	code a crate above registers at load
 native/src/code_rule_dsl/transducer/packed/json_parser.rs::PARSER	stays	computed once from the engine's own files

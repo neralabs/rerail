@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Refuses a commit that adds a thread-local or process-wide collection of relation data (decision 0468, R7).
+"""Refuses a commit that adds a thread-local or process-wide collection of relation data (decision 0478, R7).
 
 What a relation has (its rows, dead rows, indexes, orders, statistics, count tables) is read where it is, in its
-block, by the CPU and the GPU alike; what is derived once for a symbol goes in the one rolling cache (0468 §1-§4).
+block, by the CPU and the GPU alike; what is derived once for a symbol goes in the one rolling cache (0478 §1-§4).
 A `static` holding a map, a set or a vector of such data, in a `thread_local!` or for the process, is the structure
-0468 removed: it keeps a relation's pages by a thread's timing (Q261), and holds a second copy beside the block's.
+0478 removed: it keeps a relation's pages by a thread's timing (Q261), and holds a second copy beside the block's.
 
 Reads the lines a commit adds (the index against HEAD, and in a merge against every parent; with --all, the working
 tree against HEAD) in the engine's data paths, and refuses a `static` whose type holds a collection (`HashMap`,
@@ -14,7 +14,7 @@ the line above says which allowed kind it is:
     // state: bookkeeping          what is in flight: waves, waiting strata, a last report (the user, 2026-11-19:
                                    "Bookkeeping / scoreboards / schedules can be on the CPU for now")
     // state: not relation data    settings, names, compiled code: nothing a relation has or a reader reads instead
-    // state (0468 step N)         an existing one, listed in 0468's inventory, that step N removes
+    // state (0478 step N)         an existing one, listed in 0478's inventory, that step N removes
 
 Usage: check-no-relation-maps.py [--all]
 """
@@ -37,7 +37,7 @@ DIRS = (
 )
 STATIC = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?static\s+(?:mut\s+)?[A-Z_][A-Z0-9_]*\s*:\s*(?P<ty>.*)$")
 COLLECTION = re.compile(r"\b(?:Fx)?Hash(?:Map|Set)\b|\bBTree(?:Map|Set)\b|\bVec(?:Deque)?\s*<|\bHashTable\b|\bDashMap\b|\bIndexMap\b")
-MARK = re.compile(r"state: (bookkeeping|not relation data)|state \(0468 step \d+\)")
+MARK = re.compile(r"state: (bookkeeping|not relation data)|state \(0478 step \d+\)")
 
 
 def git(*args):
@@ -106,10 +106,10 @@ def main():
             if n - 1 < len(lines) and refused(lines, n):
                 problems.append(f"{p}:{n}: {lines[n - 1].strip()[:110]}")
     if problems:
-        print("Refused: the commit adds a thread-local or process-wide collection (decision 0468, R7). What a relation", file=sys.stderr)
+        print("Refused: the commit adds a thread-local or process-wide collection (decision 0478, R7). What a relation", file=sys.stderr)
         print("has is in its block, and what is derived for a symbol in the one cache. If it holds no relation data,", file=sys.stderr)
         print("say which kind on the line or the one above: `state: bookkeeping`, `state: not relation data`, or", file=sys.stderr)
-        print("`state (0468 step N)`.", file=sys.stderr)
+        print("`state (0478 step N)`.", file=sys.stderr)
         for line in problems:
             print("  " + line, file=sys.stderr)
         return 2

@@ -485,7 +485,7 @@ impl GivenRun {
 }
 
 impl Run {
-    /// Its arrays handed on to `facts`' block, where they lie (decision 0468 step 5b), or itself when any lies
+    /// Its arrays handed on to `facts`' block, where they lie (decision 0478 step 5b), or itself when any lies
     /// elsewhere or is not its own.
     pub(super) fn give(self, facts: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>) -> Result<GivenRun, Run> {
         let ids_ok = match &self.ids {
@@ -1263,7 +1263,7 @@ impl Index {
         Index { cols, runs: Vec::new(), rent: AtomicU64::new(0), printed: false }
     }
 
-    /// Its runs as one run, merged where they are several (decision 0468 step 5b: a frozen relation's order is one
+    /// Its runs as one run, merged where they are several (decision 0478 step 5b: a frozen relation's order is one
     /// sorted order in its block), with its columns and whether it is printed; `None` with no runs.
     pub(super) fn into_one<D: RowData + ?Sized>(mut self, data: &D, k: usize) -> Option<(Vec<usize>, bool, Run)> {
         let run = match self.runs.len() {

@@ -30,5 +30,5 @@ python3 scripts/check/check-dev-features.py
 python3 scripts/check/check-no-block-copies.py
 # No process-global state (decision 0442): a commit that adds a static the list does not hold is refused.
 python3 scripts/check/check-no-global-state.py
-# Nor a relation kept beside its block in a thread's or the process's map (decision 0468, R7): a commit that adds one is refused.
+# Nor a relation kept beside its block in a thread's or the process's map (decision 0478, R7): a commit that adds one is refused.
 python3 scripts/check/check-no-relation-maps.py

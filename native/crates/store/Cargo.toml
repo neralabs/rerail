@@ -19,7 +19,7 @@ rerail-prof = { path = "../prof" }
 rerail-accel = { path = "../../../accel" }
 # The memo's segments are journal blocks of deferrable leases (decision 0295 §4).
 rerail-blocks = { path = "../blocks" }
-# The rolling cache's shape (`view::cache`) for the text tests' verdicts (decision 0468 step 2d); the view alone.
+# The rolling cache's shape (`view::cache`) for the text tests' verdicts (decision 0478 step 2d); the view alone.
 rerail-clif = { path = "../clif", default-features = false }
 foldhash = "=0.2.0"
 gix = { version = "=0.90.0", default-features = false, features = ["status", "parallel", "sha1", "sha256", "revision"] }

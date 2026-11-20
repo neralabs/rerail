@@ -60,7 +60,7 @@ pub struct DeviceView<'a> {
     /// Where a stage reads the view in place (decision 0353 step 4d), when it can: nothing makes its rows.
     #[cfg(target_os = "macos")]
     pub in_place: Option<ViewInPlace>,
-    /// With `in_place`, the view's relation of no columns, whose block its probes' indexes go in (decision 0468 step
+    /// With `in_place`, the view's relation of no columns, whose block its probes' indexes go in (decision 0478 step
     /// 3, R4): made once by the source, which holds it (its batch's life), so every stratum on any thread finds them.
     pub home: Option<crate::code_rule_dsl::facts::rows::Part>,
 }
@@ -208,7 +208,7 @@ pub trait Source: Send + Sync {
     fn lookup_all(&self, _equal: &[(usize, i64)]) -> Option<Vec<usize>> {
         None
     }
-    /// The rows of the documents `docs` (by key), ascending, where the source knows where they lie (decision 0474: a
+    /// The rows of the documents `docs` (by key), ascending, where the source knows where they lie (decision 0494: a
     /// batch's, by group or by offset); `None` where it does not, and they are found by a read of its rows.
     fn rows_of_documents(&self, _docs: &std::collections::BTreeSet<u32>) -> Option<Vec<usize>> {
         None

@@ -422,7 +422,7 @@ impl<'a> Pass<'a> {
         self.dispatches.set(self.dispatches.get() + 1);
     }
 
-    /// `run_bytes`, each buffer bound at its offset (a structure inside a block: decision 0468 step 2c).
+    /// `run_bytes`, each buffer bound at its offset (a structure inside a block: decision 0478 step 2c).
     pub fn run_bytes_at(&self, pipeline: &ComputePipelineState, buffers: &[(&BufferRef, u64)], bytes: &[u8], groups: usize) {
         self.encoder.set_compute_pipeline_state(pipeline);
         for (i, (b, off)) in buffers.iter().enumerate() {

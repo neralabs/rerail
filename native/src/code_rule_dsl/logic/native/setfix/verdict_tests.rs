@@ -1,4 +1,4 @@
-//! The CPU's text tests read and keep their verdicts in the store's rolling cache (decision 0468 step 2d, R3).
+//! The CPU's text tests read and keep their verdicts in the store's rolling cache (decision 0478 step 2d, R3).
 use super::*;
 
 fn hex(s: &str) -> String {
@@ -38,7 +38,7 @@ fn a_cpu_text_test_reads_and_keeps_its_verdicts_in_the_stores_cache() {
     assert_eq!((verdicts.get(test, foo1), verdicts.get(test, bar)), (PASSES, FAILS), "the verdicts the run made, kept");
 }
 
-/// A text function of a symbol reads and keeps its text in the store's one rolling cache (decision 0468 step 2e), by
+/// A text function of a symbol reads and keeps its text in the store's one rolling cache (decision 0478 step 2e), by
 /// the key the device keeps it by: a text put there before the run (`dir` of `a/b/c` is `KEPT`) is what the run
 /// takes, so the cache answers, not the function; each other name's text is kept as it ran.
 #[test]

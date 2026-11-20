@@ -1,4 +1,4 @@
-//! Decision 0468 step 5 (R2, R5): a relation's index is in its block, the one the device finds and builds, and the
+//! Decision 0478 step 5 (R2, R5): a relation's index is in its block, the one the device finds and builds, and the
 //! CPU probes it there. Its dead rows are its block's.
 
 use super::InRel;
@@ -93,7 +93,7 @@ fn directory(rel: &InRel) -> crate::code_rule_dsl::facts::rows::InBlock {
     rel.rows.last_in_block().expect("its rows in a block")
 }
 
-/// Decision 0468 step 5b (the user, 2026-11-19: one sorted order): a frozen relation's kept orders are one sorted
+/// Decision 0478 step 5b (the user, 2026-11-19: one sorted order): a frozen relation's kept orders are one sorted
 /// order each in its block's index directory, found there by key, as the device can find them; the relation's own
 /// handles to them hold nothing of their own.
 #[test]

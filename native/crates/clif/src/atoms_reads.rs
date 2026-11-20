@@ -1,4 +1,4 @@
-//! The atoms' reads as CLIF functions, written once (decision 0468 step 2b): an id's string in a directory of runs
+//! The atoms' reads as CLIF functions, written once (decision 0478 step 2b): an id's string in a directory of runs
 //! of atoms (`rerail_blocks::atoms::AtomsDirRoot`), for the host (the blocks crate's `generated_reads.rs`), the
 //! kernels (`relation_reads.metal`) and the JIT. A read takes the directory's address and reaches each run's `ends`
 //! and `strings` through its spans, whose offsets are in the reader's own address space.

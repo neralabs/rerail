@@ -766,7 +766,7 @@ impl Within {
 
 impl Source for Within {
     /// A document's rows are its nodes' (an axis never leaves its document), in the row space `value` reads: the
-    /// batch's solve, where each node row's pairs are its run (decision 0474). The span mode's rows are made by lookup
+    /// batch's solve, where each node row's pairs are its run (decision 0494). The span mode's rows are made by lookup
     /// and have no such space: `None`.
     fn rows_of_documents(&self, docs: &std::collections::BTreeSet<u32>) -> Option<Vec<usize>> {
         if !self.solvable() {

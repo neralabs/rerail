@@ -1,4 +1,6 @@
-# 0474: A batch makes a document when first read
+# 0494: A batch makes a document when first read
+
+(0474 until 2026-11-20, here and on phased-facts: the hub's 0474 is a level's formulas as phases.)
 
 Status: decided by the user (2026-11-19, Q285: "B: lazy Batch everywhere"). Builds 0458's "a document is made when
 first read" for every batch, the chunks' too. Follows 0353 (a view is a read of the tape) and 0458. Numbered 0464 until

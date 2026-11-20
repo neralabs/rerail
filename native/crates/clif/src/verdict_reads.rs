@@ -1,4 +1,4 @@
-//! A text test's verdicts in the one rolling cache (decision 0468 step 2d), written once in CLIF for the host (the
+//! A text test's verdicts in the one rolling cache (decision 0478 step 2d), written once in CLIF for the host (the
 //! blocks crate's `generated_reads.rs`), the kernels (`relation_reads.metal`) and the JIT.
 //!
 //! An entry holds 64 symbols of one test (the user's choice, 2026-11-19): its key is `(test + 1) << 32 | symbol >> 6`,
@@ -152,7 +152,7 @@ mod tests {
     use rerail_blocks::block::{Block, kind};
     use rerail_blocks::generated_reads::{verdict_get, verdict_put};
 
-    /// Decision 0468 R3 (its host half): a verdict kept is found, by its test and symbol only; the cache stays within
+    /// Decision 0478 R3 (its host half): a verdict kept is found, by its test and symbol only; the cache stays within
     /// its generations, and a group read as others come is kept while those not read are let go (LRU).
     #[test]
     fn a_verdict_kept_is_found_and_the_cache_keeps_what_is_read() {
@@ -182,7 +182,7 @@ mod tests {
         Spec::check(buf).unwrap();
     }
 
-    /// Decision 0468 step 2e: entries of any size up to the cache's most, from each generation's bump arena. A text
+    /// Decision 0478 step 2e: entries of any size up to the cache's most, from each generation's bump arena. A text
     /// is found, or taken for its length, written and completed; texts of different lengths lie apart; one past the
     /// most is not kept and turns no generation; a text being written is pending to others; a generation full by
     /// its bytes turns, and a text read as others come is kept while one not read goes; a generation with a writer
