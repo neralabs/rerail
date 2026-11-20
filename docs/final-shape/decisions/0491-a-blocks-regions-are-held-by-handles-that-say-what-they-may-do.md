@@ -4,7 +4,7 @@ Date: 2026-11-20. Status: decided (the user, 2026-11-20, on 0487: "I was expecti
 that tracks frozenness, readers, writers, allocation, GPU placement, versions (after mutation), implicit freeing when
 there are no users left and detection of invariant issues like two writers, simultaneous readers and writers, etc. It
 should also give out references with constness properly set. Like the mldb block and memory region handling");
-the handles built (`rerail_blocks::region`); `Cells` and a relation's arrays (`BlockVec`) moved to them (step 2).
+steps 1 to 5 built (`rerail_blocks::region`, 2026-11-20); what is left is in step 3.
 
 ## Intro
 
@@ -106,6 +106,16 @@ of 2026-11-20 (fa09c9c761). Item 7 above is that model for one region and two sp
   brings it back; a read or a freeze before then fails (`a_device_copy_is_uploaded_when_behind_and_synced_back_after_a_write`).
 - **R9** With unified memory a sync is a wait, and a sync on an uncommitted write fails
   (`with_unified_memory_a_sync_is_a_wait`).
+- **R10** A truncated region gives its tail back; a truncate while shared fails (`a_truncated_region_gives_back_its_tail`).
+- **R11** A region's GPU pin is a chunk use of its block's ledger, which raw-offset writers are checked against
+  (`a_regions_gpu_pin_is_its_ledgers_chunk_use`, `a_block_vec_under_a_queued_gpu_use_of_its_chunk_fails`).
+- **R12** A pooled lease bound by address goes back to the pool only after its fence
+  (`a_tracked_lease_bound_by_address_goes_after_its_fence`, `a_pooled_held_buffer_is_found_by_its_address`).
+- **R13** A block's own region is pinned by a kernel's bind found by address, by the kernel's declared access; a
+  frozen block's refuses a GPU write (`a_blocks_bind_by_address_pins_its_own_region`,
+  `a_frozen_blocks_region_refuses_a_gpu_write`, `a_kernels_write_moves_its_blocks_version_and_a_read_does_not`).
+- **R14** Two device domains: one owner; the other catches up through the host; two domains never write one region
+  (`two_domains_hold_one_owner_and_the_other_catches_up_through_the_host`, `the_device_names_its_memory_domain`).
 
 ## Steps
 
@@ -146,11 +156,19 @@ of 2026-11-20 (fa09c9c761). Item 7 above is that model for one region and two sp
      lists hid that. Without them it went back to the pool before its kernels ran, and the parity tests' rows
      differed (`a_pooled_held_buffer_is_found_by_its_address`, the setfix parity tests).
 
-3. **The block itself as the root region:** `Facts` (done: an `Arc<Block>`, which a region in it keeps) and the
-   pool's slabs hold their block by handle, so a block's
-   frozenness, placement and lifetime are read in the same place as its regions'.
-4. **Domains (0440 §7.2):** a region's host and device versions become an entry a domain, with the owner domain of a
-   mutable region, and each device in the device layer names its domain. A test with two domains besides the host
-   (two mirrors) locks it: a write in one makes the other behind, and only the owner may write.
-5. **Kernels' rows bind their arguments:** the device layer gives each kernel's parameter rows (read, write) to the
-   host, and `Pass::run` pins each argument by its row.
+3. **The block itself as the root region** (done): `region::whole(block)` is the block's own region, one a block
+   while a handle holds it (its ledger keeps a weak reference, so a bind found by address reaches it). A frozen
+   block's is frozen. Its pins hold the block, not a chunk: a relation's CPU writers write other chunks meanwhile.
+   `Facts` holds its block by `Arc`. The device's handles of a block (`join::Held::of_block`: `DevRel`'s, an
+   index's) hold it by this region, so the block's frozenness, versions and pins are read where its regions' are.
+   A pool lease stays a ledger of its own (`Tracked`), not a region of a slab block: a block puts its header at
+   offset 0, and the join binds a lease's buffer at offset 0 at about 100 sites. A lease's region in a block would
+   bind at its offset; that is the one piece left, and it buys no check the lease's ledger lacks.
+4. **Domains (0440 §7.2)** (done): `Access` keeps a version a domain and each queued GPU write its domain;
+   `mirror_in(domain, …)`, `bind_read_on` / `bind_write_on` and `owner()`. A bind in a domain whose copy is behind
+   takes the latest through the host, from the owner's copy; a read or write in one domain while another domain's
+   write is queued fails (one owner domain). The device layer names each device's domain (`Device::domain`: 0 for
+   Apple's GPU, the CPU, OpenCL and a CUDA device reading the host's pages; 1 for a discrete card).
+5. **Kernels' rows bind their arguments** (done): the device layer gives each kernel's arguments with their access
+   (`ROBUFFER` read, `RWBUFFER` / `WOBUFFER` write), and a launch pins each bound buffer's block by it
+   (`join::Pipe::writes`, `region::bind_address`). A UKL library call's binds are held as written.

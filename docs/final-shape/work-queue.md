@@ -7432,8 +7432,9 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
 - **Then (decision 0491, the user, 2026-11-20):** region handles over blocks, MLDB's shape (`rerail_blocks::region`:
   `Mutable` / `Shared` / `Frozen`, pins, versions, implicit freeing), built. The owners move to them one at a time:
   `Cells` (done, 2026-11-20: a frozen region), a relation's arrays (done: `BlockVec` owns a `Mutable`), its rows (nothing to move: a `Part` is the handle), the device's buffers (done: every pooled lease is held by
-  the ledger, `Tracked`; every bind, library calls too, is held by its pass; `Batch`'s lists are gone); then the block
-  itself as the root region, with a pooled lease a region of a slab block. Seen on the way, outside this change (the JIT's compile, which it does not touch):
+  the ledger, `Tracked`; every bind, library calls too, is held by its pass; `Batch`'s lists are gone); the block
+  itself as the root region, binds pinned by the kernels' declared access, and memory domains (0491 steps 3 to 5,
+  done 2026-11-20). Left: a pooled lease as a region of a slab block (0491 step 3 says why it waits). Seen on the way, outside this change (the JIT's compile, which it does not touch):
   `regex_block::tests::a_patterns_block_program_runs_alike_on_every_executor` fails, the CPU JIT refusing a shape
   ("region 0's value %87 on the vectors made outside its branch", decision 0423). And on a Linux host with a CUDA
   device (a Spark, 2026-11-20), 9 of accel's 124 tests fail: 8 ask for a macOS backend ("this machine has a Metal
