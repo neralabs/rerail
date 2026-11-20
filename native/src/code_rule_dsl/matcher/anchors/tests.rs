@@ -481,7 +481,10 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             .expect("an AST clause")
     }
 
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let mut pending = vec![
         root.join("packs/complexity/rules"),
         root.join("packs/javascript/rules"),
@@ -1487,7 +1490,10 @@ fn a_pattern_selection_spends_a_unit_per_256_roots_not_per_root() {
 /// keep every finding and make AIR302 about a hundred times slower on such files (#375).
 #[test]
 fn airflow_ports_select_no_root_in_a_file_without_an_airflow_import() {
-    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python/rules");
+    let rules = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("../packs/python/rules");
     // Names the rules report, with no `airflow` import: `airflowx` has the prefix, not the module.
     let without = "import airflowx\nfrom airflowx.hooks import PostgresHook\nimport os.path as airflow_path\n\nclass Dataset: ...\n\ndef run(h: \"PostgresHook\", d: \"Dataset\") -> \"BashOperator\":\n    airflow_path.join(h.conn, airflowx.DAG)\n    return BashOperator(bash_command=\"x\", sla=d)\n";
     let with = "from airflow.hooks.S3_hook import S3Hook\nfrom airflow import Dataset\nfrom airflow.operators.bash import BashOperator\n\ndef run(h: \"S3Hook\") -> \"BashOperator\":\n    return BashOperator(bash_command=\"x\", sla=Dataset(uri=\"x\"))\n";
@@ -1559,7 +1565,10 @@ fn airflow_ports_select_no_root_in_a_file_without_an_airflow_import() {
 /// complete on a file with a `builtins` import and on one without.
 #[test]
 fn ann_ports_select_soundly_with_and_without_a_builtins_import() {
-    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python/rules");
+    let rules = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("../packs/python/rules");
     let without = "from typing import Any\n\nclass A:\n    def __init__(self):\n        pass\n\n    @staticmethod\n    def s(x):\n        return x\n\n    @classmethod\n    def c(cls):\n        return cls\n\ndef f(a: Any):\n    return a\n";
     let with = "import builtins\nfrom typing import Any\n\nclass A:\n    def __init__(self):\n        pass\n\n    @builtins.staticmethod\n    def s(x):\n        return x\n\n    @builtins.classmethod\n    def c(cls):\n        return cls\n\n    @staticmethod\n    def t(x):\n        return x\n\ndef f(a: Any):\n    return a\n";
     let without = tape_doc(without, GrammarDialect::Python);

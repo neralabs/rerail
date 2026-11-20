@@ -413,27 +413,8 @@ pub mod tests {
     /// made (`native_cpu_shape`: each loop steps a block, a token or a record, never a byte).
     #[test]
     fn the_parse_path_is_compiled_code() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let dir = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src");
         let read = |f: &str| std::fs::read_to_string(dir.join(f)).expect("the source");
-        // The body of the function whose signature starts with `head`.
-        let body = |src: &str, head: &str| -> String {
-            let at = src.find(head).unwrap_or_else(|| panic!("no `{head}`"));
-            let open = at + src[at..].find('{').expect("a body");
-            let mut depth = 0usize;
-            for (k, ch) in src[open..].char_indices() {
-                match ch {
-                    '{' => depth += 1,
-                    '}' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            return src[open..open + k + 1].to_owned();
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            panic!("`{head}`: no end")
-        };
         let path = [
             ("lib.rs", "pub fn tape(src: &str)"),
             ("lib.rs", "pub fn compiled_tape("),
@@ -458,7 +439,7 @@ pub mod tests {
         let loops_allowed = ["for file in files", "for entry in &program.entries"];
         for (file, head) in path {
             // The code alone: comments dropped.
-            let b: String = body(&read(file), head).lines().map(|l| l.split("//").next().unwrap_or("")).collect::<Vec<_>>().join("\n");
+            let b: String = body_of(&read(file), head).lines().map(|l| l.split("//").next().unwrap_or("")).collect::<Vec<_>>().join("\n");
             for w in walks {
                 assert!(!b.contains(w), "{file} `{head}`: `{w}` on the parse path");
             }
@@ -466,6 +447,26 @@ pub mod tests {
                 assert!(loops_allowed.iter().any(|a| b[k..].starts_with(a)), "{file} `{head}`: a loop on the parse path: {}", &b[k..(k + 40).min(b.len())]);
             }
         }
+    }
+
+    /// The body of the function whose signature starts with `head`.
+    fn body_of(src: &str, head: &str) -> String {
+        let at = src.find(head).unwrap_or_else(|| panic!("no `{head}`"));
+        let open = at + src[at..].find('{').expect("a body");
+        let mut depth = 0usize;
+        for (k, ch) in src[open..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return src[open..open + k + 1].to_owned();
+                    }
+                }
+                _ => {}
+            }
+        }
+        panic!("`{head}`: no end")
     }
 
     /// Tier 1 of the grammar on Metal (the forward carry: its fixed points, its passes for the
@@ -2900,44 +2901,33 @@ pub mod tests {
     #[ignore = "a benchmark: run by hand"]
     fn rr_parser_speed() {
         const REPEAT: usize = 5;
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let (mut files, mut work) = (Vec::new(), vec![root]);
-        while let Some(dir) = work.pop() {
-            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
-            for e in entries.flatten() {
-                let p = e.path();
-                let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
-                if p.is_dir() && !skip {
-                    work.push(p);
-                } else if p.extension().is_some_and(|x| x == "rerail") {
-                    files.extend(std::fs::read_to_string(&p).ok());
-                }
-            }
-        }
+        let files = corpus();
         let t = cpu();
         assert_eq!(super::compile_error(), None);
         let compile = cpu() - t;
         let bytes: usize = files.iter().map(String::len).sum();
         let ours: usize = files.iter().filter(|f| super::compiled_tape(f).is_some()).count();
-        let run = |f: &dyn Fn(&str) -> usize| {
-            let t = cpu();
-            let mut nodes = 0;
-            for _ in 0..REPEAT {
-                for src in &files {
-                    nodes += f(src);
-                }
-            }
-            std::hint::black_box(nodes);
-            (cpu() - t) / REPEAT as u32
-        };
-        let compiled = run(&|s| super::compiled_tape(s).map_or(0, |t| t.len()));
-        let engine = run(&|s| super::rr::engine_tape(s).len());
+        let compiled = cpu_a_pass(&files, REPEAT, &|s| super::compiled_tape(s).map_or(0, |t| t.len()));
+        let engine = cpu_a_pass(&files, REPEAT, &|s| super::rr::engine_tape(s).len());
         let mb = bytes as f64 / 1e6;
         let load = std::process::Command::new("uptime").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned()).unwrap_or_default();
         eprintln!("{} files, {:.2} MB, {ours} parsed by the grammar; compile {compile:.2?} CPU", files.len(), mb);
         eprintln!("  grammar: {compiled:.3?} CPU a pass, {:.1} MB/s", mb / compiled.as_secs_f64());
         eprintln!("  engine:  {engine:.3?} CPU a pass, {:.1} MB/s", mb / engine.as_secs_f64());
         eprintln!("  load: {load}");
+    }
+
+    /// The process's CPU time for one pass of `f` over `files`: the mean of `repeat` passes.
+    fn cpu_a_pass(files: &[String], repeat: usize, f: &dyn Fn(&str) -> usize) -> std::time::Duration {
+        let t = cpu();
+        let mut nodes = 0;
+        for _ in 0..repeat {
+            for src in files {
+                nodes += f(src);
+            }
+        }
+        std::hint::black_box(nodes);
+        (cpu() - t) / repeat as u32
     }
 
     /// This thread's CPU time (user and sys), to the nanosecond.
@@ -2947,7 +2937,7 @@ pub mod tests {
 
     /// The repository's `.rerail` files.
     pub fn corpus() -> Vec<String> {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
         let (mut files, mut work) = (Vec::new(), vec![root]);
         while let Some(dir) = work.pop() {
             let Ok(entries) = std::fs::read_dir(&dir) else { continue };

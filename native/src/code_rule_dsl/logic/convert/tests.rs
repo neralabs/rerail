@@ -1773,7 +1773,7 @@ struct Baseline {
 
 impl Baseline {
     fn path() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/convert/replay_baseline.txt")
+        std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/convert/replay_baseline.txt")
     }
 
     /// The recorded baseline, or why it does not read.
