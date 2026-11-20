@@ -213,13 +213,16 @@ vi.mock("node:fs/promises", async importOriginal => {
     },
     // Each call is counted, and first runs the hook a case set for its path in `discovery.lstats`, but for an entry
     // in a checkout a reader of Git's files reads meanwhile (`gitFileReads`): that reader's look at the checkout's `.git`
-    // entry is no walk's look at it. A path in `heldTimes` reports the earlier `lstat`'s times whole; one in `discovery.stamps` reports its
-    // stamp as both its modified and change time. A path in both keeps its held times: a stamp sets only the two
-    // numbers, so it would leave `mtime` and `ctime` disagreeing with them. No case sets both: each case sets one map,
-    // and the clean-up after each case empties both.
+    // entry, which on Windows comes before it opens the entry, is no walk's look at it. A path in `heldTimes` reports
+    // the earlier `lstat`'s times whole; one in `discovery.stamps` reports its stamp as both its modified and change
+    // time. A path in both keeps its held times: a stamp sets only the two numbers, so it would leave `mtime` and
+    // `ctime` disagreeing with them. No case sets both: each case sets one map, and the clean-up after each case empties
+    // both.
     lstat: (async (...args: Parameters<typeof actual.lstat>) => {
-      discovery.calls.lstat += 1;
-      if (!gitFileReads.reading.includes(dirname(String(args[0])))) await discovery.lstats.get(String(args[0]))?.shift()?.();
+      if (!gitFileReads.reading.includes(dirname(String(args[0])))) {
+        discovery.calls.lstat += 1;
+        await discovery.lstats.get(String(args[0]))?.shift()?.();
+      }
       const info = await actual.lstat(...args);
       const at = discovery.stamps.get(String(args[0]));
       const times = heldTimes.get(String(args[0])) ?? (at === undefined ? undefined : { mtimeMs: at, ctimeMs: at });
