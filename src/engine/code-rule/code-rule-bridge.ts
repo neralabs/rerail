@@ -1993,6 +1993,8 @@ export class CodeRuleBridge {
     discovery.toolCalls.finishAll(await filesystemClock());
     await this.#awaitDiscovery(discovery, checkpoint, checkpoint);
     await this.#noteIgnoreRules([]);
+    // Once the edits queued so far reached the auditor, runs waiting for their checkout to go quiet start now.
+    void this.#queue.then(() => this.#auditor.turnEnded?.());
     this.#assertDiscovery(discovery);
     return this.#discoveryResponse(discovery);
   }

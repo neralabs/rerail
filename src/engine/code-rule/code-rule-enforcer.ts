@@ -3,7 +3,9 @@ import { lstat, mkdtemp, opendir, readFile, realpath, rm, writeFile } from "node
 import { tmpdir } from "node:os";
 import { dirname, join, posix, relative, resolve, sep } from "node:path";
 import { setImmediate as yieldToHost, setTimeout as pause } from "node:timers/promises";
-import { diffLines } from "diff";
+import { editViolations, type ReportBase } from "./generated-lines.js";
+import { deliverSteer, steerSourceOf, type SteerTarget } from "./steer-publication.js";
+import { CheckoutRerailRuns, type StreamedAuditResults } from "../rr/rr-checkout-runs.js";
 import { z } from "zod";
 import {
   encodeCodeRuleWorkspaceRequest,
@@ -225,17 +227,20 @@ type PreparedWorkspace = {
   /** The storage attach, settled before the workspace's first apply; true when a Git store attached (repository audits then index natively). */
   storage: Promise<boolean>;
 };
-type ByteRange = { start: number; end: number };
-/** The earlier source an ai-output edit's generated lines are measured from. */
-type ReportBase = Pick<CodeRuleEdit, "previousText" | "previousReadError">;
 /** The nested checkouts a walk skips (judged by their own rules), and the ones it reached. */
 type NestedCheckoutWalk = { readonly pruned: ReadonlySet<string>; readonly reached: string[] };
-/** One `#runScopeAudit`: what it audits and how, and what it has gathered so far. */
-type ScopeAuditRun = {
+/** What a `#runScopeAudit` audits and how, and who asked for it. */
+type ScopeAuditRequest = {
   readonly scope: "repository" | "touched-files";
   readonly mode: AuditMode;
   readonly paths: string[];
   readonly generatedEdit: boolean;
+  /** Receives the nested checkouts the walk reached and skipped. */
+  readonly reached: string[];
+  readonly origin: AuditOrigin;
+};
+/** One `#runScopeAudit`: what it audits and how, and what it has gathered so far. */
+type ScopeAuditRun = Omit<ScopeAuditRequest, "reached"> & {
   readonly revision: number;
   readonly startedAt: number;
   readonly failures: AuditFailure[];
@@ -274,29 +279,6 @@ type ScopeAuditSummary = { resultPagesMilliseconds: number; violations: number; 
 export interface RepositoryAuditReport {
   readonly auditId: string | undefined;
   readonly nestedCheckouts: readonly string[];
-}
-
-function generatedRanges(previousText: string, generatedText: string): ByteRange[] {
-  const ranges: ByteRange[] = [];
-  let offset = 0;
-  for (const change of diffLines(previousText, generatedText)) {
-    const bytes = Buffer.byteLength(change.value);
-    if (change.added) ranges.push({ start: offset, end: offset + bytes });
-    if (!change.removed) offset += bytes;
-  }
-  return ranges;
-}
-
-/**
- * Whether an ai-output edit generated `violation`: its span meets a generated range. A violation with no span is about
- * the whole file (a `file.path` match, a `file` query), which the edit generated only by creating the file.
- */
-function generatedBy(violation: CodeRuleViolation, ranges: readonly ByteRange[], created: boolean): boolean {
-  if (violation.span === undefined) return created;
-  const { startByte, endByte } = violation.span;
-  return ranges.some(({ start, end }) =>
-    startByte === endByte ? start <= startByte && startByte <= end : startByte < end && start < endByte,
-  );
 }
 
 /** The label of a listed file (`sourceLanguageOfPath`); undefined for an unlisted one, which only text-reading rules read. */
@@ -673,6 +655,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   #reportableRevision = 0;
   #responseMode: AuditMode;
   #evaluation = emptyEvaluation();
+  /** The session's `.rerail` runs in this checkout (`#rerailRuns`). */
+  #rerail: CheckoutRerailRuns | undefined;
 
   constructor(
     catalog: CodeRuleDslCatalog,
@@ -732,7 +716,25 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * say, a path Git ignores is refused while the lane follows `.gitignore`.
    */
   acceptsPath(path: string): boolean {
-    return this.#readsPath(path) && !this.ignoresPath(path, false);
+    return (this.#readsPath(path) || (this.#rerailRuns()?.takes(path) ?? false)) && !this.ignoresPath(path, false);
+  }
+
+  /**
+   * The session's `.rerail` runs in this checkout, made on first use once the session opened the checkout; none
+   * before, and none once it closes.
+   */
+  #rerailRuns(): CheckoutRerailRuns | undefined {
+    if (this.#sessionId === undefined || this.#closing) return undefined;
+    this.#rerail ??= new CheckoutRerailRuns({
+      sessionId: this.#sessionId,
+      workspaceRoot: this.#workspaceRoot,
+      catalog: this.#catalog,
+      audits: this.#audits,
+      steerTarget: this.#steerTarget(this.#sessionId),
+      nestedCheckouts: this.#nestedCheckouts,
+      auditDeadlineMs: AUDIT_MAX_DURATION_MS,
+    });
+    return this.#rerail;
   }
 
   /** `acceptsPath` apart from Git's ignore rules. */
@@ -812,6 +814,10 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       pending: this.#busy || this.#pending.size > 0 || this.#pump !== undefined || this.#scopeAudits.size > 0,
     };
   }
+  /** The agent's turn ended: the `.rerail` run after this session's edits starts without waiting for quiet. */
+  turnEnded(): void {
+    this.#rerail?.turnEnded();
+  }
   async settleGeneratedEdits(): Promise<void> {
     while (
       this.#busy ||
@@ -878,16 +884,22 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     try {
       this.#catalog.refresh();
       this.#reportQuarantined();
-      if ((this.#replacement ?? this.#workspace)?.version === this.#catalog.status.version) return;
-      const replacement = this.#prepareWorkspace();
-      if (this.#replacement !== undefined) this.#disposeWorkspace(this.#replacement.workspace);
-      this.#replacement = replacement;
+      this.#rerail?.rulesChanged();
+      this.#replaceWhenChanged();
     } catch (error) {
       this.#readFailures.set(
         "catalog",
         failure("catalog", "adapter-error", errorMessage(error), undefined, "evaluate"),
       );
     }
+  }
+
+  /** Prepares a replacement workspace when the catalog's version is no longer the workspace's. */
+  #replaceWhenChanged(): void {
+    if ((this.#replacement ?? this.#workspace)?.version === this.#catalog.status.version) return;
+    const replacement = this.#prepareWorkspace();
+    if (this.#replacement !== undefined) this.#disposeWorkspace(this.#replacement.workspace);
+    this.#replacement = replacement;
   }
 
   /** Digest of the compiled rule catalog as of now: what a repository audit started now records as its `catalogRevision`. */
@@ -897,28 +909,41 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   }
 
   async auditGeneratedEdits(sessionId: string, batch: CodeRuleEditBatch): Promise<CodeRuleResponse> {
-    if (this.#sessionId !== sessionId || this.#closing) throw new Error("Executable policy enforcer session mismatch");
-    if (batch.revision <= this.#revision) throw new Error("Executable policy revisions must increase");
-    this.#revision = batch.revision;
-    this.refreshCodeRules();
+    this.#enterRevision(sessionId, batch.revision);
     const mode = batch.mode ?? this.#mode;
-    if (this.#scope === "repository") {
-      if (batch.edits.length > 0) {
-        for (const edit of batch.edits) this.#versions.set(edit.path, batch.revision);
-        this.#trackAudit(this.#runScopeAudit("repository", mode, [], true), true);
-      }
-      return this.#response(batch.revision);
-    }
+    const own = batch.edits.filter(edit => this.#ownsEdit(edit.path));
+    // The `.rerail` runs go on after the edit, on the files on disk: nothing here waits for them.
+    this.#rerailRuns()?.gather(own, batch.revision, this.#scope, mode);
+    if (this.#scope === "repository") return this.#auditRepositoryEdits(batch, mode);
     const scope = this.#scope;
-    const accepted = batch.edits.filter(
-      (edit) =>
-        this.acceptsPath(edit.path) && withinCheckout(this.#workspaceRoot, resolve(this.#workspaceRoot, edit.path)),
-    );
-    for (const edit of accepted) {
+    for (const edit of own.filter(edit => this.#readsPath(edit.path))) {
       this.#versions.set(edit.path, batch.revision);
       await this.#queueGeneratedEdit(edit, batch.revision, scope, mode);
     }
     this.#schedule();
+    return this.#response(batch.revision);
+  }
+
+  /** Takes `revision` as the session's newest, with the rules as they are now. */
+  #enterRevision(sessionId: string, revision: number): void {
+    if (this.#sessionId !== sessionId || this.#closing) throw new Error("Executable policy enforcer session mismatch");
+    if (revision <= this.#revision) throw new Error("Executable policy revisions must increase");
+    this.#revision = revision;
+    this.refreshCodeRules();
+  }
+
+  /** Whether an edit of `path` is this checkout's to check: inside it, and not a file Git ignores while the lane follows `.gitignore`. */
+  #ownsEdit(path: string): boolean {
+    return withinCheckout(this.#workspaceRoot, resolve(this.#workspaceRoot, path)) && !this.ignoresPath(path, false);
+  }
+
+  /** In repository scope, a batch with edits audits the whole checkout again. */
+  #auditRepositoryEdits(batch: CodeRuleEditBatch, mode: AuditMode): CodeRuleResponse {
+    if (batch.edits.length > 0) {
+      for (const edit of batch.edits) this.#versions.set(edit.path, batch.revision);
+      const task = this.#runScopeAudit({ scope: "repository", mode, paths: [], generatedEdit: true, reached: [], origin: "ongoing" });
+      this.#trackAudit(task, true);
+    }
     return this.#response(batch.revision);
   }
 
@@ -988,7 +1013,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   ): Promise<readonly string[]> {
     if (sessionId !== this.#sessionId || this.#closing) throw new Error("Executable policy enforcer session mismatch");
     if (options.scope === "repository") return await this.#scanRepository(sessionId, options);
-    const task = this.#runScopeAudit("touched-files", options.mode, this.#scanPaths(options.paths), false, [], "scan");
+    const paths = this.#scanPaths(options.paths);
+    const task = this.#runScopeAudit({ scope: "touched-files", mode: options.mode, paths, generatedEdit: false, reached: [], origin: "scan" });
     this.#trackAudit(task);
     return startedAudits(await task);
   }
@@ -1019,7 +1045,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   async auditRepository(sessionId: string, mode: AuditMode): Promise<RepositoryAuditReport> {
     if (sessionId !== this.#sessionId || this.#closing) throw new Error("Executable policy enforcer session mismatch");
     const nestedCheckouts: string[] = [];
-    const task = this.#runScopeAudit("repository", mode, [], false, nestedCheckouts, "scan");
+    const task = this.#runScopeAudit({ scope: "repository", mode, paths: [], generatedEdit: false, reached: nestedCheckouts, origin: "scan" });
     this.#trackAudit(task);
     const auditId = await task;
     return { auditId, nestedCheckouts: [...new Set(nestedCheckouts)].sort(compareDeterministicStrings) };
@@ -1031,13 +1057,18 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       // Cancelled before evaluation: preserve the work without claiming a compiled-rule revision.
       stored.auditId ??= this.#startAudit(stored.scope, stored.mode, stored.revision, [path], null);
     }
+    this.#rerail?.close();
     this.#closing = true;
-    if (this.#sessionId !== undefined) {
-      if (options?.interruptAudits === false) this.#interruptOwnAudits();
-      else this.#record(() => this.#audits.interrupt(this.#sessionId!));
-    }
+    this.#interruptSessionAudits(options);
     this.#workspace?.workspace.close();
     this.#replacement?.workspace.close();
+  }
+
+  /** Ends the session's running audits, or only this evaluator's where the session's are not its to end. */
+  #interruptSessionAudits(options: AuditorCloseOptions | undefined): void {
+    if (this.#sessionId === undefined) return;
+    if (options?.interruptAudits === false) this.#interruptOwnAudits();
+    else this.#record(() => this.#audits.interrupt(this.#sessionId!));
   }
 
   /** Ends the audits this evaluator started and left running, without touching the session's other audits. */
@@ -1274,7 +1305,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     const failures = result.failures.map((item) => ({ ...item, stage: "evaluate" as const }));
     const reported = this.#reportedAgain(stored, repackaged, result);
     const base = stored.scope === "ai-output" ? this.#reportBase(path, edit) : edit;
-    const own = this.#selectViolations(stored.scope, edit, result.violations, base);
+    const own = editViolations(stored.scope, edit, result.violations, base);
     this.#finishAudit(stored.auditId, result.status === "completed" ? "completed" : "failed", [...own, ...[...reported.values()].flat()], failures);
     if (this.#isSuperseded(path, stored)) {
       if (stored.scope === "ai-output") this.#unreported.set(path, { base, published: false });
@@ -1295,7 +1326,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   #reportedAgain(stored: StoredEdit, repackaged: readonly CodeRuleEdit[], result: Evaluation): Map<string, CodeRuleViolation[]> {
     const reported = new Map<string, CodeRuleViolation[]>();
     for (const source of repackaged) {
-      const findings = this.#selectViolations(stored.scope, source, result.violations);
+      const findings = editViolations(stored.scope, source, result.violations);
       if (
         stored.scope === "touched-files" ||
         JSON.stringify(findings) !== JSON.stringify(this.#sourceFindings.get(source.path)?.violations ?? [])
@@ -1408,58 +1439,40 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     }
   }
   /**
-   * An edit's violations: in touched-files scope its file's, otherwise those in the lines it generated since `base`
-   * (its own preimage unless given). Where that earlier text is unknown (a shell write to a file the session never
-   * saw change and Git cannot supply), the generated lines are unknown too, so the edit reports its whole file.
-   */
-  #selectViolations(
-    scope: AuditScope,
-    edit: CodeRuleEdit,
-    violations: readonly CodeRuleViolation[],
-    base: ReportBase = edit,
-  ): CodeRuleViolation[] {
-    const pathViolations = violations.filter((violation) => violation.path === edit.path);
-    if (scope === "touched-files" || edit.deleted || edit.generatedText === undefined || base.previousReadError !== undefined)
-      return pathViolations;
-    const ranges = generatedRanges(base.previousText ?? "", edit.generatedText);
-    // A new file has no earlier text and no error reading one.
-    const created = base.previousText === undefined;
-    return pathViolations.filter((violation) => generatedBy(violation, ranges, created));
-  }
-  /**
    * A repository-scope audit of a Git checkout runs the native repository index on the audit
    * workspace (`#indexRepository`); any other audit walks its paths here (`#walkAuditSources`).
    * Both evaluate the same files: Git and Rerail ignore rules decide only what the index restores.
    */
-  async #runScopeAudit(
-    scope: "repository" | "touched-files",
-    mode: AuditMode,
-    paths: string[] = [],
-    generatedEdit = false,
-    /** Receives the nested checkouts the walk reached and skipped. */
-    reached: string[] = [],
-    origin: AuditOrigin = "ongoing",
-  ): Promise<string | undefined> {
-    const startedAt = performance.now();
+  async #runScopeAudit(request: ScopeAuditRequest): Promise<string | undefined> {
     this.refreshCodeRules();
     const run: ScopeAuditRun = {
-      scope, mode, paths, generatedEdit, revision: this.#revision, startedAt, failures: [],
-      nested: { pruned: new Set(this.#nestedCheckouts()), reached },
+      ...request, revision: this.#revision, startedAt: performance.now(), failures: [],
+      nested: { pruned: new Set(this.#nestedCheckouts()), reached: request.reached },
     };
-    let workspace: NativeCodeRuleDslWorkspace | undefined;
+    let prepared: PreparedWorkspace | undefined;
     try {
       await yieldToHost();
       if (this.#closing) return undefined;
-      const prepared = this.#prepareWorkspace();
-      workspace = prepared.workspace;
-      run.auditId = this.#startAudit(scope, mode, run.revision, paths, prepared, undefined, origin);
+      prepared = this.#prepareWorkspace();
+      run.auditId = this.#startScopeAudit(run, prepared);
       await this.#evaluateScopeAudit(run, prepared);
     } catch (error) {
       this.#failScopeAudit(run, error);
     } finally {
-      if (workspace !== undefined) this.#disposeWorkspace(workspace);
+      if (prepared !== undefined) this.#disposeWorkspace(prepared.workspace);
     }
     return run.auditId;
+  }
+
+  /**
+   * Starts `run`'s audit record. An audit someone asked for (a scan) also runs the checkout's `.rerail` rules, beside
+   * the native evaluation and in the same record (`CheckoutRerailRuns.beginAudit`).
+   */
+  #startScopeAudit(run: ScopeAuditRun, prepared: PreparedWorkspace): string | undefined {
+    const start = (rerail: readonly AuditRuleProvenance[]) =>
+      this.#startAudit(run.scope, run.mode, run.revision, run.paths, prepared, [...prepared.provenance, ...rerail], run.origin);
+    const rerail = run.origin === "scan" ? this.#rerailRuns() : undefined;
+    return rerail === undefined ? start([]) : rerail.beginAudit(run.scope, run.paths, start);
   }
 
   /** Reads `run`'s files, evaluates them and records the result, unless the evaluator closes meanwhile. */
@@ -1494,6 +1507,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     if (run.scope === "repository") this.#logRepositoryAudit("failed", run.startedAt, 0, 0, 0, 0, all.length);
     const listed = auditFailureCap(run.scope)(all);
     this.#finishAudit(run.auditId, "failed", [], listed, all.length - listed.length);
+    this.#rerail?.abandonAudit(run.auditId);
   }
 
   /** One line per repository audit in the daemon log: where its time went, so a slow audit can be told from a stuck one. */
@@ -1634,7 +1648,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     const { workspace, auditId, revision, scope, mode, sourcePaths, failures, generatedEdit } = completion;
     if (!(await this.#completeScopeAuditRequest(completion))) return;
     const resultPagesStartedAt = performance.now();
-    const streamed = await this.#resultPages(workspace, scope, auditId, mode === "log" && !generatedEdit, failures);
+    const streamed = await this.#withRerailResults(auditId, await this.#resultPages(workspace, scope, auditId, mode === "log" && !generatedEdit, failures));
     const resultPagesMilliseconds = performance.now() - resultPagesStartedAt;
     const { result, allFailures, unboundedFailures, status } = this.#recordScopeAuditResult(completion, streamed);
     this.#answerScopeAudit(revision, mode, result, allFailures);
@@ -1648,6 +1662,13 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       generatedEdit,
     );
     return { resultPagesMilliseconds, violations: streamed.violationCount, failures: unboundedFailures.length, status };
+  }
+
+  /** `streamed` with the audit's `.rerail` run's results once that run has ended; a paged audit gets them as a page more. */
+  async #withRerailResults<T extends StreamedAuditResults>(auditId: string | undefined, streamed: T): Promise<T> {
+    if (this.#rerail === undefined) return streamed;
+    return await this.#rerail.withAuditResults(auditId, streamed, (pageIndex, page) =>
+      this.#record(() => this.#audits.appendResultPage?.(auditId!, pageIndex, page)));
   }
 
   /** Applies a scope audit's last request and keeps its index for reuse; false when the evaluator closes meanwhile. */
@@ -2152,34 +2173,28 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     trigger: SteerTrigger,
     generatedEdit = false,
   ): Promise<void> {
-    if (this.#sessionId === undefined || this.#closing || mode !== "steer") return;
-    if (
-      sourceScope.length === 0
-        ? revision < this.#revision
-        : sourceScope.some((path) => (this.#versions.get(path) ?? 0) > revision)
-    )
-      return;
-    const scope = sourceScope.map(path => this.#presentPath(path)).sort(compareDeterministicStrings);
-    const steerable = violations.filter((violation) => steers(violation.mode)).map(violation => this.#presented(violation));
-    if (steerable.length === 0) return;
-    const provenance = this.#workspace?.provenance ?? this.#catalog.provenance();
-    const sourceOf: SteerSourceOf = ruleId => {
-      const recorded = provenance.find(entry => entry.ruleId === ruleId);
-      return recorded !== undefined && "source" in recorded ? recorded.source : undefined;
+    if (!this.#publishes(revision, sourceScope, mode)) return;
+    const sourceOf = steerSourceOf([...(this.#workspace?.provenance ?? this.#catalog.provenance()), ...this.#catalog.snapshot().rerailRules.map(rule => rule.provenance)]);
+    await deliverSteer(this.#steerTarget(this.#sessionId!), { revision, sourceScope, violations, trigger, sourceOf, generatedEdit });
+  }
+
+  /** Whether findings at `revision` for `sourceScope` steer: the audit steers, and no later revision overtook them. */
+  #publishes(revision: number, sourceScope: readonly string[], mode: AuditMode): boolean {
+    if (this.#sessionId === undefined || this.#closing || mode !== "steer") return false;
+    return sourceScope.length === 0
+      ? revision >= this.#revision
+      : sourceScope.every((path) => (this.#versions.get(path) ?? 0) <= revision);
+  }
+
+  /** Where this checkout's steers for `sessionId` go. */
+  #steerTarget(sessionId: string): SteerTarget {
+    return {
+      sessionId,
+      delivery: this.#steerDelivery,
+      workspaceRoot: this.#workspaceRoot,
+      presentPath: this.#presentPath,
+      steerShell: this.#steerShell,
     };
-    // Paths are judged in the workspace they are relative to, so a file that links to a secret is judged as one.
-    const boundary = checkoutPathBoundary(this.#workspaceRoot);
-    const secret = new Set(violations.flatMap(({ path, mode }) =>
-      path !== undefined && steers(mode) && boundary.sensitive(path) ? [this.#presentPath(path)] : []));
-    const steer = buildSteer(steerable, trigger, sourceOf, path => secret.has(path) || sensitiveByName(path), this.#steerShell);
-    await this.#steerDelivery.requestSteer(this.#sessionId, "steer", steer.content, {
-      revision,
-      scope,
-      ruleIds: steer.ruleIds,
-      rules: steer.rules,
-      background: true,
-      ...(generatedEdit ? { generatedEdit: { violations: steerable, sourceOf } } : {}),
-    });
   }
 
   #response(revision: number): CodeRuleResponse {

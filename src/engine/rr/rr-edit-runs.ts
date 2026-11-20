@@ -9,16 +9,38 @@ import type { CodeRuleEdit, CodeRuleViolation } from "../code-rule/code-rule.js"
 import type { RerailRuleEntry } from "../code-rule/code-rule-dsl-catalog.js";
 import { editViolations, type ReportBase } from "../code-rule/generated-lines.js";
 import { deliverSteer, steerSourceOf, type SteerTarget } from "../code-rule/steer-publication.js";
-import { leftRun, type RrClaim, type RrRunOwner, type RrRunQueue } from "./rr-run-queue.js";
+import { leftRun, type RrClaim, type RrRunOwner, type RrRunQueue, type RrRunTiming } from "./rr-run-queue.js";
 import type { RrRunOutcome } from "./rr-runner.js";
 import { insideAny, takes } from "./rr-rule-scope.js";
 import { rrRunFailures, rrStoppedFailures, rrViolations } from "./rr-violations.js";
 
 /**
- * The deadline of a run after an edit: 2 minutes. [Set from the Django pack's measurements of a one-file edit on real
- * applications; see the pull request.] An audit's run has the audit's own budget instead.
+ * The deadline of a run after an edit: 5 minutes, an audit's budget (`AUDIT_MAX_DURATION_MS`). An edit runs a pack's
+ * rules over the whole checkout again: the 27 Django rules took 76.5 s of wall time (156 s of CPU) after a one-line
+ * edit of a 229-file Django application on 16 threads, and a laptop gives a run half its cores (`rr-budgets.ts`),
+ * so such an application needs about two to three minutes there. Five minutes keeps that with room to spare; a run
+ * past it would steer long after the agent moved on. `RERAIL_RR_DEADLINE_MS` replaces it.
  */
-export const EDIT_RUN_DEADLINE_MS = 2 * 60_000;
+const EDIT_RUN_DEADLINE_MS = 5 * 60_000;
+
+/**
+ * How long a checkout goes without a write before a queued run after edits starts: 10 seconds, unless the agent's turn
+ * ends first, which starts it at once. A run reads the whole checkout again (above: over a minute and gigabytes for a
+ * small application), so it is not started on the first write of a burst. An agent's writes in one burst come one
+ * model step apart, a few seconds; 10 s is the longest a boundary already waits for an edit's own check
+ * (`NATIVE_EDIT_CHECK_MS`), so a burst is gathered whole and a lone write waits no longer than its own check could.
+ * `RERAIL_RR_QUIET_MS` replaces it.
+ */
+const EDIT_RUN_QUIET_MS = 10_000;
+
+/** When the runs after edits start and how long each may take; `RERAIL_RR_QUIET_MS` (milliseconds) replaces the quiet period. Throws for a value that is no positive whole number. */
+export function editRunTiming(environment: NodeJS.ProcessEnv = process.env): RrRunTiming {
+  const text = environment.RERAIL_RR_QUIET_MS;
+  if (text === undefined || text === "") return { deadlineMs: EDIT_RUN_DEADLINE_MS, quietMs: EDIT_RUN_QUIET_MS };
+  const quietMs = Number(text);
+  if (!Number.isSafeInteger(quietMs) || quietMs <= 0) throw new Error(`RERAIL_RR_QUIET_MS is ${JSON.stringify(text)}: it takes a positive whole number`);
+  return { deadlineMs: EDIT_RUN_DEADLINE_MS, quietMs };
+}
 
 /** A written file waiting for a run: its newest edit, the text its generated lines are measured from, and how it is audited. */
 interface Gathered {
@@ -105,6 +127,13 @@ export class RerailEditRuns implements RrRunOwner {
     for (const file of flight.files) this.#regather(file);
     this.#host.queue.leave(this);
     this.#host.queue.want(this);
+    // Its files had their quiet period: the run with the new rules starts without another.
+    this.#host.queue.flush();
+  }
+
+  /** The agent's turn ended: a run waiting for quiet starts now. */
+  turnEnded(): void {
+    this.#host.queue.flush();
   }
 
   /** The session ends: nothing more runs for it, and a run it is in is left, its audit interrupted. */

@@ -317,6 +317,10 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     await this.#settleLanes(lane => lane.enforcer.settleGeneratedEdits());
   }
 
+  turnEnded(): void {
+    for (const lane of this.#lanes.values()) lane.enforcer.turnEnded();
+  }
+
   async settle(): Promise<void> {
     await this.#settleLanes(lane => lane.enforcer.settle());
   }

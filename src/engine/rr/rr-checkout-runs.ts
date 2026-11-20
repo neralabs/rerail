@@ -8,8 +8,8 @@ import type { CodeRuleEdit } from "../code-rule/code-rule.js";
 import type { CodeRuleDslCatalog, RerailRuleEntry } from "../code-rule/code-rule-dsl-catalog.js";
 import type { SteerTarget } from "../code-rule/steer-publication.js";
 import { RrAuditRun, type RrAuditResults } from "./rr-audit-run.js";
-import { EDIT_RUN_DEADLINE_MS, RerailEditRuns } from "./rr-edit-runs.js";
-import { rrRunQueue } from "./rr-run-queue.js";
+import { editRunTiming, RerailEditRuns } from "./rr-edit-runs.js";
+import { type RrRunTiming, RrRunQueue, rrRunQueue } from "./rr-run-queue.js";
 
 export interface CheckoutRerailHost {
   readonly sessionId: string;
@@ -31,6 +31,21 @@ export interface StreamedAuditResults extends RrAuditResults {
   readonly violationCount: number;
 }
 
+/**
+ * The checkout's queue of runs after edits. A `RERAIL_RR_QUIET_MS` that holds no positive whole number fails each of
+ * its runs with the reason, as the runner's own `RERAIL_RR_*` overrides do.
+ */
+function editQueue(root: string): RrRunQueue {
+  let timing: RrRunTiming;
+  try {
+    timing = editRunTiming();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return new RrRunQueue(root, { deadlineMs: 0, quietMs: 0 }, async () => ({ status: "failed", message }));
+  }
+  return rrRunQueue(root, timing);
+}
+
 export class CheckoutRerailRuns {
   readonly #host: CheckoutRerailHost;
   readonly #edits: RerailEditRuns;
@@ -43,7 +58,7 @@ export class CheckoutRerailRuns {
       ...host,
       rules,
       catalogRevision: () => host.catalog.status.version,
-      queue: rrRunQueue(host.workspaceRoot, EDIT_RUN_DEADLINE_MS),
+      queue: editQueue(host.workspaceRoot),
     });
   }
 
@@ -60,6 +75,11 @@ export class CheckoutRerailRuns {
   /** The checkout's rules were read again: a run after edits that carries rules since changed starts again. */
   rulesChanged(): void {
     this.#edits.rulesChanged();
+  }
+
+  /** The agent's turn ended: a run after edits waiting for quiet starts now. */
+  turnEnded(): void {
+    this.#edits.turnEnded();
   }
 
   /**
