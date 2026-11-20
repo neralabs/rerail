@@ -1105,35 +1105,15 @@ UKL_INLINE uint32_t phase_group_max(uint32_t v,uint32_t lane,UKL_LOCAL uint32_t*
   return m;
 }
 
-DEFINE_KERNEL2(label_passes, label_phase,
-               ROBUFFER, DocView,       docs,         "[shape.fileCount]",
-               ROBUFFER, uint32_t,      head,         "[2 + labels * words]",
-               ROBUFFER, Formula,       formulas,     "[formulas]",
-               ROBUFFER, uint32_t,      words,        "[words]",
-               RWBUFFER, uint32_t,      roots,        "[rules * words]",
-               RWBUFFER, uint32_t,      scratch,      "[formulas * shape.queue]",
-               ARGS,     Shape,         shape,        ,
-               ROBUFFER, uint32_t,      leaves,       "[leaves * shape.recursive]",
-               ROBUFFER, uint32_t,      program,      "[program]",
-               ROBUFFER, FormulaTarget, targets,      "[targets]",
-               RWBUFFER, uint32_t,      labelScratch, "[rows * words]",
-               ROBUFFER, uint32_t,      rules,        "[rules]",
-               ROBUFFER, uint32_t,      texts,        "[texts * words]",
-               RWBUFFER, uint32_t,      flags,        "[4]",
-               ROBUFFER, uint32_t,      parents,      "[32 * shape.recursive]",
-               ROBUFFER, uint8_t,       chunk,        "[block]",
-               SHARED,   uint32_t,      part,         64,
-               GID0,     uint32_t,      gid,          ,
-               GID1,     uint32_t,      y,            ,
-               TGID0,    uint32_t,      block,        ,
-               LID0,     uint32_t,      lane,         )
-{
-  // The same for the whole threadgroup (one formula): it leaves together.
-  if(shape.fileCount==0u||y>=shape.targetCount)return;
+// One tile of a phase: block `block` of the region's words and formula `y`, its thread `lane` word `gid`, in phase
+// `round`; after the formula's last phase, its targets' rows. The group's threads call it together (its barriers are
+// theirs). `scratch` is read coherently: in `label_phases` another group of the same dispatch wrote it before the
+// grid barrier.
+UKL_INLINE void phase_tile(UKL_GLOBAL const DocView* docs,UKL_GLOBAL const uint32_t* head,UKL_GLOBAL const Formula* formulas,UKL_GLOBAL uint32_t* roots,UKL_COHERENT uint32_t* scratch,Shape shape,UKL_GLOBAL const uint32_t* leaves,UKL_GLOBAL const uint32_t* program,UKL_GLOBAL const FormulaTarget* targets,UKL_GLOBAL uint32_t* labelScratch,UKL_GLOBAL const uint32_t* rules,UKL_GLOBAL const uint32_t* texts,UKL_GLOBAL uint32_t* flags,UKL_GLOBAL const uint32_t* parents,UKL_GLOBAL const uint8_t* chunk,UKL_LOCAL uint32_t* part,uint32_t gid,uint32_t y,uint32_t block,uint32_t lane,uint32_t round __UKL_PARAMS){
   // The formula's program: its instructions' first word, their count, its result's slot, its phases; after its
   // instructions, each phase's first.
   uint32_t at=program[4u*y],count=program[4u*y+1u],result=program[4u*y+2u],phases=program[4u*y+3u];
-  if(shape.round>=phases)return;
+  if(round>=phases)return;
   // From here every thread takes every instruction (the barriers are the group's); a word not live does none of
   // its own work. The file whose region holds word `gw`: the last whose region starts at or before it, searched
   // between the files of the block's first and last words (two threads search the whole list).
@@ -1162,10 +1142,10 @@ DEFINE_KERNEL2(label_passes, label_phase,
     if(i+1u==formula.targetCount)live=false;
   }
   uint32_t valid=!live?0u:(lw*32u+32u<=nodes?0xffffffffu:((1u<<(nodes-lw*32u))-1u));
-  UKL_GLOBAL uint32_t* base=scratch+y*shape.queue;
+  UKL_COHERENT uint32_t* base=scratch+y*shape.queue;
   #define PHASE_SLOT(i) (base+(i)*shape.recursive)
   // The phase's first instruction: the program's phase starts follow its instructions.
-  for(uint32_t i=program[at+4u*count+shape.round];i<count;i++){
+  for(uint32_t i=program[at+4u*count+round];i<count;i++){
     uint32_t code=program[at+4u*i],dst=program[at+4u*i+1u],src=program[at+4u*i+2u],extra=program[at+4u*i+3u];
     if(code==PHASE_END)return;
     if(code==PHASE_SPAN){
@@ -1210,7 +1190,7 @@ DEFINE_KERNEL2(label_passes, label_phase,
     if(code==PHASE_CHECK){if((PHASE_SLOT(src)[gw]&valid)!=0u)ukl_atomic_or(&flags[0],512u);continue;}
     if(code==PHASE_DOWN||code==PHASE_BEFORE){
       // A pull: each of the word's nodes reads its parent (`up`), then the parent's bit or entry.
-      UKL_GLOBAL uint32_t* in=PHASE_SLOT(src);
+      UKL_COHERENT uint32_t* in=PHASE_SLOT(src);
       uint32_t bits=0u;
       for(uint32_t rest=valid;rest!=0u;rest&=rest-1u){
         uint32_t k=ukl_ctz32(rest),p=parents[gw*32u+k],n=lw*32u+k;
@@ -1225,7 +1205,7 @@ DEFINE_KERNEL2(label_passes, label_phase,
     }
     if(code==PHASE_CLIMB){
       bool named=(extra&1u)!=0u,chain=(extra&2u)!=0u;
-      UKL_GLOBAL uint32_t* out=PHASE_SLOT(dst);UKL_GLOBAL uint32_t* through=PHASE_SLOT(extra>>8u);
+      UKL_GLOBAL uint32_t* out=(UKL_GLOBAL uint32_t*)PHASE_SLOT(dst);UKL_COHERENT uint32_t* through=PHASE_SLOT(extra>>8u);
       for(uint32_t rest=PHASE_SLOT(src)[gw]&valid;rest!=0u;rest&=rest-1u){
         uint32_t k=ukl_ctz32(rest);
         if(named&&(tape_flags(chunk,d,lw*32u+k)&1u)==0u)continue;
@@ -1241,7 +1221,7 @@ DEFINE_KERNEL2(label_passes, label_phase,
     // A push, from this word's members: `UP` their parents' bits, `LAST` their parents' array entries. A `dst` word's
     // bits gather here and go out in one atomic when the next falls in another word (siblings share a parent).
     bool named=(extra&1u)!=0u,firstOf=(extra&2u)!=0u;
-    UKL_GLOBAL uint32_t* out=PHASE_SLOT(dst);
+    UKL_GLOBAL uint32_t* out=(UKL_GLOBAL uint32_t*)PHASE_SLOT(dst);
     uint32_t held=0xffffffffu,bits=0u;
     for(uint32_t rest=PHASE_SLOT(src)[gw]&valid;rest!=0u;rest&=rest-1u){
       uint32_t k=ukl_ctz32(rest),n=lw*32u+k,p=parents[gw*32u+k];
@@ -1272,5 +1252,87 @@ DEFINE_KERNEL2(label_passes, label_phase,
       ukl_atomic_and(&row[row_at],~(valid<<sh)|(bits<<sh));
       if(sh!=0u)ukl_atomic_and(&row[row_at+1u],~(valid>>(32u-sh))|(bits>>(32u-sh)));
     }
+  }
+}
+
+DEFINE_KERNEL2(label_passes, label_phase,
+               ROBUFFER, DocView,       docs,         "[shape.fileCount]",
+               ROBUFFER, uint32_t,      head,         "[2 + labels * words]",
+               ROBUFFER, Formula,       formulas,     "[formulas]",
+               ROBUFFER, uint32_t,      words,        "[words]",
+               RWBUFFER, uint32_t,      roots,        "[rules * words]",
+               RWBUFFER, uint32_t,      scratch,      "[formulas * shape.queue]",
+               ARGS,     Shape,         shape,        ,
+               ROBUFFER, uint32_t,      leaves,       "[leaves * shape.recursive]",
+               ROBUFFER, uint32_t,      program,      "[program]",
+               ROBUFFER, FormulaTarget, targets,      "[targets]",
+               RWBUFFER, uint32_t,      labelScratch, "[rows * words]",
+               ROBUFFER, uint32_t,      rules,        "[rules]",
+               ROBUFFER, uint32_t,      texts,        "[texts * words]",
+               RWBUFFER, uint32_t,      flags,        "[4]",
+               ROBUFFER, uint32_t,      parents,      "[32 * shape.recursive]",
+               ROBUFFER, uint8_t,       chunk,        "[block]",
+               SHARED,   uint32_t,      part,         64,
+               GID0,     uint32_t,      gid,          ,
+               GID1,     uint32_t,      y,            ,
+               TGID0,    uint32_t,      block,        ,
+               LID0,     uint32_t,      lane,         )
+{
+  // The same for the whole threadgroup (one formula): it leaves together.
+  if(shape.fileCount==0u||y>=shape.targetCount)return;
+  phase_tile(docs,head,formulas,roots,(UKL_COHERENT uint32_t*)scratch,shape,leaves,program,targets,labelScratch,rules,texts,flags,parents,chunk,part,gid,y,block,lane,shape.round __UKL_ARGS);
+}
+
+// A level's formulas as one persistent dispatch (a measure, `RERAIL_PHASE_PERSISTENT`): `shape.frames` threadgroups,
+// all resident at once, each taking the tiles (block, formula) of a phase in turn; `shape.round` the phases. Between
+// two phases a grid barrier: each group adds one to `grid[0]` and polls it, by a read-modify-write (a relaxed load in
+// a poll loop never sees another core's store on Apple family 7, `block_program::poll_helper`; a load from family 9
+// on, `shape.lanes` 1), until every group of
+// the phase has. A GPU promises no progress between threadgroups, so the poll is bounded: a group that runs out sets
+// flags bit 1024 and the level's work is wrong; the host runs it again without the persistent dispatch.
+#define PHASE_GRID_POLLS (1u<<24u)
+DEFINE_KERNEL2(label_passes, label_phases,
+               ROBUFFER, DocView,       docs,         "[shape.fileCount]",
+               ROBUFFER, uint32_t,      head,         "[2 + labels * words]",
+               ROBUFFER, Formula,       formulas,     "[formulas]",
+               ROBUFFER, uint32_t,      words,        "[words]",
+               RWBUFFER, uint32_t,      roots,        "[rules * words]",
+               RWBUFFER, uint32_t,      scratch,      "[formulas * shape.queue]",
+               ARGS,     Shape,         shape,        ,
+               ROBUFFER, uint32_t,      leaves,       "[leaves * shape.recursive]",
+               ROBUFFER, uint32_t,      program,      "[program]",
+               ROBUFFER, FormulaTarget, targets,      "[targets]",
+               RWBUFFER, uint32_t,      labelScratch, "[rows * words]",
+               ROBUFFER, uint32_t,      rules,        "[rules]",
+               ROBUFFER, uint32_t,      texts,        "[texts * words]",
+               RWBUFFER, uint32_t,      flags,        "[4]",
+               ROBUFFER, uint32_t,      parents,      "[32 * shape.recursive]",
+               RWBUFFER, uint32_t,      grid,         "[1]",
+               ROBUFFER, uint8_t,       chunk,        "[block]",
+               SHARED,   uint32_t,      part,         65,
+               TGID0,    uint32_t,      group,        ,
+               LID0,     uint32_t,      lane,         )
+{
+  if(shape.fileCount==0u)return;
+  uint32_t blocks=(shape.recursive+PHASE_WORDS-1u)/PHASE_WORDS,tiles=blocks*shape.targetCount,groups=shape.frames;
+  for(uint32_t round=0u;round<shape.round;round++){
+    for(uint32_t t=group;t<tiles;t+=groups){
+      uint32_t y=t/blocks,block=t%blocks;
+      phase_tile(docs,head,formulas,roots,(UKL_COHERENT uint32_t*)scratch,shape,leaves,program,targets,labelScratch,rules,texts,flags,parents,chunk,part,block*PHASE_WORDS+lane,y,block,lane,round __UKL_ARGS);
+      ukl_tg_barrier();
+    }
+    if(round+1u==shape.round)break;
+    if((shape.lanes&2u)!=0u)continue;
+    // The grid barrier: this group's writes out, then every group's arrival.
+    ukl_tg_barrier_device();
+    if(lane==0u){
+      ukl_fence_device();
+      ukl_atomic_add(&grid[0],1u);
+      uint32_t want=(round+1u)*groups,ok=0u;
+      for(uint32_t i=0u;i<PHASE_GRID_POLLS;i++)if(((shape.lanes&1u)!=0u?ukl_atomic_load(&grid[0]):ukl_atomic_or(&grid[0],0u))>=want){ok=1u;break;}
+      if(ok==0u)ukl_atomic_or(&flags[0],1024u);
+      ukl_fence_device();
+    }
+    ukl_tg_barrier_device();
   }
 }

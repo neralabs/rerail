@@ -965,13 +965,16 @@ impl LabelKernel {
 /// A walk's stack tiers are one kernel each (`label_micro`, `label_group`, `root_records`), their frames the dispatch's
 /// shape's (`Shape::frames`), not a template's: an Apple GPU's compiler compiled each tier's copy of the walk on its own,
 /// 8–10 s each for format 16 (work queue Q181).
-const KERNELS: [&str; 9] = ["label_sink", "label_settle", "label_round", "label_micro", "label_group", "root_records", "label_leaves", "label_phase", "label_parents"];
+const KERNELS: [&str; 10] = ["label_sink", "label_settle", "label_round", "label_micro", "label_group", "root_records", "label_leaves", "label_phase", "label_parents", "label_phases"];
 /// `label_leaves` in `KERNELS` (decision 0365).
 const LEAVES_KERNEL: usize = 6;
 /// `label_phase` (decisions 0461, 0463): a level's formulas, a dispatch a phase, a thread a (word, formula).
 const PHASE_KERNEL: usize = 7;
 /// `label_parents` (0463): the batch's parents once, for `label_phase`.
 const PARENTS_KERNEL: usize = 8;
+/// `label_phases`: a level's phases as one persistent dispatch, grid barriers between them (a measure,
+/// `RERAIL_PHASE_PERSISTENT=<groups>`).
+const PERSISTENT_KERNEL: usize = 9;
 /// `RERAIL_GPU_ENCODER_TIMES=1` (a measurement switch): each compute encoder's own time on the GPU, from timestamps the
 /// GPU takes at its start and end inside its command buffer (stage-boundary counters), and the gaps between one
 /// encoder's end and the next one's start. `RERAIL_GPU_KERNEL_TIMES` times a command buffer a kernel, committed and
@@ -1682,6 +1685,8 @@ struct Runner<'a> {
     /// The levels of a chain's reach the formulas' phases hold (`PHASE_CHAIN_LEVELS`, doubled when a run's chain
     /// outgrows them).
     chain_levels: usize,
+    /// `label_phases`' threadgroups, all resident at once (`RERAIL_PHASE_PERSISTENT`); 0 a dispatch a phase.
+    phase_groups: u32,
     walks: HashMap<usize, Walks>,
     /// Every pass's roots as rules (`RootTable`), one buffer for the run (`root_words`).
     root_table: RootTable,
@@ -1878,8 +1883,16 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
     let (mut lanes, mut micro, mut deep, mut released) = (NARROW, !interpret_only(), false, false);
     let (mut budget, mut replanned) = (super::WorkBudget::current(), 0);
     let mut chain_levels = PHASE_CHAIN_LEVELS;
+    let mut phase_groups = std::env::var("RERAIL_PHASE_PERSISTENT").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
     loop {
-        let mut outcome = match encode(device, plan, files, &rounds, lanes, micro, deep, chain_levels, budget) {
+        let mut outcome = match encode(device, plan, files, &rounds, lanes, micro, deep, chain_levels, phase_groups, budget) {
+            // A grid barrier ran out of polls (its groups were not all resident): the run again, a dispatch a phase.
+            Err(Error::GridBarrier) if phase_groups > 0 => {
+                crate::code_rule_dsl::prof::count("run.grid_barrier", 1);
+                eprintln!("rerail: label_phases' grid barrier ran out of polls at {phase_groups} groups: a dispatch a phase");
+                phase_groups = 0;
+                continue;
+            }
             // A chain's reach outgrew the levels its phases hold (0463): the run again with twice them, past the most
             // the interpreter's.
             Err(Error::ChainLevels) if chain_levels < PHASE_CHAIN_MOST && micro => {
@@ -2044,6 +2057,7 @@ fn encode(
     micro: bool,
     deep: bool,
     chain_levels: usize,
+    phase_groups: u32,
     budget: super::WorkBudget,
 ) -> Result<Outcome, Error> {
     let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
@@ -2101,6 +2115,7 @@ fn encode(
         micro,
         deep,
         chain_levels,
+        phase_groups,
         walks: HashMap::new(),
         root_table: RootTable::default(),
         root_words: None,
@@ -2190,6 +2205,10 @@ fn encode(
         }
     }
     // A chain's reach with more levels than `label_phase`'s programs hold (0463): the run again with twice them.
+    if runner.flag(0) & 1024 != 0 {
+        crate::code_rule_dsl::prof::count("gpu.grid_barrier_timeout", 1);
+        return Err(Error::GridBarrier);
+    }
     if runner.flag(0) & 512 != 0 {
         crate::code_rule_dsl::prof::count("gpu.phase_levels_overflow", 1);
         return Err(Error::ChainLevels);
@@ -3176,6 +3195,7 @@ impl Runner<'_> {
             let phases = own.iter().map(|program| program.phases).max().unwrap_or(1);
             crate::code_rule_dsl::prof::count("gpu.formula_phases", phases as usize);
             let program = self.upload(&program)?;
+            let grid_counter = if self.phase_groups > 0 { Some(self.upload(&[0_u32])?) } else { None };
             let encoder = encoder_of(&self.command, &mut self.encoder_times, KERNELS[PHASE_KERNEL]);
             encoder.set_label(KERNELS[PHASE_KERNEL]);
             encoder.set_compute_pipeline_state(&state);
@@ -3194,6 +3214,22 @@ impl Runner<'_> {
             self.bind_slabs(encoder, chunk);
             // A threadgroup a block of `PHASE_WORDS` words, whole: its barriers are every thread's.
             assert!(state.max_total_threads_per_threadgroup() >= PHASE_WORDS, "label_phase takes {PHASE_WORDS} threads a group");
+            if self.phase_groups > 0 {
+                // The level's phases in one dispatch: `phase_groups` resident groups over each phase's tiles, a grid
+                // barrier between phases (its counter zeroed for the dispatch).
+                let LabelKernel { state: persistent, chunk: persistent_chunk, .. } = self.kernels[PERSISTENT_KERNEL].clone();
+                encoder.set_compute_pipeline_state(&persistent);
+                encoder.set_buffer(15, grid_counter.as_deref(), 0);
+                self.bind_slabs(encoder, persistent_chunk);
+                let shape = Shape { item_count: first as u32, target_count: own.len() as u32, round: phases, recursive: region as u32, queue: (slots * region) as u32, frames: self.phase_groups, lanes: u32::from(self.device.supports_family(metal::MTLGPUFamily::Apple9)) | if std::env::var_os("RERAIL_PHASE_NO_BARRIER").is_some() { 2 } else { 0 }, ..self.shape() };
+                encoder.set_bytes(6, std::mem::size_of::<Shape>() as u64, std::ptr::from_ref(&shape).cast());
+                crate::code_rule_dsl::prof::count_named(format!("kernel.{}", KERNELS[PERSISTENT_KERNEL]), 1);
+                encoder.checked_dispatch_threads(&self.command, MTLSize::new(u64::from(self.phase_groups) * PHASE_WORDS, 1, 1), MTLSize::new(PHASE_WORDS, 1, 1));
+                self.outcome.dispatches += 1;
+                encoder.end_encoding();
+                let _ = self.split(KERNELS[PHASE_KERNEL]);
+                continue;
+            }
             for round in 0..phases {
                 let shape = Shape { item_count: first as u32, target_count: own.len() as u32, round, recursive: region as u32, queue: (slots * region) as u32, ..self.shape() };
                 encoder.set_bytes(6, std::mem::size_of::<Shape>() as u64, std::ptr::from_ref(&shape).cast());
