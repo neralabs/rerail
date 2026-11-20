@@ -3244,11 +3244,13 @@ fn a_named_rule_file_is_read_with_or_without_tests() {
     let (missing, junk, rule) = (dir.join("missing.rerail"), dir.join("junk.rerail"), dir.join("rule.rerail"));
     std::fs::write(&junk, "garbage here (\n").unwrap();
     std::fs::write(&rule, ".decl r(x: symbol)\nr(\"a\").\n").unwrap();
-    let missing_error = super::testing::report(std::slice::from_ref(&missing), None).map(|_| ()).unwrap_err();
-    let junk_error = super::testing::report(std::slice::from_ref(&junk), None).map(|_| ()).unwrap_err();
+    let missing_report = super::testing::report(std::slice::from_ref(&missing), None);
+    let junk_report = super::testing::report(std::slice::from_ref(&junk), None);
     let rule_rows = super::testing::report(std::slice::from_ref(&rule), None);
     let walked = super::testing::report(std::slice::from_ref(&dir), None);
     let _ = std::fs::remove_dir_all(&dir);
+    let missing_error = missing_report.unwrap_err();
+    let junk_error = junk_report.unwrap_err();
     assert!(missing_error.contains("missing.rerail"), "{missing_error}");
     assert!(junk_error.contains("junk.rerail"), "{junk_error}");
     assert_eq!(rule_rows, Ok(serde_json::json!([])));
