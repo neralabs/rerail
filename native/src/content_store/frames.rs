@@ -104,8 +104,7 @@ pub struct Delta {
 }
 
 /// A frame the writer forgets only while the frame of `guard` at the same part still has `digest`, the digest its
-/// reader read, when the writer's transaction starts: a write of that frame landing between the read and the
-/// transaction, from this process or another, keeps it (`queue_frames_guarded`).
+/// reader read: a write of that frame landing first, from this process or another, keeps it (`queue_frames_guarded`).
 #[derive(Clone, Debug)]
 pub struct GoneIf {
     pub rel: Rel,
@@ -491,7 +490,6 @@ pub(super) struct FramesWrite {
     retags: Vec<Retag>,
     heads: Vec<Head>,
     gone: Vec<(Rel, i64)>,
-    gone_if: Vec<GoneIf>,
     used: Option<Used>,
     segments: Option<super::segments::SealedSegments>,
 }
@@ -501,32 +499,20 @@ impl FramesWrite {
         // Attempted once: a busy store leaves these frames unwritten, and the next run derives them again.
         let rows: Vec<Framed> = self.frames.iter().chain(&self.delta_frames).filter_map(Encoded::framed).collect();
         let used = self.used.as_ref().map(|(rels, run, program)| (rels.as_slice(), *run, *program));
-        let gone = Gone { all: &self.gone, guarded: &self.gone_if };
-        let _ = store.write_frames_placed(&self.space, &rows, self.delta_frames.len(), &self.retags, &self.heads, gone, used, self.segments.as_mut());
+        let _ = store.write_frames_placed(&self.space, &rows, self.delta_frames.len(), &self.retags, &self.heads, &self.gone, used, self.segments.as_mut());
         Ok(())
     }
 }
 
-/// The frames a write forgets (`write_frames_placed`): `all`, and each of `guarded` whose guard holds.
-#[derive(Clone, Copy)]
-struct Gone<'g> {
-    all: &'g [(Rel, i64)],
-    guarded: &'g [GoneIf],
+/// A space's guarded frames as the writer forgets them (`queue_frames_guarded`).
+pub(super) struct GuardedGone {
+    space: [u8; 32],
+    gone: Vec<GoneIf>,
 }
 
-impl<'g> Gone<'g> {
-    /// `all`, and the guarded frames whose guard holds in `t`, the writer's transaction, read before it writes.
-    fn now(self, t: &Connection, space: &[u8; 32]) -> rusqlite::Result<std::borrow::Cow<'g, [(Rel, i64)]>> {
-        if self.guarded.is_empty() {
-            return Ok(std::borrow::Cow::Borrowed(self.all));
-        }
-        let mut gone = self.all.to_vec();
-        for frame in self.guarded {
-            if guard_holds(t, space, frame)? {
-                gone.push((frame.rel.clone(), frame.part));
-            }
-        }
-        Ok(std::borrow::Cow::Owned(gone))
+impl GuardedGone {
+    pub(super) fn run(&mut self, store: &ContentStore) -> StoreResult<()> {
+        store.forget_guarded(&self.space, &self.gone)
     }
 }
 
@@ -537,6 +523,31 @@ fn guard_holds(t: &Connection, space: &[u8; 32], frame: &GoneIf) -> rusqlite::Re
     let guard = &frame.guard;
     let digest: Option<i64> = t.query_row_cached(sql, params![&space[..], guard.name, &guard.ident[..], frame.part], |r| r.get(0)).optional()?;
     Ok(digest == Some(frame.digest as i64))
+}
+
+/// Forgets, in `t`, `frame`'s row and its use.
+fn forget_frame(t: &Connection, space: &[u8; 32], frame: &GoneIf) -> rusqlite::Result<()> {
+    let (rel, part) = (&frame.rel, frame.part);
+    t.execute_cached("DELETE FROM frames WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4", params![&space[..], rel.name, &rel.ident[..], part])?;
+    t.execute_cached("DELETE FROM frame_part_used WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4", params![&space[..], rel.name, &rel.ident[..], part])?;
+    Ok(())
+}
+
+/// The query of `stored_frames_not_of` and its values.
+fn frames_not_of(space: &[u8; 32], rels: &[Rel], limit: usize) -> (String, Vec<rusqlite::types::Value>) {
+    let values = (0..rels.len()).map(|i| format!("(?{}, ?{})", 3 + 2 * i, 4 + 2 * i)).collect::<Vec<_>>().join(", ");
+    let sql = format!("SELECT rel, ident, part FROM frames WHERE space = ?1 AND (rel, ident) NOT IN (VALUES {values}) LIMIT ?2");
+    let mut args: Vec<rusqlite::types::Value> = vec![space.to_vec().into(), (limit as i64).into()];
+    for rel in rels {
+        args.extend([rel.name.clone().into(), rel.ident.to_vec().into()]);
+    }
+    (sql, args)
+}
+
+/// A frame's relation and part, from a row of its `rel`, `ident` and `part`.
+fn stored_rel_part(row: &rusqlite::Row<'_>) -> rusqlite::Result<(Rel, i64)> {
+    let ident: [u8; 32] = row.get::<_, Vec<u8>>(1)?.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
+    Ok((Rel { name: row.get(0)?, ident }, row.get::<_, i64>(2)?))
 }
 
 impl ContentStore {
@@ -929,19 +940,24 @@ impl ContentStore {
     /// At most `limit` frames of `space` the store's file holds whose relation, by name and identity, is none of
     /// `rels` (one or more), past the snapshot: what relations the space no longer has left there.
     pub fn stored_frames_not_of(&self, space: &[u8; 32], rels: &[Rel], limit: usize) -> StoreResult<Vec<(Rel, i64)>> {
-        let values = (0..rels.len()).map(|i| format!("(?{}, ?{})", 3 + 2 * i, 4 + 2 * i)).collect::<Vec<_>>().join(", ");
-        let sql = format!("SELECT rel, ident, part FROM frames WHERE space = ?1 AND (rel, ident) NOT IN (VALUES {values}) LIMIT ?2");
-        let mut args: Vec<rusqlite::types::Value> = vec![space.to_vec().into(), (limit as i64).into()];
-        for rel in rels {
-            args.extend([rel.name.clone().into(), rel.ident.to_vec().into()]);
-        }
+        let (sql, args) = frames_not_of(space, rels, limit);
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let mut st = connection.prepare_cached(&sql)?;
-        let frames = st.query_map(rusqlite::params_from_iter(args), |row| {
-            let ident: [u8; 32] = row.get::<_, Vec<u8>>(1)?.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
-            Ok((Rel { name: row.get(0)?, ident }, row.get::<_, i64>(2)?))
-        })?;
+        let frames = st.query_map(rusqlite::params_from_iter(args), stored_rel_part)?;
         Ok(frames.collect::<Result<_, _>>()?)
+    }
+
+    /// Forgets each of `gone` whose guard holds (`guard_holds`), in one transaction: the guard is read where the frame
+    /// is deleted, so no other writer's write lands between them.
+    fn forget_guarded(&self, space: &[u8; 32], gone: &[GoneIf]) -> StoreResult<()> {
+        self.immediate_transaction_once(|t| {
+            for frame in gone {
+                if guard_holds(t, space, frame)? {
+                    forget_frame(t, space, frame)?;
+                }
+            }
+            Ok(())
+        })
     }
 
     /// Forgets every frame of `space` and its count of runs: the space of a program no run will run again.
@@ -965,12 +981,18 @@ impl ContentStore {
         self.queue_encoded_retagged(space, puts.into_iter().map(Put::encoded).collect(), Vec::new(), Vec::new(), gone, used)
     }
 
-    /// `queue_frames`, and `gone_if` forgotten in the store's file, each only while its guard holds (`GoneIf`). This
-    /// process's memory of the guarded frames (its snapshot, its queued writes) is left as it is: their reader reads
-    /// them past the snapshot (`admit_parts_stored`).
+    /// `queue_frames`, then `gone_if` forgotten in the store's file by a write of its own behind it, each only while its
+    /// guard holds (`GoneIf`). This process's memory of the guarded frames (its snapshot, its queued writes) is left as
+    /// it is: their reader reads them past the snapshot (`admit_parts_stored`).
     pub fn queue_frames_guarded(&self, space: [u8; 32], puts: Vec<Put>, gone: Vec<(Rel, i64)>, gone_if: Vec<GoneIf>) {
-        let frames = puts.into_iter().map(Put::encoded).collect();
-        self.queue_encoded_as(space, frames, Vec::new(), Vec::new(), gone, gone_if, None, super::write_back::Syms::Mapped)
+        self.queue_frames(space, puts, gone, None);
+        if gone_if.is_empty() {
+            return;
+        }
+        let bytes = gone_if.len() * 64;
+        let write = GuardedGone { space, gone: gone_if };
+        let job = super::write_back::Work(super::write_back::Kind::Guarded(Box::new(write)));
+        self.write_back_syms(super::write_back::Syms::None, "frames gone while unchanged", bytes, Vec::new(), job);
     }
 
     /// `queue_frames` of frames encoded as they were made (`Put::encoded`): a caller that makes many holds each one's
@@ -1003,18 +1025,18 @@ impl ContentStore {
 
     /// `queue_frames_retagged` of frames encoded as they were made (`Put::encoded`); its deltas are encoded here.
     pub fn queue_encoded_retagged(&self, space: [u8; 32], frames: Vec<Encoded>, retags: Vec<Retag>, deltas: Vec<Delta>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
-        self.queue_encoded_as(space, frames, retags, deltas, gone, Vec::new(), used, super::write_back::Syms::Mapped)
+        self.queue_encoded_as(space, frames, retags, deltas, gone, used, super::write_back::Syms::Mapped)
     }
 
     /// `queue_encoded_retagged` for frames keyed by this process's numbering of symbols: rows whose untyped columns,
     /// parts or digests are of atoms (the retained part's documents and granules). The store can map a typed value,
     /// not a key: after a fork (decision 0170) they are not written, and the next run derives them again.
     pub fn queue_encoded_keyed_by_symbols(&self, space: [u8; 32], frames: Vec<Encoded>, retags: Vec<Retag>, deltas: Vec<Delta>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
-        self.queue_encoded_as(space, frames, retags, deltas, gone, Vec::new(), used, super::write_back::Syms::Unmapped)
+        self.queue_encoded_as(space, frames, retags, deltas, gone, used, super::write_back::Syms::Unmapped)
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn queue_encoded_as(&self, space: [u8; 32], frames: Vec<Encoded>, retags: Vec<Retag>, deltas: Vec<Delta>, gone: Vec<(Rel, i64)>, gone_if: Vec<GoneIf>, used: Option<Used>, syms: super::write_back::Syms) {
+    fn queue_encoded_as(&self, space: [u8; 32], frames: Vec<Encoded>, retags: Vec<Retag>, deltas: Vec<Delta>, gone: Vec<(Rel, i64)>, used: Option<Used>, syms: super::write_back::Syms) {
         // Each delta after its relation's frame as it is now (in memory, queued or stored).
         let mut delta_frames: Vec<Encoded> = Vec::new();
         let mut heads: Vec<Head> = Vec::new();
@@ -1081,7 +1103,7 @@ impl ContentStore {
             s.lock().expect("the frames' snapshot").holding.insert((space, *program));
         }
         // Nothing to write is no write: a warm run's kept part queues no empty job (decision 0197).
-        if frames.is_empty() && delta_frames.is_empty() && retags.is_empty() && heads.is_empty() && gone.is_empty() && gone_if.is_empty() && used.is_none() {
+        if frames.is_empty() && delta_frames.is_empty() && retags.is_empty() && heads.is_empty() && gone.is_empty() && used.is_none() {
             return;
         }
         let mut keys: Vec<(super::write_back::Key, Option<Arc<dyn std::any::Any + Send + Sync>>)> = frames
@@ -1133,7 +1155,7 @@ impl ContentStore {
         }
         // The queue's measure: what it holds in memory, the frames not placed (the placed ones are the OS's pages).
         let held: usize = frames.iter().chain(&delta_frames).filter(|e| e.place.is_none()).map(|e| e.frame.encoded_bytes() + 64).sum::<usize>() + frames.len() * 64;
-        let write = FramesWrite { space, frames, delta_frames, retags, heads, gone, gone_if, used, segments };
+        let write = FramesWrite { space, frames, delta_frames, retags, heads, gone, used, segments };
         self.write_back_syms(syms, "frames", held, keys, super::write_back::Work(super::write_back::Kind::Frames(Box::new(write))));
     }
 
@@ -1270,14 +1292,14 @@ impl ContentStore {
     /// `retags`, the deltas' `heads`, and `gone` forgotten, in one transaction; with `used`, as `keep_frames`.
     #[allow(clippy::too_many_arguments)]
     fn write_frames(&self, space: &[u8; 32], rows: &[Framed], deltas: usize, retags: &[Retag], heads: &[Head], gone: &[(Rel, i64)], used: Option<(&[Rel], u64, [u8; 32])>) -> StoreResult<()> {
-        self.write_frames_placed(space, rows, deltas, retags, heads, Gone { all: gone, guarded: &[] }, used, None)
+        self.write_frames_placed(space, rows, deltas, retags, heads, gone, used, None)
     }
 
     /// `write_frames`, of frames placed in `segments` (`place_frames`): those written back first, numbered in the
     /// transaction, and each placed frame's row a pointer into them (decision 0295 §4); renamed to their numbers once
     /// the rows commit. A forked process writes every frame's bytes inline: the writer renumbers their symbols.
     #[allow(clippy::too_many_arguments)]
-    fn write_frames_placed(&self, space: &[u8; 32], rows: &[Framed], deltas: usize, retags: &[Retag], heads: &[Head], gone: Gone<'_>, used: Option<(&[Rel], u64, [u8; 32])>, mut segments: Option<&mut super::segments::SealedSegments>) -> StoreResult<()> {
+    fn write_frames_placed(&self, space: &[u8; 32], rows: &[Framed], deltas: usize, retags: &[Retag], heads: &[Head], gone: &[(Rel, i64)], used: Option<(&[Rel], u64, [u8; 32])>, mut segments: Option<&mut super::segments::SealedSegments>) -> StoreResult<()> {
         let timed = std::env::var_os("RERAIL_WRITES").is_some();
         let files = match segments.as_deref_mut() {
             Some(s) => {
@@ -1287,9 +1309,6 @@ impl ContentStore {
             None => Vec::new(),
         };
         let numbers = self.immediate_transaction_once(|t| {
-            // What goes, the guarded frames' guards read before anything is written.
-            let gone_now = gone.now(t, space)?;
-            let gone: &[(Rel, i64)] = &gone_now;
             let mut at = std::time::Instant::now();
             let mut lap = |what: &str| if timed { eprintln!("RERAIL_WRITES frames {what}: {:.3} s", at.elapsed().as_secs_f64()); at = std::time::Instant::now(); };
             // The space's counter stamps what is put (`frame_part_used`): a run's first program counts it, and a write

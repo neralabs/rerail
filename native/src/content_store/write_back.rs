@@ -104,6 +104,8 @@ pub(super) enum Kind {
     Record { text: String, bytes: Vec<u8> },
     /// A space's frames (`queue_frames`).
     Frames(Box<super::frames::FramesWrite>),
+    /// A space's frames forgotten while their guards hold (`queue_frames_guarded`).
+    Guarded(Box<super::frames::GuardedGone>),
     /// A space's memo entries in their segments (`queue_memo_segments`).
     Memo(Box<super::frames::memo_pack::MemoWrite>),
     /// Sources and tapes gathered into segments, or each in its own rows where no segment could be placed.
@@ -135,6 +137,7 @@ impl Work {
         match &mut self.0 {
             Kind::Record { text, bytes } => super::record::apply(store, text, bytes),
             Kind::Frames(w) => w.run(store),
+            Kind::Guarded(w) => w.run(store),
             Kind::Memo(w) => w.run(store),
             Kind::Objects(w) => w.run(store),
             Kind::Atoms { queued } => {

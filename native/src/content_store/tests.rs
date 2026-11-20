@@ -3148,7 +3148,7 @@ fn two_saves_of_one_worktree_leave_the_part_the_last_write_holds() {
 }
 
 /// A worktree no restore wrote for 30 days, saved again, keeps what its save writes: a save
-/// forgets only other worktrees.
+/// forgets only other worktrees, so it is one write, with no forgetting of its own part.
 #[test]
 fn a_worktree_saved_again_after_30_days_keeps_what_its_save_writes() {
     let (_path, store) = store("verified-files-again");
@@ -3156,11 +3156,13 @@ fn a_worktree_saved_again_after_30_days_keeps_what_its_save_writes() {
         .remember_verified_worktree_files("/a", &[remembered_file("x.py", 1)], 100 * DAY)
         .unwrap();
     store.written().unwrap();
+    let jobs = store.written_so_far().jobs;
     let file = [remembered_file("y.py", 2)];
     store
         .remember_verified_worktree_files("/a", &file, 131 * DAY)
         .unwrap();
     store.written().unwrap();
+    assert_eq!(store.written_so_far().jobs, jobs + 1, "one write");
     assert_eq!(
         store.verified_worktree_files("/a", 131 * DAY).unwrap(),
         file.to_vec()

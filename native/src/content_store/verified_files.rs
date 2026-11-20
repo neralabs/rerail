@@ -139,7 +139,9 @@ impl ContentStore {
     /// The frames of at most `MAX_COLLECTION_BATCH` worktrees other than `part`'s that the store
     /// holds and no restore wrote at `since` or later, each gone only while the worktree's
     /// `verified_worktree` frame has the digest read here. A part whose write time cannot be read
-    /// (its frame's bytes are gone) is among them: no restore can read its files either.
+    /// (its frame's bytes are gone) is among them: no restore can read its files either. The
+    /// save's own part is not: its write lands first and moves that digest, so forgetting it
+    /// would be a write for nothing.
     fn old_worktrees(&self, part: i64, since: i64) -> StoreResult<Vec<GoneIf>> {
         let worktrees = rel(&WORKTREES);
         let parts = self.stored_frame_parts(&space(), &worktrees)?;
