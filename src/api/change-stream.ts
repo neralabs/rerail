@@ -8,7 +8,8 @@ import type { ChangeFeed, ChangeNotice } from "./change-feed.js";
 import type { RerailApiStores } from "./operation.js";
 import { checkoutAt } from "./repository-operations.js";
 
-const STREAM_HEADERS = { "content-type": "text/event-stream", "cache-control": "no-store" } as const;
+/** `x-accel-buffering` asks nginx, which holds a proxied response until it ends by default, to hand each message on. */
+const STREAM_HEADERS = { "content-type": "text/event-stream", "cache-control": "no-store", "x-accel-buffering": "no" } as const;
 const encoder = new TextEncoder();
 
 /** The checkout Rerail recorded at `path`, or none; recording one is a commit, which moves the token anyway. */

@@ -128,6 +128,13 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     return messagesOf(response);
   };
 
+  it("asks a proxy in front of the daemon to hand each message on as it comes, as nginx holds a response by default", async () => {
+    const response = await app.request("/api/changes");
+    await response.body?.cancel();
+
+    expect(response.headers.get("x-accel-buffering")).toBe("no");
+  });
+
   it("sends its change token at once, and a new one when a person's write commits", async () => {
     const stream = await open();
     const first = await stream.next();

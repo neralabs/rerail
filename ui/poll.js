@@ -1093,11 +1093,21 @@ function endChanges() {
   retryTimer = paceTimer = stallTimer = githubTimer = null;
 }
 
+/**
+ * Read now, as the poll did when the page opened, showed again or changed scope, and follow the stream: something
+ * between that holds the stream's messages holds its first one too. The read is out before the stream opens, so a page
+ * reading at the pace starts no second one.
+ */
+function readAndFollow() {
+  void refresh();
+  followChanges();
+}
+
 export function startPolling(listener) {
   onChange = listener;
   atPace = false;
-  followChanges();
-  document.addEventListener("visibilitychange", () => { if (hidden()) endChanges(); else followChanges(); });
+  readAndFollow();
+  document.addEventListener("visibilitychange", () => { if (hidden()) endChanges(); else readAndFollow(); });
   // Another tab of this origin stored the capability (the link `rerail manage` opens): read with it now.
   // Outside a browser page (a test's Node) there is no window, as there is no document for `hidden`.
   globalThis.window?.addEventListener("storage", event => { if (event.key === ACCESS_KEY && !hidden()) refreshNow(); });
@@ -1138,8 +1148,9 @@ export function changeScope(scope) {
   mergeAssistRead = { at: 0, loading: null, generation: -1 };
   mergeAssistCountDue = true;
   data.sessionDetail.clear();
-  // The stream names the checkout, whose own rules it follows: its first message reads the new scope.
+  // The stream names the checkout, whose own rules it follows. The new scope's read waits only for one still out for
+  // the old scope, as the poll's did, whether the page reads at the pace or the stream's first message is held.
   endChanges();
   token = null;
-  followChanges();
+  readAndFollow();
 }

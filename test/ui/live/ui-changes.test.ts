@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { refreshNow, setNeeds, startPolling } from "../../../ui/poll.js";
+import { changeScope, refreshNow, setNeeds, startPolling } from "../../../ui/poll.js";
 import { data, setScope, ui } from "../../../ui/state.js";
 import { currentNeeds } from "../../../ui/views/index.js";
 import type { MergeAssistStatus } from "../../../src/engine/index.js";
@@ -11,6 +11,8 @@ interface Stream { send: (data: string, event?: string) => void; end: () => void
 let streams: Stream[] = [];
 /** The reads the page made, by path, beside the stream. */
 let reads: string[] = [];
+/** The reads the page made as it opened, before any message of its stream. */
+let readsAtOpen: string[] = [];
 /** Whether the daemon answers the page's reads; a stopped one refuses the connection. */
 let up = true;
 /** Whether the daemon serves the change stream; one of an older Rerail answers 404. */
@@ -135,6 +137,10 @@ beforeEach(async () => {
   setHidden(false);
   startPolling(changed => renders.push(changed));
   await settle();
+  // Each test counts from the page's first read, which it made as it opened.
+  readsAtOpen = reads;
+  reads = [];
+  renders = [];
 });
 
 afterEach(() => {
@@ -163,6 +169,35 @@ describe("the dashboard following the daemon's change stream", () => {
     // Only the watch for two missed beats waits; nothing that reads.
     expect(vi.getTimerCount()).toBe(1);
     expect(streams).toHaveLength(1);
+  });
+
+  it("reads as the page opens, shows again or changes scope, with no stream message, as through a proxy that holds them", async () => {
+    expect(readsAtOpen).toContain("/api/repositories");
+    expect(data.loaded).toBe(true);
+
+    setHidden(true);
+    setHidden(false);
+    await settle();
+    expect(readsOf("/api/repositories")).toBe(1);
+
+    changeScope({ repository: "A", checkout: "/work/b" });
+    await settle();
+    expect(readsOf("/api/repositories")).toBe(2);
+  });
+
+  it("reads a new scope right after the read still out for the old one, though the page reads at the pace", async () => {
+    // A stream that never brings a message: the page reads at the pace from the first missed beats.
+    await after(12_000);
+    heldReads = Promise.withResolvers();
+    await after(5_000);
+    const out = readsOf("/api/repositories");
+
+    changeScope({ repository: "A", checkout: "/work/b" });
+    heldReads.resolve();
+    heldReads = undefined;
+    await settle();
+
+    expect(readsOf("/api/repositories")).toBe(out + 1);
   });
 
   it("reads a new token at once after a quiet spell, and at most every 5 s while changes keep coming", async () => {
