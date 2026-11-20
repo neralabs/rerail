@@ -46,7 +46,7 @@ engine did and whether the rule needs a change (`profile::author_joins`).
 What changes from Release-debugging:
 
 1. **The rewrite runs on the version** (0281). It is a keyed step of `preparation::front`, after the node products
-   (0393) and before the reach form. It decodes the tree for its rewrite, as the products step does (Q186), keyed by
+   (0461) and before the reach form. It decodes the tree for its rewrite, as the products step does (Q292), keyed by
    its settings. A debug build replays it on the tree at the stage `deferred` and checks the two match.
 2. **The placement fallback is a replan.** A pair cache's guard, or a factor read across files, can draw an answer
    that only a document can give (`node_text`, `value`, `str`) into the cross-file part. Release-debugging looped
@@ -130,5 +130,5 @@ What changes from Release-debugging:
   the screen can take it, not build its own.
 - **The AMS counters (0096)** share one hash across columns, so two columns' counters estimate a join's size
   (Σₖ L[k]·R[k]). They are not used yet.
-- **The deferred step decodes the tree** for every program it runs on (Q186).
+- **The deferred step decodes the tree** for every program it runs on (Q292).
 - Whole-pack timing and findings on `scripts/ship/corpora.json` were never compared in Release-debugging.

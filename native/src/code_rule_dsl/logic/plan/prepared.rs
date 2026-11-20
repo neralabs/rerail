@@ -258,7 +258,7 @@ impl Analysis for Prepared {
                 let width = v.decl_of(name).map_or(0, |d| d.cols().count());
                 let estimate = (e.rows * times).max(1.0);
                 let recursion = times > 1.0;
-                // Q184's oracle (`sizes_from`): the rows per node a run held of it, where one did.
+                // Q290's oracle (`sizes_from`): the rows per node a run held of it, where one did.
                 let rows = sizes_from().and_then(|m| m.get(name).copied()).map_or(estimate, |per| (per * NOMINAL_NODES).max(1.0));
                 let times = times * rows / estimate;
                 if let Some(log) = sizes_log() {
@@ -341,7 +341,7 @@ pub fn of_store_rows(rows: &[Row]) -> ByVersion {
 const RECURSION_DEPTH: f64 = 8.0;
 
 /// Whether derived relations the facts do not size are sized from their rules' plans, and the rules reading them
-/// prepared: off (Q184, 2026-11-19). Plans prepared over derived relations cost the run more the more lines they take,
+/// prepared: off (Q290, 2026-11-19). Plans prepared over derived relations cost the run more the more lines they take,
 /// and right sizes do not save them: corpus0 x B-now, 957-969 G instructions off, 991-1,056 G on, 1,128 G sized from
 /// what a run on another project held, 1,203 G from what the same corpus's run held (an oracle), the same findings in
 /// each. A relation's size is not what such a plan lacks; the distributions it is priced by are the facts' alone.
@@ -469,7 +469,7 @@ fn why_log() -> Option<std::sync::Arc<parking_lot::Mutex<std::fs::File>>> {
     })
 }
 
-/// `RERAIL_SIZES_LOG=FILE` (Q184's measurement): the derived relations' sizes, estimated and met, appended as tab-separated
+/// `RERAIL_SIZES_LOG=FILE` (Q290's measurement): the derived relations' sizes, estimated and met, appended as tab-separated
 /// lines. `estimate REL PER_NODE RECURSIVE`: what preparation sized a relation at, rows per node at the nominal scale
 /// (`RECURSIVE` 1 for a recursion's, its base rules' times `RECURSION_DEPTH`). `seen REL ASSUMED HELD NODES`: a prepared
 /// plan taken by a run, each relation it assumed a size of, rows per node, against what the run holds of it then (a
@@ -481,10 +481,10 @@ pub fn sizes_log() -> Option<std::sync::Arc<parking_lot::Mutex<std::fs::File>>> 
     })
 }
 
-/// `RERAIL_SIZES_FROM=LOG` (Q184's oracle, a measurement aid: a labelled bound, never a product path): each derived
+/// `RERAIL_SIZES_FROM=LOG` (Q290's oracle, a measurement aid: a labelled bound, never a product path): each derived
 /// relation an estimate sizes is sized instead at the rows per node an earlier run held of it (the median of its `seen`
 /// lines in `LOG`, `sizes_log`'s), its columns' distinct values scaled with it. A version's prepared plans are kept by
-/// its identity (Q183), so a run under it needs a new store.
+/// its identity (Q228), so a run under it needs a new store.
 fn sizes_from() -> Option<std::sync::Arc<HashMap<String, f64>>> {
     crate::code_rule_dsl::logic::run::setting(|| {
         let text = std::fs::read_to_string(std::env::var_os("RERAIL_SIZES_FROM")?).ok()?;

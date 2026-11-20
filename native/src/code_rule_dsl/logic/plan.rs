@@ -3258,7 +3258,7 @@ impl Model {
         })
     }
 
-    /// Q184's measurement (`prepared::sizes_log`): a prepared plan taken for `line`, each relation it assumed a size of
+    /// Q290's measurement (`prepared::sizes_log`): a prepared plan taken for `line`, each relation it assumed a size of
     /// against what this model holds of it, rows per node. A relation still being solved is left out (its rows so far).
     fn log_assumed(&self, line: u128) {
         let Some(log) = prepared::sizes_log() else { return };

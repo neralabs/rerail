@@ -3842,11 +3842,11 @@ native join it falls back to the planner's whole-rule order.
   or hash a branded name by its text (as `relocate` maps names by their strings), helpers' names included.
 - **Done when**: two fresh stores give the same rules one identity, and a test lowers them on two numberings and
   finds the same keys.
-- **Decided** (2026-11-19, decision 0472): plans do not move across stores. The kept and prepared plans are rows in
+- **Decided** (2026-11-19, decision 0486): plans do not move across stores. The kept and prepared plans are rows in
   the project's store, so a new store has none to read whatever the identity; sharing them would carry one project's
   corpus data to another outside 0442's explicit `Shared`; planning is 1-3% of a cold run's CPU; and every hash over a
   lowered rule would be re-based on text. A seeded store (an explicit export and import keyed by the rules' text) is
-  0472's open item, not built. Closed.
+  0486's open item, not built. Closed.
 
 ### Q186. The node-product rewrite on the version (0393)
 
@@ -3859,7 +3859,7 @@ native join it falls back to the planner's whole-rule order.
 - **Done when**: a run with a product decodes no tree (`trees_decoded` 0), and a test compares the pass with the
   tree's rewrite on the module's programs.
 
-### Q187. The test binaries' unwind info is past what the compact unwind table can address
+### Q345. The test binaries' unwind info is past what the compact unwind table can address
 
 - **Found** (2026-11-19, a tidy-up of 0442's work): every large test binary's link warns `__eh_frame section too
   large (max 16MB) to encode dwarf unwind offsets in compact unwind table` (the engine's, `rerail-logic`'s and
@@ -3874,7 +3874,7 @@ native join it falls back to the planner's whole-rule order.
 - **Done when**: the link gives no warning, or the cause is shown to be the binary's size and the choice (a smaller
   test binary, or the warning accepted with its reason) is the user's.
 
-### Q188. A key a derived relation declares is checked where its rows are written (0361 step 6)
+### Q346. A key a derived relation declares is checked where its rows are written (0361 step 6)
 
 - **Found** (2026-11-19, 0361 step 6): the step's checks are built at the probes (`Model::layout_broken`): a key or
   fan-out a probe is bounded by, against the executors' counts. A key is also to be checked where the rows are
@@ -3888,7 +3888,7 @@ native join it falls back to the planner's whole-rule order.
   plans the relation from statistics.
 
 
-### Q189. A loop's stolen halves lose their run where two runs share a pool
+### Q347. A loop's stolen halves lose their run where two runs share a pool
 
 - **Found** (2026-11-19, porting 0477): a parallel loop inside `on_cores` splits by rayon's `join`, and a half
   another of the machine's pool threads steals runs with nothing of its caller's: no run and no bindings. With

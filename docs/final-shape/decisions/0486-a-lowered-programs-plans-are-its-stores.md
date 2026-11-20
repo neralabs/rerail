@@ -1,6 +1,6 @@
-# 0472. A lowered program's plans are its store's: they do not move across stores
+# 0486. A lowered program's plans are its store's: they do not move across stores
 
-Status: accepted (2026-11-19), Q185's decision. Made in the work queue's order, by the agent doing the work; the
+Status: accepted (2026-11-19), Q291's decision. Made in the work queue's order, by the agent doing the work; the
 user may overrule it.
 
 ## Intro
@@ -8,17 +8,17 @@ user may overrule it.
 A rule is lowered against a store: each name it holds becomes the store's atom for it (decision 0270). So everything
 hashed over a lowered rule depends on the store's numbering: rule hashes, the file-local helpers' names
 (`typing::file_local::helper_name`), a version's identity (`manager::identity`), and a line's key (`line_key`). The
-same rules lowered on two new stores get two identities (Q185: `#n2708` on one store, `#n13220` on the other). Within
+same rules lowered on two new stores get two identities (Q291: `#n2708` on one store, `#n13220` on the other). Within
 one store all of these stay the same, because the store keeps its atoms.
 
-Q185 asked whether plans should move across stores. If they should, every one of those hashes would have to be over
+Q291 asked whether plans should move across stores. If they should, every one of those hashes would have to be over
 the names' text and not their atoms.
 
 ## Decision
 
 They do not. What a run keeps after lowering stays the store's, keyed by the store's atoms:
 - the kept plans (decisions 0038 and 0116);
-- the prepared plans (Q183);
+- the prepared plans (Q228);
 - the stored pipeline runs;
 - the memo.
 
@@ -36,7 +36,7 @@ Two things cross stores today, and both are keyed by something with no atoms in 
    the caller passes, so that security boundaries hold. No caller asks for plans from another project.
 3. **There is little to win.** Planning is 1-3% of a cold run's CPU (0361 step 5, corpus0 x B-now: 0.3 s of search
    and about 2.7 s of statistics out of 94 s). A new store's prepared plans are made from the facts at its first
-   run, with no store read (Q183's "made" count).
+   run, with no store read (Q228's "made" count).
 4. **The other way costs every key.** Rule hashes, helper names, identities and line keys would all be re-based on
    text: a name lookup at each atom of every hash, `line_key` included, which is computed at every plan.
 

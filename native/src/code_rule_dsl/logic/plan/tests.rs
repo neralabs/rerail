@@ -3364,7 +3364,7 @@ fn a_later_run_reads_the_prepared_plans_an_earlier_one_made() {
 /// base rules' times a nominal depth (`anc`, with no fact declared).
 #[test]
 fn a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it() {
-    // Off by default (Q184): turned on here, as a measurement turns it on.
+    // Off by default (Q290): turned on here, as a measurement turns it on.
     let _on = rerail_prof::code_rule_dsl::logic::profile::bind(prepared::DerivedEstimates(Some(true)));
     let text = ".decl child2(p: node, c: node, i: number)\n.input child2\n.layout child2 key(c) fanout(p -> c, few) order(i dense in p)\n\
                    .decl kind2(n: node, k: symbol)\n.input kind2\n.layout kind2 key(n) size(per n) values(k, kinds)\n\
