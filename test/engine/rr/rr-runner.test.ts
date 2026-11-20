@@ -1,12 +1,16 @@
 import * as childProcess from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { once } from "node:events";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:child_process", { spy: true });
 
+import { PACKAGE_ROOT } from "../../../src/engine/package-root.js";
 import { processState } from "../../../src/engine/process-liveness.js";
 import { describeRerailPolicies, describeRerailPoliciesSync, runRerailPolicies } from "../../../src/engine/rr/rr-runner.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
@@ -60,6 +64,7 @@ afterEach(async () => {
   delete process.env.RERAIL_RR_MEMORY_MB;
   delete process.env.RERAIL_RR_DEADLINE_MS;
   delete process.env.RERAIL_RR_STORE;
+  delete process.env.RERAIL_RR_THREADS;
   vi.clearAllMocks();
   await Promise.all(roots.splice(0).map(root => removeFolder(root)));
 });
@@ -180,6 +185,14 @@ describe("runRerailPolicies", () => {
     expect(await runRerailPolicies({ root, policies: [rule] })).toEqual({ status: "failed", message: 'RERAIL_RR_STORE is "on": it takes "off" or "checkout"' });
   });
 
+  it("completes a run whose child has 2 threads, as on a 4-core runner or a small laptop, with no store", async () => {
+    process.env.RERAIL_RR_THREADS = "2";
+    const { root, rule } = checkout({ "app/one.py": "shout(1)\n", "app/two.py": "def f():\n    return shout(2)\n" });
+    const outcome = await runRerailPolicies({ root, policies: [rule], deadlineMs: 60_000 });
+    if (outcome.status !== "completed") throw new Error(`the run did not complete: ${JSON.stringify(outcome)}`);
+    expect(outcome.findings.map(finding => [finding.path, finding.line]).sort()).toEqual([["app/one.py", 1], ["app/two.py", 2]]);
+  });
+
   it("runs two checkouts at once, each to its own findings", async () => {
     const first = checkout({ "one.py": "shout(1)\n" });
     const second = checkout({ "two.py": "x = 1\nshout(2)\n" });
@@ -219,5 +232,28 @@ describe("runRerailPolicies", () => {
     expect(await running).toMatchObject({ status: "killed", reason: "aborted" });
     expect(childrenGone()).toBe(true);
     expect(leftDirectories()).toEqual([]);
+  });
+});
+
+describe("the runner's child", () => {
+  // A FIFO as the request file holds the child's main thread in its read, as a long synchronous `describeRr` holds it:
+  // only the child's watch thread can see its parent go. POSIX only: Windows has no FIFO in its file system.
+  it.skipIf(process.platform === "win32")("ends itself, and removes its directory, once its parent is killed while its main thread is held", async () => {
+    const directory = realpathSync(mkdtempSync(join(temporary, "held-")));
+    const request = join(directory, "request.json");
+    childProcess.execFileSync("mkfifo", [request]);
+    const tsx = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
+    const args = ["--import", tsx, join(PACKAGE_ROOT, "src", "engine", "rr", "rr-child.ts"), request, join(directory, "result.json")];
+    // A parent that starts the child with no IPC channel, as the synchronous describe does, and waits.
+    const starter = `const c = require("node:child_process").spawn(process.execPath, ${JSON.stringify(args)}, { stdio: "ignore" }); console.log(c.pid); setInterval(() => {}, 1000);`;
+    const parent = childProcess.spawn(process.execPath, ["-e", starter], { stdio: ["ignore", "pipe", "inherit"] });
+    const [line] = (await once(parent.stdout!, "data")) as [Buffer];
+    const child = Number(line.toString().trim());
+    parent.kill("SIGKILL");
+    await once(parent, "exit");
+    const until = Date.now() + 15_000;
+    while ((processState(child) !== "gone" || existsSync(directory)) && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 100));
+    expect(processState(child)).toBe("gone");
+    expect(existsSync(directory)).toBe(false);
   });
 });
