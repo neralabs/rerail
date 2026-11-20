@@ -30,6 +30,8 @@ let githubNext: GithubState = "signed-in";
 let daemonAheadMs = 0;
 /** A daemon that says gh is due now at every status, as one whose gh read has not answered yet. */
 let githubDueNow = false;
+/** While set, every read the page makes waits for it to resolve before the daemon answers it, as a slow answer does. */
+let heldReads: PromiseWithResolvers<void> | undefined;
 let renders: boolean[] = [];
 let visibility: (() => void)[] = [];
 const encoder = new TextEncoder();
@@ -110,6 +112,7 @@ beforeEach(async () => {
   githubNext = "signed-in";
   daemonAheadMs = 0;
   githubDueNow = false;
+  heldReads = undefined;
   renders = [];
   vi.stubGlobal("location", { origin: "http://127.0.0.1:4000" });
   vi.stubGlobal("fetch", async (input: URL, init: { signal?: AbortSignal } = {}) => {
@@ -117,6 +120,10 @@ beforeEach(async () => {
     if (!up) throw new TypeError("fetch failed");
     if (url.pathname === "/api/changes") return streams404 ? json({ error: "not-found" }, 404) : openStream(init.signal!);
     reads.push(url.pathname);
+    if (heldReads !== undefined) {
+      await heldReads.promise;
+      if (!up) throw new TypeError("fetch failed");
+    }
     return failing.has(url.pathname) ? json({ error: "internal" }, 500) : answer(url);
   });
   setScope({ repository: "A", checkout: "/work/a" });
@@ -300,6 +307,46 @@ describe("the dashboard following the daemon's change stream", () => {
     setHidden(false);
     await settle();
     expect(streams).toHaveLength(2);
+  });
+
+  it("reads nothing while hidden though the Merge Assist page showing gh signed in hid with a read out", async () => {
+    ui.view = "merge";
+    githubReading = { at: Date.now() };
+    stream().send("t1");
+    await settle();
+    heldReads = Promise.withResolvers();
+    stream().send("t2");
+    await settle();
+
+    setHidden(true);
+    heldReads.resolve();
+    await settle();
+    const before = reads.length;
+    await after(10 * 60_000);
+
+    expect(reads.length).toBe(before);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("reads nothing while hidden though the daemon stopped answering the read out as the tab hid", async () => {
+    stream().send("t1");
+    await settle();
+    heldReads = Promise.withResolvers();
+    stream().send("t2");
+    await settle();
+
+    setHidden(true);
+    up = false;
+    heldReads.resolve();
+    await settle();
+    expect(data.disconnected).toBe(true);
+    // Back while the tab stays hidden: a read the page tried then would be counted.
+    up = true;
+    const before = reads.length;
+    await after(60_000);
+
+    expect(reads.length).toBe(before);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("opens the stream again once two beats are missed, as when the daemon's loop is stuck or a network dropped it", async () => {

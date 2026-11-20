@@ -850,11 +850,13 @@ export async function refresh() {
 /**
  * What a read's outcome moves, whatever asked for it: one that failed is tried again at the poll's own pace (`backoff`),
  * as the poll tried it, even while the stream stays open, and so is every read while the page reads at the pace
- * (`atPace`); one that answered holds what the daemon had when it began.
+ * (`atPace`); one that answered holds what the daemon had when it began. A read that answers once the tab hid arms
+ * nothing: showing again follows the stream, whose first message reads.
  */
 function afterRead(asked) {
   data.readingSince = 0;
   if (!data.disconnected && data.behindSince <= asked) data.behindSince = 0;
+  if (hidden()) return;
   if (data.disconnected || atPace) retryLater();
   armGithubRead();
 }
