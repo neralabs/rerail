@@ -1080,9 +1080,18 @@ async function runGitAsyncWith(executable: string, args: readonly string[], opti
   }, { timeoutMs: timeout, signal });
   // Git may exit before reading all of its input; the broken pipe is no failure of the read.
   child.stdin.on("error", () => undefined);
-  child.stdin.end(options.input ?? "");
+  endInput(child, options.input);
   const [result] = await Promise.all([promise, exited(child)]);
   return result;
+}
+
+/**
+ * Closes Git's stdin after `input`. With none it only closes it: a write of nothing to a Git that has already exited, as
+ * one outside any repository does at once, fails with EPIPE, and the error's stack is built for nothing.
+ */
+function endInput(child: GitProcess, input: string | undefined): void {
+  if (input === undefined || input === "") child.stdin.end();
+  else child.stdin.end(input);
 }
 
 /** Trimmed stdout of a successful `git -C <cwd> <args>`, or undefined when it fails. */
