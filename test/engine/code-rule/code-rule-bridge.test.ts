@@ -2276,6 +2276,34 @@ describe("CodeRuleBridge", () => {
       expect(toldPaths(onDiscoveryGaps)).toEqual(["src/z.py"]);
     });
 
+    it(`records at once a file an earlier walk found being deleted, denied now ahead of ${MAX_TOLD_AT_ONCE} files being deleted, when a walk between met no refusal`, async () => {
+      const root = await workspace();
+      const earlier = join(root, "src", "a.py");
+      await writeFile(earlier, "x = 1\n");
+      refuseReads(earlier);
+      discovery.accesses.set(earlier, Array.from({ length: 50 }, () => deletePending(earlier)));
+      const onDiscoveryGaps = vi.fn();
+      const bridge = gapBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
+      await bridge.openWorkspace("session-1");
+      await bridge.checkpoint("turn");
+      // Read again, by its new size: no refusal this walk.
+      discovery.reads.delete(earlier);
+      discovery.accesses.delete(earlier);
+      await writeFile(earlier, "x = 22\n");
+      await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({ failures: [] }));
+      // Denied now, and 100 files whose deletes stay pending sort after it.
+      await writeFile(earlier, "x = 333\n");
+      refuseReads(earlier);
+      const going = Array.from({ length: MAX_TOLD_AT_ONCE }, (_, index) => join(root, "src", `b${String(index).padStart(3, "0")}.py`));
+      for (const file of going) {
+        await writeFile(file, "x = 1\n");
+        refuseReads(file);
+        discovery.accesses.set(file, Array.from({ length: 50 }, () => deletePending(file)));
+      }
+      await bridge.checkpoint("turn");
+      expect(toldPaths(onDiscoveryGaps)).toEqual(["src/a.py"]);
+    });
+
     it("orders a session's looks by its own walks alone: a file an earlier session on the bridge found being deleted, denied now, is recorded at the first turn end", async () => {
       const root = await workspace();
       const earlier = join(root, "src", "a.py");

@@ -1431,13 +1431,18 @@ function sameEntry(before: Stats, now: Stats): boolean {
  * and its failure a gap; any other is no gap (`withdrawn`), and a path examined that is gone is absent from the walk
  * (`absentAfterAll`). One whose delete is pending keeps what the walk held of it until a walk finds it gone, as a read
  * that fails does. The rest are said but not recorded at this walk (`Judged.unconfirmed`). So files whose deletes stay
- * pending fill the looks of one walk, not of every walk: a denial past N of them is recorded by the walk numbered
- * (N + 1) / `MAX_LOOKED_AGAIN` rounded up, the second for 101 of them.
+ * pending fill the looks of one walk, not of every walk: a denial no earlier walk withdrew, past N of them, is recorded
+ * by the walk numbered (N + 1) / `MAX_LOOKED_AGAIN` rounded up, the second for 101 of them. A walk that met no refusal
+ * keeps none of those an earlier walk withdrew (`keepWithdrawn`).
  */
 async function judgeRefusals(walk: SourceWalk): Promise<Judged> {
   const judged: Judged = { withdrawn: new Set(), unconfirmed: new Set() };
   const { refusals } = walk;
-  if (refusals === undefined || walk.discovery.cancelled) return judged;
+  if (walk.discovery.cancelled) return judged;
+  if (refusals === undefined) {
+    walk.withdrawn.clear();
+    return judged;
+  }
   const withdrawnBefore = ({ path }: Refusal): number => Number(walk.withdrawn.has(path));
   refusals.sort((left, right) => withdrawnBefore(left) - withdrawnBefore(right) || compareDeterministicStrings(left.path, right.path));
   for (const { path } of refusals.splice(MAX_LOOKED_AGAIN)) judged.unconfirmed.add(path);
