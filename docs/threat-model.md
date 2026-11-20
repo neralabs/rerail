@@ -318,7 +318,8 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600, le
   let every local user read it, gets a protected ACL granting the person, SYSTEM and Administrators alone, which
   everything written in it inherits; a home an earlier release made gets it at the next daemon launch, and a
   `.rerail\sessions` folder Rerail did not make (Git, a person, Rerail 0.1.4) when the daemon first opens a session
-  there, the records already in it included, each session's folder first (`src/engine/storage/windows-acl.ts`,
+  there, the records already in it included but those of another account sharing the checkout, which keep the ACL
+  they had, each session's folder first (`src/engine/storage/windows-acl.ts`,
   `src/engine/storage/ledger-paths.ts`). A daemon TLS key whose ACL lets anyone else read it, or that has no DACL
   (everyone has full control), is never served with: when this account reads it as a private key, the daemon then
   serves this computer alone, on loopback, on T9's three conditions.
