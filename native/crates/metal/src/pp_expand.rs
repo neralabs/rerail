@@ -467,6 +467,30 @@ impl XCaps {
     }
 }
 
+/// The rooms a unit's runs settled at: P1's, the expansion's and the definitions' rung. They
+/// carry to the unit's next run: a round's unit holds the last round's, so its rooms are a floor
+/// (decision 0478 §6), and the expansion's run starts from the last round's.
+#[derive(Clone, Copy, Debug)]
+pub struct Sizes {
+    pub p1: Caps,
+    pub x: XCaps,
+    pub defs: u32,
+}
+
+impl Sizes {
+    pub fn first(unit: &Unit, lay: &Layout) -> Sizes {
+        let p1 = Caps::first(unit, lay);
+        Sizes { p1, x: XCaps::at(p1.top, 0), defs: 0 }
+    }
+
+    /// These rooms for `unit` (laid out as `lay`), at least its first.
+    pub fn fit(self, unit: &Unit, lay: &Layout) -> Sizes {
+        let (a, b) = (self.p1, Caps::first(unit, lay));
+        let p1 = Caps { nodes: a.nodes.max(b.nodes), dirs: a.dirs.max(b.dirs), gaps: a.gaps.max(b.gaps), top: a.top.max(b.top), rung: a.rung };
+        Sizes { p1, x: self.x.fit(p1.top), defs: self.defs }
+    }
+}
+
 /// What a lookup answers where it is no definition's row (`pp_expand.uglykl`'s `L_*`).
 pub const L_NOT_NAME: u32 = 0xffff_ffff;
 pub const L_NONE: u32 = 0xffff_fffe;
@@ -1213,6 +1237,12 @@ impl Exp {
         unsafe { *self.ctl.host().cast::<u32>().add(2) }
     }
 
+    /// P1's iterations and the text passes the run made (`TRN[11]`, `TRN[10]`).
+    pub fn passes(&self) -> (u32, u32) {
+        // SAFETY: the device finished; `trn` holds 16 words.
+        unsafe { (*self.trn.host().cast::<u32>().add(11), *self.trn.host().cast::<u32>().add(10)) }
+    }
+
     /// The refusals of the directives' lines alone: those before the last text pass (the text's
     /// own are the expansion's to report).
     pub fn line_refusals(&self) -> u32 {
@@ -1258,6 +1288,11 @@ pub struct Expanded {
     /// round ended before the expansion, and `out` is empty.
     pub p1_flags: u32,
     pub requests: Vec<Request>,
+    /// The rooms the run settled at, and its P1 iterations and text passes (measurements).
+    pub caps: Caps,
+    pub xcaps: XCaps,
+    pub passes: (u32, u32),
+    pub def_rung: u32,
 }
 
 /// The arena's stores, as `Expanded::room` lists them.
@@ -1274,8 +1309,17 @@ pub fn expand_from(unit: &Unit, lay: &Layout, rung: u32) -> Result<Expanded, Err
 
 /// `expand_from` on a grid of `groups` groups at first (halved after a failed barrier).
 pub fn expand_at(unit: &Unit, lay: &Layout, rung: u32, groups: u64) -> Result<Expanded, Error> {
-    let (mut def_rung, mut groups, mut p1) = (0, groups, Caps::first(unit, lay));
-    let mut x = XCaps::at(p1.top, rung);
+    let mut sizes = Sizes::first(unit, lay);
+    sizes.x = XCaps::at(sizes.p1.top, rung);
+    expand_sized(unit, lay, &mut sizes, groups)
+}
+
+/// `expand_at` from the rooms `sizes` (a unit's last run's), which it leaves at the rooms this
+/// run settled at. Each room grows a bounded number of times a call.
+pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -> Result<Expanded, Error> {
+    let Sizes { p1, x, defs: def_rung } = *sizes;
+    let (mut def_rung, mut groups, mut p1, mut x) = (def_rung, groups, p1, x);
+    let (mut p1_tries, mut x_tries) = (0, 0);
     // The last run refused for the expansion's room: its answer stands where the next run's
     // room is past the device's (the serial pass takes the unit).
     let mut short: Option<Expanded> = None;
@@ -1310,6 +1354,7 @@ pub fn expand_at(unit: &Unit, lay: &Layout, rung: u32, groups: u64) -> Result<Ex
             groups = fewer(groups)?;
             continue;
         };
+        *sizes = Sizes { p1, x, defs: def_rung };
         // SAFETY: the device finished writing `room`.
         if unsafe { *defs.room.host().cast::<u32>() } != 0 {
             def_rung += 1;
@@ -1320,35 +1365,38 @@ pub fn expand_at(unit: &Unit, lay: &Layout, rung: u32, groups: u64) -> Result<Ex
         }
         // P1 ended the round: room (a rung up), requests (the host's to answer), or a refusal.
         let p1_flags = vis.p1_flags();
-        if p1_flags == P1_ROOM && p1.rung + 1 < P1_RUNGS {
+        if p1_flags == P1_ROOM && p1_tries + 1 < P1_RUNGS {
             vis.log_room(unit, p1);
             p1 = p1.grown(unit, lay, vis.p1_need());
+            p1_tries += 1;
             continue;
         }
         // The lines' room (their tokens are the expansion's stores): what they decided is not to
         // be read, so before the requests and P1's refusals.
         let lines = exp.line_refusals();
-        if lines & X_ROOM != 0 && lines & !X_ROOM == 0 && rung + 1 < EXP_RUNGS {
+        if lines & X_ROOM != 0 && lines & !X_ROOM == 0 && x_tries + 1 < EXP_RUNGS {
             x = x.grown(p1.top, exp.room());
+            x_tries += 1;
             continue;
         }
         let requests = vis.requests();
         if p1_flags != 0 || !requests.is_empty() {
-            return Ok(Expanded { ev: front.read()?, refused: 0, p1_flags, requests, out: Vec::new(), rung, launches, groups, gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room() });
+            return Ok(Expanded { ev: front.read()?, refused: 0, p1_flags, requests, out: Vec::new(), rung, launches, groups, gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), def_rung });
         }
         vis.read()?;
         let (refused, out) = exp.read();
-        if refused & X_ROOM != 0 && refused & !X_ROOM == 0 && rung + 1 < EXP_RUNGS {
+        if refused & X_ROOM != 0 && refused & !X_ROOM == 0 && x_tries + 1 < EXP_RUNGS {
             if std::env::var_os("RERAIL_PP_ARENA_LOG").is_some() {
                 eprintln!("expansion room at rung {rung}: (used, cap) tokens, lists, args, scratch bytes, scratch tokens {:?}; out cap {}", exp.room(), exp.out_cap);
             }
             x = x.grown(p1.top, exp.room());
-            short = Some(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out: Vec::new(), rung, launches, groups, gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room() });
+            x_tries += 1;
+            short = Some(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out: Vec::new(), rung, launches, groups, gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), def_rung });
             continue;
         }
         let (scratch, stoks) = exp.scratch();
         let unit_out = if refused != 0 { Vec::new() } else { exp.unit_out(&vis, lay.units(), out.len()) };
-        return Ok(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room() });
+        return Ok(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), def_rung });
     }
 }
 
@@ -1369,8 +1417,15 @@ fn arena_log(arena: &Arena, l: &Lay, what: std::fmt::Arguments) {
 /// command buffer: each active stretch token's meaning (`L_*`, or the directive row of its
 /// definition), in the layout's order; and P1's answer (`Vis::p1`).
 pub fn lookups(unit: &Unit, lay: &Layout) -> Result<(crate::pp_eval::Evaluated, Vec<u32>, P1Out), Error> {
-    let (mut rung, mut groups, mut p1) = (0, crate::pp_arena::groups(), Caps::first(unit, lay));
-    let mut x = XCaps::at(p1.top, 0);
+    lookups_sized(unit, lay, &mut Sizes::first(unit, lay))
+}
+
+/// `lookups` from the rooms `sizes` (the unit's last round's), which it leaves at the rooms this
+/// run settled at.
+pub fn lookups_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes) -> Result<(crate::pp_eval::Evaluated, Vec<u32>, P1Out), Error> {
+    let Sizes { p1, x, defs: rung } = *sizes;
+    let (mut rung, mut groups, mut p1, mut x) = (rung, crate::pp_arena::groups(), p1, x);
+    let (mut p1_tries, mut x_tries) = (0, 0);
     loop {
         x = x.fit(p1.top);
         let x_rung = x.rung;
@@ -1391,6 +1446,7 @@ pub fn lookups(unit: &Unit, lay: &Layout) -> Result<(crate::pp_eval::Evaluated, 
             groups = fewer(groups)?;
             continue;
         }
+        *sizes = Sizes { p1, x, defs: rung };
         // SAFETY: the device finished writing `room`.
         if unsafe { *defs.room.host().cast::<u32>() } != 0 {
             rung += 1;
@@ -1401,14 +1457,16 @@ pub fn lookups(unit: &Unit, lay: &Layout) -> Result<(crate::pp_eval::Evaluated, 
         }
         let mut out = vis.p1();
         out.flags = vis.p1_flags();
-        if out.flags == P1_ROOM && p1.rung + 1 < P1_RUNGS {
+        if out.flags == P1_ROOM && p1_tries + 1 < P1_RUNGS {
             vis.log_room(unit, p1);
             p1 = p1.grown(unit, lay, vis.p1_need());
+            p1_tries += 1;
             continue;
         }
         out.refused = exp.line_refusals();
-        if out.refused & X_ROOM != 0 && out.refused & !X_ROOM == 0 && x_rung + 1 < EXP_RUNGS {
+        if out.refused & X_ROOM != 0 && out.refused & !X_ROOM == 0 && x_tries + 1 < EXP_RUNGS {
             x = x.grown(p1.top, exp.room());
+            x_tries += 1;
             continue;
         }
         out.requests = vis.requests();
@@ -1457,11 +1515,22 @@ pub fn relex(texts: &[Vec<u8>], options: u32) -> Result<Vec<u32>, Error> {
 /// `last` (`TO_FRONT`, `TO_DEFS`, `TO_VIS`; `TO_ALL` with the expansion; `TO_ALL + 1` the whole
 /// setup without it), in seconds; `None` where a barrier failed.
 pub fn stage_seconds(unit: &Unit, lay: &Layout, last: u32, stop: u32, groups: u64) -> Result<Option<f64>, Error> {
+    let caps = Caps::first(unit, lay);
+    stage_run(unit, lay, (last, stop, 0), groups, (caps, XCaps::at(caps.top, 0), 0))
+}
+
+/// `stage_seconds` at the rooms the run `x` settled at, with P1's iterations bounded by `iters`
+/// (`P1_ITERS` where 0).
+pub fn stage_seconds_as(unit: &Unit, lay: &Layout, last: u32, stop: u32, iters: u32, x: &Expanded) -> Result<Option<f64>, Error> {
+    stage_run(unit, lay, (last, stop, iters), x.groups, (x.caps, x.xcaps, x.def_rung))
+}
+
+fn stage_run(unit: &Unit, lay: &Layout, (last, stop, iters): (u32, u32, u32), groups: u64, (caps, xcaps, def_rung): (Caps, XCaps, u32)) -> Result<Option<f64>, Error> {
     let arena = Arena::new();
     let front = Front::new(&arena, unit, false, groups)?;
-    let defs = Defs::new(&arena, unit, 0)?;
-    let vis = Vis::new(&arena, unit, lay, Caps::first(unit, lay), 0)?;
-    let exp = Exp::new(&arena, unit, lay, XCaps::at(Caps::first(unit, lay).top, 0), Caps::first(unit, lay))?;
+    let defs = Defs::new(&arena, unit, def_rung)?;
+    let vis = Vis::new(&arena, unit, lay, caps, xcaps.rung)?;
+    let exp = Exp::new(&arena, unit, lay, xcaps, caps)?;
     arena.lease()?;
     let mut l = Lay::new();
     front.lay(&mut l, last);
@@ -1469,6 +1538,9 @@ pub fn stage_seconds(unit: &Unit, lay: &Layout, last: u32, stop: u32, groups: u6
     vis.lay(&mut l);
     exp.lay(&mut l);
     l.word("STOP", stop);
+    if iters != 0 {
+        l.word("P1_ITERS", iters);
+    }
     Ok(on_grid(&arena, unit, &front, &l, groups)?.map(|(_, s)| s))
 }
 
@@ -1486,13 +1558,13 @@ pub struct Part {
 /// split in halves where its documents are in more than one slab (a batch reads one, and
 /// gathering would copy them), where the budget refuses its arena, or where the device refuses
 /// it: a refusal is then a unit's alone.
-pub fn expand_many(units: &[(&Unit, &Layout)]) -> Result<Vec<Part>, Error> {
+pub fn expand_many(units: &[(&Unit, &Layout, Sizes)]) -> Result<Vec<Part>, Error> {
     let mut parts = Vec::with_capacity(units.len());
     many(units, &mut parts)?;
     Ok(parts)
 }
 
-fn many(units: &[(&Unit, &Layout)], parts: &mut Vec<Part>) -> Result<(), Error> {
+fn many(units: &[(&Unit, &Layout, Sizes)], parts: &mut Vec<Part>) -> Result<(), Error> {
     let split = |parts: &mut Vec<Part>| -> Result<(), Error> {
         let (a, b) = units.split_at(units.len() / 2);
         many(a, parts)?;
@@ -1500,8 +1572,8 @@ fn many(units: &[(&Unit, &Layout)], parts: &mut Vec<Part>) -> Result<(), Error> 
     };
     match units {
         [] => Ok(()),
-        [(unit, lay)] => {
-            let mut x = expand(unit, lay)?;
+        [(unit, lay, sizes)] => {
+            let mut x = expand_sized(unit, lay, &mut sizes.fit(unit, lay), crate::pp_arena::groups())?;
             // A unit its rounds settled that the device's run does not: its answer is not the
             // unit's (the serial pass takes it).
             if x.p1_flags != 0 || !x.requests.is_empty() {
@@ -1513,8 +1585,8 @@ fn many(units: &[(&Unit, &Layout)], parts: &mut Vec<Part>) -> Result<(), Error> 
             Ok(())
         }
         _ => {
-            let Some(batch) = Unit::batch(&units.iter().map(|(u, _)| *u).collect::<Vec<_>>()) else { return split(parts) };
-            let joined: Vec<(&Layout, usize)> = units.iter().map(|(u, l)| (*l, u.len())).collect();
+            let Some(batch) = Unit::batch(&units.iter().map(|(u, _, _)| *u).collect::<Vec<_>>()) else { return split(parts) };
+            let joined: Vec<(&Layout, usize)> = units.iter().map(|(u, l, _)| (*l, u.len())).collect();
             let Some(lay) = Layout::join(&joined) else { return split(parts) };
             let x = match expand(&batch, &lay) {
                 Ok(x) if x.refused == 0 && x.p1_flags == 0 && x.requests.is_empty() => std::rc::Rc::new(x),
@@ -1522,7 +1594,7 @@ fn many(units: &[(&Unit, &Layout)], parts: &mut Vec<Part>) -> Result<(), Error> 
                 Err(e) => return Err(e),
             };
             let mut file = 0;
-            for (k, (unit, _)) in units.iter().enumerate() {
+            for (k, (unit, _, _)) in units.iter().enumerate() {
                 let out = x.unit_out[k] as usize..x.unit_out[k + 1] as usize;
                 parts.push(Part { x: std::rc::Rc::clone(&x), files: file..file + unit.len(), out });
                 file += unit.len();

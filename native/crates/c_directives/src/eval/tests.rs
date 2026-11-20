@@ -294,6 +294,8 @@ struct OnDevice {
     files: Vec<Vec<u8>>,
     paths: Vec<String>,
     rounds: u32,
+    /// The rooms the last round settled at.
+    sizes: rerail_metal::pp_expand::Sizes,
 }
 
 /// The unit whose main file is `path` on the device, in rounds, and the spike's P1 of it (the
@@ -309,7 +311,15 @@ fn unit_of(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, pat
 fn on_device(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, path: &str, cpp: bool) -> Result<OnDevice, &'static str> {
     use super::rounds::Refused;
     use rerail_metal::pp_expand::*;
-    let r = super::rounds::run(&cfg, io, path, cpp, |u, l| lookups(u, l).map(|(_, _, o)| (o.requests, o.flags, o.refused))).map_err(|e| match e {
+    // The rooms carry from round to round (decision 0478 §6), and on to the expansion's run.
+    let mut sizes: Option<Sizes> = None;
+    let r = super::rounds::run(&cfg, io, path, cpp, |u, l| {
+        let mut s = sizes.map_or_else(|| Sizes::first(u, l), |s| s.fit(u, l));
+        let r = lookups_sized(u, l, &mut s).map(|(_, _, o)| (o.requests, o.flags, o.refused));
+        sizes = Some(s);
+        r
+    })
+    .map_err(|e| match e {
         Refused::NoMain => "the main file is not read",
         Refused::P1(f) if f & P1_IF_DEFINED != 0 => "defined made by a macro in an #if",
         Refused::P1(f) if f & P1_IF_BIG != 0 => "an #if past the evaluator's room",
@@ -332,7 +342,8 @@ fn on_device(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, p
         return Err("an #if's expansion");
     }
     let tapes = r.loaded.files.iter().map(|s| image(s, crate::pp::options(cpp))).collect();
-    Ok(OnDevice { unit: r.unit, lay: r.lay, tapes, files: r.loaded.files, paths: r.loaded.paths, rounds: r.rounds })
+    let sizes = sizes.map_or_else(|| Sizes::first(&r.unit, &r.lay), |s| s.fit(&r.unit, &r.lay));
+    Ok(OnDevice { unit: r.unit, lay: r.lay, tapes, files: r.loaded.files, paths: r.loaded.paths, rounds: r.rounds, sizes })
 }
 
 /// One unit of R4: its main file read by the spike's P1, then its layout's lookups on the device
@@ -762,7 +773,11 @@ fn expanded_in(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str, 
     let mut io = Search::new(dirs, move |p: &str| m.get(p).cloned());
     let d = on_device(cfg, &mut io, "main.c", cpp).unwrap();
     let (unit, lay, tapes) = (&d.unit, &d.lay, &d.tapes);
-    let x = rerail_metal::pp_expand::expand_from(unit, lay, rung).unwrap();
+    let x = if rung == 0 {
+        rerail_metal::pp_expand::expand_sized(unit, lay, &mut d.sizes.fit(unit, lay), rerail_metal::pp_arena::groups()).unwrap()
+    } else {
+        rerail_metal::pp_expand::expand_from(unit, lay, rung).unwrap()
+    };
     if x.refused != 0 {
         return (Err(x.refused), serial.0, x.rung, x.launches);
     }
@@ -967,7 +982,7 @@ fn a_batch_is_its_units() {
         let d = on_device(cfg, &mut io, "main.c", false).unwrap();
         entries.push((serial.0, d));
     }
-    let units: Vec<_> = entries.iter().map(|e| (&e.1.unit, &e.1.lay)).collect();
+    let units: Vec<_> = entries.iter().map(|e| (&e.1.unit, &e.1.lay, e.1.sizes)).collect();
     let parts = rerail_metal::pp_expand::expand_many(&units).unwrap();
     let mut alone = Vec::new();
     for (k, ((serial, d), part)) in entries.iter().zip(&parts).enumerate() {
@@ -1139,11 +1154,11 @@ fn corpus_root() -> std::path::PathBuf {
 
 /// A batch's GPU time by stage and by phase, as `where_an_evaluations_gpu_time_goes` gives a
 /// unit's: each the best of 5, at 32 groups.
-fn batch_stages(units: &[(&rerail_metal::pp_eval::Unit, &rerail_metal::pp_expand::Layout)]) {
+fn batch_stages(units: &[(&rerail_metal::pp_eval::Unit, &rerail_metal::pp_expand::Layout, rerail_metal::pp_expand::Sizes)]) {
     use rerail_metal::pp_eval::{TO_ALL, TO_DEFS, TO_FRONT, TO_VIS, Unit};
     use rerail_metal::pp_expand::{Layout, stage_seconds};
-    let Some(unit) = Unit::batch(&units.iter().map(|(u, _)| *u).collect::<Vec<_>>()) else { return eprintln!("no batch: slabs differ") };
-    let joined: Vec<(&Layout, usize)> = units.iter().map(|(u, l)| (*l, u.len())).collect();
+    let Some(unit) = Unit::batch(&units.iter().map(|(u, _, _)| *u).collect::<Vec<_>>()) else { return eprintln!("no batch: slabs differ") };
+    let joined: Vec<(&Layout, usize)> = units.iter().map(|(u, l, _)| (*l, u.len())).collect();
     let lay = Layout::join(&joined).unwrap();
     let best = |f: &dyn Fn() -> f64| (0..5).map(|_| f()).fold(f64::MAX, f64::min) * 1e6;
     let t: Vec<String> = [("front", TO_FRONT), ("defs", TO_DEFS), ("vis", TO_VIS), ("setup", TO_ALL + 1), ("all", TO_ALL)]
@@ -1276,7 +1291,31 @@ fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_p
             rounds = rounds.max(d.rounds);
             entries.push(Entry { path, serial: serial.0, d });
         }
-        let units: Vec<_> = entries.iter().map(|e| (&e.d.unit, &e.d.lay)).collect();
+        let units: Vec<_> = entries.iter().map(|e| (&e.d.unit, &e.d.lay, e.d.sizes)).collect();
+        // `RERAIL_PP_PROFILE`: each unit alone at the rooms its run settled at: its GPU time to
+        // the front's end, the definitions', and the whole setup (best of 3, ms); P1's
+        // iterations and text passes; its rooms.
+        if std::env::var_os("RERAIL_PP_PROFILE").is_some() {
+            use rerail_metal::pp_eval::{TO_ALL, TO_DEFS, TO_FRONT};
+            use rerail_metal::pp_expand::{expand_sized, stage_seconds_as};
+            for (e, (unit, lay, sizes)) in entries.iter().zip(&units) {
+                let Ok(x) = expand_sized(unit, lay, &mut sizes.fit(unit, lay), rerail_metal::pp_arena::groups()) else { continue };
+                let at = |last: u32, iters: u32| (0..3).map(|_| stage_seconds_as(unit, lay, last, 0, iters, &x).ok().flatten().unwrap_or(f64::NAN)).fold(f64::MAX, f64::min) * 1e3;
+                let best = |last: u32| at(last, 0);
+                let name = e.path.rsplit('/').next().unwrap_or(&e.path);
+                eprintln!(
+                    "PROFILE {name}: front {:.1} defs {:.1} setup {:.1} ms (run {:.1}); rounds {}, iterations {}, text passes {}; files {}, nodes {}, dirs {}, top {}, tokens {}/{}, out {}",
+                    best(TO_FRONT), best(TO_DEFS), best(TO_ALL + 1), x.gpu_seconds * 1e3, e.d.rounds, x.passes.0, x.passes.1, unit.len(), x.caps.nodes, x.caps.dirs, x.caps.top, x.room[0].0, x.room[0].1, x.out.len()
+                );
+                // The setup bounded at k of P1's iterations: each one's cost (the last with the text).
+                if std::env::var_os("RERAIL_PP_PROFILE_ITERS").is_some() {
+                    let t: Vec<f64> = (1..=x.passes.0).map(|k| at(TO_ALL + 1, k)).collect();
+                    let steps: Vec<String> = t.iter().scan(at(TO_DEFS, 0), |prev, &v| { let d = v - *prev; *prev = v; Some(format!("{d:.1}")) }).collect();
+                    eprintln!("  iterations' ms: {}", steps.join(" "));
+                }
+                eprintln!("  rooms (used/cap): {}", rerail_metal::pp_expand::ROOM_STORES.iter().zip(x.room).map(|(n, (u, c))| format!("{n} {u}/{c}")).collect::<Vec<_>>().join(", "));
+            }
+        }
         // `RERAIL_PP_STAGES`: where a batch's GPU time goes (its first `RERAIL_PP_STAGES` units).
         if let Some(k) = std::env::var("RERAIL_PP_STAGES").ok().and_then(|k| k.parse::<usize>().ok()) {
             batch_stages(&units[..k.min(units.len())]);

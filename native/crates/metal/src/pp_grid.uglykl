@@ -507,7 +507,8 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
         PX_RESET();
         // The facts this pass writes start empty; the last pass's key stays to compare.
         // The refusals so far are the lines' (the rounds read them; the text's are the expansion's).
-        ONE(x) { UKL_GLOBAL uint32_t* n_ = AT(uint32_t, TRN); n_[0] = 0u; n_[1] = 0u; n_[4] = 0u; n_[5] = 0u; n_[8] = 0u; n_[9] = AT(const uint32_t, CTL)[2]; }
+        // [10] counts the text passes (for measurements).
+        ONE(x) { UKL_GLOBAL uint32_t* n_ = AT(uint32_t, TRN); n_[0] = 0u; n_[1] = 0u; n_[4] = 0u; n_[5] = 0u; n_[8] = 0u; n_[9] = AT(const uint32_t, CTL)[2]; n_[10] += 1u; }
         uint32_t nt = N(GTOTAL);
         EACH(s, nt) px_top_parens(files, data, AT(const uint32_t, BASES), AT(const uint32_t, TEXT_NODES), AT(const uint32_t, GAT), AT(const uint32_t, N_GAPS), AT(const uint32_t, GFIRSTS), AT(const uint32_t, GTOTAL), TEXT_SCOPE, AT(uint32_t, THEADS), AT(uint32_t, DELTA), AT(uint32_t, CLOSE), nf, s);
         BARRIER();
@@ -550,6 +551,8 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
     }
     if (iter == W(P1_ITERS)) ONE(x) ukl_atomic_or(AT(uint32_t, P1_FLAGS), P1_ITERATIONS);
     if (!text_done) ONE(x) AT(uint32_t, TRN)[9] = AT(const uint32_t, CTL)[2];
+    // P1's iterations run (for measurements).
+    ONE(x) AT(uint32_t, TRN)[11] = iter + (text_done ? 1u : 0u);
     TICK();
     // Requests or a refusal: the round ends here, before the expansion (§1).
     if (N(P1_FLAGS) != 0u || N(P1_NREQ) != 0u || !text_done) {

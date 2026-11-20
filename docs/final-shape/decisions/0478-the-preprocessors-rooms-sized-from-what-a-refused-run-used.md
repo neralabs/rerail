@@ -50,6 +50,13 @@ On Boost.Preprocessor's tests that does not work:
    unit whose expansion run still ends with requests or refusals the rounds had settled is
    refused by name (`X_UNSETTLED`), never returned as output.
 
+6. **The rooms carry from run to run.** A unit's runs settle at rooms (`Sizes`: P1's, the
+   expansion's, the definitions' rung). A round's unit holds the last round's, so the next round
+   starts from them (at least its own first rooms), and the expansion's run starts from the last
+   round's. Each call bounds its own grows (`P1_RUNGS`, `EXP_RUNGS` tries), not the sizes' level.
+   Before, every round climbed the definitions' rungs and P1's rooms again from the first: 3
+   Boost `control` units took 82 runs for their rounds and 9 for their expansions; now 41 and 6.
+
 ## Requirements (each a test)
 
 | # | Requirement | Test |
@@ -75,5 +82,12 @@ Boost.Preprocessor's 64 test files (C as C, the rest as C++), each its own unit:
   every level's copy: 5 million tokens for `array.c`, more than the device's room. The serial pass
   frees each level as it goes. The fix is a design of its own: reclaim a list's tokens once its
   parent holds them.
-- The rounds and the expansion's run each climb the same rooms from the first size. The
-  expansion's run could start from the last round's sizes.
+- **The last round's run is done twice.** Since 0475 the last round's run does the text pass
+  inside P1's iterations: it is the expansion. The expansion's run (`expand_many`, a batch of
+  units) does it all again. A batch's rounds run unit by unit, and the batch's run repeats them.
+  The rounds should be the batch's: one run a round over the batch's units still requesting, a
+  unit's answer from the run it settled in.
+- **The text pass on Boost is dependency-bound.** `control.c`: P1's 23 iterations cost about 1 ms
+  each; the text pass about 264 ms, for 106k queue items over 48k lists (240k tokens through an
+  output of 240). `BOOST_PP_WHILE`'s levels are a chain of rescans, each waiting on the one
+  before.
