@@ -14,7 +14,7 @@ import { commandLine } from "../../src/engine/index.js";
 import { CONFIRM_PACKS_ANSWERS, NO_REPO_ANSWERS, READ_REPO_ANSWERS } from "../../src/harness/index.js";
 import type { SetupQuestion, SetupStep } from "../../src/harness/index.js";
 import { ManagedUpdater, type PackStore } from "../../src/setup/index.js";
-import { directoryPackStore, repositoryPackVersions } from "../support/directory-pack-store.js";
+import { directoryPackStore, REPOSITORY_CORE_VERSION, repositoryPackVersions } from "../support/directory-pack-store.js";
 import { removeInstalledPacks } from "../support/installed-packs.js";
 import { fakeSetupEnvironment, type FakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { attachedPacks } from "../support/attached-packs.js";
@@ -240,7 +240,7 @@ describe("rerail start --json", { timeout: SETUP_TIMEOUT_MS }, () => {
     const setup = await fixture();
     const home = join(setup.root, "home");
     const packageRoot = join(setup.root, "package");
-    const context = { home, packageRoot, updater: new ManagedUpdater({ home, packageRoot, packageVersion: "0.1.9" }) };
+    const context = { home, packageRoot, updater: new ManagedUpdater({ home, packageRoot, packageVersion: REPOSITORY_CORE_VERSION }) };
     const place = { cwd: setup.repo, databasePath: setup.databasePath, environment: () => fakeSetupEnvironment() };
     const step = await runSetupStepArgs(["start", "--relay", "--json"], context, place);
     expect(step.step).toBe("read-repo");
@@ -275,7 +275,7 @@ describe("rerail setup, the command", { timeout: SETUP_TIMEOUT_MS }, () => {
     const home = join(setup.root, "home");
     const packageRoot = join(setup.root, "package");
     mkdirSync(join(packageRoot, "dist"), { recursive: true });
-    writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "0.1.9" }));
+    writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: REPOSITORY_CORE_VERSION }));
     // The one approval set-up asks for first; the tests of the later questions start past it.
     if (approved) {
       mkdirSync(home, { recursive: true });
@@ -286,7 +286,7 @@ describe("rerail setup, the command", { timeout: SETUP_TIMEOUT_MS }, () => {
     vi.spyOn(process, "cwd").mockReturnValue(setup.repo);
     const said: string[] = [];
     const io: SetupIo = { lane: "agent", say: text => { said.push(text); }, close: () => {} };
-    return { setup, context: { home, packageRoot, updater: new ManagedUpdater({ home, packageRoot, packageVersion: "0.1.9" }), packs: directoryPackStore(undefined, ["typescript"]) }, said, io };
+    return { setup, context: { home, packageRoot, updater: new ManagedUpdater({ home, packageRoot, packageVersion: REPOSITORY_CORE_VERSION }), packs: directoryPackStore(undefined, ["typescript"]) }, said, io };
   }
 
   it("asks once whether Rerail may read sessions, connects nothing on no, and remembers yes", async () => {
