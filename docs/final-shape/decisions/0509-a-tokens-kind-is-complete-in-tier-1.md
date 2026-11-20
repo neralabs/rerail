@@ -55,7 +55,7 @@ Tier 1 gives each token its row's kind, so the kind alone tells tier 2 which tok
 - **One string token.** The lean lexer gives a string as one `Str` token, and its parser reads the
   pieces. Ours gives each piece a record (0323's lowering A). The pieces' kinds are now complete,
   so that is a choice of granularity, not a test tier 2 makes.
-- **The `0` byte's two classes.** `INTEGER_LITERAL` and `INTEGER_LITERAL_12` are one kind in the
+- **The `0` byte's two classes.** `INTEGER_LITERAL` and `INTEGER_LITERAL_8` are one kind in the
   grammar, but two classes of first byte: the token marks' columns split them (decision 0129).
 - **The JIT's own-kind read** is a call for a token at a first byte the mask may hold at (a `.`,
   a `0`): the lean lexer's number arm knows from the bytes it read. Next: the row's end rule gives
