@@ -1069,20 +1069,19 @@ fn the_walk_follows_no_junction() {
     write_file(&root, "app/page.tsx", "export default 1;\n");
     write_file(&root, "lib/a.ts", "");
     write_file(&outside, "b.ts", "");
-    for (link, target) in [
-        ("app/lib", root.join("lib")),
-        ("app/outside", outside.clone()),
-    ] {
+    // Each link is named with the system's separator: `mklink` reads a `/` as one of its switches.
+    for (link, target) in [("lib", root.join("lib")), ("outside", outside.clone())] {
         let made = std::process::Command::new("cmd")
             .args(["/C", "mklink", "/J"])
-            .arg(root.join(link))
+            .arg(root.join("app").join(link))
             .arg(target)
             .output()
             .unwrap();
         assert!(
             made.status.success(),
-            "mklink /J {link}: {}",
-            String::from_utf8_lossy(&made.stdout)
+            "mklink /J app\\{link}: {}{}",
+            String::from_utf8_lossy(&made.stdout),
+            String::from_utf8_lossy(&made.stderr)
         );
     }
     let mut sources = Vec::new();
