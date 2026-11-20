@@ -39,3 +39,8 @@ row can hold a string that is no atom. A text that nothing reads gets no atom an
 - The findings JSON is built two pieces at a time (`rr/lower/findings.rs`), and each partial string was an atom.
   Closed by decision 0228: a text read only as text is held in the branch's scratch, as the device holds one in its
   arena, so no n-ary form was needed.
+- A negated read (`!text(v, "self")`) narrows and demands as a positive one does. It once demanded nothing: a policy
+  whose only read of some nodes' text was negated made no row for them, and the negation held of every one, `self`
+  included; beside a policy that read those texts, it found what it should. A negation of a constant within the bound
+  needs no text past the bound (a longer text is not that constant); one that is not, of a node nothing narrows, makes
+  every node's text at any length, since no twin (0109) stands in for a negation.

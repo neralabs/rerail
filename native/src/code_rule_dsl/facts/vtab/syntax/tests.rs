@@ -1200,7 +1200,8 @@ fn cpu_now() -> f64 {
 
 /// A rule reading the text of a node whose kind no body fixes gets a twin reading `@rr_node_text` (decision 0109);
 /// a fixed kind, a field of leaves only, a short constant, and the twin itself need none. With the twin, no rule
-/// asks for every node's text at any length.
+/// asks for every node's text at any length. A negation gets no twin: of a short constant it needs no longer text,
+/// and otherwise every node's text is made at any length.
 #[test]
 fn long_text_twins_where_no_body_fixes_the_kind() {
     let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
@@ -1215,6 +1216,15 @@ fn long_text_twins_where_no_body_fixes_the_kind() {
         assert_eq!(long_text_twins(&mut program, &[]), twins, "{body}");
         assert!(text_kind_demand(&program, &[]).any.is_empty(), "{body}: every text is read");
         assert_eq!(long_text_twins(&mut program, &[]), 0, "{body}: twinned once");
+    }
+    for (body, negated_any) in [
+        ("out(\"doc\") :- node(_, n, _, _, _), !text(n, \"doc\").", 0),
+        ("out(t) :- node(_, n, _, _, _), field(n, \"attribute\", c), text(c, t), !text(n, t).", 1),
+    ] {
+        let mut program = crate::code_rule_dsl::logic::rr::parse(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
+        assert_eq!(long_text_twins(&mut program, &[]), 0, "{body}: no twin");
+        let demand = text_kind_demand(&program, &[]);
+        assert_eq!((demand.any.len(), demand.negated_any), (0, negated_any), "{body}");
     }
 }
 
@@ -1276,6 +1286,27 @@ fn a_derived_base_name_narrows_no_text() {
     // `node`'s projection alone (the lowering's, `rr::lower` `projections`) is `kind` itself: it narrows.
     let program = crate::code_rule_dsl::logic::rr::parse(&format!("{decls}kind(n, k) :- node(_, n, k, _, _).\nout(t) :- kind(n, \"call\"), text(n, t).\n")).unwrap();
     assert_eq!(text_kind_demand(&program, &[]).read, Some(TextNodes { kinds: BTreeSet::from(["call".to_owned()]), ..TextNodes::default() }));
+}
+
+/// A negated `text` read demands the rows it tests, as a positive one does: a policy whose only read of a node's text
+/// is `!text(v, "self")` finds the same alone as beside a policy that reads those nodes' text. Alone, no identifier's
+/// text was made, and the negation held of `self` too.
+#[test]
+fn a_negated_text_read_finds_the_same_alone_and_beside_a_reader() {
+    let dir = tempfile::tempdir().unwrap();
+    let at = |name: &str| dir.path().join(name);
+    std::fs::create_dir_all(at("root")).unwrap();
+    std::fs::write(at("root/a.py"), "self.x: int\nother.y: int\n").unwrap();
+    let policy = |id: &str, rule: &str| format!(".policy \"t:{id}\" revision 1\n.language python\n.mode steer\n.scope include \"**/*\"\n{rule}\n");
+    std::fs::write(at("negated.rerail"), policy("negated", ".violation Odd(at: node) code \"odd\" \"an attribute of a name other than self\"\nOdd(t) :- kind(t, \"attribute\"), field(t, \"object\", v), kind(v, \"identifier\"), !text(v, \"self\").")).unwrap();
+    std::fs::write(at("reader.rerail"), policy("reader", ".violation Named(at: node) code \"named\" \"a name\"\nNamed(v) :- kind(v, \"identifier\"), text(v, \"nothing\").")).unwrap();
+    let lines = |policies: &[&str], out: &str| -> Vec<i64> {
+        let paths: Vec<PathBuf> = policies.iter().map(|p| at(p)).collect();
+        let report = crate::code_rule_dsl::tools::run_policies(&paths, &at("root"), &at(out), &serde_json::Value::Null).unwrap();
+        report["diagnostics"].as_array().unwrap().iter().filter(|d| d["code"] == "odd").map(|d| d["line"].as_i64().unwrap()).collect()
+    };
+    assert_eq!(lines(&["negated.rerail"], "alone"), [2], "alone");
+    assert_eq!(lines(&["negated.rerail", "reader.rerail"], "beside"), [2], "beside a reader");
 }
 
 /// `node_text` (a node's exact text, at any length) is answered on request (decision 0174): each reader asks for the
