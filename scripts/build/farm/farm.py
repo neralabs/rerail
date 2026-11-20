@@ -23,7 +23,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 45
+VERSION = 46
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -1370,6 +1370,9 @@ def usable(kind=None):
     out = []
     for host in hosts():
         if not host.get("enabled", True) or (kind and not host.get(kind, True)):
+            continue
+        # `by_name`: a host only a command naming it takes (`--host`; a billed cloud GPU, say).
+        if host.get("by_name"):
             continue
         if health(host).get("ok"):
             out.append(host)

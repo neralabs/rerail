@@ -90,6 +90,8 @@ def update(name, **values):
 def placement(g):
     """The machine a guest runs on, as the dashboard names it: this Mac, or a farm host (for WSL,
     the Windows host whose `windows_ssh` is the guest's `on`); None when it has no entry."""
+    if g.get("kind") == "gce":
+        return "Google Cloud"
     if g["on"] == "local":
         return "this Mac"
     if farm.entry(g["on"]):
@@ -268,7 +270,41 @@ class Wsl:
         return on_parent(self.g, f"wsl.exe --terminate {self.vm}; wsl.exe --shutdown", 120)
 
 
-KINDS = {"lima": Lima, "orb": Orb, "parallels": Parallels, "wsl": Wsl}
+class Gce:
+    """A Google Compute Engine VM (a GPU one: billed while it runs), through this Mac's `gcloud`
+    (`project`, `zone`, `vm` in its `guest`). Its size is its machine type's, fixed: nothing to
+    size. Reached by ssh through Google's IAP tunnel (a ProxyCommand in ~/.ssh/config), so it needs
+    no external address. gcloud's sign-in expires: then its state is unknown, and `gcloud auth
+    login` (by the user) brings it back."""
+    FIXED = True
+    GCLOUD = "PATH=/opt/homebrew/bin:/usr/local/bin:$PATH; gcloud --quiet --verbosity=error "
+    STATES = {"RUNNING": "running", "TERMINATED": "stopped", "STOPPED": "stopped", "SUSPENDED": "stopped",
+              "PROVISIONING": "starting", "STAGING": "starting", "STOPPING": "stopping", "SUSPENDING": "stopping"}
+
+    def __init__(self, g):
+        self.g, self.vm = g, g["vm"]
+        self.where = f" --zone={shlex.quote(g['zone'])} --project={shlex.quote(g['project'])}"
+
+    def state(self):
+        out = on_parent(self.g, self.GCLOUD + f"compute instances describe {shlex.quote(self.vm)}{self.where} --format='value(status)'", 60)
+        if out is None or out.returncode != 0:
+            return None
+        return self.STATES.get(out.stdout.strip(), "stopped")
+
+    def machine(self):
+        return 0, 0, self.g.get("cpus", 0)
+
+    def size(self, cpus, gb):
+        return None
+
+    def start(self):
+        return on_parent(self.g, self.GCLOUD + f"compute instances start {shlex.quote(self.vm)}{self.where}", START_SECONDS)
+
+    def stop(self):
+        return on_parent(self.g, self.GCLOUD + f"compute instances stop {shlex.quote(self.vm)}{self.where}", 300)
+
+
+KINDS = {"lima": Lima, "orb": Orb, "parallels": Parallels, "wsl": Wsl, "gce": Gce}
 
 
 def kind(g):
@@ -370,12 +406,13 @@ def start(name, why="a command needs it"):
         if machine is None:
             update(base["name"], state="stopped", why="its machine did not answer", failed_at=time.time())
             return "its machine did not answer"
-        cpus, gb = size(g, machine)
-        if cpus is None:
+        cpus, gb = (g.get("cpus"), g.get("memory_gb")) if getattr(k, "FIXED", False) else size(g, machine)
+        if cpus is None and not getattr(k, "FIXED", False):
             update(base["name"], state="stopped", why=gb, failed_at=time.time())
             return gb
         started = time.time()
-        update(base["name"], state="starting", cpus=cpus, memory_gb=gb, since=started, why=why,
+        # `ours`: the farm started it, so the watcher may stop it (one started by hand is left alone).
+        update(base["name"], state="starting", cpus=cpus, memory_gb=gb, since=started, why=why, ours=True,
                machine_gb=round(machine[0] / GB, 1), checked=started)
         k.size(cpus, gb)
         out = k.start()
@@ -442,7 +479,7 @@ def stop(name, why):
         # first connections back.
         for h in [base] + [h for h in farm.hosts() if h.get("shares") == base["name"]]:
             farm.close_masters(h["name"])
-        update(base["name"], state="stopped", since=time.time(), why=why, checked=time.time())
+        update(base["name"], state="stopped", since=time.time(), why=why, checked=time.time(), ours=None)
         log(f"{base['name']}: guest stopped ({why})")
     finally:
         for h in held:
@@ -473,7 +510,10 @@ def watch_once():
                 update(name, checked=now)
             continue
         if r.get("state") != "running":
-            r = update(name, state="running", since=now, last_busy=now, why=None)
+            # Up without the farm's start (by hand, or another tool's): not the farm's to stop.
+            ours = r.get("state") == "starting" and r.get("ours") is not False
+            r = update(name, state="running", since=now, last_busy=now, why=None if ours else "started outside the farm: left to whoever did",
+                       ours=ours)
         held = take_all(base)
         busy = held is None
         for h in held or []:
@@ -482,7 +522,9 @@ def watch_once():
         idle = now - last
         limit = 60 * g.get("idle_minutes", IDLE_MINUTES)
         update(name, last_busy=last, busy=busy, checked=now, reachable=True, stop_at=None if busy else last + limit)
-        if not busy and idle >= limit:
+        if r.get("ours") is False:
+            update(name, stop_at=None)
+        elif not busy and idle >= limit:
             stop(name, f"idle {round(idle / 60)} min")
 
 

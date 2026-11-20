@@ -41,7 +41,8 @@ if [ $# -gt 0 ]; then install -m 0755 "$1" "$share/bin/sccache.tmp" && mv "$shar
 toolchain=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$here/../../../rust-toolchain.toml")
 # A Windows host's toolchain is Windows' own (README, "Windows hosts"), and a host that takes no
 # jobs (no tests, no mirror: a Windows VM's WSL1, there for its Windows side) needs none.
-python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import farm; [print(h["name"], "windows" if farm.host_os(h) == "windows" else "idle" if not h.get("tests", True) and not h.get("mirror", True) else "") for h in farm.hosts() if h.get("enabled", True)]' "$here" |
+# A stopped guest is not started for this (a cloud one bills): its toolchain is checked when it runs.
+python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import farm, guest; [print(h["name"], "stopped" if guest.spec(h)[1] and guest.record(guest.spec(h)[0]["name"]).get("state") != "running" else "windows" if farm.host_os(h) == "windows" else "idle" if not h.get("tests", True) and not h.get("mirror", True) else "") for h in farm.hosts() if h.get("enabled", True)]' "$here" |
 while read -r host kind; do
   if [ "$kind" = windows ]; then
     ssh -o BatchMode=yes -o ConnectTimeout=3 "$host" "/mnt/c/Windows/System32/cmd.exe /d /c 'cd /d C:\\ && %USERPROFILE%\\.cargo\\bin\\rustup.exe toolchain list' 2>/dev/null" </dev/null | grep -q "^$toolchain" \
@@ -49,6 +50,7 @@ while read -r host kind; do
     continue
   fi
   [ "$kind" = idle ] && { echo "$host: takes no jobs"; continue; }
+  [ "$kind" = stopped ] && { echo "$host: a guest, stopped: not checked"; continue; }
   if ssh -o BatchMode=yes -o ConnectTimeout=3 "$host" "{ ~/.cargo/bin/rustup toolchain list | grep -q '^$toolchain' || ~/.cargo/bin/rustup toolchain install $toolchain --profile minimal; } && { [ \$(uname) != Linux ] || ~/.cargo/bin/rustup target add --toolchain $toolchain aarch64-apple-darwin >/dev/null 2>&1; }" </dev/null; then
     echo "$host: ready"
   else

@@ -96,7 +96,7 @@ def stopped_guests(oses):
     machine, so a Windows host and its Linux side (`shares`) count once, the one of `oses`."""
     out, seen = [], set()
     for h in farm.hosts():
-        if not h.get("enabled", True) or not h.get("tests", True) or farm.host_os(h) not in oses:
+        if not h.get("enabled", True) or not h.get("tests", True) or h.get("by_name") or farm.host_os(h) not in oses:
             continue
         base = farm.shared_base(h)
         if base.get("guest") and base["name"] not in seen and farm.health(h).get("guest") == "stopped":

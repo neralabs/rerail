@@ -226,6 +226,7 @@ hosts, and everything compiles and tests here, as without the farm.
 | `name` | what ssh connects to (a `Host` entry of `~/.ssh/config`) |
 | `enabled` | `false` leaves a host out (default `true`) |
 | `tests` | whether `scripts/dev/test-remote` runs there (default `true`) |
+| `by_name` | `true`: only a command that names the host (`--host`) runs there, and only such a command starts it (a guest). Nothing else picks it, compiles included: a billed cloud GPU VM, kept for the work that needs it |
 | `test_slots` | how many `test-remote` commands the host runs at once (default: a third of its cores). One at a time left a 16-core host mostly idle while commands queued for 25 minutes; a command waits only when every slot of every host is taken, and goes to whichever frees first. A checkout's second command goes to another host when one has a slot (its commands on one host share a target directory, which cargo builds in one at a time) |
 | `link` | the host's network interface the farm's traffic must arrive on (its fast link); unset: any |
 | `min_free_gb` | under this much free disk, the farm frees its own data on the host and says so (default 40) |
@@ -382,7 +383,8 @@ The VM's disk is this Mac's: its entries' `max_target_gb` keeps the targets in i
 ### Guests
 
 A host that is a VM on another machine is a guest (`guest.py`): a Linux VM on a Mac (Lima,
-OrbStack), a Windows VM on a Mac (Parallels), WSL on a Windows PC. A VM holds the memory it was
+OrbStack), a Windows VM on a Mac (Parallels), WSL on a Windows PC, a cloud VM (Google Compute
+Engine). A VM holds the memory it was
 given while it runs, and gives little of it back as it idles (Apple's Virtualization framework and
 Parallels keep what the guest has touched), so a guest runs only while the farm uses it:
 
@@ -397,17 +399,31 @@ Parallels keep what the guest has touched), so a guest runs only while the farm 
   vCPUs take nothing, and the scheduler shares busy ones; half on this Mac), and its share of the
   memory (`memory_fraction`, 0.5, a quarter on this Mac; or `memory_gb`), never more than the
   machine has available less 4 GB. Under 8 GB available it does not start.
-- **Stopped once idle**: `guests watch`, this Mac's LaunchAgent (`setup` installs it when the
+- **Stopped once idle, if the farm started it**: `guests watch`, this Mac's LaunchAgent (`setup` installs it when the
   configuration has a guest), looks every minute, and stops a guest none of whose test slots,
   compile slots or checkout copies (a Relax session's) has been held for `idle_minutes` (10). It
   holds them all while it stops it, so nothing starts there meanwhile. WSL: the distribution ends,
-  then WSL's VM (`wsl --shutdown`, the farm account's own VM; the PC's user's WSL is apart).
+  then WSL's VM (`wsl --shutdown`, the farm account's own VM; the PC's user's WSL is apart). A
+  guest found running that the farm did not start (by hand, with `gcloud`, from another session)
+  is left running: it is whoever started it's to stop, and the farm takes commands there meanwhile.
 
 Its entry: `"guest": {"on": "local" or the ssh name of its machine, "kind": "lima" | "orb" |
-"parallels" | "wsl", "vm": its name}`, and the optional `cpus`, `memory_gb`, `memory_fraction`,
+"parallels" | "wsl" | "gce", "vm": its name}`, and the optional `cpus`, `memory_gb`, `memory_fraction`,
 `idle_minutes`. A Windows host on it (`shares`) is the same guest. `farm.health` takes a stopped
 guest as not usable without probing it, and with no back-off. Nothing starts a guest at boot (no
 Lima start-at-login, no Parallels autostart, no trigger on a PC's WSL task).
+
+**A cloud VM** (`"kind": "gce"`, with `"project"` and `"zone"`; `"on": "local"`, as this Mac's
+`gcloud` runs it) is started and stopped with `gcloud compute instances start` / `stop`, keeps its
+disk (its checkout copy and targets) while stopped, and is sized by its machine type (`cpus`,
+`memory_gb` say what it has). ssh reaches it through Google's IAP tunnel, a `ProxyCommand` in
+`~/.ssh/config` (`gcloud compute start-iap-tunnel VM 22 --listen-on-stdin`), so it needs no
+external address; its host key is gcloud's (`HostKeyAlias compute.ID` in
+`google_compute_known_hosts`). It bills while it runs, so its entry has `"by_name": true` (below):
+it runs only what names it. A GPU VM with a V100 (2026-11-20): started by `test-remote --host` in
+about 70 s (31 s for the start, then ssh); the first checkout sent through the tunnel in 79 s,
+then about 1 s; a command 3 s warm. When `gcloud`'s sign-in has expired its state is unknown and
+nothing starts it: `gcloud auth login` brings it back.
 
 `scripts/build/farm/guests` lists them (state, size, when each stops); `guests start NAME` and
 `guests stop NAME` do it by hand. The dashboard shows each guest on its machine's card, and its own
