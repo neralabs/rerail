@@ -157,6 +157,15 @@ impl Watches {
         self.owners.len() <= budget
     }
 
+    /// How many descriptors only spare roots other than `root` hold: those ending them frees.
+    fn spare_only(&self, root: &str) -> usize {
+        let freed = |owner: &Owner| owner.root != root && self.spare.contains(&owner.root);
+        self.owners
+            .values()
+            .filter(|owners| owners.iter().all(freed))
+            .count()
+    }
+
     /// Releases every watch of `root`.
     fn release_root(&mut self, instance: RawFd, root: &str) {
         self.spare.remove(root);
@@ -524,11 +533,18 @@ impl Inotify {
     }
 
     /// Whether `root` fits the budget watching `folders` folders. A root that is not spare makes
-    /// room by ending spare roots, one at a time, until it fits or none is left.
+    /// room by ending spare roots, one at a time, until it fits; one that would not fit with
+    /// every other spare root ended ends none.
     fn room_for(&self, watches: &mut Watches, root: &str, folders: usize, spare: bool) -> bool {
+        let needed = watches.count_with(root, folders);
+        if needed > self.budget
+            && (spare || needed.saturating_sub(watches.spare_only(root)) > self.budget)
+        {
+            return false;
+        }
         while watches.count_with(root, folders) > self.budget {
             let other = watches.spare.iter().find(|other| *other != root).cloned();
-            let Some(other) = other.filter(|_| !spare) else {
+            let Some(other) = other else {
                 return false;
             };
             self.shared.notices.ended(&other);
@@ -990,7 +1006,8 @@ mod tests {
             !backend.watch(&root, &folders),
             "it does not fit in the spare room either"
         );
-        assert!(notice_of(&notices, &spare).ended);
+        assert!(notices.take().is_empty(), "the spare root's watch goes on");
+        assert!(backend.shared.watches().spare.contains(&spare));
         backend.close();
     }
 
