@@ -937,11 +937,12 @@ fn answered_by_function(prog: &front::Program, a: &crate::code_rule_dsl::logic::
 /// demand comes from `same_pair`, which negates `same_leaf`, which reads `value`; without `same_pair`, `unparen`'s
 /// demand joined the two compared nodes by a child's position only, so it, `value`'s request and its answer were
 /// cross-file, and preparation refused the program. The steps are `run_observed`'s before the demand, in its order (the
-/// combined program has none of them yet: on it, the demand made no `unparen` demand rule), then the demand and the
-/// prune after it. Not `hiding::fold_own`: it folds guests' copies for the run's language, which combining does not
-/// know (the prepared key names it). Nor `RERAIL_DEMAND=off`: the demand is replayed under it too, which can only make
-/// an answer eager, so the combined program is not a function of it. None when the demand cannot change an answer, or
-/// when a step fails (preparation then fails, or leaves the demand out).
+/// combined program has none of them yet: on it, the demand made no `unparen` demand rule), then the demand, the
+/// prune after it, and the closures the demand put in cycles made rows again (`reach_form::undo_in_cycles`). Not
+/// `hiding::fold_own`: it folds guests' copies for the run's language, which combining does not know (the prepared key
+/// names it). Nor `RERAIL_DEMAND=off`: the demand is replayed under it too, which can only make an answer eager, so the
+/// combined program is not a function of it. None when the demand cannot change an answer, or when a step fails
+/// (preparation then fails, or leaves the demand out).
 fn demanded(prog: &front::Program) -> Option<front::Program> {
     if !demand_reaches_an_answer(prog) {
         return None;
@@ -954,7 +955,9 @@ fn demanded(prog: &front::Program) -> Option<front::Program> {
     let mut p = front::prune(p);
     crate::code_rule_dsl::logic::reach_form::find(&mut p).ok()?;
     let (p, _) = crate::code_rule_dsl::logic::magic::demand_negated_tests(p);
-    crate::code_rule_dsl::logic::magic::demand_bound_columns(p, &Default::default()).ok().map(front::prune)
+    let mut p = front::prune(crate::code_rule_dsl::logic::magic::demand_bound_columns(p, &Default::default()).ok()?);
+    crate::code_rule_dsl::logic::reach_form::undo_in_cycles(&mut p).ok()?;
+    Some(p)
 }
 
 /// Whether `prog` has its own demand, and an attribute answered by a function whose answer reads a demanded relation:
