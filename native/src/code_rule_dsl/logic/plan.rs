@@ -4447,6 +4447,9 @@ impl Model {
             /// once the head is bound, the work and rows at that point: the tail (`witnessed`).
             raw: f64,
             tail: Option<(f64, f64)>,
+            /// Its rows if every row were walked: past the head's binding `rows` is capped at the bindings (one
+            /// witness each), and `witnessed` scales the tail's reads by the bindings' share of these.
+            all: f64,
         }
         let filters: Vec<usize> = (0..b.len()).filter(|&i| !b.is_join(i)).collect();
         // Each filter's share of rows passed on (decision 0297); a body's first 128 filters are priced.
@@ -4612,7 +4615,7 @@ impl Model {
             }
             (rows, work)
         };
-        cells[0] = Some(Cell { work: work0, rows: rows0, prev: 0, last: usize::MAX, mode: None, unfounded: false, fan: 1.0, basis: "", raw: work0, tail: None });
+        cells[0] = Some(Cell { work: work0, rows: rows0, prev: 0, last: usize::MAX, mode: None, unfounded: false, fan: 1.0, basis: "", raw: work0, tail: None, all: rows0 });
         // Only the subsets one join more than a subset reached (with the delta first, half of them or fewer): a
         // subset no order reaches has no cell, and its closure is not worked out. Each is solved as before, its last
         // joins tried in the same order, so the plan is the same.
@@ -4669,6 +4672,9 @@ impl Model {
                     // (`step`'s greedy cut), `rr_agg15($a, $b, $p) :- rr_ctx16($a, $b, $p), bcgp_line($p, $l, _),
                     // !bcgp_at_line($p, $l), $l > $a, $l < $b` led from the pairs (64.8 K) and read every line of
                     // each pair's file: 28.6 s against 5.4 s led from the lines.
+                    // Every row walked, the rows it would make (`witnessed` reads them): Q240's tail of witnesses read
+                    // as the bindings' share of these, where c30a34fb24's cap alone left that share 1.
+                    let mut all = if left > 0.0 { from.all * out / left } else { out };
                     if head_bits.is_some_and(|h| h & !*bound == 0) && out > left {
                         out = left;
                     }
@@ -4683,13 +4689,14 @@ impl Model {
                         let k = new.trailing_zeros() as usize;
                         new &= new - 1;
                         out *= pass[k];
+                        all *= pass[k];
                         filtered += out;
                     }
                     // Past the head's binding, priced as the walk runs it (`witnessed`); the tail starts at the first
                     // join made with every head variable bound before it.
                     let raw = from.raw + w + filtered;
                     let tail = from.tail.or_else(|| head_mask.is_some_and(|h| *bound & h == h).then_some((from.raw, left)));
-                    let cand = Cell { work: witnessed(raw, tail, out), rows: out, prev, last: i, mode, unfounded, fan, basis: by, raw, tail };
+                    let cand = Cell { work: witnessed(raw, tail, all), rows: out, prev, last: i, mode, unfounded, fan, basis: by, raw, tail, all };
                     if mask == full_mask {
                         finals.push((cand.work, prev, i, mode, fan, by));
                     }

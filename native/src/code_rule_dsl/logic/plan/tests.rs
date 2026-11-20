@@ -2475,7 +2475,11 @@ fn a_constant_counted_none_when_planned_is_growth_when_it_has_rows() {
                 model.stats.fan.insert((rel, c), (rows / n).max(1.0));
             }
         }
-        model.stats.memo.insert("doc_role".into(), HashMap::from([(("r".into(), Constant::Int(7)), fragments)]));
+        // Its column as the model names it: `doc_role` is no base relation since the guest documents went (0431
+        // step 3), so `c1`, not the base schema's `r`; a posting under another name is no count, and `doc_role(d, 7)`
+        // was priced at rows over distinct values (75).
+        let role = model.col("doc_role", 1);
+        model.stats.memo.insert("doc_role".into(), HashMap::from([((role, Constant::Int(7)), fragments)]));
     };
     model.stats.nodes = 300_000.0;
     let r = 0usize;
@@ -3667,8 +3671,8 @@ fn a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it() {
     assert!(prep.0.contains_key(&line("anc", 1, None)) && prep.0.contains_key(&line("anc", 1, Some(0))), "the recursion, sized by its base rule");
     assert!(prep.0.contains_key(&line("z", 0, None)), "`anc` sized: `z` is prepared");
     // By default no derived relation is sized by an estimate: the recursion `anc`, which no fact sizes, is not, and `z`,
-    // which reads it, is not prepared. `o`'s rule, over the inputs, is; and `r`, as `o`'s facts (inferred from its rule)
-    // size it. (Another program: a version of the same digest holds the prepared plans made above.)
+    // which reads it, is not prepared. `o`'s rule, over the inputs, tests a constant on `kind2`'s `values` column: planned
+    // at run time (Q242), estimates or not. `r` is prepared, as `o`'s facts (inferred from its rule) size it. (Another program: a version of the same digest holds the prepared plans made above.)
     drop(_on);
     let p = parse(&format!("{text}.decl apart(x: number)\n")).unwrap();
     let v = p;
@@ -3678,7 +3682,7 @@ fn a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it() {
         let k = bodies_by_head(&placed).into_iter().filter(|(h, _)| h == head).nth(nth).unwrap().1;
         crate::code_rule_dsl::logic::plan::line_key(&placed.body(k), first)
     };
-    assert!(prep.0.contains_key(&line("o", 0, None)), "`o` reads the inputs alone");
+    assert!(!prep.0.contains_key(&line("o", 0, None)), "`o` tests a constant on a `values` column: planned at run time (Q242)");
     assert!(prep.0.contains_key(&line("r", 0, None)), "`o`'s inferred facts size it");
     assert!(!prep.0.contains_key(&line("z", 0, None)), "`anc` is not sized: `z` is not prepared");
 }
