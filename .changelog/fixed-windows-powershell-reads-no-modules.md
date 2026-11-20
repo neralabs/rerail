@@ -1,0 +1,1 @@
+On Windows, Rerail's reads through Windows PowerShell no longer wait for it to read every installed module it has not read yet. On a computer with many such modules, `rerail daemon start --tls-cert --tls-key` no longer refuses its key after 30 s, and reading the device secret from Credential Manager no longer takes most of a minute.
