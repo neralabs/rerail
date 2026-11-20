@@ -797,6 +797,13 @@ fn a_line_misses_its_step_rows_by_a_blow_up_or_an_over_estimate() {
     assert_eq!(step_miss(&[1_000.0, 8_000.0], &[(0, 100), (100, 800)], 250.0), None);
     // The widest step priced at 200 rows made 50,000: blown up (past 8 x a search's 250 too).
     assert_eq!(step_miss(&[100.0, 200.0, 100.0], &[(0, 100), (100, 200), (200, 50_000)], 250.0), Some(Miss::Wide { est: 200.0, ran: 50_000.0 }));
+    // 21 lead rows of 3,265 made 33,877 where the whole order was priced at 69,024 (corpus0's `rr_diagnostic` lines):
+    // a few lead rows are not a sample of them, so not judged; past 8 x the whole order's price they are.
+    assert_eq!(step_miss(&[3_265.0, 2_979.0, 69_024.0], &[(0, 21), (21, 21), (21, 33_877)], 250.0), None);
+    assert_eq!(
+        step_miss(&[3_265.0, 2_979.0, 69_024.0], &[(0, 21), (21, 21), (21, 600_000)], 250.0),
+        Some(Miss::Wide { est: 21.0 / 3_265.0 * 69_024.0, ran: 600_000.0 })
+    );
     // Under 8 x a search's work, a blow-up costs less than replanning it: left.
     assert_eq!(step_miss(&[100.0, 10.0], &[(0, 100), (100, 1_500)], 250.0), None);
     // A step priced at 1,000 rows a binding (100,000 rows) made 5 a binding: over-estimated.

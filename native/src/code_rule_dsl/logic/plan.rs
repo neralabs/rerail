@@ -3384,6 +3384,11 @@ impl Model {
                 let (i, o) = steps.get(k).copied().unwrap_or_default();
                 format!("[{k}] {} by {} ({}): priced {:.1} rows, made {o} of {i} in", st.literal, st.access, if st.basis.is_empty() { "-" } else { &st.basis }, st.rows)
             })
+            .chain((0..b.len()).filter_map(|i| b.plain_atom(i).map(|a| b.rel(a))).collect::<std::collections::BTreeSet<_>>().into_iter().map(|r| {
+                let w = b.args((0..b.len()).find(|&i| b.plain_atom(i).is_some_and(|a| b.rel(a) == r)).unwrap()).len();
+                let ndv: Vec<String> = (0..w).map(|c| self.ndv.at(r, c).map_or("-".into(), |n| format!("{n:.0}"))).collect();
+                format!("stats {r}: {:.0} rows (card {:?}), ndv [{}]{}{}", self.card(r), self.stats.card.get(r), ndv.join(", "), if self.stats.solving.contains(r) { ", solving" } else { "" }, if self.stats.counts.at(r, 0).is_some() { ", counted" } else { "" })
+            }))
             .collect::<Vec<_>>()
             .join(" | ")
     }

@@ -263,17 +263,24 @@ rule onto its demand and undoing Q59's narrowing (an atom a constant restricts m
 access, basis, rows priced, and bindings in and rows out made. corpus0 x B-now, one thread, profiling build, the M3:
 7 lines mispredicted (as the plan cache line counts: 6 blown up, 1 over-estimated).
 
-- **6 blown up, 3 rules twice each, one shape** (`xd_..._rr_diagnostic_...`): a deferred join's key relation
-  `xk_...($d)` leads, priced at 3,265 rows (relation size) where it made 21; `fzk_...($d)` tests each (join sketch, 0.91
-  a binding, made 1); then `node($d, $n, ...)` by document is priced at 21 nodes a binding (postings, containment
-  0.012) where it made 1,613. Every document a binding names has nodes; the share of 0.012 is node's documents over the
-  domain's distinct values, the domain taken at the lead's priced rows (0.012 x 3,265 = 39). The join size is not what
-  is missing: `node` is an input (no sketch), and the binding's domain was priced past what it held.
+- **6 blown up, 3 rules twice each, one shape, none a misprediction** (`xd_..._rr_diagnostic_...`): a deferred
+  join's key relation `xk_...($d)` (3,265 rows, 3,265 distinct values, measured) leads, `fzk_...($d)` tests each (join
+  sketch), then `node($d, $n, ...)` by document, priced at 21 nodes a lead row (postings, containment 0.012: node's
+  40 documents of the 3,265). A walk cut after 15 to 21 lead rows made 1,613 to 3,377 a row and was judged blown up.
+  The price was right over the whole relation: the same line priced by its exact pairs, measured on every row, gave
+  18.9 a row (3,265 x 18.9 = 62 k against 69 k priced). The lead's first rows, read in key order, are the ones that
+  meet the chunk's documents: a few lead rows are not a sample of them. `step_miss` judged a blow-up on any number of
+  lead rows (its over-estimate already needed `OVER_LEAST_LEAD`, 64 bindings in).
 - **1 over-estimated** (`p278_UP008`): `p278_pos_arg($al, 1, $b)` by `(c1, c2)`, priced at 0.010 rows a binding
   (observed) where it made 0.0007, its `$b` reached through `text($b, $x)` from `text($nm, $x)`: the chain shape the
   binding counters would price. The step made 74 rows; the line's work is step 6's 101 k rows, priced right (211 k).
 
-So the counters through several atoms would fix one step of 74 rows; the blow-ups are the containment rule's.
+So the counters through several atoms would fix one step of 74 rows, and the blow-ups were the check's.
+
+**Fixed:** under `OVER_LEAST_LEAD` lead rows, a line is blown up only past `slow_factor` times what its whole order
+was priced to make, a blow-up whatever the sample. corpus0, two runs on the M3: 0 lines blown up (was 6), 1 and 0
+over-estimated; findings 463 `d067ec2ebf6f`; 951.6 and 961.5 G instructions (950.8 and 952.4 G before): the false
+flags cost little (an exact pair pass and a replan each), and the planner no longer acts on them.
 
 ## Open
 
@@ -287,6 +294,5 @@ So the counters through several atoms would fix one step of 74 rows; the blow-up
   would rarely tell. Where the variable is reached through another join, the fix would be counters of the bindings
   where they are made (a hash and an add a binding, sampled 1 in 8 by hash), read by the same estimator. Reopen it
   where a run's mispredicted lines show that shape.
-- **A containment share from a domain priced past its rows** (below): 6 of corpus0's 7 mispredicted lines.
 - **The deferred step decodes the tree** for every program it runs on (Q186).
 - Whole-pack timing and findings on `scripts/ship/corpora.json` were never compared in Release-debugging.
