@@ -1075,6 +1075,7 @@ pub mod tests {
     use std::cell::{Cell, RefCell};
     use std::time::{Duration, SystemTime};
 
+    #[cfg(test)]
     thread_local! {
         /// The volume this thread's readers take in place of the one found.
         static VOLUME: Cell<Option<Volume>> = const { Cell::new(None) };
