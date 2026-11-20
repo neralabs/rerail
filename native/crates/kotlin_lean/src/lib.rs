@@ -95,19 +95,6 @@ pub fn tape_text(tape: &Tape) -> String {
     out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn tables_fit_the_keys() {
-        assert!(KINDS.len() < 1024 && FIELDS.len() <= 64);
-        assert_eq!(KINDS.len(), kinds::LAST as usize + 1);
-        assert_eq!(unkey(key(K::Identifier, f::RECEIVER, false)), (K::Identifier as u16, f::RECEIVER, 0, false));
-        assert_eq!(unkey(key(K::LineComment, 0, true)), (K::LineComment as u16, 0, 0, true));
-    }
-}
-
 /// The lexer alone over `src` (for measuring): the tokens it reads to the end, or to a refusal.
 #[doc(hidden)]
 pub fn lex_only(src: &[u8]) -> usize {
@@ -121,4 +108,17 @@ pub fn lex_only(src: &[u8]) -> usize {
         at = next;
     }
     toks.len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tables_fit_the_keys() {
+        assert!(KINDS.len() < 1024 && FIELDS.len() <= 64);
+        assert_eq!(KINDS.len(), kinds::LAST as usize + 1);
+        assert_eq!(unkey(key(K::Identifier, f::RECEIVER, false)), (K::Identifier as u16, f::RECEIVER, 0, false));
+        assert_eq!(unkey(key(K::LineComment, 0, true)), (K::LineComment as u16, 0, 0, true));
+    }
 }

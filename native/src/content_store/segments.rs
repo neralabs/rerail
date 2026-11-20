@@ -274,6 +274,11 @@ impl SegmentWriter {
         self.placed.len()
     }
 
+    /// No entries placed yet.
+    pub fn is_empty(&self) -> bool {
+        self.placed.is_empty()
+    }
+
     /// Tests: entry `i`'s bytes as written, before the segments are sealed.
     #[cfg(test)]
     pub fn entry_bytes(&self, i: usize) -> Option<Vec<u8>> {

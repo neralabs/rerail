@@ -20,6 +20,7 @@
 //!   - **The search.** The value under the values chosen so far; when it turns on an unchosen
 //!     one, each way of it in turn. Then the equations of the chosen carried values, likewise.
 //!     A budget of tries per byte: past it, the byte may have a bit (sound, less sharp).
+//!
 //! The carried values an equation may choose are those the value reads (its cone, closed under
 //! the equations' operands): an equation reaching outside them tells only what its operands do.
 //!
@@ -682,7 +683,7 @@ impl Witnesses {
             return false;
         }
         let words = &self.values[usize::from(v)];
-        let r = self.files.iter().zip(&self.spans).any(|(f, span)| {
+        self.files.iter().zip(&self.spans).any(|(f, span)| {
             let (lo, hi) = (usize::from(d), f.len() + usize::from(d));
             (lo..hi).step_by(64).any(|p| {
                 let (w, b) = (span.start + p / 64, p % 64);
@@ -691,8 +692,7 @@ impl Witnesses {
                 let m = if n == 64 { !0 } else { ((1u64 << n) - 1) << b };
                 words.get(w).is_some_and(|x| x & m != 0)
             })
-        });
-        r
+        })
     }
 
     /// The values made for `ops`: the appended operations' from the others', else all again.
@@ -993,10 +993,8 @@ impl Induction {
         let window = self.windows[&key].clone();
         let (far, reach, at_position) = (window.far, window.reach, window.at_position.clone());
         let mut u = window.attach(ops, tables, nexts);
-        if bounded {
-            if let Some(&b) = u.before.get(&(reach + 1)) {
-                u.clauses.push(&[b]);
-            }
+        if bounded && let Some(&b) = u.before.get(&(reach + 1)) {
+            u.clauses.push(&[b]);
         }
         // The position's byte is none of `exclude`'s: each group of them left out (a group is
         // one way of its readers, so all its bytes are or none).
@@ -1284,10 +1282,11 @@ impl Unrolled<'_> {
         };
         let yes: Vec<Lit> = self.groups[&lag].iter().filter(|&&(b, _)| member(self.tables, b)).map(|&(_, l)| l).collect();
         let mut yes = yes;
-        if zero_before && member(self.tables, 0) {
-            if let Some(&b) = self.before.get(&lag) {
-                yes.push(b);
-            }
+        if zero_before
+            && member(self.tables, 0)
+            && let Some(&b) = self.before.get(&lag)
+        {
+            yes.push(b);
         }
         let x = self.fresh();
         let mut c = vec![-x];

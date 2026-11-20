@@ -587,7 +587,7 @@ impl crate::compute_kernel_grid::GridBindContext for BindContext<'_> {
     }
 
     fn launch_indirect(&mut self, groups: &BufferRef, offset: u64, max_groups: &[u64], block: &[u64]) -> Result<(), String> {
-        if offset % 4 != 0 || offset + 12 > groups.length() {
+        if !offset.is_multiple_of(4) || offset + 12 > groups.length() {
             return Err(format!("an indirect launch's counts at byte {offset} of a {}-byte buffer", groups.length()));
         }
         match (self, groups) {

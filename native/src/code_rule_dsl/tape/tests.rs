@@ -7906,7 +7906,7 @@ fn the_clif_reads_read_every_format_as_the_document_does() {
             assert_eq!(view.nodes, n);
             for i in 0..n {
                 let at = |what: &str| format!("{what} of {i} ({format:?}, {lang:?})");
-                let code = codes[reads.one("tape_number", tape, &view, i as usize) as usize];
+                let code = codes[reads.one("tape_number", tape, view, i as usize) as usize];
                 assert_eq!(
                     (code.kind, code.field, code.flags),
                     (
@@ -7919,52 +7919,52 @@ fn the_clif_reads_read_every_format_as_the_document_does() {
                 );
                 let end = doc.transducer_descendants(i).end;
                 assert_eq!(
-                    reads.one("tape_end_of", tape, &view, i as usize),
+                    reads.one("tape_end_of", tape, view, i as usize),
                     end,
                     "{}",
                     at("subtree")
                 );
                 let span = doc.transducer_span(i);
                 assert_eq!(
-                    reads.one("tape_start", tape, &view, i as usize) as usize,
+                    reads.one("tape_start", tape, view, i as usize) as usize,
                     span.start,
                     "{}",
                     at("start")
                 );
                 assert_eq!(
-                    reads.one("tape_end", tape, &view, i as usize) as usize,
+                    reads.one("tape_end", tape, view, i as usize) as usize,
                     span.end,
                     "{}",
                     at("end")
                 );
                 assert_eq!(
-                    reads.one("tape_parent", tape, &view, i as usize),
+                    reads.one("tape_parent", tape, view, i as usize),
                     none(doc.transducer_parent(i)),
                     "{}",
                     at("parent")
                 );
                 assert_eq!(
-                    reads.one("tape_next", tape, &view, i as usize),
+                    reads.one("tape_next", tape, view, i as usize),
                     none(doc.transducer_next_sibling(i, false)),
                     "{}",
                     at("next")
                 );
                 let kids = doc.transducer_children(i).collect::<Vec<_>>();
                 assert_eq!(
-                    reads.one("tape_child_count", tape, &view, i as usize) as usize,
+                    reads.one("tape_child_count", tape, view, i as usize) as usize,
                     kids.len(),
                     "{}",
                     at("children")
                 );
                 assert_eq!(
-                    reads.one("tape_first_child", tape, &view, i as usize),
+                    reads.one("tape_first_child", tape, view, i as usize),
                     none(kids.first().copied()),
                     "{}",
                     at("first child")
                 );
                 for (k, &kid) in kids.iter().enumerate().take(8) {
                     assert_eq!(
-                        reads.two("tape_child", tape, &view, i as usize, k as u32),
+                        reads.two("tape_child", tape, view, i as usize, k as u32),
                         kid,
                         "{}",
                         at("a child")
@@ -7975,13 +7975,16 @@ fn the_clif_reads_read_every_format_as_the_document_does() {
     }
 }
 
+/// A grammar's encoder of a text, stopped where its callback says: its tape, or why it refused the text.
+type Encode<E> = fn(&Grammar, &str, &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, E>;
+
 /// `dialect`'s tapes from its lean parser (`encode`) are tree-sitter's, byte for byte, on `sources`;
 /// each of `invalid` (a text tree-sitter reads with an error) the lean parser refuses. And the product
 /// reads the dialect with the lean parser: a file's image through the engine's parse is the lean
 /// parser's; a file it refuses goes to tree-sitter.
 fn lean_tapes_are_tree_sitters<E: std::fmt::Debug>(
     dialect: GrammarDialect,
-    encode: fn(&Grammar, &str, &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, E>,
+    encode: Encode<E>,
     sources: &[&str],
     invalid: &[&str],
 ) {
@@ -8230,7 +8233,7 @@ fn call_argument_programs(source: &str) -> Vec<(String, usize)> {
     let grammar = Grammar::new(GrammarDialect::Python).unwrap();
     let image = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
     let doc = TapeDoc::restore(std::sync::Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
-    crate::code_rule_dsl::embed::Embedder::build_in_doc(&crate::code_rule_dsl::embed::call_argument::CallArgument, &doc, &|| false).into_iter().map(|p| (p.text.clone(), p.segments.bounds(0..1).start as usize)).collect()
+    crate::code_rule_dsl::embed::Embedder::build_in_doc(&crate::code_rule_dsl::embed::call_argument::CallArgument, &doc, &|| false).into_iter().map(|p| (p.text.clone(), p.segments.bounds(0..1).start)).collect()
 }
 
 /// Decision 0470 R2, R3: a string at a declared place is a program over its content, at its bytes; the callee is

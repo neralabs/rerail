@@ -330,11 +330,10 @@ impl<'s> Lexer<'s> {
     #[inline]
     pub fn skip(&self, mut at: usize, extras: &mut Vec<(u32, u32, u32)>) -> R<(usize, bool)> {
         // A token touching the last one (`f(`, `.b`): no white space, no comment.
-        if let Some(&c) = self.src.get(at) {
-            if c < 0x80 && c != b'/' && !block::is_space(c) {
+        if let Some(&c) = self.src.get(at)
+            && c < 0x80 && c != b'/' && !block::is_space(c) {
                 return Ok((at, false));
             }
-        }
         let mut nl = false;
         loop {
             loop {
@@ -349,11 +348,10 @@ impl<'s> Lexer<'s> {
             }
             if self.at(at) >= 0x80 {
                 // White space past ASCII (`\s` reads it): refused.
-                if let Some((c, _)) = decode(self.src, at) {
-                    if c.is_whitespace() {
+                if let Some((c, _)) = decode(self.src, at)
+                    && c.is_whitespace() {
                         return Err(Refusal::Lex(at as u32));
                     }
-                }
             }
             let Some(x) = self.comment(at)? else { return Ok((at, nl)) };
             let kind = if x.block { crate::K::MultilineComment } else { crate::K::LineComment };
@@ -449,13 +447,12 @@ impl<'s> Lexer<'s> {
                         // White space past ASCII is refused (`skip`): the long way.
                         return Ok(Lexed::Slow);
                     }
-                    if c == b'/' {
-                        if let Some(x) = self.comment(pos)? {
+                    if c == b'/'
+                        && let Some(x) = self.comment(pos)? {
                             let kind = if x.block { crate::K::MultilineComment } else { crate::K::LineComment };
                             extras.push((crate::tw::key(kind, 0, true), x.start, x.end));
                             return Ok(Lexed::Extra(x.end as usize));
                         }
-                    }
                 }
                 // Any other token from its first byte, as `token` reads it there.
                 let (kind, e, word, tick) = self.token_at(pos)?;
@@ -674,16 +671,14 @@ impl<'s> Lexer<'s> {
     /// `long_literal`'s `L` and an `unsigned_literal`'s suffix are tokens of their own.
     fn number(&self, s: usize) -> R<(T, usize, u8, bool)> {
         let (c0, c1) = (self.at(s), self.at(s + 1));
-        if c0 == b'0' && matches!(c1, b'x' | b'X') {
-            if let Some(e) = self.digits(s + 2, &HEX) {
+        if c0 == b'0' && matches!(c1, b'x' | b'X')
+            && let Some(e) = self.digits(s + 2, &HEX) {
                 return Ok((T::Hex, e, 0, false));
             }
-        }
-        if c0 == b'0' && matches!(c1, b'b' | b'B') {
-            if let Some(e) = self.digits(s + 2, &BIN) {
+        if c0 == b'0' && matches!(c1, b'b' | b'B')
+            && let Some(e) = self.digits(s + 2, &BIN) {
                 return Ok((T::Bin, e, 0, false));
             }
-        }
         let mut best = (T::Int, s);
         let int = if c0 == b'.' { None } else { self.digits(s, &DEC) };
         if let Some(e) = int {
@@ -697,15 +692,14 @@ impl<'s> Lexer<'s> {
         }
         // `DEC_DIGITS? '.' DEC_DIGITS REAL_EXPONENT? [fF]?`.
         let dot = int.unwrap_or(s);
-        if self.at(dot) == b'.' {
-            if let Some(f) = self.digits(dot + 1, &DEC) {
+        if self.at(dot) == b'.'
+            && let Some(f) = self.digits(dot + 1, &DEC) {
                 let x = self.exponent(f).unwrap_or(f);
                 let x = if matches!(self.at(x), b'f' | b'F') { x + 1 } else { x };
                 if x > best.1 {
                     best = (T::Real, x);
                 }
             }
-        }
         if best.1 == s {
             return Err(Refusal::Lex(s as u32));
         }

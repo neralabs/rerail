@@ -876,7 +876,6 @@ unused(f) :- def(f, _), !used(f).
 /// imports delete, insert and derive again; after each, the outputs are a run's with an empty store, under the
 /// device's binding too.
 #[test]
-#[ignore = "Q323: fails at rr-align's pin 08e2de78c too: the maintain mode maintains no stratum"]
 fn a_maintained_strata_pieces_run_as_one_component() {
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("together");
@@ -1000,7 +999,6 @@ reach(a, a) :- side(a), never(a).
 /// group; `named` computes its head. Each edit's run starts from the last run's rows. Its outputs are those of a run
 /// with an empty store, and the mode maintained strata (none derived again by a form).
 #[test]
-#[ignore = "Q323: fails at rr-align's pin 08e2de78c too: the maintain mode maintains no stratum"]
 fn the_maintain_mode_keeps_aggregates_by_their_groups_and_computed_heads() {
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("mode-aggregates");
@@ -1553,7 +1551,6 @@ fn beside_a_switch<T>(switch: (&'static str, &'static str), start: impl FnOnce()
 /// started while another test holds `RERAIL_CROSS_K4=off` (`beside_a_switch`): started holding nothing, it took it and
 /// wrote ("a write gathered for the store in a warm run").
 #[test]
-#[ignore = "Q323: fails at rr-align's pin 08e2de78c too: the warm run records a new manifest and recomputes twice"]
 fn the_run_after_a_cold_one_writes_nothing() {
     let temp = tempfile::tempdir().unwrap();
     // `RERAIL_TEST_KEEP=<dir>`: the runs' store and outputs left there, to look at.
@@ -1567,7 +1564,6 @@ fn the_run_after_a_cold_one_writes_nothing() {
 /// and faulted "the observer's store not asked inside the waves". PR #508's 0206654a5 (t47).
 #[cfg(unix)]
 #[test]
-#[ignore = "Q323: fails at rr-align's pin 08e2de78c too: the warm run records a new manifest and recomputes twice"]
 fn the_run_after_a_cold_one_through_a_symlink_writes_nothing() {
     let temp = tempfile::tempdir().unwrap();
     std::fs::create_dir(temp.path().join("real")).unwrap();
@@ -1785,7 +1781,8 @@ fn programs_hidden_alone_keep_their_attribute_copies_declared() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("token-copies");
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("src/a.py"), "def f(x: int) -> int:\n    if x is not None:\n        return 1\n    return 0\n").unwrap();
-    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/data-layer/packs/data-layer/candidates/datalog/authored");
+    // Pack test data (`packs/data-layer/upstream/lint/`, not in git since 5e0b69a104): pulled, or the test says so.
+    let rules = crate::code_rule_dsl::test_support::pack_test_data("packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/datalog/authored");
     let programs: Vec<String> = ["data-layer-schema-bootstrap-contracts.rerail", "data-layer-unresolved-forward-refs.rerail", "data-layer-versioned-merged-identity.rerail"]
         .iter()
         .map(|r| crate::code_rule_dsl::logic::settings::program_text(&rules.join(r)).unwrap())
@@ -1934,6 +1931,8 @@ fn every_switch_lowering_reads_is_classified() {
         "RERAIL_RR_LIB",
         // The cost model's file: its estimates steer plan choices, which keep the program's meaning (`plan::run`).
         "RERAIL_COSTS",
+        // The join model (decision 0354): its prices choose among a line's candidate orders, as the cost model's do.
+        "RERAIL_JOIN_MODEL",
         // Keyed through what it adds: the observer's facts (the source files), which the prepared key hashes.
         "RERAIL_SOURCES_PHASE",
         // Where rule images are read from and kept (decision 0246 §6): an image is keyed by its text, its scope and

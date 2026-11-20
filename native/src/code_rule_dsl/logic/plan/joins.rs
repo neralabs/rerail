@@ -26,7 +26,7 @@
 //!
 //! **The same on every run** (Q314). What the memo teaches is a function of the run's inputs, as the plans are (Q88):
 //! - A chunk reads the memo as it was once chunks `0..=n - window` were filed (`ChunkMemo`, made by
-//!   `OrderedPlans::next`), with what it wrote itself; what it writes (`Op`) goes into the run's memo when it is filed,
+//!   `OrderedPlans::next_view`), with what it wrote itself; what it writes (`Op`) goes into the run's memo when it is filed,
 //!   in the chunks' order, each line's in the order it wrote them. Before, every chunk read and wrote one memo as it
 //!   ran, so a line noted by one chunk was searched again by whichever chunks planned after, by the clock.
 //! - The critical path notes lines by their work on the path the work predicts; the path as the strata ran
@@ -607,7 +607,7 @@ pub(super) fn exact_for(rule: u64) -> Option<Arc<HashMap<Sig, [i64; 2]>>> {
     read(|m| m.exact.get(&rule).cloned())
 }
 
-fn noted_mut<'m>(memo: &'m mut Memo, key: PlanKey, rule: u64) -> &'m mut Note {
+fn noted_mut(memo: &mut Memo, key: PlanKey, rule: u64) -> &mut Note {
     joins().noted.store(true, Relaxed);
     memo.dirty = true;
     if memo.notes.len() >= NOTES_MAX && !memo.notes.contains_key(&key) {
@@ -1233,7 +1233,6 @@ pub(super) fn request(key: PlanKey, weight: f64, holds: bool, search: Search) {
 
 /// Whether a wider search of line `key` is worth asking for: none waits for it, and it has no proposals yet.
 pub(super) fn wants_request(key: &PlanKey) -> bool {
-    let key = key;
     if joins().requests.lock().iter().any(|r| &r.0 == key) {
         return false;
     }

@@ -667,8 +667,9 @@ fn hold() {
 /// This thread's records, to add to. What is read from them is this thread's alone: a reader of the run's takes
 /// `merged`.
 pub fn state() -> Held {
-    hold();
+    // The run's records first: a read outside any run (`local`'s panic in a test build) leaves the thread unheld.
     let records = local::<Records>();
+    hold();
     Held::Own(SHARD.with(|s| {
         let mut s = s.borrow_mut();
         if !std::ptr::eq(s.0.as_ptr(), std::sync::Arc::as_ptr(&records)) {
@@ -682,8 +683,9 @@ pub fn state() -> Held {
 
 /// Every thread's records, merged: each shard's taken into the run's (an ended thread's shard then dropped).
 pub fn merged() -> Held {
-    hold();
+    // The run's records first: a read outside any run (`local`'s panic in a test build) leaves the thread unheld.
     let records = local::<Records>();
+    hold();
     let mut all = records.merged.lock_arc();
     let mut shards = records.shards.lock();
     for s in shards.iter() {

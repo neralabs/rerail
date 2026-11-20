@@ -370,10 +370,7 @@ fn corpus_sql_uses_the_shared_wave_kernel_for_min_lattices() {
         &root,
         None,
         &dir.path().join("out"),
-        "",
-        false,
-        1024,
-        &[],
+        &crate::code_rule_dsl::tools::LogicRun { modes: "", metal: false, chunk_nodes: 1024, settings: &[] },
     );
     result.unwrap();
     assert_eq!(
@@ -414,10 +411,7 @@ fn both_sql_entry_points_share_custom_lattices_and_logical_zero_arity_outputs() 
         &root,
         None,
         &dir.path().join("out"),
-        "",
-        false,
-        1024,
-        &[],
+        &crate::code_rule_dsl::tools::LogicRun { modes: "", metal: false, chunk_nodes: 1024, settings: &[] },
     )
     .unwrap();
     // Each relation's one row (`flag`'s, of no columns).
@@ -476,10 +470,7 @@ fn combined_corpus_programs_keep_boolean_output_metadata_after_renaming() {
         &root,
         None,
         &dir.path().join("out"),
-        "",
-        false,
-        1024,
-        &[],
+        &crate::code_rule_dsl::tools::LogicRun { modes: "", metal: false, chunk_nodes: 1024, settings: &[] },
     )
     .unwrap();
     for name in ["p0_flag", "p1_flag"] {

@@ -69,7 +69,10 @@ pub(super) fn answered(v: &Version) -> (Vec<String>, Vec<String>) {
         }
     }
     (produced, given)
-}pub(super) const DEMAND: &str = "rr_embed_req";
+}
+
+/// `embed`'s demand: a string made a tape value and parsed (decision 0431 §8), answered in the fixpoint.
+pub(super) const DEMAND: &str = "rr_embed_req";
 /// `@parse(g, x)`'s and `@splice(t, n, t2)`'s demands (decision 0058 §4, `rr::lower`).
 pub(super) const PARSE: &str = "rr_parse_req";
 pub(super) const SPLICE: &str = "rr_splice_req";
@@ -87,7 +90,7 @@ pub(super) const SHARED: [&str; 4] = [DEMAND, PARSE, SPLICE, crate::code_rule_ds
 /// What a guest request gave (`Guests::guest`).
 pub(super) enum Got {
     /// A document made.
-    New(Document),
+    New(Box<Document>),
     /// A place more of tape value `key`, made before.
     Placed(u32, syntax::TapePlace),
     /// None: no text, no grammar, not parsed, or not seen.
@@ -337,15 +340,20 @@ pub(super) fn grammar_tags(v: &crate::code_rule_dsl::logic::program_image::Versi
     Some(tags)
 }
 
+/// Whether `t` is a document bound `combining::FoldOwn` widened to take the annotations in (above `ANNOTATION_KEYS`):
+/// a rule compared with it reads the annotations' documents, which only their requests (`DEMAND`) make.
+pub(super) fn widened(t: crate::code_rule_dsl::logic::program_image::TermRef<'_>) -> bool {
+    use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, HIDDEN_KEYS};
+    matches!(t, crate::code_rule_dsl::logic::program_image::TermRef::Int(n) if n > i64::from(ANNOTATION_KEYS) && (n <= i64::from(HIDDEN_KEYS) || n > i64::from(ANNOTATION_KEYS) << 32))
+}
+
 /// The guests `v`'s rules can see. A variable reaches a guest's document only from a guest relation (scoped,
 /// `hiding`): every other base read is bounded below `ANNOTATION_KEYS`, or below `HIDDEN_KEYS` where an annotation's
 /// copies were folded in. So a program that reads no guest relation sees annotations only where a comparison is
 /// against the widened bound, and the other guests (other grammars, values) never.
 pub(super) fn guests_seen(v: &crate::code_rule_dsl::logic::program_image::Version) -> Seen {
-    use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, HIDDEN_KEYS};
-    use crate::code_rule_dsl::logic::program_image::{Lit, TermRef};
+    use crate::code_rule_dsl::logic::program_image::Lit;
     let entry = |rel: &str| READS.contains(&rel) || super::hiding::ENTRIES.iter().any(|(r, ..)| *r == rel);
-    let widened = |t: TermRef<'_>| matches!(t, TermRef::Int(n) if n > i64::from(ANNOTATION_KEYS) && (n <= i64::from(HIDDEN_KEYS) || n > i64::from(ANNOTATION_KEYS) << 32));
     let mut seen = Seen::Code;
     for r in v.rules() {
         for l in r.body() {
@@ -442,7 +450,7 @@ impl Guests {
             self.guest(&by_key, at, grammar, parses)?
         };
         match &got {
-            Got::New(d) => docs.push(d.clone()),
+            Got::New(d) => docs.push(Document::clone(d)),
             Got::Placed(key, place) => {
                 if let Some(Made::Tape { places }) = docs.iter_mut().find(|d| d.key == *key).and_then(|d| d.guest.as_mut()).map(|g| &mut Arc::make_mut(g).made)
                     && !places.contains(place)
@@ -470,7 +478,7 @@ impl Guests {
             }
             let made = match r {
                 Request::Guest { at, grammar } => match self.guest(&by_key, at, &grammar, parses)? {
-                    Got::New(d) => Some(d),
+                    Got::New(d) => Some(*d),
                     Got::Placed(key, place) => {
                         places.push((key, place));
                         continue;
@@ -515,7 +523,7 @@ impl Guests {
         let host_key = (at >> 32) as u32;
         let Some(host) = by_key.get(&host_key).copied() else { return Ok(Got::Not) };
         if let Some(via) = embedding(host, grammar_name) {
-            return Ok(self.program(host, at, via, "program")?.map_or(Got::Not, Got::New));
+            return Ok(self.program(host, at, via, "program")?.map_or(Got::Not, |d| Got::New(Box::new(d))));
         }
         let Some((label, fragment)) = grammar(grammar_name) else { return Ok(Got::Not) };
         // A tape value is never code to rules that do not name it: its nodes are no file's, so a finding on one has no
@@ -551,7 +559,7 @@ impl Guests {
         self.values.insert((grammar_name.to_owned(), identity), i64::from(key));
         self.files.insert(i64::from(key), files);
         let none = Placement::At([0, 0]);
-        Ok(Got::New(Document {
+        Ok(Got::New(Box::new(Document {
             key,
             path: host.path.clone(),
             core: format!("#tape:{grammar_name}:{key}"),
@@ -562,7 +570,7 @@ impl Guests {
             module: None,
             unpackaged: false,
             tape: None,
-        }))
+        })))
     }
 
     /// The program host file `host` embeds through `via` (decision 0222): the embedder main registered for it

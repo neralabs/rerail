@@ -358,7 +358,7 @@ impl ContentStore {
         let mut item = Some(Item { key, canonical, grammar_id, grammar_version, tape_format_version, source: Arc::clone(source), tape, tape_identity, named });
         let dir = object_dir(&self.database_path);
         let make = || ObjectGather { dir: dir.clone(), items: Vec::new(), at: HashMap::new(), bytes: 0 };
-        if self.gather("tapes and their sources", &make, |g| g.add(item.take().expect("the file"))) {
+        if self.gather("tapes and their sources", make, |g| g.add(item.take().expect("the file"))) {
             return Ok(());
         }
         // Outside a run's waves: a gather of this one file, placed in a segment of its own now, written as the run's.

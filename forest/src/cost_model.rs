@@ -244,11 +244,10 @@ struct WordHasher(u64);
 
 impl std::hash::Hasher for WordHasher {
     fn write(&mut self, bytes: &[u8]) {
-        let mut chunks = bytes.chunks_exact(8);
-        for c in &mut chunks {
-            self.word(u64::from_le_bytes(c.try_into().unwrap()));
+        let (words, rest) = bytes.as_chunks::<8>();
+        for &w in words {
+            self.word(u64::from_le_bytes(w));
         }
-        let rest = chunks.remainder();
         if !rest.is_empty() {
             let mut w = [0u8; 8];
             w[..rest.len()].copy_from_slice(rest);
@@ -748,6 +747,9 @@ mod tests {
     /// prediction, a memo hit as the walk that filled it.
     #[test]
     fn keys_and_the_memo_are_the_models_prediction() {
+        if crate::gpu::shared::get().is_none() {
+            return;
+        }
         let train = samples(3000);
         let config = CostConfig { forest: RandomForestProcedureConfig { feature_vector_samplings: 20, ..CostConfig::default().forest }, host_batch: usize::MAX, ..Default::default() };
         let model = CostModel::train(&train, &config).unwrap();

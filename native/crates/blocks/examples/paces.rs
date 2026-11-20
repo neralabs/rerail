@@ -25,7 +25,8 @@
 //!
 //! Usage: `paces [docs] [runs] [dir]`.
 
-#[cfg(target_os = "macos")]
+// The device's joins and residency (macOS and Linux, decision 0440 step C) are its only readers.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use rerail_blocks::block::Block;
 use rerail_blocks::block::kind;
 use rerail_blocks::chunk::{self, DocIn};
@@ -552,10 +553,19 @@ impl JoinArgsPod {
     }
 }
 
-/// The GPU's edge join over `imp` and `def` (each a view in `base`/`top`), into a relation of `out`.
+/// The blocks a view's relations lie in: the base below (none on a first run) and the top.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn join_gpu(cx: &Ctx, base: Option<&Block>, top: &Block, imp: View, def: View, out_f: &Facts, out_r: usize, short: bool) -> Option<JoinRun> {
+#[derive(Clone, Copy)]
+struct Stack<'a> {
+    base: Option<&'a Block>,
+    top: &'a Block,
+}
+
+/// The GPU's edge join over `imp` and `def` (each a view in `stack`), into a relation of `out`.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn join_gpu(cx: &Ctx, stack: Stack<'_>, imp: View, def: View, out_f: &Facts, out_r: usize, short: bool) -> Option<JoinRun> {
     use rerail_blocks::gpu::{JoinArgs, NONE};
+    let Stack { base, top } = stack;
     let gpu = cx.gpu?;
     let off = |b: Option<&Block>, r: Option<&rerail_blocks::relation::Relation>| match (b, r) {
         (Some(b), Some(r)) => b.offset_of(r) as u64,
@@ -621,7 +631,7 @@ fn cold(cx: &Ctx, srcs: &[Src], store: Option<&Store>, journal: Option<&Journal>
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     if gpu_edge && cx.gpu.is_some() {
         let run = cx.time("p1.s1 edge join (gpu, count + reserve + claim + write)", || {
-            join_gpu(cx, None, &p1.block, p1.view(P_IMP), p1.view(P_DEF), &p1, P_EDGE, false)
+            join_gpu(cx, Stack { base: None, top: &p1.block }, p1.view(P_IMP), p1.view(P_DEF), &p1, P_EDGE, false)
         });
         on_gpu = run.is_some();
     }
@@ -782,7 +792,7 @@ fn maintained(cx: &Ctx, kept: &Kept, srcs: &[Src], changed: &[usize], journal: &
         chk.create(0);
         let base = p1.base.as_ref().unwrap();
         let run = cx.time("gpu edge over base + delta (check)", || {
-            join_gpu(cx, Some(&base.block), &p1.block, p1.view(P_IMP), p1.view(P_DEF), &chk, 0, true)
+            join_gpu(cx, Stack { base: Some(&base.block), top: &p1.block }, p1.view(P_IMP), p1.view(P_DEF), &chk, 0, true)
         });
         chk.freeze_rel(0);
         chk.end(0);

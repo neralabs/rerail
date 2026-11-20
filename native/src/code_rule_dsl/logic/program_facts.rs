@@ -30,6 +30,9 @@ use super::front::ast::{LatticeDecl, LayoutFact, Native, Shape, ShapeWait, SpanI
 use super::front::ast::{Gate, Report};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// The program's document scopes, each its include and exclude globs; `None` where it declares none (`doc_scoped`).
+pub type DocScopes = Option<Vec<(Vec<String>, Vec<String>)>>;
+
 /// Rows by relation, as a program's `facts` holds them.
 pub type Facts = BTreeMap<String, Vec<crate::code_rule_dsl::logic::front::name::List<Value>>>;
 
@@ -49,7 +52,7 @@ fn brand_tag(b: crate::code_rule_dsl::logic::front::ast::Branded) -> &'static st
 }
 
 fn branded(tag: &str, atom: i64) -> Result<crate::code_rule_dsl::logic::front::ast::Branded, String> {
-    let atom = u32::try_from(atom).map_err(|e| bad(e))?;
+    let atom = u32::try_from(atom).map_err(bad)?;
     tag.chars().next().and_then(|c| crate::code_rule_dsl::logic::front::ast::Branded::of_tag(c, atom)).ok_or_else(|| bad(format!("no atom class {tag:?}")))
 }
 
@@ -778,7 +781,7 @@ impl<'a, C: Cell> Reader<'a, C> {
         Ok(ordered(shapes))
     }
     fn policies(&self) -> Result<Vec<serde_json::Value>, String> {
-        Ok(ordered(self.get("policy").iter().map(|r| Ok((int(&r[0])?, serde_json::from_str(&text(&r[1])?).map_err(|e| bad(e))?))).collect::<Result<Vec<_>, String>>()?))
+        Ok(ordered(self.get("policy").iter().map(|r| Ok((int(&r[0])?, serde_json::from_str(&text(&r[1])?).map_err(bad)?))).collect::<Result<Vec<_>, String>>()?))
     }
     fn settings(&self) -> Result<Vec<(String, String)>, String> {
         Ok(ordered(self.get("setting").iter().map(|r| Ok((int(&r[0])?, (text(&r[1])?, text(&r[2])?)))).collect::<Result<Vec<_>, String>>()?))
@@ -848,11 +851,13 @@ impl<'a, C: Cell> Reader<'a, C> {
     fn ast_patterns(&self) -> Result<BTreeSet<String>, String> {
         self.get("ast_pattern").iter().map(|r| text(&r[0])).collect()
     }
-    fn doc_scopes(&self) -> Result<Option<Vec<(Vec<String>, Vec<String>)>>, String> {
+    fn doc_scopes(&self) -> Result<DocScopes, String> {
         if self.get("doc_scoped").is_empty() {
             return Ok(None);
         }
-        let mut scopes: BTreeMap<i64, (Vec<(i64, String)>, Vec<(i64, String)>)> = self.get("doc_scope").iter().map(|r| Ok((int(&r[0])?, Default::default()))).collect::<Result<_, String>>()?;
+        // A scope's globs, each at its place among them.
+        type Globs = Vec<(i64, String)>;
+        let mut scopes: BTreeMap<i64, (Globs, Globs)> = self.get("doc_scope").iter().map(|r| Ok((int(&r[0])?, Default::default()))).collect::<Result<_, String>>()?;
         for row in self.get("doc_scope_glob") {
             let entry = scopes.get_mut(&int(&row[0])?).ok_or_else(|| bad("a scope glob of no entry"))?;
             let side = if int(&row[1])? == 0 { &mut entry.0 } else { &mut entry.1 };
@@ -927,7 +932,7 @@ impl Fields<'_> {
     pub fn natives(&self) -> Result<BTreeMap<String, Native>, String> { self.0.natives() }
     pub fn rx_spans(&self) -> Result<BTreeSet<(SpanIn, String)>, String> { self.0.rx_spans() }
     pub fn ast_patterns(&self) -> Result<BTreeSet<String>, String> { self.0.ast_patterns() }
-    pub fn doc_scopes(&self) -> Result<Option<Vec<(Vec<String>, Vec<String>)>>, String> { self.0.doc_scopes() }
+    pub fn doc_scopes(&self) -> Result<DocScopes, String> { self.0.doc_scopes() }
     pub fn text_globs(&self) -> Result<Vec<String>, String> { self.0.text_globs() }
     pub fn answers(&self) -> Result<BTreeMap<String, Vec<String>>, String> { self.0.answers() }
     pub fn asked(&self) -> Result<BTreeMap<String, Vec<BTreeSet<String>>>, String> { self.0.asked() }
@@ -998,7 +1003,7 @@ pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
             Ok(u64::from_le_bytes(self.take(8)?.try_into().expect("eight bytes")))
         }
         fn len(&mut self) -> Result<usize, String> {
-            usize::try_from(self.u64()?).map_err(|e| bad(e))
+            usize::try_from(self.u64()?).map_err(bad)
         }
     }
     let mut at = At(bytes, 0);
@@ -1006,7 +1011,7 @@ pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
     let mut table = Vec::with_capacity(count.min(1 << 20));
     for _ in 0..count {
         let n = at.len()?;
-        table.push(std::str::from_utf8(at.take(n)?).map_err(|e| bad(e))?.to_owned());
+        table.push(std::str::from_utf8(at.take(n)?).map_err(bad)?.to_owned());
     }
     let string = |k: u64| table.get(k as usize).cloned().ok_or_else(|| bad("no such string"));
     let mut facts = Facts::new();
@@ -1023,7 +1028,7 @@ pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
                     1 => Value::Str(string(at.u64()?)?.into()),
                     tag @ 2..=4 => Value::Branded(crate::code_rule_dsl::logic::front::ast::Branded {
                         class: [crate::code_rule_dsl::logic::front::ast::Class::Name, crate::code_rule_dsl::logic::front::ast::Class::Kind, crate::code_rule_dsl::logic::front::ast::Class::Field][usize::from(tag - 2)],
-                        atom: u32::try_from(at.u64()?).map_err(|e| bad(e))?,
+                        atom: u32::try_from(at.u64()?).map_err(bad)?,
                     }),
                     tag => return Err(bad(format!("no value tag {tag}"))),
                 });

@@ -292,7 +292,7 @@ impl RulePass for MatcherRelations {
         for r in v.rules() {
             for l in r.body() {
                 if let Lit::Ast { matcher, captures, .. } = l.view()
-                    && captures.clone().count() <= MOST_CAPTURES
+                    && captures.count() <= MOST_CAPTURES
                 {
                     texts.insert((v.text(matcher).to_owned(), captures.map(|(n, _)| v.text(n).to_owned()).collect()));
                     set.insert(r.id());
@@ -312,7 +312,7 @@ impl RulePass for MatcherRelations {
         let mut rels = Vec::new();
         for l in &body {
             if let Lit::Ast { matcher, captures, .. } = l.view()
-                && captures.clone().count() <= MOST_CAPTURES
+                && captures.count() <= MOST_CAPTURES
             {
                 let names: Vec<String> = captures.map(|(n, _)| v.text(n).to_owned()).collect();
                 let k = self.texts.iter().position(|(t, n)| t == v.text(matcher) && *n == names).expect("numbered in begin");
@@ -323,7 +323,7 @@ impl RulePass for MatcherRelations {
         let mut w = out.rule().head_from(v, r, r.head());
         for (i, l) in body.iter().enumerate() {
             match l.view() {
-                Lit::Ast { document, node, captures, .. } if captures.clone().count() <= MOST_CAPTURES => {
+                Lit::Ast { document, node, captures, .. } if captures.count() <= MOST_CAPTURES => {
                     let mut a = vec![T::Var(name(v, r, node))];
                     a.extend(captures.map(|(_, s)| T::Var(name(v, r, s))));
                     w = w.atom(rels.next().expect("named above"), &a);
@@ -397,11 +397,10 @@ impl RulePass for NodeSubjects {
             }
             let types: Option<Vec<&str>> = v.decl_of(v.rel_name(a.rel())).map(|d| d.cols().map(|(_, t)| v.text(t)).collect());
             for (c, t) in a.args().enumerate() {
-                if let (TermRef::Var(s), Some(ty)) = (t, types.as_ref().and_then(|ts| ts.get(c))) {
-                    if *ty == "node" || *ty == "loc" {
+                if let (TermRef::Var(s), Some(ty)) = (t, types.as_ref().and_then(|ts| ts.get(c)))
+                    && (*ty == "node" || *ty == "loc") {
                         nodes.insert(s);
                     }
-                }
             }
         }
         let body: Vec<LitRef<'_>> = r.body().collect();
@@ -421,7 +420,7 @@ impl RulePass for NodeSubjects {
                     let (op, a, x) = test_of(v, *l).expect("a test");
                     let TermRef::Var(s) = a[0] else { unreachable!("a node") };
                     let t = fresh_names[k].as_str();
-                    let call: Vec<T<'_>> = std::iter::once(T::Var(t)).chain(a[1..].iter().map(|x| t_of(v, r, *x))).collect();
+                    let call: Vec<T<'_>> = std::iter::once(T::Var(t)).chain(a[1..].iter().map(|x| t_of(r, *x))).collect();
                     w = w.cmp(T::CallAtom(op, call), CmpOp::Eq, T::Int(x));
                     added.push((s, t));
                 }
@@ -703,7 +702,7 @@ fn same_term(a: TermRef<'_>, b: TermRef<'_>) -> bool {
         (TermRef::Wild, TermRef::Wild) | (TermRef::Top, TermRef::Top) => true,
         (TermRef::Int(x), TermRef::Int(y)) => x == y,
         (TermRef::Str(x), TermRef::Str(y)) => x == y,
-        (TermRef::Call(f, xs), TermRef::Call(g, ys)) => f == g && xs.clone().count() == ys.clone().count() && xs.zip(ys).all(|(x, y)| same_term(x, y)),
+        (TermRef::Call(f, xs), TermRef::Call(g, ys)) => f == g && xs.count() == ys.count() && xs.zip(ys).all(|(x, y)| same_term(x, y)),
         _ => false,
     }
 }
@@ -1035,7 +1034,7 @@ impl RulePass for TextRelations {
                 Some(Some((_, from, neg))) => {
                     let terms: Vec<T<'_>> = match from {
                         From::Var(s) => vec![T::Var(name(v, r, *s))],
-                        From::Atom(at) => body[*at].atom().map(|a| a.args().map(|t| t_of(v, r, t)).collect()).unwrap_or_default(),
+                        From::Atom(at) => body[*at].atom().map(|a| a.args().map(|t| t_of(r, t)).collect()).unwrap_or_default(),
                     };
                     w = w.atom_with(rels[&i], &terms, *neg, false);
                 }

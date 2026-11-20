@@ -25,6 +25,10 @@ use crate::code_rule_dsl::logic::front::{ast::Value, name::List};
 use crate::code_rule_dsl::logic::program_facts::Facts;
 use std::sync::Arc;
 
+/// What an edit's finish gives (`finish_placing`): the version, what it made, and where it folded, each rule's id in
+/// the folded version by its id in the edit.
+pub type Placing = (Arc<Version>, Made, Option<std::collections::BTreeMap<RuleId, RuleId>>);
+
 /// A term to write, by text or by id.
 #[derive(Clone, Debug, PartialEq)]
 pub enum T<'a> {
@@ -43,8 +47,8 @@ pub enum T<'a> {
     CallAtom(AtomId, Vec<T<'a>>),
 }
 
-/// A term of `v`'s rule `r`, to write into a builder under `v`'s ids (one on `v`, or derived from it).
-pub fn t_of<'v>(v: &'v Version, r: RuleRef<'v>, t: TermRef<'v>) -> T<'v> {
+/// A term of rule `r`, to write into a builder under its version's ids (one on that version, or derived from it).
+pub fn t_of<'v>(r: RuleRef<'v>, t: TermRef<'v>) -> T<'v> {
     match t {
         TermRef::Var(s) => T::VarAtom(r.var(s)),
         TermRef::Wild => T::Wild,
@@ -52,7 +56,7 @@ pub fn t_of<'v>(v: &'v Version, r: RuleRef<'v>, t: TermRef<'v>) -> T<'v> {
         TermRef::Int(i) => T::Int(i),
         TermRef::Branded(b) => T::Branded(b),
         TermRef::Str(a) => T::StrAtom(a),
-        TermRef::Call(f, args) => T::CallAtom(f, args.map(|a| t_of(v, r, a)).collect()),
+        TermRef::Call(f, args) => T::CallAtom(f, args.map(|a| t_of(r, a)).collect()),
     }
 }
 
@@ -804,10 +808,10 @@ impl<'p> Builder<'p> {
     /// The version the edit makes (`finish`), and where it folded, each rule's id in the folded version by its id in
     /// the edit: a fold numbers the rules from 0, in the edit's order (the parent's kept, then the added). A pass that
     /// keeps its rules in an order of its own (`Placed`'s) reads its order back through it.
-    pub fn finish_placing(self) -> Result<(Arc<Version>, Made, Option<std::collections::BTreeMap<RuleId, RuleId>>), String> {
+    pub fn finish_placing(self) -> Result<Placing, String> {
         self.finish_as(true)
     }
-    fn finish_as(mut self, placing: bool) -> Result<(Arc<Version>, Made, Option<std::collections::BTreeMap<RuleId, RuleId>>), String> {
+    fn finish_as(mut self, placing: bool) -> Result<Placing, String> {
         let Some(parent) = self.parent else {
             return Ok((Version::of_image(self.image()?)?, Made::Folded, None));
         };

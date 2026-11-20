@@ -1084,8 +1084,10 @@ pub(in crate::code_rule_dsl) fn overlay(converted: &Arc<Version>, authored: &Arc
     let mut authored_clauses = BTreeSet::new();
     for r in a.rules() {
         // `match_all("re", sp, m)` and `match_group("re", sp, m, g, gsp)` are built-ins, which the runner makes
-        // relations of (`preparation::text::TextRelations`).
-        for rel in r.reads().map(|x| a.rel_name(x.rel())).filter(|rel| !matches!(*rel, "match_all" | "match_group")) {
+        // relations of (`preparation::text::TextRelations`). The import components (`rr_cx_*`, which python/points-to
+        // reads) are `components.rerail`'s, which the runner adds to a program that reads them (decision 0076), as
+        // `front` takes them.
+        for rel in r.reads().map(|x| a.rel_name(x.rel())).filter(|rel| !matches!(*rel, "match_all" | "match_group") && !rel.starts_with("rr_cx_")) {
             if !decls.contains_key(rel) {
                 return err(format!("{rel} is read and not declared"));
             }

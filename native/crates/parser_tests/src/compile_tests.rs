@@ -55,10 +55,10 @@ fn evaluated(stmts: &[::bitlex::syntax::Stmt], bytes: &[u8], names: &[&str]) -> 
 
 fn cut(mut words: Vec<u64>, n: usize) -> Vec<u64> {
     words.truncate(n.div_ceil(64));
-    if n % 64 != 0 {
-        if let Some(last) = words.last_mut() {
-            *last &= (1u64 << (n % 64)) - 1;
-        }
+    if !n.is_multiple_of(64)
+        && let Some(last) = words.last_mut()
+    {
+        *last &= (1u64 << (n % 64)) - 1;
     }
     words
 }
@@ -175,7 +175,7 @@ fn every_total_is_one_flag_on_every_executor() {
     let block = &p.block_programs[0];
     let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
     let cranelift = native_cpu_block::compile(&native).expect("compiles");
-    let mut cases: Vec<Vec<u8>> = inputs().into_iter().map(|v| v.into_iter().map(|b| [b'a', b'b', b'c', b'x', b'x', b'x', b'x', b'x'][usize::from(b) % 8]).collect()).collect();
+    let mut cases: Vec<Vec<u8>> = inputs().into_iter().map(|v| v.into_iter().map(|b| b"abcxxxxx"[usize::from(b) % 8]).collect()).collect();
     cases.extend([b"cxxxxbxx".to_vec(), [vec![b'x'; 61], b"cxxxxb".to_vec()].concat(), b"xbxxa".to_vec(), vec![b'x'; 300]]);
     let want: Vec<Vec<u64>> = cases
         .iter()
@@ -364,7 +364,7 @@ fn positions_after_a_backward_pass_metal_payoff() {
     use metal_program_backend::block_program::serial::{Segments, run_serial_split};
     let aligned = "lexer t\nclass d = '0'..'9'\nclass q = '\"'\nclass sp = ' '\nmask ahead = fill(q, sp)\nmask a = aligned(d, 3)\nmask b = aligned(ahead, 3)\n";
     for (name, text, names, mb) in [("aligned", aligned, &["a", "b"][..], 8), ("numbers", NUMBERS, &["long", "close", "over", "far", "odd"][..], 1)] {
-        let file: Vec<u8> = runs().into_iter().flatten().map(|b| [b'1', b'`', b'"', b' '][usize::from(b) % 4]).cycle().take(mb << 20).collect();
+        let file: Vec<u8> = runs().into_iter().flatten().map(|b| b"1`\" "[usize::from(b) % 4]).cycle().take(mb << 20).collect();
         let stmts = backward(text);
         let compiled = bitlex_compile::compile(&stmts, names, None).unwrap_or_else(|e| panic!("compiles: {e}"));
         let p = rir::assemble(&format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows)).expect("assembles");
