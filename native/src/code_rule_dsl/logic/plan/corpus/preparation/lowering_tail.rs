@@ -434,7 +434,7 @@ fn write_placed(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>,
     use crate::code_rule_dsl::logic::program_image::build::t_of;
     let mut rb = b.rule().source(r.id()).head_from(input, r, r.head());
     if let Some((demand, positions)) = p.prefix.get(&r.id()) {
-        let args: Vec<T<'_>> = r.head().args().enumerate().filter(|(k, _)| positions.contains(k)).map(|(_, t)| t_of(input, r, t)).collect();
+        let args: Vec<T<'_>> = r.head().args().enumerate().filter(|(k, _)| positions.contains(k)).map(|(_, t)| t_of(r, t)).collect();
         rb = rb.atom(demand.as_str(), &args);
     }
     for l in r.body() {
@@ -443,7 +443,7 @@ fn write_placed(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>,
         }
         rb = match (anti.contains(&l.node()), l.view()) {
             (true, L::Agg { atom, .. }) => {
-                let args: Vec<T<'_>> = atom.args().map(|t| t_of(input, r, t)).collect();
+                let args: Vec<T<'_>> = atom.args().map(|t| t_of(r, t)).collect();
                 rb.atom_with(input.rel_name(atom.rel()), &args, true, atom.gated())
             }
             _ => rb.lit(input, r, l),
@@ -457,7 +457,7 @@ fn write_demand(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>,
     use crate::code_rule_dsl::logic::program_image::build::t_of;
     let src = input.rule(d.src).expect("a rule of the input");
     let L::Agg { atom, .. } = lit_at(input, d.src, d.agg).view() else { return Err("a demand's aggregate".into()) };
-    let args: Vec<T<'_>> = atom.args().enumerate().filter(|(k, _)| d.positions.contains(k)).map(|(_, t)| t_of(input, src, t)).collect();
+    let args: Vec<T<'_>> = atom.args().enumerate().filter(|(k, _)| d.positions.contains(k)).map(|(_, t)| t_of(src, t)).collect();
     let mut rb = b.rule().source(d.src).head(d.demand.as_str(), &args);
     for &i in &d.body {
         rb = match i {
@@ -465,7 +465,7 @@ fn write_demand(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>,
             Item::Placed(r) => {
                 let rule = input.rule(r).expect("a rule");
                 let (demand, positions) = &p.prefix[&r];
-                let args: Vec<T<'_>> = rule.head().args().enumerate().filter(|(k, _)| positions.contains(k)).map(|(_, t)| t_of(input, rule, t)).collect();
+                let args: Vec<T<'_>> = rule.head().args().enumerate().filter(|(k, _)| positions.contains(k)).map(|(_, t)| t_of(rule, t)).collect();
                 rb.atom(demand.as_str(), &args)
             }
         };
@@ -893,7 +893,7 @@ impl ProgramPass for OrderNodes {
             let kk = ord(*k);
             let mut head_args: Vec<T<'_>> = args.iter().map(|s| T::VarAtom(r.var(*s))).collect();
             head_args.push(T::Var(&kk));
-            let atom_args: Vec<T<'_>> = atom.args().map(|t| t_of(&input, r, t)).collect();
+            let atom_args: Vec<T<'_>> = atom.args().map(|t| t_of(r, t)).collect();
             b.rule()
                 .source(*id)
                 .head(names[*helper].as_str(), &head_args)
@@ -1240,7 +1240,7 @@ impl ProgramPass for KindSets {
                             (Some((n, a)), _) => vec![T::VarAtom(r.var(n)), T::VarAtom(r.var(a))],
                             (None, L::Atom(a)) => {
                                 let xs: Vec<TermRef<'_>> = a.args().collect();
-                                x.args.iter().map(|&k| t_of(&input, r, xs[k])).collect()
+                                x.args.iter().map(|&k| t_of(r, xs[k])).collect()
                             }
                             _ => return Err("an axis atom".into()),
                         };
@@ -1512,7 +1512,7 @@ impl ProgramPass for Findings {
                 b.keep(&input, r);
                 continue;
             }
-            let mut args: Vec<T<'_>> = r.head().args().map(|t| t_of(&input, r, t)).collect();
+            let mut args: Vec<T<'_>> = r.head().args().map(|t| t_of(r, t)).collect();
             args.push(T::Int(0));
             let mut rb = b.rule().source(r.id()).head("violation", &args);
             for l in r.body() {

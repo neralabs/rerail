@@ -420,7 +420,7 @@ impl RulePass for NodeSubjects {
                     let (op, a, x) = test_of(v, *l).expect("a test");
                     let TermRef::Var(s) = a[0] else { unreachable!("a node") };
                     let t = fresh_names[k].as_str();
-                    let call: Vec<T<'_>> = std::iter::once(T::Var(t)).chain(a[1..].iter().map(|x| t_of(v, r, *x))).collect();
+                    let call: Vec<T<'_>> = std::iter::once(T::Var(t)).chain(a[1..].iter().map(|x| t_of(r, *x))).collect();
                     w = w.cmp(T::CallAtom(op, call), CmpOp::Eq, T::Int(x));
                     added.push((s, t));
                 }
@@ -1034,7 +1034,7 @@ impl RulePass for TextRelations {
                 Some(Some((_, from, neg))) => {
                     let terms: Vec<T<'_>> = match from {
                         From::Var(s) => vec![T::Var(name(v, r, *s))],
-                        From::Atom(at) => body[*at].atom().map(|a| a.args().map(|t| t_of(v, r, t)).collect()).unwrap_or_default(),
+                        From::Atom(at) => body[*at].atom().map(|a| a.args().map(|t| t_of(r, t)).collect()).unwrap_or_default(),
                     };
                     w = w.atom_with(rels[&i], &terms, *neg, false);
                 }

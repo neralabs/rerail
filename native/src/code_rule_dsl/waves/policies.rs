@@ -933,7 +933,7 @@ fn demand_program(mut rules: Builder<'_>, atoms: usize) -> StoreResult<Option<Ar
             // The seed binds every atom's document: a key the widening unbound is demanded everywhere.
             None => {
                 needed.insert(WAVE.to_owned());
-                rule = rule.atom(WAVE, &r.head().args().map(|t| t_of(&magic, r, t)).collect::<Vec<_>>());
+                rule = rule.atom(WAVE, &r.head().args().map(|t| t_of(r, t)).collect::<Vec<_>>());
             }
         }
         rule.finish().map_err(invalid)?;

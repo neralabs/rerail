@@ -719,7 +719,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     }
                     match (doc, src) {
                         (false, Key::Const(c)) => known.insert(out, c),
-                        (false, Key::Slot(x)) => known.get(&x).copied().map(|c| known.insert(out, c)).flatten(),
+                        (false, Key::Slot(x)) => known.get(&x).copied().and_then(|c| known.insert(out, c)),
                         _ => known.remove(&out),
                     };
                     n += 1;
@@ -927,12 +927,11 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     Key::Slot(x) => known.get(&x).copied(),
                 };
                 let mut kind = kind;
-                if ntexts > 0 {
-                    if let Some((id, chain)) = keep_text(&mut d, args[0], args[1..].iter().map(konst).collect(), name, &origin, &kept_texts) {
+                if ntexts > 0
+                    && let Some((id, chain)) = keep_text(&mut d, args[0], args[1..].iter().map(konst).collect(), name, &origin, &kept_texts) {
                         kind = Kind::RowText { auto: RowAuto::None, kept: id };
                         kept_texts.insert(*out, chain);
                     }
-                }
                 if *out >= bound.len() {
                     bound.resize(*out + 1, false);
                 }
@@ -1905,7 +1904,7 @@ fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, f
     let runs = encode_runs(rules, &mut batch, rep, names)?;
     drop(room);
     finish_timed(&mut batch, rep)?;
-    complete(runs, &rules[..], store, names, fresh, rep)
+    complete(runs, rules, store, names, fresh, rep)
 }
 
 /// The first rules of `rules` that fit one submission's space, each encoded into `batch`.
@@ -2060,9 +2059,11 @@ fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], st
             rep.made += strs.len() as u64;
             Ok(Some(vals.into_iter().zip(ids).map(|(v, id)| (v, i64::from(id))).collect()))
         }).collect::<Result<_, _>>()?;
-        for x in 0..distinct {
+        // Each column's values by row, read in step (a constant head's column is not read).
+        let mut values: Vec<_> = cols.iter().map(|col| col.iter().copied()).collect();
+        for _ in 0..distinct {
             for (c, h) in plan.head.iter().enumerate() {
-                row[c] = h.unwrap_or_else(|| cols[c][x]);
+                row[c] = h.unwrap_or_else(|| values[c].next().expect("a value at each distinct row"));
                 if let Some(m) = &arena[c] {
                     row[c] = m[&row[c]];
                 }

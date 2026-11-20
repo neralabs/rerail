@@ -346,7 +346,7 @@ impl Vis {
         let dir_total = &front.dir_total();
         let by_node = Grid::Indirect(&front.node_args(), 0);
         enc.run("pe_owner_in", None, &[u_files, u_data, &front.bases, total, &self.owner_in], &[n32], by_node)?;
-        self.owner_scan.encode(enc, SegOp::Max, total, 0, &self.owner_in, &self.heads, &self.owner)?;
+        self.owner_scan.encode(enc, SegOp::Max, (total, 0), &self.owner_in, &self.heads, &self.owner)?;
         enc.run("pe_text_flag", None, &[u_files, u_data, &front.bases, total, &self.owner, &self.tflag], &[n32], by_node)?;
         self.tscan.encode(enc, total, 0, &self.tflag, &self.trank)?;
         enc.run("pe_text_nodes", None, &[&self.tflag, &self.trank, total, &self.text_nodes], &[], by_node)?;
@@ -629,7 +629,7 @@ impl Exp {
         let mut parens = top_in.to_vec();
         parens.extend([&self.theads as &dyn Bound, &self.delta, &self.close]);
         enc.run("px_top_parens", None, &parens, &[n32], by_top)?;
-        self.depth_scan.encode(enc, SegOp::Add, n_toks, 0, &self.delta, &self.theads, &self.depth)?;
+        self.depth_scan.encode(enc, SegOp::Add, (n_toks, 0), &self.delta, &self.theads, &self.depth)?;
         self.close_scan.encode(enc, n_toks, 0, &self.close, &self.close_at)?;
         enc.run("px_close_keys", None, &[&self.depth, &self.close, &self.close_at, n_toks, &self.close_keys, &self.ctl], &[], by_top)?;
         self.close_sort.encode(enc, &self.close_scan.total, 0, &self.close_keys, CLOSE_BITS)?;
@@ -657,7 +657,7 @@ impl Exp {
             &[n32],
             by_top,
         )?;
-        self.reach_scan.encode(enc, SegOp::Max, n_toks, 0, &self.cend, &self.heads, &self.reach)?;
+        self.reach_scan.encode(enc, SegOp::Max, (n_toks, 0), &self.cend, &self.heads, &self.reach)?;
         enc.run("px_top_outer", None, &[&self.cend, &self.reach, n_toks, &self.state, &self.oflag], &[], by_top)?;
         self.oscan.encode(enc, n_toks, 0, &self.oflag, &self.oid)?;
         enc.run(

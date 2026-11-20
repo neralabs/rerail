@@ -545,7 +545,7 @@ impl ProgramPass for NegatedDemand {
             match names.get(input.rel_name(r.head().rel())) {
                 Some(name) => {
                     let key = r.head().args().next().ok_or("a demanded relation of no columns")?;
-                    let mut wr = b.rule().head_from(&input, r, r.head()).atom(name.as_str(), &[t_of(&input, r, key)]);
+                    let mut wr = b.rule().head_from(&input, r, r.head()).atom(name.as_str(), &[t_of(r, key)]);
                     for l in r.body() {
                         wr = wr.lit(&input, r, l);
                     }
@@ -569,7 +569,7 @@ impl ProgramPass for NegatedDemand {
             for body in bodies.into_values() {
                 let mut wr = b.rule().head(name.as_str(), &[T::Var("k")]);
                 for (a, args, r, key) in body {
-                    let terms: Vec<T<'_>> = args.iter().map(|t| if t.var() == Some(*key) { T::Var("k") } else { t_of(&input, *r, *t) }).collect();
+                    let terms: Vec<T<'_>> = args.iter().map(|t| if t.var() == Some(*key) { T::Var("k") } else { t_of(*r, *t) }).collect();
                     wr = wr.atom(a.as_str(), &terms);
                 }
                 wr.finish()?;

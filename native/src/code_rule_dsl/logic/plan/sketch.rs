@@ -253,7 +253,7 @@ impl Moments {
 
 /// `n` rows of the value hashed to `h` into the AMS counters.
 fn ams_add(ams: &mut [i64], h: u64, n: i64) {
-    for (i, row) in ams.chunks_exact_mut(W).enumerate() {
+    for (i, row) in ams.as_chunks_mut::<W>().0.iter_mut().enumerate() {
         let at = (((h >> (i * 7)) >> 1) % W as u64) as usize;
         row[at] += if (h >> (i * 7)) & 1 == 1 { n } else { -n };
     }
@@ -261,7 +261,7 @@ fn ams_add(ams: &mut [i64], h: u64, n: i64) {
 
 /// The AMS counters' estimate of the sum of squared postings: the median row's.
 fn ams_sq(ams: &[i64]) -> f64 {
-    let mut rows: Vec<f64> = ams.chunks_exact(W).map(|r| r.iter().map(|&c| (c as f64) * (c as f64)).sum()).collect();
+    let mut rows: Vec<f64> = ams.as_chunks::<W>().0.iter().map(|r| r.iter().map(|&c| (c as f64) * (c as f64)).sum()).collect();
     rows.sort_by(f64::total_cmp);
     rows[D / 2]
 }

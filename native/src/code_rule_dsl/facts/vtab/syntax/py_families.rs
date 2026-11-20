@@ -121,7 +121,7 @@ impl Py {
                     if core == NONE {
                         return Some(-1);
                     }
-                    let local = p.local_of_node(core as u32);
+                    let local = p.local_of_node(core);
                     (local != NONE).then(|| p.global(local))
                 };
                 let mut push = |family: usize, row: Option<Vec<i64>>| match row {

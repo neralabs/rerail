@@ -353,9 +353,12 @@ impl KeptWrite {
 /// A run's wave's kept puts, by space (`ContentStore::gather`): one file a space a wave, where a file a put made
 /// each write weigh the chain again, and sync its file and directory (a cold data-layer run over 50
 /// files: 2,442 blocks, 15.7 s of the writer's CPU and most of the run's wall, its queue full at 300 files).
+/// A space's puts gathered, and each one's place among them by its key (relation, digest, part).
+type Gathered = (Vec<KeptPut>, std::collections::HashMap<(String, [u8; 32], i64), usize>);
+
 #[derive(Default)]
 struct KeptGather {
-    spaces: std::collections::BTreeMap<[u8; 32], (Vec<KeptPut>, std::collections::HashMap<(String, [u8; 32], i64), usize>)>,
+    spaces: std::collections::BTreeMap<[u8; 32], Gathered>,
     bytes: usize,
 }
 
@@ -532,10 +535,14 @@ pub fn copy_facts(from: &Path, to: &Path) -> std::io::Result<()> {
 
 pub(in crate::content_store) mod vtab;
 
+/// A relation and part kind's entries, rows and bytes (`by_relation`).
+#[cfg(any(test, feature = "test-hooks"))]
+pub type KeptOf = ((String, &'static str), (usize, usize, usize));
+
 /// What the store `path`'s chain keeps, by relation and part kind ("rows" for part 0, "granule" for an input's
 /// granules, part > 0, "beside" for the parts beside them, part < 0): entries, rows and bytes, largest first.
 #[cfg(any(test, feature = "test-hooks"))]
-pub fn by_relation(path: &std::path::Path) -> StoreResult<Vec<((String, &'static str), (usize, usize, usize))>> {
+pub fn by_relation(path: &std::path::Path) -> StoreResult<Vec<KeptOf>> {
     let c = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|e| StoreError::Invalid(e.to_string()))?;
     let spaces: Vec<Vec<u8>> = c.prepare("SELECT DISTINCT space FROM facts_chain").and_then(|mut q| q.query_map([], |r| r.get(0))?.collect()).map_err(|e| StoreError::Invalid(e.to_string()))?;
     let mut by: std::collections::HashMap<(String, &'static str), (usize, usize, usize)> = Default::default();

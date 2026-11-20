@@ -253,7 +253,7 @@ pub(crate) fn write(v: &Version, of: &dyn Of, plan: &Plan, b: &mut Builder<'_>) 
                     let Lit::Agg { var, atom, .. } = l.view() else { unreachable!("a reader's count") };
                     let rank = &plan.ranks[rank];
                     let args: Vec<TermRef<'_>> = atom.args().collect();
-                    let mut terms: Vec<T<'_>> = rank.at.iter().map(|&c| t_of(v, r, args[c])).collect();
+                    let mut terms: Vec<T<'_>> = rank.at.iter().map(|&c| t_of(r, args[c])).collect();
                     terms.push(T::Var(&n));
                     rb = rb.agg(T::VarAtom(r.var(var)), &AggOp::Sum, Some(T::Var(&n)), rank.names[3].as_str(), &terms);
                 }

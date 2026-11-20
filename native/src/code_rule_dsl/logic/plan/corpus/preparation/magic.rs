@@ -1314,7 +1314,7 @@ fn write<'v>(v: &'v Version, w: RuleBuilder<'_, '_>, m: &Made<'v>) -> std::resul
     let gate_names: Vec<String> = (0..gates).map(|n| format!("_g{n}")).collect();
     let tm = |t: Tm<'v>| -> T<'_> {
         match t {
-            Tm::Own(t) => t_of(v, r, t),
+            Tm::Own(t) => t_of(r, t),
             Tm::Fresh(n) => T::Var(name_of(n)),
             Tm::Gate(n) => T::Var(gate_names.get(n as usize).map_or("_g", String::as_str)),
             Tm::Wild => T::Wild,
@@ -1336,7 +1336,7 @@ fn write<'v>(v: &'v Version, w: RuleBuilder<'_, '_>, m: &Made<'v>) -> std::resul
                 let a: Vec<T<'_>> = args.iter().map(|t| tm(*t)).collect();
                 w.atom(rel.as_str(), &a)
             }
-            M::Call(n, call) => w.cmp(T::Var(name_of(*n)), CmpOp::Eq, t_of(v, r, *call)),
+            M::Call(n, call) => w.cmp(T::Var(name_of(*n)), CmpOp::Eq, t_of(r, *call)),
             M::True => w.atom("magic_true", &[T::Int(0)]),
         };
     }

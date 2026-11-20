@@ -47,7 +47,7 @@ const READ_RUN: usize = 256;
 /// The fixed hash every string key uses: the interner's table, and the dependency keys of
 /// probes (`Engine::probe`), which must agree for strings that are not (yet) interned.
 pub fn hash_str(s: &str) -> u64 {
-    foldhash::quality::FixedState::with_seed(0x5EED_71).hash_one(s)
+    foldhash::quality::FixedState::with_seed(0x005E_ED71).hash_one(s)
 }
 
 /// The atoms a process holds: the store's, read where they lie in its mapped blocks (decision 0401, `Stored`), and
@@ -178,6 +178,11 @@ impl Interner {
     /// One past the last id: the database's (as far as this process knows) and the pending ones.
     pub fn len(&self) -> usize {
         self.pending.last().map_or(self.base, |b| b.end().max(self.base)) as usize
+    }
+
+    /// No ids, in the database or pending.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     /// Where the pending atoms start: ids below it are in the database.
@@ -331,7 +336,10 @@ pub struct Atoms {
 /// The identity read of each database file, by its path and (device, inode, creation time): `Atoms::identity`. A file
 /// made again at a path may have the inode the deleted one had; it was not made at the same time.
 #[derive(Default)]
-struct Identities(Mutex<HashMap<String, ((u64, u64, u128), Option<i64>)>>);
+struct Identities(Mutex<HashMap<String, (FileIdentity, Option<i64>)>>);
+
+/// A database file's (device, inode, creation time).
+type FileIdentity = (u64, u64, u128);
 
 /// The database at `path` was made a store (`schema::initialize`): the identity read of it before (none) is gone.
 pub(crate) fn forget_identity(path: &str) {
@@ -340,7 +348,7 @@ pub(crate) fn forget_identity(path: &str) {
 
 thread_local! {
     /// The atoms this thread made while reserving (`reserving`), by arena.
-    static RESERVING: std::cell::RefCell<Option<(usize, Vec<(ReservedSet, Vec<Sym>)>)>> = const { std::cell::RefCell::new(None) };
+    static RESERVING: std::cell::RefCell<Option<Reserving>> = const { std::cell::RefCell::new(None) };
 }
 
 /// An arena's atoms reserved by components not yet retired (`Atoms::reserved`): pending, but no row a commit writes
@@ -471,7 +479,10 @@ pub fn reserving(arena: &Arc<Atoms>) -> Reservation {
 
 /// A thread's reservation in progress (`reserving`): `end` gives what it made. It holds the reservation it was
 /// made inside, which goes on when it ends.
-pub struct Reservation(Option<(usize, Vec<(ReservedSet, Vec<Sym>)>)>);
+pub struct Reservation(Option<Reserving>);
+
+/// A reservation under way: its arena (by address), and each reserved set with the atoms made in it.
+type Reserving = (usize, Vec<(ReservedSet, Vec<Sym>)>);
 
 impl Reservation {
     pub fn end(mut self) -> Reserved {
@@ -501,6 +512,10 @@ impl Reserved {
 
     pub fn len(&self) -> usize {
         self.0.iter().map(|(_, ids)| ids.len()).sum()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.iter().all(|(_, ids)| ids.is_empty())
     }
 }
 
@@ -773,6 +788,10 @@ impl Atoms {
 
     pub fn len(&self) -> usize {
         self.state.read().atoms.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.state.read().atoms.is_empty()
     }
 
     /// Whether ids are given out provisionally (decision 0160): a run is under way and every stored atom it may meet is

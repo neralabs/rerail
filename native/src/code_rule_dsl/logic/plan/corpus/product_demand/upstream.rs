@@ -218,7 +218,7 @@ fn install(program: &mut Program<'_>, rel: &str, cols: &[usize], products: &BTre
                 return Ok(false);
             }
             let key = keys(r.head(), cols).expect("a producer's plain key");
-            let guard: Vec<T<'_>> = key.iter().map(|t| t_of(v, r, *t)).collect();
+            let guard: Vec<T<'_>> = key.iter().map(|t| t_of(r, *t)).collect();
             let mut rb = rewritten(first, v, r, b).atom(name.as_str(), &guard);
             for l in r.body() {
                 rb = rb.lit(v, r, l);
@@ -235,9 +235,9 @@ fn install(program: &mut Program<'_>, rel: &str, cols: &[usize], products: &BTre
             for proof in &proofs {
                 let r = v.rule(proof.rule).expect("a reader of the version");
                 let read = r.body().nth(proof.read).and_then(|l| l.atom()).expect("the read");
-                let head: Vec<T<'_>> = keys(read, cols).expect("a plain key").iter().map(|t| t_of(v, r, *t)).collect();
+                let head: Vec<T<'_>> = keys(read, cols).expect("a plain key").iter().map(|t| t_of(r, *t)).collect();
                 let guard: Vec<T<'_>> = if proof.own {
-                    keys(r.head(), cols).expect("a producer's plain key").iter().map(|t| t_of(v, r, *t)).collect()
+                    keys(r.head(), cols).expect("a producer's plain key").iter().map(|t| t_of(r, *t)).collect()
                 } else {
                     Vec::new()
                 };
@@ -379,7 +379,7 @@ impl Arg {
     fn term<'v>(&self, v: &'v Version, r: RuleRef<'v>) -> T<'v> {
         let arg = |r: RuleRef<'v>, j: usize, k: usize| {
             let a = r.body().nth(j).and_then(|l| l.atom()).expect("an atom of the rule");
-            t_of(v, r, a.args().nth(k).expect("an argument of the atom"))
+            t_of(r, a.args().nth(k).expect("an argument of the atom"))
         };
         match *self {
             Arg::Rule(j, k) => arg(r, j, k),

@@ -1812,7 +1812,7 @@ impl Rows {
                     let m = merged_counts();
                     m.0[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     m.0[1].fetch_add(rows * self.k * 8, std::sync::atomic::Ordering::Relaxed);
-                    crate::code_rule_dsl::logic::profile::decision("rows of many parts merged into one", || format!("{} parts, {rows} rows of {} columns ({} KB copied)", parts.len(), self.k, rows * self.k * 8 >> 10));
+                    crate::code_rule_dsl::logic::profile::decision("rows of many parts merged into one", || format!("{} parts, {rows} rows of {} columns ({} KB copied)", parts.len(), self.k, (rows * self.k * 8) >> 10));
                     let mut one = Part::new(self.life, self.k, rows);
                     for p in parts {
                         one.copy_from(p, 0, p.len());

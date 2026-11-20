@@ -531,7 +531,7 @@ fn a_delta_is_the_size_of_its_edit() {
         for k in 0..9 {
             for r in small.rules() {
                 let head = format!("{}_{k}", small.rel_name(r.head().rel()));
-                let args: Vec<T<'_>> = r.head().args().map(|t| super::t_of(&small, r, t)).collect();
+                let args: Vec<T<'_>> = r.head().args().map(|t| super::t_of(r, t)).collect();
                 let mut w = b.rule().head(head.as_str(), &args);
                 for l in r.body() {
                     w = w.lit(&small, r, l);

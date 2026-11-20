@@ -350,7 +350,7 @@ named(n) :- node(_, n, "identifier", _, _), text(n, x), side(x).
     let parts = programs_of(Arc::clone(&v)).unwrap();
     let lv = &parts.versions.local;
     assert!(lv.rules().any(|r| lv.rel_name(r.head().rel()) == "side"), "the chunks derive side for named");
-    assert!(split.causes.get("under").is_none(), "{:?}", split.causes);
+    assert!(!split.causes.contains_key("under"), "{:?}", split.causes);
 }
 
 #[test]

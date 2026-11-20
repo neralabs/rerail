@@ -441,7 +441,7 @@ pub const PRESENCE_BLOCK: usize = rerail_tape_format::f16::PART;
 /// A tape as held, in one format.
 #[derive(Clone)]
 pub enum Held {
-    F15(Columns15),
+    F15(Box<Columns15>),
     F16(Arc<rerail_tape_format::f16::Tape16>),
     F16Z(Arc<rerail_tape_format::f16::Tape16Z>),
 }
@@ -814,12 +814,12 @@ impl FileImage {
             }
             let host_errors = stored
                 .host_errors
-                .chunks_exact(8)
+                .as_chunks::<8>()
+                .0
+                .iter()
                 .map(|pair| {
-                    (
-                        u32::from_le_bytes(pair[..4].try_into().expect("u32 width")),
-                        u32::from_le_bytes(pair[4..].try_into().expect("u32 width")),
-                    )
+                    let (start, end) = pair.split_at(4);
+                    (u32::from_le_bytes(start.try_into().expect("u32 width")), u32::from_le_bytes(end.try_into().expect("u32 width")))
                 })
                 .collect::<Vec<_>>();
             if host_errors.windows(2).any(|pair| pair[0] > pair[1])
@@ -1372,7 +1372,7 @@ impl TapeImage {
     /// An image of format 15's columns (code, size, base, off, tail), laid out in one buffer.
     fn of15(columns: [&[u8]; 5], widths: [u8; 3], codes: Vec<Code>, kind_aliases: Vec<(String, bool)>, language: GrammarDialect, source_len: usize, source_digest: Option<[u8; 32]>) -> Self {
         let (bytes, at) = Columns15::laid(columns);
-        Self { held: Held::F15(Columns15 { bytes: bytes.into(), base: 0, at, widths, codes, kind_aliases, table: Default::default() }), language, source_len, source_digest }
+        Self { held: Held::F15(Box::new(Columns15 { bytes: bytes.into(), base: 0, at, widths, codes, kind_aliases, table: Default::default() })), language, source_len, source_digest }
     }
 
     /// The tape as held.
@@ -1539,7 +1539,7 @@ impl TapeImage {
                 start = padded(start + column.len());
             }
             let c = Columns15 { bytes: home.clone(), base: columns_at, at, widths, codes, kind_aliases, table: Default::default() };
-            return Ok(Self { held: Held::F15(c), language, source_len, source_digest: None });
+            return Ok(Self { held: Held::F15(Box::new(c)), language, source_len, source_digest: None });
         }
         Ok(Self::of15(columns, widths, codes, kind_aliases, language, source_len, None))
     }
@@ -1676,7 +1676,7 @@ impl TapeImage {
                 image.source_digest = Some(source_digest(source, budget)?);
                 Ok(image)
             }
-            formats::RrTape::Written(written) => Self::written_16(written, grammar.lang, source, None, budget),
+            formats::RrTape::Written(written) => Self::written_16(*written, grammar.lang, source, None, budget),
         }
     }
 
@@ -1811,7 +1811,7 @@ impl TapeImage {
         let count = code.len() / 2;
         let [size_width, off_width, tail_width] = widths.map(|w| usize::from(w & !TAIL_FROM_START));
         if count == 0
-            || code.len() % 2 != 0
+            || !code.len().is_multiple_of(2)
             || ![size_width, off_width, tail_width].iter().all(|w| matches!(w, 2 | 4))
             || size.len() != count * size_width
             || off.len() != count * off_width
@@ -1884,7 +1884,7 @@ impl TapeImage {
                 }
                 None => SENTINEL,
             };
-            let flags = u8::from(node.extra) * CODE_EXTRA | u8::from(node.error) * CODE_ERROR | u8::from(node.missing) * CODE_MISSING;
+            let flags = (u8::from(node.extra) * CODE_EXTRA) | (u8::from(node.error) * CODE_ERROR) | (u8::from(node.missing) * CODE_MISSING);
             let mut classes = [0_u16; MAX_NODE_SUPERTYPES];
             let mut class_count = 0_usize;
             while let Some(&(_, class)) = memberships.next_if(|&&(at, _)| at as usize == index) {

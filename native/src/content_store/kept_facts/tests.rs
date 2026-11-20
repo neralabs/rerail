@@ -240,7 +240,9 @@ fn the_kept_relations_read_through_sql_equal_their_entries() {
     crate::content_store::atoms::Atoms::attach(&c).unwrap();
     let space = KeptSpace::open(&path, &SPACE, &chain_rows(&c, &SPACE).unwrap()).unwrap();
     let view = space.view();
-    let entries_of: Vec<(String, i64, i64, i64, Vec<Vec<i64>>)> = view.all().map(|k| (k.key.rel.to_owned(), k.key.part, k.digest as i64, k.rows.len() as i64, (0..k.rows.len()).map(|i| k.row(i)).collect())).collect();
+    // An entry's relation, part, digest, row count and rows.
+    type Entry = (String, i64, i64, i64, Vec<Vec<i64>>);
+    let entries_of: Vec<Entry> = view.all().map(|k| (k.key.rel.to_owned(), k.key.part, k.digest as i64, k.rows.len() as i64, (0..k.rows.len()).map(|i| k.row(i)).collect())).collect();
     let entries: Vec<(String, i64, i64, i64, String, String)> = c
         .prepare("SELECT rel, part, digest, rows, types, reads FROM kept_entries WHERE space = ?1 ORDER BY rel, part")
         .unwrap()
