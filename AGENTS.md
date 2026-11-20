@@ -15,7 +15,11 @@ JIT, the Metal kernels and SQLite's virtual tables, all through the reads writte
   - a load from disk to the exact in-memory bytes;
   - a derived fact (a rule's head, an axis's answer, an interned text), written once where it is computed, into a
     relation in a block;
-  - an index in its relation's block.
+  - an index in its relation's block;
+  - the memory hierarchy: registers, caches, paging, a GPU's own memory, a driver that maps or migrates a buffer.
+- **The rule is about the engine's data design, not hardware.** Never use it to refuse a device, backend, driver or
+  platform. Ask one question: does the engine now keep the data in a second structure of its own that readers read
+  instead? If not, it is not a copy.
 - **The copies that still exist are listed in 0353** and marked `copy (0353 step N)` in the code. The list only
   shrinks. `scripts/check/check_no_block_copies.py` (pre-commit) refuses a commit that adds one.
 

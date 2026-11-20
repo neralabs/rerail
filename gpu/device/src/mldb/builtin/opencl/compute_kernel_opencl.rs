@@ -10,9 +10,10 @@
 //! - **The driver** is the system's OpenCL library, loaded when the device is first asked for (macOS's framework,
 //!   else `libOpenCL.so.1`): no link dependency, and without it no OpenCL device.
 //! - **The device** is the first GPU of the first platform that has one (`RERAIL_OPENCL_DEVICE=k`: the k-th GPU
-//!   over all platforms). It must share the host's memory (`CL_DEVICE_HOST_UNIFIED_MEMORY`): a buffer is host
-//!   memory the device reads in place (`CL_MEM_USE_HOST_PTR`), never a copy (decision 0353). A discrete device
-//!   would stage it, so it needs SVM, which is not written; it is refused.
+//!   over all platforms). A buffer is host memory the device reads in place (`CL_MEM_USE_HOST_PTR`). A driver
+//!   that holds its own image of it (a discrete device's memory, or NVIDIA's on a GB10) is made current at each
+//!   submission's edges by a map and unmap (`DeviceInner::synced`): the device's memory holding what it reads
+//!   while it computes is not a copy (decision 0353).
 //! - **Addresses:** with `RERAIL_OPENCL_USM=1`, where the device has Intel's unified shared memory, a buffer it
 //!   allocates is a host allocation of it (`clHostMemAllocINTEL`), whose address kernels follow from a table
 //!   (`ClBuffer::address`; the fused sorts and probes). It is bound and copied as itself
@@ -68,6 +69,8 @@ const CL_PROFILING_COMMAND_END: ClUint = 0x1283;
 const CL_EVENT_COMMAND_EXECUTION_STATUS: ClUint = 0x11D3;
 const CL_COMPLETE: ClInt = 0;
 const CL_FALSE: ClUint = 0;
+const CL_MAP_READ: u64 = 1;
+const CL_MAP_WRITE_INVALIDATE_REGION: u64 = 1 << 2;
 
 /// The OpenCL entry points this runtime calls, from the system's library.
 #[allow(clippy::type_complexity)]
@@ -94,6 +97,8 @@ struct Api {
     enqueue_write_buffer: unsafe extern "C" fn(Ptr, Ptr, ClUint, usize, usize, *const c_void, ClUint, *const Ptr, *mut Ptr) -> ClInt,
     enqueue_read_buffer: unsafe extern "C" fn(Ptr, Ptr, ClUint, usize, usize, *mut c_void, ClUint, *const Ptr, *mut Ptr) -> ClInt,
     enqueue_copy_buffer: unsafe extern "C" fn(Ptr, Ptr, Ptr, usize, usize, usize, ClUint, *const Ptr, *mut Ptr) -> ClInt,
+    enqueue_map_buffer: unsafe extern "C" fn(Ptr, Ptr, ClUint, u64, usize, usize, ClUint, *const Ptr, *mut Ptr, *mut ClInt) -> Ptr,
+    enqueue_unmap_mem_object: unsafe extern "C" fn(Ptr, Ptr, Ptr, ClUint, *const Ptr, *mut Ptr) -> ClInt,
     enqueue_marker_with_wait_list: unsafe extern "C" fn(Ptr, ClUint, *const Ptr, *mut Ptr) -> ClInt,
     wait_for_events: unsafe extern "C" fn(ClUint, *const Ptr) -> ClInt,
     get_event_info: unsafe extern "C" fn(Ptr, ClUint, usize, Ptr, *mut usize) -> ClInt,
@@ -197,6 +202,8 @@ fn api() -> Result<&'static Api, String> {
             enqueue_write_buffer: f!("clEnqueueWriteBuffer"),
             enqueue_read_buffer: f!("clEnqueueReadBuffer"),
             enqueue_copy_buffer: f!("clEnqueueCopyBuffer"),
+            enqueue_map_buffer: f!("clEnqueueMapBuffer"),
+            enqueue_unmap_mem_object: f!("clEnqueueUnmapMemObject"),
             enqueue_marker_with_wait_list: f!("clEnqueueMarkerWithWaitList"),
             wait_for_events: f!("clWaitForEvents"),
             get_event_info: f!("clGetEventInfo"),
@@ -307,6 +314,10 @@ struct DeviceInner {
     max_alloc: u64,
     /// Where its buffers are host allocations with an address (`usm`).
     usm: Option<Usm>,
+    /// Whether the driver holds its own image of a buffer over host pages (device memory, or NVIDIA's on a GB10,
+    /// whose memory is the host's), which a map and unmap make current: then a submission's buffers are made the
+    /// host's at its start and the device's back into the host's at its end (`ClComputeQueue::flush`).
+    synced: bool,
 }
 
 unsafe impl Send for DeviceInner {}
@@ -344,9 +355,7 @@ impl ClDevice {
         let (platform, device) = *gpus.get(k).ok_or_else(|| format!("no OpenCL GPU {k} ({} found)", gpus.len()))?;
         let name = format!("{} ({})", device_info_string(a, device, CL_DEVICE_NAME), device_info_string(a, device, CL_DEVICE_VERSION));
         let unified = device_info_bytes(a, device, CL_DEVICE_HOST_UNIFIED_MEMORY);
-        if unified.len() < 4 || u32::from_ne_bytes(unified[..4].try_into().unwrap()) == 0 {
-            return Err(format!("OpenCL device {name} does not share the host's memory: its buffers would be copies (decision 0353)"));
-        }
+        let unified = unified.len() >= 4 && u32::from_ne_bytes(unified[..4].try_into().unwrap()) != 0;
         let mg = device_info_bytes(a, device, CL_DEVICE_MAX_WORK_GROUP_SIZE);
         let max_group = usize::from_ne_bytes(mg[..8].try_into().unwrap());
         let mut e = 0;
@@ -358,10 +367,18 @@ impl ClDevice {
         let max_alloc = u64::from_ne_bytes(ma[..8].try_into().unwrap());
         let subgroups = native_subgroups(a, device);
         // Heap buffers first: memory wrapped in place (a block, a mapped tape) is read through one.
-        let d = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, subgroups, base_align, max_alloc, usm: None }));
-        d.reads_host_pages_in_place()?;
+        let probe = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, subgroups, base_align, max_alloc, usm: None, synced: false }));
+        // A driver whose kernels' writes reach the host's pages only through a map is made current at each
+        // submission's edges (`synced`); a device's own memory holding a buffer while it computes is not a copy (0353).
+        // `RERAIL_OPENCL_SYNCED=1` takes this path on any device (its tests on a driver that needs no map).
+        let synced = !unified || std::env::var_os("RERAIL_OPENCL_SYNCED").is_some() || probe.reads_host_pages_in_place().is_err();
+        drop(probe);
+        let d = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, subgroups, base_align, max_alloc, usm: None, synced }));
+        if synced {
+            return Ok(d);
+        }
         let Some(usm) = usm(a, platform, device) else { return Ok(d) };
-        let with = ClDevice(Arc::new(DeviceInner { device, context, name, max_group, subgroups, base_align, max_alloc, usm: Some(usm) }));
+        let with = ClDevice(Arc::new(DeviceInner { device, context, name, max_group, subgroups, base_align, max_alloc, usm: Some(usm), synced }));
         // Without the check's pass its buffers stay the heap's, with no address (one context; nothing releases it).
         if let Err(e) = with.follows_addresses() {
             eprintln!("rerail-device: {e}: OpenCL buffers without addresses");
@@ -371,9 +388,8 @@ impl ClDevice {
     }
 
     /// Whether a kernel's write into a buffer over host pages is in those pages once it completes, with no map: a
-    /// driver may say it shares the host's memory and still keep a copy of a `CL_MEM_USE_HOST_PTR` buffer, made
-    /// visible only by a map (NVIDIA's on a GB10, whose memory is the host's: the reflection kernels' words read
-    /// 0). Such a buffer is a copy (decision 0353), so the device is refused.
+    /// driver may say it shares the host's memory and still keep its own image of a `CL_MEM_USE_HOST_PTR` buffer,
+    /// made current only by a map (NVIDIA's on a GB10, whose memory is the host's). Such a device is `synced`.
     fn reads_host_pages_in_place(&self) -> Result<(), String> {
         const SEEN: u32 = 0x5EED_0353;
         let lib = ClComputeFunctionLibrary::compile_from_source(self, "__kernel void ukl_in_place(__global uint* o) { o[0] = 0x5EED0353u; }", "the in-place probe")?;
@@ -394,10 +410,7 @@ impl ClDevice {
         // SAFETY: the buffer's host pages, which no kernel uses now.
         let seen = unsafe { std::ptr::read_volatile(out.0.ptr.cast::<u32>()) };
         if seen != SEEN {
-            return Err(format!(
-                "OpenCL device {} keeps a copy of host memory (a kernel's write is not in the host's pages without a map): its buffers would be copies (decision 0353)",
-                self.0.name
-            ));
+            return Err(format!("OpenCL device {}: a kernel's write is not in the host's pages without a map", self.0.name));
         }
         Ok(())
     }
@@ -775,6 +788,13 @@ impl ClComputeFunctionLibrary {
             check("clSetKernelArg", unsafe { set_buffer_arg(a, device.0.usm.as_ref(), k.0, 0, out.mem()) })?;
             let one = 1usize;
             check(name, unsafe { (a.enqueue_nd_range_kernel)(q, k.0, 1, std::ptr::null(), &one, &one, 0, std::ptr::null(), std::ptr::null_mut()) })?;
+            // A `synced` device's write reaches the host's pages through a map (`DeviceInner::synced`).
+            if device.0.synced
+                && let Mem::Cl(m) = out.mem()
+            {
+                let mut c = Enqueue { a, usm: None, q, kernels: Vec::new() };
+                c.sync(&[(m, out.length() as usize)], CL_MAP_READ)?;
+            }
             check("clFinish", unsafe { (a.finish)(q) })
         })();
         unsafe { (a.release_command_queue)(q) };
@@ -986,6 +1006,18 @@ impl Enqueue<'_> {
         Ok(())
     }
 
+    /// A map and unmap of each of `buffers` (an OpenCL buffer and its length), in the queue's order: with
+    /// `CL_MAP_WRITE_INVALIDATE_REGION` the driver's image takes the host's pages, with `CL_MAP_READ` they take it.
+    fn sync(&mut self, buffers: &[(usize, usize)], flags: u64) -> Result<(), String> {
+        for &(m, n) in buffers {
+            let mut e = 0;
+            let p = unsafe { (self.a.enqueue_map_buffer)(self.q, m as Ptr, CL_FALSE, flags, 0, n, 0, std::ptr::null(), std::ptr::null_mut(), &mut e) };
+            check("clEnqueueMapBuffer", e)?;
+            self.command(format!("a sync of {n} bytes"), "clEnqueueUnmapMemObject", |a, q, ev| unsafe { (a.enqueue_unmap_mem_object)(q, m as Ptr, p, 0, std::ptr::null(), ev) })?;
+        }
+        Ok(())
+    }
+
     /// A copy of `n` bytes at `src` to `dst`, one a host allocation, in the queue's order.
     fn memcpy(&self, dst: usize, src: usize, n: usize) -> Result<(), String> {
         let u = self.usm.ok_or("OpenCL: a host allocation's copy on a device without them")?;
@@ -1038,11 +1070,13 @@ pub struct ClComputeQueue {
     root: ClQueueRoot,
     ops: RefCell<Vec<Op>>,
     keep: RefCell<Vec<Box<dyn std::any::Any + Send>>>,
+    /// The OpenCL buffers its work names, with their lengths: what a `synced` device's map makes current.
+    touched: RefCell<Vec<(usize, usize)>>,
 }
 
 impl ClComputeQueue {
     pub fn new(root: &ClQueueRoot) -> Self {
-        ClComputeQueue { root: root.clone(), ops: Default::default(), keep: Default::default() }
+        ClComputeQueue { root: root.clone(), ops: Default::default(), keep: Default::default(), touched: Default::default() }
     }
 
     pub fn new_bind_context<'a>(&'a self, function: &'a ClComputeFunction) -> ClBindContext<'a> {
@@ -1062,12 +1096,20 @@ impl ClComputeQueue {
         self.keep.borrow_mut().push(Box::new(v));
     }
 
+    /// `keep`s a buffer the work names, and notes it for a `synced` device's maps.
+    fn keep_buffer(&self, b: &ClBuffer) {
+        if let Mem::Cl(m) = b.mem() {
+            self.touched.borrow_mut().push((m, b.length() as usize));
+        }
+        self.keep(b.clone());
+    }
+
     /// `enqueueCopyFromHost`: the bytes are taken now, and copied into `dst` at `dst_offset` in queue order.
     pub fn enqueue_copy_from_host(&self, dst: &ClBuffer, dst_offset: u64, bytes: &[u8]) {
         assert!(dst_offset + bytes.len() as u64 <= dst.length(), "a copy past its buffer's end");
         let bytes = Arc::new(bytes.to_vec());
         let (d, b) = (dst.mem(), bytes.clone());
-        self.keep(dst.clone());
+        self.keep_buffer(dst);
         self.keep(bytes);
         self.push(move |c| match d {
             Mem::Cl(d) => c.command(format!("a write of {} bytes from the host", b.len()), "clEnqueueWriteBuffer", |a, q, ev| unsafe {
@@ -1105,7 +1147,7 @@ impl ClComputeQueue {
                 let mut args = vec![(start / 4) as u32, (bytes / 4) as u32, words.len() as u32];
                 args.extend_from_slice(&w);
                 let d = dst.mem();
-                self.keep(dst.clone());
+                self.keep_buffer(dst);
                 self.push(move |c| {
                     let k = kernel.lock().unwrap();
                     check("clSetKernelArg", unsafe { set_buffer_arg(c.a, c.usm, k.0, 0, d) })?;
@@ -1132,8 +1174,8 @@ impl ClComputeQueue {
             return;
         }
         let (s, d) = (src.mem(), dst.mem());
-        self.keep(src.clone());
-        self.keep(dst.clone());
+        self.keep_buffer(src);
+        self.keep_buffer(dst);
         let (so, dof, n) = (src_offset as usize, dst_offset as usize, length as usize);
         self.push(move |c| match (s, d) {
             (Mem::Cl(s), Mem::Cl(d)) => c.command(format!("a copy of {n} bytes"), "clEnqueueCopyBuffer", |a, q, ev| unsafe {
@@ -1160,7 +1202,17 @@ impl ClComputeQueue {
     pub fn flush(&mut self) -> ClComputeEvent {
         let done = Arc::new(Done::default());
         done.state.lock().unwrap().keep = std::mem::take(&mut *self.keep.borrow_mut());
-        let ops = std::mem::take(&mut *self.ops.borrow_mut()).into();
+        let mut ops: std::collections::VecDeque<Op> = std::mem::take(&mut *self.ops.borrow_mut()).into();
+        let mut touched = std::mem::take(&mut *self.touched.borrow_mut());
+        if self.root.0.lock().unwrap().device.0.synced && !touched.is_empty() {
+            touched.sort_unstable();
+            touched.dedup();
+            // The host's pages into the driver's image first (a host write since the last submission), and the
+            // device's writes back into them last, as the work's last commands, before its marker.
+            let first = touched.clone();
+            ops.push_front(Op::Run(Box::new(move |c| c.sync(&first, CL_MAP_WRITE_INVALIDATE_REGION))));
+            ops.push_back(Op::Run(Box::new(move |c| c.sync(&touched, CL_MAP_READ))));
+        }
         self.root.0.lock().unwrap().backlog.push_back(Pending { ops, kernels: Vec::new(), error: None, done: done.clone() });
         self.root.drive();
         ClComputeEvent { done }
@@ -1308,7 +1360,7 @@ impl ClBindContext<'_> {
     /// A buffer the launch reaches through an address another holds: kept until the work completes, and a host
     /// allocation named to the driver (`CL_KERNEL_EXEC_INFO_USM_PTRS_INTEL`), which makes it the launch's.
     pub fn use_buffer(&mut self, buffer: &ClBuffer) {
-        self.queue.keep(buffer.clone());
+        self.queue.keep_buffer(buffer);
         self.used.extend(buffer.address());
     }
 
@@ -1339,7 +1391,7 @@ impl ClBindContext<'_> {
         let params: Vec<Param> = self.params.iter_mut().map(|p| p.take().unwrap()).collect();
         for p in &params {
             if let Param::Buffer(b) = p {
-                self.queue.keep(b.clone());
+                self.queue.keep_buffer(b);
             }
         }
         let global = [grid[0] * block[0], grid[1] * block[1], grid[2] * block[2]];

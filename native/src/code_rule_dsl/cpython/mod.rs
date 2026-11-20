@@ -42,6 +42,9 @@ mod test_load {
         use crate::code_rule_dsl::language::{self, Family, adapter::{pack::{Pack, register}, python::Python}};
         register(Family::Python, &Pack::<Python>::NEW);
         language::register_base(Family::Python, &Pack::<Python>::NEW);
+        // A Python file's tape reads its strings' embedder (decision 0470), which the engine installs as it loads.
+        use crate::code_rule_dsl::embed::{call_argument::CallArgument, install_embedders};
+        install_embedders(vec![(language::Via::CallArgument, &CallArgument)]);
     }
     #[used]
     #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
