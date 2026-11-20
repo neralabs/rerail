@@ -21,7 +21,13 @@ pub fn reserve(len: usize) -> *mut u8 {
     RESERVED.fetch_add(len, Relaxed);
     #[cfg(unix)]
     {
-        let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0) };
+        // Address space, not a commitment: Linux's overcommit accounting would refuse a large reservation (a block of
+        // relations reserves 16 GiB, decision 0445) that is never written whole.
+        #[cfg(target_os = "linux")]
+        let flags = libc::MAP_ANON | libc::MAP_PRIVATE | libc::MAP_NORESERVE;
+        #[cfg(not(target_os = "linux"))]
+        let flags = libc::MAP_ANON | libc::MAP_PRIVATE;
+        let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, flags, -1, 0) };
         assert!(p != libc::MAP_FAILED, "mmap of {len} bytes failed");
         p.cast()
     }

@@ -3200,6 +3200,10 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
   from a directory's entries) do not get a second load posted ahead of the failing one's error, and the test passes
   without the stopped check too. The full shape on Metal did, 3 of 13 times.
 - **Record**: the fix 1fc292eb2; the runs in working-data/bench-1118/ab41-t54.txt.
+- **On Native-and-GPU-strata** (its Q224, merged at d719a840ef, 2026-11-19):
+  - **Open**: no test fails a load's chunk (the builder is local to `run_observed`, and no hook fails a load), and
+  12 more cold Metal runs are owed for the 20.
+  - **Record**: —
 
 ### Q232. (Q40 on Go-C-and-C-support) Step 22 reads float chains and long floats in tier 1 (0413)
 
@@ -3461,6 +3465,14 @@ inventory of today's copies (12 sites, marked `copy (0353 step N)`) and the plan
    6 (in-place writes and indexes), 7 (the transducer's packed batch, its owners'), 8 (0325 step 7), 9 (prices).
 
 Q86 (step 6's prices) waits for step 4: most of what it prices goes.
+- **On Native-and-GPU-strata** (its Q87, merged at d719a840ef, 2026-11-19):
+  4. Step 5 is built for the batch's solve (2026-11-18, 0353 step 5): the axis's ids written once into a relation of
+   its own in a run's block, with room for its two indexes, read in place by the CPU and the device. hogql 16z:
+   copies 125.9 MB a run against 792.4 MB, refusals at run time 2 a run against 5–22, findings 1,629. Left: `has`'s
+   probe on the device (with 4b's parent probes), then step 6.
+  Q68 after step 5: the refusals that remain on hogql are 2 a run (binding tables, one index of 0.8 M rows). The
+  device-budget failures surfaced as a bare `BackendFailure`: a `String` error turned into `Error` loses its text
+  (`compiler::Error::from`), so a refusal names no cause; naming it is part of Q68.
 
 ### Q58. 0325's FACTS blocks raise a CPU run's footprint, and the memory line cuts a third more chunks
 
@@ -3634,6 +3646,18 @@ always a refusal.
 - Route a parked member back to the thread that holds its submission, or flush that wave before the job hands its
   members back (the job's mark taken before the thread's open wave, not after).
 - **Done when**: no hogql run has the refusal, findings unchanged over 20 runs.
+- **On Native-and-GPU-strata** (its Q90, merged at d719a840ef, 2026-11-19):
+  - **Done** (2026-11-18): a job is a scope of the thread's wave (`lanes::wave::enter`). Its floor is where the
+  thread's launches and deferred submissions stood when it began; inside it `flush` runs only what lies past the
+  floor, and a device submission joins an open wave only if that wave was opened past it (`opened_in_scope`). The
+  device's open waves are a stack (`setfix::device::WAVE`), each flushed by number. So a job's strata always open the
+  job's own wave, `deferred_since(mark)` holds, and they are flushed and resumed on the thread that holds them; the
+  thread's own wave stays for it. Test: `a_job_flushes_its_own_submissions_and_not_its_threads`. hogql: 2, 5 and 8
+  such refusals in three 16z runs before; none in 24 after (21 format 15, three 16z), findings 1,629 in each.
+  - **Superseded** (2026-11-18, at the merge of the hub's ffc390de8): decision 0386 makes a job's wave its own, which
+  covers the floor's case and more. Every pool job runs in a `lanes::wave::Scope`, which sets the thread's queued,
+  deferred and open submissions aside and puts them back as it leaves. So the floor, `opened_in_scope` and the stack
+  of waves are gone. The test is kept on the `Scope`.
 
 ### Q68. The shared cache returns a crate built against another version of a vendored crate
 
@@ -5280,6 +5304,8 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
 - **Since the fix**: 184 hogql runs (16z and 16 in turn, three at a time, M3; batches of 30, 36, 40, 36 and 42),
   all 1,629, no panic, no bound fired; the device join's 29 tests pass.
 - **Done when**: 180 format 16 runs, three at a time, have no panic. Met (184).
+- **On Native-and-GPU-strata** (its Q256, merged at d719a840ef, 2026-11-19):
+  - **Done when**: 180 format 16 runs, three at a time, have no panic.
 
 ### Q269. (Q190 on oscar until 2026-11-18) The packed transducer's JIT runs the 128-comment quantifier stress 13× slower than its interpreter
 
@@ -5633,6 +5659,15 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   not taken; a made text read by the next dispatch before its write is visible.
 - **Do**: find which (count the stage's reruns and the arena's fill in a failing run), then fix it at its cause.
 - **Done when**: 60 runs, six at a time, all pass.
+- **On Native-and-GPU-strata** (its Q217, merged at d719a840ef, 2026-11-19):
+  - **Done** (2026-11-18, at `3200d8871`): 300 runs of `parity_random_texts` (120 six at a time, 180 twelve at a
+  time; `tmp/gpu/q124/six.sh`), each running all 1,200 cases on the device with no refusal (`--nocapture`), all
+  equal to the CPU's. What ended it is not proven: no build of the old commit was made to tell. The likeliest is
+  `683d9f62e` (Q265): before it, a device row's stores went through `rows_at`, 8 bytes whatever its column's width
+  and unbounded by its chunks, so stores made in parallel could overwrite their neighbours in whatever order the
+  threads ran. The two suspects above were read and hold: a full arena's text sets `TEXTFN_FULL` and `complete`
+  runs the stage again from its first text function in a new batch's arena; and the join's passes are one serial
+  encoder, each dispatch seeing the last's writes.
 
 ### Q225. (Q179 on cost-classifier-metal-rf) (done) The combine's tail lost a merge's renamed reader (`DropRepeated` left the record by place)
 
@@ -5759,6 +5794,14 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   word; its first bytes compared there), `metal_read` returns the device's error, and the corpus test fails on
   it: 3,075 files the same, 60 refused, Metal differs on 0. Every ladder step runs on Metal (0 refused, was 14
   and 15). `parser_tests`' `a_files_start_on_metal_is_the_interpreters`.
+- **On Native-and-GPU-strata** (its Q231, merged at d719a840ef, 2026-11-19):
+  - **Next**: classify each by its decision (0103, 0104), or move it where the guard says. A table or map that is a
+  cache is to be rules, not a list entry ([[caches-are-ordinary-rules]]).
+  - **Done** (2026-11-19): none is a cache. `frame_segments`, `object_segments` (segment files), `guest_keys` (0391)
+  and `observed_changes` (0400 §4, the observer's journal) are the store's own; the 14 maps are state (open things,
+  registries, switches, profiling, a test's log). Entries gone are cut: `WAVE`, guests.rs's `KEPT` (moved to the run
+  by 7c273bdd8; the maps' pin 24 to 22, one move before it had left the pin over), run_state's `WAVES`, `TICKETS`
+  and `TOGETHER`. The three guards and `run_state`'s pass.
 
 ### Q234. (Q213 on Swift-Kotlin-Scala-support) The engine keeps the grammars' proof answers as it keeps images (0414)
 
@@ -5806,6 +5849,10 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   `logical_line_predicates_and_aliases_use_the_vocabulary_batch` (the strings' relations numbered in another order
   than the tests expect, after 0281 step 6c named them by content). None reads `finish` or a version's fields.
 - **Done when**: each list names what it lists once, and the strings tests assert by content, not number.
+- **On Native-and-GPU-strata** (its Q237, merged at d719a840ef, 2026-11-19):
+  - **Done** (2026-11-19, with 0468 step 2e's CPU texts): the strings tests name each test by what it matches; the
+  lists' other entries had been cut meanwhile, and `device.rs`'s `AUTOMATA` and `TESTS` (gone with 0468 steps 2c and
+  2d) are cut from `facts_only::STATE` and `run_state::STATE`. All five pass.
 
 ### Q238. (Q106 on Typing-support-final-shape at 4ea96a066) Relax's JIT refuses `sha2`'s `sha512h` inline asm
 
@@ -6246,3 +6293,139 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   second run wrote: the journal's latency outran the 300 ms sleeps.
 - **Next**: find what each one waits on. Replace the sleeps with a wait on the journal's own cursor (the event
   ids FSEvents gives past the writes), so a loaded host cannot reorder them.
+
+### Q258. Red after the merge of the hub's ffc390de8: four planner tests and the hub's test targets
+
+At the merge of `jeremybarnes/final-shape-serverplan-quality` (ffc390de8) into this branch, 2026-11-18. The hub's own
+test targets did not compile at ffc390de8, so its lib tests had not run there. Three causes were fixed at the merge:
+- `rerail-engine`'s lib tests: `rr::tests` read `Version::layouts` as a field (now `ProgramFields::layouts`).
+- `rerail-device-metal`'s lib tests: `typing::file_local::tests` called `push_local_joins`, the tree form that 0276
+  step 6 removed (the test now checks the version's pass alone), and `push_equal_columns`, private to the crate
+  that the device crate mounts the tests over (now `pub`).
+- 16 planner tests failed on "a space's kept facts: No such file or directory". The test stores' template copied
+  its folders' files and not their folders. The kept facts are a folder a space (0401), so every copy's rows named
+  blocks it lacked. `test_store::clone_dir` now copies folders too.
+
+Four tests are still red. None reads code this branch or oscar changed (`corpus.rs` is the hub's exactly):
+- `plan::corpus::tests::every_switch_lowering_reads_is_classified`: `corpus.rs has no "Ok((all, Tail::Many { hide,
+  policies }))" after "\nfn combine_linked_as<"`. The test reads the source text the hub changed.
+- `plan::corpus::tests::the_run_after_a_cold_one_writes_nothing`: the warm run writes "the kept plans" (0387) and
+  `observer_meta`.
+- `plan::corpus::maintain_tests::r7_the_recheck_order_is_priced`: 2 recheck lines unpriced after a use is added.
+- `plan::corpus::tests::a_header_edit_asks_again_only_for_the_units_that_read_it`: Q223's, the journal's timing.
+
+Two slow ones timed out at 240 s at load 40–70 (`phase0::tests::bootstrap_resolves_as_the_builtin_reader_does`,
+`rr::tests::library_modules_link_to_the_lowering_of_them_together`).
+- **Do**: the hub's owners fix them where they arise; this branch takes the fixes at its next merge of the hub.
+
+### Q259. hogql retires 10-20% more instructions than at 0353 step 5, after the merges of oscar and the hub
+
+First filed as a 5-8 times rise. That compared debug builds with profiling builds; build against build it is smaller,
+and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 findings every time:
+- Format 15: 71-82 B at step 5 (c3e855c09), 86-90 B at the tip (9ae441f5b).
+- 16z: 107-112 B at step 5, 120-124 B at the tip. System time doubles: 1.1-1.7 s against 2.3-4.1 s.
+- Debug builds (16z) do not show it: 650 B at step 5, 617-621 B at the hub's merge. The debug numbers are not the
+  product's cost.
+- **Where** (format 15 forced, interleaved, three runs each): step 5 71 B, 47ac05ff2 (before oscar) 69-70 B, the tip
+  82-92 B. It came with oscar's merge, which brought the hub's 47785e475 (Q55: the chunks in flight share the run's
+  headroom). Chunk sizes went from 262,144 nodes to about 11,000, run 3 at once: hogql's 2.6 M nodes are 90 chunks
+  against 32. Each stratum and matcher wave runs once a chunk, so 7,032 stratum runs against 2,255 and 119 matcher
+  launches against 46, and the host's per-run costs grow with them. 0365's anchors are not it (RERAIL_ANCHORS=off:
+  83-84 B).
+- **Why the chunks stay small**: the next chunk is sized by the most bytes a node measured this run (7,917, set by
+  one chunk that added 110 MB), not the latest. Peak footprint fell, 1,194 MB to 865 MB.
+- **Step 5's size no longer fits Metal**: at RERAIL_CHUNK_NODES=262144 the tip's label wave holds 887-1,044 MB of the
+  driver against the 512 MB budget, and the run stops (0382 §6; django-bugs' Q245). Before 1f88389be those refusals
+  ran the waves on the CPU unseen (39-59 a run), so step 5's 71 B already carried them.
+- **Attributed** (t49 §3, with the settings applied; an earlier "correction" here came from runs where my script
+  passed none): chunk size is the whole rise. With the Metal budget at 4 GB, 262,144-node chunks retire 71-72 B on
+  Metal, against 86-87 B at the default sizing and 69-70 B before oscar's merge. They peak at 2.2-2.5 GB against 0.9 GB.
+- **Do**: Q261, which lets chunks be large without a guess.
+
+### Q260. A Metal buffer refused by the driver's count, with idle buffers holding the room, stopped hogql
+
+- **Seen**: hogql in format 15 at the default 512 MB budget, after 1f88389be came in with oscar's merge (decision
+  0382 §6: the AST matcher wave's failed Metal run stops the run). 6 runs in 9 stopped on "the ast matcher wave
+  failed on Metal: BackendCapacity". `MappedBuffer`'s allocation (`rerail_metal::runtime::owned_allocation`) refused a
+  buffer under 1 MB for `metal_label_passes`' supertypes: the driver held 525-533 MB. Of that, relational work's
+  pool held 48-166 MB idle, and about 110 MB was in no ledger. The pool trims its idle buffers by the ledgers'
+  count (`make_room`), which still left them room. Before 0382 §6 the wave ran on the CPU after this refusal, unseen.
+- **Done**, in two steps. (1) 9ae441f5b: the refusal makes room by the driver's count first (`make_device_room`: idle
+  buffers least recently returned, then the residency's slabs). Not enough: each call left 1-2 MB, another thread's
+  lease took it, and 2 profiling runs of 6 still stopped. (2) The pool trims its idle buffers against the larger of
+  the two counts (`idle_room`: the ledgers', or the driver's less the idle buffers), at every return. The idle buffers
+  stay out of the driver's room, and the refusal's room making never runs. hogql: format 15 8 runs of 8, 16z 4 of 4,
+  1,629 findings. Tests: `the_driver_count_makes_room_from_idle_buffers`, `idle_buffers_give_way_to_buffers_no_ledger_counts`
+  (fails without step 2).
+- **Open**: what the 110 MB no ledger counts is (kernels' buffers, the kernel store's?). django-bugs' Q245 (a big
+  chunk's wave refused at 1 and 4 GB) may be this refusal.
+
+### Q261. One memory budget counted by what the engine writes; blocks grown in place; chunks grown (t49)
+
+- **Seen** (t49): on unified memory the engine keeps two budgets with two measures, the footprint (the run's 1 GB
+  line) and the driver's lengths (Metal's 512 MB). Neither is what the engine writes, and each sees the other's memory.
+  Row blocks are leased whole (64 MB or 16 MB): about 70 MB of rows hold 260-290 MB of the Metal budget, and no-copy
+  wraps of memory already held count again (about 150 MB). The footprint misses pages the GPU writes into a wrap. So
+  chunks are guessed small, and big ones, the cheap ones (71-72 B against 86-87 B on hogql), are refused.
+- **Do**, in t49 §6's order:
+  1. One budget counted by bytes written (blocks' used, leases' written ends, the heap's live bytes); the pool's idle
+     buffers within it.
+  2. Row blocks reserved large, wrapped once, grown in place, their tails released.
+  3. Chunks grown from small by the latest measure in that count.
+- **Done** (decision 0435, 2026-11-18): 1 and 3. A `Device::May` block is host memory, the Metal checks weigh only
+  the device's own buffers, one count (`rerail_accel::budget::written`) against one limit, chunks sized by
+  `plan/corpus/sizing.rs`. hogql: Metal 79-82 B to 72-73 B (16-19 chunks, no stop), the CPU unchanged at 87 B.
+- **Found** (2026-11-19): the noise in hogql's measures had three causes. (a) The builder cut chunks by the size
+  last stored while it worked ahead, so runs cut different chunks (16 against 20) and Q88's plans followed: fixed by
+  0435 §6 (every warm run now cuts the same 12). (b) The joins' memo (0203, 0208): lines noted by wall time, in one
+  memo every chunk reads as it runs; with `RERAIL_JOINS=off` runs plan alike and retire 78.6-79.1 B against 87-89 B.
+  (c) Threads' coordination: 3-7 B more than one thread's 80.1-80.3 B, rising with load. The first-chunk `pre_k`
+  difference was (a).
+- **Done** (decision 0444, 2026-11-19): (b). The joins' memo and the planning choices (inline or store, demand:
+  found with the memo off, one run in three inlined differently, the first chunk to plan a program choosing for all)
+  follow the chunks' order as Q88's plans do; lines are noted by work; exploration draws from a fixed seed. hogql
+  CPU: 81.9-83.1 B, the same inline choices in 6 of 6 runs; Metal 76.6-81.1 B, 3 of 3.
+- **Done** (decision 0445, 2026-11-19): 2. Row blocks reserve 16 GiB of address space and grow in place, so no
+  tail moves (WASI keeps sized blocks); the device's wrap still grows with the used extent (0266 §12); the count
+  and a chunk's held bytes leave out free lists. hogql Metal 70.9-72.6 B (one 75.5 B), device refusals 2-6 stratum
+  runs a run, against 76.6-81.1 B and 14-49.
+- **Explained** (2026-11-19): a new binary's first run is the build's image store cold (decision 0264, `rr::images::
+  store`, one store a build): the first run prepares the rules' images, phase 0 over the rules (the cone's rounds,
+  chunks of 675, 1,400 and 6,898 nodes, the relation `kind` inlined), and later runs read them. With a store of its
+  own a run (`RERAIL_IMAGE_STORE=project`) every run is that first run: the same 15 chunks and inline choices in 3
+  of 3, the corpus's own choices as a warm run's. Measurements set it (the harness did not).
+- **Found** (2026-11-19, the django-bugs merge abaecb14a): three warnings. `content_store/journal.rs`
+  `since_within` takes a `wait` it never reads (an unfinished option?); `phases.rs:380` reads `sources.rr` into a
+  `src` it never uses; `rr/testing.rs:371` imports `ProgramFields` unused in a build without test-hooks. Left to
+  that track's owner to say which are unfinished. The merge also left `the_journal_names_what_changed_since_its_cursor`
+  not compiling: two of its calls lacked the `settle` argument the other side added; given `SETTLE`, as the calls
+  beside them (0468 step 2a's commit). It and `an_answer_recorded_within_the_settle_window_is_checked_though_the_
+  journal_names_nothing` then fail: each expects `since_within`'s `wait` bound to act, and nothing reads it.
+- **Found** (2026-11-19, 0468 step 2d's device runs): one hogql Metal run in five of that build stopped with
+  `the ast matcher wave failed on Metal: BackendCapacity` (0382 §6 stops the run; peak 1,539 MB against 1,474-1,497 MB
+  in the others); none in five interleaved runs of step 2c's build. The ast wave does not run text tests; the verdict
+  stage's device memory is a few KB a stage (a directory block, wraps of blocks the run holds). Not yet known whether
+  it is the change or the device's room at that moment; next: run the two builds ten times each and read the wave's
+  refusal (what it asked, what the count held). That build also wrote a zero into slot 0 after each verdict stage
+  (fixed in the same commit); five runs after the fix, at load 57-69, had no stop.
+- **Partly done** (fa53bc6a6): a chunk's held bytes leave out a device run's own blocks, and the chunk drops the
+  device's copies of its dead relations on its thread as it ends; `FLUSHED` no longer keeps every wave.
+- **Open**: on Metal, a chunk's held bytes still differ between runs (one chunk 19-50 MB): a chunk's device strata
+  run in pool jobs on ~18 threads, and each thread's `RESIDENT` entry of a relation read in place holds its `Part`
+  until that thread's next device stratum. The user asked (2026-11-19) why the device caches relations at all, and
+  set the rule: decision 0468 (one block structure for the CPU and the GPU, no pointer-chasing Rust structure).
+  Step 1 done: the held bytes are the same in every run. Still differing: a chunk's bytes written on Metal
+  (`GROWTH`, 0468 step 7; refusals by device room). (c), the threads'
+  coordination; the Metal peak footprint at big chunks (1.36-1.47 GB, the count's
+  most 1.15 GB), whose largest rise t49 found in the guests' `ann_ctx` stratum.
+
+### Q331. Native-and-GPU-strata's process-global state, merged before 0442 reached it (d719a840ef, 2026-11-19)
+
+- **Seen**: the merge of Native-and-GPU-strata d719a840ef brought statics written before decision 0442 reached that
+  branch. `check-no-global-state.py` lists them in `global-state.txt` by where they go, and the list is to shrink:
+  `text/automata.rs::AUTOMATA` (shared: the automata block, decision 0468 step 2e; its `Automaton::bytes` reads are
+  `&'static`, so the move gives the reads the shared object's lifetime), `facts/rows.rs::MOVED` and
+  `setfix.rs::ORDERS_KEPT` (run: a profile's counts, onto `run_counts()`), `accel/src/budget.rs::MOST` and
+  `accel/src/gpu/join.rs::SAID` (machine). `joins.rs`' `SEED` moved to a run's setting in the merge itself.
+- **Do**: move each where its class says, and cut its line.
+- **Done when**: none of the five is in `global-state.txt`.

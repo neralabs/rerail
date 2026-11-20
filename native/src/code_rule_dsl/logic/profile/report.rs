@@ -29,7 +29,6 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
                 uploads: u64::from(d.uploads),
                 upload_bytes: d.upload_bytes,
                 upload_by: d.upload_by,
-                resident: u64::from(d.resident_hits),
                 in_place: u64::from(d.in_place),
                 sorts: u64::from(d.sorts),
                 sort_hits: u64::from(d.sort_hits),
@@ -495,7 +494,7 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     let cut: u64 = state.decisions.iter().filter(|((topic, _), _)| topic == "chunk cut by the run's memory line").map(|(_, n)| n).sum();
     let sized: u64 = state.decisions.iter().filter(|((topic, _), _)| topic == "chunk size").map(|(_, n)| n).sum();
     if cut > 0 {
-        let _ = writeln!(r, "- {cut} of {sized} chunk sizings (every phase's) were cut by the run's memory line (the footprint left under a quarter of a chunk's MB): every stratum and matcher wave runs once per chunk, so the device gets small grains and pays its per-launch latency per chunk. See \"chunk size\" under == Decisions; RERAIL_RUN_MB moves the line.");
+        let _ = writeln!(r, "- {cut} of {sized} chunk sizings (every phase's) were held by the run's memory limit (what the count written leaves held them under the caller's most, decision 0435): every stratum and matcher wave runs once per chunk, so the device gets small grains and pays its per-launch latency per chunk. See \"chunk size\" under == Decisions; RERAIL_RUN_MB moves the line.");
         warned += 1;
     }
     if !state.hazards.is_empty() {

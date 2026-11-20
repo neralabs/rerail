@@ -382,11 +382,27 @@ fn a_commit_past_a_blocks_room_starts_the_next() {
     let ids = store.intern_atoms(&words.iter().map(String::as_str).collect::<Vec<_>>()).unwrap();
     store.immediate_transaction(|_| Ok(())).unwrap();
     assert!(!store.atoms.pending());
-    assert_eq!(store.atoms.state.read().atoms.buf.capacity(), 0, "the heap gave its stored bytes up");
+    assert!(store.atoms.state.read().atoms.pending.is_empty(), "the pending atoms' blocks, wholly stored, let go (decision 0468 step 2a)");
     let rows = blocks(&path);
     assert!(rows.len() == 1 && rows[0].0.starts_with('b') && (rows[0].1, rows[0].2) == (1, 70_002 + cap), "one base: {rows:?}");
     for i in [0, 69_999] {
         assert_eq!(store.atom(&words[i]).unwrap(), Some(ids[i]), "read through the base here");
+    }
+    // Decision 0468 step 2b: every atom read through the directory, by the reads written once in CLIF, is the
+    // store's: across the base, and the pending blocks of atoms interned since.
+    let more: Vec<String> = (0..300).map(|i| format!("x{i}")).collect();
+    let more_ids = store.intern_atoms(&more.iter().map(String::as_str).collect::<Vec<_>>()).unwrap();
+    {
+        let state = store.atoms.state.read();
+        let dir = state.atoms.dir();
+        let last = *more_ids.last().unwrap();
+        for id in (0..=last).step_by(97).chain([1, cap, cap + 1, 70_001 + cap, more_ids[0], last]) {
+            // SAFETY: a host directory over blocks this process maps.
+            let got = unsafe { rerail_blocks::atoms::str_in(dir.root(), id) };
+            assert_eq!(got, state.atoms.str(id).map(str::as_bytes), "id {id}");
+        }
+        // SAFETY: as above.
+        assert_eq!(unsafe { rerail_blocks::atoms::str_in(dir.root(), last + 1) }, None, "past every atom");
     }
     drop(store);
     let copy = elsewhere(&path, "next-block-again");
@@ -752,4 +768,30 @@ fn a_forked_processs_unnamed_atoms_queue_no_write() {
     drop(store);
     drop(handle);
     assert_eq!(stored(&path), ["", "a", "b", "c"], "nothing stored at the close");
+}
+
+/// Decision 0468 step 2a: the run's pending atoms are in atoms blocks, the stored chain's format, each string where
+/// a block holds it (a device reads it there): none in a heap buffer. The chain grows past its first block, every
+/// atom is found by its string and read by its id, and the blocks of atoms stored since are let go.
+#[test]
+fn pending_atoms_live_in_atoms_blocks() {
+    use super::{Interner, PENDING_FIRST_CAP, hash_str};
+    let mut i = Interner::default();
+    let n = 3 * PENDING_FIRST_CAP as usize;
+    let strings: Vec<String> = (0..n).map(|k| format!("atom-{k}-{}", "x".repeat(k % 37))).collect();
+    let ids: Vec<Sym> = strings.iter().map(|s| i.intern(s)).collect();
+    assert_eq!(ids, (1..=n as Sym).collect::<Vec<_>>(), "dense ids from the first");
+    let blocks = i.pending_regions();
+    assert!(blocks.len() >= 2, "the chain grew past its first block: {blocks:?}");
+    for (s, &id) in strings.iter().zip(&ids) {
+        let got = i.str(id).expect("a pending atom's string");
+        assert_eq!(got, s);
+        let at = got.as_ptr() as usize;
+        assert!(blocks.iter().any(|&(lo, hi)| at >= lo && at + got.len() <= hi), "{s}: read where an atoms block holds it");
+        assert_eq!(i.get(s), Some(id));
+        assert_eq!(i.hash_of(id), Some(hash_str(s)));
+    }
+    assert_eq!(i.intern(&strings[5]), ids[5], "interned again: the same id");
+    assert_eq!(i.pending(), (n, strings.iter().map(String::len).sum()));
+    assert_eq!(i.len(), n + 1);
 }

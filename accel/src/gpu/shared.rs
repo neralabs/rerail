@@ -75,7 +75,7 @@ fn other() -> usize {
 }
 
 /// The bytes idle buffers may hold, with `need` more about to be leased: what the budget leaves past the ledger and
-/// the live leases.
+/// the live leases. Never the driver's count, which counts every no-copy wrap of host memory again (decision 0435 §2).
 fn idle_room(need: usize) -> usize {
     crate::budget::metal().saturating_sub(other() + dev().live.load(std::sync::atomic::Ordering::Relaxed) + reserved() + need)
 }
@@ -96,17 +96,15 @@ fn leased(b: &Buffer) {
     }
 }
 
-/// What the device holds: the pool's leases and idle buffers and the ledger's reservations, all inside the Metal
-/// budget (decision 0126), which is on top of the overall one.
-pub fn device_held() -> usize {
-    let (live, idle) = held_bytes();
-    live + idle + other()
-}
-
 /// The bytes no other lease can have until they come back: the pool's leases and the reservations not yet leased
 /// (`admit`). Its idle buffers are not counted: room is made of them on demand (`make_room`).
 pub fn bound_bytes() -> usize {
     dev().live.load(std::sync::atomic::Ordering::Relaxed) + reserved()
+}
+
+/// What `rerail-metal`'s ledger reserves now (0 until its reader is set): the count's last part (decision 0435 §3).
+pub fn ledger_bytes() -> usize {
+    other()
 }
 
 /// The bytes leased now, and the bytes the pool keeps idle: relational work's share of the device's memory.
@@ -203,20 +201,27 @@ impl Pool {
         let slab_limit = slab_idle_limit();
         let room = idle_room(need);
         while self.held > room || self.held_slabs > slab_limit {
-            let slabs_only = self.held <= room;
-            let oldest = self
-                .idle
-                .iter()
-                .filter(|(c, v)| !v.is_empty() && (!slabs_only || **c >= SLAB_MIN))
-                .min_by_key(|(_, v)| v[0].0)
-                .map(|(c, _)| *c);
-            let Some(c) = oldest else { break };
-            self.idle.get_mut(&c).unwrap().remove(0);
-            self.held -= c;
-            if c >= SLAB_MIN {
-                self.held_slabs -= c;
+            if !self.release_oldest(self.held <= room) {
+                break;
             }
         }
+    }
+
+    /// Releases the least recently returned idle buffer (a slab's, with `slabs_only`): whether there was one.
+    fn release_oldest(&mut self, slabs_only: bool) -> bool {
+        let oldest = self
+            .idle
+            .iter()
+            .filter(|(c, v)| !v.is_empty() && (!slabs_only || **c >= SLAB_MIN))
+            .min_by_key(|(_, v)| v[0].0)
+            .map(|(c, _)| *c);
+        let Some(c) = oldest else { return false };
+        self.idle.get_mut(&c).unwrap().remove(0);
+        self.held -= c;
+        if c >= SLAB_MIN {
+            self.held_slabs -= c;
+        }
+        true
     }
 
     fn take(&mut self, class: usize) -> Option<Buffer> {
@@ -318,22 +323,6 @@ pub fn lease_block_within(kind: u32, bytes: usize) -> Result<rerail_blocks::Bloc
 /// alone (`Size::Exact` in `Budget::Join`, Q205): every block is leased through it.
 pub(crate) fn lease_block_for_join(kind: u32, bytes: usize) -> Result<rerail_blocks::Block, String> {
     let slab = lease_for_join(bytes.max(rerail_blocks::alloc::EXACT_MIN), false)?;
-    Ok(rerail_blocks::Block::over(kind, Box::new(slab)))
-}
-
-/// `lease_block`, only when the Metal budget holds it with no more than idle buffers released and `keep` bytes of it
-/// still free after: nothing the evictor holds (the tape residency's slabs) is retired for it, and the device's own
-/// buffers keep their room. For a block that has a home without the pool (anonymous memory, which the device reads
-/// through a no-copy wrap): the FACTS blocks of a run's relations (decision 0325). Their leases retiring the
-/// residency's tapes made a run admit them again (20-35 s runs on posthog/hogql); taking the budget's last room
-/// left the device's joins 6-48 MB, and its resident relations were dropped 28 times a run.
-pub fn lease_block_spare(kind: u32, bytes: usize, keep: usize) -> Result<rerail_blocks::Block, String> {
-    let need = class(bytes.max(SLAB_MIN));
-    dev().pool.lock().expect("the pool").trim(need);
-    if other() + dev().live.load(std::sync::atomic::Ordering::Relaxed) + reserved() + need + keep > crate::budget::metal() {
-        return Err(format!("device budget: no spare room for a block of {} MB", need >> 20));
-    }
-    let slab = lease(bytes.max(SLAB_MIN))?;
     Ok(rerail_blocks::Block::over(kind, Box::new(slab)))
 }
 
@@ -897,6 +886,31 @@ mod tests {
         drop(room);
         assert_eq!(reserved(), 0, "what was not drawn goes back");
         crate::budget::METAL_TEST.with(|m| m.set(0));
+    }
+
+    /// A no-copy wrap of host memory is not the device's memory (decision 0435 R2): the budget's checks weigh the
+    /// pool's leases and idle buffers and the ledger, so a lease that fitted before a large wrap fits after it, and the
+    /// idle buffers the budget leaves room for stay.
+    #[test]
+    fn a_wrap_of_host_memory_leaves_the_metal_budget_unchanged() {
+        let Some(s) = get() else { return };
+        let _big = big_leases();
+        drop(lease(64 << 20).unwrap());
+        let idle = || held_bytes().1;
+        let idle_before = idle();
+        assert!(idle_before >= 64 << 20, "the dropped 64 MB lease is idle");
+        let (live, _) = held_bytes();
+        // Room for the idle buffers and one 32 MB lease more, by the ledger.
+        crate::budget::METAL_TEST.with(|m| m.set(other() + live + idle_before + (40 << 20)));
+        let host = rerail_blocks::block::Block::anon(rerail_blocks::block::kind::FACTS, 512 << 20);
+        host.try_alloc_chunk(256 << 20, 1 << 14).unwrap();
+        let wrap = host.gpu_buffer(&s.device);
+        assert!(wrap.length() >= 256 << 20, "a wrap of the host block's used extent");
+        trim_idle();
+        assert_eq!(idle(), idle_before, "the idle buffers keep their room");
+        assert!(lease_within(32 << 20).is_ok(), "a lease that fitted still fits");
+        crate::budget::METAL_TEST.with(|m| m.set(0));
+        drop((wrap, host));
     }
 
     #[test]

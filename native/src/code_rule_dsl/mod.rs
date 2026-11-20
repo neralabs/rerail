@@ -4751,6 +4751,9 @@ pub(crate) fn install_languages() {
     // What a chunk's jobs allocated less freed (Q203 item 3): the allocator's own per-thread counters.
     #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
     facts::rows::install_heap_net(heap_net);
+    // And each chunk scope's heap at its most (decision 0469): jemalloc's per-thread peak.
+    #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+    facts::rows::install_heap_peak(heap_peak, heap_peak_reset);
     // `core.rr`'s names, as the rule language reads them.
     facts::core::install_core_names(logic::rr::core_shape);
     // What the evaluator keeps per connection, dropped with it.
@@ -4926,4 +4929,34 @@ fn heap_net() -> i64 {
             tikv_jemalloc_ctl::thread::allocatedp::read().ok().zip(tikv_jemalloc_ctl::thread::deallocatedp::read().ok());
     }
     COUNTERS.with(|c| (*c).map_or(0, |(a, d)| a.get() as i64 - d.get() as i64))
+}
+
+/// jemalloc's `thread.peak.read` and `thread.peak.reset`, by their MIBs (looked up once; `None` where the allocator
+/// has no such control).
+#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+fn peak_mibs() -> Option<([usize; 3], [usize; 3])> {
+    static MIBS: std::sync::OnceLock<Option<([usize; 3], [usize; 3])>> = std::sync::OnceLock::new();
+    *MIBS.get_or_init(|| {
+        let (mut read, mut reset) = ([0; 3], [0; 3]);
+        tikv_jemalloc_ctl::raw::name_to_mib(b"thread.peak.read\0", &mut read).ok()?;
+        tikv_jemalloc_ctl::raw::name_to_mib(b"thread.peak.reset\0", &mut reset).ok()?;
+        Some((read, reset))
+    })
+}
+
+/// This thread's most allocated less freed since its last `heap_peak_reset`, above what it was then
+/// (`facts::rows::install_heap_peak`).
+#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+fn heap_peak() -> i64 {
+    // SAFETY: `thread.peak.read` is a `uint64_t`.
+    peak_mibs().and_then(|(read, _)| unsafe { tikv_jemalloc_ctl::raw::read_mib::<u64>(&read) }.ok()).map_or(0, |v| v as i64)
+}
+
+/// Resets this thread's peak (`heap_peak`) to what it holds now.
+#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+fn heap_peak_reset() {
+    if let Some((_, reset)) = peak_mibs() {
+        // SAFETY: `thread.peak.reset` reads and writes nothing: no old or new value is passed.
+        unsafe { tikv_jemalloc_sys::mallctlbymib(reset.as_ptr(), reset.len(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), 0) };
+    }
 }

@@ -3396,8 +3396,9 @@ impl Batch {
         };
         let mut docs: Vec<Projected> = Vec::with_capacity(documents.len());
         // The batch's block: what the projections can take, the chunk's copies of the facts' arrays (4 bytes a node for
-        // each of `parent`, `start`, `end`, `kind`, `core.rr`'s places; `field`'s 2), its tables, and the axes' pairs
-        // read whole (`put_pairs`, up to 1 GB). The block reserves address space, not memory.
+        // each of `parent`, `start`, `end`, `kind`, `core.rr`'s places; `field`'s 2), its tables, and the starts of the
+        // axes the device solves (4 bytes a node; their rows are relations of their own, decision 0353 step 5). The
+        // block reserves address space, not memory.
         let block = cells::block((documents.iter().map(|d| Projected::bytes(&d.facts) + 22 * d.facts.len() + 4096).sum::<usize>() + (1 << 20) + (1 << 30)).next_power_of_two());
         // Decision 0055: each document's role, root and tape; each guest's place, and its nodes' host nodes. A guest's
         // key is past every file's (`corpus::guests`), so its host is projected first and its lines are known.
@@ -3764,7 +3765,7 @@ impl Batch {
         Some(i)
     }
     /// The document index and node of id `n`.
-    fn node(&self, n: i64) -> Option<(usize, u32)> {
+    pub fn node(&self, n: i64) -> Option<(usize, u32)> {
         let doc = self.doc(n >> 32)?;
         let local = self.docs[doc].local_of((n & 0xffff_ffff) as u32)?;
         (n >= 0 && local < self.docs[doc].len()).then_some((doc, local))
@@ -3826,6 +3827,9 @@ impl Batch {
 struct Viewed {
     batch: Arc<Batch>,
     view: View,
+    /// The view's relation of no columns, its indexes' block, for a view the device reads in place (decision 0468 step
+    /// 3): made the first time it is read there. `None` inside when no block could be had.
+    home: std::sync::OnceLock<Option<crate::code_rule_dsl::facts::rows::Part>>,
 }
 impl Viewed {
     fn columns(view: View) -> &'static [&'static str] {
@@ -3936,14 +3940,18 @@ impl Source for Viewed {
         if matches!(self.view, View::Line) && in_place.is_none() && !device_chunk::fill_lines(&self.batch, chunk) {
             return None;
         }
+        #[cfg(target_os = "macos")]
+        let home = in_place.as_ref().and_then(|_| self.home.get_or_init(|| crate::code_rule_dsl::facts::rows::Part::for_device(0, self.len()).ok()).clone());
+        #[cfg(not(target_os = "macos"))]
+        let home = None;
         Some(crate::code_rule_dsl::facts::vtab::DeviceView {
             block: &chunk.block,
             root: chunk.root,
             view,
             rows: self.len(),
-            pairs: 0,
             #[cfg(target_os = "macos")]
             in_place,
+            home,
         })
     }
     fn columns(&self) -> Vec<String> {
@@ -4545,7 +4553,7 @@ fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> {
     }
     // A relation the batch made as rows (`Batch::made`: its spans have places too) is bound in place of the view.
     for (name, view) in named.into_iter().filter(|(name, _)| !batch.made.contains(name)) {
-        out.push((name, Arc::new(Viewed { batch: Arc::clone(batch), view })));
+        out.push((name, Arc::new(Viewed { batch: Arc::clone(batch), view, home: std::sync::OnceLock::new() })));
     }
     for (at, families) in families().iter().enumerate() {
         for (family, &name) in families.names().iter().enumerate() {

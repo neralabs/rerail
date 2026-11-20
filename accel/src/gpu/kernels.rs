@@ -502,6 +502,18 @@ fn library(library: [u8; 32], source: &str, name: &str) -> Library {
                 }
                 Err(_) => source,
             };
+            // A measurement's sources (`RERAIL_METAL_DUMP=<dir>`): each library's source by its digest, and the kernels
+            // made of it, to compile apart and cold (`scripts/dev/metal/compile-time.swift`).
+            if let Some(dir) = std::env::var_os("RERAIL_METAL_DUMP") {
+                let stem = Path::new(&dir).join(hex(&library[..6]));
+                if !stem.with_extension("metal").exists() {
+                    let _ = std::fs::write(stem.with_extension("metal"), text);
+                }
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(stem.with_extension("pipelines")) {
+                    use std::io::Write as _;
+                    let _ = writeln!(f, "{name}");
+                }
+            }
             let l = crate::score::phase("msl front end", || objc::rc::autoreleasepool(|| device.new_library_with_source(text, &metal::CompileOptions::new())))
                 .unwrap_or_else(|e| panic!("the Metal library of kernel {name} ({}) does not compile: {e}", hex(&library[..8])));
             let seconds = started.elapsed().as_secs_f64();

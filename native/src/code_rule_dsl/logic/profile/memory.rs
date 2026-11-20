@@ -92,6 +92,11 @@ pub(super) fn footprint() -> (u64, u64) {
     }
 }
 
+/// jemalloc's live bytes: the heap's part of the run's count (`rerail_accel::budget::set_heap_reader`, decision 0435).
+pub fn heap_live() -> usize {
+    heap().0 as usize
+}
+
 /// jemalloc's heap: bytes allocated (live) and resident, now (0 without jemalloc).
 pub(super) fn heap() -> (u64, u64) {
     #[cfg(not(any(windows, target_family = "wasm")))]

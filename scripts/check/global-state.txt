@@ -1,11 +1,14 @@
 # Decision 0442: every non-constant static in the engine, by where it goes (check-no-global-state.py).
 # path::NAME<TAB>class<TAB>why; classes: stays, run, connection, shared, machine, review. Only shrinks.
 accel/src/ane/mod.rs::INSTANCE	stays	an id counter: append-only, the same meaning in every run
+accel/src/budget.rs::HEAP	stays	the heap's reader a crate above registers once (code registered at load; decision 0435)
+accel/src/budget.rs::MOST	machine	the memory count's most when read, for the profile (0435): the machine's memory budget
 accel/src/cost_model.rs::NEXT	stays	an id counter: append-only (model versions no two machines share)
 accel/src/exec.rs::JOB_SCOPE	stays	the job scope a crate above registers once (code registered at load)
 accel/src/exec.rs::MADE	stays	rayon's global pool, built once: rayon keeps one per process, and every parallel loop reaches it; a caller's jobs on it carry their run (decision 0442)
 accel/src/exec.rs::N	stays	the size of rayon's global pool, read once as it is built (`MADE`)
 accel/src/gpu/join.rs::RATIO	stays	the OS's timebase ratio: a constant of the machine read once
+accel/src/gpu/join.rs::SAID	machine	a failed command buffer's reasons said once a process (the device's)
 accel/src/gpu/shared.rs::BIG	stays	a test lock
 accel/src/gpu/shared.rs::EVICTORS	stays	code registered at load (the pool's evictors, hooks set once each by the crates above)
 accel/src/gpu/shared.rs::GUARD	stays	code registered at load (a hook)
@@ -87,6 +90,8 @@ native/src/code_rule_dsl/facts/nearest.rs::CHUNK_AXIS	stays	compiled once from t
 native/src/code_rule_dsl/facts/nearest.rs::NEAREST	stays	compiled once from the engine's own code
 native/src/code_rule_dsl/facts/rows.rs::BLOCK_DEVICE	stays	code a crate above registers at load
 native/src/code_rule_dsl/facts/rows.rs::HEAP_NET	stays	code a crate above registers at load (the allocator's net count)
+native/src/code_rule_dsl/facts/rows.rs::HEAP_PEAK	stays	the allocator's per-thread peak a crate above registers once (decision 0469)
+native/src/code_rule_dsl/facts/rows.rs::MOVED	run	relations moved out of a full block, a profile's count (decision 0445)
 native/src/code_rule_dsl/facts/span_prefilter.rs::SPAN_PREFILTER	stays	compiled once from the engine's own code
 native/src/code_rule_dsl/facts/vtab.rs::CLOSES	stays	a generation counter: append-only
 native/src/code_rule_dsl/facts/vtab.rs::FORGET	stays	code registered at load
@@ -121,7 +126,9 @@ native/src/code_rule_dsl/logic.rs::LOAD	stays	code registered at load
 native/src/code_rule_dsl/logic/device.rs::SOLVER	stays	code a crate above registers at load
 native/src/code_rule_dsl/logic/json_rules/translate.rs::E	stays	a constant
 native/src/code_rule_dsl/logic/lanes.rs::NEXT	stays	a ticket counter: append-only
+native/src/code_rule_dsl/logic/lanes.rs::RAN	stays	a test's own counter (`lanes.rs`'s inline test module, which the file filter cannot leave out by name)
 native/src/code_rule_dsl/logic/native/setfix.rs::ONCE	stays	a hook registered once
+native/src/code_rule_dsl/logic/native/setfix.rs::ORDERS_KEPT	run	where frozen relations' orders were kept, a profile's count (decision 0468 step 5b)
 native/src/code_rule_dsl/logic/native/setfix/device.rs::TICKETS	stays	a ticket counter: append-only
 native/src/code_rule_dsl/logic/native/setfix/device.rs::WAVES	stays	an id counter: append-only, unique across threads
 native/src/code_rule_dsl/logic/native/setfix/level.rs::NEXT	stays	an id counter: append-only
@@ -135,7 +142,6 @@ native/src/code_rule_dsl/logic/plan/corpus/session.rs::GENERATION	stays	an id co
 native/src/code_rule_dsl/logic/plan/corpus/switches.rs::CHANGED	stays	guards the process's environment variables, which the OS keeps per process (a test's switches)
 native/src/code_rule_dsl/logic/plan/corpus/switches.rs::STATE	stays	guards the process's environment variables, which the OS keeps per process (a test's switches)
 native/src/code_rule_dsl/logic/plan/coverage.rs::CENSUS	stays	computed once from the engine's own files
-native/src/code_rule_dsl/logic/plan/joins.rs::N	stays	an id counter: append-only
 native/src/code_rule_dsl/logic/plan/keeps.rs::OBSERVED	stays	a key, holding nothing
 native/src/code_rule_dsl/logic/plan/output.rs::WRITES	stays	a process-unique number naming a file or directory (with the pid): runs only ever get distinct values, as from the pid
 native/src/code_rule_dsl/logic/profile.rs::EXITED	stays	the profiler's registry of the process's threads (threads are the process's, as the OS keeps them): every thread that opened a span, and the accounts of those that ended
@@ -175,6 +181,7 @@ native/src/code_rule_dsl/matcher/p_anchors/sql/lower/waves.rs::IDENTIFIER	stays	
 native/src/code_rule_dsl/matcher/term.rs::TERMS	stays	code registered at load
 native/src/code_rule_dsl/matcher/transform.rs::NUMBER_TEXT	stays	code a crate above registers at load
 native/src/code_rule_dsl/matcher/value.rs::NEXT_READING_ID	stays	an id counter: append-only
+native/src/code_rule_dsl/mod.rs::MIBS	stays	jemalloc's control ids for its per-thread peak, looked up once (the allocator's own)
 native/src/code_rule_dsl/module_graph.rs::SERVER_ENTRY	stays	a regex of a literal
 native/src/code_rule_dsl/npm_ignore/mod.rs::BLANK	stays	a regex of a literal
 native/src/code_rule_dsl/npm_ignore/mod.rs::DOUBLE_BACKSLASH	stays	a regex of a literal
@@ -255,6 +262,7 @@ native/src/code_rule_dsl/tape/tokens.rs::BY_DIALECT	stays	computed once from the
 native/src/code_rule_dsl/tape/tokens.rs::KEPT	stays	computed once from the engine's own files
 native/src/code_rule_dsl/tape/vue_lean.rs::IDS	stays	computed once from the engine's own files
 native/src/code_rule_dsl/text.rs::NAMES	stays	counter names leaked once each (`&'static str`), from the engine's own text productions: an append-only interner of the engine's names
+native/src/code_rule_dsl/text/automata.rs::AUTOMATA	shared	the text tests' and replacers' automata block (decision 0468 step 2e): Q331 moves it onto the shared object
 native/src/code_rule_dsl/transducer/packed/compile/matcher.rs::NAMES	stays	names leaked once each (`&'static str`), from the engine's own fallback reasons: an append-only interner of the engine's names
 native/src/code_rule_dsl/transducer/packed/device.rs::MATCHER	stays	code a crate above registers at load
 native/src/code_rule_dsl/transducer/packed/json_parser.rs::PARSER	stays	computed once from the engine's own files

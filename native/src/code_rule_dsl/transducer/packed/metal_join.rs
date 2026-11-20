@@ -64,11 +64,8 @@ pub(in crate::code_rule_dsl) const AGG_COUNT: u32 = 0;
 pub(in crate::code_rule_dsl) const AGG_SUM: u32 = 1;
 pub(in crate::code_rule_dsl) const AGG_MIN: u32 = 2;
 pub(in crate::code_rule_dsl) const AGG_MAX: u32 = 3;
-/// A text test of a slot (`Stage::agg`: `[slot, want]`): a binding passes when its symbol's verdict bit (the right
-/// relation, a bitset of 64 bits a row, by symbol) is `want`.
-pub(in crate::code_rule_dsl) const TEXT: u32 = 5;
-/// A function of symbols' names, each a slot or a constant (keys 0 and 1), their texts the right relation's (a
-/// `DevText`), its value into `bind_slot[0]`: by `agg[0]`, `NAMES_CMP` (`str_cmp`) or `NAMES_LEN` (`strlen`).
+/// A function of symbols' names, each a slot or a constant (keys 0 and 1), their texts read in place through the
+/// batch's atoms directory (decision 0468 step 2e), its value into `bind_slot[0]`: by `agg[0]`, `NAMES_CMP` (`str_cmp`) or `NAMES_LEN` (`strlen`).
 pub(in crate::code_rule_dsl) const STRCMP: u32 = 6;
 pub(in crate::code_rule_dsl) const NAMES_CMP: u32 = 0;
 pub(in crate::code_rule_dsl) const NAMES_LEN: u32 = 1;
@@ -115,6 +112,13 @@ pub(in crate::code_rule_dsl) const ROW_TEST: u32 = 3;
 /// Text function `TEXTFN_*` (agg[0] >> 16) of X: of numbers keys 5 and 6; a literal replacement's pattern key 2's
 /// symbol, its replacement key 4's.
 pub(in crate::code_rule_dsl) const ROW_MAP: u32 = 4;
+/// A text test of a symbol (key 0) by its table, its verdict read from and kept in the one rolling cache (decision
+/// 0468 step 2d): the symbol's bytes read through the atoms directory where a verdict is not kept yet.
+pub(in crate::code_rule_dsl) const ROW_VERDICT: u32 = 5;
+/// With a text function (`ROW_MAP`, `ROW_REPLACE`) of constant arguments of a symbol, or a chain of them: its text kept
+/// in the one rolling cache (decision 0468 step 2e) by the functions' id (`P[5]`) and the source symbol (key 7). A
+/// kept text is copied into the arena; one made is kept, up to `atoms::TEXT_MOST` bytes.
+pub(in crate::code_rule_dsl) const ROW_KEPT: u32 = 1 << 9;
 pub(in crate::code_rule_dsl) const TEXTFN_LOWER: u32 = 0;
 pub(in crate::code_rule_dsl) const TEXTFN_HEAD: u32 = 1;
 pub(in crate::code_rule_dsl) const TEXTFN_DIR: u32 = 2;
@@ -131,6 +135,8 @@ pub(in crate::code_rule_dsl) const TEXTFN_COPY: u32 = 10;
 pub(in crate::code_rule_dsl) const TEXTFN_ZERO_PAD: u32 = 11;
 pub(in crate::code_rule_dsl) const TEXTFN_FULL: u32 = 1;
 pub(in crate::code_rule_dsl) const TEXTFN_HOST: u32 = 2;
+/// A `ROW_VERDICT` stage met a symbol the atoms directory does not hold: the stratum runs on the host.
+pub(in crate::code_rule_dsl) const TEXTFN_UNHELD: u32 = 4;
 /// An operand that is an arena text (a text function's value).
 pub(in crate::code_rule_dsl) const OPND_ARENA: u32 = 3;
 /// An arena text's value: the sign bit, its offset from bit 24, its length in the low 24 bits.
@@ -231,7 +237,8 @@ pub(in crate::code_rule_dsl) struct Stage {
     /// (`view_reads::ViewDir`), and the view's number (1 + `device_chunk::VIEW_*`; 0: a relation).
     pub(in crate::code_rule_dsl) v_dir: u64,
     pub(in crate::code_rule_dsl) r_view: u32,
-    pub(in crate::code_rule_dsl) v_pad: u32,
+    /// 1 when the probed view is `child` probed by its parent, off the tape (`DevIndex::by_parent`).
+    pub(in crate::code_rule_dsl) v_parent: u32,
 }
 
 const _: () = assert!(std::mem::size_of::<Stage>() == 2320 && std::mem::size_of::<Stage>() % 16 == 0);
@@ -341,7 +348,8 @@ static inline void view_put(device uchar* out, ulong rows_at, uint r, uint c, lo
     clif_rows_put((device const uchar*)out, rows_at, r, c, ulong(v));
 }
 
-// p: the root's offset, the view (`device_chunk::VIEW_*`), the rows, the columns, an axis's pairs' offset (else 0),
+// p: the root's offset, the view (`device_chunk::VIEW_*`), the rows, the columns, 0 (an axis's pairs' place until
+// decision 0353 step 5),
 // the made relation's rows' descriptor's offset (low, high), then each column's index.
 kernel void view_expand(device const char* B [[buffer(0)]], device uchar* out [[buffer(1)]], constant uint* p [[buffer(2)]],
                         uint r [[thread_position_in_grid]]) {
@@ -351,16 +359,6 @@ kernel void view_expand(device const char* B [[buffer(0)]], device uchar* out [[
     device const ChunkRoot* root = (device const ChunkRoot*)(B + p[0]);
     device const ChunkDoc* docs = items<ChunkDoc>(root->docs);
     uint view = p[1];
-    if (view == 4u) {
-        // An axis read whole (`Within`): a pair of node rows, inner << 32 | outer; each column the node's id.
-        ulong pair = ((device const ulong*)(B + p[4]))[r];
-        for (uint c = 0u; c < p[3]; c++) {
-            uint row = p[7 + c] == 0u ? uint(pair >> 32) : uint(pair & 0xffffffffu);
-            device const ChunkDoc& d = docs[doc_of_node(docs, root->ndocs, row)];
-            view_put(out, rows_at, r, c, global_of(d, row - d.node_row));
-        }
-        return;
-    }
     if (view >= 5u && view <= 8u) {
         // core.rr's places (`View::Loc`): the document whose `Loc` rows hold `r`, then its local's span.
         uint lo = 0u, hi = root->ndocs;
@@ -471,19 +469,26 @@ kernel void axis_count(device const char* B [[buffer(0)]], device uint* start [[
     start[v] = count;
 }
 
-// Each node row's rows from its start (the scanned counts): inner << 32 | outer, nearest first. p[4] is the rows
-// the pairs' space holds: when the total (`start[n]`) is more, nothing is written, and the host writes again.
-kernel void axis_write(device const char* B [[buffer(0)]], device const uint* start [[buffer(1)]], device ulong* pairs [[buffer(2)]],
+// Each node row's rows from its start (the scanned counts), nearest first: the ids of `n` and `a`, written once into
+// the axis's relation (decision 0353 step 5) through the writer written once, bounded by its chunks. p[4] is the
+// rows the relation holds, the total (`start[n]`) read before: a total past it writes nothing. p[5], p[6]: the
+// relation's rows' descriptor's offset in `out`'s block (low, high).
+kernel void axis_write(device const char* B [[buffer(0)]], device const uint* start [[buffer(1)]], device uchar* out [[buffer(2)]],
                        constant uint* p [[buffer(3)]], uint v [[thread_position_in_grid]]) {
     if (v >= p[1] || start[p[1]] > p[4]) return;
+    ulong rows_at = ulong(p[5]) | (ulong(p[6]) << 32);
     device const ChunkRoot* root = (device const ChunkRoot*)(B + p[0]);
     device const ChunkDoc* docs = items<ChunkDoc>(root->docs);
     device const ChunkDoc& d = docs[doc_of_node(docs, root->ndocs, v)];
     uint at = start[v];
-    uint up = parent_of(d, v - d.node_row);
+    uint l = v - d.node_row;
+    long n_id = global_of(d, l);
+    uint up = parent_of(d, l);
     for (uint k = 0u; k < d.nodes && up != CH_NONE; k++) {
         if (axis_member(B, p[2], d, up)) {
-            pairs[at++] = ulong(v) << 32 | ulong(d.node_row + up);
+            view_put(out, rows_at, at, 0u, n_id);
+            view_put(out, rows_at, at, 1u, global_of(d, up));
+            at++;
             if (p[3] == 0u) break;
         }
         up = parent_of(d, up);
@@ -553,7 +558,7 @@ struct Stage {
     uint passed[16]; uint outputs[16];
     uint noutputs; uint ncols; uint agg[2];
     uint4 arith[8];
-    device const ViewDir* v_dir; uint r_view; uint v_pad;
+    device const ViewDir* v_dir; uint r_view; uint v_parent;
 };
 
 constant uint NONE = 0xffffffffu;
@@ -684,13 +689,74 @@ static inline void group_of(device const long* R, ulong at, uint index, thread c
     hi = lo + uint(g & 0xfffffffful);
 }
 
-// A binding's candidates: [lo, hi) of the relation's index group for its keys (or of the rows, without keys), and its
-// key values.
-static inline void candidates(constant Stage& s, device const long* L, uint t, device const long* R, thread long* kv, thread uint& lo, thread uint& hi) {
-    if (s.mode == 3) { lo = 0; hi = 1; return; }
-    if (s.nkeys == 0) { lo = 0; hi = s.nr; return; }
-    for (uint i = 0; i < s.nkeys && i < 8; i++) kv[i] = s.key_kind[i] == 1 ? L[ulong(s.key_slot[i]) * s.cap_in + t] : s.key_const[i];
+// The `child` view probed by its parent (decision 0353 step 4c, `Stage::v_parent`): the parent's children read off
+// the tape, its first child and each next sibling (`clif_view_child_first`, `clif_view_child_next`), with no index of
+// the view. A walk of a binding's candidates (`how`): 0 the rows [lo, hi), 1 an index group's entries [lo, hi), 2 a
+// parent's children from row lo, each step the next sibling's row (`NONE` ends it).
+static inline device const ViewDoc* vdoc(device const ViewDir* d, uint m) {
+    return (device const ViewDoc*)(d->chunk + d->rows[m].entry);
+}
+
+// A parent `key`'s children: its document by bisection of the directory on its key (the batch's documents are in
+// key order), its numbered node (`clif_view_number`), then its first child. The root's children are also the nodes
+// under unnumbered ones (a narrowed projection): its probe walks its document's rows, which `matches` tests.
+static inline void by_parent(constant Stage& s, long key, thread uint& lo, thread uint& hi, thread uint& how) {
+    device const ViewDir* d = s.v_dir;
+    lo = 0u; hi = 0u; how = 0u;
+    if (key < 0 || d->ndocs == 0u) return;
+    uint k = uint(ulong(key) >> 32);
+    uint a = 0u, b = d->ndocs;
+    while (b - a > 1u) {
+        uint m = (a + b) / 2u;
+        if (vdoc(d, m)->key <= k) a = m; else b = m;
+    }
+    if (vdoc(d, a)->key != k) return;
+    device const ViewRow& e = d->rows[a];
+    uint l = clif_view_number(d->chunk, e.entry, e.tape, e.view, e.lines, uint(ulong(key) & 0xfffffffful));
+    if (l == NONE) return;
+    uint first = e.rows[1];
+    if (l == 0u) { lo = first; hi = a + 1u < d->ndocs ? d->rows[a + 1u].rows[1] : s.nr; return; }
+    uint c = clif_view_child_first(d->chunk, e.entry, e.tape, e.view, e.lines, l);
+    if (c == NONE) return;
+    lo = first + c; hi = NONE; how = 2u;
+}
+
+// The next sibling's row of `child` row `r`, or `NONE`: its document as `vread` finds it, then the read.
+static inline uint child_next(constant Stage& s, uint r) {
+    device const ViewDir* d = s.v_dir;
+    device const ViewRow* rows = d->rows;
+    uint lo = 0u, hi = d->ndocs;
+    while (hi - lo > 1u) {
+        uint m = (lo + hi) / 2u;
+        if (rows[m].rows[1] <= r) lo = m; else hi = m;
+    }
+    device const ViewRow& e = rows[lo];
+    uint n = clif_view_child_next(d->chunk, e.entry, e.tape, e.view, e.lines, r - e.rows[1]);
+    return n == NONE ? NONE : e.rows[1] + n;
+}
+
+// A walk's candidate `q`: its row, and the next candidate.
+static inline uint cand_row(constant Stage& s, device const long* R, uint how, uint q) {
+    return how == 1u ? group_row(s, R, q) : q;
+}
+static inline uint cand_next(constant Stage& s, uint how, uint q) {
+    return how == 2u ? child_next(s, q) : q + 1u;
+}
+
+// The candidates of keys `kv` in relation R (`s`'s): its index group, a parent's children, or every row.
+static inline void probe(constant Stage& s, device const long* R, thread const long* kv, thread uint& lo, thread uint& hi, thread uint& how) {
+    if (s.nkeys == 0) { lo = 0; hi = s.nr; how = 0u; return; }
+    if (s.v_parent != 0u) { by_parent(s, kv[0], lo, hi, how); return; }
+    how = 1u;
     group_of(R, s.r_at, s.r_index, kv, s.nkeys, lo, hi);
+}
+
+// A binding's candidates (`probe`), and its key values.
+static inline void candidates(constant Stage& s, device const long* L, uint t, device const long* R, thread long* kv, thread uint& lo, thread uint& hi, thread uint& how) {
+    how = 0u;
+    if (s.mode == 3) { lo = 0; hi = 1; return; }
+    for (uint i = 0; i < s.nkeys && i < 8; i++) kv[i] = s.key_kind[i] == 1 ? L[ulong(s.key_slot[i]) * s.cap_in + t] : s.key_const[i];
+    probe(s, R, kv, lo, hi, how);
 }
 
 // Whether candidate place q (row r) matches the binding's keys and the relation's column tests.
@@ -710,13 +776,12 @@ static inline bool matches(constant Stage& s, device const long* R, uint r, thre
 // An aggregate's value over the binding's matching rows (mode 4, `Stage::agg`): 0 with `v`, 1 when it has none (a min
 // or max of no rows, or a tested value that differs), 2 when a sum passes 64 bits.
 static inline uint aggregate(constant Stage& s, device const long* L, uint t, device const long* R,
-                             uint lo, uint hi, thread const long* kv, thread long& v) {
-    bool keyed = s.nkeys > 0;
+                             uint lo, uint hi, uint how, thread const long* kv, thread long& v) {
     uint kind = s.agg[0] & 0xff;
     long cnt = 0, sum = 0, mn = 0, mx = 0;
     bool any = false, over = false;
-    for (uint q = lo; q < hi; q++) {
-        uint r = keyed ? group_row(s, R, q) : q;
+    for (uint q = lo; q < hi; q = cand_next(s, how, q)) {
+        uint r = cand_row(s, R, how, q);
         if (!matches(s, R, r, kv)) continue;
         cnt++;
         if (s.agg[1] == NONE) continue;
@@ -733,19 +798,6 @@ static inline uint aggregate(constant Stage& s, device const long* L, uint t, de
     v = kind == 0 ? cnt : (kind == 1 ? sum : (kind == 2 ? mn : mx));
     if (((s.agg[0] >> 8) & 1) == 0 && L[ulong(s.bind_slot[0]) * s.cap_in + t] != v) return 1;
     return 0;
-}
-
-// A text buffer (`DevText`): its terms' count, their symbols ascending, each one's offset into its bytes, the bytes.
-static inline uint text_count(device const long* T) { return uint(T[0]); }
-static inline device const uint* text_offs(device const long* T) { return (device const uint*)(T + 1 + T[0]); }
-static inline device const uchar* text_chars(device const long* T) { return (device const uchar*)(text_offs(T) + T[0] + 1); }
-
-// Symbol `id`'s text in T (none: the empty text, as a name the store does not hold).
-static inline void text_find(device const long* T, long id, thread uint& off, thread uint& len) {
-    uint n = text_count(T), a = 0, b = n;
-    for (uint k = 0; k < 40 && a < b; k++) { uint m = (a + b) / 2; if (T[1 + m] < id) a = m + 1; else b = m; }
-    if (a < n && T[1 + a] == id) { device const uint* o = text_offs(T); off = o[a]; len = o[a + 1] - o[a]; }
-    else { off = 0; len = 0; }
 }
 
 // Eight bytes of a text from `at`, big-endian, zero past `end`: a window compared at once.
@@ -810,11 +862,21 @@ static inline bool txt_same(Txt x, uint xs, Txt y, uint ys, uint n) {
     return true;
 }
 
+// Symbol v's bytes where the atoms blocks hold them, through the atoms directory D (decision 0468 step 2e): a value
+// no atom of D's is (no symbol, or one interned after D was made) reads as empty and sets `unheld` (the stratum then
+// runs on the host).
+static inline device const uchar* sym_text(device const uchar* D, long v, thread uint& len, thread bool& unheld) {
+    uint n = v >= 0 && v <= long(0xffffffffu) ? clif_atoms_len(D, 0ul, uint(v)) : 0xffffffffu;
+    if (n == 0xffffffffu) { unheld = true; len = 0; return D; }
+    len = n;
+    return D + clif_atoms_at(D, 0ul, uint(v));
+}
+
 // Operand kind 0: key k's symbol; 1: `cat`'s text of keys k and k + 1 (b's alone when a's is empty); 2:
-// `str_concat`'s; 3: key k's arena text.
-static inline Txt txt_of(constant Stage& s, device const long* L, uint t, device const long* R, device atomic_uint* A, uint k, uint kind) {
+// `str_concat`'s; 3: key k's arena text. Symbols read in place through D (`sym_text`).
+static inline Txt txt_of(constant Stage& s, device const long* L, uint t, device const uchar* D, device atomic_uint* A, uint k, uint kind, thread bool& unheld) {
     Txt x;
-    x.b = text_chars(R);
+    x.b = D;
     x.bl = 0;
     x.dot = 0;
     long v = key_value(s, L, t, k);
@@ -827,12 +889,9 @@ static inline Txt txt_of(constant Stage& s, device const long* L, uint t, device
         x.al = ok ? len : 0;
         return x;
     }
-    uint off;
-    text_find(R, v, off, x.al);
-    x.a = text_chars(R) + off;
+    x.a = sym_text(D, v, x.al, unheld);
     if (kind != 0) {
-        text_find(R, key_value(s, L, t, k + 1), off, x.bl);
-        x.b = text_chars(R) + off;
+        x.b = sym_text(D, key_value(s, L, t, k + 1), x.bl, unheld);
         x.dot = (kind == 1 && x.al > 0) ? 1 : 0;
     }
     return x;
@@ -849,8 +908,10 @@ static inline bool textop_one(uint op, Txt x, uint xs, uint lx, Txt y, uint ly) 
 // With `TEXT_SPLIT` (agg[0] bit 5), X is a set of patterns (`strings::SET_SEP` between them, empty ones too, as
 // `strings::test` splits it): Y passes when any one does. The separators are found a word of eight at a time (an exact
 // mask of the bytes equal to 0x1f), each member compared as one pattern.
-static inline bool textop_pass(constant Stage& s, device const long* L, uint t, device const long* R, device atomic_uint* A) {
-    Txt x = txt_of(s, L, t, R, A, 0, s.agg[1] & 15), y = txt_of(s, L, t, R, A, 2, s.agg[1] >> 4);
+// A pattern bound from a relation that holds the separator is no set (`strings::test` would split it): `host` set,
+// and the stratum runs on the host.
+static inline bool textop_pass(constant Stage& s, device const long* L, uint t, device const uchar* D, device atomic_uint* A, thread bool& unheld, thread bool& host) {
+    Txt x = txt_of(s, L, t, D, A, 0, s.agg[1] & 15, unheld), y = txt_of(s, L, t, D, A, 2, s.agg[1] >> 4, unheld);
     uint lx = txt_len(x), ly = txt_len(y);
     uint op = (s.agg[0] >> 1) & 3;
     bool r = false;
@@ -862,6 +923,7 @@ static inline bool textop_pass(constant Stage& s, device const long* L, uint t, 
             ulong z = txt_word(x, at, lx) ^ 0x1f1f1f1f1f1f1f1ful;
             // Bytes past the text read 0 (z's 0x1f): never a separator.
             ulong m = ~(((z & lo7) + lo7) | z | lo7);
+            host = host || m != 0;
             while (m != 0) {
                 uint k = clz(m) / 8;
                 uint pos = at + k;
@@ -888,11 +950,11 @@ static inline uint txt_chars(Txt x) {
 // A function of names (mode 6), of operands X (keys 0, 1) and Y (keys 2, 3) as mode 7's (kinds agg[1] & 15 and
 // agg[1] >> 4), its value into `bind_slot[0]`: by agg[0], 0 `str_cmp` (their order by bytes, a word of eight at a
 // time, then their lengths, as Rust's `str::cmp`), 1 `strlen` of X (its characters).
-static inline long strcmp_value(constant Stage& s, device const long* L, uint t, device const long* R, device atomic_uint* A) {
-    Txt x = txt_of(s, L, t, R, A, 0, s.agg[1] & 15);
+static inline long strcmp_value(constant Stage& s, device const long* L, uint t, device const uchar* D, device atomic_uint* A, thread bool& unheld) {
+    Txt x = txt_of(s, L, t, D, A, 0, s.agg[1] & 15, unheld);
     if (s.agg[0] == 1) return long(txt_chars(x));
     uint lx = txt_len(x);
-    Txt y = txt_of(s, L, t, R, A, 2, s.agg[1] >> 4);
+    Txt y = txt_of(s, L, t, D, A, 2, s.agg[1] >> 4, unheld);
     uint ly = txt_len(y), m = min(lx, ly);
     for (uint at = 0; at < m; at += 8) {
         ulong u = txt_word(x, at, m), v = txt_word(y, at, m);
@@ -901,40 +963,39 @@ static inline long strcmp_value(constant Stage& s, device const long* L, uint t,
     return lx == ly ? 0 : (lx < ly ? -1 : 1);
 }
 
-// Whether binding t's symbol in slot agg[0] has its verdict bit (mode 5), as agg[1] wants.
-static inline bool text_pass(constant Stage& s, device const long* L, uint t, device const long* R) {
-    long v = L[ulong(s.agg[0]) * s.cap_in + t];
-    bool bit = v >= 0 && ulong(v >> 6) < ulong(s.nr) && ((R[v >> 6] >> (v & 63)) & 1) != 0;
-    return bit == (s.agg[1] != 0);
-}
-
 kernel void stage_count(device const long* L [[buffer(0)]], device const long* R [[buffer(1)]],
                         device const uint* totals [[buffer(2)]], device atomic_uint* counters [[buffer(3)]], device uint* counts [[buffer(4)]],
-                        device atomic_uint* A [[buffer(5)]], constant Stage& s [[buffer(6)]], uint t [[thread_position_in_grid]]) {
+                        device atomic_uint* A [[buffer(5)]], device const uchar* D [[buffer(6)]], constant Stage& s [[buffer(7)]],
+                        uint t [[thread_position_in_grid]]) {
     if (t > s.cap_in) return;
     uint n = min(totals[s.in_slot], s.cap_in);
     if (t >= n) { counts[t] = 0; return; }
     long kv[8];
-    uint lo, hi;
-    if (s.mode == 5) { counts[t] = uint(text_pass(s, L, t, R)); return; }
+    uint lo, hi, how;
     if (s.mode == 6) { counts[t] = 1; return; }
-    if (s.mode == 7) { counts[t] = uint(textop_pass(s, L, t, R, A)); return; }
-    candidates(s, L, t, R, kv, lo, hi);
+    if (s.mode == 7) {
+        bool unheld = false, host = false;
+        counts[t] = uint(textop_pass(s, L, t, D, A, unheld, host));
+        // A symbol the atoms directory does not hold (`TEXTFN_UNHELD`), a pattern holding the separator
+        // (`TEXTFN_HOST`): the stratum on the host.
+        if (s.counter != NONE && (unheld || host)) atomic_fetch_or_explicit(&counters[s.counter], (unheld ? 4u : 0u) | (host ? 2u : 0u), memory_order_relaxed);
+        return;
+    }
+    candidates(s, L, t, R, kv, lo, hi, how);
     if (s.mode == 4) {
         long v = 0;
-        uint st = aggregate(s, L, t, R, lo, hi, kv, v);
+        uint st = aggregate(s, L, t, R, lo, hi, how, kv, v);
         if (st == 2 && s.counter != NONE) atomic_store_explicit(&counters[s.counter], 1u, memory_order_relaxed);
         counts[t] = uint(st == 0);
         return;
     }
-    bool keyed = s.mode != 3 && s.nkeys > 0;
     bool exists = s.mode == 1 || s.mode == 2;
     uint c = 0, p0 = 0;
     uint q_counts[16];
     for (uint m = 0; m < 16; m++) q_counts[m] = 0;
     bool found = false;
-    for (uint q = lo; q < hi; q++) {
-        uint r = keyed ? group_row(s, R, q) : q;
+    for (uint q = lo; q < hi; q = cand_next(s, how, q)) {
+        uint r = cand_row(s, R, how, q);
         if (s.mode == 3 ? !row_live(s, R, r) : !matches(s, R, r, kv)) continue;
         if (exists) { found = true; break; }
         p0++;
@@ -965,8 +1026,8 @@ static inline void write_row(constant Stage& s, device const long* L, uint t, de
 
 kernel void stage_scatter(device const long* L [[buffer(0)]], device const long* R [[buffer(1)]],
                           device uint* totals [[buffer(2)]], device const uint* offsets [[buffer(3)]], device long* O [[buffer(4)]],
-                          device atomic_uint* A [[buffer(5)]], device atomic_uint* counters [[buffer(6)]], constant Stage& s [[buffer(7)]],
-                          uint t [[thread_position_in_grid]]) {
+                          device atomic_uint* A [[buffer(5)]], device atomic_uint* counters [[buffer(6)]], device const uchar* D [[buffer(7)]],
+                          constant Stage& s [[buffer(8)]], uint t [[thread_position_in_grid]]) {
     uint n = min(totals[s.in_slot], s.cap_in);
     // The offsets past the rows' are not scanned when the grids are sized on the device (`Scan::size`).
     if (t == 0) totals[s.out_slot] = offsets[n];
@@ -974,22 +1035,24 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
     uint at = offsets[t];
     if (at >= s.cap_out) return;
     long kv[8];
-    uint lo, hi;
-    if (s.mode == 5 || s.mode == 7) {
+    uint lo, hi, how;
+    if (s.mode == 7) {
         if (offsets[t + 1] > at) write_row(s, L, t, R, 0, O, at);
         return;
     }
     if (s.mode == 6) {
         if (offsets[t + 1] <= at) return;
         write_row(s, L, t, R, 0, O, at);
-        O[ulong(s.bind_slot[0]) * s.cap_out + at] = strcmp_value(s, L, t, R, A);
+        bool unheld = false;
+        O[ulong(s.bind_slot[0]) * s.cap_out + at] = strcmp_value(s, L, t, D, A, unheld);
+        if (unheld && s.counter != NONE) atomic_fetch_or_explicit(&counters[s.counter], 4u, memory_order_relaxed);
         return;
     }
     if (s.mode == 4) {
         if (offsets[t + 1] <= at) return;
-        candidates(s, L, t, R, kv, lo, hi);
+        candidates(s, L, t, R, kv, lo, hi, how);
         long v = 0;
-        aggregate(s, L, t, R, lo, hi, kv, v);
+        aggregate(s, L, t, R, lo, hi, how, kv, v);
         write_row(s, L, t, R, 0, O, at);
         if ((s.agg[0] >> 8) & 1) O[ulong(s.bind_slot[0]) * s.cap_out + at] = v;
         return;
@@ -999,10 +1062,9 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
         if (offsets[t + 1] > at) write_row(s, L, t, R, 0, O, at);
         return;
     }
-    candidates(s, L, t, R, kv, lo, hi);
-    bool keyed = s.mode != 3 && s.nkeys > 0;
-    for (uint q = lo; q < hi && at < s.cap_out; q++) {
-        uint r = keyed ? group_row(s, R, q) : q;
+    candidates(s, L, t, R, kv, lo, hi, how);
+    for (uint q = lo; q < hi && at < s.cap_out; q = cand_next(s, how, q)) {
+        uint r = cand_row(s, R, how, q);
         if (s.mode == 3 ? !row_live(s, R, r) : !matches(s, R, r, kv)) continue;
         if (!defined(s, L, t, R, r)) continue;
         if (s.last != NONE) {
@@ -1023,11 +1085,11 @@ static inline bool witness_probe(constant Stage& b, device const long* L, uint t
         uint k = b.key_kind[i];
         kv[i] = k == 1 ? L[ulong(b.key_slot[i]) * cap_in + t] : (k == 2 ? rget(a, RA, ra, b.key_slot[i]) : b.key_const[i]);
     }
-    uint lo = 0, hi = b.nr;
-    if (b.nkeys > 0) group_of(R, b.r_at, b.r_index, kv, b.nkeys, lo, hi);
+    uint lo, hi, how;
+    probe(b, R, kv, lo, hi, how);
     bool found = false;
-    for (uint q = lo; q < hi; q++) {
-        uint r = b.nkeys > 0 ? group_row(b, R, q) : q;
+    for (uint q = lo; q < hi; q = cand_next(b, how, q)) {
+        uint r = cand_row(b, R, how, q);
         if (matches(b, R, r, kv)) { found = true; break; }
     }
     return found != (b.mode == 2);
@@ -1043,13 +1105,12 @@ kernel void witness_count(device const long* L [[buffer(0)]], device const long*
     uint n = min(totals[s.in_slot], s.cap_in);
     if (t >= n) { counts[t] = 0; return; }
     long kv[8];
-    uint lo, hi;
-    candidates(s, L, t, R, kv, lo, hi);
-    bool keyed = s.nkeys > 0;
+    uint lo, hi, how;
+    candidates(s, L, t, R, kv, lo, hi, how);
     uint nb = min(s.agg[0], 3u);
     uint found = 0;
-    for (uint q = lo; q < hi; q++) {
-        uint r = keyed ? group_row(s, R, q) : q;
+    for (uint q = lo; q < hi; q = cand_next(s, how, q)) {
+        uint r = cand_row(s, R, how, q);
         if (!matches(s, R, r, kv)) continue;
         bool all = true;
         if (nb > 0) all = witness_probe(bs[0], L, t, s.cap_in, s, R, r, R0);
@@ -1058,61 +1119,6 @@ kernel void witness_count(device const long* L [[buffer(0)]], device const long*
         if (all) { found = 1; break; }
     }
     counts[t] = found;
-}
-
-// A text test's verdicts, once per distinct term (decision 0038's chunked matching): a SIMD group per term walks it
-// 32 bytes at a time, each lane one byte's transition function (a row of the table), the group composing them (a
-// reduction of compositions, its scratch in device memory: 32 rows of `states` bytes a group); the chunk's function
-// takes the state on. A term whose final state, after the end of text, accepts sets its symbol's bit. The groups are
-// persistent: `groups` of them over the terms.
-struct TextParams { uint nterms; uint states; uint classes; uint start; uint groups; uint pad0; uint pad1; uint pad2; };
-
-kernel void text_verdicts(device const long* T [[buffer(0)]], device const uchar* table [[buffer(1)]], device atomic_uint* bits [[buffer(2)]],
-                          device uchar* scratch [[buffer(3)]], constant TextParams& p [[buffer(4)]], uint t [[thread_position_in_grid]],
-                          uint lane [[thread_index_in_simdgroup]]) {
-    device const long* ids = T + 1;
-    device const uint* offs = text_offs(T);
-    device const uchar* bytes = text_chars(T);
-    uint sg = t / 32;
-    if (sg >= p.groups) return;
-    uint S = p.states, C = p.classes;
-    device const uchar* cls = table;
-    device const uchar* next = table + 256;
-    device const uchar* eoi = next + S * C;
-    device const uchar* acc = eoi + S;
-    device uchar* f = scratch + ulong(sg) * 32 * S;
-    for (uint term = sg; term < p.nterms; term += p.groups) {
-        uint lo = offs[term], hi = offs[term + 1];
-        uint state = p.start;
-        for (uint base = lo; base < hi; base += 32) {
-            uint at = base + lane;
-            bool has = at < hi;
-            uint c = has ? uint(cls[bytes[at]]) : 0;
-            for (uint q = 0; q < S; q++) f[lane * S + q] = has ? next[q * C + c] : uchar(q);
-            simdgroup_barrier(mem_flags::mem_device);
-            for (uint d = 1; d < 32; d <<= 1) {
-                uint tasks = (32 / (2 * d)) * S;
-                // The earlier block's function, then the later's, into the earlier's row; then copied to the later's.
-                for (uint k = lane; k < tasks; k += 32) {
-                    uint right = (k / S) * 2 * d + 2 * d - 1, left = right - d, q = k % S;
-                    f[left * S + q] = f[right * S + f[left * S + q]];
-                }
-                simdgroup_barrier(mem_flags::mem_device);
-                for (uint k = lane; k < tasks; k += 32) {
-                    uint right = (k / S) * 2 * d + 2 * d - 1, left = right - d, q = k % S;
-                    f[right * S + q] = f[left * S + q];
-                }
-                simdgroup_barrier(mem_flags::mem_device);
-            }
-            state = f[31 * S + state];
-            simdgroup_barrier(mem_flags::mem_device);
-        }
-        state = eoi[state];
-        if (lane == 0 && acc[state] != 0) {
-            long id = ids[term];
-            if (id >= 0) atomic_fetch_or_explicit(&bits[ulong(id) >> 5], 1u << uint(id & 31), memory_order_relaxed);
-        }
-    }
 }
 
 // The states after each of m (at most 32) bytes of x, lane l's after byte `first + step * l`, from state `st`: the
@@ -1293,44 +1299,6 @@ static inline bool txt_verdict(device const uchar* tab, uint S, uint C, uint sta
     return acc[eoi[st]] != 0;
 }
 
-// `replace_all` of a regex, once per distinct term (decision 0038's chunked matching), its automata G
-// (`text::table::Replacer`): a SIMD group per term (`rx_replace_txt`), the replacement Z (`lz` bytes). Pass 0 counts
-// each term's replaced length into `lens`; after their scan (the offsets), pass 1 writes O as a text buffer
-// (`DevText`'s: the terms' ids, offsets, bytes). Groups are persistent.
-struct ReplaceParams { uint nterms; uint groups; uint lz; uint write; uint states; uint pad0; uint pad1; uint pad2; };
-
-kernel void text_replace(device const long* T [[buffer(0)]], device const uchar* G [[buffer(1)]], device const uchar* Z [[buffer(2)]],
-                         device uint* lens [[buffer(3)]], device long* O [[buffer(4)]], device uchar* scratch [[buffer(5)]],
-                         constant ReplaceParams& p [[buffer(6)]], uint t [[thread_position_in_grid]], uint lane [[thread_index_in_simdgroup]]) {
-    uint sg = t / 32;
-    if (t == 0) {
-        if (p.write == 0) lens[p.nterms] = 0;
-        else {
-            O[0] = long(p.nterms);
-            ((device uint*)(O + 1 + p.nterms))[p.nterms] = lens[p.nterms];
-        }
-    }
-    if (sg >= p.groups) return;
-    device const long* ids = T + 1;
-    device const uint* offs = text_offs(T);
-    device const uchar* bytes = text_chars(T);
-    device uchar* f = scratch + ulong(sg) * 64 * p.states;
-    device uint* ooffs = (device uint*)(O + 1 + p.nterms);
-    device uchar* obytes = (device uchar*)(ooffs + p.nterms + 1);
-    Txt z = txt_raw(Z, p.lz);
-    for (uint term = sg; term < p.nterms; term += p.groups) {
-        Txt x = txt_raw(bytes + offs[term], offs[term + 1] - offs[term]);
-        bool write = p.write != 0;
-        uint len = rx_replace_txt(G, x, z, write, obytes + (write ? lens[term] : 0), f, lane);
-        if (lane == 0) {
-            if (write) {
-                O[1 + term] = ids[term];
-                ooffs[term] = lens[term];
-            } else lens[term] = len;
-        }
-    }
-}
-
 // `replace_all` of literal y (not empty; empty: x itself) in x by z, by a SIMD group: each lane tests whether a match
 // starts at its byte (compared a word of eight at a time), the leftmost of a chunk taken, the next looked for past it
 // (matches not overlapping). The replaced text's length; written to o when `write`.
@@ -1368,8 +1336,8 @@ constant ulong POW10[20] = {1ul, 10ul, 100ul, 1000ul, 10000ul, 100000ul, 1000000
 kernel void row_text(device const long* L [[buffer(0)]], device const long* R [[buffer(1)]], device atomic_uint* A [[buffer(2)]],
                      device const uint* totals [[buffer(3)]], device atomic_uint* counters [[buffer(4)]], device uint* counts [[buffer(5)]],
                      device long* V [[buffer(6)]], device const uchar* G [[buffer(7)]], device uchar* scratch [[buffer(8)]],
-                     device const uint* P [[buffer(9)]], constant Stage& s [[buffer(10)]], uint t [[thread_position_in_grid]],
-                     uint lane [[thread_index_in_simdgroup]]) {
+                     device const uint* P [[buffer(9)]], device const uchar* D [[buffer(10)]], device const uchar* VC [[buffer(11)]],
+                     constant Stage& s [[buffer(12)]], uint t [[thread_position_in_grid]], uint lane [[thread_index_in_simdgroup]]) {
     uint n = min(totals[s.in_slot], s.cap_in);
     uint groups = P[0];
     for (uint r = n + t; r <= s.cap_in; r += groups * 32) counts[r] = 0;
@@ -1378,14 +1346,87 @@ kernel void row_text(device const long* L [[buffer(0)]], device const long* R [[
     device uchar* fs = scratch + ulong(sg) * 64 * P[1];
     uint op = s.agg[0] & 15;
     bool want = ((s.agg[0] >> 8) & 1) != 0;
+    if (op == 5) {
+        // A text test of a symbol, its verdict in the one rolling cache VC (decision 0468 step 2d): each lane looks
+        // up a row's, 32 rows at once; then the group walks table G over each missed symbol's bytes (read through
+        // the atoms directory D), 32 bytes at a time, and keeps the verdict. A value no atom holds (negative) fails.
+        uint test = P[5];
+        for (uint base = sg * 32; base < n; base += groups * 32) {
+            uint row = base + lane;
+            bool has = row < n;
+            long v = has ? key_value(s, L, row, 0) : -1;
+            bool sym = has && v >= 0 && v <= long(0xffffffffu);
+            uint got = sym ? clif_verdict_get(VC, 0ul, test, uint(v)) : 1u;
+            uint miss = simd_or(sym && got == 0u ? (1u << lane) : 0u);
+            while (miss != 0u) {
+                uint l = ctz(miss);
+                miss &= miss - 1u;
+                // A missed symbol is an atom's id (below 2^32): shuffled as a uint (no 64-bit shuffle).
+                uint id = simd_shuffle(uint(v), ushort(l));
+                uint len = clif_atoms_len(D, 0ul, id);
+                bool held = len != 0xffffffffu;
+                Txt x = txt_raw(D + clif_atoms_at(D, 0ul, id), held ? len : 0u);
+                bool ok = held && txt_verdict(G, P[2], P[3], P[4], x, fs, lane);
+                if (lane == 0 && held) clif_verdict_put(VC, 0ul, test, id, ok ? 2u : 1u);
+                if (lane == l) got = held ? (ok ? 2u : 1u) : 3u;
+            }
+            if (has) counts[row] = uint((got == 2u) == want);
+            // An atom the directory does not hold: the stage's counter's bit 2, and the stratum runs on the host.
+            if (simd_any(got == 3u) && lane == 0 && s.counter != NONE) atomic_fetch_or_explicit(&counters[s.counter], 4u, memory_order_relaxed);
+        }
+        return;
+    }
     for (uint row = sg; row < n; row += groups) {
-        Txt x = txt_of(s, L, row, R, A, 0, s.agg[1] & 15);
+        bool unheld = false;
+        Txt x = txt_of(s, L, row, D, A, 0, s.agg[1] & 15, unheld);
+        if (unheld) {
+            // A symbol the atoms directory does not hold: `TEXTFN_UNHELD`, the stratum on the host.
+            if (lane == 0) {
+                if (s.counter != NONE) atomic_fetch_or_explicit(&counters[s.counter], 4u, memory_order_relaxed);
+                V[row] = -1;
+                counts[row] = 0;
+            }
+            continue;
+        }
         if (op == 3) {
             bool v = txt_verdict(G, P[2], P[3], P[4], x, fs, lane);
             if (lane == 0) counts[row] = uint(v == want);
             continue;
         }
-        Txt y = txt_of(s, L, row, R, A, 2, s.agg[1] >> 4), z = y;
+        // A text kept by (functions P[5], source symbol key 7) in the rolling cache VC (`ROW_KEPT`, decision 0468
+        // step 2e): one lane looks it up (an entry's offset from VC, what it found in the low bits); a kept text is
+        // copied into the arena.
+        bool keeps = (s.agg[0] & (1u << 9)) != 0;
+        uint ksym = 0;
+        if (keeps) {
+            long kv = key_value(s, L, row, 7);
+            keeps = kv >= 0 && kv <= long(0xffffffffu);
+            ksym = uint(kv);
+        }
+        if (keeps) {
+            ulong r = 0;
+            if (lane == 0) r = clif_text_find(VC, 0ul, P[5], ksym);
+            r = ulong(simd_shuffle(uint(r), ushort(0))) | (ulong(simd_shuffle(uint(r >> 32), ushort(0))) << 32);
+            if ((r & 3ul) == 0ul) {
+                device const uchar* e = VC + (r & ~3ul);
+                uint len = *(device const uint*)(e + 12) - 16u;
+                uint off = 0;
+                if (lane == 0) off = atomic_fetch_add_explicit(A, len, memory_order_relaxed);
+                off = simd_shuffle(off, ushort(0));
+                bool full = ulong(off) + len > ((device const uint*)A)[1];
+                if (!full) {
+                    device uchar* o = (device uchar*)A + 16 + off;
+                    for (uint i = lane; i < len; i += 32) o[i] = e[16 + i];
+                }
+                if (lane == 0) {
+                    if (full && s.counter != NONE) atomic_fetch_or_explicit(&counters[s.counter], 1u, memory_order_relaxed);
+                    V[row] = full ? -1 : arena_value(off, len);
+                    counts[row] = 1;
+                }
+                continue;
+            }
+        }
+        Txt y = txt_of(s, L, row, D, A, 2, s.agg[1] >> 4, unheld), z = y;
         uint f = (s.agg[0] >> 16) & 255;
         uint lx = txt_len(x), len = 0, dot = 0, from = 0, to = 0, ndig = 0, pad = 0;
         ulong u = 0;
@@ -1411,8 +1452,8 @@ kernel void row_text(device const long* L [[buffer(0)]], device const long* R [[
             }
         } else if (f == 6) {
             // replace_all of a literal pattern (key 2) by key 4's text.
-            y = txt_of(s, L, row, R, A, 2, 0);
-            z = txt_of(s, L, row, R, A, 4, 0);
+            y = txt_of(s, L, row, D, A, 2, 0, unheld);
+            z = txt_of(s, L, row, D, A, 4, 0, unheld);
             len = lit_replace_txt(x, y, z, false, (device uchar*)A, lane);
         } else {
             bool high;
@@ -1453,8 +1494,24 @@ kernel void row_text(device const long* L [[buffer(0)]], device const long* R [[
                 }
             }
         }
+        if (keeps && !full && !unheld && len <= 4096u) {
+            // Made: kept for the next reader. Its bytes in the arena, written by the group's lanes, copied into an
+            // entry taken for them, then completed (another thread finds it pending until then).
+            simdgroup_barrier(mem_flags::mem_device);
+            ulong r = 0;
+            if (lane == 0) r = clif_text_open(VC, 0ul, P[5], ksym, len);
+            r = ulong(simd_shuffle(uint(r), ushort(0))) | (ulong(simd_shuffle(uint(r >> 32), ushort(0))) << 32);
+            if ((r & 3ul) == 1ul) {
+                device uchar* e = (device uchar*)VC + (r & ~3ul);
+                device const uchar* o = (device const uchar*)A + 16 + off;
+                for (uint i = lane; i < len; i += 32) e[16 + i] = o[i];
+                simdgroup_barrier(mem_flags::mem_device);
+                if (lane == 0) clif_cache_done(VC, 0ul, r & ~3ul);
+            }
+        }
         if (lane == 0) {
             if (full && s.counter != NONE) atomic_fetch_or_explicit(&counters[s.counter], 1u, memory_order_relaxed);
+            if (unheld && s.counter != NONE) atomic_fetch_or_explicit(&counters[s.counter], 4u, memory_order_relaxed);
             V[row] = full ? -1 : arena_value(off, len);
             counts[row] = 1;
         }
@@ -1471,58 +1528,9 @@ kernel void row_scatter(device const long* L [[buffer(0)]], device const long* V
     uint at = offsets[t];
     if (offsets[t + 1] <= at || at >= s.cap_out) return;
     for (uint k = 0; k < s.nslots; k++) O[ulong(k) * s.cap_out + at] = L[ulong(k) * s.cap_in + t];
-    if ((s.agg[0] & 15) != 3) O[ulong(s.bind_slot[0]) * s.cap_out + at] = V[t];
-}
-
-// A text function of constant arguments (`TEXTFN_*`: f), once per distinct term (decision 0038's chunked matching):
-// a SIMD group per term, 32 bytes at a time. The kept range of its text (head: to the first "."; dir: to the last
-// "/"; substr, sql_substr, slice: characters counted by sums over the lanes, their first bytes found by prefixes), or
-// its bytes mapped (lower, upper). `lower` of a term past ASCII sets `flag` (Unicode's mapping is the host's). Pass 0
-// counts each term's length into `lens`; after their scan, pass 1 writes O as a text buffer (`DevText`'s).
-struct MapParams { uint nterms; uint groups; uint f; uint write; long n0; long n1; };
-
-kernel void text_map(device const long* T [[buffer(0)]], device uint* lens [[buffer(1)]], device long* O [[buffer(2)]],
-                     device atomic_uint* flag [[buffer(3)]], constant MapParams& p [[buffer(4)]], uint t [[thread_position_in_grid]],
-                     uint lane [[thread_index_in_simdgroup]]) {
-    uint sg = t / 32;
-    if (t == 0) {
-        if (p.write == 0) lens[p.nterms] = 0;
-        else {
-            O[0] = long(p.nterms);
-            ((device uint*)(O + 1 + p.nterms))[p.nterms] = lens[p.nterms];
-        }
-    }
-    if (sg >= p.groups) return;
-    device const long* ids = T + 1;
-    device const uint* offs = text_offs(T);
-    device const uchar* bytes = text_chars(T);
-    device uint* ooffs = (device uint*)(O + 1 + p.nterms);
-    device uchar* obytes = (device uchar*)(ooffs + p.nterms + 1);
-    uint f = p.f;
-    for (uint term = sg; term < p.nterms; term += p.groups) {
-        device const uchar* x = bytes + offs[term];
-        uint n = offs[term + 1] - offs[term];
-        uint from, to;
-        bool high;
-        text_range(f, txt_raw(x, n), p.n0, p.n1, lane, from, to, high);
-        if (f == 0 && high && lane == 0 && p.write == 0) atomic_fetch_or_explicit(flag, 1u, memory_order_relaxed);
-        uint len = to - from;
-        if (p.write == 0) {
-            if (lane == 0) lens[term] = len;
-            continue;
-        }
-        device uchar* o = obytes + lens[term];
-        for (uint i = lane; i < len; i += 32) {
-            uchar c = x[from + i];
-            if (f == 0 || f == 8) c = (c >= 'A' && c <= 'Z') ? c + 32 : c;
-            else if (f == 9) c = (c >= 'a' && c <= 'z') ? c - 32 : c;
-            o[i] = c;
-        }
-        if (lane == 0) {
-            O[1 + term] = ids[term];
-            ooffs[term] = lens[term];
-        }
-    }
+    // A test (a made text's, `ROW_TEST`; a symbol's, `ROW_VERDICT`) binds nothing: its rows pass as they are.
+    uint op = s.agg[0] & 15;
+    if (op != 3 && op != 5) O[ulong(s.bind_slot[0]) * s.cap_out + at] = V[t];
 }
 
 // Rows copied (decision 0325 step 5): `n` rows of `ncols` columns (as many as slot `count_slot` of `totals` says, at
@@ -1711,7 +1719,7 @@ struct LatP { long top; uint n; uint had; uint nkeys; uint code; uint after; uin
 
 // The relation `R`'s row `row` in column `c`, and the place to write it: `R` is a relation in its block
 // (decision 0325 step 5), its descriptor at `r_at`, its rows' at `r_rows_at`; written through the writer written
-// once (decision 0463).
+// once, bounded by its chunks (decision 0463).
 static inline long lat_r(device const uchar* R, constant LatP& p, uint row, uint c) {
     return long(clif_rel_get(R, p.r_at, row, c));
 }
@@ -1929,25 +1937,15 @@ pub fn available() -> bool {
     rerail_accel::gpu::join::device().is_ok()
 }
 
-/// A kind-set axis's batch solve on the device, written into `chunk` (decision 0289 §2, `facts::nearest::ChunkAxis`):
-/// each node's rows counted by a climb of its ancestors, the counts scanned into the starts, then the pairs written,
-/// in one submission. The pairs' space is sized before the count: a nearest axis has at most a row per node, so its
-/// bound is exact; containment's is `INSIDE_ROWS` a node, and the rare batch past it writes again once its total is
-/// read. The space past the total is given back to the block. The starts and the pairs are page-aligned in the
-/// block, each bound as a buffer of its own with no copy; the block reserves address space, so the bound's pages
-/// the device never writes are never memory.
+/// A kind-set axis's batch solve on the device (decision 0289 §2, `facts::nearest::ChunkAxis`), from `chunk`: each
+/// node's rows counted by a climb of its ancestors and the counts scanned into the starts (in the chunk, page-aligned,
+/// bound as a buffer of their own with no copy); then, the total read, the rows written, each the ids of `n` and `a`,
+/// into a relation of exactly that many rows (decision 0353 step 5). It is a derived fact like a rule's head: it lies
+/// in a run's block, not leased from the device's budget, which a room sized before the count (containment's up to
+/// several rows a node) filled.
 pub fn axis_in_chunk(chunk: &crate::code_rule_dsl::facts::vtab::syntax::device_chunk::Chunk, bits: Option<&[u32]>, inside: bool)
                      -> Result<crate::code_rule_dsl::facts::nearest::InChunk, String> {
-    axis_in_chunk_bounded(chunk, bits, inside, INSIDE_ROWS)
-}
-
-/// Containment's rows a node that the pairs' space is sized for before the count.
-const INSIDE_ROWS: usize = 8;
-
-/// `axis_in_chunk`, with containment's space sized for `inside_rows` a node (a test makes it 0, to write again).
-pub(in crate::code_rule_dsl) fn axis_in_chunk_bounded(chunk: &crate::code_rule_dsl::facts::vtab::syntax::device_chunk::Chunk,
-                                                      bits: Option<&[u32]>, inside: bool, inside_rows: usize)
-                                                      -> Result<crate::code_rule_dsl::facts::nearest::InChunk, String> {
+    use crate::code_rule_dsl::facts::rows::Part;
     use crate::code_rule_dsl::facts::vtab::syntax::device_chunk::ChunkRoot;
     const PAGE: usize = 16384;
     let b = &chunk.block;
@@ -1958,6 +1956,7 @@ pub(in crate::code_rule_dsl) fn axis_in_chunk_bounded(chunk: &crate::code_rule_d
         Some(words) => {
             let p: *mut u32 = b.try_alloc_t(words.len()).ok_or_else(full)?;
             // SAFETY: just allocated for `words.len()` values.
+            // copy: not block data: the set's membership bits, made here for the kernel.
             unsafe { std::ptr::copy_nonoverlapping(words.as_ptr(), p, words.len()) };
             b.offset_of(p)
         }
@@ -1965,48 +1964,42 @@ pub(in crate::code_rule_dsl) fn axis_in_chunk_bounded(chunk: &crate::code_rule_d
     };
     let start_bytes = (4 * (n + 1)).next_multiple_of(PAGE);
     let start_at = b.try_alloc(start_bytes, PAGE).ok_or_else(full)?;
-    let cap = if inside { inside_rows * n } else { n }.min(u32::MAX as usize);
-    let cap_bytes = (8 * cap).max(8).next_multiple_of(PAGE);
-    let pairs_at = b.try_alloc(cap_bytes, PAGE).ok_or_else(full)?;
     let device = rerail_accel::gpu::join::device()?;
     let whole = b.gpu_buffer(device);
-    let part = |at: usize, bytes: usize| {
-        device.new_buffer_with_bytes_no_copy(b.ptr::<u8>(at) as *const std::ffi::c_void, bytes as u64, metal::MTLResourceOptions::StorageModeShared, None)
-    };
-    let starts = part(start_at, start_bytes);
-    let pairs = part(pairs_at, cap_bytes);
+    let starts = device.new_buffer_with_bytes_no_copy(b.ptr::<u8>(start_at) as *const std::ffi::c_void, start_bytes as u64, metal::MTLResourceOptions::StorageModeShared, None);
     let count = pipeline("chunk_views", "axis_count", chunk_views_source)?;
     let write = pipeline("chunk_views", "axis_write", chunk_views_source)?;
     let at = |o: usize| u32::try_from(o).map_err(|_| "the axis lies past 4 GB of its chunk".to_string());
-    let p = [at(chunk.root)?, n as u32, at(bits_at)?, u32::from(inside), cap as u32];
+    let mut p = [at(chunk.root)?, n as u32, at(bits_at)?, u32::from(inside), 0, 0, 0];
     let scan = Scan::owned(n + 1)?;
     let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
-    let pass = batch.pass(17).map_err(|e| format!("{e:?}"))?;
+    let pass = batch.pass(16).map_err(|e| format!("{e:?}"))?;
     pass.run(&count, &[&whole, &starts], &p, &[], groups(n + 1));
     scan.encode(pass, &starts)?;
-    if n > 0 {
-        pass.run(&write, &[&whole, &starts, &pairs], &p, &[], groups(n));
-    }
     batch.finish().map_err(|e| format!("{e:?}"))?;
     // SAFETY: the scan completed: its last value is the total.
     let len = unsafe { *b.ptr::<u32>(start_at + 4 * n) } as usize;
-    if len <= cap {
-        b.shrink_last(pairs_at, cap_bytes, (8 * len).max(8).next_multiple_of(PAGE));
-        return Ok(crate::code_rule_dsl::facts::nearest::InChunk { start: start_at, pairs: pairs_at, len });
+    // Alone in its block, with room for an index by each column: strata probe an axis by `n` and by `a`.
+    let rows = Part::with_index_room(crate::code_rule_dsl::facts::rows::Life::Run, 2, len, 2);
+    if len > 0 {
+        let needed = rows.rel().rows.needed.load(std::sync::atomic::Ordering::Relaxed);
+        let rows_at = rows.rows_at() as u64;
+        (p[4], p[5], p[6]) = (len as u32, rows_at as u32, (rows_at >> 32) as u32);
+        let out = rows.facts().block.gpu_buffer(device);
+        let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
+        let pass = batch.pass(1).map_err(|e| format!("{e:?}"))?;
+        pass.run(&write, &[&whole, &starts, &out], &p, &[], groups(n));
+        batch.finish().map_err(|e| format!("{e:?}"))?;
+        // Bounded by the relation's chunks (decision 0427): what the writer refused fails the solve, which the host
+        // then makes.
+        let now = rows.rel().rows.needed.load(std::sync::atomic::Ordering::Relaxed);
+        if now != needed {
+            return Err(format!("the axis's writer refused {} rows past its relation's chunks (decision 0427)", now.wrapping_sub(needed)));
+        }
     }
-    // Past the bound: the write was skipped, and is made again into space of the total's size.
-    let _span = crate::code_rule_dsl::logic::profile::span(|| format!("containment past {inside_rows} rows a node: written again"));
-    b.shrink_last(pairs_at, cap_bytes, 0);
-    let pairs_bytes = (8 * len).next_multiple_of(PAGE);
-    let pairs_at = b.try_alloc(pairs_bytes, PAGE).ok_or_else(full)?;
-    let pairs = part(pairs_at, pairs_bytes);
-    let whole = b.gpu_buffer(device);
-    let p = [p[0], p[1], p[2], p[3], len as u32];
-    let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
-    let pass = batch.pass(1).map_err(|e| format!("{e:?}"))?;
-    pass.run(&write, &[&whole, &starts, &pairs], &p, &[], groups(n));
-    batch.finish().map_err(|e| format!("{e:?}"))?;
-    Ok(crate::code_rule_dsl::facts::nearest::InChunk { start: start_at, pairs: pairs_at, len })
+    // SAFETY: the write completed, every row below the total written.
+    unsafe { rows.written(len as u32) };
+    Ok(crate::code_rule_dsl::facts::nearest::InChunk { start: start_at, rows })
 }
 
 /// A relation's columns on the device: `rows` 64-bit values each, column-major.
@@ -2050,6 +2043,11 @@ impl DevRel {
     /// (`Part::for_device`, decision 0325 step 5), every row the device's to write.
     pub(in crate::code_rule_dsl) fn empty(cols: usize, rows: usize) -> Result<DevRel, Error> {
         let part = crate::code_rule_dsl::facts::rows::Part::for_device(cols, rows).map_err(|_| Error::BackendCapacity)?;
+        DevRel::of_part(part, cols, rows)
+    }
+
+    /// A handle to `part`, a relation of the device's own of `cols` columns and `rows` rows (`Part::for_device`'s).
+    fn of_part(part: crate::code_rule_dsl::facts::rows::Part, cols: usize, rows: usize) -> Result<DevRel, Error> {
         let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         let buffer = Held::kept(part.facts().block.gpu_buffer(device), Box::new(part.facts().clone()));
         debug_assert_eq!(part.rows_at(), part.rel_at() + REL_ROWS as usize);
@@ -2061,6 +2059,15 @@ impl DevRel {
     /// the device's own, which its indexes go in, and the view's directory, which its rows are read through.
     pub(in crate::code_rule_dsl) fn view(cols: usize, rows: usize, view: crate::code_rule_dsl::facts::vtab::ViewInPlace) -> Result<DevRel, Error> {
         let mut dev = DevRel::empty(0, rows)?;
+        dev.cols = cols;
+        dev.view = Some(view);
+        Ok(dev)
+    }
+
+    /// `view`, its indexes in `home` (the view's own relation of no columns, which its source holds: decision 0468
+    /// step 3), so a stratum finds the indexes any stratum before it built there.
+    pub(in crate::code_rule_dsl) fn view_in(home: crate::code_rule_dsl::facts::rows::Part, cols: usize, rows: usize, view: crate::code_rule_dsl::facts::vtab::ViewInPlace) -> Result<DevRel, Error> {
+        let mut dev = DevRel::of_part(home, 0, rows)?;
         dev.cols = cols;
         dev.view = Some(view);
         Ok(dev)
@@ -2111,6 +2118,12 @@ impl DevRel {
     /// The words of `buffer`, `words` of them (not a relation).
     fn raw(buffer: Held, words: usize) -> DevRel {
         DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None, home: None, view: None, made: (0, 0), kept: None }
+    }
+
+    /// Whether it is a relation read where it lies (`in_block`): it holds the relation's block while it lives.
+    #[cfg(test)]
+    pub(in crate::code_rule_dsl) fn read_in_place(&self) -> bool {
+        self.part.is_none() && self.view.is_none() && self.home.is_some()
     }
 
     /// A relation the device reads where it lies (decision 0325): `b`'s, of `cols` columns, bound by its block's own
@@ -2172,86 +2185,62 @@ impl DevRel {
     }
 }
 
-/// Distinct symbols and their names' bytes on the device, in one buffer: their count, the symbols ascending (a
-/// symbol's text is found by search), each one's offset into the bytes, the bytes. The terms a text test's verdicts
-/// are made for, and the texts `str_cmp` orders.
-pub(in crate::code_rule_dsl) struct DevText {
-    packed: std::rc::Rc<DevRel>,
-    pub(in crate::code_rule_dsl) terms: usize,
-    /// One past the greatest symbol: the verdicts' bits.
-    pub(in crate::code_rule_dsl) span: usize,
-    /// The longest name's bytes.
-    pub(in crate::code_rule_dsl) longest: usize,
-    /// Whether a name holds the set separator (`strings::SET_SEP`): a text test would split it.
-    pub(in crate::code_rule_dsl) sep: bool,
-    /// The names' bytes, all told.
-    pub(in crate::code_rule_dsl) chars: usize,
+/// An atoms directory for the device (decision 0468 step 2b): its spans GPU addresses, the atoms blocks they reach
+/// (each its wrap, made resident by `use_resource` where a kernel reads through it), and the atoms it holds, below
+/// `end`. Kept with the blocks until its batch's work completes.
+pub(in crate::code_rule_dsl) struct DevAtoms {
+    dir: (metal::Buffer, u64),
+    reads: Vec<metal::Buffer>,
+    end: u32,
+    keep: std::sync::Arc<dyn std::any::Any + Send + Sync>,
 }
 
-impl DevText {
-    /// The distinct symbols `ids` (in any order), each named by `name` (copied to the device: the host evaluates
-    /// nothing).
-    // copy (0353 step 6): symbols' names copied for the device (row 5). They go: the kernels read the strings block.
-    pub(in crate::code_rule_dsl) fn upload(ids: &[i64], name: impl FnMut(i64, &mut Vec<u8>)) -> Result<DevText, Error> {
-        const NAMES: rerail_prof::copies::Site = rerail_prof::copies::Site::new(5, "6", "symbols' names copied for the device (DevText::upload)");
-        let copying = NAMES.start();
-        let text = Self::upload_in(ids, name);
-        copying.done(text.as_ref().map_or(0, DevText::bytes));
-        text
+impl DevAtoms {
+    /// The directory of `runs` (`Atoms::runs`), for the device's addresses.
+    pub(in crate::code_rule_dsl) fn new(runs: Vec<(rerail_blocks::atoms::Run, std::sync::Arc<rerail_blocks::block::Block>)>) -> Result<DevAtoms, Error> {
+        let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+        let mut blocks: Vec<std::sync::Arc<rerail_blocks::block::Block>> = Vec::new();
+        for (_, b) in &runs {
+            if !blocks.iter().any(|k| std::sync::Arc::ptr_eq(k, b)) {
+                blocks.push(b.clone());
+            }
+        }
+        let reads: Vec<metal::Buffer> = blocks.iter().map(|b| b.gpu_buffer(device)).collect();
+        // A host address in a block, as the device's: its wrap's GPU address plus its offset.
+        let at = |p: *const u8| {
+            let k = blocks.iter().position(|b| (b.base_ptr() as usize..b.base_ptr() as usize + b.reserved()).contains(&(p as usize))).expect("an address in an atoms block");
+            reads[k].gpu_address() + (p as u64 - blocks[k].base_ptr() as u64)
+        };
+        let only: Vec<rerail_blocks::atoms::Run> = runs.iter().map(|(r, _)| *r).collect();
+        let end = only.iter().map(|r| r.end).max().unwrap_or(0);
+        let dir = rerail_blocks::atoms::AtomsDir::new(&only, &at, &|b| b.gpu_buffer(device).gpu_address());
+        let dir_buf = dir.block().gpu_buffer(device);
+        let dir_at = dir.root_at() as u64;
+        Ok(DevAtoms { dir: (dir_buf, dir_at), reads, end, keep: std::sync::Arc::new((dir, blocks)) })
     }
 
-    fn upload_in(ids: &[i64], mut name: impl FnMut(i64, &mut Vec<u8>)) -> Result<DevText, Error> {
-        let mut ids = ids.to_vec();
-        ids.sort_unstable();
-        ids.dedup();
-        let n = ids.len();
-        let mut chars = Vec::new();
-        let mut offs = Vec::with_capacity(n + 1);
-        offs.push(0u32);
-        for &id in &ids {
-            name(id, &mut chars);
-            offs.push(u32::try_from(chars.len()).map_err(|_| Error::BackendCapacity)?);
-        }
-        let mut out: Vec<u8> = Vec::with_capacity(8 * (n + 1) + 4 * (n + 1) + chars.len() + 1);
-        out.extend_from_slice(&(n as i64).to_le_bytes());
-        for id in &ids {
-            out.extend_from_slice(&id.to_le_bytes());
-        }
-        for o in &offs {
-            out.extend_from_slice(&o.to_le_bytes());
-        }
-        out.extend_from_slice(&chars);
-        out.push(0);
-        let span = ids.last().map_or(0, |&m| m.max(0) as usize + 1);
-        let rows = out.len().div_ceil(8);
-        let held = Held::of(out.into_iter()).map_err(|_| Error::BackendCapacity)?;
-        let longest = offs.windows(2).map(|w| (w[1] - w[0]) as usize).max().unwrap_or(0);
-        let sep = chars.contains(&0x1f);
-        let nchars = chars.len();
-        Ok(DevText { packed: std::rc::Rc::new(DevRel::raw(held, rows)), terms: n, span, longest, sep, chars: nchars })
+    /// The atoms below which it holds every one.
+    pub(in crate::code_rule_dsl) fn end(&self) -> u32 {
+        self.end
     }
 
-    pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
-        self.packed.buffer.buffer.length() as usize
-    }
-
-    /// The text as a stage's right relation (`STRCMP` reads it).
-    pub(in crate::code_rule_dsl) fn rel(&self) -> std::rc::Rc<DevRel> {
-        self.packed.clone()
+    /// The atoms blocks made resident for `pass`'s dispatches after it.
+    fn resident_in(&self, pass: &Pass<'static>) {
+        pass.use_read(&self.reads.iter().map(|b| &**b).collect::<Vec<&BufferRef>>());
     }
 }
 
-/// A text test's automaton on the device (`text::table`).
-pub(in crate::code_rule_dsl) struct DevTable {
-    table: Held,
-    states: u32,
-    classes: u32,
-    start: u32,
+/// The store's one rolling cache on the device (decision 0468 steps 2d, 2e: the text tests' verdicts, the text
+/// functions' texts): its block's wrap and the cache's offset in it.
+pub(in crate::code_rule_dsl) struct DevKept {
+    cache: (metal::Buffer, u64),
 }
 
-impl DevTable {
-    pub(in crate::code_rule_dsl) fn upload(t: &crate::code_rule_dsl::text::table::Table) -> Result<DevTable, Error> {
-        Ok(DevTable { table: Held::of(t.bytes.iter().copied()).map_err(|_| Error::BackendCapacity)?, states: t.states, classes: t.classes, start: t.start })
+impl DevKept {
+    /// `kept` (a store's atoms' `Kept`) for the device.
+    pub(in crate::code_rule_dsl) fn new(kept: &crate::content_store::atoms::Kept) -> Result<DevKept, Error> {
+        let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+        Ok(DevKept { cache: (kept.block().gpu_buffer(device), kept.at() as u64) })
     }
 }
 
@@ -2313,6 +2302,8 @@ pub(in crate::code_rule_dsl) struct DevIndex {
     moved: Option<std::rc::Rc<DevRel>>,
     /// Whether this call built it (a sort made), or found it the relation's already.
     pub(in crate::code_rule_dsl) built: bool,
+    /// No index: the `child` view probed by its parent reads the parent's children off the tape (`by_parent`).
+    by_parent: bool,
     /// Its block's buffer, taken once the index has its room: what its builder and its probes bind. A block with no
     /// slab of its own is bound by a wrap of its used extent (`Block::gpu_buffer`), which a buffer taken before the
     /// index was added (its relation's) does not reach.
@@ -2349,8 +2340,10 @@ fn bind_right(stage: &mut Stage, rel: &DevRel, index: Option<&DevIndex>) {
     stage.r_dead = rel.dead;
     // A relation reads none: a stage bound before to a view reads its new relation, not the view.
     (stage.v_dir, stage.r_view) = rel.view.as_ref().map_or((0, 0), |v| (v.dir, v.kind));
+    stage.v_parent = 0;
     if let Some(ix) = index {
         stage.r_index = ix.index;
+        stage.v_parent = u32::from(ix.by_parent);
     }
 }
 
@@ -2508,14 +2501,19 @@ fn sized_min() -> usize {
     })
 }
 
-/// Bytes the device reads (a regex's automaton for `TEXTFN_REGEX`).
+/// An automaton the device reads (a test's table, a regex's replacement automata) where the automata block holds it
+/// (decision 0468 step 2c): the block's no-copy wrap, bound at the automaton's offset. Nothing is uploaded, and no
+/// thread keeps it: a command buffer that binds it keeps the wrap.
+#[derive(Clone)]
 pub(in crate::code_rule_dsl) struct DevBytes {
-    held: Held,
+    buffer: metal::Buffer,
+    at: u64,
 }
 
 impl DevBytes {
-    pub(in crate::code_rule_dsl) fn upload(bytes: &[u8]) -> Result<DevBytes, Error> {
-        Ok(DevBytes { held: Held::of(bytes.iter().copied()).map_err(|_| Error::BackendCapacity)? })
+    pub(in crate::code_rule_dsl) fn of(a: &crate::code_rule_dsl::text::automata::Automaton) -> Result<DevBytes, Error> {
+        let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+        Ok(DevBytes { buffer: crate::code_rule_dsl::text::automata::block().gpu_buffer(device), at: a.at as u64 })
     }
 }
 
@@ -2609,6 +2607,11 @@ pub(in crate::code_rule_dsl) struct Batch {
     arena_cap: usize,
     /// The indexes its work builds, marked built when it is done.
     building: Vec<Building>,
+    /// The atoms directory its text kernels read symbols' bytes through (decision 0468 step 2e), made the first
+    /// time a stage reads a symbol's text and made again when the store's atoms have grown past it.
+    atoms: Option<std::rc::Rc<DevAtoms>>,
+    /// The store's one rolling cache, for the verdicts and texts its text kernels keep (decision 0468 step 2e).
+    kept: Option<std::rc::Rc<DevKept>>,
     /// The relations its work writes in their blocks, each with its rows' `needed` before (decision 0463): a row
     /// its kernels could not write, past the chunks its relation holds, fails the batch, named.
     written: Vec<Written>,
@@ -2627,6 +2630,32 @@ struct Written {
 }
 
 impl Batch {
+    /// The atoms directory its text kernels read through: the one it has, unless `end` (the store's atoms now) is
+    /// past it, then `make`'s, the one before kept until the work that reads it completes.
+    pub(in crate::code_rule_dsl) fn atoms(&mut self, end: u32, make: impl FnOnce() -> Result<DevAtoms, Error>) -> Result<(), Error> {
+        if self.atoms.as_ref().is_some_and(|a| a.end() >= end) {
+            return Ok(());
+        }
+        if let Some(old) = self.atoms.take() {
+            self.held.push(Box::new(old));
+        }
+        self.atoms = Some(std::rc::Rc::new(make()?));
+        Ok(())
+    }
+
+    /// The store's one rolling cache its text kernels keep verdicts and texts in, made the first time one asks.
+    pub(in crate::code_rule_dsl) fn kept(&mut self, make: impl FnOnce() -> Result<DevKept, Error>) -> Result<(), Error> {
+        if self.kept.is_none() {
+            self.kept = Some(std::rc::Rc::new(make()?));
+        }
+        Ok(())
+    }
+
+    /// Keeps `rel` (a handle a stratum made for its work) until this batch's work completes.
+    pub(in crate::code_rule_dsl) fn keeps(&mut self, rel: std::rc::Rc<DevRel>) {
+        self.read.push(rel);
+    }
+
     pub(in crate::code_rule_dsl) fn new() -> Result<Batch, Error> {
         rerail_accel::gpu::join::device()?;
         Batch::with_arena(ARENA_START)
@@ -2635,7 +2664,7 @@ impl Batch {
     /// A batch whose text arena holds `cap` bytes.
     pub(in crate::code_rule_dsl) fn with_arena(cap: usize) -> Result<Batch, Error> {
         rerail_accel::gpu::join::device()?;
-        Ok(Batch { open: None, pass: None, committed: Vec::new(), done: Done::default(), dummy: Held::new(64)?, keep: Vec::new(), read: Vec::new(), held: Vec::new(), arena: None, arena_cap: cap, building: Vec::new(), written: Vec::new() })
+        Ok(Batch { open: None, pass: None, committed: Vec::new(), done: Done::default(), dummy: Held::new(64)?, keep: Vec::new(), read: Vec::new(), held: Vec::new(), arena: None, arena_cap: cap, building: Vec::new(), atoms: None, kept: None, written: Vec::new() })
     }
 
     /// Notes that its kernels write `rel` (`what`): its rows' `needed` now, checked when the batch is done.
@@ -2765,6 +2794,19 @@ impl Batch {
         Ok(std::mem::take(&mut self.done))
     }
 
+    /// `rel`, the `child` view read in place, probed by its parent (its column 0): no index of it is built, as a
+    /// stage reads the parent's children off the tape (decision 0353 step 4c; the kernels' `by_parent`). `None` for
+    /// any other relation or key.
+    pub(in crate::code_rule_dsl) fn by_parent(&self, rel: &DevRel, cols: &[usize]) -> Result<Option<DevIndex>, Error> {
+        use crate::code_rule_dsl::facts::vtab::syntax::device_chunk::VIEW_CHILD;
+        let Some(v) = &rel.view else { return Ok(None) };
+        if v.kind != 1 + VIEW_CHILD || cols != [0] {
+            return Ok(None);
+        }
+        let home = rel.home.clone().expect("a view's relation of no columns");
+        Ok(Some(DevIndex { index: NONE, rows: rel.rows, moved: None, built: false, by_parent: true, buffer: bound(&home)? }))
+    }
+
     /// `rel`'s index on its columns `cols`, the relation's own (decision 0325 step 5): found where it was built
     /// before (by any batch, kept with the relation), else built by this batch's work into the relation's block
     /// (read by the stages after it), and marked built when the batch is done. A relation whose block has no room for
@@ -2787,10 +2829,10 @@ impl Batch {
         let room = {
             let _g = home.ix.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(i) = r.find_index(&key, rel.rows as u32) {
-                return Ok(DevIndex { index: i as u32, rows: rel.rows, moved: None, built: false, buffer: bound(&home)? });
+                return Ok(DevIndex { index: i as u32, rows: rel.rows, moved: None, built: false, by_parent: false, buffer: bound(&home)? });
             }
             if let Some(b) = self.building.iter().find(|b| std::ptr::eq(b.rel, r) && b.room.key[..b.room.ncols] == *key && b.room.rows_n as usize == rel.rows) {
-                return Ok(DevIndex { index: b.room.index as u32, rows: rel.rows, moved: None, built: false, buffer: bound(&home)? });
+                return Ok(DevIndex { index: b.room.index as u32, rows: rel.rows, moved: None, built: false, by_parent: false, buffer: bound(&home)? });
             }
             // SAFETY: under the block's index lock; the relation's rows are written (or are by this batch's work
             // before the build, which its passes order).
@@ -2801,20 +2843,24 @@ impl Batch {
                 return Err(Error::BackendCapacity);
             }
             // A view's relation holds no values (its rows are read through the view's reads): a new one has room.
+            // Either is kept by the batch until its work, which builds the index into it, completes (Q253: a fresh
+            // relation dropped with its stage's handle gave back its index while the GPU built it).
             if let Some(view) = &rel.view {
-                let fresh = DevRel::view(rel.cols, rel.rows, view.clone())?;
+                let fresh = std::rc::Rc::new(DevRel::view(rel.cols, rel.rows, view.clone())?);
+                self.read.push(fresh.clone());
                 let ix = self.index(&fresh, cols)?;
-                return Ok(DevIndex { moved: Some(std::rc::Rc::new(fresh)), ..ix });
+                return Ok(DevIndex { moved: Some(fresh), ..ix });
             }
 // copy (0353 step 6): a second key's index copies the relation. It goes: a relation is made with room for
 // the indexes its readers probe (decision 0353).
             const MOVED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(9, "6", "a relation copied for a second key's index (DevIndex::moved)");
             MOVED.copied(8 * rel.cols * rel.rows);
-            let copy = DevRel::empty(rel.cols, rel.rows)?;
+            let copy = std::rc::Rc::new(DevRel::empty(rel.cols, rel.rows)?);
+            self.read.push(copy.clone());
             let ident: Vec<Col> = (0..rel.cols).map(Col::From).collect();
             self.copy_rows(Rows::Rel(rel), rel.rows, &ident, Rows::Rel(&copy), 0)?;
             let ix = self.index(&copy, cols)?;
-            return Ok(DevIndex { moved: Some(std::rc::Rc::new(copy)), ..ix });
+            return Ok(DevIndex { moved: Some(copy), ..ix });
         };
         let n = rel.rows;
         let buffer = bound(&home)?;
@@ -2850,15 +2896,14 @@ impl Batch {
         let index = room.index as u32;
         let before = Building::descriptor(std::ptr::from_ref(r));
         self.building.push(Building { home, rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before });
-        Ok(DevIndex { index, rows: n, moved: None, built: true, buffer })
+        Ok(DevIndex { index, rows: n, moved: None, built: true, by_parent: false, buffer })
     }
 
     /// The columns `cols` (its source's) of a view made from a chunk block on the device (decision 0289 §2), into
     /// `out`, a relation of `out.rows` rows whose columns are `cols` in order: what `Viewed::row_at` made on the host.
-    /// `pairs`: an axis's pairs' offset in the block (`device_chunk::VIEW_AXIS`), else 0.
 // copy (0353 step 4): a view expanded into a relation (660.8 MB a run on hogql). It goes: a view is a
 // read of the tape, and a stage reads it in place (decision 0353).
-    pub(in crate::code_rule_dsl) fn expand_view(&mut self, block: &metal::Buffer, root: usize, view: u32, pairs: usize, cols: &[usize], out: &DevRel) -> Result<(), Error> {
+    pub(in crate::code_rule_dsl) fn expand_view(&mut self, block: &metal::Buffer, root: usize, view: u32, cols: &[usize], out: &DevRel) -> Result<(), Error> {
         let expand = pipeline("chunk_views", "view_expand", chunk_views_source)?;
         const EXPANDED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(4, "4", "a view expanded into a device relation (expand_view)");
         EXPANDED.copied(8 * out.rows * cols.len());
@@ -2866,7 +2911,7 @@ impl Batch {
         let pass = self.pass(1)?;
         let at = |o: usize| u32::try_from(o).map_err(|_| Error::BackendCapacity);
         let rows_at = out.rows_at();
-        let mut p = vec![at(root)?, view, out.rows as u32, cols.len() as u32, at(pairs)?, rows_at as u32, (rows_at >> 32) as u32];
+        let mut p = vec![at(root)?, view, out.rows as u32, cols.len() as u32, 0, rows_at as u32, (rows_at >> 32) as u32];
         p.extend(cols.iter().map(|&c| c as u32));
         if out.rows > 0 {
             pass.run(&expand, &[block, &out.buffer.buffer], &p, &[], groups(out.rows));
@@ -2921,27 +2966,41 @@ impl Batch {
         } else {
             self.dummy.buffer.to_owned()
         };
+        // A text op's or `str_cmp`'s symbols read through the batch's atoms directory (decision 0468 step 2e).
+        let reads_names = matches!(stage.mode, STRCMP | TEXTOP);
+        let atoms = self.atoms.clone().filter(|_| reads_names);
+        if reads_names && atoms.is_none() {
+            return Err(Error::BackendCapacity);
+        }
+        let dummy = self.dummy.buffer.to_owned();
         let pass = self.pass(13)?;
         if let Some((rel, index)) = right {
             index.map_or(rel, |ix| ix.of(rel)).resident_in(pass);
         }
         let lbuf: &BufferRef = &left.buffer.buffer;
-        let count_bufs: [&BufferRef; 6] = [lbuf, &rbuf, &totals.buffer.buffer, &counters.buffer.buffer, &counts, &arena];
-        let scatter_bufs: [&BufferRef; 7] = [lbuf, &rbuf, &totals.buffer.buffer, &counts, &out.buffer.buffer, &arena, &counters.buffer.buffer];
+        let (d, d_at): (&BufferRef, u64) = match &atoms {
+            Some(a) => {
+                a.resident_in(pass);
+                (&a.dir.0, a.dir.1)
+            }
+            None => (&dummy, 0),
+        };
+        let count_bufs: [(&BufferRef, u64); 7] = [(lbuf, 0), (&rbuf, 0), (&totals.buffer.buffer, 0), (&counters.buffer.buffer, 0), (&counts, 0), (&arena, 0), (d, d_at)];
+        let scatter_bufs: [(&BufferRef, u64); 8] = [(lbuf, 0), (&rbuf, 0), (&totals.buffer.buffer, 0), (&counts, 0), (&out.buffer.buffer, 0), (&arena, 0), (&counters.buffer.buffer, 0), (d, d_at)];
         if n > sized_min() {
             // The table's space is the host's guess: the grids are sized on the device, from the rows the stage
             // before made (decision 0113's GPU-sized work).
             let sizes = scan.size(pass, &totals.buffer.buffer, in_slot, left.cap)?;
-            pass.run_bytes_indirect(&count, &count_bufs, stage.bytes(), &sizes.buffer, 4 * 32);
+            pass.run_bytes_indirect_at(&count, &count_bufs, stage.bytes(), &sizes.buffer, 4 * 32);
             scan.encode_sized(pass, &counts, &sizes)?;
-            pass.run_bytes_indirect(&scatter, &scatter_bufs, stage.bytes(), &sizes.buffer, 4 * 32);
+            pass.run_bytes_indirect_at(&scatter, &scatter_bufs, stage.bytes(), &sizes.buffer, 4 * 32);
             self.done.sized += 1;
             self.keep.push(sizes);
             return Ok(());
         }
-        pass.run_bytes(&count, &count_bufs, stage.bytes(), groups(n));
+        pass.run_bytes_at(&count, &count_bufs, stage.bytes(), groups(n));
         scan.encode(pass, &counts)?;
-        pass.run_bytes(&scatter, &scatter_bufs, stage.bytes(), groups(n));
+        pass.run_bytes_at(&scatter, &scatter_bufs, stage.bytes(), groups(n));
         Ok(())
     }
 
@@ -2996,18 +3055,19 @@ impl Batch {
         let mut write = stage;
         write.mode = SEMI;
         write.nbinds = 0;
-        let scatter_bufs: [&BufferRef; 7] = [lbuf, &a, &totals.buffer.buffer, &counts, &out.buffer.buffer, &dummy, &dummy];
+        let scatter_bufs: [&BufferRef; 8] = [lbuf, &a, &totals.buffer.buffer, &counts, &out.buffer.buffer, &dummy, &dummy, &dummy];
         pass.run_bytes(&scatter, &scatter_bufs, write.bytes(), groups(n));
         self.keep.push(held);
         Ok(())
     }
 
-    /// A mode 10 stage (`ROWTEXT`) from `left` into `out`: `row_text` (a SIMD group a row, over the names `names`,
-    /// with automaton `auto`: a replacement's automata, or a test's table and its states, classes and start) gives
-    /// each row its keep bit and value, then a scan and `row_scatter`.
+    /// A mode 10 stage (`ROWTEXT`) from `left` into `out`: `row_text` (a SIMD group a row, its symbols' bytes read
+    /// through the batch's atoms directory, decision 0468 step 2e), its automaton `auto` (a replacement's or a test's,
+    /// in the automata block), and `id`: a test's (its verdicts) or the functions' (their texts, `ROW_KEPT`) in the
+    /// batch's rolling cache; then its rows scattered.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::code_rule_dsl) fn row_stage(&mut self, mut stage: Stage, left: &Table, names: &DevRel, auto: Option<(&DevBytes, [u32; 4])>, in_slot: usize, out_slot: usize,
-                                              totals: &Words, counters: &Words, counter: Option<usize>, out: &Table) -> Result<(), Error> {
+    pub(in crate::code_rule_dsl) fn row_stage(&mut self, mut stage: Stage, left: &Table, auto: Option<(&DevBytes, [u32; 4])>, id: u32,
+                                              in_slot: usize, out_slot: usize, totals: &Words, counters: &Words, counter: Option<usize>, out: &Table) -> Result<(), Error> {
         let text = pipeline("join", "row_text", || SOURCE.to_owned())?;
         let scatter = pipeline("join", "row_scatter", || SOURCE.to_owned())?;
         stage.cap_in = left.cap as u32;
@@ -3021,15 +3081,20 @@ impl Batch {
         // [scratch states, states, classes, start]: a replacement's scratch holds its larger automaton's states.
         let [kept, states, classes, start] = auto.map_or([1, 0, 0, 0], |a| a.1);
         let work = Held::new(ngroups * 64 * kept.max(1) as usize)?;
-        let p = Held::of([ngroups as u32, kept, states, classes, start, 0, 0, 0].into_iter()).map_err(|_| Error::BackendCapacity)?;
+        let p = Held::of([ngroups as u32, kept, states, classes, start, id, 0, 0].into_iter()).map_err(|_| Error::BackendCapacity)?;
         let counts = scratch(FREE, 4 * n)?;
         let values = Held::new(8 * n)?;
         let scan = Scan::new(n)?;
         let arena = self.arena()?.buffer.buffer.to_owned();
-        let g: metal::Buffer = auto.map_or_else(|| self.dummy.buffer.to_owned(), |a| a.0.held.buffer.to_owned());
+        let (g, g_at): (metal::Buffer, u64) = auto.map_or_else(|| (self.dummy.buffer.to_owned(), 0), |a| (a.0.buffer.to_owned(), a.0.at));
+        let atoms = self.atoms.clone().ok_or(Error::BackendCapacity)?;
+        let cache = self.kept.clone().ok_or(Error::BackendCapacity)?;
+        let dummy = self.dummy.buffer.to_owned();
         let pass = self.pass(4)?;
         let lbuf: &BufferRef = &left.buffer.buffer;
-        pass.run_bytes(&text, &[lbuf, &names.buffer.buffer, &arena, &totals.buffer.buffer, &counters.buffer.buffer, &counts, &values.buffer, &g, &work.buffer, &p.buffer],
+        let (vc, vc_at) = (&*cache.cache.0, cache.cache.1);
+        atoms.resident_in(pass);
+        pass.run_bytes_at(&text, &[(lbuf, 0), (&dummy, 0), (&arena, 0), (&totals.buffer.buffer, 0), (&counters.buffer.buffer, 0), (&counts, 0), (&values.buffer, 0), (&g, g_at), (&work.buffer, 0), (&p.buffer, 0), (&atoms.dir.0, atoms.dir.1), (vc, vc_at)],
                        stage.bytes(), (ngroups * 32).div_ceil(256));
         scan.encode(pass, &counts)?;
         pass.run_bytes(&scatter, &[lbuf, &values.buffer, &totals.buffer.buffer, &counts, &out.buffer.buffer], stage.bytes(), groups(n));
@@ -3135,86 +3200,6 @@ impl Batch {
         Ok(())
     }
 
-    /// Keeps `table` until the batch's work completes (its verdicts read it).
-    pub(in crate::code_rule_dsl) fn hold_table(&mut self, table: DevTable) {
-        self.keep.push(table.table);
-    }
-
-    /// The verdicts of `table` for `text`'s terms, as bits by symbol into `bits` (zeroed, at least `text.span` bits).
-    pub(in crate::code_rule_dsl) fn verdicts(&mut self, text: &DevText, table: &DevTable, bits: &DevRel) -> Result<(), Error> {
-        if text.terms == 0 {
-            return Ok(());
-        }
-        assert!(bits.rows * 64 >= text.span);
-        let kernel = pipeline("join", "text_verdicts", || SOURCE.to_owned())?;
-        let groups = text.terms.min(1024);
-        let scratch = Held::new(groups * 32 * table.states as usize)?;
-        let p: [u32; 8] = [text.terms as u32, table.states, table.classes, table.start, groups as u32, 0, 0, 0];
-        // SAFETY: plain integers.
-        let bytes = unsafe { std::slice::from_raw_parts(p.as_ptr().cast::<u8>(), 32) };
-        let pass = self.pass(1)?;
-        pass.run_bytes(&kernel, &[&text.packed.buffer.buffer, &table.table.buffer, &bits.buffer.buffer, &scratch.buffer], bytes, (groups * 32).div_ceil(256));
-        self.keep.push(scratch);
-        Ok(())
-    }
-
-    /// `replace_all` of a regex (its automata `table`, `text::table::Replacer`) by `with`, once per term of `text`: a
-    /// text buffer of the same terms, their replaced texts (`text_replace`, two passes and a scan between).
-    pub(in crate::code_rule_dsl) fn replace(&mut self, text: &DevText, table: &DevBytes, states: u32, with: &[u8]) -> Result<DevText, Error> {
-        let n = text.terms;
-        // A match of at least a byte becomes `with`: no text grows past its length times `with`'s.
-        let room = text.chars.saturating_mul(with.len().max(1));
-        let out = std::rc::Rc::new(DevRel::raw(Held::new((8 * (1 + n) + 4 * (n + 1) + room + 1).div_ceil(8) * 8)?, (8 * (1 + n) + 4 * (n + 1) + room + 1).div_ceil(8)));
-        let kernel = pipeline("join", "text_replace", || SOURCE.to_owned())?;
-        let groups = n.clamp(1, 1024);
-        let scratch = Held::new(groups * 64 * states as usize)?;
-        let lens = Held::new(4 * (n + 1))?;
-        let z = Held::of(with.iter().copied().chain([0u8]).collect::<Vec<u8>>().into_iter()).map_err(|_| Error::BackendCapacity)?;
-        let scan = Scan::new(n + 1)?;
-        for write in [0u32, 1] {
-            let p: [u32; 8] = [n as u32, groups as u32, with.len() as u32, write, states, 0, 0, 0];
-            // SAFETY: plain integers.
-            let bytes = unsafe { std::slice::from_raw_parts(p.as_ptr().cast::<u8>(), 32) };
-            let pass = self.pass(8)?;
-            pass.run_bytes(&kernel, &[&text.packed.buffer.buffer, &table.held.buffer, &z.buffer, &lens.buffer, &out.buffer.buffer, &scratch.buffer], bytes, (groups * 32).div_ceil(256));
-            if write == 0 {
-                scan.encode(pass, &lens.buffer)?;
-            }
-        }
-        self.keep.extend([scratch, lens, z]);
-        self.read.push(text.packed.clone());
-        Ok(DevText { packed: out, terms: n, span: text.span, longest: room, sep: true, chars: room })
-    }
-
-    /// Text function `f` (`TEXTFN_*`) of constant numbers `n0`, `n1`, once per term of `text` (`text_map`): a text
-    /// buffer of the same terms, their texts made. `flag` is set when `lower` met a term past ASCII.
-    pub(in crate::code_rule_dsl) fn text_map(&mut self, text: &DevText, f: u32, n0: i64, n1: i64, flag: &Words) -> Result<DevText, Error> {
-        let n = text.terms;
-        // No function here makes a text longer.
-        let room = text.chars;
-        let out = std::rc::Rc::new(DevRel::raw(Held::new((8 * (1 + n) + 4 * (n + 1) + room + 1).div_ceil(8) * 8)?, (8 * (1 + n) + 4 * (n + 1) + room + 1).div_ceil(8)));
-        let kernel = pipeline("join", "text_map", || SOURCE.to_owned())?;
-        let groups = n.clamp(1, 1024);
-        let lens = Held::new(4 * (n + 1))?;
-        let scan = Scan::new(n + 1)?;
-        for write in [0u32, 1] {
-            let mut p = [0u8; 32];
-            for (k, w) in [n as u32, groups as u32, f, write].iter().enumerate() {
-                p[4 * k..4 * k + 4].copy_from_slice(&w.to_le_bytes());
-            }
-            p[16..24].copy_from_slice(&n0.to_le_bytes());
-            p[24..32].copy_from_slice(&n1.to_le_bytes());
-            let pass = self.pass(8)?;
-            pass.run_bytes(&kernel, &[&text.packed.buffer.buffer, &lens.buffer, &out.buffer.buffer, &flag.buffer.buffer], &p, (groups * 32).div_ceil(256));
-            if write == 0 {
-                scan.encode(pass, &lens.buffer)?;
-            }
-        }
-        self.keep.push(lens);
-        self.read.push(text.packed.clone());
-        Ok(DevText { packed: out, terms: n, span: text.span, longest: text.longest, sep: true, chars: room })
-    }
-
     /// Sets slots of `table` in place (`stage`'s binds: program columns of the binding's slots, or parameters).
     pub(in crate::code_rule_dsl) fn map(&mut self, mut stage: Stage, table: &Table, in_slot: usize, totals: &Words) -> Result<(), Error> {
         let map = pipeline("join", "stage_map", || SOURCE.to_owned())?;
@@ -3256,6 +3241,33 @@ pub mod tests {
                 ((x >> 33) as i64).rem_euclid(modulus) + (3 << 32)
             })
             .collect()
+    }
+
+    /// Q253: a relation `Batch::index` moves for an index (its directory full, or its block) is the batch's until its
+    /// work, which builds the index into it, completes: a stage's handle to it dropped meanwhile does not give back
+    /// its relation, and the index the batch marks built is still its own.
+    #[test]
+    fn a_relation_moved_for_an_index_lives_until_its_batch_is_done() {
+        if rerail_accel::gpu::join::device().is_err() {
+            return;
+        }
+        let n = 1000;
+        let cols: Vec<Vec<i64>> = (0..4).map(|c| rows(n, 11 + c, 50)).collect();
+        let rel = DevRel::upload(4, n, |v| for (k, c) in cols.iter().enumerate() { v[k * n..(k + 1) * n].copy_from_slice(c) }).unwrap();
+        let mut batch = Batch::new().unwrap();
+        let keys: [&[usize]; 9] = [&[0], &[1], &[2], &[3], &[0, 1], &[0, 2], &[0, 3], &[1, 2], &[1, 3]];
+        let mut moved = None;
+        for key in keys {
+            let ix = batch.index(&rel, key).unwrap();
+            if let Some(m) = ix.moved.clone() {
+                moved = Some(m);
+                break;
+            }
+        }
+        let moved = moved.expect("a key past the relation's directory moves it");
+        assert!(std::rc::Rc::strong_count(&moved) >= 2, "the batch keeps the relation it moved");
+        drop(moved);
+        batch.finish().expect("its index built into the relation it moved, still held");
     }
 
     /// A two-stage plan on the device against the same plan by nested loops: a scan of `a` (slots 0, 1), a join of
@@ -3641,6 +3653,8 @@ impl Batch {
         self.writes(r, "a lattice's held rows");
         // The map's block as it is now (reaching its slots), kept until the work completes.
         let hb = bound(map.home)?;
+        // Its rows written in place, bounded by their chunks (decision 0427): checked when the work completes.
+        self.writes(r, "a lattice's held rows");
         if !matches!(first, MapFirst::Ready) {
             let hclear = pipeline("join", "lat_hclear", || SOURCE.to_owned())?;
             let pass = self.pass(2)?;

@@ -376,7 +376,6 @@ pub struct GpuTotal {
     pub upload_bytes: u64,
     /// Uploads by what was read (`UPLOAD_KINDS`): bytes and the host's CPU.
     pub upload_by: [(u64, f64); 4],
-    pub resident: u64,
     /// Relations read where they lie, in their block (decision 0325): nothing uploaded.
     pub in_place: u64,
     pub sorts: u64,
@@ -416,7 +415,6 @@ impl GpuTotal {
             a.0 += b.0;
             a.1 += b.1;
         }
-        self.resident += o.resident;
         self.in_place += o.in_place;
         self.sorts += o.sorts;
         self.sort_hits += o.sort_hits;
@@ -2190,8 +2188,8 @@ pub fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
         ms(sum.gpu), sum.submissions, sum.dispatches, sum.reruns, sum.arena_reruns, sum.waved, sum.sized);
     let _ = writeln!(r, "  host CPU {:.1} ms: encode {:.1}, uploads {:.1}, wait {:.1} ({:.1} ms wall), rows back into the store {:.1}",
         ms(sum.host()), ms(sum.encode), ms(sum.upload), ms(sum.wait), ms(sum.wait_wall), ms(sum.decode));
-    let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), read in place {}, found resident {}; sorts made {}, found resident {}; bindings {}, head rows {} ({} distinct, made so on the device; {} written in place into their heads' blocks); texts made {}",
-        sum.uploads, sum.upload_bytes as f64 / 1e6, sum.in_place, sum.resident, sum.sorts, sum.sort_hits, sum.bindings, sum.rows, sum.distinct, sum.placed, sum.made);
+    let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), read in place {}; sorts made {}, found in their blocks {}; bindings {}, head rows {} ({} distinct, made so on the device; {} written in place into their heads' blocks); texts made {}",
+        sum.uploads, sum.upload_bytes as f64 / 1e6, sum.in_place, sum.sorts, sum.sort_hits, sum.bindings, sum.rows, sum.distinct, sum.placed, sum.made);
     let by: Vec<String> = UPLOAD_KINDS.iter().zip(&sum.upload_by).map(|(k, (b, c))| format!("{k} {:.1} MB in {:.1} ms", *b as f64 / 1e6, ms(*c))).collect();
     let _ = writeln!(r, "  uploads by what they read: {}", by.join(", "));
     let mut top = ran.clone();
@@ -2650,6 +2648,20 @@ pub fn memory_report(r: &mut String, spans: &BTreeMap<String, SpanTotal>) {
         memory::mb(live as f64),
         memory::mb(resident as f64)
     );
+    // The count the run is weighed by (decision 0435 §3, §5): beside the footprint, their gap names what it misses.
+    let w = rerail_accel::budget::written();
+    let _ = writeln!(
+        r,
+        "What the run wrote (decision 0435): {} MB now, {} MB at most read, of a limit of {} MB; heap {} MB, host blocks {} MB, the GPU pool's leases {} MB and idle {} MB, rerail-metal's ledger {} MB",
+        memory::mb(w.total() as f64),
+        memory::mb(rerail_accel::budget::written_most() as f64),
+        memory::mb(rerail_accel::budget::limit() as f64),
+        memory::mb(w.heap as f64),
+        memory::mb(w.host_blocks as f64),
+        memory::mb(w.leased as f64),
+        memory::mb(w.idle as f64),
+        memory::mb(w.ledger as f64)
+    );
     let _ = writeln!(r, "Spans by bytes their thread allocated while open, less the spans inside them (own); kept = allocated less freed, in all");
     let _ = writeln!(r, "{:>10} {:>10} {:>10} {:>9}  span", "own MB", "all MB", "kept MB", "calls");
     let mut by: Vec<(&String, &SpanTotal)> = spans.iter().filter(|(_, t)| t.own_alloc > 0).collect();
@@ -3063,7 +3075,6 @@ pub struct Report {
     pub upload_bytes: u64,
     /// The uploads by what they read (`UPLOAD_KINDS`, in order): bytes and this thread's CPU.
     pub upload_by: [(u64, f64); 4],
-    pub resident_hits: u32,
     /// Relations read where they lie, in their block (decision 0325).
     pub in_place: u32,
     pub sorts: u32,
