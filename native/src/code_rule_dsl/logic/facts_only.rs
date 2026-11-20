@@ -200,9 +200,9 @@ const STATE: &[(&str, &str)] = &[
     // A test's log.
     ("content_store/record.rs", "LOG"),
     // This thread's run's binding (CPU or Metal).
-    ("code_rule_dsl/logic/plan/placement.rs", "DEVICE"),
+    ("code_rule_dsl/logic/plan/placement.rs", "Device"),
     // Profiling: the placements a recording run made, and the writer's jobs by kind.
-    ("code_rule_dsl/logic/plan/placement.rs", "RECORDED"),
+    ("code_rule_dsl/logic/plan/placement.rs", "Recording"),
     // The coverage check's census of the shipped rule files, read once by a test process.
     ("code_rule_dsl/logic/plan/coverage.rs", "CENSUS"),
     // The process's interned relation names (`front::Name`): one allocation per distinct name, not a result kept.
@@ -244,22 +244,22 @@ const STATE: &[(&str, &str)] = &[
     // The language tags the store's dictionaries are chosen by (RER-131): set once as the library loads.
     ("content_store/compression.rs", "LANGUAGE_TAGS"),
     // The store handles open in this process, by path (RER-131): a registry of open things.
-    ("code_rule_dsl/logic/plan/choices.rs", "DURABLE"),
+    ("code_rule_dsl/logic/plan/choices.rs", "DurableSide"),
     ("code_rule_dsl/logic/plan/corpus.rs", "TEST_TAPE_CACHE"),
     // A test's own store, the template's path and the threads said to ask off a test's (`test_store`): which files
     // the tests' stores are, not results.
     // The caller's options for its runs' inputs (`--facts`, `--require-facts`, `--base`; decision 0442).
-    ("code_rule_dsl/logic/plan/corpus/inputs.rs", "OPTIONS"),
-    ("code_rule_dsl/logic/plan/corpus/test_store.rs", "HANDED"),
+    ("code_rule_dsl/logic/plan/corpus/inputs.rs", "Options"),
+    ("code_rule_dsl/logic/plan/corpus/test_store.rs", "Handed"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "OWN"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "PATH"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "SAID"),
     // Profiling totals, consumed and cleared by each report; no reusable results.
-    ("code_rule_dsl/logic/plan/corpus/phases.rs", "HANDED_DOWN"),
+    ("code_rule_dsl/logic/plan/corpus/phases.rs", "HandedDown"),
     // Phase 1's exports while the run that ran it is under way: the run's own facts, gone when it ends.
-    ("code_rule_dsl/logic/plan/corpus/phases.rs", "PHASE_ONE"),
-    ("code_rule_dsl/logic/plan/corpus/phases.rs", "RUNNING"),
-    ("code_rule_dsl/logic/profile.rs", "DIR"),
+    ("code_rule_dsl/logic/plan/corpus/phases.rs", "HeldPhaseOne"),
+    ("code_rule_dsl/logic/plan/corpus/phases.rs", "Phases"),
+    ("code_rule_dsl/logic/profile.rs", "Dir"),
     // Ended threads' CPU accounts and their CPU outside spans, summed for the report; no reusable results.
     ("code_rule_dsl/logic/profile.rs", "EXITED"),
     ("code_rule_dsl/logic/profile.rs", "EXITED_GAPS"),
@@ -302,11 +302,11 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix/device.rs", "AUTOMATA"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "TESTS"),
     // A switch: testing mode's store (decision 0130).
-    ("code_rule_dsl/logic/plan/corpus.rs", "STORE"),
+    ("code_rule_dsl/logic/plan/corpus.rs", "UseStore"),
     // Phase 1's runs within one batch of policies over one tree, dropped with it: nothing kept past the batch.
-    ("code_rule_dsl/logic/plan/corpus/phases.rs", "BATCH"),
+    ("code_rule_dsl/logic/plan/corpus/phases.rs", "BatchUnderWay"),
     // A registry of an open thing: the holders of the rule files' shared tape-cache handle, and the handle.
-    ("code_rule_dsl/logic/plan/corpus/phases.rs", "READING"),
+    ("code_rule_dsl/logic/plan/corpus/phases.rs", "ReadingUnderWay"),
     // The journal's open streams, one a root (decision 0105): open things.
     // A job's own plans and observations (decisions 0113, 0116), taken into the run's as the job ends: the run's own
     // state on the job's thread, gone with it.
@@ -317,20 +317,20 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),
     ("content_store/snapshots.rs", "AFTER_GIT_TREE_TRANSACTION"),
     // The session this thread's runs are runs of (decision 0204): the caller's handle, set and taken back by it.
-    ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND"),
+    ("code_rule_dsl/logic/plan/corpus/session.rs", "InSession"),
 ];
 /// Maps (file, static) that are caches not yet facts, with the 0104 step that moves each.
 const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus.rs", "PREPARED", "2"),
     // The session a thread's runs use (decision 0204: the caller's `Handle`, bound for its runs; was `SESSION`, the
     // process's): what it keeps between runs is still a cache to move.
-    ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND", "3"),
+    ("code_rule_dsl/logic/plan/corpus/session.rs", "InSession", "3"),
     ("code_rule_dsl/logic/plan.rs", "KeptPlans", "6"),
     ("code_rule_dsl/logic/plan.rs", "SESSION_PLANS", "6"),
-    ("code_rule_dsl/logic/derived.rs", "MEMO", "6"),
+    ("code_rule_dsl/logic/derived.rs", "Memoized", "6"),
     ("code_rule_dsl/logic/derived.rs", "SESSION_MEMO", "6"),
     // The observed keeps, a handle a strand enters (decision 0113 §4).
-    ("code_rule_dsl/logic/plan/keeps.rs", "OBSERVED_AT", "6"),
+    ("code_rule_dsl/logic/plan/keeps.rs", "ObservedAt", "6"),
     // RER-131's compiled group patterns, where `GROUPS` was.
     ("code_rule_dsl/logic/strings/functions.rs", "CACHE", "7"),
     ("code_rule_dsl/text.rs", "NAMES", "7"),
@@ -392,7 +392,8 @@ fn tables() -> BTreeMap<String, BTreeSet<String>> {
 }
 
 /// Each `static` behind a lock or a cell that holds more than a number or a flag, in the engine's run path, and each
-/// value of the run's context that does (a type bound by `bind`, `bind_here`; decision 0442): (file, name).
+/// value of the run's context that does (a type bound by `bind`, `bind_here`, or read by `bound`, `with_bound`;
+/// decision 0442): (file, name).
 fn maps() -> BTreeSet<(String, String)> {
     let mut fs = Vec::new();
     for d in ["code_rule_dsl/logic", "content_store"] {
@@ -404,17 +405,24 @@ fn maps() -> BTreeSet<(String, String)> {
     // A plain number, flag or instant holds no result.
     let plain = regex::Regex::new(r"(Mutex|RwLock|RefCell|OnceLock|LazyLock|Cell)\s*<\s*(\(\s*\)|bool|u8|u16|u32|u64|usize|i32|i64|f64|std::time::Instant|Instant|std::time::Duration|Option<\s*(usize|u64|i64|bool|f64|std::time::Instant)\s*>|\(\s*(Option<usize>|usize|u64|f64)\s*,\s*(usize|u64|f64)\s*\))\s*>").unwrap();
     let mut out = BTreeSet::new();
-    // The run's context: the types bound, and where each is declared with its field.
-    let binds = regex::Regex::new(r"\bbind(?:_here)?\(\s*([A-Z][A-Za-z0-9]*)\(").unwrap();
+    // The run's context: the types bound, each declared with its field in the module that binds and reads it.
+    let binds = regex::Regex::new(r"\bbind(?:_here)?\(\s*([A-Z][A-Za-z0-9]*)[({]|\bbound::<([A-Z][A-Za-z0-9]*)>|\bwith_bound\(\|[a-z_]+: &([A-Z][A-Za-z0-9]*)\|").unwrap();
     let tuple = regex::Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?struct\s+([A-Z][A-Za-z0-9]*)\((.*)\);").unwrap();
+    // A record (named fields) holds more than a number or a flag.
+    let record = regex::Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?struct\s+([A-Z][A-Za-z0-9]*)\s*\{").unwrap();
     let flat = regex::Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(bool|u8|u16|u32|u64|usize|i32|i64|f64|&'static str|Option<\s*(usize|u64|i64|bool|f64)\s*>)\s*$").unwrap();
     let texts: Vec<(std::path::PathBuf, String)> = fs.iter().map(|f| (f.clone(), std::fs::read_to_string(f).unwrap_or_default())).collect();
-    let bound: BTreeSet<String> = texts.iter().flat_map(|(_, t)| binds.captures_iter(t).map(|c| c[1].to_owned()).collect::<Vec<_>>()).collect();
     for (f, text) in &texts {
+        let bound: BTreeSet<&str> = binds.captures_iter(text).filter_map(|c| c.iter().skip(1).flatten().next().map(|m| m.as_str())).collect();
         for l in text.lines() {
             if let Some(c) = tuple.captures(l)
-                && bound.contains(&c[1])
+                && bound.contains(&c[1].as_ref())
                 && !flat.is_match(&c[2])
+            {
+                out.insert((rel(f), c[1].to_owned()));
+            }
+            if let Some(c) = record.captures(l)
+                && bound.contains(&c[1].as_ref())
             {
                 out.insert((rel(f), c[1].to_owned()));
             }

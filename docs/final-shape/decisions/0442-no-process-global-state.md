@@ -51,9 +51,13 @@ by any caller in the process, so two callers of different trust could not be kep
 ## Open
 
 - The baseline (2026-11-19): 563 statics: 78 stay, 109 run, 9 connection, 41 shared, 326 review.
-- Thread-locals of class Carried are the run's context in thread-locals: they fold into `Run` once it holds the rest.
-  Under way (2026-11-19; moved so far: the profile's switch, directory and stage, and the planner's kept plans and
-  five switches), as follows:
+- Thread-locals of class Carried were the run's context in thread-locals. Done (2026-11-19): every one is a binding
+  in the run's context, as follows. Moved: the profile's switch, directory and stage; the planner's kept plans, plan
+  site and four switches; the corpus run's count, token and testing store; the switches' depth; the session and its
+  full flag; the drain and whole-relations switches; the placement's binding and recording; the inputs' options;
+  the durable side of the kept choices; the phases under way, what they were handed, phase 1's result, the batch and
+  the reading; a test's handed store; the run's observations; the derived memo; the chunk; phase 0's flag; the SQL
+  ledger; the kept splits; the writes' waves.
   - **What they are.** Of the 40, 37 are a value for an extent of a run: a guard sets it and puts the old one back
     (how deep the run is nested, the phase under way, the batch, the kept plans, the device binding, the profile's
     switch). Two jobs of one run, in different extents, see different values. So they are not fields of `Run`: a
@@ -67,15 +71,24 @@ by any caller in the process, so two callers of different trust could not be kep
     `exec`'s launches carried the run alone: an item read its pool thread's own device binding, store, waves and
     chunk.
   - **Not context:** a job's own buffers of the kept plans and observations (`OWN_PLANS`, `OWN_PLANNED`,
-    `OWN_OBSERVED`), merged into the run's as the job ends: a job's state on its thread (class Call). `RUN` itself
-    stays, holding the chain.
+    `OWN_OBSERVED`), and a test's own store (`OWN`), merged into the run's as the job ends: a job's state on its
+    thread, the only parts `run_state` still carries beside the run. `RUN` and `CONTEXT` themselves stay, holding the
+    run and the chain. `run_state`'s copied and cloned parts are gone with the thread-locals they carried.
+  - **Guards drop in order.** A binding ends as its guard drops; a guard dropped out of the reverse of its order
+    would end an inner binding with it. A test build checks it at each drop (a panic names the decision); a struct
+    holding two guards declares them inner first (fields drop in order), and a tuple of two is never used. A choice
+    made for the rest of the caller's extent, with no guard (`bind_here`: a setter like `profile::set`), replaces
+    the nearest such choice of its type and never a guard's binding.
+  - **Still kept maps.** A context value holding more than a number or a flag is counted by decision 0104's scan
+    (`facts_only::maps`) as the thread-local was: by its type's name, in the module that binds it.
 - Step 3 (the profile), as done:
   - A run's records are the run's (`profile::Records`, a run local). Each thread's shard of them is listed in the run
     it records for. Outside a run nothing keeps them: a test that reads a profile holds a run (`run::scope`, or
     `profile::test_run` in the crates below `logic`).
   - The run thread's phases are the run's. The command's clocks are the command's thread's (`COMMAND`, Outermost).
-  - Whether to profile, and where to write the report, are the caller's: thread-locals carried to its runs' jobs
-    (`ON`, `DIR`). `profile::carried` carries the run and the switch into a pool thread's item too.
+  - Whether to profile, and where to write the report, are the caller's: bindings in the run's context (`On`,
+    `Dir`), which its runs' jobs read too. `profile::carried` carries the run and its context into a pool thread's
+    item.
   - The process lock that let one profiled run at a time (`one_run`) is gone. A corpus run holds its run's records
     (`hold_records`); one nested in it neither resets nor writes them.
   - The threads' CPU accounts (`THREADS`, `EXITED`, `EXITED_GAPS`) are the pool's, which is shared by design. They

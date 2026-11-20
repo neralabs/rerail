@@ -71,29 +71,18 @@ struct Held {
     bodies: parking_lot::RwLock<HashMap<(usize, usize), Arc<Body>>>,
 }
 
-thread_local! {
-    /// The kept splits of the run under way on this thread (`own`); `None` outside a run, where a split keeps nothing.
-    static SPLITS: std::cell::RefCell<Option<Splits>> = std::cell::RefCell::new(None);
-}
+/// The kept splits of the run under way (`own`), in the run's context (its jobs keep theirs there too); `None`
+/// outside a run, where a split keeps nothing.
+#[derive(Clone, Default)]
+struct KeptSplits(Option<Splits>);
 
-/// Carries the run's kept splits to a job on another thread (`logic::run_state`).
-pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
-    c.cloned(&["SPLITS"], &SPLITS);
-}
-
-/// A run's own kept splits on this thread until dropped, when its caller's come back.
-pub(in crate::code_rule_dsl) fn own() -> impl Drop {
-    struct Own(Option<Splits>);
-    impl Drop for Own {
-        fn drop(&mut self) {
-            SPLITS.with(|s| s.replace(self.0.take()));
-        }
-    }
-    Own(SPLITS.with(|s| s.replace(Some(Splits::default()))))
+/// A run's own kept splits until dropped, when its caller's come back.
+pub(in crate::code_rule_dsl) fn own() -> crate::code_rule_dsl::logic::profile::Bound {
+    crate::code_rule_dsl::logic::profile::bind(KeptSplits(Some(Splits::default())))
 }
 
 fn kept_splits() -> Option<Splits> {
-    SPLITS.with(|s| s.borrow().clone())
+    crate::code_rule_dsl::logic::profile::bound::<KeptSplits>().0
 }
 
 /// The keys' hasher: foldhash's quality hasher with a fixed seed, so a key is the same on every thread of the run.

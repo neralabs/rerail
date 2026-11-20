@@ -397,6 +397,8 @@ struct Link {
     key: std::any::TypeId,
     value: Box<dyn std::any::Any + Send + Sync>,
     up: Context,
+    /// Made by `bind_here` (it ends with the extent under way), not by a guard.
+    here: bool,
 }
 
 impl Context {
@@ -420,8 +422,17 @@ impl Context {
         }
     }
 
-    fn with<T: Send + Sync + 'static>(&self, value: T) -> Context {
-        Context(Some(std::sync::Arc::new(Link { key: std::any::TypeId::of::<T>(), value: Box::new(value), up: self.clone() })))
+    fn with<T: Send + Sync + 'static>(&self, value: T, here: bool) -> Context {
+        Context(Some(std::sync::Arc::new(Link { key: std::any::TypeId::of::<T>(), value: Box::new(value), up: self.clone(), here })))
+    }
+
+    /// The nearest link a guard made, past those `bind_here` made above it.
+    fn guarded(&self) -> Option<&std::sync::Arc<Link>> {
+        let mut at = self.0.as_ref();
+        while let Some(link) = at.filter(|l| l.here) {
+            at = link.up.0.as_ref();
+        }
+        at
     }
 }
 
@@ -444,10 +455,14 @@ pub fn with_bound<T: Default + Send + Sync + 'static, R>(f: impl FnOnce(&T) -> R
 /// context is as it was.
 pub fn bind<T: Send + Sync + 'static>(value: T) -> Bound {
     let was = CONTEXT.try_with(|c| {
-        let next = c.borrow().with(value);
-        c.replace(next)
+        let next = c.borrow().with(value, false);
+        let made = next.0.as_ref().map_or(0, |l| std::sync::Arc::as_ptr(l) as usize);
+        (c.replace(next), made)
     });
-    Bound(was.ok(), std::marker::PhantomData)
+    match was {
+        Ok((was, made)) => Bound(Some(was), made, std::marker::PhantomData),
+        Err(_) => Bound(None, 0, std::marker::PhantomData),
+    }
 }
 
 /// Binds `value` for the rest of the extent under way on this thread (an extent's guard dropping takes it with it): a
@@ -456,10 +471,11 @@ pub fn bind_here<T: Send + Sync + 'static>(value: T) {
     let was = CONTEXT.try_with(|c| {
         let next = {
             let here = c.borrow();
-            // A binding of the same type at the top is replaced, so that a switch set again and again stays one link.
+            // A binding of the same type `bind_here` made at the top is replaced, so that a switch set again and again
+            // stays one link. A guard's link is never replaced: its extent ends where the guard drops.
             match here.0.as_deref() {
-                Some(top) if top.key == std::any::TypeId::of::<T>() => top.up.with(value),
-                _ => here.with(value),
+                Some(top) if top.here && top.key == std::any::TypeId::of::<T>() => top.up.with(value, true),
+                _ => here.with(value, true),
             }
         };
         c.replace(next)
@@ -470,10 +486,17 @@ pub fn bind_here<T: Send + Sync + 'static>(value: T) {
 /// A binding (`bind`): dropped, the run's context on this thread is as it was before. It stays on its thread (not
 /// `Send`): dropped on another, it would set that thread's context.
 #[must_use = "the binding ends when the guard drops"]
-pub struct Bound(Option<Context>, std::marker::PhantomData<*const ()>);
+pub struct Bound(Option<Context>, usize, std::marker::PhantomData<*const ()>);
 
 impl Drop for Bound {
     fn drop(&mut self) {
+        // A test build checks that guards drop in the reverse of their order: this guard's link is the nearest a guard
+        // made. Dropped out of order, an inner binding would outlive its guard.
+        #[cfg(feature = "test-hooks")]
+        if self.0.is_some() && !std::thread::panicking() {
+            let nearest = CONTEXT.try_with(|c| c.borrow().guarded().map_or(0, |l| std::sync::Arc::as_ptr(l) as usize)).unwrap_or(self.1);
+            assert_eq!(nearest, self.1, "rerail: a binding of the run's context dropped out of order (decision 0442): guards drop in the reverse of their order");
+        }
         let left = self.0.take().and_then(|was| CONTEXT.try_with(|c| c.replace(was)).ok());
         drop(left);
     }
@@ -736,6 +759,27 @@ mod tests {
         let run: std::sync::Arc<dyn RunOwn> = std::sync::Arc::new(Bare(RunValues::default(), Shared::new()));
         let _in = enter(Some(run));
         assert_eq!(bound::<Depth>(), Depth(5));
+    }
+
+    #[cfg(feature = "test-hooks")]
+    #[test]
+    #[should_panic(expected = "dropped out of order")]
+    fn a_binding_dropped_out_of_order_is_refused() {
+        let outer = bind(Depth(1));
+        let _inner = bind(Site("in"));
+        drop(outer);
+    }
+
+    #[test]
+    fn a_choice_set_inside_a_guard_ends_with_it_and_keeps_the_guards_link() {
+        let _outer = bind(Depth(1));
+        {
+            let inner = bind(Depth(2));
+            bind_here(Depth(3));
+            assert_eq!(bound::<Depth>(), Depth(3));
+            drop(inner);
+        }
+        assert_eq!(bound::<Depth>(), Depth(1));
     }
 
     #[test]

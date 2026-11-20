@@ -25,7 +25,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
 // Whether this thread runs phase 0: the flag is the profiler's (`phase_clock`), which reads it too.
-pub use crate::code_rule_dsl::phase_clock::{IN_PHASE_0, active};
+pub use crate::code_rule_dsl::phase_clock::{active, in_phase_0};
 
 /// What phase 0 starts from for one program: its text's includes, or its file.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -596,9 +596,9 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
     static RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let out = std::env::temp_dir().join(format!("rerail-phase-0-{}-{}", std::process::id(), RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
     let options = serde_json::json!({ "reuse": true });
-    IN_PHASE_0.with(|c| c.set(true));
+    let phase_0 = in_phase_0();
     let run = super::run_with_options(&[&text], &root, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &super::Typing::default(), &options);
-    IN_PHASE_0.with(|c| c.set(false));
+    drop(phase_0);
     let result = run.map(|report| {
         use crate::code_rule_dsl::logic::plan::output::Value as V;
         let mut g = Graph { plans: report.plans, ..Graph::default() };

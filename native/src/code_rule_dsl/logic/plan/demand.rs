@@ -67,34 +67,22 @@ use super::fields::Fields;
 
 mod over;
 
-thread_local! {
-    /// Set while a session evaluates its cross-file part (decision 0077): the rows it keeps are each relation's whole
-    /// rows, which delete-and-rederive maintains, so no relation is computed only for the keys its readers reach. A
-    /// relation kept for some keys would miss a key demanded later whose derivation no delta touches (spike O125).
-    static WHOLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
+/// Bound while a session evaluates its cross-file part (decision 0077): the rows it keeps are each relation's whole
+/// rows, which delete-and-rederive maintains, so no relation is computed only for the keys its readers reach. A
+/// relation kept for some keys would miss a key demanded later whose derivation no delta touches (spike O125).
+#[derive(Clone, Copy, Default)]
+struct Whole(bool);
 
-/// Carries the setting to a job on another thread (`run_state`).
-pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
-    c.copy(&["WHOLE"], &WHOLE);
-}
-
-/// While the guard lives, `split_negations` splits nothing (`WHOLE`).
-pub(in crate::code_rule_dsl) fn whole_relations() -> impl Drop {
-    struct Reset(bool);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            WHOLE.with(|w| w.set(self.0));
-        }
-    }
-    Reset(WHOLE.with(|w| w.replace(true)))
+/// While the guard lives, `split_negations` splits nothing (`Whole`).
+pub(in crate::code_rule_dsl) fn whole_relations() -> crate::code_rule_dsl::logic::profile::Bound {
+    crate::code_rule_dsl::logic::profile::bind(Whole(true))
 }
 
 /// What was demanded, and the program's version `placed` with each demandable relation computed for the keys its
 /// readers reach (the module's split, an overlay of `placed`); `None` where nothing is, or where the split would not
 /// stratify or type. `placed` must be the whole program (t36 item 6: `over`).
 pub(super) fn split_negations(placed: &Placed, model: &super::Model) -> Option<(Vec<String>, Placed)> {
-    if WHOLE.with(|w| w.get()) {
+    if crate::code_rule_dsl::logic::profile::bound::<Whole>().0 {
         return None;
     }
     let Some(f) = Fields::of(placed).filter(|_| placed.maint.is_none()) else {

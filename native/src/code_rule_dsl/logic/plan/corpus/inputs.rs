@@ -160,46 +160,41 @@ struct Options {
     base: Option<String>,
 }
 
-thread_local! {
-    static OPTIONS: std::cell::RefCell<Options> = const { std::cell::RefCell::new(Options { facts_dir: None, require_facts: false, base: None }) };
-}
-
-/// Carries the caller's options to a job of its run on another thread (`run_state`).
-pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
-    c.cloned(&["OPTIONS"], &OPTIONS);
+/// The caller's options (`set_facts_dir`, `require_facts`, `set_base`), in the run's context: its runs' jobs read them
+/// too (decision 0442). Each setter binds the options changed for the rest of the caller's extent.
+fn options() -> Options {
+    crate::code_rule_dsl::logic::profile::bound::<Options>()
 }
 
 /// `logic --facts DIR`: the facts directory of this caller's runs.
 pub fn set_facts_dir(dir: PathBuf) -> std::result::Result<(), String> {
-    OPTIONS.with(|o| {
-        let mut o = o.borrow_mut();
-        if o.facts_dir.is_some() {
-            return Err("the facts directory is already set".to_owned());
-        }
-        o.facts_dir = Some(dir);
-        Ok(())
-    })
+    let mut o = options();
+    if o.facts_dir.is_some() {
+        return Err("the facts directory is already set".to_owned());
+    }
+    o.facts_dir = Some(dir);
+    crate::code_rule_dsl::logic::profile::bind_here(o);
+    Ok(())
 }
 
 fn facts_dir(root: &Path) -> PathBuf {
-    OPTIONS.with(|o| o.borrow().facts_dir.clone()).unwrap_or_else(|| root.join(".rerail").join("facts"))
+    options().facts_dir.unwrap_or_else(|| root.join(".rerail").join("facts"))
 }
 
 /// `logic --require-facts`, for this caller's runs.
 pub fn require_facts() {
-    OPTIONS.with(|o| o.borrow_mut().require_facts = true);
+    crate::code_rule_dsl::logic::profile::bind_here(Options { require_facts: true, ..options() });
 }
 
 /// `logic --base REV`, for this caller's runs.
 pub fn set_base(rev: String) -> std::result::Result<(), String> {
-    OPTIONS.with(|o| {
-        let mut o = o.borrow_mut();
-        if o.base.is_some() {
-            return Err("the base revision is already set".to_owned());
-        }
-        o.base = Some(rev);
-        Ok(())
-    })
+    let mut o = options();
+    if o.base.is_some() {
+        return Err("the base revision is already set".to_owned());
+    }
+    o.base = Some(rev);
+    crate::code_rule_dsl::logic::profile::bind_here(o);
+    Ok(())
 }
 
 fn unreadable(detail: impl std::fmt::Display) -> Failure { Failure { kind: "unreadable", detail: detail.to_string() } }
@@ -458,7 +453,7 @@ fn artifact_entry(text: &ReadResult<String>, digest: &ReadResult<String>) -> Str
 /// `program` is the program's header (`Version::header`): what it reads of the rules is `shape`'s.
 pub(super) fn populate(program: &mut front::Program, shape: &super::shape::Shape, root: &Path) -> Result<()> {
     let declared = artifacts(&program.settings)?;
-    let base = OPTIONS.with(|o| o.borrow().base.clone());
+    let base = options().base;
     let base = base.as_deref();
     let mut consulted = Vec::new();
     let mut base_read = base_reader(root, base);
@@ -486,7 +481,7 @@ pub(super) fn populate(program: &mut front::Program, shape: &super::shape::Shape
     consulted.extend(seen.into_inner());
     git_revisions(program, shape, root, base, &mut consulted);
     crate::code_rule_dsl::logic::run::local::<Consulted>().0.lock().unwrap_or_else(|e| e.into_inner()).extend(consulted);
-    if OPTIONS.with(|o| o.borrow().require_facts) {
+    if options().require_facts {
         required_by(program, shape)?;
     }
     Ok(())

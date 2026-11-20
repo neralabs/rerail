@@ -115,19 +115,18 @@ pub struct Chunk {
     made: Mutex<Vec<std::sync::Weak<Facts>>>,
 }
 
-thread_local! {
-    /// The chunk this thread's run is evaluating (`in_chunk`): carried to its jobs (`setfix::carried`).
-    pub static CHUNK: std::cell::RefCell<Option<Arc<Chunk>>> = const { std::cell::RefCell::new(None) };
-}
+/// The chunk the run is evaluating (`in_chunk`), in the run's context: its jobs' relations go in its blocks too.
+#[derive(Clone, Default)]
+struct InChunk(Option<Arc<Chunk>>);
 
 /// Runs `f` as a chunk's evaluation: the relations it and its jobs make go in blocks of the chunk's own, given back
 /// with the last of its rows (decision 0289: a chunk is a block). What outlives the chunk keeps only its own block;
 /// the profile counts those (`a chunk's blocks outlived it`).
 pub fn in_chunk<R>(f: impl FnOnce() -> R) -> R {
-    struct Leave(Option<Arc<Chunk>>, Arc<Chunk>);
+    struct Leave(Option<crate::code_rule_dsl::logic::profile::Bound>, Arc<Chunk>);
     impl Drop for Leave {
         fn drop(&mut self) {
-            CHUNK.with(|c| *c.borrow_mut() = self.0.take());
+            drop(self.0.take());
             for open in &self.1.open {
                 open.lock().unwrap_or_else(|e| e.into_inner()).take();
             }
@@ -142,7 +141,7 @@ pub fn in_chunk<R>(f: impl FnOnce() -> R) -> R {
         }
     }
     let chunk = Arc::new(Chunk::default());
-    let _leave = Leave(CHUNK.with(|c| c.borrow_mut().replace(chunk.clone())), chunk);
+    let _leave = Leave(Some(crate::code_rule_dsl::logic::profile::bind(InChunk(Some(chunk.clone())))), chunk);
     f()
 }
 
@@ -291,7 +290,7 @@ impl Part {
         // A relation given room past its rows (`extra`: its indexes', `Rows::with_index_room`) is alone in its block
         // too, so its indexes lie with it.
         let alone = life == Life::Device || extra > 0;
-        let chunk = CHUNK.with(|c| c.borrow().clone());
+        let chunk = crate::code_rule_dsl::logic::profile::bound::<InChunk>().0;
         let (runs, live_blocks) = (crate::code_rule_dsl::logic::profile::local::<Open>(), crate::code_rule_dsl::logic::profile::machine::<Live>());
         let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
         for fresh in [false, true] {

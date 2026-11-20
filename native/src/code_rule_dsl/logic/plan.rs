@@ -2348,9 +2348,11 @@ impl Model {
     /// calibrates them (decision 0099): the record is made without its strings, its steps' bases and the joins each
     /// step passed over, priced again for EXPLAIN.
     pub fn plan_rule_step_rows(&self, pf: Fields<'_>, b: &Body<'_>, first: Option<usize>) -> Result<(Plan, Vec<f64>)> {
-        let bound = (explaining(true), rerail_prof::code_rule_dsl::logic::profile::bind(StepRows(true)));
+        let explain = explaining(true);
+        let step_rows = rerail_prof::code_rule_dsl::logic::profile::bind(StepRows(true));
         let got = self.plan_inner(pf, b, first, None, true);
-        drop(bound);
+        drop(step_rows);
+        drop(explain);
         let (plan, x) = got?;
         let rows = x.map(|x| x.steps.iter().map(|s| s.rows).collect()).unwrap_or_default();
         Ok((plan, rows))
@@ -3268,9 +3270,11 @@ impl Model {
     /// The rows after each step of `order`, as the search prices it (`StepRows`): what a running line's counts are
     /// checked against (`joins::step_miss`), its widest step among them. A pricing, not a search.
     pub(in crate::code_rule_dsl) fn order_step_rows(&self, pf: Fields<'_>, b: &Body<'_>, first: Option<usize>, order: &[Step]) -> Option<Vec<f64>> {
-        let bound = (explaining(true), rerail_prof::code_rule_dsl::logic::profile::bind(StepRows(true)));
+        let explain = explaining(true);
+        let step_rows = rerail_prof::code_rule_dsl::logic::profile::bind(StepRows(true));
         let got = self.plan_inner(pf, b, first, Some(order), true);
-        drop(bound);
+        drop(step_rows);
+        drop(explain);
         got.ok().and_then(|(_, x)| x).map(|x| x.steps.iter().map(|s| s.rows).collect())
     }
 
