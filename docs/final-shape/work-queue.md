@@ -3058,9 +3058,8 @@ submitted" now hold device memory at once.
   The interpreter's compile: done (decision 0507). `run_batch` builds in 7.1 s, not 44.7 s, with the six largest
   tape reads written `UKL_COLD`. The resident interpreter's results are the same with and without it. Its four
   `BackendFailure` clauses were the interpreted runs' chain levels (0463), never doubled; they are doubled now.
-  Also waiting on Metal: `every_operation_runs_on_every_executor`'s ledger has no row for `@ascii_lower/1`
-  (`source-language.rerail`, from #508). It runs natively on Linux; its device cell needs `RERAIL_BLESS_COVERAGE=1` on a
-  farm Mac.
+  `every_operation_runs_on_every_executor`'s ledger had no row for `@ascii_lower/1` (`source-language.rerail`, from
+  #508): blessed on the M1 Max (native; no computed term on the device), the packs ledger's counts with it.
   (d) a derived relation's frame is still
   encoded into the segments while it is in the chain (`held_placed`, 0.05 s on 300 files), as item 4 was.
 - **Record**: —

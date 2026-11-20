@@ -79,6 +79,7 @@ function @nfkc/1	native	no computed term	p(v) :- t(a), v = @nfkc(a).
 function @shell_unquote/1	native	no computed term	p(v) :- t(a), v = @shell_unquote(a).
 function @to_precision/2	native	no computed term	p(v) :- t(a), m(y), v = @to_precision(a, y).
 function @lower/1	native	device	p(v) :- t(a), v = @lower(a).
+function @ascii_lower/1	native	no computed term	p(v) :- t(a), v = @ascii_lower(a).
 function @str_concat/2	native	no computed term	p(v) :- t(a), t(b), v = @str_concat(a, b).
 function @str_between/3	native	no computed term	p(v) :- t(a), t(b), t(c), v = @str_between(a, b, c).
 function @str_cmp/2	native	device	p(v) :- t(a), t(b), v = @str_cmp(a, b).
