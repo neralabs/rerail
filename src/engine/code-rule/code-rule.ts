@@ -1634,6 +1634,11 @@ export interface CodeRuleAuditor {
    * the edits that may steer the session (a mode other than `log`).
    */
   settleGeneratedEdits?(only?: "steering"): Promise<void>;
+  /**
+   * Whether `settleGeneratedEdits("steering")` waits for a walk's `log` edits too: in repository scope every batch, a
+   * walk's included, is checked by one audit of the whole repository. False when absent.
+   */
+  steeringWaitsForLog?(): boolean;
   /** An audit someone asked for, whose runs are recorded as scans (`AuditOrigin`), not as the session's own. */
   audit?(sessionId: string, input: {
     scope: "repository" | "touched-files";

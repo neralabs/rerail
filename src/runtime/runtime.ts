@@ -175,10 +175,20 @@ type OverdueEditChecks = { all?: Promise<void>; steering?: Promise<void> };
  * Whether a wait for the edit checks `only` names would sit behind checks an earlier boundary stopped waiting for. A
  * wait for every edit waits for those too. A `steering` wait does only behind an overdue `steering` wait: the evaluator
  * checks an edit that may steer before a walk's `log` edits queued ahead of it, or with them in one engine call, so a
- * `log` backlog an overdue wait for every edit stopped on holds it back no more than it held the earlier one.
+ * `log` backlog an overdue wait for every edit stopped on holds it back no more than it held the earlier one. Where a
+ * `steering` wait waits for those edits too, an overdue wait for every edit holds it back as well (`overdueKinds`).
  */
 function waitsBehind(overdue: OverdueEditChecks, only: "steering" | undefined): boolean {
   return overdue.steering !== undefined || (only === undefined && overdue.all !== undefined);
+}
+
+/**
+ * The kinds of wait an overdue wait for `only` holds back: its own, and a `steering` one behind a wait for every edit
+ * where a `steering` wait waits for a walk's `log` edits too (`CodeRuleBridge.steeringWaitsForLog`).
+ */
+function overdueKinds(only: "steering" | undefined, steeringWaitsForLog: boolean): ReadonlyArray<keyof OverdueEditChecks> {
+  if (only !== undefined) return [only];
+  return steeringWaitsForLog ? ["all", "steering"] : ["all"];
 }
 
 /** Whether a boundary stopped waiting for edit checks that still drain. */
@@ -1434,11 +1444,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     if (bridge === undefined || waitsBehind(state.overdueEditChecks, only)) return;
     const settled = bridge.settleGeneratedEdits(only);
     if (await settledWithin(settled, capMs)) return;
-    const kind = only ?? "all";
+    const kinds = overdueKinds(only, bridge.steeringWaitsForLog());
     const overdue: Promise<void> = settled.catch(() => undefined).finally(() => {
-      if (state.overdueEditChecks[kind] === overdue) delete state.overdueEditChecks[kind];
+      for (const kind of kinds) if (state.overdueEditChecks[kind] === overdue) delete state.overdueEditChecks[kind];
     });
-    state.overdueEditChecks[kind] = overdue;
+    for (const kind of kinds) state.overdueEditChecks[kind] = overdue;
   }
 
   /** A turn end that waits long holds the session's request lane: the daemon log says how long and on what; fast ones say nothing. */

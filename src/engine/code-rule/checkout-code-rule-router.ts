@@ -351,6 +351,11 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     await this.#settleLanes(lane => lane.enforcer.settleGeneratedEdits(only));
   }
 
+  /** Every lane checks in the router's scope: in repository scope a steering wait waits for a walk's audits too. */
+  steeringWaitsForLog(): boolean {
+    return this.#settings.scope === "repository";
+  }
+
   async settle(): Promise<void> {
     await this.#settleLanes(lane => lane.enforcer.settle());
   }

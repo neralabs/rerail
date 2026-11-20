@@ -2004,6 +2004,11 @@ export class CodeRuleBridge {
     }
   }
 
+  /** Whether its wait for the edits that may steer waits for a walk's `log` edits too (the auditor's `steeringWaitsForLog`). */
+  steeringWaitsForLog(): boolean {
+    return this.#auditor.steeringWaitsForLog?.() === true;
+  }
+
   async settle(): Promise<void> {
     this.#requireSession();
     await this.#queue;

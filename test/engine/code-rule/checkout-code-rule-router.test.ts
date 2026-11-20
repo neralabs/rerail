@@ -687,6 +687,18 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     }
   });
 
+  // In repository scope each lane checks every batch, a walk's `log` batch too, by one audit of the whole repository.
+  it("answers that a wait for the edits that may steer waits for a walk's log edits too only while its scope is the repository", async () => {
+    const { databasePath, session } = await repositoryWithWorktree(outside);
+    const auditor = router(session, databasePath, recordingAudits().recorder);
+    const answers = [auditor.steeringWaitsForLog()];
+    for (const scope of ["repository", "touched-files"] as const) {
+      auditor.updateSettings({ scope, mode: "steer" });
+      answers.push(auditor.steeringWaitsForLog());
+    }
+    expect(answers).toEqual([false, true, false]);
+  });
+
   it("keeps the stopped value a worktree outside the checkout has of its own", async () => {
     const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
     const database = openRerailDatabase(databasePath);

@@ -450,9 +450,10 @@ describe("Rerail tool results waiting for their edit's check", () => {
 
   /**
    * A session whose edit checks finish only once the test opens `check`, each steering its file's finding when the
-   * edit wrote `bad`: Claude Code's unless `host` says otherwise.
+   * edit wrote `bad`: Claude Code's unless `host` says otherwise. With `steeringWaitsForLog`, a wait for the edits that
+   * may steer waits for a walk's `log` edits too, as in repository scope.
    */
-  async function hookSession(host: "claude-code" | "codex" | "omp" = "claude-code") {
+  async function hookSession(host: "claude-code" | "codex" | "omp" = "claude-code", { steeringWaitsForLog = false } = {}) {
     // The real path: macOS's temporary folder is reached through a symlink, which would name the file twice.
     const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-hook-check-")));
     directories.push(root);
@@ -503,8 +504,9 @@ describe("Rerail tool results waiting for their edit's check", () => {
         settleGeneratedEdits: async only => {
           settles.push(only);
           checking.resolve();
-          await Promise.all(only === "steering" ? checks : [...checks, ...walkChecks]);
+          await Promise.all(only === "steering" && !steeringWaitsForLog ? checks : [...checks, ...walkChecks]);
         },
+        steeringWaitsForLog: () => steeringWaitsForLog,
         close: async () => undefined,
       }),
     });
@@ -614,6 +616,31 @@ describe("Rerail tool results waiting for their edit's check", () => {
       await vi.waitFor(() => expect(settles).toEqual([undefined, "steering"]));
       check.resolve();
       expect((await answering).map(delivery => delivery.content)).toEqual([STEER]);
+    } finally {
+      vi.useRealTimers();
+      walk.resolve();
+      check.resolve();
+      await runtime.dispose();
+    }
+  });
+
+  // In repository scope one audit of the whole repository checks each batch, a walk's `log` batch too, and a wait for
+  // the edits that may steer waits for them all: behind a turn end that stopped waiting for them, a result waits for none.
+  it("answers an OMP tool call's result at once after a turn end stopped waiting for log edits its own wait would wait for too", async () => {
+    const { runtime, check, checking, edit, turnEnd, walk, walkQueued, settles } = await hookSession("omp", { steeringWaitsForLog: true });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await walkQueued();
+      const ending = turnEnd("turn");
+      await checking.promise;
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(await ending).toEqual([]);
+
+      const { answering } = await edit("t1", BAD);
+      // A wait the result began would end only at its own ten seconds.
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(await answering).toEqual([]);
+      expect(settles).toEqual([undefined]);
     } finally {
       vi.useRealTimers();
       walk.resolve();
