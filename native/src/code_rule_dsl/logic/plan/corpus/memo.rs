@@ -41,13 +41,6 @@ pub(super) fn outputs_alone(rel: &str) -> bool {
 /// running the slice. Not an output: they are no relation of the file-local part.
 pub(super) const GUESTS: &str = "guests:";
 
-/// The `lines` key of an entry's tape values asked inside the fixpoint (decision 0431 §8): each `(at, grammar)` a
-/// rule of the file asked to parse. A chunk of partial hits whose cone sees guests but asks none (a rule reading a
-/// relation hiding widened to annotations, `FoldOwn`) admits them before its run, as far as the cone sees them: no
-/// entry keeps a base relation's rows (decision 0458 step 4), so the values are made again, not read from the entry.
-/// Under `GUESTS`, so it is no output; no round (`guest_round` is `None`).
-pub(super) const VALUES: &str = "guests:values";
-
 /// An entry's `outputs` key for round `round`'s lines of slice relation `rel`.
 pub(super) fn guest_key(round: usize, rel: &str) -> String {
     format!("{GUESTS}{round}:{rel}")
@@ -66,6 +59,16 @@ pub(super) fn same_guests(a: &Entry, b: &Entry) -> bool {
     };
     of(a) == of(b)
 }
+
+/// An entry's `outputs` key of the requests its chunk's fixpoint answered with tape values at a string of its file,
+/// or of a value it asked for (decision 0431 §8: `rr_embed_req`'s rows, the string node and its grammar), in the order
+/// answered. A chunk that reads the entry makes its values in the corpus batch from them, as the fixpoint admitted
+/// them (`Guests::admit`): each tape found by its text among the root's last runs' and its source named in the
+/// manifest (0431 R6), as the run that parsed it named it. A chunk of partial hits whose cone sees guests admits them
+/// before its run, as far as the cone sees them (a cone reading a relation hiding widened to annotations, `FoldOwn`,
+/// asks none itself): no entry keeps a base relation's rows (decision 0458 step 4), so they are made again. Not an
+/// output.
+pub(super) const VALUES: &str = "values:";
 
 /// The words `identity` is held by in `COVERED`.
 pub(super) fn covered_words(identity: &[u8; 32]) -> [i64; 2] {
