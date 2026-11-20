@@ -2737,14 +2737,24 @@ describe("CodeRuleBridge", () => {
   });
 
   it("closes mid-walk with no Git it started still running in the folder, which can then be removed at once", async () => {
+    // The daemon's one HEAD reader asks Git once per process where Git's configuration files are (`git var`), a Git no
+    // session owns: asked here first, in another repository, so the Git held below is one the session started.
+    const other = await workspace();
+    git(other, "init", "--quiet");
+    await readGitHead(other);
     const root = await workspace();
     git(root, "init", "--quiet");
     const bridge = new CodeRuleBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), {
       onIgnoreRulesChanged: () => undefined,
     });
 
+    // The ignore rules ask Git for their exclude files and the baseline walk reads HEAD, neither waited for by the open.
+    // That Git answers in milliseconds, often before the open returns, so the session's first Git runs here until it is
+    // ended, and the close meets it running.
+    heldGit.reads = 1;
+    const heldStarted = new Promise<void>(resolve => { heldGit.started = resolve; });
     await bridge.openWorkspace("session-1");
-    // The baseline walk reads HEAD and the ignore rules ask Git for their exclude files, neither waited for by the open.
+    await heldStarted;
     expect(runningIn(root)).not.toEqual([]);
     await bridge.close();
 
