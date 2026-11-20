@@ -8082,3 +8082,28 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
     tests' object or any pool thread's copy held the image. The test passes un-ignored, three runs in a row on the
     m3. The program-image, prepared-program, normalization, run, profile, observer, workspace, lane and plan tests
     pass, except the three plan tests that were red before (Q378).
+
+### Q378. (done) Three plan tests red after the roll-ups, each from two changes made apart
+
+- **Found** (2026-11-20, at the merge of final-rerail-shape-rr-align 972dc90902; red before it, on the hub):
+  `a_constant_counted_none_when_planned_is_growth_when_it_has_rows`,
+  `the_search_prices_the_steps_past_a_bound_head_as_one_witness` and
+  `a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it`.
+- **Done** (2026-11-20):
+  - The search priced the steps past the head's binding twice, by two mechanisms made on two branches, neither in
+    the other's history: Q146's `witnessed` (13d052bb17), which scales the tail's work by the share of the rows
+    walked that are witnesses, as a fixed order's price does, and Q245 item 5's cut (c30a34fb24), which set a
+    step's rows to the bindings it got. After the cut the rows were the bindings, the share was always all, and Q240's
+    documents no longer led (1 M rows where 1,200 come). The cut is gone and `witnessed` prices the search as it
+    prices a fixed order. Q245 item 5's own case (`a_probe_bounded_by_comparisons_reads_a_range`) passes on it, so the
+    cut added nothing `witnessed` lacked. Its duplicate head mask (`head_bits`, the same as `head_mask`) went with it.
+  - Smoking gun 10's test keyed its constant's count by the declared column name (`r`), which the model never reads:
+    a relation that is neither an input nor derived is read by its positional name (`Model::col`: `c1`). So the
+    count was never seen, and the setup ("about no fragment") was not the one it stated. The test now keys it as the
+    model reads it. Both of its assertions pass: `doc_role` leads with one fragment, and 2,455 are growth that is
+    searched again.
+  - The derived-relation test's second half (Q184, f6efa90478) asserted `o` prepared, but `o` tests a constant on a
+    `values` column, which 0361 (Q297, django-bugs' roll-up 7) plans at run time, as the test's own doc says. The
+    assertion states 0361 now: `o` is not prepared, and `r` is, as `o`'s inferred facts size it.
+  - The plan module's tests pass (90). Along the way: `gate/executor-coverage/packs.tsv` was stale since the merge's
+    `lib/python/references.rr` became `.rerail` and the library's programs counted one more. Blessed.

@@ -4533,8 +4533,6 @@ impl Model {
             }
             best
         };
-        // The head's variables as bits, where every one is a join's (`step`'s witness cut needs them all bound).
-        let head_bits: Option<u128> = head_vars.iter().try_fold(0u128, |m, v| var_ids[v.index()].filter(|&k| k < 128).map(|k| m | 1u128 << k));
         // By subset mask (at most `GREEDY` joins, so 4,096 subsets).
         let mut cells: Vec<Option<Cell>> = (0..1usize << joins.len()).map(|_| None).collect();
         let mut closed: Vec<(u128, u128)> = vec![(0, 0); 1 << joins.len()];
@@ -4601,15 +4599,6 @@ impl Model {
                     let by = match p { Price::Atom(_, _, by) => by, _ => "" };
                     let Some((w, mut out, mode)) = priced(p, left) else { continue };
                     let w = w * range_pass(i, *bound);
-                    // Past the head's variables the walk passes on one witness a binding (`setfix::tail`), so the
-                    // steps after pay for the bindings, not the rows. The step itself still reads its rows until a
-                    // witness, and all of them where there is none: its work stays. Priced at one row read
-                    // (`step`'s greedy cut), `rr_agg15($a, $b, $p) :- rr_ctx16($a, $b, $p), bcgp_line($p, $l, _),
-                    // !bcgp_at_line($p, $l), $l > $a, $l < $b` led from the pairs (64.8 K) and read every line of
-                    // each pair's file: 28.6 s against 5.4 s led from the lines.
-                    if head_bits.is_some_and(|h| h & !*bound == 0) && out > left {
-                        out = left;
-                    }
                     let fan = if left > 0.0 { out / left } else { 0.0 };
                     let unfounded = (prev == 0 || from.unfounded) && no_rows_when_priced(i);
                     candidates += 1;
@@ -4623,8 +4612,15 @@ impl Model {
                         out *= pass[k];
                         filtered += out;
                     }
-                    // Past the head's binding, priced as the walk runs it (`witnessed`); the tail starts at the first
-                    // join made with every head variable bound before it.
+                    // Past the head's binding, priced as the walk runs it (`witnessed`), as a fixed order is (`price`);
+                    // the tail starts at the first join made with every head variable bound before it. The walk passes
+                    // on one witness a binding (`setfix::tail`), and a step reads a binding's rows until its first:
+                    // all of them where none passes, so `rr_agg15($a, $b, $p) :- rr_ctx16($a, $b, $p),
+                    // bcgp_line($p, $l, _), !bcgp_at_line($p, $l), $l > $a, $l < $b` led from the pairs (64.8 K)
+                    // read every line of each pair's file (28.6 s against 5.4 s led from the lines). The rows here are
+                    // every row walked, as the fixed order's are: a second cut of the rows passed on to the bindings
+                    // (Q245 item 5, made apart from this one) left the share of witnesses always all, and Q240's
+                    // documents no longer led (1 M rows where 1,200 come, Q378).
                     let raw = from.raw + w + filtered;
                     let tail = from.tail.or_else(|| head_mask.is_some_and(|h| *bound & h == h).then_some((from.raw, left)));
                     let cand = Cell { work: witnessed(raw, tail, out), rows: out, prev, last: i, mode, unfounded, fan, basis: by, raw, tail };
