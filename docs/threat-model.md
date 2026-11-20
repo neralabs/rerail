@@ -535,7 +535,18 @@ boundary judges paths by secret-like name and, where a checkout is known, by sym
 - **Symlink targets count** wherever a checkout root is known (`checkoutPathBoundary`): a tracked
   `docs/a.md -> ../.env` is secret-like. Targets are judged by secret-like name only, so a pnpm `node_modules/<pkg>`
   link into `.pnpm/` passes. Only path-shaped words (a `/` or `\`, a leading `.` or `~`, or a dot-extension) are
-  looked up on disk; every word is still judged by name.
+  looked up on disk, and not a word that may be a URL's host and path where the lookup would reach another machine:
+  on Windows a share on another machine written with `//` right after a `:`, unless `file` or `smb` stands before it
+  (`//host/api` in `https://host/api` or `${SCHEME}://host/api`), and on Linux and macOS a web URL's host and path
+  under the automount root `/net` (`/NET` too on macOS) on another machine, written with `//`. Every other
+  path-shaped word is looked up: a `file:` or `smb:` URL's host and path, a URL's with no host
+  (`unix:///run/app.sock`), on Linux and macOS a `//` word as a local path, and on Windows a share written with
+  backslashes after a `:` (`/LOG:\\host\share\run.txt`), a device path (`\\?\...`, `\\.\...`) that does not go on
+  to the network redirector and a share on the loopback host wherever they stand, and a drive path written with
+  doubled backslashes (`"C:\\Users\\me"` in JSON) as `C:\Users\me` is. A word is read as its lookup opens it, so `.`
+  and `..` names do not hide the redirector, and the loopback host in any spelling the address parser reads
+  (`127.1`, `2130706433`) is this machine, as is the name the system gives it (`os.hostname()`, in any letter case).
+  Every word is still judged by name.
 
 </details>
 
