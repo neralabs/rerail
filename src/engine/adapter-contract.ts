@@ -498,11 +498,12 @@ export interface RerailEventLoop {
   answerFacts?(): EventAnswerFacts;
   /**
    * True when the daemon is not reading: each event given to `ingest` is left for it to check once it reads again, and
-   * answered with nothing; what the check finds reaches the agent with a later answer. The hook then touches none of
-   * its session's files and holds no session lock: it answers as a hook with nothing to deliver, and the steers held
-   * for the session wait for the next hook the daemon answers. A host whose hook reads the agent's own record up to a
-   * mark (Cursor's transcript) leaves both the record and the mark alone then, so the next hook the daemon answers
-   * sends it through the rules.
+   * answered with nothing; what the check finds reaches the agent with a later answer. The hook then holds no session
+   * lock and touches none of its session's files but one: it answers as a hook with nothing to deliver, and the steers
+   * held for the session wait for the next hook the daemon answers. A host whose hook reads the agent's own record up to
+   * a mark (Cursor's transcript) leaves both the record and the mark alone then, so the next hook the daemon answers
+   * sends it through the rules; it still notes in that mark's file, under the lock it takes for the write, that the
+   * session sends its own text (Cursor's prompt hook), as a hook the daemon answers does.
    */
   readonly untaken?: true;
 }

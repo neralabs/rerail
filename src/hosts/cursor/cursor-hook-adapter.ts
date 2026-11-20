@@ -17,6 +17,7 @@ import {
   type HookInput,
   type HookOutput,
   type SessionLock,
+  withSessionLock,
 } from "../../harness/hook-adapter.js";
 import { headlineText, steerHeadlines } from "../../engine/code-rule/rerail-steer.js";
 import { linkDeliveries, linkedByAnswer, presentedSessionStartNote } from "../../presentation/session-presentation.js";
@@ -252,11 +253,14 @@ async function answerCursorHook(
  * The hook's read of the transcript: its unread lines through `eventLoop`, or, while the daemon is not reading
  * (`RerailEventLoop.untaken`), only whether the transcript carries the session's text, so its lines stay unread for the
  * next hook the daemon answers, which sends them through the rules. Either records a session's `beforeSubmitPrompt`,
- * which says the session sends its own text from then on.
+ * which says the session sends its own text from then on: a hook that leaves its event holds no session lock, so it
+ * takes the lock for that write, as a hook reading the transcript keeps it for its own.
  */
 function transcriptStep(input: CursorHookInput, descriptor: AdapterSession, eventLoop: RerailEventLoop, storageRoot: string): () => Promise<boolean> {
-  if (eventLoop.untaken === true) return async () => await transcriptCarriesText(input, descriptor, storageRoot);
-  return async () => await ingestCursorTranscript(input, descriptor, linkingByAnswer(eventLoop), storageRoot);
+  if (eventLoop.untaken !== true) return async () => await ingestCursorTranscript(input, descriptor, linkingByAnswer(eventLoop), storageRoot);
+  const carries = async (): Promise<boolean> => await transcriptCarriesText(input, descriptor, storageRoot);
+  if (input.hook_event_name !== "beforeSubmitPrompt") return carries;
+  return async () => await withSessionLock(storageRoot, "cursor", descriptor.sessionId, carries);
 }
 
 /**

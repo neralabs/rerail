@@ -1,6 +1,7 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { sessionStartNote, steerBlock, type AdapterDelivery, type AdapterEvent, type RerailEventLoop } from "../../../src/engine/index.js";
@@ -9,6 +10,7 @@ import { cursorWorkspace } from "../../../src/hosts/cursor/cursor-hook-adapter.j
 import { steeredRules } from "../../support/steers.js";
 import { answering, countingDaemon } from "../../support/hook-events.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
+import { withPendingFileLock } from "../../../src/harness/index.js";
 
 async function json(path: string): Promise<unknown> {
   return JSON.parse(await readFile(path, "utf8")) as unknown;
@@ -408,5 +410,25 @@ describe("a Cursor hook while the daemon is not reading", () => {
     const taken = await kindsLeft(answer("cursor-taken"), storage, false);
     expect(taken).toEqual(["assistant-message"]);
     expect(await kindsLeft(answer("cursor-left"), storage, true)).toEqual(taken);
+  });
+
+  it("notes that the session sends its own text under the session's lock, so a hook reading the transcript keeps the note", async () => {
+    const { storage, common } = await unreadTranscript();
+    // The session's held steers' file, beside which its transcript's sidecar sits, under the lock its hooks hold.
+    const pending = join(storage, "cursor-pending", `${createHash("sha256").update("cursor-session").digest("hex")}.json`);
+    const sidecar = `${pending}.transcript`;
+    const noted = async (): Promise<boolean> => (await readFile(sidecar, "utf8").catch(() => "")).includes('"nativeTextMode":true');
+    let prompt: Promise<unknown> = Promise.resolve();
+    await withPendingFileLock(pending, async () => {
+      // A hook of the session reading its transcript holds the lock: it read the sidecar before the prompt came.
+      prompt = handleCursorEvent({ ...common, hook_event_name: "beforeSubmitPrompt", prompt: "prompt one" }, untakenLoop(), storage);
+      // A prompt hook that wrote without the lock has noted it by the time these reads end.
+      for (let look = 0; look < 200; look += 1) if (await noted()) break;
+      await mkdir(dirname(sidecar), { recursive: true });
+      await writeFile(sidecar, JSON.stringify({ path: common.transcript_path, offset: 0, latestAssistantText: "", nativeTextMode: false }));
+    });
+    await prompt;
+
+    expect(await noted()).toBe(true);
   });
 });
