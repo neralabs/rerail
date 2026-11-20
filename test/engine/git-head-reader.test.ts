@@ -463,9 +463,10 @@ describe("gitHeadReader", () => {
       for (const time of [1, 2, 3]) {
         const answer = await read(reader, main);
         expect(answer.head, `${spelling}, read ${time}`).toBe(answer.expected);
-        // Git is asked at every read. Git for Windows cannot expand another user's home, so there every Git command in
-        // the checkout fails, and the reader asks `gitHead`'s `rev-parse` after its own.
-        expect(answer.heads, `${spelling}, read ${time}`).toBeGreaterThan(0);
+        // Git is asked at every read, once. Git for Windows cannot expand another user's home, so there every Git command
+        // in the checkout fails, and the reader asks `gitHead`'s `rev-parse` after its own.
+        if (process.platform === "win32") expect(answer.heads, `${spelling}, read ${time}`).toBeGreaterThan(0);
+        else expect(answer.heads, `${spelling}, read ${time}`).toBe(1);
       }
     }
   });
