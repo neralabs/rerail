@@ -2016,13 +2016,67 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
   of one level share tests.
 - **Done when**: a level's formulas over a file are evaluated together, sharing their common subsets, with
   `label_formula` measured pinned before and after.
+- **Done** (2026-11-18, decision 0419): measured, and not the default. Evaluating a file's formulas together
+  (`RERAIL_FORMULA_FUSED=1`) took internal_dead_code's label GPU time from 83–95 to 165–175 ms, and public_api_triples'
+  from 71–79 to 105–112 ms. The groups of one file's formulas overlap their latency, and the shared tests are shared
+  already (`label_leaves`, identical formulas once). The time was latency: the step formulas, with a chain's reach as
+  the long pole (now read by blocks: 96.8 → 54.6 ms), and every level once per chunk (now a chunk below the credible
+  growth makes the next 4×: 82–98 → 77–84 ms, 89–94 → 67–82 ms). 0460's times were taken under the default memory
+  line (14–17 chunks).
+- **Closed** (2026-11-18, 0419's follow-up): with the line lifted, fewer or larger chunks did not lower the label GPU
+  time beyond noise (one chunk at a time with a 1M-node cap: 84–107 ms against 70–130 ms). A chunk's measured growth
+  is noise (16–113 MB whatever its nodes), so no finer sizing rule was adopted. Gathering concurrent chunks' label runs
+  is not built, since its prize is fewer runs and 0386 keeps each job's wave its own.
 
-### Q289. (Q219 on q178) A level's fact constraints are uploaded rows
+### Q323. `label_leaves` is most of the label passes' GPU time (done)
+
+- **Found** (2026-11-19, 0447): with `label_formula`'s floor gone, `label_leaves` takes 32.2 ms of internal_dead_code's
+  50.7 ms of GPU time at s1000 (`RERAIL_GPU_ENCODER_TIMES`): 12 encoders of about 2.7 ms each, against 16.8 ms for
+  every formula.
+- **Done when:** what a leaves pass spends its time on is measured, and either changed with rows the same as native,
+  or recorded as its work.
+- **Closed** (2026-11-19, 0449): a thread a word with no atomics, and a code read once for each block of 8 tests. The
+  leaves passes went from 31.5–39.6 to 7.8–8.0 ms, and the GPU total from 55.5–59.5 to 42.0–45.3 ms, with the rows
+  the same.
+
+### Q322. The children of members read a chain of child reads on one thread per member
+
+- **Found** (2026-11-18, 0437): with a chain's reach at the dispatch floor, op 9 (the children of members,
+  `tape_first_child` then `tape_next` per member) is `label_formula`'s largest step in one-formula mode: 103 ms over
+  224 passes at s1000, 461 µs a pass. A member's children are a chain of dependent reads, so a member with many
+  children holds its thread.
+- **Direction:** children of F are a chain's reach with `through` empty, but its blockers are every non-member below a
+  member, a size read each, and its levels follow how deeply members nest. Measure that against spreading a member's
+  children over the lanes (its child count, `tape_child_count`, and `tape_child`).
+- **Done when:** op 9's pass is near the dispatch floor (about 100 µs), with the rows the same as native.
+- **Closed** (2026-11-19, 0457, was 0440): the cost was not the shape but the read. `tape_next` searches for the parent at each
+  hop. The walks take the parent's end once and hop by `tape_next_in`. The op-9 formulas went from 431–846 µs to
+  133–212 µs, at the leaf-only floor, with the rows the same as native.
+
+### Q321. (Q220 until the hub merge) A chain's reach climbs a node at a time in each (file, formula) group
+
+- **Found** (2026-11-18, 0419): `label_formula`'s time is its steps (64–70 ms of 65–79 ms at s1000). A chain's reach
+  (`REACH_CHAIN`) takes about 1.1 ms a pass, against 23–68 µs for the other steps. Each thread decides 32 nodes in a
+  row, a tape parent read each, and climbs where a parent is before its block. Adding dispatches does not fit the
+  launch budget, so the fix stays inside the group.
+- **Direction:** reached(n) is `from` at n's nearest ancestor that is in `from` or not in `through`. Every node can find that
+  ancestor by pointer doubling: log(depth) rounds with barriers, and no tape read in the rounds. The jump pointers
+  are a file's nodes: threadgroup memory holds them only for small files, well under 32 KB a group, so larger files'
+  go to device memory, coalesced.
+- **Done when:** `REACH_CHAIN` is node-parallel within the group, with the rows the same and the step's time measured
+  before and after.
+- **Closed** (2026-11-18, 0437): not by pointer doubling but through the hot `tape_size` accessor (the user: "I
+  think this is mostly fixed by using an accessor"). The reach is descendant images, a level each time a member sits
+  below a blocker. A chain's pass went from 0.8–6.8 ms to 22–225 µs, with the rows the same as native.
+
+### Q289. (Q219 on q178) A level's fact constraints are uploaded rows (done)
 
 - **Found** (2026-11-18, Q288's measurements): `Runner::level` uploaded the facts' `(node, label)` pairs once per
   pattern kernel group, the same buffer each time: 32 MB (8.1 M words) on 15 fixtures. Fixed: once a level (0460).
 - **Left**: the upload itself is a copy of the facts' rows (AGENTS.md, 0353).
 - **Done when**: `Pass::Fact` reads the fact's relation in its block, and the upload is gone.
+- **Done** (2026-11-19, 0446): the findings are written once into the batch's fact block (`FactRows::block`), and
+  the CPU's passes and the pattern kernels read them there. The upload and both host copies are gone.
 
 ### Q50. A device run's matcher launches: the host's part and the GPU's in series, and prices 3× high
 
@@ -6083,6 +6137,13 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   test's `since` calls without `settle`, and the replay's wait took `WAIT.max(settle)` in place of the caller's
   bound; both fixed on CUDA-support, as here.
 
+- **Seen** (2026-11-19, the M3, with the journal's wait bound restored: `journal.rs`'s `sync` takes the caller's
+  `wait` again, else `WAIT.max(settle)`): the same four fail, and `the_journal_names_what_changed_since_its_cursor`
+  passes again (it asserts a zero bound answers `Lost`, "slower"). Four more journal-observer tests
+  (`a_watched_root_is_not_statted_where_the_journal_says_nothing_changed` and three like it) depend on a new stream's
+  first events arriving within the observer's 5 s budget. Run alone, they came in 0.4–3.3 s in two runs, and none
+  came in 5 s in three; the wait was the same 5 s with and without the bound.
+
 - **Fixed** (2026-11-19, Typing-support): Q189's settle window (`JOURNAL_SETTLE_NS`, 120 s) was applied to every
   root, also one checked by its listings, whose answers the listing check compared by `stat` that run and which
   never goes by the journal's silence. Every answer recorded in the last 120 s was then `stat`ed again (the tests'
@@ -6613,3 +6674,80 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   - the kept tests, the import closure and the cross views;
   - the store's observer and journal tests (35);
   - the rr tests other than the open three.
+
+### Q324. A level's formulas as phases: the pushes' chains are the time (0465)
+
+- **Found** (2026-11-19, 0465): `label_phase` runs a level's word steps and one-hop pushes in one dispatch a phase
+  for the whole batch. Its word steps cost about 32 µs a dispatch, but its pushes are chains within a thread: up to 7
+  dependent hops for a format 16 parent, and one hop for each child. On s1000 it does not beat `label_formula`, so it
+  stays behind `RERAIL_FORMULA_PHASES=1`.
+- **Next**, in this order:
+  1. spread a phase's members over its SIMD group (`simd_roots`, as `label_micro`'s roots), then measure big1 and
+     s1000;
+  2. range steps (descendants, following, reaches: ops 8, 10, 11, 15, 16, 23–25) as scans between blocks, so a
+     level runs on one kernel;
+  3. then compare a level's phases with 0464's size classes, and remove the loser.
+
+### Q325. Roll-up 11 (final-rerail-shape onto rr-align): what the merge chose, and what stays open
+
+- **Merged** (2026-11-20): final-rerail-shape at 36cf51b43ef, base d58680b1d6. Only theirs' added lines were
+  renumbered, past every number here:
+  - decisions 0424 → 0459 and 0425 → 0460 (the same decisions as ours), 0459 → 0464, 0461 → 0465;
+  - work queue Q271 → Q288 and Q251 → Q289 (ours), Q252 → Q321, Q270 → Q322, Q281 → Q323, Q283 → Q324.
+
+  The renumbering skipped `.uglykl` files; `label_passes.uglykl`'s five citations were fixed by hand.
+- **Label passes' host**: ours' device layer (`lane`, 0440 step C), with theirs' features ported onto it:
+  - the fact block (0446), bound by `Block::device_buffer` at the pattern kernel's slot 7, the shape at 8; the UKL
+    pattern kernel has theirs' fact case (a row's targets, or a word of bits);
+  - leaf rows a thread a word (0449);
+  - size classes (0464), as two launches in a row: the lane has no concurrent dispatch;
+  - `label_phase` (0465) and `phase_dispatches`, a launch a phase;
+  - `RERAIL_FORMULA_FUSED`, `RERAIL_FORMULA_WIDTH`, `RERAIL_FORMULA_WIDE`, `RERAIL_FORMULA_TRACE` (Q288).
+
+  Theirs' switches were process statics; they are run settings now (0442). The trace file is opened for each line.
+  `RERAIL_GPU_ENCODER_TIMES` (0447's encoder timestamps) is not ported: the lane has no encoders to sample.
+- **Taken from theirs**:
+  - `matcher/lower.rs`'s `write_bits` (a `filePath` test is a node set), with `RERAIL_SETS_CHECK` as a run setting;
+  - `view_reads.rs`'s `reads_ir` module, with ours' `file` field (0431);
+  - `device_tape.h`'s set-bit loop, after ours' `rule_may_in` pre-check;
+  - `probe_nodes` in `corpus.rs`, beside ours' `held_mb`;
+  - 0353 (copy 16 gone);
+  - both sides' new matcher tests.
+- **Kept from ours**:
+  - `corpus/matchers.rs`'s set filled elsewhere, made once;
+  - `relation.rs`: theirs' `try_copy_into` was a block copy with no callers (0353);
+  - journal, observer, test store, phases, file-local and rr tests;
+  - the seed-label assertion.
+- **`wave.rir` reblessed**: the same clauses and labels as before; program digests moved with ours' lowering.
+- **Checked** on the m1max (the M3 was off the network), at load 2–7:
+  - the workspace's tests and bins check with no warnings;
+  - matcher tests:
+    - `facts_on_metal_are_read_in_their_block`;
+    - `metal_passes_skip_*`;
+    - `seeded_and_copied_labels_*`;
+    - `ast_pattern_*`, with the ruff fixtures sent;
+  - `formula_class_tests`;
+  - `the_wave_is_one_evaluation_on_metal`: 491 clauses, 0 differ, 141 launches;
+  - the parity gate in slices: every clause equal except `ruff-pyi041` (item 3 below). A slice is also equal with
+    `RERAIL_FORMULA_PHASES=1` (1,025 launches against 729) and with `RERAIL_FORMULA_FUSED=2`;
+  - `plan::corpus::` (153 pass, and item 4 below);
+  - corpus matchers and sizing;
+  - `file_local`;
+  - `rerail-clif` (18);
+  - `code_rule_dsl::tape::` (97).
+- **Open**:
+  1. `RERAIL_FORMULA_PHASES=1` on the 491-clause wave: its 192 `label_phase` launches pass the 200-launch limit
+     (`BackendLaunchLimit`). This happens on theirs too, whose dispatches the same ledger counts, and the plan's
+     launch count has no phases. Q324's comparison decides whether phases stay. If they do, the plan counts them,
+     or a phase loop runs inside one launch (fixed launch count).
+  2. Per-launch device timestamps in the lane (0447's measure), and whether the size classes need to run
+     concurrently (0464).
+  3. `ruff-pyi041-redundant-numeric-union` runs past 500 s on the CPU interpreter, over the gate's 60 fixtures. It
+     did so before the merge too (813282f599), so the full parity gate no longer ends in 10 minutes. A sample puts
+     the time in `LoweredMatcher::label`: each round, each label makes the views again, and `Arc::make_mut` then
+     copies the whole wave's label table while they hold it.
+  4. `partial_tests::a_hit_read_for_its_outputs_alone_decodes_no_export_or_base_rows` failed once at 6 test threads
+     ("some strata not run: Some((5, 5))"). It passes alone, before the merge and after, so it is likely timing
+     under load (Q295's family).
+  5. `RERAIL_FORMULA_FUSED=2` on the 491-clause wave ran past 120 s. The fused switch runs each group's formulas
+     one after another; measure it before Q288 relies on it.

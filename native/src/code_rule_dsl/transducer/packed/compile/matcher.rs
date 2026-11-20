@@ -225,8 +225,24 @@ pub enum Label {
     Empty,
 }
 
-/// Each fact's rows on each tape, by (fact, tape source) addresses: made before any pass.
-type FactRows = HashMap<(usize, usize), crate::code_rule_dsl::matcher::FactFound>;
+/// Each fact's rows on each tape, made before any pass: written once, where they are found, into one block (Q289), and
+/// read there by the CPU's label passes and the device's (bound whole). By (fact, tape source) addresses.
+#[derive(Clone)]
+pub struct FactRows {
+    pub block: Arc<rerail_blocks::block::Block>,
+    found: HashMap<(usize, usize), crate::code_rule_dsl::matcher::FactFound>,
+}
+
+impl FactRows {
+    fn new(block: rerail_blocks::block::Block) -> Self {
+        Self { block: Arc::new(block), found: HashMap::new() }
+    }
+
+    /// Where the findings of fact `key.0` on the tape of source `key.1` are in `block`.
+    pub fn get(&self, key: &(usize, usize)) -> Option<&crate::code_rule_dsl::matcher::FactFound> {
+        self.found.get(key)
+    }
+}
 
 /// The rows of `facts` on each of `tapes`, before any label pass (decision 0030): the producers read
 /// no label. Each tape is one file evaluation, so its scope table is built once and shared by every
@@ -239,15 +255,21 @@ pub fn fact_rows<'a>(facts: impl Iterator<Item = &'a Arc<crate::code_rule_dsl::m
             distinct.push(fact);
         }
     }
+    // The block's reservation is address space, resident only where written: room for each fact's rows at every
+    // node of every tape (a row is at most a start), or its bits, with alignment.
+    let nodes: usize = tapes.iter().map(|tape| tape.transducer_len()).sum();
+    let reserve = distinct.iter().map(|fact| 4 * (1 + fact.slots.len()) * nodes + 8 * (nodes / 64 + 2 * tapes.len())).sum::<usize>() + 4096;
+    let mut rows = FactRows::new(rerail_blocks::block::Block::anon(rerail_blocks::block::kind::FACTS, reserve));
     if distinct.is_empty() {
-        return FactRows::new();
+        return rows;
     }
     crate::code_rule_dsl::prof::count("labels.facts.distinct", distinct.len());
     crate::code_rule_dsl::prof::count("labels.facts.anywhere", distinct.iter().filter(|fact| fact.kinds.is_none()).count());
     // `labels.facts` is the caller's thread CPU; each tape's rows, on whichever thread takes it, are `fact_rows.tape`
     // (the pool's work, which the caller's does not hold: Q135). Not a `labels.` stage: those take process CPU too,
     // which tapes in parallel would count again.
-    crate::code_rule_dsl::prof::time("labels.facts", || {
+    let block = &*rows.block;
+    rows.found = crate::code_rule_dsl::prof::time("labels.facts", || {
         tapes
             .par_iter()
             .flat_map_iter(|tape| crate::code_rule_dsl::prof::time("fact_rows.tape", || {
@@ -262,12 +284,14 @@ pub fn fact_rows<'a>(facts: impl Iterator<Item = &'a Arc<crate::code_rule_dsl::m
                     .iter()
                     .map(|fact| {
                         let starts = fact.kinds.as_ref().map(|kinds| Domain::Kinds(kinds.iter().copied().collect())).unwrap_or(Domain::All);
-                        ((Arc::as_ptr(fact) as usize, source), fact.found(&file, domain(&starts, tape, &[]), &siblings))
+                        let found = fact.found(&file, domain(&starts, tape, &[]), &siblings, block).expect("the fact block holds every row");
+                        ((Arc::as_ptr(fact) as usize, source), found)
                     })
                     .collect::<Vec<_>>()
             }))
             .collect()
-    })
+    });
+    rows
 }
 
 impl Labels {
@@ -720,10 +744,10 @@ impl LoweredMatcher {
                     let mut bits = empty(view);
                     let key = (Arc::as_ptr(fact) as usize, Arc::as_ptr(view.document_source()) as usize);
                     match facts.get(&key) {
-                        // No slot: the nodes are the verdicts.
-                        Some(crate::code_rule_dsl::matcher::FactFound::Nodes(nodes)) => bits.clone_from(nodes),
+                        // No slot: the nodes are the verdicts, the label's set.
+                        Some(found @ crate::code_rule_dsl::matcher::FactFound::Nodes { .. }) => bits.copy_from_slice(found.nodes(&facts.block).expect("a node set")),
                         Some(found) => {
-                            for (node, targets) in found.rows() {
+                            for (node, targets) in found.rows(&facts.block) {
                                 if targets.iter().zip(slots).all(|(&target, &label)| has(sets, label, target)) {
                                     set(&mut bits, node);
                                 }

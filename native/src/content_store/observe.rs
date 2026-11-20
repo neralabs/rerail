@@ -2377,7 +2377,8 @@ mod tests {
         // by its `stat`s. What the tests check is the journal's answer.
         o.journal_settle = JOURNAL_TEST_BUDGET;
         // Trust at once: these runs follow each other within the settle window, as no test can wait it out; and the
-        // journal's answer whatever it costs.
+        // journal's answer whatever it costs: waited for as long as its settle budget, since a cookie on a loaded
+        // host comes later than a run's 2 s (718434dca).
         o.settle_ns = 0;
         o.wait_least_ns = 30_000_000_000;
         o

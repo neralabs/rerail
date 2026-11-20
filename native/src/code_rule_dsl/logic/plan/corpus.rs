@@ -2883,6 +2883,11 @@ pub fn run_typed(programs: &[&str], root: &Path, t_facts: Option<&Path>, out: &P
 /// they run on the lazy DFA, whose states are built as its strings reach them.
 const DENSE_TEXT_DOCS: usize = 64;
 
+/// The first chunk's nodes (`sizing::FIRST_NODES`), or `RERAIL_PROBE_NODES` (a measurement switch, 0419).
+fn probe_nodes() -> usize {
+    std::env::var("RERAIL_PROBE_NODES").ok().and_then(|v| v.parse().ok()).unwrap_or(sizing::FIRST_NODES)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn run_with_options(
     programs: &[&str],
@@ -4804,7 +4809,7 @@ fn run_observed_within(
     // The chunks' size (decision 0435 §4): the first small, each next from what the latest added to what the run
     // wrote (`sizing`); at most the caller's.
     rerail_accel::budget::set_heap_reader(crate::code_rule_dsl::logic::profile::memory::heap_live);
-    let chunk_target = Arc::new(std::sync::atomic::AtomicUsize::new(chunk_nodes.min(sizing::FIRST_NODES)));
+    let chunk_target = Arc::new(std::sync::atomic::AtomicUsize::new(chunk_nodes.min(probe_nodes())));
     let worker_target = Arc::clone(&chunk_target);
     // The documents the builder reads, in batches, each ended by `None` on the chunks' channel: the corpus's, then
     // each load's (decision 0065 §2a). A run that loads nothing closes the channel after the corpus's, so the
@@ -5627,7 +5632,7 @@ fn run_observed_within(
     };
     // The matchers a chunk runs (decision 0106). A chunk's documents keep their tapes for them, and for a program that
     // reads W's values, f-string trees or string annotations (`syntax::taped`).
-    let demand = matchers::demanded_by_roots(head, &matchers);
+    let demand = matchers::demanded_by_roots(source, matchers);
     let narrowed = demand.iter().filter(|by| by.is_some()).count();
     if narrowed > 0 {
         crate::code_rule_dsl::logic::profile::decision("ast matchers bound only at other matchers' roots (decision 0459)", || {
@@ -6979,7 +6984,7 @@ fn run_observed_within(
             // `RERAIL_RUN_MB` (a measurement aid: "the memory line lifted") replaces the limit.
             let limit = std::env::var("RERAIL_RUN_MB").ok().and_then(|v| v.parse::<usize>().ok()).map_or_else(rerail_accel::budget::limit, |mb| mb << 20);
             let measured = sizing::Measured { nodes: chunk_nodes_built, at_once, start: count_start, end: count_end };
-            let sized = sizing::next(&measured, limit, sizing::FIRST_NODES, chunk_nodes, chunks_at_once);
+            let sized = sizing::next(&measured, limit, probe_nodes(), chunk_nodes, chunks_at_once);
             // What the chunk's own work held at its most (`rows::Chunk::held_most`, Q203 item 3): a report beside the
             // count, which sizes the chunks (decision 0435 §4).
             let held_mb = held.div_ceil(1 << 20);

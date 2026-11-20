@@ -12,8 +12,8 @@ typedef struct Result { uint32_t taskOrdinal,localOrdinal,start,label,captureSta
 typedef struct FinalCapture { uint32_t label,node,start,end,textStart,textLength,propertyStart,propertyCount,retained; } FinalCapture;
 typedef struct Arena { uint32_t start,capacity,cursor; } Arena;
 typedef struct Status { uint32_t error,resultCount,captureCount,programCounter,finalCaptureCount,propertyCount,outputByteCount,reserved; } Status;
-typedef struct Shape { uint32_t nodeCount,words,resultArena,taskCount,itemCount,targetCount,round,finish,recursive,lastLevel,fileCount,steps,profile,queue,budget,lanes,frames; } Shape;
-UKL_REFLECT_STRUCT(Shape, nodeCount,words,resultArena,taskCount,itemCount,targetCount,round,finish,recursive,lastLevel,fileCount,steps,profile,queue,budget,lanes,frames)
+typedef struct Shape { uint32_t nodeCount,words,resultArena,taskCount,itemCount,targetCount,round,finish,recursive,lastLevel,fileCount,steps,profile,queue,budget,lanes,frames,wide; } Shape;
+UKL_REFLECT_STRUCT(Shape, nodeCount,words,resultArena,taskCount,itemCount,targetCount,round,finish,recursive,lastLevel,fileCount,steps,profile,queue,budget,lanes,frames,wide)
 // flags: [0] a task failed (bit 0 an interpreter task, bit 1 a micro walk), [2] the group settled (skip), [3] a group did not settle within its
 // encoded rounds, [4 + round % 2] the round changed a label.
 // How a program's results land: mode 0 roots, 1 captured nodes (into scratch row `slot`), 2 and
@@ -920,37 +920,88 @@ UKL_INLINE bool formula_named(Tree t,uint32_t n,bool named){return !named||(tape
 // The members of a slot: `FORMULA_EACH(slot, fw, lane, width, n) { ... }`, a word a thread.
 #define FORMULA_EACH(SLOT_,FW,LANE,WIDTH,N) for(uint32_t formulaW=(LANE);formulaW<(FW);formulaW+=(WIDTH))for(uint32_t formulaBits=ukl_atomic_load(&(SLOT_)[formulaW]);formulaBits!=0u;formulaBits&=formulaBits-1u)for(uint32_t N=formulaW*32u+ukl_ctz32(formulaBits),formulaOnce=0u;formulaOnce==0u;formulaOnce=1u)
 
+// A thread a word of the batch's leaf rows (`FORMULA_REGION`'s numbering, a file's words then its two spare): each leaf
+// test's 32 bits made in a register and stored once. The word is this thread's alone, so no atomic; and a file is not
+// one group, so the largest file does not set the pass's time (Q323: a group a file, an atomic a hit, took 2.7 ms a
+// pass at s1000).
+#define LEAF_BLOCK 8u
 DEFINE_KERNEL2(label_passes, label_leaves,
-               ROBUFFER, DocView,  docs,   "[files]",
+               ROBUFFER, DocView,  docs,   "[shape.fileCount]",
                ROBUFFER, uint32_t, tests,  "[shape.targetCount]",
                RWBUFFER, uint32_t, leaves, "[shape.targetCount * shape.recursive]",
                ARGS,     Shape,    shape,  ,
                ROBUFFER, uint8_t,  chunk,  "[block]",
-               TGID0,    uint32_t, file,   ,
-               LID0,     uint32_t, lane,   ,
-               LSZ0,     uint32_t, width,  )
+               GID0,     uint32_t, tid,    )
 {
-  DocView d=docs[file];
-  uint32_t nodes=d.nodes,fw=(nodes+31u)/32u,region=FORMULA_REGION(d,file);
-  for(uint32_t w=lane;w<fw;w+=width){
-    for(uint32_t l=0u;l<shape.targetCount;l++)ukl_atomic_store(&leaves[l*shape.recursive+region+w],0u);
-    for(uint32_t k=0u;k<32u&&w*32u+k<nodes;k++){
+  if(shape.fileCount==0u)return;
+  // The file whose region holds word `tid`: the last whose region starts at or before it.
+  uint32_t first=0u,last=shape.fileCount;
+  while(last-first>1u){uint32_t middle=(first+last)/2u;if(FORMULA_REGION(docs[middle],middle)<=tid)first=middle;else last=middle;}
+  DocView d=docs[first];
+  uint32_t region=FORMULA_REGION(d,first);
+  if(tid<region)return;
+  uint32_t w=tid-region,nodes=d.nodes;
+  if(w*32u>=nodes)return;
+  uint32_t count=ukl_min(32u,nodes-w*32u);
+  // The tests a block of `LEAF_BLOCK`, each block's bits in registers: a node's code is read once a block, not once a
+  // test (a code read is two dependent loads, its number then the code).
+  for(uint32_t from=0u;from<shape.targetCount;from+=LEAF_BLOCK){
+    uint32_t bits[LEAF_BLOCK];
+    for(uint32_t j=0u;j<LEAF_BLOCK;j++)bits[j]=0u;
+    for(uint32_t k=0u;k<count;k++){
       uint32_t n=w*32u+k;
       UKL_GLOBAL const DeviceCode* code=tape_code(chunk,d,n);
-      for(uint32_t l=0u;l<shape.targetCount;l++){
-        uint32_t test=tests[l],op=test&255u,arg=test>>8u;bool hit;
-        if(op==18u)hit=tape_next(chunk,d,n)!=TAPE_NONE;
-        else if(op==22u){hit=false;for(uint32_t c=tape_next(chunk,d,n);c!=TAPE_NONE;c=tape_next(chunk,d,c))if((tape_flags(chunk,d,c)&1u)!=0u){hit=true;break;}}
-        else if(op==21u){hit=false;for(uint32_t c=tape_first_child(chunk,d,n);c!=TAPE_NONE;c=tape_next(chunk,d,c))if((tape_flags(chunk,d,c)&1u)!=0u){hit=true;break;}}
-        else if(op==19u)hit=tape_size(chunk,d,n)>1u;
-        else if(op==1u)hit=code->kind==arg;
+      for(uint32_t j=0u;j<LEAF_BLOCK;j++){
+        uint32_t l=from+j;
+        if(l>=shape.targetCount)break;
+        uint32_t test=tests[l],op=test&255u,arg=test>>8u;
+        bool hit;
+        if(op==1u)hit=code->kind==arg;
         else if(op==2u)hit=code->field==arg;
         else if(op==3u){uint32_t m=arg&255u,a=arg>>8u;hit=(code->flags&m)==m&&(code->flags&a)==0u;}
+        else if(op==18u)hit=tape_next(chunk,d,n)!=TAPE_NONE;
+        else if(op==22u){hit=false;uint32_t end=tape_siblings_end(chunk,d,n);for(uint32_t c=tape_next_in(chunk,d,n,end);c!=TAPE_NONE;c=tape_next_in(chunk,d,c,end))if((tape_flags(chunk,d,c)&1u)!=0u){hit=true;break;}}
+        else if(op==21u){hit=false;uint32_t end=tape_end_of(chunk,d,n);for(uint32_t c=tape_first_child(chunk,d,n);c!=TAPE_NONE;c=tape_next_in(chunk,d,c,end))if((tape_flags(chunk,d,c)&1u)!=0u){hit=true;break;}}
+        else if(op==19u)hit=tape_size(chunk,d,n)>1u;
         else{hit=false;for(uint32_t c=0u;c<code->classCount;c++){if(code->classes[c]==arg){hit=true;break;}if(code->classes[c]>arg)break;}}
-        if(hit)ukl_atomic_or(&leaves[l*shape.recursive+region+w],1u<<k);
+        bits[j]|=(uint32_t)hit<<k;
       }
     }
+    for(uint32_t j=0u;j<LEAF_BLOCK&&from+j<shape.targetCount;j++)leaves[(from+j)*shape.recursive+region+w]=bits[j];
   }
+}
+#undef LEAF_BLOCK
+
+// A chain's reach's level (`REACH_CHAIN`): the descendants of `level`'s members, as a targets image reads them (a
+// block of words a thread, its members' furthest end, the blocks' running maximum, then each word by masks), into
+// `out` (added, or with `cut` taken out), and `level` becomes them within `keep`. Each thread reads and writes only
+// its own block's words, so the levels need no device barrier. Whether this thread's share of `level` is not empty.
+UKL_INLINE bool formula_descend(UKL_GLOBAL const uint8_t* chunk,DocView d,UKL_GLOBAL uint32_t* level,UKL_GLOBAL uint32_t* out,UKL_GLOBAL uint32_t* keep,bool cut,UKL_LOCAL uint32_t* partials,uint32_t lane,uint32_t width,uint32_t fw,uint32_t nodes,UKL_PRIVATE uint32_t* childs){
+  uint32_t block=(fw+width-1u)/width,low=ukl_min(lane*block,fw),high=ukl_min(low+block,fw),most=0u;
+  for(uint32_t w=low;w<high;w++)for(uint32_t bits=ukl_atomic_load(&level[w]);bits!=0u;bits&=bits-1u){uint32_t n=w*32u+ukl_ctz32(bits);most=ukl_max(most,n+tape_size(chunk,d,n));}
+  ukl_tg_barrier();
+  partials[lane]=most;
+  ukl_tg_barrier();
+  if(lane==0u){uint32_t run=0u;for(uint32_t k=0u;k<width;k++){uint32_t here=partials[k];partials[k]=run;run=ukl_max(run,here);}}
+  ukl_tg_barrier();
+  uint32_t reach=partials[lane];
+  bool any=false;
+  for(uint32_t w=low;w<high;w++){
+    uint32_t b=w*32u,bits=reach>=b+32u?0xffffffffu:(reach>b?(1u<<(reach-b))-1u:0u);
+    for(uint32_t rest=ukl_atomic_load(&level[w]);rest!=0u;rest&=rest-1u){
+      uint32_t k=ukl_ctz32(rest),end=b+k+tape_size(chunk,d,b+k),hi=ukl_min(end,b+32u)-b;
+      (*childs)++;
+      bits|=(hi==32u?0xffffffffu:((1u<<hi)-1u))&~((2u<<k)-1u);
+      reach=ukl_max(reach,end);
+    }
+    if(b+32u>nodes)bits&=(1u<<(nodes-b))-1u;
+    uint32_t now=ukl_atomic_load(&out[w]);
+    ukl_atomic_store(&out[w],cut?now&~bits:now|bits);
+    uint32_t next=ukl_atomic_load(&keep[w])&bits;
+    ukl_atomic_store(&level[w],next);
+    any|=next!=0u;
+  }
+  return any;
 }
 
 DEFINE_KERNEL2(label_passes, label_formula,
@@ -968,10 +1019,11 @@ DEFINE_KERNEL2(label_passes, label_formula,
                ROBUFFER, uint32_t,      rules,        "[rules]",
                ROBUFFER, uint32_t,      texts,        "[texts * words]",
                ROBUFFER, uint8_t,       chunk,        "[block]",
-               SHARED,   uint32_t,      partials,     128,
+               SHARED,   uint32_t,      partials,     1024,
                SHARED,   uint32_t,      tally,        2,
                TGID0,    uint32_t,      file,         ,
-               TGID1,    uint32_t,      which,        ,
+               TGID1,    uint32_t,      group,        ,
+               GSZ1,     uint32_t,      groups,       ,
                LID0,     uint32_t,      lane,         ,
                LSZ0,     uint32_t,      width,        )
 {
@@ -981,7 +1033,22 @@ DEFINE_KERNEL2(label_passes, label_formula,
   Tree t={chunk,d};
   uint32_t nodes=d.nodes,fw=(nodes+31u)/32u,region=FORMULA_REGION(d,file);
   if(nodes==0u)return;
-  Formula formula=formulas[shape.itemCount+which];
+  // A dispatch of one size class (`shape.wide`, 0464): a file of the other class is the other dispatch's.
+  if(shape.wide!=0u&&(fw>=(shape.wide>>1u))!=((shape.wide&1u)!=0u))return;
+  // Profiling (`shape.profile`): per step kind its members (`stats[op]`), then parent and child reads (16, 17), the
+  // (file, formula)s (18), and the steps within a conjunction read down or climbed (19, 20).
+  bool profile=shape.profile!=0u;
+  uint32_t parents=0u,childs=0u;
+  #define FORMULA_COUNT(I,N) if(profile)ukl_atomic_add(&stats[I],N)
+  // A group evaluates the formulas `group`, `group + groups`, …: one each when the grid has a row a formula, all of
+  // the dispatch's in turn when it has one (`RERAIL_FORMULA_FUSED`, Q288), in the same scratch slots. (The grid's
+  // rows are groups: a group is one thread high.)
+  UKL_GLOBAL uint32_t* base=scratch+group*shape.queue+shape.round*region;
+  #define SLOT(i) (base+(i)*fw)
+  // The bits of local word `w` that are nodes of the file.
+  #define VALID(w) ((w)*32u+32u<=nodes?0xffffffffu:((1u<<(nodes-(w)*32u))-1u))
+  for(uint32_t y=group;y<shape.targetCount;y+=groups){
+  Formula formula=formulas[shape.itemCount+y];
   // A rule over codes that does not run in this file: its row is never read here; none runs here, nothing to do.
   bool wanted=false;
   // A rule over codes runs in a file where its bit is set (an anchored rule's after its row, `Roots::table`).
@@ -991,16 +1058,7 @@ DEFINE_KERNEL2(label_passes, label_formula,
     uint32_t codes=rules[target.rule]==2u?target.rule+rules[target.rule+1u]:target.rule;
     wanted=rules[codes]!=0u||((rules[codes+1u+file/32u]>>(file%32u))&1u)!=0u;
   }
-  if(!wanted)return;
-  UKL_GLOBAL uint32_t* base=scratch+which*shape.queue+shape.round*region;
-  #define SLOT(i) (base+(i)*fw)
-  // The bits of local word `w` that are nodes of the file.
-  #define VALID(w) ((w)*32u+32u<=nodes?0xffffffffu:((1u<<(nodes-(w)*32u))-1u))
-  // Profiling (`shape.profile`): per step kind its members (`stats[op]`), then parent and child reads (16, 17), the
-  // (file, formula)s (18), and the steps within a conjunction read down or climbed (19, 20).
-  bool profile=shape.profile!=0u;
-  uint32_t parents=0u,childs=0u;
-  #define FORMULA_COUNT(I,N) if(profile)ukl_atomic_add(&stats[I],N)
+  if(!wanted)continue;
   if(lane==0u)FORMULA_COUNT(18u,1u);
   uint32_t top=0u;
   for(uint32_t pc=0u;pc<formula.wordCount;pc++){
@@ -1072,7 +1130,7 @@ DEFINE_KERNEL2(label_passes, label_formula,
       }else if(down){
         // Each candidate's children (a child step) or next siblings (following): one in the inner set keeps it.
         FORMULA_EACH(cand,fw,lane,width,n){
-          for(uint32_t k=op==14u?tape_first_child(chunk,d,n):tape_next(chunk,d,n);k!=TAPE_NONE;k=tape_next(chunk,d,k)){
+          for(uint32_t end=op==14u?tape_end_of(chunk,d,n):tape_siblings_end(chunk,d,n),k=op==14u?tape_first_child(chunk,d,n):tape_next_in(chunk,d,n,end);k!=TAPE_NONE;k=tape_next_in(chunk,d,k,end)){
             childs++;
             if(formula_get(from,k)&&formula_named(t,k,named)){formula_set(out,n);break;}
           }
@@ -1091,9 +1149,9 @@ DEFINE_KERNEL2(label_passes, label_formula,
           FORMULA_EACH(from,fw,lane,width,n)if(formula_named(t,n,named)){parents++;uint32_t p=tape_parent(chunk,d,n);if(p!=TAPE_NONE)formula_set(parentSet,p);}
           ukl_tg_barrier_device();
           FORMULA_EACH(parentSet,fw,lane,width,p){
-            uint32_t last=TAPE_NONE;
-            for(uint32_t k=tape_first_child(chunk,d,p);k!=TAPE_NONE;k=tape_next(chunk,d,k)){childs++;if(formula_get(from,k)&&formula_named(t,k,named))last=k;}
-            if(last!=TAPE_NONE)for(uint32_t k=tape_first_child(chunk,d,p);k!=last;k=tape_next(chunk,d,k)){childs++;formula_set(out,k);}
+            uint32_t last=TAPE_NONE,end=tape_end_of(chunk,d,p);
+            for(uint32_t k=tape_first_child(chunk,d,p);k!=TAPE_NONE;k=tape_next_in(chunk,d,k,end)){childs++;if(formula_get(from,k)&&formula_named(t,k,named))last=k;}
+            if(last!=TAPE_NONE)for(uint32_t k=tape_first_child(chunk,d,p);k!=last;k=tape_next_in(chunk,d,k,end)){childs++;formula_set(out,k);}
           }
         }
         ukl_tg_barrier_device();
@@ -1122,16 +1180,16 @@ DEFINE_KERNEL2(label_passes, label_formula,
         FORMULA_EACH(from,fw,lane,width,n)if(formula_named(t,n,named)){for(uint32_t p=tape_parent(chunk,d,n);p!=TAPE_NONE;p=tape_parent(chunk,d,p)){parents++;if(formula_set(out,p))break;}}
       }else if(op==9u){
         // The children of the members.
-        FORMULA_EACH(from,fw,lane,width,n)for(uint32_t c=tape_first_child(chunk,d,n);c!=TAPE_NONE;c=tape_next(chunk,d,c)){childs++;formula_set(out,c);}
+        FORMULA_EACH(from,fw,lane,width,n){uint32_t end=tape_end_of(chunk,d,n);for(uint32_t c=tape_first_child(chunk,d,n);c!=TAPE_NONE;c=tape_next_in(chunk,d,c,end)){childs++;formula_set(out,c);}}
       }else if(op==10u){
         // The earlier siblings of the members: the members' parents, then each such parent's children before its last member.
         UKL_GLOBAL uint32_t* parentSet=SLOT(at+1u);
         FORMULA_EACH(from,fw,lane,width,n)if(formula_named(t,n,named)){parents++;uint32_t p=tape_parent(chunk,d,n);if(p!=TAPE_NONE)formula_set(parentSet,p);}
         ukl_tg_barrier_device();
         FORMULA_EACH(parentSet,fw,lane,width,p){
-          uint32_t last=TAPE_NONE;
-          for(uint32_t c=tape_first_child(chunk,d,p);c!=TAPE_NONE;c=tape_next(chunk,d,c)){childs++;if(formula_get(from,c)&&formula_named(t,c,named))last=c;}
-          if(last!=TAPE_NONE)for(uint32_t c=tape_first_child(chunk,d,p);c!=last;c=tape_next(chunk,d,c)){childs++;formula_set(out,c);}
+          uint32_t last=TAPE_NONE,end=tape_end_of(chunk,d,p);
+          for(uint32_t c=tape_first_child(chunk,d,p);c!=TAPE_NONE;c=tape_next_in(chunk,d,c,end)){childs++;if(formula_get(from,c)&&formula_named(t,c,named))last=c;}
+          if(last!=TAPE_NONE)for(uint32_t c=tape_first_child(chunk,d,p);c!=last;c=tape_next_in(chunk,d,c,end)){childs++;formula_set(out,c);}
         }
       }else if(op==23u){
         // A targets image (0365 §10): the members' proper descendants. In preorder a node is one where a member before
@@ -1156,19 +1214,35 @@ DEFINE_KERNEL2(label_passes, label_formula,
         }
       }else if(op==24u){
         // The members' later siblings: each member's next siblings, until one another member's run has set.
-        FORMULA_EACH(from,fw,lane,width,n)for(uint32_t c=tape_next(chunk,d,n);c!=TAPE_NONE;c=tape_next(chunk,d,c)){childs++;if(formula_set(out,c))break;}
+        FORMULA_EACH(from,fw,lane,width,n){uint32_t end=tape_siblings_end(chunk,d,n);for(uint32_t c=tape_next_in(chunk,d,n,end);c!=TAPE_NONE;c=tape_next_in(chunk,d,c,end)){childs++;if(formula_set(out,c))break;}}
       }else if(op==25u){
-        // A chain's reach: from each member, its children, and on down from those in `through`, in preorder by
-        // subtree sizes (a node not gone into is skipped with its subtree). A node another member's walk set is that
-        // walk's to go on from.
-        UKL_GLOBAL uint32_t* through=SLOT(src+1u);
-        FORMULA_EACH(from,fw,lane,width,m){
-          uint32_t end=ukl_min(m+tape_size(chunk,d,m),nodes);
-          for(uint32_t n=m+1u;n<end;){
-            childs++;
-            bool known=formula_set(out,n);
-            n=!known&&formula_get(through,n)?n+1u:n+tape_size(chunk,d,n);
-          }
+        // A chain's reach, as the CPU's `Reader` reads it: a node is reached where its parent is a member, or is in
+        // `through` and reached. So a node is reached where its nearest ancestor that is a member or not in `through`
+        // (a blocker) is a member. The members' and blockers' subtrees are ranges in preorder (`tape_size`, a hot read),
+        // so this is descendant images (`formula_descend`), a level each time a member sits below a blocker below a
+        // member: the reach is the union over levels k of desc(F_k) \ desc(X_k), with F_0 the members,
+        // X_k = blockers ∩ desc(F_k) and F_k+1 = members ∩ desc(X_k). Work follows the members and the blockers within
+        // the reach, a word op each, and their reads are independent (0437). (A pass over every node reading its
+        // parent, `tape_parent`, a search of the tape, took 0.8-6.8 ms a pass; reading down from the members through
+        // the child reads, a round a level of the tree, as long.)
+        UKL_GLOBAL uint32_t* blockers=SLOT(src+1u);UKL_GLOBAL uint32_t* level=SLOT(at+1u);
+        for(uint32_t w=lane;w<fw;w+=width){
+          uint32_t members=ukl_atomic_load(&from[w]);
+          ukl_atomic_store(&blockers[w],~ukl_atomic_load(&blockers[w])&~members&VALID(w));
+          ukl_atomic_store(&level[w],members);
+        }
+        ukl_tg_barrier_device();
+        for(;;){
+          formula_descend(chunk,d,level,out,blockers,false,partials,lane,width,fw,nodes,&childs);
+          bool more=formula_descend(chunk,d,level,out,from,true,partials,lane,width,fw,nodes,&childs);
+          ukl_tg_barrier();
+          if(lane==0u)partials[0]=0u;
+          ukl_tg_barrier();
+          if(more)partials[0]=1u;
+          ukl_tg_barrier();
+          bool again=partials[0]!=0u;
+          ukl_tg_barrier();
+          if(!again)break;
         }
       }else{
         // A chain: the parents of `to`'s members, and on up through `through`'s.
@@ -1188,9 +1262,6 @@ DEFINE_KERNEL2(label_passes, label_formula,
     }
     ukl_tg_barrier_device();
   }
-  FORMULA_COUNT(16u,parents);
-  FORMULA_COUNT(17u,childs);
-  #undef FORMULA_COUNT
   // The anchor into its rule's row, in the batch's numbering: a file's word spans two of the row's.
   UKL_GLOBAL uint32_t* anchor=SLOT(0u);
   uint32_t sh=d.node_base%32u;
@@ -1201,9 +1272,13 @@ DEFINE_KERNEL2(label_passes, label_formula,
     UKL_GLOBAL uint32_t* row=(target.mode>=2u?labelScratch:roots)+target.row;
     for(uint32_t w=lane;w<fw;w+=width){
       uint32_t bits=ukl_atomic_load(&anchor[w]),valid=VALID(w),at=(d.node_base+w*32u)/32u;
-      if(target.mode==2u)bits&=(uint32_t)(root_mask(chunk,d,rules,target.rule,file,w/2u)>>(32u*(w%2u)));
       if(target.mode!=1u){
         if(bits==0u)continue;
+        // Within its rule: the rule read at the word's own 32 nodes, and only where the formula holds at one. A rule
+        // over codes reads each node's code, so reading it at every word (both halves of a 64-node group each time)
+        // was the floor of every formula's dispatch, whatever the formula (0447); it reads the codes of the word's
+        // set bits only (0465).
+        if(target.mode==2u){uint32_t lo=32u*(w%2u);bits&=(uint32_t)(root_mask_among(chunk,d,rules,target.rule,file,w/2u,(uint64_t)bits<<lo)>>lo);if(bits==0u)continue;}
         ukl_atomic_or(&row[at],bits<<sh);
         if(sh!=0u)ukl_atomic_or(&row[at+1u],bits>>(32u-sh));
       }else{
@@ -1212,6 +1287,135 @@ DEFINE_KERNEL2(label_passes, label_formula,
       }
     }
   }
+  // The next formula reuses the slots.
+  ukl_tg_barrier_device();
+  }
+  FORMULA_COUNT(16u,parents);
+  FORMULA_COUNT(17u,childs);
+  #undef FORMULA_COUNT
   #undef SLOT
   #undef VALID
+}
+
+// A level's formulas as phases (decision 0465, a measure): a thread a (word of the batch's region, formula), no
+// group a file. A formula is compiled on the host (`phase_program`) into instructions over slots of the region's
+// words (`scratch`, `shape.queue` words a formula, `shape.recursive` a slot):
+//   PHASE_ROW dst word: a set, a label's row, a leaf's row, a text test's row (the formula's own word);
+//   PHASE_AND / PHASE_OR dst src: the word of `dst` with `src`'s;
+//   PHASE_ZERO dst: the word cleared, for a step that pushes into it in a later phase;
+//   PHASE_UP dst src named: the parents of `src`'s (named) members in this thread's word, set in `dst` (`CHILD`);
+//   PHASE_DOWN dst src: the children of `src`'s members in this thread's word, set in `dst` (`PARENT`);
+//   PHASE_END: the phase ends here; the next dispatch (`shape.round` + 1) goes on.
+// A one-hop step works from its members only (they are few), and sets bits in other threads' words, so its set is
+// read from the next phase on. Every other step reads and writes a thread's own word.
+#define PHASE_END 0u
+#define PHASE_ROW 1u
+#define PHASE_AND 2u
+#define PHASE_OR 3u
+#define PHASE_ZERO 4u
+#define PHASE_UP 5u
+#define PHASE_DOWN 6u
+
+// The bits of a set, label, leaf or text row at word `lw` of file `d` (`gw` in the region's numbering).
+UKL_INLINE uint32_t phase_row(UKL_GLOBAL const uint32_t* head,UKL_GLOBAL const uint32_t* leaves,UKL_GLOBAL const uint32_t* texts,uint32_t recursive,uint32_t rowWords,DocView d,uint32_t gw,uint32_t lw,uint32_t word){
+  uint32_t op=word&255u,arg=word>>8u,nodes=d.nodes;
+  uint32_t valid=lw*32u+32u<=nodes?0xffffffffu:((1u<<(nodes-lw*32u))-1u);
+  if(op==0u)return valid;
+  if(op==12u)return 0u;
+  if(op==13u)return leaves[arg*recursive+gw];
+  UKL_GLOBAL const uint32_t* row=op==4u?head+2u+(arg-16384u)*head[1]:texts+arg*rowWords;
+  uint32_t b=d.node_base+lw*32u,at=b/32u,sh=b%32u;
+  uint32_t bits=sh==0u?row[at]:(row[at]>>sh)|(row[at+1u]<<(32u-sh));
+  return bits&valid;
+}
+
+DEFINE_KERNEL2(label_passes, label_phase,
+               ROBUFFER, DocView,       docs,         "[shape.fileCount]",
+               ROBUFFER, uint32_t,      head,         "[2 + labels * words]",
+               ROBUFFER, Formula,       formulas,     "[formulas]",
+               ROBUFFER, uint32_t,      words,        "[words]",
+               RWBUFFER, uint32_t,      roots,        "[rules * words]",
+               RWBUFFER, uint32_t,      scratch,      "[formulas * shape.queue]",
+               ARGS,     Shape,         shape,        ,
+               ROBUFFER, uint32_t,      leaves,       "[leaves * shape.recursive]",
+               ROBUFFER, uint32_t,      program,      "[program]",
+               ROBUFFER, FormulaTarget, targets,      "[targets]",
+               RWBUFFER, uint32_t,      labelScratch, "[rows * words]",
+               ROBUFFER, uint32_t,      rules,        "[rules]",
+               ROBUFFER, uint32_t,      texts,        "[texts * words]",
+               ROBUFFER, uint8_t,       chunk,        "[block]",
+               GID0,     uint32_t,      gid,          ,
+               GID1,     uint32_t,      y,            )
+{
+  if(shape.fileCount==0u||y>=shape.targetCount)return;
+  uint32_t gw=gid;
+  // The file whose region holds word `gw`: the last whose region starts at or before it.
+  uint32_t file=0u,last=shape.fileCount;
+  while(last-file>1u){uint32_t middle=(file+last)/2u;if(FORMULA_REGION(docs[middle],middle)<=gw)file=middle;else last=middle;}
+  DocView d=docs[file];
+  uint32_t rs=FORMULA_REGION(d,file);
+  if(gw<rs)return;
+  uint32_t lw=gw-rs,nodes=d.nodes;
+  if(lw*32u>=nodes)return;
+  uint32_t valid=lw*32u+32u<=nodes?0xffffffffu:((1u<<(nodes-lw*32u))-1u);
+  Formula formula=formulas[shape.itemCount+y];
+  bool wanted=false;
+  for(uint32_t i=0u;i<formula.targetCount&&!wanted;i++){
+    FormulaTarget target=targets[formula.targetStart+i];
+    if(target.mode==1u||target.rule==0xffffffffu){wanted=true;continue;}
+    uint32_t codes=rules[target.rule]==2u?target.rule+rules[target.rule+1u]:target.rule;
+    wanted=rules[codes]!=0u||((rules[codes+1u+file/32u]>>(file%32u))&1u)!=0u;
+  }
+  if(!wanted)return;
+  // The formula's program: its instructions' first word, their count, its result's slot, its phases.
+  uint32_t at=program[4u*y],count=program[4u*y+1u],result=program[4u*y+2u],phases=program[4u*y+3u];
+  if(shape.round>=phases)return;
+  UKL_GLOBAL uint32_t* base=scratch+y*shape.queue;
+  #define PHASE_SLOT(i) (base+(i)*shape.recursive)
+  uint32_t i=0u;
+  for(uint32_t phase=0u;phase<shape.round&&i<count;i++)if(program[at+4u*i]==PHASE_END)phase++;
+  for(;i<count;i++){
+    uint32_t code=program[at+4u*i],dst=program[at+4u*i+1u],src=program[at+4u*i+2u],extra=program[at+4u*i+3u];
+    if(code==PHASE_END)return;
+    if(code==PHASE_ROW){PHASE_SLOT(dst)[gw]=phase_row(head,leaves,texts,shape.recursive,shape.words,d,gw,lw,src);continue;}
+    if(code==PHASE_AND||code==PHASE_OR){uint32_t a=PHASE_SLOT(dst)[gw],b=PHASE_SLOT(src)[gw];PHASE_SLOT(dst)[gw]=code==PHASE_AND?a&b:a|b;continue;}
+    if(code==PHASE_ZERO){PHASE_SLOT(dst)[gw]=0u;continue;}
+    // A one-hop step, from this word's members: their parents or children set in their words.
+    bool named=(extra&1u)!=0u;
+    UKL_GLOBAL uint32_t* out=PHASE_SLOT(dst)+rs;
+    // The bits for one word of `dst` gather here and go out in one atomic when the next bit falls in another word:
+    // siblings share a parent, and a member's children run through a few words.
+    uint32_t held=0xffffffffu,bits=0u;
+    #define PHASE_SET(x) do{uint32_t x_=(x);if(x_/32u!=held){if(bits!=0u)ukl_atomic_or(&out[held],bits);held=x_/32u;bits=0u;}bits|=1u<<(x_%32u);}while(false)
+    for(uint32_t rest=PHASE_SLOT(src)[gw]&valid;rest!=0u;rest&=rest-1u){
+      uint32_t n=lw*32u+ukl_ctz32(rest);
+      if(code==PHASE_UP){
+        if(named&&(tape_flags(chunk,d,n)&1u)==0u)continue;
+        uint32_t p=tape_parent(chunk,d,n);
+        if(p!=TAPE_NONE)PHASE_SET(p);
+      }else{
+        uint32_t end=tape_end_of(chunk,d,n);
+        for(uint32_t c=tape_first_child(chunk,d,n);c!=TAPE_NONE;c=tape_next_in(chunk,d,c,end))PHASE_SET(c);
+      }
+    }
+    #undef PHASE_SET
+    if(bits!=0u)ukl_atomic_or(&out[held],bits);
+  }
+  // The formula's set into its targets' rows, as `label_formula`'s epilogue: a file's word spans two of a row's.
+  uint32_t anchor=PHASE_SLOT(result)[gw],sh=d.node_base%32u,row_at=(d.node_base+lw*32u)/32u;
+  #undef PHASE_SLOT
+  for(uint32_t t=0u;t<formula.targetCount;t++){
+    FormulaTarget target=targets[formula.targetStart+t];
+    UKL_GLOBAL uint32_t* row=(target.mode>=2u?labelScratch:roots)+target.row;
+    uint32_t bits=anchor;
+    if(target.mode!=1u){
+      if(bits==0u)continue;
+      if(target.mode==2u){uint32_t lo=32u*(lw%2u);bits&=(uint32_t)(root_mask_among(chunk,d,rules,target.rule,file,lw/2u,(uint64_t)bits<<lo)>>lo);if(bits==0u)continue;}
+      ukl_atomic_or(&row[row_at],bits<<sh);
+      if(sh!=0u)ukl_atomic_or(&row[row_at+1u],bits>>(32u-sh));
+    }else{
+      ukl_atomic_and(&row[row_at],~(valid<<sh)|(bits<<sh));
+      if(sh!=0u)ukl_atomic_and(&row[row_at+1u],~(valid>>(32u-sh))|(bits>>(32u-sh)));
+    }
+  }
 }

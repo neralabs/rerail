@@ -8,7 +8,8 @@ use super::super::super::PackedPattern;
 use std::fmt::Write as _;
 
 pub(super) const KERNEL: &str = "clause_patterns";
-/// The item pattern of a fact's root (`Pass::Fact`): its constraints are (target node, label) pairs.
+/// The item pattern of a fact's findings on one file (`Pass::Fact`), read in the fact block (`facts`, Q289): its first
+/// constraint is (file, whether the findings are bits), then a (0, label) per slot; `root` is the findings' first u32.
 pub(super) const FACT: u32 = u32::MAX;
 /// The threads a pattern pass's item (a group of 64 nodes) takes, each finding the roots among 16 of them; a fact's
 /// item keeps one thread for its one root, so no lane is a fact's idle copy. A thread a group gave the kernel a
@@ -21,10 +22,11 @@ const COMMON: &str = r#"
 typedef struct Var { uint32_t mode,a,from,n,multi; } Var;
 // The item's document (decision 0032): nodes are the batch's numbering, read at `node - d.node_base`.
 typedef struct Ctx { UKL_GLOBAL const uint8_t* s; DocView d; UKL_TABLE_SPACE const uint8_t* text; } Ctx;
-// A pattern pass (its roots: its rule at `root` in `roots`, `LANES` threads a group of 64 nodes) or a
-// fact's root (`root`, one thread); its threads from `threadStart`.
+// A pattern pass (its roots: its rule at `root` in `roots`, `LANES` threads a group of 64 nodes) or a fact's
+// findings on a file (at `root` in `facts`: a thread a row, or a word of its bits); its threads from `threadStart`.
 typedef struct Item { uint32_t pattern,target,root,constraintStart,constraintCount,threadStart; } Item;
-// A constraint: a variable (or, for a fact, its node) and the label it must hold.
+// A constraint: a variable and the label it must hold; a fact item's first is (its file, whether its findings are
+// bits), then a (0, label) a slot.
 typedef struct Pair { uint32_t x,y; } Pair;
 // The label passes' shape (`label_passes.uglykl`'s), of which these kernels read the first fields.
 typedef struct Shape { uint32_t nodeCount,words,resultArena,taskCount,itemCount,targetCount,round,finish,recursive,lastLevel,fileCount,steps,profile,queue,budget,lanes,frames; } Shape;
@@ -55,7 +57,6 @@ UKL_INLINE bool bind_multi(Ctx c,UKL_PRIVATE Var* v,uint32_t mode,uint32_t a,uin
   Var w;w.mode=mode;w.a=a;w.from=from;w.n=n;w.multi=1u;uint32_t i=0u,j=0u;
   while(true){while(i<v->n&&(c_flags(c,var_at(c,*v,i))&1u)==0u)i++;while(j<w.n&&(c_flags(c,var_at(c,w,j))&1u)==0u)j++;if(i==v->n||j==w.n)return i==v->n&&j==w.n;if(!exact(c,var_at(c,*v,i),var_at(c,w,j)))return false;i++;j++;}
 }
-UKL_INLINE uint32_t doc_at(UKL_GLOBAL const DocView* docs,uint32_t count,uint32_t node){uint32_t first=0u,last=count;while(last-first>1u){uint32_t middle=(first+last)/2u;if(docs[middle].node_base<=node)first=middle;else last=middle;}return first;}
 "#;
 
 /// Patterns a pattern kernel holds (`source`). A kernel's thread memory is the driver's scratch,
@@ -93,7 +94,7 @@ pub(super) fn source(patterns: &[&PackedPattern], first: usize, format: u32) -> 
     // Whether the item's pattern matches at `node` (`c.d` its document) with its constraints held.
     let _ = write!(
         out,
-        "UKL_INLINE bool item_matches(Ctx c,Item item,uint32_t node,UKL_GLOBAL const uint32_t* labels,UKL_GLOBAL const Pair* constraints,Shape shape){{\n  switch(item.pattern){{\n"
+        "UKL_INLINE bool item_matches(Ctx c,Item item,uint32_t node,UKL_GLOBAL const uint32_t* labels,UKL_GLOBAL const Pair* constraints,UKL_GLOBAL const uint32_t* facts,uint32_t row,Shape shape){{\n  switch(item.pattern){{\n"
     );
     for (index, vars) in names.iter().enumerate() {
         let index = first + index;
@@ -105,11 +106,12 @@ pub(super) fn source(patterns: &[&PackedPattern], first: usize, format: u32) -> 
     }
     let _ = writeln!(
         out,
-        "  case {FACT}u:{{for(uint32_t at=0u;at<item.constraintCount;at++){{Pair constraint=constraints[item.constraintStart+at];uint32_t node=constraint.x;if(((labels[constraint.y*shape.words+node/32u]>>(node%32u))&1u)==0u)return false;}}return true;}}"
+        "  case {FACT}u:{{(void)node;UKL_GLOBAL const uint32_t* targets=facts+item.root+row*(item.constraintCount+1u)+1u;for(uint32_t at=0u;at<item.constraintCount;at++){{uint32_t t=c.d.node_base+targets[at],label=constraints[item.constraintStart+1u+at].y;if(((labels[label*shape.words+t/32u]>>(t%32u))&1u)==0u)return false;}}return true;}}"
     );
     out.push_str("  default:return false;\n  }\n}\n");
     // A pattern pass's item is a group of 64 of the batch's nodes, `LANES` threads, each finding the roots among its
-    // share of them (`root_mask_in`); a fact's item is one thread, holding its one root. A SIMD group tests all its
+    // share of them (`root_mask_in`); a fact's item is a file's findings, a thread holding a row's node or a word of
+    // its bits, read where the host wrote them. A SIMD group tests all its
     // lanes' roots, one a lane a round (`simd_roots`): lanes need not line up with the items.
     let (lanes, per) = (LANES, 64 / LANES);
     let _ = write!(
@@ -122,27 +124,28 @@ pub(super) fn source(patterns: &[&PackedPattern], first: usize, format: u32) -> 
                ROBUFFER, Item,     items,       "[shape.taskCount]",
                ROBUFFER, Pair,     constraints, "[constraints]",
                ROBUFFER, uint32_t, roots,       "[roots]",
+               ROBUFFER, uint32_t, facts,       "[facts]",
                ARGS,     Shape,    shape,       ,
                ROBUFFER, uint8_t,  chunk,       "[block]",
                GID0,     uint32_t, tid,         ,
                LANE,     uint32_t, lane,        )
 {{
-  uint64_t mask=0ul;uint32_t at=0u,file=0u,base=0u,group=0u;
+  uint64_t mask=0ul;uint32_t at=0u,file=0u,base=0u,group=0u,row=0u;
   if(tid<shape.itemCount&&ukl_atomic_load(&flags[2])==0u){{
   uint32_t low=0u,high=shape.taskCount;while(high-low>1u){{uint32_t middle=(low+high)/2u;if(items[middle].threadStart<=tid)low=middle;else high=middle;}}
   Item item=items[low];at=low;
-  if(item.pattern=={FACT}u){{file=doc_at(docs,shape.fileCount,item.root);base=item.root;mask=1ul;}}
+  if(item.pattern=={FACT}u){{uint32_t rel=tid-item.threadStart;Pair head=constraints[item.constraintStart];file=head.x;base=docs[file].node_base;if(head.y!=0u){{mask=(uint64_t)(facts[item.root+2u*rel])|((uint64_t)(facts[item.root+2u*rel+1u])<<32u);base+=rel*64u;}}else{{row=rel;base+=facts[item.root+rel*(item.constraintCount+1u)];mask=1ul;}}}}
   else{{uint32_t rel=tid-item.threadStart,part=rel%{lanes}u;group=rel/{lanes}u;file=roots_file(roots,group);group-=roots_first_group(roots,file);mask=root_mask_in(chunk,docs[file],roots,item.root,file,group,part*{per}u,(part+1u)*{per}u);base=docs[file].node_base;}}
   }}
   SimdRoots r=simd_roots(mask,lane __UKL_ARGS);
   for(uint32_t round=0u;round<r.total;round+=UKL_SIMD_WIDTH){{
     uint32_t i=round+lane;uint16_t owner=(uint16_t)(simd_root_lane(r,i __UKL_ARGS));
     uint32_t lo=ukl_sg_shuffle((uint32_t)(mask),owner __UKL_ARGS),hi=ukl_sg_shuffle((uint32_t)(mask>>32u),owner __UKL_ARGS),from=ukl_sg_shuffle(r.prefix,owner __UKL_ARGS);
-    uint32_t a=ukl_sg_shuffle(at,owner __UKL_ARGS),f=ukl_sg_shuffle(file,owner __UKL_ARGS),b=ukl_sg_shuffle(base,owner __UKL_ARGS),g=ukl_sg_shuffle(group,owner __UKL_ARGS);
+    uint32_t a=ukl_sg_shuffle(at,owner __UKL_ARGS),f=ukl_sg_shuffle(file,owner __UKL_ARGS),b=ukl_sg_shuffle(base,owner __UKL_ARGS),g=ukl_sg_shuffle(group,owner __UKL_ARGS),w=ukl_sg_shuffle(row,owner __UKL_ARGS);
     if(i>=r.total)continue;
     Item item=items[a];Ctx c;c.s=chunk;c.d=docs[f];c.text=TEXT;
     uint32_t node=b+g*ROOT_GROUP+mask_nth(lo,hi,i-from);
-    if(item_matches(c,item,node,head+2,constraints,shape))ukl_atomic_or(&scratch[item.target*shape.words+node/32u],1u<<(node%32u));
+    if(item_matches(c,item,node,head+2,constraints,facts,w,shape))ukl_atomic_or(&scratch[item.target*shape.words+node/32u],1u<<(node%32u));
   }}
 }}
 "#

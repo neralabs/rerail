@@ -99,6 +99,7 @@ fn filled_by_roots(
     known: &mut HashMap<(String, usize), Option<BTreeSet<usize>>>,
     visiting: &mut Vec<(String, usize)>,
 ) -> Option<BTreeSet<usize>> {
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
     if let Some(&k) = index.get(rel) {
         return (column == 0).then(|| BTreeSet::from([k]));
     }

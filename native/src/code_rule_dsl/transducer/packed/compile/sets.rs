@@ -308,7 +308,8 @@ impl Set {
                         let through = if named { Set::and(vec![(**through).clone(), is_named.clone()]) } else { (**through).clone() };
                         let through = through.emit(formula)?;
                         formula.words.push(word(REACH_CHAIN, 0));
-                        slots.max(1 + through).max(3)
+                        // From, through, the reach, and the device's level (0437).
+                        slots.max(1 + through).max(4)
                     }
                 };
                 if named {
@@ -1255,7 +1256,7 @@ pub mod tests {
         let image = Set::targets(&inside, Set::All).unwrap().device().unwrap();
         assert_eq!((image.words, image.depth), (vec![class, d::REACH_DESCENDANT], 2));
         let image = Set::targets(&chain, Set::Kind(7)).unwrap().device().unwrap();
-        assert_eq!((image.words, image.depth), (vec![d::KIND | 7 << 8, class, d::REACH_CHAIN], 3));
+        assert_eq!((image.words, image.depth), (vec![d::KIND | 7 << 8, class, d::REACH_CHAIN], 4));
         let named = [w(SUPERTYPE, label), word(CHILD, NAMED, 0), w(CAPTURE, 0), w(EMIT, 1)];
         let image = Set::targets(&named, Set::All).unwrap().device().unwrap();
         assert_eq!((image.words, image.depth), (vec![class, d::PARENT, d::FLAGS | u32::from(NAMED) << 8, d::AND | 2 << 8], 2));
