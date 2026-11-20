@@ -1724,7 +1724,7 @@ impl<L: Layout> Parser<'_, L> {
 mod tests {
     /// The `.rerail` files of the repository.
     fn corpus() -> Vec<(String, String)> {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
         let (mut files, mut work) = (Vec::new(), vec![root]);
         while let Some(dir) = work.pop() {
             let Ok(entries) = std::fs::read_dir(&dir) else { continue };
@@ -1837,20 +1837,7 @@ mod tests {
     #[test]
     #[ignore = "a calibration: run by hand"]
     fn widths_guess_calibration() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let (mut files, mut work) = (Vec::new(), vec![root]);
-        while let Some(dir) = work.pop() {
-            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
-            for e in entries.flatten() {
-                let p = e.path();
-                let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
-                if p.is_dir() && !skip {
-                    work.push(p);
-                } else if p.extension().is_some_and(|x| x == "rerail") {
-                    files.extend(std::fs::read_to_string(&p).ok());
-                }
-            }
-        }
+        let files: Vec<String> = corpus().into_iter().map(|(_, text)| text).collect();
         let (mut again, mut most, mut big, mut largest) = (0, 0f64, 0, 0);
         for src in &files {
             let t = super::tape(src);
@@ -1870,38 +1857,13 @@ mod tests {
 
     #[test]
     fn lean_tape_is_the_engines() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let (mut files, mut work) = (Vec::new(), vec![root]);
-        while let Some(dir) = work.pop() {
-            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
-            for e in entries.flatten() {
-                let p = e.path();
-                let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
-                if p.is_dir() && !skip {
-                    work.push(p);
-                } else if p.extension().is_some_and(|x| x == "rerail") {
-                    files.extend(std::fs::read_to_string(&p).ok().map(|t| (p.display().to_string(), t)));
-                }
-            }
-        }
+        let files = corpus();
         assert!(files.len() > 1000, "{} files", files.len());
         let mut checked = 0;
         for (path, text) in &files {
-            let mut cuts = vec![text.len()];
-            for k in 1..8 {
-                let mut at = text.len() * k / 8;
-                while !text.is_char_boundary(at) {
-                    at -= 1;
-                }
-                cuts.push(at);
-            }
-            for at in cuts {
+            for at in cuts(text) {
                 let src = &text[..at];
-                let (lean, engine) = (super::tape(src), crate::tape::image(&crate::engine_tape(src), src));
-                if lean != engine {
-                    let k = lean.iter().zip(&engine).position(|(a, b)| a != b).unwrap_or(lean.len().min(engine.len()));
-                    panic!("{path} cut at {at}: tapes of {} / {} bytes differ from byte {k}: {}", lean.len(), engine.len(), rerail_tape_format::place(&engine, k));
-                }
+                let lean = lean_tape_or_difference(src).unwrap_or_else(|diff| panic!("{path} cut at {at}: {diff}"));
                 // And the image reads back as the tree it was written from (`tape::nodes`, what the
                 // engine reads a rule file's statements off).
                 assert_eq!(crate::tape::nodes(&lean).expect("decodes"), crate::engine_tape(src), "{path} cut at {at}: decoded");
@@ -1916,23 +1878,9 @@ mod tests {
     /// character deleted, two swapped), gives the engine's tape. Seeded, so a failure names its text again.
     #[test]
     fn lean_tape_is_the_engines_on_edited_files() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let (mut files, mut work) = (Vec::new(), vec![root]);
-        while let Some(dir) = work.pop() {
-            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
-            for e in entries.flatten() {
-                let p = e.path();
-                let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
-                if p.is_dir() && !skip {
-                    work.push(p);
-                } else if p.extension().is_some_and(|x| x == "rerail") {
-                    files.extend(std::fs::read_to_string(&p).ok().map(|t| (p.display().to_string(), t)));
-                }
-            }
-        }
+        let mut files = corpus();
         files.sort();
         assert!(files.len() > 1000, "{} files", files.len());
-        const ALPHABET: &[u8] = b"(){}[],.:;!=<>+-*/%@$#_|&~?\\\"'`\n \taz09";
         let mut seed = 0x9e37_79b9_7f4a_7c15u64;
         let mut next = move || {
             seed ^= seed << 13;
@@ -1943,39 +1891,68 @@ mod tests {
         let mut checked = 0;
         for (path, text) in &files {
             for round in 0..4 {
-                let mut bytes = text.as_bytes().to_vec();
-                for _ in 0..1 + round {
-                    if bytes.is_empty() {
-                        break;
-                    }
-                    let at = (next() % bytes.len() as u64) as usize;
-                    match next() % 3 {
-                        0 => bytes.insert(at, ALPHABET[(next() % ALPHABET.len() as u64) as usize]),
-                        1 => {
-                            bytes.remove(at);
-                        }
-                        _ => {
-                            let to = (at + 1 + (next() % 8) as usize).min(bytes.len() - 1);
-                            bytes.swap(at, to);
-                        }
-                    }
-                }
+                let bytes = edited(text, 1 + round, &mut next);
                 // Only texts that are still UTF-8 (an edit inside a multi-byte character is not one).
                 let Ok(src) = String::from_utf8(bytes) else { continue };
-                let (lean, engine) = (super::tape(&src), crate::tape::image(&crate::engine_tape(&src), &src));
-                if lean != engine {
-                    let k = lean.iter().zip(&engine).position(|(a, b)| a != b).unwrap_or(lean.len().min(engine.len()));
-                    panic!(
-                        "{path}, edit round {round}: tapes of {} / {} bytes differ from byte {k}: {}\n source {:?}",
-                        lean.len(),
-                        engine.len(),
-                        rerail_tape_format::place(&engine, k),
-                        src
-                    );
+                if let Err(diff) = lean_tape_or_difference(&src) {
+                    panic!("{path}, edit round {round}: {diff}\n source {src:?}");
                 }
                 checked += 1;
             }
         }
         eprintln!("{} files, {checked} edited texts", files.len());
+    }
+
+    /// `text`'s length and the seven points at its eighths, each moved back to a character boundary.
+    fn cuts(text: &str) -> Vec<usize> {
+        let mut cuts = vec![text.len()];
+        for k in 1..8 {
+            let mut at = text.len() * k / 8;
+            while !text.is_char_boundary(at) {
+                at -= 1;
+            }
+            cuts.push(at);
+        }
+        cuts
+    }
+
+    /// The lean parser's tape of `src` when it is the engine's, byte for byte; else how the two differ: their
+    /// lengths, and the first byte that differs, placed in the engine's tape.
+    fn lean_tape_or_difference(src: &str) -> Result<Vec<u8>, String> {
+        let (lean, engine) = (super::tape(src), crate::tape::image(&crate::engine_tape(src), src));
+        if lean == engine {
+            return Ok(lean);
+        }
+        let k = lean.iter().zip(&engine).position(|(a, b)| a != b).unwrap_or(lean.len().min(engine.len()));
+        Err(format!("tapes of {} / {} bytes differ from byte {k}: {}", lean.len(), engine.len(), rerail_tape_format::place(&engine, k)))
+    }
+
+    /// `text`'s bytes after `edits` edits by `edit`, fewer when no byte is left to edit.
+    fn edited(text: &str, edits: usize, next: &mut impl FnMut() -> u64) -> Vec<u8> {
+        let mut bytes = text.as_bytes().to_vec();
+        for _ in 0..edits {
+            if bytes.is_empty() {
+                break;
+            }
+            edit(&mut bytes, next);
+        }
+        bytes
+    }
+
+    /// One edit of `bytes` at a point `next` picks: a character of `.rerail`'s syntax inserted, a byte deleted, or two
+    /// bytes swapped.
+    fn edit(bytes: &mut Vec<u8>, next: &mut impl FnMut() -> u64) {
+        const ALPHABET: &[u8] = b"(){}[],.:;!=<>+-*/%@$#_|&~?\\\"'`\n \taz09";
+        let at = (next() % bytes.len() as u64) as usize;
+        match next() % 3 {
+            0 => bytes.insert(at, ALPHABET[(next() % ALPHABET.len() as u64) as usize]),
+            1 => {
+                bytes.remove(at);
+            }
+            _ => {
+                let to = (at + 1 + (next() % 8) as usize).min(bytes.len() - 1);
+                bytes.swap(at, to);
+            }
+        }
     }
 }
