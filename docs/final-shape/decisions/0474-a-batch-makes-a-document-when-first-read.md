@@ -28,10 +28,21 @@ A batch holds its documents unmade, and makes each when it is first read.
 - **A view's rows are in document order.** Each document's rows lie at an offset from the counts of the
   documents before it: its nodes, children, fielded nodes, siblings and places. A count is the made projection's,
   or one the batch was given (below). An offset the batch cannot know makes the documents it needs.
-- **A made relation's rows are numbered by group.** A group's rows follow those of the groups made before it.
-  A batch read whole from the first read (a chunk's) makes one group, in key order: the same rows, the same one
-  `Relation` per relation, the same block the device reads as today. A relation over several groups is ordered
-  and in its block only when it has one group.
+- **A made relation's rows are numbered by group, in one block relation.** Each relation of a batch is one block
+  relation (`Relation::grown`, 0431 §6), and every group goes on in it, in the order made: a group's rows are a
+  range of it, never a relation of their own. The CPU, the JIT and the device read the one relation, in its block
+  (0353); no reader concatenates groups. A batch read whole from the first read (a chunk's) makes one group, in key
+  order: the same rows, the same block the device reads as before. Before every document is made, a probe reads the
+  ranges of the groups it routes to; after, the relation and its own indexes.
+- **A batch grows only once complete** (0431 §6, §8, merged 2026-11-20 from `final-rerail-shape-rr-align`). A
+  round's documents, or a tape value admitted inside the fixpoint, are added only to a batch every document of which
+  is made: its relations' rows are then a prefix, which the round's groups, or the values' rows, follow in the same
+  block relations. The round's batch shares the earlier documents as made (their projections are made once) and
+  holds its new ones unmade. A tape value is a batch of its own, made at once; its hosts are the chunk's documents.
+  The strings, their atoms and the families' producers are the batch's and every batch it grows into (`Shared`): a
+  producer keeps string indexes, and what it knows of a file serves the guests a later group or round adds. They
+  are held only while a group's rows are interned, never while the pool runs a job that may read the batch. A round
+  after a value was admitted is refused: the values' rows follow the chunk's.
 - **A probe is routed by what the declarations type.** A relation's row names its document by its first column
   where the rule library's declarations (`docs/rule-syntax/lib`) give that column one meaning: `n` is always a
   `node` or a `loc` (an id, `d << 32 | …`), `d` and `g` always a document's key. Other names mean different things
@@ -41,7 +52,8 @@ A batch holds its documents unmade, and makes each when it is first read.
 - **What a relation's names are** is fixed by the projection and the program, not the documents: the batch
   knows them before it makes any. A group that makes a relation it did not name fails, named.
 - **The text tests are what they mean.** A text test (0037) is a test of a string: a probe tests the probed
-  string (each tested once a run, as now), and a scan lists the batch's strings that pass. Nothing of a test
+  string (each tested once a run, as now: a round's batch keeps the earlier batch's probes, and a scan tests only
+  the strings no probe or earlier scan tested), and a scan lists the batch's strings that pass. Nothing of a test
   changes with an edit, so it has no version (`Plus`, `Minus`).
 - **Counts are kept.** The documents' table (0458) keeps each document's views' counts: its nodes, fielded nodes,
   siblings and places, the projection's own numbers. A base relation's rows are counted by its kept statistics

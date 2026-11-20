@@ -3646,6 +3646,11 @@ always a refusal.
 - Route a parked member back to the thread that holds its submission, or flush that wave before the job hands its
   members back (the job's mark taken before the thread's open wave, not after).
 - **Done when**: no hogql run has the refusal, findings unchanged over 20 runs.
+- **Done** (2026-11-18, here by decision 0386 §2, at the merge of Native-and-GPU-strata 3f90ab5d6): every pool job
+  enters a wave scope of its own, which puts the outer job's queued launches, deferred submissions and open
+  submission aside and restores them as it leaves, so a job's strata never join a wave its thread had open. The
+  floor and the stack of waves Native-and-GPU-strata built for it (below) are not taken: 0386's scope holds the
+  same invariant, and its test ported (`a_job_flushes_its_own_submissions_and_not_its_threads`, on the scope).
 - **On Native-and-GPU-strata** (its Q90, merged at d719a840ef, 2026-11-19):
   - **Done** (2026-11-18): a job is a scope of the thread's wave (`lanes::wave::enter`). Its floor is where the
   thread's launches and deferred submissions stood when it began; inside it `flush` runs only what lies past the
@@ -4802,6 +4807,8 @@ after the phases went on the run path (0083).
 - **Done when**: a warm run reads its unchanged files' batch rows where they lie (or never makes them), parses no
   unchanged file, and ep2's warm edit is back near 19 G and 200 MB.
 - **Record**: open; the phased-facts branch's (0458 Open), measured here.
+- **Taken by** 0474 (phased-facts, the user 2026-11-19: "B: lazy Batch everywhere"): a batch makes a document when
+  first read, its row space from kept counts; steps 1-4 there, ep2's numbers by its step 5.
 
 ### Q354. (Q288 on phased-facts) `the_view_reads_are_the_hosts_rows` timed out: its kernel's pipeline did not compile in 240 s (done)
 
@@ -4818,6 +4825,9 @@ Found 2026-11-19 while running `syntax::tests` for 0474 (on the M3 and the M1 Ma
   `view_field` 2.0 s; the test passes in 5.7 s. The decode runs on a block cache miss (0353 step 4b), so its calls
   are a miss's, not a read's. Checked: the reads' generated-source tests, the test, and 45 `metal-tests` of
   `rerail-logic` and `rerail-device-metal` (views made on the device, the tape reads).
+- **Superseded** (2026-11-19, the merge of rr-align 08e2de78c): 9eb867011b writes the reads as UKL, and every read
+  past `Z_APART` (the 16z decode's) is `UKL_COLD` (`noinline` on Metal) by its id, as the JIT treats it. The size
+  bound and `metal_tape_reads_z.metal` are gone with it.
 
 ### Q353. (Q287 on phased-facts) An edit keeps the rows of the cross part's `kind`, a view of `node` (open)
 
@@ -5577,7 +5587,7 @@ native join it falls back to the planner's whole-rule order.
   budget tests. Reviewer: an ordinary body's search is unchanged (`pre` empty: every new branch is skipped, and
   its key's digest is as before).
 
-### Q240. (Q146 on django-bugs at cf28cfd53) A findings key computed whole starts from every node: its existential tail is priced at full fanout
+### Q240. (Q146 on django-bugs at cf28cfd53) (done) A findings key computed whole starts from every node: its existential tail is priced at full fanout
 
 - **Seen** (2026-11-18, PostHog cold on the M3, after c6917fd26): `xk_fz…_violation_3($v) :- node($v, $n, _, _, _),
   line($n, _), col($n, _), fzk…_violation($v)` (and `xk_…rr_diagnostic_…_2`) made 77 M + 39 M native work, 12.5 +
@@ -5592,7 +5602,48 @@ native join it falls back to the planner's whole-rule order.
   engine runs (a row a binding at most), so `fzk`'s order wins in every chunk; then the gap to sd1 (2,589 G) is
   measured again. Also timing-dependent still: the inline-or-store and demand choice kept per program (decision
   0090 §5) is the first chunk's to plan at its scale.
+- **Found** (2026-11-18): the search is the fault, not the price. The fixed-order pricer (`step`, plan.rs, after
+  693247ec4) prices a step past the head's last binding as one witness; the subset search prices through its own
+  `priced` and does not. With PostHog's statistics the search took `col` first (903,406 est.) where the same pricer,
+  given `fzk` first, priced it at 1,112: the search never weighed that order as it is priced. Probed per path: the
+  `col`-first plans were each a fresh search (first sight or replanned), never a kept plan.
+- **Tried, reverted**: the same cap in the search (head bound by an earlier join). It is wrong as the engine stands:
+  the walk ends a step at the first witness (`cut_from = tail(j)`, setfix) only in its row-by-row path. A fused
+  step (an atom and its filters, a chunk of candidates at a time, `rowcode`) runs every candidate, and a collecting
+  walk has no cut (`cut_from = usize::MAX`). Priced as one row, `demand_fzk($d), col($v, $c), …` (a cross product)
+  made 1.4 G rows and `doc_tape`'s `loaded` 443 M; PostHog ran past 9 minutes and was stopped. A test of the search
+  alone (`m(v, n), l(n, y), c(n, z), k(v)`: `k` leads) was red before the cap and green with it.
+- **Wanted, in order**: (1) the fused path ends its chunk loop at the first row made past `cut_from`, as the
+  row-by-row path does, and a collecting walk's cut is decided (does it need every row past the tail?); (2) then the
+  search prices past the head's last binding as `step` does, connected steps only, never a cross product; (3) the
+  test above, and PostHog against sd1.
+- **Done** (2026-11-18):
+  - (1) The fused path (setfix.rs, `flush` and its candidate loop) ends at the first row made past `cut_from`, as the
+    row-by-row path does. Test `a_fused_step_past_the_bound_head_stops_at_its_first_witness` (cut_tests.rs): 10,000
+    rows reached `l` before, 20 after. Collecting walks keep no cut: they are a trial's (setfix.rs 3058, 3110),
+    `run_join_collect`'s and a closure's per-value search, whose callers read the rows they collect. The stratum
+    walk and the paired walk take the cut.
+  - (2) A flat one-witness cap was still wrong where few candidates are witnesses: `doc_tape`'s
+    `doc_key → loaded → doc_module(p, m)` reads every `loaded` row for each key (443 M rows, 128 s) because one in
+    15,000 passes. So the search and the fixed-order pricer price the tail by its witnesses a binding instead
+    (`witnessed`, plan.rs): past the first join made with every head variable bound (work `base`, rows `h`), the
+    tail's work is scaled by `h / rows`. Every candidate a witness reads one a binding; few witnesses read in full.
+    `step`'s cap applies only to a step joined by a bound variable, never a cross product.
+  - (3) Tests: `the_search_prices_the_steps_past_a_bound_head_as_one_witness` (plan/tests.rs: `k` leads, work under
+    2,000; red without it). `heavy_values_price_a_skewed_three_way_self_join_by_its_third_moment` now has a head that
+    reads `c`, as its comment's count needs every row.
+  - PostHog cold on the M3 (load 35–51), 29,747 findings, hash fa0efeaed6ff, every run:
 
+    | run | instructions | join work | native CPU |
+    |---|---|---|---|
+    | sd1 | 2,589 G | 546 M | 79.7 s |
+    | fx1 (before) | 2,888 G | 561 M | 85.1 s |
+    | qd143317 | 2,625 G | 451 M | 67.7 s |
+    | qe143408 | 2,635 G | 449 M | 72.1 s |
+    | qf143646 (default chunking) | 2,542 G | | |
+
+    The `xk_…` relations are gone from the per-head comparison (77 + 39 M work to under 1 M), and join work is 18 %
+    under sd1's. Warm: 119–124 G (fx2 143 G, q94n 157 G).
 
 ### Q209. (Q175 on cost-classifier-metal-rf) (done) A rebased version's request record sat on other rules (`a_library_held_once_is_read_by_each_policy_in_its_own_scope`, half its runs)
 
@@ -6215,6 +6266,13 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   "bound node products by their readers: unbounded node Cartesian product in `base`" (18) and "in `res`: the read in
   `res` has no connected demand" (1). Not PR #508's: the same with Q241's and Q244's ports and without them.
 - **Done when**: the 30 pass, the product bound at its producer (no relation computed in full to be filtered).
+- **Also seen** (Q263 on django-bugs, 2026-11-19): the same refusal in `base` on the M1 Max and the M3, in
+  `quoted_annotations_are_read_as_their_code`,
+  `a_protocols_subclass_is_a_class_and_a_methods_self_annotation_declares_an_attribute`,
+  `a_call_is_typed_by_the_overloads_its_positional_arguments_fit` and
+  `imports_resolve_through_site_packages_stubs_and_declarations_in_pep_561_order`. The planner refuses the typing
+  program (`typing/programs/calls.rr`'s `base`, which reads no guest relation) before any batch is built, so it is
+  not decision 0431's.
 
 ### Q250. Four observer tests fail at the hub's tip
 
@@ -6226,6 +6284,10 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
     asserted.
   All four are decision 0400's listing checks, and 27 of the 31 observer tests pass. Not PR #508's.
 - **Done when**: all four pass.
+- **Also seen** (Q262 on CUDA-support, 2026-11-19): the same three listing tests and the settle-window test
+  (Q293's) fail there, hidden while `rerail-store`'s tests did not compile. A merge had left two of the journal
+  test's `since` calls without `settle`, and the replay's wait took `WAIT.max(settle)` in place of the caller's
+  bound; both fixed on CUDA-support, as here.
 
 ### Q293. (Q262 on benchmarks-on-integration) The settle-window test's first leg can no longer miss an edit
 
@@ -6360,6 +6422,166 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   second run wrote: the journal's latency outran the 300 ms sleeps.
 - **Next**: find what each one waits on. Replace the sleeps with a wait on the journal's own cursor (the event
   ids FSEvents gives past the writes), so a loaded host cannot reorder them.
+
+### Q296. (Q241 on django-bugs) A warm run sometimes stops on a strict-SQL read of `atom_key` inside the waves
+
+- **Seen** (2026-11-18, PostHog warm on the M3 over qe143408's store): rc 134, `RERAIL_SQL_STRICT`: `SELECT id FROM
+  atom_key WHERE h IN rarray(?1)` from `Atoms::find` ← `intern_all` ← `ContentStore::intern_atoms` ←
+  `vtab::syntax::Batch::build` ← `run_observed`, span `answer load / a chunk projected / project and intern / intern
+  atoms`. Intermittent: over the same store the Q240 engine aborted once and passed twice. The engine from before
+  Q240 (fx2) aborted too. Warm runs over qd143317 and qf143646 passed.
+- **Wanted**: the projected chunk's atoms found without SQL inside the waves (decision 0104: one read before the
+  first wave), or this read moved before it; then a warm run over qe143408's store passes every time.
+
+### Q297. (Q242 on django-bugs) (done) A prepared plan priced a kind's constant as one kind in 200: PostHog's `param` read 10.4 M rows
+
+- **Seen** (2026-11-18, PostHog cold on the M3 after merging the hub at ffc390de8): join work 451 → 555 M. `param`'s
+  two rules (5.3 → 93.2 M) and `tp_decl`'s (0 → 31 M) took prepared plans (decision 0361 step 5, `search: 0
+  subsets`) with `kind($p, #k1025)` first: 10.4 M rows. Before, the search led with `field($f, #f65559, $ps)`, 253 k.
+- **Cause**: the prepared model prices a constant on a column by its `values` fact (`values(k, kinds)`: 1 in 200,
+  `values(f, ~50)`: 1 in 50). Kind 1025 holds 16 % of the nodes and field 65559 0.4 %. A check of the prepared
+  plan's counts (step 6) would not see it: the plan's own estimate of its work was near what it read.
+- **Done**: such a rule is not prepared (`prepared.rs`, `by_values`); it is planned at run time from the constant's
+  statistics. Recorded in 0361 under step 5. PostHog cold: 2,307 and 2,226 G instructions, 444–447 M join work, warm 102 G (merged, before:
+  2,500 G, 555 M; sd1 2,589 G, 546 M); 29,747 findings, fa0efeaed6ff.
+- **Open for 0361's owner**: most rules test a kind's constant, so fewer lines are prepared. A prepared order that
+  is right for every constant needs the constants' frequencies, which no fact gives; the run's statistics have them.
+
+### Q298. (Q243 on django-bugs) PostHog on Metal (2026-11-18): what a cold run still needs
+
+- **Runs** (M3 Max, profiling build at 2667b6d36, cold, `opts-m3-reuse.json`, load 36–73; every run that finished
+  gave 29,747 findings, fa0efeaed6ff):
+
+  | run | binding | chunk | Metal budget | wall | CPU | instructions | GPU busy | outcome |
+  |---|---|---|---|---|---|---|---|---|
+  | hc155001 | CPU | 262,144 | – | 69 s | 197 s | 2,226 G | – | done |
+  | qf143646 | CPU | default | – | 67 s | 232 s | 2,542 G | – | done |
+  | gm160557 | `metal` | 262,144 | 512 MB | 150 s | 208 s | 2,060 G | 8.0 s | 1,686 leases past the budget, refused to the CPU |
+  | gn161450, go161705 | `metal` | 262,144 | 4 GB, 1 GB | – | – | – | – | stopped: the AST matcher wave, `BackendCapacity` |
+  | gp161752 | `metal` | default | 4 GB | 78 s | 219 s | 1,938 G | 18.8 s | 18,252 of 152,677 runs on the GPU |
+  | ga161936 | `always` | default | 4 GB | 94 s | 236 s | 1,781 G | 44.8 s | 98,765 of 117,451 runs on the GPU; abort at exit |
+
+- **Wanted**, each its own item below: Q299 (dispatches), Q300 (big chunks), Q301 (prices), Q302 (computed terms and
+  the other refused forms), Q303 (uploads are copies), Q304 (the abort at exit).
+
+### Q299. (Q244 on django-bugs) The device's work is millions of small dispatches: 5.2 M dispatches, 223 k submissions, 23 s encoding
+
+- **Seen** (ga161936, `always`): 638,337 stages in 223,563 submissions and 5,178,767 dispatches; the host's CPU
+  35.6 s (encode 23.3 s, uploads 9.5 s) for 44.8 s of GPU time. `metal` (gp161752): 58,597 submissions, 1.53 M
+  dispatches, encode 8.0 s. A chunk's stratum's stage is a dispatch of its own.
+- **Wanted**: a level's strata, across chunks, enqueued as one persistent dispatch over a work queue (the device's
+  enqueue is a work queue), so dispatches and submissions scale with levels, not chunks × strata × stages.
+
+### Q300. (Q245 on django-bugs) A big chunk does not run on Metal: the AST matcher wave stops on `BackendCapacity`, leases past 512 MB
+
+- **Seen**: at 262,144-node chunks with a 1 GB or 4 GB Metal budget, `ast_wave.rs:155` panics "the ast matcher wave
+  failed on Metal: BackendCapacity" (decision 0382 §6: no CPU wave in its place), though its comment says what does
+  not fit is split (0334). At the default 512 MB the wave stays on the CPU, and 1,686 strata's leases fail
+  (`device budget: a lease of N MB past the Metal budget`); peak footprint 4.2 GB.
+- **Wanted**: the wave split to what fits; which of the interpreter's `BackendCapacity` sites it is named (the error
+  carries no origin); strata's leases sized to the budget.
+
+### Q301. (Q246 on django-bugs) Placement's GPU prices are far off: `metal` costs more CPU than the CPU binding
+
+- **Seen** (gp161752): `ann_ctx` 2,236 GPU runs, 5.46 s host CPU and 1.99 s GPU, where its 758 CPU runs took 0.17 s;
+  `walk` est 3,147 ms, actual 1.45 s host + 1.51 s GPU; gm160557's `tgt` 11.3 s host on the GPU against 16 ms on the
+  CPU. The prices leave out the host's encoding and each dispatch's cost (Q299).
+- **Wanted**: the device's measured per-run host and GPU costs priced (decision 0354's learned correction trained on
+  these runs), so `metal` never costs more than the CPU binding.
+
+### Q302. (Q247 on django-bugs) Strata the device has no form for: computed terms (13–18 s CPU), split, gates, several indexes
+
+- **Seen** (ga161936): `@rr_node_text` in a comparison (16 strata, 15.9 s), `@cat` in a head (4, 8.9 s), `@pkg_up`,
+  `@rx_group`, `@concat`, `@head`, `@replace_all`, `@str_between`, `@substr`, `@rr_node_value`; refused at run time:
+  "no native seed join" (`parsed_in`), "an atom over the component's own relation by several indexes"
+  (`exported/public_name`), "split has no device form" (`rr_agg7`), "a component with gates or requests".
+- **Wanted**: device forms for the text terms first (`@rr_node_text`, `@cat`): 25 s of the 32 s.
+
+### Q303. (Q248 on django-bugs) Inputs' views are uploaded to the device: 0.8–1.3 GB a run, 5.9–8.8 s of host CPU
+
+- **Seen**: "uploads by what they read: views 769 MB in 5,855 ms" (ga161936), 1,274 MB in 8,756 ms (gm160557). On
+  unified memory these are copies (decision 0353): the device should read the inputs' blocks in place.
+- **Wanted**: Native-and-GPU-strata's 0353 steps 4b–5 (the transducer's kernels and the view read in place) merged,
+  then the views' uploads counted again.
+
+### Q304. (Q249 on django-bugs) An `always` run aborts at exit: a thread local read during or after its destruction
+
+- **Seen** (ga161936): after the outputs were written, `main` panicked "cannot access a Thread Local Storage value
+  during or after destruction", "thread local panicked on drop, aborting" (rc 134). No backtrace.
+- **Wanted**: the drop that reads it named (a run with `RUST_BACKTRACE=1`), and fixed.
+
+- **Done** (2026-11-18, at `3200d8871`): 300 runs of `parity_random_texts` (120 six at a time, 180 twelve at a
+  time; `tmp/gpu/q124/six.sh`), each running all 1,200 cases on the device with no refusal (`--nocapture`), all
+  equal to the CPU's. What ended it is not proven: no build of the old commit was made to tell. The likeliest is
+  `683d9f62e` (Q265): before it, a device row's stores went through `rows_at`, 8 bytes whatever its column's width
+  and unbounded by its chunks, so stores made in parallel could overwrite their neighbours in whatever order the
+  threads ran. The two suspects above were read and hold: a full arena's text sets `TEXTFN_FULL` and `complete`
+  runs the stage again from its first text function in a new batch's arena; and the join's passes are one serial
+  encoder, each dispatch seeing the last's writes.
+
+### Q305. (Q257 on django-bugs) Format 16's writer reserves too little tail where codes pass a byte: `finish` grows the room, copying the tape
+
+- **Found** (2026-11-18, at the merge of oscar into django-bugs): `f16::tests::ops_write_the_tape` failed 4 runs in
+  5 under the crate's parallel run, at oscar's own 7577c16b9 too. Its check that the tape is the writer's room (0434,
+  R4: nothing copied but the last block) held only when `realloc` grew the room in place. `Writer::new` reserves the
+  tail as `nodes / 2` bytes of side lists ("their usual share"); on the test's nodes the side lists are about 4.7 KB
+  for 2,001 nodes: 1,036 codes past a byte (a table of 600 codes, `low_w` 1) and 243 escaped slots.
+- **Now**: `finish_moves_only_the_last_block` (the R4 test 0434 names, missing until now) checks the room is kept
+  where codes fit a byte; `ops_write_the_tape` states that its nodes pass the reserve.
+- **Do**: size the side lists' reserve from what the writer knows (the language's code count against `low_w`, the
+  source's length against the slot and gap widths), or grow the room while the side lists fill, before the tail;
+  measure how often `finish` grows the room on hogql and PostHog first.
+- **Done when**: no tape of the PostHog corpus is copied by `finish`, and a test with a table past 256 codes holds R4.
+
+### Q306. (Q261 on django-bugs) No guest documents: guests are tape values the rules make and keep (decision 0431)
+
+- **Asked** (2026-11-18, the user): "there are no guest documents. The CPU and GPU run on exactly the same data";
+  the rules decide which strings are parsed (annotations, maybe format strings), and what they make is kept as the
+  program's facts.
+- **Measured before** (PostHog cold, M3, 1ca497070): guests 32.1 s CPU (CPU binding) and 34.4 s (Metal), of which
+  the batch built again with guests 18.4 s (216 builds) and 13.7 s (402); the embed slice's rounds 10.9 s and 18.1 s.
+  Findings 29,747, fa0efeaed6ff.
+- **Design** (the user, 2026-11-18): strings the rules parse are tape values, their nodes named by the tape ("do
+  a"); programs the grammar holds are part of their file ("okay, I agree with that"); format 16 unchanged.
+- **Steps**: 0431's five. Step 1 (the record and the R1–R4 tests, ignored, each failing for its reason) is done.
+- **Done when**: R1–R8 hold, their tests pass unignored, no guest document, key range, embed slice or batch rebuild
+  is left, and PostHog's findings are unchanged on CPU and Metal.
+
+### Q307. (Q262 on django-bugs) (Q208 again) `r7_the_recheck_order_is_priced` fails: 2 recheck lines unpriced after "a use added"
+
+- **Seen** (2026-11-18, m1max, at 24740af51 and at 2e9d16bc8, alone and in a batch): `ran.shape.rechecks_unpriced`
+  is 2 after the "a use added" edit; Q208 (done) had it 0. Not a load or timing failure: it fails every time, in 4 s.
+- **Not 0431's**: it fails with 0431's step 2 stashed. A merge since Q208 brought it in; to bisect between Q208's
+  commit and 24740af51 on the maintain mode's recheck lines (`bound_head_order`, `plan_rule_reused`).
+- **Done when**: R7 passes, and the test names the unpriced line when it fails.
+
+### Q308. (Q264 on django-bugs) `a_request_record_over_an_edit_is_a_run_from_scratchs` fails: "edit 2: a record to carry"
+
+- **Seen** (2026-11-19, m3, with 0431 step 4c in the tree): `program_image::tests` asserts that a run from scratch of
+  edit 2 (`reads_e("q")`, which adds a request's rule) states a request record, and it states none.
+- **Not 0431's, by its place**: the test builds versions and runs `Pipeline`'s rename pass. It reads no batch, run or
+  lowering that 4c changed. To check at 4c's parent, then on decision 0393's carried record (`set_asked`, `rebase`).
+- **Done when**: it passes.
+
+### Q309. (Q265 on django-bugs) The Linux hosts' builds of `rerail-accel` miss `rerail_blocks`
+
+- **Seen** (2026-11-19): a `test-remote` run sent to a Linux host fails to compile `rerail-accel` (`cannot find module
+  or crate rerail_blocks`, 8 errors). A Mac's build of the same checkout compiles.
+- **Do**: make `rerail-accel`'s use of `rerail_blocks` match the dependency's target (a `cfg` on one and not the
+  other), so CI's Linux build compiles it.
+- **Done when**: the engine's tests build on a Linux host.
+
+### Q310. (Q266 on django-bugs) An input a constant filters is uploaded to the device
+
+- **Seen** (2026-11-19, 0431 step 4c, the device): `parsed(s, "annotation", r)` binds `parsed` through a select with
+  `WHERE grammar = …` (setfix `view`): a view of the rows the constant chose (`View::ids`, `eqs`). The device reads no
+  such view in place: `resident` uploads its rows (copy 0353 step 6, row 5), whatever its source (a relation in its
+  block, a tape view). Every program with a constant on a bound input pays it.
+- **Do**: bind the source whole where it lies (`in_block`, `device_view`) and check the view's `eqs` on the device, in
+  the stages that read it (a probe by the constant, or a filter of the scan). No mask or row list made on the host.
+- **Done when**: R8's test (`cpu_and_metal_read_the_same_tape_values`) allows no upload for `parsed` (its `q266`), and
+  its HTML run (whose library, `html/embeds.rr`, filters `child` and `node` by constants) uploads no more than a run
+  over a file with no script.
 
 ### Q258. Red after the merge of the hub's ffc390de8: four planner tests and the hub's test targets
 
@@ -6517,3 +6739,76 @@ Found 2026-11-19 merging phased-facts (10d3b38139) here: `leg-083-typed` on the 
 - **Measured** (same run, m16 to m18): `node rows` and `projected` 2,918 to 2,017 calls (each document once; the
   guests no read reaches are not made), `relations` 0.91 to 0.68 s; 564 G to 542 G instructions; outputs equal
   (3775f8dd2719); peak 1,165 to 1,192 MB. Load 28-34 (wall 23.4 s, user 42.5 s: not comparable to m16's 18-31).
+- **Superseded** (2026-11-20, at the merge of phased-facts' 0431 work): there is no batch built again. A chunk's batch
+  grows by its tape values (0431 §6: `Grower`, `Docs::grown` sharing the documents made), and each of its relations
+  is one block relation, a group a range of it (phased-facts 9a94c02ee1). `syntax::grown`, `Batch::take_groups`, the
+  projections' slack and `Matchers::same` are gone with the rebuild they served. The test is ported:
+  `partial_tests::a_chunks_files_rows_are_made_once_with_its_guests` (no slice run, no batch grown, values admitted).
+
+- **Open**: why a 4,096-node first chunk makes 20-30 negation-split strata (`pre_k`) where 65,536 makes 11, and
+  1-5 B more on the CPU (the two first-chunk runs at one size also differ, 127 against 154 strata); 2 (row blocks
+  reserved large and grown in place, tails released); the Metal peak footprint at big chunks
+  (1.36-1.47 GB, the count's most 1.15 GB), whose largest rise t49 found in the guests' `ann_ctx` stratum.
+
+### Q379. Roll-up 8 (CUDA-support's 0440 onto rr-align): what the merge chose, and what stays open
+
+- **Seen** (merge of a6d9a03aa8d): each side rebuilt the same parts its own way. CUDA-support moved the kernels to
+  UKL on a device layer (0440). This branch made the run and machine state explicit (0442), sized chunks by each
+  chunk's own work (Q203 item 3, b6d2c1eba), and moved a tape's reads in place to format 16 (0434).
+- **Done**:
+  - Kernels follow 0440: theirs' `label_passes.uglykl` and `device_tape.h`, with this branch's Q189 bounded marks and
+    0434 step 6's presence skip ported in. The tape writer's ops are UKL too (`<ukl/writer.h>`,
+    `rerail_clif::writer::ukl_source`); the MSL backend (`msl.rs`) is gone.
+  - The device layer's statics became the machine's or the run's under 0442. This covers accel's `Layer` (made on
+    each ask), the kernels made elsewhere, theirs' label kernels and the sweep, 0435's count and sampler, and the
+    tests' per-thread counts.
+  - Chunk sizing follows 0435 §4, a user decision. The chunk's own account (`rows::Chunk::held_most`) is now a report
+    in the "chunk size" decision line. One index-room function (`Part::with_index_room`) replaces this branch's
+    `for_writes_indexed`.
+- **Open**:
+  1. While chunks run together, 0435 §4 reads the run's count. Should it read each chunk's own account instead, so
+     two chunks' growth is not taken as one's?
+  2. The device has two LZ4 decoders. The library's `ukl/lz4.h` (a whole block decoded by a group) sits beside the
+     reads' `z_lz4`, which is 0353 step 4b's one decoder. Should the library's go, or be the reads'?
+  3. `<ukl/writer.h>` is 249 KB, every op `UKL_INLINE`; the MSL source it replaces was 192 KB. Measure its compile.
+
+### Q380. `open_tuple` grows faster than its chunk: 0435's bigger chunks cost ep2's cold run 35%
+
+- **Seen** (roll-up 8, ep2 cold, profiled, on M3 at load 20-50; 1,334 rows, 0 differing each time):
+
+  | Build | Chunks | `open_tuple` | Cold |
+  |---|---|---|---|
+  | Roll-up 7 | 32 | 14.9 s CPU, 22 runs | 1,391 G |
+  | Roll-up 8, 0435's sizing | 14 | 55.2 s CPU, 6 runs | 1,877 G |
+  | Roll-up 8, `RERAIL_CHUNK_NODES=32768` | 19 | 31.0 s CPU, 8 runs | 1,569 G |
+
+  Warm runs are unchanged at 52.5-56.8 G. A run of the stratum costs about 0.7 s at roll-up 7's chunks and 9 s at
+  0435's, so its join is superlinear in the chunk's nodes. `rr_agg321` (10.4 s) and `pre_688` (4.1 s) are new in the
+  top spans too.
+- **Do**: find what in `open_tuple`'s plan grows with the chunk's square (a cross product of the chunk's tuples, or an
+  index the planner skips at the bigger size), and fix its shape. 0435's sizing is a user decision: it stays.
+
+### Q381. Roll-up 9 (Parser-generators-final-shape onto rr-align): what the merge chose
+
+- **Seen** (merge of 6da4cd4692e; the branch has moved on to 9fc4ad9c22, and the roll-up keeps the pinned commit):
+  - Both sides renumbered the same four decisions. This branch had them as 0411, 0412, 0402 and 0403. Theirs had
+    them as 0452–0455, after taking 0402 and 0403 for the kept facts and the proven reads; this branch numbers those
+    0456 and 0463. Theirs' new decisions 0417, 0418, 0420, 0421, 0423 and 0428 collide with nothing here.
+- **Done**:
+  - This branch's numbers stay. Every citation theirs made was mapped: 0452 → 0411, 0453 → 0412, 0454 → 0402 and
+    0455 → 0403. Theirs' copies of the four files are gone, and the README rows are this branch's, with theirs' six
+    new rows added.
+  - In the code, each side's change is kept. From theirs: step 5b's end of the stream (`Next` past the count, no
+    `AtEnd`), in this branch's 0407 token-mark test too; 0418's hoisted constants beside this branch's
+    `forward(exits, arm_rules)`; `tier1_agrees` given `made` and `lazy` once a ladder, inside this branch's
+    `check_documents`; the regions read as `parse_string` ahead of time, without the one-extra refusal this branch
+    lifted. From this branch: 0413's cut on a rule's last; the run's compile options (0442) in place of theirs'
+    `OPTIMIZE_TIER2`.
+  - Format 16's tier 2 module is one code arena (`cut.near || sixteen`, `rerail_clif::jit::CODE_RESERVE`). The tape
+    writer's ops call each other directly (`writer::define_ops`), so two chunks of the default provider could lie
+    past a `bl`'s reach. Theirs' new `ladder_steps_rust_tapes_are_the_jits` panicked there once in three runs
+    (`compiled_blob`'s `Arm64Call`), and it has passed since.
+  - The AOT crates' build scripts and `kotlin_aot::aot` compile in a run of their own. They still stored to the
+    statics 0442 had removed, a break that only `--features generated` showed. Without a run, `options()` is a fresh
+    value each call, so the IR was not kept ("tier 1: no entry"). `aot`'s flags now end with its run, and the
+    restore of `bit_test` is gone.

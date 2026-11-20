@@ -61,8 +61,8 @@ pub trait Backing: Send + Sync {
     fn base(&self) -> *mut u8;
     fn len(&self) -> usize;
     /// The device buffer over the whole of it, made once by its owner.
-    #[cfg(target_os = "macos")]
-    fn buffer(&self) -> Option<metal::Buffer> {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn buffer(&self) -> Option<rerail_device::device::Buffer> {
         None
     }
 }
@@ -112,8 +112,8 @@ pub struct Block {
     was_free_listed: bool,
     /// The device buffer this block is read through, kept: a buffer's first use maps it into the GPU's address
     /// space at about 20 ms a GiB (0266 §12), so it is made once and remade only when the block outgrows it.
-    #[cfg(target_os = "macos")]
-    gpu: std::sync::Mutex<Option<(metal::Buffer, usize)>>,
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    gpu: std::sync::Mutex<Option<(rerail_device::device::Buffer, usize)>>,
 }
 
 unsafe impl Send for Block {}
@@ -170,7 +170,7 @@ impl Block {
             dirty,
             free: 0,
             was_free_listed: false,
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             gpu: std::sync::Mutex::new(None),
         }
     }
@@ -381,38 +381,43 @@ impl Block {
     /// Lets go of the no-copy wrap `gpu_buffer` kept; the device must be done with it. It does not let the OS write
     /// back a file block's pages a kernel wrote: the driver holds them wired until the range is unmapped (decision
     /// 0295 §1 and §7, measured by `examples/deferrable`).
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub fn release_gpu_buffer(&self) {
         self.gpu.lock().unwrap().take();
     }
 
-    /// The device buffer to bind this block with: its slab's own, or a no-copy wrap of its used extent made once
-    /// and kept (remade, twice as long, only when the block has outgrown it).
-    #[cfg(target_os = "macos")]
-    pub fn gpu_buffer(&self, device: &metal::DeviceRef) -> metal::Buffer {
+    /// The device buffer to bind this block with: its slab's own, or a wrap of its used extent in place
+    /// (`rerail_device::device::wrap_host_memory`: no copy, decision 0353) made once and kept (remade, twice as long,
+    /// only when the block has outgrown it).
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub fn device_buffer(&self, device: &rerail_device::device::Device) -> Result<rerail_device::device::Buffer, String> {
         if let Some(b) = self.backing.as_ref().and_then(|b| b.buffer()) {
-            return b;
+            return Ok(b);
         }
         let mut kept = self.gpu.lock().unwrap();
         let used = self.used();
         if let Some((b, len)) = kept.as_ref()
             && *len >= used
         {
-            return b.clone();
+            return Ok(b.clone());
         }
         let len = kept.as_ref().map_or(1 << 20, |k| k.1 * 2).max(used.div_ceil(1 << 20) << 20).min(self.reserved);
         // A measurement aid: `RERAIL_DEVICE_TRACE` prints where a block of 4 MB or more is wrapped for the device.
         if len >= 4 << 20 && std::env::var_os("RERAIL_DEVICE_TRACE").is_some() {
-            eprintln!("RERAIL_DEVICE_TRACE a block wrapped, {} MB (driver {} MB):\n{}", len >> 20, device.current_allocated_size() >> 20, std::backtrace::Backtrace::force_capture());
+            eprintln!("RERAIL_DEVICE_TRACE a block wrapped, {} MB:\n{}", len >> 20, std::backtrace::Backtrace::force_capture());
         }
-        let b = device.new_buffer_with_bytes_no_copy(
-            self.base as *const std::ffi::c_void,
-            len as u64,
-            metal::MTLResourceOptions::StorageModeShared,
-            None,
-        );
+        // SAFETY: the block's pages outlive the wrap: it is kept by the block, and let go before they are unmapped.
+        let b = unsafe { rerail_device::device::wrap_host_memory(device, self.base, len)? };
         *kept = Some((b.clone(), len));
-        b
+        Ok(b)
+    }
+
+    /// `device_buffer` for the engine's Metal kernels not yet on the device layer (decision 0440 step C moves each
+    /// with its kernel): the block's buffer as Metal's.
+    #[cfg(target_os = "macos")]
+    pub fn gpu_buffer(&self, device: &metal::DeviceRef) -> metal::Buffer {
+        let b = self.device_buffer(&rerail_device::device::Device::Native(device.to_owned())).unwrap_or_else(|e| panic!("a block's device buffer: {e}"));
+        b.metal().expect("a block bound to a Metal kernel has a Metal buffer").clone()
     }
 
     fn init(&self, kind: u32) {
@@ -573,7 +578,7 @@ impl Block {
             // Whole MBs, and never under a device buffer made over it (`gpu_buffer`'s extent).
             #[allow(unused_mut)]
             let mut keep = round_up(len.max(1 << 20), 1 << 20);
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             if let Some((_, l)) = self.gpu.lock().unwrap().as_ref() {
                 keep = keep.max(*l);
             }

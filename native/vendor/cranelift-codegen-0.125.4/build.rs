@@ -29,6 +29,9 @@ fn main() {
     // This build has the `clmul` instruction: a dependent's build script reads
     // `DEP_CRANELIFT_CODEGEN_CLMUL` (the package's `links` key) to use it.
     println!("cargo:clmul=1");
+    // And the `preserve_most` calling convention (`CallConv::PreserveMost`):
+    // `DEP_CRANELIFT_CODEGEN_PRESERVE_MOST`.
+    println!("cargo:preserve_most=1");
 
     let out_dir = env::var("OUT_DIR").expect("The OUT_DIR environment variable must be set");
     let out_dir = std::path::Path::new(&out_dir);

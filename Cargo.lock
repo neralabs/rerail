@@ -3159,7 +3159,10 @@ dependencies = [
  "rayon",
  "rerail-blocks",
  "rerail-context",
+ "rerail-device",
  "rerail-forest",
+ "rerail-gpu",
+ "rerail-ukl",
  "rustc-hash",
  "sha2 0.10.9",
 ]
@@ -3174,6 +3177,8 @@ dependencies = [
  "rayon",
  "rerail-blocks",
  "rerail-context",
+ "rerail-device",
+ "rerail-ukl",
 ]
 
 [[package]]
@@ -3268,6 +3273,17 @@ dependencies = [
  "rerail-css-lean",
  "rerail-simd8",
  "rerail-tape-format",
+]
+
+[[package]]
+name = "rerail-device"
+version = "0.1.0"
+dependencies = [
+ "block",
+ "libc",
+ "metal",
+ "objc",
+ "rerail-ukl",
 ]
 
 [[package]]
@@ -3408,6 +3424,7 @@ dependencies = [
  "rerail-ecma-lean",
  "rerail-facts",
  "rerail-go-lean",
+ "rerail-gpu",
  "rerail-html-lean",
  "rerail-java-lean",
  "rerail-kotlin-lean",
@@ -3540,11 +3557,12 @@ name = "rerail-forest"
 version = "0.1.0"
 dependencies = [
  "block",
- "cc",
  "libc",
  "metal",
  "objc",
  "rayon",
+ "rerail-gpu",
+ "rerail-ukl",
  "sha2 0.10.9",
 ]
 
@@ -3556,6 +3574,20 @@ dependencies = [
  "rerail-simd8",
  "rerail-tape-format",
  "unicode-ident",
+]
+
+[[package]]
+name = "rerail-gpu"
+version = "0.1.0"
+dependencies = [
+ "block",
+ "libc",
+ "lz4-sys",
+ "metal",
+ "objc",
+ "rerail-blocks",
+ "rerail-device",
+ "rerail-ukl",
 ]
 
 [[package]]
@@ -3592,6 +3624,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "rerail-compiler",
+ "rerail-context",
  "rerail-kotlin-aot",
  "rerail-kotlin-lean",
  "rerail-kotlin-parser",
@@ -4234,6 +4267,7 @@ dependencies = [
  "rerail-clif",
  "rerail-compiler",
  "rerail-context",
+ "rerail-device",
  "rerail-metal",
  "rerail-prof",
  "serde",
@@ -4245,11 +4279,13 @@ name = "rerail-parser-tests"
 version = "0.1.0"
 dependencies = [
  "bitlex",
+ "libc",
  "rerail-compiler",
  "rerail-context",
  "rerail-metal",
  "rerail-parser-tests",
  "rerail-rr-syntax",
+ "rerail-tape-format",
  "tree-sitter",
  "tree-sitter-json",
 ]
@@ -4680,8 +4716,8 @@ version = "0.1.0"
 dependencies = [
  "lz4-sys",
  "memchr",
- "metal",
  "rerail-clif",
+ "rerail-gpu",
  "rerail-simd8",
  "rerail-tape-format",
  "sha2 0.10.9",
@@ -4756,6 +4792,15 @@ dependencies = [
  "unicode-normalization",
  "windows-sys 0.61.2",
  "zstd",
+]
+
+[[package]]
+name = "rerail-ukl"
+version = "0.1.0"
+dependencies = [
+ "rerail-c-lean",
+ "rerail-c-pp",
+ "rerail-ukl",
 ]
 
 [[package]]

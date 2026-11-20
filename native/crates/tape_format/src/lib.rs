@@ -26,9 +26,10 @@ mod generated_reads;
 /// The tape's writer's ops as Rust, from CLIF (decision 0434 §6): `rerail_clif::writer::rust_source`.
 mod generated_writer;
 
-/// The writer's ops as MSL (decision 0434 §6, R15), generated from their CLIF (`rerail_clif::writer::msl_source`):
-/// a kernel that writes a tape includes it. Each op takes the region's buffer and the state's offset in it.
-pub const WRITER_MSL: &str = include_str!("writer.metal");
+
+/// The writer's ops as Rust source (`generated_writer`, the host's own): a tier 2 generated ahead of time that writes
+/// format 16 holds it as a module of its own and calls the ops at its node words (`rerail_compiler::rust_stream`).
+pub const WRITER_RUST: &str = include_str!("generated_writer.rs");
 
 pub const MAGIC: &[u8; 8] = b"TMPTAP9N";
 /// 10: supertype memberships folded into the codes; 11: columns aligned (`COLUMN_ALIGN`); 12:

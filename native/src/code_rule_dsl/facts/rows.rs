@@ -1052,16 +1052,6 @@ impl Part {
         Ok(part)
     }
 
-    /// Stores row `id`'s value `v` in column `c`.
-    ///
-    /// # Safety
-    /// Row `id` is within the rows reserved, and no reader reads it until it is claimed (`written`).
-    #[inline]
-    pub unsafe fn put(&self, id: u32, c: usize, v: i64) {
-        // SAFETY: as the caller says.
-        unsafe { self.rel().rows.put(id, c, v) }
-    }
-
     /// How long its rows live: the blocks it is in.
     /// Whether nothing else holds its relation (no other part, reader or borrowed array of it).
     pub fn is_unique(&self) -> bool {
@@ -1119,12 +1109,13 @@ impl Part {
     /// A relation of `k` columns living `life` long, room for `rows` rows alone in a block, and past them for
     /// `indexes` indexes of its own over its rows, one for each key its readers probe it by (`Rows::with_index_room`'s
     /// part; an axis's, by `n` and by `a`, decision 0353 step 5): a key past them copies the relation
-    /// (`DevIndex::moved`). The room is the block's address space: its pages are taken as an index is written.
+    /// (`DevIndex::moved`). The room is the block's address space: its pages are taken as an index is written. Not
+    /// leased from the device's budget.
     pub fn with_index_room(life: Life, k: usize, rows: usize, indexes: usize) -> Part {
         let cap = rows.next_power_of_two().max(1);
-        let index = 4 * (cap + 1) + 4 * rows.max(1) + 64;
-        let extra = indexes.max(1) * index + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64;
-        Part::try_new_with(life, k, rows, extra, false).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"))
+        let one = 4 * (cap + 1) + 4 * rows.max(1) + 3 * 64;
+        let room = indexes.clamp(1, rerail_blocks::relation::ADDED_INDEXES) * one + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>();
+        Part::try_new_with(life, k, rows, room, false).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"))
     }
 
     /// `for_writes` alone in a block with `room` bytes past its rows' (decision 0384 step 5): a relation the device
@@ -1172,6 +1163,17 @@ impl Part {
     /// the relation's chunks as the part does.
     pub fn in_block(&self, rows: u32) -> InBlock {
         InBlock { facts: self.facts.clone(), at: self.rel_at(), rows, dead: 0, kills: None, part: Some(self.clone()) }
+    }
+
+    /// Row `i`'s value in column `c` written where it lies: a derived value put in its place (a device fold's text
+    /// made its symbol, an axis's ids as the host writes them).
+    ///
+    /// # Safety
+    /// Row `i` is reserved, and no reader or other writer touches it meanwhile.
+    pub unsafe fn put(&self, i: u32, c: usize, v: i64) {
+        debug_assert!(!self.capped(), "a capped part is never written");
+        // SAFETY: the caller's.
+        unsafe { self.rel().rows.put(i, c, v) };
     }
 
     /// Its rows' descriptor's offset in its block: what a writer's `rows_at` takes.

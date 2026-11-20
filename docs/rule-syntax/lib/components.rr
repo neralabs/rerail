@@ -58,8 +58,10 @@ rr_cx_own(d) :- doc(d, _, _).
 // so the host's digest covers it, and rows about either name the other's nodes: they share a component.
 .decl rr_cx_guest(g: number, h: number)
 rr_cx_guest(g, h) :- guest(g, h, _, _).
-// A program that reads guests through `parsed` (T's shape, as calls.rr does) may have no `guest` rows.
-rr_cx_guest(g, h) :- parsed(s, _, r), docof(s, h), docof(r, g), g != h.
+// A program that reads guests through `parsed` (T's shape, as calls.rr does) may have no `guest` rows. A tape value
+// (decision 0431: a string a rule parses) is no file's (no `doc` row) and joins none: one tape is every file's that
+// holds its text, and a function of that text alone.
+rr_cx_guest(g, h) :- parsed(s, _, r), docof(s, h), docof(r, g), g != h, doc(g, _, _).
 
 // d depends on e.
 // Stored (decision 0099, priced by the recursion's delta plans): unfolded into rr_cx_reach's recursion, each new

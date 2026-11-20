@@ -593,6 +593,11 @@ fn lowered_clauses_find_the_same_roots_on_the_resident_interpreter() {
                     refused += 1;
                     eprintln!("  refused {policy}/{clause}: {error:?}");
                 }
+                (Ok(cpu), Ok(metal)) => {
+                    // Where they part: each side's count, and the first root that differs.
+                    let at = cpu.iter().zip(&metal).position(|(a, b)| a != b);
+                    differ.push(format!("{policy}/{clause}: cpu {} roots, metal {}, first differing at {at:?}: cpu {:?}, metal {:?}", cpu.len(), metal.len(), at.map(|i| &cpu[i]), at.map(|i| &metal[i])));
+                }
                 (cpu, metal) => differ.push(format!("{policy}/{clause}: cpu {:?}, metal {:?}", cpu.as_ref().err(), metal.as_ref().err())),
             }
         }
@@ -1633,7 +1638,7 @@ fn micro_walks_are_the_interpreters_label_outputs() {
 
 /// Whether a walk's first move, reached from its start through saves, forks and jumps only, is `after` with a tail
 /// that marks the start alone (tests, a `load` and its tests, a capture, the emit): the shape the device answers once
-/// for a parent's children (`metal_label_passes.metal`'s `sibling_pass`, work queue Q182).
+/// for a parent's children (`label_passes.uglykl`'s `sibling_pass`, work queue Q182).
 #[cfg(target_os = "macos")]
 fn sibling_shape(words: &[u32]) -> bool {
     let (mut pc, mut seen) = (0, 0);

@@ -6,6 +6,8 @@ the same linear data"; "it must be clear EVERYWHERE that blocks NEVER get copied
 "What it replaces". Follows 0140 (the tape is the engine's bytes), 0266 (blocks), 0293 (one tape API, read in place),
 0310 (reads written once, three backends) and 0325 (relations are blocks).
 
+Amended between memory domains by 0440 §7.2 (the user, 2026-11-18): within one domain (a host's RAM and its unified GPUs) this holds as written; between domains (a discrete GPU's memory, another host) a block is copied as the same bytes, never into another data structure, and the engine keeps the copies coherent.
+
 ## Intro
 
 **The problem.** The engine holds its data in blocks: each document's tape, and every relation the rules derive
@@ -492,8 +494,8 @@ Each step ends with:
        - The tape crate's `F16Z` still decodes with `lz4_sys` into its thread's two blocks, then reads them with the
          generated format 16 reads: the same block, decoded by a second decoder. Built once (f9451f0dd: `tape_lz4`,
          the CLIF decoder translated by the Rust backend, its slot's loads bounded by the decoder) and taken out
-         again the same day: decision 0426 (the Oscar worktree) rewrites 16z as four pieces a block, and this
-         branch stays off the 16 and 16z paths until it lands. The one decoder is redone on 0426's form then.
+         again the same day: decision 0434 (the Oscar worktree) rewrites 16z as four pieces a block, and this
+         branch stays off the 16 and 16z paths until it lands. The one decoder is redone on 0434's form then.
        - The device's views read a 16z batch in place (2026-11-18; `views.refused.z_on_device` gone): the join
          kernels include the reads with the 16z case (`metal_tape_reads_z.metal`); a batch whose tapes are 16z
          gets one cache (`device_chunk::zcache_spec`), which every stage that reads its views shares, resident
@@ -686,7 +688,7 @@ Each step ends with:
        cut: containment's room 8 rows a node), it filled the budget: refusals rose from 5–38 to 23–52 a run.
      - On the device: `axis_count` and the scan (one submission), the total read, then `axis_write` writes each row's
        two ids (`global_of`) through `view_put`, the writer written once, bounded by the relation's chunks
-       (decision 0427). The starts (node row → first row) stay in the chunk; on the CPU, a vector beside the
+       (decision 0463). The starts (node row → first row) stay in the chunk; on the CPU, a vector beside the
        relation.
      - On the CPU: the climb counts, then writes `batch.id` of each side into the same kind of relation.
      - Every reader reads it in place: `value` and `documents_of` through `Part::get`, the device through

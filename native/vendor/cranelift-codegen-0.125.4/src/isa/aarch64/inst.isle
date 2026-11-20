@@ -3914,6 +3914,14 @@
       (amode ty (stack_addr slot offset1) offset2)
       (AMode.SlotOffset
        (abi_stackslot_offset_into_slot_region slot offset1 offset2)))
+;; A base that is the pinned register (rerail's patch): it is read in place, as
+;; `sp` is, not moved out to a register of its own first.
+(rule 4 (amode ty (get_pinned_reg) offset)
+        (if-let simm9 (simm9_from_i64 offset))
+        (AMode.Unscaled (preg_to_reg (preg_pinned)) simm9))
+(rule 5 (amode ty (get_pinned_reg) offset)
+        (if-let uimm12 (uimm12_scaled_from_i64 offset ty))
+        (AMode.UnsignedOffset (preg_to_reg (preg_pinned)) uimm12))
 
 (decl amode_no_more_iconst (Type Value i32) AMode)
 ;; Base case: move the `offset` into a register and add it to `val` via the

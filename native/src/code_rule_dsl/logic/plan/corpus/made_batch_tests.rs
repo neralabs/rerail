@@ -81,7 +81,7 @@ fn r4_a_text_test_has_no_version_after_an_edit() {
     let mut unversioned = BTreeSet::new();
     for (i, (file, body)) in edits.iter().enumerate() {
         c.write(file, body);
-        // The run's scope, which the corpus run joins: its decisions are the run's (decision 0442).
+        // The run resets the profile as it starts; the test's scope keeps its records after (decision 0442).
         let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         profile::set(true);
         profile::take_decisions();
@@ -104,7 +104,7 @@ fn r5_the_documents_counts_are_kept_and_given_to_the_corpus_batch() {
     use crate::code_rule_dsl::logic::profile;
     let mut c = Corpus::new("r5");
     let row_space = |c: &mut Corpus, store: &str| {
-        // The run's scope, which the corpus run joins: its decisions are the run's (decision 0442).
+        // The run resets the profile as it starts; the test's scope keeps its records after (decision 0442).
         let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         profile::set(true);
         profile::take_decisions();
@@ -154,7 +154,7 @@ fn r6_an_edit_reads_no_base_relation_through() {
     let cold = shown(&mut c, "kept.sqlite");
     assert!(!cold.is_empty(), "the corpus exercises the joins");
     c.write("a.py", "def foo(x, y):\n    w = x\n    return w\n\ndef bar():\n    pass\n");
-    // The run's scope, which the corpus run joins: its decisions are the run's (decision 0442).
+    // The run resets the profile as it starts; the test's scope keeps its records after (decision 0442).
     let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     profile::set(true);
     profile::take_decisions();
@@ -184,7 +184,7 @@ fn r6_an_edit_counts_no_kept_statistic_again() {
     ];
     for (i, (file, body)) in edits.iter().enumerate() {
         c.write(file, body);
-        // The run's scope, which the corpus run joins: its decisions are the run's (decision 0442).
+        // The run resets the profile as it starts; the test's scope keeps its records after (decision 0442).
         let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         profile::set(true);
         profile::take_decisions();

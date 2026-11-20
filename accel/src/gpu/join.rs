@@ -95,13 +95,15 @@ pub fn gpu_seconds(command: &CommandBufferRef) -> f64 {
     (end - start).max(0.0)
 }
 
-/// Why a failed command buffer failed: its error's description and code, once per process for each description
-/// (a wave's strata are refused to the CPU with no more than `BackendFailure` otherwise).
+/// Why a failed command buffer failed: its error's description and code, once a run for each description (a wave's
+/// strata are refused to the CPU with no more than `BackendFailure` otherwise).
 #[allow(unexpected_cfgs)]
 pub fn say_failure(command: &CommandBufferRef) {
     use objc::runtime::Object;
     use objc::{msg_send, sel, sel_impl};
-    static SAID: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    /// The descriptions said: the run's own (decision 0442).
+    #[derive(Default)]
+    struct Said(std::sync::Mutex<Vec<String>>);
     // SAFETY: `error` is an NSError or nil; its description an NSString, read as UTF-8 while the error lives.
     let why = unsafe {
         let error: *mut Object = msg_send![command, error];
@@ -115,22 +117,28 @@ pub fn say_failure(command: &CommandBufferRef) {
             format!("{text} (code {code})")
         }
     };
-    let mut said = SAID.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if !said.contains(&why) {
-        eprintln!("rerail: a command buffer the GPU failed: {why}");
-        said.push(why);
-    }
-}
-
-/// A Metal library, function or pipeline that does not compile is fatal (decision 0382): the run stops, naming the
-/// kernel and the compiler's message, and no caller runs another path (the CPU's) on it.
-#[track_caller]
-pub fn compile_failed(name: &str, what: &str, error: impl std::fmt::Display) -> ! {
-    panic!("Metal: the {what} of `{name}` does not compile (decision 0382: fatal): {error}")
+    rerail_context::with_local::<Said, _>(|said| {
+        let mut said = said.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !said.contains(&why) {
+            eprintln!("rerail: a command buffer the GPU failed: {why}");
+            said.push(why);
+        }
+    });
 }
 
 /// The threads of a join kernel's group: every dispatch's (`Pass::dispatch*`).
 pub const GROUP: u64 = 256;
+
+/// A join pipeline that cannot run a group of `GROUP` threads (its registers allow fewer) is not made: as one that
+/// does not compile, the run stops (decision 0382), and no caller runs another path on it. A dispatch past its most
+/// is undefined.
+fn held_to_group(name: &str, pipe: ComputePipelineState) -> ComputePipelineState {
+    let most = pipe.max_total_threads_per_threadgroup();
+    if most < GROUP {
+        panic!("Metal: the pipeline of `{name}` does not compile (decision 0382: fatal): at most {most} threads a group, its dispatches' {GROUP}");
+    }
+    pipe
+}
 
 /// `name` of `source` on the shared device: through the store of compiled kernels (decision 0395).
 pub fn compile(source: &str, name: &str) -> Result<ComputePipelineState, String> {
@@ -157,15 +165,7 @@ pub fn scratch_set(set: usize) -> usize {
 pub fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> Result<ComputePipelineState, String> {
     shared::pipeline(&format!("join {variant} {name}"), || {
         device()?;
-        let pipe = super::kernels::pipeline_fixed(&source(), name, None);
-        // Every dispatch of a join kernel is of groups of 256 threads: a kernel whose registers allow fewer cannot run
-        // them (a dispatch past its most is undefined). Such a pipeline does not compile, and the run stops (decision
-        // 0382): no caller runs another path on it.
-        let most = pipe.max_total_threads_per_threadgroup();
-        if most < GROUP {
-            compile_failed(name, "pipeline", format!("at most {most} threads a group, its dispatches' {GROUP}"));
-        }
-        Ok(pipe)
+        Ok(held_to_group(name, super::kernels::pipeline_fixed(&source(), name, None)))
     })
 }
 
@@ -2207,5 +2207,115 @@ mod host_costs {
                 probe_gpu / runs as f64 * 1e6
             );
         }
+    }
+}
+
+/// Decision 0440 step 5's speed gate: the UKL library's scan and radix sort (`rerail_gpu::library`), on Metal, against
+/// this lane's own kernels on the same input: GPU time of the command buffer, warmed, the median of nine runs taken in
+/// turn. A measurement: `--ignored`.
+#[cfg(test)]
+mod library_speed {
+    use super::*;
+    use rerail_gpu::device::ComputeQueue;
+    use rerail_gpu::kernels::{alloc, buffer_of};
+    use rerail_gpu::library::{radix_sort_pairs, scan_exclusive_u32};
+
+    fn median(mut v: Vec<f64>) -> f64 {
+        v.sort_by(f64::total_cmp);
+        v[v.len() / 2]
+    }
+
+    /// The lane's time and the library's, in ms, of `lane` and `lib` (each returns its GPU seconds).
+    fn race(what: &str, mut lane: impl FnMut() -> f64, mut lib: impl FnMut() -> f64) -> (f64, f64) {
+        for _ in 0..3 {
+            lane();
+            lib();
+        }
+        let (mut a, mut b) = (Vec::new(), Vec::new());
+        for _ in 0..9 {
+            a.push(lane());
+            b.push(lib());
+        }
+        let (a, b) = (median(a) * 1e3, median(b) * 1e3);
+        eprintln!("{what}: lane {a:.3} ms, UKL library {b:.3} ms ({:.2}x)", b / a);
+        (a, b)
+    }
+
+    #[test]
+    #[ignore = "a measurement"]
+    fn the_library_is_no_slower_than_the_lane() {
+        let shared = rerail_gpu::shared::get().expect("a Metal device");
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+
+        // A scan of 16M values.
+        let n = 1usize << 24;
+        let vals: Vec<u32> = (0..n).map(|_| (next() % 7) as u32).collect();
+        let data = Held::of(vals.iter().copied()).unwrap();
+        let lane_scan = Scan::owned(n).unwrap();
+        let (inb, out) = (buffer_of(&vals).unwrap(), alloc::<u32>(n + 1).unwrap());
+        let (a, b) = race(
+            "scan of 16M u32",
+            || {
+                let command = queue().unwrap().new_command_buffer().to_owned();
+                let pass = Pass::new(&command);
+                lane_scan.encode(&pass, &data.buffer).unwrap();
+                pass.end();
+                command.commit();
+                command.wait_until_completed();
+                gpu_seconds(&command)
+            },
+            || {
+                let mut q = ComputeQueue::new(&shared.queue);
+                scan_exclusive_u32(&q, &inb, &out, n as u32).unwrap();
+                let e = q.flush();
+                e.await_().unwrap();
+                e.gpu_seconds()
+            },
+        );
+        assert!(b <= a * 1.1, "the library's scan is slower than the lane's");
+
+        // A radix sort of 4M 32-bit keys with their rows: four passes of histogram, scan and scatter each.
+        let n = 1usize << 22;
+        let keys: Vec<u32> = (0..n).map(|_| next() as u32).collect();
+        let rows: Vec<u32> = (0..n as u32).collect();
+        let [_, hist, scatter, ..] = sort_pipes(Width::W32).unwrap();
+        let (ka, kb) = (Held::of(keys.iter().copied()).unwrap(), Held::new(4 * n).unwrap());
+        let (ia, ib) = (Held::of(rows.iter().copied()).unwrap(), Held::new(4 * n).unwrap());
+        let tiles = n.div_ceil(TILE);
+        let histogram = Held::new(4 * 256 * tiles).unwrap();
+        let hscan = Scan::owned(256 * tiles).unwrap();
+        let (lk, lv) = (buffer_of(&keys).unwrap(), buffer_of(&rows).unwrap());
+        let (tk, tv) = (alloc::<u32>(n).unwrap(), alloc::<u32>(n).unwrap());
+        let (a, b) = race(
+            "radix sort of 4M u32 keys and rows",
+            || {
+                let command = queue().unwrap().new_command_buffer().to_owned();
+                let pass = Pass::new(&command);
+                for p in 0..4u32 {
+                    let (ki, ii, ko, io) = if p % 2 == 0 { (&ka, &ia, &kb, &ib) } else { (&kb, &ib, &ka, &ia) };
+                    pass.run(&hist, &[&ki.buffer, &histogram.buffer], &[n as u32, 8 * p], &[], tiles);
+                    hscan.encode(&pass, &histogram.buffer).unwrap();
+                    pass.run(&scatter, &[&ki.buffer, &ii.buffer, &histogram.buffer, &ko.buffer, &io.buffer], &[n as u32, 8 * p], &[], tiles);
+                }
+                pass.end();
+                command.commit();
+                command.wait_until_completed();
+                gpu_seconds(&command)
+            },
+            || {
+                let mut q = ComputeQueue::new(&shared.queue);
+                radix_sort_pairs::<u32>(&q, &lk, &lv, &tk, &tv, n as u32, 32).unwrap();
+                let e = q.flush();
+                e.await_().unwrap();
+                e.gpu_seconds()
+            },
+        );
+        assert!(b <= a * 1.1, "the library's sort is slower than the lane's");
     }
 }

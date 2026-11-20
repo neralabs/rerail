@@ -35,6 +35,11 @@ impl Block {
         self.lease.buffer()
     }
 
+    /// The block's buffer in the device layer (decision 0440 step C), on any backend.
+    pub fn device_buffer(&self) -> &rerail_device::device::Buffer {
+        self.lease.device_buffer()
+    }
+
     pub fn host(&self) -> *mut u8 {
         self.lease.host()
     }

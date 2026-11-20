@@ -1,0 +1,59 @@
+// A wave's node sets on the device (decision 0024 §1): slots over the wave's node space in one
+// buffer, each file's nodes from a word boundary (`FileWords`), so a file's words are its own.
+// The whole program is one dispatch (list step 13): a threadgroup per file runs every step over
+// the file's words, a barrier between steps, so a step sees the last (metal_set_steps.rs).
+#include <ukl/backend.h>
+
+typedef struct ProgramArgs { uint32_t steps, words, files, pad; } ProgramArgs;
+UKL_REFLECT_STRUCT(ProgramArgs, steps, words, files, pad)
+
+// `steps`: four words a step: op (0 clear, 1 every node, 2 copy, 3 or, 4 and, 5 and-not, 6 within), out, a, b.
+// `files`: four words a file: its first word in a slot, its words, its nodes, unused.
+DEFINE_KERNEL2(set_steps, set_program,
+               RWBUFFER, uint64_t,    values, "[p.words * slots]",
+               ARGS,     ProgramArgs, p,      ,
+               ROBUFFER, uint32_t,    steps,  "[4 * p.steps]",
+               ROBUFFER, uint32_t,    files,  "[4 * p.files]",
+               SHARED,   uint32_t,    any,    1,
+               TGID0,    uint32_t,    file,   ,
+               LID0,     uint32_t,    lane,   ,
+               LSZ0,     uint32_t,    width,  )
+{
+  if (file >= p.files) return;
+  UKL_GLOBAL const uint32_t* f = files + 4u * file;
+  uint32_t first = f[0], fileWords = f[1], nodes = f[2];
+  for (uint32_t at = 0u; at < p.steps; at++) {
+    UKL_GLOBAL const uint32_t* s = steps + 4u * at;
+    uint32_t op = s[0];
+    UKL_GLOBAL uint64_t* out = values + (uint64_t)s[1] * p.words + first;
+    UKL_GLOBAL const uint64_t* a = values + (uint64_t)s[2] * p.words + first;
+    UKL_GLOBAL const uint64_t* b = values + (uint64_t)s[3] * p.words + first;
+    if (op == 6u) {
+      // `out`'s nodes kept where `a` has a node in the file.
+      if (lane == 0u) any[0] = 0u;
+      ukl_tg_barrier();
+      for (uint32_t w = lane; w < fileWords; w += width) {
+        if (a[w] != 0ul) { any[0] = 1u; break; }
+      }
+      ukl_tg_barrier();
+      if (any[0] == 0u) {
+        for (uint32_t w = lane; w < fileWords; w += width) out[w] = 0ul;
+      }
+    } else {
+      for (uint32_t w = lane; w < fileWords; w += width) {
+        uint64_t value;
+        switch (op) {
+          case 0u: value = 0ul; break;
+          case 1u: { uint32_t left = nodes - w * 64u; value = left >= 64u ? ~(uint64_t)0 : (((uint64_t)1 << left) - 1ul); } break;
+          case 2u: value = a[w]; break;
+          case 3u: value = a[w] | b[w]; break;
+          case 4u: value = a[w] & b[w]; break;
+          case 5u: value = a[w] & ~b[w]; break;
+          default: value = out[w]; break;
+        }
+        out[w] = value;
+      }
+    }
+    ukl_tg_barrier_device();
+  }
+}

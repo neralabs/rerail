@@ -1,6 +1,6 @@
 //! A relation's reads as CLIF functions, written once (decision 0325): what `rerail_blocks`' `Rows` and `Relation`
 //! read, for the host (the Rust backend: the blocks crate's `generated_reads.rs`), the kernels (the MSL backend:
-//! `relation_reads.metal`) and the JIT (inlined where hot).
+//! `<ukl/reads/relation.h>`) and the JIT (inlined where hot).
 //!
 //! A read takes a descriptor's address (a `Rows`, or a `Relation`) and reaches everything else through the block's
 //! self-relative references: a span's items lie `off` bytes from the span's own address, a column's chunk `chunk[k]`

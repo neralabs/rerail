@@ -32,6 +32,13 @@ metal = "0.33.0"
 objc = "0.2.7"
 block = "0.1.6"
 core-foundation-sys = "0.8.7"
+# A kernel that takes UKL's library (the reads written once in CLIF) preprocessed before the Metal front end
+# (`gpu::kernels::msl`, decision 0440 §3.3).
+rerail-ukl = { path = "../native/crates/ukl" }
+# The pool's buffers and the blocks' wraps: the device layer's (decision 0440 step B).
+rerail-device = { path = "../gpu/device" }
+# Kernels on a device other than Metal, compiled from UKL by the device layer (`gpu::kernels::function`, 0440 step C).
+rerail-gpu = { path = "../gpu" }
 
 [build-dependencies]
 cc = "=1.10.0"

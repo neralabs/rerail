@@ -403,8 +403,9 @@ ids(m, x) :- idents(m, x), x != "{ids_edit}".
 const ANNOTATED_OUTPUTS: &[&str] = &["names", "flag_col", "ids"];
 
 /// An edit's chunks of partial hits run its cone alone, and make only the guests the cone can see
-/// (`guests::guests_seen`): an edit of `flagged`, which names no guest and reads no relation an annotation reaches,
-/// makes no annotation guest; one of `names`, which reads them through `parsed`, makes them all. Either way the rows
+/// (decision 0431 §8: a tape value is admitted only as the cone's rules ask for it): an edit of `flagged`, which names
+/// no guest and reads no relation an annotation reaches, admits no annotation; one of `names`, which reads them
+/// through `parsed`, admits them. Either way the rows
 /// are a full run's. Before, every chunk made every guest its entries asked for (27,373 on an edit of ep2, 1.6 s).
 #[test]
 fn a_partial_hit_makes_only_the_guests_its_cone_can_see() {
@@ -422,13 +423,13 @@ fn a_partial_hit_makes_only_the_guests_its_cone_can_see() {
     let program = annotated("n0", "while_statement", "i0");
     let (edited, rows) = run(&dir, &program, ANNOTATED_OUTPUTS);
     assert_eq!(edited.memo_partial, ANNOTATED.len(), "every file is a partial hit");
-    assert!(edited.guests_unseen > 0, "the cone of `flagged` sees no annotation: none is made");
+    // A tape value is made only as a rule of the cone asks for it (decision 0431 §8): no request, none admitted.
+    assert_eq!((edited.values_admitted, edited.guest_parses), (0, 0), "the cone of `flagged` sees no annotation: none is made");
     assert_eq!(rows, fresh("flagged", &program), "the rows of a full run");
     // `names`' edit: its cone reads the annotations.
     let program = annotated("n1", "while_statement", "i0");
     let (edited, rows) = run(&dir, &program, ANNOTATED_OUTPUTS);
     assert_eq!(edited.memo_partial, ANNOTATED.len(), "every file is a partial hit");
-    assert_eq!(edited.guests_unseen, 0, "the cone of `names` reads every annotation");
     assert!(rows[0].iter().any(|r| r[0] == "Foo"), "the annotations' names: {:?}", rows[0]);
     assert_eq!(rows, fresh("names", &program), "the rows of a full run");
     // `ids`' edit: it names no guest, but reads `idents`, which hiding widened to the annotations it copied it for
@@ -441,34 +442,17 @@ fn a_partial_hit_makes_only_the_guests_its_cone_can_see() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Q355: a chunk's batch built again with the guests its slice asked for (decision 0055) takes the rows the round
-/// before made of its files, and makes only the guests': each document's rows are made once. Before, the batch with
-/// guests made every file's rows again (773 of `leg-083-typed`'s 901 files, 0.8 s of its chunks' CPU).
+/// Q355: a chunk's files' rows are made once, whatever guests its rules ask for. Before, the batch with guests was
+/// built again and made every file's rows again (773 of `leg-083-typed`'s 901 files, 0.8 s of its chunks' CPU).
+/// Under decision 0431 an annotation is a tape value admitted in the program's fixpoint: no slice round runs and
+/// the batch never grows (R5, R10), so no file is made twice.
 #[test]
-fn a_batch_built_again_with_guests_makes_its_files_rows_once() {
-    use crate::code_rule_dsl::logic::profile;
+fn a_chunks_files_rows_are_made_once_with_its_guests() {
     let marker = format!("{:?}", std::time::SystemTime::now());
     let dir = corpus("guests-once", &marker, ANNOTATED);
-    // The run's scope, which the corpus run joins: its decisions are the run's (decision 0442).
-    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
-    profile::set(true);
-    profile::take_decisions();
-    let (_, rows) = run(&dir, &annotated("n0", "f0", "i0"), ANNOTATED_OUTPUTS);
-    let made = profile::take_decisions();
-    profile::set(false);
+    let (report, rows) = run(&dir, &annotated("n0", "f0", "i0"), ANNOTATED_OUTPUTS);
     let _ = std::fs::remove_dir_all(&dir);
     assert!(rows[0].iter().any(|r| r[0] == "Foo"), "the annotations' names: {:?}", rows[0]);
-    let said = |title: &str| made.keys().filter(|(t, _)| t == title).map(|(_, x)| x.clone()).collect::<BTreeSet<String>>();
-    let again = said("a batch built again with more documents (Q355)");
-    assert_eq!(again, BTreeSet::from(["the rows of the documents before taken".to_owned()]), "every batch built again takes the rows before");
-    // The batch with guests makes a group of its guests alone: `g of g + 2` documents, not `g + 2 of g + 2`.
-    let groups = said("a batch's documents made by group (decision 0474)");
-    let parse = |x: &str| -> Option<(usize, usize)> {
-        let (made, rest) = x.split_once(" of ")?;
-        Some((made.parse().ok()?, rest.strip_suffix(" documents")?.parse().ok()?))
-    };
-    assert!(
-        groups.iter().filter_map(|x| parse(x)).any(|(made, of)| made > 0 && made + ANNOTATED.len() == of),
-        "a group of the guests alone, the files' rows taken: {groups:?}"
-    );
+    assert_eq!((report.slice_runs, report.batch_grown), (0, 0), "no slice round, no batch grown or built again");
+    assert!(report.values_admitted > 0, "the annotations are values admitted in the fixpoint");
 }

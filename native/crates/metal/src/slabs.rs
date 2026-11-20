@@ -68,9 +68,9 @@ pub fn aligned(length: usize) -> usize {
 pub use rerail_clif::view::TapeView as DocView;
 const _: () = assert!(std::mem::size_of::<DocView>() == 124);
 
-/// The MSL of `DocView`, for the kernels that read documents in place (`metal_tape.metal`).
+/// The MSL of `DocView`, for the kernels that read documents in place (`device_tape.h`).
 pub fn msl() -> String {
-    rerail_clif::view::msl()
+    rerail_clif::view::ukl()
 }
 
 /// A slab: a chunk block over a lease of the pool, and its identity. Its rooms are the block's
@@ -78,8 +78,8 @@ pub fn msl() -> String {
 pub struct Slab {
     pub id: u64,
     block: rerail_blocks::Block,
-    /// The lease's buffer, as kernels bind it (the block's backing's own).
-    buffer: metal::Buffer,
+    /// The lease's buffer, as kernels bind it (the block's backing's own): the device layer's.
+    buffer: rerail_device::device::Buffer,
     /// The languages' code tables placed in it, once each (decision 0336 §7): by key (`Table`), the table's offset
     /// and length.
     tables: Mutex<HashMap<u32, (usize, usize)>>,
@@ -96,14 +96,14 @@ pub struct Table {
 impl Slab {
     /// A slab of at least `bytes`, within the Metal budget.
     fn lease(id: u64, bytes: usize) -> Result<Slab, Error> {
-        // The device first: making it installs the one block policy (decision 0342), without which no block is a
-        // device slab (`alloc::plain` refuses `Device::Must`). A process that leases a slab before anything else
-        // touched the device (the parser crate's tests) had every lease refused as over capacity.
-        let device = crate::METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
+        // The device first, whatever its backend: making it installs the one block policy (decision 0342), without
+        // which no block is a device slab (`alloc::plain` refuses `Device::Must`). A process that leases a slab before
+        // anything else touched the device (the parser crate's tests) had every lease refused as over capacity.
+        let device = crate::lane::device()?;
         // From the one block policy (decision 0342): a device slab, room made within the Metal budget.
         let need = rerail_blocks::alloc::Need { kind: rerail_blocks::block::kind::CHUNK, bytes, writes: rerail_blocks::alloc::Writes::Once, device: rerail_blocks::alloc::Device::Must, ..rerail_blocks::alloc::Need::SLAB };
         let block = rerail_blocks::alloc::block(&need).map_err(|_| Error::BackendCapacity)?;
-        let buffer = block.gpu_buffer(device);
+        let buffer = block.device_buffer(device).map_err(|_| Error::BackendCapacity)?;
         Ok(Slab { id, block, buffer, tables: Mutex::default() })
     }
 
@@ -131,8 +131,13 @@ impl Slab {
         unsafe { std::slice::from_raw_parts(self.host().add(at), len) }
     }
 
-    /// Its buffer, as kernels bind it.
+    /// Its buffer, as Metal's kernels not yet on the device layer bind it (decision 0440 step C moves each).
     pub fn buffer(&self) -> &metal::Buffer {
+        self.buffer.metal().expect("a slab's buffer is Metal's while the residency is")
+    }
+
+    /// Its buffer in the device layer, as UKL kernels bind it on every backend.
+    pub fn device_buffer(&self) -> &rerail_device::device::Buffer {
         &self.buffer
     }
 
@@ -262,7 +267,7 @@ pub struct DocTable {
     /// The cache the batch's 16z documents' reads decode their blocks into (decision 0353 step 4b, `view::cache`),
     /// which each of their views names: none where no tape is 16z. A kernel that reads them makes it resident to
     /// be read and written, and its batch is refused where its failures rose (`cache_failed`).
-    pub cache: Option<metal::Buffer>,
+    pub cache: Option<rerail_device::device::Buffer>,
 }
 
 impl Drop for DocTable {
@@ -277,8 +282,9 @@ impl Drop for DocTable {
 /// A cache for `views`' 16z documents, made on the device, each view pointed at it: its address less the view's
 /// document's (`base` + its `at`: where a kernel's reads take the document), its entry size, its reads checked
 /// (shared). `Some(None)` where no view is 16z; `None` where there is no device to make it on, and then no view may
-/// be read (a 16z view's cache would be its tape's own bytes). Its shape goes to the profile (`zcache.*`).
-pub fn zcache_for(views: &mut [DocView], base: impl Fn(&DocView) -> u64) -> Option<Option<metal::Buffer>> {
+/// be read (a 16z view's cache would be its tape's own bytes): OpenCL 1.2's kernels follow no address a buffer
+/// holds. Its shape goes to the profile (`zcache.*`).
+pub fn zcache_for(views: &mut [DocView], base: impl Fn(&DocView) -> Option<u64>) -> Option<Option<rerail_device::device::Buffer>> {
     use rerail_clif::view::{F16Z_BLOCK, F16Z_FORMAT};
     let z: Vec<usize> = (0..views.len()).filter(|&i| views[i].format == F16Z_FORMAT).collect();
     if z.is_empty() {
@@ -287,12 +293,13 @@ pub fn zcache_for(views: &mut [DocView], base: impl Fn(&DocView) -> u64) -> Opti
     let blocks = z.iter().map(|&i| (views[i].nodes as usize).div_ceil(F16Z_BLOCK as usize)).sum();
     let entry = z.iter().map(|&i| views[i].columns[3] as usize).max().unwrap_or(0);
     let spec = rerail_clif::view::cache::Spec::configured(blocks, entry);
-    let device = crate::METAL_DEVICE.as_ref()?;
-    let cache = device.new_buffer(spec.bytes() as u64, metal::MTLResourceOptions::StorageModeShared);
+    let device = crate::lane::device().ok()?;
+    let cache = rerail_device::device::alloc_uninitialized_array_sync::<u8>(device, spec.bytes());
+    let address = cache.device_address()?;
     // SAFETY: the buffer's bytes, shared with the host, read by no kernel yet.
     spec.init(unsafe { std::slice::from_raw_parts_mut(cache.contents().cast::<u8>(), spec.bytes()) }).expect("a cache's buffer of its size");
     for &i in &z {
-        let rel = cache.gpu_address().wrapping_sub(base(&views[i])) as i64;
+        let rel = address.wrapping_sub(base(&views[i])?) as i64;
         let v = &mut views[i];
         (v.side[0], v.side[1]) = (rel as u32, (rel >> 32) as u32);
         (v.columns[3], v.columns[4]) = (spec.entry_bytes() as u32, 1);
@@ -305,7 +312,7 @@ pub fn zcache_for(views: &mut [DocView], base: impl Fn(&DocView) -> u64) -> Opti
 }
 
 /// A cache's counts in the profile (`zcache.*`; the statistics mode's too, where it is on): when its batch is done.
-pub fn zcache_report(cache: &metal::Buffer) {
+pub fn zcache_report(cache: &rerail_device::device::Buffer) {
     let c = zcache_counts(cache);
     for (name, n) in c.named() {
         rerail_prof::count(name, n as usize);
@@ -313,12 +320,12 @@ pub fn zcache_report(cache: &metal::Buffer) {
 }
 
 /// The failures a cache has counted (no room: a read of its dead entry).
-pub fn zcache_failed(cache: &metal::Buffer) -> u32 {
+pub fn zcache_failed(cache: &rerail_device::device::Buffer) -> u32 {
     zcache_counts(cache).failed
 }
 
 /// A cache's counts once its batch's kernels are done, the cache checked (`Spec::check`, decision 0463).
-fn zcache_counts(cache: &metal::Buffer) -> rerail_clif::view::cache::Counts {
+fn zcache_counts(cache: &rerail_device::device::Buffer) -> rerail_clif::view::cache::Counts {
     // SAFETY: the cache's shared buffer, all of it; its batch's kernels are done.
     rerail_clif::view::cache::Counts::checked(unsafe { std::slice::from_raw_parts(cache.contents().cast::<u8>(), cache.length() as usize) })
 }
@@ -363,8 +370,8 @@ impl DocTable {
         u32::try_from(nodes).ok()?;
         u32::try_from(source).ok()?;
         // A kernel's reads take a document at its block's address plus its `at` (`tape_doc`).
-        let address = block.as_ref().map_or(0, |b| b.buffer().gpu_address());
-        let cache = zcache_for(&mut views, |v| address + u64::from(v.at))?;
+        let address = block.as_ref().map_or(Some(0), |b| b.device_buffer().device_address());
+        let cache = zcache_for(&mut views, |v| Some(address? + u64::from(v.at)))?;
         Some(Self { views, block, nodes, documents, cache })
     }
 }
@@ -800,7 +807,7 @@ mod tests {
     /// that buffer, its rooms zeroed though it holds the last lease's bytes.
     #[test]
     fn an_evicted_slab_is_recycled_and_its_rooms_read_zero() {
-        if crate::METAL_DEVICE.is_none() {
+        if crate::lane::device().is_err() {
             return;
         }
         // The residency is the process's; other tests of this crate admit sources into it too.

@@ -89,7 +89,7 @@ impl AstWave for Wave {
         at: &[Option<&Projected>],
         binding: crate::code_rule_dsl::typing::file_local::Binding,
         atoms: &crate::content_store::atoms::Atoms,
-    ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
+    ) -> StoreResult<Vec<(String, Relation)>> {
         matched(tapes, at, self, binding, atoms)
     }
 }
@@ -179,7 +179,7 @@ fn matched(
     matchers: &Wave,
     binding: crate::code_rule_dsl::typing::file_local::Binding,
     atoms: &crate::content_store::atoms::Atoms,
-) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
+) -> StoreResult<Vec<(String, Relation)>> {
     use crate::code_rule_dsl::logic::profile;
     let _span = profile::span(|| "ast matchers on the transducer".into());
     let Some(wave) = &matchers.wave else { return Ok(Vec::new()) };
@@ -318,7 +318,7 @@ fn matched(
             }
         }
         crate::code_rule_dsl::prof::count("ast.matched", rows as usize);
-        out.push((m.rel.clone(), Arc::new(r) as Arc<dyn Source>));
+        out.push((m.rel.clone(), r));
     }
     Ok(out)
 }

@@ -232,14 +232,14 @@ impl Analysis for Prepared {
             let mut sums: HashMap<&str, Estimate> = HashMap::new();
             let mut all_known = true;
             for &k in &base {
-                match prepare_rule(&mut model, f, &placed.body(k), &scc, &estimated, &mut out) {
+                match prepare_rule(&mut model, f, &layouts, &placed.body(k), &scc, &estimated, &mut out) {
                     Some(e) => sums.entry(placed.body(k).rel(placed.body(k).head())).or_default().add(e),
                     None => all_known = false,
                 }
             }
             if !derive {
                 for &k in &steps {
-                    prepare_rule(&mut model, f, &placed.body(k), &scc, &estimated, &mut out);
+                    prepare_rule(&mut model, f, &layouts, &placed.body(k), &scc, &estimated, &mut out);
                 }
                 continue;
             }
@@ -269,7 +269,7 @@ impl Analysis for Prepared {
                     }
                 }
                 for &k in &steps {
-                    prepare_rule(&mut model, f, &placed.body(k), &scc, &estimated, &mut out);
+                    prepare_rule(&mut model, f, &layouts, &placed.body(k), &scc, &estimated, &mut out);
                 }
             } else if all_known {
                 for n in &names {
@@ -281,8 +281,9 @@ impl Analysis for Prepared {
         }
         Ok(Prepared(out))
     }
-    /// 2: each plan's assumed sizes of the derived relations an estimate sized.
-    const VERSION: u32 = 2;
+    /// 2: each plan's assumed sizes of the derived relations an estimate sized. 3: no plan for a line with a constant
+    /// on a column a `values` fact answers.
+    const VERSION: u32 = 3;
     fn rows(&self, _v: &Version) -> Option<Vec<Row>> {
         Some(self.to_rows())
     }
@@ -368,7 +369,7 @@ impl Estimate {
 /// reads have distinct values, or a comparison), with a recursive rule's deltas: its head's estimate from the plan
 /// (`None` where it is not planned). The rows are the plan's; a head column's distinct values those of the body column
 /// that binds it, at most the rows (one for a constant).
-fn prepare_rule(model: &mut Model, f: super::fields::Fields<'_>, b: &super::body::Body<'_>, scc: &HashMap<&str, usize>, estimated: &HashSet<String>, out: &mut HashMap<u128, PreparedPlan>) -> Option<Estimate> {
+fn prepare_rule(model: &mut Model, f: super::fields::Fields<'_>, layouts: &crate::code_rule_dsl::logic::program_image::layouts::Layouts, b: &super::body::Body<'_>, scc: &HashMap<&str, usize>, estimated: &HashSet<String>, out: &mut HashMap<u128, PreparedPlan>) -> Option<Estimate> {
     let known = |model: &Model, i: usize| -> bool {
         match b.view(i) {
             Lit::Cmp { .. } => true,
@@ -404,6 +405,18 @@ fn prepare_rule(model: &mut Model, f: super::fields::Fields<'_>, b: &super::body
         }
         return None;
     }
+    // A constant on a column a `values` fact answers: the fact gives the column's distinct values, not how many rows
+    // hold this one, and the plan turns on it. PostHog's `param`: `kind($p, #k1025)` (an identifier, 16 % of the
+    // nodes) priced as one kind in 200 led and read 10.4 M rows, where the search, from the kind's frequency, led with
+    // `field($f, #f65559, $ps)` (0.4 %): 253 k. Such a line is planned at run time, from the constant's statistics
+    // (decision 0361 item 5: what no fact answers); its rows still size its head here.
+    let by_values = |i: usize| -> bool {
+        let Lit::Atom(a) = b.view(i) else { return false };
+        b.args(i).iter().enumerate().any(|(c, t)| {
+            matches!(t, TermRef::Int(_) | TermRef::Str(_) | TermRef::Branded(_)) && layouts.of(a.rel()).any(|f| matches!(f, LayoutFact::Values { col, .. } if *col == c))
+        })
+    };
+    let kept = !(0..b.len()).any(by_values);
     let own = scc.get(b.rel(b.head())).copied();
     let deltas: Vec<usize> = (0..b.len()).filter(|&i| matches!(b.view(i), Lit::Atom(a) if !a.neg() && own.is_some() && scc.get(b.rel(a)).copied() == own)).collect();
     let mut whole = None;
@@ -426,7 +439,9 @@ fn prepare_rule(model: &mut Model, f: super::fields::Fields<'_>, b: &super::body
         if first.is_none() {
             whole = Some(rows);
         }
-        out.insert(super::line_key(b, first), PreparedPlan { order, work_per_node: work / NOMINAL_NODES, rows_per_node: rows / NOMINAL_NODES, assumed: assumed.clone() });
+        if kept {
+            out.insert(super::line_key(b, first), PreparedPlan { order, work_per_node: work / NOMINAL_NODES, rows_per_node: rows / NOMINAL_NODES, assumed: assumed.clone() });
+        }
     }
     let rows = whole?.max(1.0);
     let ndv = b

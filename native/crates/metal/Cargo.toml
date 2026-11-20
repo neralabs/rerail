@@ -24,6 +24,8 @@ sha2 = "0.10"
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1.6"
 metal = "0.33.0"
+# A slab's buffer: the device layer's (decision 0440 step C).
+rerail-device = { path = "../../../gpu/device" }
 
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).

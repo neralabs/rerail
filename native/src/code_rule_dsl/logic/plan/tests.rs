@@ -2522,6 +2522,29 @@ fn priced_first_rule(model: &Model, p: &Program) -> (Vec<String>, f64) {
     (order.iter().map(|s| r.body[s.at].to_string()).collect(), work)
 }
 
+/// Work queue Q240: past the step that binds the head's last variable the walk needs one witness, and the search
+/// prices it so, as a fixed order's pricing does. `xk(v) :- m(v, n), l(n, y), c(n, z), k(v)` (a findings key: a
+/// document's nodes by `m`) starts from `k`'s 300 documents, each a row through `m`, `l` and `c`. Priced at `m`'s
+/// fanout by document (3,000), the search took `c`'s every node first: 19 M rows a step in half of PostHog's chunks.
+/// A cross product is not priced so: `k(v), c(n, z)` reads `c` until a row passes the rest, maybe all of it.
+#[test]
+fn the_search_prices_the_steps_past_a_bound_head_as_one_witness() {
+    let p = parse(".decl m(v: number, n: number)\n.decl l(n: number, y: number)\n.decl c(n: number, z: number)\n.decl k(v: number)\n.decl xk(v: number)\nxk(v) :- m(v, n), l(n, y), c(n, z), k(v).\n.output xk\n").unwrap();
+    let mut model = bare_model(&p);
+    for (rel, rows, cols) in [("m", 250_000.0, vec![(300.0, 3_000.0), (250_000.0, 1.0)]), ("l", 250_000.0, vec![(250_000.0, 1.0), (1_000.0, 250.0)]), ("c", 250_000.0, vec![(250_000.0, 1.0), (100.0, 2_500.0)]), ("k", 300.0, vec![(300.0, 1.0)])] {
+        model.stats.card.insert(rel, rows);
+        for (c, (ndv, fan)) in cols.into_iter().enumerate() {
+            model.ndv.insert((rel, c), ndv);
+            model.stats.fan.insert((rel, c), fan);
+        }
+    }
+    model.stats.nodes = 250_000.0;
+    let (order, work) = priced_first_rule(&model, &p);
+    assert!(order[0].starts_with("k("), "the documents lead: {order:?} at {work}");
+    assert!(order[1].starts_with("m("), "then the documents' nodes, not a cross product: {order:?} at {work}");
+    assert!(work < 2_000.0, "a row a document through each step: {work} {order:?}");
+}
+
 /// Decision 0299: `within(n, a)` read from its container yields the container's descendants: the mean size of a
 /// node with children (`Stats::subtree_fan`), not the view's fanout, which is of the lookups made so far.
 #[test]
@@ -3200,6 +3223,7 @@ fn prepared_program() -> crate::code_rule_dsl::logic::front::Program {
            .decl kind2(n: node, k: symbol)\n.input kind2\n.layout kind2 key(n) size(per n) values(k, kinds)\n\
            .decl part(x: number, y: number)\n.input part\n\
            .decl o(c: node, k: symbol)\n.output o\no(c, k) :- child2(p, c, _), kind2(c, k), kind2(p, \"x\").\n\
+           .decl s(c: node, k: symbol)\n.output s\ns(c, k) :- child2(p, c, _), kind2(c, k), kind2(p, k).\n\
            .decl q(c: node)\n.output q\nq(c) :- child2(_, c, _), part(c, _).\n\
            .decl up(a: node, b: node)\n.layout up fanout(a -> b, ~8) values(b, many)\n.output up\n\
            up(p, c) :- child2(p, c, _).\nup(a, c) :- up(a, b), child2(b, c, _).\n").unwrap()
@@ -3212,7 +3236,9 @@ fn bodies_by_head(placed: &body::Placed) -> Vec<(String, usize)> {
 
 /// Decision 0361 step 5: a rule over relations whose facts size them and price every column it reads is planned with
 /// the program, from the facts alone; its order covers its literals. A rule reading a relation with no size (`part`)
-/// is not: it is planned at run time. A recursive rule over a declared relation is planned for its delta too.
+/// is not: it is planned at run time. A recursive rule over a declared relation is planned for its delta too. A rule
+/// that tests a constant on a column a `values` fact answers (`kind2(p, "x")`) is not either: the fact gives the
+/// column's distinct values, not this one's rows, and the order turns on them (PostHog's `param`, work queue Q297).
 #[test]
 fn a_rule_over_shaped_relations_is_planned_with_the_program() {
     let p = prepared_program();
@@ -3223,9 +3249,10 @@ fn a_rule_over_shaped_relations_is_planned_with_the_program() {
         let k = bodies_by_head(&placed).into_iter().filter(|(h, _)| h == head).nth(nth).unwrap().1;
         crate::code_rule_dsl::logic::plan::line_key(&placed.body(k), first)
     };
-    let o = prep.0.get(&line("o", 0, None)).expect("`o`'s rule is prepared");
+    let o = prep.0.get(&line("s", 0, None)).expect("`s`'s rule is prepared");
     assert_eq!(o.order.len(), 3, "{o:?}");
     assert!(o.work_per_node > 0.0);
+    assert!(!prep.0.contains_key(&line("o", 0, None)), "`o` tests a kind's constant: planned at run time");
     assert!(!prep.0.contains_key(&line("q", 0, None)), "`part` has no size: `q`'s rule is an exception");
     assert!(prep.0.contains_key(&line("up", 0, None)));
     assert!(prep.0.contains_key(&line("up", 1, None)) && prep.0.contains_key(&line("up", 1, Some(0))), "the recursive rule and its delta at `up`");
@@ -3402,7 +3429,8 @@ fn a_probe_bounded_by_comparisons_reads_a_range() {
 /// Decision 0361 step 5, derived relations: one the facts do not size is sized from its rules' plans, in dependency
 /// order, so the rules that read it are prepared too. A union's rows are its rules' summed, and only where every rule
 /// is planned (`u` has a branch over `part`, which has no size: what reads it is not prepared); a recursion's are its
-/// base rules' times a nominal depth (`anc`, with no fact declared).
+/// base rules' times a nominal depth (`anc`, with no fact declared). `o`, testing a constant on `kind2`'s `values`
+/// column, is planned at run time, and its rows still size it.
 #[test]
 fn a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it() {
     let p = parse(".decl child2(p: node, c: node, i: number)\n.input child2\n.layout child2 key(c) fanout(p -> c, few) order(i dense in p)\n\
@@ -3413,7 +3441,7 @@ fn a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it() {
                    .decl u(c: node)\nu(c) :- o(c, _).\nu(c) :- part(c, _).\n\
                    .decl w(c: node)\n.output w\nw(c) :- u(c), kind2(c, _).\n\
                    .decl anc(a: node, b: node)\nanc(a, b) :- child2(a, b, _).\nanc(a, c) :- anc(a, b), child2(b, c, _).\n\
-                   .decl z(a: node)\n.output z\nz(a) :- anc(a, b), kind2(b, \"y\").\n").unwrap();
+                   .decl z(a: node)\n.output z\nz(a) :- anc(a, b), kind2(b, _).\n").unwrap();
     let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
     let placed = body::Placed::whole(std::sync::Arc::clone(&v));
     let prep = prepared::Prepared::of_version(&v);
