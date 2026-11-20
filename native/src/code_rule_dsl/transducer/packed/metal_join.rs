@@ -437,7 +437,7 @@ impl DevRel {
     /// A handle to `part`, a relation of the device's own of `cols` columns and `rows` rows (`Part::for_device`'s).
     fn of_part(part: crate::code_rule_dsl::facts::rows::Part, cols: usize, rows: usize) -> Result<DevRel, Error> {
         let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
-        let buffer = Held::kept(part.facts().block.device_buffer(device)?, Box::new(part.facts().clone()));
+        let buffer = held_block(device, part.facts(), Box::new(part.facts().clone()))?;
         debug_assert_eq!(part.rows_at(), part.rel_at() + REL_ROWS as usize);
         let home = Some(part.facts().clone());
         Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part), home, view: None, made: (0, 0), kept: None }.noted())
@@ -520,7 +520,7 @@ impl DevRel {
         assert!(b.at > 0, "a descriptor past the block's header");
         let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         // The block, the relation and its pages: not given back while the device reads them (decisions 0342, Q76).
-        let buffer = Held::kept(b.facts.block.device_buffer(device)?, Box::new(b.clone()));
+        let buffer = held_block(device, &b.facts, Box::new(b.clone()))?;
         Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None, made: (0, 0), kept: b.part.clone() }.noted())
     }
 
@@ -753,7 +753,13 @@ impl DevIndex {
 /// The buffer of `home`'s block as it is now (reaching what it holds now), the block kept with it.
 fn bound(home: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>) -> Result<Held, Error> {
     let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
-    Ok(Held::kept(home.block.device_buffer(device)?, Box::new(home.clone())))
+    held_block(device, home, Box::new(home.clone()))
+}
+
+/// The buffer of `facts`' block as it is now, `keep` kept with it, and the block held by its own region (decision
+/// 0491 step 3): a launch that binds it pins that region by the kernel's access.
+fn held_block(device: &rerail_device::device::Device, facts: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>, keep: Box<dyn std::any::Any + Send + Sync>) -> Result<Held, Error> {
+    Ok(Held::of_block(facts.block.device_buffer(device)?, rerail_blocks::region::whole(&facts.block), keep))
 }
 
 /// A stage's probed relation `rel` (and its index, read by keys) into its fields.
@@ -1645,6 +1651,29 @@ pub mod tests {
                 ((x >> 33) as i64).rem_euclid(modulus) + (3 << 32)
             })
             .collect()
+    }
+
+    /// Decision 0491 steps 3 and 5: a device relation's block is held by its own region, which a kernel's bind pins by
+    /// the kernel's declared access: a copy into a relation moves its block's version once the batch's work is done,
+    /// and the block it reads from, bound read-only, keeps its version.
+    #[test]
+    fn a_kernels_write_moves_its_blocks_version_and_a_read_does_not() {
+        if rerail_accel::gpu::join::device().is_err() {
+            return;
+        }
+        let n = 300;
+        let src = DevRel::upload(2, n, |v| for (i, x) in v.iter_mut().enumerate() { *x = i as i64 }).unwrap();
+        let dst = DevRel::empty(2, n).unwrap();
+        let (sb, db) = (src.home.clone().unwrap(), dst.home.clone().unwrap());
+        let (s0, d0) = (rerail_blocks::region::whole(&sb.block).region().version(), rerail_blocks::region::whole(&db.block).region().version());
+        let mut batch = Batch::new().unwrap();
+        batch.copy_rows(Rows::Rel(&src), n, &[Col::From(0), Col::From(1)], Rows::Rel(&dst), 0).unwrap();
+        batch.finish().unwrap();
+        let d1 = rerail_blocks::region::whole(&db.block).region().version();
+        assert!(d1 > d0, "the written block's version moved ({d0} to {d1})");
+        if !std::sync::Arc::ptr_eq(&sb, &db) {
+            assert_eq!(rerail_blocks::region::whole(&sb.block).region().version(), s0, "the block only read keeps its version");
+        }
     }
 
     /// Q265: a relation `Batch::index` moves for an index (its directory full, or its block) is the batch's until its

@@ -391,3 +391,14 @@ fn a_pooled_held_buffer_is_found_by_its_address() {
     f.complete();
     assert!(!rerail_blocks::ledger::Fence::new().uses_address(at), "back to the pool once the work completed");
 }
+
+/// Decision 0491 step 4: the process's device names the memory domain its kernels read. Apple's GPU reads the host's
+/// memory in place: domain 0, so a region needs no mirror there.
+#[test]
+fn the_device_names_its_memory_domain() {
+    let Some(layer) = shared::layer() else { return };
+    #[cfg(target_os = "macos")]
+    assert_eq!(layer.device.domain(), 0, "Apple's unified memory is the host's");
+    #[cfg(not(target_os = "macos"))]
+    assert!(layer.device.domain() <= 1);
+}
