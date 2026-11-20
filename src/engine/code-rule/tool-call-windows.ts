@@ -15,6 +15,12 @@ interface ToolCallWindow extends RunningCall {
   readonly ended: number;
 }
 
+/** The calls that ended once `after` calls had ended, up to the `through`th (`ToolCallWindows.ends`). */
+export interface EndedCalls {
+  readonly after: number;
+  readonly through: number;
+}
+
 /**
  * The most finished calls a session keeps. Its walks drop the calls they have answered for (`answered`); one whose walks
  * never finish cleanly would otherwise keep every call for the session's life. Past this the oldest go, and a change
@@ -33,6 +39,8 @@ export class ToolCallWindows {
   /** The calls that ended, oldest first. */
   #finished: ToolCallWindow[] = [];
   #ends = 0;
+  /** `ends` as the last walk that answered for the calls (`answered`) began: a call that ended by then claims no write. */
+  #answered = 0;
 
   /**
    * How many calls have ended so far. A walk notes it as it starts (`commandSince`, `answered`): unlike the filesystem's
@@ -72,16 +80,22 @@ export class ToolCallWindows {
   /**
    * A walk that began once `ends` calls had ended (`ends` as it began) has seen every write of those calls: they go. A
    * call that ended since stays, though it ended before the walk read the clock: the walk may have left what it was
-   * writing to the walk after it (`commandSince`), which takes that write as the call's.
+   * writing to the walk after it (`commandSince`), which takes that write as the call's. The calls in `held` stay too,
+   * though only for the file the walk could not read that holds them (`ranDuring`'s `held`).
    */
-  answered(ends: number): void {
-    this.#finished = this.#finished.filter(window => window.ended > ends);
+  answered(ends: number, held: readonly EndedCalls[] = []): void {
+    this.#answered = Math.max(this.#answered, ends);
+    this.#finished = this.#finished.filter(window => window.ended > ends || held.some(calls => within(calls, window.ended)));
   }
 
-  /** Whether a call ran at some point from `from` to `to`; `from` equal to `to` asks about one stamp. */
-  ranDuring(from: number, to: number): boolean {
+  /**
+   * Whether a call ran at some point from `from` to `to`; `from` equal to `to` asks about one stamp. A call a walk
+   * answered for counts only when it is in `held`, the calls kept for the file asked about (`answered`).
+   */
+  ranDuring(from: number, to: number, held?: EndedCalls): boolean {
     for (const { start } of this.#running.values()) if (start <= to) return true;
-    return this.#finished.some(window => window.start <= to && window.end >= from);
+    const claims = (ended: number): boolean => ended > this.#answered || (held !== undefined && within(held, ended));
+    return this.#finished.some(window => window.start <= to && window.end >= from && claims(window.ended));
   }
 
   /**
@@ -105,4 +119,9 @@ export class ToolCallWindows {
     }
     return since;
   }
+}
+
+/** Whether the call that ended `ended`th is one of `calls`. */
+function within(calls: EndedCalls, ended: number): boolean {
+  return ended > calls.after && ended <= calls.through;
 }
