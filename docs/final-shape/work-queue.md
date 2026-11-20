@@ -6711,4 +6711,3 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
 - **Step 1 done** (2026-11-19): R1–R4, R5 for a Python rule, R6 (PostHog unchanged, 29,747). Open, step 2: a run of
   the embedded language reads the files holding its programs (0470 "Steps"); an HTML run sees no Python file's
   program, nor a JavaScript run an HTML file's `<script>`.
-

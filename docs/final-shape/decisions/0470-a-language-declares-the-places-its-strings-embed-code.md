@@ -141,4 +141,3 @@ PostHog cold on the CPU, on the M3 (load average 50 from other jobs): 29,747 fin
 - R5: `a_string_at_a_declared_place_is_a_program_of_its_file`, and `an_html_run_reads_a_python_files_html_program`
   (ignored: step 2).
 - Lean parsers read a file that embeds code: `a_file_that_embeds_code_is_read_by_its_lean_parser`.
-
