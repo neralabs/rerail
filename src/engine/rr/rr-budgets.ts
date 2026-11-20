@@ -15,28 +15,29 @@ export interface RrBudgets {
 
 /**
  * 10 minutes. The JSON path stops a repository audit at 5 minutes (`AUDIT_MAX_DURATION_MS`), but a `.rerail` pack
- * reads the whole corpus in one run, and its cross-file rules are the costly part. The Django pack's first run over
- * a 229-file project took 45 to 50 s on 16 threads, and an edit costs a run of the same size. With half a laptop's
- * cores ({@link defaultThreads}), a project a few times larger takes minutes. A run past 10 minutes is a run no
- * session waits for.
+ * reads the whole corpus in one run, and its cross-file rules are the costly part. Measured with the Django pack's
+ * 27 rules on 4 threads, on the checkout's store (`rr-child-process.ts`): a first run took 13 s on a 229-file project,
+ * 151 s on a 1,300-file one and 283 s on a 4,500-file one, and a run after an edit 4 s, 183 s and 514 s. A run past
+ * 10 minutes is a run no session waits for.
  */
 const DEADLINE_MS = 10 * 60_000;
 
 /**
  * Half the cores, at least one. The run shares the machine with the person's editor, build and agent. With half the
- * cores the laptop stays usable and the engine still runs in parallel; on one thread it is impractically slow.
+ * cores the laptop stays usable and the engine still runs in parallel: the runs above took no more than 1.5 times
+ * as long on 4 threads as on 16.
  */
 function defaultThreads(): number {
   return Math.max(1, Math.floor(availableParallelism() / 2));
 }
 
 /**
- * Half the physical memory, at most 8 GiB. The Django pack's first run over a 229-file project peaked at 5.7 GiB.
- * Over larger projects the engine's chunk budget does not hold the run (one of 1,300 files passed 55 GiB). Without
- * this limit, a run would push the person's own work into swap long before it finished.
+ * Half the physical memory. The engine's own chunk budget does not bound a run: the Django pack's runs above
+ * peaked at 1.2 GB, 8.0 GB and 12.6 GB. A run larger than half the machine would push the person's own work into
+ * swap long before it finished, so it is stopped there; a machine with less memory runs only smaller projects.
  */
 function defaultMemoryBytes(): number {
-  return Math.min(8 * 1024 ** 3, Math.floor(totalmem() / 2));
+  return Math.floor(totalmem() / 2);
 }
 
 /**
