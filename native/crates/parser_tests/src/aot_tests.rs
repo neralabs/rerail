@@ -210,8 +210,11 @@ fn documents(c: &Compiled, name: &str, ladder: &Ladder) -> (Vec<Vec<u8>>, Vec<bo
     docs.extend((ladder.fixed)().into_iter().map(String::into_bytes));
     let accepted: Vec<&Vec<u8>> = docs.iter().filter(|d| d.len() > 2 && c.parser.parse(d).is_ok()).collect();
     for sep in [&b"\n"[..], b";", b","] {
+        // Only the documents that still parse joined to themselves: one that does not (its last token running on into
+        // the next, a comment to the line's end) would refuse the whole join.
+        let joins: Vec<&&Vec<u8>> = accepted.iter().filter(|d| c.parser.parse(&[&d[..], sep, &d[..]].concat()).is_ok()).collect();
         let mut long = Vec::new();
-        for d in accepted.iter().cycle().take(accepted.len().max(1) * 400) {
+        for d in joins.iter().cycle().take(joins.len().max(1) * 400) {
             if !long.is_empty() {
                 long.extend_from_slice(sep);
             }
@@ -247,7 +250,7 @@ fn ladder_steps_rust_tapes_are_the_jits() {
     let pick = std::env::var("RERAIL_AOT_STEPS").ok();
     for ladder in LADDERS.iter().filter(|l| only.as_deref().is_none_or(|o| o == l.name)) {
         let mut built: Vec<(String, Compiled, String, String)> = Vec::new();
-        for (name, source) in (ladder.steps)().into_iter().filter(|(n, _)| pick.as_deref().is_none_or(|p| p.split(',').any(|w| n.contains(w)))) {
+        for (name, source) in (ladder.steps)().into_iter().filter(|(n, _)| pick.as_deref().is_none_or(|p| p.split(',').filter(|w| !w.is_empty()).any(|w| n.contains(w)))) {
             let t0 = std::time::Instant::now();
             let c = compile_step_as(&name, &source, ladder.rules);
             eprintln!("{} {name}: compiled in {:?}", ladder.name, t0.elapsed());

@@ -652,7 +652,14 @@ ladder.
 | `.rr`'s ladder, steps 1 to 6 | 6 | 1,464 | 12 |
 | the probes | 3 | 660 | 8 |
 
-`.rr`'s whole ladder and `rerail_rr_aot`'s generated tiers are run on a farm host next; their result follows in the next commit.
+On farm hosts, after the change:
+
+| | steps | format 16 homes, the JIT's | of 3,000 nodes or more |
+|---|---:|---:|---:|
+| `.rr`'s ladder | 22 of 22 | 5,540 | 44 |
+
+`rerail_rr_aot` with its generated tiers (`--features generated --profile profiling`): its 21
+tests, `aot_format_16_tapes_are_the_jits` among them (2,017 files, 4,014 homes, each the JIT's).
 
 ## Step 30, done: the JIT's direct run, each node to the writer's ops at its word
 
@@ -721,9 +728,12 @@ inside an array).
 | | steps | format 16 homes, the JIT's | of 3,000 nodes or more |
 |---|---:|---:|---:|
 | JSON's ladder | 15 of 15 | 3,300 | 30 |
+| Kotlin's ladder | 35 of 35 | 9,152 | 52 |
 
-Kotlin's ladder: steps 1 to 16 taken on a farm host before the prover fix; the whole ladder is run
-again with it, and its result follows in the next commit.
+Kotlin's steps run in chunks on farm hosts: the JIT compiles a late step in 5 to 7 minutes there
+(debug build), and the test compares only once every step of a run is built. A step alone had
+no document past 3,000 nodes at step 35: one accepted sentence that does not parse joined to
+itself refused every join. The long documents now join only the sentences that do.
 
 Mutations, each failing the check:
 - the read-back frame from one record before only;
