@@ -7,7 +7,7 @@
 use crate::native_ir::{FlagOp, On, Structure, StructuralOperation as Op};
 use crate::program::LocalOp;
 use crate::stream_ir::REFUSE;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 
 /// What the analysis reads: the program, its supertypes' classes, and the program as one function.
 struct D<'a> {
@@ -300,31 +300,15 @@ fn fetched(native: &Structure) -> Result<bool, String> {
 }
 
 /// A local check's word form (`program::local_value` over the 64 places of a word, a bit
-/// each): the values each op's needs, `(op, words back)`, a `Prev` reading the word before its
-/// operand's too; and the byte sets' classes, tier 1's form (a class a bit of a byte, by two
+/// each): the byte sets' classes, tier 1's form (a class a bit of a byte, by two
 /// nibble tables, `lo[b & 15] & hi[b >> 4]`, eight classes a pair of tables), each set's table
 /// and class bits.
 pub(crate) struct WordForm {
-    pub need: BTreeSet<(usize, usize)>,
     pub tables: Vec<([u8; 16], [u8; 16])>,
     pub class_of: HashMap<usize, (usize, u8)>,
 }
 
 pub(crate) fn word_form(ops: &[LocalOp]) -> Result<WordForm, String> {
-    let n = ops.len();
-    let mut need: BTreeSet<(usize, usize)> = BTreeSet::new();
-    let mut todo = vec![(n - 1, 0usize)];
-    while let Some((k, t)) = todo.pop() {
-        if !need.insert((k, t)) {
-            continue;
-        }
-        match ops[k] {
-            LocalOp::Not(a) => todo.push((usize::from(a), t)),
-            LocalOp::And(a, b) | LocalOp::Or(a, b) | LocalOp::Xor(a, b) | LocalOp::AndNot(a, b) => todo.extend([(usize::from(a), t), (usize::from(b), t)]),
-            LocalOp::Prev(a, _) => todo.extend([(usize::from(a), t), (usize::from(a), t + 1)]),
-            _ => {}
-        }
-    }
     let mut tables: Vec<([u8; 16], [u8; 16])> = Vec::new();
     let mut class_of: HashMap<usize, (usize, u8)> = HashMap::new();
     let mut classes = 0usize;
@@ -369,7 +353,7 @@ pub(crate) fn word_form(ops: &[LocalOp]) -> Result<WordForm, String> {
         class_of.insert(k, (classes / 8, bits));
         classes += pats.len();
     }
-    Ok(WordForm { need, tables, class_of })
+    Ok(WordForm { tables, class_of })
 }
 
 /// Whether rows carry marks (`head`): where a field is set on a wrap's inner node, or a reread

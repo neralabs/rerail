@@ -2481,13 +2481,9 @@ pub(crate) struct SplitReader {
 }
 
 /// A region read in parts that tier 2's `TOKEN` splits (`Split::Tier2`, decision 0323): its
-/// reader's opener (an output) and its closer's offset (its record's last is the closer's), its parts (each its start's
-/// output and its bytes, the shortest first), and the record pass's tables for the parts' codes
-/// (`native_cpu_block::plain_code`), which the code reads by address.
+/// readers, and the record pass's tables for the parts' codes (`native_cpu_block::plain_code`),
+/// which the code reads by address.
 pub(crate) struct SplitParts {
-    pub(crate) opener: u16,
-    pub(crate) off: i8,
-    pub(crate) parts: Vec<(u16, u8)>,
     /// Each reader whose regions tier 2 splits, as the lean parser's string arm reads its
     /// string's pieces (decision 0509): its pieces need no marks.
     pub(crate) readers: Vec<SplitReader>,
@@ -2620,7 +2616,7 @@ pub(crate) fn split_parts(native: &Structure) -> Result<Option<Box<SplitParts>>,
             sq.codes2 = Some(t);
         }
     }
-    Ok(Some(Box::new(SplitParts { opener: a.opener, off: a.off, parts, readers, tables, seq })))
+    Ok(Some(Box::new(SplitParts { readers, tables, seq })))
 }
 
 /// Each token's record made by `TOKEN` from its start (`Records::fetched_in_tier2`, page 40), as

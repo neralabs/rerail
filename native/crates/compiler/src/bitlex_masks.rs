@@ -113,6 +113,8 @@ pub struct Compiled {
     /// The provers' answers this compile made (decision 0488): what a later compile is given to
     /// answer the same questions without their proofs (`compile_proved`).
     pub proofs: Vec<(Vec<u8>, bitlex_prove::Answer)>,
+    /// Tier 2 as Rust, written from the tree rules (`bitlex_rust`), or why it is not yet.
+    pub rust: Option<Result<String, String>>,
 }
 
 /// A named value of the block program (`Compiled::values`): its operation, and its delay (bit
@@ -413,6 +415,8 @@ pub struct Lowering {
     pub toggles: Vec<(Val, Val)>,
     /// Each cost's source and its operations' range (`Compiled::costs`).
     pub costs: Vec<(String, usize, usize)>,
+    /// Tier 2 as Rust (`Compiled::rust`).
+    pub rust: Option<Result<String, String>>,
 }
 
 
@@ -532,6 +536,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         toggles: Vec::new(),
         soft: Vec::new(),
         costs: Vec::new(),
+        rust: None,
     };
     // Every class's products first: the tables come before the operations.
     for stmt in stmts {
@@ -760,7 +765,8 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         .collect();
     let fallbacks = labels.iter().filter(|(l, _)| l == FALLBACK).map(|&(_, k)| k).collect();
     let proofs = std::mem::take(&mut low.proofs.made);
-    Ok(Compiled { rows: rows(&program), program, words, machine, labels, fallbacks, costs, origin, values, proofs })
+    let rust = low.rust.take();
+    Ok(Compiled { rows: rows(&program), program, words, machine, labels, fallbacks, costs, origin, values, proofs, rust })
 }
 
 /// The operations the provers read: the prefix's value zero (it is stripped before the passes,
@@ -4936,6 +4942,27 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             names.marks.push((j as u8, n));
         }
     }
+    // Tier 2 as Rust, from the tree rules and these tables (`bitlex_rust`).
+    let rust_marks: Vec<crate::bitlex_rust::Mark<'_>> = (0..low.marks.len())
+        .map(|i| {
+            let (name, _, end) = &low.marks[i];
+            let bit = (0..records.marks.len()).find(|&j| marks.get(j).is_some_and(|m: &bitlex_tier2::Mark| usize::from(m.mask) == i && m.tokens.is_none()));
+            crate::bitlex_rust::Mark {
+                name: name.clone(),
+                bit: bit.map(|j| j as u8),
+                word: bit.map_or(0, |j| records.marks[j].1),
+                end: *end,
+                tokens: low.token_marks.get(&i).map(|(b, s)| (b.as_slice(), s.as_slice())),
+                next: low.mark_next.get(&i).map_or(&[][..], |v| v.as_slice()),
+                unless_after: low.unless.get(&i).map_or(&[][..], |v| v.as_slice()),
+                ends: low.ends.contains(&i),
+                settles: low.settles.contains(&i),
+                hidden: low.hidden.contains(name),
+            }
+        })
+        .collect();
+    let rust = crate::bitlex_rust::tier2(&crate::bitlex_rust::Input { tree: &low.tree, kind: symbols.kind, field: symbols.field, tokens: &names.tokens, words: &records.words, keywords: &low.keywords, marks: rust_marks, extras: &low.extra, extra_bits: extra_mark.map(|e| std::iter::once((e, low.extra[0].clone())).chain(extra_kind_bits.iter().map(|(k, b)| (*b, k.clone()))).collect()).unwrap_or_default() });
+    low.rust = Some(rust);
     let mut text = lowered.text;
     crate::rir_text::name_rows(&mut text, &names);
     Ok((grammar::text(&states, &arms), text, takes_last, mark_masks, records))
