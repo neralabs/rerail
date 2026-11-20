@@ -32,6 +32,7 @@
 
 // cratify: `compiled_view` is rerail-lang-php's (it mounts it)
 // cratify: `script_block` is rerail-lang-ecma's (it mounts it)
+// cratify: `call_argument` is rerail-lang-python's (it mounts it: it reads the scope table)
 pub mod host;
 pub mod inline_content;
 pub mod raw_text;
@@ -63,13 +64,14 @@ impl Parse {
     /// parser reads the text, else by tree-sitter (one behavior: tree-sitter's tape, or a
     /// refusal). `None` where tree-sitter has no grammar for the dialect.
     pub fn read(dialect: GrammarDialect, text: &str, budget: &dyn Fn() -> bool) -> Option<Self> {
-        use crate::code_rule_dsl::tape::{Grammar, ecma_lean, php_lean};
+        use crate::code_rule_dsl::tape::{Grammar, ecma_lean, html_lean, php_lean};
         let ecma = |lean| Grammar::embedded(dialect).ok().and_then(|grammar| ecma_lean::encode(lean, &grammar, text, budget).ok());
         let lean = match dialect {
             GrammarDialect::JavaScript => ecma(rerail_ecma_lean::Dialect::JavaScript),
             GrammarDialect::TypeScript => ecma(rerail_ecma_lean::Dialect::TypeScript),
             GrammarDialect::Tsx => ecma(rerail_ecma_lean::Dialect::Tsx),
             GrammarDialect::Php => Grammar::embedded(dialect).ok().and_then(|grammar| php_lean::encode_program(&grammar, text, budget).ok()),
+            GrammarDialect::Html => Grammar::embedded(dialect).ok().and_then(|grammar| html_lean::encode(&grammar, text, budget).ok()),
             _ => None,
         };
         if let Some(tape) = lean.and_then(Result::ok) {
@@ -105,6 +107,9 @@ pub struct Program {
     pub segments: SegmentMap,
     /// The host bytes it cannot be read through, sorted: the host's syntax errors it reads.
     pub host_errors: Vec<Range<usize>>,
+    /// The host bytes of the node it stands at, where they are not its text's (decision 0470: a Python string's
+    /// program stands at the string, around its content); `None`: the innermost host node over its text.
+    pub at: Option<Range<usize>>,
 }
 
 /// Builds a host file's embedded program: one per registry `via`.
@@ -127,6 +132,18 @@ pub trait Embedder: Send + Sync {
     /// bytes), else the file's whole (its root, as a Vue component's view or a Blade file's compiled view is).
     fn per_place(&self) -> bool {
         false
+    }
+
+    /// Whether it reads the host through the file's scope table (decision 0470): its programs are then
+    /// `build_in_doc`'s, from the batch's document over the host's tape, and `build_all`, which has no document, builds
+    /// none.
+    fn reads_scope(&self) -> bool {
+        false
+    }
+
+    /// The programs of the host `doc` (`reads_scope`).
+    fn build_in_doc(&self, _doc: &crate::code_rule_dsl::tape::TapeDoc, _budget: &dyn Fn() -> bool) -> Vec<Program> {
+        Vec::new()
     }
 }
 

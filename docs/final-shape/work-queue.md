@@ -5585,3 +5585,16 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
   `jsx_self_closing_element` and `element`. A refused text is one `ERROR` node, so `.on guest_error` still sees it.
   The libraries' rules needed no change: `annotation`, `parsed_in` and `ann_strip` already read a `type` root.
   PostHog on the CPU is unchanged: 29,747 findings, fa0efeaed6ff.
+
+### Q270. A language declares the places its strings embed code (decision 0470)
+
+- **Asked** (2026-11-19, the user): choice 2 for "a string we know is HTML": a language declares the embeds at known
+  places. After 0466.
+- **Steps**: R1–R6's tests; the registry's `places` (schema, checks, generated table); the `call-argument` embedder
+  over the batch's tape document (scope table, plain strings, segments); Python's places; an HTML rule over a
+  program; PostHog's findings.
+- **Done when**: R1–R6 hold and PostHog's findings are unchanged or each change is named.
+- **Step 1 done** (2026-11-19): R1–R4, R5 for a Python rule, R6 (PostHog unchanged, 29,747). Open, step 2: a run of
+  the embedded language reads the files holding its programs (0470 "Steps"); an HTML run sees no Python file's
+  program, nor a JavaScript run an HTML file's `<script>`.
+

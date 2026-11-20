@@ -47,7 +47,19 @@ export const languageEntrySchema = z
     capabilities: z.record(z.string(), support),
     suppressions: z.array(name),
     /** `dialects`: the embedded language's dialects the embedding gives, every one where absent; a language embeds itself only through dialects it names (Markdown's inline grammar). */
-    embeds: z.array(z.object({ language: name, via: name, dialects: z.array(name).min(1).optional() }).strict()).optional(),
+    /** `places` (decision 0470): a `call-argument` embed's calls whose positional argument holds the language, by the callee's qualified name. */
+    embeds: z
+      .array(
+        z
+          .object({
+            language: name,
+            via: name,
+            dialects: z.array(name).min(1).optional(),
+            places: z.array(z.object({ callee: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/), argument: z.number().int().min(0) }).strict()).min(1).optional(),
+          })
+          .strict(),
+      )
+      .optional(),
     /** Grammars of a part of a dialect (decision 0082): `name` is `dialect` parsed from `start`. The engine reads them; the host does not. */
     // A grammar of a part of a dialect: parsed from the node kind `start` by its hand-written parser (decision 0466),
     // its tapes under a tag of its own.
@@ -69,6 +81,7 @@ export const languageEntrySchema = z
     }
     if (new Set(entry.suppressions).size !== entry.suppressions.length) issue(["suppressions"], "Suppressions repeat.");
     for (const embed of entry.embeds ?? []) if (embed.language === entry.id && embed.dialects === undefined) issue(["embeds"], "A language embeds itself only through dialects it names.");
+    for (const embed of entry.embeds ?? []) if ((embed.via === "call-argument") !== (embed.places !== undefined)) issue(["embeds"], "Places belong to `call-argument`, which has at least one.");
   });
 
 export type LanguageEntry = z.infer<typeof languageEntrySchema>;

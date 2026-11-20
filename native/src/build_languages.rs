@@ -147,7 +147,22 @@ struct Embed {
     /// itself only through a dialect of its own other than the host's (Markdown's inline grammar, decision 0431 §4).
     #[serde(default)]
     dialects: Vec<String>,
+    /// The places a host's strings hold the embedded language (decision 0470): `call-argument`'s alone.
+    #[serde(default)]
+    places: Vec<Place>,
 }
+
+/// A call's positional argument that holds code (decision 0470): the callee's qualified name, dot-separated, as the
+/// file's scope table resolves it, and the argument's index from 0.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Place {
+    callee: String,
+    argument: u32,
+}
+
+/// The `via` whose embeds list places (decision 0470).
+const CALL_ARGUMENT: &str = "call-argument";
 
 /// A supported dialect's grammar: one `build.rs` generates from a vendored `grammar.json`, one
 /// Rerail implements itself (no tree-sitter grammar), or one of ast-grep's.
@@ -478,6 +493,19 @@ fn validate_entry(name: &str, stem: &str, entry: &Entry, vendored: &[&str]) {
             embed.language != entry.id || !embed.dialects.is_empty(),
             "{name}: a language embeds itself only through dialects it names"
         );
+        assert!(
+            (embed.via == CALL_ARGUMENT) == !embed.places.is_empty(),
+            "{name}: embeds {} via `{}`: places belong to `{CALL_ARGUMENT}`, which has at least one",
+            embed.language,
+            embed.via
+        );
+        for place in &embed.places {
+            let dotted = place.callee.split('.').all(|part| {
+                let mut chars = part.chars();
+                chars.next().is_some_and(|c| c == '_' || c.is_ascii_alphabetic()) && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
+            });
+            assert!(dotted, "{name}: place `{}` is not a dotted name of identifiers", place.callee);
+        }
     }
 }
 
@@ -722,42 +750,81 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
         let _ = writeln!(out, "            Self::{} => {via:?},", pascal(via));
     }
     out.push_str("            #[cfg(any(test, feature = \"test-hooks\"))]\n            Self::TestScript => \"test-script\",\n        }\n    }\n}\n\nimpl GrammarDialect {\n");
-    out.push_str("    /// The dialects a file of this dialect embeds programs of, each with the `Via` that builds\n    /// them: every dialect of each language its registry entry `embeds`, in registry order.\n");
-    out.push_str("    pub const fn embeds(self) -> &'static [(Via, GrammarDialect)] {\n        match self {\n");
+    for (name, doc, places) in [
+        ("embeds", "    /// The dialects a file of this dialect embeds programs of, each with the `Via` that builds\n    /// them: every dialect of each language its registry entry `embeds`, in registry order.\n", None),
+        (
+            "program_embeds",
+            "    /// [`Self::embeds`] less those at places (decision 0470): the embeddings whose program is the file's own (a Blade\n    /// view's, a Vue component's), which its semantics read, where a string's code at a place never is.\n",
+            Some(false),
+        ),
+    ] {
+        out.push_str(doc);
+        let _ = writeln!(out, "    pub const fn {name}(self) -> &'static [(Via, GrammarDialect)] {{\n        match self {{");
+        for entry in &supported {
+            for dialect in &entry.dialects {
+                let host = dialect.variant.as_deref().expect("validated");
+                let embeds = entry
+                    .embeds
+                    .iter()
+                    .filter(|embed| !omitted.contains(&embed.language))
+                    .filter(|embed| places.is_none_or(|placed| embed.places.is_empty() != placed))
+                    .flat_map(|embed| {
+                        entries
+                            .iter()
+                            .find(|candidate| candidate.id == embed.language)
+                            .expect("validated embedded language")
+                            .dialects
+                            .iter()
+                            .filter(move |embedded| {
+                                (embed.dialects.is_empty() || embed.dialects.contains(&embedded.label))
+                                    && embedded.label != dialect.label
+                            })
+                            .map(move |dialect| {
+                                format!(
+                                    "(Via::{}, GrammarDialect::{})",
+                                    pascal(&embed.via),
+                                    dialect.variant.as_deref().expect("validated")
+                                )
+                            })
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let _ = writeln!(out, "            Self::{host} => &[{embeds}],");
+            }
+        }
+        out.push_str(
+            "            #[cfg(any(test, feature = \"test-hooks\"))]\n            _ => test_embeds(self),\n        }\n    }\n",
+        );
+    }
+    out.push_str("\n    /// The places a file of this dialect holds embedded code (decision 0470), each with its embedding's `Via` and the\n    /// embedded dialect: a callee's qualified name and the positional argument's index.\n");
+    out.push_str("    pub const fn embed_places(self) -> &'static [(Via, GrammarDialect, &'static str, u32)] {\n        match self {\n");
     for entry in &supported {
         for dialect in &entry.dialects {
             let host = dialect.variant.as_deref().expect("validated");
-            let embeds = entry
+            let places = entry
                 .embeds
                 .iter()
                 .filter(|embed| !omitted.contains(&embed.language))
                 .flat_map(|embed| {
-                    entries
+                    let embedded = entries
                         .iter()
                         .find(|candidate| candidate.id == embed.language)
                         .expect("validated embedded language")
                         .dialects
                         .iter()
-                        .filter(move |embedded| {
-                            (embed.dialects.is_empty() || embed.dialects.contains(&embedded.label))
-                                && embedded.label != dialect.label
-                        })
-                        .map(move |dialect| {
-                            format!(
-                                "(Via::{}, GrammarDialect::{})",
-                                pascal(&embed.via),
-                                dialect.variant.as_deref().expect("validated")
-                            )
-                        })
+                        .filter(|embedded| (embed.dialects.is_empty() || embed.dialects.contains(&embedded.label)) && embedded.label != dialect.label)
+                        .map(|embedded| embedded.variant.as_deref().expect("validated"))
+                        .collect::<Vec<_>>();
+                    embed.places.iter().flat_map(move |place| {
+                        embedded.clone().into_iter().map(move |to| format!("(Via::{}, GrammarDialect::{to}, {:?}, {})", pascal(&embed.via), place.callee, place.argument))
+                    })
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
-            let _ = writeln!(out, "            Self::{host} => &[{embeds}],");
+            let _ = writeln!(out, "            Self::{host} => &[{places}],");
         }
     }
-    out.push_str(
-        "            #[cfg(any(test, feature = \"test-hooks\"))]\n            _ => test_embeds(self),\n        }\n    }\n}\n\n",
-    );
+    out.push_str("            #[cfg(any(test, feature = \"test-hooks\"))]\n            _ => &[],\n        }\n    }\n}\n\n");
 
     out.push_str("const DIALECTS: &[Dialect] = &[\n");
     for entry in &supported {
@@ -1184,6 +1251,47 @@ mod tests {
         let generated = Registry::new("embeds", &[one, two]).generate();
         assert!(generated.contains("pub enum Via {\n    CompiledView,\n"));
         assert!(generated.contains("Self::One => &[(Via::CompiledView, GrammarDialect::Two)],"));
+    }
+
+    /// Decision 0470 R1: a `call-argument` embed's places (a callee's qualified name, an argument's index) are
+    /// generated per host dialect, with the embedding's `Via`.
+    #[test]
+    fn an_embed_lists_the_places_its_strings_hold_code() {
+        let mut one = supported("one", ".one", 1);
+        one["embeds"] = json!([{ "language": "two", "via": "call-argument", "places": [{ "callee": "a.b.c", "argument": 0 }, { "callee": "d", "argument": 2 }] }]);
+        let mut two = supported("two", ".two", 2);
+        two["dialects"][0]["variant"] = json!("Two");
+        let generated = Registry::new("places", &[one, two]).generate();
+        assert!(generated.contains("Self::One => &[(Via::CallArgument, GrammarDialect::Two, \"a.b.c\", 0), (Via::CallArgument, GrammarDialect::Two, \"d\", 2)],"), "{generated}");
+        assert!(generated.contains("Self::Two => &[],"), "{generated}");
+        // A string's code at a place is no program of the file's own: `program_embeds` leaves it out.
+        let program = &generated[generated.find("pub const fn program_embeds").unwrap()..];
+        assert!(program[..program.find("\n    }\n").unwrap()].contains("Self::One => &[],"), "{generated}");
+        assert!(generated.contains("Self::One => &[(Via::CallArgument, GrammarDialect::Two)],"), "{generated}");
+    }
+
+    #[test]
+    #[should_panic(expected = "is not a dotted name")]
+    fn a_place_names_a_qualified_callee() {
+        let mut one = supported("one", ".one", 1);
+        one["embeds"] = json!([{ "language": "two", "via": "call-argument", "places": [{ "callee": "a..b", "argument": 0 }] }]);
+        Registry::new("place-callee", &[one, supported("two", ".two", 2)]).generate();
+    }
+
+    #[test]
+    #[should_panic(expected = "places belong to `call-argument`")]
+    fn places_belong_to_a_call_argument_embed() {
+        let mut one = supported("one", ".one", 1);
+        one["embeds"] = json!([{ "language": "two", "via": "raw-text", "places": [{ "callee": "a", "argument": 0 }] }]);
+        Registry::new("place-via", &[one, supported("two", ".two", 2)]).generate();
+    }
+
+    #[test]
+    #[should_panic(expected = "places belong to `call-argument`")]
+    fn a_call_argument_embed_has_places() {
+        let mut one = supported("one", ".one", 1);
+        one["embeds"] = json!([{ "language": "two", "via": "call-argument" }]);
+        Registry::new("place-none", &[one, supported("two", ".two", 2)]).generate();
     }
 
     /// Decision 0466: a fragment starts at a node kind and has a tape tag of its own, which no dialect's is.

@@ -610,6 +610,11 @@ macro_rules! on_tape {
 use rerail_tape_format::tape::Tape as _;
 
 impl Facts {
+    /// The dialect's grammar, where the facts have a tape.
+    pub fn grammar(&self) -> Option<&Arc<crate::code_rule_dsl::tape::Grammar>> {
+        self.grammar.as_ref()
+    }
+
     fn doc_tape(&self) -> &crate::code_rule_dsl::tape::formats::DocTape {
         self.tape.as_deref().expect("a node read from facts with no tape (a text-only document has no nodes)")
     }

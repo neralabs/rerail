@@ -592,7 +592,7 @@ pub fn stateless_calls(
         let module = file.module.as_deref();
         // A file that embeds code reads its calls from its tape's embedded program
         // (`calls::calls_document`).
-        let (summary, _) = if !language.embeds().is_empty() {
+        let (summary, _) = if !language.program_embeds().is_empty() {
             let bytes = file.source.len();
             // A file the parser stopped on (`file_tape`) has no program to read calls from.
             let doc = query::file_tape(language, file)?.map(|(doc, _)| doc);

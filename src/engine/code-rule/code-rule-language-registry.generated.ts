@@ -31,6 +31,26 @@ export const LANGUAGE_REGISTRY = /* registry */ [
       "noqa",
       "nosec"
     ],
+    "embeds": [
+      {
+        "language": "html",
+        "via": "call-argument",
+        "places": [
+          {
+            "callee": "markupsafe.Markup",
+            "argument": 0
+          },
+          {
+            "callee": "django.utils.safestring.mark_safe",
+            "argument": 0
+          },
+          {
+            "callee": "django.utils.html.format_html",
+            "argument": 0
+          }
+        ]
+      }
+    ],
     "fragments": [
       {
         "name": "annotation",

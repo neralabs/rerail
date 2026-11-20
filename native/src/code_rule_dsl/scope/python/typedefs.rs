@@ -154,7 +154,7 @@ impl Flags {
 /// builtin's (`["", name]`), then the attribute names after the head; a relative import or a
 /// definition by the module path, where there is one. `None` for a name bound otherwise, a
 /// deleted one, or an expression that is no name or attribute chain.
-fn qualified_name<D: Doc>(
+pub(crate) fn qualified_name<D: Doc>(
     table: &ScopeTable,
     module: Option<&ModulePath>,
     node: &Node<'_, D>,

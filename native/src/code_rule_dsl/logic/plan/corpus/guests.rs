@@ -600,7 +600,19 @@ impl Guests {
                 }
             }
             for via in vias {
-                for program in embedded(host, &mut |root, source| crate::code_rule_dsl::embed::embedder(via).build_all(root, source, &|| false)) {
+                let embedder = crate::code_rule_dsl::embed::embedder(via);
+                // An embedder that reads the file's scope table reads it from a document over the host's tape, read in
+                // place (decision 0470); another reads the host's nodes.
+                let doc = || {
+                    let (tape, grammar) = (host.facts.tape.as_ref()?, host.facts.grammar()?);
+                    Some(crate::code_rule_dsl::tape::TapeDoc::over(Arc::clone(tape), Arc::clone(grammar), Arc::clone(&host.facts.lines)))
+                };
+                let programs = if embedder.reads_scope() {
+                    host.tape.as_ref().map(|(doc, _)| doc.clone()).or_else(doc).map_or_else(Vec::new, |doc| embedder.build_in_doc(&doc, &|| false))
+                } else {
+                    embedded(host, &mut |root, source| embedder.build_all(root, source, &|| false))
+                };
+                for program in programs {
                     out.extend(self.placed_program(host, None, via, "program", program)?);
                 }
             }
@@ -624,7 +636,12 @@ impl Guests {
                 // A program of its own place stands at the innermost node over its bytes, a whole file's at its root;
                 // made, it is made under its grammar and its embedding both, as a library's `embed` names either.
                 let whole = [0, u32::try_from(host.facts.source.len()).unwrap_or(u32::MAX)];
-                let bytes = if crate::code_rule_dsl::embed::embedder(via).per_place() { place.host([0, u32::try_from(program.text.len()).unwrap_or(u32::MAX)]) } else { whole };
+                let narrow = |b: usize| u32::try_from(b).unwrap_or(u32::MAX);
+                let bytes = match &program.at {
+                    Some(at) => [narrow(at.start), narrow(at.end)],
+                    None if crate::code_rule_dsl::embed::embedder(via).per_place() => place.host([0, narrow(program.text.len())]),
+                    None => whole,
+                };
                 let ids = self.numbering(host)?;
                 let Some(at) = (if bytes == whole { ids.root() } else { ids.over(bytes) }) else { return Ok(None) };
                 let (by_grammar, by_via) = (self.made.insert((at, label.to_owned())), self.made.insert((at, via.id().to_owned())));

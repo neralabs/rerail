@@ -2531,6 +2531,29 @@ impl TapeSource {
 }
 
 impl TapeDoc {
+    /// The document over `held`, a tape the facts were read off and checked then (`facts::core`): the same image,
+    /// read in place, with nothing copied or checked again (decision 0353). An embedder that reads the host through
+    /// the scope table reads it so (decision 0470).
+    pub fn over(held: Arc<formats::DocTape>, grammar: Arc<Grammar>, lines: Arc<LineTable>) -> Self {
+        let image = Arc::clone(held.image_arc());
+        let source = Arc::clone(held.source());
+        Self {
+            source_digest: image.source_digest.unwrap_or_default(),
+            points: Arc::new(Points { source: Arc::clone(&source), rows: std::sync::OnceLock::new() }),
+            held,
+            source,
+            grammar,
+            lines,
+            labels: Arc::new(Vec::new()),
+            texts: Arc::default(),
+            guests: Guests::Owned(Arc::new(Vec::new())),
+            host: None,
+            image,
+            digest: Arc::default(),
+            path: None,
+        }
+    }
+
     /// P's: the digest of the source the tape was built from (P's SQL anchor engine,
     /// test-only). W's tape keeps no digest, so it is computed.
     /// G's: the shared source (G's literal anchors, test-only).

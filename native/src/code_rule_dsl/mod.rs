@@ -777,6 +777,7 @@ mod embed {
     pub use rerail_lang::code_rule_dsl::embed::*;
     pub use rerail_lang_php::code_rule_dsl::embed::compiled_view;
     pub use rerail_lang_ecma::code_rule_dsl::embed::script_block;
+    pub use rerail_lang_python::code_rule_dsl::embed::call_argument;
     #[allow(unused_imports)]
     #[cfg(test)]
     pub(crate) use crate::code_rule_dsl::embed::test_script::TestScript;
@@ -4693,6 +4694,8 @@ pub(crate) fn install_languages() {
         (language::Via::CompiledView, &embed::compiled_view::CompiledView),
         #[cfg(feature = "lang-html")]
         (language::Via::RawText, &embed::raw_text::RawText),
+        #[cfg(all(feature = "lang-html", feature = "lang-python"))]
+        (language::Via::CallArgument, &embed::call_argument::CallArgument),
         #[cfg(feature = "lang-markdown")]
         (language::Via::InlineContent, &embed::inline_content::InlineContent),
         #[cfg(feature = "lang-vue")]

@@ -4093,6 +4093,7 @@ fn blade_programs_agree(source: &str) -> Option<bool> {
         text: program.text.clone(),
         segments: program.segments.clone(),
         host_errors: program.host_errors.clone(),
+        at: program.at.clone(),
     };
     let ours = DerivedImage::encode(Via::CompiledView, program, 0, &host, source, &|| false).unwrap();
     let theirs = DerivedImage::encode(Via::CompiledView, theirs, 0, &host, source, &|| false).unwrap();
@@ -5678,4 +5679,47 @@ fn a_file_that_embeds_code_is_read_by_its_lean_parser() {
     let routed = TapeImage::parse(&html, source, &|| false).unwrap().unwrap();
     assert_eq!(routed.derived.len(), 2);
     assert!(routed.primary.to_bytes().unwrap() == image.primary.to_bytes().unwrap(), "the router reads it the same way");
+}
+
+
+fn call_argument_programs(source: &str) -> Vec<(String, usize)> {
+    let grammar = Grammar::new(GrammarDialect::Python).unwrap();
+    let image = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
+    let doc = TapeDoc::restore(std::sync::Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
+    crate::code_rule_dsl::embed::Embedder::build_in_doc(&crate::code_rule_dsl::embed::call_argument::CallArgument, &doc, &|| false).into_iter().map(|p| (p.text.clone(), p.segments.bounds(0..1).start as usize)).collect()
+}
+
+/// Decision 0470 R2, R3: a string at a declared place is a program over its content, at its bytes; the callee is
+/// matched as the file resolves it.
+#[test]
+fn call_argument_a_string_at_a_place_is_a_program_at_its_bytes() {
+    let src = "from markupsafe import Markup as M\nimport markupsafe\nx = M(\"<b>a</b>\")\ny = markupsafe.Markup('<i>b</i>')\n";
+    assert_eq!(call_argument_programs(src), [("<b>a</b>".to_owned(), 60), ("<i>b</i>".to_owned(), 94)]);
+    let src = "from django.utils.html import format_html\nformat_html('<a href=\"{}\">{}</a>', '<p>not</p>')\n";
+    assert_eq!(call_argument_programs(src).iter().map(|p| p.0.as_str()).collect::<Vec<_>>(), ["<a href=\"{}\">{}</a>"], "argument 0 only");
+    let src = "from django.utils.safestring import mark_safe\nmark_safe(\"<p>\" \"x</p>\")\n";
+    assert_eq!(call_argument_programs(src).iter().map(|p| p.0.as_str()).collect::<Vec<_>>(), ["<p>x</p>"], "a concatenation is one program");
+}
+
+/// R3: a name the file binds otherwise, or never imports, is not the place's callee.
+#[test]
+fn call_argument_a_callee_the_file_does_not_import_is_no_place() {
+    for src in [
+        "def Markup(s): return s\nMarkup('<b>a</b>')\n",
+        "Markup('<b>a</b>')\n",
+        "from other import Markup\nMarkup('<b>a</b>')\n",
+        "from markupsafe import Markup\nMarkup = str\nMarkup('<b>a</b>')\n",
+    ] {
+        assert_eq!(call_argument_programs(src), [], "{src:?}");
+    }
+}
+
+/// R4: only a plain string is a program.
+#[test]
+fn call_argument_only_a_plain_string_is_a_program() {
+    for arg in ["f\"<b>{x}</b>\"", "b\"<b>x</b>\"", "name", "\"<b>\\n</b>\"", "\"<b>\" + x", "*args"] {
+        let src = format!("from markupsafe import Markup\nMarkup({arg})\n");
+        assert_eq!(call_argument_programs(&src), [], "{arg}");
+    }
+    assert_eq!(call_argument_programs("from markupsafe import Markup\nMarkup(r\"<b>\\d</b>\")\n").len(), 1, "a raw string's bytes are its value");
 }

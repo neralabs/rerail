@@ -59,7 +59,7 @@ impl Embedder for InlineContent {
             segments.index();
             let dialect = GrammarDialect::MarkdownInline;
             let Some(parse) = super::Parse::read(dialect, &text, budget) else { continue };
-            programs.push(Program { dialect, parse, text, segments, host_errors: Vec::new() });
+            programs.push(Program { dialect, parse, text, segments, host_errors: Vec::new(), at: None });
         }
         programs
     }

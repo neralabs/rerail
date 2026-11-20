@@ -4711,3 +4711,37 @@ fn layouts_are_carried_with_the_program() {
     let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&policy("a"), &policy("b")]).unwrap();
     assert_eq!(combined.layouts().get("child"), Some(child), "{:?}", combined.layouts().keys().collect::<Vec<_>>());
 }
+
+/// Decision 0470 R5: a string at a place the Python language declares (`markupsafe.Markup`'s argument) is an HTML
+/// program of its file, at the string: a Python rule reaches it through `parsed(s, "html", p)`, and its nodes stand at
+/// the file's lines. A string at no place is no program: a rule that asks for it gets a tape value, at its own text's
+/// lines.
+#[test]
+fn a_string_at_a_declared_place_is_a_program_of_its_file() {
+    let py = "from markupsafe import Markup\n\nx = Markup(\n    \"<p><b>a</b></p>\"\n)\ny = \"<i>not</i>\"\n";
+    let rule = r#"
+.decl tags(t: symbol, l: number)
+tags(t, l) :- kind(s, "string"), parsed(s, "html", p), within(e, p), kind(e, "tag_name"), text(e, t), line(e, l).
+.output tags
+"#;
+    let [tags] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("place-program", &[("a.py", py)], rule, &["tags"])).unwrap();
+    let tags: BTreeSet<Vec<String>> = tags.into_iter().collect();
+    // The rule asks every string: the one at no place is a tape value (decision 0431), at its own text's line.
+    assert_eq!(tags, [["b", "4"], ["i", "1"], ["p", "4"]].iter().map(|r| r.iter().map(|v| (*v).to_owned()).collect()).collect(), "{tags:?}");
+}
+
+/// Decision 0470 R5, an HTML run: a Python file's HTML program is code to it, at the file's lines.
+#[test]
+#[ignore = "Q270 step 2: a run reads only its own language's files (`CorpusFiles::of`), so no run sees a program another language's file holds (an HTML file's scripts in a JavaScript run neither)"]
+fn an_html_run_reads_a_python_files_html_program() {
+    let py = "from markupsafe import Markup\n\nx = Markup(\n    \"<p><b>a</b></p>\"\n)\ny = \"<i>not</i>\"\n";
+    let rule = r#"
+.language html
+.decl tags(t: symbol, l: number)
+tags(t, l) :- kind(e, "tag_name"), text(e, t), line(e, l).
+.output tags
+"#;
+    let [tags] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("place-program-html", &[("a.py", py)], rule, &["tags"])).unwrap();
+    let tags: BTreeSet<Vec<String>> = tags.into_iter().collect();
+    assert_eq!(tags, [["b", "4"], ["p", "4"]].iter().map(|r| r.iter().map(|v| (*v).to_owned()).collect()).collect(), "an HTML run: {tags:?}");
+}
