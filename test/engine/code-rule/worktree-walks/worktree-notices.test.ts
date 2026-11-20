@@ -328,6 +328,22 @@ describe("WorktreeNotices", () => {
     expect([await subject.changed("/w"), subject.watching("/w")]).toEqual([true, false]);
   });
 
+  it("reads a Linux worktree's path again once the watch budget refused the folders its read walked, the read having found its folder", async () => {
+    const watch = new ScriptedWatch();
+    let reads = 0;
+    const folderAt = async (): Promise<string> => {
+      reads += 1;
+      return "a";
+    };
+    const subject = new WorktreeNotices({ treeWatch: watch, platform: "linux", now: () => 0, folderAt });
+    await subject.changed("/w");
+    subject.reading("/w");
+    watch.overBudget.add("src/deep");
+    subject.read("/w", seen);
+    // Read as the watch began, and again after the refusal: only that read can find the folder gone.
+    expect([reads, watch.calls]).toEqual([2, ["watch /w []", "watch /w [,src,src/deep]", "unwatch /w"]]);
+  });
+
   it("tries to watch at the next walk a Linux worktree whose folder went after its read, before the watch followed the read's folders", async () => {
     const watch = new ScriptedWatch();
     const folders = new Map([["/w", "a"]]);
