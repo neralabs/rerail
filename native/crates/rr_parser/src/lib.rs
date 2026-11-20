@@ -2211,13 +2211,23 @@ pub mod tests {
         let refs: Vec<&[u8]> = inputs.iter().map(|f| f.as_slice()).collect();
         let cpu = forms.new.parser.tier1.run_files(&refs);
         let mut taken = [0usize; 2];
+        let mut at_token = Vec::new();
         for (k, f) in refs.iter().enumerate() {
-            let kept = forms.check_file(k, f, &cpu[k], k < cased);
+            let (kept, stopped) = forms.check_file(k, f, &cpu[k], k < cased);
             taken[usize::from(kept)] += usize::from(k < MARKS_PADS.len() * MARKS_CASES.len());
+            at_token.extend(stopped.then_some(k));
         }
         #[cfg(target_os = "macos")]
         forms.check_metal(&refs, &cpu);
         assert!(taken[0] > 0 && taken[1] > 0, "the cases both refused and taken: {taken:?}");
+        // The files tier 1 refuses at a token, whose codes are compared only up to it: the last two
+        // cases, of a number it refuses, after each pad, and of the corpus a file in a hundred at
+        // most (today one, a library with a number of 19 digits). A file added with such a
+        // number passes; a change that sent many files to the fallback does not.
+        let number_cases: Vec<usize> = (0..MARKS_PADS.len()).flat_map(|p| [MARKS_CASES.len() - 2, MARKS_CASES.len() - 1].map(|c| p * MARKS_CASES.len() + c)).collect();
+        let (cases_at_token, corpus_at_token) = at_token.into_iter().partition::<Vec<usize>, _>(|&k| k < cased);
+        assert_eq!(cases_at_token, number_cases, "the cases tier 1 refuses at a token");
+        assert!(corpus_at_token.len() * 100 <= refs.len() - cased, "{} of {} corpus files refused at a token", corpus_at_token.len(), refs.len() - cased);
         eprintln!("{} files: the same marks; of the cases {} refused, {} taken", refs.len(), taken[0], taken[1]);
     }
 
@@ -2309,8 +2319,9 @@ pub mod tests {
         }
 
         /// File `k`'s checks, `f` its bytes and `cpu` the CPU's tier 1 of it; `cased`, one of the
-        /// cases, whose tier 2 on the CPU is checked too. Whether the new form's tier 2 takes it.
-        fn check_file(&self, k: usize, f: &[u8], cpu: &rerail_compiler::block::BlockRun, cased: bool) -> bool {
+        /// cases, whose tier 2 on the CPU is checked too. Whether the new form's tier 2 takes it,
+        /// and whether tier 1 refuses it at a token (`refusing_token`).
+        fn check_file(&self, k: usize, f: &[u8], cpu: &rerail_compiler::block::BlockRun, cased: bool) -> (bool, bool) {
             let (new, old) = (self.new, &self.old);
             let (a, b) = (new.program.block_programs[0].run(f), old.program.block_programs[0].run(f));
             // Tier 2's result, the tape or the refusal: the old form checks some of `json_bad`'s
@@ -2325,7 +2336,8 @@ pub mod tests {
             let tested = self.checks.program.block_programs[0].run(f);
             let want: Vec<u32> = a.codes.iter().zip(&tested.codes).map(|(&c, &t)| c & !self.lazy | t & self.coded).collect();
             let records = new.program.block_programs[0].records.as_ref().expect("records");
-            let stop = refusing_token(records, f, &a).unwrap_or(want.len());
+            let refusing = refusing_token(records, f, &a);
+            let stop = refusing.unwrap_or(want.len());
             assert_eq!(cpu.codes, want[..stop], "file {k}: the CPU's codes");
             // The CPU's tier 2 takes the gaps: its tape or refusal is the interpreter's, over the
             // cases (the corpus: its tape where it takes the file; two files of 500 KB it
@@ -2336,7 +2348,7 @@ pub mod tests {
                 assert!(*i == rerail_compiler::stream::image(x, &new.program.readings.extras, rerail_tape_format::RR_TAG, f), "file {k}: the CPU's tape");
             }
             assert_eq!(cpu.totals, a.totals, "file {k}: the CPU's refusals");
-            x.is_ok()
+            (x.is_ok(), refusing.is_some())
         }
 
         /// Metal's tier 1 of `refs`: Metal sets the gap marks tier 2 on the CPU tests itself, so
