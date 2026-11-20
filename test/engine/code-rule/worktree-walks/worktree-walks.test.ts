@@ -1157,12 +1157,15 @@ describe("what a walk looks at in a watched worktree that no notice tells of", (
 function quietWalk(folder: string): WatcherWalk {
   return {
     worktrees: new Set(), checkout: folder, folder, firstSight: new Set(), startedAt: 0, heads: new Set(), unmerged: new Set(),
-    scan: async () => undefined, claims: async () => new Set(), take: async () => undefined,
+    scan: async () => undefined, holdsRefusal: () => false, claims: async () => new Set(), take: async () => undefined,
   };
 }
 
-/** A session watching `roots` whose reads find nothing, each read of a root put in `scans`, and which takes nothing. */
-function watcherOf(roots: readonly string[], scans: string[]): WorktreeWatcher {
+/**
+ * A session watching `roots` whose reads find nothing, each read of a root put in `scans`, and which takes nothing. With
+ * `gaveUp`, each read gave up on a path it met (`SourceScan.gaveUp`).
+ */
+function watcherOf(roots: readonly string[], scans: string[], gaveUp = false): WorktreeWatcher {
   return {
     clock: async () => Date.now(),
     start: () => ({
@@ -1171,9 +1174,10 @@ function watcherOf(roots: readonly string[], scans: string[]): WorktreeWatcher {
         scans.push(root);
         return {
           sources: new Map(), failedRoots: new Set(), errors: [], unread: new Map(), firstSeen: new Map(), checkouts: new Set([root]),
-          unmerged: new Map(), lateListings: new Map(), seen: { folders: new Set([""]), leftOut: new Set() },
+          unmerged: new Map(), lateListings: new Map(), seen: { folders: new Set([""]), leftOut: new Set() }, ...(gaveUp ? { gaveUp: true as const } : {}),
         };
       },
+      holdsRefusal: () => false,
       claims: async () => new Set(),
       take: async () => undefined,
     }),
@@ -1220,6 +1224,22 @@ describe("the reread of a worktree no notice told of a change in", () => {
     await until(Date.now(), 1_000);
     expect(scans).toHaveLength(1);
     await watch.close();
+  });
+
+  // A path gone as the read looked, no place, may have moved where it did not look: the next walk reads the worktree
+  // again, as after a folder it could not list.
+  it("reads a watched worktree again at the next walk, though no notice tells of a change, after a read that gave up on a path it met", async () => {
+    const { worktrees } = await repository(["w1"]);
+    for (const gaveUp of [false, true]) {
+      const scans: string[] = [];
+      const watch = noticedWalks().watch(watcherOf([worktrees[0]!], scans, gaveUp));
+      watch.request();
+      await watch.settled();
+      watch.request();
+      await watch.settled();
+      expect(scans).toHaveLength(gaveUp ? 2 : 1);
+      await watch.close();
+    }
   });
 
   it("rereads in time though the timer fired before the read was due", async () => {

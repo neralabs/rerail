@@ -1,0 +1,1 @@
+A turn end's check for shell-written files now records each place it skipped, once, with its reason: a folder or file Rerail cannot read; a file over 1,000,000 bytes that a rule would read; a source or text file holding binary data, such as UTF-16 text; a walk that fails. The dashboard and session API count and list them.
