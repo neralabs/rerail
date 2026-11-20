@@ -38,6 +38,10 @@ impl CodeRuleSqlExecutor {
         name: &str,
         f: impl FnOnce(&mut Self) -> Result<T>,
     ) -> Result<T> {
+        // The call is a run (decision 0442): its open blocks of relations, its settings and measurements are the
+        // run's. Outside one, each relation's chunk took a block of its own (16 GiB of address space, decision 0445),
+        // and a thousand documents bound ran a 47-bit address space out.
+        let _run = super::super::logic::run::scope(super::super::logic::native::width::Settings::from_env);
         let _scope = scope(&self.db, name);
         let _operation = self.db.profile_scope(|| json!({"operation":name}));
         let ledger = self.db.admission();
@@ -67,6 +71,8 @@ impl CodeRuleSqlExecutor {
         name: &str,
         f: impl FnOnce(&Self) -> Result<T>,
     ) -> Result<T> {
+        // A run, as `profiled`'s (decision 0442).
+        let _run = super::super::logic::run::scope(super::super::logic::native::width::Settings::from_env);
         let _scope = scope(&self.db, name);
         let _operation = self.db.profile_scope(|| json!({"operation":name}));
         let result = match self.db.admission().enter(name) {Ok(_admission)=>f(self),Err(e)=>Err(error(e))};
