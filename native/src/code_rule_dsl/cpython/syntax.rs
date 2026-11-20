@@ -8,9 +8,9 @@
 //! what `ast.parse` rejects counts: compile-time errors (`return` outside a function, a repeated keyword argument, a
 //! duplicate parameter, `nonlocal` at module level) are not syntax errors here, as they are not in `ast.parse`.
 //! CPython's choice among several errors is followed where it differs from the earliest: an error its parser raises
-//! gives way to a tokenizer error later in the file (an unterminated string, a stray bracket, a bad dedent), and a
-//! generic `invalid syntax` to a bracket left open on an earlier line (`'(' was never closed`), as
-//! `_PyPegen_tokenize_full_source_to_check_for_errors` does; where the first pass fails in the parser, its second
+//! gives way to a tokenizer error later in the file that raises (an unterminated string, a stray bracket, an invalid
+//! character; not a bad dedent, which raises nothing there), and to a bracket left open on an earlier line (`'(' was
+//! never closed`), as `_PyPegen_tokenize_full_source_to_check_for_errors` does, but an `unexpected indent`; where the first pass fails in the parser, its second
 //! pass's `print` or `exec` before an expression (`invalid_legacy_expression`, on valid code too), an f-string's
 //! replacement field (`invalid_replacement_field`) or a missing block comes first. A printable ASCII character Ruff
 //! starts no token with (`$`, `?`, `` ` ``) is an operator to CPython's tokenizer, which its parser fails on.
@@ -268,22 +268,17 @@ pub(crate) fn syntax_error(source: &str) -> Result<Option<SyntaxError>, Raised> 
         at_eof: false,
         raises: false,
     });
-    // CPython tokenizes the rest of the file after an error its parser raised (`_Pypegen_set_syntax_error`): a tokenizer
-    // error there replaces it, and so does a bracket still open at the end that opened on a line before the one the
-    // first pass failed on.
-    if let Some(later) = found.iter().skip(1).filter(|f| f.at > first.at).find(|f| f.is_tokenizer())
-        && !first.is_tokenizer()
-    {
+    // CPython tokenizes the rest of the file after an error its parser raised (`_PyPegen_set_syntax_error`, any
+    // `SyntaxError` of either pass): the first tokenizer error there that raises replaces it (`raises_in_scan`; one that
+    // raises nothing ends the scan), and so does a bracket still open where the scan stops that opened on a line before
+    // the error's. An `INDENT` or `DEDENT` the first pass failed at raises "unexpected indent" with no scan.
+    let indent = matches!(first.what, What::Parse(ParseErrorType::UnexpectedIndentation)) && second.is_none();
+    let stop = found.iter().skip(1).filter(|f| f.at > first.at).find(|f| f.is_tokenizer());
+    if indent || first.is_tokenizer() {
+    } else if let Some(later) = stop.filter(|f| f.raises_in_scan()) {
         chosen = later.message(&cx);
-    } else if let Some(unclosed) = unclosed {
-        let replaced = if chosen.generic {
-            chosen.at_eof || unclosed.line < chosen.line
-        } else if second.is_some() {
-            unclosed.line < lines.line(first.at)
-        } else {
-            // The parser ran into the end of the file inside a bracket.
-            chosen.at_eof
-        };
+    } else if let Some(unclosed) = unclosed.filter(|u| stop.is_none_or(|s| lines.line(s.at) >= u.line)) {
+        let replaced = if second.is_some() { unclosed.line < lines.line(first.at) } else { chosen.at_eof || unclosed.line < chosen.line };
         if replaced {
             chosen = unclosed;
         }
@@ -447,6 +442,17 @@ impl Found<'_> {
         }
     }
 
+    /// A tokenizer error that sets an exception (`syntaxerror` in CPython's tokenizer): found in the scan past a
+    /// parser's error, it replaces that error. A bad dedent (`E_DEDENT`), a tab mixed with spaces (`E_TABSPACE`) and a
+    /// line continuation's (`E_LINECONT`) are an `ERRORTOKEN` with none: the scan stops there, and the parser's stands.
+    fn raises_in_scan(&self) -> bool {
+        self.is_tokenizer()
+            && !matches!(
+                &self.what,
+                What::Parse(ParseErrorType::Lexical(LexicalErrorType::IndentationError | LexicalErrorType::LineContinuationError))
+            )
+    }
+
     fn is_tokenizer(&self) -> bool {
         match &self.what {
             What::Tokenizer(_) => true,
@@ -559,6 +565,10 @@ impl Found<'_> {
                     named(Span::NoColumn(line, body.len() - body.trim_start_matches([' ', '\t', '\x0c']).len()), "unexpected indent".into())
                 }
                 ParseErrorType::ExpectedToken { expected: TokenKind::Colon, .. } => named(token, "expected ':'".into()),
+                // `function_def_raw`'s forced `&&'('` after the name (`_PyPegen_expect_forced_token`): at the token found.
+                ParseErrorType::ExpectedToken { expected: TokenKind::Lpar, .. } if after_def_name(tokens, self.at) => {
+                    named(token, "expected '('".into())
+                }
                 ParseErrorType::ExpectedToken { expected: TokenKind::Comma | TokenKind::Rpar | TokenKind::Rsqb | TokenKind::Rbrace, found }
                     if depth_at(tokens, self.at) > 0 && starts_expression(*found) =>
                 {
@@ -960,10 +970,18 @@ fn other_message(ruff: &str) -> Option<&'static str> {
         | "Only one '*' parameter allowed"
         | "Keyword-only parameter separator not allowed after '*' parameter" => "* argument may appear only once",
         "'/' parameter must appear before '*' parameter" => "/ must be ahead of *",
+        // `invalid_try_stmt`: a `try` block with no handler after it.
+        "Expected `except` or `finally` after `try` block" => "expected 'except' or 'finally' block",
         "Only single target (not tuple) can be annotated" => "only single target (not tuple) can be annotated",
         "Only single target (not list) can be annotated" => "only single target (not list) can be annotated",
         _ => return None,
     })
+}
+
+/// Whether the token before `at` is a function's name: `def NAME` (`async def` too).
+fn after_def_name(tokens: &Tokens, at: TextSize) -> bool {
+    let mut before = tokens.iter().take_while(|t| t.end() <= at).filter(|t| !t.kind().is_trivia()).map(|t| t.kind()).collect::<Vec<_>>().into_iter().rev();
+    matches!((before.next(), before.next()), (Some(TokenKind::Name), Some(TokenKind::Def)))
 }
 
 /// The bracket depth at `at`, as CPython's tokenizer counts it.
