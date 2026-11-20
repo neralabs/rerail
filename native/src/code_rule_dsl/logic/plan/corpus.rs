@@ -277,6 +277,22 @@ pub fn usage() -> (f64, f64, f64) {
     }
 }
 
+/// The corpus batch's documents in a run (decision 0458): the memo hits' documents built from their stored tapes or
+/// parsed again, those a session held from its last run, and of the batch's documents those whose rows were made
+/// (decision 0494). A warm run builds, parses and makes nothing of a file that did not change (Q332).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CorpusDocs {
+    /// The memo hits' documents built from the tapes the store kept: each reads its file and builds its facts.
+    pub from_tape: usize,
+    /// The memo hits' documents whose file was parsed again (the store kept no tape of it).
+    pub parsed: usize,
+    /// The documents a session held from its last run, unchanged.
+    pub held: usize,
+    /// The batch's documents whose rows were made (`Batch::documents_made`), and all it holds.
+    pub made: usize,
+    pub documents: usize,
+}
+
 /// What a corpus run did: its phases' CPU (user, system) and the peak RSS after each, and the outcome.
 #[derive(Default)]
 pub struct Report {
@@ -328,6 +344,12 @@ pub struct Report {
     /// The files built in its waves whose tape was read before the first wave, and those parsed (Q22): a run over
     /// unchanged files parses none, whatever its programs.
     pub file_tapes: (usize, usize),
+    /// The corpus batch's documents (decision 0458) and what the run did to make them: what a warm run must not do to
+    /// an unchanged file (Q332, `warm_tests`).
+    pub corpus_docs: CorpusDocs,
+    /// The files the run parsed, by the path that parsed them and their language (`core::parses`): a warm run
+    /// parses only what changed.
+    pub parsed: std::collections::BTreeMap<(&'static str, String), usize>,
     /// The guests chunks of partial hits did not make, their cones unable to see them (`guests::guests_seen`).
     pub guests_unseen: usize,
     /// The guest texts parsed (decision 0431 R6): a text a run parsed before is not parsed again.
@@ -8905,6 +8927,9 @@ fn run_observed_within(
     let mut changed_docs: Vec<syntax::Document> = Vec::new();
     let mut corpus_digest = 0u64;
     let mut corpus_batch: Option<Arc<syntax::Batch>> = None;
+    // The memo hits' documents built from a kept tape, and parsed again; those a session held (`Report::corpus_docs`).
+    let hit_docs_built = (std::sync::atomic::AtomicUsize::new(0), std::sync::atomic::AtomicUsize::new(0));
+    let mut corpus_held = 0;
     // The corpus batch makes the chunks' projection (decision 0458): a span the cross part reads (a line's `line`,
     // a comment's `col`) is made only where its relation is, and the file-local part names them. Not what makes no
     // span and the cross part does not read: the tree digests (every node's hash), the text tests and the `ast`
@@ -8949,7 +8974,9 @@ fn run_observed_within(
                 Err(e) if e.kind() == std::io::ErrorKind::InvalidData && text_document(root, &h.path, label) => return Ok(None),
                 Err(e) => return Err(Error::Plan(format!("{}: {e}", h.path))),
             };
-            doc_of(h.key, &h.path, h.module.clone(), source, tapes_of.get(&h.path))
+            let frame = tapes_of.get(&h.path);
+            if frame.is_some() { &hit_docs_built.0 } else { &hit_docs_built.1 }.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            doc_of(h.key, &h.path, h.module.clone(), source, frame)
         };
         let mut made: Vec<syntax::Document> = crate::code_rule_dsl::logic::profile::on_cores(|| hits.par_iter().map(hit_doc).collect::<Result<Vec<_>>>())?.into_iter().flatten().collect();
         let (rounds, values): (Vec<_>, Vec<_>) = hits.into_iter().map(|h| (h.rounds, h.values)).unzip();
@@ -8957,6 +8984,7 @@ fn run_observed_within(
         let mut all = std::mem::take(&mut corpus_docs);
         all.extend(made);
         let (made, held) = (all.len(), reused.len());
+        corpus_held = held;
         crate::code_rule_dsl::logic::profile::decision("the corpus batch (decision 0458)", || match held_docs {
             Some(_) => format!("{made} documents made, {held} held from the session's last run"),
             None => format!("{made} documents made, none held"),
@@ -10946,7 +10974,13 @@ fn run_observed_within(
     if !nested && !phase0::active() {
         crate::code_rule_dsl::logic::profile::run_ends(crate::code_rule_dsl::logic::profile::snapshot());
     }
-    let report = Report { phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, stats_kept: stats_kept.into_inner(), prepared: origin, cross_strata, cross_kept, cone_kept, guests_unseen: guests_unseen.load(std::sync::atomic::Ordering::Relaxed), guest_parses: guest_parses.parsed(), batch_grown: batch_grown.load(std::sync::atomic::Ordering::Relaxed), values_admitted: values_admitted.load(std::sync::atomic::Ordering::Relaxed), slice_runs: slice_runs.load(std::sync::atomic::Ordering::Relaxed), file_tapes: (file_tapes.0.load(std::sync::atomic::Ordering::Relaxed), file_tapes.1.load(std::sync::atomic::Ordering::Relaxed)), cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_skipped, language_asked, cross_handed, cross_unloaded, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), run: None, plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
+    let corpus_docs = {
+        let (made, documents) = corpus_batch.as_ref().map_or((0, 0), |b| b.documents_made());
+        let built = |a: &std::sync::atomic::AtomicUsize| a.load(std::sync::atomic::Ordering::Relaxed);
+        CorpusDocs { from_tape: built(&hit_docs_built.0), parsed: built(&hit_docs_built.1), held: corpus_held, made, documents }
+    };
+    crate::code_rule_dsl::logic::profile::decision("the corpus batch's documents (Q332)", || format!("{corpus_docs:?}"));
+    let report = Report { corpus_docs, parsed: core::parses(), phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, stats_kept: stats_kept.into_inner(), prepared: origin, cross_strata, cross_kept, cone_kept, guests_unseen: guests_unseen.load(std::sync::atomic::Ordering::Relaxed), guest_parses: guest_parses.parsed(), batch_grown: batch_grown.load(std::sync::atomic::Ordering::Relaxed), values_admitted: values_admitted.load(std::sync::atomic::Ordering::Relaxed), slice_runs: slice_runs.load(std::sync::atomic::Ordering::Relaxed), file_tapes: (file_tapes.0.load(std::sync::atomic::Ordering::Relaxed), file_tapes.1.load(std::sync::atomic::Ordering::Relaxed)), cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_skipped, language_asked, cross_handed, cross_unloaded, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), run: None, plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
     handed.succeeded();
     Ok(report)
 }

@@ -207,8 +207,24 @@ fn kept_tape(keep: bool, file: &dyn SourceFile, grammar: &Arc<crate::code_rule_d
     TapeDoc::restore_with_lines(Arc::clone(file.source()), Arc::clone(grammar), &image, Arc::clone(lines), &|| false).map(Some)
 }
 
-fn record_parse(file: &dyn SourceFile, reader: &str) {
+/// The files a run parsed (`record_parse`): the run's own count (decision 0442), always kept, for the tests that
+/// hold a warm run to parsing only what changed (Q332, `warm_tests`).
+#[derive(Default)]
+pub struct Parses(parking_lot::Mutex<std::collections::BTreeMap<(&'static str, String), usize>>);
+
+/// The files the run under way parsed, by the path that parsed them (`direct`: `build_with_tape`; `wave`, `cached`:
+/// a wave's build that found no tape) and their language.
+pub fn parses() -> std::collections::BTreeMap<(&'static str, String), usize> {
+    crate::code_rule_dsl::logic::profile::local::<Parses>().0.lock().clone()
+}
+
+fn record_parse(file: &dyn SourceFile, reader: &'static str) {
     use crate::code_rule_dsl::prof;
+    *crate::code_rule_dsl::logic::profile::local::<Parses>().0.lock().entry((reader, file.language().to_owned())).or_default() += 1;
+    // A measurement aid: `RERAIL_PARSE_TRACE` prints where each parse is asked for.
+    if std::env::var_os("RERAIL_PARSE_TRACE").is_some() {
+        eprintln!("RERAIL_PARSE_TRACE {reader} {}:\n{}", file.language(), std::backtrace::Backtrace::force_capture());
+    }
     prof::count("source_tape.parses", 1);
     if prof::on() {
         use sha2::{Digest as _, Sha256};

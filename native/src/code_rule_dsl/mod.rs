@@ -1759,6 +1759,9 @@ pub(crate) mod logic {
             // Decision 0494: a batch makes a document when first read.
             #[cfg(test)]
             pub mod made_batch_tests;
+            // Q332: what a warm run does to the files that did not change, by count (the `warm` nextest profile).
+            #[cfg(test)]
+            pub mod warm_tests;
             #[cfg(test)]
             pub mod cache_tests;
             // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.

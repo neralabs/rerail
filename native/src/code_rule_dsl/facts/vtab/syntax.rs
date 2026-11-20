@@ -2787,6 +2787,11 @@ impl Batch {
         self.docs.given_all()
     }
 
+    /// How many of the batch's documents are made, of how many it holds (decision 0494): a run makes those it reads.
+    pub fn documents_made(&self) -> (usize, usize) {
+        (self.docs.made_count(), self.docs.len())
+    }
+
     /// Each document's views' counts, by key: the documents' table keeps them (decision 0494). A document neither made
     /// nor given counts is made for them.
     pub fn view_counts(&self) -> Vec<(u32, made::ViewCounts)> {

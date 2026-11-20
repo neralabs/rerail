@@ -5103,6 +5103,22 @@ after the phases went on the run path (0083).
 - **Record**: open; the phased-facts branch's (0458 Open), measured here.
 - **Taken by** 0494 (phased-facts, the user 2026-11-19: "B: lazy Batch everywhere"): a batch makes a document when
   first read, its row space from kept counts; steps 1-4 there, ep2's numbers by its step 5.
+- **Found** (2026-11-20, the sync branch after merging Bend and phased-facts bf0d3742bd; the warm tier, 4 files): with
+  0494 in, a warm run over unchanged files still costs each file twice. `warm_tests` reports it by count
+  (`Report::corpus_docs`, `Report::parsed`). Over 4 unchanged files: `CorpusDocs { from_tape: 4, parsed: 0, made: 4 of
+  4 }` and 4 files parsed (`("direct", "python")`); after a one-file edit, 3 built from tape, 4 of 4 made, and 3
+  unchanged files parsed.
+  - The parses are phase 1's (`sources.rerail`, `phases::sources`, a corpus run inside the run). It loads every file
+    and reads `doc` and `tape_of` across files, so its cross part has base relations and its corpus batch makes
+    every file's document. A phase run reads nothing from the store inside the waves (0104), so its memo hits come
+    with no tape (`hit_tapes` empty) and `doc_of` parses each one (`core::build_with_tape`). Its
+    `.cache doc_tape by doc_key` would answer the phase from the last run, but the documents are made before any
+    rule reads them.
+  - The outer run's batch builds every memo hit's document from its stored tape (`doc_of`: the source read, the tape
+    decompressed, the facts built and digested) and makes every document's rows, unchanged or not.
+- **Tests** (2026-11-20): `warm_tests` (the `warm` nextest profile, with the cold-then-warm, R2 new-process, 0494 and
+  session tests: `cargo nextest run -p rerail-engine --lib --features test-hooks --profile warm`, 14 tests, about 10 s).
+  Its four fail until this item is done, each naming what the warm run did.
 
 ### Q383. (Q354 here until 2026-11-20; Q288 on phased-facts) `the_view_reads_are_the_hosts_rows` timed out: its kernel's pipeline did not compile in 240 s (done)
 
