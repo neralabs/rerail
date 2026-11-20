@@ -1,10 +1,10 @@
-# 0466. The parse workers' time is the reference graph's summaries, not the parse
+# 0485. The parse workers' time is the reference graph's summaries, not the parse
 
-Status: accepted (2026-11-19). Follows 0465 (its next steps 1–3, Q284).
+Status: accepted (2026-11-19). Follows 0484 (its next steps 1–3, Q343).
 
 ## Intro
 
-0465 found the parse workers taking 13.4 s of CPU on all (3,089 files, 9.6 M nodes), 4.3 ms a file. The user: "please
+0484 found the parse workers taking 13.4 s of CPU on all (3,089 files, 9.6 M nodes), 4.3 ms a file. The user: "please
 do all 3. Our parsing should be lightning fast".
 
 The parse is fast already. On all, on an M1 Max:

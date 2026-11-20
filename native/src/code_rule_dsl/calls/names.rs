@@ -5,7 +5,7 @@
 //!
 //! The table is `SHARDS` shards, a name's by the hash of its family and text, each behind its own
 //! lock: the parse workers summarize their files at once, and behind one lock their interning was
-//! a third of the summaries' time, waiting (0465's next steps, Q284). A name's parent is interned
+//! a third of the summaries' time, waiting (0484's next steps, Q343). A name's parent is interned
 //! before its own shard is locked, so no thread holds two shards' locks.
 
 use crate::code_rule_dsl::language::Family;
@@ -50,7 +50,7 @@ impl Name {
     /// names at once (a summary's), each shard's lock taken once a prefix depth (a read for the names it has, a
     /// write for the rest), not once a name. Most of a file's names are its own, new to the table, so one by one
     /// each took a write lock, and the parse workers summarizing their files at once waited on each other's
-    /// (0465, Q284). The names come back in `texts`' order.
+    /// (0484, Q343). The names come back in `texts`' order.
     pub fn new_all<'t>(family: Family, texts: impl IntoIterator<Item = &'t str>) -> Vec<Self> {
         let texts = texts.into_iter().collect::<Vec<_>>();
         // Every text and dotted prefix, once, by depth (its dots): a prefix's name is made before the names under it.

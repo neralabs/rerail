@@ -62,7 +62,7 @@ pub enum Set {
     Reached { step: Step, named: bool, from: Box<Set> },
 }
 
-/// A walk's anchor as the device evaluates it (`label_phase`, decisions 0365, 0463): `Set` in postfix over a stack of node
+/// A walk's anchor as the device evaluates it (`label_phase`, decisions 0365, 0483): `Set` in postfix over a stack of node
 /// sets, a word an operation (`op | arg << 8`), `depth` the stack's slots (an axis step's output a slot past its
 /// input), and the labels it reads (by index, past `DERIVED_CLASS_BASE`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

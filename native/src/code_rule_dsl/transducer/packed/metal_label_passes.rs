@@ -968,9 +968,9 @@ impl LabelKernel {
 const KERNELS: [&str; 9] = ["label_sink", "label_settle", "label_round", "label_micro", "label_group", "root_records", "label_leaves", "label_phase", "label_parents"];
 /// `label_leaves` in `KERNELS` (decision 0365).
 const LEAVES_KERNEL: usize = 6;
-/// `label_phase` (decisions 0461, 0463): a level's formulas, a dispatch a phase, a thread a (word, formula).
+/// `label_phase` (decisions 0465, 0483): a level's formulas, a dispatch a phase, a thread a (word, formula).
 const PHASE_KERNEL: usize = 7;
-/// `label_parents` (0463): the batch's parents once, for `label_phase`.
+/// `label_parents` (0483): the batch's parents once, for `label_phase`.
 const PARENTS_KERNEL: usize = 8;
 /// `RERAIL_GPU_ENCODER_TIMES=1` (a measurement switch): each compute encoder's own time on the GPU, from timestamps the
 /// GPU takes at its start and end inside its command buffer (stage-boundary counters), and the gaps between one
@@ -1124,12 +1124,12 @@ const PHASE_CLIMB: u32 = 17;
 const PHASE_WORDS: u64 = 64;
 /// The levels of a chain's reach (`REACH_CHAIN`) a run's programs hold at first, each two descendant scans: a member
 /// below a blocker below a member is a level. A chain with more fails its run (flags bit 512), which runs again with
-/// twice the levels (`Error::ChainLevels`, 0463). One held every chain of s1000.
+/// twice the levels (`Error::ChainLevels`, 0483). One held every chain of s1000.
 const PHASE_CHAIN_LEVELS: usize = 1;
 /// Past this many levels a chain's run is the interpreter's (as a walk past its frames).
 const PHASE_CHAIN_MOST: usize = 64;
 
-/// `words` (a lowered formula, `compile_sets::DeviceFormula`'s postfix) as `label_phase`'s program (decision 0463), where its steps
+/// `words` (a lowered formula, `compile_sets::DeviceFormula`'s postfix) as `label_phase`'s program (decision 0483), where its steps
 /// are rows, AND, OR, the one-hop steps (`CHILD`, `PARENT`, `CHILD_IN`), the siblings (`FOLLOWING`, `FOLLOWING_IN`,
 /// `REACH_FOLLOWING`), descendants (`REACH_DESCENDANT`), a chain's reach (`REACH_CHAIN`, `levels` of it) and the
 /// climbs (`DESCENDANT`, `DESCENDANT_IN`, `CHAIN`); else `None` (a word no device formula has).
@@ -1698,7 +1698,7 @@ struct Runner<'a> {
     run_leaf_rows: Option<MappedBuffer>,
     /// `label_phase`'s slots (0461).
     phase_scratch: Option<MappedBuffer>,
-    /// The batch's parents (`label_parents`, 0463), made at its first phases.
+    /// The batch's parents (`label_parents`, 0483), made at its first phases.
     phase_parents: Option<MappedBuffer>,
     /// The loop tier's stacks (`MICRO_POOL` of them), committed only as walks use them.
     stacks: Option<MappedBuffer>,
@@ -1760,7 +1760,7 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
         let programs = level.iter().any(|pass| matches!(pass, Pass::Program { .. } | Pass::Count { .. }));
         let patterns = level.iter().any(kernel_pass);
         // Decision 0365: a level's formulas (its anchors, its formula passes): their leaves, and a dispatch a phase of
-        // the one with the most (0463).
+        // the one with the most (0483).
         let phases = level
             .iter()
             .filter_map(|pass| match pass {
@@ -1772,7 +1772,7 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
             .max();
         2 * usize::from(programs) + usize::from(patterns) + 1 + phases.map_or(0, |phases| 1 + phases)
     };
-    // The batch's parents, once where a level has formulas (`label_parents`, 0463).
+    // The batch's parents, once where a level has formulas (`label_parents`, 0483).
     let parents = plan.steps.iter().flat_map(|(_, levels)| levels.iter().flatten()).any(|pass| match pass {
         Pass::Program { roots, .. } | Pass::Count { roots, .. } => roots.anchor().is_some(),
         Pass::Formula { .. } => true,
@@ -1882,7 +1882,7 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
     let mut chain_levels = PHASE_CHAIN_LEVELS;
     loop {
         let mut outcome = match encode(device, plan, files, &rounds, lanes, micro, deep, chain_levels, budget) {
-            // A chain's reach outgrew the levels its phases hold (0463): the run again with twice them, past the most
+            // A chain's reach outgrew the levels its phases hold (0483): the run again with twice them, past the most
             // the interpreter's.
             Err(Error::ChainLevels) if chain_levels < PHASE_CHAIN_MOST && micro => {
                 crate::code_rule_dsl::prof::count("run.chain_levels", 1);
@@ -2191,7 +2191,7 @@ fn encode(
             eprintln!("rerail: a label pass took a node past its batch's {} (decision 0427, Q253): not written; the passes on the interpreter", runner.nodes);
         }
     }
-    // A chain's reach with more levels than `label_phase`'s programs hold (0463): the run again with twice them.
+    // A chain's reach with more levels than `label_phase`'s programs hold (0483): the run again with twice them.
     if runner.flag(0) & 512 != 0 {
         crate::code_rule_dsl::prof::count("gpu.phase_levels_overflow", 1);
         return Err(Error::ChainLevels);
@@ -3091,7 +3091,7 @@ impl Runner<'_> {
                 }
             }
         }
-        // Each formula as phases (0463). Every step a device formula has compiles; one that did not would have no
+        // Each formula as phases (0483). Every step a device formula has compiles; one that did not would have no
         // kernel to run it.
         let mut programs = Vec::with_capacity(unique.len());
         for (words, _) in &unique {
@@ -4092,7 +4092,7 @@ fn programs_of<'p>(passes: &'p [Pass<'_>], rows: bool) -> Vec<(&'p Program, &'p 
 
 #[cfg(test)]
 mod phase_program_tests {
-    /// 0461, 0463: a push writes into a slot cleared before phase 0, so it starts in phase 1 and is read in the
+    /// 0465, 0483: a push writes into a slot cleared before phase 0, so it starts in phase 1 and is read in the
     /// next; a pull reads a set written in an earlier phase; `CHILD_IN` takes its candidates when read; a sibling
     /// step is a push into a node array and a pull from it; descendants are a span and a cover a phase apart; a
     /// chain's reach is two scans a level; an ancestor step is a climb, a chain's through a set whole before it.

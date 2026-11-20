@@ -1,6 +1,6 @@
 # 0476. The reference graph is rules: `python/references.rr`, per file and then linked
 
-Status: accepted (2026-11-19). Follows 0466 and 0472 (their next step "the summary as a tape pass").
+Status: accepted (2026-11-19). Follows 0485 and 0472 (their next step "the summary as a tape pass").
 
 ## Intro
 
@@ -13,7 +13,7 @@ checks walk it. Until now the engine made them in Rust:
   writes each reference as a marked name (`m.<bare>.f=>m.f`, `C.<self>.run`, `m.<type>.T.x`).
 - **After them.** W's linker (`calls::closure::Graph::link_references`) resolved the names across files.
 
-On all (3,089 files) that was 5.9 s of CPU, 1.9 ms a file, six times the parse (0466, 0472). The user asked: "please
+On all (3,089 files) that was 5.9 s of CPU, 1.9 ms a file, six times the parse (0485, 0472). The user asked: "please
 fix it. however, shouldn't this be implemented in .rerail files? or at least, use all of those mechanisms, including
 AST matchers, and the per-file fixpoint executor to get its information out? having a hand-rolled Rust Python
 extractor feels wrong".
@@ -27,7 +27,7 @@ It is wrong, for three reasons:
   alone: the program's file-local part, evaluated in the chunks and memoised per file (0052). Linking names across
   files is the cross-file part.
 - **A Rust walk is the shape the engine is built to replace.** Its reads go through ast-grep's node API, one node at
-  a time, and its interned names wait on a process-wide table (0466).
+  a time, and its interned names wait on a process-wide table (0485).
 
 ## Decision
 

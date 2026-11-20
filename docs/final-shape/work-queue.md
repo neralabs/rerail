@@ -5595,7 +5595,7 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
 - **Done when**: the four pass, or an assertion is shown to state a behaviour the observer no longer has on
   purpose, and is changed with the reason.
 
-### Q283. A level's formulas as phases: the pushes' chains are the time (0461; done in 0463)
+### Q324. A level's formulas as phases: the pushes' chains are the time (0465; done in 0483)
 
 - **Found** (2026-11-19, 0461): `label_phase` runs a level's word steps and one-hop pushes in one dispatch a phase
   for the whole batch. Its word steps cost about 32 µs a dispatch, but its pushes are chains within a thread: up to 7
@@ -5607,14 +5607,14 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   2. range steps (descendants, following, reaches: ops 8, 10, 11, 15, 16, 23–25) as scans between blocks, so a
      level runs on one kernel;
   3. then compare a level's phases with 0459's size classes, and remove the loser.
-- **Done** (2026-11-19, 0463): the parents once a batch (`label_parents`), the range steps as scans and the climbs, so
-  every formula runs on `label_phase`; `label_formula` and 0459's size classes are removed. The SIMD spread was not
+- **Done** (2026-11-19, 0483): the parents once a batch (`label_parents`), the range steps as scans and the climbs, so
+  every formula runs on `label_phase`; `label_formula` and 0464's size classes are removed. The SIMD spread was not
   built: the pushes are under 1 ms once a parent is one load. Left: `label_leaves` (7.4–11 ms on s1000), the
   epilogue (2–3 ms), and a descendant scan in one dispatch (decoupled look-back).
 
-### Q284. After 0465: the parse workers, the serial phases, and small label runs
+### Q343. After 0484: the parse workers, the serial phases, and small label runs
 
-- **Found** (2026-11-19, 0465), on all (3,089 files, 9.6 M nodes; about 20 s on an M1 Max):
+- **Found** (2026-11-19, 0484), on all (3,089 files, 9.6 M nodes; about 20 s on an M1 Max):
   - the parse workers take 13.4 s of CPU (4.3 ms a file);
   - the run uses 3.3–3.6 of 10 cores, with 13–48 s of its threads ready and no core;
   - the run's thread spends 8–10 s in serial phases: cross 2.7–5.1 s, stats 2.1–2.5 s (400,000–800,000

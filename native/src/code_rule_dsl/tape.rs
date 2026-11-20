@@ -3158,7 +3158,7 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
     /// The parent, then its parent, and so on: a parent read each, at most `K - 1` sibling steps in format 16. A
     /// climb mostly stops a few levels up (the nearest function or class), where a descent from the root
     /// (`Tape::path`) read every sibling before the path at each level: in a module of hundreds of statements, the
-    /// reference graph's climbs from its parameters were a sixth of its time (0465, Q284).
+    /// reference graph's climbs from its parameters were a sixth of its time (0484, Q343).
     fn ancestors(&self, _root: Self) -> impl Iterator<Item = Self> {
         std::iter::successors(self.parent(), Self::parent)
     }

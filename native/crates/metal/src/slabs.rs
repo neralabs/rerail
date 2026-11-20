@@ -334,7 +334,7 @@ impl DocTable {
     /// The table of `documents`, in order, read where they lie: in the first one's slab (the block), or in another
     /// slab of the batch, reached by the slabs' GPU addresses (decision 0353 step 4, 0471). Nothing is copied. Before,
     /// a batch over several slabs was copied into one (`gather`); with the residency full of tapes' homes that copy
-    /// found no room, and each wave was halved until its files shared a slab (0466's small label runs). `None` for a
+    /// found no room, and each wave was halved until its files shared a slab (0485's small label runs). `None` for a
     /// batch past the u32 numbering.
     pub fn new(documents: Vec<Arc<Resident>>) -> Option<Self> {
         let block = documents.first().map(|document| Arc::clone(&document.slab));

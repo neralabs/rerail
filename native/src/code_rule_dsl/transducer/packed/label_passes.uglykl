@@ -899,7 +899,7 @@ DEFINE_KERNEL2(label_passes, root_records,
 
 // A level's anchors (decision 0365, `Runner::formulas`). First `label_leaves`: each node's code read once, and every
 // distinct leaf test of the level's formulas (kind, field, flags, a grammar supertype) into its row of `leaves`, a
-// file's words at its region (`FORMULA_REGION`). Then `label_phase` (0463): the formulas
+// file's words at its region (`FORMULA_REGION`). Then `label_phase` (0483): the formulas
 // (`compile_sets::DeviceFormula`, compiled to phases over node sets in `scratch`, the region's words) into their rules'
 // rows in `roots`: set where `mode` 0 (a rule over codes, kind 2), cleared outside the anchor where 1 (a listed rule).
 // A formula: its targets (`FormulaTarget`: {row, mode, rule (`0xffffffff` none: a root walk's anchor in `texts`)}) and
@@ -963,7 +963,7 @@ DEFINE_KERNEL2(label_passes, label_leaves,
 }
 #undef LEAF_BLOCK
 
-// A level's formulas as phases (decisions 0461, 0463): a threadgroup a block of `PHASE_WORDS` words of the batch's
+// A level's formulas as phases (decisions 0465, 0483): a threadgroup a block of `PHASE_WORDS` words of the batch's
 // region and a formula, a thread a word; a dispatch a phase. A formula is compiled on the host (`phase_program`) into
 // instructions `[code, dst, src, extra]` over slots of the region's words (`scratch`, `shape.queue` words a formula,
 // `shape.recursive` a slot):
@@ -1070,7 +1070,7 @@ UKL_INLINE void phase_parents(UKL_GLOBAL const DocView* docs,uint32_t files,UKL_
   }
 }
 
-// The batch's parents, once (decision 0463): a threadgroup a block of `PHASE_WORDS` words, `phase_parents` into
+// The batch's parents, once (decision 0483): a threadgroup a block of `PHASE_WORDS` words, `phase_parents` into
 // threadgroup memory, then each word's 32 entries into `parents` at the region's numbering (word `gw`'s node `k` at
 // gw*32 + k; a file-local node, `TAPE_NONE` for none or past the file). The phases read a node's parent there.
 DEFINE_KERNEL2(label_passes, label_parents,
@@ -1254,7 +1254,7 @@ DEFINE_KERNEL2(label_passes, label_phase,
     if(bits!=0u)ukl_atomic_or(&out[held],bits);
   }
   // The formula's set into its targets' rows: a file's word spans two of a row's. Modes 0 and 1 a rule's row in
-  // `roots`; 2 a formula pass's scratch row, within its rule, read only at the word's set bits (0447, 0461: a rule
+  // `roots`; 2 a formula pass's scratch row, within its rule, read only at the word's set bits (0447, 0465: a rule
   // over codes reads each node's code); 3 a targets pass's scratch row, the image as it is.
   if(!live)return;
   uint32_t anchor=PHASE_SLOT(result)[gw],sh=d.node_base%32u,row_at=(d.node_base+lw*32u)/32u;

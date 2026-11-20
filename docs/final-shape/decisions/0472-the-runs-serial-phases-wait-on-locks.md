@@ -1,10 +1,10 @@
 # 0472. The run's serial phases wait on locks the pool's threads share
 
-Status: accepted (2026-11-19). Follows 0465 §1 (Q284's second item) and 0471.
+Status: accepted (2026-11-19). Follows 0484 §1 (Q343's second item) and 0471.
 
 ## Intro
 
-0465 found the run's own thread spending 8–10 s of all's 19–23 s in serial phases: `cross` 2.7–5.1 s, of which
+0484 found the run's own thread spending 8–10 s of all's 19–23 s in serial phases: `cross` 2.7–5.1 s, of which
 `public_best_len` and `public_best_route` were 1.4 s off a core; `stats` 2.1–2.5 s; `combine` 2.2–3.0 s. The user:
 "please do all 3. Our parsing should be lightning fast".
 
@@ -60,18 +60,18 @@ host's load was 13–33, so the walls say nothing. The residency's and the tapes
 
 ## Whether the pool oversubscribes the cores
 
-It does not. 0465's "13–48 s ready with no core" had two causes:
+It does not. 0484's "13–48 s ready with no core" had two causes:
 
 - **The machine's load**, and the threads parked on the locks above.
 - **The measurement's binary name.** The library's load-time constructor (`install_tree_sitter_allocator`, for the
   Node addon and the test runner) makes the pool without the main thread unless the executable's name starts with
-  `rerail-engine`. Every run 0465–0472 measured was a copy named `engine`: the pool had ten workers apart from the
+  `rerail-engine`. Every run 0484–0472 measured was a copy named `engine`: the pool had ten workers apart from the
   main thread, whose waits ran no jobs ("help s" 0.000). The CLI's own name is not affected. The A/B pairs above ran
   under one name each, so they compare.
 
 Under its own name (9 workers and the main thread), all on an M1 Max at load about 5:
 
-| | 0465 | Now |
+| | 0484 | Now |
 |---|---|---|
 | native wall, CPU | 23.2 s, 77.5 s | 16.2–16.8 s, 51.3–52.0 s |
 | Metal pinned to the GPU (after a first run that compiles its kernels, 40.6 s) | 19.2–22.6 s, 61–73 s | 16.3 s, 43.1 s |
@@ -83,7 +83,7 @@ Under its own name (9 workers and the main thread), all on an M1 Max at load abo
 - **The store writer's one lock in the parse.** Every tape a worker queues (`queue_source_and_tape` into the
   run's one gather) and every look-up of a queued tape (`pending`) takes the writer's state `Mutex`. A gather per
   worker would remove it, but the other threads' look-ups of a queued tape must still find it.
-- **The parse workers' CPU** is W's reference graph (0466): 6.5 s of the 8.4 s.
+- **The parse workers' CPU** is W's reference graph (0485): 6.5 s of the 8.4 s.
 - `cross`' largest strata now run on a core: `reach_edges` 0.69 s and `flow0` 0.63 s, CPU nearly all.
 - `stats` is 1.0 s (it was 1.6–2.5 s), its waits now small.
 - **A renamed CLI loses the main thread from its pool** (the constructor's name test). Every harness that copies the

@@ -1,17 +1,17 @@
-# 0463. A level's formulas run on one kernel, in phases, from the batch's parents
+# 0483. A level's formulas run on one kernel, in phases, from the batch's parents
 
-Status: accepted (2026-11-19). Follows 0461. Supersedes 0459 (the size classes are removed with `label_formula`) and
-0461's decision 1 (the phases are no longer a measure behind a switch, they are the only path).
+Status: accepted (2026-11-19). Follows 0465. Supersedes 0464 (the size classes are removed with `label_formula`) and
+0465's decision 1 (the phases are no longer a measure behind a switch, they are the only path).
 
 ## Intro
 
-0461 measured a level's formulas as phases: one dispatch per phase, a thread per (word, formula). Its word steps cost
+0465 measured a level's formulas as phases: one dispatch per phase, a thread per (word, formula). Its word steps cost
 about 32 µs a dispatch for a whole batch, and its time was the one-hop pushes' chains: in format 16 a parent read is
 a search back over up to 7 siblings. Its next steps were:
 
 1. spread a phase's pushes over its SIMD group, as `label_micro` spreads its roots;
 2. turn the descendant, following and reach steps into scans, so that a level runs on one kernel;
-3. compare the phases with 0459's size classes, and remove the loser.
+3. compare the phases with 0464's size classes, and remove the loser.
 
 The user: "please look at this: [those three]. Also look at extracting the parent/child relationships for a block to
 shared memory during the same kernel launch, so that the hopping and dependent reads are faster, or at least caching
@@ -46,8 +46,8 @@ them".
 
    - A node's parent is one load from `label_parents`' array.
    - Every word a device formula has compiles. `label_formula` is removed, and with it:
-     - 0459's size classes and `Shape::wide`;
-     - Q271's fused mode;
+     - 0464's size classes and `Shape::wide`;
+     - Q288's fused mode;
      - its profile counts and trace;
      - the switches `RERAIL_FORMULA_PHASES`, `_WIDE`, `_WIDTH`, `_FUSED`, `_TRACE` and `_ONE`.
 3. **A chain's levels are the run's.**
