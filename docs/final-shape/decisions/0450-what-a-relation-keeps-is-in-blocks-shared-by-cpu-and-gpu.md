@@ -506,3 +506,16 @@ sort again).
 - Test: `an_inputs_value_counts_and_statistics_are_in_a_block`.
 - hogql cold, profiling, format 15: CPU 83.3-84.1 B against 5e's 83.3-84.0 B; Metal 74.6-78.1 B, 1,629 in each of 3
   runs.
+
+## Built (2026-11-19, step 6b: the count tables in blocks)
+
+- A count table (decision 0098 §1, `table::Table`) was a map from each key (a boxed copy of its values) to a slot of
+  the histogram's counts. It is now open addressing in a block near the relation's rows. Each slot holds the key's
+  first row and its rows (`[u32; 2]`), and is found by the key's hash (`rerail_blocks::key_hash`). The probe checks
+  the key against that row's values, read where they lie, so no key is copied. The histogram kernel's coder gives
+  each key's first row with its code.
+- `InRel::tables` keeps a handle per key-column set.
+- Test: `a_count_table_is_slots_in_a_block`. `a_count_many_bindings_reach_reads_its_count_table` stays ignored (the
+  scalar summaries' memo answers its count first, decision 0100, open).
+- hogql builds no count table. CPU 83.7-87.1 B against 6a's 84.6-88.9 B at load 39-59 (noisy). Metal 75.5-77.1 B;
+  one run of 3 lost a chunk (1,487: Q262, older than this work).
