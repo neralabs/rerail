@@ -1782,30 +1782,48 @@ pub const GIVEN: [&str; 8] = ["in_scope", "out_scope", "report_when_gt", "option
 /// yet are empty (`NOT_MADE`, O76).
 fn bound(prog: &front::Program) -> Result<()> {
     let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).chain(prog.facts.keys().map(String::as_str)).collect();
-    let cpython = "CPython (core.rerail: the isolated `ast.parse` worker), which the corpus runner does not run";
-    // `env` is the run's settings (`tools::with_settings`): facts when there are any, else empty. The world's
-    // relations (`dir_entry`, `file_line`, …, and `loaded`) are answered by the runner (`world`).
-    let world = |rel: &str| rel == world::LOADED || crate::code_rule_dsl::logic::rr::WORLD.iter().any(|(r, _)| *r == rel);
-    let given = |rel: &str| GIVEN.contains(&rel) || rel == "env" || world(rel) || NOT_MADE.iter().any(|(r, _)| *r == rel);
     // core.rerail's literal parts are made in core.rerail's shape only (`syntax::core_rr`): a program that declares its base
     // relations itself (T's shape) has none.
     let t_shape = syntax::Projection::of(prog, BTreeSet::new()).shape == syntax::Shape::T;
-    let parts = |rel: &str| t_shape && rel.starts_with("str_part");
-    for rule in &prog.rules {
-        for a in rule.body.iter().filter_map(front::Literal::atom) {
-            let rel = a.rel.as_str();
-            if !parts(rel) && (derived.contains(rel) || super::super::sql::select::input_columns(rel).is_some() || !crate::code_rule_dsl::logic::rr::is_core(rel) || given(rel)) {
-                continue;
-            }
-            let why = match rel {
-                _ if parts(rel) => format!("core.rerail's shape makes it (a program that includes core.rerail); without it, it needs {cpython}"),
-                "list_len" => "it counts a pattern's list variable ($$$X), and patterns do not lower".to_owned(),
-                _ => "the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md)".to_owned(),
-            };
-            return Err(Error::Plan(format!("{rel} is read, and nothing derives it or binds it: {why}")));
-        }
+    let mut read = prog.rules.iter().flat_map(|rule| rule.body.iter().filter_map(front::Literal::atom)).map(|a| a.rel.as_str());
+    match read.find(|rel| !is_bound(rel, &derived, t_shape)) {
+        Some(rel) => Err(Error::Plan(format!("{rel} is read, and nothing derives it or binds it: {}", unbound_why(rel, t_shape)))),
+        None => Ok(()),
     }
-    Ok(())
+}
+
+/// Whether the relation `rel` a program reads has rows (`bound`): derived, an input of its own or a core relation the
+/// runner binds. A literal part in T's shape never has.
+fn is_bound(rel: &str, derived: &BTreeSet<&str>, t_shape: bool) -> bool {
+    !literal_part(rel, t_shape) && (derived.contains(rel) || super::super::sql::select::input_columns(rel).is_some() || !crate::code_rule_dsl::logic::rr::is_core(rel) || run_given(rel))
+}
+
+/// One of core.rerail's literal parts (`str_part…`), read by a program in T's shape.
+fn literal_part(rel: &str, t_shape: bool) -> bool {
+    t_shape && rel.starts_with("str_part")
+}
+
+/// A core relation the run gives though nothing derives it. `env` is the run's settings (`tools::with_settings`), and
+/// `tool_call` and `tool_input` the tool calls it is given (`corpus::added`, `rr::lower::TOOL_CALLS`): facts when there
+/// are any, else empty. The converter's (`GIVEN`) and the relations not made yet (`NOT_MADE`) are empty too, and the
+/// world's are the runner's (`world_relation`).
+fn run_given(rel: &str) -> bool {
+    GIVEN.contains(&rel) || rel == "env" || crate::code_rule_dsl::logic::rr::lower::TOOL_CALLS.contains(&rel) || world_relation(rel) || NOT_MADE.iter().any(|(r, _)| *r == rel)
+}
+
+/// The world's relations (`dir_entry`, `file_line`, …, and `loaded`), which the runner answers (`world`).
+fn world_relation(rel: &str) -> bool {
+    rel == world::LOADED || crate::code_rule_dsl::logic::rr::WORLD.iter().any(|(r, _)| *r == rel)
+}
+
+/// Why nothing gives `rel` rows, for `bound`'s error.
+fn unbound_why(rel: &str, t_shape: bool) -> String {
+    let cpython = "CPython (core.rerail: the isolated `ast.parse` worker), which the corpus runner does not run";
+    match rel {
+        _ if literal_part(rel, t_shape) => format!("core.rerail's shape makes it (a program that includes core.rerail); without it, it needs {cpython}"),
+        "list_len" => "it counts a pattern's list variable ($$$X), and patterns do not lower".to_owned(),
+        _ => "the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md)".to_owned(),
+    }
 }
 
 /// Of a program whose text names its libraries as modules (decision 0089 §5), the part the run's library does not
@@ -2467,6 +2485,8 @@ pub fn run_with_options(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
+    // The run's options as it is first given them: a `toolCalls` option not of its shape is an error here (`added`).
+    added::check_tool_calls(options).map_err(Error::Plan)?;
     run_handed(programs, None, None, root, t_facts, out, modes, binding, chunk_nodes, typing, options)
 }
 
@@ -2499,6 +2519,7 @@ pub(super) fn run_read_handing(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
+    added::check_tool_calls(options).map_err(Error::Plan)?;
     let key = read_key(read)?;
     run_handed(&[key.as_str()], Some(read), sources, root, None, out, modes, binding, chunk_nodes, typing, options)
 }
