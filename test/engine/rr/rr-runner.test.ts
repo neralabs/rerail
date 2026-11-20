@@ -127,11 +127,11 @@ describe("describeRerailPolicies", () => {
       tests: 1,
       suppresses: true,
       fixes: false,
-      // The rule file first, then what it reads: its own library file beside it, and `core.rerail`.
+      // The rule file first, then what it reads, as the engine read it: `core.rerail`, then its own library file.
       files: [
         { path: rule, sha256: sha256(SHOUT) },
-        { path: join(rule, "..", "lib", "shout-calls.rerail"), sha256: sha256(SHOUT_CALLS) },
         { path: expect.stringMatching(/[/\\]docs[/\\]rule-syntax[/\\]lib[/\\]core\.rerail$/u), sha256: expect.stringMatching(/^[0-9a-f]{64}$/u) },
+        { path: join(rule, "..", "lib", "shout-calls.rerail"), sha256: sha256(SHOUT_CALLS) },
       ],
     });
     expect(rows[1]).toEqual({ path: bad, ok: false, error: expect.stringContaining(bad) });
