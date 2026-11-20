@@ -171,8 +171,13 @@ struct sha256_portable {
 };
 
 #if SIMDJSON_IMPLEMENTATION_ARM64
+// The target that lets the SHA2 intrinsics inline. GCC 12 and older put them under `+crypto`, a flag of
+// its own that `+sha2` does not set (it also turns on AES, which no code here uses); GCC 13 split it
+// into `+aes` and `+sha2`.
 #if defined(__clang__)
 #define RERAIL_ARM_SHA "sha2"
+#elif __GNUC__ < 13
+#define RERAIL_ARM_SHA "+crypto"
 #else
 #define RERAIL_ARM_SHA "+sha2"
 #endif

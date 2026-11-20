@@ -36,6 +36,7 @@ through the shell (`sed -i`) is not caught; the read-back said so.
   "rule": {
     "id": "local:no-hand-edits-to-generated-files",
     "mode": "steer",
+    "title": "Don't hand-edit generated files",
     "match": {
       "all": [
         {

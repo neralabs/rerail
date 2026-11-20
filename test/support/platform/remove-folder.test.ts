@@ -58,6 +58,22 @@ describe("removeFolder", () => {
     expect(existsSync(path)).toBe(false);
   });
 
+  it.runIf(process.platform === "linux" || process.platform === "win32")("takes a process the system shows exited for gone before Node has its exit, as a stop that waited for it does", async () => {
+    const path = await folder();
+    const child = await runningProcess(path);
+    const exited = once(child, "exit");
+    child.kill("SIGKILL");
+    // No turn of the event loop comes while this loop runs, so Node cannot take the exit in: only the system shows it.
+    // Within the test's 5 s.
+    const deadline = Date.now() + 3_000;
+    while (runningIn(path).length > 0 && Date.now() < deadline) {
+      // The process ends on the system's schedule.
+    }
+    expect({ exitCode: child.exitCode, signalCode: child.signalCode }).toEqual({ exitCode: null, signalCode: null });
+    expect(runningIn(path)).toEqual([]);
+    await exited;
+  });
+
   it("removes a link to a folder a process runs in, and leaves the folder and the process alone", async () => {
     const target = await folder();
     const child = await runningProcess(target);

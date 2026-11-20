@@ -1,0 +1,86 @@
+{
+  "kind": "code",
+  "rule": {
+    "format": "rerail.policy/v1",
+    "id": "local:radius-from-tokens",
+    "revision": 1,
+    "mode": "steer",
+    "description": "Round corners only with the card, sheet, button and chip radii; no Tailwind radius sizes, arbitrary radii or numeric border radius in styles.",
+    "scope": {
+      "include": [
+        "src/**/*.ts",
+        "src/**/*.tsx"
+      ],
+      "exclude": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "src/types/database.ts",
+        "src/theme/**"
+      ]
+    },
+    "clauses": [
+      {
+        "id": "radius-class",
+        "forbid": {
+          "regex": {
+            "pattern": "(?:^|[\\s'\"`:])rounded(?:-(?:t|b|l|r|s|e|tl|tr|bl|br))?(?:-(?:sm|md|lg|xl|2xl|3xl|full|\\[[^\\]\\s]+\\]))?(?:$|[\\s'\"`])",
+            "source": "file.content"
+          }
+        },
+        "violation": {
+          "code": "OFF_TOKEN_RADIUS",
+          "anchor": "witness.span",
+          "message": "Use rounded-card (14), rounded-sheet (22), rounded-button (12) or rounded-chip (999), with a side prefix if needed (rounded-t-sheet)."
+        }
+      },
+      {
+        "id": "radius-style",
+        "forbid": {
+          "regex": {
+            "pattern": "\\bborder(?:Top|Bottom)?(?:Left|Right|Start|End)?Radius\\s*:\\s*[1-9]",
+            "source": "file.content"
+          }
+        },
+        "violation": {
+          "code": "NUMERIC_RADIUS_STYLE",
+          "anchor": "witness.span",
+          "message": "Use a rounded-card / rounded-sheet / rounded-button / rounded-chip class, or read the value from src/theme/radius.json, instead of a number."
+        }
+      }
+    ]
+  },
+  "cases": {
+    "caught": [
+      {
+        "path": "src/features/activities/activity-card.tsx",
+        "content": "<View className=\"bg-muted size-12 items-center justify-center rounded-lg\" />\n"
+      },
+      {
+        "path": "src/components/ui/text.tsx",
+        "content": "const code = 'bg-muted relative rounded px-2 font-mono';\n"
+      },
+      {
+        "path": "src/app/a.tsx",
+        "content": "<View className=\"rounded-t-[22px] rounded-full\" />\n"
+      },
+      {
+        "path": "src/app/b.tsx",
+        "content": "const s = StyleSheet.create({ box: { borderTopLeftRadius: 8 } });\n"
+      }
+    ],
+    "passed": [
+      {
+        "path": "src/app/c.tsx",
+        "content": "<View className=\"rounded-card rounded-t-sheet rounded-button rounded-chip rounded-none\" />\n"
+      },
+      {
+        "path": "src/app/d.tsx",
+        "content": "import radius from '@/theme/radius.json';\nconst s = { borderRadius: radius.card };\n"
+      },
+      {
+        "path": "src/app/d0.tsx",
+        "content": "const s = { borderRadius: 0 };\n"
+      }
+    ]
+  }
+}
