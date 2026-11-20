@@ -531,6 +531,8 @@ jobs:
   # `next`, it was a pre-release. A pack's Release is never the repository's latest release (core's is). Its notes are
   # from the pack's CHANGELOG.md on main, which keeps every released version's section: everything since the pack's
   # last version on `latest`, a version that never reached `latest` included (previousStable in github-release.mjs).
+  # It checks out main as it is now, not the commit this run was started on, which can be days before the approval: a
+  # note or lead corrected on main while the release was tested is what stable users read.
   promoted-releases:
     name: Promoted GitHub Releases
     needs: promote
@@ -543,6 +545,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: main
           fetch-depth: 1
           persist-credentials: false
 

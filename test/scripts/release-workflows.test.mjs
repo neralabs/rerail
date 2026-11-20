@@ -108,6 +108,11 @@ describe("release-packs.yml", () => {
     const step = releases.steps.find((candidate) => String(candidate.run ?? "").includes("github-release.mjs"));
     expect(step.env.RELEASED).toBe("${{ needs.promote.outputs.promoted }}");
   });
+
+  it("writes the promoted Releases from main's changelog as it is at approval, not as it was when the promotion was requested", () => {
+    const checkout = jobs["promoted-releases"].steps.find((step) => String(step.uses ?? "").startsWith("actions/checkout@"));
+    expect(checkout.with.ref).toBe("main");
+  });
 });
 
 describe("every release workflow", () => {

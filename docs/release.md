@@ -361,6 +361,10 @@ version on `latest`, so a release candidate that never reached `latest` is not l
 - Backfill reads only the remote's tags, and names each tag it skips: local-only, local commit differing from the
   remote's, or no changelog section for its version. So every Release it makes has notes.
 - Only the highest core version on `latest` becomes the latest release.
+- A version above its package's `latest` on npm is still on `next`, so backfill makes its Release a pre-release.
+- A Release's pre-release flag records whether its version reached `latest`, and a promoted Release's notes start
+  after the last version without it. If a promotion's **Promoted GitHub Release** job fails, re-run it before the
+  next promotion, or that promotion lists the version as a candidate that never reached `latest`.
 
 </details>
 
