@@ -179,11 +179,11 @@ pub(super) fn choose(base: &Placed, model: &mut Model) -> Result<Option<(Vec<Str
     // Decision 0301: the jobs' sums handed in so far folded in first, then hidden from the estimates on this thread (and
     // the jobs it starts) by an empty handle in the run's place, not taken out of the run's.
     OBSERVED.with(|o| o.0.fold(true));
-    let held = OBSERVED_AT.with(|a| {
-        let run = a.borrow().clone();
-        let on = run.published.load().is_some();
-        on.then(|| std::mem::replace(&mut *a.borrow_mut(), Arc::new(ObservedShared::observing(true))))
-    });
+    let run = share_observed();
+    let (held, hidden) = match run.published.load().is_some() {
+        true => (Some(run), Some(crate::code_rule_dsl::logic::profile::bind(ObservedAt(Arc::new(ObservedShared::observing(true)))))),
+        false => (None, None),
+    };
     let observed_any = held.as_ref().is_some_and(|run| run.published.load().as_ref().is_some_and(|o| !o.rules.is_empty()));
     // The statistics the cone's plans read, if they are made when first planned with (`Model::resolve`); and its
     // readers' (the pricing below plans them).
@@ -197,9 +197,7 @@ pub(super) fn choose(base: &Placed, model: &mut Model) -> Result<Option<(Vec<Str
     if !bounded_small.is_empty() {
         super::super::profile::decision("inline or store (decision 0099)", || format!("{} candidates stored small, their inputs' counts bounding them under {SMALL} rows: not planned", bounded_small.len()));
     }
-    if let Some(run) = held {
-        OBSERVED_AT.with(|a| *a.borrow_mut() = run);
-    }
+    drop(hidden);
     // The observations can change a choice only where the stored side ran (every reader as it is): a veto of an
     // inlining, or, where the inlined side ran too, a revert. Only those are priced again: over the estimates, each
     // relation an earlier chunk or part measured takes its measured rows and columns (`overlay`), and each build is
@@ -1007,18 +1005,21 @@ impl ObservedShared {
     }
 }
 
+/// The run's observations, in the run's context: its jobs observe into them (`enter_observed`).
+#[derive(Clone, Default)]
+struct ObservedAt(SharedObserved);
+
 thread_local! {
-    static OBSERVED_AT: RefCell<SharedObserved> = RefCell::new(Default::default());
     /// A job's own observations (a thread that entered another's, `enter_observed`): its strata add to them without
     /// a lock, and they are added to the run's once, as the job ends (strands observing took turns at the run's
     /// lock, rule by rule).
     static OWN_OBSERVED: RefCell<Option<Observed>> = const { RefCell::new(None) };
 }
 
-/// Carries the run's observations to a job on another thread (`run_state`): shared, what the job observes is added
-/// to them as it ends (`enter_observed`).
+/// A job's own observations, on the job's thread (`run_state`): what it observes is added to the run's as it ends
+/// (`enter_observed`). The run's themselves are in the run's context, which the job's run carries.
 pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
-    c.part(&["OBSERVED_AT", "OWN_OBSERVED"], crate::code_rule_dsl::logic::run_state::Shared(share_observed(), enter_observed));
+    c.part(&["OWN_OBSERVED"], crate::code_rule_dsl::logic::run_state::Shared(share_observed(), enter_observed));
 }
 
 /// Adds to this thread's job's observations where it has them (`enter_observed`), else to the run's: `f` is given
@@ -1089,7 +1090,7 @@ impl ObservedCell {
 struct ObservedKey;
 impl ObservedKey {
     fn with<R>(&self, f: impl FnOnce(&ObservedCell) -> R) -> R {
-        f(&ObservedCell(OBSERVED_AT.with(|a| a.borrow().clone())))
+        f(&ObservedCell(share_observed()))
     }
 }
 static OBSERVED: ObservedKey = ObservedKey;
@@ -1118,27 +1119,31 @@ pub(in crate::code_rule_dsl) fn file_observed(run: &SharedObserved, made: Observ
     run.change(|o| o.add(made));
 }
 
-/// This thread's observations, for a job on another thread to enter.
-pub(in crate::code_rule_dsl) fn share_observed() -> SharedObserved {
-    OBSERVED_AT.with(|a| a.borrow().clone())
+/// The observations `to` (a chunk's, `chunk_observed`) bound as the run's for the guard's extent: its jobs observe
+/// into them too (`plan::in_view`, Q88).
+pub(in crate::code_rule_dsl) fn bind_observed(to: SharedObserved) -> crate::code_rule_dsl::logic::profile::Bound {
+    crate::code_rule_dsl::logic::profile::bind(ObservedAt(to))
 }
 
-/// While the guard lives, this thread's strata observe into `to` (another thread's, `share_observed`).
+/// The run's observations (`ObservedAt`).
+pub(in crate::code_rule_dsl) fn share_observed() -> SharedObserved {
+    crate::code_rule_dsl::logic::profile::bound::<ObservedAt>().0
+}
+
+/// While the guard lives, this thread's job observes into observations of its own, added to `to` (the run's, its
+/// caller's `share_observed`) as it ends.
 pub(in crate::code_rule_dsl) fn enter_observed(to: SharedObserved) -> impl Drop {
     struct Entered(Option<SharedObserved>, Option<Observed>);
     impl Drop for Entered {
         fn drop(&mut self) {
-            if let Some(mine) = OWN_OBSERVED.with(|o| std::mem::replace(&mut *o.borrow_mut(), self.1.take())) {
-                OBSERVED_AT.with(|a| a.borrow().clone()).hand_in(mine);
-            }
-            if let Some(a) = self.0.take() {
-                OBSERVED_AT.with(|o| *o.borrow_mut() = a);
+            let mine = OWN_OBSERVED.with(|o| std::mem::replace(&mut *o.borrow_mut(), self.1.take()));
+            if let (Some(mine), Some(to)) = (mine, self.0.take()) {
+                to.hand_in(mine);
             }
         }
     }
     let own = to.published.load().is_some().then(Observed::default);
-    let was = OBSERVED_AT.with(|a| std::mem::replace(&mut *a.borrow_mut(), to));
-    Entered(Some(was), OWN_OBSERVED.with(|o| std::mem::replace(&mut *o.borrow_mut(), own)))
+    Entered(Some(to), OWN_OBSERVED.with(|o| std::mem::replace(&mut *o.borrow_mut(), own)))
 }
 
 /// Observed join work and relations, each with the corpus nodes of the runs that observed it (summed), so a later
@@ -1182,7 +1187,7 @@ pub(super) struct Seen<'a> {
 pub(super) fn observing(on: bool) {
     let on = on && !std::env::var("RERAIL_OBSERVED_STEPS").is_ok_and(|v| v == "off");
     // A new handle: what the last run's jobs handed in stays with theirs.
-    OBSERVED_AT.with(|a| *a.borrow_mut() = Arc::new(ObservedShared::observing(on)));
+    crate::code_rule_dsl::logic::profile::bind_here(ObservedAt(Arc::new(ObservedShared::observing(on))));
 }
 
 /// A stratum's native run: per rule, the (in, out) rows of each step of each of its probes, and each relation it
@@ -1466,7 +1471,10 @@ fn estimate(f: Fields<'_>, model: &mut Model, (base, ids_of): (&Placed, &BTreeMa
             !built.contains(rel.as_str()) && (model.stats.card.contains_key(rel) || observed_rows(rel, nodes).is_some())
         }).collect();
         let model_now: &Model = model;
+        // In the run, on whichever thread prices a relation: its plans read the run's and the object's statistics.
+        let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
         let sums: Vec<(f64, f64)> = each.par_iter().zip(&measured_only).map(|(&i, &measured_only)| {
+            let _in = carry.enter();
             let (mut rows, mut work) = (0.0, 0.0);
             for &k in order[i].1.iter().filter(|_| !measured_only) {
                 if let Some((w, n)) = calibrated_rows(f, model_now, &base.body(k)) {

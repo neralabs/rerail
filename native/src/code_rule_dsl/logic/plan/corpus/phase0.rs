@@ -25,7 +25,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
 // Whether this thread runs phase 0: the flag is the profiler's (`phase_clock`), which reads it too.
-pub use crate::code_rule_dsl::phase_clock::{IN_PHASE_0, active};
+pub use crate::code_rule_dsl::phase_clock::{active, in_phase_0};
 
 /// What phase 0 starts from for one program: its text's includes, or its file.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -626,10 +626,10 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
     // The library is already a permitted input root. Phase zero only loads the files its seeds request.
     let options = serde_json::json!({ "reuse": true, "inputFiles": [] });
     let mut image = Vec::new();
-    IN_PHASE_0.with(|c| c.set(true));
+    let phase_0 = in_phase_0();
     let run = super::run_handed(&[&text], None, None, &lib, None, std::path::Path::new(""), "program",
         crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &super::Typing::default(), &options, Some(&mut image), Default::default());
-    IN_PHASE_0.with(|c| c.set(false));
+    drop(phase_0);
     let result = run.and_then(|report| {
         use crate::code_rule_dsl::logic::plan::output::Value as V;
         let mut g = Graph { plans: report.plans, ..Graph::default() };

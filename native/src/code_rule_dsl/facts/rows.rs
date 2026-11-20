@@ -212,21 +212,28 @@ thread_local! {
     static TOP: std::cell::Cell<(i64, i64)> = const { std::cell::Cell::new((0, 0)) };
 }
 
-/// A chunk entered on this thread (`enter_chunk`): when it drops, the thread's chunk is back, and what this thread
-/// allocated less freed meanwhile (less the scopes inside) is the chunk's.
+/// A chunk entered here (`enter_chunk`): when it drops, the chunk bound before is back, and what this thread
+/// allocated less freed meanwhile (less the scopes inside) is the chunk's. Its fields drop in order: the binding
+/// last, after the account is given (decision 0442's guards drop in order).
 pub struct InChunk {
-    old: Option<Option<Arc<Chunk>>>,
     chunk: Option<Arc<Chunk>>,
     net: i64,
     given: i64,
     top: (i64, i64),
+    _bound: crate::code_rule_dsl::logic::profile::Bound,
 }
 
-/// Enters `chunk` on this thread, for a job carried into it or its own evaluation (`in_chunk`).
+/// Enters `chunk` here, for a job carried into it or its own evaluation (`in_chunk`): bound in the run's context,
+/// its account kept on this thread.
 pub fn enter_chunk(chunk: Option<Arc<Chunk>>) -> InChunk {
-    let old = CHUNK.with(|c| c.replace(chunk.clone()));
+    let bound = crate::code_rule_dsl::logic::profile::bind(ChunkHere(chunk.clone()));
     let (net, given) = (heap_net(), GIVEN.with(std::cell::Cell::get));
-    InChunk { old: Some(old), chunk, net, given, top: TOP.with(|t| t.replace((net, given))) }
+    InChunk { chunk, net, given, top: TOP.with(|t| t.replace((net, given))), _bound: bound }
+}
+
+/// The chunk under way (`in_chunk`), else `None`.
+pub fn current_chunk() -> Option<Arc<Chunk>> {
+    crate::code_rule_dsl::logic::profile::bound::<ChunkHere>().0
 }
 
 impl Drop for InChunk {
@@ -238,15 +245,12 @@ impl Drop for InChunk {
             c.heap.fetch_add(own, std::sync::atomic::Ordering::Relaxed);
             c.note();
         }
-        if let Some(old) = self.old.take() {
-            CHUNK.with(|c| *c.borrow_mut() = old);
-        }
     }
 }
 
 /// What the chunk this thread evaluates has held at its most so far (`Chunk::held_most`); `None` outside one.
 pub fn chunk_held_most() -> Option<usize> {
-    let chunk = CHUNK.with(|c| c.borrow().clone())?;
+    let chunk = current_chunk()?;
     // The scope this thread is in, its allocation so far: its chunk's, not given yet.
     let (net, given) = TOP.with(std::cell::Cell::get);
     let open = (heap_net() - net) - (GIVEN.with(std::cell::Cell::get) - given);
@@ -256,10 +260,9 @@ pub fn chunk_held_most() -> Option<usize> {
     Some(most)
 }
 
-thread_local! {
-    /// The chunk this thread's run is evaluating (`in_chunk`): carried to its jobs (`setfix::carried`).
-    pub static CHUNK: std::cell::RefCell<Option<Arc<Chunk>>> = const { std::cell::RefCell::new(None) };
-}
+/// The chunk the run is evaluating (`in_chunk`), in the run's context: its jobs' relations go in its blocks too.
+#[derive(Clone, Default)]
+struct ChunkHere(Option<Arc<Chunk>>);
 
 /// Runs `f` as a chunk's evaluation: the relations it and its jobs make go in blocks of the chunk's own, given back
 /// with the last of its rows (decision 0289: a chunk is a block). What outlives the chunk keeps only its own block;
@@ -325,7 +328,7 @@ fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<F
 /// after it, the room could be another thread's by then, or not in one piece (a free list's), and the chunk failed
 /// (an index's 2.5 MB, the data layer's 50 policies on 901 files). A new open block when that one has no such chunk.
 fn open_chunk(life: Life, need: usize, align: usize) -> Result<(Arc<Facts>, (usize, usize)), String> {
-    let chunk = CHUNK.with(|c| c.borrow().clone());
+    let chunk = current_chunk();
     let runs = crate::code_rule_dsl::logic::profile::local::<Open>();
     let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
     if let Some(f) = &*open
@@ -798,7 +801,7 @@ impl Part {
         // A relation given room past its rows (`extra`: its indexes', `Rows::with_index_room`) is alone in its block
         // too, so its indexes lie with it.
         let alone = life == Life::Device || extra > 0;
-        let chunk = CHUNK.with(|c| c.borrow().clone());
+        let chunk = current_chunk();
         let (runs, live_blocks) = (crate::code_rule_dsl::logic::profile::local::<Open>(), crate::code_rule_dsl::logic::profile::machine::<Live>());
         let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
         for fresh in [false, true] {
@@ -1876,7 +1879,7 @@ mod tests {
         // Its most when asked: its own 100 + 30 - 10 MB, the other chunk's 50 MB not, the 500 MB before it not.
         assert_eq!(held, 120 << 20, "{} MB", held >> 20);
         assert_eq!(other.held_most(), 50 << 20, "the other chunk's job is its own");
-        assert!(CHUNK.with(|c| c.borrow().is_none()), "the thread's chunk is back");
+        assert!(current_chunk().is_none(), "the chunk bound before is back");
     }
 
     /// An empty kept relation keeps its width: one started from it holds the rows pushed to it (it dropped them when

@@ -2,18 +2,21 @@
 //! construction (anchor index publication) and execution (anchor selection, relational SQL).
 //! Parse and clause matching are timed per apply in `Metrics`. Read through `workspaceProfile`.
 
-use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-thread_local! {
-    /// Set while this thread runs phase 0 (`logic::plan::corpus::phase0`): `bootstrap.rerail` itself is read by the
-    /// builtin reader, and the profiler's roofline measures nothing in it.
-    pub static IN_PHASE_0: Cell<bool> = const { Cell::new(false) };
+/// Bound while phase 0 runs (`logic::plan::corpus::phase0`), in the run's context: `bootstrap.rerail` itself is read by
+/// the builtin reader, and the profiler's roofline measures nothing in it. Its jobs are in phase 0 too.
+#[derive(Clone, Copy, Default)]
+struct InPhase0(bool);
+
+/// Phase 0 runs here until the guard drops.
+pub fn in_phase_0() -> crate::code_rule_dsl::logic::profile::Bound {
+    crate::code_rule_dsl::logic::profile::bind(InPhase0(true))
 }
 
-/// Whether this thread is running phase 0 (`bootstrap.rerail` and `core.rerail` are then read by the builtin reader).
+/// Whether phase 0 runs here (`bootstrap.rerail` and `core.rerail` are then read by the builtin reader).
 pub fn active() -> bool {
-    IN_PHASE_0.with(Cell::get)
+    crate::code_rule_dsl::logic::profile::bound::<InPhase0>().0
 }
 
 /// A run's phase clocks, in CPU nanoseconds (decision 0442: the run's).

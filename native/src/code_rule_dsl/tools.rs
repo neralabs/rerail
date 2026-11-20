@@ -1123,7 +1123,8 @@ const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine du
 /// it keeps.
 ///
 /// Returns the command's result, and where it cut a relation at the width cap (decision 0462, `RERAIL_WIDEST=cut`) the
-/// message that its results are incomplete: the caller fails the process with it.
+/// message that its results are incomplete: the caller fails the process with it. So too where the engine read state
+/// outside any run (decision 0442, `rerail_context::misses`): a refused read, which took a value of its own.
 pub fn cli(args: &[String]) -> (Result<String, String>, Option<String>) {
     // Decision 0272 (O167): the process ends with its command, before any idle time, so each run serves its waiting
     // join searches at its end, within a share of its CPU (decision 0243). A long-lived caller of `cli_in` leaves
@@ -1155,6 +1156,14 @@ pub fn cli(args: &[String]) -> (Result<String, String>, Option<String>) {
             c.wall, c.own + c.helped, c.off_core(), c.others(), c.no_core()
         );
     }
+    let misses = crate::code_rule_dsl::logic::profile::misses();
+    let refused = (!misses.is_empty()).then(|| {
+        format!("{} read(s) outside any run, refused (decision 0442; each with its backtrace above): {}", misses.len(), misses.join(", "))
+    });
+    let incomplete = match (incomplete, refused) {
+        (Some(a), Some(b)) => Some(format!("{a}\n{b}")),
+        (a, b) => a.or(b),
+    };
     (out, incomplete)
 }
 

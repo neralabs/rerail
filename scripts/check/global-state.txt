@@ -34,7 +34,7 @@ native/crates/c_directives/src/tokens.rs::C	stays	computed once from the engine'
 native/crates/c_directives/src/tokens.rs::CPP	stays	computed once from the engine's own grammar
 native/crates/c_directives/src/tokens.rs::CPP_WORDS	stays	computed once from the engine's own grammar
 native/crates/c_directives/src/tokens.rs::C_WORDS	stays	computed once from the engine's own grammar
-native/crates/context/src/lib.rs::SAID	stays	the strict check's report (RERAIL_STRICT_RUN=1): the types said, never read by the engine
+native/crates/context/src/lib.rs::MISSES	stays	the reads outside any run (decision 0442): the process's error report, as its stderr is (a read outside any run is no run's); never read by the engine
 native/crates/context/src/lib.rs::TESTS	stays	test builds only (`test-hooks`): the tests' shared object, for a test that models no caller
 native/crates/device_metal/src/lib.rs::ONCE	stays	registers the engine's languages once (code registered at load)
 native/crates/kotlin_lean/src/lex.rs::BIN	stays	a byte class of a literal

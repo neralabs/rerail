@@ -1052,30 +1052,24 @@ pub fn search_one(over: &dyn Fn() -> bool) -> bool {
     true
 }
 
-thread_local! {
-    /// Decision 0243: whether a run's end serves the waiting searches (`drain_at_end`): a one-shot process ends before the
-    /// machine is idle, and its requests, with the relations they hold, end with it. Decision 0272: every command of the
-    /// CLI (`tools::cli`) sets it; a long-lived caller (the reactor) leaves the searches to the idle job. The caller's
-    /// (decision 0442): held by the thread that set it, carried to its runs' jobs (`carried`).
-    static DRAIN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// Carries the caller's `drain_at_end` to a job of its run on another thread (`run_state`).
-pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
-    c.copy(&["DRAIN"], &DRAIN);
-}
+/// Decision 0243: whether a run's end serves the waiting searches (`drain_at_end`): a one-shot process ends before the
+/// machine is idle, and its requests, with the relations they hold, end with it. Decision 0272: every command of the
+/// CLI (`tools::cli`) sets it; a long-lived caller (the reactor) leaves the searches to the idle job. The caller's
+/// (decision 0442), in the run's context, so its runs' jobs see it too.
+#[derive(Clone, Copy, Default)]
+struct Drain(bool);
 /// The share of the process's CPU a run's end may spend on them.
 const DRAIN_SHARE: f64 = 0.05;
 
 /// Sets whether the ends of this caller's runs serve the waiting searches.
 pub fn drain_at_end(on: bool) {
-    DRAIN.with(|d| d.set(on));
+    crate::code_rule_dsl::logic::profile::bind_here(Drain(on));
 }
 
 /// At a run's end, where `drain_at_end` is set: the waiting searches, most important first, until this thread has
 /// spent `DRAIN_SHARE` of the process's CPU so far on them. The searches the budget leaves wait, as before.
 pub(super) fn drain() {
-    if !DRAIN.with(std::cell::Cell::get) || joins().requests.lock().is_empty() {
+    if !crate::code_rule_dsl::logic::profile::bound::<Drain>().0 || joins().requests.lock().is_empty() {
         return;
     }
     let budget = DRAIN_SHARE * super::super::profile::process_cpu();

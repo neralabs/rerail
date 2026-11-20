@@ -6924,6 +6924,10 @@ Python process for every batch, though `code_rule_dsl::cpython` computes the sam
     where every relation the rules read is a file's; `rr_ctx16` (the pairs) is none.
   - `plan.rs`, the search: past the bound head a step passes on one binding (`setfix::tail`), as the greedy order
     priced it; the step's reads stay priced (priced at one row, a pair-led order read every line of its file: 28.6 s).
+    On the sync branch (2026-11-20) the cut met Q240's witness pricing: with the tail's rows cut to its bindings,
+    `witnessed` never saw a witness share, and `xk(v) :- m(v, n), l(n, y), c(n, z), k(v)` led from `m` at 1 M rows
+    of work (`the_search_prices_the_steps_past_a_bound_head_as_one_witness`). The search's cell keeps its rows uncut
+    (`Cell::full`) for `witnessed`, and passes on the cut ones: `k` leads, and Bend's range test still passes.
   - `setfix::ranges`, `Found::within`, `InRel::index_then`, and `range_pass` in the search: a probe whose new column
     later comparisons bound by values bound before reads a range of an order on its key then that column, which a
     held input (`Stats::held`: the cross part's held bases and exports) or a derived relation has. The comparisons

@@ -77,9 +77,12 @@ fn cpu_between_spans_is_named_by_the_spans_around_it() {
     // The test's own run, profiled (decision 0442: the switch is its caller's, the records its run's).
     let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     profile::set(true);
+    let run = profile::run_own();
     let t = std::thread::Builder::new()
         .name("xgaps".into())
-        .spawn(|| {
+        .spawn(move || {
+            // In the test's run, as a job of it is.
+            let _in = profile::enter(run);
             // A thread of its own, profiled as its caller is (the switch is a caller's, carried to its jobs).
             profile::set(true);
             drop(profile::span(|| "xgap before".into()));

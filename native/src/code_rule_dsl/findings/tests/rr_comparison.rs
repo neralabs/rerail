@@ -373,7 +373,9 @@ fn concurrent_runs_read_their_own_long_texts() {
 result(t) :- field(_,"right",n), text(n,t).
 .output result
 "#;
-    let runs: Vec<_> = ["111", "222", "333", "444"].into_iter().map(|digits| std::thread::spawn(move || {
+    let caller = crate::code_rule_dsl::logic::profile::caller();
+    let runs: Vec<_> = ["111", "222", "333", "444"].into_iter().map(|digits| (digits, caller.clone())).map(|(digits, caller)| std::thread::spawn(move || {
+        let _caller = caller.enter();
         let base = crate::code_rule_dsl::prefilter::tests::temp().with_extension(format!("long-text-{digits}"));
         let root = base.join("src");
         std::fs::create_dir_all(&root).unwrap();

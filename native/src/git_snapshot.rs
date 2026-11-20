@@ -265,9 +265,17 @@ pub fn install_source_checker(check: SourceChecker) {
 
 static VIEWS: Mutex<Vec<Arc<View>>> = Mutex::new(Vec::new());
 static ACTIVE: AtomicUsize = AtomicUsize::new(0);
+/// The storage batch under way (`StorageBatch`): its view and epoch, in the run's context (decision 0442), so its
+/// jobs read through it too.
+#[derive(Clone, Copy, Default)]
+struct StorageBatchId(Option<(u64, u64)>);
+
+fn storage_batch() -> Option<(u64, u64)> {
+    rerail_prof::code_rule_dsl::logic::profile::bound::<StorageBatchId>().0
+}
+
 thread_local! {
     // One object-store handle per worker, reused across reads. No cache of a snapshot's whole contents.
-    pub static STORAGE_BATCH: std::cell::Cell<Option<(u64, u64)>> = const { std::cell::Cell::new(None) };
     static REPOSITORY: RefCell<Option<((u64, u64), gix::Repository)>> = const { RefCell::new(None) };
 }
 
@@ -323,7 +331,7 @@ enum SourcePath {
 /// One evaluation shares the validated pack layout across its workers. An independent API read
 /// validates the layout on entry. The evaluation checks its original layout before returning.
 pub struct StorageBatch {
-    previous: Option<(u64, u64)>,
+    _bound: rerail_prof::code_rule_dsl::logic::profile::Bound,
     storage: Arc<storage::Storage>,
     view: Arc<View>,
 }
@@ -333,17 +341,13 @@ impl StorageBatch {
         let Some(view) = view(root) else { return Ok(None) };
         let state = view.current_repository()?;
         let id = (view.id, state.epoch);
-        if STORAGE_BATCH.get() == Some(id) { return Ok(None); }
+        if storage_batch() == Some(id) { return Ok(None); }
         let storage = state.storage.clone();
         drop(state);
-        Ok(storage.map(|storage| Self { previous: STORAGE_BATCH.replace(Some(id)), storage, view }))
+        Ok(storage.map(|storage| Self { _bound: rerail_prof::code_rule_dsl::logic::profile::bind(StorageBatchId(Some(id))), storage, view }))
     }
 
     pub fn is_current(&self) -> bool { self.view.directories.check().is_ok() && self.storage.is_current() }
-}
-
-impl Drop for StorageBatch {
-    fn drop(&mut self) { STORAGE_BATCH.set(self.previous); }
 }
 
 impl View {
@@ -472,7 +476,7 @@ impl View {
 
     fn current_repository(&self) -> io::Result<std::sync::MutexGuard<'_, RepositoryState>> {
         let mut repository = self.repository.lock().unwrap_or_else(|e| e.into_inner());
-        if STORAGE_BATCH.get() == Some((self.id, repository.epoch)) { return Ok(repository); }
+        if storage_batch() == Some((self.id, repository.epoch)) { return Ok(repository); }
         self.directories.check()?;
         if !repository.storage.as_deref().is_some_and(storage::Storage::is_current) {
             let options = crate::git_access::opener::open_options().open_path_as_is(true);
@@ -496,7 +500,7 @@ impl View {
             }
             drop(repository);
             let answer = f(&slot.as_ref().unwrap().1, storage.as_deref(), epoch.1);
-            if STORAGE_BATCH.get() != Some(epoch) { self.directories.check()?; }
+            if storage_batch() != Some(epoch) { self.directories.check()?; }
             Ok(answer)
         })
     }

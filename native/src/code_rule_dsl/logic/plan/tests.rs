@@ -299,6 +299,8 @@ fn a_probe_is_planned_when_its_delta_first_has_rows() {
     let p = parse_version(src).unwrap();
     let mut outputs = Vec::new();
     for modes in ["", "program"] {
+        // The counts are the run's (decision 0442): the test holds the run they are read in, which the run joins.
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         let _plans = KeepPlans::start(None);
         let path = crate::code_rule_dsl::fixtures::temp();
         let store = ContentStore::open(&path).unwrap();
@@ -2436,9 +2438,9 @@ fn a_relation_empty_when_planned_does_not_make_a_cross_product_free() {
     }
     let r = 0usize;
     let _plans = KeepPlans::start(None);
-    let was = explaining(true);
+    let explain = explaining(true);
     let (_, explained) = model.plan_rule_reused(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), None).unwrap();
-    explaining(was);
+    drop(explain);
     let steps = explained.expect("explained").steps;
     let zero: Vec<&str> = steps.iter().filter(|s| s.rows <= 0.0).map(|s| s.literal.as_str()).collect();
     assert!(zero.is_empty(), "no step is priced at no rows, so no order after the empty relation is free: {zero:?} of {:?}", steps.iter().map(|s| (s.literal.as_str(), s.rows)).collect::<Vec<_>>());
@@ -3153,7 +3155,7 @@ fn the_searchs_own_steps_are_the_records_features() {
     let fields = fields.fields().unwrap();
     let b = body::nth(&p, 0);
     // The record made in full, as a profiled run makes it.
-    let was = explaining(true);
+    let explain = explaining(true);
     for first in [None, Some(2)] {
         let got = model.search_steps_against_records(fields, &b, first).unwrap();
         assert!(got.len() >= 2, "the best and a runner-up, delta {first:?}: {}", got.len());
@@ -3168,7 +3170,7 @@ fn the_searchs_own_steps_are_the_records_features() {
             }
         }
     }
-    explaining(was);
+    drop(explain);
     joins::set_pricer(None);
 }
 

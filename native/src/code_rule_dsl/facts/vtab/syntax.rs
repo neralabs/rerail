@@ -3990,6 +3990,9 @@ pub fn shaped(store: &ContentStore, documents: Vec<Document>, projection: &Proje
 fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> {
     let mut out: Vec<(&'static str, Arc<dyn Source>)> = Vec::new();
     let mut named = vec![("node", View::Node), ("child", View::Child), ("field", View::Field), ("tape", View::Tape), ("core_node", View::Core), ("node_order", View::Order)];
+    // A node's depth is the tape's (`at.depth`) in either shape: the cross part reads it as a measure's key (decision
+    // 0364 R6) whatever the program's shape.
+    named.push(("ast_depth", View::Depth));
     match batch.shape {
         Shape::T => named.push(("line", View::Line)),
         Shape::Core => named.extend([
@@ -3999,7 +4002,6 @@ fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> {
             ("col", View::Loc(Place::Col)),
             // `core.rerail`'s `docof(x: loc, d)` is an input (`rr::lower`): nodes' and spans' documents.
             ("docof", View::Loc(Place::Docof)),
-            ("ast_depth", View::Depth),
             ("next_sibling", View::Sibling),
         ]),
     }

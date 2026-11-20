@@ -66,7 +66,11 @@ pub fn configure(this_thread: bool) {
     MADE.get_or_init(|| {
         // Every block is made by the one policy from here on (decision 0342).
         crate::blocks::install();
-        let b = rayon::ThreadPoolBuilder::new().num_threads(threads()).thread_name(|i| format!("rerail-cpu {i}")).stack_size(POOL_STACK);
+        let b = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads())
+            .thread_name(|i| format!("rerail-cpu {i}"))
+            .stack_size(POOL_STACK)
+            .start_handler(|_| rerail_context::engine_thread());
         let _ = if this_thread { b.use_current_thread() } else { b }.build_global();
     });
 }
@@ -775,10 +779,12 @@ pub fn service<T: Send + 'static>(name: &str, stack: Option<usize>, f: impl FnOn
     let named = name.to_owned();
     // The service reads its starter's shared and machine values (decision 0442), and keeps no run of its alive: it
     // may outlive it. One started outside any run (the process's signal watcher, from `main`) has none to carry.
-    let shared = rerail_context::shared_object();
+    let shared = rerail_context::starter_object();
     b.spawn(move || {
+        rerail_context::engine_thread();
+        // Listed in its machine's services (one with no object has no machine, and is listed in none).
+        let pools = shared.as_ref().map(|s| s.machine().get::<Pools>());
         let _within = shared.map(rerail_context::within);
-        let pools = pools();
         struct Listed(String, Arc<Pools>);
         impl Drop for Listed {
             fn drop(&mut self) {
@@ -788,8 +794,10 @@ pub fn service<T: Send + 'static>(name: &str, stack: Option<usize>, f: impl FnOn
                 }
             }
         }
-        pools.services.lock().unwrap_or_else(|e| e.into_inner()).push(named.clone());
-        let _listed = Listed(named, pools);
+        let _listed = pools.map(|pools| {
+            pools.services.lock().unwrap_or_else(|e| e.into_inner()).push(named.clone());
+            Listed(named, pools)
+        });
         f()
     })
 }
@@ -827,7 +835,7 @@ pub fn services() -> Vec<String> {
 /// Drops `x` beside the caller, as a job on the pool: freeing what it holds is no step's work, and a drop waits for
 /// nothing.
 pub fn drop_beside<T: Send + 'static>(x: T) {
-    let run = rerail_context::run_own();
+    let run = rerail_context::job_run();
     rayon::spawn(move || {
         let _run = rerail_context::enter(run);
         drop(x)
@@ -932,10 +940,10 @@ fn lane_host<R>(lane: Lane, f: impl FnOnce() -> R) -> R {
     // SAFETY: see `Handed`: the caller is blocked for as long as the other thread holds it.
     unsafe impl<T> Send for Handed<T> {}
     let pools = pools();
-    match pools.lanes.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(threads().div_ceil(2)).thread_name(|i| format!("rerail-lane-host {i}")).build().ok()) {
+    match pools.lanes.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(threads().div_ceil(2)).thread_name(|i| format!("rerail-lane-host {i}")).start_handler(|_| rerail_context::engine_thread()).build().ok()) {
         Some(pool) => {
             let f = Handed(f);
-            let run = rerail_context::run_own();
+            let run = rerail_context::job_run();
             pool.install(move || {
                 let f = f;
                 let _run = rerail_context::enter(run);
@@ -960,7 +968,7 @@ pub fn lane_spawn<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> 
     use std::sync::atomic::Ordering;
     let (send, take) = std::sync::mpsc::channel();
     let pools = pools();
-    let run = rerail_context::run_own();
+    let run = rerail_context::job_run();
     let held = Arc::clone(&pools);
     let job = move |slot: Option<usize>| {
         let _run = rerail_context::enter(run);
@@ -1514,7 +1522,12 @@ impl Executor {
                     hosts.push(Arc::clone(b));
                     for _ in 0..per_lane[lane.index()].min(threads()) {
                         let (claims, backend) = (Arc::clone(&claims), Arc::clone(b));
-                        rayon::spawn_fifo(move || as_job(if lane == Lane::Sql { "SQL launches" } else { "the cores' launches" }, || claims.serve_host(&*backend)));
+                        // The launches run in their submitter's run, on whichever pool thread takes them.
+                        let run = rerail_context::job_run();
+                        rayon::spawn_fifo(move || {
+                            let _run = rerail_context::enter(run);
+                            as_job(if lane == Lane::Sql { "SQL launches" } else { "the cores' launches" }, || claims.serve_host(&*backend))
+                        });
                     }
                 }
                 // A device lane: its worker claims its share when it reaches the batch, and a device with nothing
@@ -1546,7 +1559,7 @@ impl Executor {
             });
         }
         // The job is its caller's run's (decision 0442), on whichever pool thread takes it.
-        let run = rerail_context::run_own();
+        let run = rerail_context::job_run();
         queue(Box::new(move || {
             let _run = rerail_context::enter(run);
             board.start(&mut ticket);

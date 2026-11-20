@@ -6,7 +6,9 @@
 //! - `RUN`: the run under way on this thread, made and carried by `rerail_logic::run` (and `run_state`, to its jobs);
 //! - `setting`, `local`, `with_local`, `local_if_any`: a run's settings and its own values, by type;
 //! - `Shared` (`shared`, `with_shared`): what a caller shares by design with the runs it hands the object;
-//! - `Machine` (`machine`): the machine's resources, which every `Shared` is made on.
+//! - `Machine` (`machine`): the machine's resources, which every `Shared` is made on;
+//! - `bind`, `bound`, `with_bound`: the run's context, a value by type for an extent of the run (`CONTEXT`), carried
+//!   with the run to its jobs.
 //!
 //! Outside a run, each gives a value of its own that nothing keeps.
 
@@ -18,6 +20,10 @@ thread_local! {
 
 /// What the crates below `logic` tell the run under way, and read of it (`RUN`; decisions 0441, 0442).
 pub trait RunOwn: Send + Sync {
+    /// A job's handle (`job_run`): the run, and the context it was taken in. `enter` puts both on the job's thread.
+    fn with_context(&self) -> Option<(&std::sync::Arc<dyn RunOwn>, &Context)> {
+        None
+    }
     /// Its settings and its own values (`setting`, `local`).
     fn values(&self) -> &RunValues;
     /// What its caller shares by design with the other runs it hands the same object (`shared`).
@@ -105,36 +111,79 @@ pub fn default_shared() -> std::sync::Arc<Shared> {
     Shared::new()
 }
 
-/// The shared object a read of `what` outside any run takes. A product build's entry points, and every thread the
-/// engine makes, hold a run or a shared object (`enter`, `within`), so such a read is a miss: it takes one of its own,
-/// which nothing keeps. A test build takes the tests' one.
+/// The shared object a read of `what` outside any run takes. Decision 0442 refuses such a read: every entry point and
+/// every thread the engine makes holds a run or a shared object (`enter`, `within`), so it is a miss (`missed`). In a
+/// product build it takes an object of its own, which reaches nothing of any caller's and which nothing keeps. In a
+/// test build, a test's thread (one the engine did not make: `on_a_tests_thread`) is a caller with no entry point
+/// (it calls the engine's parts directly), whose object is the tests' one (`TESTS`).
 #[cold]
 fn outside_a_run(what: &'static str) -> std::sync::Arc<Shared> {
-    missed(what);
     #[cfg(feature = "test-hooks")]
-    return std::sync::Arc::clone(&TESTS);
-    #[cfg(not(feature = "test-hooks"))]
+    if on_a_tests_thread() {
+        return std::sync::Arc::clone(&TESTS);
+    }
+    missed(what);
     Shared::new()
 }
 
-/// A read of `what` (a type's name) outside any run: with `RERAIL_STRICT_RUN=1`, said once a type on stderr, so that
-/// one run lists every miss (a check that a product path holds its run everywhere: a pool's parallel loop that does
-/// not carry it, a thread started without it).
+/// Whether this thread is a test's (test builds): one the engine did not make (`engine_thread`). A test's own thread,
+/// and every thread a test starts itself, is a caller's; the engine's threads (its pools, its services) run its jobs,
+/// which carry their caller's run (`job_run`), so a read outside any run there is a job that lost it.
+#[cfg(feature = "test-hooks")]
+fn on_a_tests_thread() -> bool {
+    !ENGINE.with(std::cell::Cell::get)
+}
+
+#[cfg(feature = "test-hooks")]
+thread_local! {
+    /// Whether the engine made this thread (`engine_thread`): test builds, for `on_a_tests_thread`.
+    static ENGINE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Marks this thread as one the engine made (its pools' threads as they start, each service's): in a test build, a
+/// read outside any run on it is refused (`missed`), as every read is in a product build. A no-op in a product build.
+pub fn engine_thread() {
+    #[cfg(feature = "test-hooks")]
+    ENGINE.with(|e| e.set(true));
+}
+
+/// A read of `what` (a type's name) outside any run, refused (decision 0442). In a test build (`test-hooks`) it panics
+/// on the engine's threads (a test's take the tests' object: `outside_a_run`): a job runs in its caller's run, and a
+/// thread holds its starter's object. In a product build it is said once a type on stderr, with its backtrace, and kept (`misses`): the command
+/// fails at its end (`tools::cli`), with its output written, as a run cut at the width cap does.
 #[cold]
+#[track_caller]
 fn missed(what: &'static str) {
-    if !std::env::var_os("RERAIL_STRICT_RUN").is_some_and(|v| v == "1") {
-        return;
-    }
-    // The types said so far: a check's report, never read by the engine.
-    static SAID: parking_lot::Mutex<Vec<&'static str>> = parking_lot::Mutex::new(Vec::new());
-    let mut said = SAID.lock();
-    if !said.contains(&what) {
-        said.push(what);
-        eprintln!("rerail: outside any run: {what} (RERAIL_STRICT_RUN=1)\n{}", std::backtrace::Backtrace::force_capture());
+    #[cfg(feature = "test-hooks")]
+    panic!(
+        "rerail: a read of {what} outside any run, on thread {:?} (decision 0442): a job runs in its caller's run, and a thread holds its starter's object (`within`)",
+        std::thread::current().name()
+    );
+    #[cfg(not(feature = "test-hooks"))]
+    {
+        let mut said = MISSES.lock();
+        if !said.contains(&what) {
+            said.push(what);
+            eprintln!("rerail: a read of {what} outside any run (decision 0442)\n{}", std::backtrace::Backtrace::force_capture());
+        }
     }
 }
 
-/// The tests' shared object (`default_shared`, `outside_a_run`): test builds only.
+/// The types read outside any run in this process (`missed`): an error's report, never read by the engine. The
+/// process's, as its stderr is: a read outside any run is no run's.
+#[cfg(not(feature = "test-hooks"))]
+static MISSES: parking_lot::Mutex<Vec<&'static str>> = parking_lot::Mutex::new(Vec::new());
+
+/// The types read outside any run so far in this process (`missed`), for the command's error at its end. A test build
+/// has none: a miss panics there.
+pub fn misses() -> Vec<&'static str> {
+    #[cfg(not(feature = "test-hooks"))]
+    return MISSES.lock().clone();
+    #[cfg(feature = "test-hooks")]
+    Vec::new()
+}
+
+/// The tests' shared object (`default_shared`): test builds only.
 #[cfg(feature = "test-hooks")]
 static TESTS: std::sync::LazyLock<std::sync::Arc<Shared>> = std::sync::LazyLock::new(Shared::new);
 
@@ -212,22 +261,86 @@ pub fn shared_object() -> Option<std::sync::Arc<Shared>> {
     run_own().map(|r| std::sync::Arc::clone(r.shared()))
 }
 
+/// The object a thread started here holds (a service: `within` there): the run's; with no run, on a test's thread,
+/// the tests' one (a caller with no entry point: `outside_a_run`); else none (a thread that holds no caller's state:
+/// the process's signal watcher, started by `main`).
+pub fn starter_object() -> Option<std::sync::Arc<Shared>> {
+    #[cfg(feature = "test-hooks")]
+    if run_own().is_none() && on_a_tests_thread() {
+        return Some(std::sync::Arc::clone(&TESTS));
+    }
+    shared_object()
+}
+
 /// The shared object a thread reads by: its run's, else `outside_a_run`'s (for a thread that hands it on: a service
 /// it starts, a machine's own thread).
 pub fn shared_here() -> std::sync::Arc<Shared> {
     shared_object().unwrap_or_else(|| outside_a_run("the shared object"))
 }
 
-/// Puts `run` on this thread (a job of it, on another thread) until the guard drops, then what the thread had.
+/// Puts `run` on this thread (a job of it, on another thread) until the guard drops, then what the thread had. A job's
+/// handle (`job_run`) puts its context on the thread too; a run alone leaves the thread's context as it is.
 pub fn enter(run: Option<std::sync::Arc<dyn RunOwn>>) -> impl Drop {
-    struct Back(Option<Option<std::sync::Arc<dyn RunOwn>>>);
+    struct Back(Option<Option<std::sync::Arc<dyn RunOwn>>>, Option<Context>);
     impl Drop for Back {
         fn drop(&mut self) {
             let was = self.0.take().flatten();
-            let _ = RUN.try_with(|r| *r.borrow_mut() = was);
+            // The context first, as it was entered last; each dropped outside its cell (a value's drop may read it).
+            let context = self.1.take().and_then(|c| CONTEXT.try_with(|x| x.replace(c)).ok());
+            drop(context);
+            // The run that leaves, dropped here: if it was the last holder, the run has ended.
+            let left = RUN.try_with(|r| r.replace(was)).ok().flatten();
+            drop(left);
+            left_run();
         }
     }
-    Back(Some(RUN.try_with(|r| r.replace(run)).ok().flatten()))
+    let (run, context) = match run {
+        Some(job) => match job.with_context() {
+            Some((run, context)) => (Some(std::sync::Arc::clone(run)), Some(context.clone())),
+            None => (Some(job), None),
+        },
+        None => (None, None),
+    };
+    let was_run = RUN.try_with(|r| r.replace(run)).ok().flatten();
+    let was_context = context.and_then(|c| CONTEXT.try_with(|x| x.replace(c)).ok());
+    Back(Some(was_run), was_context)
+}
+
+/// Whether this thread holds `job`'s run and context already (a pool's item run inline on its caller's thread).
+pub fn holds(job: &Option<std::sync::Arc<dyn RunOwn>>) -> bool {
+    let (run, context) = match job.as_ref().map(|j| (j, j.with_context())) {
+        Some((_, Some((run, context)))) => (Some(run), Some(context)),
+        Some((run, None)) => (Some(run), None),
+        None => (None, None),
+    };
+    let same_run = RUN.with(|r| match (r.borrow().as_ref(), run) {
+        (Some(a), Some(b)) => std::ptr::addr_eq(std::sync::Arc::as_ptr(a), std::sync::Arc::as_ptr(b)),
+        (None, None) => true,
+        _ => false,
+    });
+    same_run && context.is_none_or(|c| CONTEXT.with(|x| x.borrow().same(c)))
+}
+
+/// A run has left this thread (a guard that put it there dropped, `RUN` back as it was): if it has ended (nothing
+/// holds it), this thread's copy of its values (`SEEN`) is dropped now, outside the copy's borrow (a value's drop may
+/// read a run). Kept, they would live until the thread next enters a run or exits, where a value's drop can find the
+/// thread's other locals gone.
+pub fn left_run() {
+    let dead = SEEN
+        .try_with(|seen| {
+            let mut seen = seen.borrow_mut();
+            seen.run.as_ref().is_some_and(|w| w.strong_count() == 0).then(|| std::mem::take(&mut *seen))
+        })
+        .ok()
+        .flatten();
+    drop(dead);
+}
+
+/// The run under way on this thread has ended (its outermost scope, on its own thread): this thread's copy of its
+/// values (`SEEN`) is dropped now (`left_run`).
+pub fn run_ended() {
+    let held = SEEN.try_with(|seen| std::mem::take(&mut *seen.borrow_mut())).ok();
+    drop(held);
 }
 
 /// Puts a run of its own on this thread, on `shared`, until the guard drops: for a thread that outlives the run that
@@ -235,6 +348,185 @@ pub fn enter(run: Option<std::sync::Arc<dyn RunOwn>>) -> impl Drop {
 /// no run alive.
 pub fn within(shared: std::sync::Arc<Shared>) -> impl Drop {
     enter(Some(std::sync::Arc::new(Bare(RunValues::default(), shared))))
+}
+
+/// The run a job of this thread's runs in, on whichever thread takes it (`enter` there): the run under way, else a run
+/// of its own on this thread's object (`shared_here`: on a test's thread, the tests' one). A job runs as its caller
+/// does (decision 0442), whether or not the caller holds a run.
+pub fn job_run() -> Option<std::sync::Arc<dyn RunOwn>> {
+    let run = run_own().unwrap_or_else(|| std::sync::Arc::new(Bare(RunValues::default(), shared_here())));
+    let context = CONTEXT.try_with(|c| c.borrow().clone()).unwrap_or_default();
+    Some(std::sync::Arc::new(InContext(run, context)))
+}
+
+/// A job's handle (`job_run`): the run, and the context the job was made in.
+struct InContext(std::sync::Arc<dyn RunOwn>, Context);
+
+impl RunOwn for InContext {
+    fn with_context(&self) -> Option<(&std::sync::Arc<dyn RunOwn>, &Context)> {
+        Some((&self.0, &self.1))
+    }
+    fn values(&self) -> &RunValues {
+        self.0.values()
+    }
+    fn shared(&self) -> &std::sync::Arc<Shared> {
+        self.0.shared()
+    }
+    fn any(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync> {
+        std::sync::Arc::clone(&self.0).any()
+    }
+}
+
+thread_local! {
+    /// The run's context on this thread (decision 0442): a value by type for each extent under way (`bind`), carried
+    /// with the run to its jobs (`job_run`, `enter`).
+    static CONTEXT: std::cell::RefCell<Context> = const { std::cell::RefCell::new(Context(None)) };
+}
+
+/// The run's context: a chain of values by type, the nearest binding first. Shared by the jobs taken in it; a binding
+/// adds a link and leaves the chain it was made on as it was.
+#[derive(Clone, Default)]
+pub struct Context(Option<std::sync::Arc<Link>>);
+
+struct Link {
+    key: std::any::TypeId,
+    value: Box<dyn std::any::Any + Send + Sync>,
+    up: Context,
+    /// Made by `bind_here` (it ends with the extent under way), not by a guard.
+    here: bool,
+}
+
+impl Context {
+    fn find<T: 'static>(&self) -> Option<&T> {
+        let key = std::any::TypeId::of::<T>();
+        let mut at = self.0.as_deref();
+        while let Some(link) = at {
+            if link.key == key {
+                return link.value.downcast_ref::<T>();
+            }
+            at = link.up.0.as_deref();
+        }
+        None
+    }
+
+    fn same(&self, other: &Context) -> bool {
+        match (&self.0, &other.0) {
+            (Some(a), Some(b)) => std::sync::Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+
+    fn with<T: Send + Sync + 'static>(&self, value: T, here: bool) -> Context {
+        Context(Some(std::sync::Arc::new(Link { key: std::any::TypeId::of::<T>(), value: Box::new(value), up: self.clone(), here })))
+    }
+
+    /// The nearest link a guard made, past those `bind_here` made above it (the test build's order check).
+    #[cfg(feature = "test-hooks")]
+    fn guarded(&self) -> Option<&std::sync::Arc<Link>> {
+        let mut at = self.0.as_ref();
+        while let Some(link) = at.filter(|l| l.here) {
+            at = link.up.0.as_ref();
+        }
+        at
+    }
+}
+
+/// The value of type `T` the run's context binds here (the nearest `bind`), else `T`'s default.
+pub fn bound<T: Clone + Default + Send + Sync + 'static>() -> T {
+    CONTEXT.try_with(|c| c.borrow().find::<T>().cloned()).ok().flatten().unwrap_or_default()
+}
+
+/// `f` of the value of type `T` the run's context binds here, else of `T`'s default. `f` may bind and read the
+/// context: it holds the chain, not the thread's cell.
+pub fn with_bound<T: Default + Send + Sync + 'static, R>(f: impl FnOnce(&T) -> R) -> R {
+    let context = CONTEXT.try_with(|c| c.borrow().clone()).unwrap_or_default();
+    match context.find::<T>() {
+        Some(t) => f(t),
+        None => f(&T::default()),
+    }
+}
+
+/// Binds `value` in the run's context on this thread, and in every job taken here, until the guard drops; then the
+/// context is as it was.
+pub fn bind<T: Send + Sync + 'static>(value: T) -> Bound {
+    let was = CONTEXT.try_with(|c| {
+        let next = c.borrow().with(value, false);
+        let made = next.0.as_ref().map_or(0, |l| std::sync::Arc::as_ptr(l) as usize);
+        (c.replace(next), made)
+    });
+    let (was, made) = match was {
+        Ok((was, made)) => (Some(was), made),
+        Err(_) => (None, 0),
+    };
+    #[cfg(not(feature = "test-hooks"))]
+    let _ = made;
+    Bound {
+        was,
+        #[cfg(feature = "test-hooks")]
+        made,
+        _here: std::marker::PhantomData,
+    }
+}
+
+/// Binds `value` for the rest of the extent under way on this thread (an extent's guard dropping takes it with it): a
+/// caller's choice for its runs (the profile's switch, the options for its inputs).
+pub fn bind_here<T: Send + Sync + 'static>(value: T) {
+    let was = CONTEXT.try_with(|c| {
+        let next = {
+            let here = c.borrow();
+            // A binding of the same type `bind_here` made at the top is replaced, so that a switch set again and again
+            // stays one link. A guard's link is never replaced: its extent ends where the guard drops.
+            match here.0.as_deref() {
+                Some(top) if top.here && top.key == std::any::TypeId::of::<T>() => top.up.with(value, true),
+                _ => here.with(value, true),
+            }
+        };
+        c.replace(next)
+    });
+    drop(was);
+}
+
+/// A binding (`bind`): dropped, the run's context on this thread is as it was before. It stays on its thread (not
+/// `Send`): dropped on another, it would set that thread's context.
+#[must_use = "the binding ends when the guard drops"]
+pub struct Bound {
+    /// The context before it, put back as it drops.
+    was: Option<Context>,
+    /// Its own link, which the test build checks is the nearest a guard made as it drops.
+    #[cfg(feature = "test-hooks")]
+    made: usize,
+    _here: std::marker::PhantomData<*const ()>,
+}
+
+impl Drop for Bound {
+    fn drop(&mut self) {
+        // A test build checks that guards drop in the reverse of their order: this guard's link is the nearest a guard
+        // made. Dropped out of order, an inner binding would outlive its guard.
+        #[cfg(feature = "test-hooks")]
+        if self.was.is_some() && !std::thread::panicking() {
+            let nearest = CONTEXT.try_with(|c| c.borrow().guarded().map_or(0, |l| std::sync::Arc::as_ptr(l) as usize)).unwrap_or(self.made);
+            assert_eq!(nearest, self.made, "rerail: a binding of the run's context dropped out of order (decision 0442): guards drop in the reverse of their order");
+        }
+        let left = self.was.take().and_then(|was| CONTEXT.try_with(|c| c.replace(was)).ok());
+        drop(left);
+    }
+}
+
+/// What a thread holds for its caller (`caller`): `job_run`'s run.
+#[derive(Clone)]
+pub struct Caller(Option<std::sync::Arc<dyn RunOwn>>);
+
+/// What this thread holds, for a thread it starts (`Caller::enter` there): `job_run`.
+pub fn caller() -> Caller {
+    Caller(job_run())
+}
+
+impl Caller {
+    /// Puts the caller's run on this thread until the guard drops.
+    pub fn enter(&self) -> impl Drop {
+        enter(self.0.clone())
+    }
 }
 
 /// A run with nothing of its own but its values and its shared object (`within`, `test_run`).
@@ -310,6 +602,11 @@ pub fn local<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
 #[cold]
 fn local_slow<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
     let Some(run) = run_own() else {
+        // A test's own thread takes a value of its own, as a caller with no run does (`outside_a_run`).
+        #[cfg(feature = "test-hooks")]
+        if on_a_tests_thread() {
+            return std::sync::Arc::new(T::default());
+        }
         missed(std::any::type_name::<T>());
         return std::sync::Arc::new(T::default());
     };
@@ -403,4 +700,107 @@ pub fn test_run() -> impl Drop {
         }
     }
     Guard(fresh)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Clone, Default, PartialEq, Debug)]
+    struct Depth(usize);
+    #[derive(Clone, Default, PartialEq, Debug)]
+    struct Site(&'static str);
+
+    fn links() -> usize {
+        CONTEXT.with(|c| {
+            let (mut n, mut at) = (0, c.borrow().0.clone());
+            while let Some(l) = at {
+                n += 1;
+                at = l.up.0.clone();
+            }
+            n
+        })
+    }
+
+    #[test]
+    fn a_binding_lasts_its_extent_and_the_nearest_wins() {
+        assert_eq!(bound::<Depth>(), Depth(0), "unbound: the default");
+        {
+            let _one = bind(Depth(1));
+            let _site = bind(Site("plan"));
+            assert_eq!(bound::<Depth>(), Depth(1));
+            {
+                let _two = bind(Depth(2));
+                assert_eq!((bound::<Depth>(), bound::<Site>()), (Depth(2), Site("plan")));
+                assert_eq!(with_bound(|d: &Depth| d.0), 2);
+            }
+            assert_eq!(bound::<Depth>(), Depth(1));
+        }
+        assert_eq!((bound::<Depth>(), links()), (Depth(0), 0));
+    }
+
+    #[test]
+    fn a_job_takes_its_callers_context_and_its_bindings_stay_its_own() {
+        let _test = test_run();
+        let _outer = bind(Depth(3));
+        let job = job_run();
+        let _later = bind(Depth(4));
+        std::thread::spawn(move || {
+            assert_eq!(bound::<Depth>(), Depth(0), "a thread of its own: no context");
+            {
+                let _in = enter(job.clone());
+                assert_eq!(bound::<Depth>(), Depth(3), "the context the job was taken in");
+                assert!(run_own().is_some_and(|r| r.with_context().is_none()), "the run, not the job's handle");
+                assert!(holds(&job));
+                let _own = bind(Depth(9));
+                assert_eq!(bound::<Depth>(), Depth(9));
+                assert!(!holds(&job));
+            }
+            assert_eq!(bound::<Depth>(), Depth(0), "the thread's own again");
+        })
+        .join()
+        .unwrap();
+        assert_eq!(bound::<Depth>(), Depth(4), "the caller's own bindings are untouched");
+    }
+
+    #[test]
+    fn a_run_entered_alone_leaves_the_threads_context() {
+        let _depth = bind(Depth(5));
+        let run: std::sync::Arc<dyn RunOwn> = std::sync::Arc::new(Bare(RunValues::default(), Shared::new()));
+        let _in = enter(Some(run));
+        assert_eq!(bound::<Depth>(), Depth(5));
+    }
+
+    #[cfg(feature = "test-hooks")]
+    #[test]
+    #[should_panic(expected = "dropped out of order")]
+    fn a_binding_dropped_out_of_order_is_refused() {
+        let outer = bind(Depth(1));
+        let _inner = bind(Site("in"));
+        drop(outer);
+    }
+
+    #[test]
+    fn a_choice_set_inside_a_guard_ends_with_it_and_keeps_the_guards_link() {
+        let _outer = bind(Depth(1));
+        {
+            let inner = bind(Depth(2));
+            bind_here(Depth(3));
+            assert_eq!(bound::<Depth>(), Depth(3));
+            drop(inner);
+        }
+        assert_eq!(bound::<Depth>(), Depth(1));
+    }
+
+    #[test]
+    fn a_choice_set_again_is_one_binding_and_ends_with_its_extent() {
+        {
+            let _extent = bind(Site("outer"));
+            for i in 0..100 {
+                bind_here(Depth(i));
+            }
+            assert_eq!((bound::<Depth>(), links()), (Depth(99), 2));
+        }
+        assert_eq!((bound::<Depth>(), links()), (Depth(0), 0));
+    }
 }

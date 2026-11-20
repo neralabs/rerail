@@ -6431,32 +6431,31 @@ impl std::fmt::Debug for NodeTexts {
 /// on its caller's thread, as before (to compare).
 /// Not under `walks_whole`.
 fn morsels_on() -> bool {
-    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_MORSELS").map_or(true, |v| v != "off")) && !WALKS_WHOLE.with(std::cell::Cell::get)
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_MORSELS").map_or(true, |v| v != "off")) && !rerail_prof::code_rule_dsl::logic::profile::bound::<WalksWhole>().0
 }
 
 thread_local! {
     /// The walks this thread ran in morsels (`morsels_walked`).
     static IN_MORSELS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    /// Under `walks_whole`: this run's joins each walk on one thread.
-    static WALKS_WHOLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Runs `f` with each join walked whole on its thread, not in morsels: for work that already keeps the pool busy
 /// beside others like it (a run's chunks evaluating at once, decision 0254), where morsels would only add jobs and
 /// the memory of their rows. The jobs `f` starts walk so too (`carried`).
 pub fn walks_whole<R>(f: impl FnOnce() -> R) -> R {
-    struct Reset(bool);
-    impl Drop for Reset {
-        fn drop(&mut self) { WALKS_WHOLE.with(|w| w.set(self.0)); }
-    }
-    let _reset = Reset(WALKS_WHOLE.with(|w| w.replace(true)));
+    let _whole = rerail_prof::code_rule_dsl::logic::profile::bind(WalksWhole(true));
     f()
 }
 
+/// Bound under `walks_whole`: this run's joins each walk on one thread, in its jobs too (the run's context).
+#[derive(Clone, Copy, Default)]
+struct WalksWhole(bool);
+
+/// A job's account of the chunk under way (`rows::enter_chunk`, Q203 item 3), entered on its thread (`run_state`):
+/// the chunk itself is the run's context's, carried with it; what the job's thread allocates and does not free is
+/// counted there (`GIVEN`, `TOP`) and given to the chunk as the job ends.
 pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
-    c.copy(&["WALKS_WHOLE"], &WALKS_WHOLE);
-    // The chunk, with its account of what the job holds (`rows::enter_chunk`, Q203 item 3).
-    c.part(&["CHUNK"], crate::code_rule_dsl::logic::run_state::Shared(crate::code_rule_dsl::facts::rows::CHUNK.with(|c| c.borrow().clone()), crate::code_rule_dsl::facts::rows::enter_chunk));
+    c.part(&["GIVEN", "TOP"], crate::code_rule_dsl::logic::run_state::Shared(crate::code_rule_dsl::facts::rows::current_chunk(), crate::code_rule_dsl::facts::rows::enter_chunk));
 }
 
 

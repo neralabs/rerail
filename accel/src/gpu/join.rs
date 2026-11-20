@@ -1550,7 +1550,10 @@ impl Column {
 /// compiled where they are needed (a job's panic would end the process).
 pub fn prewarm() {
     crate::exec::configure(false);
-    rayon::spawn(|| crate::exec::as_job("the GPU's prewarm", || {
+    // In its caller's run (decision 0442): the pipelines are the caller's machine's.
+    let run = rerail_context::job_run();
+    rayon::spawn(move || crate::exec::as_job("the GPU's prewarm", || {
+        let _run = rerail_context::enter(run);
         let _ = std::panic::catch_unwind(|| objc::rc::autoreleasepool(|| {
             let _ = fused_pipe("sort_all");
             let _ = fused_pipe("probe_all");

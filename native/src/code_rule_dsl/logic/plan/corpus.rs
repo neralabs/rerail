@@ -2786,16 +2786,11 @@ pub fn closes_done() {
     }
 }
 
-thread_local! {
-    /// The store this thread's runs use instead of the machine's while one is set (`use_store`): testing mode's
-    /// (decision 0130), whose runs must not read what other runs left, nor wait behind their writes. Its caller's
-    /// (decision 0442), carried to its runs' jobs (`carried`).
-    static STORE: std::cell::RefCell<Option<std::path::PathBuf>> = const { std::cell::RefCell::new(None) };
-}
-
-thread_local! {
-    static THREAD_STORE: std::cell::RefCell<Option<StoreSelection>> = const { std::cell::RefCell::new(None) };
-}
+/// The store this caller's runs use instead of the machine's while one is bound (`use_store`): testing mode's
+/// (decision 0130), whose runs must not read what other runs left, nor wait behind their writes. In the run's
+/// context (decision 0442), so its runs' jobs use it too.
+#[derive(Clone, Default)]
+struct UseStore(Option<std::path::PathBuf>);
 
 #[derive(Clone)]
 struct StoreSelection {
@@ -2804,34 +2799,38 @@ struct StoreSelection {
     git_reads: Arc<crate::git_workspace::snapshot::InventoryReads>,
 }
 
-struct ThreadStore(Option<StoreSelection>);
+/// The store the caller selected for its runs (`ThreadStore::select`), in the run's context (decision 0442): its
+/// runs' jobs read it too.
+#[derive(Clone, Default)]
+struct SelectedStore(Option<StoreSelection>);
+
+struct ThreadStore {
+    _bound: crate::code_rule_dsl::logic::profile::Bound,
+}
 
 impl ThreadStore {
     fn select(path: &Path, ownership: Option<(PathBuf, crate::content_store::analysis_scope::AnalysisOwner)>) -> Self {
         let path = (path != Path::new(":memory:")).then(|| path.to_owned());
-        Self(THREAD_STORE.with(|store| store.replace(Some(StoreSelection { path, ownership, git_reads: Arc::default() }))))
+        Self { _bound: crate::code_rule_dsl::logic::profile::bind(SelectedStore(Some(StoreSelection { path, ownership, git_reads: Arc::default() }))) }
+    }
+
+    fn with<R>(f: impl FnOnce(Option<&StoreSelection>) -> R) -> R {
+        crate::code_rule_dsl::logic::profile::with_bound(|s: &SelectedStore| f(s.0.as_ref()))
     }
 
     fn owner(root: &Path) -> Option<crate::content_store::analysis_scope::AnalysisOwner> {
-        THREAD_STORE.with(|store| {
-            let store = store.borrow();
-            let (expected, owner) = store.as_ref()?.ownership.as_ref()?;
+        Self::with(|store| {
+            let (expected, owner) = store?.ownership.as_ref()?;
             (expected == root).then(|| owner.clone())
         })
     }
 
     fn ephemeral() -> bool {
-        THREAD_STORE.with(|store| store.borrow().as_ref().is_some_and(|store| store.path.is_none()))
+        Self::with(|store| store.is_some_and(|store| store.path.is_none()))
     }
 
     fn git_reads() -> Option<Arc<crate::git_workspace::snapshot::InventoryReads>> {
-        THREAD_STORE.with(|store| store.borrow().as_ref().map(|selected| Arc::clone(&selected.git_reads)))
-    }
-}
-
-impl Drop for ThreadStore {
-    fn drop(&mut self) {
-        THREAD_STORE.with(|store| store.replace(self.0.take()));
+        Self::with(|store| store.map(|selected| Arc::clone(&selected.git_reads)))
     }
 }
 
@@ -2853,30 +2852,24 @@ pub fn git_source_reads_complete() -> bool {
 
 /// While the guard lives, every run of this thread (without `RERAIL_TAPE_CACHE`) uses the store at `path`.
 pub fn use_store(path: std::path::PathBuf) -> UsedStore {
-    let was = STORE.with(|s| s.borrow_mut().replace(path));
-    UsedStore(was)
+    UsedStore { _store: crate::code_rule_dsl::logic::profile::bind(UseStore(Some(path))) }
 }
 
 /// `use_store`'s guard: the store before it comes back when it drops.
-pub struct UsedStore(Option<std::path::PathBuf>);
-
-impl Drop for UsedStore {
-    fn drop(&mut self) {
-        let was = self.0.take();
-        STORE.with(|s| *s.borrow_mut() = was);
-    }
+pub struct UsedStore {
+    _store: crate::code_rule_dsl::logic::profile::Bound,
 }
 
 /// Whether the caller names the store its runs use (`RERAIL_TAPE_CACHE`, `use_store`), so a test's runs use that
 /// one and not their own copy (`test_store::carried`).
 #[cfg(any(test, feature = "test-hooks"))]
 fn names_its_store() -> bool {
-    std::env::var_os("RERAIL_TAPE_CACHE").is_some() || STORE.with(|s| s.borrow().is_some())
+    std::env::var_os("RERAIL_TAPE_CACHE").is_some() || crate::code_rule_dsl::logic::profile::bound::<UseStore>().0.is_some()
 }
 
 /// The path `tape_cache` opens (`None`: `RERAIL_TAPE_CACHE=off`).
 pub fn tape_cache_path() -> Option<std::path::PathBuf> {
-    if let Some(path) = THREAD_STORE.with(|store| store.borrow().as_ref().map(|store| store.path.clone())) {
+    if let Some(path) = ThreadStore::with(|store| store.map(|store| store.path.clone())) {
         return path;
     }
     #[cfg(any(test, feature = "test-hooks"))]
@@ -2884,7 +2877,7 @@ pub fn tape_cache_path() -> Option<std::path::PathBuf> {
         return Some(path);
     }
     if std::env::var_os("RERAIL_TAPE_CACHE").is_none()
-        && let Some(path) = STORE.with(|s| s.borrow().clone())
+        && let Some(path) = crate::code_rule_dsl::logic::profile::bound::<UseStore>().0
     {
         return Some(path);
     }
@@ -3124,15 +3117,7 @@ fn run_handed(
     // Initialize before phase 0 or a parallel read can create rayon's default pool.
     crate::threads::configure(false);
     // Whether the native strata may be placed on the device (`plan::placement`, decision 0095), for this run.
-    struct Device(super::placement::Binding);
-    impl Drop for Device {
-        fn drop(&mut self) {
-            super::placement::set_binding(self.0);
-        }
-    }
-    let was = super::placement::binding();
-    super::placement::set_device(binding == Binding::Metal);
-    let _device = Device(was);
+    let _device = super::placement::set_device(binding == Binding::Metal);
     // The corpus root and the rule library are watched (decision 0105): what the journal says is unchanged under
     // them is not statted.
     let library = crate::code_rule_dsl::logic::rr::library();
@@ -3195,7 +3180,7 @@ fn run_handed(
     let kept = if reuse { reuse::reused(&texts, root, out, modes, typing, options, image.as_deref_mut()) } else { Ok(None) };
     let report = match kept {
         // A profiled run that the cutoff answered writes its profile too: the lifecycle below appends to it.
-        Ok(Some(report)) if crate::code_rule_dsl::logic::profile::on() && !phase0::active() && RUNS_UNDER_WAY.with(std::cell::Cell::get) == 0 => {
+        Ok(Some(report)) if crate::code_rule_dsl::logic::profile::on() && !phase0::active() && runs_under_way() == 0 => {
             match crate::code_rule_dsl::logic::profile::directory() {
                 Some(dir) => crate::code_rule_dsl::logic::profile::report::write(&dir, "Profile of a corpus run the whole-run cutoff answered: every read as the last run left it, its outputs written again\n")
                     .map_err(|e| Error::Plan(format!("profile: {e}")))
@@ -3227,7 +3212,7 @@ fn run_handed(
         // The outermost run's last writes, its whole-run record (`reuse::record`) and this flush, are queued after
         // `run_observed` waited for the observer: wait for them too, or the process ends with them queued, and the
         // next run finds no record (every warm run evaluated again).
-        if !phase0::active() && RUNS_UNDER_WAY.with(std::cell::Cell::get) == 0 {
+        if !phase0::active() && runs_under_way() == 0 {
             crate::content_store::observe::written();
         }
         did
@@ -3249,12 +3234,12 @@ fn run_handed(
     // The run is over: upkeep may go on. What the outermost run left due as utility work (the frames its keep
     // decision left unreachable, decision 0227) is done before it returns, unless another run has begun.
     drop(under_way.take());
-    if !phase0::active() && RUNS_UNDER_WAY.with(std::cell::Cell::get) == 0 && store_file.is_some() {
+    if !phase0::active() && runs_under_way() == 0 && store_file.is_some() {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the run's utility upkeep (decision 0227)".into());
         crate::code_rule_dsl::logic::profile::behind(rerail_accel::upkeep::finish_soon);
     }
     if report.is_ok() && crate::code_rule_dsl::logic::profile::on() && !phase0::active()
-        && RUNS_UNDER_WAY.with(std::cell::Cell::get) == 0
+        && runs_under_way() == 0
         && let Some(dir) = crate::code_rule_dsl::logic::profile::directory()
     {
         use std::io::Write as _;
@@ -3276,32 +3261,25 @@ fn run_handed(
     })
 }
 
-thread_local! {
-    /// Runs under way on this thread: a run started inside another (a phase, the constants, phase 0) is nested.
-    static RUNS_UNDER_WAY: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
+/// Runs under way here, in the run's context: a run started inside another (a phase, the constants, phase 0) is
+/// nested, and so is a run in a job of one (decision 0442: the context goes with the job).
+#[derive(Clone, Copy, Default)]
+struct RunsUnderWay(usize);
 
-/// Carries the run's nesting to a job on another thread (`run_state`): a run there is nested in this one.
-pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
-    c.cloned(&["THREAD_STORE"], &THREAD_STORE);
-    c.copy(&["RUNS_UNDER_WAY"], &RUNS_UNDER_WAY);
-    c.cloned(&["STORE"], &STORE);
+/// Counts a run under way here until dropped.
+struct UnderWay {
+    _count: crate::code_rule_dsl::logic::profile::Bound,
 }
-
-/// Counts a run under way on this thread until dropped.
-struct UnderWay;
 impl UnderWay {
     fn enter() -> UnderWay {
-        RUNS_UNDER_WAY.with(|n| n.set(n.get() + 1));
-        UnderWay
-    }
-}
-impl Drop for UnderWay {
-    fn drop(&mut self) {
-        RUNS_UNDER_WAY.with(|n| n.set(n.get() - 1));
+        UnderWay { _count: crate::code_rule_dsl::logic::profile::bind(RunsUnderWay(runs_under_way() + 1)) }
     }
 }
 
+/// Runs under way here (`RunsUnderWay`).
+fn runs_under_way() -> usize {
+    crate::code_rule_dsl::logic::profile::bound::<RunsUnderWay>().0
+}
 
 /// `programs` with their messages masked (`rr::message_masked`), as the keys read them.
 fn masked<'a>(programs: &[&'a str]) -> Vec<std::borrow::Cow<'a, str>> {
@@ -3482,7 +3460,7 @@ fn run_observed_within(
     let mut phase_clock: Vec<(&'static str, crate::code_rule_dsl::logic::profile::PhaseClock)> = Vec::new();
     let mut clock_last = crate::code_rule_dsl::logic::profile::snapshot();
     // The command's time before its run (reading its rules and settings), taken by the command's first run.
-    if RUNS_UNDER_WAY.with(std::cell::Cell::get) == 0 && !phase0::active() && let Some(start) = crate::code_rule_dsl::logic::profile::take_command_start() {
+    if runs_under_way() == 0 && !phase0::active() && let Some(start) = crate::code_rule_dsl::logic::profile::take_command_start() {
         phase_clock.push(("before", crate::code_rule_dsl::logic::profile::PhaseClock::between(&start, &clock_last)));
     }
     let tracking = std::cell::Cell::new(false);
@@ -3529,7 +3507,7 @@ fn run_observed_within(
     // phase 0's own run hold it only when no corpus run of the run does: nested, the profile is the outer one's, and
     // such a run neither resets nor writes it. So does a run behind the run on another thread (`profile::behind`:
     // the test store's template).
-    let nested = RUNS_UNDER_WAY.with(std::cell::Cell::get) > 0 || crate::code_rule_dsl::logic::profile::is_behind();
+    let nested = runs_under_way() > 0 || crate::code_rule_dsl::logic::profile::is_behind();
     let _under_way = UnderWay::enter();
     let _stage = crate::code_rule_dsl::logic::profile::run_begins();
     let _profile = if crate::code_rule_dsl::logic::profile::on() { crate::code_rule_dsl::logic::profile::hold_records() } else { None };
@@ -6235,7 +6213,7 @@ fn run_observed_within(
         /// An outer sequencer leaves parser jobs to the pool. Nested sequencers can occupy every
         /// worker simultaneously, so each helps the pool while waiting for its own chunk.
         fn main_wait<T>(&self, site: &'static str, poll: impl FnMut() -> Option<T>) -> T {
-            if crate::threads::max() >= 2 && RUNS_UNDER_WAY.with(std::cell::Cell::get) <= 1 {
+            if crate::threads::max() >= 2 && runs_under_way() <= 1 {
                 self.bell.wait_as(site, poll)
             } else {
                 rerail_accel::exec::help_until_as(site, poll)

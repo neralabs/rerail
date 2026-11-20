@@ -423,7 +423,7 @@ impl PackedDemand {
         let matches = range
             .clone()
             .into_par_iter()
-            .map(|file| {
+            .map(crate::code_rule_dsl::logic::profile::carried("demand walks (pool)", |file| {
                 let tape = &self.files[file];
                 let mut frames = Frames::default();
                 let mut records = Vec::new();
@@ -495,7 +495,7 @@ impl PackedDemand {
                         Some(found)
                     })
                     .collect::<Option<Vec<_>>>()
-            })
+            }))
             .collect::<Option<Vec<_>>>()?;
         crate::code_rule_dsl::prof::count("demand.walked", matches.iter().flatten().map(Vec::len).sum());
         Some(RootsExecution::Walked { files: range.len(), programs: programs.len(), matches })
@@ -726,9 +726,9 @@ impl PackedDemand {
         );
         let sizes = (0..self.files.len())
             .into_par_iter()
-            .map(|file| {
+            .map(crate::code_rule_dsl::logic::profile::carried("demand workspace sizes (pool)", |file| {
                 packed_workspace_size(&self.programs, &self.files[file..=file], &self.anchors[file..=file], &self.result_limits).ok()
-            })
+            }))
             .collect::<Vec<_>>();
         let bytes = sizes.iter().map(|size| size.map_or(u64::MAX, |(bytes, _)| bytes)).collect::<Vec<_>>();
         let mut ranges = Vec::new();

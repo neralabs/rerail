@@ -7,7 +7,6 @@
 use crate::git_workspace::snapshot::{physical_objects, resolve_revision, revision_failure_reason, verified_object};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
 
 use rusqlite::types::Value;
@@ -31,29 +30,24 @@ struct State {
 
 #[derive(Clone)]
 pub struct Evaluation(Arc<Mutex<State>>);
-thread_local! {
-    static GIT_EVALUATION: RefCell<Option<Evaluation>> = const { RefCell::new(None) };
-}
 
-pub fn current() -> Option<Evaluation> { GIT_EVALUATION.with_borrow(Clone::clone) }
+/// The Git evaluation the run reads, in the run's context (decision 0442): its jobs read it too.
+#[derive(Clone, Default)]
+struct GitEvaluation(Option<Evaluation>);
 
-pub fn enter(evaluation: Option<Evaluation>) -> Scope {
-    Scope(GIT_EVALUATION.replace(evaluation))
+pub fn current() -> Option<Evaluation> {
+    crate::code_rule_dsl::logic::profile::bound::<GitEvaluation>().0
 }
 
 /// A run's Git evaluation, for the run's length: calls answer from the repository that holds its root. A run inside
-/// another (phase 0's `bootstrap.rerail` run, a phase) enters its own and puts the outer run's back when it ends.
-pub struct Scope(Option<Evaluation>);
+/// another (phase 0's `bootstrap.rerail` run, a phase) binds its own, and the outer run's is back when it ends.
+pub struct Scope {
+    _bound: crate::code_rule_dsl::logic::profile::Bound,
+}
 
 pub fn scope(root: &Path) -> Scope {
     let state = State { root: Some(root.to_owned()), ..State::default() };
-    enter(Some(Evaluation(Arc::new(Mutex::new(state)))))
-}
-
-impl Drop for Scope {
-    fn drop(&mut self) {
-        GIT_EVALUATION.replace(self.0.take());
-    }
+    Scope { _bound: crate::code_rule_dsl::logic::profile::bind(GitEvaluation(Some(Evaluation(Arc::new(Mutex::new(state)))))) }
 }
 
 /// Tracking observes the paths of the decoded effective index, including shared split-index entries.
@@ -127,7 +121,7 @@ fn has(repo: &Repo, sha: &str, path: &str) -> Option<bool> {
 }
 
 fn answer(name: &'static str, sha: &str, path: &str) -> Value {
-    let Some(evaluation) = GIT_EVALUATION.with_borrow(Clone::clone) else { return Value::Null };
+    let Some(evaluation) = current() else { return Value::Null };
     let mut state = evaluation.0.lock().unwrap_or_else(|e| e.into_inner());
     let key = (name, sha.to_owned(), path.to_owned());
     if name == "git_tracked" && let Some(known) = state.answers.get(&key) {
@@ -162,7 +156,7 @@ pub(super) fn git_tracked(path: &str) -> Value {
 
 /// Observations made by this evaluation and its workers.
 pub fn consulted(root: &Path) -> Vec<(String, String, String)> {
-    let Some(evaluation) = GIT_EVALUATION.with_borrow(Clone::clone) else { return Vec::new() };
+    let Some(evaluation) = current() else { return Vec::new() };
     let state = evaluation.0.lock().unwrap_or_else(|e| e.into_inner());
     if state.root.as_deref() != Some(root) { return Vec::new(); }
     let mut rows = Vec::new();
