@@ -145,7 +145,8 @@ impl Bound for Buffer {
 
 /// The evaluator's one source, UKL (decision 0468 §5): the tape's view and its reads written once
 /// in CLIF (`<ukl/reads/tape.h>`, the view read where the batch holds it), the persistent grid's
-/// barrier and primitives (`<ukl/grid.h>`), the work queue (`<ukl/workqueue.h>`), the arena's
+/// barrier and primitives (`<ukl/grid.h>`), the work queue (`<ukl/workqueue.h>`), the pool of
+/// blocks used again (`<ukl/pool.h>`), the arena's
 /// slots (`SLOTS`, the source's `S_*`), the front passes (`pp_eval.uglykl`), the searches
 /// (`pp_search.uglykl`), the expansion's passes (`pp_expand.uglykl`), the kernels that run them
 /// all (`pp_grid.uglykl`) and the tests' probes (`pp_probes.uglykl`). The kernel store
@@ -153,7 +154,7 @@ impl Bound for Buffer {
 pub fn source() -> &'static str {
     static SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         format!(
-            "#include <ukl/backend.h>\n#define CLIF_VIEW_SPACE UKL_GLOBAL\n{}#include <ukl/reads/tape.h>\n#include <ukl/bits.h>\n#include <ukl/grid.h>\n#include <ukl/workqueue.h>\n{}{}\n{}\n{}\n{}\n{}\n{}\n{}",
+            "#include <ukl/backend.h>\n#define CLIF_VIEW_SPACE UKL_GLOBAL\n{}#include <ukl/reads/tape.h>\n#include <ukl/bits.h>\n#include <ukl/grid.h>\n#include <ukl/workqueue.h>\n#include <ukl/pool.h>\n{}{}\n{}\n{}\n{}\n{}\n{}\n{}",
             rerail_clif::view::ukl(),
             SLOTS.iter().enumerate().map(|(k, s)| format!("#define S_{s} {k}u\n")).collect::<String>(),
             include_str!("pp_eval.uglykl"),

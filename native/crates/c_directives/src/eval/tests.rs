@@ -1516,6 +1516,43 @@ fn a_flat_argument_is_read_in_place() {
     }
 }
 
+/// Decision 0503 §10: the expansion's tokens no item reads again are given back between the
+/// queue's runs. Chains of 150 calls each passing a state of 120 tokens on make more tokens than
+/// rung 0 holds, while few stay live: each settles at rung 0, the serial pass's. The state passed
+/// through plain calls, through an argument scanned at each level (a dead argument's list), and
+/// through an exit at each level (a join); `__LINE__` in it (its origin read from the lists'
+/// `lref`, not their tokens), `#` of it at the end, and in C and C++.
+#[test]
+fn reclaimed_tokens_keep_a_chain_at_rung_0() {
+    let state = (0..20).map(|i| format!("a{i} (b, c)")).collect::<Vec<_>>().join(" ");
+    let levels = 150;
+    let chain = |body: &dyn Fn(usize) -> String, last: &str, tail: &str| {
+        let mut t = String::from("#define ID(x) x\n#define CAT(a, b) a ## b\n#define S(x) #x\n#define X(x) S(x)\n");
+        t += &format!("#define L0(s) {last}\n");
+        for k in 1..=levels {
+            t += &format!("#define L{k}(s) {}\n", body(k));
+        }
+        t += &format!("L{levels}({state}{tail})\nend\n");
+        t
+    };
+    let shapes = [
+        ("plain", chain(&|k| format!("L{}(s)", k - 1), "[s]", "")),
+        ("an argument scanned", chain(&|k| format!("L{}(ID(s))", k - 1), "[s]", "")),
+        ("an exit", chain(&|k| format!("CAT(L, {})(s)", k - 1), "<s>", "")),
+        ("__LINE__", chain(&|k| format!("L{}(s)", k - 1), "[s]", " __LINE__")),
+        ("stringized", chain(&|k| format!("L{}(ID(s))", k - 1), "X(s)", "")),
+    ];
+    for (what, text) in &shapes {
+        let files = [("main.c", text.as_str())];
+        for cpp in [false, true] {
+            let (got, want, rung, _) = expanded(&files, cpp);
+            let got = got.unwrap_or_else(|why| panic!("{what}: refused {why}"));
+            same(show(&got), show(&want), what);
+            assert_eq!(rung, 0, "{what}: grew to rung {rung}");
+        }
+    }
+}
+
 /// Plan step 11 of decision 0448 (the built-ins): `__LINE__` is the line of the outermost call's
 /// end (the serial pass's: a token's origin climbed through each expansion's end), `__FILE__` the
 /// file the stretch is in. In text, in a body, in an argument (expanded and raw, `#`), in a call
