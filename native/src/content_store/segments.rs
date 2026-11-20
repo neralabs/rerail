@@ -120,13 +120,12 @@ pub(super) fn retired(usage: &SegmentUse, floor: u64, budget: usize) -> Option<i
     numbers.get(budget / 2).copied().filter(|_| numbers.len() > budget)
 }
 
-/// A kind of segment, as compaction finds and merges it: the table that numbers its segments and the column, the
-/// directory of their files, and the extension of its files of before (the memo's packs, `<n>.pack`), if any.
+/// A kind of segment, as compaction finds and merges it: the table that numbers its segments and the column, and the
+/// directory of their files.
 pub(super) struct SegmentKind<'a> {
     pub(super) table: &'static str,
     pub(super) column: &'static str,
     pub(super) dir: &'a Path,
-    pub(super) before: Option<&'static str>,
 }
 
 impl SegmentKind<'_> {
@@ -157,9 +156,9 @@ impl SegmentKind<'_> {
 
     /// Compacts the kind in its write transaction `t` where `usage`, read in `t` (so nothing is written between the
     /// choice and the merge), makes it due: its segments from the oldest `retired` names merged (`merge`), each row
-    /// `placed` finds in them moved or lost. Not while the newest segment's file is not in place: its writer names it
-    /// only once its rows are committed (`SealedSegments::name`), and a merge would find its entries lost. Returns the
-    /// retired segments, whose files go once `t` commits (`remove`).
+    /// `placed` finds in them moved or lost. Every segment a row names is named in place by then (see
+    /// `SealedSegments::name`), so an entry found missing is lost. Returns the retired segments, whose files go once
+    /// `t` commits (`remove`).
     pub(super) fn compact<K>(
         &self,
         t: &rusqlite::Connection,
@@ -169,14 +168,8 @@ impl SegmentKind<'_> {
         lost: impl FnMut(&K) -> rusqlite::Result<()>,
         moved: impl FnMut(&K, i64, i64) -> rusqlite::Result<()>,
     ) -> StoreResult<Vec<i64>> {
-        let Some(from) = retired(usage, floor, budget).filter(|_| self.newest_in_place(usage)) else { return Ok(Vec::new()) };
+        let Some(from) = retired(usage, floor, budget) else { return Ok(Vec::new()) };
         merge(t, self, from, placed(t, from)?, lost, moved)
-    }
-
-    /// Whether the newest segment's file is in place (`compact`): a segment, or a file of before.
-    fn newest_in_place(&self, usage: &SegmentUse) -> bool {
-        let in_place = |n: i64| segment_path(self.dir, n).exists() || self.before.is_some_and(|ext| self.dir.join(format!("{n}.{ext}")).exists());
-        usage.numbers.last().is_none_or(|&n| in_place(n))
     }
 }
 
@@ -445,7 +438,11 @@ impl SealedSegments {
         self.placed[i]
     }
     /// Once the rows naming them are committed: each segment renamed to its number (`numbers`, in `files`' order) in
-    /// `dir`. A reader that found a row meanwhile misses.
+    /// `dir`. A reader that found a row meanwhile misses. No compaction runs meanwhile, which would find the rows'
+    /// segment missing and forget its entries (`SegmentKind::compact`): a store is one process's at a time
+    /// (`corpus::owner`), a run's writes, this rename with them, are applied under its collection lease
+    /// (`hold_collection`, kept until written), and compaction runs only under the exclusive lease (`try_collect`,
+    /// `collect_corpus_pass`), which that lease keeps off (`a_collector_waits_for_a_run_and_its_writes`).
     pub(super) fn name(&mut self, dir: &Path, numbers: &[i64]) -> StoreResult<()> {
         self.named = true;
         for (file, seg) in self.files().iter().zip(numbers) {

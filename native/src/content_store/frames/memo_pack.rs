@@ -353,7 +353,7 @@ impl ContentStore {
 
 /// The memo's segments, as compaction finds and merges them.
 fn memo_kind(dir: &Path) -> SegmentKind<'_> {
-    SegmentKind { table: "memo_packs", column: "pack", dir, before: Some("pack") }
+    SegmentKind { table: "memo_packs", column: "pack", dir }
 }
 
 /// The memo's segments' use, read in `t` (`segments::SegmentUse`), the packs' of before (`old_pack_path`) held too.

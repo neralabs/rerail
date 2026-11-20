@@ -147,7 +147,7 @@ fn frame_dir(database: &std::path::Path) -> std::path::PathBuf {
 
 /// The frame segments, as compaction finds and merges them.
 fn frame_kind(dir: &std::path::Path) -> super::segments::SegmentKind<'_> {
-    super::segments::SegmentKind { table: "frame_segments", column: "seg", dir, before: None }
+    super::segments::SegmentKind { table: "frame_segments", column: "seg", dir }
 }
 
 /// The frame segments' use, read in `t` (`segments::SegmentUse`).
@@ -2117,33 +2117,23 @@ mod tests {
         }
     }
 
-    /// A merge waits while the newest segment's rows are committed and its file is not named yet (its writer renames
-    /// it once they are, `SealedSegments::name`): its frames would be found lost, and forgotten. Once it is named, the
-    /// next compaction takes it in.
+    /// A collector, and so a compaction (`collect_corpus_pass`), waits while a run holds its collection lease
+    /// (`hold_collection`), which the run keeps until its writes are applied, each segment's name with them
+    /// (`SealedSegments::name`, after the commit): no compaction finds a segment whose rows are committed and whose file
+    /// is not named yet.
     #[test]
-    fn a_merge_waits_for_the_newest_segment_to_be_named() {
+    fn a_collector_waits_for_a_run_and_its_writes() {
         let dir = tempfile::tempdir().unwrap();
         let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
-        let space = [7u8; 32];
-        let rels: Vec<Rel> = (0..4).map(|i| rel("r", i)).collect();
-        for (i, r) in rels.iter().enumerate() {
-            let put = Put { rel: r.clone(), part: 0, digest: i as u64, reads: Vec::new(), rows: Rows { types: vec![0], n: 1, rows: vec![i as i64] } };
-            store.queue_frames(space, vec![put], Vec::new(), None);
-            store.written().unwrap();
-        }
-        let frames = frame_dir(&store.database_path);
-        let newest = *store.frame_segment_use().unwrap().numbers.last().expect("four segments");
-        let (named, pending) = (super::super::segments::segment_path(&frames, newest), frames.join("w-pending.seg"));
-        std::fs::rename(&named, &pending).unwrap();
-        assert_eq!(store.compact_frame_segments_within(u64::MAX, 0).unwrap(), 0, "the newest not named yet: no merge");
-        assert_eq!(std::fs::read_dir(&frames).unwrap().count(), 4, "every segment as it was");
-        std::fs::rename(&pending, &named).unwrap();
-        store.compact_frame_segments_within(u64::MAX, 0).unwrap();
-        assert_eq!(std::fs::read_dir(&frames).unwrap().count(), 1, "named: all four merged");
-        for (i, r) in rels.iter().enumerate() {
-            let read = store.read_frame_parts_from(&space, &[(r.clone(), 0)], true, false).unwrap().remove(&(r.clone(), 0)).expect("read from the store");
-            assert_eq!(read.rows().unwrap().rows, vec![i as i64], "frame {i} kept");
-        }
+        let reading = store.hold_collection().unwrap();
+        let put = Put { rel: rel("r", 1), part: 0, digest: 1, reads: Vec::new(), rows: Rows { types: vec![0], n: 1, rows: vec![1] } };
+        store.queue_frames([8; 32], vec![put], Vec::new(), None);
+        assert!(store.try_collect().unwrap().is_none(), "no collector while the run writes");
+        store.written().unwrap();
+        assert_eq!(std::fs::read_dir(frame_dir(&store.database_path)).unwrap().count(), 1, "the write's segment named");
+        assert!(store.try_collect().unwrap().is_none(), "nor while the run holds its lease");
+        drop(reading);
+        assert!(store.try_collect().unwrap().is_some(), "a collector once the run let go");
     }
 
     #[test]
