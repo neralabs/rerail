@@ -61,6 +61,7 @@ import { ruleDocumentDigest, stableJsonText } from "../engine/stable-json.js";
 import { agentSession, type AgentSession } from "../engine/agent-session.js";
 import type { CodeRuleSourceLanguage } from "../engine/code-rule/code-rule.js";
 import { UNLISTED_TEXT_LANGUAGE } from "../engine/code-rule/code-rule-languages.js";
+import { clean } from "../harness/setup-screens.js";
 
 /** How many repository matches and unchecked files the text report shows; the JSON report lists every one. */
 const REPOSITORY_SHOWN = 5;
@@ -1032,7 +1033,9 @@ export function showRule(id: string, repo: string, databasePath = defaultRerailD
     }
     const shown = rerailRuleShown(database, ruleCatalog, bundled, repo, id);
     const draft = withPackTitle(shown.draft, ruleCatalog);
-    return { draft, notes: [...shown.notes, ...untitledNotes(draft)] };
+    // The reason names the pack as its pack.json does, which a third party writes: no control characters reach the terminal.
+    const notRun = ruleCatalog.notRun.get(id);
+    return { draft, notes: [...notRun === undefined ? [] : [`${id} does not run, whether it is on or off. ${clean(notRun)}`], ...shown.notes, ...untitledNotes(draft)] };
   } finally {
     database.$client.close();
   }

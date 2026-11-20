@@ -516,6 +516,8 @@ class ConfigurationResolver {
       suppressions: suppressions.value,
       config,
       configError: configured?.ok === false ? configured.reason : null,
+      // A rule created by you under a pack rule's id shadows it: its document is its own, not the pack's.
+      notRun: presence.source.kind === "library_rule" ? null : this.#ruleCatalog.notRun.get(presence.document.rule.id) ?? null,
       decidedBy: { on: on.decider, mode: mode.decider, suppressions: suppressions.decider, config: deciders },
       revision: presence.revision,
       payloadHash: presence.payloadHash,
