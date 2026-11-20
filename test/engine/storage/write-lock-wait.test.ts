@@ -1,17 +1,23 @@
 /**
  * The wait for another process's write lock, off the calling thread. Its stop ends the thread at once, whatever the
- * holder does, so a daemon stopping with records waiting is not kept by it. Its start failing, as it does from a hook
- * bundle that left the worker's file behind, gives the record writer that asked for it a rejection it handles, never a
- * throw into the store write that met the lock.
+ * holder does, so a daemon stopping with records waiting is not kept by it. Its start failing, as it would in a package
+ * that lost the worker's file, gives the record writer that asked for it a rejection it handles, never a throw into the
+ * store write that met the lock.
  */
-import { mkdtemp } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import Database from "better-sqlite3";
+import { build, type BuildOptions, type Plugin } from "esbuild";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const roots: string[] = [];
+const run = promisify(execFile);
 
 afterEach(async () => {
   vi.doUnmock("node:worker_threads");
@@ -168,4 +174,29 @@ describe("waiting for the write lock", () => {
     expect(() => { waiting = waitForWriteLock("/no/database.sqlite"); }).not.toThrow();
     await expect(waiting).rejects.toThrow(/write-lock-wait-worker/u);
   });
+
+  it("starts its thread from a bundle that inlines it in a folder of its own, as the CLI's and the hooks' do", async () => {
+    // Where the build writes the worker, and the wait looks for it.
+    const worker = "dist/engine/storage/write-lock-wait-worker.js";
+    const path = await databaseFile();
+    // A package as its build lays it out: the worker where tsc writes it, and a bundle that calls the wait in dist/cli.
+    const root = await mkdtemp(join(tmpdir(), "rerail-write-lock-wait-bundle-"));
+    roots.push(root);
+    await writeFile(join(root, "package.json"), JSON.stringify({ type: "module" }));
+    const sources = fileURLToPath(new URL("../../../", import.meta.url));
+    const installed = createRequire(import.meta.url).resolve("better-sqlite3");
+    // The bundles keep better-sqlite3 out, found where the package is installed: here, this checkout's.
+    const external: Plugin = { name: "installed", setup: build => { build.onResolve({ filter: /^better-sqlite3$/u }, () => ({ path: pathToFileURL(installed).href, external: true })); } };
+    const options: BuildOptions = { bundle: true, platform: "node", format: "esm", plugins: [external], logLevel: "silent" };
+    await build({ ...options, entryPoints: [join(sources, "src/engine/storage/write-lock-wait-worker.ts")], outfile: join(root, worker) });
+    await build({
+      ...options,
+      stdin: { contents: "import { waitForWriteLock } from \"./write-lock-wait.js\";\nconsole.log(await waitForWriteLock(process.argv[2]));\n", resolveDir: join(sources, "src", "engine", "storage"), loader: "ts" },
+      outfile: join(root, "dist", "cli", "cli.js"),
+    });
+
+    const { stdout } = await run(process.execPath, [join(root, "dist", "cli", "cli.js"), path]);
+
+    expect(stdout.trim()).toBe("true");
+  }, 60_000);
 });

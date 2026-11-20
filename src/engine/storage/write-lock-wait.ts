@@ -6,7 +6,12 @@
  * busy handler does, at that handler's own times. That runs here on a worker thread of its own, so the thread that
  * answers hooks never sleeps in it (`record-writes.ts`, and a quiet session's reopen in `engine-service.ts`).
  */
+import { join } from "node:path";
 import { Worker } from "node:worker_threads";
+import { PACKAGE_ROOT } from "../package-root.js";
+
+/** The worker's JavaScript in the package, relative to its root: tsc writes it there from `src/engine/storage/`. */
+const LOCK_WAIT_WORKER = "dist/engine/storage/write-lock-wait-worker.js";
 
 /** What the thread `waitForWriteLock` starts reads (`write-lock-wait-worker.ts`). */
 export interface WriteLockWaitData {
@@ -57,7 +62,7 @@ export function epochNow(): number {
  */
 export function waitForWriteLock(path: string, signal?: AbortSignal, since = epochNow()): Promise<boolean> {
   const stop = new Int32Array(new SharedArrayBuffer(4));
-  // A worker that cannot start (a bundle that left its file behind) rejects, as one that fails later does.
+  // A worker that cannot start (a package that lost its file) rejects, as one that fails later does.
   return new Promise<boolean>((resolve, reject) => {
     const worker = lockWaitWorker({ path, stop, since });
     worker.unref();
@@ -77,11 +82,12 @@ export function waitForWriteLock(path: string, signal?: AbortSignal, since = epo
 }
 
 /**
- * The worker beside this module (`write-lock-wait-worker.ts`): its JavaScript as the package ships it, or, where this
- * module runs from source (tests), the TypeScript through tsx, as `rule-provenance-move.ts` starts its own.
+ * The worker (`write-lock-wait-worker.ts`): its JavaScript where the package ships it, found from the package's root as
+ * its entry points are, since the bundles of the CLI, the hooks and the event stream inline this module in another
+ * folder; or, where this module runs from source (tests), the TypeScript beside it through tsx, as
+ * `rule-provenance-move.ts` starts its own.
  */
 function lockWaitWorker(data: WriteLockWaitData): Worker {
-  const fromSource = import.meta.url.endsWith(".ts");
-  const entry = new URL(`./write-lock-wait-worker.${fromSource ? "ts" : "js"}`, import.meta.url);
-  return new Worker(entry, { workerData: data, ...(fromSource ? { execArgv: ["--import", "tsx"] } : {}) });
+  if (!import.meta.url.endsWith(".ts")) return new Worker(join(PACKAGE_ROOT, LOCK_WAIT_WORKER), { workerData: data });
+  return new Worker(new URL("./write-lock-wait-worker.ts", import.meta.url), { workerData: data, execArgv: ["--import", "tsx"] });
 }
