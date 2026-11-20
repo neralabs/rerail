@@ -8,7 +8,8 @@ import { loadNativeBinding, type NativeAnalysisScopeRun } from "./native.js";
 import { contentStoreOverride, contentStorePath } from "./rerail-build.js";
 import { assertContentStoreOwner } from "./main-instance.js";
 import { storedPath, storedScopeDirectory } from "../catalog/checkout-control.js";
-import { attachReleaseJournal, journalHasWork, recoverReleaseJournal } from "./analysis-release-journal.js";
+import { attachReleaseJournal, journalHasWork, recoverReleaseJournal, releaseCutoff } from "./analysis-release-journal.js";
+import { hasRetiredRoute, releaseJournalPath, resumeAnalysisStore, storeRegistryPath } from "./analysis-store-retirement.js";
 
 export function scanContentStore(databasePath: string): string {
   return contentStoreOverride() ?? defaultScanStore(databasePath);
@@ -41,14 +42,6 @@ function readControlGeneration(databasePath: string): number {
   } finally {
     reader.$client.close();
   }
-}
-
-function storeRegistryPath(databasePath: string): string {
-  return `${storedPath(databasePath)}.analysis-stores.sqlite`;
-}
-
-function releaseJournalPath(databasePath: string): string {
-  return `${storedPath(databasePath)}.analysis-releases.sqlite`;
 }
 
 export function readAnalysisScopeGeneration(databasePath: string): number {
@@ -103,15 +96,25 @@ export function acquireNamedAnalysisRun(databasePath: string, name: string, stor
   const index = openSqliteDatabase(storeRegistryPath(databasePath));
   let run: NativeAnalysisScopeRun | undefined;
   try {
-    return index.$client.transaction(() => {
+    const register = index.$client.transaction(() => {
       ensureNamedRoutes(index);
       run = new (loadNativeBinding().AnalysisScopeRun)(store, name, false, scanId, 0);
+      if (hasRetiredRoute(index.$client, run.storeIdentity)) {
+        run.finish(false);
+        return run.storeIdentity;
+      }
       const path = storedPath(store);
       maintenanceRegistration(index)(path, run.storeIdentity);
       index.$client.prepare("INSERT INTO analysis_named_acquisition(name,path,identity,acquisition,scan) VALUES (?,?,?,?,?)")
         .run(name, path, run.storeIdentity, run.acquisition, scanId);
       return run;
-    }).immediate();
+    });
+    for (;;) {
+      const result = register.immediate();
+      if (typeof result !== "string") return result;
+      run = undefined;
+      resumeAnalysisStore(databasePath, store, result);
+    }
   } catch (error) {
     run?.finish(false);
     throw error;
@@ -207,10 +210,13 @@ export async function deleteNamedAnalysisScope(databasePath: string, name: strin
   return { store: released.store, hadMembers: released.result?.hadMembers ?? false };
 }
 
-function registerDirectoryAnalysisStore(databasePath: string, root: string, store: string, identity: string, floor?: number): number {
+function registerDirectoryAnalysisStore(databasePath: string, root: string, store: string, identity: string, floor: number): number;
+function registerDirectoryAnalysisStore(databasePath: string, root: string, store: string, identity: string): number | undefined;
+function registerDirectoryAnalysisStore(databasePath: string, root: string, store: string, identity: string, floor?: number): number | undefined {
   const index = openSqliteDatabase(storeRegistryPath(databasePath));
   try {
-    return index.$client.transaction(() => {
+    const register = index.$client.transaction(() => {
+      if (hasRetiredRoute(index.$client, identity)) return undefined;
       index.$client.exec("CREATE TABLE IF NOT EXISTS analysis_directory_store (directory TEXT NOT NULL, path TEXT NOT NULL, PRIMARY KEY(directory,path)) STRICT");
       index.$client.exec(`CREATE TABLE IF NOT EXISTS analysis_directory_store_identity (
         directory TEXT NOT NULL, path TEXT NOT NULL, identity TEXT NOT NULL, first_generation INTEGER NOT NULL, last_generation INTEGER NOT NULL,
@@ -223,7 +229,12 @@ function registerDirectoryAnalysisStore(databasePath: string, root: string, stor
         ON CONFLICT(directory,path,identity) DO UPDATE SET first_generation=min(first_generation,excluded.first_generation),
           last_generation=max(last_generation,excluded.last_generation)`).run(root, path, identity, generation, generation);
       return generation;
-    }).immediate();
+    });
+    for (;;) {
+      const generation = register.immediate();
+      if (generation !== undefined || floor === undefined) return generation;
+      resumeAnalysisStore(databasePath, store, identity);
+    }
   } finally {
     index.$client.close();
   }
@@ -235,9 +246,10 @@ function analysisStores(databasePath: string, root?: string, cutoff = Number.MAX
   const configured = contentStoreOverride();
   if (configured !== undefined) fallback.add(storedPath(configured));
   const registered: StoreRoute[] = [];
+  const retired = new Set<string>();
   const maintenance = new Map<string, string[]>();
   const indexPath = storeRegistryPath(databasePath);
-  if (!existsSync(indexPath)) return { fallback, registered, maintenance };
+  if (!existsSync(indexPath)) return { fallback, registered, maintenance, retired };
   const index = openSqliteDatabase(indexPath, { readonly: true });
   try {
     const tables = index.$client.prepare("SELECT name FROM sqlite_schema WHERE type='table'").pluck().all();
@@ -262,7 +274,10 @@ function analysisStores(databasePath: string, root?: string, cutoff = Number.MAX
       for (const path of index.$client.prepare("SELECT path FROM analysis_maintenance_store").pluck().all() as string[]) fallback.add(path);
       const sources = ["analysis_maintenance_identity", "analysis_directory_store_identity", "analysis_named_store"].filter(name => tables.includes(name));
       if (sources.length > 0) {
-        const rows = index.$client.prepare(sources.map(name => "SELECT path,identity FROM " + name).join(" UNION ")).iterate();
+        const source = sources.map(name => "SELECT path,identity FROM " + name).join(" UNION ");
+        const active = tables.includes("analysis_retired_route") ? ` WHERE NOT EXISTS (
+          SELECT 1 FROM analysis_retired_route r WHERE r.identity=s.identity AND r.path=s.path)` : "";
+        const rows = index.$client.prepare(`SELECT path,identity FROM (${source}) s${active}`).iterate();
         for (const { path, identity } of rows as Iterable<{ path: string; identity: string }>) {
           if (!identity) continue;
           const identities = maintenance.get(path);
@@ -271,10 +286,23 @@ function analysisStores(databasePath: string, root?: string, cutoff = Number.MAX
         }
       }
     }
+    if (tables.includes("analysis_retired_route")) {
+      const live = tables.includes("analysis_maintenance_identity") ? ` AND NOT EXISTS (
+        SELECT 1 FROM analysis_maintenance_identity i WHERE i.path=retired.path
+          AND NOT EXISTS (SELECT 1 FROM analysis_retired_route r WHERE r.identity=i.identity AND r.path=i.path))` : "";
+      const inactive = index.$client.prepare(`SELECT 1 FROM analysis_retired_route retired WHERE path=?${live} LIMIT 1`);
+      for (const path of fallback) if (inactive.get(path)) fallback.delete(path);
+      if (root !== undefined) {
+        const prefix = root.endsWith(sep) ? root : root + sep;
+        const end = prefix.slice(0, -1) + String.fromCharCode(sep.charCodeAt(0) + 1);
+        for (const id of index.$client.prepare(`SELECT DISTINCT identity FROM analysis_retired_directory
+          WHERE (directory=? OR (directory>=? AND directory<?)) AND first_generation<=?`).pluck().iterate(root, prefix, end, cutoff)) retired.add(id as string);
+      }
+    }
   } finally {
     index.$client.close();
   }
-  return { fallback, registered, maintenance };
+  return { fallback, registered, maintenance, retired };
 }
 
 /** Advance only routes this delivery covered. A concurrent new acquisition keeps its registration. */
@@ -286,8 +314,12 @@ function acknowledgeRoutes(databasePath: string, routes: StoreRoute[], id: strin
     index.$client.transaction(() => {
       const identified = index.$client.prepare("SELECT 1 FROM sqlite_schema WHERE name='analysis_directory_store_identity'").get();
       const remember = maintenanceRegistration(index);
+      const current = identified ? index.$client.prepare(
+        "SELECT 1 FROM analysis_directory_store_identity WHERE directory=? AND path=? AND identity=?") : undefined;
       for (const { directory, path, identity } of routes) {
-        remember(path, identity);
+        // Retirement or a move can remove this route between native delivery and acknowledgement.
+        // An identified route already acknowledged by a peer still has its maintenance registration.
+        if (!identity || current?.get(directory, path, identity)) remember(path, identity);
         if (identified) {
           index.$client.prepare("DELETE FROM analysis_directory_store_identity WHERE directory=? AND path=? AND identity=? AND last_generation<=?").run(directory, path, identity, cutoff);
           index.$client.prepare("UPDATE analysis_directory_store_identity SET first_generation=? WHERE directory=? AND path=? AND identity=? AND first_generation<=?")
@@ -300,20 +332,11 @@ function acknowledgeRoutes(databasePath: string, routes: StoreRoute[], id: strin
   } finally { index.$client.close(); }
 }
 
-function releaseCutoff(id: string): number | undefined {
-  const colon = id.indexOf(":");
-  if (colon < 0) return undefined;
-  const prefix = id.slice(0, colon);
-  const cutoff = Number(prefix);
-  if (!/^\d+$/u.test(prefix) || !Number.isSafeInteger(cutoff)) throw new Error("Invalid analysis scope release cutoff");
-  return cutoff;
-}
-
 function discoverReleaseRoute(databasePath: string, directory: string, store: string, home: string): StoreRoute[] {
   const identity = loadNativeBinding().owningDirectoryAnalysisStore(store, toNamespacedPath(directory), home, true);
   if (identity == null) return [];
-  registerDirectoryAnalysisStore(databasePath, directory, store, identity);
-  return [{ directory, path: store, identity }];
+  const generation = registerDirectoryAnalysisStore(databasePath, directory, store, identity);
+  return generation === undefined ? [] : [{ directory, path: store, identity }];
 }
 
 function deliverRelease(database: RerailDatabase, root: string, store: string, id: string, routes: StoreRoute[]): void {
@@ -351,7 +374,8 @@ export function queueAnalysisScopeReleases(tx: Transaction, directories: readonl
   for (const directory of directories) {
     const root = storedScopeDirectory(directory), id = `${generation - 1}:j-${randomUUID()}:${home}`;
     tx.insert(analysisScopeReleases).values({ id, directory: root, nextAttemptAt }).run();
-    const { registered, fallback } = analysisStores(databasePath, root, generation - 1);
+    const { registered, fallback, retired } = analysisStores(databasePath, root, generation - 1);
+    for (const identity of retired) tx.run(sql`INSERT OR IGNORE INTO release_journal.analysis_retired_release VALUES (${identity},${root},${id})`);
     for (const route of registered) tx.run(sql`INSERT INTO release_journal.analysis_journal_target VALUES
       (${id},${route.directory},${route.path},${route.identity ?? ""},0)`);
     const known = new Set(registered.map(route => route.path));

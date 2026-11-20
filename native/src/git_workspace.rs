@@ -694,6 +694,9 @@ impl GitWorkspace {
         prefix_bytes: u64,
     ) -> std::io::Result<Vec<u8>> {
         check_source_path(relative_path)?;
+        if let Some(snapshot) = &self.snapshot {
+            return snapshot.read_source_prefix(relative_path, prefix_bytes);
+        }
         read_anchored_prefix(&self.worktree_root, relative_path, prefix_bytes)
     }
 }

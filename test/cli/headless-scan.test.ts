@@ -14,8 +14,8 @@ import { runRuleApproveCommand } from "../../src/cli/rule-approval-cli.js";
 import { describeScan, runHeadlessScan, type ScanReport } from "../../src/cli/headless-scan.js";
 import {
   acquireDirectoryAnalysisGeneration, acquireNamedAnalysisRun, analysisScopeHome, codeRuleSchema, collectAnalysisCaches,
-  deleteNamedAnalysisScope, finishNamedAnalysisRegistration, loadNativeBinding, openRerailDatabase, queueAnalysisScopeReleases,
-  readAnalysisScopeGeneration, recordCheckout, RERAIL_DATABASE_FILE, scanContentStore, settleAnalysisScopeReleases,
+  deleteNamedAnalysisScope, finishNamedAnalysisRegistration, listAnalysisStores, loadNativeBinding, openRerailDatabase, queueAnalysisScopeReleases,
+  readAnalysisScopeGeneration, recordCheckout, RERAIL_DATABASE_FILE, retireAnalysisStore, scanContentStore, settleAnalysisScopeReleases,
 } from "../../src/engine/index.js";
 import { setCheckoutStarted, stopRerail } from "../../src/runtime/index.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
@@ -72,6 +72,26 @@ const scan = (repo: string, options: Partial<Parameters<typeof runHeadlessScan>[
 
 const directoryOwnerCount = (store: string): number | undefined =>
   queryContentStore<{ count: number }>(store, "SELECT count(*) AS count FROM analysis_scope_workspace_snapshot")[0]?.count;
+
+function storeRetirementFixture(home: string, control: string) {
+  const cli = (store: string, ...args: string[]) => {
+    const p = spawnSync(process.execPath, ["--import", "tsx", "src/cli/cli.ts", "--rerail-managed-child", ...args], {
+      env: { ...process.env, RERAIL_HOME: home, RERAIL_CONTENT_STORE_PATH: store }, encoding: "utf8",
+    });
+    expect(p.status, p.stderr || p.stdout).toBe(0);
+    return p.stdout;
+  };
+  const publish = (store: string, repo: string, ...extra: string[]) => {
+    const report: ScanReport = JSON.parse(cli(store, "scan", "--repo", repo, "--no-send", "--json", ...extra));
+    expect(report.status, JSON.stringify(report.failures)).toBe("completed");
+    expect(report.cacheWarnings).toBeUndefined();
+  };
+  const stop = (root: string) => {
+    const db = openRerailDatabase(control);
+    try { db.transaction(tx => queueAnalysisScopeReleases(tx, [root], control)); } finally { db.$client.close(); }
+  };
+  return { cli, publish, stop };
+}
 
 describe("headless rerail scan", () => {
   const suiteStore = process.env.RERAIL_CONTENT_STORE_PATH;
@@ -334,7 +354,7 @@ C(n) :- label("always"), kind(n, "call").
       vi.unstubAllEnvs();
     }
     expect(git(root, "status", "--porcelain")).toBe("");
-  });
+  }, 30_000);
 
   it("scans a bare repository with explicit policy from a ref", async () => {
     const root = checkout();
@@ -570,6 +590,200 @@ Edge(n, via) :- reference_edge(n, _, via).
     expect(partial.status, JSON.stringify(partial.failures)).toBe("completed");
     expect(partial.violations.map(finding => finding.path)).toEqual(["a.py", "data/a/b.py"]);
   });
+
+  it("joins only the requested Git paths to their parsed documents across scans of the same tree", async () => {
+    const root = checkout();
+    const policy = join(root, "origins.rerail");
+    cpSync(join(root, "a.py"), join(root, "copy.py"));
+    git(root, "add", "--", "copy.py");
+    git(root, "commit", "-qm", "same blob at two paths");
+    const blob = git(root, "rev-parse", "HEAD:a.py");
+    writeFileSync(policy, `#include "git/documents.rerail"
+.language python
+.policy "origins" revision 1
+.violation Origin(at: span, view: symbol, blob: symbol, grammar: symbol, profile: symbol, parsed: symbol) "{view} {blob} {grammar} {profile} {parsed}"
+Origin(@place(p,1), v, b, g, profile, cat("", t)) :- git_source_file(v, p, _, b), source_document(v, p, _, g, profile, t, _).
+`);
+    const read = async (paths: string[]) => {
+      const report = await scan(root, { revision: "HEAD", analysisScope: "paths", paths, rr: [policy] });
+      expect(report.status, JSON.stringify(report.failures)).toBe("completed");
+      return report.violations.filter(f => f.ruleId === "origins").map(f => ({ path: f.path ?? "", fields: f.message.split(" ") }))
+        .sort((a, b) => a.path.localeCompare(b.path));
+    };
+    const both = await read(["a.py", "copy.py"]);
+    expect(both.map(r => r.path)).toEqual(["a.py", "copy.py"]);
+    expect(both[1]!.fields).toEqual(both[0]!.fields);
+    const [view, id, grammar, profile, tape] = both[0]!.fields;
+    expect([id, grammar]).toEqual([blob, "python"]);
+    expect(view).toMatch(/^[a-f0-9]{64}$/u);
+    expect(profile).toMatch(/.+\/[0-9]+$/u);
+    expect(tape).toMatch(/^[a-f0-9]{64}$/u);
+    const one = await read(["copy.py"]);
+    expect(one.map(r => r.path)).toEqual(["copy.py"]);
+    expect(one[0]!.fields[0]).not.toBe(view);
+    expect(one[0]!.fields.slice(1)).toEqual(both[0]!.fields.slice(1));
+    git(root, "repack", "-ad");
+    expect(await read(["copy.py", "a.py"])).toEqual(both);
+  }, 90_000);
+
+  it("classifies oversized loose and packed Git blobs through the same scan policy as the filesystem", async () => {
+    const root = checkout();
+    const path = "unlisted.dat", file = join(root, path);
+    const broad = { ...(needle("broad", "NEEDLE") as Record<string, unknown>), scope: { include: ["**/*"], exclude: [] } };
+    writeRule(root, "broad.json", broad);
+    const payload = Buffer.alloc(32_000_001, 65);
+    payload[7999] = 0;
+    writeFileSync(file, payload);
+    git(root, "add", "--", path);
+    git(root, "commit", "-qm", "oversized binary");
+    const binary = git(root, "rev-parse", "HEAD");
+    const binaryId = git(root, "rev-parse", "HEAD:" + path);
+    const check = async (revision: string | undefined, failure?: string) => {
+      const report = await scan(root, { ...(revision && { revision, analysisScope: "large" }), paths: [path, "a.py"] });
+      expect(report.violations.some(v => v.ruleId === "broad" && v.path === "a.py"), JSON.stringify(report.failures)).toBe(true);
+      expect(report.failures.map(f => [f.path, f.code]), JSON.stringify(report.failures)).toEqual(failure ? [[path, failure]] : []);
+      expect(report.status).toBe(failure ? "failed" : "completed");
+    };
+    await check(undefined);
+    payload[7999] = 65;
+    writeFileSync(file, Buffer.concat([payload, Buffer.from("Z")]));
+    git(root, "add", "--", path);
+    git(root, "commit", "-qm", "oversized text");
+    const text = git(root, "rev-parse", "HEAD");
+    await check(binary);
+    await check(text, "budget-exceeded");
+    const object = join(root, ".git", "objects", binaryId.slice(0, 2), binaryId.slice(2));
+    renameSync(object, object + ".offline");
+    try {
+      await check(binary, "source-incomplete");
+    } finally { renameSync(object + ".offline", object); }
+    // A one-blob pack keeps the revision, its tree, and the text witness readable when the blob stream fails.
+    const packBase = join(root, ".git", "objects", "pack", "pack");
+    const packId = execFileSync("git", ["pack-objects", packBase], { cwd: root, input: binaryId + "\n", encoding: "utf8" }).trim();
+    const pack = packBase + "-" + packId + ".pack", saved = pack + ".original";
+    renameSync(pack, saved);
+    const damaged = readFileSync(saved);
+    let stream = 12;
+    do { stream++; } while ((damaged[stream - 1]! & 0x80) !== 0);
+    damaged[stream] = 0;
+    writeFileSync(pack, damaged);
+    renameSync(object, object + ".offline");
+    try {
+      await check(binary, "source-incomplete");
+    } finally {
+      renameSync(object + ".offline", object);
+      rmSync(pack);
+      renameSync(saved, pack);
+    }
+    git(root, "repack", "-adf", "--window=50", "--depth=10");
+    git(root, "prune-packed");
+    expect(existsSync(object)).toBe(false);
+    await check(binary);
+    await check(text, "budget-exceeded");
+  }, 120_000);
+
+  it("reports typed commit locations beside a real file named git", async () => {
+    const root = checkout();
+    writeFileSync(join(root, "git"), "file witness\n");
+    git(root, "add", "--", "git");
+    git(root, "commit", "-qm", "file named git");
+    const parent = git(root, "rev-parse", "HEAD");
+    git(root, "commit", "--allow-empty", "-qm", "child");
+    const child = git(root, "rev-parse", "HEAD");
+    const policy = join(root, "locations.rerail");
+    writeFileSync(policy, `#include "git.rerail"
+.policy "locations" revision 1
+.violation Seen(at: loc) "witness"
+.decl candidate(repo: symbol, commit: symbol)
+candidate(r,c) :- git_source_commit(r,c).
+candidate(r,p) :- git_source_commit(r,c), git_parent(r,c,_,p).
+Seen(@git_commit_location(r,c,"message")) :- candidate(r,c).
+Seen(@git_commit_location(r,c)) :- git_source_commit(r,c).
+Seen(@place("git",1)) :- file_line("git",1,"file witness").
+`);
+    const read = async (revision: string) => {
+      const report = await scan(root, { revision, analysisScope: "typed", rr: [policy] });
+      expect(report.status, JSON.stringify(report.failures)).toBe("completed");
+      return { rows: report.violations.filter(v => v.ruleId === "locations"), text: describeScan(report) };
+    };
+    const { rows, text } = await read(child);
+    expect(rows).toHaveLength(4);
+    expect(new Set(rows.map(v => v.fingerprint)).size).toBe(4);
+    const file = rows.find(v => v.path === "git");
+    expect(file?.start).toEqual({ line: 1, column: 1 });
+    expect(file?.location).toBeUndefined();
+    const commits = rows.filter(v => v.location);
+    const repository = commits[0]?.location?.repository;
+    expect(repository).toBeTruthy();
+    for (const v of commits) {
+      expect([v.path, v.start, v.end]).toEqual([null, null, null]);
+      expect(v.location).toMatchObject({ kind: "git-commit", repository });
+    }
+    const match = (id: string, field: string | null) => commits.find(v => v.location?.commit === id && v.location.field === field);
+    expect(match(child, null)).toBeDefined();
+    expect(match(child, "message")).toBeDefined();
+    expect(text).toContain(`commit ${parent} in ${repository} (message)`);
+    expect(text).toContain("git:1:1");
+    const earlier = await read(parent);
+    expect(earlier.rows.find(v => v.location?.commit === parent && v.location.field === "message")?.fingerprint).toBe(match(parent, "message")?.fingerprint);
+    const home = root + "-home";
+    const result = spawnSync(process.execPath, ["--import", "tsx", "src/cli/cli.ts", "--rerail-managed-child", "scan",
+      "--repo", root, "--revision", child, "--analysis-scope", "typed", "--rr", policy, "--no-send", "--fail-on-violations", "--json"], {
+      env: { ...process.env, RERAIL_HOME: home, RERAIL_CONTENT_STORE_PATH: join(home, "store.sqlite") }, encoding: "utf8",
+    });
+    expect(result.status, result.stderr).toBe(SCAN_VIOLATIONS_EXIT);
+    const json = JSON.parse(result.stdout) as ScanReport;
+    expect(json.violations.filter(v => v.ruleId === "locations").map(v => v.fingerprint).sort()).toEqual(rows.map(v => v.fingerprint).sort());
+  }, 60_000);
+
+  it("checks for a readable root commit through bound metadata in revision policies", async () => {
+    const root = checkout();
+    const initial = git(root, "rev-parse", "HEAD");
+    git(root, "commit", "--allow-empty", "-qm", "child");
+    const policy = join(root, "roots.rerail");
+    const missing = "1".repeat(40);
+    writeFileSync(policy, `#include "git.rerail"
+.policy "roots" revision 1
+.decl candidate(repo: symbol, oid: symbol)
+candidate(r, c) :- git_source_commit(r, c).
+candidate(r, "${missing}") :- git_root_repo(r).
+.violation Root(at: span, id: symbol) "{id}"
+Root(@place("log",1), c) :- candidate(r, c), !git_parent(r, c, _, _).
+`);
+    for (const [revision, roots] of [[initial, [initial]], ["HEAD", []]] as const) {
+      const report = await scan(root, { revision, analysisScope: "roots", rr: [policy] });
+      expect(report.status, JSON.stringify(report.failures)).toBe("completed");
+      expect(report.violations.filter(v => v.ruleId === "roots").map(v => v.message)).toEqual(roots);
+    }
+  }, 60_000);
+
+  it("reads binary object content from the selected revision through a rule handle", async () => {
+    const root = checkout();
+    const file = join(root, "example.bin"), policy = join(root, "signature.rerail");
+    writeFileSync(file, Buffer.from([0, 255, 19, 37, 65]));
+    git(root, "add", "--", "example.bin");
+    git(root, "commit", "-qm", "binary signature");
+    const oid = git(root, "rev-parse", "HEAD:example.bin");
+    const example = readFileSync(resolve("docs/rule-syntax/git.md"), "utf8").split("```rr\n")
+      .map(block => block.split("\n```")[0]!).find(block => block.includes(".output signature"))!;
+    writeFileSync(policy, example + `
+.policy "signature" revision 1
+.violation Signature(at: span, bytes: symbol) "{bytes}"
+Signature(@place("a.py",1), data) :- signature(data).
+.violation Unavailable(at: span, object: symbol, reason: symbol) "{object} {reason}"
+Unavailable(@place("a.py",1), id, why) :- git_content_error(_,id,why).
+`);
+    writeFileSync(file, "working copy");
+    const check = async (expected: string) => {
+      const report = await scan(root, { revision: "HEAD", analysisScope: "binary-signature", rr: [policy] });
+      expect(report.violations.filter(f => f.ruleId === "signature").map(f => f.message), JSON.stringify(report.failures)).toEqual([expected]);
+    };
+    await check("00ff1325");
+    const object = join(root, ".git", "objects", oid.slice(0, 2), oid.slice(2)), moved = object + ".offline";
+    renameSync(object, moved);
+    try { await check(oid + " missing"); } finally { renameSync(moved, object); }
+    await check("00ff1325");
+  }, 60_000);
 
   it("reports completeness for the requested tree and exposes failures for an incomplete walk", async () => {
     const root = checkout();
@@ -2211,7 +2425,7 @@ Seen(@place("git",1), id, "snapshot", s) :- analysis_run_snapshot(r,s), analysis
   });
 
   it("waits for the original store after a swap and releases both identities that used one path", async () => {
-    const root = checkout(), home = root + "-home", databasePath = join(home, "home.sqlite");
+    const root = checkout(), home = root + "-home", databasePath = join(home, "rerail.sqlite");
     const mounted = join(home, "mount"), first = mounted + "-first", second = mounted + "-second";
     const store = join(mounted, "content.sqlite"), binding = loadNativeBinding();
     vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
@@ -2219,26 +2433,25 @@ Seen(@place("git",1), id, "snapshot", s) :- analysis_run_snapshot(r,s), analysis
       binding.retireUpkeepUnder?.(mounted);
       renameSync(mounted, destination);
     };
-    const stop = () => {
-      const db = openRerailDatabase(databasePath);
-      try { db.transaction(tx => queueAnalysisScopeReleases(tx, [root], databasePath)); } finally { db.$client.close(); }
-    };
+    const { publish, stop } = storeRetirementFixture(home, databasePath);
     const pending = () => {
       const db = openRerailDatabase(databasePath);
       try { return db.$client.prepare("SELECT count(*) FROM analysis_scope_releases").pluck().get(); }
       finally { db.$client.close(); }
     };
     try {
-      expect((await scan(root, { databasePath })).status).toBe("completed");
+      publish(store, root);
       expect(directoryOwnerCount(store)).toBe(1);
       unmount(first);
       // A valid replacement with no registration must never acknowledge the first store's stop.
-      await binding.prepareAnalysisStoreAsync(store);
-      stop();
+      execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", store], {
+        input: 'import { loadNativeBinding } from "./src/engine/index.ts"; await loadNativeBinding().prepareAnalysisStoreAsync(process.argv[2]);',
+      });
+      stop(root);
       expect(() => settleAnalysisScopeReleases(databasePath, -1)).toThrow(/identity changed/u);
       expect(queryContentStore(store, "SELECT id FROM analysis_scope_release")).toEqual([]);
       expect(pending()).toBe(1);
-      expect((await scan(root, { databasePath })).status).toBe("completed");
+      publish(store, root);
       unmount(second);
       expect(() => settleAnalysisScopeReleases(databasePath, -1)).toThrow();
       expect(existsSync(mounted)).toBe(false);
@@ -2246,8 +2459,8 @@ Seen(@place("git",1), id, "snapshot", s) :- analysis_run_snapshot(r,s), analysis
       settleAnalysisScopeReleases(databasePath, -1);
       expect(directoryOwnerCount(store)).toBe(0);
       expect(pending()).toBe(0);
-      expect((await scan(root, { databasePath })).status).toBe("completed");
-      stop(); // Both stores now own this directory in the ended generation.
+      publish(store, root);
+      stop(root); // Both stores now own this directory in the ended generation.
       expect(() => settleAnalysisScopeReleases(databasePath, -1)).toThrow(/identity changed/u);
       expect(directoryOwnerCount(store)).toBe(0);
       expect(pending()).toBe(1);
@@ -2269,7 +2482,7 @@ Seen(@place("git",1), id, "snapshot", s) :- analysis_run_snapshot(r,s), analysis
         expect(collect.mock.calls.filter(([path]) => path === store)).toHaveLength(1);
       } finally { collect.mockRestore(); }
     } finally { vi.unstubAllEnvs(); }
-  });
+  }, 120_000);
 
   it.skipIf(process.platform !== "linux")("releases only the selected directory when two symlink targets differ in raw bytes", async () => {
     const parent = checkout(), dbPath = join(parent, "home.sqlite"), store = join(parent, "content.sqlite");
@@ -2469,6 +2682,133 @@ Seen(@place("git",1), id, "snapshot", s) :- analysis_run_snapshot(r,s), analysis
       await run();
     } finally { vi.unstubAllEnvs(); }
   }, 60_000);
+
+  it("retires an offline store by identity and delivers directory stops when it returns at a new path", async () => {
+    const first = checkout(), second = checkout(), home = first + "-home", control = join(home, "rerail.sqlite");
+    const former = join(home, "volume"), moved = join(home, "returned"), filename = "store.sqlite";
+    const original = join(former, filename), returned = join(moved, filename);
+    const { cli, publish, stop } = storeRetirementFixture(home, control);
+    const settle = () => settleAnalysisScopeReleases(control, -1);
+    const decisions = () => queryContentStore<{ directory: string; release_id: string }>(control + ".analysis-releases.sqlite",
+      "SELECT directory,release_id FROM analysis_retired_release ORDER BY directory");
+    const owners = (store: string) => queryContentStore<{ scope: string }>(store,
+      "SELECT DISTINCT scope FROM analysis_scope_manifest WHERE scope GLOB 'cwd:*' ORDER BY scope").map(r => r.scope);
+    mkdirSync(former, { recursive: true });
+    publish(original, first);
+    publish(original, second);
+    publish(original, first, "--revision", "HEAD", "--analysis-scope", "named-owner");
+    const [identity] = cli(original, "scope", "stores").trim().split("\t");
+    expect(identity).toBeTruthy();
+    expect(owners(original)).toHaveLength(2);
+    stop(first);
+    renameSync(former, moved);
+    expect(cli(original, "scope", "retire-store", identity!)).toContain("Retired 1");
+    expect(cli(original, "scope", "retire-store", identity!)).toContain("Retired 0");
+    expect(cli(original, "scope", "stores")).toBe("");
+    const pending = decisions();
+    expect(pending).toHaveLength(1);
+    stop(second);
+    const earlier = decisions().find(row => row.directory === second)!;
+    expect(earlier).toBeDefined();
+    stop(second);
+    settle();
+    expect(decisions()).toHaveLength(2);
+    const later = decisions().find(row => row.directory === second)!;
+    expect(Number(later.release_id.split(":")[0])).toBeGreaterThan(Number(earlier.release_id.split(":")[0]));
+    expect(decisions()).toContainEqual(pending[0]);
+    expect(existsSync(former)).toBe(false);
+
+    mkdirSync(former);
+    writeFileSync(original, "retired volume mount point");
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", original);
+    const collect = vi.spyOn(loadNativeBinding(), "collectAnalysisCacheAsync").mockResolvedValue(undefined);
+    try {
+      await collectAnalysisCaches(control);
+      expect(collect.mock.calls.map(([file]) => file)).not.toContain(original);
+    } finally { collect.mockRestore(); vi.unstubAllEnvs(); }
+    rmSync(original);
+    publish(original, first);
+    const replacement = cli(original, "scope", "stores");
+    expect(replacement).not.toContain(identity + "\t");
+    expect(owners(original)).toHaveLength(1);
+    settle();
+    expect(decisions()).toHaveLength(2);
+    expect(owners(returned)).toHaveLength(2);
+    publish(returned, second);
+    expect(decisions()).toEqual([]);
+    expect(owners(original)).toHaveLength(1);
+    expect(owners(returned)).toHaveLength(1);
+    expect(cli(returned, "scope", "stores")).toContain(identity + "\t");
+    expect(cli(original, "scope", "delete", "named-owner")).toContain("Released scope");
+    expect(queryContentStore(returned, "SELECT scope FROM analysis_scope_manifest WHERE scope='named:named-owner'")).toEqual([]);
+  }, 120_000);
+
+  it("resumes a retired store through a named scan after replay fails and a replacement has registered", () => {
+    const first = checkout(), survivor = checkout(), home = first + "-home", control = join(home, "rerail.sqlite");
+    const former = join(home, "former"), moved = join(home, "moved");
+    const oldPath = join(former, "store.sqlite"), newPath = join(moved, "store.sqlite");
+    const { publish, stop } = storeRetirementFixture(home, control);
+    mkdirSync(former, { recursive: true });
+    publish(oldPath, first);
+    publish(oldPath, survivor);
+    const identity = listAnalysisStores(control)[0]!.identity;
+    stop(first);
+    renameSync(former, moved);
+    mkdirSync(former);
+    publish(oldPath, first);
+    expect(listAnalysisStores(control)).toHaveLength(2);
+    expect(retireAnalysisStore(control, identity)).toBe(1);
+    expect(listAnalysisStores(control)).toHaveLength(1);
+    expect(directoryOwnerCount(oldPath)).toBe(1);
+
+    const engine = loadNativeBinding(), remove = engine.deleteAnalysisScope;
+    const crash = vi.spyOn(engine, "deleteAnalysisScope").mockImplementationOnce((...args) => {
+      remove(...args);
+      throw new Error("interrupted after store delivery");
+    });
+    try {
+      expect(() => acquireNamedAnalysisRun(control, "retry", newPath, "interrupted")).toThrow("interrupted after store delivery");
+    } finally { crash.mockRestore(); }
+    expect(listAnalysisStores(control)).toHaveLength(1);
+    expect(directoryOwnerCount(newPath)).toBe(1);
+    expect(queryContentStore(control + ".analysis-releases.sqlite", "SELECT release_id FROM analysis_retired_release")).toHaveLength(1);
+    publish(newPath, first, "--revision", "HEAD", "--analysis-scope", "retry");
+    expect(queryContentStore(control + ".analysis-releases.sqlite", "SELECT release_id FROM analysis_retired_release")).toEqual([]);
+    expect(listAnalysisStores(control).filter(route => route.identity === identity)).toEqual([{ identity, path: newPath }]);
+    expect(directoryOwnerCount(newPath)).toBe(1);
+    expect(directoryOwnerCount(oldPath)).toBe(1);
+    stop(survivor);
+    settleAnalysisScopeReleases(control, -1);
+    expect(directoryOwnerCount(newPath)).toBe(0);
+    expect(directoryOwnerCount(oldPath)).toBe(1);
+  }, 120_000);
+
+  it("retires unused store paths without accumulating routing or release rows", () => {
+    const repo = checkout(), home = repo + "-home", control = join(home, "rerail.sqlite");
+    mkdirSync(home);
+    for (let i = 0; i < 8; i++) {
+      const path = join(home, `store-${i}.sqlite`), scanId = `scan-${i}`;
+      const run = acquireNamedAnalysisRun(control, "unused", path, scanId);
+      run.finish(false);
+      finishNamedAnalysisRegistration(control, "unused", scanId, run);
+      const registry = new Database(control + ".analysis-stores.sqlite");
+      try {
+        registry.exec("CREATE TABLE IF NOT EXISTS analysis_store(path TEXT PRIMARY KEY)");
+        registry.prepare("INSERT INTO analysis_store VALUES (?)").run(path);
+      } finally { registry.close(); }
+      expect(retireAnalysisStore(control, run.storeIdentity)).toBe(1);
+      expect(retireAnalysisStore(control, run.storeIdentity)).toBe(0);
+    }
+    expect(listAnalysisStores(control)).toEqual([]);
+    const registry = new Database(control + ".analysis-stores.sqlite", { readonly: true });
+    try {
+      for (const table of ["analysis_store", "analysis_maintenance_store", "analysis_maintenance_identity",
+        "analysis_retired_route", "analysis_retired_directory", "analysis_named_acquisition", "analysis_named_store"]) {
+        expect(registry.prepare(`SELECT count(*) FROM ${table}`).pluck().get(), table).toBe(0);
+      }
+    } finally { registry.close(); }
+    expect(queryContentStore(control + ".analysis-releases.sqlite", "SELECT release_id FROM analysis_retired_release")).toEqual([]);
+  });
 
   it("recovers committed directory stops after restoring the control database across worker crashes", async () => {
     const root = checkout(), home = root + "-home", control = join(home, "rerail.sqlite"), backup = control + ".backup", pending = control + ".pending";

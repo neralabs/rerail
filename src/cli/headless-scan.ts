@@ -71,6 +71,13 @@ interface RefRuleSource {
   commit: string;
 }
 
+export interface GitCommitLocation {
+  kind: "git-commit";
+  repository: string;
+  commit: string;
+  field: string | null;
+}
+
 export interface ScanViolation {
   ruleId: string;
   payloadHash: string | null;
@@ -78,6 +85,7 @@ export interface ScanViolation {
   code: string;
   clauseId: string;
   path: string | null;
+  location?: GitCommitLocation;
   pathIdentity?: GitPathIdentity;
   /** Inclusive start. */
   start: ScanPosition | null;
@@ -670,7 +678,7 @@ function distinctFingerprints(violations: ScanViolation[]): ScanViolation[] {
 interface RrReport {
   readonly metadata: { policies: readonly { id: string }[] };
   readonly programInputs: readonly { path: string; sha256: string | null }[];
-  readonly diagnostics: readonly { policy: string; clause: string; code: string; path: string | null; line: number | null; message: string; span?: { start: ScanPosition; end: ScanPosition; text: string } }[];
+  readonly diagnostics: readonly { policy: string; clause: string; code: string; path: string | null; line: number | null; message: string; location?: GitCommitLocation; span?: { start: ScanPosition; end: ScanPosition; text: string } }[];
 }
 
 async function scanRrRules(
@@ -714,10 +722,13 @@ async function scanRrRules(
       const line = finding.line !== null && finding.line > 0 ? finding.line : null;
       const start = finding.span?.start ?? (line === null ? null : { line, column: 1 });
       const end = finding.span?.end ?? null;
-      const fingerprint = findingFingerprint(finding.policy, path ?? "", finding.code, finding.span?.text);
+      const location = finding.location;
+      const fingerprint = location === undefined ? findingFingerprint(finding.policy, path ?? "", finding.code, finding.span?.text)
+        : createHash("sha256").update(JSON.stringify([location.kind, finding.policy, finding.clause, finding.code,
+          location.repository, location.commit, location.field])).digest("hex").slice(0, 32);
       violations.push({
         ruleId: finding.policy, payloadHash, mode, code: finding.code, clauseId: finding.clause,
-        path, start, end, message: finding.message, fingerprint,
+        path, start, end, message: finding.message, fingerprint, ...(location && { location }),
       });
     }
   }
@@ -968,6 +979,10 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
 /** One line per violation, then a summary: the text `rerail scan` prints without `--json`. */
 export function describeScan(report: ScanReport): string {
   const lines = report.violations.map(violation => {
+    if (violation.location) {
+      const { repository, commit, field } = violation.location;
+      return `commit ${commit} in ${repository}${field === null ? "" : ` (${field})`} [${violation.ruleId}] ${violation.message}`;
+    }
     const at = violation.path === null ? "" : `${violation.path}${violation.start === null ? "" : `:${violation.start.line}:${violation.start.column}`} `;
     return `${at}[${violation.ruleId}] ${violation.message}`;
   });

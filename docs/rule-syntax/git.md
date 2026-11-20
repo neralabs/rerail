@@ -56,13 +56,62 @@ release_scan(id, t) :- analysis_history_of("named", "release", _, _, id, _, _, t
 The store looks up completed runs by scope. Publishing or removing another scope preserves this query's cached result.
 To enumerate every published run, read `analysis_run_record` or its projections such as `analysis_scope_run`.
 
+## Read bytes through a Git content handle
+
+Include `git/content.rerail` and derive `git_content_request(repo, oid)` for each object whose bytes you need.
+For a readable object, `git_object(repo, oid, kind, content)` returns its kind and an opaque content handle.
+`git_blob_content(repo, oid, content)` selects blobs. Equal payload bytes share a handle across revisions.
+The source store retains the verified bytes under the consuming analysis scope.
+
+```rr
+#include "git/content.rerail"
+#include "git/documents.rerail"
+git_content_request(r, b) :- git_source_view(v, r, _, _, _), git_source_file(v, "example.bin", _, b).
+git_content_read_request(h, 0, 4) :- git_blob_content(_, _, h).
+.decl signature(bytes: symbol)
+signature(hex) :- git_content_bytes(_, 0, 4, hex).
+.output signature
+```
+
+`git_content_size(content, size)` gives the payload length in bytes. Offsets start at zero.
+`git_content_bytes(content, offset, length, hex)` returns the requested bytes in lowercase hexadecimal.
+A read that crosses the end returns the available bytes. A read starting at or beyond the end returns the empty string.
+Negative offsets or lengths give `git_content_read_error(content, offset, length, reason)`.
+
+The rule must acquire the handle from a repository in this evaluation. This lets one rule pass the handle to another.
+If the Git object disappears or fails verification, `git_content_error(repo, oid, reason)` reports the failure.
+Restoring the object lets a subsequent evaluation verify it and read the same bytes again.
+
+## Find the Git blob behind a parsed document
+
+Include `git/documents.rerail` to join a parsed file to its source in the selected revision.
+
+```rr
+#include "git/documents.rerail"
+.language python
+.decl origin(path: symbol, blob: symbol, grammar: symbol, parsed: tape, document: number)
+origin(p, b, g, t, d) :-
+    git_source_view(v, _, _, _, _), git_source_file(v, p, _, b),
+    source_document(v, p, _, g, _, t, d).
+.output origin
+```
+
+`git_source_view(view, repo, tree, prefix, config)` identifies the selected tree, directory within it, and file selection. The root prefix is empty.
+`git_source_file(view, path, mode, blob)` lists the selected regular files, including executables. Paths use Git separators and start at the view's directory.
+The inventory applies the invocation's path filter and the selected tree's ignore rules. Listing files requires their tree entries.
+
+`source_document(view, path, module, grammar, profile, tape, document)` identifies a primary document the policy actually parsed.
+The grammar comes from the parser. The profile identifies the grammar build and tape format.
+A policy's document filter can exclude a file that the Git inventory lists.
+Two paths containing the same bytes can share a blob and a tape while retaining different document IDs.
+Document IDs belong to one evaluation. Use the view and path to identify a file across rules.
+
 ## Read the selected commit
 
 ```rr
 #include "git.rerail"
 
 .decl selected_message(repo: symbol, commit: symbol, message: symbol)
-git_object_request(r, c) :- git_source_commit(r, c).
 selected_message(r, c, msg) :- git_source_commit(r, c), git_message(r, c, msg).
 
 .output selected_message
@@ -72,19 +121,35 @@ selected_message(r, c, msg) :- git_source_commit(r, c), git_message(r, c, msg).
 `git_source_tree` holds the root tree for a commit or tree snapshot.
 For a tree snapshot, `git_source_commit` has zero rows.
 
-Request the object before using the absence of a metadata row. For example, a root commit has a readable commit record and zero parents.
+Bind the repository and commit to read metadata. Both can come from another relation, including a parent from an earlier lookup.
+A root commit has a readable commit record and zero parents.
 
 ```rr
 #include "git.rerail"
 
 .decl parentless_commit(repo: symbol, commit: symbol)
-git_object_request(r, c) :- git_source_commit(r, c).
-parentless_commit(r, c) :- git_source_commit(r, c), git_commit(r, c, _), !git_parent(r, c, _, _).
+parentless_commit(r, c) :- git_source_commit(r, c), !git_parent(r, c, _, _).
 .output parentless_commit
 ```
 
-The `git_commit` join checks that decoding succeeded. A failed object request has a `git_object_error` row.
-Without an object request, the parent relation can be empty even for a commit with parents.
+The negative parent test requires a decoded commit. A child, a tree and an unavailable commit each produce zero root findings.
+Read `git_object_error(repo, oid, reason)` to report a failed object read.
+To enumerate a batch, you can still derive `git_object_request(repo, oid)` for every key you want to inspect.
+
+### Report a finding on a commit
+
+Use `@git_commit_location(repository, commit, field)` in a violation head. Omit the field for a finding about the entire commit.
+This policy reports a commit message that contains `WIP`.
+
+```rr
+#include "git.rerail"
+.policy "work-in-progress" revision 1
+.violation WorkInProgress(at: loc) "Commit message contains WIP"
+WorkInProgress(@git_commit_location(r, c, "message")) :- git_source_commit(r, c), git_message(r, c, msg), contains("WIP", msg).
+```
+
+A rule can supply a commit from any bound relation, including a parent. The JSON report preserves the repository, commit and field.
+File findings keep their path and line. [Scan report fields](../headless-scan.md#locations-for-commit-findings)
 
 ### Read commit trailers
 
@@ -132,7 +197,6 @@ A cache warning alone leaves a successful analysis at exit status 0.
 .decl reachable(repo: symbol, commit: symbol)
 git_revision_request(r, "HEAD") :- git_root_repo(r).
 reachable(r, c) :- git_revision(r, "HEAD", c).
-git_object_request(r, c) :- reachable(r, c).
 reachable(r, p) :- reachable(r, c), git_parent(r, c, _, p).
 
 .output reachable

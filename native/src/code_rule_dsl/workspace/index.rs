@@ -726,13 +726,15 @@ impl WorkspaceIndexTask {
                 Err(error) if error.kind() == std::io::ErrorKind::FileTooLarge => {
                     // An oversized file the host lists no language for is binary, and dropped like
                     // one in budget, where its first bytes hold a NUL.
-                    if file.unlisted
-                        && repository.snapshot.is_none()
-                        && repository
-                            .read_source_prefix(&file.repository_path, BINARY_PREFIX_BYTES)
-                            .is_ok_and(|prefix| prefix.contains(&0))
-                    {
-                        continue;
+                    if file.unlisted {
+                        match repository.read_source_prefix(&file.repository_path, BINARY_PREFIX_BYTES) {
+                            Ok(prefix) if prefix.contains(&0) => continue,
+                            Ok(_) => {}
+                            Err(error) => {
+                                failures.push(read_failure(&file.path, "source-incomplete", &format!("cannot read workspace source: {error}")));
+                                continue;
+                            }
+                        }
                     }
                     failures.push(read_failure(
                         &file.path,

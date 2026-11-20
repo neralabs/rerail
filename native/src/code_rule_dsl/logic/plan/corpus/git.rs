@@ -19,7 +19,8 @@ const TREE: &str = "git_source_tree";
 const COMMIT: &str = "git_source_commit";
 const SELECTION: &str = "git_inventory_selection";
 const SOURCE_BLOB: &str = "git_selected_source_blob";
-pub(super) const INPUTS: [&str; 8] = [ROOT, VIEW, REPOSITORY, LOCATION, TREE, COMMIT, SELECTION, SOURCE_BLOB];
+pub(super) const SELECTED_DIRECTORY: &str = "git_selected_directory";
+pub(super) const INPUTS: [&str; 9] = [ROOT, VIEW, REPOSITORY, LOCATION, TREE, COMMIT, SELECTION, SOURCE_BLOB, SELECTED_DIRECTORY];
 
 #[derive(Default)]
 pub(super) struct Git {
@@ -121,6 +122,17 @@ impl Git {
         read(repo, self.storage.get_or_init(|| storage::Storage::of(repo)).as_ref())
     }
 
+    pub(super) fn payload(&self, key: &str, oid: &str) -> Result<(String, Vec<u8>, String), &'static str> {
+        self.with_repository(key, |repo, storage| {
+            let id = Self::object_id(repo, oid)?;
+            let stamp = storage.and_then(|s| s.object(id)).unwrap_or_else(|| "unverified".to_owned());
+            let object = snapshot::verified_object(repo, id).map_err(|error| {
+                if error.kind() == std::io::ErrorKind::NotFound { "missing" } else { "unreadable" }
+            })?;
+            Ok((object.kind.to_string(), object.detach().data, stamp))
+        })
+    }
+
     fn read_object(&self, repo: &gix::Repository, storage: Option<&storage::Storage>, oid: &str) -> Result<Vec<Record>, &'static str> {
         let id = Self::object_id(repo, oid)?;
         let observed = storage.and_then(|storage| storage.object(id));
@@ -132,6 +144,7 @@ impl Git {
                 return Ok(records);
             }
         }
+        crate::code_rule_dsl::logic::profile::decision("Git metadata object read", || oid.to_owned());
         let object = snapshot::verified_object(repo, id).map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound { "missing" } else { "unreadable" }
         })?;
@@ -288,7 +301,7 @@ fn non_unicode_git_locations_keep_the_original_path_units() {
     }
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(super) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
@@ -314,7 +327,9 @@ pub(super) fn observation(program: &(impl ProgramFields + ?Sized), root: &Path) 
     })
 }
 
-pub(super) fn inputs(program: &(impl ProgramFields + ?Sized), root: &Path, options: &serde_json::Value) -> std::collections::BTreeMap<String, Vec<Vec<Value>>> {
+pub(super) fn inputs(
+    program: &(impl ProgramFields + ?Sized), root: &Path, options: &serde_json::Value, consulted: &mut Vec<(String, String, String)>,
+) -> std::collections::BTreeMap<String, Vec<Vec<Value>>> {
     let mut inputs = std::collections::BTreeMap::new();
     if !observes_git(program) {
         return inputs;
@@ -334,6 +349,13 @@ pub(super) fn inputs(program: &(impl ProgramFields + ?Sized), root: &Path, optio
     }
     if let Some((identity, repo)) = &source.repository {
         let key = &identity.repository;
+        if let Some(rows) = inputs.get_mut(SELECTED_DIRECTORY) {
+            let context = snapshot::selection_context(root);
+            consulted.push((SELECTED_DIRECTORY.to_owned(), String::new(), serde_json::to_string(&context).expect("selection strings")));
+            if let (Some(tree), Some((prefix, config, selection))) = (source.tree, context) {
+                rows.push([key.clone(), tree.to_string(), prefix, config, selection].into_iter().map(|s| Value::Str(s.into())).collect());
+            }
+        }
         if let Some(rows) = inputs.get_mut(LOCATION) {
             rows.extend(location_rows(repo).into_iter().map(|(role, encoding, value)| {
                 vec![Value::Str(key.as_str().into()), Value::Str(identity.view.as_str().into()), Value::Str(role.into()), Value::Str(encoding.into()), Value::Str(value.into())]
@@ -462,6 +484,10 @@ pub(super) fn verify_sources(
     Ok(())
 }
 
+pub(super) fn selection_stamp(root: &Path) -> String {
+    serde_json::to_string(&snapshot::selection_context(root)).expect("selection strings")
+}
+
 pub(super) fn still(root: &Path, input: &str, previous: &str) -> bool {
     Git::new(root).identity(input == LOCATION) == previous
 }
@@ -470,7 +496,7 @@ pub(super) fn still(root: &Path, input: &str, previous: &str) -> bool {
 /// can run before any source inventory is available.
 pub(super) fn metadata_only(program: &Version) -> bool {
     let needed = super::world::needed(program);
-    if !needed.iter().any(|rel| INPUTS.contains(&rel.as_str()) || super::analysis_history::is_input(rel) || rel == super::analysis_history::ANSWER) {
+    if !needed.iter().any(|rel| INPUTS.contains(&rel.as_str()) || super::analysis_history::is_input(rel) || rel == super::analysis_history::ANSWER || rel == super::git_content::ANSWER) {
         return false;
     }
     let heads: std::collections::BTreeSet<&str> = program.rules().map(|rule| program.rel_name(rule.head().rel())).collect();
@@ -484,7 +510,7 @@ pub(super) fn metadata_only(program: &Version) -> bool {
             || program.states_facts(rel)
             || INPUTS.contains(&rel.as_str())
             || super::analysis_history::is_input(rel)
-            || rel == super::analysis_history::ANSWER
+            || rel == super::analysis_history::ANSWER || rel == super::git_content::ANSWER
             || super::source_languages::is_input(rel)
             // A declared relation with no producers is empty, unless a phase can supply it.
             || (program.declares(rel) && !rel.contains("__") && !program.has_input(rel))
@@ -545,6 +571,7 @@ pub(in crate::code_rule_dsl) fn inventory(root: &Path, store: Option<&Path>, own
         include_str!("../../../../../../docs/rule-syntax/lib/core.rerail"), "\n",
         include_str!("../../../../../../docs/rule-syntax/lib/git.rerail"), "\n",
         include_str!("../../../../../../docs/rule-syntax/lib/source-language.rerail"), "\n",
+        include_str!("../../../../../../docs/rule-syntax/lib/git/selected-tree.rerail"), "\n",
         include_str!("../../../typing/programs/git-inventory.rerail"),
     );
     let options = serde_json::json!({ "reuse": false, "inputFiles": [] });

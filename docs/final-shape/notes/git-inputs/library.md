@@ -32,12 +32,11 @@ The ordinary invocation does not require a programmer to write a repository path
 
 .decl empty_head_message(repo: symbol, view: symbol, commit: symbol)
 git_view_revision_request(v, "HEAD") :- git_root_view(_, v).
-git_object_request(r, c) :- git_root_view(r, v), git_view_revision(v, "HEAD", c).
 empty_head_message(r, v, c) :- git_root_view(r, v), git_view_revision(v, "HEAD", c), git_message(r, c, "").
 .output empty_head_message
 ```
 
-The executable example requests the commit explicitly. Section 6 describes the remaining work on direct bound lookup.
+The join binds the repository and the commit. Section 6 describes how the engine requests that key.
 
 ## 2. Mutable names and immutable objects
 
@@ -61,6 +60,7 @@ It does not assert that the object remains in the local Git directory forever.
 The object kind is `commit`, `tree`, `blob`, or `tag`.
 The payload's bytes remain unchanged under the full object ID.
 A content handle refers to those bytes in the ordinary source store.
+To acquire a handle and read a byte range, see [Read bytes through a Git content handle](../../../rule-syntax/git.md#read-bytes-through-a-git-content-handle).
 
 The library derives commit trees, parents, and tag targets from decoded object data.
 A commit has one tree. A root commit has a complete empty parent family.
@@ -192,14 +192,20 @@ A relational declaration alone does not specify when its native source is reques
 The implementation needs a binding-mode contract for each keyed public view.
 For example, bound `(repo, commit)` in `git_message` must reach an object request through the library rules.
 
-There are two compatible implementation techniques:
+The library declares the request, completeness relation and member relations together.
+For example, `.pragma "bound-family" "git_object_request git_commit_readable git_parent"` declares one member.
+The first name identifies the request. The second identifies a relation with one row for each complete key.
+The remaining names identify relations that supply values for the key.
+For each member, the first columns have the same types and order as the request key.
+A rule can bind those columns with literals, a fact, a selection, or the result of another lookup.
+The compiler derives a request for each bound key. Rules can still populate the request relation directly for batch enumeration.
+The repository and object ID remain visible in both forms.
 
-1. Existing demand translation propagates bound keys through the library to its request relations.
-2. A library phase derives explicit object requests from finite selection inputs, then exports complete result families.
-
-The first technique gives ergonomic direct lookup. The second makes whole-selection analysis explicit.
-A first implementation must demonstrate both access needs with existing engine mechanisms.
-A new implicit repository slot or a native implementation of each public relation does not satisfy this contract.
+For example, `git_source_commit(r,c), !git_parent(r,c,_,_)` requests the selected commit.
+The absence test needs a successful commit decode for that same repository and object ID.
+It succeeds for a readable root, and gives zero rows for a child, a tree, or a missing commit.
+The error relation records a failed object read. A text-based trailer test also requires a decodable commit message.
+A rule that binds a parent's ID can query that parent's metadata, even when it belongs to a different snapshot.
 
 Each requested key has a complete success family or an explicit failure/incomplete outcome.
 A complete zero-parent family permits root-commit reasoning.
@@ -213,8 +219,8 @@ Their compatibility treatment needs explicit agreement.
 New public library signatures do not acquire hidden repository arguments to mimic those functions.
 Tree membership and current index membership remain different relations.
 
-A commit diagnostic refers to repository and commit, with an optional metadata field.
-It does not invent a file named `commits` or `COMMIT_EDITMSG`.
+A commit diagnostic refers to the repository and commit supplied by the rule, with an optional metadata field.
 A source diagnostic refers to a source view, path, and span.
 The scan report records its one selected tree and the commit if the revision names one.
-The report schema and display form remain open, rather than overloading the existing path field silently.
+The JSON finding carries a `git-commit` location. The text report names the repository, commit and optional field.
+See [Report a finding on a commit](../../../rule-syntax/git.md#report-a-finding-on-a-commit).

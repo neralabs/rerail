@@ -703,6 +703,13 @@ impl Snapshot {
         })
     }
 
+    pub fn read_source_prefix(&self, path: &str, limit: u64) -> io::Result<Vec<u8>> {
+        self.with_blob_header(path, |_, storage, id, size, _| {
+            storage.ok_or_else(|| error("cannot locate Git blob storage"))?
+                .blob_prefix(id, size, limit).map_err(|e| error(format_args!("cannot read Git blob prefix {id}: {e}")))
+        })
+    }
+
     pub fn contains_path(&self, path: &Path) -> io::Result<bool> {
         let Ok(under) = relative_path(path) else { return Ok(false) };
         match self.view.relative_entry(&under, requires_directory(path)) {
@@ -754,24 +761,30 @@ impl Snapshot {
         path: &str,
         f: impl FnOnce(u64, &dyn Fn() -> io::Result<Vec<u8>>) -> io::Result<T>,
     ) -> io::Result<T> {
+        self.with_blob_header(path, |repo, _, id, size, under| {
+            f(size, &|| {
+                let bytes = verified_blob(repo, id).map_err(|err| {
+                    if err.kind() == io::ErrorKind::NotFound { error(format_args!("missing Git blob object {id}")) } else { err }
+                })?.data.clone();
+                let key = gix::path::to_unix_separators_on_windows(gix::path::into_bstr(under).map_err(error)?);
+                self.view.source_errors.lock().unwrap_or_else(|err| err.into_inner()).remove(key.to_str().map_err(error)?);
+                Ok(bytes)
+            })
+        })
+    }
+
+    fn with_blob_header<T>(&self, path: &str, f: impl FnOnce(&gix::Repository, Option<&storage::Storage>, gix::ObjectId, u64, &Path) -> io::Result<T>) -> io::Result<T> {
         let path = Path::new(path);
         let under = relative_path(path)?;
         let Entry::File(id) = self.view.relative_entry(&under, requires_directory(path))? else {
             return Err(io::Error::from(io::ErrorKind::IsADirectory));
         };
-        self.view.with_repo(|repo, _, _| {
+        self.view.with_repo(|repo, storage, _| {
             let header = repo.find_header(id).map_err(|e| error(format_args!("cannot read Git blob {id}: {e}")))?;
             if header.kind() != gix::object::Kind::Blob {
                 return Err(error(format_args!("expected Git blob {id}, found {}", header.kind())));
             }
-            f(header.size(), &|| {
-                let bytes = verified_blob(repo, id).map_err(|err| {
-                    if err.kind() == io::ErrorKind::NotFound { error(format_args!("missing Git blob object {id}")) } else { err }
-                })?.data.clone();
-                let key = gix::path::to_unix_separators_on_windows(gix::path::into_bstr(under.as_path()).map_err(error)?);
-                self.view.source_errors.lock().unwrap_or_else(|err| err.into_inner()).remove(key.to_str().map_err(error)?);
-                Ok(bytes)
-            })
+            f(repo, storage, id, header.size(), &under)
         })?
     }
 
@@ -1041,9 +1054,33 @@ pub fn inventory_filter(root: &Path) -> Result<InventoryFilter, String> {
     Ok(InventoryFilter { rules, coverage, paths, prefix: v.prefix.clone() })
 }
 
+/// Logical selection identity. The tree identifies its ignore file. Storage stamps are checked separately.
+pub fn selection_context(root: &Path) -> Option<(String, String, String)> {
+    let v = view(root)?;
+    let prefix = v.prefix.join(root.strip_prefix(&v.root).ok()?);
+    let slash_path = |p: &Path| {
+        let parts = p.components().map(|part| part.as_os_str().to_str()).collect::<Option<Vec<_>>>()?;
+        Some(parts.join("/"))
+    };
+    let paths = v.inventory.lock().unwrap_or_else(|e| e.into_inner()).paths.clone();
+    let selection = inventory_stamp(&v, &paths)?;
+    let normalized = match &paths {
+        Some(paths) => Some(paths.iter().map(|p| Some((slash_path(&p.path)?, p.directory_only))).collect::<Option<Vec<_>>>()?),
+        None => None,
+    };
+    let config = serde_json::to_string(&(INVENTORY_FILTER_VERSION, normalized)).expect("serializable selection");
+    Some((slash_path(&prefix)?, config, selection))
+}
+
+const INVENTORY_FILTER_VERSION: &str = "ignore-v7";
+
 pub fn inventory_selection(root: &Path) -> Option<String> {
     let v = view(root)?;
     let paths = v.inventory.lock().unwrap_or_else(|err| err.into_inner()).paths.clone();
+    inventory_stamp(&v, &paths)
+}
+
+fn inventory_stamp(v: &View, paths: &Option<Vec<SelectedPath>>) -> Option<String> {
     let ignores = match v.ignore_blob() {
         Ok(Some(id)) => v.with_repo(|repo, storage, _| {
             storage.and_then(|storage| storage.object(id)).filter(|_| repo.has_object(id))
@@ -1056,7 +1093,12 @@ pub fn inventory_selection(root: &Path) -> Option<String> {
         Ok(None) => String::new(),
         Err(_) => format!("unreadable:{}", v.tree),
     };
-    serde_json::to_string(&("ignore-v7", ignores, &v.prefix, &paths)).ok()
+    serde_json::to_string(&(INVENTORY_FILTER_VERSION, ignores, &v.prefix, paths)).ok()
+}
+
+/// The only repository and filter the active inventory can answer for.
+pub fn inventory_request_key(root: &Path) -> Option<(String, String)> {
+    Some((pinned_identity(root)?.repository, inventory_selection(root)?))
 }
 
 pub fn source_languages(root: &Path) -> Option<SourceLanguages> {

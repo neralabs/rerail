@@ -545,6 +545,24 @@ impl Translator<'_> {
                 let text = self.braces()?;
                 self.out.push_str(&format!(".policy {text}"));
             }
+            // `.layout r form(…)` (decision 0361) is `.rerail` already: its text as written, to its closing paren.
+            "layout" => {
+                let start = self.toks.get(self.i).map_or(self.src.len(), |t| t.1);
+                let mut depth = 0usize;
+                loop {
+                    match self.peek().clone() {
+                        Tok::P("(") => depth += 1,
+                        Tok::P(")") if depth == 1 => break,
+                        Tok::P(")") => depth = depth.saturating_sub(1),
+                        Tok::Eof => return self.fail("a layout's closing paren"),
+                        _ => {}
+                    }
+                    self.i += 1;
+                }
+                let end = self.toks[self.i].2;
+                self.i += 1;
+                self.out.push_str(&format!(".layout {}", &self.src[start..end]));
+            }
             _ => return self.fail("a directive"),
         }
         Ok(())

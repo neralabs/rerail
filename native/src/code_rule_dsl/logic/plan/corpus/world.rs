@@ -158,7 +158,7 @@ impl World {
         (roots, budget)
     }
 
-    fn git(&mut self) -> &super::git::Git {
+    pub(super) fn git(&mut self) -> &super::git::Git {
         self.git.get_or_insert_with(|| super::git::Git::new(&self.root))
     }
 

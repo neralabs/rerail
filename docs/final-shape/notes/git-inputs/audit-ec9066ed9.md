@@ -2,16 +2,106 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners.
 
-Twenty-two of the 28 follow-up findings have verified results. Six remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
+All 28 follow-up findings from the two reviews have verified results. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
 
-| Open finding | What still needs to pass |
-| --- | --- |
-| 11. Large Git blobs | Skip a binary after a bounded prefix read. Distinguish large text from an unreadable blob for loose and packed objects. |
-| 42. Removed stores | Retire a route by store identity. Apply its outstanding stop if that store returns. Preserve a different store at the same path. |
-| Bound commit metadata | Request the bound commit when a rule reads its metadata. Verify root commits, non-root commits and unavailable objects under negation. |
-| Commit diagnostic locations | Identify the repository, commit and optional field in the report. Distinguish a commit finding from a finding in a file named `git`. |
-| Content handles | Read verified content through a rule-visible handle. Check reuse across revisions and the result for a missing object. |
-| Selected document provenance | Join the selected path, blob, grammar, tape and document. Test two paths with identical bytes and a scan that excludes one. |
+## Retiring an offline content store
+
+Case 42 passed through the public CLI. Two directories and one named revision scope used the original store.
+One directory stopped before retirement. The second stopped twice while the store was offline.
+The journal kept one receipt per directory. Repeating retirement removed zero additional routes.
+Maintenance skipped the retired path even when an explicit override pointed there and the path existed.
+
+A replacement database registered at the former path and retained its owner.
+When the original database returned elsewhere, a filesystem scan delivered both stops.
+Its newly acquired run survived, and the named scope could be released at the new location.
+
+A second test interrupted delivery after the native store had accepted the stop.
+The journal retained the receipt. A named revision scan replayed it and restored the route for a surviving directory.
+Stopping that directory reached the moved database. The replacement kept its owner.
+Eight successive retirements of unused stores left zero active routes, retired routes, archived directory owners or pending deliveries.
+All 13 selected macOS scope and recovery tests passed. The Windows 11 Pro ARM64 guest ran seven tests on NTFS at `0276dee45e`.
+All seven passed in 119.15 seconds, including both orders of store replacement and the interrupted replay.
+The volume-swap fixture closes each scan process before moving its directory so that NTFS can release the SQLite handles.
+The complete macOS headless suite passed 155 tests in 692.57 seconds with a 60-second default test timeout.
+It skipped one Linux-only test for distinct symlink targets with non-UTF-8 names.
+TypeScript and the import-boundary check passed. The repository structure check retained the same 15 failing metrics as its baseline.
+[CLI commands](../../../headless-scan.md#scan-historical-source) · [Recovery contract](analysis-scopes.md#retire-an-offline-store) · [Regression tests](../../../../test/cli/headless-scan.test.ts)
+
+## Oversized Git blobs
+
+The same broad policy found the text violation in `a.py` on the filesystem and at both revisions.
+A 32,000,001-byte blob with a NUL at byte offset 7,999 produced no failure. The text revision produced `budget-exceeded`.
+Both results survived repacking and removal of the loose copies. A missing loose blob and damaged compressed data in a pack each produced `source-incomplete`.
+The current working file held text during the historical binary checks.
+
+The storage test compared six prefix lengths with the original bytes for loose objects and both Git delta encodings.
+It checked the actual pack entry types for a base identified by offset and a base identified by object ID.
+After truncating a loose compressed stream to 16 KiB, 8,000 bytes could still be read. Requesting 32 KiB failed.
+The scan regression and both storage tests passed on macOS.
+The Windows 11 ARM64 guest rebuilt `7728f9d9e1` on NTFS. The packed-delta storage test and all 17 standalone revision tests passed.
+All five selected headless tests passed, including the oversized-file scan with damaged pack data.
+[Scan contract](../../../headless-scan.md) · [Storage regression](../../../../native/src/git_snapshot_storage.rs) · [Headless regression](../../../../test/cli/headless-scan.test.ts)
+
+## Commit diagnostic locations
+
+The standalone CLI ran the same policy alone and in a two-policy batch. Each policy reported three witnesses.
+The real file `git` had line 1. The selected commit had a repository, its own ID, and a null field.
+The parent commit used the same repository, its own ID, and the field `message`. Both commit findings had null source positions.
+The documented WIP policy reported the message on the correct commit. A commit-only policy succeeded with a missing source subtree.
+
+The headless scan produced four distinct fingerprints for the file and three commit locations.
+The parent message kept its fingerprint when scanned as the selected commit. The text report displayed the full parent ID, repository and field.
+A separate `rerail scan --json --fail-on-violations` process returned the same fingerprints and exit code 3.
+All 17 standalone revision tests passed on macOS. The single-policy and batch location regression also passed on Linux.
+On Windows 11 ARM64 with NTFS, all 17 standalone tests passed at `23b9280f49` in 56.31 seconds.
+The rebuilt addon passed all four headless checks. The location check also ran the public JSON command in a separate process.
+[Rule example](../../../rule-syntax/git.md#report-a-finding-on-a-commit) · [Report format](../../../headless-scan.md#locations-for-commit-findings) · [Standalone regression](../../../../native/tests/git_revision_cli.rs) · [Headless regression](../../../../test/cli/headless-scan.test.ts)
+
+## Bound commit metadata
+
+The standalone policy tested four IDs with `!git_parent`. It reported the initial commit as a root.
+The child, the tree and the missing object produced zero root findings. The missing object also produced a `missing` error.
+The policy read the child's subject and followed its parent ID to read the initial commit's subject.
+Explicitly requesting the four IDs gave the same answers and request keys.
+
+A second policy joined two batch entries to one selected label. In a fresh store it requested one commit.
+The evaluation profile recorded one native metadata read, for that commit. The headless scan also reported only the root when given the same negative parent test.
+All 16 standalone revision tests passed on Linux. Six related headless tests passed on macOS.
+The Windows 11 ARM64 guest passed all 16 standalone revision tests on NTFS at `5e3712000c` in 48.70 seconds.
+The rebuilt addon passed all three headless checks for root commits, binary content and selected paths.
+[Rule examples](../../../rule-syntax/git.md#read-the-selected-commit) · [Standalone regression](../../../../native/tests/git_revision_cli.rs) · [Headless regression](../../../../test/cli/headless-scan.test.ts)
+
+## Verified Git content handles
+
+The standalone CLI returned the same bytes as `git cat-file` for a blob, tree, commit and annotated tag.
+A request for an unopened repository returned `repository-not-open`.
+The binary fixture returned `00ff1325` for its first four bytes. Reads stopped at the end of the blob.
+A negative offset returned `invalid-range`. An unacquired handle returned zero rows.
+
+The first scan verified the Git payload once. A fresh process at an unrelated commit reused the same stored source with zero payload verifications.
+Each scan published under a different scope. Collection preserved the bytes after the first scope was released and removed them after the last release.
+Removing the warmed blob produced `missing`. Replacing it with a valid blob under the wrong ID produced `unreadable`.
+Restoring the original object restored the bytes. Repacking the repository preserved them.
+All 15 standalone revision tests and both headless content and provenance tests passed on macOS.
+Windows 11 ARM64 on NTFS passed the same 15 standalone tests in 44.13 seconds at `220b3ed57a`.
+Both headless tests passed with the Windows addon in 46.79 seconds.
+The first Windows run caught the provenance fixture retaining the previous same-size blob at one path.
+The fixture now stages the intended blob ID and checks the committed tree before scanning.
+[Rule example](../../../rule-syntax/git.md#read-bytes-through-a-git-content-handle) · [Standalone regression](../../../../native/tests/git_revision_cli.rs) · [Headless regression](../../../../test/cli/headless-scan.test.ts)
+
+## Selected document provenance
+
+The standalone CLI found two Python files with identical committed bytes after the working copy of one file changed.
+Both file entries had Git's blob ID and mode 33188. The two document rows reported the Python grammar and one shared tape. Each path had a different document ID.
+A policy filter excluded the nested document. The Git inventory still listed both files. A scan from the subdirectory reported the path relative to that directory.
+The raw inventory reader answered the request for the selected repository and filter. Two requests with a foreign repository or filter returned zero rows.
+
+The headless scan selected both paths, then selected one path under the same analysis scope. The file selection changed the view ID and preserved the tape.
+After Git repacked the objects, selecting both paths in reverse order restored the original view ID and findings.
+All 13 standalone revision tests passed on Linux. Five related headless tests passed on macOS.
+On Windows 11 ARM64 with NTFS, all 13 standalone tests passed at `d7e7a8018a` in 47.89 seconds.
+The headless path-selection and repack test passed with the addon rebuilt from that commit.
+[Rule example](../../../rule-syntax/git.md#find-the-git-blob-behind-a-parsed-document) · [Standalone regression](../../../../native/tests/git_revision_cli.rs) · [Headless regression](../../../../test/cli/headless-scan.test.ts)
 
 ## Recovery of a committed directory stop
 
@@ -21,7 +111,7 @@ An ordinary transaction rollback and termination before commit both preserved th
 After commit, the journal retained both original store identities even when their live routes were removed.
 Restoring the control backup then delivered the outstanding release. A new run in the first store survived replay of the original cutoff.
 Restoring a backup that still listed the completed release preserved both newer runs. The journal retained zero releases and zero targets.
-On macOS, 31 scope, stop, restart, and recovery tests passed. The four release tests also passed on Windows 11 ARM64 with NTFS in 41.49 seconds.
+On macOS, 31 scope, stop, restart, and recovery tests passed. At `9486d62f78`, all four release tests passed on Windows 11 ARM64 with NTFS in 41.44 seconds.
 Two older tests simulated an unavailable store by its path. They now use the native Windows spelling so their injected failures reach that store.
 [Public recovery regression](../../../../test/cli/headless-scan.test.ts) · [Backup and restore contract](analysis-scopes.md#recovery-contract-for-a-stopped-directory)
 

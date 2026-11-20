@@ -5,6 +5,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, atomic::{AtomicU32, Ordering}};
 
+#[path = "git_blob_prefix.rs"]
+mod blob_prefix;
+
 pub struct Storage {
     roots: Vec<PathBuf>,
     loose: Sha256,
@@ -292,8 +295,12 @@ mod tests {
     use std::process::{Command, Stdio};
 
     fn pack(repo: &gix::Repository, ids: &[gix::ObjectId]) -> PathBuf {
+        pack_with(repo, ids, &[])
+    }
+
+    fn pack_with(repo: &gix::Repository, ids: &[gix::ObjectId], options: &[&str]) -> PathBuf {
         let base = repo.git_dir().join("objects/pack/pack");
-        let mut git = Command::new("git").arg("pack-objects").arg(&base)
+        let mut git = Command::new("git").arg("pack-objects").args(options).arg(&base)
             .current_dir(repo.workdir().unwrap())
             .stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
         let mut input = git.stdin.take().unwrap();
@@ -303,6 +310,65 @@ mod tests {
         assert!(output.status.success());
         let hash = std::str::from_utf8(&output.stdout).unwrap().trim();
         base.with_file_name(format!("pack-{hash}.pack"))
+    }
+
+    #[test]
+    fn reads_blob_prefixes_from_loose_objects_and_both_git_delta_encodings() {
+        use std::io::{BufReader, Seek, SeekFrom};
+        use gix::odb::pack::data::{Entry, entry::Header};
+        for offset_delta in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let repo = gix::init(dir.path()).unwrap();
+            let mut seed = 9u32;
+            let bytes: Vec<_> = (0..196608).map(|_| {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                (seed >> 24) as u8
+            }).collect();
+            // The second blob begins with a copy late in the first, followed by a literal and overlapping copies.
+            let moved = [&bytes[131072..139264], b"literal\0", &bytes[..], &bytes[4096..12000]].concat();
+            let objects = [(&bytes, repo.write_blob(&bytes).unwrap().detach()), (&moved, repo.write_blob(&moved).unwrap().detach())];
+            let check = |storage: &Storage| {
+                for (data, id) in objects {
+                    for limit in [0, 1, 8000, 8207, 65536, 300000] {
+                        assert_eq!(storage.blob_prefix(id, data.len() as u64, limit).unwrap(),
+                            data[..data.len().min(limit as usize)], "object {id}, limit {limit}");
+                    }
+                }
+            };
+            check(&Storage::of(&repo).unwrap());
+            let (data, id) = objects[0];
+            let hex = id.to_string();
+            let loose = repo.git_dir().join("objects").join(&hex[..2]).join(&hex[2..]);
+            let compressed = std::fs::read(&loose).unwrap();
+            let storage = Storage::of(&repo).unwrap();
+            // The checked prefix is available even when the rest of this compressed stream is absent.
+            let original = dir.path().join("original-object");
+            std::fs::rename(&loose, &original).unwrap();
+            std::fs::write(&loose, &compressed[..16384]).unwrap();
+            assert_eq!(storage.blob_prefix(id, data.len() as u64, 8000).unwrap(), data[..8000]);
+            assert!(storage.blob_prefix(id, data.len() as u64, 32768).is_err());
+            std::fs::remove_file(&loose).unwrap();
+            std::fs::rename(original, loose).unwrap();
+            let options = if offset_delta { &["--delta-base-offset"][..] } else { &[] };
+            let pack = pack_with(&repo, &[objects[0].1, objects[1].1], options);
+            let mut packed = BufReader::new(std::fs::File::open(&pack).unwrap());
+            let index = gix::odb::pack::index::File::at(pack.with_extension("idx"), repo.object_hash()).unwrap();
+            let mut deltas = 0;
+            for (_, id) in objects {
+                let offset = index.pack_offset_at_index(index.lookup(id.as_ref()).unwrap());
+                packed.seek(SeekFrom::Start(offset)).unwrap();
+                match Entry::from_read(&mut packed, offset, id.as_slice().len()).unwrap().header {
+                    Header::Blob => {}
+                    Header::OfsDelta { .. } if offset_delta => deltas += 1,
+                    Header::RefDelta { .. } if !offset_delta => deltas += 1,
+                    h => panic!("unexpected pack entry {h:?}"),
+                }
+                let hex = id.to_string();
+                std::fs::remove_file(repo.git_dir().join("objects").join(&hex[..2]).join(&hex[2..])).unwrap();
+            }
+            assert_eq!(deltas, 1, "exercise a packed delta in each encoding");
+            check(&Storage::of(&repo).unwrap());
+        }
     }
 
     #[test]

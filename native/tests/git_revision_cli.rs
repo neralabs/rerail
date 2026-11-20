@@ -10,6 +10,14 @@ struct Checkout {
     policy: PathBuf,
 }
 
+/// Each decision row contains its detail and, when it repeats, a count such as "(x2)".
+fn profile_decisions(directory: &Path, topic: &str) -> Vec<String> {
+    let trace = fs::read_to_string(directory.join("profile.txt")).unwrap();
+    let mut lines = trace.lines();
+    if !lines.any(|line| line.strip_suffix(':') == Some(topic)) { return Vec::new(); }
+    lines.map_while(|line| line.strip_prefix("  - ")).map(str::to_owned).collect()
+}
+
 impl Checkout {
     fn new() -> Self {
         let area = tempfile::tempdir().unwrap();
@@ -163,6 +171,93 @@ per_document(s) :- marker(s), kind(_, "identifier").
     f.git(&["rm", "-q", "--", "a.py", "sub/b.py", "marker"]);
     f.git(&["commit", "-qm", "empty tree"]);
     check(&mixed, &[("literal", &["from-fact"]), ("marker", &["from-fact"])]);
+}
+
+#[test]
+fn selected_documents_keep_each_git_placement_of_a_shared_tape() {
+    let f = Checkout::new();
+    fs::copy(f.repo.join("a.py"), f.repo.join("sub/b.py")).unwrap();
+    fs::write(f.repo.join("sub/ignored.py"), "ignored = True\n").unwrap();
+    fs::write(f.repo.join(".rerailignore"), "sub/ignored.py\n").unwrap();
+    // Both files originally had the same size. An index stat match can hide the replacement on Windows.
+    let blob = f.git(&["rev-parse", "HEAD:a.py"]);
+    f.git(&["update-index", "--cacheinfo", "100644", &blob, "sub/b.py"]);
+    f.git(&["add", "--", "sub/ignored.py", ".rerailignore"]);
+    f.git(&["commit", "-qm", "two selected paths share one blob"]);
+    assert_eq!(f.git(&["rev-parse", "HEAD:sub/b.py"]), blob);
+    let tree = f.git(&["rev-parse", "HEAD^{tree}"]);
+    fs::write(f.repo.join("a.py"), "edited = 'working tree'\n").unwrap();
+    let example = include_str!("../../docs/rule-syntax/git.md").split("```rr\n")
+        .map(|block| block.split("\n```").next().unwrap())
+        .find(|program| program.lines().any(|line| line == ".output origin")).unwrap();
+    let policy = f.area.path().join("origin.rerail");
+    let out = f.area.path().join("origin-output");
+    let query = |root: &Path, scope: &str| {
+        fs::write(&policy, format!("{example}\n{scope}\n.output git_source_file\n.output git_source_view\n")).unwrap();
+        let result = f.run("logic", &[&policy, root, &out], Some("origins"));
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        assert!(f.run("csv", &[&out], None).status.success());
+        let rows = |name: &str| {
+            let csv = fs::read_to_string(out.join(format!("{name}.csv"))).unwrap();
+            let mut rows: Vec<Vec<String>> = csv.lines().map(|row| row.split('\t').map(str::to_owned).collect()).collect();
+            rows.sort();
+            rows
+        };
+        let views = rows("git_source_view");
+        assert_eq!(views.len(), 1, "{views:?}");
+        assert_eq!(views[0][2], tree);
+        let files = rows("git_source_file");
+        for row in &files { assert_eq!(row[0], views[0][0]); }
+        let selected = files.into_iter().filter(|row| row[1].ends_with(".py")).map(|row| {
+            assert_eq!(row[2], "33188");
+            assert_eq!(row[3], blob);
+            row[1].clone()
+        }).collect::<Vec<_>>();
+        let documents = rows("origin");
+        for row in &documents {
+            assert_eq!(row[1], blob);
+            assert_eq!(row[2], "python");
+            assert!(selected.contains(&row[0]));
+        }
+        (views[0].clone(), selected, documents)
+    };
+    let (view, files, both) = query(&f.repo, "");
+    assert_eq!(view[3], "");
+    assert_eq!(files, ["a.py", "sub/b.py"]);
+    assert_eq!(both.iter().map(|r| r[0].as_str()).collect::<Vec<_>>(), ["a.py", "sub/b.py"]);
+    assert_eq!(both[0][3], both[1][3], "equal content and grammar share a tape");
+    assert_ne!(both[0][4], both[1][4], "each path places its own document");
+    let (same_view, same_files, narrowed) = query(&f.repo, ".scope exclude \"sub/**\"");
+    assert_eq!((same_view, same_files), (view.clone(), files));
+    assert_eq!(narrowed.len(), 1);
+    assert_eq!(narrowed[0][..4], both[0][..4]);
+    let (subtree, files, nested) = query(&f.repo.join("sub"), "");
+    assert_ne!(subtree[0], view[0]);
+    assert_eq!(subtree[3], "sub");
+    assert_eq!(files, ["b.py"]);
+    assert_eq!(nested.len(), 1);
+    assert_eq!(nested[0][0], "b.py");
+    assert_eq!(nested[0][1..4], both[1][1..4]);
+
+    // Exercise the raw filter reader with one valid key and two keys from outside the selected view.
+    fs::write(&policy, r#"#include "git.rerail"
+.decl git_inventory_selection(s: symbol)
+.input git_inventory_selection
+.decl git_inventory_child_request(r: symbol, s: symbol, directory: symbol, name: symbol, mode: number, encoding: symbol)
+.decl git_inventory_child_of(r: symbol, s: symbol, directory: symbol, name: symbol, mode: number, encoding: symbol, path: symbol)
+git_inventory_child_request(r, s, "", "a.py", 33188, "utf8") :- git_root_repo(r), git_inventory_selection(s).
+git_inventory_child_request("another-repository", s, "", "a.py", 33188, "utf8") :- git_inventory_selection(s).
+git_inventory_child_request(r, "another-selection", "", "a.py", 33188, "utf8") :- git_root_repo(r).
+.decl chosen(repo: symbol, path: symbol)
+chosen(r,p) :- git_inventory_child_request(r,s,d,n,m,c), git_inventory_child_of(r,s,d,n,m,c,p).
+.output chosen
+"#).unwrap();
+    let run = f.run("logic", &[&policy, &f.repo, &out], Some("origins"));
+    assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+    assert!(f.run("csv", &[&out], None).status.success());
+    let children = fs::read_to_string(out.join("chosen.csv")).unwrap();
+    assert_eq!(children.lines().count(), 1, "{children}");
+    assert!(children.starts_with(&view[1]) && children.trim_end().ends_with("\ta.py"), "{children}");
 }
 
 #[test]
@@ -415,6 +510,254 @@ Seen(n, s) :- marker(s), kind(n, "identifier").
     release("two");
     assert_eq!(versions(), 0);
     scan(&first, "three", "selected", false);
+}
+
+#[test]
+fn content_handles_read_and_retain_only_verified_object_bytes() {
+    use rerail_engine::content_store::{self, ContentStore, CorpusPolicy, HashKey};
+    use sha2::{Digest, Sha256};
+    let f = Checkout::new();
+    let payload = [0, 0xff, 0x13, 0x25, 0x41];
+    fs::write(f.repo.join("example.bin"), payload).unwrap();
+    f.git(&["add", "--", "example.bin"]);
+    f.git(&["commit", "-qm", "binary"]);
+    let blob = f.git(&["rev-parse", "HEAD:example.bin"]);
+    let object = f.repo.join(".git/objects").join(&blob[..2]).join(&blob[2..]);
+    let database = f.area.path().join("store.sqlite");
+    let canonical = HashKey::sha256(&payload);
+    let digest: [u8; 32] = Sha256::digest(payload).into();
+    let handle = format!("sha256:{}", digest.iter().map(|b| format!("{b:02x}")).collect::<String>());
+    let example = include_str!("../../docs/rule-syntax/git.md").split("```rr\n")
+        .map(|block| block.split("\n```").next().unwrap())
+        .find(|program| program.lines().any(|line| line == ".output signature")).unwrap();
+    let policy = f.area.path().join("content.rerail");
+    let out = f.area.path().join("content-output");
+    fs::write(&policy, format!("{example}\n{}", r#"
+git_content_read_request(h,3,100) :- git_blob_content(_,_,h).
+git_content_read_request(h,9,2) :- git_blob_content(_,_,h).
+git_content_read_request(h,-1,2) :- git_blob_content(_,_,h).
+git_content_read_request("sha256:unacquired",0,1).
+.decl acquired(blob: symbol, kind: symbol, handle: symbol, size: number)
+acquired(b,k,h,n) :- git_object(_,b,k,h), git_content_size(h,n).
+.decl errors(oid: symbol, reason: symbol)
+errors(id,why) :- git_content_error(_,id,why).
+.output acquired
+.output errors
+.output git_content_bytes
+.output git_content_read_error
+"#)).unwrap();
+    let profile = f.area.path().join("content-profile");
+    let scan = |scope: &str, failure: Option<&str>| {
+        let output = f.command("logic", &[&policy, &f.repo, &out], Some(scope)).env("RERAIL_PROFILE", &profile).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert!(f.run("csv", &[&out], None).status.success());
+        let read = |name: &str| fs::read_to_string(out.join(format!("{name}.csv"))).unwrap();
+        if failure.is_none() {
+            assert_eq!(read("acquired").trim_end(), format!("{blob}\tblob\t{handle}\t5"));
+            assert_eq!(read("signature").trim_end(), "00ff1325");
+            let bytes = read("git_content_bytes");
+            let mut rows: Vec<_> = bytes.lines().collect();
+            rows.sort();
+            assert_eq!(rows, [format!("{handle}\t0\t4\t00ff1325"), format!("{handle}\t3\t100\t2541"), format!("{handle}\t9\t2\t")]);
+            assert_eq!(read("git_content_read_error").trim_end(), format!("{handle}\t-1\t2\tinvalid-range"));
+            assert!(read("errors").is_empty());
+        } else {
+            assert_eq!(read("errors").trim_end(), format!("{blob}\t{}", failure.unwrap()));
+            for name in ["acquired","signature","git_content_bytes"] { assert!(read(name).is_empty(), "{name}"); }
+        }
+        profile_decisions(&profile, "Git payload verified")
+    };
+    let stored = || ContentStore::open(&database).unwrap().source_by_hash(canonical).unwrap();
+    assert_eq!(scan("first", None), [blob.as_str()]);
+    let id = stored().expect("the ordinary source store holds the payload");
+    assert_eq!(ContentStore::open(&database).unwrap().get_source(id).unwrap(), payload);
+    fs::write(f.repo.join("a.py"), "another = 2\n").unwrap();
+    f.git(&["add", "--", "a.py"]);
+    f.git(&["commit", "-qm", "unrelated"]);
+    assert!(scan("second", None).is_empty(), "an unrelated commit reuses the verified bytes");
+    assert_eq!(stored(), Some(id));
+    let release = |scope: &str| {
+        let (store_id, members) = content_store::analysis_scope::release_named_scope(&database, scope, &[]).unwrap();
+        assert!(members);
+        let store = ContentStore::open_for_collection(&database, &[store_id]).unwrap();
+        let now = content_store::unix_seconds().unwrap();
+        let policy = CorpusPolicy::default();
+        for _ in 0..64 {
+            if !store.corpus_pass_wanted(&policy, now).unwrap() { break; }
+            store.collect_corpus_pass(&policy, now).unwrap();
+        }
+        store.collect(now, 256).unwrap();
+    };
+    release("first");
+    assert_eq!(stored(), Some(id));
+    let offline = f.area.path().join("offline-blob");
+    fs::rename(&object, &offline).unwrap();
+    scan("second", Some("missing"));
+    // Git can inflate the replacement as a blob, but its checksum belongs to another object.
+    let wrong = f.git(&["rev-parse","HEAD:a.py"]);
+    fs::copy(f.repo.join(".git/objects").join(&wrong[..2]).join(&wrong[2..]), &object).unwrap();
+    scan("second", Some("unreadable"));
+    fs::remove_file(&object).unwrap();
+    fs::rename(offline, &object).unwrap();
+    scan("second", None);
+    f.git(&["repack", "-ad"]);
+    scan("second", None);
+    release("second");
+    assert_eq!(stored(), None);
+}
+
+#[test]
+fn content_handles_return_git_payloads_for_all_four_object_kinds() {
+    use sha2::{Digest, Sha256};
+    let f = Checkout::new();
+    f.git(&["tag", "-a", "sample-tag", "-m", "an annotated tag"]);
+    let policy = f.area.path().join("raw.rerail");
+    let out = f.area.path().join("raw");
+    let mut program = String::from(r#"#include "git/content.rerail"
+.decl wanted(object: symbol)
+git_content_request(r,id) :- git_root_repo(r), wanted(id).
+git_content_read_request(h,0,n) :- git_content_size(h,n).
+.decl checked(kind: symbol, id: symbol, h: symbol, bytes: symbol)
+checked(k,id,h,bytes) :- git_object(_,id,k,h), git_content_bytes(h,0,_,bytes).
+.output checked
+.output git_content_error
+"#);
+    let mut expected = Vec::new();
+    let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    for (kind, rev) in [("tree","HEAD^{tree}"),("commit","HEAD"),("blob","HEAD:a.py"),("tag","refs/tags/sample-tag")] {
+        let id = f.git(&["rev-parse",rev]);
+        let raw = Command::new("git").current_dir(&f.repo).args(["cat-file",kind,&id]).output().unwrap();
+        assert!(raw.status.success());
+        expected.push(format!("{kind}\t{id}\tsha256:{}\t{}", hex(&Sha256::digest(&raw.stdout)), hex(&raw.stdout)));
+        program.push_str(&format!("wanted(\"{id}\").\n"));
+    }
+    program.push_str("git_content_request(\"unopened\",\"x\").\n");
+    fs::write(&policy, program).unwrap();
+    let run = f.run("logic", &[&policy, &f.repo, &out], Some("objects"));
+    assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+    assert!(f.run("csv", &[&out], None).status.success());
+    let csv = fs::read_to_string(out.join("checked.csv")).unwrap();
+    let mut rows: Vec<_> = csv.lines().collect();
+    rows.sort();
+    expected.sort();
+    assert_eq!(rows, expected);
+    assert_eq!(fs::read_to_string(out.join("git_content_error.csv")).unwrap().trim_end(), "unopened\tx\trepository-not-open");
+}
+
+#[test]
+fn commit_locations_keep_the_bound_repository_commit_and_optional_field_in_reports() {
+    let f = Checkout::new();
+    let parent = f.git(&["rev-parse", "HEAD"]);
+    fs::write(f.repo.join("git"), "file witness\n").unwrap();
+    f.git(&["add", "--", "git"]);
+    f.git(&["commit", "-qm", "WIP file named git"]);
+    let child = f.git(&["rev-parse", "HEAD"]);
+    let policy = f.area.path().join("places.rerail");
+    let other = f.area.path().join("other.rerail");
+    let out = f.area.path().join("report");
+    let program = r#"#include "git.rerail"
+.policy "places" revision 1
+.violation Seen(at: loc, witness: symbol) "{witness}"
+Seen(@git_commit_location(r,p,"message"), "parent") :- git_source_commit(r,c), git_parent(r,c,_,p).
+Seen(@git_commit_location(r,c), "child") :- git_source_commit(r,c).
+Seen(@place("git",1), "file") :- file_line("git",1,"file witness").
+"#;
+    fs::write(&policy, program).unwrap();
+    fs::write(&other, program.replace("\"places\"", "\"other\"")).unwrap();
+    for (name, paths, copies) in [
+        ("run-rr", vec![policy.as_path(), &f.repo, &out], 1),
+        ("run-policies", vec![f.repo.as_path(), &out, &policy, &other], 2),
+    ] {
+        let report = json(f.run(name, &paths, Some("locations")), 0);
+        let rows = report["diagnostics"].as_array().unwrap();
+        assert_eq!(rows.len(), 3 * copies, "{report}");
+        for policy_name in ["places", "other"].into_iter().take(copies) {
+            let find = |witness: &str| rows.iter().find(|r| r["policy"] == policy_name && r["parameters"]["witness"] == witness).unwrap();
+            let file = find("file");
+            assert_eq!(file["path"], "git");
+            assert_eq!(file["line"], 1);
+            assert!(file.get("location").is_none());
+            let repository = &find("parent")["location"]["repository"];
+            assert!(!repository.as_str().unwrap().is_empty());
+            for (witness, id, field) in [("parent", &parent, Some("message")), ("child", &child, None)] {
+                let row = find(witness);
+                assert_eq!(row["location"], serde_json::json!({"kind":"git-commit","repository":repository,"commit":id,"field":field}));
+                assert_eq!(row["message"], witness);
+                for key in ["at", "path", "line"] { assert!(row[key].is_null(), "{row}"); }
+            }
+        }
+    }
+    let example = include_str!("../../docs/rule-syntax/git.md").split("```rr\n")
+        .filter_map(|block| block.split_once("\n```").map(|(text, _)| text))
+        .find(|program| program.contains(".violation WorkInProgress(")).unwrap();
+    fs::write(&policy, example).unwrap();
+    let report = json(f.run("run-rr", &[&policy, &f.repo, &out], Some("locations")), 0);
+    let rows = report["diagnostics"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{report}");
+    assert_eq!(rows[0]["location"]["commit"], child);
+    assert_eq!(rows[0]["location"]["field"], "message");
+}
+
+#[test]
+fn bound_commit_metadata_requests_each_key_and_guards_absence() {
+    let f = Checkout::new();
+    let root = f.git(&["rev-parse", "HEAD"]);
+    f.git(&["commit", "--allow-empty", "-qm", "child"]);
+    let child = f.git(&["rev-parse", "HEAD"]);
+    let tree = f.git(&["rev-parse", "HEAD^{tree}"]);
+    let missing = "1111111111111111111111111111111111111111";
+    let policy = f.area.path().join("bound.rerail");
+    let out = f.area.path().join("bound-results");
+    let direct = format!(r#"#include "git.rerail"
+.decl candidate(id: symbol)
+candidate("{root}"). candidate("{child}"). candidate("{tree}"). candidate("{missing}").
+.decl roots(id: symbol)
+roots(id) :- git_root_repo(r), candidate(id), !git_parent(r, id, _, _).
+.decl selected(id: symbol, message: symbol)
+selected(id, msg) :- git_source_commit(r, id), git_subject(r, id, msg).
+.decl parent_subject(id: symbol, subject: symbol)
+parent_subject(p, subject) :- git_subject(r, p, subject), git_parent(r, c, _, p), git_source_commit(r, c).
+.decl failed(id: symbol, reason: symbol)
+failed(id, reason) :- git_object_error(_, id, reason).
+.output roots, selected, parent_subject, failed, git_object_request
+"#);
+    for requests in ["", "git_object_request(r, id) :- git_root_repo(r), candidate(id)."] {
+        fs::write(&policy, format!("{direct}\n{requests}\n")).unwrap();
+        let result = f.run("logic", &[&policy, &f.repo, &out], Some("metadata"));
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        assert!(f.run("csv", &[&out], None).status.success());
+        let read = |name: &str| fs::read_to_string(out.join(format!("{name}.csv"))).unwrap().trim_end().to_owned();
+        assert_eq!(read("roots"), root);
+        assert_eq!(read("selected"), format!("{child}\tchild"));
+        assert_eq!(read("parent_subject"), format!("{root}\ttwo identifiers"));
+        assert_eq!(read("failed"), format!("{missing}\tmissing"));
+        let rows = read("git_object_request");
+        let mut keys: Vec<_> = rows.lines().map(|row| row.split_once('\t').unwrap().1).collect();
+        keys.sort();
+        let mut expected = [&*root, &*child, &*tree, missing];
+        expected.sort();
+        assert_eq!(keys, expected);
+    }
+    // The join key selects the commit. Projecting it away too early would also ask for the missing object.
+    fs::write(&policy, format!(r#"#include "git.rerail"
+.decl batch(label: symbol, oid: symbol)
+batch("keep", "{root}"). batch("drop", "{missing}").
+.decl chosen(label: symbol)
+chosen("keep").
+.decl subject(s: symbol)
+subject(s) :- git_root_repo(r), batch(label, c), chosen(label), git_subject(r, c, s).
+.output subject, git_object_request
+"#)).unwrap();
+    let profile = f.area.path().join("profile-batch");
+    let result = f.command("logic", &[&policy, &f.repo, &out], Some("metadata"))
+        .env("RERAIL_TAPE_CACHE", f.area.path().join("batch.sqlite"))
+        .env("RERAIL_PROFILE", &profile).output().unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    assert_eq!(profile_decisions(&profile, "Git metadata object read"), [root.as_str()]);
+    assert!(f.run("csv", &[&out], None).status.success());
+    assert_eq!(fs::read_to_string(out.join("subject.csv")).unwrap().trim_end(), "two identifiers");
+    let requests = fs::read_to_string(out.join("git_object_request.csv")).unwrap();
+    assert_eq!(requests.lines().map(|row| row.split_once('\t').unwrap().1).collect::<Vec<_>>(), [root]);
 }
 
 #[test]
@@ -688,6 +1031,10 @@ fn incomplete_source_reads_return_partial_results_and_a_failed_exit() {
     );
     assert_eq!(complete["status"], "completed");
     assert_eq!(complete["diagnostics"].as_array().unwrap().len(), 1);
+    fs::write(&metadata, "#include \"git.rerail\"\n.policy \"meta\" revision 1\n.violation Commit(at: loc) \"commit\"\nCommit(@git_commit_location(r,c)) :- git_source_commit(r,c).\n").unwrap();
+    let commit_only = json(f.run("run-rr", &[&metadata, &f.repo, &out], Some("metadata")), 0);
+    assert_eq!(commit_only["status"], "completed");
+    assert_eq!(commit_only["diagnostics"][0]["location"]["commit"], f.git(&["rev-parse", "HEAD"]));
     fs::rename(held, object).unwrap();
     let restored = json(
         f.run("run-rr", &[&f.policy, &f.repo, &out], Some("partial")),

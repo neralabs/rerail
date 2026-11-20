@@ -246,7 +246,7 @@ fn files(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) {
 /// The hand-written `.rerail` files: the library, the data-layer rules and the spikes (`site/` is the page's code).
 fn rr_files() -> Vec<PathBuf> {
     let mut out = Vec::new();
-    files(&rule_syntax(), "rr", &mut out);
+    files(&rule_syntax(), "rerail", &mut out);
     // `typing/programs` holds copies of the engine's typing programs (T's dialect, its own inputs): not rules.
     // `packs/python-main` is generated from all of main's rules (`site/regen_main_pack.sh`), the ones the reader
     // refuses too, so a test over every rule of main sees them all; its own check is `reader-check.txt`.
@@ -622,6 +622,41 @@ fn a_negated_match_reads_its_named_groups_as_groups() {
     assert!(text.contains("(?:.*)") && !text.contains("(?<z>"), "{text}");
 }
 
+#[test]
+fn bound_family_keeps_its_contract_when_printed_and_rejects_incompatible_keys() {
+    let source = r#"
+.decl selected(r: symbol, k: number)
+.decl ask(r: symbol, k: number) extensible
+.decl complete(r: symbol, k: number)
+.decl member(r: symbol, k: number, value: symbol)
+.pragma "bound-family" "ask complete member"
+.decl empty(r: symbol, k: number)
+empty(r,k) :- selected(r,k), !member(r,k,_).
+.output empty
+"#;
+    // The reader asks for its keys (`ask`, from `selected`), and its negation reads `complete` at them.
+    let check = |p: &Arc<Version>| {
+        let demand = rules_of(p, |h| h == "ask");
+        assert_eq!(demand.len(), 1, "{:?}", shown(p, |h| h == "ask"));
+        let first = demand[0].body().next().and_then(|l| l.atom()).map(|a| p.rel_name(a.rel()).to_owned());
+        assert_eq!(first.as_deref(), Some("selected"), "{:?}", shown(p, |h| h == "ask"));
+        let query = rules_of(p, |h| h == "empty");
+        let complete = query[0].body().filter(|l| matches!(l.view(), Lit::Atom(a) if !a.neg() && p.rel_name(a.rel()) == "complete")).count();
+        assert_eq!(complete, 1, "{:?}", shown(p, |h| h == "empty"));
+    };
+    let program = parse(source).unwrap();
+    check(&program);
+    check(&parse(&print_version(&program).unwrap()).unwrap());
+    for (from, to, why) in [
+        ("ask complete member", "ask complete absent", "undeclared relation absent"),
+        ("complete(r: symbol, k: number)", "complete(r: symbol)", "needs the key columns"),
+        ("member(r: symbol, k: number", "member(r: symbol, k: symbol", "needs the key columns"),
+    ] {
+        let error = parse(&source.replace(from, to)).unwrap_err().to_string();
+        assert!(error.contains(why), "{error}");
+    }
+}
+
 /// What is not lowered yet says so by name. A `must` head needs its relation declared `must, may`; a `.violation`
 /// at a span or loc whose values can be spans the engine does not make lowers (such a row has no `docof`, and so no
 /// finding).
@@ -914,7 +949,7 @@ fn rdl_programs_translate_to_the_same_program() {
                 continue;
             }
         };
-        let beside = path.with_extension("rr");
+        let beside = path.with_extension("rerail");
         if beside.exists() && std::fs::read_to_string(&beside).unwrap() != rr {
             failures.push(format!("{name}: {} is not its translation", beside.display()));
         }
@@ -940,7 +975,7 @@ fn rr_programs_print_as_themselves() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/programs/data_layer");
     let prelude = std::fs::read_to_string(dir.join("prelude.rerail")).unwrap();
     let mut found = Vec::new();
-    files(&dir, "rr", &mut found);
+    files(&dir, "rerail", &mut found);
     let mut programs: Vec<(String, String)> = found
         .into_iter()
         .filter(|p| !p.ends_with("prelude.rerail"))
@@ -993,7 +1028,7 @@ b(s) :- t(s), !match("(?i)x(y)", s).
 #[ignore = "writes files: the .rerail translations of the authored .rdl programs"]
 fn write_rr_translations() {
     for (name, text, path) in authored() {
-        std::fs::write(path.with_extension("rr"), translate(&text).unwrap_or_else(|e| panic!("{name}: {e}"))).unwrap();
+        std::fs::write(path.with_extension("rerail"), translate(&text).unwrap_or_else(|e| panic!("{name}: {e}"))).unwrap();
     }
 }
 
@@ -1004,10 +1039,10 @@ fn write_rr_translations() {
 #[ignore = "a report: what the hand-written rules need from the lowering"]
 fn hand_written_rules_lowering_report() {
     let mut out = Vec::new();
-    files(&rule_syntax().join("data-layer"), "rr", &mut out);
-    files(&library(), "rr", &mut out);
+    files(&rule_syntax().join("data-layer"), "rerail", &mut out);
+    files(&library(), "rerail", &mut out);
     for dir in std::env::var("RERAIL_RR_REPORT_EXTRA").iter().flat_map(|dirs| dirs.split(':')).filter(|d| !d.is_empty()) {
-        files(Path::new(dir), "rr", &mut out);
+        files(Path::new(dir), "rerail", &mut out);
     }
     for f in out {
         let result = parse_file_version(&f);
@@ -3544,7 +3579,7 @@ fn converted_cases_are_tests() {
 #[test]
 fn aggregate_demand_keeps_the_candidates_a_whole_stratification_keeps() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer");
-    let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|e| e == "rr")).collect();
+    let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|e| e == "rerail")).collect();
     paths.sort();
     let (mut read, mut demanded) = (0, 0);
     for path in &paths {
@@ -3572,7 +3607,7 @@ fn lowers_back(dirs: &[&str], k: usize, n: usize) {
     let mut paths: Vec<_> = dirs
         .iter()
         .flat_map(|d| std::fs::read_dir(root.join(d)).unwrap().map(|e| e.unwrap().path()))
-        .filter(|p| p.extension().is_some_and(|e| e == "rr"))
+        .filter(|p| p.extension().is_some_and(|e| e == "rerail"))
         .collect();
     paths.sort();
     crate::code_rule_dsl::logic::plan::corpus::phase0::keep_files(paths.iter().skip(k).step_by(n));
@@ -3673,7 +3708,7 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
                 if !skip.iter().any(|s| path == manifest.join(s)) {
                     pending.push(path);
                 }
-            } else if path.extension().is_some_and(|e| e == "rr") {
+            } else if path.extension().is_some_and(|e| e == "rerail") {
                 paths.push(path);
             }
         }
@@ -4023,7 +4058,7 @@ fn walk_rr(dir: &Path) -> Vec<PathBuf> {
         let p = e.path();
         if p.is_dir() {
             out.extend(walk_rr(&p));
-        } else if p.extension().is_some_and(|x| x == "rr") {
+        } else if p.extension().is_some_and(|x| x == "rerail") {
             out.push(p);
         }
     }

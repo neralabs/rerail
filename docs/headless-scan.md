@@ -206,6 +206,11 @@ Approvals apply to the policy and include bytes that the scan reads.
 A `.rerail` policy load error fails the scan, including with `--rules-ref`.
 Explicit `--rr` scans use the registered repository identity when it exists.
 Paths, package configuration, and `.rerailignore` come from the selected tree.
+When an unlisted file exceeds the per-file byte limit, Rerail inspects its first 8,000 bytes.
+A NUL in that prefix skips the file as binary. A text prefix produces a byte-budget failure.
+An unreadable prefix produces a source-read failure. A revision scan reads the prefix from the Git object database.
+For a packed delta, the reader follows copy instructions to obtain the required ranges from its base.
+The prefix serves only to classify the file. Acquiring a content handle still verifies the entire object before storing its bytes.
 With `--path` or `--paths-from`, a directory selects its descendants.
 The path `.` selects the entire tree. The scan still applies the ignore rules.
 Python package lookup uses the markers in the selected tree, including markers outside the scan paths.
@@ -244,6 +249,12 @@ The reported scope path uses the directory name stored on disk, including its le
 `rerail stop` releases filesystem scopes for the directories it stops.
 Rerail records the stores used by filesystem scans and watches.
 A stop releases scopes in those stores even if the configured store changes.
+
+Use `rerail scope stores` to list each registered store identity and path.
+If a store goes offline permanently or moves, run `rerail scope retire-store <identity>`.
+Maintenance stops polling its path. Rerail remembers directory stops for that identity.
+If a scan uses the original store again, Rerail delivers those stops at its current path.
+A replacement store at the old path keeps its own scopes.
 
 ### In CI
 
@@ -330,6 +341,17 @@ A detached HEAD has a null ref and no `refHex`.
 - **`failures`**: execution failures and coverage gaps, as an audit records them ([reference](reference.md#scan-and-settings-controls)).
   The scan adds its own: `rule-left-out` for a rule file at `--rules-ref` that does not load, and
   `checkout-not-audited` for each checkout it meant to audit, when it had files to scan and no audit ran.
+
+### Locations for commit findings
+
+In a `.rerail` violation head, use `@git_commit_location(repo, commit)` to identify a commit.
+Add a third argument to identify a metadata field, for example `@git_commit_location(r, c, "message")`.
+Use the repository and commit from the rule. A policy can report a parent of the selected revision.
+
+The JSON finding carries `location` with `kind: "git-commit"`, `repository`, `commit`, and `field`.
+The field is null when the rule supplies two arguments. The finding's `path`, `start`, and `end` are null.
+The text report prints the repository, full commit ID and field when present.
+These values also identify the location for fingerprinting. A file named `git` keeps its file path and source position.
 
 <details>
 <summary>Exact field semantics</summary>

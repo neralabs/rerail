@@ -79,6 +79,7 @@ pub mod constants;
 pub mod inputs;
 pub use inputs::parameters as input_parameters;
 mod git;
+mod git_content;
 mod analysis_history;
 pub mod source_languages;
 
@@ -3603,7 +3604,7 @@ fn run_observed_within(
     } else {
         phases::facts(&*v, &shape, root, modes, binding, chunk_nodes, typing, options)?
     };
-    phased.extend(git::inputs(&*v, root, options));
+    phased.extend(git::inputs(&*v, root, options, &mut source_checks));
     if let Some(history) = analysis_history::Read::needed(&v) {
         let (rows, digest) = history.records()?;
         phased.extend(rows);
@@ -7921,6 +7922,7 @@ fn run_observed_within(
         let git_root = root.to_path_buf();
         let kept_lookup_reads: Arc<std::sync::Mutex<Vec<(&'static str, String, String, String)>>> = Arc::default();
         let kept_lookup_reads_in = Arc::clone(&kept_lookup_reads);
+        let payload_sources = Arc::clone(&late_sources);
         let rounds_journal_in = rounds_journal.clone();
         let still_root = root.to_path_buf();
         // Beside the main thread, which answers its requests: a job of the pool's that takes turns with this one.
@@ -8031,6 +8033,20 @@ fn run_observed_within(
                     }
                     return unchanged;
                 }
+                if req == git_content::REQUEST {
+                    let ([r, id, _, _], [row]) = (key, rows) else { return false };
+                    let [_, _, _, _, _, handle, _, _, status, stamp] = row.as_slice() else { return false };
+                    let (Some(repo), Some(oid), Some(handle), Some(status), Some(stamp)) =
+                        (sym_text(*r), sym_text(*id), sym_text(*handle), sym_text(*status), sym_text(*stamp)) else { return false };
+                    if status != "ok" || !stamp.starts_with("readable:") { return false; }
+                    if git.borrow_mut().get_or_insert_with(|| git::Git::new(&git_root)).observation(git::OBJECT, &repo, &oid).as_ref() != Some(&stamp) {
+                        return false;
+                    }
+                    let Some(source) = cone_handle.as_ref().and_then(|s| git_content::source(s, &handle).ok().flatten()) else { return false };
+                    payload_sources.lock().expect("run sources").push(source);
+                    kept_lookup_reads_in.lock().expect("lookup observations").push((git::OBJECT, repo, oid, stamp));
+                    return true;
+                }
                 if req == analysis_history::REQUEST {
                     let [kind, key] = key else { return false };
                     let (Some(kind), Some(key)) = (sym_text(*kind), sym_text(*key)) else { return false };
@@ -8042,8 +8058,9 @@ fn run_observed_within(
                     return false;
                 }
                 if req == git::INVENTORY_CHILD {
-                    return key.get(1).and_then(|&atom| sym_text(atom)).as_ref()
-                        == git_selection.get_or_init(|| crate::git_workspace::snapshot::inventory_selection(&git_root)).as_ref();
+                    let [repo, selection, ..] = key else { return false };
+                    return git_selection.get_or_init(|| crate::git_workspace::snapshot::inventory_request_key(&git_root)).as_ref()
+                        .is_some_and(|(r, s)| sym_text(*repo).as_ref() == Some(r) && sym_text(*selection).as_ref() == Some(s));
                 }
                 if matches!(req, reference_facts::REQUEST | reference_facts::SIBLINGS_REQUEST | reference_facts::FILE_REQUEST) {
                     return !rows.is_empty();
@@ -8165,6 +8182,8 @@ fn run_observed_within(
         // Where an answer's time goes (decision 0114 §6): reported once the cone ends.
         let times = std::cell::RefCell::new(AnswerTimes::default());
         let reference_paths: HashMap<_, _> = reference_sources.iter().map(|source| (source.digest.as_str(), source.path.as_str())).collect();
+        let active_inventory = std::cell::OnceCell::new();
+        let mut payloads = git_content::Reader::default();
         let mut answer_one = |rel: &str, rows: &[Vec<i64>], process: &mut dyn FnMut(Step) -> Result<Option<(Task, Ctx)>>| -> Result<Vec<(String, Vec<Vec<i64>>)>> {
             pauses += 1;
             let t_call = std::time::Instant::now();
@@ -8174,6 +8193,18 @@ fn run_observed_within(
                 t.rows += rows.len();
                 t.total += t_call.elapsed().as_secs_f64();
             });
+            if rel == git_content::REQUEST {
+                let mut out = Vec::with_capacity(rows.len());
+                for row in rows {
+                    let [r, id, offset, length] = row.as_slice() else { return Err(Error::Plan("invalid payload request".into())); };
+                    let (repo, oid) = (text(*r)?, text(*id)?);
+                    let a = payloads.read(world.git(), &store, &late_sources, &repo, &oid, *offset, *length)?;
+                    world.consulted_lookup(git::OBJECT, &repo, &oid, a.storage.clone());
+                    let values = atoms(&[&a.kind, &a.handle, &a.bytes, a.status, &a.storage])?;
+                    out.push(vec![*r, *id, *offset, *length, values[0], values[1], a.size, values[2], values[3], values[4]]);
+                }
+                return Ok(vec![(git_content::ANSWER.to_owned(), out)]);
+            }
             // A language's answer (`answerers`): the relations of it the program reads, each row led by the request's key.
             if let Some(answerer) = crate::code_rule_dsl::language::answerer(rel) {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| format!("answer {rel}"));
@@ -8237,9 +8268,11 @@ fn run_observed_within(
             if rel == git::INVENTORY_CHILD {
                 let mut out = Vec::new();
                 for row in rows {
-                    let [_, _, directory, name, mode, encoding] = row.as_slice() else {
+                    let [repo, selection, directory, name, mode, encoding] = row.as_slice() else {
                         return Err(Error::Plan(format!("{rel}: invalid child request")));
                     };
+                    let Some((r, s)) = active_inventory.get_or_init(|| crate::git_workspace::snapshot::inventory_request_key(root)) else { continue };
+                    if text(*repo)? != *r || text(*selection)? != *s { continue; }
                     if let Some(path) = world.inventory_child(
                         &text(*directory)?, &text(*name)?, *mode, text(*encoding)? == "bytes",
                     ).map_err(Error::Plan)? {
@@ -12342,7 +12375,7 @@ fn cone_of(cross: &super::body::Placed, exports: &[String], base: &[String], pro
     let mut parts = crate::code_rule_dsl::logic::answers::split(&whole).expect("the program has answers");
     // Git answers start empty and are produced by the fixpoint. Unlike a
     // document load's exports, they have no caller-supplied seed rows.
-    parts.load_inputs.retain(|rel| !matches!(rel.as_str(), "git_view_revision_of" | "git_revision_of" | "git_object_of" | "git_inventory_child_of" | analysis_history::ANSWER | reference_facts::ANSWER | reference_facts::SIBLINGS_ANSWER | reference_facts::FILE_ANSWER | reference_facts::LINK_ANSWER));
+    parts.load_inputs.retain(|rel| !matches!(rel.as_str(), "git_view_revision_of" | "git_revision_of" | "git_object_of" | git_content::ANSWER | "git_inventory_child_of" | analysis_history::ANSWER | reference_facts::ANSWER | reference_facts::SIBLINGS_ANSWER | reference_facts::FILE_ANSWER | reference_facts::LINK_ANSWER));
     // The rest reads the answers as inputs: the runner binds what it gave.
     for rel in answers.values().flatten().filter(|r| !exports.contains(r)) {
         if !parts.rest_inputs.contains(rel) {

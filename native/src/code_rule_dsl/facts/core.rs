@@ -969,6 +969,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "ast_match" => &["p", "n", "g", "c"],
         // Decision 0055's (`facts::vtab::syntax::guests`).
         "guest" => &["g", "host", "at", "grammar"],
+        "doc_grammar" => &["d", "g"],
         "doc_role" => &["d", "r"],
         "doc_root" => &["d", "n"],
         "tape_of" => &["d", "t"],
