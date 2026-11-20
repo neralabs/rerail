@@ -13,28 +13,23 @@
  */
 import { existsSync } from "node:fs";
 import * as nodeModule from "node:module";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "../engine/child-process.js";
 import { sameFile } from "./same-file.js";
 
 /**
- * Turns on Node's compile cache in this process (`module.enableCompileCache`) in the folder Node takes itself: the one
- * `NODE_COMPILE_CACHE` names, else `node-compile-cache` in the temporary folder. Each hook event starts a Node that loads
- * the hook's bundle of over 2 MB, which V8 would otherwise parse and compile again in every process. It changes no
- * environment, so whatever the hook starts runs as it did before. The cache stays off where
- * `NODE_DISABLE_COMPILE_CACHE` turns it off, and a node without one, or a cache folder that cannot be made, runs the
- * hook as before.
+ * Turns on Node's compile cache in this process (`module.enableCompileCache`) in the folder Node takes itself:
+ * `node-compile-cache` in the temporary folder, or the one `NODE_COMPILE_CACHE` names, where Node turned the cache on
+ * as it started. Each hook event starts a Node that loads the hook's bundle of over 2 MB, which V8 would otherwise
+ * parse and compile again in every process. It changes no environment, so whatever the hook starts runs as it did
+ * before. The cache stays off where `NODE_DISABLE_COMPILE_CACHE` turns it off, and a node without one, or a cache
+ * folder that cannot be made, runs the hook as before.
  */
 function turnOnCompileCache(): void {
   // A node older than the cache has no such export; the namespace then holds none.
   const enable = (nodeModule as { enableCompileCache?: typeof nodeModule.enableCompileCache }).enableCompileCache;
-  // Node reads an empty NODE_COMPILE_CACHE as none.
-  const named = process.env.NODE_COMPILE_CACHE;
-  const folder = named === undefined || named === "" ? join(tmpdir(), "node-compile-cache") : named;
   try {
-    enable?.(folder);
+    enable?.();
   } catch {
     // The hook runs without the cache, as on a node that has none.
   }
