@@ -8,7 +8,8 @@ parsed string is named by its tape ("do a"); and the split below ("okay, I agree
 documents (§4, "What was built" 3–4) and 0391 (guest keys) but for a file's programs (§4). On a program's node ids,
 §4's second choice, a key of its own from 0391's registry (2026-11-19, the user: "okay, let's try b"). On how a
 rule names a program, by its file and place (§4, Q267's first choice; 2026-11-19, the user: "pick a for the decision").
-Step 3 done (2026-11-19). Keeps 0055's model of a tape as content, 0058 (hiding,
+Step 3 done (2026-11-19). Step 5 done (2026-11-19): guests 32.1 s and 34.4 s to 0.16 s and 0.33 s, instructions
+2,476 to 2,421 G (CPU) and 2,071 to 1,800 G (Metal), findings unchanged. Keeps 0055's model of a tape as content, 0058 (hiding,
 normalized strings, `@parse`), 0104 (no SQL in the waves), 0353 (blocks never copied), 0426 (format 16, unchanged).
 Work queue Q261.
 
@@ -266,7 +267,35 @@ keep their meaning, rewritten for `guest_of` and the file's programs where they 
    program; tape values stored and loaded before the waves (R4, R6, R7, R5's annotations). The embed slice and its
    rounds stay for the grammar's programs until step 3.
 5. PostHog cold on CPU and Metal against 1ca497070's 32.1 s and 34.4 s of guests, findings unchanged (29,747,
-   fa0efeaed6ff).
+   fa0efeaed6ff). Done (2026-11-19), below.
+
+## Measured (step 5)
+
+All of PostHog (29,885 Python files, `len-_py.rr`), cold store, profiling build, the M3 Max, the same options as
+1ca497070's runs (`full.sh`, reuse on, `RERAIL_MEMORY_MB=8000`). The findings were the same in every run: 29,747,
+fa0efeaed6ff. The load was high and moved (averages 22 to 75), so the instructions are the comparison; CPU is user +
+system.
+
+| | 1ca497070, CPU | step 3, CPU | step 5, CPU | 1ca497070, Metal | step 3, Metal | step 5, Metal |
+|---|---|---|---|---|---|---|
+| Instructions | 2,476 G | 2,929 G | 2,421 G | 2,071 G | 2,633 G | 1,800 G |
+| CPU | 199.1 s | 246.4 s | 196.2 s | 180.5 s | 242.8 s | 182.6 s |
+| Wall (loaded) | 60.0 s | 54.7 s | 56.5 s | 73.5 s | 113.2 s | 91.9 s |
+| Guests (span) | 32.1 s | 0.16 s | | 34.4 s | 0.33 s | |
+
+- Guests: the `guests` span (the embed slice's rounds and the batch built again with guests) is gone. Left of it are
+  the requests answered in the fixpoint (`answer rr_embed_req`, the tape values admitted): 0.16 s on the CPU and
+  0.33 s on Metal. PostHog's rules hold no programs (no Python embeds), so `the files' programs` does not run.
+- Step 3 ran slower than 1ca497070 because of the layering, not the guests. Every source a chunk binds is
+  layered, read or not, and `Layered::new` counted its base's rows. Counting a source made on lookup (`within`, not
+  solvable) makes every row (`Within::len`, its `OnceLock`). That was 44 s of `a chunk evaluated (job)`'s own CPU,
+  which no span named. A layered source now counts its base when a value's rows are first numbered past it, and never
+  for a base made on lookup (whose values' rows lie at `MADE_AT`)
+  (`layering_a_source_counts_none_of_its_rows`).
+- Layered's cost after that: a 45 s stack sample of the CPU run gives `Layered`'s own frames 2.0 % of the busy
+  samples, and `syntax::values` 2.6 % (about 5 s of 196 s). That is the dispatch of every read of a chunk's sources
+  through the layer: `lookup` 0.5 %, then `parts`, `Parts::of`, `Values::total` and `value`. Reads made before a
+  value is admitted still go through it.
 
 ## Open
 
