@@ -7,18 +7,20 @@ description = "Tier 2 for .rr built ahead of time: the JIT's Cranelift IR as Rus
 
 [features]
 # The test-only items of the crates below, for the tests above them (native/Cargo.toml, `test-hooks`).
-test-hooks = ["rerail-compiler/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-rr-parser/test-hooks"]
+test-hooks = ["rerail-context/test-hooks", "rerail-compiler/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-rr-parser/test-hooks"]
 # The generated tiers: the build script writes the parser's code as Rust (about 700 KB) and this
 # crate compiles it. Off by default, so a workspace build or test leaves them out:
 # `cargo test -p rerail-rr-aot --features generated --profile profiling`.
-generated = ["dep:rerail-compiler", "dep:rerail-rr-parser"]
+generated = ["dep:rerail-compiler", "dep:rerail-rr-parser", "dep:rerail-context"]
 
 [dependencies]
+rerail-context = { path = "../context" }
 rerail-compiler = { path = "../compiler" }
 rerail-rr-parser = { path = "../rr_parser" }
 rerail-rr-syntax = { path = "../rr_syntax" }
 
 [build-dependencies]
+rerail-context = { path = "../context", optional = true }
 rerail-compiler = { path = "../compiler", optional = true }
 rerail-rr-parser = { path = "../rr_parser", optional = true }
 

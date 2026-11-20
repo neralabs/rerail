@@ -41,6 +41,7 @@ impl ViewEntry {
         // descriptor among them), which live as long as it.
         unsafe {
             (*d).key = p.key;
+            (*d).file = p.file;
             (*d).tag = u32::from(p.tag);
             (*d).preorder = u32::from(p.defs.is_none());
             (*d).nodes = p.len();

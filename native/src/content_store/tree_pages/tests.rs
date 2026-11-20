@@ -12,7 +12,7 @@ fn key(tree: u8, plan: u8) -> TreePageKey<'static> {
 }
 
 fn page(bytes: &[u8], file_count: usize) -> TreePage {
-    TreePage { file_count, bytes: bytes.to_vec() }
+    TreePage::new(file_count, bytes.to_vec())
 }
 
 #[test]
@@ -41,5 +41,14 @@ fn collection_keeps_pages_a_name_binds() {
     store.bind_names(&[Binding { name: "/repo#page:src".to_owned(), digest: kept }]).unwrap();
     store.collect(i64::MAX, 256).unwrap();
     assert!(store.has_tree_pages(&key(1, 1)).unwrap());
+    // Unbound, the other set is pending: its binding may be in an overlay layer this process has not written.
+    assert!(store.has_tree_pages(&key(2, 1)).unwrap(), "a set its live process put is kept until its binding is written");
+    let pending = || store.query_rows("SELECT count(*) FROM tree_pages_pending", [], |r| r.get::<_, i64>(0)).unwrap()[0];
+    assert_eq!(pending(), 1, "the bound set is no longer pending");
+    // Its process gone, nothing will bind it: collected.
+    store.query_rows("UPDATE tree_pages_pending SET pid=2147483000 RETURNING pid", [], |r| r.get::<_, i64>(0)).unwrap();
+    store.collect(i64::MAX, 256).unwrap();
+    assert!(store.has_tree_pages(&key(1, 1)).unwrap());
     assert!(!store.has_tree_pages(&key(2, 1)).unwrap());
+    assert_eq!(pending(), 0);
 }

@@ -49,35 +49,38 @@ struct Snapshot {
     kept: Option<HashMap<[u8; 32], super::kept_facts::ChainRows>>,
 }
 
-fn snapshots() -> &'static std::sync::Mutex<HashMap<std::path::PathBuf, Arc<std::sync::Mutex<Snapshot>>>> {
-    static SNAPSHOTS: std::sync::OnceLock<std::sync::Mutex<HashMap<std::path::PathBuf, Arc<std::sync::Mutex<Snapshot>>>>> = std::sync::OnceLock::new();
-    SNAPSHOTS.get_or_init(Default::default)
+/// The stores' snapshots, by store: the shared object's (decision 0442), shared by design by the runs on a store.
+#[derive(Default)]
+struct Snapshots(std::sync::Mutex<HashMap<std::path::PathBuf, Arc<std::sync::Mutex<Snapshot>>>>);
+
+fn snapshots() -> Arc<Snapshots> {
+    rerail_prof::code_rule_dsl::logic::profile::shared::<Snapshots>()
 }
 
 /// `f` over the kept blocks' rows this process holds of the store at `path` (`Snapshot::kept`); `None` when no
 /// snapshot of it is installed.
 pub(super) fn snapshot_kept<T>(path: &std::path::Path, f: impl FnOnce(&mut Option<HashMap<[u8; 32], super::kept_facts::ChainRows>>) -> T) -> Option<T> {
-    let snapshot = snapshots().lock().expect("the store's snapshots").get(&super::atoms::key(path)).cloned()?;
+    let snapshot = snapshots().0.lock().expect("the store's snapshots").get(&super::atoms::key(path)).cloned()?;
     let mut snapshot = snapshot.lock().expect("the store's snapshot");
     Some(f(&mut snapshot.kept))
 }
 
 /// A store created at `path` (its schema new): a snapshot of an earlier file there is not this one's.
 pub fn forget_snapshot(path: &str) {
-    snapshots().lock().expect("the store's snapshots").remove(&super::atoms::key(std::path::Path::new(path)));
+    snapshots().0.lock().expect("the store's snapshots").remove(&super::atoms::key(std::path::Path::new(path)));
 }
 
 impl ContentStore {
     /// The snapshot of this store's file, by its canonical path: handles that name it differently share it.
     fn snapshot(&self) -> Option<Arc<std::sync::Mutex<Snapshot>>> {
-        snapshots().lock().expect("the store's snapshots").get(&super::atoms::key(&self.database_path)).cloned()
+        snapshots().0.lock().expect("the store's snapshots").get(&super::atoms::key(&self.database_path)).cloned()
     }
 
     /// What a run reads of the store before its first wave (decision 0104), once a process: the kept blocks' rows
     /// (`preload_kept`), held in the store's snapshot, which this process's writes keep current, and with it the
     /// memo's admissions (`admit_memo_entries`). Returns the spaces read now.
     pub fn preload_kept_state(&self) -> StoreResult<usize> {
-        snapshots().lock().expect("the store's snapshots").entry(super::atoms::key(&self.database_path)).or_default();
+        snapshots().0.lock().expect("the store's snapshots").entry(super::atoms::key(&self.database_path)).or_default();
         self.preload_kept()
     }
 }

@@ -1354,7 +1354,7 @@ pub mod tests {
         let result=cut(Some(&kept),key,&pl(&p),&st(&p),&inputs).unwrap();
         assert_eq!(result.strata,(0,strata.len()));
         let v=crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap().0;
-        let lowered=lower::Lowered {version:v,domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
+        let lowered=lower::Lowered {version:v,domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python,normal:Default::default()};
         let reused=result.program(&lowered).unwrap();
         let placed=reused.placed().unwrap();
         // A view of an input's columns (Q37: `kind(n, k) :- node(_, n, k, _, _).`) is never kept: its rule stays, to
@@ -2626,9 +2626,10 @@ impl Retained {
         let mut made: HashMap<&String, u64> = {
             use rayon::prelude::*;
             let atoms = &atoms;
-            // Under the span open here, on whichever thread runs it: rayon's loops open none of their own.
+            // In the run and under the span open here, on whichever thread runs it: rayon's loops carry neither.
             let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
             whole.into_par_iter().filter_map(|(rel, k)| {
+                let _in = carry.enter();
                 let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || "a relation's rows, digested".into());
                 if k.rel.levels_shape().2 {
                     return None;
@@ -2908,7 +2909,12 @@ pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InK
     };
     let framed_inputs: Vec<Option<(u64, usize)>> = {
         use rayon::prelude::*;
-        inputs.par_iter().map(|(rel, source)| one_input(rel, source)).collect()
+        // In the run, on whichever thread runs it: its frames' placement reads the machine's device memory.
+        let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
+        inputs.par_iter().map(|(rel, source)| {
+            let _in = carry.enter();
+            one_input(rel, source)
+        }).collect()
     };
     for ((rel, _), done) in inputs.iter().zip(framed_inputs) {
         let Some((digest, n)) = done else { continue };

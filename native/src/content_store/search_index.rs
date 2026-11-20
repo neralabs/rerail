@@ -16,8 +16,8 @@ use std::sync::atomic::Ordering;
 /// Tapes of another tape format are never in it: this build cannot decode them, and no lookup of
 /// this build reads them (`tape_objects` lookups match the format too).
 pub(super) const TAPES_WITHOUT_SEARCH_INDEX_SQL: &str = "SELECT t.tape_id, t.grammar_id, \
-     s.codec_id, s.raw_length, s.frame, sh.algorithm_id, sh.lane0, sh.lane1, sh.lane2, sh.lane3, \
-     t.codec_id, t.raw_length, t.frame, th.algorithm_id, th.lane0, th.lane1, th.lane2, th.lane3, \
+     s.raw_length, sh.algorithm_id, sh.lane0, sh.lane1, sh.lane2, sh.lane3, \
+     t.raw_length, th.algorithm_id, th.lane0, th.lane1, th.lane2, th.lane3, \
      s.seg, s.seg_at, s.seg_len, t.seg, t.seg_at, t.seg_len \
      FROM tape_objects t \
      JOIN hashes th ON th.hash_id = t.canonical_hash_id \
@@ -145,7 +145,7 @@ impl ContentStore {
         after: Option<TapeId>,
         limit: usize,
     ) -> StoreResult<Vec<UnindexedTape>> {
-        type Frame = (i64, i64, Vec<u8>, HashKey, [i64; 3]);
+        type Frame = (i64, HashKey, [i64; 3]);
         let rows = {
             let connection = self
                 .connection
@@ -155,15 +155,13 @@ impl ContentStore {
             let frame = |row: &rusqlite::Row<'_>, at: usize, seg: usize| -> rusqlite::Result<Frame> {
                 Ok((
                     row.get(at)?,
-                    row.get(at + 1)?,
-                    row.get(at + 2)?,
                     HashKey {
-                        algorithm: row.get(at + 3)?,
+                        algorithm: row.get(at + 1)?,
                         lanes: [
+                            row.get(at + 2)?,
+                            row.get(at + 3)?,
                             row.get(at + 4)?,
                             row.get(at + 5)?,
-                            row.get(at + 6)?,
-                            row.get(at + 7)?,
                         ],
                     },
                     [row.get(seg)?, row.get(seg + 1)?, row.get(seg + 2)?],
@@ -181,19 +179,21 @@ impl ContentStore {
                         Ok((
                             TapeId(row.get(0)?),
                             row.get::<_, i64>(1)?,
-                            frame(row, 2, 18)?,
-                            frame(row, 10, 21)?,
+                            frame(row, 2, 14)?,
+                            frame(row, 8, 17)?,
                         ))
                     },
                 )?
                 .collect::<Result<Vec<_>, _>>()?
         };
         // A source is checked against its hash; its tape against its identity (`HashKey::tape_identity`).
-        // In a segment (decision 0295 step 5): read there; one whose segment is gone is not indexed.
+        // In a segment (decision 0295 step 5): read there; one whose segment is gone is not indexed, nor an archived
+        // one (decision 0450 step 4): placed back to be indexed in the background, it would undo the archive. An index
+        // made before its archive is kept; a run that reads the tape places it back, and it is indexed after.
         let mut maps = super::segments::SegmentMaps::new(super::object_segments::object_dir(&self.database_path));
-        let mut decode = |(codec, length, frame, hash, [seg, at, len]): Frame, identity: &dyn Fn(&[u8]) -> HashKey| -> StoreResult<Option<Vec<u8>>> {
-            let Some(frame) = super::object_segments::row_frame(&mut maps, codec, frame, seg, at, len)? else { return Ok(None) };
-            let bytes = frame.bytes(0)?.into_vec();
+        let mut decode = |(length, hash, [seg, at, len]): Frame, identity: &dyn Fn(&[u8]) -> HashKey| -> StoreResult<Option<super::ObjectBytes>> {
+            let Some(frame) = super::object_segments::row_frame(&mut maps, seg, at, len) else { return Ok(None) };
+            let bytes = super::ObjectBytes::Mapped(frame.segment().clone());
             if usize::try_from(length).ok() != Some(bytes.len()) || identity(&bytes) != hash {
                 return Err(StoreError::Corrupt(
                     "object length or hash does not match metadata".to_owned(),
@@ -203,7 +203,7 @@ impl ContentStore {
         };
         let mut out = Vec::with_capacity(rows.len());
         for (tape, grammar, source, image) in rows {
-            let source_hash = source.3;
+            let source_hash = source.1;
             let (Some(source), Some(image)) = (decode(source, &|bytes| HashKey::sha256(bytes))?, decode(image, &|bytes| HashKey::tape_identity(source_hash, bytes))?) else { continue };
             out.push(UnindexedTape { tape, grammar, source, image });
         }

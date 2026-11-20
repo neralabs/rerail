@@ -74,6 +74,20 @@ fn file_language(file: &dyn SourceFile) -> Option<crate::code_rule_dsl::language
     crate::code_rule_dsl::language::dialect_by_label(file.language())
 }
 
+/// The tape tag of the grammar labelled `label` (`build_in_wave_with_tape`'s key's), if it has one.
+pub fn label_tag(label: &str) -> Option<i64> {
+    crate::code_rule_dsl::language::dialect_by_label(label).and_then(tape_tag).map(i64::from)
+}
+
+/// Whether this process has queued the tape of a text whose SHA-256 is `digest` in the grammar `file` names, for the
+/// store (`build_in_wave_with_tape` then reads it, not parses it): decision 0431 R6's count of the texts parsed.
+pub fn tape_queued(cache: &crate::content_store::ContentStore, file: &dyn SourceFile, digest: &[u8; 32]) -> bool {
+    use crate::code_rule_dsl::build_ids::grammar_version;
+    let Some(tag) = file_language(file).and_then(tape_tag).map(i64::from) else { return false };
+    let fv = i64::from(crate::code_rule_dsl::tape::formats::stored_version());
+    cache.queued_tape(&queued_tape(digest, tag, grammar_version(), fv)).is_some()
+}
+
 pub const NONE: u32 = u32::MAX;
 /// Kind codes per dialect (the tape's `KIND_LIMIT`).
 pub const KIND_STRIDE: u32 = 1024;
@@ -229,8 +243,6 @@ fn queued_tape(source: &[u8; 32], tag: i64, gv: i64, fv: i64) -> crate::content_
 /// A parsed tape's stored bytes in their home and the image read there (decision 0353 step 4a): written straight
 /// into a slab's room, which the store's writer and every reader take. A host whose tape is not placed (no device,
 /// or the pool refused the room) keeps the parser's image, and the writer its bytes.
-// copy (0353 step 4a): the parsers write their columns into a vector of their own, which goes once its stored bytes
-// are in their room. It goes when a parser writes into the room (decision 0353).
 /// A tape still queued for the writer, read where it is: the room this process placed it in (decision 0353 step 4a),
 /// else its bytes read into a tape of its own.
 // copy (0353 step 4a): a queued tape not in a room (a frame of a gathered segment, decompressed) is read into a vector.
@@ -243,7 +255,8 @@ fn queued_image(stored: &crate::content_store::ObjectBytes, grammar: &Arc<crate:
         return TapeImage::from_home((*home).clone(), grammar);
     }
     crate::code_rule_dsl::prof::count("tape.queued_read_apart", 1);
-    TapeImage::from_bytes(stored, grammar)
+    const APART: rerail_prof::copies::Site = rerail_prof::copies::Site::new(15, "4a", "a queued tape not in a room, read into a vector (queued_image)");
+    APART.time(|| (TapeImage::from_bytes(stored, grammar), stored.len()))
 }
 
 /// A parse's tape in a slab's room where a device reads tapes (`placed_parse`), else as the parser made it.
@@ -370,7 +383,7 @@ pub(crate) fn build_cached_source(file: &dyn SourceFile, cache: &crate::content_
 }
 
 /// [`build_cached_source`], with the tape the facts were read off (decision 0106).
-pub(crate) fn build_cached_with_tape(
+pub fn build_cached_with_tape(
     file: &dyn SourceFile,
     cache: &crate::content_store::ContentStore,
     known: Option<crate::content_store::SourceId>,
@@ -923,6 +936,8 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "tape_of" => &["d", "t"],
         "sub_tape" => &["at", "grammar", "t"],
         "host_node" => &["n", "h"],
+        "guest_of" => &["n", "s"],
+        "guest_place" => &["n", "s", "l", "c"],
         // Decision 0058's tape operations.
         "parse_of" => &["x", "g", "t"],
         "unparse_of" => &["t", "x"],
@@ -958,18 +973,20 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
 /// The executor of a binding (the run's lanes: every lane under the device binding, the cores' otherwise), registered
 /// at load (`install_executors`); without one, a fresh executor of the machine's lanes, made only then (making it
 /// compiles the GPU's kernels and builds the Neural Engine's lane).
-pub fn executor_for(device: bool) -> &'static rerail_accel::Executor {
-    static OWN: std::sync::OnceLock<rerail_accel::Executor> = std::sync::OnceLock::new();
+pub fn executor_for(device: bool) -> std::sync::Arc<rerail_accel::Executor> {
+    /// The machine's executor where none is registered (decision 0442: the machine's).
+    #[derive(Default)]
+    struct Own(std::sync::OnceLock<std::sync::Arc<rerail_accel::Executor>>);
     match EXECUTORS.get() {
         Some(executor) => executor(device),
-        None => OWN.get_or_init(rerail_accel::Executor::new),
+        None => std::sync::Arc::clone(crate::code_rule_dsl::logic::profile::machine::<Own>().0.get_or_init(|| std::sync::Arc::new(rerail_accel::Executor::new()))),
     }
 }
 
-static EXECUTORS: std::sync::OnceLock<fn(bool) -> &'static rerail_accel::Executor> = std::sync::OnceLock::new();
+static EXECUTORS: std::sync::OnceLock<fn(bool) -> std::sync::Arc<rerail_accel::Executor>> = std::sync::OnceLock::new();
 
 /// Registers the run's executors (once, at load).
-pub fn install_executors(executor: fn(bool) -> &'static rerail_accel::Executor) {
+pub fn install_executors(executor: fn(bool) -> std::sync::Arc<rerail_accel::Executor>) {
     let _ = EXECUTORS.set(executor);
 }
 

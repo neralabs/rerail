@@ -206,8 +206,9 @@ pub fn generated_ready(programs: &[&BlockNative], width: LaneWidth) -> bool {
 /// The bindings of a batch's slabs (`MAX_SLABS`): 0, then past the interpreter's 12–15.
 const SLAB_BUFFERS: [u64; crate::slabs::MAX_SLABS] = [0, 16, 17, 18];
 
-/// Launches repeated because a look-back ran out of polls.
-pub static REPEATED_LAUNCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Launches repeated because a look-back ran out of polls: the run's count (decision 0442).
+#[derive(Default)]
+pub struct RepeatedLaunches(pub std::sync::atomic::AtomicUsize);
 
 /// What `program` needs that generated MSL lacks (decision 0202's `metal-form` list), if any: a
 /// `run_batch` of it is refused. A fixed point (`rounds`) is the CPU's for now: each lane would run
@@ -393,7 +394,7 @@ pub fn run_batch(
             return Err(Error::BackendFailure);
         }
         if launches > 0 {
-            REPEATED_LAUNCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            rerail_context::with_local::<RepeatedLaunches, _>(|r| r.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
             // SAFETY: two words, written between launches, when no kernel runs.
             unsafe { std::ptr::write_bytes(tickets.host().cast::<u32>(), 0, 2) };
         }
@@ -676,8 +677,11 @@ fn batch_helpers() -> String {
 fn poll_helper() -> &'static str {
     const LOAD: &str = "static inline uint poll(device atomic_uint* x) { return atomic_load_explicit(x, memory_order_relaxed); }\n";
     const RMW: &str = "static inline uint poll(device atomic_uint* x) { return atomic_fetch_or_explicit(x, 0u, memory_order_relaxed); }\n";
-    static COHERENT_LOADS: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| crate::device().map_or(true, |d| d.supports_family(metal::MTLGPUFamily::Apple9)));
-    if *COHERENT_LOADS { LOAD } else { RMW }
+    // A fact of the machine's device, found once (decision 0442: the machine's).
+    #[derive(Default)]
+    struct CoherentLoads(std::sync::OnceLock<bool>);
+    let coherent = *rerail_context::machine::<CoherentLoads>().0.get_or_init(|| crate::device().map_or(true, |d| d.supports_family(metal::MTLGPUFamily::Apple9)));
+    if coherent { LOAD } else { RMW }
 }
 
 /// A file of a batch, and its bytes read in place in its slab: 16-byte chunks from `src16`, zero

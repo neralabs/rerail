@@ -43,10 +43,17 @@ unsafe impl GlobalAlloc for Counting {
 #[global_allocator]
 static A: Counting = Counting;
 
+/// Instructions retired (macOS); 0 elsewhere.
 fn retired() -> u64 {
-    let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
-    let ok = unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
-    if ok == 0 { info.ri_instructions } else { 0 }
+    #[cfg(target_os = "macos")]
+    {
+        let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
+        let ok = unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
+        if ok == 0 {
+            return info.ri_instructions;
+        }
+    }
+    0
 }
 
 #[derive(Default, Clone, Copy)]

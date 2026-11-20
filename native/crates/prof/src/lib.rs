@@ -7,15 +7,23 @@
 //! crate of its own so that the engine's crates (the Metal runtime's) count into the same stages.
 
 use std::collections::BTreeMap;
-use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 // The workspace profile (`RERAIL_PROFILE`) reports the stages too (its "Stages" section).
-static ON: LazyLock<bool> = LazyLock::new(|| std::env::var_os("RERAIL_PROF").is_some() || std::env::var_os("RERAIL_PROFILE").is_some());
-static STAGES: Mutex<BTreeMap<String, (Duration, usize)>> = Mutex::new(BTreeMap::new());
+/// Whether stages are timed (`RERAIL_PROF`, `RERAIL_PROFILE`): read once a run (decision 0442).
+fn stages_on() -> bool {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_PROF").is_some() || std::env::var_os("RERAIL_PROFILE").is_some())
+}
+/// The run's stages (decision 0442: a run's measurement), by name: CPU time and calls.
+#[derive(Default)]
+struct Stages(std::sync::Arc<parking_lot::Mutex<BTreeMap<String, (Duration, usize)>>>);
+
+fn held() -> parking_lot::ArcMutexGuard<parking_lot::RawMutex, BTreeMap<String, (Duration, usize)>> {
+    rerail_context::local::<Stages>().0.lock_arc()
+}
 
 pub fn time<T>(stage: &str, f: impl FnOnce() -> T) -> T {
-    if !*ON {
+    if !stages_on() {
         return f();
     }
     let start = thread_cpu();
@@ -24,7 +32,7 @@ pub fn time<T>(stage: &str, f: impl FnOnce() -> T) -> T {
     let cpu = top.then(process_cpu);
     let out = f();
     let elapsed = thread_cpu().saturating_sub(start);
-    let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut stages = held();
     if let Some(cpu) = cpu {
         let entry = stages.entry(format!("cpu_ms.{stage}")).or_default();
         entry.1 += ((process_cpu() - cpu).as_secs_f64() * 1e3) as usize;
@@ -128,10 +136,10 @@ pub fn windows_peak_working_set() -> u64 {
 /// Prints the stages' times under `title` and clears them.
 
 pub fn report(title: &str) {
-    if !*ON {
+    if !stages_on() {
         return;
     }
-    let stages = std::mem::take(&mut *STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner()));
+    let stages = std::mem::take(&mut *held());
     eprintln!("prof {title}:");
     for (stage, (elapsed, calls)) in stages {
         eprintln!("  {stage:<40} {:>10.1} ms {calls:>7} calls", elapsed.as_secs_f64() * 1e3);
@@ -143,14 +151,14 @@ pub struct Stage(Option<(&'static str, Duration, Option<Duration>)>);
 
 impl Stage {
     pub fn start(stage: &'static str) -> Self {
-        Self(ON.then(|| (stage, thread_cpu(), (stage.starts_with("labels.") || stage.starts_with("demand.") || stage == "size.texts").then(process_cpu))))
+        Self(stages_on().then(|| (stage, thread_cpu(), (stage.starts_with("labels.") || stage.starts_with("demand.") || stage == "size.texts").then(process_cpu))))
     }
 }
 
 impl Drop for Stage {
     fn drop(&mut self) {
         if let Some((stage, start, cpu)) = self.0.take() {
-            let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut stages = held();
             if let Some(cpu) = cpu {
                 stages.entry(format!("cpu_ms.{stage}")).or_default().1 += ((process_cpu() - cpu).as_secs_f64() * 1e3) as usize;
             }
@@ -163,29 +171,148 @@ impl Drop for Stage {
 
 /// Adds `amount` (bytes, records) to `stage`'s count, shown as its calls.
 pub fn count(stage: &'static str, amount: usize) {
-    if *ON {
-        let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if stages_on() {
+        let mut stages = held();
         stages.entry(stage.to_owned()).or_default().1 += amount;
     }
 }
 
 /// Whether stages are timed (`RERAIL_PROF`, or the workspace profile's `RERAIL_PROFILE`).
 pub fn on() -> bool {
-    *ON
+    stages_on()
 }
 
 /// `count` with a name made at run time.
 pub fn count_named(stage: String, amount: usize) {
-    if *ON {
-        let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if stages_on() {
+        let mut stages = held();
         stages.entry(stage).or_default().1 += amount;
     }
 }
 
 /// The stages, locked: for a reading of its own (the engine's memory peaks), kept as the
 /// largest seen.
-pub fn stages() -> std::sync::MutexGuard<'static, BTreeMap<String, (Duration, usize)>> {
-    STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+pub fn stages() -> parking_lot::ArcMutexGuard<parking_lot::RawMutex, BTreeMap<String, (Duration, usize)>> {
+    held()
+}
+
+/// The copies decision 0353 still lists, counted where each is made: the measure its steps drive to 0. Each site is
+/// one `static` (`copies::Site`), named by its row of 0353's table ("The copies today") and the step that removes it,
+/// and marked `copy (0353 step N)` beside it. Bytes and calls are always counted (two relaxed adds); the CPU a copy
+/// takes is timed only when stages are (`on`). A site joins the list at its first copy, so the profile's heading
+/// `copies (decision 0353)` names every site that copied in the run, and a site absent from it copied nothing.
+pub mod copies {
+    use std::sync::Mutex;
+
+    /// A site of a copy decision 0353 lists: code, its row and step fixed where it is written. What it copied is the
+    /// run's (`Copies`, decision 0442): a run's profile names the copies that run made.
+    pub struct Site {
+        /// Its row in 0353's table.
+        pub row: u8,
+        /// The step of 0353's plan that removes it.
+        pub step: &'static str,
+        /// What is copied, and where.
+        pub name: &'static str,
+    }
+
+    /// A site's totals so far.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct Totals {
+        pub bytes: u64,
+        pub calls: u64,
+        pub cpu_ns: u64,
+    }
+
+    /// The run's copies, by site (`rerail_context::local`; a site is its row and name, a `const` written once):
+    /// each site that copied, in the order it first did.
+    #[derive(Default)]
+    struct Copies(Mutex<Vec<(&'static Site, Totals)>>);
+
+    impl Copies {
+        fn add(&self, site: &'static Site, bytes: u64, cpu_ns: u64) {
+            let mut all = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let at = match all.iter().position(|(s, _)| (s.row, s.name) == (site.row, site.name)) {
+                Some(at) => at,
+                None => {
+                    all.push((site, Totals::default()));
+                    all.len() - 1
+                }
+            };
+            let t = &mut all[at].1;
+            t.bytes += bytes;
+            t.calls += 1;
+            t.cpu_ns += cpu_ns;
+        }
+    }
+
+    impl Site {
+        pub const fn new(row: u8, step: &'static str, name: &'static str) -> Self {
+            Self { row, step, name }
+        }
+
+        fn count(&'static self, bytes: usize, cpu_ns: u64) {
+            rerail_context::with_local::<Copies, _>(|c| c.add(self, bytes as u64, cpu_ns));
+        }
+
+        /// One copy of `bytes`, its CPU not timed (a copy inside a timed one, or too small to time).
+        pub fn copied(&'static self, bytes: usize) {
+            self.count(bytes, 0);
+        }
+
+        /// One copy made by `f`, which gives its bytes with its value; its CPU timed when stages are.
+        pub fn time<T>(&'static self, f: impl FnOnce() -> (T, usize)) -> T {
+            let start = super::on().then(super::thread_cpu);
+            let (out, bytes) = f();
+            let cpu = start.map_or(0, |start| super::thread_cpu().saturating_sub(start).as_nanos() as u64);
+            self.count(bytes, cpu);
+            out
+        }
+
+        /// A copy begun here, ended by `Copying::done` with its bytes: for a copy spread through a function.
+        pub fn start(&'static self) -> Copying {
+            Copying { site: self, start: super::on().then(super::thread_cpu) }
+        }
+    }
+
+    /// A copy under way at a site (`Site::start`).
+    #[must_use = "a copy is counted when it is done"]
+    pub struct Copying {
+        site: &'static Site,
+        start: Option<std::time::Duration>,
+    }
+
+    impl Copying {
+        pub fn done(self, bytes: usize) {
+            let cpu = self.start.map_or(0, |start| super::thread_cpu().saturating_sub(start).as_nanos() as u64);
+            self.site.count(bytes, cpu);
+        }
+    }
+
+    /// Every site that copied in the run under way, by row, with its totals.
+    pub fn sites() -> Vec<(&'static Site, Totals)> {
+        let Some(copies) = rerail_context::local_if_any::<Copies>() else { return Vec::new() };
+        let mut sites = copies.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+        sites.sort_by_key(|(site, _)| (site.row, site.name));
+        sites
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        const ONE: Site = Site::new(250, "test", "a test's copy");
+
+        #[test]
+        fn a_sites_copies_are_counted_and_listed_once() {
+            let _run = rerail_context::test_run();
+            ONE.copied(10);
+            let made = ONE.time(|| ("made", 32));
+            assert_eq!(made, "made");
+            let listed: Vec<_> = sites().into_iter().filter(|(site, _)| site.row == 250).collect();
+            assert_eq!(listed.len(), 1, "a site is listed once, however often it copies");
+            assert_eq!((listed[0].1.bytes, listed[0].1.calls), (42, 2));
+        }
+    }
 }
 
 /// A sampling heap profiler (`RERAIL_HEAP_SAMPLE`): which spans allocated the heap that is live at the footprint's

@@ -693,6 +693,13 @@ pub(super) struct CoreRows {
     ast_match: Vec<[i64; 4]>,
 }
 
+impl CoreRows {
+    /// The bytes of its rows so far (a copy's size, decision 0353's row 7).
+    pub(super) fn bytes(&self) -> usize {
+        std::mem::size_of_val(self.op.as_slice()) + std::mem::size_of_val(self.op_at.as_slice()) + std::mem::size_of_val(self.text.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.str.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice()) + std::mem::size_of_val(self.value.as_slice()) + std::mem::size_of_val(self.comment.as_slice()) + std::mem::size_of_val(self.spread.as_slice()) + std::mem::size_of_val(self.syntax_error.as_slice()) + std::mem::size_of_val(self.source.as_slice()) + std::mem::size_of_val(self.src_line.as_slice()) + std::mem::size_of_val(self.split_line.as_slice()) + std::mem::size_of_val(self.lf_line.as_slice()) + std::mem::size_of_val(self.line_count.as_slice()) + std::mem::size_of_val(self.str_part.as_slice()) + std::mem::size_of_val(self.str_part_start.as_slice()) + std::mem::size_of_val(self.str_part_word.as_slice()) + std::mem::size_of_val(self.first_token.as_slice()) + std::mem::size_of_val(self.last_token.as_slice()) + std::mem::size_of_val(self.token_before.as_slice()) + std::mem::size_of_val(self.token_after.as_slice()) + std::mem::size_of_val(self.end_point.as_slice()) + std::mem::size_of_val(self.structural_before.as_slice()) + std::mem::size_of_val(self.structural_after.as_slice()) + std::mem::size_of_val(self.tree_digest.as_slice()) + std::mem::size_of_val(self.def_digest.as_slice()) + std::mem::size_of_val(self.ast_match.as_slice())
+    }
+}
+
 /// `node`'s relations a program does not read, each family's rows left unmade (all made by default). Measured on
 /// struct and values (237 files): every node's operators, siblings, names and literals were made for programs that
 /// read few of them.

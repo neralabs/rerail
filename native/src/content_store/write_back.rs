@@ -45,8 +45,7 @@ fn cap_bytes_default() -> usize {
 
 /// The queue's cap: 192 MB, or `RERAIL_WRITE_QUEUE_MB` (a measurement aid: how far behind the writer may fall).
 fn cap_bytes() -> usize {
-    static CAP: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *CAP.get_or_init(|| std::env::var("RERAIL_WRITE_QUEUE_MB").ok().and_then(|v| v.parse::<usize>().ok()).map_or(cap_bytes_default(), |mb| mb << 20))
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_WRITE_QUEUE_MB").ok().and_then(|v| v.parse::<usize>().ok()).map_or(cap_bytes_default(), |mb| mb << 20))
 }
 
 /// The first wait before a busy job runs again: a writer that held the store is often done at once.
@@ -299,7 +298,7 @@ enum Seal {
 
 /// Seals `run`'s wave still being written in every store's writer.
 fn seal_everywhere(run: u64, how: Seal) {
-    let all: Vec<Arc<Writer>> = writers().lock().expect("the writers").values().cloned().collect();
+    let all: Vec<Arc<Writer>> = writers().0.lock().expect("the writers").values().cloned().collect();
     for w in all {
         w.seal(run, how);
     }
@@ -399,9 +398,8 @@ struct Wave {
 /// The bytes under which a job is queued past the cap (back-pressure holds only a job of this size or more).
 /// `RERAIL_WRITES` (a measurement aid): seconds since the writer's first use in this process, for its timeline.
 fn writes_trace() -> Option<f64> {
-    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_WRITES").is_some());
     static T0: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
-    (*ON).then(|| T0.elapsed().as_secs_f64())
+    (rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_WRITES").is_some())).then(|| T0.elapsed().as_secs_f64())
 }
 
 fn small_job() -> usize {
@@ -524,15 +522,19 @@ impl Writer {
     }
 }
 
-/// The process's writers, by store path.
-fn writers() -> &'static Mutex<HashMap<PathBuf, Arc<Writer>>> {
-    static WRITERS: std::sync::OnceLock<Mutex<HashMap<PathBuf, Arc<Writer>>>> = std::sync::OnceLock::new();
-    WRITERS.get_or_init(Default::default)
+/// The shared object's writers, by store path (decision 0442): another object's handles on a store have a writer of
+/// their own, as another process's would (the store's lease keeps them apart).
+#[derive(Default)]
+struct Writers(Mutex<HashMap<PathBuf, Arc<Writer>>>);
+
+fn writers() -> Arc<Writers> {
+    rerail_prof::code_rule_dsl::logic::profile::shared::<Writers>()
 }
 
 /// The writer of the store at `path`, counted as one more of its handles (a `Hold`, which names no store).
 pub(super) fn register(path: &Path) -> Arc<Writer> {
-    let mut all = writers().lock().expect("the writers");
+    let held = writers();
+    let mut all = held.0.lock().expect("the writers");
     let w = Arc::clone(all.entry(path.to_path_buf()).or_default());
     w.handles.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     w
@@ -541,7 +543,8 @@ pub(super) fn register(path: &Path) -> Arc<Writer> {
 /// The writer of the store at `path` whose identity is `identity`, counted as one more of its handles. The path's
 /// writer of a store since deleted stays its handles' alone: this store gets a new one.
 pub(super) fn register_store(path: &Path, identity: i64) -> Arc<Writer> {
-    let mut all = writers().lock().expect("the writers");
+    let held = writers();
+    let mut all = held.0.lock().expect("the writers");
     let entry = all.entry(path.to_path_buf()).or_default();
     if *entry.identity.get_or_init(|| identity) != identity {
         *entry = Arc::default();
@@ -556,7 +559,8 @@ pub(super) fn register_store(path: &Path, identity: i64) -> Arc<Writer> {
 fn unregister(path: &Path, w: &Arc<Writer>) {
     // Under the registry's lock: a handle opened meanwhile finds this writer, never a new one that cannot see its
     // queue (the writer's jobs never take this lock).
-    let mut all = writers().lock().expect("the writers");
+    let held = writers();
+    let mut all = held.0.lock().expect("the writers");
     if w.handles.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) != 1 {
         return;
     }
@@ -598,13 +602,14 @@ pub fn hold(path: &Path) -> Hold {
 }
 
 /// Each kind of job's count, bytes held until written, CPU on the writer's thread and the bytes of the frames it
-/// encoded, in this process (the profile's write-back).
-static BY_KIND: std::sync::LazyLock<Mutex<std::collections::BTreeMap<&'static str, (usize, usize, f64, usize)>>> = std::sync::LazyLock::new(Default::default);
+/// encoded, by the shared object's writers (the profile's write-back; decision 0442).
+#[derive(Default)]
+struct ByKind(Mutex<std::collections::BTreeMap<&'static str, (usize, usize, f64, usize)>>);
 
 /// Each kind of job written so far in this process: count, bytes held, the writer's CPU and the bytes of the frames
 /// it encoded, costliest first.
 pub fn written_by_kind() -> Vec<(&'static str, usize, usize, f64, usize)> {
-    let mut v: Vec<_> = BY_KIND.lock().expect("the writer's account").iter().map(|(k, (n, b, c, e))| (*k, *n, *b, *c, *e)).collect();
+    let mut v: Vec<_> = rerail_prof::code_rule_dsl::logic::profile::shared::<ByKind>().0.lock().expect("the writer's account").iter().map(|(k, (n, b, c, e))| (*k, *n, *b, *c, *e)).collect();
     v.sort_by(|a, b| b.3.total_cmp(&a.3));
     v
 }
@@ -1096,7 +1101,8 @@ fn accounted(what: &'static str, bytes: usize, mut job: Job) -> Job {
         }
         let (t0, e0) = (thread_cpu(), super::compression::encoded_here());
         let out = retried(store, what, &mut job);
-        let mut by = BY_KIND.lock().expect("the writer's account");
+        let held = rerail_prof::code_rule_dsl::logic::profile::shared::<ByKind>();
+        let mut by = held.0.lock().expect("the writer's account");
         let e = by.entry(what).or_default();
         e.0 += 1;
         e.1 += bytes;

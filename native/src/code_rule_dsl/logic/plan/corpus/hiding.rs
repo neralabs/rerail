@@ -27,7 +27,7 @@
 /// columns, grammar column, tape column).
 /// `string_annotation(s)` is one: Ruff's strings that are type definitions, nested ones too, whose nodes are in an
 /// annotation's document (not shown, `guests::key`).
-pub(super) const ENTRIES: [(&str, &[usize], Option<usize>, Option<usize>); 10] = [
+pub(super) const ENTRIES: [(&str, &[usize], Option<usize>, Option<usize>); 12] = [
     ("guest", &[0], Some(3), None),
     ("string_annotation", &[0], None, None),
     ("parsed", &[2], Some(1), None),
@@ -36,6 +36,8 @@ pub(super) const ENTRIES: [(&str, &[usize], Option<usize>, Option<usize>); 10] =
     ("doc_role", &[0], None, None),
     ("tape_of", &[0], None, Some(1)),
     ("host_node", &[0], None, None),
+    ("guest_of", &[0], None, None),
+    ("guest_place", &[0], None, None),
     ("parse_of", &[], Some(1), Some(2)),
     ("splice_of", &[], None, Some(3)),
 ];

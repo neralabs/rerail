@@ -18,7 +18,7 @@ use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, FileInput, Metrics, Query, Terms};
 use crate::code_rule_dsl::tape;
 use crate::content_store::{
-    CandidateClause, HashKey, LocalResultPublication, StoredLocalResult, compress,
+    CandidateClause, HashKey, LocalResultPublication, StoredLocalResult,
 };
 use ast_grep_core::AstGrep as Root;
 use napi::Result;
@@ -27,7 +27,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::AtomicBool;
 #[cfg(any(test, feature = "test-hooks"))]
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// A consumer file whose results must follow the graph: its new stamp, and the terms silent in
@@ -598,8 +598,8 @@ struct SharedSummaries {
     swept: usize,
 }
 
-static SHARED_SUMMARIES: LazyLock<parking_lot::Mutex<SharedSummaries>> =
-    LazyLock::new(Default::default);
+#[derive(Default)]
+struct SharedSummariesKept(parking_lot::Mutex<SharedSummaries>);
 
 fn version_key(file: &FileState) -> (HashKey, HashKey) {
     (
@@ -610,7 +610,7 @@ fn version_key(file: &FileState) -> (HashKey, HashKey) {
 
 /// `file`'s summary as some workspace holds it.
 fn shared_summary(file: &FileState) -> Option<Arc<Summary>> {
-    SHARED_SUMMARIES
+    crate::code_rule_dsl::logic::profile::shared::<SharedSummariesKept>().0
         .lock()
         .summaries
         .get(&version_key(file))
@@ -620,7 +620,8 @@ fn shared_summary(file: &FileState) -> Option<Arc<Summary>> {
 /// Shares `summary` as `file`'s, unless another workspace did meanwhile: then theirs.
 fn share_summary(file: &FileState, summary: Summary) -> Arc<Summary> {
     let key = version_key(file);
-    let mut shared = SHARED_SUMMARIES.lock();
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<SharedSummariesKept>();
+    let mut shared = held_.0.lock();
     if let Some(known) = shared
         .summaries
         .get(&key)
@@ -646,13 +647,10 @@ pub(super) fn summary_publication(file: &FileState) -> Result<Option<LocalResult
     }) else {
         return Ok(None);
     };
-    let bytes = summary.encode();
-    let frame = compress(&bytes, 3).map_err(|error| invalid(error.to_string()))?;
     Ok(Some(LocalResultPublication {
         candidate: summary_candidate(),
         context: file_context(&file.input),
-        raw_length: bytes.len(),
-        frame,
+        bytes: summary.encode(),
     }))
 }
 

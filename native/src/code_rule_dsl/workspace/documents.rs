@@ -194,7 +194,7 @@ fn stored_image(
     tape_id: TapeId,
     derived: &[StoredDocument],
     grammar: &Arc<tape::Grammar>,
-) -> Option<(tape::FileImage, bool)> {
+) -> Option<tape::FileImage> {
     let sources = derived
         .iter()
         .map(|document| document.source)
@@ -204,15 +204,13 @@ fn stored_image(
         .collect::<Vec<_>>();
     let tapes = store.get_tapes_bulk(&tape_ids).ok()?;
     let texts = store.get_sources_bulk(&sources).ok()?;
-    let (primary, primary_hit) = tapes.get(&tape_id)?;
-    let mut cache_hit = *primary_hit;
+    let primary = tapes.get(&tape_id)?;
     let stored = derived
         .iter()
         .zip(&sources)
         .map(|(document, source)| {
-            let (text, text_hit) = texts.get(source)?;
-            let (tape, tape_hit) = tapes.get(&document.tape)?;
-            cache_hit &= *text_hit && *tape_hit;
+            let text = texts.get(source)?;
+            let tape = tapes.get(&document.tape)?;
             Some(tape::StoredDerived {
                 ordinal: document.ordinal,
                 parent: document.parent_ordinal,
@@ -225,8 +223,7 @@ fn stored_image(
             })
         })
         .collect::<Option<Vec<_>>>()?;
-    let image = tape::FileImage::read(primary, grammar, &stored).ok()?;
-    Some((image, cache_hit))
+    tape::FileImage::read(primary, grammar, &stored).ok()
 }
 
 /// Attach one stored file's documents after selector eligibility requires ordinary evaluation.
@@ -238,11 +235,10 @@ pub(super) fn attach_stored_tape(
     file: &mut FileState,
     grammar: &Arc<tape::Grammar>,
 ) {
-    let Some((image, cache_hit)) = stored_image(store, tape_id, derived, grammar) else {
+    let Some(image) = stored_image(store, tape_id, derived, grammar) else {
         return;
     };
-    file.tape_cache_hit = cache_hit;
-    file.tape_decompressed = !cache_hit;
+    file.tape_from_store = true;
     file.tape = Some((file.source_revision, image));
 }
 
@@ -417,10 +413,9 @@ pub(super) fn load_many(
             let image = objects.tapes.get(&version.grammar).and_then(|&id| {
                 let derived = stored.derived.get(&id).map_or(&[][..], Vec::as_slice);
                 if derived.is_empty() {
-                    let (bytes, _) = tapes.get(&id)?;
-                    tape::FileImage::read(bytes, &grammar, &[]).ok()
+                    tape::FileImage::read(tapes.get(&id)?, &grammar, &[]).ok()
                 } else {
-                    stored_image(&store, id, derived, &grammar).map(|(image, _)| image)
+                    stored_image(&store, id, derived, &grammar)
                 }
             });
             let image = match image {

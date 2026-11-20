@@ -58,4 +58,4 @@ pub mod prim_gpu;
 pub mod scan;
 #[cfg(target_os = "macos")]
 pub mod columns;
-
+pub mod zlevel;

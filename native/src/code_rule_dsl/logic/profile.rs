@@ -44,30 +44,34 @@ pub mod sources;
 pub use roofline::Unit;
 // cratify: `report` is rerail-logic's (it mounts it)
 
-static ON: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(std::env::var_os("RERAIL_PROFILE").is_some()));
+thread_local! {
+    /// Whether the caller's runs are profiled (decision 0442: the caller's choice, `RERAIL_PROFILE` unless it sets
+    /// one; held by its thread and carried to its runs' jobs, `logic::run_state`).
+    pub static ON: std::cell::Cell<bool> = std::cell::Cell::new(std::env::var_os("RERAIL_PROFILE").is_some());
+    /// The directory the caller's next report is written to: `RERAIL_PROFILE`'s, unless it sets one.
+    pub static DIR: std::cell::RefCell<Option<std::path::PathBuf>> = std::cell::RefCell::new(std::env::var_os("RERAIL_PROFILE").map(Into::into));
+}
 
 /// Whether this run is profiled.
 pub fn on() -> bool {
-    ON.load(Ordering::Relaxed)
+    ON.with(std::cell::Cell::get)
 }
 
-/// Turns profiling on or off (a test that profiles without the environment variable).
+/// Turns profiling of this caller's runs on or off (a test that profiles without the environment variable).
 #[allow(dead_code)]
 pub fn set(on: bool) {
-    ON.store(on, Ordering::Relaxed);
+    ON.with(|o| o.set(on));
 }
-
-static DIR: LazyLock<Mutex<Option<std::path::PathBuf>>> = LazyLock::new(|| Mutex::new(std::env::var_os("RERAIL_PROFILE").map(Into::into)));
 
 /// The directory the next report is written to: `RERAIL_PROFILE`'s, unless set (one per rule in a measurement).
 pub fn directory() -> Option<std::path::PathBuf> {
-    DIR.lock().unwrap().clone()
+    DIR.with(|d| d.borrow().clone())
 }
 
-/// Sets the directory the next report is written to.
+/// Sets the directory this caller's next report is written to.
 #[allow(dead_code)]
 pub fn set_directory(dir: &Path) {
-    *DIR.lock().unwrap() = Some(dir.to_path_buf());
+    DIR.with(|d| *d.borrow_mut() = Some(dir.to_path_buf()));
 }
 
 fn cpu() -> f64 {
@@ -579,26 +583,28 @@ pub const PHASES: [&str; 7] = [
     "wake (GPUEndTime to wait returning)",
 ];
 
-/// The profile's records, merged: every thread's shard (`SHARDS`) is added in when they are read (`merged`).
-static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
 
 /// One thread's records: what its spans, decisions, work and plans add, under a lock only its own thread takes
 /// while it records. One lock for every thread's records was a run's hottest lock: sixteen threads ending spans and
 /// stating decisions took turns at it (about a tenth of a full corpus run's yields and blocked waits, 2026-11-15).
 type Shard = std::sync::Arc<parking_lot::Mutex<State>>;
 
-/// Every thread's shard, an ended thread's too until its records are merged.
-static SHARDS: Mutex<Vec<Shard>> = Mutex::new(Vec::new());
+/// A run's profile (decision 0442: the run's, `local`): its records merged, and every thread's shard of them, an
+/// ended thread's too until its records are merged.
+#[derive(Default)]
+pub struct Records {
+    merged: std::sync::Arc<parking_lot::Mutex<State>>,
+    shards: parking_lot::Mutex<Vec<Shard>>,
+    /// Whether a corpus run of the run holds them (`hold_records`): it resets and writes them.
+    held: AtomicBool,
+}
 
 thread_local! {
     /// Whether this thread holds the profile's state (`state`, `merged`).
     static HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// This thread's shard, made and listed when it first records.
-    static SHARD: Shard = {
-        let s = Shard::default();
-        SHARDS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(s.clone());
-        s
-    };
+    /// This thread's shard of its run's records (`Records`), made and listed in them when it first records for that
+    /// run, with the run's records it is listed in.
+    static SHARD: std::cell::RefCell<(std::sync::Weak<Records>, Shard)> = std::cell::RefCell::new((std::sync::Weak::new(), Shard::default()));
 }
 
 /// The profile's state, held: this thread's shard to record into (`state`), or every record merged to read
@@ -608,7 +614,7 @@ thread_local! {
 /// instead, naming the cause.
 pub enum Held {
     Own(parking_lot::ArcMutexGuard<parking_lot::RawMutex, State>),
-    Merged(std::sync::MutexGuard<'static, State>),
+    Merged(parking_lot::ArcMutexGuard<parking_lot::RawMutex, State>),
 }
 
 impl std::ops::Deref for Held {
@@ -644,14 +650,24 @@ fn hold() {
 /// `merged`.
 pub fn state() -> Held {
     hold();
-    Held::Own(SHARD.with(|s| s.lock_arc()))
+    let records = local::<Records>();
+    Held::Own(SHARD.with(|s| {
+        let mut s = s.borrow_mut();
+        if !std::ptr::eq(s.0.as_ptr(), std::sync::Arc::as_ptr(&records)) {
+            let shard = Shard::default();
+            records.shards.lock().push(shard.clone());
+            *s = (std::sync::Arc::downgrade(&records), shard);
+        }
+        s.1.lock_arc()
+    }))
 }
 
 /// Every thread's records, merged: each shard's taken into the run's (an ended thread's shard then dropped).
 pub fn merged() -> Held {
     hold();
-    let mut all = STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut shards = SHARDS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let records = local::<Records>();
+    let mut all = records.merged.lock_arc();
+    let mut shards = records.shards.lock();
     for s in shards.iter() {
         let taken = std::mem::take(&mut *s.lock());
         all.absorb(taken);
@@ -724,8 +740,8 @@ fn charge(track: &mut Option<Track>, opens: &[Open], cpu: f64) {
 }
 
 /// Each phase of the run's thread (`run_thread_phase`): its name, and by span path the wall and CPU.
-type RunPhases = Vec<(&'static str, HashMap<String, [f64; 2]>)>;
-static RUN_PHASES: LazyLock<Mutex<RunPhases>> = LazyLock::new(Default::default);
+/// The run's (decision 0442, `local`).
+type RunPhases = Mutex<Vec<(&'static str, HashMap<String, [f64; 2]>)>>;
 
 /// Starts charging this thread's time to its spans, phase by phase (decision 0288): the run's thread, once the run
 /// holds the profile. The phases kept so far are forgotten.
@@ -733,7 +749,7 @@ pub fn track_run_thread() {
     if !on() {
         return;
     }
-    RUN_PHASES.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
+    local::<RunPhases>().lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
     STACK.with(|s| s.lock().track = Some(Track { wall: std::time::Instant::now(), cpu: cpu(), by: HashMap::new() }));
 }
 
@@ -746,7 +762,8 @@ pub fn run_thread_phase(name: &'static str) {
         charge(&mut s.track, &s.opens, cpu());
         let Some(t) = s.track.as_mut() else { return };
         let by = std::mem::take(&mut t.by);
-        let mut all = RUN_PHASES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let phases = local::<RunPhases>();
+        let mut all = phases.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         match all.iter_mut().find(|p| p.0 == name) {
             Some((_, kept)) => {
                 for (path, d) in by {
@@ -795,14 +812,17 @@ pub fn snapshot() -> Snapshot {
     Snapshot { at: std::time::Instant::now(), own: cpu() - helped, helped, process: process_clock() }
 }
 
-/// The command's start (`command_begins`) and its run's end (`run_ends`), for the time before and after its run.
-static COMMAND: Mutex<(Option<Snapshot>, Option<Snapshot>, f64)> = Mutex::new((None, None, 0.0));
+thread_local! {
+    /// The command's start (`command_begins`) and its run's end (`run_ends`), for the time before and after its run.
+    /// The command's, on the thread that runs it (its outermost run runs there).
+    static COMMAND: std::cell::Cell<(Option<Snapshot>, Option<Snapshot>, f64)> = const { std::cell::Cell::new((None, None, 0.0)) };
+}
 
 /// The command line's command begins (decision 0288): its clocks now, and the process's age (its start's time).
 /// Profiling, this thread's time is charged to its spans from here (`track_run_thread`): its run files what came
 /// before it as its phase `before`.
 pub fn command_begins() {
-    *COMMAND.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = (Some(snapshot()), None, process_age());
+    COMMAND.with(|c| c.set((Some(snapshot()), None, process_age())));
     track_run_thread();
 }
 
@@ -813,19 +833,32 @@ pub fn tracked() -> bool {
 
 /// The command's start, taken by its first run that holds the profile or runs alone (`before`).
 pub fn take_command_start() -> Option<Snapshot> {
-    COMMAND.lock().unwrap_or_else(std::sync::PoisonError::into_inner).0.take()
+    COMMAND.with(|c| {
+        let mut v = c.get();
+        let start = v.0.take();
+        c.set(v);
+        start
+    })
 }
 
 /// The command's run ended with these clocks.
 pub fn run_ends(at: Snapshot) {
-    COMMAND.lock().unwrap_or_else(std::sync::PoisonError::into_inner).1 = Some(at);
+    COMMAND.with(|c| {
+        let mut v = c.get();
+        v.1 = Some(at);
+        c.set(v);
+    });
 }
 
 /// The process's age when the command began, and the time since its run ended (`run_ends`), if it ran one.
 pub fn command_ends() -> (f64, Option<PhaseClock>) {
-    let mut c = COMMAND.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let age = c.2;
-    (age, c.1.take().map(|end| PhaseClock::between(&end, &snapshot())))
+    COMMAND.with(|c| {
+        let mut v = c.get();
+        let age = v.2;
+        let end = v.1.take();
+        c.set(v);
+        (age, end.map(|end| PhaseClock::between(&end, &snapshot())))
+    })
 }
 
 impl PhaseClock {
@@ -941,7 +974,8 @@ pub fn run_thread_report(clocks: &[(&'static str, PhaseClock)]) -> String {
     for (name, c) in clocks.iter().chain(std::iter::once(&("all", total))) {
         let _ = writeln!(r, "{name:<10} {:>7.3} {:>7.3} {:>7.3} {:>7.3} {:>7.3} {:>8.2} {:>8.3} {:>9}", c.wall, c.own, c.helped, c.off_core(), c.others(), c.process_cpu / c.wall.max(1e-9), c.no_core(), c.involuntary);
     }
-    let phases = RUN_PHASES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(phases) = local_if_any::<RunPhases>() else { return r };
+    let phases = phases.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if phases.is_empty() {
         return r;
     }
@@ -1199,15 +1233,93 @@ pub fn here() -> Option<String> {
     STACK.with(|s| s.lock().opens.last().map(|o| o.path.clone()))
 }
 
-/// `f` for a parallel iterator's items, each a sizeable piece of work (a file, a tape): on a thread with no span
-/// open (a pool thread that took the item), under `name` in the span open where `carried` was called; on a thread
-/// with one open (the caller's), as it is. Rayon's work taken by another thread is under no span of that thread's.
+/// `f` for a parallel iterator's items, each a sizeable piece of work (a file, a tape, a piece of `par_pieces`):
+/// on a thread whose innermost open span is not the one open where `carried` was called, under `name` in that one;
+/// on the caller's thread, inside its span, as it is. A thread that took the item while it waited inside another
+/// span (rayon's join runs any queued piece) so counts it apart: as that span's own, the piece's CPU and
+/// allocation were charged to whatever the thread waited in (Q203 item 3: a chunk's joins seemed to allocate
+/// 3.7 GB more at the same rows).
 pub fn carried<A, R>(name: &'static str, f: impl Fn(A) -> R + Sync + Send) -> impl Fn(A) -> R + Sync + Send {
-    let under = here();
+    let carry = carry();
     move |a| {
-        let _span = (under.is_some() && STACK.with(|s| s.lock().opens.is_empty())).then(|| span_at(under.as_deref(), || name.to_owned()));
+        let _in = carry.enter(name);
         f(a)
     }
+}
+
+/// What `carried` carries, for a parallel loop whose items `carried` cannot wrap (`map_init`'s, given the item's
+/// state too): the run under way here and the span open, entered by each item (`Carry::enter`).
+pub struct Carry {
+    under: Option<String>,
+    run: Option<std::sync::Arc<dyn RunOwn>>,
+    on: bool,
+}
+
+/// The run under way here, for the items a pool thread takes: their records are the run's (decision 0442).
+pub fn carry() -> Carry {
+    Carry { under: here(), run: run_own(), on: on() }
+}
+
+impl Carry {
+    /// An item on this thread in the carried run, under `name` in the carried span (as `carried`'s), until dropped.
+    pub fn enter(&self, name: &'static str) -> impl Drop {
+        // The span closes first, inside the run, as two locals would.
+        struct In(Option<InRun>, Option<Span>);
+        impl Drop for In {
+            fn drop(&mut self) {
+                self.1.take();
+                self.0.take();
+            }
+        }
+        let run = InRun::enter(&self.run, self.on);
+        // A span when the item runs where the innermost open span is not the carried one: another thread, or one
+        // that took it while waiting inside another span (Q203 item 3), so its CPU is counted apart.
+        let elsewhere = self.under.as_deref().is_some_and(|u| STACK.with(|s| s.lock().opens.last().is_none_or(|o| o.path != u)));
+        let span = elsewhere.then(|| span_at(self.under.as_deref(), || name.to_owned()));
+        In(Some(run), span)
+    }
+}
+
+/// A pool thread in a run's context for an item (`carried`): the run and its profiling switch; dropped, the thread's
+/// own are back. On a thread already in that run, nothing changes.
+struct InRun(Option<(Option<std::sync::Arc<dyn RunOwn>>, bool)>);
+
+impl InRun {
+    fn enter(run: &Option<std::sync::Arc<dyn RunOwn>>, on: bool) -> InRun {
+        let same = RUN.with(|r| match (r.borrow().as_ref(), run.as_ref()) {
+            (Some(a), Some(b)) => std::ptr::addr_eq(std::sync::Arc::as_ptr(a), std::sync::Arc::as_ptr(b)),
+            (None, None) => true,
+            _ => false,
+        });
+        if same {
+            return InRun(None);
+        }
+        let was_run = RUN.with(|r| r.replace(run.clone()));
+        let was_on = ON.with(|o| o.replace(on));
+        InRun(Some((was_run, was_on)))
+    }
+}
+
+impl Drop for InRun {
+    fn drop(&mut self) {
+        if let Some((run, on)) = self.0.take() {
+            RUN.with(|r| *r.borrow_mut() = run);
+            ON.with(|o| o.set(on));
+        }
+    }
+}
+
+/// `f` over `items` on the pool in pieces (about `PIECES_PER_THREAD` a thread, at least `min` items each), each
+/// piece through [`carried`] (a span when another thread, or one waiting in another span, takes it): `f` maps a
+/// piece to its items' results, in order, so a piece's state (a pattern set) is made once a piece.
+pub fn par_pieces<T: Sync, R: Send>(name: &'static str, items: &[T], min: usize, f: impl Fn(&[T]) -> Vec<R> + Sync + Send) -> Vec<R> {
+    use rayon::prelude::*;
+    const PIECES_PER_THREAD: usize = 4;
+    let size = items.len().div_ceil(rayon::current_num_threads() * PIECES_PER_THREAD).max(min).max(1);
+    let pieces: Vec<Vec<R>> = items.par_chunks(size).map(carried(name, f)).collect();
+    let mut out = Vec::with_capacity(items.len());
+    pieces.into_iter().for_each(|p| out.extend(p));
+    out
 }
 
 /// Opens span `name` under `under`, a path another thread's `here` gave: a pool job's span (`crate::threads`), at
@@ -1224,14 +1336,11 @@ pub fn span(name: impl FnOnce() -> String) -> Span {
     if !on() {
         // A timeline (dev, `RERAIL_TIMELINE`): the main thread's spans as they open, nothing measured.
         // `RERAIL_TIMELINE=all`: every thread's, named (a test runs on a thread of its own name).
-        static TIMELINE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        static ALL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        let on = *TIMELINE.get_or_init(|| std::env::var_os("RERAIL_TIMELINE").is_some());
-        let all = *ALL.get_or_init(|| std::env::var("RERAIL_TIMELINE").is_ok_and(|v| v == "all"));
+        let on = rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_TIMELINE").is_some());
+        let all = rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_TIMELINE").is_ok_and(|v| v == "all"));
         // `RERAIL_TIMELINE=sections`: the runs' sections alone (`corpus::run_observed`), no span: a line per span
         // costs as much as a small span's work, so a timeline of every span is not the run's instructions.
-        static SECTIONS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        let sections = *SECTIONS.get_or_init(|| std::env::var("RERAIL_TIMELINE").is_ok_and(|v| v == "sections"));
+        let sections = rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_TIMELINE").is_ok_and(|v| v == "sections"));
         if on && !sections && (all || std::thread::current().name() == Some("main")) {
             // With the process's instructions retired so far (macOS): a gap between two spans is then its work, not
             // only its wall time.
@@ -1380,8 +1489,10 @@ pub fn sql(text: String, ns: u64, vm: u64, scan: u64, sort: u64, autoindex: u64)
     t.autoindex += autoindex;
 }
 
-/// Waves under way in this process (`waves`): SQL from a wave's thread meanwhile is a hazard.
-static WAVES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Waves under way on this machine (`waves`): SQL from a wave's thread meanwhile is a hazard. Read only by a thread
+/// with no run's context (decision 0442: the machine's, as every run on it counts in it).
+#[derive(Default)]
+struct WavesUnderWay(std::sync::atomic::AtomicUsize);
 
 thread_local! {
     /// This thread works behind the run (the store's writer): what it sends to SQLite no wave waits for.
@@ -1398,23 +1509,27 @@ pub fn read_in_waves<T>(f: impl FnOnce() -> T) -> T {
 /// Waves are under way until dropped: from a run's first wave (its first chunk) to its last (the cross-file part's
 /// last stratum). SQL before and after is the run's beginning and end, where it may be; inside, it is a hazard.
 /// With the stage this thread's run was at before (`STAGE`).
-pub struct Waves(bool, u8);
+/// The count it added to, so its drop takes it off there on any thread.
+pub struct Waves(Option<std::sync::Arc<WavesUnderWay>>, u8);
 
 pub fn waves() -> Waves {
-    WAVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    Waves(true, STAGE.with(|s| s.replace(INSIDE)))
+    let count = machine::<WavesUnderWay>();
+    count.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    Waves(Some(count), STAGE.with(|s| s.replace(INSIDE)))
 }
 
 /// Where this thread's run is (decision 0192), carried to its jobs (`run_state`): no run (`0`), a run before its
 /// first wave (`BEFORE`), or inside the waves (`INSIDE`). Runs on other threads may be in their waves meanwhile (a
 /// typing run beside phase 1): a run before its own may still read, and a thread of a run in its waves may not.
-/// A thread with no run's context (a parallel loop's item) goes by the process's count (`WAVES`).
+/// A thread with no run's context (a parallel loop's item) goes by the machine's count (`WavesUnderWay`).
 const BEFORE: u8 = 1;
 const INSIDE: u8 = 2;
 thread_local! {
     /// Public so that the run's context can carry it (`logic::run_state`, a crate above this one).
     pub static STAGE: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
 }
+
+pub use rerail_context::{AnyArc, Machine, RUN, RunOwn, RunValues, Shared, default_shared, enter, local, local_if_any, machine, run_own, setting, shared, shared_here, shared_object, with_local, with_shared, within};
 
 /// A run starts on this thread (`plan::corpus`): before its first wave, unless it is nested in a run inside its
 /// waves, until the guard drops.
@@ -1438,7 +1553,7 @@ fn waves_here() -> bool {
     match STAGE.with(std::cell::Cell::get) {
         BEFORE => false,
         INSIDE => true,
-        _ => WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0,
+        _ => machine::<WavesUnderWay>().0.load(std::sync::atomic::Ordering::Relaxed) > 0,
     }
 }
 
@@ -1453,8 +1568,7 @@ pub fn inside_waves() -> bool {
 /// the store's writer. Any other statement, on any connection of the process, ends it at once (`strict_statement`), naming
 /// the statement, its thread and span, and where it was sent from; so does a wave's wait for the writer.
 pub fn strict() -> bool {
-    static STRICT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *STRICT.get_or_init(|| std::env::var("RERAIL_SQL_STRICT").is_ok_and(|v| !matches!(v.as_str(), "" | "0" | "off")))
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_SQL_STRICT").is_ok_and(|v| !matches!(v.as_str(), "" | "0" | "off")))
 }
 
 /// `RERAIL_WARM`, a development check for a run that is truly warm: one over a store that already holds everything
@@ -1482,8 +1596,7 @@ pub enum Warm {
 
 pub fn warm_mode() -> Warm {
     // The switch, read once as `strict` reads its own: 0 off, 1 fail, 2 list.
-    static WARM: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
-    match *WARM.get_or_init(|| match std::env::var("RERAIL_WARM").as_deref() {
+    match rerail_prof::code_rule_dsl::logic::profile::setting(|| match std::env::var("RERAIL_WARM").as_deref() {
         Err(_) | Ok("" | "0" | "off") => 0,
         Ok("list") => 2,
         Ok(_) => 1,
@@ -1706,8 +1819,8 @@ pub fn strict_on_every_connection() {
 
 impl Drop for Waves {
     fn drop(&mut self) {
-        if self.0 {
-            WAVES.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        if let Some(count) = self.0.take() {
+            count.0.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
             STAGE.with(|s| s.set(self.1));
         }
     }
@@ -2380,24 +2493,27 @@ pub fn device_phases(kernel: &str, phases: [f64; PHASES.len()], made: u64, reuse
     t.reused += reused;
 }
 
-/// The profile is process-wide, so one profiled run (or profile test) at a time: a run that resets it holds this,
-/// and so does a test that turns it on, so a run in another thread cannot reset the records the test reads.
-static ONE_RUN: Mutex<()> = Mutex::new(());
+/// The run's records held by one corpus run of it (`hold_records`), until the guard drops.
+pub struct Holding(std::sync::Arc<Records>);
 
-/// Holds the profile for one run (`ONE_RUN`).
-pub fn one_run() -> std::sync::MutexGuard<'static, ()> {
-    ONE_RUN.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
-/// Holds the profile for one run if no run holds it: a run nested in another (phase 0's, inside a run's preparing)
-/// is then the outer run's, and neither resets nor writes the profile.
-pub fn one_run_if_free() -> Option<std::sync::MutexGuard<'static, ()>> {
-    match ONE_RUN.try_lock() {
-        Ok(guard) => Some(guard),
-        Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
-        Err(std::sync::TryLockError::WouldBlock) => None,
+impl Drop for Holding {
+    fn drop(&mut self) {
+        self.0.held.store(false, Ordering::Release);
     }
 }
+
+/// Holds the run's profile for one corpus run of it, if no other corpus run of it holds it (decision 0442: the records
+/// are the run's, so a run never waits on another's): a corpus run nested in another (phase 0's, inside a run's
+/// preparing) is then the outer one's, and neither resets nor writes the profile. Outside a run, nothing.
+pub fn hold_records() -> Option<Holding> {
+    run_own()?;
+    let records = local::<Records>();
+    (!records.held.swap(true, Ordering::AcqRel)).then(|| Holding(records))
+}
+
+/// A run of its own for a test of the crates below `logic` (whose runs are `logic::run`'s), where none is under way.
+#[cfg(any(test, feature = "test-hooks"))]
+pub use rerail_context::test_run;
 
 /// Forgets everything recorded (a run's start).
 pub fn reset() {
@@ -2533,6 +2649,20 @@ pub fn memory_report(r: &mut String, spans: &BTreeMap<String, SpanTotal>) {
         memory::mb(max as f64),
         memory::mb(live as f64),
         memory::mb(resident as f64)
+    );
+    // The count the run is weighed by (decision 0435 §3, §5): beside the footprint, their gap names what it misses.
+    let w = rerail_accel::budget::written();
+    let _ = writeln!(
+        r,
+        "What the run wrote (decision 0435): {} MB now, {} MB at most read, of a limit of {} MB; heap {} MB, host blocks {} MB, the GPU pool's leases {} MB and idle {} MB, rerail-metal's ledger {} MB",
+        memory::mb(w.total() as f64),
+        memory::mb(rerail_accel::budget::written_most() as f64),
+        memory::mb(rerail_accel::budget::limit() as f64),
+        memory::mb(w.heap as f64),
+        memory::mb(w.host_blocks as f64),
+        memory::mb(w.leased as f64),
+        memory::mb(w.idle as f64),
+        memory::mb(w.ledger as f64)
     );
     let _ = writeln!(r, "Spans by bytes their thread allocated while open, less the spans inside them (own); kept = allocated less freed, in all");
     let _ = writeln!(r, "{:>10} {:>10} {:>10} {:>9}  span", "own MB", "all MB", "kept MB", "calls");
@@ -2694,7 +2824,7 @@ pub mod tests {
     /// nothing (its enclosing step keeps what it decided); a run that reuses the step's output states them, kept.
     #[test]
     fn a_step_keeps_its_decisions_and_a_reuse_states_them() {
-        let _serial = one_run();
+        let _serial = test_run();
         set(false);
         let outer = Deciding::open();
         decision("t", || "a".into());
@@ -2724,7 +2854,7 @@ pub mod tests {
     /// the rest.
     #[test]
     fn a_thread_records_while_another_holds_its_records() {
-        let _serial = one_run();
+        let _serial = test_run();
         set(true);
         reset();
         let held = state();
@@ -2732,7 +2862,11 @@ pub mod tests {
         let threads: Vec<_> = (0..8)
             .map(|_| {
                 let tx = tx.clone();
+                // Each thread in the test's run, profiled (decision 0442: the records and the switch are the run's
+                // and its caller's).
+                let run = run_own();
                 std::thread::spawn(move || {
+                    let _run = InRun::enter(&run, true);
                     for _ in 0..10 {
                         let _s = span(|| "xsharded".into());
                         decision("xshard", || "on another thread".into());
@@ -2755,7 +2889,7 @@ pub mod tests {
 
     #[test]
     fn spans_nest_and_charge_their_own_cpu() {
-        let _serial = one_run();
+        let _serial = test_run();
         set(true);
         reset();
         {
@@ -2782,7 +2916,7 @@ pub mod tests {
     /// freed; a dump lists the spans still open on every thread, with the SQL statement running.
     #[test]
     fn the_memory_sampler_charges_a_rise_to_the_span_open_on_its_thread() {
-        let _serial = one_run();
+        let _serial = test_run();
         set(true);
         // The high-water mark is the process's: other tests in this process may have left it so high that the probe
         // cannot raise it. Then only the span's own allocation can be seen.
@@ -2810,9 +2944,48 @@ pub mod tests {
         set(false);
     }
 
+    /// A carried piece taken by a thread waiting inside another span is that piece's, under the span it was made
+    /// in, not the other span's own (Q203 item 3); the caller's thread runs its own pieces as its own.
+    #[test]
+    fn a_piece_taken_inside_another_span_is_charged_apart() {
+        let _serial = test_run();
+        set(true);
+        reset();
+        let spin = |ms: u64| {
+            let t = cpu();
+            while cpu() - t < ms as f64 / 1e3 {
+                std::hint::black_box(0u64);
+            }
+        };
+        let piece = {
+            let _made = span(|| "made".into());
+            let piece = carried("a piece", move |ms: u64| spin(ms));
+            // The caller's own thread, in the span it was made in: as it is, no span of its own.
+            piece(1);
+            piece
+        };
+        // The other thread in the test's run, profiled (decision 0442), its own span open when it takes the piece.
+        let run = run_own();
+        std::thread::scope(|t| {
+            t.spawn(|| {
+                let _run = InRun::enter(&run, true);
+                let _waiting = span(|| "waiting".into());
+                piece(30);
+            });
+        });
+        let got: Vec<i64> = par_pieces("pieces", &(0..1000).collect::<Vec<i64>>(), 10, |p: &[i64]| p.iter().map(|x| x * 2).collect());
+        let s = spans();
+        set(false);
+        assert_eq!(got, (0..1000).map(|x| x * 2).collect::<Vec<_>>(), "in order");
+        assert!(s.contains_key("made/a piece"), "{:?}", s.keys().collect::<Vec<_>>());
+        assert!(!s.keys().any(|k| k.starts_with("made/a piece") && s[k].calls > 1), "the caller's own piece opened none");
+        assert!(s["made/a piece"].own >= 0.025, "{}", s["made/a piece"].own);
+        assert!(s["waiting"].own < 0.015, "the waiting span's own holds none of the piece: {}", s["waiting"].own);
+    }
+
     #[test]
     fn spans_charge_memory_and_a_dump_lists_what_is_open() {
-        let _serial = one_run();
+        let _serial = test_run();
         set(true);
         reset();
         let mb = 1 << 20;
@@ -2827,9 +3000,11 @@ pub mod tests {
         }
         // Another thread, stopped inside a span with a statement running, while this one dumps.
         let (opened, release) = (std::sync::mpsc::channel(), std::sync::mpsc::channel::<()>());
+        let run = run_own();
         let holder = std::thread::Builder::new()
             .name("holder".into())
             .spawn(move || {
+                let _run = InRun::enter(&run, true);
                 let _held = span(|| "held open".into());
                 statement(Some("SELECT 42".into()));
                 opened.0.send(()).unwrap();
@@ -2881,6 +3056,9 @@ pub struct Report {
     pub dispatches: u32,
     /// Runs again from an overflowing stage.
     pub reruns: u32,
+    /// Times it waited for the device's memory before it encoded (`gpu::shared::admit`, Q203), and the seconds.
+    pub admit_waits: u32,
+    pub admit_seconds: f64,
     pub gpu_seconds: f64,
     /// This thread's CPU: encoding (uploads and sorts' encoding included), waiting, and reading the rows back into
     /// the store.

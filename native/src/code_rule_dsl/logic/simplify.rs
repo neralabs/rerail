@@ -2550,9 +2550,9 @@ pub mod tests {
             "#,
         )
         .unwrap();
-        // Unprofiled: held so no profile test turns the (process-wide) profile on meanwhile.
+        // Unprofiled: a run of its own (decision 0442: the profile is the caller's and the run's).
         let report = {
-            let _run = super::super::profile::one_run();
+            let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
             simplify(&mut prog)
         };
         let mut merged = report.merged.clone();
@@ -2592,8 +2592,8 @@ pub mod tests {
             p1_mine(b) :- edge(3, b), p1_reach(b).
             .output p0_mine, p1_mine
         "#;
-        // Held from the unprofiled run on: no other profile test turns the (process-wide) profile on meanwhile.
-        let _run = super::super::profile::one_run();
+        // A run of its own from the unprofiled run on (decision 0442).
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         let quiet = simplify(&mut super::super::rr::parse(text).unwrap());
         assert_eq!(quiet.merged.len(), 2, "{:?}", quiet.merged);
         assert_eq!((quiet.similar, quiet.similar_groups), (0, 0));

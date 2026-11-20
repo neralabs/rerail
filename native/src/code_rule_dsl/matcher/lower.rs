@@ -138,8 +138,7 @@ impl Fact {
         let answer = || {
             let bits = nth.bits(tape, &siblings.of(nth, tape), self.kinds.as_ref());
             // `RERAIL_SETS_CHECK`: the bits against W's rows.
-            static CHECK: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_SETS_CHECK").is_some());
-            if *CHECK {
+            if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_SETS_CHECK").is_some()) {
                 let file = ast_grep_core::AstGrep::doc(tape.clone());
                 let _scopes = super::FileScopeSlot::install(Vec::new(), None, !tape.syntax_error_ranges().is_empty());
                 let starts = (0..tape.transducer_len() as u32).filter(|&node| self.kinds.as_ref().is_none_or(|kinds| kinds.contains(&tape.transducer_kind(node))));

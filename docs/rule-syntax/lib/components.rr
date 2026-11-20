@@ -1,10 +1,11 @@
-// components: each document's import component and its key (decision 0076). The engine adds this program to a
-// corpus run whose program declares `.pragma "cross-memo" "…"`; a rule does not include it.
+// components: each Python document's import closure (`rr_cx_reach`) and the modules it sees (`rr_cx_sees`). The
+// engine adds this program to a corpus run whose program reads an `rr_cx_` relation (`import_closure.rs`); a rule
+// does not include it. A lookup by name joins the closure, so what it finds is what the reader imports. (It made the
+// cross-file memo's components too, decision 0076; the memo is removed, decision 0450 §3.)
 //
 // The file-local rules make three exports per document, which the per-file memo keeps (decision 0052): the modules
-// it imports, the module it is, and its own digest (its path and tape: its content and grammar). They hold no node,
-// so an edit inside a body leaves them as they were. The cross-file part joins them into edges, and
-// `components` names each document's strongly connected component and its Merkle key over the closure.
+// it imports, the module it is, and that it is a document. They hold no node, so an edit inside a body leaves them as
+// they were. The cross-file part joins them into edges and the closure.
 //
 // An import names its module and every package above it (importing `a.b.c` runs `a` and `a.b`); `from m import x`
 // names m.x too, which may be a submodule. A missing edge would make a key too small, so the rules over-approximate.
@@ -28,7 +29,7 @@ rr_cx_imports(d, @dot(m, x)) :- rr_cx_from(i, m), rr_cx_from_name(i, x), docof(i
 // The packages above each module named.
 rr_cx_imports(d, p) :- rr_cx_imports(d, q), p = @pkg_up(q, 1), p != "".
 // Every module reads `builtins` without importing it.
-rr_cx_imports(d, "builtins") :- rr_cx_own(d, _).
+rr_cx_imports(d, "builtins") :- rr_cx_own(d).
 
 .decl rr_cx_updots(t: symbol, k: number)
 rr_cx_updots(".", 0). rr_cx_updots("..", 1). rr_cx_updots("...", 2). rr_cx_updots("....", 3).
@@ -49,16 +50,18 @@ rr_cx_from_name(i, x) :- kind(i, "import_from_statement"), field(i, "name", a), 
 .decl rr_cx_module(d: number, q: symbol)
 rr_cx_module(d, q) :- doc(d, _, q), q != "".
 
-// What a document's cross-file rows are a function of in the document itself.
-.decl rr_cx_own(d: number, h: symbol)
-rr_cx_own(d, h) :- doc(d, p, _), tape_of(d, t), h = @sha256(cat(p, "\t", t)).
+// Each document.
+.decl rr_cx_own(d: number)
+rr_cx_own(d) :- doc(d, _, _).
 
 // Guest document g (a string's code, decision 0055) stands in host document h. Its tree is made from the host's bytes,
 // so the host's digest covers it, and rows about either name the other's nodes: they share a component.
 .decl rr_cx_guest(g: number, h: number)
 rr_cx_guest(g, h) :- guest(g, h, _, _).
-// A program that reads guests through `parsed` (T's shape, as calls.rr does) may have no `guest` rows.
-rr_cx_guest(g, h) :- parsed(s, _, r), docof(s, h), docof(r, g), g != h.
+// A program that reads guests through `parsed` (T's shape, as calls.rr does) may have no `guest` rows. A tape value
+// (decision 0431: a string a rule parses) is no file's (no `doc` row) and joins none: one tape is every file's that
+// holds its text, and a function of that text alone.
+rr_cx_guest(g, h) :- parsed(s, _, r), docof(s, h), docof(r, g), g != h, doc(g, _, _).
 
 // d depends on e.
 // Stored (decision 0099, priced by the recursion's delta plans): unfolded into rr_cx_reach's recursion, each new
@@ -68,15 +71,11 @@ rr_cx_edge(d, e) :- rr_cx_imports(d, q), rr_cx_module(e, q), d != e.
 rr_cx_edge(g, h) :- rr_cx_guest(g, h).
 rr_cx_edge(h, g) :- rr_cx_guest(g, h).
 
-// d's closure: d and every document it depends on. A memoised rule that looks a name up joins it, so that what it
-// finds is in the closure (decision 0076).
+// d's closure: d and every document it depends on. A rule that looks a name up joins it, so that what it finds is in
+// the closure.
 .decl rr_cx_reach(d: number, e: number)
-rr_cx_reach(d, d) :- rr_cx_own(d, _).
+rr_cx_reach(d, d) :- rr_cx_own(d).
 rr_cx_reach(d, f) :- rr_cx_reach(d, e), rr_cx_edge(e, f).
 // The modules d's closure holds: "is q a module", asked of what d can see.
 .decl rr_cx_sees(d: number, q: symbol)
 rr_cx_sees(d, q) :- rr_cx_reach(d, e), rr_cx_module(e, q).
-
-.decl rr_cx_component(d: number, c: number, k: symbol)
-rr_cx_component(d, c, k) :- components(d, c, k, rr_cx_edge, rr_cx_own).
-.output rr_cx_component

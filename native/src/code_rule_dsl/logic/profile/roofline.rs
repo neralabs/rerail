@@ -87,8 +87,10 @@ impl Unit {
 /// profile per run), and once per engine binary and day across processes: the loops take seconds in a debug build,
 /// which every profiled run paid before its report (O139). Returns where the roofs came from.
 pub(super) fn calibrate(units: &std::collections::BTreeSet<Unit>) -> (BTreeMap<Unit, Option<f64>>, String) {
-    static ROOFS: std::sync::LazyLock<std::sync::Mutex<BTreeMap<Unit, Option<f64>>>> = std::sync::LazyLock::new(Default::default);
-    let mut known = ROOFS.lock().unwrap_or_else(|e| e.into_inner());
+    #[derive(Default)]
+    struct Roofs(std::sync::Mutex<BTreeMap<Unit, Option<f64>>>);
+    let held_ = crate::code_rule_dsl::logic::profile::machine::<Roofs>();
+    let mut known = held_.0.lock().unwrap_or_else(|e| e.into_inner());
     let cache = cache_file();
     let mut source = "measured now";
     if units.iter().any(|u| !known.contains_key(u))

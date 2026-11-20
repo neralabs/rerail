@@ -32,7 +32,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 use std::collections::BTreeSet;
 use std::hash::Hasher;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, Mutex};
 
 /// A step's walks must read at least this many rows before a table is built for it.
 const FLOOR: u64 = 4096;
@@ -67,17 +67,19 @@ pub(super) struct StepForm {
 }
 
 /// The tables a run found worth building, by relation (its table's name) and columns: the next chunk builds them ahead,
-/// in its levels' waves.
-static PAID: LazyLock<Mutex<BTreeSet<(String, Vec<usize>)>>> = LazyLock::new(Default::default);
+/// in its levels' waves. The run's own (decision 0442).
+#[derive(Default)]
+struct Paid(Mutex<BTreeSet<(String, Vec<usize>)>>);
 
-/// What the forms did in this process, for the profile.
+/// What the forms did in the run, for the profile (the run's own, `BuiltSums`; decision 0442).
 #[derive(Default, Clone, Copy)]
 pub(super) struct Built {
     pub(super) histograms: u64,
     pub(super) per_row: u64,
     pub(super) rows: u64,
 }
-pub(super) static BUILT: Mutex<Built> = Mutex::new(Built { histograms: 0, per_row: 0, rows: 0 });
+#[derive(Default)]
+struct BuiltSums(Mutex<Built>);
 
 fn hash(key: &[i64]) -> u64 {
     let mut h = FxHasher::default();
@@ -191,7 +193,8 @@ pub(super) fn histogram_table(p: Pending, out: Output) -> Result<Table, String> 
     let Output::Counts { data, .. } = out else { return Err("a histogram's launch returned no counts".into()) };
     let width = p.width;
     let slot = p.coded.codes.into_iter().map(|(k, (part, code))| (k, part * width + u32::from(code))).collect();
-    let mut b = BUILT.lock().unwrap();
+    let b = crate::code_rule_dsl::logic::run::local::<BuiltSums>();
+    let mut b = b.0.lock().unwrap();
     b.histograms += 1;
     b.rows += p.coded.rows.len() as u64;
     Ok(Table { slot, counts: data })
@@ -286,7 +289,7 @@ pub(super) fn spent(form: &StepForm, steps: &[Step], i: usize, walked: u64) {
             });
             let _ = form.table.set(t);
             if let Some(name) = rel.name.get() {
-                PAID.lock().unwrap().insert((name.clone(), cols.clone()));
+                crate::code_rule_dsl::logic::run::local::<Paid>().0.lock().unwrap().insert((name.clone(), cols.clone()));
             }
         }),
     };
@@ -345,7 +348,8 @@ fn per_row(rel: &InRel, cols: &[usize], left: &InRel, of_key: &[Option<usize>], 
     let (mut done, _) = crate::code_rule_dsl::logic::lanes::prof::run("count per row", Batch(vec![Launch::new(k)]))?;
     let _h = crate::code_rule_dsl::logic::lanes::prof::host("count per row", "decode: counts back in row order");
     let Output::PerRow(counts) = done.remove(0).out else { return Err("a count table's launch returned no counts per row".into()) };
-    let mut b = BUILT.lock().unwrap();
+    let b = crate::code_rule_dsl::logic::run::local::<BuiltSums>();
+    let mut b = b.0.lock().unwrap();
     b.per_row += 1;
     b.rows += (coded.rows.len() + left.len()) as u64;
     Ok(pos.iter().map(|&p| counts[p as usize]).collect())
@@ -358,7 +362,7 @@ pub(super) fn prefetch(wants: &BTreeSet<(String, Vec<usize>)>, held: impl Fn(&st
     if off_on() {
         return Ok((0, 0));
     }
-    let paid = PAID.lock().unwrap().clone();
+    let paid = crate::code_rule_dsl::logic::run::local_if_any::<Paid>().map(|p| p.0.lock().unwrap().clone()).unwrap_or_default();
     let mut pending = Vec::new();
     let mut launches = Vec::new();
     for (name, cols) in wants.intersection(&paid) {
@@ -385,7 +389,7 @@ pub(super) fn prefetch(wants: &BTreeSet<(String, Vec<usize>)>, held: impl Fn(&st
     Ok((n, rels.len()))
 }
 
-/// What the forms built so far in this process.
+/// What the forms built so far in the run.
 pub(super) fn built() -> Built {
-    *BUILT.lock().unwrap()
+    crate::code_rule_dsl::logic::run::local_if_any::<BuiltSums>().map(|b| *b.0.lock().unwrap()).unwrap_or_default()
 }

@@ -217,6 +217,20 @@ impl<'v> Body<'v> {
     pub fn args(&self, i: usize) -> &[TermRef<'v>] {
         &self.args.get_or_init(|| self.lits.iter().map(|l| l.atom().map_or_else(Vec::new, |a| a.args().collect())).collect())[i]
     }
+    /// Whether another kept read already proves this positive read, with the same bound columns.
+    pub(super) fn implied_read(&self, at: usize, kept: &[usize]) -> bool {
+        let Some(read) = self.plain_atom(at).filter(|a| !a.neg() && !a.gated()) else { return false };
+        let args = self.args(at);
+        kept.iter().copied().filter(|&other| other != at).any(|other| {
+            if !self.plain_atom(other).is_some_and(|a| !a.neg() && !a.gated() && a.rel() == read.rel()) {
+                return false;
+            }
+            let terms = self.args(other);
+            args.len() == terms.len()
+                && args.iter().zip(terms).all(|(&a, &b)| matches!(a, TermRef::Wild) || self.same_term(a, self, b))
+                && (other < at || args.iter().zip(terms).any(|(&a, &b)| matches!(a, TermRef::Wild) && !matches!(b, TermRef::Wild)))
+        })
+    }
     /// The head as text, written only when shown (`{head}` in a message).
     pub fn head_text(&self) -> HeadText<'_, 'v> {
         HeadText(self)
@@ -230,7 +244,8 @@ impl<'v> Body<'v> {
         self.lits.iter().filter(|l| l.atom().is_some()).count()
     }
     /// The demand that drives its rule whatever the statistics say: a demand-restricted aggregate's
-    /// (`rr_demand_agg_…`, a positive atom), whose witnesses are enumerated from its requested keys.
+    /// (`rr_demand_agg_…`, a positive atom), whose witnesses are enumerated from its requested keys, or the tuple
+    /// demand that bounds a Cartesian product (`product_demand::PREFIX`): the product's only bound, so it leads.
     pub fn demand_first(&self) -> Option<usize> {
         let head = self.rel(self.head());
         (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| {
@@ -565,8 +580,7 @@ impl std::fmt::Display for HeadText<'_, '_> {
 
 /// An equality of a bound variable or constant with an unbound variable assigns the right side (`plan::binds_right`).
 pub(super) fn binds_right(l: TermRef<'_>, op: CmpOp, r: TermRef<'_>, bound: &VarSet) -> Option<Slot> {
-    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if *OFF.get_or_init(|| std::env::var("RERAIL_EQUALITY_BINDS").is_ok_and(|v| v == "off")) || op != CmpOp::Eq {
+    if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_EQUALITY_BINDS").is_ok_and(|v| v == "off")) || op != CmpOp::Eq {
         return None;
     }
     let TermRef::Var(y) = r else { return None };
@@ -622,6 +636,8 @@ impl Placed {
     /// and the pairs `(rel, rel__stated)`, by name.
     pub fn normalized(&self, apart: bool) -> Result<Normalized> {
         use super::super::program_image::passes;
+        #[cfg(any(test, feature = "test-hooks"))]
+        NORMALIZED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if !self.whole || self.ids.is_some() {
             return Err(Error::Plan("the program has no image: its run reads it from its version".into()));
         }
@@ -701,6 +717,10 @@ impl Placed {
 
 /// A program's version as `plan::run` normalizes it (`Placed::normalized`): the version, the relations given a
 /// presence column, and the pairs `(rel, rel__stated)` whose stated facts were moved apart.
+/// Tests: the programs normalized so far in this process (`Placed::normalized`).
+#[cfg(any(test, feature = "test-hooks"))]
+pub static NORMALIZED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 pub struct Normalized {
     pub placed: Placed,
     pub sentinels: std::collections::BTreeSet<String>,

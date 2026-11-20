@@ -21,8 +21,8 @@ fn burn(seconds: f64) {
 /// threads' CPU adds up to the process's, and what no span covered is named by thread.
 #[test]
 fn the_profile_accounts_for_every_threads_cpu() {
-    // The profile is the process's: another test's run must not turn it off under this one.
-    let _run = profile::one_run();
+    // The test's own run, profiled (decision 0442: the switch is its caller's, the records its run's).
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     profile::set(true);
     let (park, parked) = std::sync::mpsc::channel::<()>();
     let (burnt, done) = std::sync::mpsc::channel::<()>();
@@ -62,12 +62,14 @@ fn the_profile_accounts_for_every_threads_cpu() {
 /// opened next, so CPU outside every span points at the code that runs it.
 #[test]
 fn cpu_between_spans_is_named_by_the_spans_around_it() {
-    // The profile is the process's: another test's run must not turn it off under this one.
-    let _run = profile::one_run();
+    // The test's own run, profiled (decision 0442: the switch is its caller's, the records its run's).
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     profile::set(true);
     let t = std::thread::Builder::new()
         .name("xgaps".into())
         .spawn(|| {
+            // A thread of its own, profiled as its caller is (the switch is a caller's, carried to its jobs).
+            profile::set(true);
             drop(profile::span(|| "xgap before".into()));
             burn(0.1);
             drop(profile::span(|| "xgap after".into()));
@@ -91,7 +93,7 @@ fn cpu_between_spans_is_named_by_the_spans_around_it() {
 /// of what it charged.
 #[test]
 fn the_run_threads_time_is_charged_to_its_innermost_span_by_phase() {
-    let _run = profile::one_run();
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     profile::set(true);
     profile::track_run_thread();
     {

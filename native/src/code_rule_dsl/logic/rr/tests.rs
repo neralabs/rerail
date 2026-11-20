@@ -2257,23 +2257,24 @@ fn guests_run_with<T>(name: &str, files: &[(&str, &str)], rule: &str, read: impl
     rows
 }
 
-/// A string annotation is parsed where it stands: its names have the file's lines and columns, through the escapes
-/// and the parts of a concatenation (the normalized text's map); a string inside a parsed one is parsed in the next
-/// round, for a rule that reaches it through the annotation (`ann`): an annotation is not shown to rules that do not
-/// name it, so `ident`'s `kind(s, "string")` does not see it. Bytes give no guest.
+/// A string annotation is a tape value (decision 0431): its names are placed in the file through the string
+/// (`guest_place`), through the escapes and the parts of a concatenation (the normalized text's map); a string inside
+/// a parsed one is parsed in the next round, for a rule that reaches it through the annotation (`ann`), and is placed
+/// in the annotation's text, which is no file's: an annotation is not shown to rules that do not name it, so
+/// `ident`'s `kind(s, "string")` does not see it. Bytes give no guest.
 #[test]
 fn string_annotations_are_guests_at_their_host_lines() {
     let py = "x: \"List[int]\" = []\n\ndef f(y: 'Dict[str, Foo]') -> \"Bar\": ...\nz: \"A\\x42\" = 1\nw: (\"Li\" \"st\") = 2\nq: \"Opt['Baz']\" = 3\nb: b\"Nope\" = 4\n";
     let rule = r#"
 .decl ident(x: symbol, l: number, c: number)
-ident(x, l, c) :- kind(s, "string"), parsed(s, "annotation", _), guest(g, _, s, _), node(g, i, "identifier", _, _), text(i, x), line(i, l), col(i, c).
+ident(x, l, c) :- kind(s, "string"), parsed(s, "annotation", _), guest_of(i, s), kind(i, "identifier"), text(i, x), guest_place(i, s, l, c).
 .decl ann(n: node)
 ann(r) :- kind(s, "string"), parsed(s, "annotation", r).
 ann(c) :- ann(p), child(p, c, _).
-.decl nested(x: symbol, l: number, c: number)
-nested(x, l, c) :- ann(s), kind(s, "string"), parsed(s, "annotation", _), guest(g, _, s, _), node(g, i, "identifier", _, _), text(i, x), line(i, l), col(i, c).
+.decl nested(x: symbol)
+nested(x) :- ann(s), kind(s, "string"), parsed(s, "annotation", _), guest_of(i, s), kind(i, "identifier"), text(i, x).
 .decl whole(x: symbol, l: number, c: number)
-whole(x, l, c) :- kind(s, "concatenated_string"), parsed(s, "annotation", _), guest(g, _, s, _), node(g, i, "identifier", _, _), text(i, x), line(i, l), col(i, c).
+whole(x, l, c) :- kind(s, "concatenated_string"), parsed(s, "annotation", _), guest_of(i, s), kind(i, "identifier"), text(i, x), guest_place(i, s, l, c).
 .decl roots(k: symbol)
 roots(k) :- kind(s, "string"), parsed(s, "annotation", r), kind(r, k).
 .output ident, nested, whole, roots
@@ -2290,29 +2291,151 @@ roots(k) :- kind(s, "string"), parsed(s, "annotation", r), kind(r, k).
     assert_eq!(whole, [["List", "5", "5"]]);
     assert_eq!(roots, [["identifier"], ["subscript"]]);
     // 'Baz' inside "Opt['Baz']": round 2, through the annotation; `ident` does not see inside it.
-    assert_eq!(nested, [["Baz", "6", "9"]]);
+    assert_eq!(nested, [["Baz"]]);
     assert!(!names.iter().any(|n| n[0].starts_with("Baz")), "{names:?}");
     assert!(!names.iter().any(|n| n[0].starts_with("Nope")), "{names:?}");
 }
 
-/// A guest is made in a wave, where no run reads the store (decision 0104), so no later process reads its tape: a run
-/// stores none, and its own collection has none to delete (Q30). The host's source is stored; the annotation's text,
-/// parsed as a guest (wrapped: `(List[int])`), is not.
+/// Decision 0431 §7 (it replaces Q30): a string a rule parses is a tape value, stored with its text behind the run,
+/// so the next run finds it by the text and parses nothing (R6). The host's source is stored, and so is the
+/// annotation's text as it is parsed (wrapped: `(List[int])`).
 #[test]
-fn a_run_stores_no_source_of_its_guests() {
+fn a_run_stores_its_tape_values_by_their_text() {
     use sha2::Digest as _;
     let py = "x: \"List[int]\" = []\n";
     let rule = r#"
 .decl ident(x: symbol)
-ident(x) :- kind(s, "string"), parsed(s, "annotation", _), guest(g, _, s, _), node(g, i, "identifier", _, _), text(i, x).
+ident(x) :- kind(s, "string"), parsed(s, "annotation", _), guest_of(i, s), kind(i, "identifier"), text(i, x).
 .output ident
 "#;
-    let [names] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("no-guest-sources", &[("a.py", py)], rule, &["ident"])).unwrap();
-    assert!(names.contains(&shown_row(&["List"])), "the guest was made: {names:?}");
+    let [names] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("tape-value-sources", &[("a.py", py)], rule, &["ident"])).unwrap();
+    assert!(names.contains(&shown_row(&["List"])), "the tape value was made: {names:?}");
     let store = crate::content_store::ContentStore::open(&crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().unwrap()).unwrap();
     let key = |t: &str| crate::content_store::HashKey::from_sha256_digest(sha2::Sha256::digest(t.as_bytes()).into());
     assert!(store.source_by_hash(key(py)).unwrap().is_some(), "the host's source is stored");
-    assert!(store.source_by_hash(key("(List[int])")).unwrap().is_none(), "the guest's source is not");
+    assert!(store.source_by_hash(key("(List[int])")).unwrap().is_some(), "the tape value's text is stored");
+}
+
+/// Decision 0431 R1: there are no guest documents. A program the grammar holds (an HTML file's scripts) is part of its
+/// file: its nodes are numbered in the file's id space, so `docof` of a script's root is the file's, as the `raw_text`
+/// it stands at is, and its lines are the file's.
+#[test]
+fn a_program_a_file_holds_is_the_files() {
+    let html = "<!doctype html>\n<script>\nlet a = f(1);\n</script>\n<script type=\"module\">g(2)</script>\n";
+    let rule = r#"
+.language html
+#include "html/embeds.rr"
+.decl same(d: number, e: number)
+same(d, e) :- kind(r, "raw_text"), parsed(r, "javascript", p), docof(r, d), docof(p, e).
+.decl calls(x: symbol, l: number)
+calls(x, l) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x), line(c, l).
+.output same, calls
+"#;
+    let [same, calls] = <[Vec<Vec<String>>; 2]>::try_from(guests_run("program-in-file", &[("a.html", html)], rule, &["same", "calls"])).unwrap();
+    assert_eq!(same.len(), 1, "both scripts are a.html's: {same:?}");
+    assert_eq!(same[0][0], same[0][1], "a script's root is its file's: {same:?}");
+    assert_eq!(calls, [["f(1)", "3"], ["g(2)", "5"]]);
+}
+
+/// Decision 0431 §4: a file's programs are granules of the file, so an edit inside one script renumbers no node of
+/// the other script and none of the file's own.
+#[test]
+fn an_edit_in_one_script_renumbers_no_other_program() {
+    let html = |body: &str| format!("<!doctype html>\n<p>hi</p>\n<script>\n{body}\n</script>\n<script>g(2); h(3)</script>\n");
+    let rule = r#"
+.language html
+#include "html/embeds.rr"
+.decl ids(x: symbol, n: node, d: number)
+ids(x, c, d) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x), docof(c, d).
+ids(x, e, d) :- kind(e, "element"), text(e, x), docof(e, d).
+.output ids
+"#;
+    let before = guests_run("one-script-a", &[("a.html", &html("let a = f(1);"))], rule, &["ids"]).remove(0);
+    let after = guests_run("one-script-b", &[("a.html", &html("let a = f(1) + k(4);"))], rule, &["ids"]).remove(0);
+    let kept = |rows: &[Vec<String>]| rows.iter().filter(|r| ["g(2)", "h(3)", "<p>hi</p>"].contains(&r[0].as_str())).cloned().collect::<Vec<_>>();
+    assert_eq!(kept(&before).len(), 3, "{before:?}");
+    assert_eq!(kept(&before), kept(&after), "the second script's and the file's ids stay");
+    assert!(before.iter().all(|r| r[2] == before[0][2]), "every node is a.html's: {before:?}");
+}
+
+/// Decision 0431 R2: `guest_of(n, s)` names the string node a guest node was parsed from (it replaces
+/// `docof(n, d), guest(d, _, s, _)`), for every node of the guest and for no node of the file's own tree.
+#[test]
+fn guest_of_names_the_string_a_node_was_parsed_from() {
+    let py = "x: \"List[int]\" = []\nList = 1\n";
+    let rule = r#"
+.decl from(x: symbol, l: number, c: number)
+from(x, l, c) :- kind(s, "string"), parsed(s, "annotation", _), guest_of(i, s), kind(i, "identifier"), text(i, x), line(s, l), col(s, c).
+.decl own(x: symbol)
+own(x) :- kind(i, "identifier"), text(i, x), !guest_of(i, _).
+.output from, own
+"#;
+    let [from, own] = <[Vec<Vec<String>>; 2]>::try_from(guests_run("guest-of", &[("a.py", py)], rule, &["from", "own"])).unwrap();
+    assert_eq!(from, [["List", "1", "3"], ["int", "1", "3"]], "each name of the annotation, at its string");
+    assert_eq!(own, [["List"], ["x"]], "the file's own identifiers are no guest's");
+}
+
+/// Decision 0431 R3: a string a rule parses is a tape value. The same annotation in two files is one tape and one
+/// set of nodes: both strings' `parsed` give the same root. A tape value's node is no file's (its positions are its
+/// own text's); a rule places it through its string.
+#[test]
+fn one_tape_at_two_places_is_one_set_of_nodes() {
+    let a = "x: \"List[int]\" = []\n";
+    let b = "\n\n\ny: \"List[int]\" = []\n";
+    let rule = r#"
+.decl tapes(t: tape)
+tapes(t) :- kind(s, "string"), sub_tape(s, "annotation", t).
+.decl roots(r: node)
+roots(r) :- kind(s, "string"), parsed(s, "annotation", r).
+.decl files(f: symbol)
+files(f) :- kind(s, "string"), parsed(s, "annotation", r), docof(r, d), doc(d, f, _).
+.decl at(f: symbol, l: number)
+at(f, l) :- kind(s, "string"), parsed(s, "annotation", _), line(s, l), docof(s, d), doc(d, f, _).
+.output tapes, roots, files, at
+"#;
+    let [tapes, roots, files, at] = <[Vec<Vec<String>>; 4]>::try_from(guests_run("guest-two-places", &[("a.py", a), ("b.py", b)], rule, &["tapes", "roots", "files", "at"])).unwrap();
+    assert_eq!(tapes.len(), 1, "one tape for the one text: {tapes:?}");
+    assert_eq!(roots.len(), 1, "one root, the tape's, for both places: {roots:?}");
+    assert!(files.is_empty(), "a tape value's node is no file's: {files:?}");
+    assert_eq!(at, [["a.py", "1"], ["b.py", "4"]], "each place at its string");
+}
+
+/// Decision 0431 R9: a finding placed at a tape value's node is refused, not dropped: the node is no file's, so the
+/// finding has no place. Its rule places it through the string (`guest_place`, or at the string).
+#[test]
+fn a_finding_at_a_tape_values_node_is_refused() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("tape-finding");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x: \"List[int]\" = []\n").unwrap();
+    let program = r#"
+.policy "t:tape-finding" revision 1
+.language python
+.violation Inner(at: node) "a name inside an annotation"
+Inner(i) :- string_annotation(s), parsed(s, "annotation", _), guest_of(i, s), kind(i, "identifier").
+"#;
+    let rule = dir.with_extension("tape-finding.rr");
+    std::fs::write(&rule, program).unwrap();
+    let flat = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    std::fs::remove_file(&rule).unwrap();
+    let ran = crate::code_rule_dsl::logic::plan::corpus::run(&flat, &dir, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
+    let _ = std::fs::remove_dir_all(&dir);
+    let err = ran.err().map(|e| e.to_string()).unwrap_or_default();
+    assert!(err.contains("Inner") && err.contains("tape value"), "the finding is refused, naming its clause: {err:?}");
+}
+
+/// Decision 0431 R4: the rules decide what is parsed. A plain string holding the same text as an annotation is not
+/// parsed: no node of it is a guest's.
+#[test]
+fn a_string_no_rule_asks_for_is_not_parsed() {
+    let py = "x: \"List[int]\" = []\ny = \"Dict[str, int]\"\n";
+    let rule = r#"
+.decl names(x: symbol)
+names(x) :- string_annotation(s), parsed(s, "annotation", _), kind(i, "identifier"), guest_of(i, _), text(i, x).
+.output names
+"#;
+    let [names] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("guest-asked-only", &[("a.py", py)], rule, &["names"])).unwrap();
+    assert_eq!(names, [["List"], ["int"]], "only the annotation is parsed: {names:?}");
 }
 
 /// `.on guest_error`: a guest that does not parse is withheld (skip, the default) or keeps its partial tree, and
@@ -2327,9 +2450,9 @@ fn guests_that_do_not_parse_follow_the_policy() {
 .on syntax_error report BAD000
 {on}
 .decl roots(l: number)
-roots(l) :- kind(s, "string"), parsed(s, "annotation", r), line(r, l).
+roots(l) :- kind(s, "string"), parsed(s, "annotation", _), line(s, l).
 .decl kept(l: number)
-kept(l) :- kind(s, "string"), guest(_, _, s, "annotation"), line(s, l).
+kept(l) :- kind(s, "string"), sub_tape(s, "annotation", _), line(s, l).
 .output roots, kept
 "#
         )

@@ -23,18 +23,23 @@ use std::sync::LazyLock;
 // run against it. It is safe to delete by hand once no older binary runs; the CHANGELOG entry of
 // each floor raise names the file (with its -wal and -shm). STORE_FILE_FLOOR pins the pairing, so
 // raising SCHEMA_VERSION alone does not compile.
-pub(super) const SCHEMA_VERSION: i64 = 7;
+pub(super) const SCHEMA_VERSION: i64 = 9;
 
 /// File name of every content store, managed or checkout-private, renamed whenever the floor rises.
-pub const STORE_FILE_NAME: &str = "content-v7.sqlite";
-/// The floor `STORE_FILE_NAME` was introduced at. 7: a space's kept facts are a chain of packed files (decision 0456),
+pub const STORE_FILE_NAME: &str = "content-v9.sqlite";
+/// The floor `STORE_FILE_NAME` was introduced at. 9: a space's kept facts are a chain of packed files (decision 0456),
 /// and there are no frames (decision 0439), which an older binary would read as a store that keeps nothing, and a
-/// kept column may be a node id split at its granule, which it would read as wrong values; 6: the atoms are blocks in files beside the store (decision 0401:
+/// kept column may be a node id split at its granule, which it would read as wrong values (7 on
+/// final-rerail-shape-rr-align, joined with 8 and 7 below on sync-integration-hub-tape); 8: every check result, call
+/// summary and tree page is in a segment, as it is, its row naming its range (decision 0450 step 2, 2026-11-19), which
+/// an older binary would read as a row with no frame; 7: every source and tape is in a segment, as it is, and no row
+/// holds an object's bytes (decision 0295 step 5, 2026-11-19), which an older binary would read as an empty or corrupt
+/// frame; 6: the atoms are blocks in files beside the store (decision 0401:
 /// `atom_blocks`), which an older binary would read as a store with no atoms; 5: a frame's row points at its bytes in a segment beside the store
 /// (decision 0295 §4: `frames.seg`), which an older binary would read as an empty frame; 4: a corpus manifest's lane is a column of it
 /// (`corpus_manifests.lane`), not a table of its own (decision 0104); 3 was atoms stored as segments
 /// of the arena (decision 0049); 2 the prefilter vocabulary keyed by atom.
-const STORE_FILE_FLOOR: i64 = 7;
+const STORE_FILE_FLOOR: i64 = 9;
 const _: () = assert!(
     SCHEMA_VERSION == STORE_FILE_FLOOR,
     "raising the floor requires a new STORE_FILE_NAME"
@@ -97,9 +102,9 @@ CREATE TABLE IF NOT EXISTS tape_objects (
     seg_len INTEGER NOT NULL DEFAULT 0,
     UNIQUE (source_id, grammar_id, grammar_version, tape_format_version)
 ) STRICT;
--- The segments sources and tapes are in (decision 0295 step 5: `<store>.objects/<seg>.seg`, mapped, uncompressed): a
--- row of codec 0 names its range (`seg`, `seg_at`, `seg_len`) and holds no frame; `seg` 0 is a row whose bytes are its
--- `frame` (zstd), and -1 one whose segment went missing (absent until stored again).
+-- The segments sources and tapes are in (decision 0295 step 5: `<store>.objects/<seg>.seg`, mapped, uncompressed): every
+-- row is of codec 0, names its range (`seg`, `seg_at`, `seg_len`) and holds no frame (floor 7: `frame` is always
+-- empty); `seg` -1 is a row whose segment went missing (absent until stored again).
 CREATE TABLE IF NOT EXISTS object_segments(seg INTEGER PRIMARY KEY);
 CREATE INDEX IF NOT EXISTS tape_objects_by_hash ON tape_objects(canonical_hash_id);
 -- The documents a file derives from its own (an embedded program, a generated one), keyed by the
@@ -171,6 +176,21 @@ CREATE INDEX IF NOT EXISTS workspaces_by_lease ON workspaces(state_id, lease_unt
 CREATE INDEX IF NOT EXISTS workspaces_by_repository ON workspaces(repository_string_id);
 CREATE INDEX IF NOT EXISTS workspaces_by_owner ON workspaces(owner_string_id);
 CREATE INDEX IF NOT EXISTS workspaces_by_snapshot ON workspaces(snapshot_id);
+-- Store sessions (decision 0450 §2): the durable owners whose latest data is live. `kind` 1 is a workspace, `key` its
+-- root (`paths`); 2 a corpus lane, `key` a digest of its root and lane, its row written by each keep decision; 3 a pin's
+-- owner, `key` its name (`strings`), its source and tape pins its data. `latest` is its latest generation, `last_used` the unix second it was last registered or renewed,
+-- `ended` the second its lease ended (NULL while something keeps it alive), and `aged_bytes` the bytes its data held
+-- then: an ended session's data is aged under one budget and backstop, the oldest-ended released first (0450 step 3).
+CREATE TABLE IF NOT EXISTS store_sessions (
+    kind INTEGER NOT NULL,
+    key INTEGER NOT NULL,
+    latest INTEGER NOT NULL,
+    last_used INTEGER NOT NULL,
+    ended INTEGER,
+    aged_bytes INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (kind, key)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS store_sessions_by_ended ON store_sessions(kind, ended) WHERE ended IS NOT NULL;
 CREATE TABLE IF NOT EXISTS workspace_overlay (
     workspace_id INTEGER NOT NULL REFERENCES workspaces(workspace_id),
     path_id INTEGER NOT NULL REFERENCES paths(path_id),
@@ -229,22 +249,15 @@ CREATE TABLE IF NOT EXISTS completed_workspace_revisions (
 ) STRICT;
 CREATE INDEX IF NOT EXISTS completed_workspace_revisions_by_catalog
 ON completed_workspace_revisions(catalog_hash_id);
-CREATE TABLE IF NOT EXISTS local_check_results (
-    source_id INTEGER NOT NULL REFERENCES source_objects(source_id),
-    check_id INTEGER NOT NULL REFERENCES candidate_checks(check_id),
-    codec_id INTEGER NOT NULL,
-    raw_length INTEGER NOT NULL,
-    frame BLOB NOT NULL,
-    PRIMARY KEY(source_id, check_id)
-) STRICT, WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS local_check_results_by_check ON local_check_results(check_id, source_id);
+-- A file's result of a check (a call summary among them) under a context: its bytes as they are, in a segment of
+-- `<store>.objects/`, read there in place (decision 0450 step 2: floor 8); the row names their range.
 CREATE TABLE IF NOT EXISTS context_check_results (
     source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE,
     context_hash_id INTEGER NOT NULL REFERENCES hashes(hash_id) ON DELETE CASCADE,
     check_id INTEGER NOT NULL REFERENCES candidate_checks(check_id) ON DELETE CASCADE,
-    codec_id INTEGER NOT NULL,
-    raw_length INTEGER NOT NULL,
-    frame BLOB NOT NULL,
+    seg INTEGER NOT NULL,
+    seg_at INTEGER NOT NULL,
+    seg_len INTEGER NOT NULL,
     PRIMARY KEY(source_id, context_hash_id, check_id)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS context_check_results_by_check
@@ -329,32 +342,11 @@ CREATE TABLE IF NOT EXISTS facts_completions (
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS facts_completions_by_set ON facts_completions(set_digest);
 
--- The cross-file memo's stored rows (decision 0076, cross_rows.rs). `cross_components` maps a component's digest
--- (its plan, key and documents' keys) to a source holding that descriptor; `cross_rows` holds its rows of each
--- memoised relation, clustered by (source, relation), so a run's lookup and its replay are one query each. Additive:
--- every row cascades from its source, which a run's manifest names (decision 0053).
-CREATE TABLE IF NOT EXISTS cross_components (
-    digest TEXT PRIMARY KEY,
-    source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE
-) STRICT, WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS cross_components_by_source ON cross_components(source_id);
-CREATE TABLE IF NOT EXISTS cross_rows (
-    source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE,
-    rel TEXT NOT NULL,
-    seq INTEGER NOT NULL,
-    c0 INTEGER, c1 INTEGER, c2 INTEGER, c3 INTEGER, c4 INTEGER, c5 INTEGER, c6 INTEGER, c7 INTEGER,
-    PRIMARY KEY (source_id, rel, seq)
-) STRICT, WITHOUT ROWID;
--- The rows as blocks (cross_rows.rs): a component's rows of one relation, its columns delta-coded, one row each.
--- `cross_rows` is what older binaries write and read; components stored as blocks are named apart from theirs.
-CREATE TABLE IF NOT EXISTS cross_blocks (
-    source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE,
-    rel TEXT NOT NULL,
-    width INTEGER NOT NULL,
-    rows INTEGER NOT NULL,
-    data BLOB NOT NULL,
-    PRIMARY KEY (source_id, rel)
-) STRICT, WITHOUT ROWID;
+-- The cross-file memo's tables (decision 0076), removed with it (decision 0450 §3): a store made before loses them
+-- when SCHEMA is next applied.
+DROP TABLE IF EXISTS cross_blocks;
+DROP TABLE IF EXISTS cross_rows;
+DROP TABLE IF EXISTS cross_components;
 
 -- Corpus runs' roots (decision 0053, corpus_runs.rs). Each run of a root records a manifest: the sources it read
 -- (delta-varint ids, sorted), the grammar version and tape format of their tapes, and its memo plan. A run whose
@@ -407,9 +399,20 @@ CREATE TABLE IF NOT EXISTS corpus_state (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     run INTEGER NOT NULL,
     history_bytes INTEGER NOT NULL,
-    due INTEGER NOT NULL
+    due INTEGER NOT NULL,
+    archive_due INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 INSERT OR IGNORE INTO corpus_state(singleton, run, history_bytes, due) VALUES (1, 0, 0, 0);
+-- The archive (decision 0450 step 4, `archive.rs`): an aged source's or tape's bytes as one zstd frame, its row's `seg`
+-- -2 (its `seg_len` its length). `kind` is `object_pins`' object kind (1 a tape, 2 a source). Placed back in a segment
+-- when read again. `corpus_state.archive_due`: set when a session ends or a keep decision is made, cleared by a pass
+-- that archives nothing.
+CREATE TABLE IF NOT EXISTS object_archive (
+    kind INTEGER NOT NULL,
+    id INTEGER NOT NULL,
+    frame BLOB NOT NULL,
+    PRIMARY KEY (kind, id)
+) STRICT, WITHOUT ROWID;
 -- The last keep decision: the run counter and unix second it was made at. A new manifest makes a decision due, but
 -- a pass makes one only when it can change something (`CorpusPolicy`): a root past its protected runs since, or
 -- enough runs or seconds since. A new root's first runs are protected, so a run of fresh roots decides rarely.
@@ -507,19 +510,27 @@ CREATE TABLE IF NOT EXISTS push_pending (
 CREATE INDEX IF NOT EXISTS name_bindings_by_digest ON name_bindings(digest);
 
 -- Per-directory result pages (tree_pages.rs, from Tempo's tree_result_segments), keyed by what the
--- directory's result depends on; `digest` is the page derivation's output digest.
+-- directory's result depends on; `digest` is the page derivation's output digest. Each page's bytes are in a
+-- segment of `<store>.objects/`, as they are (decision 0450 step 2: floor 8).
 CREATE TABLE IF NOT EXISTS tree_pages (
     page_key BLOB NOT NULL CHECK(length(page_key) = 32),
     page_index INTEGER NOT NULL CHECK(page_index >= 0),
     page_count INTEGER NOT NULL CHECK(page_count > 0),
     digest BLOB NOT NULL CHECK(length(digest) = 32),
-    codec_id INTEGER NOT NULL,
-    raw_length INTEGER NOT NULL CHECK(raw_length >= 0),
     file_count INTEGER NOT NULL CHECK(file_count >= 0 AND file_count <= 64),
-    frame BLOB NOT NULL,
+    seg INTEGER NOT NULL,
+    seg_at INTEGER NOT NULL,
+    seg_len INTEGER NOT NULL,
     PRIMARY KEY (page_key, page_index)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS tree_pages_by_digest ON tree_pages(digest);
+-- Page sets put and not yet bound: the name binding a page derivation records is written with its overlay layer,
+-- later (facts/overlay.rs), and a set no name binds is collected. A set stays here, kept, while the process that put
+-- it lives (`pid`), until collection sees a binding of its digest.
+CREATE TABLE IF NOT EXISTS tree_pages_pending (
+    digest BLOB PRIMARY KEY CHECK(length(digest) = 32),
+    pid INTEGER NOT NULL
+) STRICT, WITHOUT ROWID;
 
 -- The prefilter's per-tape access paths (prefilter.rs, from Pulling-it-all-together's anchor
 -- store): kind positions, case-exact term postings and the nodes terms do not cover, each keyed by
@@ -864,6 +875,7 @@ fn holds_retired(connection: &Connection) -> StoreResult<bool> {
 /// Each has a default, so an older binary's inserts, which do not name it, still apply.
 const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("corpus_decided", "swept", "INTEGER NOT NULL DEFAULT 0"),
+    ("corpus_state", "archive_due", "INTEGER NOT NULL DEFAULT 0"),
     ("corpus_manifests", "policy", "BLOB CHECK(policy IS NULL OR length(policy) = 32)"),
     ("memo_entries", "over_pack", "INTEGER NOT NULL DEFAULT 0"),
     ("memo_entries", "over_at", "INTEGER NOT NULL DEFAULT 0"),

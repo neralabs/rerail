@@ -143,24 +143,24 @@ impl CPython {
         Ok(())
     }
 
-    /// The relations read, their strings as atoms (`atom` of a string index).
-    pub(super) fn relations(self, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, super::Relation)> {
+    /// The relations read of the rows made since the last call, their strings as atoms (`atom` of a string index).
+    pub(super) fn relations(&mut self, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, super::Relation)> {
         let mut out = Vec::new();
         if self.syntax_error {
             let mut r = super::Relation::new(&["d", "l", "msg"]);
-            self.syntax_errors.iter().for_each(|&[d, l, m]| r.push(&[d, l, atom(m)]));
+            std::mem::take(&mut self.syntax_errors).into_iter().for_each(|[d, l, m]| r.push(&[d, l, atom(m)]));
             out.push((SYNTAX_ERROR, r));
         }
         if self.literal_json {
             let mut r = super::Relation::new(&["n", "v"]);
-            self.literals.iter().for_each(|&[n, v]| r.push(&[n, atom(v)]));
+            std::mem::take(&mut self.literals).into_iter().for_each(|[n, v]| r.push(&[n, atom(v)]));
             out.push((LITERAL_JSON, r));
         }
         let wanted = [self.want.unparse, self.want.dump, self.want.dump_sha256, self.want.body_sha256, self.want.signature_sha256];
-        for ((rel, rows), wanted) in PRINTED.into_iter().zip(&self.printed).zip(wanted) {
+        for ((rel, rows), wanted) in PRINTED.into_iter().zip(self.printed.iter_mut()).zip(wanted) {
             if wanted {
                 let mut r = super::Relation::new(columns(rel));
-                rows.iter().for_each(|&[n, s]| r.push(&[n, atom(s)]));
+                std::mem::take(rows).into_iter().for_each(|[n, s]| r.push(&[n, atom(s)]));
                 out.push((rel, r));
             }
         }
@@ -188,7 +188,7 @@ impl super::ProducerRun for CPython {
     fn document(&mut self, p: &super::Projected, d: &super::Document, dialect: Option<&super::Dialect>, own: bool, string: &mut dyn FnMut(&str) -> usize) -> crate::content_store::StoreResult<()> {
         CPython::document(self, p, &d.path, dialect, own, string)
     }
-    fn relations(self: Box<Self>, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, super::Relation)> {
-        CPython::relations(*self, atom)
+    fn relations(&mut self, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, super::Relation)> {
+        CPython::relations(self, atom)
     }
 }

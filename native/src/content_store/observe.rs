@@ -40,7 +40,7 @@ use rusqlite::{Connection, params};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 mod listing;
 
@@ -422,7 +422,7 @@ impl Observer {
             _ => None,
         });
         let (generation, floor) = (meta_int(LISTING_GEN).unwrap_or(0), meta_int(LISTING_FLOOR).unwrap_or(0));
-        Observer { db, entries, dirty: Vec::new(), racy: Vec::new(), aliases, new_aliases: Vec::new(), canon, new_canon: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, open: 0, stored_roots, volumes, cookies, own, unreported: Vec::new(), changes: BTreeMap::new(), generation, floor, list_max: list_max(), journal_settle: std::time::Duration::ZERO, settle_ns: JOURNAL_SETTLE_NS, wait_least_ns: JOURNAL_WAIT_LEAST.load(std::sync::atomic::Ordering::Relaxed) }
+        Observer { db, entries, dirty: Vec::new(), racy: Vec::new(), aliases, new_aliases: Vec::new(), canon, new_canon: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, open: 0, stored_roots, volumes, cookies, own, unreported: Vec::new(), changes: BTreeMap::new(), generation, floor, list_max: list_max(), journal_settle: std::time::Duration::ZERO, settle_ns: JOURNAL_SETTLE_NS, wait_least_ns: journal_wait_least() }
     }
 
     /// Records `dir` as a directory a run writes its outputs into: rerail's own (decision 0284), for this observer
@@ -466,7 +466,7 @@ impl Observer {
 
     /// Whether `path` is one of rerail's own files (decision 0284): this observer's or the process's.
     fn is_own(&self, path: &Path) -> bool {
-        self.own.iter().any(|o| owned_by(o, path)) || OWN.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|o| owned_by(o, path))
+        self.own.iter().any(|o| owned_by(o, path)) || rerail_prof::code_rule_dsl::logic::profile::machine::<OwnFiles>().0.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|o| owned_by(o, path))
     }
 
     /// The kind and stat of an own file, asked of the system each time: no answer is kept (decision 0284).
@@ -625,8 +625,7 @@ impl Observer {
         for root in self.roots.iter_mut().filter(|r| !r.trusted && under(&path, &r.path)) {
             root.checked.insert(path.to_owned());
         }
-        static SHOW: OnceLock<bool> = OnceLock::new();
-        if *SHOW.get_or_init(|| std::env::var_os("RERAIL_OBSERVED_PATHS").is_some()) {
+        if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_OBSERVED_PATHS").is_some()) {
             let under = self.roots.iter().find(|r| under(&path, &r.path)).map(|r| if r.trusted { "trusted root, no answer" } else { "untrusted root" }).unwrap_or("no root");
             eprintln!("rerail: stat {} ({under})", path.display());
         }
@@ -1170,7 +1169,9 @@ impl Observer {
             let named: BTreeSet<&Path> = exact.iter().chain(whole).map(PathBuf::as_path).collect();
             self.new_canon.retain(|(k, _)| !named.contains(k.as_path()) && !k.ancestors().any(|a| whole.iter().any(|w| w == a)));
         }
-        for p in exact.iter().chain(whole) {
+        // What the journal records: each path named (a directory whose listing changed, as its entries: `dir_named`).
+        let logged: Vec<PathBuf> = exact.iter().chain(whole).cloned().collect();
+        for p in &logged {
             self.changes.insert(p.clone(), generation);
         }
         self.counts.forgotten += forgotten;
@@ -1202,7 +1203,7 @@ impl Observer {
                     let _ = canon.execute(params![at, format!("{at}/"), format!("{at}/\u{10ffff}")]);
                 }
                 let Ok(mut log) = tx.prepare_cached("INSERT OR REPLACE INTO observed_changes VALUES (?1, ?2)") else { return };
-                for p in exact.iter().chain(&whole) {
+                for p in &logged {
                     let _ = log.execute(params![p.to_string_lossy(), generation as i64]);
                 }
                 let _ = tx.execute_cached("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![key, cursor]);
@@ -1551,29 +1552,41 @@ impl Observer {
                 waiting.push(path);
                 continue;
             }
-            let Some((kind, stat)) = Self::own_stat(&path) else { continue };
-            if kind != e.kind || stat != e.stat {
-                continue;
-            }
-            let (digest, listing) = match kind {
-                Kind::File => {
-                    let Ok(bytes) = std::fs::read(&path) else { continue };
-                    self.counts.hashed += 1;
-                    self.counts.bytes += bytes.len() as u64;
-                    (Sha256::digest(&bytes).into(), None)
-                }
-                Kind::Dir => {
-                    let Some(l) = self.read_listing(&path, false) else { continue };
-                    self.counts.listed += 1;
-                    (listing_digest(&l), Some(l))
-                }
-                _ => continue,
-            };
-            if digest == e.digest && Self::own_stat(&path).is_some_and(|(_, s)| s == e.stat) {
-                self.remember(&path, Entry { listing: listing.or(e.listing), recorded_ns: now, ..e });
-            }
+            self.settle_one(&path, e, now);
         }
         self.racy.extend(waiting);
+    }
+
+    /// Whether `e`, the racy answer at `path`, is still what is there: the same stat, and the same bytes (or listing)
+    /// read now. Recorded again by `now` where the window has passed (`settle_racy`); inside it, left racy (a later
+    /// write in the same tick keeps the stat), but what a reader read is what is there now. Sound as `settle_racy`
+    /// is: a write after this read changes the stat.
+    fn settle_one(&mut self, path: &Path, e: Entry, now: i64) -> bool {
+        let Some((kind, stat)) = Self::own_stat(path) else { return false };
+        if kind != e.kind || stat != e.stat {
+            return false;
+        }
+        let (digest, listing) = match kind {
+            Kind::File => {
+                let Ok(bytes) = std::fs::read(path) else { return false };
+                self.counts.hashed += 1;
+                self.counts.bytes += bytes.len() as u64;
+                (Sha256::digest(&bytes).into(), None)
+            }
+            Kind::Dir => {
+                let Some(l) = self.read_listing(path, false) else { return false };
+                self.counts.listed += 1;
+                (listing_digest(&l), Some(l))
+            }
+            _ => return false,
+        };
+        if digest == e.digest && Self::own_stat(path).is_some_and(|(_, s)| s == e.stat) {
+            if e.stat.mtime_ns.max(e.stat.ctime_ns) < now - RACY_NS {
+                self.remember(path, Entry { listing: listing.or(e.listing), recorded_ns: now, ..e });
+            }
+            return true;
+        }
+        false
     }
 
     /// The digest of `dir`'s listing, as `listing` gives it.
@@ -1810,8 +1823,7 @@ fn listing_cursor(text: &str) -> Option<u64> {
 
 /// `LIST_MAX`, or `RERAIL_LIST_MAX`.
 fn list_max() -> usize {
-    static MAX: OnceLock<usize> = OnceLock::new();
-    *MAX.get_or_init(|| std::env::var("RERAIL_LIST_MAX").ok().and_then(|v| v.parse().ok()).unwrap_or(LIST_MAX))
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_LIST_MAX").ok().and_then(|v| v.parse().ok()).unwrap_or(LIST_MAX))
 }
 
 /// How many paths the journal may name under a root, none of them an answer kept, while its stored cursor stays: a
@@ -1914,13 +1926,16 @@ const CANONICAL: &str = "canonical:";
 /// The prefix of a directory runs wrote their outputs into, as `observer_meta` keeps it (`own_output`).
 const OWN_OUTPUT: &str = "own:";
 
-/// rerail's own files the process names (decision 0284, `own`): the cost statistics' file.
-static OWN: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+/// rerail's own files the machine names (decision 0284, `own`): the cost statistics' file, the machine's (decision
+/// 0442).
+#[derive(Default)]
+struct OwnFiles(Mutex<Vec<PathBuf>>);
 
-/// Names `path` as one of rerail's own files for every observer of the process (decision 0284): it, what is under
+/// Names `path` as one of rerail's own files for every observer on the machine (decision 0284): it, what is under
 /// it, and every file named after it beside it (`<path>-wal`, `<path>.upkeep`) are outside the observer.
 pub fn own(path: &Path) {
-    let mut own = OWN.lock().unwrap_or_else(|e| e.into_inner());
+    let held = rerail_prof::code_rule_dsl::logic::profile::machine::<OwnFiles>();
+    let mut own = held.0.lock().unwrap_or_else(|e| e.into_inner());
     for p in spellings(path) {
         if !own.contains(&p) {
             own.push(p);
@@ -2304,12 +2319,14 @@ impl DigestRead {
     }
 }
 
-static OBSERVERS: OnceLock<Mutex<HashMap<Option<PathBuf>, Observer>>> = OnceLock::new();
+/// The shared object's observers, one per store (decision 0442).
+#[derive(Default)]
+struct Observers(Mutex<HashMap<Option<PathBuf>, Observer>>);
 
 /// Waits until every observer's queued writes are in its store: the run's end, beside the content store's writer.
 pub fn written() {
-    if let Some(all) = OBSERVERS.get() {
-        all.lock().unwrap_or_else(|e| e.into_inner()).values().for_each(Observer::written);
+    if let Some(all) = rerail_prof::code_rule_dsl::logic::profile::shared_object().and_then(|shared| shared.get_if_any::<Observers>()) {
+        all.0.lock().unwrap_or_else(|e| e.into_inner()).values().for_each(Observer::written);
     }
 }
 
@@ -2317,17 +2334,17 @@ pub fn written() {
 /// test's own). Every run's end waits on each observer the process holds (`written`), so one kept past its store's
 /// life is a cost to every later run.
 pub fn forget(store: &Path) {
-    let gone = OBSERVERS.get().and_then(|all| all.lock().unwrap_or_else(|e| e.into_inner()).remove(&Some(store.to_path_buf())));
+    let gone = rerail_prof::code_rule_dsl::logic::profile::shared::<Observers>().0.lock().unwrap_or_else(|e| e.into_inner()).remove(&Some(store.to_path_buf()));
     if let Some(observer) = gone {
         observer.written();
     }
 }
 
-/// Runs `f` with the observer of the P0 store at `store` (`None`: in memory, for the process). One observer per
-/// store, for the process.
+/// Runs `f` with the observer of the P0 store at `store` (`None`: in memory, for the shared object). One observer per
+/// store, for the shared object.
 pub fn with<T>(store: Option<&Path>, f: impl FnOnce(&mut Observer) -> T) -> T {
-    let all = OBSERVERS.get_or_init(Default::default);
-    let mut all = all.lock().unwrap_or_else(|e| e.into_inner());
+    let all = rerail_prof::code_rule_dsl::logic::profile::shared::<Observers>();
+    let mut all = all.0.lock().unwrap_or_else(|e| e.into_inner());
     let key = store.map(Path::to_path_buf);
     let observer = all.entry(key.clone()).or_insert_with(|| Observer::open(key.as_deref()));
     f(observer)
@@ -2414,7 +2431,8 @@ mod tests {
     /// is made here by moving the root's stored cursor past the edit's event, which is what the replay amounts to.
     #[cfg(target_os = "macos")]
     #[test]
-    fn an_answer_recorded_within_the_settle_window_is_checked_though_the_journal_names_nothing() {
+    #[ignore = "Q293: since 0400 a replay answers by arrival, so moving the cursor past the edit no longer hides it (the stream names it); the first leg's miss cannot happen"]
+        fn an_answer_recorded_within_the_settle_window_is_checked_though_the_journal_names_nothing() {
         let base = std::env::temp_dir().join(format!("rerail-settle-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let root = base.join("root");
@@ -2720,7 +2738,9 @@ mod tests {
     }
 
     /// A path's canonical form is resolved once: under a root the journal says is unchanged, the next run answers it
-    /// with no `realpath`, and a symlink retargeted under the root is resolved again.
+    /// with no `realpath`, and a symlink retargeted under the root is resolved again. The journal is
+    /// FSEvents's: elsewhere nothing is trusted.
+    #[cfg(target_os = "macos")]
     #[test]
     fn a_canonical_path_is_resolved_again_only_where_the_journal_names_a_change() {
         let base = std::env::temp_dir().join(format!("rerail-canonical-{}", std::process::id()));
@@ -3352,7 +3372,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_racy_answer_is_named_by_the_listing() {
-        let (base, root, files) = listing_tree("racy");
+        let (base, root, files) = listing_tree("racy-named");
         std::fs::write(&files[0], "x = 3\n").unwrap();
         let name = files[0].file_name().unwrap().to_owned();
         let listed = listing::entries(&root.join("pkg")).unwrap().into_iter().find(|(n, _)| *n == name).and_then(|(_, l)| l);
@@ -3449,35 +3469,86 @@ mod tests {
         assert_eq!(told, [Some(vec![])]);
         let _ = std::fs::remove_dir_all(&base);
     }
-}
 
-/// Whether the observer asks the file system's journal (decision 0105). On unless `RERAIL_JOURNAL=off`, or turned off
-/// by `set_journal`: the engine's tests do (each run of a test waits for its cookie's event, up to `journal`'s `WAIT`, and a test
-/// makes many runs), and the journal's own tests here keep it on.
-static JOURNAL: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
-
-fn journal_on() -> bool {
-    use std::sync::atomic::Ordering;
-    match JOURNAL.load(Ordering::Relaxed) {
-        1 => true,
-        2 => false,
-        _ => {
-            let on = !std::env::var("RERAIL_JOURNAL").is_ok_and(|v| v == "off");
-            JOURNAL.store(if on { 1 } else { 2 }, Ordering::Relaxed);
-            on
-        }
+    /// R8: the observer's journal tells a reader what changed, as FSEvents' replay did: a file added to a listed
+    /// directory is named, not the directory (whose answer, its listing, is forgotten all the same; a reader takes a
+    /// path named with all under it, as the cone's `still` does); and a file written just before one run and not since
+    /// is not named to the next while its answer is still inside the racy window, its bytes being the answer's.
+    #[cfg(unix)]
+    #[test]
+    fn the_journal_names_an_added_entry_and_not_a_racy_answer_that_holds() {
+        let (base, root, files) = listing_tree("told");
+        let store = base.join("store.files");
+        let pkg = root.join("pkg");
+        let run = |asked: &[String]| -> (String, Vec<Option<Vec<PathBuf>>>, Counts) {
+            let mut o = Observer::open(Some(&store));
+            o.begin();
+            let cursor = o.mark(&[root.clone()]).unwrap().remove(0);
+            o.listing(&pkg);
+            for f in &files {
+                o.digest(f);
+            }
+            let told = asked.iter().map(|c| o.changed_since("test-told", &[root.clone()], &[c.clone()]).map(|mut v| { v.sort(); v })).collect();
+            o.flush();
+            o.written();
+            (cursor, told, o.counts)
+        };
+        run(&[]);
+        std::thread::sleep(std::time::Duration::from_nanos(RACY_NS as u64 + 50_000_000));
+        let (c1, _, _) = run(&[]);
+        std::fs::write(pkg.join("new.py"), "y = 1\n").unwrap();
+        let (c2, told, counts) = run(std::slice::from_ref(&c1));
+        assert_eq!(told, [Some(vec![pkg.join("new.py")])], "the entry added, not its directory");
+        assert_eq!(counts.checked_named, 1, "the directory's answer is forgotten: {counts}");
+        // Written now: the next run records its answer inside the window; the one after reads it again and names
+        // nothing, its bytes unchanged.
+        std::fs::write(&files[1], "x = 7\n").unwrap();
+        let (c3, told, _) = run(std::slice::from_ref(&c2));
+        assert_eq!(told, [Some(vec![files[1].clone()])]);
+        let (_, told, counts) = run(std::slice::from_ref(&c3));
+        assert_eq!(told, [Some(vec![])], "the racy answer's bytes are still the file's: {counts}");
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
 
-/// Turns the observer's use of the journal on or off for the process, whatever `RERAIL_JOURNAL` says.
+/// Whether the observer asks the file system's journal (decision 0105): on unless `RERAIL_JOURNAL=off` (a run's
+/// setting). A test build may turn it off or on for its process (`set_journal`): the engine's tests do (each run of a
+/// test waits for its cookie's event, up to `journal`'s `WAIT`, and a test makes many runs), and the journal's own
+/// tests here keep it on.
+fn journal_on() -> bool {
+    #[cfg(any(test, feature = "test-hooks"))]
+    match JOURNAL.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => return true,
+        2 => return false,
+        _ => {}
+    }
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| !std::env::var("RERAIL_JOURNAL").is_ok_and(|v| v == "off"))
+}
+
+/// A test build's choice of the journal (`set_journal`): 0 none (the setting's), 1 on, 2 off.
+#[cfg(any(test, feature = "test-hooks"))]
+static JOURNAL: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Turns the observer's use of the journal on or off for a test build's process, whatever `RERAIL_JOURNAL` says.
+#[cfg(any(test, feature = "test-hooks"))]
 pub fn set_journal(on: bool) {
     JOURNAL.store(if on { 1 } else { 2 }, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// The least the observers made after this wait for the journal ([`JOURNAL_WAIT_LEAST_NS`] until set): a test that
 /// asks for the journal's answer whatever it costs raises it (Q221).
-static JOURNAL_WAIT_LEAST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(JOURNAL_WAIT_LEAST_NS);
+/// On the shared object (decision 0442): set by its owner, read by the observers its runs make.
+struct JournalWaitLeast(std::sync::atomic::AtomicU64);
+impl Default for JournalWaitLeast {
+    fn default() -> Self {
+        JournalWaitLeast(std::sync::atomic::AtomicU64::new(JOURNAL_WAIT_LEAST_NS))
+    }
+}
+
+fn journal_wait_least() -> u64 {
+    rerail_prof::code_rule_dsl::logic::profile::shared::<JournalWaitLeast>().0.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 pub fn set_journal_wait_least(wait: std::time::Duration) {
-    JOURNAL_WAIT_LEAST.store(wait.as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+    rerail_prof::code_rule_dsl::logic::profile::shared::<JournalWaitLeast>().0.store(wait.as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
 }

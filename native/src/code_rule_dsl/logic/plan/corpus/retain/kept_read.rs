@@ -18,9 +18,10 @@ pub(in crate::code_rule_dsl) struct Bound {
     space: KeptSpace,
 }
 
-/// Each space's chain this process mapped, by the store's file and the space, with the rows that named its files:
-/// mapped again only when a commit changed them.
-static BOUND: Mutex<Option<HashMap<(String, [u8; 32]), (ChainRows, Arc<Bound>)>>> = Mutex::new(None);
+/// Each space's chain the runs sharing a shared object mapped, by the store's file and the space, with the rows that
+/// named its files: mapped again only when a commit changed them. Shared by design (decision 0442): the shared object's.
+#[derive(Default)]
+struct BoundChains(Mutex<HashMap<(String, [u8; 32]), (ChainRows, Arc<Bound>)>>);
 
 impl Bound {
     /// `space`'s chain as the store's last commit has it (this process's queued writes to it written first);
@@ -28,13 +29,14 @@ impl Bound {
     pub(in crate::code_rule_dsl) fn of(store: &ContentStore, space: &[u8; 32]) -> StoreResult<Option<Arc<Bound>>> {
         let Some(rows) = store.kept_row(space)? else { return Ok(None) };
         let key = (store.database_path().to_string_lossy().into_owned(), *space);
-        if let Some((was, bound)) = BOUND.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(&key))
+        let chains = crate::code_rule_dsl::logic::profile::shared::<BoundChains>();
+        if let Some((was, bound)) = chains.0.lock().unwrap_or_else(|e| e.into_inner()).get(&key)
             && *was == rows
         {
             return Ok(Some(Arc::clone(bound)));
         }
         let bound = Arc::new(Bound { space: store.open_kept(space, &rows)? });
-        BOUND.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(key, (rows, Arc::clone(&bound)));
+        chains.0.lock().unwrap_or_else(|e| e.into_inner()).insert(key, (rows, Arc::clone(&bound)));
         Ok(Some(bound))
     }
 

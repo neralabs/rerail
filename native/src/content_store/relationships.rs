@@ -5,9 +5,9 @@ use super::publication::{
     stored_object_identities, stored_path_ids,
 };
 use super::rows::hash_params;
+use super::object_segments::Placing;
 use super::{
-    CODEC_ZSTD, HashKey, OverlayFilePublication, SourceId, StoreError, StoreResult, TapeId,
-    WorkspaceId,
+    HashKey, OverlayFilePublication, SourceId, StoreError, StoreResult, TapeId, WorkspaceId,
 };
 use rusqlite::Connection;
 use rusqlite::types::{ToSqlOutput, ValueRef};
@@ -22,13 +22,18 @@ pub(super) struct PreparedRelationshipPass<'a> {
     statements: Vec<PreparedSqlStatement>,
     /// The distinct contexts of `results`, as the JSON array of their hash parameters.
     contexts: Option<String>,
-    /// Each local result as its source, the index of its context in `contexts`, its clause, its
-    /// raw length, and its frame.
-    results: Vec<(SourceId, usize, i64, i64, &'a [u8])>,
+    /// Each local result as its source, the index of its context in `contexts`, its clause, and
+    /// its bytes, which the pass places in a segment as they are (`result_bytes`).
+    results: Vec<(SourceId, usize, i64, &'a [u8])>,
     results_per_statement: usize,
 }
 
 impl PreparedRelationshipPass<'_> {
+    /// The results' bytes, in the order `execute_relationship_pass` names their places: what the pass's segment
+    /// holds (decision 0450 step 2).
+    pub(super) fn result_bytes(&self) -> Vec<&[u8]> {
+        self.results.iter().map(|row| row.3).collect()
+    }
     /// The data statements `execute_relationship_pass` runs.
     pub(super) fn statement_count(&self) -> usize {
         self.statements.len()
@@ -71,7 +76,7 @@ pub(super) fn prepare_relationship_pass<'a>(
         values: overlay_values,
     });
 
-    let mut local_results = Vec::<(SourceId, HashKey, i64, i64, &[u8])>::new();
+    let mut local_results = Vec::<(SourceId, HashKey, i64, &[u8])>::new();
     for (_, _, source_id, _, publication) in rows {
         let catalog_key = publication.catalog.key();
         let catalog_id = *interned
@@ -87,16 +92,7 @@ pub(super) fn prepare_relationship_pass<'a>(
                     result.candidate.clause.clone(),
                 ))
                 .ok_or(StoreError::Vanished("candidate check"))?;
-            let raw_length = i64::try_from(result.raw_length).map_err(|_| {
-                StoreError::Invalid("local result length exceeds SQLite range".to_owned())
-            })?;
-            local_results.push((
-                *source_id,
-                result.context,
-                check_id,
-                raw_length,
-                result.frame.as_slice(),
-            ));
+            local_results.push((*source_id, result.context, check_id, result.bytes.as_slice()));
         }
     }
 
@@ -136,11 +132,11 @@ pub(super) fn prepare_relationship_pass<'a>(
     };
     let results = local_results
         .into_iter()
-        .map(|(source_id, context, check_id, raw_length, frame)| {
+        .map(|(source_id, context, check_id, bytes)| {
             let context = contexts
                 .binary_search(&context)
                 .expect("every result context is collected");
-            (source_id, context, check_id, raw_length, frame)
+            (source_id, context, check_id, bytes)
         })
         .collect::<Vec<_>>();
 
@@ -208,9 +204,13 @@ pub(super) fn relationship_references_current(
     Ok(resolve_publication_identities(transaction, candidate_identities)? == *interned)
 }
 
+/// Runs the pass in `transaction`; `placing` holds its results' bytes (`result_bytes`), in the segment numbered
+/// `seg`.
 pub(super) fn execute_relationship_pass(
     transaction: &Connection,
     pass: &PreparedRelationshipPass<'_>,
+    placing: &Placing,
+    seg: Option<i64>,
 ) -> StoreResult<()> {
     for statement in &pass.statements {
         transaction
@@ -240,14 +240,19 @@ pub(super) fn execute_relationship_pass(
             }
         }
     }
-    for chunk in pass.results.chunks(pass.results_per_statement) {
+    let seg = match (seg, pass.results.is_empty()) {
+        (_, true) => 0,
+        (Some(seg), false) => seg,
+        (None, false) => return Err(StoreError::Invalid("a relationship pass's results were not placed".to_owned())),
+    };
+    for (chunk_index, chunk) in pass.results.chunks(pass.results_per_statement).enumerate() {
         let mut sql = String::with_capacity(120 + chunk.len() * 14);
         sql.push_str(
             "INSERT OR IGNORE INTO context_check_results(source_id,context_hash_id,check_id,\
-             codec_id,raw_length,frame) VALUES ",
+             seg,seg_at,seg_len) VALUES ",
         );
         let mut values = Vec::with_capacity(chunk.len() * 6);
-        for (index, (source_id, context, check_id, raw_length, frame)) in chunk.iter().enumerate() {
+        for (index, (source_id, context, check_id, _)) in chunk.iter().enumerate() {
             if index != 0 {
                 sql.push(',');
             }
@@ -255,11 +260,11 @@ pub(super) fn execute_relationship_pass(
             let context_id = context_ids[*context].ok_or_else(|| {
                 StoreError::Corrupt("a local result context was not interned".to_owned())
             })?;
+            let place = placing.place(seg, chunk_index * pass.results_per_statement + index);
             values.extend(
-                [source_id.0, context_id, *check_id, CODEC_ZSTD, *raw_length]
+                [source_id.0, context_id, *check_id, place.seg, place.at as i64, place.len as i64]
                     .map(|value| ToSqlOutput::Borrowed(ValueRef::Integer(value))),
             );
-            values.push(ToSqlOutput::Borrowed(ValueRef::Blob(frame)));
         }
         transaction
             .prepare_cached(&sql)?

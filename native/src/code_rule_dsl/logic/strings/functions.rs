@@ -191,10 +191,12 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()
         db.create_scalar_function(name, arity, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, move |ctx| Ok(call(name, args, ctx)))?;
     }
     // A node's text or value, from the batch this connection's run binds (`node_read`).
-    let at = crate::code_rule_dsl::facts::vtab::Scoped::at(db);
+    // The connection's data (decision 0442), held by its functions, which close with it.
+    let data = crate::code_rule_dsl::facts::vtab::connection_data(db);
     for name in NODE_READS {
+        let data = std::sync::Arc::clone(&data);
         db.create_scalar_function(name, 1, FunctionFlags::SQLITE_UTF8, move |ctx| {
-            let text = ctx.get::<Option<i64>>(0)?.and_then(|n| node_read(name, crate::code_rule_dsl::facts::vtab::bound_source_at(at, LONG_TEXT_NODES).as_deref(), n));
+            let text = ctx.get::<Option<i64>>(0)?.and_then(|n| node_read(name, crate::code_rule_dsl::facts::vtab::bound_source_in(&data, LONG_TEXT_NODES).as_deref(), n));
             Ok(text.map_or(Value::Null, Value::Text))
         })?;
     }

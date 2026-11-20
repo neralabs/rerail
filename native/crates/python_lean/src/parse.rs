@@ -14,7 +14,7 @@
 
 use crate::lex::{Extra, Lexed, Refusal, T, Tok, soft};
 use crate::{K, f, key, unkey};
-use rerail_tape_format::{Redo, Widths, Writer};
+use rerail_tape_format::{Redo, Sink, Widths, Writer};
 
 type R<X> = Result<X, Refusal>;
 
@@ -156,7 +156,7 @@ pub enum Relex {
 pub const MAX_JOINS: usize = 64;
 
 /// `src` parsed, `joins` joined; `Err(Ok(r))`, the text to be lexed again.
-pub fn parse<Out>(src: &[u8], lexed: &Lexed, joins: &[u32], finish: &mut dyn FnMut(Writer) -> Result<Out, Redo>) -> Result<Out, Result<Relex, Refusal>> {
+pub fn parse<Out>(src: &[u8], lexed: &Lexed, joins: &[u32], finish: &mut dyn Sink<Out>) -> Result<Out, Result<Relex, Refusal>> {
     let mut widths = Widths::guess(src.len());
     loop {
         let mut p = P {
@@ -165,7 +165,7 @@ pub fn parse<Out>(src: &[u8], lexed: &Lexed, joins: &[u32], finish: &mut dyn FnM
             extras: &lexed.extras,
             i: 0,
             e: 0,
-            w: Writer::new(0, widths, lexed.toks.len() + lexed.extras.len() + 1),
+            w: Writer::new(0, widths, lexed.toks.len() + lexed.extras.len() + 1).to(finish.target(), src),
             last_end: 0,
             depth: 0,
             relex: None,
@@ -174,10 +174,10 @@ pub fn parse<Out>(src: &[u8], lexed: &Lexed, joins: &[u32], finish: &mut dyn FnM
         if let Err(r) = p.module() {
             return Err(p.relex.ok_or(r));
         }
-        match finish(p.w) {
+        match finish.finish(p.w) {
             Ok(done) => return Ok(done),
             Err(Redo(w)) => {
-                if w == widths {
+                if w == widths && !finish.again() {
                     return Err(Err(Refusal::TooLarge));
                 }
                 widths = w;

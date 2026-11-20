@@ -217,6 +217,7 @@ fn apply_response(
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": revision, "files": files, "removed": removed })
             .to_string(),
         request_buffer: None,

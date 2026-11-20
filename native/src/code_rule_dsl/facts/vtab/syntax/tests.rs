@@ -250,6 +250,35 @@ fn a_views_filter_scan_holds_the_rows_a_per_row_read_finds() {
     assert!(tried >= 4 * 3, "the four views were tried");
 }
 
+/// Q220: a lookup of `node` by kind (`lookup_read`, a join's `kind($c, #k)` read where the view lies) gives every row
+/// of that kind, each with the values a per-row read gives, from the batch's index by kind (`Batch::by_kind`), for
+/// every kind of four documents, common and rare; and `lookup` gives the same rows.
+#[test]
+fn a_kind_lookup_reads_the_rows_a_per_row_read_finds() {
+    let store = ContentStore::open(&temp("kind-read")).unwrap();
+    let (_, node) = sources(&store, documents().into_iter().take(4).collect()).unwrap().into_iter().find(|(name, _)| *name == "node").unwrap();
+    let (n, width) = (node.len(), node.columns().len());
+    let cols: Vec<usize> = (0..width).collect();
+    let mut kinds: BTreeMap<i64, usize> = BTreeMap::new();
+    for r in 0..n {
+        *kinds.entry(node.value(r, 2)).or_default() += 1;
+    }
+    assert!(kinds.values().any(|&k| k * 16 >= n) && kinds.values().any(|&k| k == 1), "the documents have common kinds and single ones");
+    for &kind in kinds.keys() {
+        let per_row: BTreeSet<(usize, Vec<i64>)> = (0..n).filter(|&r| node.value(r, 2) == kind).map(|r| (r, cols.iter().map(|&c| node.value(r, c)).collect())).collect();
+        let mut read = BTreeSet::new();
+        let mut rows = 0;
+        assert!(node.lookup_read(2, kind, &cols, &mut |r, vals| {
+            rows += 1;
+            read.insert((r, vals.to_vec()));
+        }), "kind {kind}: the view reads its lookup");
+        assert_eq!(rows, per_row.len(), "kind {kind}: each row once");
+        assert_eq!(read, per_row, "kind {kind}");
+        let found: Vec<usize> = node.lookup(2, &[kind]).expect("the view looks up by kind");
+        assert_eq!(found, per_row.iter().map(|(r, _)| *r).collect::<Vec<_>>(), "kind {kind}: lookup's rows, in order");
+    }
+}
+
 /// A field's children by parent and field (`lookup_eq`, a join's `field($a, #f, $t)` with `$a` bound) are the rows a
 /// lookup by parent finds and a filter on the field keeps, in the same order: for every parent and each of its
 /// fields, and for a field it lacks.
@@ -1749,7 +1778,7 @@ fn an_axis_counts_its_rows_without_its_solve() {
     }
 }
 
-/// Decision 0353 step 2: the numbering's reads as MSL (`id_reads.metal`, written once in CLIF), run on the device
+/// Decision 0353 step 2: the numbering's reads as UKL (`<ukl/reads/ids.h>`, written once in CLIF), run on the device
 /// over a projection's descriptor where it lies in its block, answer what the host's reads (their Rust) answer: for
 /// every tape node, its bit and ranks, the selects, the ids' low bits of nodes and tokens and back, and the order keys
 /// and back. In all three formats, whole and narrowed, a document of more nodes than a granule's slot holds.
@@ -1783,7 +1812,9 @@ kernel void ids_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[b
     o[11] = clif_num_is(b, d, 2u, x);
 }
 "#;
-    let lib = device.new_library_with_source(&format!("#include <metal_stdlib>\nusing namespace metal;\n{}{KERNEL}", include_str!("id_reads.metal")), &CompileOptions::new()).expect("the id reads compile");
+    let source = format!("#include <metal_stdlib>\nusing namespace metal;\n#include <ukl/reads/ids.h>\n{KERNEL}");
+    let source = rerail_accel::gpu::kernels::msl(&source, "ids_probe").unwrap();
+    let lib = device.new_library_with_source(&source, &CompileOptions::new()).expect("the id reads compile");
     let pipe = device.new_compute_pipeline_state_with_function(&lib.get_function("ids_probe", None).unwrap()).unwrap();
     let queue = device.new_command_queue();
     let many: String = (0..17_000).map(|i| format!("def f{i}():\n    return {i}\n")).collect();
@@ -1873,33 +1904,32 @@ fn the_view_reads_are_the_hosts_rows() {
 struct Tapes { device const uchar* tt; device const uchar* ll; };
 kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[buffer(1)]], constant uint& n [[buffer(2)]],
                        constant Tapes& tapes [[buffer(3)]], constant uint* tv [[buffer(4)]], device long* out [[buffer(5)]],
-                       constant uint& nf [[buffer(6)]], uint l [[thread_position_in_grid]]) {
-    if (l >= n) return;
+                       constant uint& nf [[buffer(6)]], uint2 g [[thread_position_in_grid]]) {
+    // A thread a (local, slot): each read is called once with its column a value, so the compiler makes one copy of
+    // each (a column a constant, unrolled, had it make sixteen, each with 16z's decoder: minutes of compile on an M3).
+    uint l = g.x, k = g.y;
+    if (l >= n || k >= 16u) return;
     device const uchar* tt = tapes.tt;
     device const uchar* ll = tapes.ll;
     uint v[29];
-    for (uint k = 0u; k < 29u; k++) v[k] = tv[k];
-    device long* o = out + l * 16u;
-    for (uint c = 0u; c < 5u; c++) o[c] = long(clif_view_node(b, d, tt, v, ll, l, c));
-    for (uint c = 0u; c < 3u; c++) o[5u + c] = l + 1u < n ? long(clif_view_child(b, d, tt, v, ll, l, c)) : 0;
-    for (uint c = 0u; c < 3u; c++) o[8u + c] = l < nf ? long(clif_view_field(b, d, tt, v, ll, l, c)) : 0;
-    for (uint c = 0u; c < 3u; c++) o[11u + c] = long(clif_view_core(b, d, tt, v, ll, l, c));
-    for (uint c = 0u; c < 2u; c++) o[14u + c] = long(clif_view_line(b, d, tt, v, ll, l, c));
+    for (uint q = 0u; q < 29u; q++) v[q] = tv[q];
+    long r = 0;
+    if (k < 5u) r = long(clif_view_node(b, d, tt, v, ll, l, k));
+    else if (k < 8u) r = l + 1u < n ? long(clif_view_child(b, d, tt, v, ll, l, k - 5u)) : 0;
+    else if (k < 11u) r = l < nf ? long(clif_view_field(b, d, tt, v, ll, l, k - 8u)) : 0;
+    else if (k < 14u) r = long(clif_view_core(b, d, tt, v, ll, l, k - 11u));
+    else r = long(clif_view_line(b, d, tt, v, ll, l, k - 14u));
+    out[l * 16u + k] = r;
 }
 "#;
-    const _: () = assert!(std::mem::size_of::<TapeView>() == 29 * 4);
     let jit = rerail_clif::jit::Reads::new();
     // SAFETY: `view_node`'s signature: the entry, the tape's base, its view, the lines' base, a local, a column.
     let read = |name: &str| -> extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, u32, u32) -> i64 { unsafe { std::mem::transmute(jit.function(name)) } };
     let (node, child, field, core_node, line) = (read("view_node"), read("view_child"), read("view_field"), read("view_core"), read("view_line"));
     let device = Device::system_default();
     let pipe = device.as_ref().map(|device| {
-        let source = format!(
-            "#include <metal_stdlib>\nusing namespace metal;\n{}{}{}{KERNEL}",
-            include_str!("../../../transducer/packed/metal_tape_reads_z.metal"),
-            include_str!("id_reads.metal"),
-            include_str!("view_reads.metal")
-        );
+        let source = format!("#include <metal_stdlib>\nusing namespace metal;\n#include <ukl/reads/view.h>\n{KERNEL}");
+        let source = rerail_accel::gpu::kernels::msl(&source, "view_probe").unwrap();
         let lib = device.new_library_with_source(&source, &CompileOptions::new()).expect("the view reads compile");
         (device.new_compute_pipeline_state_with_function(&lib.get_function("view_probe", None).unwrap()).unwrap(), device.new_command_queue())
     });
@@ -2005,7 +2035,7 @@ kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[
                     enc.set_bytes(4, std::mem::size_of::<TapeView>() as u64, (&raw const view).cast());
                     enc.set_buffer(5, Some(&out), 0);
                     enc.set_bytes(6, 4, (&raw const nf).cast());
-                    enc.dispatch_threads(MTLSize::new(u64::from(n), 1, 1), MTLSize::new(64, 1, 1));
+                    enc.dispatch_threads(MTLSize::new(u64::from(n), WIDE as u64, 1), MTLSize::new(16, WIDE as u64, 1));
                     enc.end_encoding();
                     cmd.commit();
                     cmd.wait_until_completed();

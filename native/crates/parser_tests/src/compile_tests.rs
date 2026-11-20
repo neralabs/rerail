@@ -552,14 +552,18 @@ fn the_cpu_executors_take_a_batch() {
     let bytes = batch_bytes();
     let files = batch_files(&bytes, blocks.len());
     let want: Vec<_> = files.iter().map(|f| blocks[f.program].run(f.bytes)).collect();
-    // The outputs the CPU's record pass makes instead of a mask (decision 0411): not compared.
-    let made: Vec<Vec<usize>> = programs.iter().map(|p| rerail_compiler::block_native::BlockNative::lower(&p.block_programs[0]).records_made()).collect();
+    // The rows the CPU's tier 1 does not store (0406): a total no one reads by its rows is its
+    // flag only, compared below.
+    let unstored: Vec<Vec<usize>> = blocks.iter().map(|b| rerail_compiler::block_native::BlockNative::lower(b).cpu_unstored()).collect();
     for (name, got) in [("interpreter", block::run_batch(&blocks, &files)), ("cranelift", native_cpu_block::run_batch(&compiled, &files))] {
         assert_eq!(got.len(), files.len());
         for (k, (got, want)) in got.iter().zip(&want).enumerate() {
             let what = format!("{name}: file {k} ({} bytes, program {})", files[k].bytes.len(), files[k].program);
-            let made: &[usize] = if name == "cranelift" { &made[files[k].program] } else { &[] };
-            assert_eq!(got.without(made).outputs, want.without(made).outputs, "{what}");
+            let rows = |r: &block::BlockRun| -> Vec<Vec<u64>> {
+                r.outputs.iter().enumerate().filter(|&(o, _)| name == "interpreter" || !unstored[files[k].program].contains(&o)).map(|(_, w)| w.clone()).collect()
+            };
+            assert_eq!(rows(got), rows(want), "{what}");
+            assert_eq!(got.totals, want.totals, "{what}: the totals");
             if name == "interpreter" {
                 // Cranelift has no lowering of `extract` rows (docs/parser-generators/20-the-ir.md).
                 assert_eq!(got.positions, want.positions, "{what}");
@@ -598,8 +602,11 @@ fn json_batch_cost_per_block() {
     println!("cranelift, one call: {:.3} ns per block, {:.2} GB/s (CPU time, best of 3)", s / blocks as f64 * 1e9, total as f64 / s / 1e9);
     #[cfg(target_os = "macos")]
     if std::env::var_os("RERAIL_CPU_ONLY").is_none() {
-        use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, REPEATED_LAUNCHES, run_split};
-        let before = REPEATED_LAUNCHES.load(std::sync::atomic::Ordering::Relaxed);
+        use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, RepeatedLaunches, run_split};
+        // The count is the run's (decision 0442).
+        let _run = rerail_context::test_run();
+        let repeated = rerail_context::local::<RepeatedLaunches>();
+        let before = repeated.0.load(std::sync::atomic::Ordering::Relaxed);
         for executor in [Executor::Generated(ClassStrategy::Lookup), Executor::Generated(ClassStrategy::Planes), Executor::Interpreter] {
             for width in LaneWidth::ALL {
                 let (mut best, mut launches) = (f64::MAX, 0);
@@ -617,7 +624,7 @@ fn json_batch_cost_per_block() {
                 );
             }
         }
-        println!("repeated launches: {}", REPEATED_LAUNCHES.load(std::sync::atomic::Ordering::Relaxed) - before);
+        println!("repeated launches: {}", repeated.0.load(std::sync::atomic::Ordering::Relaxed) - before);
     }
 }
 
@@ -1015,7 +1022,11 @@ fn only_the_compiler_reads_tier2s_states() {
                     ["rd", "reader", "shape", "cols", "c", "self"].contains(&receiver) || indexed
                 })
             };
-            let table_line = |line: &str| needles[1..].iter().any(|n| line.contains(n)) || (line.contains(".arms") && !other_arms(line));
+            // And `.arms` is the table's only in code that reaches `grammar` (its rows are
+            // `grammar::ArmRow`s); a comment reads nothing.
+            let code = |line: &str| !line.trim_start().starts_with("//");
+            let reaches_grammar = text.lines().filter(|l| code(l)).any(|l| l.contains("grammar::"));
+            let table_line = |line: &str| code(line) && (needles[1..].iter().any(|n| line.contains(n)) || (reaches_grammar && line.contains(".arms") && !other_arms(line)));
             if text.lines().any(table_line) {
                 readers.push(path.display().to_string());
             }
