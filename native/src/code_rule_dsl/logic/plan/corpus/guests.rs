@@ -78,7 +78,10 @@ pub(super) fn answered(v: &Version) -> (Vec<String>, Vec<String>) {
         }
     }
     (produced, given)
-}pub(super) const DEMAND: &str = "rr_embed_req";
+}
+
+/// `parsed`'s demand (decision 0055): the strings a rule asks to have parsed.
+pub(super) const DEMAND: &str = "rr_embed_req";
 /// `@parse(g, x)`'s and `@splice(t, n, t2)`'s demands (decision 0058 §4, `rr::lower`).
 pub(super) const PARSE: &str = "rr_parse_req";
 pub(super) const SPLICE: &str = "rr_splice_req";

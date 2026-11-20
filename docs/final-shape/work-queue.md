@@ -7101,3 +7101,21 @@ Python process for every batch, though `code_rule_dsl::cpython` computes the sam
   run (the request rules of `rr_embed_req` for the annotation grammar, with what their bodies read), and its
   admission is bounded by `seeing`. Then see whether 0431 §8's answer (`kept_guests`, made only in the slice's
   branch now) is reached in a chunk with no slice. The test is ignored with this item.
+
+### Q363. A test's store leaves an object segment open after its thread ends (open)
+
+- **Found** (2026-11-20, on the sync branch after the merges of 2026-11-19 and 2026-11-20):
+  `a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test` finds a file descriptor of the first probe's store
+  still open once its thread ended and its directory was removed: `store.sqlite.objects/14.seg`, a tape or source
+  segment (`object_segments`), held as a `Frozen` block (`rerail_blocks::journal::open`, which keeps the file).
+  Inside the probe, `content_store::holding` is `(0, 0)`: no handle or connection is left; the holder is a mapped
+  object's bytes (`ObjectBytes::Mapped`, `SegmentBytes`) kept past the store.
+- **Ruled out**: the lowered libraries (`rr::lower_library`'s cache on the shared object). Forgetting a store's
+  libraries as the test's store goes left the segment open.
+- **Candidates**: what holds a run's tapes on the shared or machine object, which a test's thread shares with every
+  other test of the process (decision 0442's `TESTS`): the tape residency (the tapes' slabs), the writer's queued
+  tapes (`QueuedTape`), a module image read in place (decision 0464). Each would hold a deleted store's bytes while
+  the process goes on.
+- **Next**: list the holders of `SegmentBytes` on the shared and machine objects; the one holding a store's bytes
+  forgets them in `ContentStore::forget` (by the store's path), as the snapshots and identities do. The test is
+  ignored with this item.
