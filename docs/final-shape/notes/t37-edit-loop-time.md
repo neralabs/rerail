@@ -460,8 +460,9 @@ A probe crate with clap, serde, regex, serde_json, anyhow, thiserror and itertoo
 The refusal is by design: a macOS client never sends a dylib input (`CAN_DIST_DYLIBS` is false off
 Linux and FreeBSD, `src/compiler/compiler.rs`), and a proc macro is one. The farm compiles those
 remotely: the host rebuilds the proc macro natively and gives it this Mac's SVH ("Mac compiles on
-a Linux host" in the farm's README). In the engine's graph, the crates that load proc macros
-include most of the big ones (serde's users, clap, tokio's, every derive user).
+a Linux host" in the farm's README). In the workspace's graph (`cargo metadata`, all platforms),
+29 of its 404 registry libraries load a proc macro (serde, futures-util, zerocopy, gix-protocol,
+wasm-bindgen among them), and 26 are proc macros: sccache-dist would send the other 349 or so.
 
 Either way it changes nothing for an edit: like the farm, it sends one whole crate per compile,
 and never an incremental one. The engine's own compile, on the idle M3 (`-Z time-passes`, the
