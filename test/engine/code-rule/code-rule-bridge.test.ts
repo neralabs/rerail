@@ -4325,6 +4325,23 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
   });
 
+  // A walk of a worktree the session already knew, run while `git worktree remove` deletes it, finds each file it saw
+  // there deleted, and, with no checkout left for Git to read them against, recorded every deletion.
+  it.each([
+    ["outside the session's folder", false],
+    ["inside the session's folder", true],
+  ])("records nothing of a worktree the session knew whose files and `.git` entry went before its walk read Git, %s", async (_name, inside) => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, inside ? join(root, "wt") : join(await workspace(), "w"));
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    // Git still lists the worktree: `roots` keeps it, as its folder under `.git/worktrees` goes last.
+    await removeFolder(join(worktree, "src"));
+    await rm(join(worktree, ".git"));
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+  });
+
   it("reports no deletions for a worktree removed while its own walk ran, with no other walk between", async () => {
     const root = await twoBranches();
     const { worktree, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
