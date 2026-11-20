@@ -2990,7 +2990,7 @@ impl Runner<'_> {
         let scratch = self.phase_scratch.as_ref().expect("the phases' scratch").buffer().clone();
         // A threadgroup a block of `PHASE_WORDS` words, whole: its barriers are every thread's.
         let groups = (region as u64).div_ceil(PHASE_WORDS);
-        let wide_enough = |kernel: &LabelKernel| kernel.kernel.metal().is_none_or(|m| m.compute_pipeline_state.max_total_threads_per_threadgroup() >= PHASE_WORDS);
+        let wide_enough = |kernel: &LabelKernel| kernel.kernel.max_threads_per_group().is_none_or(|t| t >= PHASE_WORDS);
         if self.phase_parents.is_none() {
             // Not an upload: a derived answer (each node's parent), written once where it is computed (0353).
             let parents = HostMapped::zeroed::<u32>(32 * region)?;

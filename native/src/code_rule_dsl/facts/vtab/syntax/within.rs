@@ -462,7 +462,7 @@ impl Within {
     }
 
     /// The axis solved on the device over `chunks`, in one relation (`nearest::ChunkAxis`).
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn solved_in(&self, chunks: &[&super::device_chunk::Chunk]) -> Option<crate::code_rule_dsl::facts::nearest::InChunk> {
         use crate::code_rule_dsl::facts::core::KIND_STRIDE;
         use crate::code_rule_dsl::facts::nearest::chunk_axis;

@@ -33,7 +33,7 @@ use rerail_device::device::{Buffer, BufferRef, ComputeEvent, ComputeFunction, Co
 use rerail_gpu::library::{radix_sort_pairs_in, scan_exclusive_u32_in, scan_sized, RadixSpace, ScanSpace, SCAN_SIZES};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 /// What every join kernel's source starts with (`join_common.h`): `JoinP`, the threadgroup's prefix sum.
 pub const COMMON: &str = include_str!("join_common.h");
@@ -227,7 +227,7 @@ pub fn host_clock() -> f64 {
         fn mach_timebase_info(info: *mut Timebase) -> i32;
         fn mach_absolute_time() -> u64;
     }
-    static RATIO: OnceLock<f64> = OnceLock::new();
+    static RATIO: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
     let ratio = *RATIO.get_or_init(|| {
         let mut info = Timebase { numer: 0, denom: 0 };
         // SAFETY: fills the struct.

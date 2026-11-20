@@ -158,6 +158,7 @@ pub struct Shared {
 }
 
 /// The process's device, once something opened it, without opening it (`rerail_forest::gpu::shared::opened`).
+#[cfg(target_os = "macos")]
 pub fn opened_device() -> Option<&'static metal::DeviceRef> {
     rerail_forest::gpu::shared::opened().and_then(|s| s.device.metal()).map(|d| &**d)
 }
@@ -763,7 +764,7 @@ fn holder() -> u64 {
 /// `p`, counted as this thread's.
 fn held_here(mut p: Pooled) -> Pooled {
     let me = holder();
-    dev().holders.lock().expect("the holders").entry(me).or_default().0 += p.buffer().length() as usize;
+    dev().holders.lock().expect("the holders").entry(me).or_default().0 += p.length() as usize;
     p.owner = me;
     p
 }

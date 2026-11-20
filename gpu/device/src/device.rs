@@ -503,6 +503,16 @@ impl ComputeFunction {
         }
     }
 
+    /// The most threads a threadgroup of the kernel may have, as its pipeline says (Metal's); `None` where the
+    /// backend does not say.
+    pub fn max_threads_per_group(&self) -> Option<u64> {
+        match self {
+            #[cfg(target_os = "macos")]
+            ComputeFunction::Native(f) => Some(f.compute_pipeline_state.max_total_threads_per_threadgroup()),
+            _ => None,
+        }
+    }
+
     pub fn get_argument_info(&self) -> &[GridComputeFunctionArgument] {
         match self {
             ComputeFunction::Native(f) => f.get_argument_info(),

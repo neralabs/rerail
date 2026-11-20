@@ -447,7 +447,7 @@ pub mod code_rule_dsl {
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             #[path = "verify/bounded_repeat_proof.rs"]
             pub mod bounded_repeat_proof;
-            #[cfg_attr(target_os = "macos", path = "compile")]
+            #[path = "compile"]
             pub mod compile_matcher {
                 pub use rerail_transducer::code_rule_dsl::transducer::packed::compile_matcher::*;
                 #[cfg(any(target_os = "macos", target_os = "linux"))]

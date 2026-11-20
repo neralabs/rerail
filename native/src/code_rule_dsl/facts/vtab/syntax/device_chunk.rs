@@ -194,7 +194,7 @@ fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
 }
 
 /// One document of a views' directory: its projection, its dialect, and its first row in each view (`VIEWS`).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 struct DirDoc<'a> {
     p: &'a Arc<super::Projected>,
     dialect: &'a super::Dialect,
@@ -202,7 +202,7 @@ struct DirDoc<'a> {
 }
 
 /// `batch`'s documents in a directory, each view's rows past `past` of that view.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn docs_of(batch: &Batch, past: [u32; 9]) -> Vec<DirDoc<'_>> {
     let (nodes, children, fields, locs) = (batch.offsets(View::Node), batch.offsets(View::Child), batch.offsets(View::Field), batch.offsets(View::Loc(Place::Line)));
     batch
@@ -242,7 +242,7 @@ pub fn views_over(batch: &Batch, values: &[Arc<Batch>]) -> Option<ViewsInPlace> 
 }
 
 /// The directory of `docs`, made in `b` (`ViewsInPlace`): each one's entry, tape and lines where the device reads them.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
     use rerail_clif::view_reads::{ViewDir, ViewRow};
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the views' directory".into());
