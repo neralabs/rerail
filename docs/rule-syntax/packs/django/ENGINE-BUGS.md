@@ -321,9 +321,11 @@ with no attribute step.
 **Workaround used (removed).** get-or-create-needs-unique resolved the Meta base through its object:
 `attr_of(e, o, "Meta"), sym_of(o, bq)`. It now reads the Meta's `class_base` and matches it to the base's own Meta.
 
-**Fix (#898).** `sym_of(n, @dot(q, a)) :- attr_of(n, o, a), sym_of(o, q), class_def(_, q)`: an attribute of a class
-of the run is the class's name and the attribute's, along a chain (`Base.Meta.abstract`), as `qn` extends an imported
-name; `class_base` follows. An attribute of a def or of anything not a class of the run still has no row.
+**Fix (#898).** `sym_of(n, q) :- attr_of(n, o, a), sym_of(o, c), class_def(_, c), q = @dot(c, a), qualname(_, q)`: a
+def or class of the run read as an attribute of its class (`Base.Meta`, `Base.f`) is its qualified name, as where
+Base is imported; `class_base` follows. As for a bare name (rule 2), only definitions resolve: a value the class
+assigns (`Base.X`) has no row, as a module's own variable has none, so rules that fall back to a name heuristic for
+what does not resolve (`!sym_of(n, _)`, the logging rules' `Service.logger`) are unchanged.
 
 ---
 
