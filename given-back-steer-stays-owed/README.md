@@ -1,6 +1,6 @@
 # A steer a reopened session owed survives a hook that gave up
 
-For the pull request of branch `JeanFrancoisGagne/given-back-steer-stays-owed`, not opened yet, head 5596af86d. [report.html](report.html) is the same report as one page: download it and open it.
+For the pull request of branch `JeanFrancoisGagne/given-back-steer-stays-owed`, not opened yet, head 384827d67. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -10,7 +10,7 @@ For the pull request of branch `JeanFrancoisGagne/given-back-steer-stays-owed`, 
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 109 lines in 2 files: 41 ship, 68 are tests and text | Fast. Low risk, no high-risk path. | Nothing. No CI run on GitHub yet: not pushed. | 2 |
+| 144 lines in 2 files: 41 ship, 103 are tests and text | Fast. Low risk, no high-risk path. | Nothing. No CI run on GitHub yet: not pushed. | 2 |
 
 ## 2. Intent, and the gap
 
@@ -32,7 +32,7 @@ Found on 19 November 2026 by the automated reviewer reading #874, and shown by t
 
 1. **Read first**, 5 min: `runtime.ts`: `returnUndelivered`, `#takeHandedOut`, `#giveBack`, `#takeOwed`. Can a steer given back reach a list no answer takes, or be told twice?
 
-**Then skim**, 5 min: The tests: two cases in the unheard-answers file and an option of its service that holds or fails the rules of a session opened again.
+**Then skim**, 5 min: The tests: four cases in the unheard-answers file and an option of its service that holds or fails the rules of a session opened again.
 
 ## 4. Risk against verification
 
@@ -98,11 +98,11 @@ The description on GitHub is the record: "How you tested it" holds the runs on `
 | Linux x64 | The two new cases over `main` cccb25a8d's source, then here, one machine | Over `main`'s source: both fail, 1 of 1 run, the next hook answering nothing. Here: both pass, 20 of 20. |
 | Windows 11 | The same, 20 runs a side in turn, one machine, engine built for this tree | Over `main` cccb25a8d's source: both fail, 20 of 20 runs. Here: both pass, 20 of 20. |
 | Linux x64 and Windows 11 | A real daemon and the built Claude Code hooks: a reopened session's owed steer, its prompt's hook gone, then the rules held or failed as they open; `main` d64e54fb7 and 78c1a2998 on one machine | Rules failing: `main` told it in 0 of 7 runs (4 on Linux x64, 3 on Windows 11), here once in 7 of 7, at the Stop; one ledger entry each. Rules opening: both told it at the Stop after they opened. |
-| Linux x64 | The unheard-answers file and the 10 test files that import `runtime.ts`, here and at `main` cccb25a8d on one machine | Here 213 passed, 10 skipped; `main` 211 passed, 10 skipped. A first run here at load 20 ran three cases past their 5 s limit; each passed in this one. |
+| Linux x64 | The unheard-answers file and the 10 test files that import `runtime.ts`, here, and at 5596af86d and `main` cccb25a8d on one machine | Here 215 passed, 10 skipped; at 5596af86d 213 and `main` 211 passed, 10 skipped each. A first run at 5596af86d at load 20 ran three cases past their 5 s limit; each passed in this one. |
 | Windows 11 | The same 11 files at 78c1a2998, against `main`'s Windows results | 221 passed, 2 skipped, none failed. |
 | Linux x64 | CI's lint and type-check job | Passed: the Justfile, the release notes, `npm run check`, the UI tokens and the generated references. |
 | Linux x64 | The automated reviewer's rules at `main` cccb25a8d over the diff | No new finding and no function over complexity 6, with the published 0.1.5 and with Rerail built from `main`. |
 
-**Sources.** The branch at 5596af86d and its diff against `main` cccb25a8d, read on 19 November 2026; runs at 5596af86d and 78c1a2998 and at `main`'s source on Linux x64 machines and Windows 11 virtual machines.
+**Sources.** The branch at 384827d67 and its diff against `main` cccb25a8d, read on 19 November 2026; runs at 384827d67, 5596af86d and 78c1a2998 and at `main`'s source on Linux x64 machines and Windows 11 virtual machines.
 
 </details>
