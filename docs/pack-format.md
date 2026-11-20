@@ -957,7 +957,8 @@ summaries.
   (`scripts/release/github-release.mjs`), beside the npm publish rather than after it, so npm can neither hold back
   nor skip a Release. Rerun, it rewrites an existing Release's notes and flags.
 - A pack's Release is never the repository's latest release, which is core's. It is a pre-release while its version is
-  on `next`, and the promote makes it a full release.
+  on `next`, and the promote makes it a full release, its notes then everything since the pack's last version on
+  `latest`, a version that never reached `latest` included ([release.md](release.md#before-promoting)).
 - Releases missing for older tags, or from a run that failed before its Release, are made by hand with the script's
   backfill, which skips a version whose changelog has no section ([release.md](release.md#release)).
 
