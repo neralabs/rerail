@@ -43,7 +43,13 @@ function samplePack(change: (directory: string) => void = () => undefined): stri
   return directory;
 }
 
-describe("a pack's rules written in .rerail", () => {
+/**
+ * Reading a `.rerail` rule starts the runner's child, which reads core's library with no kept store; on a loaded
+ * machine at two threads that takes seconds, past vitest's default.
+ */
+const CHILD_TIMEOUT = 120_000;
+
+describe("a pack's rules written in .rerail", { timeout: CHILD_TIMEOUT }, () => {
   it("takes each rule's facts from its file, as the engine reads it", () => {
     const directory = samplePack();
     const catalog = readRuleCatalog([directory]);
@@ -153,7 +159,7 @@ describe("the engine's readings kept between processes", () => {
     expect(asked).toEqual([[rule], [rule]]);
   });
 
-  it("writes each reading beside the compile verdicts, for the next process", () => {
+  it("writes each reading beside the compile verdicts, for the next process", { timeout: CHILD_TIMEOUT }, () => {
     const home = realpathSync(mkdtempSync(join(tmpdir(), "rerail-rr-home-")));
     temporary.push(home);
     const directory = samplePack();
@@ -165,7 +171,7 @@ describe("the engine's readings kept between processes", () => {
   });
 });
 
-describe("the checkout catalog's .rerail rules", () => {
+describe("the checkout catalog's .rerail rules", { timeout: CHILD_TIMEOUT }, () => {
   it("places each active .rerail rule per folder for the .rerail runner, and refuses options for one", () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), "rerail-rr-checkout-")));
     temporary.push(root);
