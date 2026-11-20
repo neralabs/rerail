@@ -447,13 +447,13 @@ fn share(p: &mut Program<'_>, shown: &str) -> Result<Option<String>, String> {
             for l in r.body() {
                 rb = rb.lit(v, r, l);
             }
-            rb.not(hot.as_str(), &[t_of(v, r, endpoint)]).finish().map(|_| true)
+            rb.not(hot.as_str(), &[t_of(r, endpoint)]).finish().map(|_| true)
         },
         &mut |v, b| {
             use crate::code_rule_dsl::logic::program_image::fields::FieldsMut as _;
             let r = v.rule(id).expect("the shared rule");
             let lits: Vec<_> = r.body().collect();
-            let e = t_of(v, r, endpoint);
+            let e = t_of(r, endpoint);
             b.fields().declare(&hot, &[("endpoint", endpoint_ty.as_str())]);
             b.fields().declare(&factor, &[("endpoint", endpoint_ty.as_str()), ("witness", key_ty.as_str())]);
             b.fields().set_field(Field::Qualifiers(&qualifiers));
@@ -467,13 +467,13 @@ fn share(p: &mut Program<'_>, shown: &str) -> Result<Option<String>, String> {
                 .cmp(T::Var(&count), CmpOp::Ge, T::Int(SHARE_AFTER))
                 .finish()?;
             // factor(e, k) :- hot(e), the part.
-            let mut rb = b.rule().head(factor.as_str(), &[e.clone(), t_of(v, r, key_term)]).atom(hot.as_str(), std::slice::from_ref(&e));
+            let mut rb = b.rule().head(factor.as_str(), &[e.clone(), t_of(r, key_term)]).atom(hot.as_str(), std::slice::from_ref(&e));
             for &l in &part {
                 rb = rb.lit(v, r, lits[l]);
             }
             rb.finish()?;
             // The rule's own head, from its request, the endpoint's witnesses and the other part.
-            let mut rb = b.rule().head_from(v, r, r.head()).lit(v, r, lits[request_at]).atom(factor.as_str(), &[e.clone(), t_of(v, r, key_term)]);
+            let mut rb = b.rule().head_from(v, r, r.head()).lit(v, r, lits[request_at]).atom(factor.as_str(), &[e.clone(), t_of(r, key_term)]);
             for &l in &other {
                 rb = rb.lit(v, r, lits[l]);
             }
