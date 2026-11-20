@@ -213,11 +213,16 @@ export interface RepositoryScope {
   repositoryId?: string | readonly string[] | undefined;
 }
 
-/** Who a session row belongs to when a write has to (re)create it. */
+/**
+ * Who a session row belongs to when a write has to (re)create it, and when the fact an event row records happened where
+ * that is earlier than the write (`observedAt`: a fact of an event a hook left while the daemon did not read), which
+ * the event's own `observedAt` overrides.
+ */
 export interface SessionAttribution {
   startedAt?: number;
   endedAt?: number | null;
   repositoryKey?: string | null;
+  observedAt?: number;
 }
 
 function repositoryFilter(repositoryIds: string | readonly string[] | undefined) {
@@ -472,7 +477,7 @@ export class SqliteSessionStore {
   }
 
   append(event: SessionEvent, session?: AdapterSession, attribution?: SessionAttribution): string {
-    const row = eventRow(event);
+    const row = eventRow(event, attribution?.observedAt);
     const restore = session === undefined ? undefined : this.#sessionRestore(session, attribution);
     this.#records.write(this.#eventWrite(row, restore), rowBytes(row));
     return row.eventId;
@@ -554,12 +559,13 @@ function steerEvent(session: AdapterSession, receiptId: string, ruleIds: readonl
 }
 
 /** The row `event` is stored as, its id and time taken now: a write that waits for the lock is made later. */
-function eventRow(event: SessionEvent): EventRow {
+/** The row of `event`, observed at its own `observedAt`, else at `happenedAt` (`SessionAttribution.observedAt`), else now. */
+function eventRow(event: SessionEvent, happenedAt?: number): EventRow {
   return {
     sessionId: event.sessionId,
     eventId: event.eventId ?? randomUUID(),
     kind: event.kind,
-    observedAt: event.observedAt ?? Date.now(),
+    observedAt: event.observedAt ?? happenedAt ?? Date.now(),
     payloadJson: stableJsonText(event.payload) ?? JSON.stringify({ encoding: "node:v8" }),
     payloadV8: serialize(event.payload),
   };

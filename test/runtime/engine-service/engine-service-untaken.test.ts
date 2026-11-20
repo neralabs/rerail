@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { mkdtemp, readFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, onTestFailed, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFailed, onTestFinished, vi } from "vitest";
 import { type AdapterEvent, type CodeRuleAuditor, leaveUntaken, type UntakenPass } from "../../../src/engine/index.js";
 import { engineRequestBody, ingestEngineEvent, startEngineService } from "../../../src/runtime/engine-service.js";
 import { SqliteSessionReader } from "../../../src/runtime/index.js";
@@ -424,5 +424,46 @@ describe("an engine service beside the events hooks left while its daemon did no
     // Checked by the clock as it was checked, the call ran after the file was written, which read as another writer's.
     const edits = held.batches.flatMap(batch => batch.edits).filter(edit => edit.path === "b.py");
     expect(edits.map(edit => edit.generatedText)).toEqual(["def b():\n    return 3\n"]);
+  });
+
+  it("starts a session whose start was left untaken at the time its hook met it, before the events it sent after", async () => {
+    const held = await serviceWithUntaken();
+    const late = { host: "claude-code" as const, sessionId: "late-start", cwd: held.root };
+    await held.leave({ kind: "session-start", eventId: "late:start", session: late }, 1_000);
+    await held.leave({ kind: "user-prompt", eventId: "late:prompt", sessionId: late.sessionId, session: late, text: "hi" }, 2_000);
+    await held.service.untaken.taken();
+    await vi.waitFor(() => expect(held.passes).toEqual([{ events: 2, from: 1_000, to: 2_000, failed: 0 }]));
+    const reader = new SqliteSessionReader(held.databasePath);
+    try {
+      // Before, the session started, and its start was recorded, when the daemon checked them: after its prompt.
+      expect(reader.session(late.sessionId)?.startedAt).toBe(1_000);
+      const events = reader.events(late.sessionId).filter(event => event.kind === "session-start" || event.kind === "user-prompt");
+      expect(events.map(({ kind, observedAt }) => ({ kind, observedAt }))).toEqual([
+        { kind: "session-start", observedAt: 1_000 },
+        { kind: "user-prompt", observedAt: 2_000 },
+      ]);
+    } finally {
+      reader.close();
+    }
+  });
+
+  it("records a boundary a call left untaken met before the session's code rules opened at the time its hook met it", async () => {
+    const opening = Promise.withResolvers<void>();
+    const held = await serviceWithUntaken(opening.promise);
+    try {
+      const call = { kind: "call", eventId: "early:call", sessionId: SESSION, toolCallId: "early", toolName: "Bash", input: { command: "ls" } } as const;
+      await held.leave(call, 1_000);
+      await held.service.untaken.taken();
+      await vi.waitFor(() => expect(held.passes).toHaveLength(1));
+      // Before, the boundary's row took the time the daemon checked the call.
+      const reader = new SqliteSessionReader(held.databasePath);
+      try {
+        expect(reader.events(SESSION).filter(event => event.kind === "code-rules-pending").map(event => event.observedAt)).toEqual([1_000]);
+      } finally {
+        reader.close();
+      }
+    } finally {
+      opening.resolve();
+    }
   });
 });

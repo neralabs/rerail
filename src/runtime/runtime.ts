@@ -1179,6 +1179,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #catalogs: CheckoutCatalogs;
   readonly #owners = new CheckoutOwners(() => this.#catalogs.recordedCheckoutsVersion());
   readonly #sessions = new Map<string, RuntimeSessionState>();
+  /**
+   * While an event that happened earlier opens its session (`IngestOptions.observedAt`), when it happened, by session id:
+   * a session it opens starts then (`#asOf`).
+   */
+  readonly #startsAt = new Map<string, number>();
   /** The sessions `resumeSession` is opening again for a scan, whose open fails rather than wait for a write lock. */
   readonly #resumingForScan = new Set<string>();
   /**
@@ -1367,32 +1372,53 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   /** One event in its session's lane, waited for and timed as `IngestOptions` says. */
   async #ingest(event: AdapterEvent, { signal, observedAt }: IngestOptions): Promise<readonly AdapterDelivery[]> {
-    if (event.kind === "session-start") {
-      this.#sessions.get(event.session.sessionId)?.ruleSync?.refresh();
-      return this.#ingestSessionStart(event);
-    }
+    if (event.kind === "session-start") return await this.#ingestSessionStart(event, observedAt);
 
     const { active, descriptor } = this.#resolveEventSession(event);
-    if (active === undefined) await this.#router(descriptor.host).start(descriptor);
+    if (active === undefined) await this.#asOf(descriptor.sessionId, observedAt, () => this.#router(descriptor.host).start(descriptor));
     const state = this.#session(event.sessionId);
+    // A hook host's stop hook is the end of the agent's run; OMP and Pi end a turn at every model call, and yield later.
+    const yields = event.kind === "turn-end" && ADAPTER_CAPABILITIES[descriptor.host].toolSurface !== "native";
+    // The event's records, a boundary it met before the code rules opened included, and the run of its tool call, at the
+    // time it happened.
+    state.observedAt = observedAt;
+    try {
+      await this.#ingestInSession(state, event, yields, signal);
+    } finally {
+      state.observedAt = undefined;
+    }
+    if (event.kind === "session-end") return [];
+    return this.#boundaryDeliveries(state, event.eventId, yields, signal);
+  }
+
+  /** The work of `event` in its open session, before what its answer delivers. */
+  async #ingestInSession(state: RuntimeSessionState, event: Exclude<AdapterEvent, { kind: "session-start" }>, yields: boolean, signal: AbortSignal | undefined): Promise<void> {
     this.#writeOwedClaim(state);
     this.#scheduleAuditRequests(state.descriptor.sessionId);
     state.ruleSync?.refresh();
     // A code-rule boundary reached while the session's evaluator is still opening (indexing) goes on without code rules.
     const bridge = CODE_RULE_BOUNDARIES[event.kind] === true ? await this.#codeRuleWorkspaceNow(state, event) : state.codeRuleBridge;
     bridge?.refreshCodeRules();
-    // A hook host's stop hook is the end of the agent's run; OMP and Pi end a turn at every model call, and yield later.
-    const yields = event.kind === "turn-end" && ADAPTER_CAPABILITIES[descriptor.host].toolSurface !== "native";
-    // The event's record, and the run of its tool call, at the time it happened.
-    state.observedAt = observedAt;
+    await this.#noteTurnWindow(state, event);
+    await this.#ingestEventWork(state, bridge, event, yields, signal);
+  }
+
+  /**
+   * Runs `work`, which opens the session `sessionId` or records its start, as of `observedAt` (`IngestOptions.observedAt`):
+   * a session it opens starts then, and its records made meanwhile keep that time.
+   */
+  async #asOf(sessionId: string, observedAt: number | undefined, work: () => Promise<void>): Promise<void> {
+    if (observedAt === undefined) return await work();
+    this.#startsAt.set(sessionId, observedAt);
+    const open = this.#sessions.get(sessionId);
+    if (open !== undefined) open.observedAt = observedAt;
     try {
-      await this.#noteTurnWindow(state, event);
-      await this.#ingestEventWork(state, bridge, event, yields, signal);
+      await work();
     } finally {
-      state.observedAt = undefined;
+      this.#startsAt.delete(sessionId);
+      const state = this.#sessions.get(sessionId);
+      if (state !== undefined) state.observedAt = undefined;
     }
-    if (event.kind === "session-end") return [];
-    return this.#boundaryDeliveries(state, event.eventId, yields, signal);
   }
 
   /**
@@ -1684,6 +1710,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       this.#recordSessionFact(
         state.descriptor.sessionId,
         (store, descriptor, attribution) => store.recordCodeRulesPending(descriptor, boundary, attribution),
+        happenedAt(state),
       );
     } catch (error) {
       // Recording a boundary that answered without code rules is best-effort: it never fails the boundary.
@@ -2071,6 +2098,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   #recordSessionFact(
     sessionId: string,
     record: (store: SqliteSessionStore, descriptor: AdapterSession, attribution: SessionAttribution) => void,
+    // A fact of the event the session is ingesting: recorded at the time that event happened (`happenedAt`).
+    happened?: { observedAt?: number },
   ): void {
     const state = this.#sessions.get(sessionId);
     const closed = this.#closedSessions.get(sessionId);
@@ -2083,6 +2112,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         startedAt: state?.startedAt ?? closed!.startedAt,
         endedAt: closed?.endedAt ?? null,
         repositoryKey: state === undefined ? closed!.repositoryKey : this.#repositoryKey(state.checkout),
+        ...happened,
       });
     } finally {
       if (this.#sessionStoreClosed) sessionStore.close();
@@ -2216,7 +2246,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     // Before the read below, which makes this process's waiting record writes and may wait for the lock to do so.
     this.#failWhileWriteLockedForScan(session.sessionId);
     const recordedSession = this.#sessionStore.session(session.sessionId);
-    const startedAt = recordedSession?.startedAt ?? Date.now();
+    const startedAt = recordedSession?.startedAt ?? this.#startsAt.get(session.sessionId) ?? Date.now();
     const ledger = await this.#openLedger(session, recordedSession === undefined);
     const checkout = this.#startingCheckout(session);
     const restored = await this.#restoreRegistry(session, ledger.entries, checkout);
@@ -2485,7 +2515,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       pendingSteers: [],
       steerStrategy,
       resultWindow: undefined,
-      observedAt: undefined,
+      observedAt: this.#startsAt.get(session.sessionId),
       codeRuleRevision: 0,
       codeRuleSourceVersions: new Map(),
       undeliveredSources: new Set(),
@@ -3335,10 +3365,13 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     }
   }
 
-  async #ingestSessionStart(event: Extract<AdapterEvent, { kind: "session-start" }>): Promise<readonly AdapterDelivery[]> {
-    assertEventHost(event.session.host);
+  /** A session's start, which happened at `observedAt` when it reaches the runtime later (`IngestOptions.observedAt`). */
+  async #ingestSessionStart(event: Extract<AdapterEvent, { kind: "session-start" }>, observedAt: number | undefined): Promise<readonly AdapterDelivery[]> {
+    const { session } = event;
+    this.#sessions.get(session.sessionId)?.ruleSync?.refresh();
+    assertEventHost(session.host);
     if (this.#autostart) autostartDaemon();
-    await this.#router(event.session.host).ingest(event);
+    await this.#asOf(session.sessionId, observedAt, () => this.#router(session.host).ingest(event));
     return [];
   }
 
