@@ -8590,7 +8590,10 @@ fn run_observed_within(
     if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
         eprintln!("rerail: base versions: old {:?}, corpus {}, versions {:?}", old_base.as_ref().map(|(c, o)| (c.len(), o.len())), corpus_sources.len(), base_versions.iter().map(|(r, (p, m))| (r.clone(), p.len(), m.len())).collect::<Vec<_>>());
     }
-    given_deltas.extend(base_versions.iter().map(|(rel, v)| (rel.clone(), v.clone())));
+    for (rel, v) in &base_versions {
+        given_deltas.insert(rel.clone(), v.clone());
+        crate::code_rule_dsl::logic::plan::corpus::maintain::shape::input_from_owners();
+    }
     // Each base relation the cross part reads: its columns as the corpus batch has them, and which of them it names
     // (`stored`). The rows are the batch's; none is gathered.
     for (rel, names) in stored.iter().filter(|_| !corpus_sources.is_empty()) {
@@ -8758,6 +8761,7 @@ fn run_observed_within(
                         let plus = added.map_or_else(none, |a| crate::code_rule_dsl::logic::native::component::InRel::picked(a, patch.plus, names()));
                         let minus = crate::code_rule_dsl::logic::native::component::InRel::picked(Arc::clone(&k.source), patch.minus, names());
                         given_deltas.insert(rel.clone(), (plus, minus));
+                        crate::code_rule_dsl::logic::plan::corpus::maintain::shape::input_from_owners();
                     }
                     exports.borrow_mut().install(&rel, width, source);
                 }
