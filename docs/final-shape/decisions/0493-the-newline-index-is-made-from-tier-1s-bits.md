@@ -56,6 +56,14 @@ but at load 44 the times are not a measurement.
   A newline offset moved by one byte fails it.
 - The JSON and probe AOT ladders, the compiler's tier 2 tests, and the quick `.rr` tests pass.
 
+## Later: a word at a time
+
+`index_of` first wrote each newline's high bit and low bits as reads and writes of the index's bytes, then made the
+two sample lists in two more passes over the high words. It now keeps the high word and the low bits in registers and
+stores each once it is whole (the offsets ascend), and makes both sample lists in one pass. `twitter.json`: 39.04 →
+38.92 instructions a byte. Its share of a profile was time more than instructions. The test above
+(`an_index_from_bits_is_the_scans`) is unchanged and passes.
+
 ## What is left
 
 `bits_of` reads the newline words twice, once to count and once to place. A popcount kept by tier 1 (a running count,

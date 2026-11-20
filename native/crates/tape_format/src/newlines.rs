@@ -46,46 +46,66 @@ pub fn index_of(out: &mut Vec<u8>, u: u64, m: u64, offsets: impl Iterator<Item =
     let low_len = (m * u64::from(l)).div_ceil(8) as usize;
     let (high_at, low_at) = (HEAD + 8 * (zs + os), HEAD + 8 * (zs + os + words));
     out.clear();
-    // The low parts' room past them: a word's store at the last one's byte.
     out.resize(low_at + low_len + 8, 0);
-    let word_at = |out: &[u8], at: usize| u64::from_le_bytes(out[at..at + 8].try_into().expect("8 bytes"));
+    let store = |out: &mut [u8], at: usize, word: u64| out[at..at + 8].copy_from_slice(&word.to_le_bytes());
+    // The high bits a word at a time and the low parts a word of bits at a time, each stored once it is whole: the
+    // offsets ascend, so every bit of a word comes before the next word's.
     let mask = if l > 0 { (1u64 << l) - 1 } else { 0 };
+    let (mut word, mut w_at) = (0u64, 0usize);
+    let (mut low, mut low_bits, mut low_byte) = (0u64, 0u32, low_at);
     let mut n = 0u64;
     for o in offsets {
         let at = (o >> l) + n;
-        let h = high_at + 8 * (at / 64) as usize;
-        let word = word_at(out, h) | 1 << (at % 64);
-        out[h..h + 8].copy_from_slice(&word.to_le_bytes());
+        let w = (at / 64) as usize;
+        if w != w_at {
+            store(out, high_at + 8 * w_at, word);
+            (word, w_at) = (0, w);
+        }
+        word |= 1 << (at % 64);
         if l > 0 {
-            let bit = n * u64::from(l);
-            let b = low_at + (bit / 8) as usize;
-            let word = word_at(out, b) | (o & mask) << (bit % 8);
-            out[b..b + 8].copy_from_slice(&word.to_le_bytes());
+            let part = o & mask;
+            low |= part << low_bits;
+            low_bits += l;
+            if low_bits >= 32 {
+                // Four whole bytes out; the bits past them kept (`l` is at most 32).
+                out[low_byte..low_byte + 4].copy_from_slice(&(low as u32).to_le_bytes());
+                (low, low_bits, low_byte) = (low >> 32, low_bits - 32, low_byte + 4);
+            }
         }
         n += 1;
     }
     debug_assert_eq!(n, m, "the newlines counted are the offsets given");
+    if n > 0 {
+        store(out, high_at + 8 * w_at, word);
+    }
+    store(out, low_byte, low);
     out.truncate(low_at + low_len);
-    // Samples: the word holding every SAMPLE-th zero (one), and the zeros (ones) before that word.
-    let mut sample = |ones: bool, count: u64, first: usize| {
-        let (mut k, mut before) = (0usize, 0u64);
-        for w in 0..words {
-            let word = word_at(out, high_at + 8 * w);
-            let valid = if (w + 1) * 64 <= bits as usize { 64 } else { bits as usize - w * 64 };
-            let set = u64::from(word.count_ones());
-            let here = if ones { set } else { valid as u64 - set };
-            while (k as u64) * (SAMPLE as u64) < before + here && (k as u64) * (SAMPLE as u64) < count {
-                let at = HEAD + 8 * (first + k);
-                out[at..at + 4].copy_from_slice(&(w as u32).to_le_bytes());
-                out[at + 4..at + 8].copy_from_slice(&(before as u32).to_le_bytes());
-                k += 1;
-            }
-            before += here;
+    // Samples, in one pass over the high words: the word holding every SAMPLE-th zero (one), and the zeros (ones)
+    // before that word.
+    let word_at = |out: &[u8], at: usize| u64::from_le_bytes(out[at..at + 8].try_into().expect("8 bytes"));
+    let (mut kz, mut ko, mut zeros, mut ones) = (0u64, 0u64, 0u64, 0u64);
+    let sample = SAMPLE as u64;
+    for w in 0..words {
+        let x = word_at(out, high_at + 8 * w);
+        let valid = if (w + 1) * 64 <= bits as usize { 64 } else { bits as u64 - 64 * w as u64 };
+        let set = u64::from(x.count_ones());
+        let (z_here, o_here) = (valid - set, set);
+        while kz * sample < zeros + z_here && kz * sample < buckets {
+            let at = HEAD + 8 * kz as usize;
+            out[at..at + 4].copy_from_slice(&(w as u32).to_le_bytes());
+            out[at + 4..at + 8].copy_from_slice(&(zeros as u32).to_le_bytes());
+            kz += 1;
         }
-        debug_assert_eq!(k, if ones { os } else { zs }, "the samples' count");
-    };
-    sample(false, buckets, 0);
-    sample(true, m, zs);
+        while ko * sample < ones + o_here && ko * sample < m {
+            let at = HEAD + 8 * (zs + ko as usize);
+            out[at..at + 4].copy_from_slice(&(w as u32).to_le_bytes());
+            out[at + 4..at + 8].copy_from_slice(&(ones as u32).to_le_bytes());
+            ko += 1;
+        }
+        zeros += z_here;
+        ones += o_here;
+    }
+    debug_assert_eq!((kz as usize, ko as usize), (zs, os), "the samples' count");
     for (k, v) in [m as u32, l, zs as u32, os as u32, words as u32].into_iter().enumerate() {
         out[4 * k..4 * k + 4].copy_from_slice(&v.to_le_bytes());
     }
