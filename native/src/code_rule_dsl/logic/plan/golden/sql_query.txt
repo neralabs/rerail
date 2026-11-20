@@ -1,0 +1,500 @@
+# sql_query_builds_the_golden_sql (plan/tests.rs; RERAIL_BLESS_SQL=1 rewrites this file): per rule of SQL_QUERY_PROBE, each distinct SQL under its cases. a, n, s: fixed atoms, native nearest, documents by shift; v: step modes; d: delta step; t: named tables.
+
+## seen
+a0n0s0v0d-t0 a0n0s0v0d1t0 a0n0s0v2d-t0 a0n0s0v2d1t0 a0n0s1v0d-t0 a0n0s1v0d1t0 a0n0s1v2d-t0 a0n0s1v2d1t0 a0n1s0v0d-t0 a0n1s0v0d1t0 a0n1s0v2d-t0 a0n1s0v2d1t0 a0n1s1v0d-t0 a0n1s1v0d1t0 a0n1s1v2d-t0 a0n1s1v2d1t0 a1n0s0v0d-t0 a1n0s0v0d1t0 a1n0s0v2d-t0 a1n0s0v2d1t0 a1n0s1v0d-t0 a1n0s1v0d1t0 a1n0s1v2d-t0 a1n0s1v2d1t0 a1n1s0v0d-t0 a1n1s0v0d1t0 a1n1s0v2d-t0 a1n1s0v2d1t0 a1n1s1v0d-t0 a1n1s1v0d1t0 a1n1s1v2d-t0 a1n1s1v2d1t0
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t1.c0 AS f FROM roots t1), walk0(f, cur) AS (SELECT s.f, c.c FROM seed0 s JOIN node k ON (k.n = s.f) AND (k.kind IN ('function_definition')) JOIN child c ON (c.p = s.f) UNION ALL SELECT w.f, c.c FROM walk0 w JOIN node k ON (k.n = w.cur) AND (NOT (k.kind IN ('function_definition'))) JOIN child c ON (c.p = w.cur)), near0 AS (SELECT w.f, w.cur AS near_out FROM walk0 w) SELECT DISTINCT near0.f AS c0, near0.near_out AS c1 FROM near0 near0
+
+a0n0s0v0d-t1 a0n0s0v0d1t1 a0n0s0v2d-t1 a0n0s0v2d1t1 a0n0s1v0d-t1 a0n0s1v0d1t1 a0n0s1v2d-t1 a0n0s1v2d1t1 a0n1s0v0d-t1 a0n1s0v0d1t1 a0n1s0v2d-t1 a0n1s0v2d1t1 a0n1s1v0d-t1 a0n1s1v0d1t1 a0n1s1v2d-t1 a0n1s1v2d1t1 a1n0s0v0d-t1 a1n0s0v0d1t1 a1n0s0v2d-t1 a1n0s0v2d1t1 a1n0s1v0d-t1 a1n0s1v0d1t1 a1n0s1v2d-t1 a1n0s1v2d1t1 a1n1s0v0d-t1 a1n1s0v0d1t1 a1n1s0v2d-t1 a1n1s0v2d1t1 a1n1s1v0d-t1 a1n1s1v0d1t1 a1n1s1v2d-t1 a1n1s1v2d1t1
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t1.c0 AS f FROM full_roots t1), walk0(f, cur) AS (SELECT s.f, c.c FROM seed0 s JOIN node k ON (k.n = s.f) AND (k.kind IN ('function_definition')) JOIN child c ON (c.p = s.f) UNION ALL SELECT w.f, c.c FROM walk0 w JOIN node k ON (k.n = w.cur) AND (NOT (k.kind IN ('function_definition'))) JOIN child c ON (c.p = w.cur)), near0 AS (SELECT w.f, w.cur AS near_out FROM walk0 w) SELECT DISTINCT near0.f AS c0, near0.near_out AS c1 FROM near0 near0
+
+a0n0s0v0d0t0 a0n0s0v0d0t1 a0n0s0v2d0t0 a0n0s0v2d0t1 a0n0s1v0d0t0 a0n0s1v0d0t1 a0n0s1v2d0t0 a0n0s1v2d0t1 a0n1s0v0d0t0 a0n1s0v0d0t1 a0n1s0v2d0t0 a0n1s0v2d0t1 a0n1s1v0d0t0 a0n1s1v0d0t1 a0n1s1v2d0t0 a0n1s1v2d0t1 a1n0s0v0d0t0 a1n0s0v0d0t1 a1n0s0v2d0t0 a1n0s0v2d0t1 a1n0s1v0d0t0 a1n0s1v0d0t1 a1n0s1v2d0t0 a1n0s1v2d0t1 a1n1s0v0d0t0 a1n1s0v0d0t1 a1n1s0v2d0t0 a1n1s0v2d0t1 a1n1s1v0d0t0 a1n1s1v0d0t1 a1n1s1v2d0t0 a1n1s1v2d0t1
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t1.c0 AS f FROM delta_roots t1), walk0(f, cur) AS (SELECT s.f, c.c FROM seed0 s JOIN node k ON (k.n = s.f) AND (k.kind IN ('function_definition')) JOIN child c ON (c.p = s.f) UNION ALL SELECT w.f, c.c FROM walk0 w JOIN node k ON (k.n = w.cur) AND (NOT (k.kind IN ('function_definition'))) JOIN child c ON (c.p = w.cur)), near0 AS (SELECT w.f, w.cur AS near_out FROM walk0 w) SELECT DISTINCT near0.f AS c0, near0.near_out AS c1 FROM near0 near0
+
+a0n0s0v1d-t0 a0n0s0v1d-t1 a0n0s0v1d0t0 a0n0s0v1d0t1 a0n0s0v1d1t0 a0n0s0v1d1t1 a0n0s0v3d-t0 a0n0s0v3d-t1 a0n0s0v3d0t0 a0n0s0v3d0t1 a0n0s0v3d1t0 a0n0s0v3d1t1 a0n0s1v1d-t0 a0n0s1v1d-t1 a0n0s1v1d0t0 a0n0s1v1d0t1 a0n0s1v1d1t0 a0n0s1v1d1t1 a0n0s1v3d-t0 a0n0s1v3d-t1 a0n0s1v3d0t0 a0n0s1v3d0t1 a0n0s1v3d1t0 a0n0s1v3d1t1 a0n1s0v1d-t0 a0n1s0v1d-t1 a0n1s0v1d0t0 a0n1s0v1d0t1 a0n1s0v1d1t0 a0n1s0v1d1t1 a0n1s0v3d-t0 a0n1s0v3d-t1 a0n1s0v3d0t0 a0n1s0v3d0t1 a0n1s0v3d1t0 a0n1s0v3d1t1 a0n1s1v1d-t0 a0n1s1v1d-t1 a0n1s1v1d0t0 a0n1s1v1d0t1 a0n1s1v1d1t0 a0n1s1v1d1t1 a0n1s1v3d-t0 a0n1s1v3d-t1 a0n1s1v3d0t0 a0n1s1v3d0t1 a0n1s1v3d1t0 a0n1s1v3d1t1 a1n0s0v1d-t0 a1n0s0v1d-t1 a1n0s0v1d0t0 a1n0s0v1d0t1 a1n0s0v1d1t0 a1n0s0v1d1t1 a1n0s0v3d-t0 a1n0s0v3d-t1 a1n0s0v3d0t0 a1n0s0v3d0t1 a1n0s0v3d1t0 a1n0s0v3d1t1 a1n0s1v1d-t0 a1n0s1v1d-t1 a1n0s1v1d0t0 a1n0s1v1d0t1 a1n0s1v1d1t0 a1n0s1v1d1t1 a1n0s1v3d-t0 a1n0s1v3d-t1 a1n0s1v3d0t0 a1n0s1v3d0t1 a1n0s1v3d1t0 a1n0s1v3d1t1 a1n1s0v1d-t0 a1n1s0v1d-t1 a1n1s0v1d0t0 a1n1s0v1d0t1 a1n1s0v1d1t0 a1n1s0v1d1t1 a1n1s0v3d-t0 a1n1s0v3d-t1 a1n1s0v3d0t0 a1n1s0v3d0t1 a1n1s0v3d1t0 a1n1s0v3d1t1 a1n1s1v1d-t0 a1n1s1v1d-t1 a1n1s1v1d0t0 a1n1s1v1d0t1 a1n1s1v1d1t0 a1n1s1v1d1t1 a1n1s1v3d-t0 a1n1s1v3d-t1 a1n1s1v3d0t0 a1n1s1v3d0t1 a1n1s1v3d1t0 a1n1s1v3d1t1
+ERR Plan("$n is unbound in SQL")
+
+## wanted
+a0n0s0v0d-t0 a0n0s0v2d-t0 a0n0s1v0d-t0 a0n0s1v2d-t0 a0n1s0v0d-t0 a0n1s0v2d-t0 a0n1s1v0d-t0 a0n1s1v2d-t0 a1n0s0v0d-t0 a1n0s0v2d-t0 a1n0s1v0d-t0 a1n0s1v2d-t0 a1n1s0v0d-t0 a1n1s0v2d-t0 a1n1s1v0d-t0 a1n1s1v2d-t0
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t1.c0 AS f, t2.c0 AS n FROM roots t1 CROSS JOIN targets t2), walk0(f, n, cur) AS (SELECT s.f, s.n, c.c FROM seed0 s JOIN node k ON (k.n = s.f) AND (k.kind IN ('function_definition')) JOIN child c ON (c.p = s.f) UNION ALL SELECT w.f, w.n, c.c FROM walk0 w JOIN node k ON (k.n = w.cur) AND (NOT (k.kind IN ('function_definition'))) JOIN child c ON (c.p = w.cur)), near0 AS (SELECT w.f, w.n, w.cur AS near_out FROM walk0 w WHERE (w.cur = w.n)) SELECT DISTINCT near0.f AS c0, near0.n AS c1 FROM near0 near0
+
+a0n0s0v0d-t1 a0n0s0v2d-t1 a0n0s1v0d-t1 a0n0s1v2d-t1 a0n1s0v0d-t1 a0n1s0v2d-t1 a0n1s1v0d-t1 a0n1s1v2d-t1 a1n0s0v0d-t1 a1n0s0v2d-t1 a1n0s1v0d-t1 a1n0s1v2d-t1 a1n1s0v0d-t1 a1n1s0v2d-t1 a1n1s1v0d-t1 a1n1s1v2d-t1
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t1.c0 AS f, t2.c0 AS n FROM full_roots t1 CROSS JOIN full_targets t2), walk0(f, n, cur) AS (SELECT s.f, s.n, c.c FROM seed0 s JOIN node k ON (k.n = s.f) AND (k.kind IN ('function_definition')) JOIN child c ON (c.p = s.f) UNION ALL SELECT w.f, w.n, c.c FROM walk0 w JOIN node k ON (k.n = w.cur) AND (NOT (k.kind IN ('function_definition'))) JOIN child c ON (c.p = w.cur)), near0 AS (SELECT w.f, w.n, w.cur AS near_out FROM walk0 w WHERE (w.cur = w.n)) SELECT DISTINCT near0.f AS c0, near0.n AS c1 FROM near0 near0
+
+a0n0s0v0d0t0 a0n0s0v2d0t0 a0n0s1v0d0t0 a0n0s1v2d0t0 a0n1s0v0d0t0 a0n1s0v2d0t0 a0n1s1v0d0t0 a0n1s1v2d0t0 a1n0s0v0d0t0 a1n0s0v2d0t0 a1n0s1v0d0t0 a1n0s1v2d0t0 a1n1s0v0d0t0 a1n1s0v2d0t0 a1n1s1v0d0t0 a1n1s1v2d0t0
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t1.c0 AS f, t2.c0 AS n FROM delta_roots t1 CROSS JOIN targets t2), walk0(f, n, cur) AS (SELECT s.f, s.n, c.c FROM seed0 s JOIN node k ON (k.n = s.f) AND (k.kind IN ('function_definition')) JOIN child c ON (c.p = s.f) UNION ALL SELECT w.f, w.n, c.c FROM walk0 w JOIN node k ON (k.n = w.cur) AND (NOT (k.kind IN ('function_definition'))) JOIN child c ON (c.p = w.cur)), near0 AS (SELECT w.f, w.n, w.cur AS near_out FROM walk0 w WHERE (w.cur = w.n)) SELECT DISTINCT near0.f AS c0, near0.n AS c1 FROM near0 near0
+
+a0n0s0v0d0t1 a0n0s0v2d0t1 a0n0s1v0d0t1 a0n0s1v2d0t1 a0n1s0v0d0t1 a0n1s0v2d0t1 a0n1s1v0d0t1 a0n1s1v2d0t1 a1n0s0v0d0t1 a1n0s0v2d0t1 a1n0s1v0d0t1 a1n0s1v2d0t1 a1n1s0v0d0t1 a1n1s0v2d0t1 a1n1s1v0d0t1 a1n1s1v2d0t1
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t1.c0 AS f, t2.c0 AS n FROM delta_roots t1 CROSS JOIN full_targets t2), walk0(f, n, cur) AS (SELECT s.f, s.n, c.c FROM seed0 s JOIN node k ON (k.n = s.f) AND (k.kind IN ('function_definition')) JOIN child c ON (c.p = s.f) UNION ALL SELECT w.f, w.n, c.c FROM walk0 w JOIN node k ON (k.n = w.cur) AND (NOT (k.kind IN ('function_definition'))) JOIN child c ON (c.p = w.cur)), near0 AS (SELECT w.f, w.n, w.cur AS near_out FROM walk0 w WHERE (w.cur = w.n)) SELECT DISTINCT near0.f AS c0, near0.n AS c1 FROM near0 near0
+
+a0n0s0v0d1t0 a0n0s0v2d1t0 a0n0s1v0d1t0 a0n0s1v2d1t0 a0n1s0v0d1t0 a0n1s0v2d1t0 a0n1s1v0d1t0 a0n1s1v2d1t0 a1n0s0v0d1t0 a1n0s0v2d1t0 a1n0s1v0d1t0 a1n0s1v2d1t0 a1n1s0v0d1t0 a1n1s0v2d1t0 a1n1s1v0d1t0 a1n1s1v2d1t0
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t1.c0 AS f, t2.c0 AS n FROM roots t1 CROSS JOIN delta_targets t2), walk0(f, n, cur) AS (SELECT s.f, s.n, c.c FROM seed0 s JOIN node k ON (k.n = s.f) AND (k.kind IN ('function_definition')) JOIN child c ON (c.p = s.f) UNION ALL SELECT w.f, w.n, c.c FROM walk0 w JOIN node k ON (k.n = w.cur) AND (NOT (k.kind IN ('function_definition'))) JOIN child c ON (c.p = w.cur)), near0 AS (SELECT w.f, w.n, w.cur AS near_out FROM walk0 w WHERE (w.cur = w.n)) SELECT DISTINCT near0.f AS c0, near0.n AS c1 FROM near0 near0
+
+a0n0s0v0d1t1 a0n0s0v2d1t1 a0n0s1v0d1t1 a0n0s1v2d1t1 a0n1s0v0d1t1 a0n1s0v2d1t1 a0n1s1v0d1t1 a0n1s1v2d1t1 a1n0s0v0d1t1 a1n0s0v2d1t1 a1n0s1v0d1t1 a1n0s1v2d1t1 a1n1s0v0d1t1 a1n1s0v2d1t1 a1n1s1v0d1t1 a1n1s1v2d1t1
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t1.c0 AS f, t2.c0 AS n FROM full_roots t1 CROSS JOIN delta_targets t2), walk0(f, n, cur) AS (SELECT s.f, s.n, c.c FROM seed0 s JOIN node k ON (k.n = s.f) AND (k.kind IN ('function_definition')) JOIN child c ON (c.p = s.f) UNION ALL SELECT w.f, w.n, c.c FROM walk0 w JOIN node k ON (k.n = w.cur) AND (NOT (k.kind IN ('function_definition'))) JOIN child c ON (c.p = w.cur)), near0 AS (SELECT w.f, w.n, w.cur AS near_out FROM walk0 w WHERE (w.cur = w.n)) SELECT DISTINCT near0.f AS c0, near0.n AS c1 FROM near0 near0
+
+a0n0s0v1d-t0 a0n0s0v3d-t0 a0n0s1v1d-t0 a0n0s1v3d-t0 a1n0s0v1d-t0 a1n0s0v3d-t0 a1n0s1v1d-t0 a1n0s1v3d-t0
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t1.c0 AS f, t2.c0 AS n FROM roots t1 CROSS JOIN targets t2), walk0(f, n, cur) AS (SELECT s.f, s.n, t.par FROM seed0 s JOIN tape t ON (t.n = s.n) WHERE (t.par >= 0) UNION ALL SELECT w.f, w.n, t.par FROM walk0 w JOIN node k ON (k.n = w.cur) AND (NOT (k.kind IN ('function_definition'))) JOIN tape t ON (t.n = w.cur) WHERE (t.par >= 0)), near0 AS (SELECT w.f, w.n, w.cur AS near_out FROM walk0 w CROSS JOIN node k WHERE (k.n = w.cur) AND (k.kind IN ('function_definition')) AND (w.cur = w.f)) SELECT DISTINCT near0.f AS c0, near0.n AS c1 FROM near0 near0
+
+a0n0s0v1d-t1 a0n0s0v3d-t1 a0n0s1v1d-t1 a0n0s1v3d-t1 a1n0s0v1d-t1 a1n0s0v3d-t1 a1n0s1v1d-t1 a1n0s1v3d-t1
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t1.c0 AS f, t2.c0 AS n FROM full_roots t1 CROSS JOIN full_targets t2), walk0(f, n, cur) AS (SELECT s.f, s.n, t.par FROM seed0 s JOIN tape t ON (t.n = s.n) WHERE (t.par >= 0) UNION ALL SELECT w.f, w.n, t.par FROM walk0 w JOIN node k ON (k.n = w.cur) AND (NOT (k.kind IN ('function_definition'))) JOIN tape t ON (t.n = w.cur) WHERE (t.par >= 0)), near0 AS (SELECT w.f, w.n, w.cur AS near_out FROM walk0 w CROSS JOIN node k WHERE (k.n = w.cur) AND (k.kind IN ('function_definition')) AND (w.cur = w.f)) SELECT DISTINCT near0.f AS c0, near0.n AS c1 FROM near0 near0
+
+a0n0s0v1d0t0 a0n0s0v3d0t0 a0n0s1v1d0t0 a0n0s1v3d0t0 a1n0s0v1d0t0 a1n0s0v3d0t0 a1n0s1v1d0t0 a1n0s1v3d0t0
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t1.c0 AS f, t2.c0 AS n FROM delta_roots t1 CROSS JOIN targets t2), walk0(f, n, cur) AS (SELECT s.f, s.n, t.par FROM seed0 s JOIN tape t ON (t.n = s.n) WHERE (t.par >= 0) UNION ALL SELECT w.f, w.n, t.par FROM walk0 w JOIN node k ON (k.n = w.cur) AND (NOT (k.kind IN ('function_definition'))) JOIN tape t ON (t.n = w.cur) WHERE (t.par >= 0)), near0 AS (SELECT w.f, w.n, w.cur AS near_out FROM walk0 w CROSS JOIN node k WHERE (k.n = w.cur) AND (k.kind IN ('function_definition')) AND (w.cur = w.f)) SELECT DISTINCT near0.f AS c0, near0.n AS c1 FROM near0 near0
+
+a0n0s0v1d0t1 a0n0s0v3d0t1 a0n0s1v1d0t1 a0n0s1v3d0t1 a1n0s0v1d0t1 a1n0s0v3d0t1 a1n0s1v1d0t1 a1n0s1v3d0t1
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t1.c0 AS f, t2.c0 AS n FROM delta_roots t1 CROSS JOIN full_targets t2), walk0(f, n, cur) AS (SELECT s.f, s.n, t.par FROM seed0 s JOIN tape t ON (t.n = s.n) WHERE (t.par >= 0) UNION ALL SELECT w.f, w.n, t.par FROM walk0 w JOIN node k ON (k.n = w.cur) AND (NOT (k.kind IN ('function_definition'))) JOIN tape t ON (t.n = w.cur) WHERE (t.par >= 0)), near0 AS (SELECT w.f, w.n, w.cur AS near_out FROM walk0 w CROSS JOIN node k WHERE (k.n = w.cur) AND (k.kind IN ('function_definition')) AND (w.cur = w.f)) SELECT DISTINCT near0.f AS c0, near0.n AS c1 FROM near0 near0
+
+a0n0s0v1d1t0 a0n0s0v3d1t0 a0n0s1v1d1t0 a0n0s1v3d1t0 a1n0s0v1d1t0 a1n0s0v3d1t0 a1n0s1v1d1t0 a1n0s1v3d1t0
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t1.c0 AS f, t2.c0 AS n FROM roots t1 CROSS JOIN delta_targets t2), walk0(f, n, cur) AS (SELECT s.f, s.n, t.par FROM seed0 s JOIN tape t ON (t.n = s.n) WHERE (t.par >= 0) UNION ALL SELECT w.f, w.n, t.par FROM walk0 w JOIN node k ON (k.n = w.cur) AND (NOT (k.kind IN ('function_definition'))) JOIN tape t ON (t.n = w.cur) WHERE (t.par >= 0)), near0 AS (SELECT w.f, w.n, w.cur AS near_out FROM walk0 w CROSS JOIN node k WHERE (k.n = w.cur) AND (k.kind IN ('function_definition')) AND (w.cur = w.f)) SELECT DISTINCT near0.f AS c0, near0.n AS c1 FROM near0 near0
+
+a0n0s0v1d1t1 a0n0s0v3d1t1 a0n0s1v1d1t1 a0n0s1v3d1t1 a1n0s0v1d1t1 a1n0s0v3d1t1 a1n0s1v1d1t1 a1n0s1v3d1t1
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t1.c0 AS f, t2.c0 AS n FROM full_roots t1 CROSS JOIN delta_targets t2), walk0(f, n, cur) AS (SELECT s.f, s.n, t.par FROM seed0 s JOIN tape t ON (t.n = s.n) WHERE (t.par >= 0) UNION ALL SELECT w.f, w.n, t.par FROM walk0 w JOIN node k ON (k.n = w.cur) AND (NOT (k.kind IN ('function_definition'))) JOIN tape t ON (t.n = w.cur) WHERE (t.par >= 0)), near0 AS (SELECT w.f, w.n, w.cur AS near_out FROM walk0 w CROSS JOIN node k WHERE (k.n = w.cur) AND (k.kind IN ('function_definition')) AND (w.cur = w.f)) SELECT DISTINCT near0.f AS c0, near0.n AS c1 FROM near0 near0
+
+a0n1s0v1d-t0 a0n1s0v3d-t0 a0n1s1v1d-t0 a0n1s1v3d-t0 a1n1s0v1d-t0 a1n1s0v3d-t0 a1n1s1v1d-t0 a1n1s1v3d-t0
+SELECT DISTINCT t1.c0 AS c0, t2.c0 AS c1 FROM roots t1 CROSS JOIN targets t2 WHERE (tape_nearest(t2.c0, 'function_definition') = t1.c0)
+
+a0n1s0v1d-t1 a0n1s0v3d-t1 a0n1s1v1d-t1 a0n1s1v3d-t1 a1n1s0v1d-t1 a1n1s0v3d-t1 a1n1s1v1d-t1 a1n1s1v3d-t1
+SELECT DISTINCT t1.c0 AS c0, t2.c0 AS c1 FROM full_roots t1 CROSS JOIN full_targets t2 WHERE (tape_nearest(t2.c0, 'function_definition') = t1.c0)
+
+a0n1s0v1d0t0 a0n1s0v3d0t0 a0n1s1v1d0t0 a0n1s1v3d0t0 a1n1s0v1d0t0 a1n1s0v3d0t0 a1n1s1v1d0t0 a1n1s1v3d0t0
+SELECT DISTINCT t1.c0 AS c0, t2.c0 AS c1 FROM delta_roots t1 CROSS JOIN targets t2 WHERE (tape_nearest(t2.c0, 'function_definition') = t1.c0)
+
+a0n1s0v1d0t1 a0n1s0v3d0t1 a0n1s1v1d0t1 a0n1s1v3d0t1 a1n1s0v1d0t1 a1n1s0v3d0t1 a1n1s1v1d0t1 a1n1s1v3d0t1
+SELECT DISTINCT t1.c0 AS c0, t2.c0 AS c1 FROM delta_roots t1 CROSS JOIN full_targets t2 WHERE (tape_nearest(t2.c0, 'function_definition') = t1.c0)
+
+a0n1s0v1d1t0 a0n1s0v3d1t0 a0n1s1v1d1t0 a0n1s1v3d1t0 a1n1s0v1d1t0 a1n1s0v3d1t0 a1n1s1v1d1t0 a1n1s1v3d1t0
+SELECT DISTINCT t1.c0 AS c0, t2.c0 AS c1 FROM roots t1 CROSS JOIN delta_targets t2 WHERE (tape_nearest(t2.c0, 'function_definition') = t1.c0)
+
+a0n1s0v1d1t1 a0n1s0v3d1t1 a0n1s1v1d1t1 a0n1s1v3d1t1 a1n1s0v1d1t1 a1n1s0v3d1t1 a1n1s1v1d1t1 a1n1s1v3d1t1
+SELECT DISTINCT t1.c0 AS c0, t2.c0 AS c1 FROM full_roots t1 CROSS JOIN delta_targets t2 WHERE (tape_nearest(t2.c0, 'function_definition') = t1.c0)
+
+## early
+a0n0s0v0d-t0 a0n0s0v0d-t1 a0n0s0v0d0t0 a0n0s0v0d0t1 a0n0s0v0d1t0 a0n0s0v0d1t1 a0n0s0v1d-t0 a0n0s0v1d-t1 a0n0s0v1d0t0 a0n0s0v1d0t1 a0n0s0v1d1t0 a0n0s0v1d1t1 a0n0s0v2d-t0 a0n0s0v2d-t1 a0n0s0v2d0t0 a0n0s0v2d0t1 a0n0s0v2d1t0 a0n0s0v2d1t1 a0n0s0v3d-t0 a0n0s0v3d-t1 a0n0s0v3d0t0 a0n0s0v3d0t1 a0n0s0v3d1t0 a0n0s0v3d1t1 a0n0s1v0d-t0 a0n0s1v0d-t1 a0n0s1v0d0t0 a0n0s1v0d0t1 a0n0s1v0d1t0 a0n0s1v0d1t1 a0n0s1v1d-t0 a0n0s1v1d-t1 a0n0s1v1d0t0 a0n0s1v1d0t1 a0n0s1v1d1t0 a0n0s1v1d1t1 a0n0s1v2d-t0 a0n0s1v2d-t1 a0n0s1v2d0t0 a0n0s1v2d0t1 a0n0s1v2d1t0 a0n0s1v2d1t1 a0n0s1v3d-t0 a0n0s1v3d-t1 a0n0s1v3d0t0 a0n0s1v3d0t1 a0n0s1v3d1t0 a0n0s1v3d1t1 a0n1s0v0d-t0 a0n1s0v0d-t1 a0n1s0v0d0t0 a0n1s0v0d0t1 a0n1s0v0d1t0 a0n1s0v0d1t1 a0n1s0v2d-t0 a0n1s0v2d-t1 a0n1s0v2d0t0 a0n1s0v2d0t1 a0n1s0v2d1t0 a0n1s0v2d1t1 a0n1s1v0d-t0 a0n1s1v0d-t1 a0n1s1v0d0t0 a0n1s1v0d0t1 a0n1s1v0d1t0 a0n1s1v0d1t1 a0n1s1v2d-t0 a0n1s1v2d-t1 a0n1s1v2d0t0 a0n1s1v2d0t1 a0n1s1v2d1t0 a0n1s1v2d1t1 a1n0s0v0d-t0 a1n0s0v0d-t1 a1n0s0v0d0t0 a1n0s0v0d0t1 a1n0s0v0d1t0 a1n0s0v0d1t1 a1n0s0v1d-t0 a1n0s0v1d-t1 a1n0s0v1d0t0 a1n0s0v1d0t1 a1n0s0v1d1t0 a1n0s0v1d1t1 a1n0s0v2d-t0 a1n0s0v2d-t1 a1n0s0v2d0t0 a1n0s0v2d0t1 a1n0s0v2d1t0 a1n0s0v2d1t1 a1n0s0v3d-t0 a1n0s0v3d-t1 a1n0s0v3d0t0 a1n0s0v3d0t1 a1n0s0v3d1t0 a1n0s0v3d1t1 a1n0s1v0d-t0 a1n0s1v0d-t1 a1n0s1v0d0t0 a1n0s1v0d0t1 a1n0s1v0d1t0 a1n0s1v0d1t1 a1n0s1v1d-t0 a1n0s1v1d-t1 a1n0s1v1d0t0 a1n0s1v1d0t1 a1n0s1v1d1t0 a1n0s1v1d1t1 a1n0s1v2d-t0 a1n0s1v2d-t1 a1n0s1v2d0t0 a1n0s1v2d0t1 a1n0s1v2d1t0 a1n0s1v2d1t1 a1n0s1v3d-t0 a1n0s1v3d-t1 a1n0s1v3d0t0 a1n0s1v3d0t1 a1n0s1v3d1t0 a1n0s1v3d1t1 a1n1s0v0d-t0 a1n1s0v0d-t1 a1n1s0v0d0t0 a1n1s0v0d0t1 a1n1s0v0d1t0 a1n1s0v0d1t1 a1n1s0v2d-t0 a1n1s0v2d-t1 a1n1s0v2d0t0 a1n1s0v2d0t1 a1n1s0v2d1t0 a1n1s0v2d1t1 a1n1s1v0d-t0 a1n1s1v0d-t1 a1n1s1v0d0t0 a1n1s1v0d0t1 a1n1s1v0d1t0 a1n1s1v0d1t1 a1n1s1v2d-t0 a1n1s1v2d-t1 a1n1s1v2d0t0 a1n1s1v2d0t1 a1n1s1v2d1t0 a1n1s1v2d1t1
+ERR Plan("the walk of nearest($n, $f, scope) reads nothing before it")
+
+a0n1s0v1d-t0 a0n1s0v1d-t1 a0n1s0v1d0t0 a0n1s0v1d0t1 a0n1s0v1d1t0 a0n1s0v1d1t1 a0n1s0v3d-t0 a0n1s0v3d-t1 a0n1s0v3d0t0 a0n1s0v3d0t1 a0n1s0v3d1t0 a0n1s0v3d1t1 a0n1s1v1d-t0 a0n1s1v1d-t1 a0n1s1v1d0t0 a0n1s1v1d0t1 a0n1s1v1d1t0 a0n1s1v1d1t1 a0n1s1v3d-t0 a0n1s1v3d-t1 a0n1s1v3d0t0 a0n1s1v3d0t1 a0n1s1v3d1t0 a0n1s1v3d1t1 a1n1s0v1d-t0 a1n1s0v1d-t1 a1n1s0v1d0t0 a1n1s0v1d0t1 a1n1s0v1d1t0 a1n1s0v1d1t1 a1n1s0v3d-t0 a1n1s0v3d-t1 a1n1s0v3d0t0 a1n1s0v3d0t1 a1n1s0v3d1t0 a1n1s0v3d1t1 a1n1s1v1d-t0 a1n1s1v1d-t1 a1n1s1v1d0t0 a1n1s1v1d0t1 a1n1s1v1d1t0 a1n1s1v1d1t1 a1n1s1v3d-t0 a1n1s1v3d-t1 a1n1s1v3d0t0 a1n1s1v3d0t1 a1n1s1v3d1t0 a1n1s1v3d1t1
+ERR Plan("$n is unbound in SQL")
+
+## rng
+a0n0s0v0d-t0 a0n0s0v1d-t0 a0n0s1v0d-t0 a0n0s1v1d-t0 a0n1s0v0d-t0 a0n1s0v1d-t0 a0n1s1v0d-t0 a0n1s1v1d-t0 a1n0s0v0d-t0 a1n0s0v1d-t0 a1n0s1v0d-t0 a1n0s1v1d-t0 a1n1s0v0d-t0 a1n1s0v1d-t0 a1n1s1v0d-t0 a1n1s1v1d-t0
+SELECT DISTINCT t2.c0 AS c0 FROM q t1 CROSS JOIN p t2 CROSS JOIN docof t3 WHERE (t3.c0 = t2.c0) AND (t3.c1 = t1.c0)
+
+a0n0s0v0d-t1 a0n0s0v1d-t1 a0n0s1v0d-t1 a0n0s1v1d-t1 a0n1s0v0d-t1 a0n1s0v1d-t1 a0n1s1v0d-t1 a0n1s1v1d-t1 a1n0s0v0d-t1 a1n0s0v1d-t1 a1n0s1v0d-t1 a1n0s1v1d-t1 a1n1s0v0d-t1 a1n1s0v1d-t1 a1n1s1v0d-t1 a1n1s1v1d-t1
+SELECT DISTINCT t2.c0 AS c0 FROM full_q t1 CROSS JOIN full_p t2 CROSS JOIN full_docof t3 WHERE (t3.c0 = t2.c0) AND (t3.c1 = t1.c0)
+
+a0n0s0v0d0t0 a0n0s0v1d0t0 a0n0s1v0d0t0 a0n0s1v1d0t0 a0n1s0v0d0t0 a0n1s0v1d0t0 a0n1s1v0d0t0 a0n1s1v1d0t0 a1n0s0v0d0t0 a1n0s0v1d0t0 a1n0s1v0d0t0 a1n0s1v1d0t0 a1n1s0v0d0t0 a1n1s0v1d0t0 a1n1s1v0d0t0 a1n1s1v1d0t0
+SELECT DISTINCT t2.c0 AS c0 FROM delta_q t1 CROSS JOIN p t2 CROSS JOIN docof t3 WHERE (t3.c0 = t2.c0) AND (t3.c1 = t1.c0)
+
+a0n0s0v0d0t1 a0n0s0v1d0t1 a0n0s1v0d0t1 a0n0s1v1d0t1 a0n1s0v0d0t1 a0n1s0v1d0t1 a0n1s1v0d0t1 a0n1s1v1d0t1 a1n0s0v0d0t1 a1n0s0v1d0t1 a1n0s1v0d0t1 a1n0s1v1d0t1 a1n1s0v0d0t1 a1n1s0v1d0t1 a1n1s1v0d0t1 a1n1s1v1d0t1
+SELECT DISTINCT t2.c0 AS c0 FROM delta_q t1 CROSS JOIN full_p t2 CROSS JOIN full_docof t3 WHERE (t3.c0 = t2.c0) AND (t3.c1 = t1.c0)
+
+a0n0s0v0d1t0 a0n0s0v1d1t0 a0n0s1v0d1t0 a0n0s1v1d1t0 a0n1s0v0d1t0 a0n1s0v1d1t0 a0n1s1v0d1t0 a0n1s1v1d1t0 a1n0s0v0d1t0 a1n0s0v1d1t0 a1n0s1v0d1t0 a1n0s1v1d1t0 a1n1s0v0d1t0 a1n1s0v1d1t0 a1n1s1v0d1t0 a1n1s1v1d1t0
+SELECT DISTINCT t2.c0 AS c0 FROM q t1 CROSS JOIN delta_p t2 CROSS JOIN docof t3 WHERE (t3.c0 = t2.c0) AND (t3.c1 = t1.c0)
+
+a0n0s0v0d1t1 a0n0s0v1d1t1 a0n0s1v0d1t1 a0n0s1v1d1t1 a0n1s0v0d1t1 a0n1s0v1d1t1 a0n1s1v0d1t1 a0n1s1v1d1t1 a1n0s0v0d1t1 a1n0s0v1d1t1 a1n0s1v0d1t1 a1n0s1v1d1t1 a1n1s0v0d1t1 a1n1s0v1d1t1 a1n1s1v0d1t1 a1n1s1v1d1t1
+SELECT DISTINCT t2.c0 AS c0 FROM full_q t1 CROSS JOIN delta_p t2 CROSS JOIN full_docof t3 WHERE (t3.c0 = t2.c0) AND (t3.c1 = t1.c0)
+
+a0n0s0v2d-t0 a0n0s0v3d-t0 a0n1s0v2d-t0 a0n1s0v3d-t0 a1n0s0v2d-t0 a1n0s0v3d-t0 a1n1s0v2d-t0 a1n1s0v3d-t0
+SELECT DISTINCT t2.c0 AS c0 FROM q t1 CROSS JOIN f.stat_docrange t3 CROSS JOIN p t2 CROSS JOIN docof t4 WHERE (t3.d = t1.c0) AND t2.c0 BETWEEN t3.lo AND t3.hi AND (t4.c0 = t2.c0) AND (t4.c1 = t1.c0)
+
+a0n0s0v2d-t1 a0n0s0v3d-t1 a0n1s0v2d-t1 a0n1s0v3d-t1 a1n0s0v2d-t1 a1n0s0v3d-t1 a1n1s0v2d-t1 a1n1s0v3d-t1
+SELECT DISTINCT t2.c0 AS c0 FROM full_q t1 CROSS JOIN f.stat_docrange t3 CROSS JOIN full_p t2 CROSS JOIN full_docof t4 WHERE (t3.d = t1.c0) AND t2.c0 BETWEEN t3.lo AND t3.hi AND (t4.c0 = t2.c0) AND (t4.c1 = t1.c0)
+
+a0n0s0v2d0t0 a0n0s0v3d0t0 a0n1s0v2d0t0 a0n1s0v3d0t0 a1n0s0v2d0t0 a1n0s0v3d0t0 a1n1s0v2d0t0 a1n1s0v3d0t0
+SELECT DISTINCT t2.c0 AS c0 FROM delta_q t1 CROSS JOIN f.stat_docrange t3 CROSS JOIN p t2 CROSS JOIN docof t4 WHERE (t3.d = t1.c0) AND t2.c0 BETWEEN t3.lo AND t3.hi AND (t4.c0 = t2.c0) AND (t4.c1 = t1.c0)
+
+a0n0s0v2d0t1 a0n0s0v3d0t1 a0n1s0v2d0t1 a0n1s0v3d0t1 a1n0s0v2d0t1 a1n0s0v3d0t1 a1n1s0v2d0t1 a1n1s0v3d0t1
+SELECT DISTINCT t2.c0 AS c0 FROM delta_q t1 CROSS JOIN f.stat_docrange t3 CROSS JOIN full_p t2 CROSS JOIN full_docof t4 WHERE (t3.d = t1.c0) AND t2.c0 BETWEEN t3.lo AND t3.hi AND (t4.c0 = t2.c0) AND (t4.c1 = t1.c0)
+
+a0n0s0v2d1t0 a0n0s0v3d1t0 a0n1s0v2d1t0 a0n1s0v3d1t0 a1n0s0v2d1t0 a1n0s0v3d1t0 a1n1s0v2d1t0 a1n1s0v3d1t0
+SELECT DISTINCT t2.c0 AS c0 FROM q t1 CROSS JOIN f.stat_docrange t3 CROSS JOIN delta_p t2 CROSS JOIN docof t4 WHERE (t3.d = t1.c0) AND t2.c0 BETWEEN t3.lo AND t3.hi AND (t4.c0 = t2.c0) AND (t4.c1 = t1.c0)
+
+a0n0s0v2d1t1 a0n0s0v3d1t1 a0n1s0v2d1t1 a0n1s0v3d1t1 a1n0s0v2d1t1 a1n0s0v3d1t1 a1n1s0v2d1t1 a1n1s0v3d1t1
+SELECT DISTINCT t2.c0 AS c0 FROM full_q t1 CROSS JOIN f.stat_docrange t3 CROSS JOIN delta_p t2 CROSS JOIN full_docof t4 WHERE (t3.d = t1.c0) AND t2.c0 BETWEEN t3.lo AND t3.hi AND (t4.c0 = t2.c0) AND (t4.c1 = t1.c0)
+
+a0n0s1v2d-t0 a0n0s1v3d-t0 a0n1s1v2d-t0 a0n1s1v3d-t0 a1n0s1v2d-t0 a1n0s1v3d-t0 a1n1s1v2d-t0 a1n1s1v3d-t0
+SELECT DISTINCT t2.c0 AS c0 FROM q t1 CROSS JOIN p t2 CROSS JOIN docof t3 WHERE t2.c0 BETWEEN (t1.c0 * 4294967296) AND ((t1.c0 * 4294967296) + 4294967295) AND (t3.c0 = t2.c0) AND (t3.c1 = t1.c0)
+
+a0n0s1v2d-t1 a0n0s1v3d-t1 a0n1s1v2d-t1 a0n1s1v3d-t1 a1n0s1v2d-t1 a1n0s1v3d-t1 a1n1s1v2d-t1 a1n1s1v3d-t1
+SELECT DISTINCT t2.c0 AS c0 FROM full_q t1 CROSS JOIN full_p t2 CROSS JOIN full_docof t3 WHERE t2.c0 BETWEEN (t1.c0 * 4294967296) AND ((t1.c0 * 4294967296) + 4294967295) AND (t3.c0 = t2.c0) AND (t3.c1 = t1.c0)
+
+a0n0s1v2d0t0 a0n0s1v3d0t0 a0n1s1v2d0t0 a0n1s1v3d0t0 a1n0s1v2d0t0 a1n0s1v3d0t0 a1n1s1v2d0t0 a1n1s1v3d0t0
+SELECT DISTINCT t2.c0 AS c0 FROM delta_q t1 CROSS JOIN p t2 CROSS JOIN docof t3 WHERE t2.c0 BETWEEN (t1.c0 * 4294967296) AND ((t1.c0 * 4294967296) + 4294967295) AND (t3.c0 = t2.c0) AND (t3.c1 = t1.c0)
+
+a0n0s1v2d0t1 a0n0s1v3d0t1 a0n1s1v2d0t1 a0n1s1v3d0t1 a1n0s1v2d0t1 a1n0s1v3d0t1 a1n1s1v2d0t1 a1n1s1v3d0t1
+SELECT DISTINCT t2.c0 AS c0 FROM delta_q t1 CROSS JOIN full_p t2 CROSS JOIN full_docof t3 WHERE t2.c0 BETWEEN (t1.c0 * 4294967296) AND ((t1.c0 * 4294967296) + 4294967295) AND (t3.c0 = t2.c0) AND (t3.c1 = t1.c0)
+
+a0n0s1v2d1t0 a0n0s1v3d1t0 a0n1s1v2d1t0 a0n1s1v3d1t0 a1n0s1v2d1t0 a1n0s1v3d1t0 a1n1s1v2d1t0 a1n1s1v3d1t0
+SELECT DISTINCT t2.c0 AS c0 FROM q t1 CROSS JOIN delta_p t2 CROSS JOIN docof t3 WHERE t2.c0 BETWEEN (t1.c0 * 4294967296) AND ((t1.c0 * 4294967296) + 4294967295) AND (t3.c0 = t2.c0) AND (t3.c1 = t1.c0)
+
+a0n0s1v2d1t1 a0n0s1v3d1t1 a0n1s1v2d1t1 a0n1s1v3d1t1 a1n0s1v2d1t1 a1n0s1v3d1t1 a1n1s1v2d1t1 a1n1s1v3d1t1
+SELECT DISTINCT t2.c0 AS c0 FROM full_q t1 CROSS JOIN delta_p t2 CROSS JOIN full_docof t3 WHERE t2.c0 BETWEEN (t1.c0 * 4294967296) AND ((t1.c0 * 4294967296) + 4294967295) AND (t3.c0 = t2.c0) AND (t3.c1 = t1.c0)
+
+## rngc
+a0n0s0v0d-t0 a0n0s0v1d-t0 a0n0s1v0d-t0 a0n0s1v1d-t0 a0n1s0v0d-t0 a0n1s0v1d-t0 a0n1s1v0d-t0 a0n1s1v1d-t0 a1n0s0v0d-t0 a1n0s0v1d-t0 a1n0s1v0d-t0 a1n0s1v1d-t0 a1n1s0v0d-t0 a1n1s0v1d-t0 a1n1s1v0d-t0 a1n1s1v1d-t0
+SELECT DISTINCT t1.c0 AS c0 FROM p t1 CROSS JOIN docof t2 WHERE (t2.c0 = t1.c0) AND (t2.c1 = 3)
+
+a0n0s0v0d-t1 a0n0s0v1d-t1 a0n0s1v0d-t1 a0n0s1v1d-t1 a0n1s0v0d-t1 a0n1s0v1d-t1 a0n1s1v0d-t1 a0n1s1v1d-t1 a1n0s0v0d-t1 a1n0s0v1d-t1 a1n0s1v0d-t1 a1n0s1v1d-t1 a1n1s0v0d-t1 a1n1s0v1d-t1 a1n1s1v0d-t1 a1n1s1v1d-t1
+SELECT DISTINCT t1.c0 AS c0 FROM full_p t1 CROSS JOIN full_docof t2 WHERE (t2.c0 = t1.c0) AND (t2.c1 = 3)
+
+a0n0s0v0d0t0 a0n0s0v1d0t0 a0n0s1v0d0t0 a0n0s1v1d0t0 a0n1s0v0d0t0 a0n1s0v1d0t0 a0n1s1v0d0t0 a0n1s1v1d0t0 a1n0s0v0d0t0 a1n0s0v1d0t0 a1n0s1v0d0t0 a1n0s1v1d0t0 a1n1s0v0d0t0 a1n1s0v1d0t0 a1n1s1v0d0t0 a1n1s1v1d0t0
+SELECT DISTINCT t1.c0 AS c0 FROM delta_p t1 CROSS JOIN docof t2 WHERE (t2.c0 = t1.c0) AND (t2.c1 = 3)
+
+a0n0s0v0d0t1 a0n0s0v1d0t1 a0n0s1v0d0t1 a0n0s1v1d0t1 a0n1s0v0d0t1 a0n1s0v1d0t1 a0n1s1v0d0t1 a0n1s1v1d0t1 a1n0s0v0d0t1 a1n0s0v1d0t1 a1n0s1v0d0t1 a1n0s1v1d0t1 a1n1s0v0d0t1 a1n1s0v1d0t1 a1n1s1v0d0t1 a1n1s1v1d0t1
+SELECT DISTINCT t1.c0 AS c0 FROM delta_p t1 CROSS JOIN full_docof t2 WHERE (t2.c0 = t1.c0) AND (t2.c1 = 3)
+
+a0n0s0v0d1t0 a0n0s0v1d1t0 a0n0s1v0d1t0 a0n0s1v1d1t0 a0n1s0v0d1t0 a0n1s0v1d1t0 a0n1s1v0d1t0 a0n1s1v1d1t0 a1n0s0v0d1t0 a1n0s0v1d1t0 a1n0s1v0d1t0 a1n0s1v1d1t0 a1n1s0v0d1t0 a1n1s0v1d1t0 a1n1s1v0d1t0 a1n1s1v1d1t0
+SELECT DISTINCT t1.c0 AS c0 FROM p t1 CROSS JOIN delta_docof t2 WHERE (t2.c0 = t1.c0) AND (t2.c1 = 3)
+
+a0n0s0v0d1t1 a0n0s0v1d1t1 a0n0s1v0d1t1 a0n0s1v1d1t1 a0n1s0v0d1t1 a0n1s0v1d1t1 a0n1s1v0d1t1 a0n1s1v1d1t1 a1n0s0v0d1t1 a1n0s0v1d1t1 a1n0s1v0d1t1 a1n0s1v1d1t1 a1n1s0v0d1t1 a1n1s0v1d1t1 a1n1s1v0d1t1 a1n1s1v1d1t1
+SELECT DISTINCT t1.c0 AS c0 FROM full_p t1 CROSS JOIN delta_docof t2 WHERE (t2.c0 = t1.c0) AND (t2.c1 = 3)
+
+a0n0s0v2d-t0 a0n0s0v3d-t0 a0n1s0v2d-t0 a0n1s0v3d-t0 a1n0s0v2d-t0 a1n0s0v3d-t0 a1n1s0v2d-t0 a1n1s0v3d-t0
+SELECT DISTINCT t1.c0 AS c0 FROM f.stat_docrange t2 CROSS JOIN p t1 CROSS JOIN docof t3 WHERE (t2.d = 3) AND t1.c0 BETWEEN t2.lo AND t2.hi AND (t3.c0 = t1.c0) AND (t3.c1 = 3)
+
+a0n0s0v2d-t1 a0n0s0v3d-t1 a0n1s0v2d-t1 a0n1s0v3d-t1 a1n0s0v2d-t1 a1n0s0v3d-t1 a1n1s0v2d-t1 a1n1s0v3d-t1
+SELECT DISTINCT t1.c0 AS c0 FROM f.stat_docrange t2 CROSS JOIN full_p t1 CROSS JOIN full_docof t3 WHERE (t2.d = 3) AND t1.c0 BETWEEN t2.lo AND t2.hi AND (t3.c0 = t1.c0) AND (t3.c1 = 3)
+
+a0n0s0v2d0t0 a0n0s0v3d0t0 a0n1s0v2d0t0 a0n1s0v3d0t0 a1n0s0v2d0t0 a1n0s0v3d0t0 a1n1s0v2d0t0 a1n1s0v3d0t0
+SELECT DISTINCT t1.c0 AS c0 FROM f.stat_docrange t2 CROSS JOIN delta_p t1 CROSS JOIN docof t3 WHERE (t2.d = 3) AND t1.c0 BETWEEN t2.lo AND t2.hi AND (t3.c0 = t1.c0) AND (t3.c1 = 3)
+
+a0n0s0v2d0t1 a0n0s0v3d0t1 a0n1s0v2d0t1 a0n1s0v3d0t1 a1n0s0v2d0t1 a1n0s0v3d0t1 a1n1s0v2d0t1 a1n1s0v3d0t1
+SELECT DISTINCT t1.c0 AS c0 FROM f.stat_docrange t2 CROSS JOIN delta_p t1 CROSS JOIN full_docof t3 WHERE (t2.d = 3) AND t1.c0 BETWEEN t2.lo AND t2.hi AND (t3.c0 = t1.c0) AND (t3.c1 = 3)
+
+a0n0s0v2d1t0 a0n0s0v3d1t0 a0n1s0v2d1t0 a0n1s0v3d1t0 a1n0s0v2d1t0 a1n0s0v3d1t0 a1n1s0v2d1t0 a1n1s0v3d1t0
+SELECT DISTINCT t1.c0 AS c0 FROM f.stat_docrange t2 CROSS JOIN p t1 CROSS JOIN delta_docof t3 WHERE (t2.d = 3) AND t1.c0 BETWEEN t2.lo AND t2.hi AND (t3.c0 = t1.c0) AND (t3.c1 = 3)
+
+a0n0s0v2d1t1 a0n0s0v3d1t1 a0n1s0v2d1t1 a0n1s0v3d1t1 a1n0s0v2d1t1 a1n0s0v3d1t1 a1n1s0v2d1t1 a1n1s0v3d1t1
+SELECT DISTINCT t1.c0 AS c0 FROM f.stat_docrange t2 CROSS JOIN full_p t1 CROSS JOIN delta_docof t3 WHERE (t2.d = 3) AND t1.c0 BETWEEN t2.lo AND t2.hi AND (t3.c0 = t1.c0) AND (t3.c1 = 3)
+
+a0n0s1v2d-t0 a0n0s1v3d-t0 a0n1s1v2d-t0 a0n1s1v3d-t0 a1n0s1v2d-t0 a1n0s1v3d-t0 a1n1s1v2d-t0 a1n1s1v3d-t0
+SELECT DISTINCT t1.c0 AS c0 FROM p t1 CROSS JOIN docof t2 WHERE t1.c0 BETWEEN (3 * 4294967296) AND ((3 * 4294967296) + 4294967295) AND (t2.c0 = t1.c0) AND (t2.c1 = 3)
+
+a0n0s1v2d-t1 a0n0s1v3d-t1 a0n1s1v2d-t1 a0n1s1v3d-t1 a1n0s1v2d-t1 a1n0s1v3d-t1 a1n1s1v2d-t1 a1n1s1v3d-t1
+SELECT DISTINCT t1.c0 AS c0 FROM full_p t1 CROSS JOIN full_docof t2 WHERE t1.c0 BETWEEN (3 * 4294967296) AND ((3 * 4294967296) + 4294967295) AND (t2.c0 = t1.c0) AND (t2.c1 = 3)
+
+a0n0s1v2d0t0 a0n0s1v3d0t0 a0n1s1v2d0t0 a0n1s1v3d0t0 a1n0s1v2d0t0 a1n0s1v3d0t0 a1n1s1v2d0t0 a1n1s1v3d0t0
+SELECT DISTINCT t1.c0 AS c0 FROM delta_p t1 CROSS JOIN docof t2 WHERE t1.c0 BETWEEN (3 * 4294967296) AND ((3 * 4294967296) + 4294967295) AND (t2.c0 = t1.c0) AND (t2.c1 = 3)
+
+a0n0s1v2d0t1 a0n0s1v3d0t1 a0n1s1v2d0t1 a0n1s1v3d0t1 a1n0s1v2d0t1 a1n0s1v3d0t1 a1n1s1v2d0t1 a1n1s1v3d0t1
+SELECT DISTINCT t1.c0 AS c0 FROM delta_p t1 CROSS JOIN full_docof t2 WHERE t1.c0 BETWEEN (3 * 4294967296) AND ((3 * 4294967296) + 4294967295) AND (t2.c0 = t1.c0) AND (t2.c1 = 3)
+
+a0n0s1v2d1t0 a0n0s1v3d1t0 a0n1s1v2d1t0 a0n1s1v3d1t0 a1n0s1v2d1t0 a1n0s1v3d1t0 a1n1s1v2d1t0 a1n1s1v3d1t0
+SELECT DISTINCT t1.c0 AS c0 FROM p t1 CROSS JOIN delta_docof t2 WHERE t1.c0 BETWEEN (3 * 4294967296) AND ((3 * 4294967296) + 4294967295) AND (t2.c0 = t1.c0) AND (t2.c1 = 3)
+
+a0n0s1v2d1t1 a0n0s1v3d1t1 a0n1s1v2d1t1 a0n1s1v3d1t1 a1n0s1v2d1t1 a1n0s1v3d1t1 a1n1s1v2d1t1 a1n1s1v3d1t1
+SELECT DISTINCT t1.c0 AS c0 FROM full_p t1 CROSS JOIN delta_docof t2 WHERE t1.c0 BETWEEN (3 * 4294967296) AND ((3 * 4294967296) + 4294967295) AND (t2.c0 = t1.c0) AND (t2.c1 = 3)
+
+## sp
+a0n0s0v0d-t0 a0n0s0v1d-t0 a0n0s0v2d-t0 a0n0s0v3d-t0 a0n0s1v0d-t0 a0n0s1v1d-t0 a0n0s1v2d-t0 a0n0s1v3d-t0 a0n1s0v0d-t0 a0n1s0v1d-t0 a0n1s0v2d-t0 a0n1s0v3d-t0 a0n1s1v0d-t0 a0n1s1v1d-t0 a0n1s1v2d-t0 a0n1s1v3d-t0
+SELECT DISTINCT CASE WHEN (t2.c0 = '') THEN t1.c0 ELSE substr(t1.c0, (length(t2.c0) + 2)) END AS c0 FROM name t1 CROSS JOIN pre t2 WHERE ((t2.c0 = '') OR (substr(t1.c0, 1, (length(t2.c0) + 1)) = (t2.c0 || '.')))
+
+a0n0s0v0d-t1 a0n0s0v1d-t1 a0n0s0v2d-t1 a0n0s0v3d-t1 a0n0s1v0d-t1 a0n0s1v1d-t1 a0n0s1v2d-t1 a0n0s1v3d-t1 a0n1s0v0d-t1 a0n1s0v1d-t1 a0n1s0v2d-t1 a0n1s0v3d-t1 a0n1s1v0d-t1 a0n1s1v1d-t1 a0n1s1v2d-t1 a0n1s1v3d-t1
+SELECT DISTINCT CASE WHEN (t2.c0 = '') THEN t1.c0 ELSE substr(t1.c0, (length(t2.c0) + 2)) END AS c0 FROM full_name t1 CROSS JOIN full_pre t2 WHERE ((t2.c0 = '') OR (substr(t1.c0, 1, (length(t2.c0) + 1)) = (t2.c0 || '.')))
+
+a0n0s0v0d0t0 a0n0s0v1d0t0 a0n0s0v2d0t0 a0n0s0v3d0t0 a0n0s1v0d0t0 a0n0s1v1d0t0 a0n0s1v2d0t0 a0n0s1v3d0t0 a0n1s0v0d0t0 a0n1s0v1d0t0 a0n1s0v2d0t0 a0n1s0v3d0t0 a0n1s1v0d0t0 a0n1s1v1d0t0 a0n1s1v2d0t0 a0n1s1v3d0t0
+SELECT DISTINCT CASE WHEN (t2.c0 = '') THEN t1.c0 ELSE substr(t1.c0, (length(t2.c0) + 2)) END AS c0 FROM delta_name t1 CROSS JOIN pre t2 WHERE ((t2.c0 = '') OR (substr(t1.c0, 1, (length(t2.c0) + 1)) = (t2.c0 || '.')))
+
+a0n0s0v0d0t1 a0n0s0v1d0t1 a0n0s0v2d0t1 a0n0s0v3d0t1 a0n0s1v0d0t1 a0n0s1v1d0t1 a0n0s1v2d0t1 a0n0s1v3d0t1 a0n1s0v0d0t1 a0n1s0v1d0t1 a0n1s0v2d0t1 a0n1s0v3d0t1 a0n1s1v0d0t1 a0n1s1v1d0t1 a0n1s1v2d0t1 a0n1s1v3d0t1
+SELECT DISTINCT CASE WHEN (t2.c0 = '') THEN t1.c0 ELSE substr(t1.c0, (length(t2.c0) + 2)) END AS c0 FROM delta_name t1 CROSS JOIN full_pre t2 WHERE ((t2.c0 = '') OR (substr(t1.c0, 1, (length(t2.c0) + 1)) = (t2.c0 || '.')))
+
+a0n0s0v0d1t0 a0n0s0v1d1t0 a0n0s0v2d1t0 a0n0s0v3d1t0 a0n0s1v0d1t0 a0n0s1v1d1t0 a0n0s1v2d1t0 a0n0s1v3d1t0 a0n1s0v0d1t0 a0n1s0v1d1t0 a0n1s0v2d1t0 a0n1s0v3d1t0 a0n1s1v0d1t0 a0n1s1v1d1t0 a0n1s1v2d1t0 a0n1s1v3d1t0
+SELECT DISTINCT CASE WHEN (t2.c0 = '') THEN t1.c0 ELSE substr(t1.c0, (length(t2.c0) + 2)) END AS c0 FROM name t1 CROSS JOIN delta_pre t2 WHERE ((t2.c0 = '') OR (substr(t1.c0, 1, (length(t2.c0) + 1)) = (t2.c0 || '.')))
+
+a0n0s0v0d1t1 a0n0s0v1d1t1 a0n0s0v2d1t1 a0n0s0v3d1t1 a0n0s1v0d1t1 a0n0s1v1d1t1 a0n0s1v2d1t1 a0n0s1v3d1t1 a0n1s0v0d1t1 a0n1s0v1d1t1 a0n1s0v2d1t1 a0n1s0v3d1t1 a0n1s1v0d1t1 a0n1s1v1d1t1 a0n1s1v2d1t1 a0n1s1v3d1t1
+SELECT DISTINCT CASE WHEN (t2.c0 = '') THEN t1.c0 ELSE substr(t1.c0, (length(t2.c0) + 2)) END AS c0 FROM full_name t1 CROSS JOIN delta_pre t2 WHERE ((t2.c0 = '') OR (substr(t1.c0, 1, (length(t2.c0) + 1)) = (t2.c0 || '.')))
+
+a1n0s0v0d-t0 a1n0s0v1d-t0 a1n0s0v2d-t0 a1n0s0v3d-t0 a1n0s1v0d-t0 a1n0s1v1d-t0 a1n0s1v2d-t0 a1n0s1v3d-t0 a1n1s0v0d-t0 a1n1s0v1d-t0 a1n1s0v2d-t0 a1n1s0v3d-t0 a1n1s1v0d-t0 a1n1s1v1d-t0 a1n1s1v2d-t0 a1n1s1v3d-t0
+SELECT DISTINCT sym_atom(CASE WHEN (sym_text(t2.c0) = '') THEN sym_text(t1.c0) ELSE substr(sym_text(t1.c0), (length(sym_text(t2.c0)) + 2)) END) AS c0 FROM name t1 CROSS JOIN pre t2 WHERE ((sym_text(t2.c0) = '') OR (substr(sym_text(t1.c0), 1, (length(sym_text(t2.c0)) + 1)) = (sym_text(t2.c0) || '.')))
+
+a1n0s0v0d-t1 a1n0s0v1d-t1 a1n0s0v2d-t1 a1n0s0v3d-t1 a1n0s1v0d-t1 a1n0s1v1d-t1 a1n0s1v2d-t1 a1n0s1v3d-t1 a1n1s0v0d-t1 a1n1s0v1d-t1 a1n1s0v2d-t1 a1n1s0v3d-t1 a1n1s1v0d-t1 a1n1s1v1d-t1 a1n1s1v2d-t1 a1n1s1v3d-t1
+SELECT DISTINCT sym_atom(CASE WHEN (sym_text(t2.c0) = '') THEN sym_text(t1.c0) ELSE substr(sym_text(t1.c0), (length(sym_text(t2.c0)) + 2)) END) AS c0 FROM full_name t1 CROSS JOIN full_pre t2 WHERE ((sym_text(t2.c0) = '') OR (substr(sym_text(t1.c0), 1, (length(sym_text(t2.c0)) + 1)) = (sym_text(t2.c0) || '.')))
+
+a1n0s0v0d0t0 a1n0s0v1d0t0 a1n0s0v2d0t0 a1n0s0v3d0t0 a1n0s1v0d0t0 a1n0s1v1d0t0 a1n0s1v2d0t0 a1n0s1v3d0t0 a1n1s0v0d0t0 a1n1s0v1d0t0 a1n1s0v2d0t0 a1n1s0v3d0t0 a1n1s1v0d0t0 a1n1s1v1d0t0 a1n1s1v2d0t0 a1n1s1v3d0t0
+SELECT DISTINCT sym_atom(CASE WHEN (sym_text(t2.c0) = '') THEN sym_text(t1.c0) ELSE substr(sym_text(t1.c0), (length(sym_text(t2.c0)) + 2)) END) AS c0 FROM delta_name t1 CROSS JOIN pre t2 WHERE ((sym_text(t2.c0) = '') OR (substr(sym_text(t1.c0), 1, (length(sym_text(t2.c0)) + 1)) = (sym_text(t2.c0) || '.')))
+
+a1n0s0v0d0t1 a1n0s0v1d0t1 a1n0s0v2d0t1 a1n0s0v3d0t1 a1n0s1v0d0t1 a1n0s1v1d0t1 a1n0s1v2d0t1 a1n0s1v3d0t1 a1n1s0v0d0t1 a1n1s0v1d0t1 a1n1s0v2d0t1 a1n1s0v3d0t1 a1n1s1v0d0t1 a1n1s1v1d0t1 a1n1s1v2d0t1 a1n1s1v3d0t1
+SELECT DISTINCT sym_atom(CASE WHEN (sym_text(t2.c0) = '') THEN sym_text(t1.c0) ELSE substr(sym_text(t1.c0), (length(sym_text(t2.c0)) + 2)) END) AS c0 FROM delta_name t1 CROSS JOIN full_pre t2 WHERE ((sym_text(t2.c0) = '') OR (substr(sym_text(t1.c0), 1, (length(sym_text(t2.c0)) + 1)) = (sym_text(t2.c0) || '.')))
+
+a1n0s0v0d1t0 a1n0s0v1d1t0 a1n0s0v2d1t0 a1n0s0v3d1t0 a1n0s1v0d1t0 a1n0s1v1d1t0 a1n0s1v2d1t0 a1n0s1v3d1t0 a1n1s0v0d1t0 a1n1s0v1d1t0 a1n1s0v2d1t0 a1n1s0v3d1t0 a1n1s1v0d1t0 a1n1s1v1d1t0 a1n1s1v2d1t0 a1n1s1v3d1t0
+SELECT DISTINCT sym_atom(CASE WHEN (sym_text(t2.c0) = '') THEN sym_text(t1.c0) ELSE substr(sym_text(t1.c0), (length(sym_text(t2.c0)) + 2)) END) AS c0 FROM name t1 CROSS JOIN delta_pre t2 WHERE ((sym_text(t2.c0) = '') OR (substr(sym_text(t1.c0), 1, (length(sym_text(t2.c0)) + 1)) = (sym_text(t2.c0) || '.')))
+
+a1n0s0v0d1t1 a1n0s0v1d1t1 a1n0s0v2d1t1 a1n0s0v3d1t1 a1n0s1v0d1t1 a1n0s1v1d1t1 a1n0s1v2d1t1 a1n0s1v3d1t1 a1n1s0v0d1t1 a1n1s0v1d1t1 a1n1s0v2d1t1 a1n1s0v3d1t1 a1n1s1v0d1t1 a1n1s1v1d1t1 a1n1s1v2d1t1 a1n1s1v3d1t1
+SELECT DISTINCT sym_atom(CASE WHEN (sym_text(t2.c0) = '') THEN sym_text(t1.c0) ELSE substr(sym_text(t1.c0), (length(sym_text(t2.c0)) + 2)) END) AS c0 FROM full_name t1 CROSS JOIN delta_pre t2 WHERE ((sym_text(t2.c0) = '') OR (substr(sym_text(t1.c0), 1, (length(sym_text(t2.c0)) + 1)) = (sym_text(t2.c0) || '.')))
+
+## ss
+a0n0s0v0d-t0 a0n0s0v1d-t0 a0n0s0v2d-t0 a0n0s0v3d-t0 a0n0s1v0d-t0 a0n0s1v1d-t0 a0n0s1v2d-t0 a0n0s1v3d-t0 a0n1s0v0d-t0 a0n1s0v1d-t0 a0n1s0v2d-t0 a0n1s0v3d-t0 a0n1s1v0d-t0 a0n1s1v1d-t0 a0n1s1v2d-t0 a0n1s1v3d-t0
+SELECT DISTINCT CASE WHEN (t1.c0 = t2.c0) THEN '' ELSE substr(t1.c0, 1, ((length(t1.c0) - length(t2.c0)) - 1)) END AS c0 FROM name t1 CROSS JOIN suf t2 WHERE ((t1.c0 = t2.c0) OR ((substr(t1.c0, ((-length(t2.c0)) - 1)) = ('.' || t2.c0)) AND (length(t1.c0) > (length(t2.c0) + 1))))
+
+a0n0s0v0d-t1 a0n0s0v1d-t1 a0n0s0v2d-t1 a0n0s0v3d-t1 a0n0s1v0d-t1 a0n0s1v1d-t1 a0n0s1v2d-t1 a0n0s1v3d-t1 a0n1s0v0d-t1 a0n1s0v1d-t1 a0n1s0v2d-t1 a0n1s0v3d-t1 a0n1s1v0d-t1 a0n1s1v1d-t1 a0n1s1v2d-t1 a0n1s1v3d-t1
+SELECT DISTINCT CASE WHEN (t1.c0 = t2.c0) THEN '' ELSE substr(t1.c0, 1, ((length(t1.c0) - length(t2.c0)) - 1)) END AS c0 FROM full_name t1 CROSS JOIN full_suf t2 WHERE ((t1.c0 = t2.c0) OR ((substr(t1.c0, ((-length(t2.c0)) - 1)) = ('.' || t2.c0)) AND (length(t1.c0) > (length(t2.c0) + 1))))
+
+a0n0s0v0d0t0 a0n0s0v1d0t0 a0n0s0v2d0t0 a0n0s0v3d0t0 a0n0s1v0d0t0 a0n0s1v1d0t0 a0n0s1v2d0t0 a0n0s1v3d0t0 a0n1s0v0d0t0 a0n1s0v1d0t0 a0n1s0v2d0t0 a0n1s0v3d0t0 a0n1s1v0d0t0 a0n1s1v1d0t0 a0n1s1v2d0t0 a0n1s1v3d0t0
+SELECT DISTINCT CASE WHEN (t1.c0 = t2.c0) THEN '' ELSE substr(t1.c0, 1, ((length(t1.c0) - length(t2.c0)) - 1)) END AS c0 FROM delta_name t1 CROSS JOIN suf t2 WHERE ((t1.c0 = t2.c0) OR ((substr(t1.c0, ((-length(t2.c0)) - 1)) = ('.' || t2.c0)) AND (length(t1.c0) > (length(t2.c0) + 1))))
+
+a0n0s0v0d0t1 a0n0s0v1d0t1 a0n0s0v2d0t1 a0n0s0v3d0t1 a0n0s1v0d0t1 a0n0s1v1d0t1 a0n0s1v2d0t1 a0n0s1v3d0t1 a0n1s0v0d0t1 a0n1s0v1d0t1 a0n1s0v2d0t1 a0n1s0v3d0t1 a0n1s1v0d0t1 a0n1s1v1d0t1 a0n1s1v2d0t1 a0n1s1v3d0t1
+SELECT DISTINCT CASE WHEN (t1.c0 = t2.c0) THEN '' ELSE substr(t1.c0, 1, ((length(t1.c0) - length(t2.c0)) - 1)) END AS c0 FROM delta_name t1 CROSS JOIN full_suf t2 WHERE ((t1.c0 = t2.c0) OR ((substr(t1.c0, ((-length(t2.c0)) - 1)) = ('.' || t2.c0)) AND (length(t1.c0) > (length(t2.c0) + 1))))
+
+a0n0s0v0d1t0 a0n0s0v1d1t0 a0n0s0v2d1t0 a0n0s0v3d1t0 a0n0s1v0d1t0 a0n0s1v1d1t0 a0n0s1v2d1t0 a0n0s1v3d1t0 a0n1s0v0d1t0 a0n1s0v1d1t0 a0n1s0v2d1t0 a0n1s0v3d1t0 a0n1s1v0d1t0 a0n1s1v1d1t0 a0n1s1v2d1t0 a0n1s1v3d1t0
+SELECT DISTINCT CASE WHEN (t1.c0 = t2.c0) THEN '' ELSE substr(t1.c0, 1, ((length(t1.c0) - length(t2.c0)) - 1)) END AS c0 FROM name t1 CROSS JOIN delta_suf t2 WHERE ((t1.c0 = t2.c0) OR ((substr(t1.c0, ((-length(t2.c0)) - 1)) = ('.' || t2.c0)) AND (length(t1.c0) > (length(t2.c0) + 1))))
+
+a0n0s0v0d1t1 a0n0s0v1d1t1 a0n0s0v2d1t1 a0n0s0v3d1t1 a0n0s1v0d1t1 a0n0s1v1d1t1 a0n0s1v2d1t1 a0n0s1v3d1t1 a0n1s0v0d1t1 a0n1s0v1d1t1 a0n1s0v2d1t1 a0n1s0v3d1t1 a0n1s1v0d1t1 a0n1s1v1d1t1 a0n1s1v2d1t1 a0n1s1v3d1t1
+SELECT DISTINCT CASE WHEN (t1.c0 = t2.c0) THEN '' ELSE substr(t1.c0, 1, ((length(t1.c0) - length(t2.c0)) - 1)) END AS c0 FROM full_name t1 CROSS JOIN delta_suf t2 WHERE ((t1.c0 = t2.c0) OR ((substr(t1.c0, ((-length(t2.c0)) - 1)) = ('.' || t2.c0)) AND (length(t1.c0) > (length(t2.c0) + 1))))
+
+a1n0s0v0d-t0 a1n0s0v1d-t0 a1n0s0v2d-t0 a1n0s0v3d-t0 a1n0s1v0d-t0 a1n0s1v1d-t0 a1n0s1v2d-t0 a1n0s1v3d-t0 a1n1s0v0d-t0 a1n1s0v1d-t0 a1n1s0v2d-t0 a1n1s0v3d-t0 a1n1s1v0d-t0 a1n1s1v1d-t0 a1n1s1v2d-t0 a1n1s1v3d-t0
+SELECT DISTINCT sym_atom(CASE WHEN (sym_text(t1.c0) = sym_text(t2.c0)) THEN '' ELSE substr(sym_text(t1.c0), 1, ((length(sym_text(t1.c0)) - length(sym_text(t2.c0))) - 1)) END) AS c0 FROM name t1 CROSS JOIN suf t2 WHERE ((sym_text(t1.c0) = sym_text(t2.c0)) OR ((substr(sym_text(t1.c0), ((-length(sym_text(t2.c0))) - 1)) = ('.' || sym_text(t2.c0))) AND (length(sym_text(t1.c0)) > (length(sym_text(t2.c0)) + 1))))
+
+a1n0s0v0d-t1 a1n0s0v1d-t1 a1n0s0v2d-t1 a1n0s0v3d-t1 a1n0s1v0d-t1 a1n0s1v1d-t1 a1n0s1v2d-t1 a1n0s1v3d-t1 a1n1s0v0d-t1 a1n1s0v1d-t1 a1n1s0v2d-t1 a1n1s0v3d-t1 a1n1s1v0d-t1 a1n1s1v1d-t1 a1n1s1v2d-t1 a1n1s1v3d-t1
+SELECT DISTINCT sym_atom(CASE WHEN (sym_text(t1.c0) = sym_text(t2.c0)) THEN '' ELSE substr(sym_text(t1.c0), 1, ((length(sym_text(t1.c0)) - length(sym_text(t2.c0))) - 1)) END) AS c0 FROM full_name t1 CROSS JOIN full_suf t2 WHERE ((sym_text(t1.c0) = sym_text(t2.c0)) OR ((substr(sym_text(t1.c0), ((-length(sym_text(t2.c0))) - 1)) = ('.' || sym_text(t2.c0))) AND (length(sym_text(t1.c0)) > (length(sym_text(t2.c0)) + 1))))
+
+a1n0s0v0d0t0 a1n0s0v1d0t0 a1n0s0v2d0t0 a1n0s0v3d0t0 a1n0s1v0d0t0 a1n0s1v1d0t0 a1n0s1v2d0t0 a1n0s1v3d0t0 a1n1s0v0d0t0 a1n1s0v1d0t0 a1n1s0v2d0t0 a1n1s0v3d0t0 a1n1s1v0d0t0 a1n1s1v1d0t0 a1n1s1v2d0t0 a1n1s1v3d0t0
+SELECT DISTINCT sym_atom(CASE WHEN (sym_text(t1.c0) = sym_text(t2.c0)) THEN '' ELSE substr(sym_text(t1.c0), 1, ((length(sym_text(t1.c0)) - length(sym_text(t2.c0))) - 1)) END) AS c0 FROM delta_name t1 CROSS JOIN suf t2 WHERE ((sym_text(t1.c0) = sym_text(t2.c0)) OR ((substr(sym_text(t1.c0), ((-length(sym_text(t2.c0))) - 1)) = ('.' || sym_text(t2.c0))) AND (length(sym_text(t1.c0)) > (length(sym_text(t2.c0)) + 1))))
+
+a1n0s0v0d0t1 a1n0s0v1d0t1 a1n0s0v2d0t1 a1n0s0v3d0t1 a1n0s1v0d0t1 a1n0s1v1d0t1 a1n0s1v2d0t1 a1n0s1v3d0t1 a1n1s0v0d0t1 a1n1s0v1d0t1 a1n1s0v2d0t1 a1n1s0v3d0t1 a1n1s1v0d0t1 a1n1s1v1d0t1 a1n1s1v2d0t1 a1n1s1v3d0t1
+SELECT DISTINCT sym_atom(CASE WHEN (sym_text(t1.c0) = sym_text(t2.c0)) THEN '' ELSE substr(sym_text(t1.c0), 1, ((length(sym_text(t1.c0)) - length(sym_text(t2.c0))) - 1)) END) AS c0 FROM delta_name t1 CROSS JOIN full_suf t2 WHERE ((sym_text(t1.c0) = sym_text(t2.c0)) OR ((substr(sym_text(t1.c0), ((-length(sym_text(t2.c0))) - 1)) = ('.' || sym_text(t2.c0))) AND (length(sym_text(t1.c0)) > (length(sym_text(t2.c0)) + 1))))
+
+a1n0s0v0d1t0 a1n0s0v1d1t0 a1n0s0v2d1t0 a1n0s0v3d1t0 a1n0s1v0d1t0 a1n0s1v1d1t0 a1n0s1v2d1t0 a1n0s1v3d1t0 a1n1s0v0d1t0 a1n1s0v1d1t0 a1n1s0v2d1t0 a1n1s0v3d1t0 a1n1s1v0d1t0 a1n1s1v1d1t0 a1n1s1v2d1t0 a1n1s1v3d1t0
+SELECT DISTINCT sym_atom(CASE WHEN (sym_text(t1.c0) = sym_text(t2.c0)) THEN '' ELSE substr(sym_text(t1.c0), 1, ((length(sym_text(t1.c0)) - length(sym_text(t2.c0))) - 1)) END) AS c0 FROM name t1 CROSS JOIN delta_suf t2 WHERE ((sym_text(t1.c0) = sym_text(t2.c0)) OR ((substr(sym_text(t1.c0), ((-length(sym_text(t2.c0))) - 1)) = ('.' || sym_text(t2.c0))) AND (length(sym_text(t1.c0)) > (length(sym_text(t2.c0)) + 1))))
+
+a1n0s0v0d1t1 a1n0s0v1d1t1 a1n0s0v2d1t1 a1n0s0v3d1t1 a1n0s1v0d1t1 a1n0s1v1d1t1 a1n0s1v2d1t1 a1n0s1v3d1t1 a1n1s0v0d1t1 a1n1s0v1d1t1 a1n1s0v2d1t1 a1n1s0v3d1t1 a1n1s1v0d1t1 a1n1s1v1d1t1 a1n1s1v2d1t1 a1n1s1v3d1t1
+SELECT DISTINCT sym_atom(CASE WHEN (sym_text(t1.c0) = sym_text(t2.c0)) THEN '' ELSE substr(sym_text(t1.c0), 1, ((length(sym_text(t1.c0)) - length(sym_text(t2.c0))) - 1)) END) AS c0 FROM full_name t1 CROSS JOIN delta_suf t2 WHERE ((sym_text(t1.c0) = sym_text(t2.c0)) OR ((substr(sym_text(t1.c0), ((-length(sym_text(t2.c0))) - 1)) = ('.' || sym_text(t2.c0))) AND (length(sym_text(t1.c0)) > (length(sym_text(t2.c0)) + 1))))
+
+## se
+a0n0s0v0d-t0 a0n0s0v0d1t0 a0n0s0v1d-t0 a0n0s0v1d1t0 a0n0s0v2d-t0 a0n0s0v2d1t0 a0n0s0v3d-t0 a0n0s0v3d1t0 a0n0s1v0d-t0 a0n0s1v0d1t0 a0n0s1v1d-t0 a0n0s1v1d1t0 a0n0s1v2d-t0 a0n0s1v2d1t0 a0n0s1v3d-t0 a0n0s1v3d1t0 a0n1s0v0d-t0 a0n1s0v0d1t0 a0n1s0v1d-t0 a0n1s0v1d1t0 a0n1s0v2d-t0 a0n1s0v2d1t0 a0n1s0v3d-t0 a0n1s0v3d1t0 a0n1s1v0d-t0 a0n1s1v0d1t0 a0n1s1v1d-t0 a0n1s1v1d1t0 a0n1s1v2d-t0 a0n1s1v2d1t0 a0n1s1v3d-t0 a0n1s1v3d1t0
+SELECT DISTINCT substr(t1.c0, 1, (t2.i - 1)) AS c0, CASE WHEN (t2.i = 1) THEN t1.c0 ELSE substr(t1.c0, (t2.i + 1)) END AS c1 FROM name t1 CROSS JOIN (WITH RECURSIVE rdl_i(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM rdl_i WHERE i < 4096) SELECT i FROM rdl_i) t2 WHERE (t2.i <= max(length(t1.c0), 1)) AND ((t2.i = 1) OR (substr(t1.c0, t2.i, 1) = '.'))
+
+a0n0s0v0d-t1 a0n0s0v0d1t1 a0n0s0v1d-t1 a0n0s0v1d1t1 a0n0s0v2d-t1 a0n0s0v2d1t1 a0n0s0v3d-t1 a0n0s0v3d1t1 a0n0s1v0d-t1 a0n0s1v0d1t1 a0n0s1v1d-t1 a0n0s1v1d1t1 a0n0s1v2d-t1 a0n0s1v2d1t1 a0n0s1v3d-t1 a0n0s1v3d1t1 a0n1s0v0d-t1 a0n1s0v0d1t1 a0n1s0v1d-t1 a0n1s0v1d1t1 a0n1s0v2d-t1 a0n1s0v2d1t1 a0n1s0v3d-t1 a0n1s0v3d1t1 a0n1s1v0d-t1 a0n1s1v0d1t1 a0n1s1v1d-t1 a0n1s1v1d1t1 a0n1s1v2d-t1 a0n1s1v2d1t1 a0n1s1v3d-t1 a0n1s1v3d1t1
+SELECT DISTINCT substr(t1.c0, 1, (t2.i - 1)) AS c0, CASE WHEN (t2.i = 1) THEN t1.c0 ELSE substr(t1.c0, (t2.i + 1)) END AS c1 FROM full_name t1 CROSS JOIN (WITH RECURSIVE rdl_i(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM rdl_i WHERE i < 4096) SELECT i FROM rdl_i) t2 WHERE (t2.i <= max(length(t1.c0), 1)) AND ((t2.i = 1) OR (substr(t1.c0, t2.i, 1) = '.'))
+
+a0n0s0v0d0t0 a0n0s0v0d0t1 a0n0s0v1d0t0 a0n0s0v1d0t1 a0n0s0v2d0t0 a0n0s0v2d0t1 a0n0s0v3d0t0 a0n0s0v3d0t1 a0n0s1v0d0t0 a0n0s1v0d0t1 a0n0s1v1d0t0 a0n0s1v1d0t1 a0n0s1v2d0t0 a0n0s1v2d0t1 a0n0s1v3d0t0 a0n0s1v3d0t1 a0n1s0v0d0t0 a0n1s0v0d0t1 a0n1s0v1d0t0 a0n1s0v1d0t1 a0n1s0v2d0t0 a0n1s0v2d0t1 a0n1s0v3d0t0 a0n1s0v3d0t1 a0n1s1v0d0t0 a0n1s1v0d0t1 a0n1s1v1d0t0 a0n1s1v1d0t1 a0n1s1v2d0t0 a0n1s1v2d0t1 a0n1s1v3d0t0 a0n1s1v3d0t1
+SELECT DISTINCT substr(t1.c0, 1, (t2.i - 1)) AS c0, CASE WHEN (t2.i = 1) THEN t1.c0 ELSE substr(t1.c0, (t2.i + 1)) END AS c1 FROM delta_name t1 CROSS JOIN (WITH RECURSIVE rdl_i(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM rdl_i WHERE i < 4096) SELECT i FROM rdl_i) t2 WHERE (t2.i <= max(length(t1.c0), 1)) AND ((t2.i = 1) OR (substr(t1.c0, t2.i, 1) = '.'))
+
+a1n0s0v0d-t0 a1n0s0v0d1t0 a1n0s0v1d-t0 a1n0s0v1d1t0 a1n0s0v2d-t0 a1n0s0v2d1t0 a1n0s0v3d-t0 a1n0s0v3d1t0 a1n0s1v0d-t0 a1n0s1v0d1t0 a1n0s1v1d-t0 a1n0s1v1d1t0 a1n0s1v2d-t0 a1n0s1v2d1t0 a1n0s1v3d-t0 a1n0s1v3d1t0 a1n1s0v0d-t0 a1n1s0v0d1t0 a1n1s0v1d-t0 a1n1s0v1d1t0 a1n1s0v2d-t0 a1n1s0v2d1t0 a1n1s0v3d-t0 a1n1s0v3d1t0 a1n1s1v0d-t0 a1n1s1v0d1t0 a1n1s1v1d-t0 a1n1s1v1d1t0 a1n1s1v2d-t0 a1n1s1v2d1t0 a1n1s1v3d-t0 a1n1s1v3d1t0
+SELECT DISTINCT sym_atom(substr(sym_text(t1.c0), 1, (t2.i - 1))) AS c0, sym_atom(CASE WHEN (t2.i = 1) THEN sym_text(t1.c0) ELSE substr(sym_text(t1.c0), (t2.i + 1)) END) AS c1 FROM name t1 CROSS JOIN (WITH RECURSIVE rdl_i(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM rdl_i WHERE i < 4096) SELECT i FROM rdl_i) t2 WHERE (t2.i <= max(length(sym_text(t1.c0)), 1)) AND ((t2.i = 1) OR (substr(sym_text(t1.c0), t2.i, 1) = '.'))
+
+a1n0s0v0d-t1 a1n0s0v0d1t1 a1n0s0v1d-t1 a1n0s0v1d1t1 a1n0s0v2d-t1 a1n0s0v2d1t1 a1n0s0v3d-t1 a1n0s0v3d1t1 a1n0s1v0d-t1 a1n0s1v0d1t1 a1n0s1v1d-t1 a1n0s1v1d1t1 a1n0s1v2d-t1 a1n0s1v2d1t1 a1n0s1v3d-t1 a1n0s1v3d1t1 a1n1s0v0d-t1 a1n1s0v0d1t1 a1n1s0v1d-t1 a1n1s0v1d1t1 a1n1s0v2d-t1 a1n1s0v2d1t1 a1n1s0v3d-t1 a1n1s0v3d1t1 a1n1s1v0d-t1 a1n1s1v0d1t1 a1n1s1v1d-t1 a1n1s1v1d1t1 a1n1s1v2d-t1 a1n1s1v2d1t1 a1n1s1v3d-t1 a1n1s1v3d1t1
+SELECT DISTINCT sym_atom(substr(sym_text(t1.c0), 1, (t2.i - 1))) AS c0, sym_atom(CASE WHEN (t2.i = 1) THEN sym_text(t1.c0) ELSE substr(sym_text(t1.c0), (t2.i + 1)) END) AS c1 FROM full_name t1 CROSS JOIN (WITH RECURSIVE rdl_i(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM rdl_i WHERE i < 4096) SELECT i FROM rdl_i) t2 WHERE (t2.i <= max(length(sym_text(t1.c0)), 1)) AND ((t2.i = 1) OR (substr(sym_text(t1.c0), t2.i, 1) = '.'))
+
+a1n0s0v0d0t0 a1n0s0v0d0t1 a1n0s0v1d0t0 a1n0s0v1d0t1 a1n0s0v2d0t0 a1n0s0v2d0t1 a1n0s0v3d0t0 a1n0s0v3d0t1 a1n0s1v0d0t0 a1n0s1v0d0t1 a1n0s1v1d0t0 a1n0s1v1d0t1 a1n0s1v2d0t0 a1n0s1v2d0t1 a1n0s1v3d0t0 a1n0s1v3d0t1 a1n1s0v0d0t0 a1n1s0v0d0t1 a1n1s0v1d0t0 a1n1s0v1d0t1 a1n1s0v2d0t0 a1n1s0v2d0t1 a1n1s0v3d0t0 a1n1s0v3d0t1 a1n1s1v0d0t0 a1n1s1v0d0t1 a1n1s1v1d0t0 a1n1s1v1d0t1 a1n1s1v2d0t0 a1n1s1v2d0t1 a1n1s1v3d0t0 a1n1s1v3d0t1
+SELECT DISTINCT sym_atom(substr(sym_text(t1.c0), 1, (t2.i - 1))) AS c0, sym_atom(CASE WHEN (t2.i = 1) THEN sym_text(t1.c0) ELSE substr(sym_text(t1.c0), (t2.i + 1)) END) AS c1 FROM delta_name t1 CROSS JOIN (WITH RECURSIVE rdl_i(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM rdl_i WHERE i < 4096) SELECT i FROM rdl_i) t2 WHERE (t2.i <= max(length(sym_text(t1.c0)), 1)) AND ((t2.i = 1) OR (substr(sym_text(t1.c0), t2.i, 1) = '.'))
+
+## sk
+a0n0s0v0d-t0 a0n0s0v0d1t0 a0n0s0v1d-t0 a0n0s0v1d1t0 a0n0s0v2d-t0 a0n0s0v2d1t0 a0n0s0v3d-t0 a0n0s0v3d1t0 a0n0s1v0d-t0 a0n0s1v0d1t0 a0n0s1v1d-t0 a0n0s1v1d1t0 a0n0s1v2d-t0 a0n0s1v2d1t0 a0n0s1v3d-t0 a0n0s1v3d1t0 a0n1s0v0d-t0 a0n1s0v0d1t0 a0n1s0v1d-t0 a0n1s0v1d1t0 a0n1s0v2d-t0 a0n1s0v2d1t0 a0n1s0v3d-t0 a0n1s0v3d1t0 a0n1s1v0d-t0 a0n1s1v0d1t0 a0n1s1v1d-t0 a0n1s1v1d1t0 a0n1s1v2d-t0 a0n1s1v2d1t0 a0n1s1v3d-t0 a0n1s1v3d1t0
+SELECT DISTINCT CASE WHEN ('a' = '') THEN t1.c0 ELSE substr(t1.c0, (length('a') + 2)) END AS c0 FROM name t1 WHERE (('a' = '') OR (substr(t1.c0, 1, (length('a') + 1)) = ('a' || '.'))) AND ('a' = 'a')
+
+a0n0s0v0d-t1 a0n0s0v0d1t1 a0n0s0v1d-t1 a0n0s0v1d1t1 a0n0s0v2d-t1 a0n0s0v2d1t1 a0n0s0v3d-t1 a0n0s0v3d1t1 a0n0s1v0d-t1 a0n0s1v0d1t1 a0n0s1v1d-t1 a0n0s1v1d1t1 a0n0s1v2d-t1 a0n0s1v2d1t1 a0n0s1v3d-t1 a0n0s1v3d1t1 a0n1s0v0d-t1 a0n1s0v0d1t1 a0n1s0v1d-t1 a0n1s0v1d1t1 a0n1s0v2d-t1 a0n1s0v2d1t1 a0n1s0v3d-t1 a0n1s0v3d1t1 a0n1s1v0d-t1 a0n1s1v0d1t1 a0n1s1v1d-t1 a0n1s1v1d1t1 a0n1s1v2d-t1 a0n1s1v2d1t1 a0n1s1v3d-t1 a0n1s1v3d1t1
+SELECT DISTINCT CASE WHEN ('a' = '') THEN t1.c0 ELSE substr(t1.c0, (length('a') + 2)) END AS c0 FROM full_name t1 WHERE (('a' = '') OR (substr(t1.c0, 1, (length('a') + 1)) = ('a' || '.'))) AND ('a' = 'a')
+
+a0n0s0v0d0t0 a0n0s0v0d0t1 a0n0s0v1d0t0 a0n0s0v1d0t1 a0n0s0v2d0t0 a0n0s0v2d0t1 a0n0s0v3d0t0 a0n0s0v3d0t1 a0n0s1v0d0t0 a0n0s1v0d0t1 a0n0s1v1d0t0 a0n0s1v1d0t1 a0n0s1v2d0t0 a0n0s1v2d0t1 a0n0s1v3d0t0 a0n0s1v3d0t1 a0n1s0v0d0t0 a0n1s0v0d0t1 a0n1s0v1d0t0 a0n1s0v1d0t1 a0n1s0v2d0t0 a0n1s0v2d0t1 a0n1s0v3d0t0 a0n1s0v3d0t1 a0n1s1v0d0t0 a0n1s1v0d0t1 a0n1s1v1d0t0 a0n1s1v1d0t1 a0n1s1v2d0t0 a0n1s1v2d0t1 a0n1s1v3d0t0 a0n1s1v3d0t1
+SELECT DISTINCT CASE WHEN ('a' = '') THEN t1.c0 ELSE substr(t1.c0, (length('a') + 2)) END AS c0 FROM delta_name t1 WHERE (('a' = '') OR (substr(t1.c0, 1, (length('a') + 1)) = ('a' || '.'))) AND ('a' = 'a')
+
+a1n0s0v0d-t0 a1n0s0v0d1t0 a1n0s0v1d-t0 a1n0s0v1d1t0 a1n0s0v2d-t0 a1n0s0v2d1t0 a1n0s0v3d-t0 a1n0s0v3d1t0 a1n0s1v0d-t0 a1n0s1v0d1t0 a1n0s1v1d-t0 a1n0s1v1d1t0 a1n0s1v2d-t0 a1n0s1v2d1t0 a1n0s1v3d-t0 a1n0s1v3d1t0 a1n1s0v0d-t0 a1n1s0v0d1t0 a1n1s0v1d-t0 a1n1s0v1d1t0 a1n1s0v2d-t0 a1n1s0v2d1t0 a1n1s0v3d-t0 a1n1s0v3d1t0 a1n1s1v0d-t0 a1n1s1v0d1t0 a1n1s1v1d-t0 a1n1s1v1d1t0 a1n1s1v2d-t0 a1n1s1v2d1t0 a1n1s1v3d-t0 a1n1s1v3d1t0
+SELECT DISTINCT sym_atom(CASE WHEN (sym_text('a') = '') THEN sym_text(t1.c0) ELSE substr(sym_text(t1.c0), (length(sym_text('a')) + 2)) END) AS c0 FROM name t1 WHERE ((sym_text('a') = '') OR (substr(sym_text(t1.c0), 1, (length(sym_text('a')) + 1)) = (sym_text('a') || '.'))) AND ('a' = 'a')
+
+a1n0s0v0d-t1 a1n0s0v0d1t1 a1n0s0v1d-t1 a1n0s0v1d1t1 a1n0s0v2d-t1 a1n0s0v2d1t1 a1n0s0v3d-t1 a1n0s0v3d1t1 a1n0s1v0d-t1 a1n0s1v0d1t1 a1n0s1v1d-t1 a1n0s1v1d1t1 a1n0s1v2d-t1 a1n0s1v2d1t1 a1n0s1v3d-t1 a1n0s1v3d1t1 a1n1s0v0d-t1 a1n1s0v0d1t1 a1n1s0v1d-t1 a1n1s0v1d1t1 a1n1s0v2d-t1 a1n1s0v2d1t1 a1n1s0v3d-t1 a1n1s0v3d1t1 a1n1s1v0d-t1 a1n1s1v0d1t1 a1n1s1v1d-t1 a1n1s1v1d1t1 a1n1s1v2d-t1 a1n1s1v2d1t1 a1n1s1v3d-t1 a1n1s1v3d1t1
+SELECT DISTINCT sym_atom(CASE WHEN (sym_text('a') = '') THEN sym_text(t1.c0) ELSE substr(sym_text(t1.c0), (length(sym_text('a')) + 2)) END) AS c0 FROM full_name t1 WHERE ((sym_text('a') = '') OR (substr(sym_text(t1.c0), 1, (length(sym_text('a')) + 1)) = (sym_text('a') || '.'))) AND ('a' = 'a')
+
+a1n0s0v0d0t0 a1n0s0v0d0t1 a1n0s0v1d0t0 a1n0s0v1d0t1 a1n0s0v2d0t0 a1n0s0v2d0t1 a1n0s0v3d0t0 a1n0s0v3d0t1 a1n0s1v0d0t0 a1n0s1v0d0t1 a1n0s1v1d0t0 a1n0s1v1d0t1 a1n0s1v2d0t0 a1n0s1v2d0t1 a1n0s1v3d0t0 a1n0s1v3d0t1 a1n1s0v0d0t0 a1n1s0v0d0t1 a1n1s0v1d0t0 a1n1s0v1d0t1 a1n1s0v2d0t0 a1n1s0v2d0t1 a1n1s0v3d0t0 a1n1s0v3d0t1 a1n1s1v0d0t0 a1n1s1v0d0t1 a1n1s1v1d0t0 a1n1s1v1d0t1 a1n1s1v2d0t0 a1n1s1v2d0t1 a1n1s1v3d0t0 a1n1s1v3d0t1
+SELECT DISTINCT sym_atom(CASE WHEN (sym_text('a') = '') THEN sym_text(t1.c0) ELSE substr(sym_text(t1.c0), (length(sym_text('a')) + 2)) END) AS c0 FROM delta_name t1 WHERE ((sym_text('a') = '') OR (substr(sym_text(t1.c0), 1, (length(sym_text('a')) + 1)) = (sym_text('a') || '.'))) AND ('a' = 'a')
+
+## sk2
+a0n0s0v0d-t0 a0n0s0v0d1t0 a0n0s0v1d-t0 a0n0s0v1d1t0 a0n0s0v2d-t0 a0n0s0v2d1t0 a0n0s0v3d-t0 a0n0s0v3d1t0 a0n0s1v0d-t0 a0n0s1v0d1t0 a0n0s1v1d-t0 a0n0s1v1d1t0 a0n0s1v2d-t0 a0n0s1v2d1t0 a0n0s1v3d-t0 a0n0s1v3d1t0 a0n1s0v0d-t0 a0n1s0v0d1t0 a0n1s0v1d-t0 a0n1s0v1d1t0 a0n1s0v2d-t0 a0n1s0v2d1t0 a0n1s0v3d-t0 a0n1s0v3d1t0 a0n1s1v0d-t0 a0n1s1v0d1t0 a0n1s1v1d-t0 a0n1s1v1d1t0 a0n1s1v2d-t0 a0n1s1v2d1t0 a0n1s1v3d-t0 a0n1s1v3d1t0
+SELECT DISTINCT CASE WHEN (t2.i = 1) THEN t1.c0 ELSE substr(t1.c0, (t2.i + 1)) END AS c0 FROM name t1 CROSS JOIN (WITH RECURSIVE rdl_i(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM rdl_i WHERE i < 4096) SELECT i FROM rdl_i) t2 WHERE (t2.i <= max(length(t1.c0), 1)) AND ((t2.i = 1) OR (substr(t1.c0, t2.i, 1) = '.')) AND (substr(t1.c0, 1, (t2.i - 1)) = '')
+
+a0n0s0v0d-t1 a0n0s0v0d1t1 a0n0s0v1d-t1 a0n0s0v1d1t1 a0n0s0v2d-t1 a0n0s0v2d1t1 a0n0s0v3d-t1 a0n0s0v3d1t1 a0n0s1v0d-t1 a0n0s1v0d1t1 a0n0s1v1d-t1 a0n0s1v1d1t1 a0n0s1v2d-t1 a0n0s1v2d1t1 a0n0s1v3d-t1 a0n0s1v3d1t1 a0n1s0v0d-t1 a0n1s0v0d1t1 a0n1s0v1d-t1 a0n1s0v1d1t1 a0n1s0v2d-t1 a0n1s0v2d1t1 a0n1s0v3d-t1 a0n1s0v3d1t1 a0n1s1v0d-t1 a0n1s1v0d1t1 a0n1s1v1d-t1 a0n1s1v1d1t1 a0n1s1v2d-t1 a0n1s1v2d1t1 a0n1s1v3d-t1 a0n1s1v3d1t1
+SELECT DISTINCT CASE WHEN (t2.i = 1) THEN t1.c0 ELSE substr(t1.c0, (t2.i + 1)) END AS c0 FROM full_name t1 CROSS JOIN (WITH RECURSIVE rdl_i(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM rdl_i WHERE i < 4096) SELECT i FROM rdl_i) t2 WHERE (t2.i <= max(length(t1.c0), 1)) AND ((t2.i = 1) OR (substr(t1.c0, t2.i, 1) = '.')) AND (substr(t1.c0, 1, (t2.i - 1)) = '')
+
+a0n0s0v0d0t0 a0n0s0v0d0t1 a0n0s0v1d0t0 a0n0s0v1d0t1 a0n0s0v2d0t0 a0n0s0v2d0t1 a0n0s0v3d0t0 a0n0s0v3d0t1 a0n0s1v0d0t0 a0n0s1v0d0t1 a0n0s1v1d0t0 a0n0s1v1d0t1 a0n0s1v2d0t0 a0n0s1v2d0t1 a0n0s1v3d0t0 a0n0s1v3d0t1 a0n1s0v0d0t0 a0n1s0v0d0t1 a0n1s0v1d0t0 a0n1s0v1d0t1 a0n1s0v2d0t0 a0n1s0v2d0t1 a0n1s0v3d0t0 a0n1s0v3d0t1 a0n1s1v0d0t0 a0n1s1v0d0t1 a0n1s1v1d0t0 a0n1s1v1d0t1 a0n1s1v2d0t0 a0n1s1v2d0t1 a0n1s1v3d0t0 a0n1s1v3d0t1
+SELECT DISTINCT CASE WHEN (t2.i = 1) THEN t1.c0 ELSE substr(t1.c0, (t2.i + 1)) END AS c0 FROM delta_name t1 CROSS JOIN (WITH RECURSIVE rdl_i(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM rdl_i WHERE i < 4096) SELECT i FROM rdl_i) t2 WHERE (t2.i <= max(length(t1.c0), 1)) AND ((t2.i = 1) OR (substr(t1.c0, t2.i, 1) = '.')) AND (substr(t1.c0, 1, (t2.i - 1)) = '')
+
+a1n0s0v0d-t0 a1n0s0v0d1t0 a1n0s0v1d-t0 a1n0s0v1d1t0 a1n0s0v2d-t0 a1n0s0v2d1t0 a1n0s0v3d-t0 a1n0s0v3d1t0 a1n0s1v0d-t0 a1n0s1v0d1t0 a1n0s1v1d-t0 a1n0s1v1d1t0 a1n0s1v2d-t0 a1n0s1v2d1t0 a1n0s1v3d-t0 a1n0s1v3d1t0 a1n1s0v0d-t0 a1n1s0v0d1t0 a1n1s0v1d-t0 a1n1s0v1d1t0 a1n1s0v2d-t0 a1n1s0v2d1t0 a1n1s0v3d-t0 a1n1s0v3d1t0 a1n1s1v0d-t0 a1n1s1v0d1t0 a1n1s1v1d-t0 a1n1s1v1d1t0 a1n1s1v2d-t0 a1n1s1v2d1t0 a1n1s1v3d-t0 a1n1s1v3d1t0
+SELECT DISTINCT sym_atom(CASE WHEN (t2.i = 1) THEN sym_text(t1.c0) ELSE substr(sym_text(t1.c0), (t2.i + 1)) END) AS c0 FROM name t1 CROSS JOIN (WITH RECURSIVE rdl_i(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM rdl_i WHERE i < 4096) SELECT i FROM rdl_i) t2 WHERE (t2.i <= max(length(sym_text(t1.c0)), 1)) AND ((t2.i = 1) OR (substr(sym_text(t1.c0), t2.i, 1) = '.')) AND (sym_atom(substr(sym_text(t1.c0), 1, (t2.i - 1))) = '')
+
+a1n0s0v0d-t1 a1n0s0v0d1t1 a1n0s0v1d-t1 a1n0s0v1d1t1 a1n0s0v2d-t1 a1n0s0v2d1t1 a1n0s0v3d-t1 a1n0s0v3d1t1 a1n0s1v0d-t1 a1n0s1v0d1t1 a1n0s1v1d-t1 a1n0s1v1d1t1 a1n0s1v2d-t1 a1n0s1v2d1t1 a1n0s1v3d-t1 a1n0s1v3d1t1 a1n1s0v0d-t1 a1n1s0v0d1t1 a1n1s0v1d-t1 a1n1s0v1d1t1 a1n1s0v2d-t1 a1n1s0v2d1t1 a1n1s0v3d-t1 a1n1s0v3d1t1 a1n1s1v0d-t1 a1n1s1v0d1t1 a1n1s1v1d-t1 a1n1s1v1d1t1 a1n1s1v2d-t1 a1n1s1v2d1t1 a1n1s1v3d-t1 a1n1s1v3d1t1
+SELECT DISTINCT sym_atom(CASE WHEN (t2.i = 1) THEN sym_text(t1.c0) ELSE substr(sym_text(t1.c0), (t2.i + 1)) END) AS c0 FROM full_name t1 CROSS JOIN (WITH RECURSIVE rdl_i(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM rdl_i WHERE i < 4096) SELECT i FROM rdl_i) t2 WHERE (t2.i <= max(length(sym_text(t1.c0)), 1)) AND ((t2.i = 1) OR (substr(sym_text(t1.c0), t2.i, 1) = '.')) AND (sym_atom(substr(sym_text(t1.c0), 1, (t2.i - 1))) = '')
+
+a1n0s0v0d0t0 a1n0s0v0d0t1 a1n0s0v1d0t0 a1n0s0v1d0t1 a1n0s0v2d0t0 a1n0s0v2d0t1 a1n0s0v3d0t0 a1n0s0v3d0t1 a1n0s1v0d0t0 a1n0s1v0d0t1 a1n0s1v1d0t0 a1n0s1v1d0t1 a1n0s1v2d0t0 a1n0s1v2d0t1 a1n0s1v3d0t0 a1n0s1v3d0t1 a1n1s0v0d0t0 a1n1s0v0d0t1 a1n1s0v1d0t0 a1n1s0v1d0t1 a1n1s0v2d0t0 a1n1s0v2d0t1 a1n1s0v3d0t0 a1n1s0v3d0t1 a1n1s1v0d0t0 a1n1s1v0d0t1 a1n1s1v1d0t0 a1n1s1v1d0t1 a1n1s1v2d0t0 a1n1s1v2d0t1 a1n1s1v3d0t0 a1n1s1v3d0t1
+SELECT DISTINCT sym_atom(CASE WHEN (t2.i = 1) THEN sym_text(t1.c0) ELSE substr(sym_text(t1.c0), (t2.i + 1)) END) AS c0 FROM delta_name t1 CROSS JOIN (WITH RECURSIVE rdl_i(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM rdl_i WHERE i < 4096) SELECT i FROM rdl_i) t2 WHERE (t2.i <= max(length(sym_text(t1.c0)), 1)) AND ((t2.i = 1) OR (substr(sym_text(t1.c0), t2.i, 1) = '.')) AND (sym_atom(substr(sym_text(t1.c0), 1, (t2.i - 1))) = '')
+
+## ng
+a0n0s0v0d-t0 a0n0s0v0d1t0 a0n0s0v1d-t0 a0n0s0v1d1t0 a0n0s1v0d-t0 a0n0s1v0d1t0 a0n0s1v1d-t0 a0n0s1v1d1t0 a0n1s0v0d-t0 a0n1s0v0d1t0 a0n1s0v1d-t0 a0n1s0v1d1t0 a0n1s1v0d-t0 a0n1s1v0d1t0 a0n1s1v1d-t0 a0n1s1v1d1t0 a1n0s0v0d-t0 a1n0s0v0d1t0 a1n0s0v1d-t0 a1n0s0v1d1t0 a1n0s1v0d-t0 a1n0s1v0d1t0 a1n0s1v1d-t0 a1n0s1v1d1t0 a1n1s0v0d-t0 a1n1s0v0d1t0 a1n1s0v1d-t0 a1n1s0v1d1t0 a1n1s1v0d-t0 a1n1s1v0d1t0 a1n1s1v1d-t0 a1n1s1v1d1t0
+SELECT DISTINCT t1.c0 AS c0 FROM p t1 WHERE NOT EXISTS (SELECT 1 FROM targets t2 WHERE (t2.c0 = t1.c0)) AND NOT EXISTS (SELECT 1 FROM docof t3 WHERE (t3.c0 = t1.c0) AND (t3.c1 = 4))
+
+a0n0s0v0d-t1 a0n0s0v0d1t1 a0n0s0v1d-t1 a0n0s0v1d1t1 a0n0s1v0d-t1 a0n0s1v0d1t1 a0n0s1v1d-t1 a0n0s1v1d1t1 a0n1s0v0d-t1 a0n1s0v0d1t1 a0n1s0v1d-t1 a0n1s0v1d1t1 a0n1s1v0d-t1 a0n1s1v0d1t1 a0n1s1v1d-t1 a0n1s1v1d1t1 a1n0s0v0d-t1 a1n0s0v0d1t1 a1n0s0v1d-t1 a1n0s0v1d1t1 a1n0s1v0d-t1 a1n0s1v0d1t1 a1n0s1v1d-t1 a1n0s1v1d1t1 a1n1s0v0d-t1 a1n1s0v0d1t1 a1n1s0v1d-t1 a1n1s0v1d1t1 a1n1s1v0d-t1 a1n1s1v0d1t1 a1n1s1v1d-t1 a1n1s1v1d1t1
+SELECT DISTINCT t1.c0 AS c0 FROM full_p t1 WHERE NOT EXISTS (SELECT 1 FROM full_targets t2 WHERE (t2.c0 = t1.c0)) AND NOT EXISTS (SELECT 1 FROM full_docof t3 WHERE (t3.c0 = t1.c0) AND (t3.c1 = 4))
+
+a0n0s0v0d0t0 a0n0s0v1d0t0 a0n0s1v0d0t0 a0n0s1v1d0t0 a0n1s0v0d0t0 a0n1s0v1d0t0 a0n1s1v0d0t0 a0n1s1v1d0t0 a1n0s0v0d0t0 a1n0s0v1d0t0 a1n0s1v0d0t0 a1n0s1v1d0t0 a1n1s0v0d0t0 a1n1s0v1d0t0 a1n1s1v0d0t0 a1n1s1v1d0t0
+SELECT DISTINCT t1.c0 AS c0 FROM delta_p t1 WHERE NOT EXISTS (SELECT 1 FROM targets t2 WHERE (t2.c0 = t1.c0)) AND NOT EXISTS (SELECT 1 FROM docof t3 WHERE (t3.c0 = t1.c0) AND (t3.c1 = 4))
+
+a0n0s0v0d0t1 a0n0s0v1d0t1 a0n0s1v0d0t1 a0n0s1v1d0t1 a0n1s0v0d0t1 a0n1s0v1d0t1 a0n1s1v0d0t1 a0n1s1v1d0t1 a1n0s0v0d0t1 a1n0s0v1d0t1 a1n0s1v0d0t1 a1n0s1v1d0t1 a1n1s0v0d0t1 a1n1s0v1d0t1 a1n1s1v0d0t1 a1n1s1v1d0t1
+SELECT DISTINCT t1.c0 AS c0 FROM delta_p t1 WHERE NOT EXISTS (SELECT 1 FROM full_targets t2 WHERE (t2.c0 = t1.c0)) AND NOT EXISTS (SELECT 1 FROM full_docof t3 WHERE (t3.c0 = t1.c0) AND (t3.c1 = 4))
+
+a0n0s0v2d-t0 a0n0s0v2d1t0 a0n0s0v3d-t0 a0n0s0v3d1t0 a0n1s0v2d-t0 a0n1s0v2d1t0 a0n1s0v3d-t0 a0n1s0v3d1t0 a1n0s0v2d-t0 a1n0s0v2d1t0 a1n0s0v3d-t0 a1n0s0v3d1t0 a1n1s0v2d-t0 a1n1s0v2d1t0 a1n1s0v3d-t0 a1n1s0v3d1t0
+SELECT DISTINCT t1.c0 AS c0 FROM f.stat_docrange t2 CROSS JOIN p t1 WHERE (t2.d = 4) AND t1.c0 BETWEEN t2.lo AND t2.hi AND NOT EXISTS (SELECT 1 FROM targets t3 WHERE (t3.c0 = t1.c0)) AND NOT EXISTS (SELECT 1 FROM docof t4 WHERE (t4.c0 = t1.c0) AND (t4.c1 = 4))
+
+a0n0s0v2d-t1 a0n0s0v2d1t1 a0n0s0v3d-t1 a0n0s0v3d1t1 a0n1s0v2d-t1 a0n1s0v2d1t1 a0n1s0v3d-t1 a0n1s0v3d1t1 a1n0s0v2d-t1 a1n0s0v2d1t1 a1n0s0v3d-t1 a1n0s0v3d1t1 a1n1s0v2d-t1 a1n1s0v2d1t1 a1n1s0v3d-t1 a1n1s0v3d1t1
+SELECT DISTINCT t1.c0 AS c0 FROM f.stat_docrange t2 CROSS JOIN full_p t1 WHERE (t2.d = 4) AND t1.c0 BETWEEN t2.lo AND t2.hi AND NOT EXISTS (SELECT 1 FROM full_targets t3 WHERE (t3.c0 = t1.c0)) AND NOT EXISTS (SELECT 1 FROM full_docof t4 WHERE (t4.c0 = t1.c0) AND (t4.c1 = 4))
+
+a0n0s0v2d0t0 a0n0s0v3d0t0 a0n1s0v2d0t0 a0n1s0v3d0t0 a1n0s0v2d0t0 a1n0s0v3d0t0 a1n1s0v2d0t0 a1n1s0v3d0t0
+SELECT DISTINCT t1.c0 AS c0 FROM f.stat_docrange t2 CROSS JOIN delta_p t1 WHERE (t2.d = 4) AND t1.c0 BETWEEN t2.lo AND t2.hi AND NOT EXISTS (SELECT 1 FROM targets t3 WHERE (t3.c0 = t1.c0)) AND NOT EXISTS (SELECT 1 FROM docof t4 WHERE (t4.c0 = t1.c0) AND (t4.c1 = 4))
+
+a0n0s0v2d0t1 a0n0s0v3d0t1 a0n1s0v2d0t1 a0n1s0v3d0t1 a1n0s0v2d0t1 a1n0s0v3d0t1 a1n1s0v2d0t1 a1n1s0v3d0t1
+SELECT DISTINCT t1.c0 AS c0 FROM f.stat_docrange t2 CROSS JOIN delta_p t1 WHERE (t2.d = 4) AND t1.c0 BETWEEN t2.lo AND t2.hi AND NOT EXISTS (SELECT 1 FROM full_targets t3 WHERE (t3.c0 = t1.c0)) AND NOT EXISTS (SELECT 1 FROM full_docof t4 WHERE (t4.c0 = t1.c0) AND (t4.c1 = 4))
+
+a0n0s1v2d-t0 a0n0s1v2d1t0 a0n0s1v3d-t0 a0n0s1v3d1t0 a0n1s1v2d-t0 a0n1s1v2d1t0 a0n1s1v3d-t0 a0n1s1v3d1t0 a1n0s1v2d-t0 a1n0s1v2d1t0 a1n0s1v3d-t0 a1n0s1v3d1t0 a1n1s1v2d-t0 a1n1s1v2d1t0 a1n1s1v3d-t0 a1n1s1v3d1t0
+SELECT DISTINCT t1.c0 AS c0 FROM p t1 WHERE t1.c0 BETWEEN (4 * 4294967296) AND ((4 * 4294967296) + 4294967295) AND NOT EXISTS (SELECT 1 FROM targets t2 WHERE (t2.c0 = t1.c0)) AND NOT EXISTS (SELECT 1 FROM docof t3 WHERE (t3.c0 = t1.c0) AND (t3.c1 = 4))
+
+a0n0s1v2d-t1 a0n0s1v2d1t1 a0n0s1v3d-t1 a0n0s1v3d1t1 a0n1s1v2d-t1 a0n1s1v2d1t1 a0n1s1v3d-t1 a0n1s1v3d1t1 a1n0s1v2d-t1 a1n0s1v2d1t1 a1n0s1v3d-t1 a1n0s1v3d1t1 a1n1s1v2d-t1 a1n1s1v2d1t1 a1n1s1v3d-t1 a1n1s1v3d1t1
+SELECT DISTINCT t1.c0 AS c0 FROM full_p t1 WHERE t1.c0 BETWEEN (4 * 4294967296) AND ((4 * 4294967296) + 4294967295) AND NOT EXISTS (SELECT 1 FROM full_targets t2 WHERE (t2.c0 = t1.c0)) AND NOT EXISTS (SELECT 1 FROM full_docof t3 WHERE (t3.c0 = t1.c0) AND (t3.c1 = 4))
+
+a0n0s1v2d0t0 a0n0s1v3d0t0 a0n1s1v2d0t0 a0n1s1v3d0t0 a1n0s1v2d0t0 a1n0s1v3d0t0 a1n1s1v2d0t0 a1n1s1v3d0t0
+SELECT DISTINCT t1.c0 AS c0 FROM delta_p t1 WHERE t1.c0 BETWEEN (4 * 4294967296) AND ((4 * 4294967296) + 4294967295) AND NOT EXISTS (SELECT 1 FROM targets t2 WHERE (t2.c0 = t1.c0)) AND NOT EXISTS (SELECT 1 FROM docof t3 WHERE (t3.c0 = t1.c0) AND (t3.c1 = 4))
+
+a0n0s1v2d0t1 a0n0s1v3d0t1 a0n1s1v2d0t1 a0n1s1v3d0t1 a1n0s1v2d0t1 a1n0s1v3d0t1 a1n1s1v2d0t1 a1n1s1v3d0t1
+SELECT DISTINCT t1.c0 AS c0 FROM delta_p t1 WHERE t1.c0 BETWEEN (4 * 4294967296) AND ((4 * 4294967296) + 4294967295) AND NOT EXISTS (SELECT 1 FROM full_targets t2 WHERE (t2.c0 = t1.c0)) AND NOT EXISTS (SELECT 1 FROM full_docof t3 WHERE (t3.c0 = t1.c0) AND (t3.c1 = 4))
+
+## rr_agg1
+a0n0s0v0d-t0 a0n0s0v1d-t0 a0n0s0v2d-t0 a0n0s0v3d-t0 a0n0s1v0d-t0 a0n0s1v1d-t0 a0n0s1v2d-t0 a0n0s1v3d-t0 a0n1s0v0d-t0 a0n1s0v1d-t0 a0n1s0v2d-t0 a0n1s0v3d-t0 a0n1s1v0d-t0 a0n1s1v1d-t0 a0n1s1v2d-t0 a0n1s1v3d-t0 a1n0s0v0d-t0 a1n0s0v1d-t0 a1n0s0v2d-t0 a1n0s0v3d-t0 a1n0s1v0d-t0 a1n0s1v1d-t0 a1n0s1v2d-t0 a1n0s1v3d-t0 a1n1s0v0d-t0 a1n1s0v1d-t0 a1n1s0v2d-t0 a1n1s0v3d-t0 a1n1s1v0d-t0 a1n1s1v1d-t0 a1n1s1v2d-t0 a1n1s1v3d-t0
+SELECT DISTINCT t1.c0 AS c0, t2.c1 AS c1 FROM rr_demand_agg_rr_agg1 t1 CROSS JOIN val t2 WHERE (t2.c0 = t1.c0) AND (t2.c2 = t2.c1)
+
+a0n0s0v0d-t1 a0n0s0v1d-t1 a0n0s0v2d-t1 a0n0s0v3d-t1 a0n0s1v0d-t1 a0n0s1v1d-t1 a0n0s1v2d-t1 a0n0s1v3d-t1 a0n1s0v0d-t1 a0n1s0v1d-t1 a0n1s0v2d-t1 a0n1s0v3d-t1 a0n1s1v0d-t1 a0n1s1v1d-t1 a0n1s1v2d-t1 a0n1s1v3d-t1 a1n0s0v0d-t1 a1n0s0v1d-t1 a1n0s0v2d-t1 a1n0s0v3d-t1 a1n0s1v0d-t1 a1n0s1v1d-t1 a1n0s1v2d-t1 a1n0s1v3d-t1 a1n1s0v0d-t1 a1n1s0v1d-t1 a1n1s0v2d-t1 a1n1s0v3d-t1 a1n1s1v0d-t1 a1n1s1v1d-t1 a1n1s1v2d-t1 a1n1s1v3d-t1
+SELECT DISTINCT t1.c0 AS c0, t2.c1 AS c1 FROM full_rr_demand_agg_rr_agg1 t1 CROSS JOIN full_val t2 WHERE (t2.c0 = t1.c0) AND (t2.c2 = t2.c1)
+
+a0n0s0v0d0t0 a0n0s0v1d0t0 a0n0s0v2d0t0 a0n0s0v3d0t0 a0n0s1v0d0t0 a0n0s1v1d0t0 a0n0s1v2d0t0 a0n0s1v3d0t0 a0n1s0v0d0t0 a0n1s0v1d0t0 a0n1s0v2d0t0 a0n1s0v3d0t0 a0n1s1v0d0t0 a0n1s1v1d0t0 a0n1s1v2d0t0 a0n1s1v3d0t0 a1n0s0v0d0t0 a1n0s0v1d0t0 a1n0s0v2d0t0 a1n0s0v3d0t0 a1n0s1v0d0t0 a1n0s1v1d0t0 a1n0s1v2d0t0 a1n0s1v3d0t0 a1n1s0v0d0t0 a1n1s0v1d0t0 a1n1s0v2d0t0 a1n1s0v3d0t0 a1n1s1v0d0t0 a1n1s1v1d0t0 a1n1s1v2d0t0 a1n1s1v3d0t0
+SELECT DISTINCT t1.c0 AS c0, t2.c1 AS c1 FROM delta_rr_demand_agg_rr_agg1 t1 CROSS JOIN val t2 WHERE (t2.c0 = t1.c0) AND (t2.c2 = t2.c1)
+
+a0n0s0v0d0t1 a0n0s0v1d0t1 a0n0s0v2d0t1 a0n0s0v3d0t1 a0n0s1v0d0t1 a0n0s1v1d0t1 a0n0s1v2d0t1 a0n0s1v3d0t1 a0n1s0v0d0t1 a0n1s0v1d0t1 a0n1s0v2d0t1 a0n1s0v3d0t1 a0n1s1v0d0t1 a0n1s1v1d0t1 a0n1s1v2d0t1 a0n1s1v3d0t1 a1n0s0v0d0t1 a1n0s0v1d0t1 a1n0s0v2d0t1 a1n0s0v3d0t1 a1n0s1v0d0t1 a1n0s1v1d0t1 a1n0s1v2d0t1 a1n0s1v3d0t1 a1n1s0v0d0t1 a1n1s0v1d0t1 a1n1s0v2d0t1 a1n1s0v3d0t1 a1n1s1v0d0t1 a1n1s1v1d0t1 a1n1s1v2d0t1 a1n1s1v3d0t1
+SELECT DISTINCT t1.c0 AS c0, t2.c1 AS c1 FROM delta_rr_demand_agg_rr_agg1 t1 CROSS JOIN full_val t2 WHERE (t2.c0 = t1.c0) AND (t2.c2 = t2.c1)
+
+a0n0s0v0d1t0 a0n0s0v1d1t0 a0n0s0v2d1t0 a0n0s0v3d1t0 a0n0s1v0d1t0 a0n0s1v1d1t0 a0n0s1v2d1t0 a0n0s1v3d1t0 a0n1s0v0d1t0 a0n1s0v1d1t0 a0n1s0v2d1t0 a0n1s0v3d1t0 a0n1s1v0d1t0 a0n1s1v1d1t0 a0n1s1v2d1t0 a0n1s1v3d1t0 a1n0s0v0d1t0 a1n0s0v1d1t0 a1n0s0v2d1t0 a1n0s0v3d1t0 a1n0s1v0d1t0 a1n0s1v1d1t0 a1n0s1v2d1t0 a1n0s1v3d1t0 a1n1s0v0d1t0 a1n1s0v1d1t0 a1n1s0v2d1t0 a1n1s0v3d1t0 a1n1s1v0d1t0 a1n1s1v1d1t0 a1n1s1v2d1t0 a1n1s1v3d1t0
+SELECT DISTINCT t1.c0 AS c0, t2.c1 AS c1 FROM rr_demand_agg_rr_agg1 t1 CROSS JOIN delta_val t2 WHERE (t2.c0 = t1.c0) AND (t2.c2 = t2.c1)
+
+a0n0s0v0d1t1 a0n0s0v1d1t1 a0n0s0v2d1t1 a0n0s0v3d1t1 a0n0s1v0d1t1 a0n0s1v1d1t1 a0n0s1v2d1t1 a0n0s1v3d1t1 a0n1s0v0d1t1 a0n1s0v1d1t1 a0n1s0v2d1t1 a0n1s0v3d1t1 a0n1s1v0d1t1 a0n1s1v1d1t1 a0n1s1v2d1t1 a0n1s1v3d1t1 a1n0s0v0d1t1 a1n0s0v1d1t1 a1n0s0v2d1t1 a1n0s0v3d1t1 a1n0s1v0d1t1 a1n0s1v1d1t1 a1n0s1v2d1t1 a1n0s1v3d1t1 a1n1s0v0d1t1 a1n1s0v1d1t1 a1n1s0v2d1t1 a1n1s0v3d1t1 a1n1s1v0d1t1 a1n1s1v1d1t1 a1n1s1v2d1t1 a1n1s1v3d1t1
+SELECT DISTINCT t1.c0 AS c0, t2.c1 AS c1 FROM full_rr_demand_agg_rr_agg1 t1 CROSS JOIN delta_val t2 WHERE (t2.c0 = t1.c0) AND (t2.c2 = t2.c1)
+
+## ag
+a0n0s0v0d-t0 a0n0s0v0d1t0 a0n0s0v1d-t0 a0n0s0v1d1t0 a0n0s0v2d-t0 a0n0s0v2d1t0 a0n0s0v3d-t0 a0n0s0v3d1t0 a0n0s1v0d-t0 a0n0s1v0d1t0 a0n0s1v1d-t0 a0n0s1v1d1t0 a0n0s1v2d-t0 a0n0s1v2d1t0 a0n0s1v3d-t0 a0n0s1v3d1t0 a0n1s0v0d-t0 a0n1s0v0d1t0 a0n1s0v1d-t0 a0n1s0v1d1t0 a0n1s0v2d-t0 a0n1s0v2d1t0 a0n1s0v3d-t0 a0n1s0v3d1t0 a0n1s1v0d-t0 a0n1s1v0d1t0 a0n1s1v1d-t0 a0n1s1v1d1t0 a0n1s1v2d-t0 a0n1s1v2d1t0 a0n1s1v3d-t0 a0n1s1v3d1t0 a1n0s0v0d-t0 a1n0s0v0d1t0 a1n0s0v1d-t0 a1n0s0v1d1t0 a1n0s0v2d-t0 a1n0s0v2d1t0 a1n0s0v3d-t0 a1n0s0v3d1t0 a1n0s1v0d-t0 a1n0s1v0d1t0 a1n0s1v1d-t0 a1n0s1v1d1t0 a1n0s1v2d-t0 a1n0s1v2d1t0 a1n0s1v3d-t0 a1n0s1v3d1t0 a1n1s0v0d-t0 a1n1s0v0d1t0 a1n1s0v1d-t0 a1n1s0v1d1t0 a1n1s0v2d-t0 a1n1s0v2d1t0 a1n1s0v3d-t0 a1n1s0v3d1t0 a1n1s1v0d-t0 a1n1s1v0d1t0 a1n1s1v1d-t0 a1n1s1v1d1t0 a1n1s1v2d-t0 a1n1s1v2d1t0 a1n1s1v3d-t0 a1n1s1v3d1t0
+SELECT DISTINCT t1.c0 AS c0, (SELECT count(*) FROM docof t2 WHERE (t2.c1 = t1.c0)) AS c1, (SELECT coalesce(rr_exact_sum(t3.c1), 0) FROM val t3 WHERE (t3.c0 = t1.c0)) AS c2, (SELECT min(t4.c1) FROM val t4 WHERE (t4.c0 = t1.c0)) AS c3, (SELECT max(t5.c1) FROM rr_agg1 t5 WHERE (t5.c0 = t1.c0)) AS c4 FROM q t1 WHERE ((SELECT min(t4.c1) FROM val t4 WHERE (t4.c0 = t1.c0)) IS NOT NULL) AND ((SELECT max(t5.c1) FROM rr_agg1 t5 WHERE (t5.c0 = t1.c0)) IS NOT NULL)
+
+a0n0s0v0d-t1 a0n0s0v0d1t1 a0n0s0v1d-t1 a0n0s0v1d1t1 a0n0s0v2d-t1 a0n0s0v2d1t1 a0n0s0v3d-t1 a0n0s0v3d1t1 a0n0s1v0d-t1 a0n0s1v0d1t1 a0n0s1v1d-t1 a0n0s1v1d1t1 a0n0s1v2d-t1 a0n0s1v2d1t1 a0n0s1v3d-t1 a0n0s1v3d1t1 a0n1s0v0d-t1 a0n1s0v0d1t1 a0n1s0v1d-t1 a0n1s0v1d1t1 a0n1s0v2d-t1 a0n1s0v2d1t1 a0n1s0v3d-t1 a0n1s0v3d1t1 a0n1s1v0d-t1 a0n1s1v0d1t1 a0n1s1v1d-t1 a0n1s1v1d1t1 a0n1s1v2d-t1 a0n1s1v2d1t1 a0n1s1v3d-t1 a0n1s1v3d1t1 a1n0s0v0d-t1 a1n0s0v0d1t1 a1n0s0v1d-t1 a1n0s0v1d1t1 a1n0s0v2d-t1 a1n0s0v2d1t1 a1n0s0v3d-t1 a1n0s0v3d1t1 a1n0s1v0d-t1 a1n0s1v0d1t1 a1n0s1v1d-t1 a1n0s1v1d1t1 a1n0s1v2d-t1 a1n0s1v2d1t1 a1n0s1v3d-t1 a1n0s1v3d1t1 a1n1s0v0d-t1 a1n1s0v0d1t1 a1n1s0v1d-t1 a1n1s0v1d1t1 a1n1s0v2d-t1 a1n1s0v2d1t1 a1n1s0v3d-t1 a1n1s0v3d1t1 a1n1s1v0d-t1 a1n1s1v0d1t1 a1n1s1v1d-t1 a1n1s1v1d1t1 a1n1s1v2d-t1 a1n1s1v2d1t1 a1n1s1v3d-t1 a1n1s1v3d1t1
+SELECT DISTINCT t1.c0 AS c0, (SELECT count(*) FROM docof t2 WHERE (t2.c1 = t1.c0)) AS c1, (SELECT coalesce(rr_exact_sum(t3.c1), 0) FROM val t3 WHERE (t3.c0 = t1.c0)) AS c2, (SELECT min(t4.c1) FROM val t4 WHERE (t4.c0 = t1.c0)) AS c3, (SELECT max(t5.c1) FROM rr_agg1 t5 WHERE (t5.c0 = t1.c0)) AS c4 FROM full_q t1 WHERE ((SELECT min(t4.c1) FROM val t4 WHERE (t4.c0 = t1.c0)) IS NOT NULL) AND ((SELECT max(t5.c1) FROM rr_agg1 t5 WHERE (t5.c0 = t1.c0)) IS NOT NULL)
+
+a0n0s0v0d0t0 a0n0s0v0d0t1 a0n0s0v1d0t0 a0n0s0v1d0t1 a0n0s0v2d0t0 a0n0s0v2d0t1 a0n0s0v3d0t0 a0n0s0v3d0t1 a0n0s1v0d0t0 a0n0s1v0d0t1 a0n0s1v1d0t0 a0n0s1v1d0t1 a0n0s1v2d0t0 a0n0s1v2d0t1 a0n0s1v3d0t0 a0n0s1v3d0t1 a0n1s0v0d0t0 a0n1s0v0d0t1 a0n1s0v1d0t0 a0n1s0v1d0t1 a0n1s0v2d0t0 a0n1s0v2d0t1 a0n1s0v3d0t0 a0n1s0v3d0t1 a0n1s1v0d0t0 a0n1s1v0d0t1 a0n1s1v1d0t0 a0n1s1v1d0t1 a0n1s1v2d0t0 a0n1s1v2d0t1 a0n1s1v3d0t0 a0n1s1v3d0t1 a1n0s0v0d0t0 a1n0s0v0d0t1 a1n0s0v1d0t0 a1n0s0v1d0t1 a1n0s0v2d0t0 a1n0s0v2d0t1 a1n0s0v3d0t0 a1n0s0v3d0t1 a1n0s1v0d0t0 a1n0s1v0d0t1 a1n0s1v1d0t0 a1n0s1v1d0t1 a1n0s1v2d0t0 a1n0s1v2d0t1 a1n0s1v3d0t0 a1n0s1v3d0t1 a1n1s0v0d0t0 a1n1s0v0d0t1 a1n1s0v1d0t0 a1n1s0v1d0t1 a1n1s0v2d0t0 a1n1s0v2d0t1 a1n1s0v3d0t0 a1n1s0v3d0t1 a1n1s1v0d0t0 a1n1s1v0d0t1 a1n1s1v1d0t0 a1n1s1v1d0t1 a1n1s1v2d0t0 a1n1s1v2d0t1 a1n1s1v3d0t0 a1n1s1v3d0t1
+SELECT DISTINCT t1.c0 AS c0, (SELECT count(*) FROM docof t2 WHERE (t2.c1 = t1.c0)) AS c1, (SELECT coalesce(rr_exact_sum(t3.c1), 0) FROM val t3 WHERE (t3.c0 = t1.c0)) AS c2, (SELECT min(t4.c1) FROM val t4 WHERE (t4.c0 = t1.c0)) AS c3, (SELECT max(t5.c1) FROM rr_agg1 t5 WHERE (t5.c0 = t1.c0)) AS c4 FROM delta_q t1 WHERE ((SELECT min(t4.c1) FROM val t4 WHERE (t4.c0 = t1.c0)) IS NOT NULL) AND ((SELECT max(t5.c1) FROM rr_agg1 t5 WHERE (t5.c0 = t1.c0)) IS NOT NULL)
+
+## agb
+a0n0s0v0d-t0 a0n0s0v0d1t0 a0n0s0v1d-t0 a0n0s0v1d1t0 a0n0s0v2d-t0 a0n0s0v2d1t0 a0n0s0v3d-t0 a0n0s0v3d1t0 a0n0s1v0d-t0 a0n0s1v0d1t0 a0n0s1v1d-t0 a0n0s1v1d1t0 a0n0s1v2d-t0 a0n0s1v2d1t0 a0n0s1v3d-t0 a0n0s1v3d1t0 a0n1s0v0d-t0 a0n1s0v0d1t0 a0n1s0v1d-t0 a0n1s0v1d1t0 a0n1s0v2d-t0 a0n1s0v2d1t0 a0n1s0v3d-t0 a0n1s0v3d1t0 a0n1s1v0d-t0 a0n1s1v0d1t0 a0n1s1v1d-t0 a0n1s1v1d1t0 a0n1s1v2d-t0 a0n1s1v2d1t0 a0n1s1v3d-t0 a0n1s1v3d1t0 a1n0s0v0d-t0 a1n0s0v0d1t0 a1n0s0v1d-t0 a1n0s0v1d1t0 a1n0s0v2d-t0 a1n0s0v2d1t0 a1n0s0v3d-t0 a1n0s0v3d1t0 a1n0s1v0d-t0 a1n0s1v0d1t0 a1n0s1v1d-t0 a1n0s1v1d1t0 a1n0s1v2d-t0 a1n0s1v2d1t0 a1n0s1v3d-t0 a1n0s1v3d1t0 a1n1s0v0d-t0 a1n1s0v0d1t0 a1n1s0v1d-t0 a1n1s0v1d1t0 a1n1s0v2d-t0 a1n1s0v2d1t0 a1n1s0v3d-t0 a1n1s0v3d1t0 a1n1s1v0d-t0 a1n1s1v0d1t0 a1n1s1v1d-t0 a1n1s1v1d1t0 a1n1s1v2d-t0 a1n1s1v2d1t0 a1n1s1v3d-t0 a1n1s1v3d1t0
+SELECT DISTINCT t1.c0 AS c0 FROM q t1 WHERE NOT EXISTS (SELECT 1 FROM docof t2 WHERE (t2.c1 = t1.c0))
+
+a0n0s0v0d-t1 a0n0s0v0d1t1 a0n0s0v1d-t1 a0n0s0v1d1t1 a0n0s0v2d-t1 a0n0s0v2d1t1 a0n0s0v3d-t1 a0n0s0v3d1t1 a0n0s1v0d-t1 a0n0s1v0d1t1 a0n0s1v1d-t1 a0n0s1v1d1t1 a0n0s1v2d-t1 a0n0s1v2d1t1 a0n0s1v3d-t1 a0n0s1v3d1t1 a0n1s0v0d-t1 a0n1s0v0d1t1 a0n1s0v1d-t1 a0n1s0v1d1t1 a0n1s0v2d-t1 a0n1s0v2d1t1 a0n1s0v3d-t1 a0n1s0v3d1t1 a0n1s1v0d-t1 a0n1s1v0d1t1 a0n1s1v1d-t1 a0n1s1v1d1t1 a0n1s1v2d-t1 a0n1s1v2d1t1 a0n1s1v3d-t1 a0n1s1v3d1t1 a1n0s0v0d-t1 a1n0s0v0d1t1 a1n0s0v1d-t1 a1n0s0v1d1t1 a1n0s0v2d-t1 a1n0s0v2d1t1 a1n0s0v3d-t1 a1n0s0v3d1t1 a1n0s1v0d-t1 a1n0s1v0d1t1 a1n0s1v1d-t1 a1n0s1v1d1t1 a1n0s1v2d-t1 a1n0s1v2d1t1 a1n0s1v3d-t1 a1n0s1v3d1t1 a1n1s0v0d-t1 a1n1s0v0d1t1 a1n1s0v1d-t1 a1n1s0v1d1t1 a1n1s0v2d-t1 a1n1s0v2d1t1 a1n1s0v3d-t1 a1n1s0v3d1t1 a1n1s1v0d-t1 a1n1s1v0d1t1 a1n1s1v1d-t1 a1n1s1v1d1t1 a1n1s1v2d-t1 a1n1s1v2d1t1 a1n1s1v3d-t1 a1n1s1v3d1t1
+SELECT DISTINCT t1.c0 AS c0 FROM full_q t1 WHERE NOT EXISTS (SELECT 1 FROM full_docof t2 WHERE (t2.c1 = t1.c0))
+
+a0n0s0v0d0t0 a0n0s0v1d0t0 a0n0s0v2d0t0 a0n0s0v3d0t0 a0n0s1v0d0t0 a0n0s1v1d0t0 a0n0s1v2d0t0 a0n0s1v3d0t0 a0n1s0v0d0t0 a0n1s0v1d0t0 a0n1s0v2d0t0 a0n1s0v3d0t0 a0n1s1v0d0t0 a0n1s1v1d0t0 a0n1s1v2d0t0 a0n1s1v3d0t0 a1n0s0v0d0t0 a1n0s0v1d0t0 a1n0s0v2d0t0 a1n0s0v3d0t0 a1n0s1v0d0t0 a1n0s1v1d0t0 a1n0s1v2d0t0 a1n0s1v3d0t0 a1n1s0v0d0t0 a1n1s0v1d0t0 a1n1s0v2d0t0 a1n1s0v3d0t0 a1n1s1v0d0t0 a1n1s1v1d0t0 a1n1s1v2d0t0 a1n1s1v3d0t0
+SELECT DISTINCT t1.c0 AS c0 FROM delta_q t1 WHERE NOT EXISTS (SELECT 1 FROM docof t2 WHERE (t2.c1 = t1.c0))
+
+a0n0s0v0d0t1 a0n0s0v1d0t1 a0n0s0v2d0t1 a0n0s0v3d0t1 a0n0s1v0d0t1 a0n0s1v1d0t1 a0n0s1v2d0t1 a0n0s1v3d0t1 a0n1s0v0d0t1 a0n1s0v1d0t1 a0n1s0v2d0t1 a0n1s0v3d0t1 a0n1s1v0d0t1 a0n1s1v1d0t1 a0n1s1v2d0t1 a0n1s1v3d0t1 a1n0s0v0d0t1 a1n0s0v1d0t1 a1n0s0v2d0t1 a1n0s0v3d0t1 a1n0s1v0d0t1 a1n0s1v1d0t1 a1n0s1v2d0t1 a1n0s1v3d0t1 a1n1s0v0d0t1 a1n1s0v1d0t1 a1n1s0v2d0t1 a1n1s0v3d0t1 a1n1s1v0d0t1 a1n1s1v1d0t1 a1n1s1v2d0t1 a1n1s1v3d0t1
+SELECT DISTINCT t1.c0 AS c0 FROM delta_q t1 WHERE NOT EXISTS (SELECT 1 FROM full_docof t2 WHERE (t2.c1 = t1.c0))
+
+## cmp
+a0n0s0v0d-t0 a0n0s0v1d-t0 a0n0s0v2d-t0 a0n0s0v3d-t0 a0n0s1v0d-t0 a0n0s1v1d-t0 a0n0s1v2d-t0 a0n0s1v3d-t0 a0n1s0v0d-t0 a0n1s0v1d-t0 a0n1s0v2d-t0 a0n1s0v3d-t0 a0n1s1v0d-t0 a0n1s1v1d-t0 a0n1s1v2d-t0 a0n1s1v3d-t0 a1n0s0v0d-t0 a1n0s0v1d-t0 a1n0s0v2d-t0 a1n0s0v3d-t0 a1n0s1v0d-t0 a1n0s1v1d-t0 a1n0s1v2d-t0 a1n0s1v3d-t0 a1n1s0v0d-t0 a1n1s0v1d-t0 a1n1s0v2d-t0 a1n1s0v3d-t0 a1n1s1v0d-t0 a1n1s1v1d-t0 a1n1s1v2d-t0 a1n1s1v3d-t0
+SELECT DISTINCT t1.c0 AS c0, t2.c0 AS c1 FROM q t1 CROSS JOIN q t2 WHERE (t1.c0 < t2.c0) AND (t1.c0 <> 3) AND (t2.c0 >= t1.c0) AND (t2.c0 > 1) AND (t1.c0 <= 9) AND ((t1.c0 + t2.c0) = 5)
+
+a0n0s0v0d-t1 a0n0s0v1d-t1 a0n0s0v2d-t1 a0n0s0v3d-t1 a0n0s1v0d-t1 a0n0s1v1d-t1 a0n0s1v2d-t1 a0n0s1v3d-t1 a0n1s0v0d-t1 a0n1s0v1d-t1 a0n1s0v2d-t1 a0n1s0v3d-t1 a0n1s1v0d-t1 a0n1s1v1d-t1 a0n1s1v2d-t1 a0n1s1v3d-t1 a1n0s0v0d-t1 a1n0s0v1d-t1 a1n0s0v2d-t1 a1n0s0v3d-t1 a1n0s1v0d-t1 a1n0s1v1d-t1 a1n0s1v2d-t1 a1n0s1v3d-t1 a1n1s0v0d-t1 a1n1s0v1d-t1 a1n1s0v2d-t1 a1n1s0v3d-t1 a1n1s1v0d-t1 a1n1s1v1d-t1 a1n1s1v2d-t1 a1n1s1v3d-t1
+SELECT DISTINCT t1.c0 AS c0, t2.c0 AS c1 FROM full_q t1 CROSS JOIN full_q t2 WHERE (t1.c0 < t2.c0) AND (t1.c0 <> 3) AND (t2.c0 >= t1.c0) AND (t2.c0 > 1) AND (t1.c0 <= 9) AND ((t1.c0 + t2.c0) = 5)
+
+a0n0s0v0d0t0 a0n0s0v1d0t0 a0n0s0v2d0t0 a0n0s0v3d0t0 a0n0s1v0d0t0 a0n0s1v1d0t0 a0n0s1v2d0t0 a0n0s1v3d0t0 a0n1s0v0d0t0 a0n1s0v1d0t0 a0n1s0v2d0t0 a0n1s0v3d0t0 a0n1s1v0d0t0 a0n1s1v1d0t0 a0n1s1v2d0t0 a0n1s1v3d0t0 a1n0s0v0d0t0 a1n0s0v1d0t0 a1n0s0v2d0t0 a1n0s0v3d0t0 a1n0s1v0d0t0 a1n0s1v1d0t0 a1n0s1v2d0t0 a1n0s1v3d0t0 a1n1s0v0d0t0 a1n1s0v1d0t0 a1n1s0v2d0t0 a1n1s0v3d0t0 a1n1s1v0d0t0 a1n1s1v1d0t0 a1n1s1v2d0t0 a1n1s1v3d0t0
+SELECT DISTINCT t1.c0 AS c0, t2.c0 AS c1 FROM delta_q t1 CROSS JOIN q t2 WHERE (t1.c0 < t2.c0) AND (t1.c0 <> 3) AND (t2.c0 >= t1.c0) AND (t2.c0 > 1) AND (t1.c0 <= 9) AND ((t1.c0 + t2.c0) = 5)
+
+a0n0s0v0d0t1 a0n0s0v1d0t1 a0n0s0v2d0t1 a0n0s0v3d0t1 a0n0s1v0d0t1 a0n0s1v1d0t1 a0n0s1v2d0t1 a0n0s1v3d0t1 a0n1s0v0d0t1 a0n1s0v1d0t1 a0n1s0v2d0t1 a0n1s0v3d0t1 a0n1s1v0d0t1 a0n1s1v1d0t1 a0n1s1v2d0t1 a0n1s1v3d0t1 a1n0s0v0d0t1 a1n0s0v1d0t1 a1n0s0v2d0t1 a1n0s0v3d0t1 a1n0s1v0d0t1 a1n0s1v1d0t1 a1n0s1v2d0t1 a1n0s1v3d0t1 a1n1s0v0d0t1 a1n1s0v1d0t1 a1n1s0v2d0t1 a1n1s0v3d0t1 a1n1s1v0d0t1 a1n1s1v1d0t1 a1n1s1v2d0t1 a1n1s1v3d0t1
+SELECT DISTINCT t1.c0 AS c0, t2.c0 AS c1 FROM delta_q t1 CROSS JOIN full_q t2 WHERE (t1.c0 < t2.c0) AND (t1.c0 <> 3) AND (t2.c0 >= t1.c0) AND (t2.c0 > 1) AND (t1.c0 <= 9) AND ((t1.c0 + t2.c0) = 5)
+
+a0n0s0v0d1t0 a0n0s0v1d1t0 a0n0s0v2d1t0 a0n0s0v3d1t0 a0n0s1v0d1t0 a0n0s1v1d1t0 a0n0s1v2d1t0 a0n0s1v3d1t0 a0n1s0v0d1t0 a0n1s0v1d1t0 a0n1s0v2d1t0 a0n1s0v3d1t0 a0n1s1v0d1t0 a0n1s1v1d1t0 a0n1s1v2d1t0 a0n1s1v3d1t0 a1n0s0v0d1t0 a1n0s0v1d1t0 a1n0s0v2d1t0 a1n0s0v3d1t0 a1n0s1v0d1t0 a1n0s1v1d1t0 a1n0s1v2d1t0 a1n0s1v3d1t0 a1n1s0v0d1t0 a1n1s0v1d1t0 a1n1s0v2d1t0 a1n1s0v3d1t0 a1n1s1v0d1t0 a1n1s1v1d1t0 a1n1s1v2d1t0 a1n1s1v3d1t0
+SELECT DISTINCT t1.c0 AS c0, t2.c0 AS c1 FROM q t1 CROSS JOIN delta_q t2 WHERE (t1.c0 < t2.c0) AND (t1.c0 <> 3) AND (t2.c0 >= t1.c0) AND (t2.c0 > 1) AND (t1.c0 <= 9) AND ((t1.c0 + t2.c0) = 5)
+
+a0n0s0v0d1t1 a0n0s0v1d1t1 a0n0s0v2d1t1 a0n0s0v3d1t1 a0n0s1v0d1t1 a0n0s1v1d1t1 a0n0s1v2d1t1 a0n0s1v3d1t1 a0n1s0v0d1t1 a0n1s0v1d1t1 a0n1s0v2d1t1 a0n1s0v3d1t1 a0n1s1v0d1t1 a0n1s1v1d1t1 a0n1s1v2d1t1 a0n1s1v3d1t1 a1n0s0v0d1t1 a1n0s0v1d1t1 a1n0s0v2d1t1 a1n0s0v3d1t1 a1n0s1v0d1t1 a1n0s1v1d1t1 a1n0s1v2d1t1 a1n0s1v3d1t1 a1n1s0v0d1t1 a1n1s0v1d1t1 a1n1s0v2d1t1 a1n1s0v3d1t1 a1n1s1v0d1t1 a1n1s1v1d1t1 a1n1s1v2d1t1 a1n1s1v3d1t1
+SELECT DISTINCT t1.c0 AS c0, t2.c0 AS c1 FROM full_q t1 CROSS JOIN delta_q t2 WHERE (t1.c0 < t2.c0) AND (t1.c0 <> 3) AND (t2.c0 >= t1.c0) AND (t2.c0 > 1) AND (t1.c0 <= 9) AND ((t1.c0 + t2.c0) = 5)
+
+## str
+a0n0s0v0d-t0 a0n0s0v0d1t0 a0n0s0v1d-t0 a0n0s0v1d1t0 a0n0s0v2d-t0 a0n0s0v2d1t0 a0n0s0v3d-t0 a0n0s0v3d1t0 a0n0s1v0d-t0 a0n0s1v0d1t0 a0n0s1v1d-t0 a0n0s1v1d1t0 a0n0s1v2d-t0 a0n0s1v2d1t0 a0n0s1v3d-t0 a0n0s1v3d1t0 a0n1s0v0d-t0 a0n1s0v0d1t0 a0n1s0v1d-t0 a0n1s0v1d1t0 a0n1s0v2d-t0 a0n1s0v2d1t0 a0n1s0v3d-t0 a0n1s0v3d1t0 a0n1s1v0d-t0 a0n1s1v0d1t0 a0n1s1v1d-t0 a0n1s1v1d1t0 a0n1s1v2d-t0 a0n1s1v2d1t0 a0n1s1v3d-t0 a0n1s1v3d1t0
+SELECT DISTINCT t1.c0 AS c0, (t1.c0 || '') AS c1, to_number(t1.c0) AS c2 FROM name t1 WHERE (to_number(t1.c0) IS NOT NULL) AND (t1.c0 = 'x')
+
+a0n0s0v0d-t1 a0n0s0v0d1t1 a0n0s0v1d-t1 a0n0s0v1d1t1 a0n0s0v2d-t1 a0n0s0v2d1t1 a0n0s0v3d-t1 a0n0s0v3d1t1 a0n0s1v0d-t1 a0n0s1v0d1t1 a0n0s1v1d-t1 a0n0s1v1d1t1 a0n0s1v2d-t1 a0n0s1v2d1t1 a0n0s1v3d-t1 a0n0s1v3d1t1 a0n1s0v0d-t1 a0n1s0v0d1t1 a0n1s0v1d-t1 a0n1s0v1d1t1 a0n1s0v2d-t1 a0n1s0v2d1t1 a0n1s0v3d-t1 a0n1s0v3d1t1 a0n1s1v0d-t1 a0n1s1v0d1t1 a0n1s1v1d-t1 a0n1s1v1d1t1 a0n1s1v2d-t1 a0n1s1v2d1t1 a0n1s1v3d-t1 a0n1s1v3d1t1
+SELECT DISTINCT t1.c0 AS c0, (t1.c0 || '') AS c1, to_number(t1.c0) AS c2 FROM full_name t1 WHERE (to_number(t1.c0) IS NOT NULL) AND (t1.c0 = 'x')
+
+a0n0s0v0d0t0 a0n0s0v0d0t1 a0n0s0v1d0t0 a0n0s0v1d0t1 a0n0s0v2d0t0 a0n0s0v2d0t1 a0n0s0v3d0t0 a0n0s0v3d0t1 a0n0s1v0d0t0 a0n0s1v0d0t1 a0n0s1v1d0t0 a0n0s1v1d0t1 a0n0s1v2d0t0 a0n0s1v2d0t1 a0n0s1v3d0t0 a0n0s1v3d0t1 a0n1s0v0d0t0 a0n1s0v0d0t1 a0n1s0v1d0t0 a0n1s0v1d0t1 a0n1s0v2d0t0 a0n1s0v2d0t1 a0n1s0v3d0t0 a0n1s0v3d0t1 a0n1s1v0d0t0 a0n1s1v0d0t1 a0n1s1v1d0t0 a0n1s1v1d0t1 a0n1s1v2d0t0 a0n1s1v2d0t1 a0n1s1v3d0t0 a0n1s1v3d0t1
+SELECT DISTINCT t1.c0 AS c0, (t1.c0 || '') AS c1, to_number(t1.c0) AS c2 FROM delta_name t1 WHERE (to_number(t1.c0) IS NOT NULL) AND (t1.c0 = 'x')
+
+a1n0s0v0d-t0 a1n0s0v0d1t0 a1n0s0v1d-t0 a1n0s0v1d1t0 a1n0s0v2d-t0 a1n0s0v2d1t0 a1n0s0v3d-t0 a1n0s0v3d1t0 a1n0s1v0d-t0 a1n0s1v0d1t0 a1n0s1v1d-t0 a1n0s1v1d1t0 a1n0s1v2d-t0 a1n0s1v2d1t0 a1n0s1v3d-t0 a1n0s1v3d1t0 a1n1s0v0d-t0 a1n1s0v0d1t0 a1n1s0v1d-t0 a1n1s0v1d1t0 a1n1s0v2d-t0 a1n1s0v2d1t0 a1n1s0v3d-t0 a1n1s0v3d1t0 a1n1s1v0d-t0 a1n1s1v0d1t0 a1n1s1v1d-t0 a1n1s1v1d1t0 a1n1s1v2d-t0 a1n1s1v2d1t0 a1n1s1v3d-t0 a1n1s1v3d1t0
+SELECT DISTINCT t1.c0 AS c0, sym_atom((t1.c0 || '')) AS c1, to_number(sym_text(t1.c0)) AS c2 FROM name t1 WHERE (to_number(sym_text(t1.c0)) IS NOT NULL) AND (t1.c0 = 'x')
+
+a1n0s0v0d-t1 a1n0s0v0d1t1 a1n0s0v1d-t1 a1n0s0v1d1t1 a1n0s0v2d-t1 a1n0s0v2d1t1 a1n0s0v3d-t1 a1n0s0v3d1t1 a1n0s1v0d-t1 a1n0s1v0d1t1 a1n0s1v1d-t1 a1n0s1v1d1t1 a1n0s1v2d-t1 a1n0s1v2d1t1 a1n0s1v3d-t1 a1n0s1v3d1t1 a1n1s0v0d-t1 a1n1s0v0d1t1 a1n1s0v1d-t1 a1n1s0v1d1t1 a1n1s0v2d-t1 a1n1s0v2d1t1 a1n1s0v3d-t1 a1n1s0v3d1t1 a1n1s1v0d-t1 a1n1s1v0d1t1 a1n1s1v1d-t1 a1n1s1v1d1t1 a1n1s1v2d-t1 a1n1s1v2d1t1 a1n1s1v3d-t1 a1n1s1v3d1t1
+SELECT DISTINCT t1.c0 AS c0, sym_atom((t1.c0 || '')) AS c1, to_number(sym_text(t1.c0)) AS c2 FROM full_name t1 WHERE (to_number(sym_text(t1.c0)) IS NOT NULL) AND (t1.c0 = 'x')
+
+a1n0s0v0d0t0 a1n0s0v0d0t1 a1n0s0v1d0t0 a1n0s0v1d0t1 a1n0s0v2d0t0 a1n0s0v2d0t1 a1n0s0v3d0t0 a1n0s0v3d0t1 a1n0s1v0d0t0 a1n0s1v0d0t1 a1n0s1v1d0t0 a1n0s1v1d0t1 a1n0s1v2d0t0 a1n0s1v2d0t1 a1n0s1v3d0t0 a1n0s1v3d0t1 a1n1s0v0d0t0 a1n1s0v0d0t1 a1n1s0v1d0t0 a1n1s0v1d0t1 a1n1s0v2d0t0 a1n1s0v2d0t1 a1n1s0v3d0t0 a1n1s0v3d0t1 a1n1s1v0d0t0 a1n1s1v0d0t1 a1n1s1v1d0t0 a1n1s1v1d0t1 a1n1s1v2d0t0 a1n1s1v2d0t1 a1n1s1v3d0t0 a1n1s1v3d0t1
+SELECT DISTINCT t1.c0 AS c0, sym_atom((t1.c0 || '')) AS c1, to_number(sym_text(t1.c0)) AS c2 FROM delta_name t1 WHERE (to_number(sym_text(t1.c0)) IS NOT NULL) AND (t1.c0 = 'x')
+
+## dup
+a0n0s0v0d-t0 a0n0s0v1d-t0 a0n0s1v0d-t0 a0n0s1v1d-t0 a0n1s0v0d-t0 a0n1s0v1d-t0 a0n1s1v0d-t0 a0n1s1v1d-t0 a1n0s0v0d-t0 a1n0s0v1d-t0 a1n0s1v0d-t0 a1n0s1v1d-t0 a1n1s0v0d-t0 a1n1s0v1d-t0 a1n1s1v0d-t0 a1n1s1v1d-t0
+SELECT DISTINCT t1.c0 AS c0 FROM docof t1 CROSS JOIN p t2 CROSS JOIN q t3 CROSS JOIN name t4 WHERE (t1.c1 = t1.c0) AND (t2.c0 = t1.c0) AND (t3.c0 = 3) AND (t4.c0 = 'a')
+
+a0n0s0v0d-t1 a0n0s0v1d-t1 a0n0s1v0d-t1 a0n0s1v1d-t1 a0n1s0v0d-t1 a0n1s0v1d-t1 a0n1s1v0d-t1 a0n1s1v1d-t1 a1n0s0v0d-t1 a1n0s0v1d-t1 a1n0s1v0d-t1 a1n0s1v1d-t1 a1n1s0v0d-t1 a1n1s0v1d-t1 a1n1s1v0d-t1 a1n1s1v1d-t1
+SELECT DISTINCT t1.c0 AS c0 FROM full_docof t1 CROSS JOIN full_p t2 CROSS JOIN full_q t3 CROSS JOIN full_name t4 WHERE (t1.c1 = t1.c0) AND (t2.c0 = t1.c0) AND (t3.c0 = 3) AND (t4.c0 = 'a')
+
+a0n0s0v0d0t0 a0n0s0v1d0t0 a0n0s1v0d0t0 a0n0s1v1d0t0 a0n1s0v0d0t0 a0n1s0v1d0t0 a0n1s1v0d0t0 a0n1s1v1d0t0 a1n0s0v0d0t0 a1n0s0v1d0t0 a1n0s1v0d0t0 a1n0s1v1d0t0 a1n1s0v0d0t0 a1n1s0v1d0t0 a1n1s1v0d0t0 a1n1s1v1d0t0
+SELECT DISTINCT t1.c0 AS c0 FROM delta_docof t1 CROSS JOIN p t2 CROSS JOIN q t3 CROSS JOIN name t4 WHERE (t1.c1 = t1.c0) AND (t2.c0 = t1.c0) AND (t3.c0 = 3) AND (t4.c0 = 'a')
+
+a0n0s0v0d0t1 a0n0s0v1d0t1 a0n0s1v0d0t1 a0n0s1v1d0t1 a0n1s0v0d0t1 a0n1s0v1d0t1 a0n1s1v0d0t1 a0n1s1v1d0t1 a1n0s0v0d0t1 a1n0s0v1d0t1 a1n0s1v0d0t1 a1n0s1v1d0t1 a1n1s0v0d0t1 a1n1s0v1d0t1 a1n1s1v0d0t1 a1n1s1v1d0t1
+SELECT DISTINCT t1.c0 AS c0 FROM delta_docof t1 CROSS JOIN full_p t2 CROSS JOIN full_q t3 CROSS JOIN full_name t4 WHERE (t1.c1 = t1.c0) AND (t2.c0 = t1.c0) AND (t3.c0 = 3) AND (t4.c0 = 'a')
+
+a0n0s0v0d1t0 a0n0s0v1d1t0 a0n0s1v0d1t0 a0n0s1v1d1t0 a0n1s0v0d1t0 a0n1s0v1d1t0 a0n1s1v0d1t0 a0n1s1v1d1t0 a1n0s0v0d1t0 a1n0s0v1d1t0 a1n0s1v0d1t0 a1n0s1v1d1t0 a1n1s0v0d1t0 a1n1s0v1d1t0 a1n1s1v0d1t0 a1n1s1v1d1t0
+SELECT DISTINCT t1.c0 AS c0 FROM docof t1 CROSS JOIN delta_p t2 CROSS JOIN q t3 CROSS JOIN name t4 WHERE (t1.c1 = t1.c0) AND (t2.c0 = t1.c0) AND (t3.c0 = 3) AND (t4.c0 = 'a')
+
+a0n0s0v0d1t1 a0n0s0v1d1t1 a0n0s1v0d1t1 a0n0s1v1d1t1 a0n1s0v0d1t1 a0n1s0v1d1t1 a0n1s1v0d1t1 a0n1s1v1d1t1 a1n0s0v0d1t1 a1n0s0v1d1t1 a1n0s1v0d1t1 a1n0s1v1d1t1 a1n1s0v0d1t1 a1n1s0v1d1t1 a1n1s1v0d1t1 a1n1s1v1d1t1
+SELECT DISTINCT t1.c0 AS c0 FROM full_docof t1 CROSS JOIN delta_p t2 CROSS JOIN full_q t3 CROSS JOIN full_name t4 WHERE (t1.c1 = t1.c0) AND (t2.c0 = t1.c0) AND (t3.c0 = 3) AND (t4.c0 = 'a')
+
+a0n0s0v2d-t0 a0n0s0v3d-t0 a0n1s0v2d-t0 a0n1s0v3d-t0 a1n0s0v2d-t0 a1n0s0v3d-t0 a1n1s0v2d-t0 a1n1s0v3d-t0
+SELECT DISTINCT t1.c0 AS c0 FROM docof t1 CROSS JOIN f.stat_docrange t3 CROSS JOIN p t2 CROSS JOIN q t4 CROSS JOIN name t5 WHERE (t1.c1 = t1.c0) AND (t3.d = t1.c0) AND t2.c0 BETWEEN t3.lo AND t3.hi AND (t2.c0 = t1.c0) AND (t4.c0 = 3) AND (t5.c0 = 'a')
+
+a0n0s0v2d-t1 a0n0s0v3d-t1 a0n1s0v2d-t1 a0n1s0v3d-t1 a1n0s0v2d-t1 a1n0s0v3d-t1 a1n1s0v2d-t1 a1n1s0v3d-t1
+SELECT DISTINCT t1.c0 AS c0 FROM full_docof t1 CROSS JOIN f.stat_docrange t3 CROSS JOIN full_p t2 CROSS JOIN full_q t4 CROSS JOIN full_name t5 WHERE (t1.c1 = t1.c0) AND (t3.d = t1.c0) AND t2.c0 BETWEEN t3.lo AND t3.hi AND (t2.c0 = t1.c0) AND (t4.c0 = 3) AND (t5.c0 = 'a')
+
+a0n0s0v2d0t0 a0n0s0v3d0t0 a0n1s0v2d0t0 a0n1s0v3d0t0 a1n0s0v2d0t0 a1n0s0v3d0t0 a1n1s0v2d0t0 a1n1s0v3d0t0
+SELECT DISTINCT t1.c0 AS c0 FROM delta_docof t1 CROSS JOIN f.stat_docrange t3 CROSS JOIN p t2 CROSS JOIN q t4 CROSS JOIN name t5 WHERE (t1.c1 = t1.c0) AND (t3.d = t1.c0) AND t2.c0 BETWEEN t3.lo AND t3.hi AND (t2.c0 = t1.c0) AND (t4.c0 = 3) AND (t5.c0 = 'a')
+
+a0n0s0v2d0t1 a0n0s0v3d0t1 a0n1s0v2d0t1 a0n1s0v3d0t1 a1n0s0v2d0t1 a1n0s0v3d0t1 a1n1s0v2d0t1 a1n1s0v3d0t1
+SELECT DISTINCT t1.c0 AS c0 FROM delta_docof t1 CROSS JOIN f.stat_docrange t3 CROSS JOIN full_p t2 CROSS JOIN full_q t4 CROSS JOIN full_name t5 WHERE (t1.c1 = t1.c0) AND (t3.d = t1.c0) AND t2.c0 BETWEEN t3.lo AND t3.hi AND (t2.c0 = t1.c0) AND (t4.c0 = 3) AND (t5.c0 = 'a')
+
+a0n0s0v2d1t0 a0n0s0v3d1t0 a0n1s0v2d1t0 a0n1s0v3d1t0 a1n0s0v2d1t0 a1n0s0v3d1t0 a1n1s0v2d1t0 a1n1s0v3d1t0
+SELECT DISTINCT t1.c0 AS c0 FROM docof t1 CROSS JOIN f.stat_docrange t3 CROSS JOIN delta_p t2 CROSS JOIN q t4 CROSS JOIN name t5 WHERE (t1.c1 = t1.c0) AND (t3.d = t1.c0) AND t2.c0 BETWEEN t3.lo AND t3.hi AND (t2.c0 = t1.c0) AND (t4.c0 = 3) AND (t5.c0 = 'a')
+
+a0n0s0v2d1t1 a0n0s0v3d1t1 a0n1s0v2d1t1 a0n1s0v3d1t1 a1n0s0v2d1t1 a1n0s0v3d1t1 a1n1s0v2d1t1 a1n1s0v3d1t1
+SELECT DISTINCT t1.c0 AS c0 FROM full_docof t1 CROSS JOIN f.stat_docrange t3 CROSS JOIN delta_p t2 CROSS JOIN full_q t4 CROSS JOIN full_name t5 WHERE (t1.c1 = t1.c0) AND (t3.d = t1.c0) AND t2.c0 BETWEEN t3.lo AND t3.hi AND (t2.c0 = t1.c0) AND (t4.c0 = 3) AND (t5.c0 = 'a')
+
+a0n0s1v2d-t0 a0n0s1v3d-t0 a0n1s1v2d-t0 a0n1s1v3d-t0 a1n0s1v2d-t0 a1n0s1v3d-t0 a1n1s1v2d-t0 a1n1s1v3d-t0
+SELECT DISTINCT t1.c0 AS c0 FROM docof t1 CROSS JOIN p t2 CROSS JOIN q t3 CROSS JOIN name t4 WHERE (t1.c1 = t1.c0) AND t2.c0 BETWEEN (t1.c0 * 4294967296) AND ((t1.c0 * 4294967296) + 4294967295) AND (t2.c0 = t1.c0) AND (t3.c0 = 3) AND (t4.c0 = 'a')
+
+a0n0s1v2d-t1 a0n0s1v3d-t1 a0n1s1v2d-t1 a0n1s1v3d-t1 a1n0s1v2d-t1 a1n0s1v3d-t1 a1n1s1v2d-t1 a1n1s1v3d-t1
+SELECT DISTINCT t1.c0 AS c0 FROM full_docof t1 CROSS JOIN full_p t2 CROSS JOIN full_q t3 CROSS JOIN full_name t4 WHERE (t1.c1 = t1.c0) AND t2.c0 BETWEEN (t1.c0 * 4294967296) AND ((t1.c0 * 4294967296) + 4294967295) AND (t2.c0 = t1.c0) AND (t3.c0 = 3) AND (t4.c0 = 'a')
+
+a0n0s1v2d0t0 a0n0s1v3d0t0 a0n1s1v2d0t0 a0n1s1v3d0t0 a1n0s1v2d0t0 a1n0s1v3d0t0 a1n1s1v2d0t0 a1n1s1v3d0t0
+SELECT DISTINCT t1.c0 AS c0 FROM delta_docof t1 CROSS JOIN p t2 CROSS JOIN q t3 CROSS JOIN name t4 WHERE (t1.c1 = t1.c0) AND t2.c0 BETWEEN (t1.c0 * 4294967296) AND ((t1.c0 * 4294967296) + 4294967295) AND (t2.c0 = t1.c0) AND (t3.c0 = 3) AND (t4.c0 = 'a')
+
+a0n0s1v2d0t1 a0n0s1v3d0t1 a0n1s1v2d0t1 a0n1s1v3d0t1 a1n0s1v2d0t1 a1n0s1v3d0t1 a1n1s1v2d0t1 a1n1s1v3d0t1
+SELECT DISTINCT t1.c0 AS c0 FROM delta_docof t1 CROSS JOIN full_p t2 CROSS JOIN full_q t3 CROSS JOIN full_name t4 WHERE (t1.c1 = t1.c0) AND t2.c0 BETWEEN (t1.c0 * 4294967296) AND ((t1.c0 * 4294967296) + 4294967295) AND (t2.c0 = t1.c0) AND (t3.c0 = 3) AND (t4.c0 = 'a')
+
+a0n0s1v2d1t0 a0n0s1v3d1t0 a0n1s1v2d1t0 a0n1s1v3d1t0 a1n0s1v2d1t0 a1n0s1v3d1t0 a1n1s1v2d1t0 a1n1s1v3d1t0
+SELECT DISTINCT t1.c0 AS c0 FROM docof t1 CROSS JOIN delta_p t2 CROSS JOIN q t3 CROSS JOIN name t4 WHERE (t1.c1 = t1.c0) AND t2.c0 BETWEEN (t1.c0 * 4294967296) AND ((t1.c0 * 4294967296) + 4294967295) AND (t2.c0 = t1.c0) AND (t3.c0 = 3) AND (t4.c0 = 'a')
+
+a0n0s1v2d1t1 a0n0s1v3d1t1 a0n1s1v2d1t1 a0n1s1v3d1t1 a1n0s1v2d1t1 a1n0s1v3d1t1 a1n1s1v2d1t1 a1n1s1v3d1t1
+SELECT DISTINCT t1.c0 AS c0 FROM full_docof t1 CROSS JOIN delta_p t2 CROSS JOIN full_q t3 CROSS JOIN full_name t4 WHERE (t1.c1 = t1.c0) AND t2.c0 BETWEEN (t1.c0 * 4294967296) AND ((t1.c0 * 4294967296) + 4294967295) AND (t2.c0 = t1.c0) AND (t3.c0 = 3) AND (t4.c0 = 'a')
+
+## rr_demand_agg_rr_agg1
+a0n0s0v0d-t0 a0n0s0v0d1t0 a0n0s0v1d-t0 a0n0s0v1d1t0 a0n0s0v2d-t0 a0n0s0v2d1t0 a0n0s0v3d-t0 a0n0s0v3d1t0 a0n0s1v0d-t0 a0n0s1v0d1t0 a0n0s1v1d-t0 a0n0s1v1d1t0 a0n0s1v2d-t0 a0n0s1v2d1t0 a0n0s1v3d-t0 a0n0s1v3d1t0 a0n1s0v0d-t0 a0n1s0v0d1t0 a0n1s0v1d-t0 a0n1s0v1d1t0 a0n1s0v2d-t0 a0n1s0v2d1t0 a0n1s0v3d-t0 a0n1s0v3d1t0 a0n1s1v0d-t0 a0n1s1v0d1t0 a0n1s1v1d-t0 a0n1s1v1d1t0 a0n1s1v2d-t0 a0n1s1v2d1t0 a0n1s1v3d-t0 a0n1s1v3d1t0 a1n0s0v0d-t0 a1n0s0v0d1t0 a1n0s0v1d-t0 a1n0s0v1d1t0 a1n0s0v2d-t0 a1n0s0v2d1t0 a1n0s0v3d-t0 a1n0s0v3d1t0 a1n0s1v0d-t0 a1n0s1v0d1t0 a1n0s1v1d-t0 a1n0s1v1d1t0 a1n0s1v2d-t0 a1n0s1v2d1t0 a1n0s1v3d-t0 a1n0s1v3d1t0 a1n1s0v0d-t0 a1n1s0v0d1t0 a1n1s0v1d-t0 a1n1s0v1d1t0 a1n1s0v2d-t0 a1n1s0v2d1t0 a1n1s0v3d-t0 a1n1s0v3d1t0 a1n1s1v0d-t0 a1n1s1v0d1t0 a1n1s1v1d-t0 a1n1s1v1d1t0 a1n1s1v2d-t0 a1n1s1v2d1t0 a1n1s1v3d-t0 a1n1s1v3d1t0
+SELECT DISTINCT t1.c0 AS c0 FROM q t1
+
+a0n0s0v0d-t1 a0n0s0v0d1t1 a0n0s0v1d-t1 a0n0s0v1d1t1 a0n0s0v2d-t1 a0n0s0v2d1t1 a0n0s0v3d-t1 a0n0s0v3d1t1 a0n0s1v0d-t1 a0n0s1v0d1t1 a0n0s1v1d-t1 a0n0s1v1d1t1 a0n0s1v2d-t1 a0n0s1v2d1t1 a0n0s1v3d-t1 a0n0s1v3d1t1 a0n1s0v0d-t1 a0n1s0v0d1t1 a0n1s0v1d-t1 a0n1s0v1d1t1 a0n1s0v2d-t1 a0n1s0v2d1t1 a0n1s0v3d-t1 a0n1s0v3d1t1 a0n1s1v0d-t1 a0n1s1v0d1t1 a0n1s1v1d-t1 a0n1s1v1d1t1 a0n1s1v2d-t1 a0n1s1v2d1t1 a0n1s1v3d-t1 a0n1s1v3d1t1 a1n0s0v0d-t1 a1n0s0v0d1t1 a1n0s0v1d-t1 a1n0s0v1d1t1 a1n0s0v2d-t1 a1n0s0v2d1t1 a1n0s0v3d-t1 a1n0s0v3d1t1 a1n0s1v0d-t1 a1n0s1v0d1t1 a1n0s1v1d-t1 a1n0s1v1d1t1 a1n0s1v2d-t1 a1n0s1v2d1t1 a1n0s1v3d-t1 a1n0s1v3d1t1 a1n1s0v0d-t1 a1n1s0v0d1t1 a1n1s0v1d-t1 a1n1s0v1d1t1 a1n1s0v2d-t1 a1n1s0v2d1t1 a1n1s0v3d-t1 a1n1s0v3d1t1 a1n1s1v0d-t1 a1n1s1v0d1t1 a1n1s1v1d-t1 a1n1s1v1d1t1 a1n1s1v2d-t1 a1n1s1v2d1t1 a1n1s1v3d-t1 a1n1s1v3d1t1
+SELECT DISTINCT t1.c0 AS c0 FROM full_q t1
+
+a0n0s0v0d0t0 a0n0s0v0d0t1 a0n0s0v1d0t0 a0n0s0v1d0t1 a0n0s0v2d0t0 a0n0s0v2d0t1 a0n0s0v3d0t0 a0n0s0v3d0t1 a0n0s1v0d0t0 a0n0s1v0d0t1 a0n0s1v1d0t0 a0n0s1v1d0t1 a0n0s1v2d0t0 a0n0s1v2d0t1 a0n0s1v3d0t0 a0n0s1v3d0t1 a0n1s0v0d0t0 a0n1s0v0d0t1 a0n1s0v1d0t0 a0n1s0v1d0t1 a0n1s0v2d0t0 a0n1s0v2d0t1 a0n1s0v3d0t0 a0n1s0v3d0t1 a0n1s1v0d0t0 a0n1s1v0d0t1 a0n1s1v1d0t0 a0n1s1v1d0t1 a0n1s1v2d0t0 a0n1s1v2d0t1 a0n1s1v3d0t0 a0n1s1v3d0t1 a1n0s0v0d0t0 a1n0s0v0d0t1 a1n0s0v1d0t0 a1n0s0v1d0t1 a1n0s0v2d0t0 a1n0s0v2d0t1 a1n0s0v3d0t0 a1n0s0v3d0t1 a1n0s1v0d0t0 a1n0s1v0d0t1 a1n0s1v1d0t0 a1n0s1v1d0t1 a1n0s1v2d0t0 a1n0s1v2d0t1 a1n0s1v3d0t0 a1n0s1v3d0t1 a1n1s0v0d0t0 a1n1s0v0d0t1 a1n1s0v1d0t0 a1n1s0v1d0t1 a1n1s0v2d0t0 a1n1s0v2d0t1 a1n1s0v3d0t0 a1n1s0v3d0t1 a1n1s1v0d0t0 a1n1s1v0d0t1 a1n1s1v1d0t0 a1n1s1v1d0t1 a1n1s1v2d0t0 a1n1s1v2d0t1 a1n1s1v3d0t0 a1n1s1v3d0t1
+SELECT DISTINCT t1.c0 AS c0 FROM delta_q t1
+
