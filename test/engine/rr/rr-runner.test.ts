@@ -32,15 +32,21 @@ Shout(c) :- kind(c, "call"), field(c, "function", f), text(f, "shout").
 const MULTI_BYTE = 'greeting = "héllo wörld 漢字"; shout("ü")\n';
 const MULTI_LINE = "def f():\n    return shout(\n        1,\n    )\n";
 
-/** Each test's TMPDIR: the runner's temporary directories, and the child's store, are made there. */
+/**
+ * This file's temporary folder, which `os.tmpdir()` reads (TMPDIR, and TEMP and TMP on Windows), and so the runner's
+ * children inherit: the runner's temporary directories, and the children's stores, are made there and nowhere else.
+ */
 let temporary: string;
-let previousTmpdir: string | undefined;
+const TEMPORARY_VARIABLES = ["TMPDIR", "TEMP", "TMP"] as const;
+const previous = new Map<string, string | undefined>();
 const roots: string[] = [];
 
 beforeAll(() => {
-  previousTmpdir = process.env.TMPDIR;
   temporary = realpathSync(mkdtempSync(join(tmpdir(), "rr-runner-test-")));
-  process.env.TMPDIR = temporary;
+  for (const name of TEMPORARY_VARIABLES) {
+    previous.set(name, process.env[name]);
+    process.env[name] = temporary;
+  }
 });
 
 afterEach(async () => {
@@ -51,8 +57,10 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
-  if (previousTmpdir === undefined) delete process.env.TMPDIR;
-  else process.env.TMPDIR = previousTmpdir;
+  for (const [name, value] of previous) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
   await removeFolder(temporary);
 });
 
