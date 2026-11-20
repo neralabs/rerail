@@ -62,6 +62,34 @@ has instead. In MLDB (`block/memory_region.h` and `block/compute_kernel_grid.h`,
 
    With unified memory (Apple's) there is one copy: no mirror, nothing moves, and a sync is the wait alone.
 
+## Against 0440 §7.2: memory domains, replicas and the directory
+
+CUDA-support decided how blocks cross memory domains (0440 §7.2, the user's Q1). It reached this branch in the merge
+of 2026-11-20 (fa09c9c761). Item 7 above is that model for one region and two spaces. Where they meet:
+
+- **The same.** A version names what a copy holds. A frozen version may have a copy in every domain, and none is ever
+  invalidated. A mutable region is written in one domain at a time. Within one domain (Apple, the GB10) nothing
+  moves, and a sync is a wait. A copy is ordered before the kernel that reads it, on its fence.
+- **Domains, not "host" and "device".** 0440 counts every domain: a host's RAM, each discrete GPU's memory, another
+  host's RAM, the disk. A host with two cards has three. A region's `host` and `device` versions become one entry a
+  domain: its version and its `Mirror`, for each domain that holds a copy.
+- **A mutable region has one owner domain.** 0440 lets one domain hold the mutable version. Item 7's rule says the
+  same: after a GPU write, a CPU access fails until `sync_host`. That is ownership moving to the device, and back. The
+  entry that holds the latest version is the owner. A write elsewhere first takes ownership, by moving the bytes, so
+  two domains never write one region.
+- **Freezing publishes.** 0440 freezes a block when its writer's work ends. Here a `Mutable` stays mutable across
+  writes, and each write moves its version. `freeze` is still what makes copies free to keep everywhere. A kernel's
+  output that no one writes again is frozen as its work completes.
+- **The directory is the regions' state.** 0440 asks for one table a process: each block's version, its owner and
+  its copies. That table is the live regions' `Access` entries, with the ledger's address index (0487 R8) to find a
+  buffer's region. It is the machine's (0442), not a second store beside the regions.
+- **Kernels say their reads and writes.** UKL's rows already do (`ROBUFFER` reads, `RWBUFFER` and `WOBUFFER`
+  write). A launch pins each argument by its row, read or write, so no caller picks `bind_read` or `bind_write` by
+  hand. The device layer does not give the host those rows yet; that is a step below.
+- **Eviction is the one cache.** A frozen copy in a domain that another domain or the disk also holds may go. It is
+  an entry of the one cache the CPU and the GPU share, bound by LRU (the user's rule). A mutable region's owner copy
+  is written back before its pages go.
+
 ## Requirements, each locked by a test (`region::tests`)
 
 - **R1** A write while a read is live fails (`a_write_while_a_read_is_live_fails`).
@@ -88,3 +116,8 @@ has instead. In MLDB (`block/memory_region.h` and `block/compute_kernel_grid.h`,
    and `Batch` marks each command buffer's fence committed as it commits it.
 3. **The block itself as the root region:** `Facts` and the pool's slabs hold their block by handle, so a block's
    frozenness, placement and lifetime are read in the same place as its regions'.
+4. **Domains (0440 §7.2):** a region's host and device versions become an entry a domain, with the owner domain of a
+   mutable region, and each device in the device layer names its domain. A test with two domains besides the host
+   (two mirrors) locks it: a write in one makes the other behind, and only the owner may write.
+5. **Kernels' rows bind their arguments:** the device layer gives each kernel's parameter rows (read, write) to the
+   host, and `Pass::run` pins each argument by its row.

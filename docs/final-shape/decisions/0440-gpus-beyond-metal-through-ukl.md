@@ -570,6 +570,9 @@ cache protocol into bookkeeping:
 | mutable (being written) | exactly one, in the writer's domain | write it there; readers elsewhere read the last frozen version |
 | frozen v+1 from a delta | the delta is shipped to replicas of v and applied there (O(delta), 0260) | read v+1 where it has been made |
 
+(Built for a region on one host: 0491, `rerail_blocks::region`, whose "Against 0440 §7.2" says how its versions, mirrors and
+owner become these domains, replicas and directory.)
+
 **The directory.** One table per process (`rerail_blocks`, beside 0342's allocator) records, for each block: its
 current version, the domain that owns its mutable version if any, and which domains hold which frozen versions,
 with an event per replica for when its copy completes. Across hosts the directory is per host, and a host asks the
