@@ -534,15 +534,39 @@ function noticedWalks(watch = new StampTreeWatch(), options: { fullWalkMs?: numb
   return new WorktreeWalks({ gapMs: 0, ...options, notices: new WorktreeNotices({ treeWatch: watch, platform: "darwin" }) });
 }
 
+/** Walks with change notices (`noticedWalks`) and the watch they take them from. */
+interface Noticing {
+  readonly walks: WorktreeWalks;
+  readonly watch: StampTreeWatch;
+}
+
 /**
- * Two sessions in `folder`: one whose walks read only the worktrees a change notice named, and one whose walks read every
- * worktree, as all walks did before notices. Each has had two walks.
+ * Writes `text` to `path`, in the watched worktree `root`, as one change. A write empties the file before it writes the
+ * text, and on a loaded machine the two are far enough apart that a walk a notice asks for can read the file empty and
+ * record that too, then the text as a second edit. No walk runs as the write begins, and the notices of `root` wait
+ * until it ended.
  */
-async function bothWays(folder: string, checkouts: readonly string[]): Promise<{ noticed: Session; everyWorktree: Session }> {
-  const noticed = await session(folder, checkouts, noticedWalks());
+async function writeAsOneChange({ walks, watch }: Noticing, root: string, path: string, text: string): Promise<void> {
+  await walks.idle();
+  watch.hold(root);
+  try {
+    await writeFile(path, text);
+  } finally {
+    watch.release(root);
+  }
+}
+
+/**
+ * Two sessions in `folder`: one whose walks read only the worktrees a change notice named (through `noticing`), and one
+ * whose walks read every worktree, as all walks did before notices. Each has had two walks.
+ */
+async function bothWays(folder: string, checkouts: readonly string[]): Promise<{ noticed: Session; everyWorktree: Session; noticing: Noticing }> {
+  const watch = new StampTreeWatch();
+  const walks = noticedWalks(watch);
+  const noticed = await session(folder, checkouts, walks);
   const everyWorktree = await session(folder, checkouts, new WorktreeWalks({ gapMs: 0, fullWalkMs: 0 }));
   await turn(noticed, everyWorktree);
-  return { noticed, everyWorktree };
+  return { noticed, everyWorktree, noticing: { walks, watch } };
 }
 
 describe("a walk of the other worktrees with change notices", () => {
@@ -661,11 +685,11 @@ describe("a walk of the other worktrees with change notices", () => {
     git(w3, "commit", "--quiet", "-am", "other");
     git(w3, "checkout", "--quiet", "--detach", "HEAD~1");
     await awaitClockAfter(join(w3, "src", "a.py"));
-    const { noticed, everyWorktree } = await bothWays(worktrees[0]!, checkouts);
+    const { noticed, everyWorktree, noticing } = await bothWays(worktrees[0]!, checkouts);
     git(w3, "checkout", "--quiet", "other");
     await turn(noticed, everyWorktree);
     await awaitClockAfter(join(w3, "src", "a.py"));
-    await writeFile(join(w3, "src", "a.py"), "other\nmine\n");
+    await writeAsOneChange(noticing, w3, join(w3, "src", "a.py"), "other\nmine\n");
     await turn(noticed, everyWorktree);
     // The write after the switch is measured against the branch's text.
     expect(edits(noticed).at(-1)).toEqual([[{ path: "../w3/src/a.py", language: "python", previousText: "other\n", generatedText: "other\nmine\n" }], "log"]);
@@ -690,8 +714,10 @@ describe("a walk of the other worktrees with change notices", () => {
     await writeFile(join(nested, "both.py"), "1\n2\n3\n4\n5\n6\nours\n");
     git(nested, "commit", "--quiet", "-am", "ours");
     await awaitClockAfter(join(nested, "both.py"));
+    const watch = new StampTreeWatch();
+    const noticing: Noticing = { watch, walks: noticedWalks(watch) };
     const sessions = await Promise.all([
-      session(worktrees[0]!, checkouts, noticedWalks(), { nested: [nested] }),
+      session(worktrees[0]!, checkouts, noticing.walks, { nested: [nested] }),
       session(worktrees[0]!, checkouts, new WorktreeWalks({ gapMs: 0, fullWalkMs: 0 }), { nested: [nested] }),
     ]);
     const [noticed, everyWorktree] = sessions;
@@ -703,7 +729,7 @@ describe("a walk of the other worktrees with change notices", () => {
     await turn(...sessions);
     expect(edits(noticed)).toEqual([]);
     await awaitClockAfter(join(nested, "both.py"));
-    await writeFile(join(nested, "gone.py"), "gone\nours\nmine\n");
+    await writeAsOneChange(noticing, worktrees[2]!, join(nested, "gone.py"), "gone\nours\nmine\n");
     await turn(...sessions);
     expect(edits(noticed)).toEqual([
       [[{ path: "../w3/lib/gone.py", language: "python", previousText: "gone\nours\n", generatedText: "gone\nours\nmine\n" }], "log"],
