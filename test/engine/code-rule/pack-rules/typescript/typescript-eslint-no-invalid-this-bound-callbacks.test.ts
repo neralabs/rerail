@@ -109,6 +109,11 @@ const CALLBACKS: ReadonlyArray<[string, string, [number, Steer][]]> = [
     [[2, "callback"]],
   ],
   ["`map` without `thisArg` inside a method", "class C { m() { return [1].map(function () { return this; }); } }\n", [[1, "callback"]]],
+  [
+    "a computed key of a method or field inside the callback",
+    ["it('x', function () {", "  const o = { [this.key]() {} };", "  class C { [this.key] = 1; }", "});", ""].join("\n"),
+    [[2, "callback"], [3, "callback"]],
+  ],
 ];
 
 /** Neighbours that keep their answer: the general message where `this` is not in a callback argument, silence where valid. */
@@ -116,6 +121,7 @@ const NEIGHBOURS: ReadonlyArray<[string, string, [number, Steer][]]> = [
   ["a function declaration", "function plain() { return this; }\n", [[1, "general"]]],
   ["module top level", "export const x = this;\n", [[1, "general"]]],
   ["a function expression assigned to a variable", "const f = function () { return this; };\n", [[1, "general"]]],
+  ["a computed key of a method inside a function declaration", "function plain() { return { [this.key]() {} }; }\n", [[1, "general"]]],
   ["a function returned from an arrow inside a call argument", "run(() => { function g() { return this; } return g; });\n", [[1, "general"]]],
   ["a callback that declares `this`", "test('x', function (this: Mocha.Context) { this.skip(); });\n", []],
   ["an arrow function callback (lexical `this` at the top level)", "test('x', () => this.skip());\n", [[1, "general"]]],
