@@ -33,7 +33,7 @@
     "Codex invokes Rerail commands as `$rerail-…`; every other coding agent as `/rerail-…`. `/rerail` lists them all.",
     "Rules belong to one repository. Create one with `/rerail-create`: test the draft with `rerail rules test <draft.json>` and run `rerail rules add <draft.json>` only after the person confirms it.",
     "To change only where a rule applies, a Rerail pack's rule included, `rerail rules show <id>` prints it as a draft: change its `scope` alone and test it with `rerail rules test <draft.json>`.",
-    "After the person confirms a draft that `rerail rules show <id>` printed, run `rerail rules add <draft.json>` and `rerail rules approve <id it printed>`. A pack rule is saved as the person's copy, which turns the original off once approved.",
+    "After the person confirms a draft `rerail rules show <id>` printed, run `rerail rules add <draft.json>`; the person approves it in the dashboard. A pack rule, or an edit of an approved rule, is saved as a copy that turns the original off once approved.",
     "A rule's mode is `log` (recorded only) or `steer` (its guidance is sent to the agent).",
     "Write a code rule as a JSON draft whose `rule` is a `rerail.policy/v1` document. A `.rerail` file runs only through `rerail rules test` from a Rerail checkout: sessions, scans and packs do not run it, and `rerail rules add` takes only JSON.",
     "When Rerail reports violations of your last edit, fix them, or tell the user in one line why you won't and record that line with `rerail feedback <rule-id> '<that line>'`.",

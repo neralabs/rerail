@@ -22,7 +22,7 @@ Data tables, generated from the JSON (`gen-<id>.py` writes, `check-<id>.py` roun
 |---|---|---|
 | `ruff-air301-airflow3-removal.names.rerail` | 76 | the name clauses' `old-name` lists, prefix flags, `new-import` guards and messages |
 | `ruff-air302-airflow3-moved-to-provider.moved.rerail` | 182 | each clause's `old` list, plus the provider, version, module and name parsed from its message |
-| `ruff-air312-airflow3-suggested-to-move-to-provider.moved.rerail` | 31 | the `deprecated` list. The new module is the old one under `airflow.providers.standard`, with Ruff's two exceptions (`sensor.bash`, sic, and `sensors.time`). The check compares the old names with the JSON and every row with the arms of Ruff's `suggested_to_move_to_provider_in_3.rs` (`RUFF_SRC` overrides its path): 31 names, 31 arms, 0 differences |
+| `ruff-air312-airflow3-suggested-to-move-to-provider.moved.rerail` | 31 | the `deprecated` list. The new module is the old one under `airflow.providers.standard`, with Ruff's two exceptions (`sensor.bash`, sic, and `sensors.time`). The check compares the old names with the JSON and every row with the arms of Ruff's `suggested_to_move_to_provider_in_3.rs` (read from `RUFF_SRC`, a Ruff checkout at 0be08a2, which must be set): 31 names, 31 arms, 0 differences |
 
 The 52 rules have 1,536 lines, comments and directives included. Most are 16 to 60 lines. AIR311 has 64,
 because its name table is inline. ERA001 has 91, for its grammar (E1). AIR301 has 176, above the 130 aimed

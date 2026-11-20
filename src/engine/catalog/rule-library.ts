@@ -262,13 +262,46 @@ export function copyRerailRuleToLibrary(
 ): CopiedRule {
   const original = ruleCatalog.documents.get(sourceId);
   if (original === undefined) throw new Error(`${sourceId} is not a By Rerail rule`);
+  return storeCopy(db, ruleCatalog, original.kind, sourceId, edited, tx => rerailRuleFolders(tx, ruleCatalog, repositoryKey, sourceId), { repositoryKey, ...options });
+}
+
+/**
+ * Store a coding agent's edit of your approved rule `sourceId` as a library copy, in one transaction, as
+ * {@link copyRerailRuleToLibrary} does for a By Rerail rule: the copy is added where the original is in the repository,
+ * runs in Log until a person approves it, and that first approval switches the original off there. Until then the
+ * approved original keeps running, unchanged in every repository it is added to.
+ */
+export function copyLibraryRuleToLibrary(
+  db: RerailDatabase,
+  ruleCatalog: RuleCatalog,
+  repositoryKey: RepositoryKey,
+  sourceId: string,
+  edited: unknown,
+  options: { readonly now?: number } = {},
+): CopiedRule {
+  const original = getLibraryRule(db, sourceId);
+  if (original === undefined) throw new Error(`${sourceId} is not a rule created by you`);
+  return storeCopy(db, ruleCatalog, original.document.kind, sourceId, edited, tx => libraryRuleFolders(tx, repositoryKey, sourceId), { repositoryKey, ...options });
+}
+
+/** Write `edited` as the copy of `sourceId`, and add it at the folders `foldersOf` reads in the same transaction. */
+function storeCopy(
+  db: RerailDatabase,
+  ruleCatalog: RuleCatalog,
+  kind: RuleKind,
+  sourceId: string,
+  edited: unknown,
+  foldersOf: (tx: Queries) => string[],
+  options: { readonly repositoryKey: RepositoryKey; readonly id?: string; readonly now?: number },
+): CopiedRule {
   if (typeof edited !== "object" || edited === null) throw new Error("the edited rule must be an object");
   const now = options.now ?? Date.now();
+  const { repositoryKey } = options;
   return db.transaction(tx => {
     const id = options.id ?? freeCopyId(tx, ruleCatalog, sourceId);
-    const document = validateLibraryDocument({ ...edited, id }, original.kind);
+    const document = validateLibraryDocument({ ...edited, id }, kind);
     writeLibraryRule(tx, ruleCatalog, document, { copiedFromRuleId: sourceId, now });
-    const folders = rerailRuleFolders(tx, ruleCatalog, repositoryKey, sourceId);
+    const folders = foldersOf(tx);
     for (const folder of folders) {
       tx.insert(ruleAttachments)
         .values({ repositoryKey, folder, sourceKind: "library_rule", sourceId: id, createdAt: now })

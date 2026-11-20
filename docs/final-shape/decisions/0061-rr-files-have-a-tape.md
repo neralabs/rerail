@@ -306,7 +306,7 @@ in-process caches of decision 0060 with the store's. That step gets its own deci
 - **Decision 0055:** code in another language is a guest made by `embed` rules (section 5).
 - **Blade (`blade::forte`):** a dialect Rerail parses itself, with its own kind table and ERROR
   leaves. `.rr` follows it.
-- **ast-index-spike, history index L919-920:** the language is part of every cache key. A `.rr`
+- **SQL index prototype, history index L919-920:** the language is part of every cache key. A `.rr`
   tape has its own tag and grammar version.
 
 ## Open

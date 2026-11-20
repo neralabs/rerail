@@ -86,7 +86,7 @@ The modes the rules shipped in:
   per-family modules the adapter's module documentation names (`scope/<family>.rs`, `value/<family>/`, `calls/…`).
 - **Answered**: whether the node-kind checks in `native/src/code_rule_dsl/suppress/rerail.rs:116,196,230` count as
   branching on a language. #50's review asked and nobody answered; on
-  [#373](https://github.com/neralabs/rerail/pull/373#issuecomment-6606280318) Timo answered that they do: node kinds
+  [#373](https://github.com/neralabs/rerail/pull/373#issuecomment-6606280318) a maintainer answered that they do: node kinds
   are per-grammar names. PR #400 moved them onto each family's adapter, and the rest are flagged by
   [`rerail-grammar-node-kinds`](#rerail-grammar-node-kinds-grammar-node-kinds-only-on-the-familys-adapter), a separate
   rule because this one steers and that one has to start in Log.
@@ -468,7 +468,7 @@ proposed](#considered-and-not-proposed). The ones below have history behind them
 - **`rerail-origin-ranges`** (Log). `origin.rs:13-15`: "No caller maps a byte range itself." In the pull request that created
   it (#132), three callers still mapped ranges themselves through `segments.host_span`, which widened spans in Vue
   templates; blocker 4298111569 flagged it and `4e57c59d7` fixed it. Nothing on `main` breaks it; the unmerged
-  `jeremybarnes/final-rerail-shape` adds `host_range` back (`d9ab616c5`). Rule: `\.host_(range|span)\(` and
+  `final-rerail-shape` adds `host_range` back (`d9ab616c5`). Rule: `\.host_(range|span)\(` and
   `fn host_(range|span)` in `native/src/code_rule_dsl/**` outside `origin.rs`, `literal/offsets.rs` and
   `embed/segments.rs`.
 - **`rerail-pack-package-names`** (Steer, 0 today; was 1). #140 restated `@neralabs/rerail-pack-<id>` in six places

@@ -61,7 +61,7 @@ a .kt file
   the comparison reading for `as java.util.List<Int>` there, not for `as List<Int>`).
 
 Oracle (`cargo test -p rerail-kotlin-lean -- oracle --ignored`, `RERAIL_KOTLIN_OUT` = the engine's
-expected tapes): 495 files from 25 repositories (`~/orca/rerail-shared/lean-corpus/kt`), 491
+expected tapes): 495 files from 25 repositories (`<shared data>/lean-corpus/kt`), 491
 without errors: **486 the same, 3 refused, 2 differ**; all 4 error texts refused. The 2 differ where
 tree-sitter reads `public open class Table { … }` as an infix expression whose right operand is a
 lambda; it reads the same text as a class when the file is cut just after it, so the choice
@@ -112,7 +112,7 @@ The writer gained two things for Swift, used by both crates' shape: `field_since
 rule's field to the tokens held since a mark too (not only the nodes written), and `refield`.
 
 Oracle (`RERAIL_SWIFT_OUT`): 376 files from 25 repositories
-(`~/orca/rerail-shared/lean-corpus/swift`), 335 without errors: **325 the same, 10 refused, none
+(`<shared data>/lean-corpus/swift`), 335 without errors: **325 the same, 10 refused, none
 differ**; all 41 error texts refused. Golden tests: 15 probe texts (`golden.rs`), the same.
 
 About 140 MB/s on one core under load (`swift_costs`, the corpus 20 times: 53.5 MB in 0.38 s of
@@ -161,7 +161,7 @@ user time, 12 MB resident).
   definition inside `'[…]`, and several XML nodes side by side at the top of a literal.
 
 Oracle (`RERAIL_SCALA_OUT`): 440 files from 22 repositories
-(`~/orca/rerail-shared/lean-corpus/scala`), 439 without errors: **438 the same, none refused, 1
+(`<shared data>/lean-corpus/scala`), 439 without errors: **438 the same, none refused, 1
 differs**; the error text refused. The one that differs: tree-sitter reads the outermost
 `new BoxPanel(x) { … }` of a 5 KB nest of `new X(…) { … }` bodies as a call of an instance with a
 block argument, and every nested one of the same shape (and the same text taken alone) as an

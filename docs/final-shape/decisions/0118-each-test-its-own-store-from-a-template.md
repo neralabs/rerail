@@ -12,8 +12,8 @@ make each test repeat the work every run starts with: loading the rule library (
 program. So each test's store starts as a copy of a template that already holds that work. The template is made once
 per build of the engine.
 
-The prior art is the data-layer repository's SQLite test fixtures (`conform/conftest.py`,
-`data_layer_testing/helpers/sqlite_*.py`): a template per schema key, built under a file lock into a staging file,
+The prior art is the data-layer repository's SQLite test fixtures (its conformance suite's
+`conftest.py` and its SQLite test helpers): a template per schema key, built under a file lock into a staging file,
 published with a rename and a ready mark; each test clones it (APFS `clonefile`, else a copy); dead processes' files
 are swept.
 

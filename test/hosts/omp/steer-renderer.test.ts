@@ -97,6 +97,13 @@ describe("OMP steer renderer", () => {
     ]);
   });
 
+  it("names a titled rule by its title on the person's line, while the block names its id", () => {
+    const content = steerBlock({ kind: "edit" }, [{ ruleId: "local:no-shadows", mode: "steer", message: "Take this shadow off." }], "posix");
+    const rows = formatOmpSteer(content, [{ id: "local:no-shadows", title: "No shadows except\u001b[2J the sheet's", state: "steered" }], { expanded: true, hyperlinks: true, mark: MARK }, theme);
+    expect(rows[0]!.text).toBe("<accent>◆</accent> <mark>R E R A I L</mark><dim> · </dim>No shadows except[2J the sheet's  <accent>steered</accent>");
+    expect(rows.map(row => row.text)).toContain("<dim>- Take this shadow off. [local:no-shadows]</dim>");
+  });
+
   it("strips terminal controls from the guidance and rule ids a repository wrote", () => {
     const { content, details } = codeRuleSteer({ ruleId: "local:sh\u001bout", mode: "steer", message: "Stop\u001b[2J here.\u0007" });
     const rows = formatOmpSteer(content, details.rules, { expanded: true, hyperlinks: false, mark: MARK }, theme);
@@ -115,10 +122,10 @@ describe("OMP steer renderer", () => {
   it("draws a Merge Assist note as its conflict's line, open linking its card, and the note under it expanded", () => {
     const url = `${DASHBOARD}#merge?conflict=conflict:a`;
     const content = "This note comes from Rerail, not the user.\nYour edit to src/retry.ts overlaps open work.";
-    const details = { rules: [], conflict: { id: "conflict:a", text: "your edit overlaps jbarnes-1 (Tim\u001b[2J): retry.ts", url } };
+    const details = { rules: [], conflict: { id: "conflict:a", text: "your edit overlaps jdoe-1 (Sam\u001b[2J): retry.ts", url } };
     const render = registered({ Container, Text }, true);
     const lines = (expanded: boolean) => (render({ customType: RULE_MESSAGE_TYPE, content, details }, { expanded }, theme as Theme) as Container).render(WIDTH);
-    const line = ` <accent>◆</accent> ${MARK}<dim> · </dim>your edit overlaps jbarnes-1 (Tim[2J): retry.ts<dim>  ·  </dim>\u001b]8;;${url}\u0007<mdLink>open</mdLink>\u001b]8;;\u0007`;
+    const line = ` <accent>◆</accent> ${MARK}<dim> · </dim>your edit overlaps jdoe-1 (Sam[2J): retry.ts<dim>  ·  </dim>\u001b]8;;${url}\u0007<mdLink>open</mdLink>\u001b]8;;\u0007`;
     expect(lines(false)).toEqual([line]);
     expect(lines(true)).toEqual([
       line,
@@ -127,7 +134,7 @@ describe("OMP steer renderer", () => {
       "    <dim>Your edit to src/retry.ts overlaps open work.</dim>",
     ]);
     expect(formatOmpSteer(content, [], { expanded: false, hyperlinks: false, mark: MARK }, theme, details.conflict).map(row => row.text)).toEqual([
-      `<accent>◆</accent> ${MARK}<dim> · </dim>your edit overlaps jbarnes-1 (Tim[2J): retry.ts<dim>  ·  </dim><mdLink>open</mdLink><dim> → </dim><mdLinkUrl>${url}</mdLinkUrl>`,
+      `<accent>◆</accent> ${MARK}<dim> · </dim>your edit overlaps jdoe-1 (Sam[2J): retry.ts<dim>  ·  </dim><mdLink>open</mdLink><dim> → </dim><mdLinkUrl>${url}</mdLinkUrl>`,
     ]);
     // A note whose conflict is not one shows OMP's default card.
     expect(render({ customType: RULE_MESSAGE_TYPE, content, details: { rules: [], conflict: { id: 1 } } }, { expanded: false }, theme as Theme)).toBeUndefined();

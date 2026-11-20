@@ -304,7 +304,8 @@ Code from npm installs without install scripts and is checked before it runs. Pa
 
 ### B6: Data at rest
 
-Rerail's files are private to the person's OS user: folders 0700, files 0600, ledgers never written through a symlink.
+Rerail's files are private to the person's OS user: folders 0700, files 0600 (except the session records `.gitignore`,
+`0644`, which holds only `*`), ledgers never written through a symlink.
 
 <details>
 <summary>Controls</summary>
@@ -316,13 +317,17 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600, le
 - Session directories are created 0700 and explicitly chmod 0700; ledgers append 0600 (`src/runtime/runtime.ts`).
 - Windows ignores modes. A Rerail home or `.rerail\sessions` folder made outside the profile folder, whose ACL would
   let every local user read it, gets a protected ACL granting the person, SYSTEM and Administrators alone, which
-  everything written in it inherits; a home an earlier release made gets it at the next daemon launch
-  (`src/engine/storage/windows-acl.ts`). A daemon TLS key whose ACL lets anyone else read it, or that has no DACL
+  everything written in it inherits; a home an earlier release made gets it at the next daemon launch, and a
+  `.rerail\sessions` folder Rerail did not make (Git, a person, Rerail 0.1.4) when the daemon first opens a session
+  there, the records already in it included but those of another account sharing the checkout, which keep the ACL
+  they had, each session's folder first (`src/engine/storage/windows-acl.ts`,
+  `src/engine/storage/ledger-paths.ts`). A daemon TLS key whose ACL lets anyone else read it, or that has no DACL
   (everyone has full control), is never served with: when this account reads it as a private key, the daemon then
   serves this computer alone, on loopback, on T9's three conditions.
 - The repository identity file is read without following a symlink (`openNoFollowSync`) plus size and format checks,
   and created with `wx` (`src/engine/catalog/repository-identity.ts`).
-- A ledger root in `.rerail/` gets a `.gitignore` of `*`, rewritten whenever it differs, and nothing in it is written
+- The default ledger root, `<checkout>/.rerail/sessions`, gets a `.gitignore` of `*`, rewritten whenever it differs
+  unless another account's Rerail keeps it (T8), and nothing in a ledger root in `.rerail/` is written
   through a symlink (`src/engine/storage/ledger-paths.ts`).
 
 </details>
@@ -605,9 +610,12 @@ audit errors, and Rerail's `daemon.log` lines. Rule matching and steers use the 
 - **Erasure.** Database writers use `secure_delete`. `rerail reset` checkpoints the WAL, runs `VACUUM`, and checkpoints
   again, so deleted history cannot be read back from the file.
 - **History stored by older versions.** `rerail scrub` redacts the database, its pre-update copy, every recorded
-  checkout's ledgers and held steers, and `daemon.log`, then rewrites the database file. Daemon and sessions keep
-  running: ledgers and `daemon.log` are rewritten in place, never through a symlink, without losing concurrent
-  appends, and held steers under their hook's lock. A failing step (`VACUUM` included) is reported, the rest still run, and the command exits 1.
+  checkout's ledgers and held steers, and `daemon.log`, then rewrites the database file. In a records folder or
+  held-steer folder this account may not list (one another account shares), it scrubs those of the sessions the
+  database records and names the folder in its summary; what a session it does not record left there stays. Daemon
+  and sessions keep running: ledgers and `daemon.log` are rewritten in place, never through a symlink, without losing
+  concurrent appends, and held steers under their hook's lock. A failing step (`VACUUM` included) is reported, the
+  rest still run, and the command exits 1.
   `rerail update` suggests it once.
 - **Removing everything.** `rerail install --remove --delete-data` deletes the databases, every `~/.rerail-clean-*`
   backup, the content cache and every recorded checkout's `.rerail/sessions`, rather than backing them up, then
@@ -663,8 +671,9 @@ code runs. No Nera-held signature is verified ([distribution-model.md](distribut
 
 ### T8: Repo-planted `.rerail/` redirects or exposes ledgers
 
-A repository could commit a `.rerail/` folder to redirect or expose session ledgers. Rerail refuses symlinks there
-and keeps its own `.gitignore`.
+A repository could commit a `.rerail/` folder to redirect or expose session ledgers. Rerail refuses symlinks there,
+keeps its own `.gitignore`, and on Windows gives a records folder it did not make an ACL under which each record is its
+maker's alone.
 
 <details>
 <summary>Mitigations and what remains</summary>
@@ -674,10 +683,29 @@ and keeps its own `.gitignore`.
 - Every folder from the innermost `.rerail` down is checked with `lstat`; a symlink or non-folder is refused. Ledger
   and pending-steer files open without following a symlink (`openNoFollow`).
 - A refusal names the path in the daemon log, and the hook fails open.
-- `ignoreInGit` rewrites `.gitignore` whenever it is not Rerail's own `*` file, so a planted `!*` cannot expose ledgers
-  to `git add -A`.
+- `ignoreInGit` rewrites `.gitignore` in the default root whenever it is not Rerail's own `*` file, so a planted `!*`
+  cannot expose ledgers to `git add -A`; a rewrite that fails fails the session. It writes it `0644` whatever the
+  umask, so every account's Git reads it. It keeps one only when it is another account's to write: a file this account
+  may not read whose owner and records folder's owner are both another account (a folder's owner rewrites it; on
+  Windows, where no owner is read, one this account may also not add a file beside), or none at all where this account
+  may not add a file, as in a records folder another account repaired. A refused write left to that account is named
+  in the daemon log.
+- A `.rerail/sessions` the repository's own commit makes, which on Windows outside the profile folder takes its
+  parent's ACL, is given one of its own when the daemon first opens a session there: each file and folder in it, those
+  already there included, grants its maker, SYSTEM and Administrators alone, and an account an entry the folder
+  inherits let add a folder there may still add one, never list it (an allow entry set on the folder itself for such
+  an account stays, with that right added; an account a deny entry set there names is given nothing). Every `icacls`
+  on the records folder or a folder in it runs with `/l`, so a junction swapped in
+  for one cannot redirect a grant to a folder this user owns. That session's own folder is private before the session
+  writes (`makeLedgerFolder` with `repair`). Elsewhere it loses the group's and others' read, and gets the sticky bit
+  while they may still add to it (`2775` becomes `3731`, `0777` `1733`, `0755` `0711`): no other account lists it, one
+  that shares it still makes its own `0700` session folder there, and none of them can rename or remove this account's
+  entries (its session folders, its `.gitignore`). On Windows, one
+  whose ACL Rerail cannot read or change is named in the daemon log. Only the checkout's default records folder is
+  repaired: a `RERAIL_STORAGE_ROOT` below a `.rerail` folder is checked for symlinks but keeps its mode and ACL.
 
-**What remains:** a `RERAIL_STORAGE_ROOT` outside any `.rerail` folder is not checked. Replayed ledgers are still
+**What remains:** a `RERAIL_STORAGE_ROOT` outside any `.rerail` folder is not checked; one inside a `.rerail` folder is
+checked for symlinks but neither repaired nor given a `.gitignore`. Replayed ledgers are still
 trusted state; planting one needs the session id, whose hash names the folder.
 
 </details>
@@ -729,7 +757,8 @@ capability.
 ### T10: Files and directories not kept private
 
 On Unix, Rerail creates its files private and tightens existing ones. On Windows, which ignores modes, a Rerail home or
-`.rerail\sessions` folder made outside the profile folder gets an ACL for the person, SYSTEM and Administrators alone
+`.rerail\sessions` folder Rerail makes outside the profile folder gets an ACL for the person, SYSTEM and Administrators
+alone, and a records folder another program made one under which each record is its maker's alone
 ([B6](#b6-data-at-rest)).
 
 <details>

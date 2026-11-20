@@ -4,7 +4,7 @@
 use super::{Adapter, Refusal};
 use crate::code_rule_dsl::compile::config::Options;
 use crate::code_rule_dsl::compile::options;
-use crate::code_rule_dsl::language::SourceType;
+use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
 use crate::code_rule_dsl::literal::Grammar;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
 use ast_grep_core::{Doc, Node};
@@ -50,6 +50,15 @@ pub trait SyntaxRules: Adapter {
     /// Whether a pattern's `$`-prefixed leaf that is no metavariable is a name of the language
     /// (Python's `$At` an identifier, PHP's `$x` a variable), spelled back with `$`.
     const DOLLAR_NAMES: bool;
+    /// A plain pattern as the one statement of a function body, for a family whose file scope,
+    /// where a pattern is parsed, holds only declarations, so that a call can read there as one
+    /// (C's `gets($A)`): the `context` that holds it in a body and the kind of the expression it
+    /// is there, where it parses there cleanly as one whole expression statement. `None` for a
+    /// family whose file scope reads an expression as one.
+    fn body_pattern(pattern: &str, language: GrammarDialect) -> Option<(String, String)> {
+        let _ = (pattern, language);
+        None
+    }
     /// Whether the family reads `feature`, or why not.
     fn feature(feature: SyntaxFeature) -> Result<(), Refusal>;
     /// The `languageOptions` (`value`) of the ast query at `path`, where `feature` reads them:

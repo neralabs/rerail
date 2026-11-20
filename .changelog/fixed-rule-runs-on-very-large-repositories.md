@@ -1,1 +1,0 @@
-A rule whose relations derive many rows sharing one leading value, such as the Python call graph on a repository of tens of thousands of files, no longer re-reads all of those rows for each new row it checks: such a run used to stay on one core in that check and not finish.
