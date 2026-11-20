@@ -15,6 +15,11 @@ WASI filesystem in a Web Worker. No Node and no emscripten: clang, lld and wasi-
 `env.sh` joins Homebrew's libc and libc++ sysroots under `target/wasi-sysroot` and points cc-rs at clang.
 It also links that libc (newer than the copy Rust bundles) and libc++.
 
+On Linux, in place of `brew install`, unpack a [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) release
+(clang, llvm-ar, and one sysroot holding wasi-libc and libc++) and name it before sourcing `env.sh`:
+`export WASI_SDK_PATH=<its folder>`. CI runs the check above that way on every change to the engine (the
+Rust engine's fmt and clippy job in `.github/workflows/ci.yml`), since no other job builds this target.
+
 ## One build per language, without the Node addon
 
 A page needs one language's engine, not the addon's whole API:

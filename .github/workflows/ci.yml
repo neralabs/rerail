@@ -536,9 +536,26 @@ jobs:
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
           components: rustfmt, clippy
+          targets: wasm32-wasip1
 
       - name: Run fmt, clippy
         run: npm run check:native
+
+      # The engine's browser build (native/wasm/README.md), which the rule explorer runs: no other job builds the
+      # engine for wasm32-wasip1, so a change that broke it failed no check. A check, not a build. wasi-sdk brings the
+      # clang, llvm-ar, wasi-libc and libc++ that native/wasm/env.sh takes from Homebrew on macOS.
+      - name: Check the engine's browser build (wasm32-wasip1)
+        env:
+          WASI_SDK: wasi-sdk-34.0-x86_64-linux
+          WASI_SDK_SHA256: b761e3a0721dbae9c09a0059e5fdb2bf917d1b4a8a7b430fb3b5aafb0984b2c4
+        run: |
+          curl -sSfL --retry 3 -o "$RUNNER_TEMP/$WASI_SDK.tar.gz" \
+            "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/$WASI_SDK.tar.gz"
+          echo "$WASI_SDK_SHA256  $RUNNER_TEMP/$WASI_SDK.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$WASI_SDK.tar.gz" -C "$RUNNER_TEMP"
+          export WASI_SDK_PATH="$RUNNER_TEMP/$WASI_SDK"
+          . native/wasm/env.sh
+          cargo check -p rerail-engine --lib --target wasm32-wasip1
 
   # The engine's test binaries, compiled once for the legs of the rust job (scripts/check/ci/native-test-legs.mjs): it runs
   # `cargo test --workspace` with that script as cargo's target runner, which records each test binary with the
