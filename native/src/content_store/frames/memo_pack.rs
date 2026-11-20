@@ -353,7 +353,7 @@ impl ContentStore {
 
 /// The memo's segments, as compaction finds and merges them.
 fn memo_kind(dir: &Path) -> SegmentKind<'_> {
-    SegmentKind { table: "memo_packs", column: "pack", dir }
+    SegmentKind { table: "memo_packs", column: "pack", dir, before: Some("pack") }
 }
 
 /// The memo's segments' use, read in `t` (`segments::SegmentUse`), the packs' of before (`old_pack_path`) held too.
@@ -394,7 +394,7 @@ fn placed_entries(t: &rusqlite::Connection, from: i64) -> rusqlite::Result<Vec<M
 
 /// An entry's bytes, and what is kept over it, where they are in segments numbered `from` and after.
 fn entry_places((space, part, doc, digest, pack, at, len, over_pack, over_at, over_len): PlacedEntry, from: i64, out: &mut Vec<Moved<EntryBytes>>) {
-    // Every row's digest is 32 bytes here (`compact_memo_pack_within` forgot the others).
+    // Every row's digest is 32 bytes here (`placed_entries` forgot the others).
     let digest: [u8; 32] = digest.try_into().unwrap_or_default();
     let place = |seg, at: i64, len: i64| Place { seg, at: at as u64, len: len as usize };
     if pack >= from {

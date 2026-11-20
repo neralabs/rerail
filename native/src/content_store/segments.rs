@@ -120,12 +120,13 @@ pub(super) fn retired(usage: &SegmentUse, floor: u64, budget: usize) -> Option<i
     numbers.get(budget / 2).copied().filter(|_| numbers.len() > budget)
 }
 
-/// A kind of segment, as compaction finds and merges it: the table that numbers its segments and the column, and the
-/// directory of their files.
+/// A kind of segment, as compaction finds and merges it: the table that numbers its segments and the column, the
+/// directory of their files, and the extension of its files of before (the memo's packs, `<n>.pack`), if any.
 pub(super) struct SegmentKind<'a> {
     pub(super) table: &'static str,
     pub(super) column: &'static str,
     pub(super) dir: &'a Path,
+    pub(super) before: Option<&'static str>,
 }
 
 impl SegmentKind<'_> {
@@ -172,9 +173,10 @@ impl SegmentKind<'_> {
         merge(t, self, from, placed(t, from)?, lost, moved)
     }
 
-    /// Whether the newest segment's file is in place (`compact`).
+    /// Whether the newest segment's file is in place (`compact`): a segment, or a file of before.
     fn newest_in_place(&self, usage: &SegmentUse) -> bool {
-        usage.numbers.last().is_none_or(|&n| segment_path(self.dir, n).exists())
+        let in_place = |n: i64| segment_path(self.dir, n).exists() || self.before.is_some_and(|ext| self.dir.join(format!("{n}.{ext}")).exists());
+        usage.numbers.last().is_none_or(|&n| in_place(n))
     }
 }
 

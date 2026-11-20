@@ -395,7 +395,7 @@ impl ContentStore {
 
 /// The tape and source segments, as compaction finds and merges them.
 fn object_kind(dir: &Path) -> super::segments::SegmentKind<'_> {
-    super::segments::SegmentKind { table: "object_segments", column: "seg", dir }
+    super::segments::SegmentKind { table: "object_segments", column: "seg", dir, before: None }
 }
 
 /// The tape and source segments' use, read in `t` (`segments::SegmentUse`).

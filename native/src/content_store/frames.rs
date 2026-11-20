@@ -147,7 +147,7 @@ fn frame_dir(database: &std::path::Path) -> std::path::PathBuf {
 
 /// The frame segments, as compaction finds and merges them.
 fn frame_kind(dir: &std::path::Path) -> super::segments::SegmentKind<'_> {
-    super::segments::SegmentKind { table: "frame_segments", column: "seg", dir }
+    super::segments::SegmentKind { table: "frame_segments", column: "seg", dir, before: None }
 }
 
 /// The frame segments' use, read in `t` (`segments::SegmentUse`).
