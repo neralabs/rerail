@@ -1,0 +1,1 @@
+A code rule that only checks that a node's text is not some value, such as `!text(v, "self")`, no longer also reports the nodes whose text is that value when it runs alone: it finds what it finds beside rules that read that text.

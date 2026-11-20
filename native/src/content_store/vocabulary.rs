@@ -1,6 +1,6 @@
 //! The prefilter's vocabulary (`code_rule_dsl/prefilter`, Phase 3 row 3): SQL functions that
 //! match regex predicates against distinct terms, installed on every store connection so the
-//! vocabulary tables (schema: `vocabulary_*`) fill in SQL. Adapted from Pulling-it-all-together's
+//! vocabulary tables (schema: `vocabulary_*`) fill in SQL. Adapted from PIAT's
 //! `matcher/anchors/sql/functions.rs`; its node decoders (`nera_decode`, `nera_span`, `nera_slice`,
 //! `nera_parent`, ...) read P's private tape copies and went with them (03 §7).
 use crate::probes::TextProbe;

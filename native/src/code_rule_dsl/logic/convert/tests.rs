@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 mod reference_tests;
 
-/// The rules converted: the pack as rewritten by Pulling-it-all-together (`rules-ast`, decision 0037 step 1).
+/// The rules converted: the pack as rewritten by PIAT (`rules-ast`, decision 0037 step 1).
 const RULES: &str = "rules-ast";
 
 /// The data-layer pack's candidates, pack test data (`packs/data-layer/upstream/lint/`, not in git).
@@ -379,7 +379,7 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
     Ok(Converted { program, clauses, approx: e.approx.clone(), configured, when })
 }
 
-/// The rules the converter reads, by id: the 60 of Pulling-it-all-together's rewrite (`rules-ast`), then the
+/// The rules the converter reads, by id: the 60 of PIAT's rewrite (`rules-ast`), then the
 /// newer rules of Data-layer-rule-expressivity (its candidates in `rules`, its certified rules in the pack's
 /// `rules`), each rule once, the first source winning.
 fn rule_files() -> Vec<PathBuf> {
