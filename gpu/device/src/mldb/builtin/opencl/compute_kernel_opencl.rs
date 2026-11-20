@@ -13,8 +13,9 @@
 //!   over all platforms). It must share the host's memory (`CL_DEVICE_HOST_UNIFIED_MEMORY`): a buffer is host
 //!   memory the device reads in place (`CL_MEM_USE_HOST_PTR`), never a copy (decision 0353). A discrete device
 //!   would stage it, so it needs SVM, which is not written; it is refused.
-//! - **The SIMD group**: no OpenCL device we can test has subgroups, so they are emulated through threadgroup
-//!   memory at 32 lanes (`ukl_opencl_shim.h`), or a group is one lane (`RERAIL_OPENCL_SIMD_WIDTH=1`).
+//! - **The SIMD group** is the device's sub-group where it has OpenCL 3.0's with 32 lanes (`native_subgroups`: Intel's
+//!   GPUs), else emulated through threadgroup memory at 32 lanes (`ukl_opencl_shim.h`, Apple's OpenCL 1.2), or one
+//!   lane (`RERAIL_OPENCL_SIMD_WIDTH=1`).
 //! - **A queue** holds its operations until a flush, which enqueues them in order on its root's in-order command
 //!   queue, then a marker: the event. A queue's work never interleaves with another's, as with Metal's command
 //!   buffers. A wait for a host-signalled event holds the rest on the host, and the root's later flushes behind it,
@@ -41,6 +42,9 @@ const CL_DEVICE_MAX_WORK_GROUP_SIZE: ClUint = 0x1004;
 const CL_DEVICE_HOST_UNIFIED_MEMORY: ClUint = 0x1035;
 const CL_DEVICE_MEM_BASE_ADDR_ALIGN: ClUint = 0x1019;
 const CL_DEVICE_MAX_MEM_ALLOC_SIZE: ClUint = 0x1010;
+const CL_DEVICE_EXTENSIONS: ClUint = 0x1030;
+/// `cl_intel_required_subgroup_size`: the sub-group sizes a kernel may require (`size_t`s).
+const CL_DEVICE_SUB_GROUP_SIZES_INTEL: ClUint = 0x4108;
 const CL_BUFFER_CREATE_TYPE_REGION: ClUint = 0x1220;
 const CL_MEM_READ_WRITE: u64 = 1;
 const CL_MEM_USE_HOST_PTR: u64 = 1 << 3;
@@ -173,15 +177,35 @@ fn device_info_string(a: &Api, d: Ptr, param: ClUint) -> String {
     String::from_utf8_lossy(&v).trim_end_matches('\0').trim().to_string()
 }
 
-/// The SIMD groups' lanes of the OpenCL device's kernels: `RERAIL_OPENCL_SIMD_WIDTH` (1 or 32), else 32, emulated.
+/// The SIMD groups' lanes of the OpenCL device's kernels: `RERAIL_OPENCL_SIMD_WIDTH` (1 or 32), else 32 (the device's
+/// sub-groups or emulated, `native_subgroups`).
 pub fn simd_width() -> u32 {
     match std::env::var("RERAIL_OPENCL_SIMD_WIDTH") {
         Err(_) => 32,
         Ok(w) => match w.parse::<u32>() {
             Ok(n @ (1 | 32)) => n,
-            _ => panic!("RERAIL_OPENCL_SIMD_WIDTH={w}: 1 or 32 (native subgroups are not written)"),
+            _ => panic!("RERAIL_OPENCL_SIMD_WIDTH={w}: 1 or 32"),
         },
     }
+}
+
+/// Whether the device's sub-groups are the SIMD groups its kernels want (decision 0440, the Intel plan's step 1):
+/// OpenCL 3.0's sub-groups with their shuffles, relative shuffles and ballot (`cl_khr_subgroups`,
+/// `_subgroup_shuffle`, `_subgroup_shuffle_relative`, `_subgroup_ballot`), and a kernel may require 32 lanes
+/// (`cl_intel_required_subgroup_size`, 32 among its sizes). Otherwise, or with `RERAIL_OPENCL_SUBGROUPS=0` (to
+/// measure one against the other), the shim emulates them in threadgroup memory.
+fn native_subgroups(a: &Api, device: Ptr) -> bool {
+    if std::env::var("RERAIL_OPENCL_SUBGROUPS").is_ok_and(|v| v == "0") || simd_width() != 32 {
+        return false;
+    }
+    let ext = device_info_string(a, device, CL_DEVICE_EXTENSIONS);
+    let has = |e: &str| ext.split_ascii_whitespace().any(|x| x == e);
+    let wanted = ["cl_khr_subgroups", "cl_khr_subgroup_shuffle", "cl_khr_subgroup_shuffle_relative", "cl_khr_subgroup_ballot", "cl_intel_required_subgroup_size"];
+    if !wanted.iter().all(|e| has(e)) {
+        return false;
+    }
+    let sizes = device_info_bytes(a, device, CL_DEVICE_SUB_GROUP_SIZES_INTEL);
+    sizes.chunks_exact(8).any(|c| u64::from_ne_bytes(c.try_into().unwrap()) == 32)
 }
 
 struct DeviceInner {
@@ -189,6 +213,8 @@ struct DeviceInner {
     context: Ptr,
     name: String,
     max_group: usize,
+    /// Whether its kernels' SIMD groups are the device's sub-groups (`native_subgroups`), else emulated.
+    subgroups: bool,
     /// The alignment of a sub-buffer's origin, in bytes (`CL_DEVICE_MEM_BASE_ADDR_ALIGN`, given in bits).
     base_align: u64,
     /// The largest buffer (`CL_DEVICE_MAX_MEM_ALLOC_SIZE`).
@@ -242,7 +268,8 @@ impl ClDevice {
         let base_align = (u32::from_ne_bytes(ba[..4].try_into().unwrap()) as u64 / 8).max(1);
         let ma = device_info_bytes(a, device, CL_DEVICE_MAX_MEM_ALLOC_SIZE);
         let max_alloc = u64::from_ne_bytes(ma[..8].try_into().unwrap());
-        let d = ClDevice(Arc::new(DeviceInner { device, context, name, max_group, base_align, max_alloc }));
+        let subgroups = native_subgroups(a, device);
+        let d = ClDevice(Arc::new(DeviceInner { device, context, name, max_group, subgroups, base_align, max_alloc }));
         d.reads_host_pages_in_place()?;
         Ok(d)
     }
@@ -293,9 +320,19 @@ impl ClDevice {
         self.0.max_group.min(1024)
     }
 
-    /// The defines its kernels' preprocessing takes: the SIMD width and the largest threadgroup.
+    /// The defines its kernels' preprocessing takes: the SIMD width, the largest threadgroup, and whether the SIMD
+    /// groups are the device's sub-groups (`UKL_OPENCL_SUBGROUPS`, `native_subgroups`).
     pub fn defines(&self) -> Vec<(&'static str, String)> {
-        vec![("UKL_SIMD_WIDTH", format!("{}u", simd_width())), ("UKL_TG_MAX", format!("{}u", self.max_group()))]
+        let mut d = vec![("UKL_SIMD_WIDTH", format!("{}u", simd_width())), ("UKL_TG_MAX", format!("{}u", self.max_group()))];
+        if self.0.subgroups {
+            d.push(("UKL_OPENCL_SUBGROUPS", "1".into()));
+        }
+        d
+    }
+
+    /// Whether its kernels' SIMD groups are the device's sub-groups (`native_subgroups`), not emulated.
+    pub fn subgroups(&self) -> bool {
+        self.0.subgroups
     }
 
     pub fn new_shared_event(&self) -> ClSharedEvent {
@@ -475,11 +512,12 @@ impl ClComputeFunctionLibrary {
     /// Builds OpenCL C (UKL preprocessed for OpenCL) with the device's driver.
     pub fn compile_from_source(device: &ClDevice, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
         let a = api()?;
-        const OPTIONS: &str = "-cl-std=CL1.2";
-        let options = CString::new(OPTIONS).unwrap();
+        // OpenCL C 3.0 where the kernels use the device's sub-groups (its `sub_group_*` functions are 3.0's), else 1.2.
+        let options_text = if device.subgroups() { "-cl-std=CL3.0" } else { "-cl-std=CL1.2" };
+        let options = CString::new(options_text).unwrap();
         // The store's binary (`crate::store`), keyed by the device's name, version and driver beside the source.
         let driver = device_info_string(a, device.0.device, CL_DRIVER_VERSION);
-        let key = crate::store::key(&[b"opencl", device.name().as_bytes(), driver.as_bytes(), OPTIONS.as_bytes(), preprocessed_source.as_bytes()]);
+        let key = crate::store::key(&[b"opencl", device.name().as_bytes(), driver.as_bytes(), options_text.as_bytes(), preprocessed_source.as_bytes()]);
         if let Some(bin) = crate::store::load("opencl", &key, "bin") {
             let (n, p) = (bin.len(), bin.as_ptr());
             let (mut status, mut e) = (0, 0);

@@ -1481,6 +1481,41 @@ old suffix, `gpu/src/library_tests.ukl`, is renamed.
     (two events a check) gives the recorded findings exactly on CUDA: 413,000 launches, 3.4 s of GPU time
     (`nsys`; joins' counts and scatters, copies, dedups, indexes, the library's scans and sorts, text verdicts,
     the label passes).
+- **Found after the commit:** accel's tests did not compile (`blocks.rs`' test module named `Budget` and `Size`, whose
+  import had moved into the lane's function): imported in the tests. accel's 85 pass on the Mac, its 60 on the Arc.
+
+**The Intel plan, step 1: OpenCL's native sub-groups (2026-11-20).**
+
+- **Where the device has them** (`native_subgroups`): OpenCL 3.0's sub-groups with shuffles, relative shuffles and
+  ballot (`cl_khr_subgroups`, `_subgroup_shuffle`, `_subgroup_shuffle_relative`, `_subgroup_ballot`), and a kernel
+  may require 32 lanes (`cl_intel_required_subgroup_size`, 32 among `CL_DEVICE_SUB_GROUP_SIZES_INTEL`). The host
+  defines `UKL_OPENCL_SUBGROUPS` and builds as OpenCL C 3.0. `RERAIL_OPENCL_SUBGROUPS=0` keeps the emulation, to
+  measure one against the other. Apple's OpenCL 1.2 has none: emulated, as before.
+- **The shim:** each kernel requires 32 lanes (`intel_reqd_sub_group_size(32)`), a lane is
+  `get_sub_group_local_id()`, and `ukl_sg_*` are the device's `sub_group_*` functions (`backend.h`). A lane outside
+  the group, or the group's own at a relative shuffle's edge, reads its own value, as CUDA's and the emulation's do
+  (the device's functions leave it undefined). No threadgroup word per thread, and no barriers.
+- **OpenCL C 3.0 has types named `atomic_uint` and `atomic_int`** (C11's `_Atomic`, which 1.2's atomic functions do
+  not take). UKL's sources use the names for a word the atomics take, so under 3.0 they are the integers' by macro;
+  1.2's atomic functions remain in 3.0. The source is preprocessed on the host, before the driver defines
+  `__OPENCL_C_VERSION__`, so the shim keys this on `UKL_OPENCL_SUBGROUPS`.
+- **Results on the Arc 140V (WSL2):**
+  - the library's 19, the device layer's 6, accel's 60 and the lane suite's 58 pass;
+  - the lane suite: 2,242 s the first time (each kernel compiled cold, OpenCL C 3.0, by Intel's compiler), 21 s from
+    the store (the emulation's: 773 s cold; the GB10's CUDA: 29 s);
+  - accel's `host_costs`, device time, warm (each run twice; load about 1.2):
+
+    | rows | radix sort, native | emulated | probe, native | emulated |
+    |---|---|---|---|---|
+    | 1,000 | 41 µs | 67 µs | 23 µs | 25 µs |
+    | 20,000 | 120 µs | 156 µs | 63 µs | 64 µs |
+    | 200,000 | 1,084 µs | 1,735 µs | 945 µs | 970 µs |
+
+    The sort's ranks are SIMD-group work (ballots, shuffles): 38% less at 200,000 rows. The probe has little.
+- **Open:** a cold compile of the lane's kernels takes Intel's compiler 37 minutes (an engine's first run on a new
+  driver); the store keeps them after. Whether SPIR-V (`cl_khr_il_program`), compiled ahead, or Xe2's native 16
+  lanes compile faster is to be measured.
+
 - **Open:** `rerail-device-metal`'s tests register Python's and `.rr`'s packs (`test_languages`) only where two tests
   call it, while its corpus runs read `.rr` documents (`lines::of`) in tests that do not: a CPU worker panics
   ("no language registered for Rr"), now and then by which test runs first, caught and run again. Every test passes

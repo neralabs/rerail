@@ -310,6 +310,24 @@ UKL_INLINE uint32_t ukl_sg_ballot(bool b __UKL_PARAMS)
     return m;
 }
 UKL_INLINE void ukl_sg_barrier() { barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE); }
+#elif defined(UKL_OPENCL_SUBGROUPS)
+// The device's sub-groups, 32 lanes (the shim requires it of each kernel): OpenCL 3.0's functions. A lane outside
+// the group, or the group's own (`shuffle_up` below lane `d`, `shuffle_down` past the last lane), reads its own
+// value, as CUDA's and the emulation's do; the device's functions leave those undefined.
+UKL_INLINE uint32_t ukl_sg_shuffle(uint32_t v, uint32_t lane __UKL_PARAMS) { return sub_group_shuffle(v, lane & (UKL_SIMD_WIDTH - 1u)); }
+UKL_INLINE uint32_t ukl_sg_shuffle_up(uint32_t v, uint32_t d __UKL_PARAMS)
+{
+    uint32_t r = sub_group_shuffle_up(v, d);
+    return __UKL_CL_LANE >= d ? r : v;
+}
+UKL_INLINE uint32_t ukl_sg_shuffle_down(uint32_t v, uint32_t d __UKL_PARAMS)
+{
+    uint32_t r = sub_group_shuffle_down(v, d);
+    return __UKL_CL_LANE + d < UKL_SIMD_WIDTH ? r : v;
+}
+UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m __UKL_PARAMS) { return sub_group_shuffle_xor(v, m & (UKL_SIMD_WIDTH - 1u)); }
+UKL_INLINE uint32_t ukl_sg_ballot(bool b __UKL_PARAMS) { return sub_group_ballot(b ? 1 : 0).x; }
+UKL_INLINE void ukl_sg_barrier() { sub_group_barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE); }
 #elif UKL_SIMD_WIDTH == 1
 // A group of one lane: every lane reads its own value.
 UKL_INLINE uint32_t ukl_sg_shuffle(uint32_t v, uint32_t lane __UKL_PARAMS) { return v; }
@@ -319,7 +337,7 @@ UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m __UKL_PARAMS) { re
 UKL_INLINE uint32_t ukl_sg_ballot(bool b __UKL_PARAMS) { return b ? 1u : 0u; }
 UKL_INLINE void ukl_sg_barrier() { mem_fence(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE); }
 #else
-#  error "ukl/backend.h: OpenCL's native subgroups (cl_khr_subgroup_shuffle, _ballot) are not written yet (decision 0440 §3.5)"
+#  error "ukl/backend.h: OpenCL's SIMD groups are 32 lanes (native or emulated) or 1"
 #endif
 
 // Relaxed atomics on a device word (OpenCL 1.2's are relaxed), and a fence. OpenCL 1.2 has no coherent memory but
