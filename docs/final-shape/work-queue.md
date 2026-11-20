@@ -8183,3 +8183,18 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   apart from `doc`), so R9 refuses it as it refuses a string inside a value, or it is placed at the asking rule's
   place.
 - **Done when**: a finding at a `@parse` value's node is refused or placed in its file, with a test either way.
+
+### Q399. Four block tests hang on a Mac's Metal executors, and pass in 0.04 s without them
+
+- **Seen** (2026-11-20, after merging the hub to 236ea95371): `rerail-parser-tests`'
+  `block_tests::prev_equals_reference_on_every_executor`, `stage1_utf8_equals_std_on_every_executor`,
+  `binary_operators_equal_reference_on_every_executor` and `within_and_delay_equal_reference_on_every_executor` run
+  past their 240 s on an M1 Max host, alone as with other tests, and are terminated. On a Linux host, where
+  `Executors::run` has no Metal executors (`run_generated_with`, the forward carry `run_serial_split`), the first two
+  pass in 0.04 s. So the time is on a Metal path: an MSL compile, or a command buffer that does not end.
+- **Why it matters**: a command buffer that runs for minutes is what rebooted a Mac twice on 2026-11-20 (the pp
+  grid's Boost test); a hung test's GPU work may outlive the test's kill. Not run again on a Mac until bounded.
+- **Not the cause**: `bee578718a`'s ASCII-split change is in the Cranelift block compiler, and these programs have
+  no gated region, so their code is the same.
+- **Next**: on a farm Mac, the first executor `every` reaches that does not return (a print per executor), and whether
+  it is the MSL compile or the wait; then bound the launch's GPU time.
