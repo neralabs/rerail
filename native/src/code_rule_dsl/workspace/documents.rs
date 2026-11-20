@@ -222,6 +222,7 @@ fn stored_image(
                 source_map: &document.source_map,
                 host_errors: &document.host_errors,
                 tape,
+                at: document.at,
             })
         })
         .collect::<Option<Vec<_>>>()?;

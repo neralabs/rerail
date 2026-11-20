@@ -289,6 +289,36 @@ pub(super) struct Guests {
     seen: Seen,
     /// The guests not made because the program cannot see them.
     pub(super) unseen: usize,
+    /// The files' programs made this chunk (decision 0431 step 6, `Report::programs`): read off a file's record, and
+    /// made by an embedder from a file whose record is not known.
+    pub(super) programs_read: usize,
+    pub(super) programs_made: usize,
+}
+
+/// A program to place in its file (`Guests::placed_program`): an embedder's, or one read off the file's record (decision
+/// 0431 step 6), its parts shared with the record, not copied.
+struct Held {
+    dialect: crate::code_rule_dsl::language::GrammarDialect,
+    parse: crate::code_rule_dsl::embed::Parse,
+    text: Arc<String>,
+    segments: Arc<crate::code_rule_dsl::embed::segments::SegmentMap>,
+    at: Option<std::ops::Range<usize>>,
+}
+
+impl Held {
+    fn made(program: crate::code_rule_dsl::embed::Program) -> Self {
+        Held { dialect: program.dialect, parse: program.parse, text: Arc::new(program.text), segments: Arc::new(program.segments), at: program.at }
+    }
+
+    fn kept(image: &crate::code_rule_dsl::tape::DerivedImage) -> Self {
+        Held {
+            dialect: image.dialect(),
+            parse: crate::code_rule_dsl::embed::Parse::Tape(image.tape.clone()),
+            text: Arc::clone(&image.text),
+            segments: Arc::clone(image.source_map()),
+            at: image.at.map(|(start, end)| start as usize..end as usize),
+        }
+    }
 }
 
 /// Which guests a program can see (decision 0058 §1, `hiding`): a guest it cannot see adds no row any of its rules
@@ -571,7 +601,7 @@ impl Guests {
     /// through the segments (`Placement::Segments`). `None` where the host embeds no program (no script, `lang="coffee"`).
     fn program(&mut self, host: &Document, at: i64, via: crate::code_rule_dsl::language::Via, role: &str) -> Result<Option<Document>, String> {
         let Some(program) = embedded(host, &mut |root, source| crate::code_rule_dsl::embed::embedder(via).build(root, source, &|| false).into_iter().collect()).into_iter().next() else { return Ok(None) };
-        self.placed_program(host, Some(at), via, role, program)
+        self.placed_program(host, Some(at), via, role, Held::made(program))
     }
 
     /// The files' programs among `docs` (made with the batch, `programs`), as made: their places, under their grammar
@@ -599,6 +629,14 @@ impl Guests {
     pub(super) fn programs(&mut self, docs: &[Document]) -> Result<Vec<Document>, String> {
         let mut out = Vec::new();
         for host in docs.iter().filter(|d| d.guest.is_none()) {
+            // Made at its parse, or read with its stored tape: placed, with no embedder run and nothing parsed.
+            if let Some(record) = host.facts.programs.as_ref() {
+                for image in record.iter() {
+                    self.programs_read += 1;
+                    out.extend(self.placed_program(host, None, image.via, "program", Held::kept(image))?);
+                }
+                continue;
+            }
             let Some(dialect) = crate::code_rule_dsl::language::from_tape_tag(core::facts_tag(&host.facts)) else { continue };
             let mut vias: Vec<crate::code_rule_dsl::language::Via> = Vec::new();
             for &(via, _) in dialect.embeds() {
@@ -620,7 +658,8 @@ impl Guests {
                     embedded(host, &mut |root, source| embedder.build_all(root, source, &|| false))
                 };
                 for program in programs {
-                    out.extend(self.placed_program(host, None, via, "program", program)?);
+                    self.programs_made += 1;
+                    out.extend(self.placed_program(host, None, via, "program", Held::made(program))?);
                 }
             }
         }
@@ -629,14 +668,14 @@ impl Guests {
 
     /// The document of `program`, which `via` built from `host`, at host node `at` (else the innermost node over its
     /// bytes, and made once there); `None` where the run does not see it, or its text does not parse.
-    fn placed_program(&mut self, host: &Document, at: Option<i64>, via: crate::code_rule_dsl::language::Via, role: &str, program: crate::code_rule_dsl::embed::Program) -> Result<Option<Document>, String> {
+    fn placed_program(&mut self, host: &Document, at: Option<i64>, via: crate::code_rule_dsl::language::Via, role: &str, program: Held) -> Result<Option<Document>, String> {
         let Some(label) = crate::code_rule_dsl::language::label(program.dialect) else { return Ok(None) };
         let range = if label == self.run { Range::Code } else { Range::Hidden };
         if !self.seen.sees(range) {
             self.unseen += 1;
             return Ok(None);
         }
-        let place = Placement::Segments(Arc::new(program.segments));
+        let place = Placement::Segments(program.segments);
         let at = match at {
             Some(at) => at,
             None => {
@@ -864,8 +903,8 @@ fn parse(path: &str, label: &str, fragment: Option<core::Fragment>, text: String
 /// An embedded program's facts, read off the tape or tree its embedder parsed its text into (`parse`), with its tape
 /// kept beside them (decision 0222): the rules over a view read W's values (`value`, a key's text) as over a file,
 /// and a value is read off the document's tape. Its tape is not stored (Q30).
-fn taped(path: &str, label: &str, text: String, parse: crate::code_rule_dsl::embed::Parse) -> Result<Option<(Parsed, Tape)>, String> {
-    let file = crate::code_rule_dsl::facts::core::Source { language: label.to_owned(), source: Arc::new(text) };
+fn taped(path: &str, label: &str, text: Arc<String>, parse: crate::code_rule_dsl::embed::Parse) -> Result<Option<(Parsed, Tape)>, String> {
+    let file = crate::code_rule_dsl::facts::core::Source { language: label.to_owned(), source: text };
     // Read off the embedder's parse, not parsed again.
     let built = core::build_parsed(&file, parse, true).map_err(|e| format!("{path}: {e}"))?;
     let (Built::Facts(facts), tape) = built else { return Ok(None) };

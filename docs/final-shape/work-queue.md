@@ -5514,7 +5514,8 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
 - **Also** (2026-11-19, this machine, with 0431 step 3 in the tree): `python_calls_program_agrees_with_the_runtime` and
   `rules_read_the_python_program_through_lib_calls` fail with it (`in res`: "the read in `res` has no connected
   demand"), with or without step 3's widened hiding (checked both ways).
-- **Done when**: all six pass.
+- **Also** (2026-11-20, m3): `rust_calls_program_agrees_with_rust_analyzer` fails with it (`in res`).
+- **Done when**: all seven pass.
 
 ### Q264. `a_request_record_over_an_edit_is_a_run_from_scratchs` fails: "edit 2: a record to carry"
 
@@ -5587,6 +5588,21 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
     (`combined_programs_see_guests_by_their_own_policy`).
 - **Done when**: no round outside the fixpoint; a file's programs read from its stored tape; the setting's meaning
   decided.
+- **Programs kept with the tape, done** (2026-11-20, 0431 step 6, R11): a file's programs are made at its parse,
+  carried in its facts, stored with its tape and read back with it; the batch runs an embedder only for a tape whose
+  record is not known (stored before step 6). Test: `a_files_programs_are_kept_with_its_tape`.
+
+### Q272. The store crate's tests: five fail on a farm host, one flakes
+
+- **Seen** (2026-11-20, 0431 step 6): `cargo nextest run -p rerail-store` did not compile (`journal.rs`: two test
+  calls to `fsevents::since` lacked `settle`, from the hub merge 667386cfe). With `SETTLE` passed it compiles, and
+  246 of 251 pass on the M3 and the M1 Max. Fail there: `git_workspace::tests::discovers_current_repository_without_a_git_process`
+  (the farm's copy of the checkout has no `.git`) and four `observe` tests on the journal
+  (`a_listing_names_an_edited_file_and_no_other`: 7 stats where 2 are expected, and three like it). Flaky:
+  `write_back::tests::a_batch_run_again_after_a_fork_keeps_every_wait_queued_meanwhile` fails 2 runs in 3.
+- **Do**: run the five here, where the checkout has its `.git` and the journal its usual roots, to tell the host's
+  environment from a fault; find the fork test's race.
+- **Done when**: the crate's tests pass where they are meant to run, and the fork test every time.
 
 ### Q269. A fragment is parsed from a node kind (decision 0466)
 

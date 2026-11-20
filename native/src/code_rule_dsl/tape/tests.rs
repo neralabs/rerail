@@ -360,6 +360,7 @@ fn file_documents_persist_apart_and_are_checked() {
                 source_map: map,
                 host_errors: &host_errors,
                 tape,
+                at: None,
             }],
         )
     };

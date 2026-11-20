@@ -322,6 +322,9 @@ pub struct Report {
     pub guests_unseen: usize,
     /// The guest texts parsed (decision 0431 R6): a text a run parsed before is not parsed again.
     pub guest_parses: usize,
+    /// Decision 0431 R11 (step 6): the files' programs the batches read off a file's record (made at its parse, or read
+    /// with its stored tape), and those an embedder made in a batch, the file's record not known.
+    pub programs: (usize, usize),
     /// Decision 0431 R5 and §6: the documents the chunks' batches grew by (their rounds' guests and tape values, and
     /// the tape values given more places), the run's total. A chunk's batch is built once.
     pub batch_grown: usize,
@@ -5134,6 +5137,9 @@ fn run_observed(
     // The same tapes by their text's hash (Q22), for a file the run knows by its digest alone (no memo, or one named
     // by digest in a wave).
     let mut by_text: HashMap<crate::content_store::HashKey, (crate::content_store::SourceId, crate::content_store::TapeFrame)> = HashMap::new();
+    // The tapes of the files a run reads for their programs (`.embedded on`, decision 0470 step 2), by their text: each
+    // in its own language, found by its own tag, with its programs (decision 0431 step 6).
+    let mut host_text: HashMap<crate::content_store::HashKey, (crate::content_store::SourceId, crate::content_store::TapeFrame)> = HashMap::new();
     // Decision 0431 R6: the tapes of the texts the rules parse in a grammar other than the run's, by text and tag.
     let mut value_frames: HashMap<(crate::content_store::HashKey, i64), (crate::content_store::SourceId, crate::content_store::TapeFrame)> = HashMap::new();
     let run_tag = crate::code_rule_dsl::language::dialect_by_label(label).and_then(crate::code_rule_dsl::language::tape_tag).map(i64::from);
@@ -5493,6 +5499,19 @@ fn run_observed(
             }
             let _ = wave_tapes.set(frames.iter().map(|(s, _, f)| (*s, f.clone())).collect());
             by_text = frames.into_iter().map(|(source, hash, frame)| (hash, (source, frame))).collect();
+            if embedded {
+                let hosts: BTreeSet<u8> = docs
+                    .iter()
+                    .filter(|(_, p)| host(p))
+                    .filter_map(|(_, p)| crate::code_rule_dsl::language::label_of_path(p).and_then(crate::code_rule_dsl::language::dialect_by_label).and_then(crate::code_rule_dsl::language::tape_tag))
+                    .collect();
+                for t in hosts {
+                    let frames = cache
+                        .tape_frames_with_hashes(&wanted, i64::from(t), crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()))
+                        .map_err(|e| Error::Plan(e.to_string()))?;
+                    host_text.extend(frames.into_iter().map(|(source, hash, frame)| (hash, (source, frame))));
+                }
+            }
             // The texts the rules parse in other grammars (decision 0431 R6): the tags the program's requests name, or
             // every tag where a request's grammar is not a constant. The run's own are `by_text`'s.
             let (gv, fv) = (crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()));
@@ -5640,6 +5659,7 @@ fn run_observed(
     let partials: parking_lot::Mutex<HashMap<i64, memo::Entry>> = parking_lot::Mutex::new(HashMap::new());
     let partial_hits = std::sync::atomic::AtomicUsize::new(0);
     let guests_unseen = std::sync::atomic::AtomicUsize::new(0);
+    let programs_counted = (std::sync::atomic::AtomicUsize::new(0), std::sync::atomic::AtomicUsize::new(0));
     let batch_grown = std::sync::atomic::AtomicUsize::new(0);
     let values_admitted = std::sync::atomic::AtomicUsize::new(0);
     let slice_runs = std::sync::atomic::AtomicUsize::new(0);
@@ -5688,7 +5708,7 @@ fn run_observed(
                     None => {
                         use sha2::Digest as _;
                         let d: [u8; 32] = digest.unwrap_or_else(|| sha2::Sha256::digest(file.source.as_bytes()).into());
-                        let held = by_text.get(&crate::content_store::HashKey::from_sha256_digest(d));
+                        let held = if host(path) { &host_text } else { &by_text }.get(&crate::content_store::HashKey::from_sha256_digest(d));
                         if let Some((source, _)) = held {
                             late_sources.lock().expect("the late sources").push(*source);
                         }
@@ -5817,7 +5837,10 @@ fn run_observed(
                 let mut made = guests::Guests::new(label, projection.shape, Arc::clone(&guest_keys)).seeing(seen);
                 // Documents projected before (a chunk projected again) hold theirs already.
                 made.seed(&docs);
-                match made.programs(&docs) {
+                let programs = made.programs(&docs);
+                programs_counted.0.fetch_add(made.programs_read, std::sync::atomic::Ordering::Relaxed);
+                programs_counted.1.fetch_add(made.programs_made, std::sync::atomic::Ordering::Relaxed);
+                match programs {
                     Ok(programs) => programs,
                     Err(e) => return (Err(Error::Plan(e)), (0.0, 0.0)),
                 }
@@ -10254,7 +10277,7 @@ fn run_observed(
     if !nested && !phase0::active() {
         crate::code_rule_dsl::logic::profile::run_ends(crate::code_rule_dsl::logic::profile::snapshot());
     }
-    let report = Report { phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, stats_kept: stats_kept.into_inner(), cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, guests_unseen: guests_unseen.load(std::sync::atomic::Ordering::Relaxed), guest_parses: guest_parses.parsed(), batch_grown: batch_grown.load(std::sync::atomic::Ordering::Relaxed), values_admitted: values_admitted.load(std::sync::atomic::Ordering::Relaxed), slice_runs: slice_runs.load(std::sync::atomic::Ordering::Relaxed), file_tapes: (file_tapes.0.load(std::sync::atomic::Ordering::Relaxed), file_tapes.1.load(std::sync::atomic::Ordering::Relaxed)), cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, language_asked, cross_handed, cross_unloaded, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
+    let report = Report { phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, stats_kept: stats_kept.into_inner(), cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, guests_unseen: guests_unseen.load(std::sync::atomic::Ordering::Relaxed), guest_parses: guest_parses.parsed(), programs: (programs_counted.0.load(std::sync::atomic::Ordering::Relaxed), programs_counted.1.load(std::sync::atomic::Ordering::Relaxed)), batch_grown: batch_grown.load(std::sync::atomic::Ordering::Relaxed), values_admitted: values_admitted.load(std::sync::atomic::Ordering::Relaxed), slice_runs: slice_runs.load(std::sync::atomic::Ordering::Relaxed), file_tapes: (file_tapes.0.load(std::sync::atomic::Ordering::Relaxed), file_tapes.1.load(std::sync::atomic::Ordering::Relaxed)), cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, language_asked, cross_handed, cross_unloaded, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
     handed.succeeded();
     Ok(report)
 }

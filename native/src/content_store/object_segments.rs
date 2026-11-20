@@ -196,6 +196,8 @@ pub(super) struct Item {
     tape_identity: HashKey,
     /// Whether the run's manifest names the source once written (`ContentStore::name_sources`).
     named: bool,
+    /// The file's programs (decision 0431 step 6), recorded with its tape; `None`: not known, none recorded.
+    documents: Option<Arc<[super::QueuedDocument]>>,
 }
 
 /// A run's parsed files gathered for the store: placed in one segment when closed.
@@ -216,6 +218,7 @@ pub(super) struct Row {
     tape_len: usize,
     tape_identity: HashKey,
     named: bool,
+    documents: Option<Arc<[super::QueuedDocument]>>,
 }
 
 impl ObjectGather {
@@ -284,6 +287,7 @@ impl Gather for ObjectGather {
                 tape_len: (*i.tape).as_ref().len(),
                 tape_identity: i.tape_identity,
                 named: i.named,
+                documents: i.documents,
             })
             .collect();
         // The queue holds the rows; the bytes are the OS's pages.
@@ -299,7 +303,7 @@ pub(super) enum ObjectsWrite {
     /// A gather's where no segment could be placed: each compressed into its own rows.
     Each(Vec<Item>),
     /// One file's, queued outside a run's waves.
-    Lone { canonical: HashKey, grammar: (i64, i64, i64), frames: Arc<super::SourceAndTapeFrames>, named: bool },
+    Lone { canonical: HashKey, grammar: (i64, i64, i64), frames: Arc<super::SourceAndTapeFrames>, named: bool, documents: Option<Arc<[super::QueuedDocument]>> },
 }
 
 impl ObjectsWrite {
@@ -311,18 +315,29 @@ impl ObjectsWrite {
         match self {
             ObjectsWrite::Placed { rows, segments } => {
                 let ids = store.put_objects_placed(rows, segments)?;
+                for (row, id) in rows.iter().zip(&ids) {
+                    if let Some(documents) = row.documents.as_ref().filter(|d| !d.is_empty()) {
+                        store.put_programs(*id, (row.grammar_id, row.grammar_version, row.tape_format_version), &documents.iter().map(super::QueuedDocument::payload).collect::<Vec<_>>())?;
+                    }
+                }
                 store.name_sources(rows.iter().zip(ids).filter(|(row, _)| row.named).map(|(_, id)| id));
             }
             ObjectsWrite::Each(items) => {
                 for i in items.iter() {
                     let (id, _) = store.put_source_and_tape(i.source.as_bytes(), i.canonical, i.grammar_id, i.grammar_version, i.tape_format_version, (*i.tape).as_ref())?;
+                    if let Some(documents) = &i.documents {
+                        store.put_programs(id, (i.grammar_id, i.grammar_version, i.tape_format_version), &documents.iter().map(super::QueuedDocument::payload).collect::<Vec<_>>())?;
+                    }
                     if i.named {
                         store.name_sources([id]);
                     }
                 }
             }
-            ObjectsWrite::Lone { canonical, grammar: (gid, gv, fv), frames, named } => {
+            ObjectsWrite::Lone { canonical, grammar: (gid, gv, fv), frames, named, documents } => {
                 let (id, _) = store.put_source_and_tape_framed(*canonical, *gid, *gv, *fv, frames)?;
+                if let Some(documents) = documents {
+                    store.put_programs(id, (*gid, *gv, *fv), &documents.iter().map(super::QueuedDocument::payload).collect::<Vec<_>>())?;
+                }
                 if *named {
                     store.name_sources([id]);
                 }
@@ -339,9 +354,9 @@ impl ContentStore {
     /// written (`name_sources`).
     /// Where the queue is full a lone write is dropped, and the next run parses the file again.
     #[allow(clippy::too_many_arguments)]
-    pub fn queue_source_and_tape(&self, key: Key, canonical: HashKey, grammar_id: i64, grammar_version: i64, tape_format_version: i64, source: &Arc<String>, tape: TapeBytes, named: bool) -> StoreResult<()> {
+    pub fn queue_source_and_tape(&self, key: Key, canonical: HashKey, grammar_id: i64, grammar_version: i64, tape_format_version: i64, source: &Arc<String>, tape: TapeBytes, named: bool, documents: Option<Arc<[super::QueuedDocument]>>) -> StoreResult<()> {
         let tape_identity = HashKey::tape_identity(canonical, (*tape).as_ref());
-        let mut item = Some(Item { key, canonical, grammar_id, grammar_version, tape_format_version, source: Arc::clone(source), tape, tape_identity, named });
+        let mut item = Some(Item { key, canonical, grammar_id, grammar_version, tape_format_version, source: Arc::clone(source), tape, tape_identity, named, documents });
         let dir = object_dir(&self.database_path);
         let make = || ObjectGather { dir, items: Vec::new(), at: HashMap::new(), bytes: 0 };
         if self.gather("tapes and their sources", make, |g| g.add(item.take().expect("the file"))) {
@@ -349,7 +364,7 @@ impl ContentStore {
         }
         let item = item.take().expect("the file, not gathered");
         let frames = Arc::new(self.source_and_tape_frames(item.source.as_bytes(), canonical, (*item.tape).as_ref())?);
-        let write = ObjectsWrite::Lone { canonical, grammar: (grammar_id, grammar_version, tape_format_version), frames: Arc::clone(&frames), named: item.named };
+        let write = ObjectsWrite::Lone { canonical, grammar: (grammar_id, grammar_version, tape_format_version), frames: Arc::clone(&frames), named: item.named, documents: item.documents };
         self.write_back_unless_full(Syms::None, "a tape and its source", frames.bytes(), vec![(key, Some(frames as Held))], write.work());
         Ok(())
     }
@@ -386,7 +401,12 @@ impl ContentStore {
             for (i, row) in rows.iter().enumerate() {
                 let source = put_source_placed_tx(t, row.canonical, row.source_len, place(2 * i), created)?;
                 let tape = TapePayload { grammar_id: row.grammar_id, grammar_version: row.grammar_version, tape_format_version: row.tape_format_version, bytes: &[], documents: &[] };
-                put_tape_placed_tx(t, source, tape, row.tape_len, row.tape_identity, place(2 * i + 1), created)?;
+                let tape_id = put_tape_placed_tx(t, source, tape, row.tape_len, row.tape_identity, place(2 * i + 1), created)?;
+                // A file that holds no program records so with its tape (decision 0431 step 6), in this transaction;
+                // one that holds some has them written after (`put_programs`).
+                if row.documents.as_ref().is_some_and(|d| d.is_empty()) {
+                    t.prepare_cached("UPDATE tape_objects SET programs=0 WHERE tape_id=?1 AND programs<0")?.execute([tape_id.0])?;
+                }
                 ids.push(source);
             }
             Ok((ids, numbers))
@@ -679,7 +699,7 @@ mod tests {
         let queue = || {
             let _waves = write_back::run_waves();
             for (i, (source, tape)) in files.iter().enumerate() {
-                store.queue_source_and_tape(key(i), HashKey::sha256(source.as_bytes()), 7, 1, 1, source, Arc::clone(tape) as TapeBytes, true).unwrap();
+                store.queue_source_and_tape(key(i), HashKey::sha256(source.as_bytes()), 7, 1, 1, source, Arc::clone(tape) as TapeBytes, true, None).unwrap();
                 match i {
                     // Gathered: read where the run holds it.
                     0 => assert!(matches!(store.queued_tape(&key(0)), Some(Ok(ObjectBytes::Tape(_))))),

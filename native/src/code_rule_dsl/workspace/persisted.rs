@@ -420,15 +420,7 @@ pub(super) fn grammar_id(language: GrammarDialect) -> i64 {
 /// that text parses to. The id keeps each its own row, never a primary's, while texts with the same
 /// omissions share one.
 pub(super) fn document_grammar_id(dialect: GrammarDialect, omissions: &[u8]) -> i64 {
-    let fingerprint = if omissions.is_empty() {
-        0
-    } else {
-        let digest = HashKey::sha256(omissions)
-            .sha256_bytes()
-            .expect("a SHA-256 key");
-        u64::from_be_bytes(digest[..8].try_into().expect("digest width")) >> 17
-    };
-    ((fingerprint as i64) << 9) | (1 << 8) | grammar_id(dialect)
+    tape::derived_grammar_id(dialect, omissions)
 }
 
 /// The dialect of a stored tape's grammar id, a primary's (`grammar_id`) or a derived
@@ -766,6 +758,7 @@ pub(super) fn persist_files(
                     tape: &bytes.tape,
                     source_map: &bytes.source_map,
                     host_errors: &bytes.host_errors,
+                    at: document.at,
                 })
                 .collect::<Vec<_>>()
         })

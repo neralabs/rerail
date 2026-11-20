@@ -243,6 +243,7 @@ code may be named by which rules asked for it, or in what order.
 | R8 | CPU and Metal give the same rows, the device reading the same tapes: a value's rows read where they lie, none uploaded (but Q266's filtered inputs) | `cpu_and_metal_read_the_same_tape_values`, with both kinds |
 | R9 | A finding placed at a tape value's node is refused: the lowering derives `rr_unplaced(clause)`, and the run fails naming the clauses | `a_finding_at_a_tape_values_node_is_refused` |
 | R10 | A string a rule parses is parsed in the program's fixpoint (§8): no slice and no round runs for it, the batch never grows by a value, each value is admitted once at its first lookup (`Report::values_admitted`), a string inside a value too; no scan lists a hidden value's nodes, and a shown one's are read after the request (§8, as built) | `tape_values_are_read_in_the_fixpoint` |
+| R11 | A file's programs are made once, at its parse, and kept with its tape (§7, step 6): the batch makes a program's document from the file's record, running no embedder and parsing nothing (`Report::programs`: read from a record, made by an embedder); a run that finds the file's tape in the store finds its programs with it; a tape the store holds with no record (stored before step 6) has its programs made in the batch, as before. The rows are the same each way | `a_files_programs_are_kept_with_its_tape` |
 
 The tests for R1–R4 are in `logic/rr/tests.rs`, R6's in `logic/plan/corpus/tests.rs`, ignored until their step lands (`#[ignore = "0431 …"]`). 0055's tests
 keep their meaning, rewritten for `guest_of` and the file's programs where they read `guest(g, …)`.
@@ -269,6 +270,38 @@ keep their meaning, rewritten for `guest_of` and the file's programs where they 
    rounds stay for the grammar's programs until step 3.
 5. PostHog cold on CPU and Metal against 1ca497070's 32.1 s and 34.4 s of guests, findings unchanged (29,747,
    fa0efeaed6ff). Done (2026-11-19), below.
+6. (Q268, 2026-11-20, the user: "address all of these".) A file's programs kept with its tape (§5, §7; R11):
+   - The parse makes them: `FileImage::embedding` runs every embedding the file's dialect declares, one that reads
+     the scope (`call-argument`, decision 0470) over a document over the tape just made. Each is a `DerivedImage`,
+     with the host bytes it stands at (`at`) where they are not its text's.
+   - The facts carry them (`Facts::programs`, `None` where not known), not dropped by `build_with_tape`.
+   - The batch makes each program's document from its image (its tape, text, map and place): no embedder runs and
+     nothing is parsed. A file whose facts do not know its programs has them made as before.
+   - They are stored with the file's tape, in its transaction: each program's text a source, its tape a tape, and a
+     `file_documents` row (the matcher path's, 0055, with `at`); `tape_objects.programs` says how many, -1 for a tape
+     stored before (not known).
+   - A run that finds the file's tape before the first wave reads its programs' rows and tapes with it.
+   As built (2026-11-20):
+   - The parse's record is `FileImage::embedding`'s derived documents and, for an embedding that reads the scope,
+     the programs `core::with_programs` builds over a document over the facts' own tape (`TapeDoc::over`), in the
+     paths that parse a whole file (`build_with_tape`, `build_in_wave_with_tape`'s miss, `build_cached_with_tape`).
+   - `Guests::programs` places each program of a known record (`Held::kept`: the image's tape, text and map, shared,
+     not copied) and counts it read; an unknown record has its embedders run, each program counted made.
+   - The run's writer takes a parsed file's programs with its tape (`queue_source_and_tape`'s `documents`). A file
+     that holds none records `programs = 0` in the transaction that writes its tape; one that holds some has them
+     written after it (`ContentStore::put_programs`: sources, tapes, `file_documents` rows and the count, one
+     transaction, once). A derived tape's grammar id is the matcher path's (`tape::derived_grammar_id`, one
+     definition for both).
+   - A file tape's frame carries its programs (`TapeFrame::programs`): `tape_frames_for` and
+     `tape_frames_with_hashes` read each tape's count and, for a tape that holds some, their rows, texts and tapes
+     in one read (`attach_programs`). The hit path places each program's tape in a room, as the file's own, and
+     checks it against the file (`DerivedImage::checked`, `FileImage::read`'s checks); one that does not check
+     leaves the record unknown.
+   - Under `.embedded on` the tapes of the files the run reads for their programs are read before the first wave
+     by their own tags (`host_text`), so an unchanged host file parses nothing either.
+   - Left: a tape still queued for the writer (read before it is written, in the same run) gives no record, so its
+     file's programs are made in the batch. The matcher path's own publication (`publication.rs`) writes `at` but
+     records no count: its tapes read as not known, as before.
 
 ## Measured (step 5)
 

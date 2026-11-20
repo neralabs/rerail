@@ -93,6 +93,9 @@ CREATE TABLE IF NOT EXISTS tape_objects (
     seg INTEGER NOT NULL DEFAULT 0,
     seg_at INTEGER NOT NULL DEFAULT 0,
     seg_len INTEGER NOT NULL DEFAULT 0,
+    -- The file's programs (decision 0431 step 6): the number of its `file_documents` rows, written in the transaction
+    -- that writes them; -1 where not known (a tape stored without its programs).
+    programs INTEGER NOT NULL DEFAULT -1,
     UNIQUE (source_id, grammar_id, grammar_version, tape_format_version)
 ) STRICT;
 -- The segments sources and tapes are in (decision 0295 step 5: `<store>.objects/<seg>.seg`, mapped, uncompressed): a
@@ -114,6 +117,9 @@ CREATE TABLE IF NOT EXISTS file_documents (
     document_tape_id INTEGER NOT NULL REFERENCES tape_objects(tape_id),
     source_map BLOB NOT NULL,
     host_errors BLOB NOT NULL,
+    -- The parent's bytes the document stands at, where they are not its text's (`tape::DerivedImage::at`).
+    at_start INTEGER,
+    at_end INTEGER,
     PRIMARY KEY (tape_id, ordinal)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS file_documents_by_document ON file_documents(document_tape_id);
@@ -887,6 +893,9 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("tape_objects", "seg", "INTEGER NOT NULL DEFAULT 0"),
     ("tape_objects", "seg_at", "INTEGER NOT NULL DEFAULT 0"),
     ("tape_objects", "seg_len", "INTEGER NOT NULL DEFAULT 0"),
+    ("tape_objects", "programs", "INTEGER NOT NULL DEFAULT -1"),
+    ("file_documents", "at_start", "INTEGER"),
+    ("file_documents", "at_end", "INTEGER"),
 ];
 
 /// The `ADDED_COLUMNS` a store's tables lack (of the tables it has).
