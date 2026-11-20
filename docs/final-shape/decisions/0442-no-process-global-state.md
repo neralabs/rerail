@@ -81,6 +81,10 @@ by any caller in the process, so two callers of different trust could not be kep
     the nearest such choice of its type and never a guard's binding.
   - **Still kept maps.** A context value holding more than a number or a flag is counted by decision 0104's scan
     (`facts_only::maps`) as the thread-local was: by its type's name, in the module that binds it.
+  - **Its cost.** A read walks the chain to the nearest binding of its type. B-now (corpus0, 317 rules, profiling
+    build), on one M1 Max at load 17-40, two runs each: 985.5 and 979.3 G instructions before the context
+    (65d1d55f07), 985.0 and 1015.9 G with every value moved (420f98435c); the same 463 findings. The two builds'
+    runs overlap, and two runs of one build differ by 3%: no cost shows at that resolution.
 - Step 3 (the profile), as done:
   - A run's records are the run's (`profile::Records`, a run local). Each thread's shard of them is listed in the run
     it records for. Outside a run nothing keeps them: a test that reads a profile holds a run (`run::scope`, or
