@@ -25,13 +25,14 @@ UKL_INLINE void UKL_RADIX_NAME(ukl_radix_hist_tile)(UKL_GLOBAL const UKL_RADIX_K
 }
 
 // The tile's rows at their places. `counts`: `UKL_RADIX_GROUPS * UKL_RADIX_DIGITS` threadgroup words (the round's
-// rows of each digit, by SIMD group); `before`, `base`: `UKL_RADIX_DIGITS` each (the digit's rows in the earlier
-// rounds; its offset for the tile).
+// rows of each digit, by rank group); `before`, `base`: `UKL_RADIX_DIGITS` each (the digit's rows in the earlier
+// rounds; its offset for the tile); `digits`: `UKL_RADIX_SPILL` (each thread's digit, where a rank group is not a SIMD
+// group).
 UKL_INLINE void UKL_RADIX_NAME(ukl_radix_scatter_tile)(UKL_GLOBAL const UKL_RADIX_KEY* keys, UKL_GLOBAL const uint32_t* values, UKL_GLOBAL const uint32_t* offsets,
                                        UKL_GLOBAL UKL_RADIX_KEY* outKeys, UKL_GLOBAL uint32_t* outValues, UklRadixArgs args, UKL_LOCAL uint32_t* counts,
-                                       UKL_LOCAL uint32_t* before, UKL_LOCAL uint32_t* base, uint32_t tile, uint32_t t __UKL_PARAMS)
+                                       UKL_LOCAL uint32_t* before, UKL_LOCAL uint32_t* base, UKL_LOCAL uint32_t* digits, uint32_t tile, uint32_t t __UKL_PARAMS)
 {
-    uint32_t lane = t % UKL_SIMD_WIDTH, sg = t / UKL_SIMD_WIDTH;
+    uint32_t me = t % UKL_RADIX_RG, sg = t / UKL_RADIX_RG;
     base[t] = offsets[t * args.tiles + tile];
     before[t] = 0u;
     for (uint32_t k = 0u; k < UKL_RADIX_ROUNDS; k++) {
@@ -40,9 +41,22 @@ UKL_INLINE void UKL_RADIX_NAME(ukl_radix_scatter_tile)(UKL_GLOBAL const UKL_RADI
         UKL_RADIX_KEY key = live ? keys[r] : (UKL_RADIX_KEY)0;
         // A row past the end has a digit of its own, equal to no live row's.
         uint32_t d = live ? UKL_RADIX_NAME(ukl_radix_digit)(key, args.shift) : UKL_RADIX_DIGITS;
+#if UKL_RADIX_MATCHED
         uint32_t m = ukl_sg_match(d __UKL_ARGS);
-        uint32_t rank = ukl_rank32(m, lane);
-        bool last = (m >> lane) == 1u;
+        uint32_t rank = ukl_rank32(m, me);
+        bool last = (m >> me) == 1u;
+        (void)digits;
+#else
+        digits[t] = d;
+        ukl_tg_barrier();
+        uint32_t rank = 0u;
+        bool last = true;
+        for (uint32_t j = 0u; j < UKL_RADIX_RG; j++) {
+            uint32_t dj = digits[t - me + j];
+            rank += (uint32_t)(dj == d && j < me);
+            last = last && !(dj == d && j > me);
+        }
+#endif
         for (uint32_t s = 0u; s < UKL_RADIX_GROUPS; s++)
             counts[s * UKL_RADIX_DIGITS + t] = 0u;
         ukl_tg_barrier();

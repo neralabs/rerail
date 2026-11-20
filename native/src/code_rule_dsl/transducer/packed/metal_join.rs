@@ -328,7 +328,7 @@ pub fn axis_in_chunk(chunk: &crate::code_rule_dsl::facts::vtab::syntax::device_c
     let write = pipeline("chunk_views", "axis_write", chunk_views_source)?;
     let at = |o: usize| u32::try_from(o).map_err(|_| "the axis lies past 4 GB of its chunk".to_string());
     let mut p = [at(chunk.root)?, n as u32, at(bits_at)?, u32::from(inside), 0];
-    let scan = Scan::owned(n + 1)?;
+    let scan = Scan::owned(n)?;
     let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
     let pass = batch.pass(16).map_err(|e| format!("{e:?}"))?;
     pass.run(&count, &[&whole, &starts], &p, &[], groups(n + 1));
@@ -1267,7 +1267,7 @@ impl Batch {
             let scount = pipeline("join", "scan_count", || SOURCE.to_owned())?;
             let sscatter = pipeline("join", "scan_scatter", || SOURCE.to_owned())?;
             let n = stage.nr as usize + 1;
-            let counts = scratch(FREE, 4 * n)?;
+            let counts = scratch(FREE, 4 * (n + 1))?;
             let scan = Scan::new(n)?;
             let sb = self.block(stage.bytes())?;
             let pass = self.pass(12)?;
@@ -1281,7 +1281,7 @@ impl Batch {
             return Ok(());
         }
         let n = left.cap + 1;
-        let counts = scratch(FREE, 4 * n)?;
+        let counts = scratch(FREE, 4 * (n + 1))?;
         let scan = Scan::new(n)?;
         let arena: Buffer = if matches!(stage.mode, STRCMP | TEXTOP) && (stage.agg[1] & 15 == OPND_ARENA || stage.agg[1] >> 4 == OPND_ARENA) {
             self.arena()?.buffer.buffer.clone()
@@ -1348,7 +1348,7 @@ impl Batch {
         }
         let held = Held::of(probes.iter().flat_map(|p| p.bytes().iter().copied()).collect::<Vec<u8>>().into_iter()).map_err(|_| Error::BackendCapacity)?;
         let n = left.cap + 1;
-        let counts = scratch(FREE, 4 * n)?;
+        let counts = scratch(FREE, 4 * (n + 1))?;
         let scan = Scan::new(n)?;
         // The bindings with a witness out as they are: a semi-join's scatter (mode 1 writes the binding alone).
         let mut write = stage;
@@ -1393,7 +1393,7 @@ impl Batch {
         let [kept, states, classes, start] = auto.map_or([1, 0, 0, 0], |a| a.1);
         let work = Held::new(ngroups * 2 * simd_group() * kept.max(1) as usize)?;
         let p = Held::of([ngroups as u32, kept, states, classes, start, 0, 0, 0].into_iter()).map_err(|_| Error::BackendCapacity)?;
-        let counts = scratch(FREE, 4 * n)?;
+        let counts = scratch(FREE, 4 * (n + 1))?;
         let values = Held::new(8 * n)?;
         let scan = Scan::new(n)?;
         let arena = self.arena()?.buffer.buffer.clone();
@@ -1431,7 +1431,7 @@ impl Batch {
         let bytes: &[u8] = unsafe { std::slice::from_raw_parts(d.as_ptr().cast::<u8>(), std::mem::size_of_val(&d)) };
         let p = Held::new(4 * places)?;
         let n = table.cap + 1;
-        let counts = scratch(FREE, 4 * n)?;
+        let counts = scratch(FREE, 4 * (n + 1))?;
         let scan = Scan::new(n)?;
         let db = self.block(bytes)?;
         let pass = self.pass(12)?;
@@ -1546,7 +1546,7 @@ impl Batch {
         let scratch = Held::new(groups * 2 * simd_group() * states as usize)?;
         let lens = Held::new(4 * (n + 1))?;
         let z = Held::of(with.iter().copied().chain([0u8]).collect::<Vec<u8>>().into_iter()).map_err(|_| Error::BackendCapacity)?;
-        let scan = Scan::new(n + 1)?;
+        let scan = Scan::new(n)?;
         for write in [0u32, 1] {
             let p: [u32; 8] = [n as u32, groups as u32, with.len() as u32, write, states, 0, 0, 0];
             // SAFETY: plain integers.
@@ -1572,7 +1572,7 @@ impl Batch {
         let kernel = pipeline("join", "text_map", || SOURCE.to_owned())?;
         let groups = n.clamp(1, 1024);
         let lens = Held::new(4 * (n + 1))?;
-        let scan = Scan::new(n + 1)?;
+        let scan = Scan::new(n)?;
         for write in [0u32, 1] {
             let mut p = [0u8; 32];
             for (k, w) in [n as u32, groups as u32, f, write].iter().enumerate() {

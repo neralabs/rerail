@@ -1327,6 +1327,39 @@ old suffix, `gpu/src/library_tests.ukl`, is renamed.
   gap rule and Metal's extract need not agree (its R5): it excuses the gap lasts there, as `ladder::tier1_agrees`
   does on the CPU. The crate's 86 pass on Metal.
 
+**D: accel's scans and sorts are the library's calls (2026-11-19).**
+
+- **The library grew to what accel's own kernels did**, so no second scan or sort is left:
+  - `ScanSpace`: a scan's temporaries, made once (from a caller's scratch, `new_in`) and reused, so a scan
+    allocates nothing. Each level's tile sums are scanned in place into their offsets. A scan may be in place, its
+    buffer `n + 1` values with the total last.
+  - A scan sized on the device: `ScanSpace::size` writes each level's count and grid from a count the work before
+    made (`min(counts[slot], cap)`, accel's `scan_size`), and `scan_sized` launches on those grids. It also writes a
+    grid over the outputs for the launches around it.
+  - `RadixSpace` and `radix_sort_pairs_in`: the sort in kept temporaries, its histograms scanned in place.
+  - The radix sort at every SIMD width: below 32 lanes a rank group is 32 threads, their digits read from
+    threadgroup memory (accel's method); from 32 up, a SIMD group matched as before. The sort had refused widths
+    below 8. The library's tests cover in-place and sized scans, and sorts at the CPU's width 1 and 8 and OpenCL's 1.
+  - `ready()` compiles the library ahead of a first call.
+- **accel calls them.** `Scan` holds a `ScanSpace`, and `encode`, `encode_into`, `size` and `encode_sized` are
+  library calls on the pass's queue (`Pass::library`, whose launches count to the submission's budget). The
+  sort (`encode_sort`) and the pairs' sort (`encode_sorted_pairs`) call `radix_sort_pairs_in` between accel's own
+  `sort_init` and its runs. `rows_scan`'s users (the tile join, the engine's row programs) scan through `Scan` too.
+  Gone: `scan_block`, `scan_add`, `scan_size`, `scan_block_sized`, `scan_add_sized`, `rows_scan`, `sort_hist`,
+  `sort_scatter`, and `library_speed`, whose other side they were. Every scanned buffer has room for its total, and
+  a probe's pair count is that word, read after completion. The stages that scanned `n + 1` values to get a total
+  (the axes' starts, the texts' lengths) scan `n`.
+- **Speed, last measured before the kernels went** (`library_speed`, Metal, load average 11 to 14): the GPU ran in
+  two states that moved both sides together. In the fast one the library's 16M scan took 0.44 ms against accel's
+  0.47 (0.94×), and its 4M sort 0.83 ms against 0.91 (0.91×), as at step 5. In the slow one the scan took 0.81 ms
+  against 0.65 to 0.74.
+- accel's 85 pass on Metal, the CPU and OpenCL, and its `gpu::` tests at OpenCL's width 1. `rerail-device-metal`'s
+  59 (the engine's device stages, row programs and tile joins) pass on Metal, OpenCL and the CPU, and again with every
+  stage sized on the device (`RERAIL_DEVICE_SIZED_MIN=0`). The library's 19 pass on CUDA on a GB10.
+- **Found on the way:** `production_encoders_cannot_bypass_the_launch_guard` had been red since step C. It refused
+  any `.commit()` in the engine's device files, and since then they commit accel's `Pass`, the checked submission.
+  It now refuses a commit in a file that makes a Metal command buffer.
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.
