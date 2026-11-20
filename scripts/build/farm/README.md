@@ -661,7 +661,16 @@ host over ssh. For each compile it scans what the compile may read from here (th
 directory and native library directories; `test-remote` and `live-test-remote` send a checkout's
 files the same way; one scan serves every compile that started before it), sends each file whose size or mtime differs from what it last sent, then the
 compile, on the same stream: the agent writes the files before it runs the compile. The outputs
-come back on the stream.
+come back on the stream, staged beside their places (`.farm-PID-JOB`): the compile moves them in,
+the `.rmeta` last, only once every output it asked for came and what the compile read is as it is
+here; otherwise it removes them and compiles here. An output the host's compile did not write
+fails it there (code 72), and the files of a compile no one waits for any more are dropped. Before,
+a remote compile's outputs went straight into place as they came, any one missing was skipped,
+and a late file of a compile given up could land beside a newer compile's: an `.rmeta` that was
+not its `.rlib`'s, which sccache then keeps as one entry. A crate above it failed with E0463
+("can't find crate") with the `.rmeta` present and compiled against the `.rlib` (Q377,
+2026-11-20; the cache's 554 Cranelift entries were all consistent, so the pair formed in the
+target directory). `SCCACHE_RECACHE=1` (with `RERAIL_FARM_ANY_ENV=1`) rewrites such a pair.
 
 The stream starts on ssh, then moves to plain TCP: the daemon listens on a port of its own,
 sends the agent the port and a one-time token over ssh, and the agent connects back to the

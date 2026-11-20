@@ -46,6 +46,11 @@ def receive(f):
     return header, payload
 
 
+def staged(path, job_id):
+    """Where a compile's output `path` waits until its caller takes it (`farm.run_mirror`)."""
+    return f"{path}.farm-{os.getpid()}-{job_id}"
+
+
 def stat(path):
     try:
         st = os.stat(path)
@@ -135,7 +140,17 @@ class Host:
             self.waiting[job_id] = {"event": done, "result": None}
             send(self.w, dict(header, id=job_id))
         done.wait(timeout)
-        return self.waiting.pop(job_id, {}).get("result")
+        waiting = self.waiting.pop(job_id, {})
+        result = waiting.get("result")
+        if result is not None and waiting.get("files"):
+            result["staged"] = waiting["files"]
+        else:
+            for to in waiting.get("files", {}).values():
+                try:
+                    os.unlink(to)
+                except OSError:
+                    pass
+        return result
 
     def stop(self):
         with self.lock:
@@ -214,11 +229,21 @@ class Host:
                     waiting["event"].set()
                 return
             if header["op"] == "file":
+                # Staged beside its place, never put there: the caller moves a compile's outputs in
+                # once it has them all and the compile read what is here (`staged`, farm.run_mirror).
+                # A file of a job no one waits for (the caller gave up and compiled here) is dropped:
+                # put in place late, it would sit beside the newer outputs of another compile, an
+                # `.rmeta` that is not its `.rlib`'s (Q377: E0463 above it).
                 path = header["path"]
-                tmp = f"{path}.farm-{os.getpid()}"
+                waiting = self.waiting.get(header.get("id"))
+                if waiting is None:
+                    continue
+                to = staged(path, header["id"])
+                tmp = f"{to}.part"
                 with open(tmp, "wb") as f:
                     f.write(payload)
-                os.replace(tmp, path)
+                os.replace(tmp, to)
+                waiting.setdefault("files", {})[path] = to
             elif header["op"] in ("done", "had", "same?", "unlisted!", "removed"):
                 waiting = self.waiting.get(header["id"])
                 if waiting:

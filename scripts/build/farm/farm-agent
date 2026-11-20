@@ -38,7 +38,8 @@ From the daemon:
   [mtime_ns, size] as `seen`, for the daemon to check against its own. An output that names ROOT
   (a path written into it that no remap reached, such as `env!("CARGO_MANIFEST_DIR")`) is not sent:
   code 71, and the compile runs on the build machine. A put that fails makes every later run fail
-  with code 70: the daemon then drops this agent and forgets what it sent.
+  with code 70: the daemon then drops this agent and forgets what it sent. An output the compile
+  did not write: code 72, and the compile runs on the build machine.
   With "xc": {"home", "toolchain"} (a Mac's compile on a Linux host), the compile runs in this
   host's container instead (`xc_container`), where the build machine's paths are real: ROOT's copy
   of the build machine's top directory at its own path (the daemon sends the crate's sources
@@ -511,7 +512,10 @@ def run(job):
             try:
                 data = open(at(path), "rb").read()
             except OSError:
-                continue
+                # Every output or none: the build machine compiles it itself (an output left out
+                # kept the last compile's there, beside this one's others: Q377).
+                code, stderr = 72, f"{path}: not written by the compile".encode()
+                break
             if path == job.get("depinfo"):
                 data = data.replace(root + b"/", b"/")
             if any(x in data for x in leaks):

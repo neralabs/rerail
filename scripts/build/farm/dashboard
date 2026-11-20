@@ -314,6 +314,7 @@ function card(m, all) {
   const d = m.last, f = m.farm || {}, gs = m.guest;
   let status, color;
   if (m.connected) { status = "connected"; color = "var(--good)"; }
+  else if (gs && gs.state !== "running") { status = gs.state; color = STATE_COLOR[gs.state] || "var(--muted)"; }
   else { status = "not connected"; color = "var(--bad)"; }
   let html = `<div class="top"><div><span class="name">${esc(m.name)}</span> <span class="model">${esc(d ? d.model || "" : "")}</span></div>` +
     `<span class="badge"><i class="dot" style="background:${color}"></i>${status}${m.rtt_ms != null && m.connected ? " · " + m.rtt_ms + " ms" : ""}</span></div>`;

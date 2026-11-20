@@ -9,6 +9,7 @@ See README.md beside this file. Two entry points use this module:
 """
 import concurrent.futures
 import fcntl
+import glob
 import hashlib
 import json
 import os
@@ -22,7 +23,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 43
+VERSION = 44
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -1762,14 +1763,33 @@ def run_mirror(host, rustc, args, env, cwd, out_dir, crate, since, lap, give_up,
                 o = rec["env"].get("OUT_DIR")
                 if o and os.path.isdir(o):
                     roots.append([o, "tree"])
+    # (a staged output a compile that was given up left behind: never put in place)
+    for o in run["outputs"]:
+        for left in glob.glob(glob.escape(o) + ".farm-*"):
+            try:
+                os.unlink(left)
+            except OSError:
+                pass
     reply = mirror.compile({"host": host["name"], "since": since, "roots": roots, "files": files, "run": run})
     if reply is None:
         return give_up("the mirror daemon did not answer")
+    # Its outputs wait beside their places (mirror.py, `staged`): moved in only once all of them came
+    # and what it read is as it is here; else removed, and the compile runs here. A missing `.rmeta`
+    # left the last compile's beside a new `.rlib`, and a compile above it failed with E0463 (Q377).
+    staged = reply.get("staged") or {}
+
+    def unstage():
+        for to in staged.values():
+            try:
+                os.unlink(to)
+            except OSError:
+                pass
     t = reply.get("times", {})
     lap(f"sync {t.get('sync')} ({t.get('files')} files), compile {t.get('compile')}, mirror")
     if reply["code"] == 71:
         open(leak, "w").close()
     if reply["code"] != 0:
+        unstage()
         return give_up(f"the compile failed ({reply['code']}): {reply.get('why', '')} {reply['stderr'][-400:]!r}")
 
     def here(path):
@@ -1780,7 +1800,15 @@ def run_mirror(host, rustc, args, env, cwd, out_dir, crate, since, lap, give_up,
             return None
     stale = [p for p, seen in reply["read"].items() if seen != "inplace" and seen != here(p)]
     if stale:
+        unstage()
         return give_up(f"it read files that are not as they are here: {stale[:3]}")
+    missing = [o for o in run["outputs"] if o not in staged]
+    if missing:
+        unstage()
+        return give_up(f"not every output came back: {[os.path.basename(o) for o in missing]}")
+    # The `.rmeta` last: cargo starts the crates above on it, and its `.rlib` is in place by then.
+    for o in sorted(run["outputs"], key=lambda o: o.endswith(".rmeta")):
+        os.replace(staged[o], o)
     sys.stdout.buffer.write(reply["stdout"].encode("latin-1"))
     sys.stderr.buffer.write(reply["stderr"].encode("latin-1"))
     log(f"{crate}: compiled on {host['name']}, mirror ({t.get('sync')} s sync, {t.get('compile')} s compile, {len(reply['read'])} read)")
