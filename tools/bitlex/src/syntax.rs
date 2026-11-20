@@ -1006,8 +1006,8 @@ pub fn backward(mut stmts: Vec<Stmt>, names: &[&str]) -> Result<Vec<Stmt>, Strin
     Ok(stmts)
 }
 
-/// Why `back_fill` is refused, and what to write instead (decision 0406).
-pub const BACK_FILL_REMOVED: &str = "`back_fill` is removed from Bitlex (decision 0406). A value at a byte that is made from the \
+/// Why `back_fill` is refused, and what to write instead (decision 0416).
+pub const BACK_FILL_REMOVED: &str = "`back_fill` is removed from Bitlex (decision 0416). A value at a byte that is made from the \
 bytes after it needs a pass backward over the whole file, and the lean parsers never make one: they look ahead from \
 where they stand, and only where they need to. Write what the back fill asks, at the token:
   - the next token, or a run of tokens from here: a token mark, `mark K = tokens [after E] A B ...`, \

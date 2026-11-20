@@ -102,7 +102,7 @@ step; `jit_against_aot` measures it at the end of a stage, as information.
 | | Passes | Slots a block | CPU body's instructions |
 |---|---|---|---|
 | step 35, before this work | 7 (4 forward, 3 back) | 555 | 1,743 + 1,168 + 184 + 254 |
-| step 36, no back fills (0406) | 1 (forward) | 0 | 2,462 |
+| step 36, no back fills (0416) | 1 (forward) | 0 | 2,462 |
 
 Measured as information (`jit_against_aot`, the 429 corpus files the grammar takes, load 60–80):
 tier 1 ahead of time 289 cycles a node; the lean parser's whole parse 115.
@@ -114,7 +114,7 @@ parse 296M instructions, 64.5M cycles, 19.2 ms (118 cycles a node).
 
 ## Stages 3 and 4: where the operations are (2026-11-18)
 
-After Q222 to Q225 (step 36, the corpus 431 / 60 / 0), tier 1 is one forward pass of 2,460
+After Q339 to Q342 (step 36, the corpus 431 / 60 / 0), tier 1 is one forward pass of 2,460
 operations a block. `kotlin_parser`'s `tier1_cones` counts them by the statement that made each
 (`Compiled::origin`) and by the outputs that need them:
 
