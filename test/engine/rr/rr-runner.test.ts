@@ -185,6 +185,15 @@ describe("runRerailPolicies", () => {
     expect(await runRerailPolicies({ root, policies: [rule] })).toEqual({ status: "failed", message: 'RERAIL_RR_STORE is "on": it takes "off" or "checkout"' });
   });
 
+  it("refuses a deadline override past the longest timer Node keeps, which would end every run at once", async () => {
+    process.env.RERAIL_RR_DEADLINE_MS = "9999999999";
+    const { root, rule } = checkout({ "a.py": "shout(1)\n" });
+    expect(await runRerailPolicies({ root, policies: [rule] })).toEqual({
+      status: "failed",
+      message: 'RERAIL_RR_DEADLINE_MS is "9999999999": it takes a whole number from 1 to 2147483647',
+    });
+  });
+
   it("completes a run whose child has 2 threads, as on a 4-core runner or a small laptop, with no store", async () => {
     process.env.RERAIL_RR_THREADS = "2";
     const { root, rule } = checkout({ "app/one.py": "shout(1)\n", "app/two.py": "def f():\n    return shout(2)\n" });

@@ -1446,6 +1446,11 @@ pub struct Locs {
 }
 
 impl Locs {
+    /// The document's lines as its run counts them: by its family's terminators (`core_rr::Lines`), as `line`,
+    /// `end_line` and `col` read them.
+    pub fn lines(&self) -> &core_rr::Lines {
+        &self.lines
+    }
     /// The document's spans past its nodes: its tokens, then (its own text) the whole source and each line.
     fn positions(&self) -> u32 { self.ends_from() + self.ends }
     /// The first end point's position: past the tokens, the whole source and the lines.
