@@ -194,8 +194,12 @@ fn the_corpus_reads_the_same_or_is_refused() {
     let c = compiled_or_panic();
     let root = std::env::var("RERAIL_C_CORPUS").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/lean-corpus"));
     let (mut same_n, mut refused, mut differ) = (0, 0, Vec::new());
-    // The other backends', against Cranelift's: files whose rows differ.
-    let (mut interp, mut metal) = (Vec::new(), Vec::new());
+    // The other backends', against Cranelift's: files whose rows differ (the device's on macOS alone, as it runs).
+    let mut interp = Vec::new();
+    #[cfg(target_os = "macos")]
+    let mut metal = Vec::new();
+    #[cfg(not(target_os = "macos"))]
+    let metal: Vec<String> = Vec::new();
     for (dir, cpp) in [("c", false), ("cpp", true)] {
         let Ok(entries) = std::fs::read_dir(root.join(dir)) else { continue };
         let mut paths: Vec<_> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
@@ -281,3 +285,4 @@ fn every_ladder_step_compiles() {
     }
     assert_eq!(std::fs::read_to_string(steps.last().unwrap()).unwrap(), GRAMMAR, "the last step is the grammar");
 }
+

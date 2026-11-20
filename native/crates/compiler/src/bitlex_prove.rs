@@ -426,7 +426,7 @@ pub fn never_unrolled(ops: &[BlockOp], tables: &[ClassTable], rounds: &[Vec<(u16
 
 /// A lemma: values that never hold together at a position, each an operation at a lag from it
 /// (read as a `prev` reads it) and its value; `STREAM` for "the byte is in the stream".
-type Lemma = Vec<(u16, u32, bool)>;
+pub type Lemma = Vec<(u16, u32, bool)>;
 
 /// A lemma's value "the byte at this lag is in the stream" (`Lemma`).
 const STREAM: u16 = u16::MAX;
@@ -479,7 +479,7 @@ pub struct Induction {
 
 /// The version of what the provers answer, in every question's key (`Proofs`, decision 0414):
 /// bumped with any change that can make one answer differently.
-pub const PROOFS_VERSION: u32 = 1;
+pub const PROOFS_VERSION: u32 = 2;
 
 /// An answer the provers made: whether a value is zero everywhere, or the bytes it can be at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -590,6 +590,13 @@ pub fn decode(bytes: &[u8]) -> Known {
 /// from the value meets them, each class by its table's bytes; the delay; and `asker`, the prover
 /// and its settings. The same question in another grammar, or at other numbers, has this key.
 pub fn question(ops: &[BlockOp], tables: &[ClassTable], rounds: &[Vec<(u16, u16)>], v: u16, d: u8, asker: &str) -> Vec<u8> {
+    question_given(ops, tables, rounds, v, d, asker, &[])
+}
+
+/// `question`, asked of a prover given `given` (`Induction::given`): the lemmas whose values all lie in the cone, as
+/// the cone numbers them, are in the key too, as the answer may use them (a walk's kinds apart, decision 0484, which
+/// the equations do not show). A lemma with a value outside the cone is never applied (the window is the cone's).
+pub fn question_given(ops: &[BlockOp], tables: &[ClassTable], rounds: &[Vec<(u16, u16)>], v: u16, d: u8, asker: &str, given: &[Lemma]) -> Vec<u8> {
     use std::fmt::Write;
     let nexts: HashMap<u16, u16> = rounds.iter().flatten().copied().collect();
     let mut number: HashMap<u16, u16> = HashMap::default();
@@ -617,6 +624,20 @@ pub fn question(ops: &[BlockOp], tables: &[ClassTable], rounds: &[Vec<(u16, u16)
             BlockOp::Carry(_) => write!(out, ";{op:?} {:?}", nexts.get(&at).map(|n| number[n])),
             _ => write!(out, ";{op:?}"),
         };
+    }
+    let mut lemmas: Vec<Vec<(u16, u32, bool)>> = given
+        .iter()
+        .filter(|l| l.iter().all(|(at, _, _)| number.contains_key(at)))
+        .map(|l| {
+            let mut l: Vec<(u16, u32, bool)> = l.iter().map(|&(at, lag, b)| (number[&at], lag, b)).collect();
+            l.sort_unstable();
+            l
+        })
+        .collect();
+    lemmas.sort_unstable();
+    lemmas.dedup();
+    for l in &lemmas {
+        let _ = write!(out, ";lemma {l:?}");
     }
     out.into_bytes()
 }
@@ -800,6 +821,12 @@ impl Induction {
     /// proves it first (`never_inductive` of their conjunction).
     pub fn add_lemma(&mut self, lemma: Vec<(u16, u32, bool)>) {
         self.given.push(lemma);
+    }
+
+    /// The lemmas given so far (`add_lemma`, `never_inductive`): what a keyed answer may depend on beside its
+    /// question (`question_given`).
+    pub fn given(&self) -> &[Lemma] {
+        &self.given
     }
 
     /// `hypothesis`: `v` is this lemma's values all holding, assumed not to hold at every lag

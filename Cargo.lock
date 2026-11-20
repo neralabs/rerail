@@ -3195,6 +3195,7 @@ dependencies = [
  "rerail-pp-aot",
  "rerail-simd8",
  "rerail-tape-format",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -3214,6 +3215,7 @@ dependencies = [
  "rerail-c-lean",
  "rerail-c-pp",
  "rerail-simd8",
+ "rerail-tape-format",
 ]
 
 [[package]]
@@ -4281,6 +4283,8 @@ dependencies = [
  "rerail-context",
  "rerail-metal",
  "rerail-prof",
+ "rerail-tape-format",
+ "rerail-ukl",
  "serde",
  "sha2 0.10.9",
 ]

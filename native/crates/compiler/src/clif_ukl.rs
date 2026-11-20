@@ -12,6 +12,9 @@
 //!   64-bit word), so every access is a byte or an aligned 64-bit word (`ukl_ldw_*`, `ukl_stw_*`): no direct access
 //!   of another width the compiler's type-based alias rules could reorder, and none unaligned. The IR's `aligned` flag
 //!   is the CPU's, and is not used.
+//! - **The context** (each function's first parameter) is a column of the batch's table: a field is its 8-byte slot's
+//!   row (0408, L2), `cs` bytes a row, so a SIMD group's lanes read one field as adjacent words. The context is only
+//!   ever a field's base (`context_uses`).
 //! - **Control:** `clif_rust::Shape`'s structure, printed as C without labels (`Shape::c`).
 //! - **Calls:** each function `UKL_CALLED`, called directly, the compiler inlining as it chooses; the graph has no
 //!   recursion (no GPU language has it), which the translation checks.
@@ -36,10 +39,10 @@ fn ty(t: ir::Type) -> Result<(&'static str, &'static str, u32), String> {
 
 /// What every translation starts with: the library's backend and its word loads and stores.
 const PRELUDE: &str = "#include <ukl/backend.h>\n#include <ukl/memory.h>\n\n\
-// The batch's launch: its contexts' count, and the device's address of the arena's first byte (`hb`): each access is\n\
-// the arena's pointer at an address's offset from it.\n\
-typedef struct PpBatch { uint64_t hb; uint32_t count; uint32_t pad; } PpBatch;\n\
-UKL_REFLECT_STRUCT(PpBatch, hb, count, pad)\n\n";
+// The batch's launch: its contexts' count, the device's address of the arena's first byte (`hb`): each access is\n\
+// the arena's pointer at an address's offset from it; and the contexts' table's row bytes (`cs`, 0408 L2).\n\
+typedef struct PpBatch { uint64_t hb; uint32_t count; uint32_t pad; uint64_t cs; } PpBatch;\n\
+UKL_REFLECT_STRUCT(PpBatch, hb, count, pad, cs)\n\n";
 
 /// The functions (by their user name's index), as UKL: each of `entries` called from a kernel of its name over a
 /// batch, one context a thread taken by ticket (decision 0027's workers): `ctxs[t]` the context's address,
@@ -92,7 +95,7 @@ pub fn translate(funcs: &[(u32, ir::Function)], entries: &[(u32, &str)]) -> Resu
              \x20 for (uint32_t k = 0u; k < p.count; k++) {{\n\
              \x20   const uint32_t t = ukl_atomic_add(ticket, 1u);\n\
              \x20   if (t >= p.count) return;\n\
-             \x20   results[t] = f{entry}(0ul, heap, p.hb, ctxs[t]);\n\
+             \x20   results[t] = f{entry}(0ul, heap, p.hb, p.cs, ctxs[t]);\n\
              \x20 }}\n\
              }}\n"
         )
@@ -112,10 +115,12 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<(), String> {
         1 => ty(f.signature.returns[0].value_type)?.0,
         _ => return Err("more than one result".into()),
     };
+    let fields = context_fields(f);
+    context_uses(f, &fields)?;
     let name = |v: ir::Value| format!("v{}", dfg.resolve_aliases(v).as_u32());
     let entry = f.layout.entry_block().ok_or("no entry block")?;
     let params: Vec<String> = dfg.block_params(entry).iter().map(|&v| Ok(format!("{} a{}", ty(dfg.value_type(v))?.0, v.as_u32()))).collect::<Result<_, String>>()?;
-    writeln!(out, "UKL_CALLED {ret_ty} f{id}(uint64_t pin, UKL_GLOBAL uint8_t* heap, uint64_t hb{}{}) {{", if params.is_empty() { "" } else { ", " }, params.join(", ")).unwrap();
+    writeln!(out, "UKL_CALLED {ret_ty} f{id}(uint64_t pin, UKL_GLOBAL uint8_t* heap, uint64_t hb, uint64_t cs{}{}) {{", if params.is_empty() { "" } else { ", " }, params.join(", ")).unwrap();
     let absorbed = absorbed(f);
     if !absorbed.is_empty() {
         return Err("a vector test".into());
@@ -148,7 +153,7 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<(), String> {
             let emit = |node: usize, jump: &dyn Fn(usize) -> Result<String, String>| -> Result<String, String> {
                 let mut s = String::new();
                 for inst in f.layout.block_insts(blocks[node]) {
-                    s.push_str(&instruction(f, inst, &name, &|k, _| jump(k))?);
+                    s.push_str(&instruction(f, inst, &fields, &name, &|k, _| jump(k))?);
                     s.push('\n');
                 }
                 Ok(s)
@@ -163,12 +168,86 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<(), String> {
             for blk in f.layout.blocks() {
                 writeln!(out, "  case {}u: {{", blk.as_u32()).unwrap();
                 for inst in f.layout.block_insts(blk) {
-                    out.push_str(&instruction(f, inst, &name, &|_, to: ir::Block| Ok(format!("b = {}u; continue;", to.as_u32())))?);
+                    out.push_str(&instruction(f, inst, &fields, &name, &|_, to: ir::Block| Ok(format!("b = {}u; continue;", to.as_u32())))?);
                     out.push('\n');
                 }
                 out.push_str("  } break;\n");
             }
             writeln!(out, "  default: return {};\n  }}\n  }}\n}}\n", if ret_ty == "void" { "" } else { "0" }).unwrap();
+        }
+    }
+    Ok(())
+}
+
+/// A function's context: its first parameter.
+fn context(f: &ir::Function) -> Option<ir::Value> {
+    f.layout.entry_block().and_then(|e| f.dfg.block_params(e).first().copied())
+}
+
+/// The values that are the context plus a constant (the context itself, and `iadd_imm`s of them), each with its
+/// constant.
+type Fields = std::collections::HashMap<ir::Value, i64>;
+
+fn context_fields(f: &ir::Function) -> Fields {
+    let dfg = &f.dfg;
+    let mut fields = Fields::new();
+    let Some(c) = context(f) else { return fields };
+    fields.insert(c, 0);
+    loop {
+        let before = fields.len();
+        for b in f.layout.blocks() {
+            for inst in f.layout.block_insts(b) {
+                if let InstructionData::BinaryImm64 { opcode: Opcode::IaddImm, arg, imm } = dfg.insts[inst]
+                    && let Some(&o) = fields.get(&dfg.resolve_aliases(arg))
+                {
+                    fields.insert(dfg.first_result(inst), o + imm.bits());
+                }
+            }
+        }
+        if fields.len() == before {
+            return fields;
+        }
+    }
+}
+
+/// The context is used only as a load's or a store's base, at a field within one 8-byte slot, as a callee's context
+/// (its first argument), or plus a constant (`context_fields`) for the same uses: the device's table holds a context
+/// by slots, so any other use, an address made from it any other way or the context as a value, is refused.
+fn context_uses(f: &ir::Function, fields: &Fields) -> Result<(), String> {
+    let dfg = &f.dfg;
+    for b in f.layout.blocks() {
+        for inst in f.layout.block_insts(b) {
+            let data = &dfg.insts[inst];
+            for (i, &v) in dfg.inst_args(inst).iter().enumerate() {
+                let Some(&at) = fields.get(&dfg.resolve_aliases(v)) else { continue };
+                let field = |n: u32| {
+                    data.load_store_offset().is_some_and(|o| {
+                        let o = at + i64::from(o);
+                        o >= 0 && o % i64::from(n) == 0 && o % 8 + i64::from(n) <= 8
+                    })
+                };
+                let ok = match data.opcode() {
+                    Opcode::Uload8 | Opcode::Sload8 if i == 0 => field(1),
+                    Opcode::Uload16 | Opcode::Sload16 if i == 0 => field(2),
+                    Opcode::Uload32 | Opcode::Sload32 if i == 0 => field(4),
+                    Opcode::Load if i == 0 => dfg.inst_results(inst).first().is_some_and(|&r| field(dfg.value_type(r).bytes())),
+                    Opcode::Store | Opcode::Istore8 | Opcode::Istore16 | Opcode::Istore32 if i == 1 => {
+                        let n = match data.opcode() {
+                            Opcode::Istore8 => 1,
+                            Opcode::Istore16 => 2,
+                            Opcode::Istore32 => 4,
+                            _ => dfg.value_type(dfg.inst_args(inst)[0]).bytes(),
+                        };
+                        field(n)
+                    }
+                    Opcode::Call => i == 0 && at == 0,
+                    Opcode::IaddImm => fields.contains_key(&dfg.first_result(inst)),
+                    _ => false,
+                };
+                if !ok {
+                    return Err(format!("the context used other than as a field's base: {}", dfg.display_inst(inst)));
+                }
+            }
         }
     }
     Ok(())
@@ -207,7 +286,7 @@ fn konst(c: i64, u: &str) -> String {
     format!("(({u})({:#x}ul))", c as u64)
 }
 
-fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> String, jump: &dyn Fn(usize, ir::Block) -> Result<String, String>) -> Result<String, String> {
+fn instruction(f: &ir::Function, inst: ir::Inst, fields: &Fields, name: &dyn Fn(ir::Value) -> String, jump: &dyn Fn(usize, ir::Block) -> Result<String, String>) -> Result<String, String> {
     let dfg = &f.dfg;
     let data = &dfg.insts[inst];
     let op = data.opcode();
@@ -239,8 +318,20 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         let off = data.load_store_offset().unwrap_or(0);
         if off == 0 { format!("(({p}) - hb)") } else { format!("(({p}) + {} - hb)", konst(i64::from(off), "uint64_t")) }
     };
-    let load = |n: u32| -> String { format!("ukl_ldw_u{}(heap, {})", n * 8, addr(&args[0])) };
-    let store = |n: u32, x: &str| -> String { format!("ukl_stw_u{}(heap, {}, (uint64_t)({x}));", n * 8, addr(&args[1])) };
+    // A field of the context (the function's first parameter, or it plus a constant): its 8-byte slot's row of the
+    // batch's table (0408, L2), `cs` bytes a row, in the context's column; `context_uses` checked it lies in one slot.
+    let place = |i: usize| -> String {
+        let base = dfg.resolve_aliases(dfg.inst_args(inst)[i]);
+        match fields.get(&base) {
+            Some(&o) => {
+                let off = o + i64::from(data.load_store_offset().unwrap_or(0));
+                format!("(({}) - hb + cs * {}ul + {}ul)", name(context(f).expect("a context")), off / 8, off % 8)
+            }
+            None => addr(&args[i]),
+        }
+    };
+    let load = |n: u32| -> String { format!("ukl_ldw_u{}(heap, {})", n * 8, place(0)) };
+    let store = |n: u32, x: &str| -> String { format!("ukl_stw_u{}(heap, {}, (uint64_t)({x}));", n * 8, place(1)) };
     let shift = |x: &str| format!("(((uint32_t)({x})) & {}u)", bits - 1);
     // The operand's bits counted by the library's 32- or 64-bit count.
     let (aw, abits) = match at.and_then(|t| ty(t).ok()) {
@@ -347,7 +438,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
                 ir::ExternalName::User(r) => f.params.user_named_funcs()[*r].index,
                 n => return Err(format!("a call of {n:?}")),
             };
-            let call = format!("f{callee}(pin, heap, hb{}{})", if args.is_empty() { "" } else { ", " }, args.join(", "));
+            let call = format!("f{callee}(pin, heap, hb, cs{}{})", if args.is_empty() { "" } else { ", " }, args.join(", "));
             if returned_call(f, inst) {
                 return Ok(format!("return {call};"));
             }
@@ -400,4 +491,61 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         }
         op => return Err(format!("the opcode {op}")),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use cranelift_codegen::ir::{AbiParam, Function, InstBuilder, MemFlags, Signature, UserFuncName, types::I64};
+    use cranelift_codegen::isa::CallConv;
+    use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
+
+    /// A function of the context: `body` given the builder and the context, returning a value.
+    fn of_context(body: impl FnOnce(&mut FunctionBuilder<'_>, cranelift_codegen::ir::Value) -> cranelift_codegen::ir::Value) -> Function {
+        let mut sig = Signature::new(CallConv::Tail);
+        sig.params.push(AbiParam::new(I64));
+        sig.returns.push(AbiParam::new(I64));
+        let mut f = Function::with_name_signature(UserFuncName::user(0, 0), sig);
+        let mut ctx = FunctionBuilderContext::new();
+        let mut b = FunctionBuilder::new(&mut f, &mut ctx);
+        let entry = b.create_block();
+        b.append_block_params_for_function_params(entry);
+        b.switch_to_block(entry);
+        let c = b.block_params(entry)[0];
+        let r = body(&mut b, c);
+        b.ins().return_(&[r]);
+        b.seal_all_blocks();
+        b.finalize();
+        f
+    }
+
+    /// A context field, directly or through the context plus a constant, is its slot's row of the batch's table
+    /// (0408, L2): 8 bytes on and 4 bytes into it is row 1 and byte 4.
+    #[test]
+    fn a_context_field_is_its_slots_row() {
+        let f = of_context(|b, c| {
+            let at = b.ins().iadd_imm(c, 8);
+            let x = b.ins().uload32(MemFlags::trusted(), at, 4);
+            let y = b.ins().load(I64, MemFlags::trusted(), c, 16);
+            b.ins().iadd(x, y)
+        });
+        let ukl = super::translate(&[(0, f)], &[(0, "k")]).unwrap();
+        assert!(ukl.contains("((v0) - hb + cs * 1ul + 4ul)"), "{ukl}");
+        assert!(ukl.contains("((v0) - hb + cs * 2ul + 0ul)"), "{ukl}");
+    }
+
+    /// Any other use of the context is refused: an address made from it by a value, the context as a value, or a
+    /// field across two slots.
+    #[test]
+    fn the_context_as_a_value_is_refused() {
+        let made = of_context(|b, c| {
+            let at = b.ins().iadd(c, c);
+            b.ins().load(I64, MemFlags::trusted(), at, 0)
+        });
+        let returned = of_context(|_, c| c);
+        let across = of_context(|b, c| b.ins().load(I64, MemFlags::trusted(), c, 4));
+        for f in [made, returned, across] {
+            let e = super::translate(&[(0, f)], &[(0, "k")]).unwrap_err();
+            assert!(e.contains("the context used other than as a field's base"), "{e}");
+        }
+    }
 }

@@ -18,9 +18,8 @@
 //! It does not take string joins, text tests, computed text (`cat`, text functions), gates or requests: the forms
 //! (recursion), gates or requests: the forms `DEVICE_FORMS` lacks.
 //!
-//! **One submission per stratum.** Every seed join of the stratum is encoded into one `metal_join::Batch`, and the
-//! relations they read stay on the device across the chunk's strata (`Resident`): uploaded once, sorted once per key,
-//! while the engine holds the relation (a weak reference: a relation the engine drops is dropped here too). A stage
+//! **One submission per stratum.** Every seed join of the stratum is encoded into one `metal_join::Batch`; no device
+//! cache holds a relation across strata (decision 0450 step 3: a view's indexes are in its own block). A stage
 //! whose rows overflow the space its table was given is run again from that stage with the exact size, in one more
 //! submission for every rule that overflowed.
 //!

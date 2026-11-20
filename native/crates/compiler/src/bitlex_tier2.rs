@@ -968,7 +968,7 @@ impl Emit<'_> {
                 match arm {
                     Some(a) => Some((k, AtMark::Arm(a))),
                     None if st.refuses.contains(&m.kind) => Some((k, AtMark::Refuse)),
-                    None if (m.ends && !after_mark_only || !m.hidden) && nested && st.end.is_some() => Some((k, AtMark::End)),
+                    None if (m.ends && !after_mark_only || !m.hidden || st.follows.contains(&m.kind)) && nested && st.end.is_some() => Some((k, AtMark::End)),
                     None if !m.hidden => Some((k, AtMark::Refuse)),
                     None => None,
                 }
@@ -1032,6 +1032,28 @@ impl Emit<'_> {
         // Entered only by taking a mark, at the token it was taken at: the level has made the
         // gap's decision there, so a hidden mark that ends levels does not end it, as the lean
         // parser asks `asi` once at a line break.
+        // A hidden mark only some of the level's uses have after them (`StateRow::split`):
+        // where the level may end, it may hold at no token the state takes. There ending at it
+        // and skipping it are the same (the token is no arm's: the level ends, and its caller
+        // takes the mark or skips it); at a token the state takes, one call can not end after
+        // some uses and read on after others.
+        if nested && st.end.is_some() && !st.split.is_empty() {
+            for m in self.marks.iter().filter(|m| st.split.contains(&m.kind) && !mine.iter().any(|&a| self.arms[a].token == m.kind)) {
+                let taken = (0..=255u8).find(|&b| {
+                    has(&m.first, b)
+                        && mine.iter().any(|&a| {
+                            let kind = self.arms[a].token;
+                            self.rows.iter().any(|row| (row.kind == kind && row.kind != 0 && has(&row.first, b)) || row.keywords.iter().chain(&row.soft).any(|(w, k)| *k == kind && w[0] == b))
+                        })
+                });
+                if let Some(b) = taken {
+                    return Err(format!(
+                        "state {s}: a call whose uses differ in the hidden mark of kind {} after them may end here and take a token it may hold at (byte {b:#04x}): one call can not end at it after some uses and read on after others; make the rule `nested`, or give its uses one follow",
+                        m.kind
+                    ));
+                }
+            }
+        }
         let tests = self.tests_at(s);
         // A refusal tested on its token's bytes only (`Mark::first`), in the switch's arms for
         // them, as the lean parser looks for a mark where it reads its token: where every test
@@ -1288,7 +1310,7 @@ fn tests_of(states: &[StateRow], arms: &[ArmRow], marks: &[Mark]) -> Vec<Vec<usi
     states
         .iter()
         .enumerate()
-        .map(|(s, st)| (0..marks.len()).filter(|&k| !refusing(&marks[k], arms) && (takes[s].contains(&marks[k].kind) || !marks[k].hidden || st.refuses.contains(&marks[k].kind) || marks[k].ends && st.end.is_some())).collect())
+        .map(|(s, st)| (0..marks.len()).filter(|&k| !refusing(&marks[k], arms) && (takes[s].contains(&marks[k].kind) || !marks[k].hidden || st.refuses.contains(&marks[k].kind) || (marks[k].ends || st.follows.contains(&marks[k].kind)) && st.end.is_some())).collect())
         .collect()
 }
 

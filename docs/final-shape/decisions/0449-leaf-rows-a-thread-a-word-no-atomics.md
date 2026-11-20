@@ -1,6 +1,6 @@
 # 0449. A level's leaf rows are a thread a word, each test's bits stored once
 
-Status: accepted (2026-11-19). Follows 0447; closes Q281.
+Status: accepted (2026-11-19). Follows 0447; closes Q323.
 
 ## Intro
 

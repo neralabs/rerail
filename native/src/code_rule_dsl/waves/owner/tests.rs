@@ -16,7 +16,7 @@ fn documents() -> Vec<crate::code_rule_dsl::facts::vtab::syntax::Document> {
     let lines = std::sync::Arc::new(crate::code_rule_dsl::lines::LineTable::new(source, crate::code_rule_dsl::lines::Terminators::Newlines));
     let facts = std::sync::Arc::new(core::from_tape(&tape, lines).unwrap());
     let path = "f.py".to_owned();
-    vec![crate::code_rule_dsl::facts::vtab::syntax::Document { key: 0, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None }]
+    vec![crate::code_rule_dsl::facts::vtab::syntax::Document { key: 0, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }]
 }
 
 fn count(db: &Database, sql: &str) -> i64 {

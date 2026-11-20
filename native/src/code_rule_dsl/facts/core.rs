@@ -1036,6 +1036,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "package_field" => &["dir", "key", "v"],
         "package_for" => &["path", "dir"],
         "pkg" => &["d", "p"],
+        "unpackaged" => &["d"],
         "path_part" | "file_name" => &["d", "s"],
         "tape" => &["n", "par", "size", "depth"],
         "core_node" => &["d", "t", "n"],

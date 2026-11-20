@@ -225,7 +225,7 @@ code may be named by which rules asked for it, or in what order.
    - A source that grew is bound again: the device's resident copy of a source is reused only while its rows are the
      same (or the source is made on lookup).
    - Left: an input a constant filters (`parsed(s, "annotation", r)`, and the `child` and `node` filters in
-     `html/embeds.rr`) is uploaded, the batch's and a value's alike (Q310). R8's test allows exactly `parsed`'s rows
+     `html/embeds.rerail`) is uploaded, the batch's and a value's alike (Q310). R8's test allows exactly `parsed`'s rows
      for it.
 
 ## Requirements, each with its test

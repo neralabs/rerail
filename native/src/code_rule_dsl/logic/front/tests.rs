@@ -144,6 +144,13 @@ fn named_errors() {
     assert_eq!(unbounded.unwrap_err(), Error::UnboundedLattice { relation: "hi".into() });
     assert!(parse(".decl hi(n: node, v: max<>) widen 4\n").is_ok());
 
+    // A min over symbols reduced their ids, not their text (python/references.rerail picked a route at random).
+    let symbols = ".decl p(a: number, s: symbol)\n.decl q(a: number, s: symbol)\n.decl n(a: number, s: number)\n.decl r(a: number, s: number)\n";
+    let refused = parse(&format!("{symbols}q(a, s) :- p(a, _), s = min t : {{ p(a, t) }}.\n"));
+    assert!(matches!(&refused, Err(Error::Syntax(m)) if m.contains("min over a symbol of p")), "{refused:?}");
+    let numbers = parse(&format!("{symbols}r(a, s) :- n(a, _), s = max t : {{ n(a, t) }}.\n"));
+    assert!(numbers.is_ok(), "{numbers:?}");
+
     let negation = parse("a(x) :- e(x), !b(x).\nb(x) :- a(x).\n").unwrap();
     assert!(matches!(strata(&negation), Err(Error::NotStratifiable { negated, .. }) if negated == "b"));
 

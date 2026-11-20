@@ -1903,6 +1903,10 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
         if let Some(k) = r.extra {
             let _ = writeln!(out, "  block {at} recextra {k}");
         }
+        // `block N reckindrows K`: the first bit telling a token mark's kind by its rows.
+        if let Some(k) = r.kind_rows {
+            let _ = writeln!(out, "  block {at} reckindrows {k}");
+        }
         // `block N recunless K W`: gap mark `K` is none after a grammar token of word `W`.
         for (k, w) in &r.unless {
             let _ = writeln!(out, "  block {at} recunless {k} {w}");

@@ -3489,6 +3489,92 @@ fn a_version_with_no_prepared_plan_is_read_back() {
     assert_eq!(back.get(&[7u8; 32]).map(|p| p.0.len()), Some(0), "kept, with no plan");
 }
 
+/// Decision 0361 step 6, end to end: a policy's derived relation declares `fanout(a -> b, one)`, and its rows break it
+/// (a module's statements, 40 of them, under each module; recursive, so it is not inlined into its reader). The run
+/// reads the executors' counts, finds the fact broken, plans the relation from statistics from then on, and goes on:
+/// its findings are what the rules say.
+#[test]
+#[ignore = "Q376: the hub's step-6 check reads a line's counts only where they are kept (`keys`/`counted`); this run makes none, so no probe is checked against the fan-out"]
+fn a_run_finds_a_fanout_its_rows_break_and_finds_the_same() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("broken-fanout");
+    std::fs::create_dir_all(&root).unwrap();
+    let statements: String = (0..40).map(|k| format!("f{k}()\n")).collect();
+    std::fs::write(root.join("a.py"), &statements).unwrap();
+    std::fs::write(root.join("b.py"), &statements).unwrap();
+    std::fs::write(root.join("c.py"), "x = 1\n").unwrap();
+    let policy = root.with_extension("policy.rerail");
+    std::fs::write(
+        &policy,
+        ".language python\n\
+         .decl under(a: node, b: node)\n.layout under fanout(a -> b, one)\n\
+         under(m, n) :- kind(m, \"module\"), child(m, n, _).\n\
+         under(m, n) :- under(m, b), kind(b, \"block\"), child(b, n, _).\n\
+         .violation hit(at: node) code \"X1\" \"a call statement beside another\"\n\
+         hit(n) :- kind(x, \"expression_statement\"), child(m, x, _), under(m, n), kind(n, \"expression_statement\"), n != x.\n",
+    )
+    .unwrap();
+    // The test's run holds the policy run (it joins it), so the facts counted broken are this run's alone.
+    let run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    let report = crate::code_rule_dsl::tools::run_policies(&[policy.clone()], &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let broken = shapes::run_broken().facts().len();
+    // The probes checked against a fact: none means no line priced by it was counted.
+    let checked = shapes::run_broken().1.load(std::sync::atomic::Ordering::Relaxed);
+    drop(run);
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_file(&policy);
+    let mut hits: Vec<(String, i64)> = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| (d["file"].as_str().or(d["path"].as_str()).unwrap_or("").rsplit('/').next().unwrap_or("").to_owned(), d["line"].as_i64().or(d["start_line"].as_i64()).unwrap_or(-1)))
+        .collect();
+    hits.sort();
+    let want: Vec<(String, i64)> = ["a.py", "b.py"].iter().flat_map(|f| (1..=40).map(move |l| (f.to_string(), l))).collect();
+    assert_eq!(hits, want, "{report:#}");
+    assert_eq!(broken, 1, "the run found `under`'s fan-out broken ({checked} probes checked against a fact)");
+}
+
+/// Decision 0361 step 6, a key checked where the rows are written: `under` declares `key(a)`, and a module has 40
+/// statements under it. Its reader probes it by `b` alone, so no probe's counts cover the key: the rows' writer finds
+/// the second row of a key, the run plans `under` from statistics from then on, and its findings are the rules'.
+#[test]
+fn a_run_finds_a_key_its_rows_break_where_they_are_written() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("broken-key");
+    std::fs::create_dir_all(&root).unwrap();
+    let statements: String = (0..40).map(|k| format!("f{k}()\n")).collect();
+    std::fs::write(root.join("a.py"), &statements).unwrap();
+    std::fs::write(root.join("c.py"), "x = 1\n").unwrap();
+    let policy = root.with_extension("policy.rerail");
+    std::fs::write(
+        &policy,
+        ".language python\n\
+         .decl under(a: node, b: node)\n.layout under key(a)\n\
+         under(m, n) :- kind(m, \"module\"), child(m, n, _).\n\
+         under(m, n) :- under(m, b), kind(b, \"block\"), child(b, n, _).\n\
+         .violation hit(at: node) code \"X1\" \"a statement at a module's top\"\n\
+         hit(n) :- kind(n, \"expression_statement\"), under(m, n), kind(m, \"module\").\n",
+    )
+    .unwrap();
+    // The test's run holds the policy run (it joins it), so the facts counted broken are this run's alone.
+    let run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    let report = crate::code_rule_dsl::tools::run_policies(&[policy.clone()], &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let broken = shapes::run_broken().facts().len();
+    drop(run);
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_file(&policy);
+    let mut hits: Vec<(String, i64)> = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| (d["file"].as_str().or(d["path"].as_str()).unwrap_or("").rsplit('/').next().unwrap_or("").to_owned(), d["line"].as_i64().or(d["start_line"].as_i64()).unwrap_or(-1)))
+        .collect();
+    hits.sort();
+    let mut want: Vec<(String, i64)> = (1..=40).map(|l| ("a.py".to_owned(), l)).collect();
+    want.push(("c.py".to_owned(), 1));
+    assert_eq!(hits, want, "{report:#}");
+    assert_eq!(broken, 1, "the rows' writer found `under`'s key broken");
+}
+
 /// Q228: the prepared plans a run made of a version are kept for the store by its identity, and a later process's run
 /// of the same program (another version, built again) reads them, made none.
 #[test]

@@ -5790,9 +5790,8 @@ pub(super) const PLACE: &str = "place";
 pub(super) const PLACE_PATH: &str = "place_path";
 pub(super) const PLACE_LINE: &str = "place_line";
 
-/// `prog` reading the base relation `rel` (`child`, `node`): declared as the engine declares it, and an input unless
-/// a rule makes it (`derived`). For rules added to a program already read (`corpus::bridge`), as lowering adds them for
-/// its own: `prog` may be a header alone.
+/// `prog` reading the base relation `rel` (`child`, `node`): declared as the engine declares it, and an input unless a
+/// rule derives it (`derived`). `prog` may be a header alone.
 pub fn base_relation_derived(prog: &mut (impl crate::code_rule_dsl::logic::program_image::fields::FieldsMut + ?Sized), rel: &str, derived: bool) {
     let cols: &[(&str, &str)] = match rel {
         "child" => &[("p", "node"), ("c", "node"), ("i", "int")],

@@ -5,7 +5,7 @@
 //! The rows are T's: over each document's named nodes other than comments, in preorder,
 //!
 //! ```text
-//! doc(d, path, module)   pkg(d, p)             node(d, n, kind, start, end_)
+//! doc(d, path, module)   pkg(d, p)   unpackaged(d)   node(d, n, kind, start, end_)
 //! child(p, c, idx)       field(p, f, c)        tape(n, par, size, depth)
 //! text(n, s)             intval(n, v)          op(n, s)
 //! ```
@@ -720,6 +720,9 @@ pub struct Document {
     /// The module a loaded document is (t21 E2: `load(path, module, …)`, the module its resolution gave); `None` for
     /// a file of the corpus, whose module follows from its path.
     pub module: Option<Arc<str>>,
+    /// A Python file no regular package holds: one of the root, or whose folder has no `__init__.py` (core.rerail's
+    /// `unpackaged`, `corpus::package_root_modules`).
+    pub unpackaged: bool,
 }
 
 /// W's values (`Extra`) and the AST patterns' matches (`ast_match`, matched over the tape), which a batch reads off
@@ -1195,12 +1198,12 @@ impl Projected {
     /// Its arrays are in a block of its own; a batch's documents' are in the batch's (`narrowed`).
     pub fn new(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, withheld: bool, guest: Option<(&Guest, Arc<core_rr::Lines>)>) -> Self {
         let block = cells::block(Self::bytes(&facts));
-        Self::narrowed(key, facts, dialect, shape, withheld, guest, None, &block)
+        Self::narrowed(key, facts, dialect, shape, withheld, guest, None, None, &block)
     }
     /// `new`, narrowed to `anchors` (`narrowed`): the root and each outermost anchor's subtree.
     pub fn anchored(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, anchors: &BTreeSet<String>) -> Self {
         let block = cells::block(Self::bytes(&facts));
-        Self::narrowed(key, facts, dialect, shape, false, None, Some(anchors), &block)
+        Self::narrowed(key, facts, dialect, shape, false, None, None, Some(anchors), &block)
     }
 
     /// What a projection's arrays can take in a block: `core`, `local`, `up`, `low`, the ordinals and the fielded
@@ -1215,7 +1218,8 @@ impl Projected {
     /// root's child here; the program reads no node outside the subtrees, nor an anchor's parent or place among its
     /// siblings, and its node ids stay inside its phase.
     #[allow(clippy::too_many_arguments)]
-    pub fn narrowed(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, withheld: bool, guest: Option<(&Guest, Arc<core_rr::Lines>)>, anchors: Option<&BTreeSet<String>>, block: &Arc<Block>) -> Self {
+    /// `known`: the document's own lines where a guest of it was projected first and built them (decision 0470 step 2).
+    pub fn narrowed(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, withheld: bool, guest: Option<(&Guest, Arc<core_rr::Lines>)>, known: Option<Arc<core_rr::Lines>>, anchors: Option<&BTreeSet<String>>, block: &Arc<Block>) -> Self {
         let identity_span = crate::code_rule_dsl::logic::profile::span(|| "identity maps".into());
         let f = &*facts;
         let (first, last) = match guest {
@@ -1242,8 +1246,11 @@ impl Projected {
         };
         // The walk: which tape nodes the projection numbers, marked in its rank index (`ranks`) in the block. A node's
         // local id is its rank among them, in preorder.
-        let (lo, hi) = (ranges.first().map_or(first, |r| r.0), ranges.last().map_or(first, |r| r.1).max(first + 1));
         let core_tokens = shape == Shape::Core && dialect.is_some() && !withheld;
+        // Walked by anchors, the root's tokens (below) lie anywhere in the document, past the last anchored subtree
+        // too: the index then reaches the document's end.
+        let root_tokens = ranges.len() > 1 && core_tokens && f.named(first);
+        let (lo, hi) = (ranges.first().map_or(first, |r| r.0), if root_tokens { end } else { ranges.last().map_or(first, |r| r.1) }.max(first + 1));
         let ranks = ranks::Ranks::build(block, lo, hi, |marks| {
             if withheld {
                 return;
@@ -1251,7 +1258,7 @@ impl Projected {
             // Walked by anchors, the root's own range is the root alone: its tokens between the anchored subtrees (a
             // `;` between two statements) are in no range, yet are tokens of an included node, as `Projected::span`
             // reads them.
-            if ranges.len() > 1 && core_tokens && f.named(first) {
+            if root_tokens {
                 let outside = |c: u32| !ranges.iter().any(|&(a, b)| a <= c && c < b);
                 for c in f.children(first) {
                     if !f.named(c) && f.end(c) > f.start(c) && outside(c) {
@@ -1325,7 +1332,7 @@ impl Projected {
         drop(identity_span);
         if shape == Shape::Core {
             let lines_span = crate::code_rule_dsl::logic::profile::span(|| "line index".into());
-            let lines = Arc::new(core_rr::Lines::shared(Arc::clone(&f.source), dialect.is_some_and(|d| d.family == Family::Python), p.block()));
+            let lines = known.unwrap_or_else(|| Arc::new(core_rr::Lines::shared(Arc::clone(&f.source), dialect.is_some_and(|d| d.family == Family::Python), p.block())));
             drop(lines_span);
             let _ids_span = crate::code_rule_dsl::logic::profile::span(|| "definition ids".into());
             if definition_ids() && let Some(dialect) = dialect {
@@ -2723,7 +2730,7 @@ impl Batch {
             strings.len() - 1
         };
         // Rows with string indexes; the indexes become atoms once the batch's strings are interned.
-        let (mut doc, mut pkg) = (Vec::new(), Vec::new());
+        let (mut doc, mut pkg, mut unpackaged) = (Vec::new(), Vec::new(), Vec::new());
         // `path_part(d, s)`: each directory of a document's path and its file name; `file_name(d, s)`: the last.
         let (mut path_part, mut file_name): (Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new());
         // `text`, `intval`, T's `op` and the text relations (`NodeRows`).
@@ -2831,6 +2838,8 @@ impl Batch {
         // key is past every file's (`corpus::guests`), so its host is projected first and its lines are known.
         let mut g = GuestRows::default();
         let lines_of = &mut grown.lines_of;
+        // A file's lines built ahead of it, for a guest projected before it (below): taken by the file's projection.
+        let mut ahead: HashMap<u32, Arc<core_rr::Lines>> = HashMap::new();
         // Each guest's file: its host's, through guests of guests. Files' keys are below every guest's, so a file
         // is projected (and its lines known) before its guests; a guest's guests may come before it.
         grown.host.extend(documents.iter().filter_map(|d| d.guest.as_ref().map(|g| (d.key, g.host))));
@@ -2867,9 +2876,33 @@ impl Batch {
             };
             let withheld = core && error.is_some() && !guest.is_some_and(|g| projection.keeps_partial(&g.grammar));
             let python_lines = dialect.is_some_and(|d| d.family == Family::Python);
-            let placed = guest.map(|g| (g, lines_of.get(&file_of(g.host)).cloned().unwrap_or_else(|| Arc::new(core_rr::Lines::shared(Arc::clone(&d.facts.source), python_lines, &block)))));
+            // A guest's lines are its file's. A file that a run reads for its programs (decision 0470 step 2) has a hidden
+            // key, past its programs', so a program may come first: its file's lines are built then, from the file's
+            // document, and the file's projection takes them.
+            let placed = match guest {
+                Some(g) => {
+                    let file = file_of(g.host);
+                    let lines = match lines_of.get(&file) {
+                        Some(lines) => Arc::clone(lines),
+                        None => match documents.iter().find(|h| h.key == file && h.guest.is_none()) {
+                            Some(h) => {
+                                let tag = crate::code_rule_dsl::facts::core::facts_tag(&h.facts);
+                                let python = tag != TEXT && Family::of(crate::code_rule_dsl::language::from_tape_tag(tag).and_then(crate::code_rule_dsl::language::label)) == Family::Python;
+                                let lines = Arc::new(core_rr::Lines::shared(Arc::clone(&h.facts.source), python, &block));
+                                ahead.insert(file, Arc::clone(&lines));
+                                lines_of.insert(file, Arc::clone(&lines));
+                                lines
+                            }
+                            None => Arc::new(core_rr::Lines::shared(Arc::clone(&d.facts.source), python_lines, &block)),
+                        },
+                    };
+                    Some((g, lines))
+                }
+                None => None,
+            };
+            let known = if guest.is_none() && core { ahead.remove(&d.key) } else { None };
             let new_span = crate::code_rule_dsl::logic::profile::span(|| "projected".into());
-            let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, projection.node_anchors.as_ref().filter(|_| core), &block);
+            let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, known, projection.node_anchors.as_ref().filter(|_| core), &block);
             drop(new_span);
             // A program that reads `end_point` has each node's end point among the positions, after the lines.
             let nodes = p.len();
@@ -2925,6 +2958,9 @@ impl Batch {
                     None => package(&d.path),
                 };
                 pkg.push([key, string(&package) as i64]);
+            }
+            if py_file && d.unpackaged {
+                unpackaged.push(key);
             }
             let parts: Vec<&str> = d.path.split('/').filter(|s| !s.is_empty()).collect();
             if let Some(last) = parts.last() {
@@ -3112,6 +3148,7 @@ impl Batch {
             (LONG_TEXT_NODES, relation(&["n"], &mut long_text_nodes.iter().map(|&n| vec![n]))),
             ("doc", relation(&["d", "path", "module"], &mut doc.iter().map(|&[d, p, m]| vec![d, atom(p), atom(m)]))),
             ("pkg", pairs(&["d", "p"], &pkg, [false, true])),
+            ("unpackaged", relation(&["d"], &mut unpackaged.iter().map(|&d| vec![d]))),
             ("path_part", pairs(&["d", "s"], &path_part, [false, true])),
             ("file_name", pairs(&["d", "s"], &file_name, [false, true])),
             ("intval", pairs(&["n", "v"], &rows.intval, [false, false])),
@@ -4011,10 +4048,12 @@ pub fn field_atom(tag: u8, code: u16) -> u32 {
 }
 
 /// Document `key`'s `function_definition` and `class_definition` nodes by byte range (start, end), as ids of
-/// `node`: what W's call summaries name a definition by (`calls::summary::Def`).
-pub fn definitions(key: u32, facts: &Arc<Facts>) -> StoreResult<HashMap<(u32, u32), i64>> {
+/// `node` in the run's shape (`core`: core.rerail's, else T's; a node's id is its rank among the shape's numbered nodes,
+/// so T's ids name other nodes of a run in core.rerail's shape): what W's call summaries name a definition by
+/// (`calls::summary::Def`).
+pub fn definitions(key: u32, facts: &Arc<Facts>, core: bool) -> StoreResult<HashMap<(u32, u32), i64>> {
     let dialect = Dialect::new(crate::code_rule_dsl::facts::core::facts_tag(facts))?;
-    let p = Projected::new(key, Arc::clone(facts), Some(&dialect), Shape::T, false, None);
+    let p = Projected::new(key, Arc::clone(facts), Some(&dialect), if core { Shape::Core } else { Shape::T }, false, None);
     Ok(p.node_ids()
         .filter(|&(_, id, _)| matches!(dialect.name(facts, id), "function_definition" | "class_definition"))
         .map(|(_, id, n)| ((facts.start(id), facts.end(id)), n))

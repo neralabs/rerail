@@ -1336,6 +1336,12 @@ impl<'s> Pipeline<'s> {
         let asked = AskedByRule::of(&v);
         Pipeline { name, input: v.clone(), v, decided: RefCell::new(Vec::new()), stages: Vec::new(), failed: None, keep: false, last: Vec::new(), kept: Vec::new(), keyed: None, asked, asked_again: false }
     }
+    /// A pipeline whose last step states the request record itself (a part's fields, `passes::PartOf`): the record is
+    /// not carried by rule, nor stated again after each step (Q180). Restated after a step, the record is a layer of
+    /// its own that the last step's states again (a part made a view, the record's overlay and its fields' overlay).
+    pub fn stating_record(name: &'static str, v: Arc<Version>) -> Pipeline<'s> {
+        Pipeline { asked: None, ..Pipeline::new(name, v) }
+    }
     /// A pipeline whose steps are keyed and kept in `steps` (0281 §6). A step's key is a chain: the input version's
     /// identity (`identity`), the pipeline's name and the engine build, then for each step so far its pass's `NAME`,
     /// `VERSION` and `settings`, and the key parts the caller added before it (`key_part`). A step's input is the step

@@ -52,3 +52,10 @@ On Metal the rows were copied three times before the device saw them:
 
   It is also tested by the pack's parity gate, `lowered_clauses_find_the_same_roots_on_metal`, whose clauses include
   `binds` facts. Both match the CPU.
+
+## On rr-align (roll-up 11, Q369)
+
+The label passes' host side here launches through the device layer (`lane`, 0440 step C), so the block is bound as
+`Block::device_buffer` of the lane's device, at the pattern kernel's slot 7, the shape after it at 8. The UKL
+pattern kernel (`metal_label_patterns.rs`) reads the findings the same way: a fact item's first constraint gives its
+file and whether its findings are bits; a thread holds a row's node, or a word of the bits.

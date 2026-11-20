@@ -525,16 +525,14 @@ fn write(src: &[u8], index: &[u32], shift: u32, kinds: &Kinds) -> Result<Tape, R
 mod tests {
     use super::*;
 
-    /// The process's instructions retired so far (macOS: `proc_pid_rusage`), for the measurements: their difference
-    /// over a run on one thread is its count. Zero elsewhere.
+    /// The process's instructions retired so far (`proc_pid_rusage`), for the measurements (macOS's, as they are):
+    /// their difference over a run on one thread is its count. Zero where the call fails.
+    #[cfg(target_os = "macos")]
     fn retired() -> u64 {
-        #[cfg(target_os = "macos")]
-        {
-            // SAFETY: the call writes the structure, which is plain integers.
-            let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
-            if unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) } == 0 {
-                return info.ri_instructions;
-            }
+        // SAFETY: the call writes the structure, which is plain integers.
+        let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
+        if unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) } == 0 {
+            return info.ri_instructions;
         }
         0
     }

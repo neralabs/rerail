@@ -560,6 +560,17 @@ impl<'p> Builder<'p> {
     /// States about relation `name`'s rows, every other about relation kept.
     pub(in crate::code_rule_dsl::logic::program_image) fn set_about_rows(&mut self, name: &str, rows: Vec<Vec<Cell>>) {
         self.own_about();
+        // The program's own row, which every field's reader asks for, is held by every version that states an about
+        // row, whichever edit stated the first: a version from a tree has it (`about_of`), and one a pass's field or
+        // a record (`set_asked`) gave about rows has it too. Stated by one edit only, two runs of one program differed
+        // by it (Q358).
+        if name != "program" && !rows.is_empty() {
+            let program = self.enc.atom("program");
+            if !self.parts.facts.contains_key(&(program | ABOUT_BIT)) {
+                let p = Cell::Str(self.atom(super::ABOUT));
+                self.set_about_rows("program", vec![vec![p]]);
+            }
+        }
         let a = self.enc.atom(name);
         for &c in super::about::relation_columns(name) {
             for row in &rows {

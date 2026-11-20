@@ -2880,7 +2880,7 @@ impl Runner<'_> {
             .slot(1, &tests_buffer, 0)
             .slot(2, leaves, 0)
             .slot_value(3, &shape)
-            .threads(threads, LEAVES_WIDTH);
+            .threads(threads, LEAVES_WIDTH.min(threads));
         self.split(KERNELS[LEAVES_KERNEL]);
         Ok(())
     }

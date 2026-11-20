@@ -198,6 +198,27 @@ pub struct Read {
     pub first_expr: Vec<(&'static str, u32, u32)>,
 }
 
+/// A tape image as text, a node a line: its depth's indent, its field (`name:`), its kind (by
+/// `kinds`, its id where `kinds` has none) and its bytes. For tests and for reading a tape.
+pub fn outline(image: &[u8], kinds: &[&str], fields: &[&str], src: &[u8]) -> Result<String, String> {
+    let v = rerail_tape_format::View::new(image)?;
+    let mut out = String::new();
+    let mut ends: Vec<usize> = Vec::new();
+    for i in 0..v.len() {
+        while ends.last().is_some_and(|&e| e <= i) {
+            ends.pop();
+        }
+        let (k, f) = ((v.key(i) & 0x3ff) as usize, ((v.key(i) & 0xffff) >> rerail_tape_format::KIND_BITS) as usize);
+        let kind = kinds.get(k).map_or_else(|| format!("#{k}"), |k| k.to_string());
+        let field = f.checked_sub(1).and_then(|f| fields.get(f)).map_or(String::new(), |f| format!("{f}: "));
+        let (s, e) = (v.start(i) as usize, v.end(i) as usize);
+        let text = String::from_utf8_lossy(src.get(s..e.min(s + 40)).unwrap_or(b"")).replace('\n', "\\n");
+        out += &format!("{}{field}{kind} {s}..{e} {text:?}\n", "  ".repeat(ends.len()));
+        ends.push(i + v.size(i));
+    }
+    Ok(out)
+}
+
 /// A tape image read in place, in one walk: each directive (a node of a directive's kind, at the
 /// root or in a `group`), each field's node below it, and each group's chain (its own
 /// directives) and the parent it gives the directives inside it.
@@ -357,6 +378,8 @@ mod facts;
 pub use facts::Facts;
 pub mod expand;
 pub mod tokens;
+pub mod pp;
+pub mod eval;
 
 /// `src`'s mode (a) facts: from the compiled grammar's tape where it reads the file, else (a
 /// construct the ladder does not read, or a grammar that does not compile) the lean scan's.
