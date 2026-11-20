@@ -4,7 +4,7 @@ Date: 2026-11-20. Status: decided (the user, 2026-11-20, on 0487: "I was expecti
 that tracks frozenness, readers, writers, allocation, GPU placement, versions (after mutation), implicit freeing when
 there are no users left and detection of invariant issues like two writers, simultaneous readers and writers, etc. It
 should also give out references with constness properly set. Like the mldb block and memory region handling");
-the handles built (`rerail_blocks::region`); `Cells` is the first owner moved to them (step 2).
+the handles built (`rerail_blocks::region`); `Cells` and a relation's arrays (`BlockVec`) moved to them (step 2).
 
 ## Intro
 
@@ -111,10 +111,15 @@ of 2026-11-20 (fa09c9c761). Item 7 above is that model for one region and two sp
 
 1. **The handles** (built).
 2. **The owners move to them**, one at a time, each with its frees by hand removed: `Cells` (done: a
-   `Frozen<T>`, built through `Mutable::truncate`, which gives a front allocation's unwritten tail back), then a relation's columns and indexes (`BlockVec`, `rows`), then the device's handles (`DevRel`,
+   `Frozen<T>`, built through `Mutable::truncate`, which gives a front allocation's unwritten tail back), then a
+   relation's arrays (done: `BlockVec` owns its chunk as a `Mutable<T>`, placed near its relation by itself and
+   taken with `Mutable::adopt`, handed to a directory with `into_chunk`; its pushes write through its pointer, each
+   checked by the ledger, 0487 R4, with no lock: a region's GPU pin is a chunk use of its ledger too), then the rows
+   themselves (`rows`, the directory's chunks), then the device's handles (`DevRel`,
    `Held::kept`), whose `Batch` lists then go. A kernel binds a region only through `buffer_read` / `buffer_write`,
    and `Batch` marks each command buffer's fence committed as it commits it.
-3. **The block itself as the root region:** `Facts` and the pool's slabs hold their block by handle, so a block's
+3. **The block itself as the root region:** `Facts` (done: an `Arc<Block>`, which a region in it keeps) and the
+   pool's slabs hold their block by handle, so a block's
    frozenness, placement and lifetime are read in the same place as its regions'.
 4. **Domains (0440 §7.2):** a region's host and device versions become an entry a domain, with the owner domain of a
    mutable region, and each device in the device layer names its domain. A test with two domains besides the host

@@ -75,7 +75,8 @@ const MARGIN: usize = 1 << 20;
 
 /// A block of relations: shared by every segment and tail in it, given back (to the pool) with the last.
 pub struct Facts {
-    pub block: Block,
+    /// Held by handle (decision 0491 step 3): a region of it keeps it as its relations do.
+    pub block: Arc<Block>,
     /// Held while an index is added to one of its relations (`Relation::try_reserve_index`, decision 0325 step 5).
     pub ix: Mutex<()>,
     /// The count of bytes given back of the run that leased it (`given_back`): a relation's last holder may drop it
@@ -91,7 +92,7 @@ impl Facts {
     /// A block of relations of `life`: the chunk's the run is evaluating, if one is, counted in its tally.
     fn new(block: Block, life: Life) -> Facts {
         let tally = current_chunk().map(|c| Arc::clone(&c.tally));
-        Facts { block, ix: Mutex::new(()), given: crate::code_rule_dsl::logic::profile::local::<GivenBack>(), tally, life }
+        Facts { block: Arc::new(block), ix: Mutex::new(()), given: crate::code_rule_dsl::logic::profile::local::<GivenBack>(), tally, life }
     }
 }
 
@@ -448,8 +449,9 @@ impl Home {
 
 /// An array of `T`s in a block of relations (decision 0384 step 4): a relation's derived structure (a sorted run's
 /// ids, tags, fences, prints), written once where it is computed, in its relation's block when that has room past
-/// its relations' margin (`Home`), else in the open block of the relation's life. Its chunk goes back to the block's
-/// free list when dropped; it keeps the block while it lives. Grows as a vector does, in the same block.
+/// its relations' margin (`Home`), else in the open block of the relation's life. Its chunk is a region it owns
+/// (decision 0491 step 2): back to the block's free list with it, after the GPU's work, and the block kept while it
+/// lives. Grows as a vector does, in the same block.
 pub struct BlockVec<T: rerail_blocks::Pod> {
     facts: Option<Arc<Facts>>,
     /// Its first `T` in the block (which never moves): read as a vector's buffer is, with no walk to the block.
@@ -458,8 +460,8 @@ pub struct BlockVec<T: rerail_blocks::Pod> {
     at: usize,
     len: usize,
     cap: usize,
-    /// The bytes its chunk keeps (what `Block::free_chunk_fit` takes back); 0 for a borrowed one (`shared`).
-    kept: usize,
+    /// Its own chunk, as a region (`None` for a borrowed one, `shared`, and an empty one).
+    region: Option<rerail_blocks::region::Mutable<T>>,
     /// A borrowed one's relation, whose directory owns its chunk (decision 0478 step 5b): kept while it lives.
     owner: Option<Part>,
     /// Its block's ledger, beside the pointer: each read and write is checked against the GPU's queued uses of its
@@ -481,7 +483,7 @@ impl<T: rerail_blocks::Pod> Default for BlockVec<T> {
 impl<T: rerail_blocks::Pod> BlockVec<T> {
     /// Empty, with no chunk.
     pub const fn new() -> Self {
-        BlockVec { facts: None, ptr: std::ptr::NonNull::dangling(), life: Life::Run, at: 0, len: 0, cap: 0, kept: 0, owner: None, ledger: None, _t: std::marker::PhantomData }
+        BlockVec { facts: None, ptr: std::ptr::NonNull::dangling(), life: Life::Run, at: 0, len: 0, cap: 0, region: None, owner: None, ledger: None, _t: std::marker::PhantomData }
     }
 
     /// The `len` `T`s at `at` of `owner`'s block, which `owner`'s relation keeps (its directory's: decision 0478 step
@@ -496,7 +498,7 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
         let facts = owner.facts().clone();
         let ptr = std::ptr::NonNull::new(facts.block.ptr::<T>(at)).expect("a block's chunk");
         let ledger = Some(facts.block.ledger().clone());
-        BlockVec { facts: Some(facts), ptr, life: owner.life(), at, len, cap: len, kept: 0, owner: Some(owner.clone()), ledger, _t: std::marker::PhantomData }
+        BlockVec { facts: Some(facts), ptr, life: owner.life(), at, len, cap: len, region: None, owner: Some(owner.clone()), ledger, _t: std::marker::PhantomData }
     }
 
     /// The chunk `into_chunk` handed on, its own again (no directory took it).
@@ -506,7 +508,10 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
         }
         let ptr = std::ptr::NonNull::new(facts.block.ptr::<T>(g.at)).expect("a block's chunk");
         let ledger = Some(facts.block.ledger().clone());
-        BlockVec { facts: Some(facts.clone()), ptr, life, at: g.at, len: g.len, cap: g.kept / size_of::<T>(), kept: g.kept, owner: None, ledger, _t: std::marker::PhantomData }
+        let cap = g.kept / size_of::<T>();
+        // SAFETY: the chunk was this vector's (`into_chunk`), handed back whole: `kept` bytes, `cap` `T`s.
+        let region = Some(unsafe { rerail_blocks::region::Mutable::adopt(&facts.block, g.at, cap, g.kept, "a relation's array") });
+        BlockVec { facts: Some(facts.clone()), ptr, life, at: g.at, len: g.len, cap, region, owner: None, ledger, _t: std::marker::PhantomData }
     }
 
     /// `n` items, those past its length `v`.
@@ -538,7 +543,7 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
 
     /// Whether `into_chunk` would hand its chunk on to `facts`' block (or it has none to hand).
     pub fn can_give(&self, facts: &Arc<Facts>) -> bool {
-        self.len == 0 || (self.facts.as_ref().is_some_and(|f| Arc::ptr_eq(f, facts)) && self.owner.is_none() && self.kept > 0)
+        self.len == 0 || (self.facts.as_ref().is_some_and(|f| Arc::ptr_eq(f, facts)) && self.region.is_some())
     }
 
     /// Whether it is borrowed (`shared`).
@@ -553,14 +558,14 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
             return Ok(rerail_blocks::relation::Given::default());
         }
         match &self.facts {
-            Some(f) if Arc::ptr_eq(f, facts) && self.owner.is_none() && self.kept > 0 => {}
+            Some(f) if Arc::ptr_eq(f, facts) && self.region.is_some() => {}
             _ => return Err(self),
         }
-        let given = rerail_blocks::relation::Given { at: self.at, len: self.len, kept: self.kept };
+        let (at, kept) = self.region.take().expect("its own chunk").into_chunk();
+        let given = rerail_blocks::relation::Given { at, len: self.len, kept };
         // Handed on: nothing of it is given back here.
         self.facts = None;
         self.ledger = None;
-        self.kept = 0;
         self.cap = 0;
         self.len = 0;
         self.ptr = std::ptr::NonNull::dangling();
@@ -607,23 +612,22 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
             unsafe { std::ptr::copy_nonoverlapping(self.as_ptr(), facts.block.ptr::<T>(at), self.len) };
         }
         self.free();
-        self.ptr = std::ptr::NonNull::new(facts.block.ptr::<T>(at)).expect("a block's chunk");
+        let cap = size / size_of::<T>();
+        // SAFETY: the chunk was just taken for this vector: `size` bytes, `cap` `T`s.
+        let mut region = unsafe { rerail_blocks::region::Mutable::adopt(&facts.block, at, cap, size, "a relation's array") };
+        self.ptr = std::ptr::NonNull::new(region.as_mut_ptr()).expect("a block's chunk");
+        self.region = Some(region);
         self.ledger = Some(facts.block.ledger().clone());
         self.facts = Some(facts);
         self.at = at;
-        self.kept = size;
-        self.cap = size / size_of::<T>();
+        self.cap = cap;
     }
 
-    /// Its chunk given back.
+    /// Its chunk given back: its region's last handle goes (a borrowed one's chunk is its owner's).
     fn free(&mut self) {
-        // A borrowed one's chunk is its owner's.
         self.owner = None;
-        if let Some(f) = self.facts.take()
-            && self.kept > 0
-        {
-            f.block.free_chunk_fit(self.at, self.kept);
-        }
+        self.region = None;
+        self.facts = None;
         self.ledger = None;
         self.ptr = std::ptr::NonNull::dangling();
         self.cap = 0;
