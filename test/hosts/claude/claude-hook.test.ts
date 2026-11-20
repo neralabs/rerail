@@ -495,6 +495,29 @@ describe("Claude Code one-shot hook", () => {
     }
   });
 
+  it("links a steer it holds with the answer that found it, so the next tool call's hook asks the daemon nothing after its answer", async () => {
+    const root = await temporaryDirectory();
+    const daemon = await countingDaemon(join(root, "home"));
+    vi.stubEnv("RERAIL_HOME", join(root, "home"));
+    try {
+      const common = { session_id: "claude-session", cwd: root };
+      const dashboard = "http://127.0.0.1:4791/?repository=clone%3Aapp&checkout=%2Fwork%2Fapp";
+      const steer = [delivery("steer", editSteer("acme:no-print", "Remove print."), ["acme:no-print"])];
+      const storageRoot = join(root, "sessions");
+      await handleClaudeEvent({ ...common, hook_event_name: "Stop", prompt_id: "p1", stop_hook_active: true }, answering(scriptedLoop({ "turn-end": steer }), { dashboard }), storageRoot);
+      await handleClaudeEvent({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p2", prompt: "next" }, answering(scriptedLoop({ "user-prompt": steer }), { dashboard }), storageRoot);
+
+      // The tool call's answer links nothing of its own, so it carries no dashboard.
+      const call = await handleClaudeEvent({ ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: "tool-1", tool_input: {} }, scriptedLoop({}), storageRoot);
+      // Either steer held unlinked would have the hook read the dashboard from the daemon.
+      expect(JSON.stringify(call)).toContain(`${dashboard}#rule/acme%3Ano-print`);
+      expect(daemon.requests).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+      await daemon.close();
+    }
+  });
+
   it("gives a turn-end steer to the coding agent at Stop, with the person's line and its count, and nothing at the next prompt", async () => {
     const root = await temporaryDirectory();
     const common = { session_id: "claude-session", cwd: root };

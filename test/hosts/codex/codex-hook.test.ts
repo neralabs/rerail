@@ -144,6 +144,24 @@ describe("Codex one-shot hook", () => {
     }
   });
 
+  it("links a steer it holds at Stop with the answer that found it, so the next prompt's hook asks the daemon nothing after its answer", async () => {
+    const root = await temporaryDirectory();
+    const daemon = await countingDaemon(join(root, "home"));
+    try {
+      const common = { session_id: "codex-session", cwd: root };
+      const dashboard = "http://127.0.0.1:4791/?repository=clone%3Aapp&checkout=%2Fwork%2Fapp";
+      const steer = [delivery("steer", editSteer("acme:no-print", "Remove print."), ["acme:no-print"])];
+      await handleCodexEvent({ ...common, hook_event_name: "Stop", turn_id: "t1", last_assistant_message: "Done." }, answering(scriptedLoop({ "turn-end": steer }), { dashboard }), join(root, "sessions"));
+
+      // The prompt's answer links nothing of its own, so it carries no dashboard.
+      const prompt = await handleCodexEvent({ ...common, hook_event_name: "UserPromptSubmit", turn_id: "t2", prompt: "next" }, scriptedLoop({}), join(root, "sessions"));
+      expect(JSON.stringify(prompt)).toContain(`${dashboard}#rule/acme%3Ano-print`);
+      expect(daemon.requests).toEqual([]);
+    } finally {
+      await daemon.close();
+    }
+  });
+
   it("routes steer and block deliveries through additionalContext or the pending file, never a Stop block", async () => {
     const root = await temporaryDirectory();
     const storageRoot = join(root, "sessions");

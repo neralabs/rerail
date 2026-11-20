@@ -19,7 +19,7 @@ import {
   type SessionLock,
 } from "../../harness/hook-adapter.js";
 import { headlineText, steerHeadlines } from "../../engine/code-rule/rerail-steer.js";
-import { linkDeliveries, presentedSessionStartNote } from "../../presentation/session-presentation.js";
+import { linkDeliveries, linkedByAnswer, presentedSessionStartNote } from "../../presentation/session-presentation.js";
 import { steers } from "../../engine/catalog/rule-mode.js";
 
 export type CursorHookInput = HookInput;
@@ -237,7 +237,8 @@ async function answerCursorHook(
   const { hook, path } = at;
   switch (hook) {
     case "beforeSubmitPrompt":
-      await persistPending(path, deliveries.filter(delivery => steers(delivery.requested)));
+      // A steer held for a later event keeps this answer's links, so that event's answer need carry none.
+      await persistPending(path, linkedByAnswer(deliveries.filter(delivery => steers(delivery.requested)), at.answered));
       return cursorHookOutput(hook, []);
     case "sessionEnd":
       await rm(path, { force: true });
@@ -273,7 +274,7 @@ async function cursorAnswer(
   { hook, descriptor, path, answered }: { hook: string; descriptor: AdapterSession; path: string; answered: EventAnswerFacts },
   deliveries: readonly AdapterDelivery[],
 ): Promise<CursorHookOutput> {
-  const available = await routeDeliveries(path, hook, deliveries, {
+  const available = await routeDeliveries(path, hook, linkedByAnswer(deliveries, answered), {
     // Cursor only exposes preToolUse.agent_message when a tool is denied.
     // Preserve the steer until a post-tool result can actually carry it.
     sessionStart: true, postToolUse: true,

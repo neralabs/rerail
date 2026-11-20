@@ -189,6 +189,28 @@ describe("Cursor plugin contract", () => {
     }
   });
 
+  it("links a steer it holds with the answer that found it, so the hook that carries it asks the daemon nothing after its answer", async () => {
+    const root = await temporaryDirectory();
+    const home = join(root, "home");
+    vi.stubEnv("RERAIL_HOME", home);
+    const daemon = await countingDaemon(home);
+    try {
+      const common = { conversation_id: "cursor-session", cwd: root, workspace_roots: [root], tool_name: "Shell", tool_input: { command: "ls" } };
+      const dashboard = "http://127.0.0.1:4791/?repository=clone%3Aapp&checkout=%2Fwork%2Fapp";
+      const steer = [delivery("steer", "Remove print.", ["acme:no-print"])];
+      await handleCursorEvent({ ...common, tool_use_id: "t1", hook_event_name: "preToolUse" }, answering(scriptedLoop({ call: steer }), { dashboard }), join(root, "sessions"));
+      await handleCursorEvent({ ...common, hook_event_name: "beforeSubmitPrompt", prompt: "next" }, answering(scriptedLoop({ "user-prompt": steer }), { dashboard }), join(root, "sessions"));
+
+      // The result's answer links nothing of its own, so it carries no dashboard.
+      const result = await handleCursorEvent({ ...common, tool_use_id: "t1", hook_event_name: "postToolUse", tool_output: "a" }, scriptedLoop({}), join(root, "sessions"));
+      // Either steer held unlinked would have the hook read the dashboard from the daemon.
+      expect(JSON.stringify(result)).toContain(`${dashboard}#rule/acme%3Ano-print`);
+      expect(daemon.requests).toEqual([]);
+    } finally {
+      await daemon.close();
+    }
+  });
+
   it("preserves pre-tool code rule violations until Cursor can expose them after the tool", async () => {
     const root = await temporaryDirectory();
     const storage = join(root, "sessions");

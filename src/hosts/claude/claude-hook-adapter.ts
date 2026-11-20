@@ -17,7 +17,7 @@ import {
   type SteerLines,
 } from "../../harness/hook-adapter.js";
 import { conflictLine, headlineText, steerHeadlines, type HeadlineLinkStyle } from "../../engine/code-rule/rerail-steer.js";
-import { linkDeliveries, presentedSessionStartNote } from "../../presentation/session-presentation.js";
+import { linkDeliveries, linkedByAnswer, presentedSessionStartNote } from "../../presentation/session-presentation.js";
 import { terminalDrawsHyperlinks } from "../../presentation/terminal-hyperlinks.js";
 import { colourDepth, rerailMark } from "../../presentation/rerail-mark.js";
 
@@ -131,10 +131,12 @@ async function answerClaudeHook(
     await rm(path, { force: true });
     return {};
   }
+  // A steer held for a later event keeps this answer's links, so that event's answer need carry none.
+  const found = linkedByAnswer(deliveries, answered);
   // Rerail keeps a turn going at most once: a Stop that follows a Stop hook's continuation (`stop_hook_active`) holds
   // its steers, line and all, for the next context event, so writes the turn-end walk keeps finding cannot loop it.
   if (hook === "Stop" && input.stop_hook_active === true) {
-    await holdStopSteers(path, deliveries);
+    await holdStopSteers(path, found);
     return {};
   }
   // The runtime records no links; the rules point at this checkout's dashboard only here.
@@ -142,7 +144,7 @@ async function answerClaudeHook(
   const links = terminalDrawsHyperlinks(env) ? "hyperlink" : "plain";
   const mark = rerailMark(colourDepth(env));
   const note = await sessionNote(hook, { host: "claude-code", sessionId, cwd }, answered);
-  const routed = await routeDeliveries(path, hook, deliveries, CONTEXT_EVENTS);
+  const routed = await routeDeliveries(path, hook, found, CONTEXT_EVENTS);
   // `linkDeliveries` copies each delivery, so a steer the 0.1.2 hook held at `Stop` keeps its `late` mark.
   return claudeHookOutput(hook, await linkDeliveries(routed, cwd, answered), { note, links, mark });
 }

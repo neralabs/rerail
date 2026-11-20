@@ -283,16 +283,37 @@ export async function presentedSessionStartNote(session: AdapterSession, answere
 export async function linkDeliveries<Delivery extends AdapterDelivery>(
   deliveries: readonly Delivery[], cwd: string | undefined, answered: EventAnswerFacts = {},
 ): Promise<Delivery[]> {
-  // Hooks call this on every event, and most events deliver nothing: only a rule or a conflict to link is worth asking
-  // the daemon.
-  const links = deliveries.some(delivery => delivery.rules.length > 0 || delivery.conflict !== undefined);
-  const dashboard = cwd === undefined || !links ? undefined : await steerDashboard(cwd, answered);
+  // Hooks call this on every event, and most events deliver nothing: only a rule or a conflict still to link is worth
+  // asking the daemon. A steer a hook held keeps the links of the answer that found it (`linkedByAnswer`).
+  const dashboard = cwd === undefined || !deliveries.some(unlinked) ? undefined : await steerDashboard(cwd, answered);
   if (dashboard === undefined) return deliveries.map(delivery => ({ ...delivery }));
-  return deliveries.map(delivery => ({
+  return deliveries.map(delivery => linked(delivery, dashboard));
+}
+
+/**
+ * `deliveries` linked into the dashboard the daemon's answer named (`answered`), asking nothing: a hook links the steers
+ * it holds for a later event with the answer that found them, so that event, whose own answer usually links nothing,
+ * reads nothing after it. As they are where the answer named no dashboard: the later event links them then.
+ */
+export function linkedByAnswer<Delivery extends AdapterDelivery>(deliveries: readonly Delivery[], answered: EventAnswerFacts): Delivery[] {
+  const dashboard = answered.dashboard;
+  if (dashboard === undefined || dashboard === null) return [...deliveries];
+  return deliveries.map(delivery => linked(delivery, dashboard));
+}
+
+/** Whether `delivery` holds a rule or a conflict with no link yet. */
+function unlinked(delivery: AdapterDelivery): boolean {
+  return delivery.rules.some(rule => rule.url === undefined) || (delivery.conflict !== undefined && delivery.conflict.url === undefined);
+}
+
+/** `delivery` with each rule and its conflict linked into `dashboard`, keeping a link it already holds. */
+function linked<Delivery extends AdapterDelivery>(delivery: Delivery, dashboard: string): Delivery {
+  const { conflict } = delivery;
+  return {
     ...delivery,
-    rules: delivery.rules.map(rule => ({ ...rule, url: ruleUrl(dashboard, rule.id) })),
-    ...(delivery.conflict === undefined ? {} : { conflict: { ...delivery.conflict, url: conflictUrl(dashboard, delivery.conflict.id) } }),
-  }));
+    rules: delivery.rules.map(rule => ({ ...rule, url: rule.url ?? ruleUrl(dashboard, rule.id) })),
+    ...(conflict === undefined ? {} : { conflict: { ...conflict, url: conflict.url ?? conflictUrl(dashboard, conflict.id) } }),
+  };
 }
 
 /**
