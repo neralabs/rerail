@@ -29,6 +29,7 @@
 //! Everything here is safe to share between threads: Metal's device, queues and pipelines are, and the pool is
 //! behind a lock.
 
+#[cfg(target_os = "macos")]
 use metal::{Buffer, BufferRef, CommandQueue, ComputePipelineState, Device};
 /// The pool's buffers: the device layer's (decision 0440 step B), Metal's to the kernels not yet on it.
 type DeviceBuffer = rerail_device::device::Buffer;
@@ -47,6 +48,7 @@ pub(crate) struct Memory {
     slab_idle: std::sync::atomic::AtomicUsize,
     /// The bytes leased now (and not yet dropped): what relational work holds on the device, for the profile.
     live: std::sync::atomic::AtomicUsize,
+    #[cfg(target_os = "macos")]
     pipelines: Mutex<HashMap<String, Slot>>,
     pool: Mutex<Pool>,
     /// The admissions' bytes reserved and not yet leased (`reserve`, Q203): counted with the leases.
@@ -142,7 +144,8 @@ pub fn held_bytes() -> (usize, usize) {
     (dev().live.load(std::sync::atomic::Ordering::Relaxed), idle)
 }
 
-/// The device and its one queue.
+/// The device and its one queue, as Metal's (Metal's own tier: decision 0440 step E).
+#[cfg(target_os = "macos")]
 pub struct Shared {
     /// The process's device in the device layer (`rerail_gpu`): what the pool leases from and blocks wrap for.
     pub layer: rerail_device::device::Device,
@@ -154,7 +157,8 @@ pub struct Shared {
     pub max_buffer: u64,
 }
 
-/// The process's device, once something opened it, without opening it (`rerail_forest::gpu::shared::opened`).
+/// The process's device as Metal's, once something opened it, without opening it (`rerail_forest::gpu::shared::opened`).
+#[cfg(target_os = "macos")]
 pub fn opened_device() -> Option<&'static metal::DeviceRef> {
     rerail_forest::gpu::shared::opened().and_then(|s| s.device.metal()).map(|d| &**d)
 }
@@ -177,8 +181,9 @@ pub fn layer() -> Option<Layer> {
     Some(Layer { device: &one.device, queue: &one.queue, max_buffer: one.device.max_buffer_length() })
 }
 
-/// The process's device and queue as Metal's: `None` without a Metal device. The engine's kernels not yet on the
-/// device layer (decision 0440 step C) run here alone.
+/// The process's device and queue as Metal's: `None` without a Metal device. Metal's tier (its pipelines and
+/// archives, its command buffers' timeline) uses it; everything else, the device layer's `layer`.
+#[cfg(target_os = "macos")]
 pub fn get() -> Option<&'static Shared> {
     static SHARED: OnceLock<Option<Shared>> = OnceLock::new();
     SHARED
@@ -200,10 +205,12 @@ pub fn get() -> Option<&'static Shared> {
 
 /// A pipeline's slot: made once. A thread that asks while another makes it waits for that one (the prewarm's
 /// compile is not done twice by a job that needs it first).
+#[cfg(target_os = "macos")]
 type Slot = std::sync::Arc<Mutex<Option<ComputePipelineState>>>;
 
 /// The pipeline kept under `key`, made by `make` the first time. A caller that finds another thread making it
 /// waits, scored as the phase `pipeline wait` (a cold job, like the compile itself).
+#[cfg(target_os = "macos")]
 pub fn pipeline<E>(key: &str, make: impl FnOnce() -> Result<ComputePipelineState, E>) -> Result<ComputePipelineState, E> {
     let slot = std::sync::Arc::clone(dev().pipelines.lock().expect("the pipelines").entry(key.to_owned()).or_default());
     let mut s = match slot.try_lock() {
@@ -301,6 +308,7 @@ pub struct Pooled {
 
 impl Pooled {
     /// The lease's buffer as Metal's (the pool is Metal's while `get` is: the process's device is Metal).
+    #[cfg(target_os = "macos")]
     pub fn buffer(&self) -> &Buffer {
         self.device_buffer().metal().expect("a pooled buffer is Metal's")
     }
@@ -333,6 +341,7 @@ impl Pooled {
 
     /// Hands the lease to `cmd`: it goes back to the pool when `cmd` completes, not before (a GPU read is never
     /// overtaken by the next lease's host writes).
+    #[cfg(target_os = "macos")]
     pub fn after(self, cmd: &metal::CommandBufferRef) {
         let held = Mutex::new(Some(self));
         let done = block::ConcreteBlock::new(move |_: &metal::CommandBufferRef| drop(held.lock().map(|mut h| h.take())));
@@ -483,6 +492,7 @@ pub fn return_deferrable(path: std::path::PathBuf, slab_len: usize) {
     }
 }
 
+#[cfg(target_os = "macos")]
 impl std::ops::Deref for Pooled {
     type Target = BufferRef;
     fn deref(&self) -> &BufferRef {
@@ -754,7 +764,7 @@ fn holder() -> u64 {
 /// `p`, counted as this thread's.
 fn held_here(mut p: Pooled) -> Pooled {
     let me = holder();
-    dev().holders.lock().expect("the holders").entry(me).or_default().0 += p.buffer().length() as usize;
+    dev().holders.lock().expect("the holders").entry(me).or_default().0 += p.device_buffer().length() as usize;
     p.owner = me;
     p
 }
@@ -827,6 +837,7 @@ pub fn drop_idle() {
     p.held = 0;
     p.held_slabs = 0;
     drop(p);
+    #[cfg(target_os = "macos")]
     dev().pipelines.lock().expect("the pipelines").clear();
 }
 
@@ -866,7 +877,7 @@ mod tests {
     /// are dropped.
     #[test]
     fn a_bounded_lease_keeps_within_the_metal_budget() {
-        if get().is_none() {
+        if layer().is_none() {
             return;
         }
         let _big = big_leases();
@@ -886,7 +897,7 @@ mod tests {
     /// budget; and its leases are drawn from it.
     #[test]
     fn a_stratum_waits_for_room_others_hold_and_only_that() {
-        if get().is_none() {
+        if layer().is_none() {
             return;
         }
         let _big = big_leases();
@@ -930,7 +941,7 @@ mod tests {
     /// from the reservation, counted once.
     #[test]
     fn two_works_past_the_budget_together_both_run_on_the_device_in_turn() {
-        if get().is_none() {
+        if layer().is_none() {
             return;
         }
         let _big = big_leases();
@@ -962,7 +973,7 @@ mod tests {
     /// idle buffers the budget leaves room for stay.
     #[test]
     fn a_wrap_of_host_memory_leaves_the_metal_budget_unchanged() {
-        let Some(s) = get() else { return };
+        let Some(s) = layer() else { return };
         let _big = big_leases();
         drop(lease(64 << 20).unwrap());
         let idle = || held_bytes().1;
@@ -973,7 +984,7 @@ mod tests {
         crate::budget::METAL_TEST.with(|m| m.set(other() + live + idle_before + (40 << 20)));
         let host = rerail_blocks::block::Block::anon(rerail_blocks::block::kind::FACTS, 512 << 20);
         host.try_alloc_chunk(256 << 20, 1 << 14).unwrap();
-        let wrap = host.device_buffer(&s.layer).unwrap();
+        let wrap = host.device_buffer(s.device).unwrap();
         assert!(wrap.length() >= 256 << 20, "a wrap of the host block's used extent");
         trim_idle();
         // This test's idle 64 MB stays: other tests lease and return small buffers from the same pool meanwhile, so
@@ -986,7 +997,7 @@ mod tests {
 
     #[test]
     fn leases_return_to_the_pool_by_size_class() {
-        if get().is_none() {
+        if layer().is_none() {
             return;
         }
         // Other tests lease from the same pool at the same time, so only the sizes and the zeroing are this test's.
@@ -999,8 +1010,8 @@ mod tests {
         assert_eq!(b.length(), 32 << 10);
         // SAFETY: the lease is this test's, 32 KiB long.
         assert!(unsafe { std::slice::from_raw_parts(b.host(), 30_000) }.iter().all(|&x| x == 0));
-        let p = pipeline::<String>("test no-op", || Err("not made".into()));
-        assert!(p.is_err());
+        #[cfg(target_os = "macos")]
+        assert!(pipeline::<String>("test no-op", || Err("not made".into())).is_err());
     }
 
     #[test]
@@ -1024,7 +1035,7 @@ mod tests {
     fn a_block_in_a_slab_is_recycled_and_reads_fresh() {
         use rerail_blocks::block::kind;
         use rerail_blocks::relation::{self, RelW, Relation, Spec, View};
-        if get().is_none() {
+        if layer().is_none() {
             return;
         }
         let _big = big_leases();
@@ -1033,14 +1044,14 @@ mod tests {
         let lock = Mutex::new(());
         // 23 MiB: a class (24 MiB) no other test leases.
         let b = lease_block(kind::FACTS, 23 << 20).unwrap();
-        let first = b.device_buffer(&get().unwrap().layer).unwrap().device_address();
+        let first = b.device_buffer(layer().unwrap().device).unwrap().device_address();
         let r = Relation::create(&b, &spec, None);
         RelW { block: &b, rel: r, lock: &lock }.extend(&(0..20_000).flat_map(|i| [i % 300, i % 7]).collect::<Vec<_>>());
         relation::freeze(&b, r, &spec, None);
         assert_eq!(View::full(r).live_len(), 2_100);
         drop(b);
         let b = lease_block(kind::FACTS, 23 << 20).unwrap();
-        assert_eq!(b.device_buffer(&get().unwrap().layer).unwrap().device_address(), first, "the slab came back, with its buffer");
+        assert_eq!(b.device_buffer(layer().unwrap().device).unwrap().device_address(), first, "the slab came back, with its buffer");
         let r = Relation::create(&b, &spec, None);
         assert_eq!(r.rows.len(), 0);
         assert!(!r.is_frozen(), "a new relation in a recycled slab reads fresh");
@@ -1055,7 +1066,7 @@ mod tests {
     fn a_freeze_takes_its_scratch_from_a_pooled_slab() {
         use rerail_blocks::block::kind;
         use rerail_blocks::relation::{self, RelW, Relation, Spec, View};
-        if get().is_none() {
+        if layer().is_none() {
             return;
         }
         let _big = big_leases();
@@ -1085,6 +1096,7 @@ mod tests {
 
     /// A lease handed to a command buffer goes back to the pool when it completes.
     #[test]
+    #[cfg(target_os = "macos")]
     fn a_lease_after_a_command_returns_when_it_completes() {
         let Some(sh) = get() else { return };
         let _big = big_leases();
@@ -1112,7 +1124,7 @@ mod tests {
     fn a_block_grows_into_a_larger_slab() {
         use rerail_blocks::block::kind;
         use rerail_blocks::relation::{self, RelW, Relation, Spec, View};
-        if get().is_none() {
+        if layer().is_none() {
             return;
         }
         let _big = big_leases();
@@ -1139,7 +1151,7 @@ mod tests {
     fn a_deferrable_journal_is_handed_off_and_its_file_reused() {
         use rerail_blocks::block::kind;
         use rerail_blocks::journal;
-        if get().is_none() {
+        if layer().is_none() {
             return;
         }
         let _big = big_leases();
@@ -1147,7 +1159,17 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let live = || dev().live.load(std::sync::atomic::Ordering::Relaxed);
         let before = live();
-        let d = lease_deferrable(kind::JOURNAL, 1 << 20, &dir.join("seg-1")).unwrap();
+        let d = match lease_deferrable(kind::JOURNAL, 1 << 20, &dir.join("seg-1")) {
+            Ok(d) => d,
+            // Intel's OpenCL under WSL2 wraps anonymous memory and private file mappings, not a shared file mapping
+            // (`CL_OUT_OF_HOST_MEMORY`): a limit of that device's, which no product path meets yet (the store's
+            // segments are the host's alone, `lease_deferrable_host`; decision 0440 step E).
+            Err(e) if rerail_device::device::backend() == "OpenCL" && e.ends_with("clCreateBuffer failed (-6)") => {
+                eprintln!("this OpenCL device does not wrap a shared file mapping ({e}): skipped");
+                return;
+            }
+            Err(e) => panic!("{e}"),
+        };
         assert_eq!(live(), before + class(SLAB_MIN), "a deferrable lease counts in the budget while open");
         journal::init(d.block(), 8);
         let src = rerail_blocks::Block::anon(kind::SCRATCH, 1 << 20);

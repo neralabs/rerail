@@ -40,14 +40,12 @@ fn cpu() -> Arc<Executor> {
     }))
 }
 
-/// The CPU binding's lanes: the cores, SQL and, where the CPU has one, its matrix unit (`sme::backend` asks the CPU
+/// The CPU binding's lanes: the cores, SQL and, where the CPU has one, its matrix unit (`rerail_accel::sme_backend` asks the CPU
 /// itself). No device lane is asked for: asking compiles the GPU's kernels and builds the Neural Engine's lane (11 ms
 /// of a run on the cores, decision 0285).
 fn cpu_lanes() -> Vec<Arc<dyn Backend>> {
-    #[cfg_attr(not(all(target_os = "macos", target_arch = "aarch64")), allow(unused_mut))]
     let mut lanes: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend::default()), Arc::new(SqlBackend)];
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    lanes.extend(rerail_accel::sme::backend());
+    lanes.extend(rerail_accel::sme_backend());
     lanes
 }
 
@@ -393,8 +391,7 @@ mod cpu_lane_tests {
         assert_eq!(rerail_accel::lanes::device_lanes_asked(), before, "the CPU binding asked for a device lane");
         assert!(lanes.iter().all(|l| matches!(l, rerail_accel::Lane::Cpu | rerail_accel::Lane::Sql | rerail_accel::Lane::Sme)), "{lanes:?}");
         assert!(lanes.contains(&rerail_accel::Lane::Cpu) && lanes.contains(&rerail_accel::Lane::Sql), "{lanes:?}");
-        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-        assert_eq!(lanes.contains(&rerail_accel::Lane::Sme), rerail_accel::sme::backend().is_some(), "{lanes:?}");
+        assert_eq!(lanes.contains(&rerail_accel::Lane::Sme), rerail_accel::sme_backend().is_some(), "{lanes:?}");
     }
 }
 

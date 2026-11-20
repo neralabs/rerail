@@ -1,6 +1,6 @@
 # 0361. Relations declare their shapes, and plans come from them
 
-Status: decided (2026-11-17), being built: steps 1, 2, 3, 4, 5 and 7 built (2026-11-18), step 6 at the probes (2026-11-19; at the writes: Q330). The user: "a directive which allows us to add enough data to the
+Status: decided (2026-11-17), being built: steps 1, 2, 3, 4, 5 and 7 built (2026-11-18), step 6 at the probes (2026-11-19) and at the writes (2026-11-20, Q330). The user: "a directive which allows us to add enough data to the
 relations in the .rr files that we can provide good default shapes for them (or at least name an algorithm or
 something) so that we don't need to pay for planning, or only in exceptional circumstances."
 
@@ -506,17 +506,34 @@ For the rest of the run the relation is planned from statistics:
 - A prepared plan reading a relation left out, or assuming a size of one, is not taken (`Prepared::take`).
 - A line that ran a prepared order priced by the fact is searched now (`prepared_heavy`).
 - A base relation left out has its columns measured at the next chunk (`sampled_statistics_unanswered`).
-**At the writes: not built (Q330).** A key the rules infer is proved from the facts of the relations they read, and
+
+**At the writes** (2026-11-20, Q330). A key the rules infer is proved from the facts of the relations they read, and
 the base relations, the only ones core.rr declares keys of, are tape views whose rows are never written. So a key that
-rows could break where they are written is a key a derived relation declares, and no program declares one. Every key
-a probe is bounded by is checked at the probes.
+rows could break where they are written is a key a derived relation declares (`.layout r key(...)` where `r` has
+rules). For one, the planner writes the key into the relation's join spec (`SpecLine::Key`); the executor probes the
+key's columns as each row is written, and counts a second row for a key (`Fx::key_breaks`). The planner reads the
+count after the stratum: the key is broken (`shapes::report_broken`, as at the probes), and the relation is planned
+from statistics for the rest of the run (`Shapes::for_run`). A key a probe is bounded by is checked at the probes too.
+
 **Tests** (Relax, here): `a_fan_out_the_rows_break_leaves_its_relation_to_the_statistics` (within the class, and too
 few probes, break nothing; 200 rows a probe of `few` over 100 probes breaks it, noted once; the relation and those
 inferred from it left out, in a later model too; a prepared plan reading it not taken).
+End to end, in a run (`plan::tests`): a declared `fanout(a -> b, one)` the rows break, and a declared `key(a)` of a
+derived relation its rules break where they are written, each named broken in the run's `Broken`.
+
+**The writes' check at scale** (2026-11-20, corpus0 x B-now, cold, profiling build, an M3 at load 9-23). Its first
+run found a declared fact false: `.layout doc key(d) key(path)`. A guest document's path is its host file's (decision
+0055), so a path holds a file's documents, not one. The check saw it on four relations a rule copies `doc`'s path
+and document into (`xd_…_rr_diagnostic_…`, inferred `key(rr_p)`), each planned from statistics after; the
+probes never had (no probe there binds a path alone). core.rerail keeps `key(d)` alone. After: 463 findings, the
+sorted rows' digest unchanged (a8b386173677), no fact broken, 1,146-1,155 G instructions.
+
 **At scale** (corpus0 x B-now, profiling build, an M1 Max at load 10-15): 3,350 probe steps checked, no fact broken,
 463 findings d067ec2ebf6f; 985.8 G instructions in one run and 1,004.9 and 1,017.7 G in two others, against 982.7 and
 1,045.8 G before.
+
 ## Derived relations' estimates: off (2026-11-19, Q290)
+
 The "Wider" step sized each derived relation that no fact sizes from its rules' plans. Measured directly (Q290,
 `RERAIL_SIZES_LOG` and `scripts/profiling/derived_sizes.py`), those estimates were within 2x of the rows a run held for
 15% of relations, 4% weighted by the plans that read them: the facts carry no grammar's kind skew and no kind's fields.

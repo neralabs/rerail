@@ -172,7 +172,7 @@ pub fn ukl() -> String {
     s += &format!("UKL_STATIC_ASSERT(sizeof(Numbering) == {}, \"Numbering: size\");\n", std::mem::size_of::<Numbering>());
     for (_, name, at) in fields.iter() {
         let name = name.split('[').next().unwrap_or(name);
-        s += &format!("UKL_STATIC_ASSERT(__builtin_offsetof(Numbering, {name}) == {at}, \"Numbering.{name}\");\n");
+        s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(Numbering, {name}) == {at}, \"Numbering.{name}\");\n");
     }
     s
 }

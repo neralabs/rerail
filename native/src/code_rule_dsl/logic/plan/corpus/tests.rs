@@ -1334,6 +1334,7 @@ fn benchmark_test_store_copy() {
 #[cfg(target_vendor = "apple")]
 #[test]
 #[ignore = "a benchmark: the steps of a test's store"]
+#[cfg(target_vendor = "apple")] // `clonefile` is APFS's
 fn benchmark_test_store_copy_steps() {
     use std::os::unix::ffi::OsStrExt as _;
     let template = super::test_store::template().to_path_buf();

@@ -189,6 +189,8 @@ fn a_merged_variable_is_renamed_inside_the_head() {
 /// namespace, with their equal facts; the programs' own rules, which differ, keep their namespaces.
 #[test]
 fn recursive_copies_merge_into_the_shared_namespace() {
+    // Unprofiled: a run of its own, whose profile is its own (decision 0441).
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     let (report, v) = simplified(
         r#"
         .decl edge(a: number, b: number)
@@ -241,6 +243,8 @@ fn relations_alike_but_for_their_constants_are_found_only_when_profiled() {
         p1_mine(b) :- edge(3, b), p1_reach(b).
         .output p0_mine, p1_mine
     "#;
+    // A run of its own from the unprofiled run on, whose profile is its own (decision 0441).
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     let (quiet, _) = simplified(text);
     assert_eq!(quiet.merged, 2);
     assert_eq!((quiet.similar.0, quiet.similar.1), (0, 0));

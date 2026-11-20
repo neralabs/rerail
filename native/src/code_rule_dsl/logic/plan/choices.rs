@@ -108,7 +108,7 @@ fn kept() -> std::sync::Arc<KeptChoices> {
 const KEPT_PROGRAMS: usize = 16;
 
 /// The durable side of the corpus run, while it holds `Durable`: the tape cache's store and the prepared program's
-/// key, which names the source the entries live under. With the entries, by path, and the texts of the programs they
+/// key, which names the source the entries live under. With the entries, by path, and the images of the programs they
 /// name, by digest: all read at the start. In the run's context: a nested run in a job looks up and keeps its choices
 /// in the same store, under the same program, as the run's thread.
 #[derive(Clone, Default)]

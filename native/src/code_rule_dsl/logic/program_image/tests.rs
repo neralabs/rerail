@@ -2083,3 +2083,39 @@ fn facts_in_another_order_are_the_same_program() {
     let other = with_k(&rows[..rows.len() - 1]);
     assert_ne!(Placed::whole(prog.clone()).digest(), Placed::whole(other).digest());
 }
+
+/// A made step (`Pipeline::made`: a version built whole from a program, its rules numbered anew, as the deferred
+/// joins' and node products' steps make theirs) hands on the record its program states: a rule step after it reads
+/// the record by the made version's rules, not the input's (decision 0506: every `rr_value_req` rule was then read
+/// as serving only itself).
+#[test]
+fn a_made_steps_request_record_is_carried_by_its_own_rules() {
+    use std::collections::BTreeSet;
+    struct DropFirstQ;
+    impl super::manager::ProgramPass for DropFirstQ {
+        const NAME: &'static str = "drop q's first rule";
+        fn run(&mut self, cx: &super::manager::Cx<'_>, w: &mut super::manager::ProgramW<'_>) -> Result<(), String> {
+            let v = cx.v();
+            let first = v.heads(v.rel("q").unwrap()).next().unwrap().id();
+            w.keep(|r| r.id() != first)
+        }
+    }
+    let text = ".decl a(x: number)\n.input a\n.decl b(x: number)\n.input b\n.decl c(x: number)\n.input c\n.decl q(x: number)\n.output q\n\
+                q(x) :- a(x).\nq(x) :- b(x).\nq(x) :- c(x).\n";
+    let by = |r: &str| BTreeSet::from([r.to_owned()]);
+    let asked = |text: &str, record: &super::about::Asked| {
+        let base = crate::code_rule_dsl::logic::rr::parse_version(text).map_err(|e| format!("{e:?}"))?;
+        let mut b = Builder::on(&base);
+        b.fields().set_asked(record);
+        Ok::<_, String>(b.finish()?.0)
+    };
+    let v = asked(text, &super::about::Asked::from([("q".to_owned(), vec![by("r1"), by("r2"), by("r3")])])).unwrap();
+    let mut pipe = super::manager::Pipeline::new("test", v);
+    // Made again with two rules of another relation first: every rule of `q` is numbered anew.
+    let before = ".decl a(x: number)\n.input a\n.decl b(x: number)\n.input b\n.decl c(x: number)\n.input c\n.decl s(x: number)\n.output s\n\
+                  .decl q(x: number)\n.output q\ns(x) :- a(x).\ns(x) :- b(x).\nq(x) :- a(x).\nq(x) :- b(x).\nq(x) :- c(x).\n";
+    pipe.made("rules before q's", 1, &[], |v| Ok((asked(before, &v.asked())?, Vec::new())));
+    pipe.program(&mut DropFirstQ);
+    let now = pipe.current().unwrap().clone();
+    assert_eq!(now.asked().get("q"), Some(&vec![by("r2"), by("r3")]), "q's readers by its rules after the made step");
+}

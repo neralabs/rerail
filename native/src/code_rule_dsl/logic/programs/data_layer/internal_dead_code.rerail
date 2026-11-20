@@ -199,7 +199,10 @@ public_best_len(o, n, l) :- public_len(o, n, _), l = min k : { public_len(o, n, 
 .decl public_route(owner: symbol, name: symbol, route: symbol)
 public_route(o, n, r) :- public_candidate(o, n, _, l, r), public_best_len(o, n, l).
 .decl public_best_route(owner: symbol, name: symbol, route: symbol)
-public_best_route(o, n, r) :- public_route(o, n, _), r = min q : { public_route(o, n, q) }.
+// The first route by its text: symbols have no order a `min` keeps (it would take the first interned).
+.decl public_route_later(owner: symbol, name: symbol, route: symbol)
+public_route_later(o, n, r) :- public_route(o, n, r), public_route(o, n, q), q < r.
+public_best_route(o, n, r) :- public_route(o, n, r), !public_route_later(o, n, r).
 .decl public_methods(owner: symbol, name: symbol, symbol: symbol)
 public_methods(o, n, id) :- public_candidate(o, n, id, _, r), public_best_route(o, n, r).
 

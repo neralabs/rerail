@@ -4629,7 +4629,7 @@ tests, `read_derived`/`rows_of` (tests and outputs) and the session deltas.
 - **Record**: done (2026-11-17). What was still to do is 0353's list of copies, each marked `copy (0353 step N)` in
   the code, and is followed there.
 
-### Q155. (Q82 on Typing-support) Relations declare their shapes; plans come from them (0361)
+### Q155. (Q82 on Typing-support) (done) Relations declare their shapes; plans come from them (0361)
 
 The user (2026-11-17): a directive giving relations enough data in the `.rerail` files for good default shapes, so runs
 pay for planning only in exceptional circumstances. Designed with the user in 0361 (`.layout` lines; classes with
@@ -4638,6 +4638,14 @@ Build steps 1-7 in 0361. Step 7's running aggregate is the `rr_agg56` planner fi
 - **State** (2026-11-19): 0361's steps 1–5 and 7 are built (2026-11-18). Left: step 6, the checks (keys where the
   rows are written, fan-out from the executors' counts, a broken fact replans and is reported). Done when 0361's
   "Done when" holds.
+- **State** (2026-11-20): step 6 built. The probes' checks (a fan-out or key a probe is bounded by, against the
+  executors' counts; a broken fact the run's, planned from statistics after) are cost-classifier-metal-rf's
+  (merged here; they replace this branch's 2b9841b58b). The key a derived relation declares is checked where its
+  rows are written (39c6f43cea, ported onto theirs; Q330).
+- **Record**: done (2026-11-20). corpus0 x B-now cold: 463 findings, no fact broken, once core.rerail's false
+  `doc key(path)` (a guest's path is its host's) was dropped; the writes' check found it (0361, "The writes' check at
+  scale"). The same runs found two jobs reading machine state outside any run (the cost model's training pool, and
+  `begin_as`'s claims dropped after their job left its run): both fixed.
 
 ### Q156. (Q88 on Typing-support; Q83 on phased-facts at 77a9d64fc) Exports held where they lie (0325)
 
@@ -6225,7 +6233,7 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   `Early` or a prefix in the program), no device in the process, or a single-program check.
 - **Done when**: the cause is named and the two tests pass on a Mac with Metal.
 
-### Q237. (Q105 on Typing-support-final-shape at 4ea96a066) Five `rerail-logic` tests fail that read nothing of 0276 §3's port
+### Q237. (Q105 on Typing-support-final-shape at 4ea96a066) (done) Five `rerail-logic` tests fail that read nothing of 0276 §3's port
 
 - **Found** (2026-11-18, running `rerail-logic`'s tests for Q83): `facts_only::every_table_is_facts_or_listed`
   (`content_store/schema.rs`'s `frame_segments`, `guest_keys`, `object_segments` in no list),
@@ -6240,7 +6248,7 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   2d) are cut from `facts_only::STATE` and `run_state::STATE`. All five pass.
 - **Record**: done (2026-11-19, Typing-support at 049b9aaa6, a Linux farm host): all five pass.
 
-### Q238. (Q106 on Typing-support-final-shape at 4ea96a066) Relax's JIT refuses `sha2`'s `sha512h` inline asm
+### Q238. (Q106 on Typing-support-final-shape at 4ea96a066) (done) Relax's JIT refuses `sha2`'s `sha512h` inline asm
 
 - **Found** (2026-11-18, running `rr::tests` under Relax for 0276 step 5):
   `rr::tests::shared_signing_library_verifies_an_existing_empty_allowlist` stops at "compile error in
@@ -6875,7 +6883,7 @@ Open:
   lowered rule would be re-based on text. A seeded store (an explicit export and import keyed by the rules' text) is
   0472's open item, not built. Closed.
 
-### Q292. (Q186 on cost-classifier-metal-rf) The node-product rewrite on the version (0461)
+### Q292. (Q186 on cost-classifier-metal-rf; Q297 on Typing-support until 2026-11-20) (done) The node-product rewrite on the version (0461)
 
 - **Found** (2026-11-18, while porting Release-debugging's product demand): `product_demand::rewrite` and its
   `upstream`/`nullable` passes edit the front tree. On the version path (0281) it runs as a `Pipeline::made` step
@@ -6885,6 +6893,10 @@ Open:
   local joins.
 - **Done when**: a run with a product decodes no tree (`trees_decoded` 0), and a test compares the pass with the
   tree's rewrite on the module's programs.
+- **Record** (2026-11-20, the merge of cost-classifier-metal-rf into Typing-support): done on Typing-support before
+  the merge (0276 C): `product_demand`, `upstream` and `nullable` rewrite the version (`BoundProducts`), and the tree
+  forms are gone (0276 step 6), so no run decodes one. The merge keeps that rewrite and takes this branch's
+  `RERAIL_READER_DEMAND` aid into it (its setting is the pass's key).
 
 ### Q294. (done; Q265 on benchmarks-on-integration) `ane::tests::exact_random_shapes` failed on the M3: Core ML placed a matmul on the CPU
 
@@ -7430,7 +7442,7 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   `-no_keep_dwarf_unwind`). If the binary is simply this large, the cause is its size at opt-level 0.
 - **Done when**: the link gives no warning, or the cause is shown to be the binary's size and the choice (a smaller
   test binary, or the warning accepted with its reason) is the user's.
-### Q330. (Q188 on cost-classifier-metal-rf) A key a derived relation declares is checked where its rows are written (0361 step 6)
+### Q330. (Q188 on cost-classifier-metal-rf; Q299 on Typing-support until 2026-11-20) (done) A key a derived relation declares is checked where its rows are written (0361 step 6)
 - **Found** (2026-11-19, 0361 step 6): the step's checks are built at the probes (`Model::layout_broken`): a key or
   fan-out a probe is bounded by, against the executors' counts. A key is also to be checked where the rows are
   written, as the decision says: dedup probes the whole row, and a key needs one more probe. No program has a subject
@@ -7441,6 +7453,11 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   (setfix's CPU levels, its closures, the device's): a second row for a key breaks it (`shapes::Broken`).
 - **Done when**: a test declares a key of a derived relation whose rules break it, and the run names it broken and
   plans the relation from statistics.
+- **Record** (2026-11-20, Typing-support 39c6f43cea): the planner writes a declared key into the
+  join spec (`SpecLine::Key`); the executor probes the key's columns as each row is written and counts a second row
+  for a key (`Fx::key_breaks`); the planner notes it broken in the run's `Broken` (`shapes::report_broken`, as the
+  probes' check reports) and plans the relation from statistics for the rest of the run. The end-to-end test
+  declares `under`'s key, breaks it, and reads `[("under", "key(a)")]` from the run.
 
 ### Q333. (Q283 on final-rerail-shape) A level's formulas as phases: the pushes' chains are the time (0474; done in 0475)
 
@@ -7617,7 +7634,7 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   count into `used` and the plan bound reads the ledger, so the batch is split before it runs.
 - **Done when**: both cases are equal on Metal, and the retry loop's plan bound is the ledger's.
 
-### Q337. (Q262 on Native-GPU-strata) On Metal a hogql run can lose a whole chunk's findings
+### Q337. (Q262 on Native-GPU-strata) On Metal a hogql run can lose a whole chunk's findings — one cause fixed (a freeze's pages); format 16 open
 
 - **Seen** (2026-11-19, decision 0478 5b-5e): a cold hogql run under the Metal binding, profiling build, format 15,
   sometimes gives fewer than its 1,629 findings (1,358, 1,375 and 1,487 seen), with no error and exit 0. The files
@@ -7638,6 +7655,60 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   `xd_fz2220395310_..._violation` made on the device in that run. The diagnostic's host run read an input that the
   refused chunk had not finished writing. **Next:** in the chunk that fell back, check which input the diagnostic's
   host run read, and when that input was filled.
+- **Reproduced** (2026-11-19): with two strata's device runs refused by a measurement knob (a diagnostic and a
+  violation of hogql's, one as `BackendCapacity`), about 1 run in 8 lost a chunk (1,487, 1,358). The loss was a device
+  run of `fzk3398261162_..._diagnostic` (`demand($d), node($d,$v,_,_,_), line($v,$l)`, one witness per file) that
+  passed 1 of 213 files, with no error. The CPU's rerun path, the device indexes, the in-place views and the
+  residency's slabs all checked out on the host after the run.
+- **Cause:** a freeze lost live rows. `Block::freeze` drops the block's free list (`drop_free_list`) and gives each free
+  chunk of a page or more to the OS with `mem::free_pages(base + at, size)`. Those chunks are not page-aligned: a chunk
+  from the front is 64-byte aligned, and a fit's piece lies at an eighth of its class. `madvise` rounds its range out to
+  whole pages (macOS takes an unaligned `MADV_FREE_REUSABLE` and clears the modified bit of a page it only partly
+  covers, shown with `mincore`). So the first and last pages of each such chunk, which hold its neighbours' live
+  rows, were marked reusable, and under memory pressure the OS dropped them: those rows read zero. Hence the
+  pattern: rare, silent, and only on Metal, where the device's memory leaves the host the least room. The lead above
+  (an input "not finished") was this: the rows were written, then lost.
+- **Fixed:** `mem::free_pages` gives back only the whole pages inside its range, as `mem::give_back` already did, so
+  no caller can reach a neighbour's page. Tests: `free_pages_gives_back_only_the_whole_pages_inside_its_range` and
+  `a_freeze_gives_back_no_page_a_live_chunk_shares` (both failed before the fix). The other `madvise` calls in the
+  tree are a mapping's whole range just before its `munmap`.
+- **Measured** (profiling build, an M-series Mac): with the fix, 16 runs with the two refusals forced and 6 plain runs
+  at format 15 gave 1,629 each (75-78 B instructions).
+- **Still open, format 16** (the default): after the fix, 5 of 30 runs lost a chunk (1,375, 1,358), all in the same
+  hour; the 30 runs after them lost none. In the bad runs that were traced, the loss was a device run of
+  `xd_fz3398261162_..._diagnostic` (`fl2387840878_P($v), node($d,$v,..), xk_..._1($d), fzk1229918992_..($d),
+  line($v,$l)`) whose last stage, `line`, passed 0 of 13,300 bindings. That chunk's `line` (`View::Loc(Place::Line)`)
+  was made on the device (`expand_view`, after `fill_locs`) rather than read in place, which happens only when a
+  document's tape or lines are not in a slab. Its index was well formed, but the host's rows in each key's bucket were
+  not the key. Each run with a made `line` view lost a chunk, and each run that read it in place did not. Forced
+  (every `Loc` view made, `RERAIL_Q262_MADE=loc`, also with a command buffer per pass), the made rows equal the
+  host's row by row and the runs give 1,629. So the made view goes wrong only under the pressure that makes it.
+  Suspect, not shown: the GPU reading pages the CPU wrote after they were given back as reusable and taken again (a
+  free list's chunks in a block the device has wrapped). **Next:** catch a natural bad run with the made view's rows
+  checked against the host's (the check is in `tmp/gpu/q36/q262-trace.patch`, with the knobs used here). If its rows
+  differ, the device read stale bytes; if they agree, the index build read them early.
+- **Also seen:** `bound_in` gives 60,278-60,281 rows between good runs (the findings the same): a smaller
+  nondeterminism, not looked into.
+
+### Q378. (Q264 on Native-GPU-strata) One ledger owns a block's memory, for the CPU and the GPU (decision 0487) — steps 1-2 built
+
+- **Asked** (the user, 2026-11-20, on Q337): live and queued readers and writers of every block, on the CPU and the
+  GPU, kept in one place by the system, with invariants under which what cannot work fails.
+- **Built:** step 1 (`rerail_blocks::ledger`: every chunk of a free-listed block tracked, frees and pages through it,
+  `Fence`, R1-R8) and step 2's first part: accel's `Pass`, where the device joins bind every buffer, registers the
+  block each bound buffer lies in on a fence its command buffer's completion handler ends.
+- **Next, step 2's rest:** the other encoders (the syntax side's `metal_*` passes, `crates/metal`, `blocks::gpu`) made
+  through one constructor that registers its bindings, so none binds unregistered; then `Batch::keep`, `read`, `held`
+  and `Held::kept` go where what they hold is a block's.
+- **Next, step 3:** the pool's buffers (`Pooled`, `Pooled::after`), `Scratch` resets, the residency slabs' `retire`
+  and the deferrable slabs under a ledger of their own.
+- **Next, step 4:** a chunk's CPU writers (BlockVec, a relation's rows) check the ledger at each write's start (R4).
+- **Then:** Q337's format-16 runs again, 20 at 1,629.
+- **Then (decision 0491, the user, 2026-11-20):** region handles over blocks, MLDB's shape (`rerail_blocks::region`:
+  `Mutable` / `Shared` / `Frozen`, pins, versions, implicit freeing), built. The owners move to them one at a time:
+  `Cells` (done, 2026-11-20: a frozen region), a relation's arrays (done: `BlockVec` owns a `Mutable`), its rows (nothing to move: a `Part` is the handle), the device's handles (`DevRel`, `Held::kept`), after the
+  pool's buffers are blocks (0491 step 2, "What holds the lists": a pooled lease is reused the moment it is dropped,
+  so `Batch`'s lists hold it until the GPU is done); then the block itself as the root region.
 
 ### Q338. (Q263 on Native-GPU-strata) A relation's statistics kept by delta are on the heap (0478 R5) — done (0478 step 6f)
 
@@ -7931,6 +8002,11 @@ on an M3 or M5:
 - **Do**: each count a test reads is its run's (`run_counts()`, decision 0442), or the test's own shared object
   (`profile::within`); find what the maintain and session tests share.
 - **Done when**: the group passes run together, three times.
+- **Fixed in part** (2026-11-20, the merge of the hub into Typing-support): the maintain tests' counts are the run's,
+  and `run_kept` held no run, so its counts were a run it never read (`r2_a_new_process_hashes_only_the_changed_
+  documents_rows_of_its_inputs` read 0 inputs hashed, run with the others or alone). It holds its run's scope now,
+  as `run` does; `maintain_tests::` and `session::tests` pass together on a Linux host (69 of 69, once).
+  `plan::body::NORMALIZED` and the three-runs criterion are still open.
 
 - **Fixed** (2026-11-19, Typing-support): Q189's settle window (`JOURNAL_SETTLE_NS`, 120 s) was applied to every
   root, also one checked by its listings, whose answers the listing check compared by `stat` that run and which
@@ -7940,7 +8016,7 @@ on an M3 or M5:
 - **Record**: done (2026-11-19, Typing-support): as **Fixed** above. The journal tests that still failed on a
   loaded host are Q223's (fseventsd delivering late), done: 22 of 22 runs on the M3.
 
-### Q359. (Q251 until 2026-11-19; the hub's Q251 is a level's fact constraints) 0364 R7 is red: after a use is added, two recheck lines are unpriced
+### Q359. (Q292 on Typing-support until 2026-11-20; Q251 until 2026-11-19; the hub's Q251 is a level's fact constraints) (done) 0364 R7 is red: after a use is added, two recheck lines are unpriced
 
 Seen 2026-11-19 on an M-series farm host, at this branch's a9c6b3b62 and on the hub (django-bugs' 2e9d16bc8 names it
 failing at 24740af51): `maintain_tests::r7_the_recheck_order_is_priced` fails at maintain_tests.rs:327, "R7: after a
@@ -7956,7 +8032,7 @@ regression of the maintain mode's plans (0328 §4), not a stale test.
   recheck's spec is written from the head-bound body, and the spec's cache key says which it is. R7 passes; the 139
   maintain, session, recheck and plan tests pass.
 
-### Q360. (Q252 until 2026-11-19; the hub's Q252 is a chain's reach) CPython ran on the product's path: `value::python_ast` started `python3.13` for each demand batch
+### Q360. (Q293 on Typing-support until 2026-11-20; Q252 until 2026-11-19; the hub's Q252 is a chain's reach) (done) CPython ran on the product's path: `value::python_ast` started `python3.13` for each demand batch
 
 Seen 2026-11-19 (Typing-support), on a Linux farm host without CPython 3.13: 9 of `rerail-lang-python`'s tests
 failed, "Canonical Python AST facts require CPython 3.13". The relational producer
@@ -7974,7 +8050,28 @@ Python process for every batch, though `code_rule_dsl::cpython` computes the sam
   and CPython's offsets differ by the kind of error. Its test is ignored with that reason.
 - **Done when**: `cpython::syntax` gives the error's span as CPython 3.13 does, checked by `parity` against CPython
   on a box, and the worker is deleted.
-- **Record**: —
+- **Record**: done (2026-11-20, Typing-support). `cpython::syntax` gives each error a `Span` by how CPython raises
+  it, read from CPython 3.13's sources and probes:
+  - at the token its parser failed at, or at a node an action names: columns + 1, in characters of `text`, clamped
+    one past its end;
+  - at the tokenizer's cursor (`_syntaxerror_range`: an unterminated string put back past its first character, an
+    invalid character, a stray bracket), the end there too, `text` without its line end;
+  - at a token with no column (an `INDENT`, the `ENDMARKER`, the tokenizer's dedent): the cursor's place on its
+    line, end -1;
+  - at a bracket never closed or a line continuation: column + 1, end 0.
+
+  `text` has its line end where the tokenizer read no further than the error's line: the token after the error's
+  last one, or, at a failed token, past the expression beside it (`invalid_expression`). `value::python_ast` writes
+  `syntax_error` natively, as the worker's `json.dumps(..., ensure_ascii=True)` did. `python_ast/worker.py` and the
+  `oracle` path are deleted, and `syntax_errors_are_cpythons_whole` replaces the ignored test: 41 errors recorded
+  from CPython 3.13.18, every span kind and escapes.
+
+  `syntax_error_parity` compares the span too, against CPython 3.13.12 on a farm Mac:
+  - the fixtures (the replay's input): 152 of 152 rejects equal in line, message and span;
+  - 1,680 seeded mutants of corpus0's Python files: 734 of the 737 whose line and message agree equal in span. The
+    3 others are Ruff's recovery (noted APPROX in `read_failed`).
+
+  Line and message on the mutants, 792 and 746 of 851, are Q391.
 
 ### Q368. (Q320 on final-rerail-shape-rr-align) Roll-up 10 (Typing-support-final-shape onto rr-align): what the merge chose, and what stays open
 
@@ -8132,3 +8229,85 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
     tests' object or any pool thread's copy held the image. The test passes un-ignored, three runs in a row on the
     m3. The program-image, prepared-program, normalization, run, profile, observer, workspace, lane and plan tests
     pass, except the three plan tests that were red before (Q378).
+
+### Q386. (Q300 on Typing-support until 2026-11-20; Q189 on cost-classifier-metal-rf) (done) A loop's stolen halves lose their run where two runs share a pool
+
+- **Found** (2026-11-19, porting 0506): a parallel loop inside `on_cores` splits by rayon's `join`, and a half
+  another of the machine's pool threads steals runs with nothing of its caller's: no run and no bindings. With
+  `RERAIL_PROFILE` the first file-stat loop (`profile::work`) is refused at once. Before 0442 step 5 the loops ran on
+  rayon's global pool, whose threads were not marked as the engine's: the same reads silently took values of their
+  own, so a profile lost the stolen halves' work and a binding read there gave its default.
+- **Built so far** (60df62dc48): `on_cores` registers its job in its pool's `Inside`, and a pool thread with no run of
+  its own takes the run there when the jobs inside are one run's (tests in rerail-context). That covers a program
+  with one run. It does not cover two runs' loops in one pool at once: a corpus run's phase 0 and its main program
+  do, and a profiled corpus0 x B-now run is still refused there.
+- **Next**: a stolen job carries its creator's run. Rayon has no hook for it: patch rayon-core (`[patch.crates-io]`)
+  so `StackJob` and `HeapJob` capture a carrier the engine installs (`job_run`) when made and enter it when run.
+  Then `Inside` goes.
+- **Done when**: a test with two runs' loops in one pool at once reads each run's own value in every item, and a
+  profiled corpus0 x B-now run completes.
+- **Record**: done (2026-11-20, Typing-support). rayon-core 1.13.0 is vendored and patched
+  (`native/vendor/rayon-core-1.13.0`, PATCHES.md): `StackJob` and `HeapJob` capture the installed carrier when made
+  and enter it where another thread runs them, left before the latch is set. The engine's carrier is `job_run`
+  (`rerail_context::carry`, installed by `Machine::new`); `Inside`, its thread-local and `on_cores`'s registration
+  are gone. `two_runs_loops_in_one_pool_at_once_each_read_their_own_run` passes (two callers, 8 loops each of 4096
+  items, every item its own run's value and binding), as do rerail-context's 10, 88 logic/prof/accel and 32 engine
+  run-state tests. corpus0 x B-now cold, profiled: completes, 463 findings, the same digest; unprofiled 1,143.9 G
+  instructions, against 1,146-1,155 G before (0442, "Every job carries its maker's run").
+
+### Q390. (Q301 on Typing-support until 2026-11-20; Q190 on cost-classifier-metal-rf) The deferred joins are priced (0506)
+
+- **Found** (2026-11-19, 0506): `RERAIL_DEFERRED_JOINS=auto` took 7-12% more instructions on corpus0 x B-now for the
+  same findings, so it is off by default. It rewrote pair demand into many rules (`c4_elt`, `c4_comp`, `exc_call`,
+  ...), each a few more strata, where the joins were cheap as written.
+- **On by default** (2026-11-20, 0506 "On by default"): a replan that ran the sources program twice (23.5 G) and a
+  view's heavy values counted at every stratum removed; `auto` 961.8 G against `off` 952.7 G on corpus0 (one thread, +1.0%).
+- **Next**: offer each rewrite as an alternative the pricer scores against the join as written, from the readers'
+  distinct requests and the factors' sizes (the lab's design, `scripts/profiling/deferred_joins/README.md`, "Where
+  the classifier belongs"), and keep it only where it wins.
+- **Done when**: the rewrite is on by default and corpus0 x B-now takes no more instructions than with it off, with
+  SLF001 on PostHog bounded as Release-debugging measured.
+- **State** (2026-11-20, the merge into Typing-support): the rewrite is a step on the version there (0506, item 1):
+  the tree forms are gone, so it was ported, its five tests with it. Its pricing is as open as before.
+- **State** (2026-11-20, cost-classifier-metal-rf merged into Typing-support): `auto` is the default here too, with
+  that branch's fixes ported to the version's passes: the cross-file guard (`Plans::cross`, read from the version's
+  file-local split), no pair cache whose readers' cone reads a document's answer (`passes/factorize.rs`), a view's
+  change since its mark, the made step's request record. The kept filters, join-size counters and screens came with
+  it; the device's screens (the sort's `screen_bloom`, the probes', the fused probe's and the stages') were MSL there
+  and are UKL here, compiled but not yet run on a device: the Metal hold of 2026-11-20, and no OpenCL host usable.
+  Open as before: the pricer of the rewrite against the join as written, and its done-when.
+
+### Q391. Done: (Q389 on Typing-support until 2026-11-20) `cpython::syntax`'s line and message where Ruff recovers otherwise than CPython
+
+- **Found** (2026-11-20, Q360): on 1,680 seeded mutants of corpus0's Python files (truncated, a character dropped,
+  a bracket, quote, backslash, `$`, tab or newline put in, a line's indentation changed), CPython 3.13 rejects 851.
+  The engine's verdict is right on all 1,680, but its line differs on 59 and its message on 105. On the fixtures
+  (the replay's input) all 152 agree. The differences are where the first error Ruff reports is not the one CPython
+  raises: a keyword-argument error inside a call whose bracket is never closed, where CPython reports the bracket.
+- **To do**: generate the mutants again (`scripts/dev/python-syntax-mutants.py`, seeded), run
+  `cpython::parity::syntax_error_parity` with `RERAIL_PARITY_ROOTS=fixtures:<mutants>` on a box with CPython 3.13,
+  and follow CPython's choice in each class of difference, as `syntax_error` already does for tokenizer errors and
+  brackets left open.
+- **Done when**: line and message agree on the mutants but for differences named APPROX with their count.
+- **Done** (2026-11-20, Typing-support): on the same 1,680 mutants (851 CPython 3.13 rejects) the line agrees on
+  844 (792), the message on 821 (746), and offset, text and end on 816 of the 820 where both agree; the fixtures
+  stay 152 of 152 on every field. Each change follows CPython 3.13's parser:
+  - `_PyPegen_set_syntax_error`'s scan after any parser error: a later tokenizer error wins only if it raises (not a
+    bad dedent or a line continuation's, which end the scan); a bracket open since an earlier line wins over named
+    errors too; an INDENT or DEDENT the first pass failed at ("unexpected indent", "unexpected unindent", a
+    decorator's line among them) has no scan.
+  - Forced tokens: `def NAME` without `(` is "expected '('"; "expected ':'" only in `def`, `for`, `try`,
+    `finally`, `else`, or where a NEWLINE follows the header.
+  - Places: a missing block after a header the next line dedents from, and a `try` without a handler, are at the
+    `DEDENT` (no column) or the file's end; a mismatched closing bracket names its opening's line.
+- **APPROX** (the 30 messages and 7 lines left, each a single file or a few): f-string errors CPython's tokenizer
+  names (`f-string: expecting '}'`, `f-string: unmatched ')'`) where Ruff reports an unterminated f-string or a
+  bracket (8 messages); a number CPython's tokenizer refuses where Ruff reads on (`invalid decimal literal`,
+  `leading zeros in decimal integer literals`: 3 messages, 3 lines); Ruff's "Perhaps you forgot a comma?" or
+  "positional argument follows keyword argument" where CPython's first pass fails earlier or a bracket wins
+  (7); `'(' was never closed` against `invalid syntax` either way (5), at a bracket CPython's scan reads otherwise;
+  an `expected ':'` CPython's forced token gives at a `$` or after a missing expression (5); a dict's missing
+  value (`expression expected after dictionary key and ':'`, 1); a generator expression in a bracket never closed
+  (1). Offsets: 4 (a text's line end, two columns of a `,` and a comment).
+- **Next, if wanted**: the numbers (CPython's `verify_end_of_number` and its leading-zero check) are tokenizer
+  errors, and the f-string ones are its f-string mode's: both are the tokenizer's own, as `Brackets::scan` is.

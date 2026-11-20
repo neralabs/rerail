@@ -612,7 +612,7 @@ struct Kid {
 }
 
 // SAFETY: `#[repr(C)]`, three `u32`s: every byte a named field, no address.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 unsafe impl rerail_blocks::Pod for Kid {}
 
 impl Table {
@@ -708,7 +708,7 @@ impl Table {
     /// Points the projection's descriptor's table runs at these columns (`rerail_clif::ids::Numbering`), so the reads
     /// written once find them: by the projection that keeps this table, once. A table numbered again (a reference to
     /// check against, a measurement) is not described: the descriptor would point at its columns once it is dropped,
-    /// which on the heap (`cells`, off macOS) are freed.
+    /// which on the heap (`cells`, on WASM) are freed, and in a block are a dropped table's.
     pub(super) fn describe(&self, r: &Ranks) {
         use rerail_clif::ids::Run;
         let d = r.desc_mut();

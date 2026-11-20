@@ -120,7 +120,7 @@ struct Solved {
     start: Vec<u32>,
     rows: crate::code_rule_dsl::facts::rows::Part,
     /// The starts' offset in the chunk, when the device made them.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     start_in_chunk: Option<usize>,
 }
 
@@ -327,7 +327,7 @@ impl Within {
     /// rows (that ancestor, or for `inside` the chain of them).
     fn solved(&self) -> &Solved {
         self.solved.get_or_init(|| {
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             if let Some(s) = self.solved_in_chunk() {
                 return s;
             }
@@ -401,7 +401,7 @@ impl Within {
         Solved {
             start,
             rows,
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             start_in_chunk: None,
         }
     }
@@ -429,7 +429,7 @@ impl Within {
     /// The solve's first row per node row (`nodes + 1` values).
     fn starts(&self) -> &[u32] {
         let s = self.solved();
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         if let Some(at) = s.start_in_chunk {
             let n = self.batch.nodes().last().copied().unwrap_or(0) + 1;
             // SAFETY: the device wrote `n` values there, and the chunk lives as long as the batch this axis holds.
@@ -445,14 +445,14 @@ impl Within {
 
     /// The solve made on the device in the batch's chunk (decision 0289 §2), when the binding is the device's and
     /// one is registered: `None` sends it to the host's.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn solved_in_chunk(&self) -> Option<Solved> {
         self.solved_in(&[self.batch.chunk()]).map(|c| Solved { start: Vec::new(), rows: c.rows, start_in_chunk: Some(c.start) })
     }
 
     /// Its solve and those of `more`, the axis over a chunk's tape values (decision 0431 §8), made on the device in
     /// one relation: its rows, then each one's of `more`, as the device binds a layered source's (`values::Layered`).
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub(super) fn solved_with(&self, more: &[&Within]) -> Option<crate::code_rule_dsl::facts::rows::Part> {
         if !self.solvable() || more.iter().any(|w| w.mode != self.mode) {
             return None;
@@ -462,7 +462,7 @@ impl Within {
     }
 
     /// The axis solved on the device over `chunks`, in one relation (`nearest::ChunkAxis`).
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn solved_in(&self, chunks: &[&super::device_chunk::Chunk]) -> Option<crate::code_rule_dsl::facts::nearest::InChunk> {
         use crate::code_rule_dsl::facts::core::KIND_STRIDE;
         use crate::code_rule_dsl::facts::nearest::chunk_axis;

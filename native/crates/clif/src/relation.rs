@@ -18,6 +18,7 @@ use cranelift_codegen::ir::{
     types::{I32, I64},
 };
 use rerail_blocks::refs::Span;
+use rerail_blocks::bloom::Bloom;
 use rerail_blocks::relation::{Index, Relation};
 use rerail_blocks::rows::{ColDir, Rows};
 use std::mem::{offset_of, size_of};
@@ -42,6 +43,7 @@ const INDEX_MASK: i32 = offset_of!(Index, mask) as i32;
 const INDEX_OFFS: i32 = offset_of!(Index, offs) as i32;
 const INDEX_ROWS: i32 = offset_of!(Index, rows) as i32;
 const INDEX_SIZE: i64 = size_of::<Index>() as i64;
+const BLOOM_WORDS: i32 = offset_of!(Bloom, words) as i32;
 
 impl B<'_, '_> {
     /// The block's word of type `ty` at `p + offset` (aligned).
@@ -327,6 +329,74 @@ pub fn rel_key_mix(b: &mut B<'_, '_>) -> Value {
     let h = b.f.ins().imul_imm(h, 0x9E37_79B9_7F4A_7C15_u64 as i64);
     let s = b.f.ins().ushr_imm(h, 29);
     b.f.ins().bxor(h, s)
+}
+
+/// `bloom_hash(_, key)`: the hash a Bloom filter places a key by (`rerail_blocks::bloom`), in 32-bit multiplies (the
+/// device's native ones; the host's cost the same). The key's halves folded (`lo ^ hi * φ`: keys sharing either half
+/// never collide), murmur3's finalizer, and a second word of it for the high half. It reads nothing.
+pub fn bloom_hash(b: &mut B<'_, '_>) -> Value {
+    let v = b.arg(0);
+    let lo = b.f.ins().ireduce(I32, v);
+    let hi = b.f.ins().ushr_imm(v, 32);
+    let hi = b.f.ins().ireduce(I32, hi);
+    let hi = b.f.ins().imul_imm(hi, i64::from(0x9e37_79b1_u32 as i32));
+    let h = b.f.ins().bxor(lo, hi);
+    let s = b.f.ins().ushr_imm(h, 16);
+    let h = b.f.ins().bxor(h, s);
+    let h = b.f.ins().imul_imm(h, i64::from(0x85eb_ca6b_u32 as i32));
+    let s = b.f.ins().ushr_imm(h, 13);
+    let h = b.f.ins().bxor(h, s);
+    let h = b.f.ins().imul_imm(h, i64::from(0xc2b2_ae35_u32 as i32));
+    let s = b.f.ins().ushr_imm(h, 16);
+    let h = b.f.ins().bxor(h, s);
+    let w = b.f.ins().imul_imm(h, i64::from(0x27d4_eb2f_u32 as i32));
+    let s = b.f.ins().ushr_imm(w, 15);
+    let w = b.f.ins().bxor(w, s);
+    let low = b.f.ins().uextend(I64, h);
+    let high = b.f.ins().uextend(I64, w);
+    let high = b.f.ins().ishl_imm(high, 32);
+    b.f.ins().bor(high, low)
+}
+
+/// `bloom_mask(_, h)`: the bits of its word a key of hash `h` sets: five, from 6-bit fields of `h`. It reads nothing.
+pub fn bloom_mask(b: &mut B<'_, '_>) -> Value {
+    let h = b.arg(0);
+    let mut m = b.c64(0);
+    for i in 0..5 {
+        let f = b.f.ins().ushr_imm(h, 6 * i);
+        let f = b.f.ins().band_imm(f, 63);
+        let one = b.c64(1);
+        let bit = b.f.ins().ishl(one, f);
+        m = b.f.ins().bor(m, bit);
+    }
+    m
+}
+
+/// `bloom_may(filter, h)`: 1 if the filter (a `bloom::Bloom`) may hold a key of hash `h`, 0 if it certainly does
+/// not: its word `(h >> 32) & (words - 1)` has every bit of `bloom_mask(h)`. A filter of no words holds every key.
+pub fn bloom_may(b: &mut B<'_, '_>) -> Value {
+    let h = b.arg(0);
+    let words = b.word_at(I64, b.tape, BLOOM_WORDS + SPAN_LEN);
+    let none = b.f.ins().icmp_imm(IntCC::Equal, words, 0);
+    b.either(
+        I32,
+        none,
+        |b| b.c32(1),
+        |b| {
+            let at = b.f.ins().ushr_imm(h, 32);
+            let less = b.f.ins().iadd_imm(words, -1);
+            let at = b.f.ins().band(at, less);
+            let base = b.follow(b.tape, BLOOM_WORDS);
+            let at = b.f.ins().ishl_imm(at, 3);
+            let p = b.f.ins().iadd(base, at);
+            let word = b.word_at(I64, p, 0);
+            let m = b.call("bloom_mask", &[h]);
+            let hit = b.f.ins().band(word, m);
+            let all = b.f.ins().icmp(IntCC::Equal, hit, m);
+            let (yes, no) = (b.c32(1), b.c32(0));
+            b.f.ins().select(all, yes, no)
+        },
+    )
 }
 
 #[cfg(test)]

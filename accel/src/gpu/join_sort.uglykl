@@ -1,17 +1,9 @@
-// The radix sort, its runs, the gather and the column statistics (decision 0095 §4, 0209 §6), in UKL (decision 0440
-// step C), for a column word `COL_T` (16, 32 or 64 bits) read into sort words `KEY_T` (32 or 64): defined in front of
+// The radix sort's keys, its runs, the gather and the column statistics (decision 0095 §4, 0209 §6), in UKL (decision
+// 0440 step C), for a column word `COL_T` (16, 32 or 64 bits) read into sort words `KEY_T` (32 or 64): defined in front of
 // the source by `join.rs` (`sort_source`), with `join_common.h`. One variant per column width.
 //
-// The sort: a stable LSD radix sort of 1,024-row tiles. A tile's digit histogram is counted in threadgroup memory; a
-// row's place is its digit's offset for the tile (the scan of every tile's histogram, digit-major), the rows of its
-// digit in the tile's earlier rounds and rank groups, and its rank among its rank group's earlier threads of the
-// digit (a bounded loop over the group). No atomic decides an order.
-//
-// A rank group is a SIMD group where it has 32 lanes or more, its digits shuffled; below 32 lanes (the CPU's and
-// OpenCL's narrower widths), 32 threads, their digits read from threadgroup memory. So the counts are at most 8 rank
-// groups' of 256 digits whatever the width: a group a lane would need 256 KB.
-#define SORT_RG (UKL_SIMD_WIDTH >= 32u ? (uint32_t)UKL_SIMD_WIDTH : 32u)
-#define SORT_RGS (JOIN_TG / SORT_RG)
+// The sort itself is the UKL library's radix sort (`ukl/radix.h`, decision 0440 step D): these are its keys and rows
+// before it, and its runs and the gather after it.
 
 // Each row's key and its place. p0: the rows.
 DEFINE_KERNEL2(join, sort_init,
@@ -22,83 +14,6 @@ DEFINE_KERNEL2(join, sort_init,
                GID0,     uint32_t, t,    )
 {
   if (t < a.p0) { keys[t] = (KEY_T)col[t]; idx[t] = t; }
-}
-
-// A tile's digit histogram, digit-major across the tiles: hist[d * tiles + tile]. p: the rows, the digit's shift,
-// the tiles.
-DEFINE_KERNEL2(join, sort_hist,
-               ROBUFFER, KEY_T,    keys, "[a.p0]",
-               RWBUFFER, uint32_t, hist, "[256 * a.p2]",
-               ARGS,     JoinP,    a,    ,
-               SHARED,   uint32_t, h,    256,
-               TGID0,    uint32_t, tg,   ,
-               LID0,     uint32_t, t,    )
-{
-  ukl_atomic_store_local(&h[t], 0u);
-  ukl_tg_barrier();
-  for (uint32_t i = 0u; i < 4u; i++) {
-    uint32_t at = tg * 1024u + i * 256u + t;
-    if (at < a.p0) ukl_atomic_add_local(&h[(uint32_t)(keys[at] >> a.p1) & 255u], 1u);
-  }
-  ukl_tg_barrier();
-  hist[t * a.p2 + tg] = ukl_atomic_load_local(&h[t]);
-}
-
-// Each row at its digit's offset for the tile, after the tile's earlier rows of the digit: stable. p: the rows, the
-// digit's shift, the tiles. `counts`: per rank group, its rows of each digit; `digits`, each thread's digit, where a
-// rank group is not a SIMD group.
-DEFINE_KERNEL2(join, sort_scatter,
-               ROBUFFER, KEY_T,    keys,   "[a.p0]",
-               ROBUFFER, uint32_t, idx,    "[a.p0]",
-               ROBUFFER, uint32_t, offs,   "[256 * a.p2]",
-               RWBUFFER, KEY_T,    okeys,  "[a.p0]",
-               RWBUFFER, uint32_t, oidx,   "[a.p0]",
-               ARGS,     JoinP,    a,      ,
-               SHARED,   uint32_t, counts, 2048,
-               SHARED,   uint32_t, digits, 256,
-               SHARED,   uint32_t, before, 256,
-               SHARED,   uint32_t, base,   256,
-               TGID0,    uint32_t, tg,     ,
-               LID0,     uint32_t, t,      )
-{
-  uint32_t tiles = a.p2;
-  uint32_t sg = t / SORT_RG, first = sg * SORT_RG, me = t - first;
-  base[t] = offs[t * tiles + tg];
-  before[t] = 0u;
-  for (uint32_t i = 0u; i < 4u; i++) {
-    uint32_t at = tg * 1024u + i * 256u + t;
-    bool live = at < a.p0;
-    KEY_T key = live ? keys[at] : (KEY_T)0;
-    uint32_t d = live ? ((uint32_t)(key >> a.p1) & 255u) : 256u;
-    uint32_t rank = 0u;
-    bool last = true;
-    // The width is the kernel's constant: every thread takes the same side.
-    bool shuffled = UKL_SIMD_WIDTH >= 32u;
-    if (!shuffled) {
-      digits[t] = d;
-      ukl_tg_barrier();
-    }
-    for (uint32_t j = 0u; j < SORT_RG; j++) {
-      uint32_t dj = shuffled ? ukl_sg_shuffle(d, j __UKL_ARGS) : digits[first + j];
-      if (dj == d && j < me) rank++;
-      if (dj == d && j > me) last = false;
-    }
-    for (uint32_t s = 0u; s < SORT_RGS; s++) counts[s * 256u + t] = 0u;
-    ukl_tg_barrier();
-    if (live && last) counts[sg * 256u + d] = rank + 1u;
-    ukl_tg_barrier();
-    uint32_t acc = 0u;
-    for (uint32_t s = 0u; s < SORT_RGS; s++) { uint32_t c = counts[s * 256u + t]; counts[s * 256u + t] = acc; acc += c; }
-    ukl_tg_barrier();
-    if (live) {
-      uint32_t to = base[d] + before[d] + counts[sg * 256u + d] + rank;
-      okeys[to] = key;
-      oidx[to] = idx[at];
-    }
-    ukl_tg_barrier();
-    before[t] += acc;
-    ukl_tg_barrier();
-  }
 }
 
 // Whether each sorted place starts a run. p0: the rows.
@@ -212,4 +127,17 @@ DEFINE_KERNEL2(join, col_top,
   if (t < n) { uint32_t r = perm[n - 1u - t]; len = lens[r]; key = (uint64_t)rkeys[r]; }
   out[3u + t] = key;
   out[3u + k + t] = len;
+}
+
+// A sort's screen (decision 0506, `join::Keyed::screen`): a thread a run, its key (the sort word plus `a.b0`) added
+// to the screen at byte 0 of `f`. p0: the rows (a bound on the runs).
+DEFINE_KERNEL2(join, screen_bloom,
+               ROBUFFER, KEY_T,    rkeys, "[a.p0]",
+               ROBUFFER, uint32_t, nruns, "[1]",
+               RWBUFFER, uint8_t,  f,     "[the screen]",
+               ARGS,     JoinP,    a,     ,
+               GID0,     uint32_t, r,     )
+{
+  if (r >= a.p0 || r >= nruns[0]) return;
+  screen_add(f, 0u, (uint64_t)rkeys[r] + (uint64_t)a.b0);
 }

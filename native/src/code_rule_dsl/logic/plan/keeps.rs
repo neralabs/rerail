@@ -805,8 +805,16 @@ fn factorizable(f: Fields<'_>, base: &Placed, ids_of: &BTreeMap<&str, Vec<usize>
 /// head variable, with each comparison and negation in the part whose variables it reads; the key's name, and each
 /// part's literals by place. `None` where no variable splits it so, or it holds anything but atoms and comparisons.
 pub(in crate::code_rule_dsl) fn factors_of(v: &Version, r: super::super::program_image::RuleRef<'_>) -> Option<(String, Vec<Vec<usize>>)> {
+    factors_without(v, r, None)
+}
+
+/// `factors_of` over rule `r`'s body without its literal `skip` (a request's guard, decision 0506): the parts' literals
+/// by their places in the whole body.
+pub(in crate::code_rule_dsl) fn factors_without(v: &Version, r: super::super::program_image::RuleRef<'_>, skip: Option<usize>) -> Option<(String, Vec<Vec<usize>>)> {
     use super::super::program_image::Lit;
-    let lits: Vec<_> = r.body().collect();
+    let all: Vec<_> = r.body().collect();
+    let at: Vec<usize> = (0..all.len()).filter(|&i| Some(i) != skip).collect();
+    let lits: Vec<_> = at.iter().map(|&i| all[i]).collect();
     if !lits.iter().all(|l| matches!(l.view(), Lit::Atom(_) | Lit::Cmp { .. })) {
         return None;
     }
@@ -819,7 +827,7 @@ pub(in crate::code_rule_dsl) fn factors_of(v: &Version, r: super::super::program
     let vars: Vec<super::body::VarSet> = lits.iter().map(|&l| super::body::lit_vars(l)).collect();
     let numbered = Numbered::of(head.iter().map(name), vars.iter().map(|vs| vs.iter().map(name)));
     let (key, parts) = factor_parts(&numbered, &positive)?;
-    Some((numbered.names[key].to_owned(), parts))
+    Some((numbered.names[key].to_owned(), parts.into_iter().map(|p| p.into_iter().map(|i| at[i]).collect()).collect()))
 }
 
 /// A body's variables for `factor_parts`, numbered in the order of their names (so a key tried in number order is

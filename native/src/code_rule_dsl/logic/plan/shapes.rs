@@ -59,6 +59,21 @@ pub fn run_broken() -> std::sync::Arc<Broken> {
     crate::code_rule_dsl::logic::run::local::<Broken>()
 }
 
+/// Notes `rel`'s fact `fact` broken in the run (`Broken`), and the first time names it, `text`: in the profile, and on
+/// stderr in a strict run. Whether it was the first. A probe's counts (`Model::layout_broken`) and a key's second row
+/// where the rows are written (`setfix::Rel::set_key`) both break a fact here.
+pub fn report_broken(rel: &str, fact: String, text: impl FnOnce() -> String) -> bool {
+    if !run_broken().note(rel, fact) {
+        return false;
+    }
+    let text = text();
+    if crate::code_rule_dsl::logic::profile::strict() {
+        eprintln!("rerail: a layout fact broken (decision 0361 step 6): {text}");
+    }
+    crate::code_rule_dsl::logic::profile::decision("broken layout facts (decision 0361 step 6)", || text);
+    true
+}
+
 /// The rows a probe of a fan-out's columns returns, as priced; `None` for `many` (statistics price it).
 fn probe_rows(fan: Fan) -> Option<f64> {
     match fan {

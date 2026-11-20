@@ -154,7 +154,7 @@ impl rerail_accel::kernel::Program for MatcherWave {
 
     fn run(&self, lane: rerail_accel::Lane) -> Result<rerail_accel::kernel::ProgramOutput, String> {
         use crate::code_rule_dsl::transducer::packed::MatcherBackend;
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         if lane == rerail_accel::Lane::Gpu {
             // A Metal run that fails stops the run (decision 0382 §6): no CPU wave in its place. What does not fit is
             // split, and work past its budget replanned, inside the run (0334).
@@ -216,7 +216,7 @@ fn matched(
             let first = docs.first().map_or(0, of);
             if docs.iter().all(|d| of(d) == first) { first } else { 0 }
         };
-        let gpu = cfg!(target_os = "macos") && metal && wave.metal_ready(format());
+        let gpu = cfg!(any(target_os = "macos", target_os = "linux")) && metal && wave.metal_ready(format());
         let program = MatcherWave { wave: Arc::clone(wave), tapes: docs, active, gpu };
         let kernel = rerail_accel::Kernel::Program(rerail_accel::kernel::ProgramKernel(Arc::new(program)));
         let ex = crate::code_rule_dsl::logic::lanes::executor_for(metal);

@@ -70,6 +70,8 @@ pub struct Machine {
 
 impl Machine {
     pub fn new() -> std::sync::Arc<Machine> {
+        // Before any of its pools makes a job: every pool's jobs carry their makers' runs.
+        install_carrier();
         std::sync::Arc::default()
     }
     /// Its value of type `T`, made the first time it is asked for.
@@ -305,13 +307,51 @@ impl Cores {
     }
 }
 
-/// A pool of [`threads`] threads; with `this_thread`, the calling thread its thread 0.
+/// This thread's context.
+fn context_here() -> Context {
+    CONTEXT.try_with(|c| c.borrow().clone()).unwrap_or_default()
+}
+
+/// What a job made on this thread carries to the thread that runs it (rayon-core's patch, `set_job_carrier`): the
+/// run under way and its context (`job_run`). A loop's items split by rayon's `join`, and a half another thread steals
+/// runs in its maker's run, whichever runs share the pool (decision 0442, Q386). Nothing where the thread holds no
+/// run: a thread the engine gave none (in a test build, a test's own thread carries the tests' object).
+fn carry() -> Option<rayon_core::Carried> {
+    if RUN.try_with(|r| r.borrow().is_none()).unwrap_or(true) {
+        #[cfg(feature = "test-hooks")]
+        if on_a_tests_thread() {
+            return Some(Box::new(job_run()));
+        }
+        return None;
+    }
+    Some(Box::new(job_run()))
+}
+
+/// Enters what a job carried (`carry`) on the thread that runs it, until the guard drops; nothing where the thread
+/// holds that run and context already.
+fn enter_carried(carried: rayon_core::Carried) -> Box<dyn std::any::Any> {
+    let job = *carried.downcast::<Option<std::sync::Arc<dyn RunOwn>>>().expect("rerail: the engine's job carrier carries a job's run");
+    if holds(&job) {
+        return Box::new(());
+    }
+    Box::new(enter(job))
+}
+
+/// Installs the engine's job carrier (`carry`) before the first pool is made: code registered at load, set once for
+/// the process (later calls are ignored).
+fn install_carrier() {
+    rayon_core::set_job_carrier(carry, enter_carried);
+}
+
+/// A pool of [`threads`] threads; with `this_thread`, the calling thread its thread 0. Its jobs carry their makers'
+/// runs (`install_carrier`).
 fn make_pool(this_thread: bool) -> rayon::ThreadPool {
+    install_carrier();
     let b = rayon::ThreadPoolBuilder::new()
         .num_threads(threads())
         .thread_name(|i| format!("rerail-cpu {i}"))
         .stack_size(POOL_STACK)
-        .start_handler(|_| engine_thread());
+        .start_handler(move |_| engine_thread());
     if this_thread { b.use_current_thread() } else { b }.build().expect("rerail: the machine's job pool")
 }
 
@@ -339,6 +379,7 @@ fn on_a_pool() -> bool {
 /// split over the machine's pool. On one of a pool's threads it runs here; else on one of the cores', in this
 /// caller's run and context (`job_run`), while this thread waits.
 pub fn on_cores<R: Send>(f: impl FnOnce() -> R + Send) -> R {
+    // A loop's halves another thread steals carry this caller's run (`carry`), on a pool's thread or on the cores.
     if on_a_pool() {
         return f();
     }
@@ -493,7 +534,7 @@ pub fn within(shared: std::sync::Arc<Shared>) -> impl Drop {
 /// does (decision 0442), whether or not the caller holds a run.
 pub fn job_run() -> Option<std::sync::Arc<dyn RunOwn>> {
     let run = run_own().unwrap_or_else(|| std::sync::Arc::new(Bare(RunValues::default(), shared_here())));
-    let context = CONTEXT.try_with(|c| c.borrow().clone()).unwrap_or_default();
+    let context = context_here();
     Some(std::sync::Arc::new(InContext(run, context)))
 }
 
@@ -572,13 +613,13 @@ impl Context {
 
 /// The value of type `T` the run's context binds here (the nearest `bind`), else `T`'s default.
 pub fn bound<T: Clone + Default + Send + Sync + 'static>() -> T {
-    CONTEXT.try_with(|c| c.borrow().find::<T>().cloned()).ok().flatten().unwrap_or_default()
+    context_here().find::<T>().cloned().unwrap_or_default()
 }
 
 /// `f` of the value of type `T` the run's context binds here, else of `T`'s default. `f` may bind and read the
 /// context: it holds the chain, not the thread's cell.
 pub fn with_bound<T: Default + Send + Sync + 'static, R>(f: impl FnOnce(&T) -> R) -> R {
-    let context = CONTEXT.try_with(|c| c.borrow().clone()).unwrap_or_default();
+    let context = context_here();
     match context.find::<T>() {
         Some(t) => f(t),
         None => f(&T::default()),
@@ -1006,5 +1047,91 @@ mod tests {
         cores_spawn(move || tx.send(on_pool_of(&m)).unwrap());
         assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(10)), Ok(true));
         assert_eq!(cores_threads(), threads());
+    }
+}
+
+#[cfg(test)]
+mod stolen_halves {
+    use super::*;
+
+    /// Q386: two runs' loops in one pool at once (a corpus run's phase 0 beside its main program). Every item, the
+    /// halves other threads steal included, reads its own run's value and its own caller's binding: each job carries
+    /// its maker's run (rayon-core's patch, `carry`).
+    #[test]
+    fn two_runs_loops_in_one_pool_at_once_each_read_their_own_run() {
+        use rayon::prelude::*;
+        #[derive(Default)]
+        struct Mark;
+        #[derive(Clone, Default)]
+        struct Tag(u32);
+        let start = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let callers: Vec<_> = [1u32, 2]
+            .into_iter()
+            .map(|tag| {
+                let start = std::sync::Arc::clone(&start);
+                std::thread::spawn(move || {
+                    let _run = test_run();
+                    let _tag = bind(Tag(tag));
+                    let mark = local::<Mark>();
+                    start.wait();
+                    let mut wrong = 0usize;
+                    let mut threads = std::collections::HashSet::new();
+                    // Several loops, so the two callers' loops are in the pool together.
+                    for _ in 0..8 {
+                        let seen: Vec<(bool, u32, std::thread::ThreadId)> = on_cores(|| {
+                            (0..4096)
+                                .into_par_iter()
+                                .map(|_| {
+                                    std::hint::black_box((0..200).sum::<u64>());
+                                    (std::sync::Arc::ptr_eq(&local::<Mark>(), &mark), bound::<Tag>().0, std::thread::current().id())
+                                })
+                                .collect()
+                        });
+                        wrong += seen.iter().filter(|&&(same, t, _)| !same || t != tag).count();
+                        threads.extend(seen.iter().map(|s| s.2));
+                    }
+                    (wrong, threads.len())
+                })
+            })
+            .collect();
+        for caller in callers {
+            let (wrong, threads) = caller.join().expect("a caller's thread");
+            assert_eq!(wrong, 0, "items read another run's value or lost their caller's binding");
+            assert!(threads > 1 || super::threads() == 1, "a caller's loops ran on one thread: nothing was stolen");
+        }
+    }
+
+    /// A loop's items split over the pool, the halves other threads steal included, each read the caller's run and
+    /// its bindings: `local` the run's one value, `bound` the caller's binding. Then the same where the loop starts
+    /// on one of the pool's own threads holding a run (a program's main thread is its machine's thread 0).
+    #[test]
+    fn a_loops_stolen_halves_are_in_its_run() {
+        use rayon::prelude::*;
+        #[derive(Default)]
+        struct Mark;
+        #[derive(Clone, Default)]
+        struct Tag(u32);
+        let _run = test_run();
+        let _tag = bind(Tag(7));
+        let mark = local::<Mark>();
+        let seen: Vec<(bool, u32, std::thread::ThreadId)> = on_cores(|| {
+            (0..4096)
+                .into_par_iter()
+                .map(|_| {
+                    std::hint::black_box((0..200).sum::<u64>());
+                    (std::sync::Arc::ptr_eq(&local::<Mark>(), &mark), bound::<Tag>().0, std::thread::current().id())
+                })
+                .collect()
+        });
+        assert!(seen.iter().all(|&(same, tag, _)| same && tag == 7), "an item read another run's value or lost the binding");
+        let threads: std::collections::HashSet<_> = seen.iter().map(|s| s.2).collect();
+        assert!(threads.len() > 1 || super::threads() == 1, "the loop ran on one thread: nothing was stolen");
+        let job = job_run();
+        let mark = std::sync::Arc::clone(&mark);
+        let all = machine::<Cores>().pool().install(move || {
+            let _in = enter(job);
+            on_cores(|| (0..4096).into_par_iter().map(|_| std::sync::Arc::ptr_eq(&local::<Mark>(), &mark)).collect::<Vec<_>>())
+        });
+        assert!(all.iter().all(|&same| same), "a loop started on a pool thread lost its run");
     }
 }

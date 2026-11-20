@@ -18,7 +18,9 @@
       reaches a SIMD-group operation takes it (`__UKL_PARAMS`) and passes it on (`__UKL_ARGS`). OpenCL 1.2's only
       wait is the workgroup's barrier, so under emulation every SIMD-group operation must be reached by every
       live thread of the threadgroup (the CPU backend checks this rule: `RERAIL_CPU_OPENCL_RULE=1`). At width 1
-      the group is the thread: no memory, no barrier.
+      the group is the thread: no memory, no barrier. A device whose sub-groups are 32 lanes (the host defines
+      `UKL_OPENCL_SUBGROUPS`, and builds as OpenCL C 3.0) has them natively: each kernel requires 32 lanes
+      (`intel_reqd_sub_group_size`), and the operations are its `sub_group_*` functions (`ukl/backend.h`).
     - reflection: OpenCL cannot read a program's constants back, so each kernel has a one-thread kernel beside it
       (`Name__ukl_info`) that writes its rows' layout and their text, and each reflected structure one that writes
       its fields' layout and names (`Type__ukl_layout`). The host runs them once per program.
@@ -43,15 +45,32 @@ typedef uchar uint8_t;
 typedef char int8_t;
 typedef ulong uint64_t;
 typedef long int64_t;
+// A word the atomics take: a plain integer, as OpenCL 1.2's atomic functions (`atomic_or`, ...) do. OpenCL C 2.0
+// and later have types of these names (C11's `_Atomic`, which 1.2's functions do not take, and which a private
+// variable cannot be), so there the names are the integers' by macro; 1.2's functions remain in 3.0. The source is
+// preprocessed on the host, before the driver defines `__OPENCL_C_VERSION__`: the host builds as 3.0 exactly where it
+// defines `UKL_OPENCL_SUBGROUPS` (`compute_kernel_opencl`).
+#if defined(UKL_OPENCL_SUBGROUPS)
+#define atomic_uint uint
+#define atomic_int int
+#else
 typedef uint atomic_uint;
 typedef int atomic_int;
+#endif
 
 // The thread's index in its threadgroup, the threads in order along x, then y, then z; and its lane.
 static inline uint __ukl_cl_lid(void)
 {
     return (uint)(get_local_id(0) + get_local_size(0) * (get_local_id(1) + get_local_size(1) * get_local_id(2)));
 }
+#if defined(UKL_OPENCL_SUBGROUPS)
+#define __UKL_CL_LANE ((uint)get_sub_group_local_id())
+// Every kernel's sub-groups are its SIMD groups: 32 lanes, the device's required size.
+#define __UKL_SG_ATTR __attribute__((intel_reqd_sub_group_size(32)))
+#else
 #define __UKL_CL_LANE (__ukl_cl_lid() & (UKL_SIMD_WIDTH - 1u))
+#define __UKL_SG_ATTR
+#endif
 
 #if UKL_SIMD_WIDTH > 1 && !defined(UKL_OPENCL_SUBGROUPS)
 #define UKL_OPENCL_EMULATED_SG 1
@@ -310,13 +329,20 @@ static inline uint __ukl_cl_text(__global ulong * out, uint at, __constant char 
     { Type __ukl_e; __ukl_out[__ukl_k++] = sizeof(Type); __ukl_out[__ukl_k++] = __alignof__(Type); \
       __ukl_out[__ukl_k++] = __UKL_KIND(__ukl_e); }
 
+// A scalar's kind from arithmetic on its type: NVIDIA's OpenCL compiler accepts `_Generic` but always takes its
+// `default` (probed on a GB10's, 580.95), so an `ARGS` field, which is a scalar (`rows::struct_type`), is not
+// measured with it: bool where 2 converts to 1, floating where 1 / 2 is not 0, signed where -1 is below 0.
+#define __UKL_SCALAR_KIND(e) ((__typeof__(e))2 == (__typeof__(e))1 ? 'b' \
+    : (__typeof__(e))1 / (__typeof__(e))2 != (__typeof__(e))0 ? (sizeof(e) == 8 ? 'd' : 'f') \
+    : (__typeof__(e))-1 < (__typeof__(e))0 ? 'i' : 'u')
+
 // A structure passed by value (an `ARGS` row), reflected for the host: a one-thread kernel writes its size and
 // alignment, each field's offset, size and kind (measured on an instance), then the fields' names as text.
 // One field's three numbers, an expression (the fields are joined by commas).
 #define __UKL_FIELD_LAYOUT(Type, Field) \
     (__ukl_out[__ukl_k++] = (ulong)((char *)&__ukl_v.Field - (char *)&__ukl_v), \
      __ukl_out[__ukl_k++] = sizeof(__ukl_v.Field), \
-     __ukl_out[__ukl_k++] = __UKL_KIND(__ukl_v.Field))
+     __ukl_out[__ukl_k++] = __UKL_SCALAR_KIND(__ukl_v.Field))
 #define UKL_REFLECT_STRUCT(Type, ...) \
     __kernel void Type ## __ukl_layout(__global ulong * __ukl_out) \
     { \
@@ -342,7 +368,7 @@ static inline uint __ukl_cl_text(__global ulong * out, uint at, __constant char 
         __ukl_cl_text(__ukl_out, __ukl_k, __ukl_text); \
     } \
     static void Name ## _inner( __UKL_FOREACH_QUAD(GEN_INNER_PARAMETER2, __VA_ARGS__) __UKL_PARAMS ); \
-    __kernel void Name ( __UKL_FOREACH_QUAD(GEN_OUTER_PARAMETER2, __VA_ARGS__, GROUPS, uint, __ukl_groups, ) ) \
+    __kernel __UKL_SG_ATTR void Name ( __UKL_FOREACH_QUAD(GEN_OUTER_PARAMETER2, __VA_ARGS__, GROUPS, uint, __ukl_groups, ) ) \
     { \
         if (__ukl_groups && (get_group_id(0) >= __ukl_groups[__ukl_groups_at] || get_group_id(1) >= __ukl_groups[__ukl_groups_at + 1u] \
                              || get_group_id(2) >= __ukl_groups[__ukl_groups_at + 2u])) \

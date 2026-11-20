@@ -111,8 +111,9 @@ mod tests {
         if interp != image {
             return Err(format!("the interpreter's tape differs ({} / {})", interp.is_some(), image.is_some()));
         }
-        #[cfg(target_os = "macos")]
-        {
+        // The device runs it wherever there is one: always on macOS; on Linux where a GPU is (CI's has none).
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        if cfg!(target_os = "macos") || rerail_metal::lane::device().is_ok() {
             let m = c.metal_images(&[src]).map_err(|e| format!("the device runs it: {e:?}"))?;
             if m[0] != image {
                 return Err(format!("Metal's tape differs ({} / {})", m[0].is_some(), image.is_some()));

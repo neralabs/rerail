@@ -171,9 +171,9 @@ impl Count {
             let (used, free) = crate::blocks::host_held();
             used.saturating_sub(free)
         };
-        #[cfg(all(feature = "gpu", target_os = "macos"))]
+        #[cfg(gpu_lane)]
         let ((leased, idle), ledger) = (crate::gpu::shared::held_bytes(), crate::gpu::shared::ledger_bytes());
-        #[cfg(not(all(feature = "gpu", target_os = "macos")))]
+        #[cfg(not(gpu_lane))]
         let ((leased, idle), ledger) = ((0, 0), 0);
         let w = Written { heap, host_blocks, leased, idle, ledger };
         self.most.fetch_max(w.total(), Ordering::Relaxed);

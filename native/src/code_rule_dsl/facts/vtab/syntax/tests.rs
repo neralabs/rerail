@@ -1788,7 +1788,7 @@ fn an_axis_counts_its_rows_without_its_solve() {
 /// every tape node, its bit and ranks, the selects, the ids' low bits of nodes and tokens and back, and the order keys
 /// and back. In all three formats, whole and narrowed, a document of more nodes than a granule's slot holds. The
 /// kernel is UKL, on the process's device (decision 0440 step C).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 fn the_kernels_id_reads_are_the_hosts() {
     use crate::code_rule_dsl::lines::{LineTable, Terminators};
@@ -1905,7 +1905,7 @@ DEFINE_KERNEL2(syntax_tests, ids_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, I
 /// tape where it is read in place, are the host's rows (`Viewed::value_of`): every numbered node's document, id, kind,
 /// start and end; each child's parent, id and place; each fielded node's parent, field and id; each node's tape node;
 /// each node's line, by its lines where they lie (step 4d). In all three formats, whole and narrowed.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 fn the_view_reads_are_the_hosts_rows() {
     use crate::code_rule_dsl::lines::{LineTable, Terminators};

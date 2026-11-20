@@ -29,7 +29,9 @@
 // Facts about documents. A document is one parsed source file; `d` is its integer id.
 // doc(d, "src/app/main.py", "app.main"): the module name is derived from the path; "" when the file has none.
 .decl doc(d: number, path: symbol, module: symbol)  // one row per document; module is the dotted module name, or ""
-.layout doc key(d) key(path) size(per document) values(module, many)
+// Keyed by d alone: a guest document's path is its host file's (decision 0055), so a path is no key (0361 step 6's
+// check at the writes found it broken on corpus0, 2026-11-20).
+.layout doc key(d) size(per document) values(module, many)
 // pkg(d, "app") for src/app/main.py: the dotted Python package holding the document.
 .decl pkg(d: number, p: symbol)                          // the package a document belongs to (Python)
 // unpackaged(d): no regular package holds Python document d: it is a file of the root, or its folder has no

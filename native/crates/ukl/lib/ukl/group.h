@@ -37,6 +37,27 @@ UKL_INLINE uint32_t ukl_tg_sum(uint32_t v, uint32_t lid, uint32_t lsz, UKL_LOCAL
     return t;
 }
 
+// The group's bitwise OR (`and_`: AND) of `v`, in every thread: a butterfly in each SIMD group, then the SIMD
+// groups' partials.
+UKL_INLINE uint32_t ukl_tg_bits(uint32_t v, bool and_, uint32_t lid, uint32_t lsz, UKL_LOCAL uint32_t* scratch __UKL_PARAMS)
+{
+    uint32_t lane = lid % UKL_SIMD_WIDTH, sg = lid / UKL_SIMD_WIDTH, groups = lsz / UKL_SIMD_WIDTH;
+    for (uint32_t m = 1u; m < UKL_SIMD_WIDTH; m <<= 1u) {
+        uint32_t w = ukl_sg_shuffle_xor(v, m __UKL_ARGS);
+        v = and_ ? (v & w) : (v | w);
+    }
+    if (lane == 0u)
+        scratch[sg] = v;
+    ukl_tg_barrier();
+    uint32_t acc = and_ ? ~0u : 0u;
+    for (uint32_t i = 0u; i < groups; i++)
+        acc = and_ ? (acc & scratch[i]) : (acc | scratch[i]);
+    ukl_tg_barrier();
+    return acc;
+}
+UKL_INLINE uint32_t ukl_tg_or(uint32_t v, uint32_t lid, uint32_t lsz, UKL_LOCAL uint32_t* scratch __UKL_PARAMS) { return ukl_tg_bits(v, false, lid, lsz, scratch __UKL_ARGS); }
+UKL_INLINE uint32_t ukl_tg_and(uint32_t v, uint32_t lid, uint32_t lsz, UKL_LOCAL uint32_t* scratch __UKL_PARAMS) { return ukl_tg_bits(v, true, lid, lsz, scratch __UKL_ARGS); }
+
 // The exclusive scan of `v` over the group's threads in order, and the group's total.
 UKL_INLINE UklScan ukl_tg_exclusive_sum(uint32_t v, uint32_t lid, uint32_t lsz, UKL_LOCAL uint32_t* scratch __UKL_PARAMS)
 {

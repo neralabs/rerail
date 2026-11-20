@@ -444,6 +444,12 @@ pub struct Stats {
     /// (rel, col) → its heavy values (decision 0209 §4), made for the columns a line raised (`Run::heavy_for`).
     /// Shared, not copied, by a component's model.
     pub heavy: ColMap<std::sync::Arc<table::HeavyCol>>,
+    /// (derived rel, col) → its keys (decision 0506: the native relation's sketch's few values, or its filter), read
+    /// where the engine keeps them: the keys two columns share price a probe's hits (`atom_rows`).
+    pub keys: ColMap<super::bloom::Keys>,
+    /// (derived rel, col) → its counts for join sizes (decision 0506: the native relation's sketch's counters,
+    /// `join_size`): a probe by one atom's column is priced by the rows the two columns join (`atom_rows`).
+    pub counts: ColMap<std::sync::Arc<super::join_size::JoinCounts>>,
     /// rel → the engine's relation as its heavy values were made or last merged over (`InRel::mark`): its change
     /// since is merged into them, not counted again (O172).
     pub heavy_mark: table::RelMap<std::sync::Arc<super::native::component::RelMark>>,
@@ -585,6 +591,8 @@ impl Stats {
             fan: Default::default(),
             dfreq: Default::default(),
             heavy: Default::default(),
+            keys: Default::default(),
+            counts: Default::default(),
             heavy_mark: Default::default(),
             obs: HashMap::new(),
             solving: BTreeSet::new(),
@@ -764,6 +772,8 @@ impl Stats {
             fan: Default::default(),
             dfreq: Default::default(),
             heavy: Default::default(),
+            keys: Default::default(),
+            counts: Default::default(),
             heavy_mark: Default::default(),
             obs: HashMap::new(),
             solving: BTreeSet::new(),
@@ -942,6 +952,8 @@ impl Model {
             fan: Default::default(),
             dfreq: Default::default(),
             heavy: Default::default(),
+            keys: Default::default(),
+            counts: Default::default(),
             heavy_mark: Default::default(),
             obs: rules.iter().filter_map(|r| Some((*r, st.obs.get(r)?.clone()))).collect(),
             solving: BTreeSet::new(),
@@ -972,6 +984,8 @@ impl Model {
             stats.fan.share_from(&st.fan, r, w);
             stats.dfreq.share_from(&st.dfreq, r, w);
             stats.heavy.share_from(&st.heavy, r, w);
+            stats.keys.share_from(&st.keys, r, w);
+            stats.counts.share_from(&st.counts, r, w);
         }
         stats.solve(BTreeSet::new());
         let analysis = std::sync::OnceLock::new();
@@ -1007,6 +1021,8 @@ impl Model {
             self.ndv.take_from(&mut fork.ndv, r, w);
             self.stats.fan.take_from(&mut fork.stats.fan, r, w);
             self.stats.dfreq.take_from(&mut fork.stats.dfreq, r, w);
+            self.stats.keys.take_from(&mut fork.stats.keys, r, w);
+            self.stats.counts.take_from(&mut fork.stats.counts, r, w);
             if fork.stats.prior_later.contains(r) { self.stats.prior_later.insert(r.clone()); } else { self.stats.prior_later.remove(r); }
         }
         for rule in rules {
@@ -3304,13 +3320,7 @@ impl Model {
                 let cols: Vec<usize> = b.args(s.at).iter().enumerate().filter(|(_, t)| t.var().is_some_and(|v| bound.contains(v)) || b.constant(**t).is_some()).map(|(c, _)| c).collect();
                 let (into, made) = steps[k];
                 if let Some(fact) = self.stats.shapes.broken_at(rel, &cols, into, made) {
-                    if shapes::run_broken().note(rel, fact.clone()) {
-                        let text = format!("{rel}: {fact} broken: {into} probes made {made} rows, in {}; planned from statistics for the rest of the run", b.head_text());
-                        if super::profile::strict() {
-                            eprintln!("rerail: a layout fact broken (decision 0361 step 6): {text}");
-                        }
-                        super::profile::decision("broken layout facts (decision 0361 step 6)", || text);
-                    }
+                    shapes::report_broken(rel, fact.clone(), || format!("{rel}: {fact} broken: {into} probes made {made} rows, in {}; planned from statistics for the rest of the run", b.head_text()));
                     broke = true;
                 }
             }
@@ -3362,6 +3372,30 @@ impl Model {
             *expected = Some((order.to_vec(), self.order_step_rows(pf, b, first, order).unwrap_or_default()));
         }
         expected.as_ref().and_then(|(_, e)| joins::step_miss(e, steps, SEARCH_WORK))
+    }
+
+    /// A mispredicted line, step by step (`RERAIL_JOINS_LOG`, decision 0506's measure of what the counters do not
+    /// price): each step's literal, the rule it was priced by, its rows priced, and the bindings in and rows out it
+    /// made so far (`steps`).
+    fn describe_miss(&self, pf: Fields<'_>, b: &Body<'_>, first: Option<usize>, order: &[Step], steps: &[(u64, u64)]) -> String {
+        let explain = explaining(true);
+        let got = self.explain_order(pf, b, first, order);
+        drop(explain);
+        let Some(x) = got else { return "no explain".into() };
+        x.steps
+            .iter()
+            .enumerate()
+            .map(|(k, st)| {
+                let (i, o) = steps.get(k).copied().unwrap_or_default();
+                format!("[{k}] {} by {} ({}): priced {:.1} rows, made {o} of {i} in", st.literal, st.access, if st.basis.is_empty() { "-" } else { &st.basis }, st.rows)
+            })
+            .chain((0..b.len()).filter_map(|i| b.plain_atom(i).map(|a| b.rel(a))).collect::<std::collections::BTreeSet<_>>().into_iter().map(|r| {
+                let w = b.args((0..b.len()).find(|&i| b.plain_atom(i).is_some_and(|a| b.rel(a) == r)).unwrap()).len();
+                let ndv: Vec<String> = (0..w).map(|c| self.ndv.at(r, c).map_or("-".into(), |n| format!("{n:.0}"))).collect();
+                format!("stats {r}: {:.0} rows (card {:?}), ndv [{}]{}{}", self.card(r), self.stats.card.get(r), ndv.join(", "), if self.stats.solving.contains(r) { ", solving" } else { "" }, if self.stats.counts.at(r, 0).is_some() { ", counted" } else { "" })
+            }))
+            .collect::<Vec<_>>()
+            .join(" | ")
     }
 
     fn plan_for_rows_in(&mut self, pf: Fields<'_>, b: &Body<'_>, at: usize, rows: f64, cx: &mut joins::SearchCx) -> Option<Vec<Step>> {
@@ -3712,6 +3746,9 @@ impl Model {
             let a = b.atom(i).expect("an atom");
             let (rel, args) = (b.rel(a), b.args(i));
             basis_hit.set(1.0);
+            // The columns whose postings count the bindings that miss (heavy values, a join's size): the share of
+            // the bindings that hit is not taken of them again.
+            let misses_counted = std::cell::Cell::new(0u64);
             // An atom that shares no bound variable, read after bindings exist, is a cross product: its fanout
             // observed in one wave or chunk is the relation's size then (none before a guest round makes the rows),
             // not a property of the join, so it is priced from the relation's own estimate (below). What was
@@ -3875,29 +3912,43 @@ impl Model {
                     // values, the binding is drawn value by value through those atoms, so a value common in all is
                     // drawn as often as it is. A fanout (sq / rows) is that for one atom placed; a three-way
                     // self-join on a skewed key wants the third moment (0.51 of its size from sq on the fixture).
-                    if let Some(here) = self.heavy_of(rel, c) {
-                        let mut by = Vec::new();
-                        let mut all = true;
-                        for (d, vars, _) in &binding_domains {
-                            if *d == i || !vars.is_subset(bound) { continue; }
-                            let dr = b.rel(b.atom(*d).expect("an atom"));
-                            // Its rows reach `v` weighted by their own counts only where no other of its variables
-                            // joins another atom: one reached through another column (`kind($m, return)`, then
-                            // `inf($f, $m)`) draws `v` by that join, a few returns a function whatever its size,
-                            // which only measured pairs see (0203 §3).
-                            let joined_else = b.args(*d).iter().any(|t| matches!(t, TermRef::Var(x) if *x != v
-                                && binding_domains.iter().any(|(e, evars, _)| *e != *d && evars.contains(*x))));
-                            if joined_else { all = false; }
-                            for (dc, t) in b.args(*d).iter().enumerate() {
-                                if matches!(t, TermRef::Var(x) if *x == v) {
-                                    match self.heavy_of(dr, dc) { Some(h) => by.push(h), None => all = false }
-                                }
-                            }
-                        }
-                        if all && !by.is_empty() && let Some(f) = table::heavy_fan(here, &by) {
-                            basis.set("heavy values");
-                            return f.max(0.01);
-                        }
+                    // The placed atoms' columns that hold `v`, the bindings drawn through them; `all`: each draws
+                    // `v` by its own rows. Its rows reach `v` weighted by their own counts only where no other of
+                    // its variables joins another atom: one reached through another column (`kind($m, return)`,
+                    // then `inf($f, $m)`) draws `v` by that join, a few returns a function whatever its size, which
+                    // only measured pairs see (0203 §3).
+                    let mut by_cols: Vec<(&str, usize)> = Vec::new();
+                    let mut all = true;
+                    for (d, vars, _) in &binding_domains {
+                        if *d == i || !vars.is_subset(bound) { continue; }
+                        let dr = b.rel(b.atom(*d).expect("an atom"));
+                        let joined_else = b.args(*d).iter().any(|t| matches!(t, TermRef::Var(x) if *x != v
+                            && binding_domains.iter().any(|(e, evars, _)| *e != *d && evars.contains(*x))));
+                        if joined_else { all = false; }
+                        by_cols.extend(b.args(*d).iter().enumerate().filter(|(_, t)| matches!(t, TermRef::Var(x) if *x == v)).map(|(dc, _)| (dr, dc)));
+                    }
+                    // Each column priced with its kept keys (decision 0506), read where the engine keeps them.
+                    let priced = |r: &str, c: usize| self.heavy_of(r, c).map(|h| table::PricedCol::new(h, self.stats.keys.at(r, c)));
+                    if all && !by_cols.is_empty() && let Some(here) = priced(rel, c)
+                        && let Some(by) = by_cols.iter().map(|&(dr, dc)| priced(dr, dc)).collect::<Option<Vec<_>>>()
+                        && let Some(f) = table::heavy_fan(here, &by)
+                    {
+                        basis.set("heavy values");
+                        misses_counted.set(misses_counted.get() | 1 << c.min(63));
+                        return f.max(0.01);
+                    }
+                    // Decision 0506: drawn through one atom's column, the rows the two columns join (their sketches'
+                    // counters, `join_size`) over that column's rows are this column's rows a binding, the bindings
+                    // that miss counted in. Only where the counters tell the join's size.
+                    if all && let [(dr, dc)] = by_cols[..]
+                        && let (Some(mine), Some(theirs)) = (self.stats.counts.at(rel, c), self.stats.counts.at(dr, dc))
+                        && theirs.rows >= 1.0
+                        && let joined = mine.join(theirs)
+                        && joined.tells()
+                    {
+                        basis.set("join sketch");
+                        misses_counted.set(misses_counted.get() | 1 << c.min(63));
+                        return (joined.rows / theirs.rows).max(0.01);
                     }
                 }
                 t.col(c, b, i, self).fan
@@ -3942,15 +3993,26 @@ impl Model {
                 let mut hit = 1.0f64;
                 for &c in &cols {
                     let TermRef::Var(v) = args[c] else { continue };
+                    if c == first && misses_counted.get() >> c.min(63) & 1 != 0 { continue }
                     let Some(here) = t.col(c, b, i, self).ndv else { continue };
-                    let from = binding_domains
+                    let (from, at) = binding_domains
                         .iter()
                         .filter_map(|(d, vars, domains)| {
                             if *d == i || !vars.is_subset(bound) { return None; }
-                            b.args(*d).iter().position(|t| matches!(t, TermRef::Var(x) if *x == v)).and_then(|c2| domains[c2])
+                            b.args(*d).iter().position(|t| matches!(t, TermRef::Var(x) if *x == v)).and_then(|c2| Some((domains[c2]?, (*d, c2))))
                         })
-                        .fold(f64::INFINITY, f64::min);
-                    if from.is_finite() && from > here.max(1.0) {
+                        .fold((f64::INFINITY, None), |m, (n, at)| if n < m.0 { (n, Some(at)) } else { m });
+                    // Where both columns' keys are kept (decision 0506), the bindings that hit are the share of the
+                    // domain's keys this column holds too, whichever has more: two columns of disjoint values
+                    // (a node's ids against another kind's) hit nothing, which distinct counts cannot tell.
+                    let kept = at.and_then(|(d, c2)| {
+                        let (mine, theirs) = (self.stats.keys.at(rel, c)?, self.stats.keys.at(b.rel(b.atom(d)?), c2)?);
+                        let of = theirs.distinct();
+                        (of >= 1.0).then(|| Some((mine.shared(theirs)? / of).clamp(0.5 / of, 1.0))).flatten()
+                    });
+                    if let Some(share) = kept {
+                        hit = hit.min(share);
+                    } else if from.is_finite() && from > here.max(1.0) {
                         hit = hit.min(here.max(1.0) / from);
                     }
                 }
@@ -5512,7 +5574,7 @@ impl Fx<'_> {
         if self.direct {
             return Ok(super::native::component::live(self.db, name)?
                 .into_iter()
-                .map(|l| LiveRel { n: l.n, delta: l.delta, ndv: l.ndv, sq: l.sq, freq: l.freq.into_iter().map(|(c, v)| (c, v.into_iter().map(|(v, m)| (Constant::Int(v), m)).collect())).collect() })
+                .map(|l| LiveRel::of_native(l))
                 .collect());
         }
         let text: String = self.db.query_row("SELECT set_fixpoint_stats(?1)", [name], |r| r.get(0))?;
@@ -5531,7 +5593,7 @@ impl Fx<'_> {
         }
         Ok(super::native::component::live_changed(self.db, name, seen)?
             .into_iter()
-            .map(|l| l.map(|l| LiveRel { n: l.n, delta: l.delta, ndv: l.ndv, sq: l.sq, freq: l.freq.into_iter().map(|(c, v)| (c, v.into_iter().map(|(v, m)| (Constant::Int(v), m)).collect())).collect() }))
+            .map(|l| l.map(|l| LiveRel::of_native(l)))
             .collect())
     }
     fn reprobe(&self, name: &str, i: usize, new: &Reprobe) -> Result<()> {
@@ -6138,6 +6200,8 @@ impl<'a> Run<'a, '_> {
                 ndv: stats.iter().map(|s| s.2).collect(),
                 sq: stats.iter().map(|s| s.3).collect(),
                 freq: Vec::new(),
+                keys: Vec::new(),
+                counts: Vec::new(),
             });
             super::profile::decision("native fact result", || format!("{rel}: retained rows={}", source.len()));
             return Ok(source.len());
@@ -6187,6 +6251,8 @@ impl<'a> Run<'a, '_> {
             ndv: stats.iter().map(|s| s.2).collect(),
             sq: stats.iter().map(|s| s.3).collect(),
             freq: Vec::new(),
+            keys: Vec::new(),
+            counts: Vec::new(),
         });
         Ok(Some(source.len()))
     }
@@ -6247,6 +6313,8 @@ impl<'a> Run<'a, '_> {
             ndv: stats.iter().map(|s| s.2).collect(),
             sq: stats.iter().map(|s| s.3).collect(),
             freq: Vec::new(),
+            keys: Vec::new(),
+            counts: Vec::new(),
         });
         Ok(Some(source.len()))
     }
@@ -6305,6 +6373,8 @@ impl<'a> Run<'a, '_> {
             ndv: stats.iter().map(|s| s.2).collect(),
             sq: stats.iter().map(|s| s.3).collect(),
             freq: Vec::new(),
+            keys: Vec::new(),
+            counts: Vec::new(),
         });
         Ok(Some(source.len()))
     }
@@ -6331,7 +6401,7 @@ impl<'a> Run<'a, '_> {
             }
         }
         super::native::component::hold_view_in_place(self.db, rel, Arc::clone(src), cols.to_vec(), types);
-        Some(LiveRel { n, delta: n, ndv, sq, freq })
+        Some(LiveRel { n, delta: n, ndv, sq, freq, keys: Vec::new(), counts: Vec::new() })
     }
 
     /// The reach index (decision 0119, `front::Native::Reach` and `ReachThrough`) over relations the engine holds:
@@ -6384,6 +6454,8 @@ impl<'a> Run<'a, '_> {
             ndv: stats.iter().map(|s| s.2).collect(),
             sq: stats.iter().map(|s| s.3).collect(),
             freq: Vec::new(),
+            keys: Vec::new(),
+            counts: Vec::new(),
         });
         super::profile::note(format!("{rel} index bytes"), || bytes.to_string());
         Ok(Some((n, why)))
@@ -6540,6 +6612,8 @@ impl<'a> Run<'a, '_> {
             ndv: stats.iter().map(|s| s.2).collect(),
             sq: stats.iter().map(|s| s.3).collect(),
             freq: Vec::new(),
+            keys: Vec::new(),
+            counts: Vec::new(),
         });
         Ok(Some(source.len()))
     }
@@ -6673,6 +6747,8 @@ impl<'a> Run<'a, '_> {
             ndv: stats.iter().map(|s| s.2).collect(),
             sq: stats.iter().map(|s| s.3).collect(),
             freq: Vec::new(),
+            keys: Vec::new(),
+            counts: Vec::new(),
         });
         Ok(Some(made.len()))
     }
@@ -6899,8 +6975,16 @@ pub struct LiveRel {
     pub ndv: Vec<i64>,
     pub sq: Vec<i64>,
     pub freq: Vec<(usize, HashMap<Constant, i64>)>,
+    /// Each column's keys, where the native engine keeps them (decision 0506), else none.
+    pub keys: Vec<super::bloom::Keys>,
+    /// Each column's counts for join sizes, where the native engine keeps them (`join_size`), else none.
+    pub counts: Vec<std::sync::Arc<super::join_size::JoinCounts>>,
 }
 impl LiveRel {
+    /// The native engine's (`setfix::live`): its values are integers.
+    fn of_native(l: super::native::component::Live) -> LiveRel {
+        LiveRel { n: l.n, delta: l.delta, ndv: l.ndv, sq: l.sq, freq: l.freq.into_iter().map(|(c, v)| (c, v.into_iter().map(|(v, m)| (Constant::Int(v), m)).collect())).collect(), keys: l.keys, counts: l.counts }
+    }
     /// From T's extension's text line (`set_fixpoint_stats`); `text(c)`: column `c` holds symbols as text.
     fn parse(line: &str, text: &dyn Fn(usize) -> bool) -> LiveRel {
         let mut parts = line.split(" |");
@@ -6924,7 +7008,7 @@ impl LiveRel {
                 Some((c, freq))
             })
             .collect();
-        LiveRel { n, delta: n, ndv: rest[..k].to_vec(), sq: rest[k..].to_vec(), freq }
+        LiveRel { n, delta: n, ndv: rest[..k].to_vec(), sq: rest[k..].to_vec(), freq, keys: Vec::new(), counts: Vec::new() }
     }
 }
 
@@ -6961,6 +7045,13 @@ pub fn live_stats(model: &mut Model, r: &str, live: LiveRel) -> Vec<usize> {
     let card = (live.n as f64).max(1.0);
     if model.stats.card.insert(r.to_owned(), card) != Some(card) { changed.push(0); }
     let mut freq: HashMap<_, _> = live.freq.into_iter().collect();
+    // Its keys change with its rows, as its distinct values do: a change of them alone replans nothing.
+    for (c, keys) in live.keys.into_iter().enumerate().filter(|_| super::bloom::kept_keys_read()) {
+        model.stats.keys.insert((r.to_owned(), c), keys);
+    }
+    for (c, counts) in live.counts.into_iter().enumerate().filter(|_| super::bloom::kept_keys_read()) {
+        model.stats.counts.insert((r.to_owned(), c), counts);
+    }
     for (c, (&ndv, &sq)) in live.ndv.iter().zip(&live.sq).enumerate() {
         let key = (r.to_owned(), c);
         let ndv = ndv.max(1) as f64;
@@ -7586,7 +7677,10 @@ impl<'a> Run<'a, '_> {
                         let fan = self.model.stats.fan.at(rel, c).copied().unwrap_or(rows / ndv.max(1.0));
                         ndv > table::HEAVY as f64 && fan * ndv / rows.max(1.0) > 2.0
                     };
-                    if wanted { want.entry(rel.to_owned()).or_default().insert(c); }
+                    if wanted {
+                        joins::log(|| format!("heavy values wanted {rel}.{c}: kept {:?} rows, card {:?}, held {}, mark {}", self.model.stats.heavy.at(rel, c).map(|h| h.rows), self.model.stats.card.get(rel), super::native::component::held(self.db, rel).is_some(), self.model.stats.heavy_mark.get(rel).is_some()));
+                        want.entry(rel.to_owned()).or_default().insert(c);
+                    }
                 }
             }
         }
@@ -8436,7 +8530,7 @@ impl<'a> Run<'a, '_> {
         let spec = ComponentSpec { name: name.clone(), lines };
         let fx = Fx { db: self.db, direct: true };
         for r in scc {
-            super::native::component::hold_as(self.db, r, Arc::clone(&olds[r]));
+            super::native::component::hold_start(self.db, r, Arc::clone(&olds[r]));
         }
         fx.open(&spec)?;
         fx.run(&name, 0)?;
@@ -8698,7 +8792,7 @@ impl<'a> Run<'a, '_> {
                 None => {
                     let _span = super::profile::span(|| "a view of an input's columns: its rows".into());
                     let l = super::native::component::hold_view(self.db, rel, src, cols.clone(), types(rel).into_bytes());
-                    ("read into flat rows", LiveRel { n: l.n, delta: l.delta, ndv: l.ndv, sq: l.sq, freq: l.freq.into_iter().map(|(c, v)| (c, v.into_iter().map(|(v, m)| (Constant::Int(v), m)).collect())).collect() })
+                    ("read into flat rows", LiveRel::of_native(l))
                 }
             };
             if std::env::var_os("RERAIL_SHAPE_TRACE").is_some() {
@@ -9350,23 +9444,17 @@ impl<'a> Run<'a, '_> {
                 return Ok(Native::Waiting(suspended!()));
             }
             let steps = self.fx().steps(&name)?;
-            // A declared key a second row broke where the rows were written (decision 0361 step 6): the run's, as a
-            // probe's counts break a fact (`Model::layout_broken`), planned from statistics from then on.
-            let mut key_broke = false;
+            // A declared key a second row broke where the rows were written (decision 0361 step 6, Q330): the run's,
+            // as a probe's counts break one (`Model::layout_broken`).
+            let mut keys_broke = false;
             for (i, cols) in self.fx().key_breaks(&name)? {
                 let Some(rel) = rels.get(i).map(|r| r.to_string()) else { continue };
                 let names = self.model.stats.shapes.0.get(rel.as_str()).map(|(n, _)| n.clone()).unwrap_or_default();
                 let fact = crate::code_rule_dsl::logic::front::LayoutFact::Key(cols).show(&|c| names.get(c).cloned().unwrap_or_else(|| format!("${c}")));
-                if shapes::run_broken().note(&rel, fact.clone()) {
-                    let text = format!("{rel}: {fact} broken: a second row of a key, where its rows were written; planned from statistics for the rest of the run");
-                    if super::profile::strict() {
-                        eprintln!("rerail: a layout fact broken (decision 0361 step 6): {text}");
-                    }
-                    super::profile::decision("broken layout facts (decision 0361 step 6)", || text);
-                }
-                key_broke = true;
+                shapes::report_broken(&rel, fact.clone(), || format!("{rel}: {fact} broken: a second row of a key, where its rows were written; planned from statistics for the rest of the run"));
+                keys_broke = true;
             }
-            if key_broke {
+            if keys_broke {
                 self.model.stats.shapes = shapes::Shapes::for_run(std::sync::Arc::clone(&self.model.stats.shapes));
             }
             if profiling {
@@ -9470,6 +9558,7 @@ impl<'a> Run<'a, '_> {
                     if let Some(m) = &miss {
                         joins::count_miss(m);
                         super::profile::decision("mispredicted joins (decision 0203)", || format!("{} (delta at {ai}): {}", b.head_text(), m.describe()));
+                        joins::log(|| format!("mispredicted {} (delta at {ai}): {}; {}", b.head_text(), m.describe(), self.model.describe_miss(pf, &b, Some(ai), &probes[k].2, c)));
                     }
                     joins::flag_slow(key, rule, &probes[k].2, est, work);
                     super::profile::decision("slow joins (decision 0203)", || format!("{} (delta at {ai}): {work:.0} rows of work, priced {est:.0} for its {delta:.0} delta rows", b.head_text()));
@@ -9737,6 +9826,9 @@ impl<'a> Run<'a, '_> {
                         if let Some(m) = &miss {
                             joins::count_miss(m);
                             super::profile::decision("mispredicted joins (decision 0203)", || format!("{}: {}", b.head_text(), m.describe()));
+                            if let Some(steps) = counted.get(line) {
+                                joins::log(|| format!("mispredicted {}: {}; {}", b.head_text(), m.describe(), self.model.describe_miss(pf, &b, Some(cut_lead), &running, steps)));
+                            }
                             self.model.prepared_heavy(&b, &[first, None], &running);
                         }
                         joins::flag_slow(key, rule, &running, est, ran);
