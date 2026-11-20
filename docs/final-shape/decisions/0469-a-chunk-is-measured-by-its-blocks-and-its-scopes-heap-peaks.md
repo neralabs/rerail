@@ -58,7 +58,14 @@ their reservations: since 0445 a block reserves 16 GiB of address space.
   `a_chunk_measures_what_its_blocks_wrote_the_same_every_time`.
 - **R3** Q203 item 3 holds: `a_chunk_holds_what_its_own_work_allocated`.
 
-## Not yet
+## Measured
 
-- The measure is read per chunk; the schedule does not yet tell a chunk's heap apart from its blocks in its
-  decision line, so a profile cannot say which grew. Q316's next step reads it.
+`leg-083-typed` on 901 files of the data layer's repository (1,972,112 nodes, the CPU binding, the M5 at load
+27-43, 2026-11-19): 8 chunks, held at the caller's most (262,144 nodes), against 80 before the merge, cut to the
+8,192-node floor by the process's footprint. A typing chunk measures 932-1,043 bytes a node: about 120 in its
+blocks, the rest its scopes' heap peaks (the 30 KB a node Q316 saw was the footprint's rise, not the chunk's own).
+The count when the chunks begin leaves 959 MB of the 1,152 MB room; the footprint is 144-297 MB then. The per-chunk
+costs went with the chunks (the statistics 4.95 to 0.02 s, the views and tables 3.73 to 0.02 s, the order probes 1.6
+s to 0); the findings are the same; the peak footprint 1,342 to 1,124 MB, system time 9.0 to 4.7 s.
+
+The chunk-size line prints the blocks' bytes and the heap's rise apart.

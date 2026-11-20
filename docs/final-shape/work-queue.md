@@ -6007,8 +6007,19 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   - `an_answer_recorded_within_the_settle_window_is_checked_though_the_journal_names_nothing` fails 4 of 5 on the M3
     at load 35-107 (`0 trusted by the journal`: the run's own question timed out, and the answer was checked by
     `stat`), as Q223's test does: the journal's timing at load.
-  - The typing program's bytes a node (30 KB at most), and the 740 MB before the first chunk: they set the chunks'
-    count, and so every per-chunk cost's.
+  - ~~The typing program's bytes a node (30 KB at most), and the 740 MB before the first chunk~~ (done 2026-11-19, with
+    the merge of Native-and-GPU-strata 84f7a8649a and decision 0469). Neither was the chunk's: the 30 KB was the
+    footprint's rise over a chunk, and the 740 MB the footprint, which `RUN_MB` cut by. Measured by 0435's count and
+    0469's measure, a typing chunk is 932-1,043 bytes a node (about 120 in its blocks, the rest its scopes' heap
+    peaks), and the run is at 144-297 MB when the chunks begin. `leg-083-typed` on the 901 files: 8 chunks at the
+    caller's most (262,144 nodes), was 80 at the floor; statistics 4.95 to 0.02 s, views and tables 3.73 to 0.02 s,
+    order probes 1.6 s to 0; findings the same; peak 1,342 to 1,124 MB; user 48.0 to 47.0 s, 541 to 591 G instructions
+    (the merge's other changes: its spans' own CPU 51.4 to 43.2 s), 34.6 s wall at load 27-43.
+  - **Next, by its share of the 43.2 s** (spans' own CPU, the run above): the chunks' strata 15.3 s (the joins 11.3);
+    the export to the cross part 8.8 s, of it the memo entries' base rows 4.3 s and 1.28 GB allocated (decision
+    0458's copy 2, its step 4 not yet done); the cross part 6.6 s; the corpus batch 3.8 s, which projects every
+    document's node rows and string annotations and runs the matchers again beside the chunks (0458: "made when
+    first read"; 0353 copy 7 and step 3); the windows of files resolved 2.3 s.
 
 ### Q313. (Q243 here before the merge of rr-align 62618b2e0a) At 2,410 files the mode is priced above a derive for deltas of 0.1% of the rows read
 

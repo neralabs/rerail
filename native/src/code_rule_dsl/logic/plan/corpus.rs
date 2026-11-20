@@ -6977,8 +6977,9 @@ fn run_observed_within(
                     sizing::By::Room => "what the room holds",
                 };
                 format!(
-                    "a chunk of {chunk_nodes_built} nodes ({at_once} at once) wrote {} MB in its blocks ({:.0} bytes a node), {} MB of them held past it; chunk {} is {} nodes ({by}; {} MB of room left of a limit of {} MB holds {}), {} at once",
+                    "a chunk of {chunk_nodes_built} nodes ({at_once} at once) wrote {} MB in its blocks and its scopes' heap rose {} MB at their most ({:.0} bytes a node), {} MB of the blocks' held past it; chunk {} is {} nodes ({by}; {} MB of room left of a limit of {} MB holds {}), {} at once",
                     written.bytes >> 20,
+                    written.heap >> 20,
                     d.per_node,
                     written.held >> 20,
                     d.chunk,
