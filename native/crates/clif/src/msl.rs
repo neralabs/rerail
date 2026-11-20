@@ -193,12 +193,24 @@ fn pointers(family: Family) -> (&'static str, &'static str) {
     }
 }
 
+/// The most instructions a read may have and still be inlined into its callers. A larger one (the 16z tape's block
+/// decode, about 3,000) is called, not copied into each caller: the backend's compile of a kernel grows with every
+/// copy, and a read that calls it from a loop gets several (Q288: one view read's pipeline took 32 s cold with its
+/// copies inlined, 2 s with the decode called).
+const MOST_INLINED: usize = 1024;
+
+/// Whether `f` is small enough to be inlined into its callers (`MOST_INLINED`).
+fn inlined(f: &ir::Function) -> bool {
+    f.layout.blocks().map(|b| f.layout.block_insts(b).count()).sum::<usize>() <= MOST_INLINED
+}
+
 fn signature(f: &ir::Function, name: &str, family: Family) -> Result<String, String> {
     let [ret] = f.signature.returns.as_slice() else { return Err(format!("{name}: a read returns one value")) };
     let params: Vec<String> =
         f.signature.params.iter().enumerate().skip(family.pointers()).map(|(i, p)| Ok(format!("{} a{i}", ty(p.value_type)?.0))).collect::<Result<_, String>>()?;
     let more = if params.is_empty() { String::new() } else { format!(",{}", params.join(",")) };
-    Ok(format!("inline {} {name}({}{more})", ty(ret.value_type)?.0, pointers(family).0))
+    let linkage = if inlined(f) { "inline" } else { "__attribute__((noinline))" };
+    Ok(format!("{linkage} {} {name}({}{more})", ty(ret.value_type)?.0, pointers(family).0))
 }
 
 fn body(out: &mut String, f: &ir::Function, named: &dyn Fn(u32) -> Result<String, String>, family: Family) -> Result<(), String> {
