@@ -18,7 +18,7 @@ after:   files --copy once, by hash--> slab (resident) --> kernel binds the slab
 
 ## Prior work consulted
 
-- **ast-index-spike indexes:** the spike ran no GPU experiments (prior-work `README.md`, "Known
+- **SQL index prototype indexes:** the spike ran no GPU experiments (prior-work `README.md`, "Known
   differences"). Its mldb tape row ("per-entry tape over the source buffer, no text copy")
   **agrees**: the reader works over the source where it lies.
 - **Decision 0032 (slabs):**

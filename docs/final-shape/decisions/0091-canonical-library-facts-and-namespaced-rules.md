@@ -93,7 +93,7 @@ API has a Python one). It is also what decision 0083's P1 asks for: structure ov
 A first version made each library relation over the union of its readers' scopes, guarded by a relation
 `rr_scope_not_all<k>` per set of readers. The two differ only where one library's readers cover less than the run,
 since the run reads the union of all the scopes. The narrower version cost planning (part of the 800 scope strata
-below) and coupled which facts exist to the policies of the run. ast-index-spike trap T2 (union-scoped sharing lost
+below) and coupled which facts exist to the policies of the run. SQL index prototype trap T2 (union-scoped sharing lost
 through scope inflation, 0.23x and 0.80x, S149) is about what each policy's rules read, which §2's guards keep to its
 scope; it does not argue for narrowing the library. Union scoping may come back as an optimisation if a measurement
 shows the extra documents cost much, never as the meaning.

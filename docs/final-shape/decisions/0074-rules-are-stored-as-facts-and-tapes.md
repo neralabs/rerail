@@ -129,11 +129,11 @@ The converted-rules replay, run twice on one fresh store, gave the recorded find
   is stored, and the facts the run reads are derived from it and memoised.
 - **Lessons ledger 25:** restoring a stored derivation beats redoing it. A program read back takes 13 ms where
   preparing it takes 52.
-- **ast-index-spike history index L919-920:** key memoised analysis by what it is a function of. The facts are keyed
+- **SQL index prototype history index L919-920:** key memoised analysis by what it is a function of. The facts are keyed
   by the document's content and the grammar's version; the pointer by the program's text and the run's plan.
-- **ast-index-spike history index L417 (DH L2185-2189):** "storing data in memory... is dishonest". The program is
+- **SQL index prototype history index L417 (DH L2185-2189):** "storing data in memory... is dishonest". The program is
   in the store, as data a rule can read.
-- **ast-index-spike design index S112 (the compiled artifact):** a compiled query is an artifact of its own. Here it
+- **SQL index prototype design index S112 (the compiled artifact):** a compiled query is an artifact of its own. Here it
   is a document, with a tape and facts like any other.
 - **Decisions 0052, 0061, 0062 and 0073:** the facts memo, the rr tape, reading statements off it, and the stored
   prepared program this record changes the form of.

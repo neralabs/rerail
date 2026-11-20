@@ -146,9 +146,9 @@ describe("remote sink outbox", () => {
 
   it("names this machine by the remote's --label when it has one", async () => {
     seed();
-    addRemote({ url: sink.url, token: "test-token", content: true, label: "Jeff's laptop" }, home);
+    addRemote({ url: sink.url, token: "test-token", content: true, label: "Alex's laptop" }, home);
     await outbox().sync({ force: true });
-    expect(sink.requests[0]!.header.machineLabel).toBe("Jeff's laptop");
+    expect(sink.requests[0]!.header.machineLabel).toBe("Alex's laptop");
     expect(() => addRemote({ url: sink.url, token: "t", content: true, name: "other", label: "bad\nlabel" }, home)).toThrow(/control characters/u);
   });
 
@@ -362,7 +362,8 @@ describe("remote sink outbox", () => {
   it("gives the token folder an owner-only ACL on Windows on every add, in a home an earlier release made", () => {
     // The home is already there, so nothing gives it an ACL now: an earlier release made it with its parent's, under C:\.
     const restricted: Array<[string, boolean]> = [];
-    const acl = { restrictToOwner: (path: string, folder: boolean): void => { restricted.push([path, folder]); }, otherReaders: (): string[] => [] };
+    const acl = { restrictToOwner: (path: string, folder: boolean): void => { restricted.push([path, folder]); }, otherReaders: (): string[] => [], inherits: () => Promise.resolve(true), restrictFolderToOwner: () => Promise.resolve(),
+      writers: () => Promise.resolve([]), inheritedWriters: () => Promise.resolve([]), keepEachOwnersOwn: () => Promise.resolve(), letAddFiles: () => Promise.resolve() };
     const windows = { acl, platform: "win32" as const, profile: String.raw`C:\Users\nobody-here` };
     addRemote({ url: "https://rerail.example", token: "t", content: true, name: "team" }, home, clock, windows);
     expect(restricted).toEqual([[join(home, "remote-tokens"), true]]);
