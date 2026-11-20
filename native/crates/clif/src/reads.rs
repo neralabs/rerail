@@ -144,6 +144,10 @@ pub const READS: &[Read] = &[
     Read { family: Family::Relation, name: "text_find", params: &[I32, I32], ret: I64, hot: false, body: crate::verdict_reads::text_find },
     Read { family: Family::Relation, name: "text_open", params: &[I32, I32, I32], ret: I64, hot: false, body: crate::verdict_reads::text_open },
     Read { family: Family::Relation, name: "cache_done", params: &[I64], ret: I32, hot: false, body: crate::verdict_reads::cache_done },
+    // The cache's two lookups, each written once and called (decision 0310): the verdicts' (an entry made with its
+    // masks empty) and the texts' open one. Last, so no other read's number moves.
+    Read { family: Family::Relation, name: "verdict_entry", params: &[I32, I32], ret: I64, hot: false, body: crate::verdict_reads::verdict_entry },
+    Read { family: Family::Relation, name: "cache_open", params: &[I64, I32], ret: I64, hot: false, body: crate::verdict_reads::cache_open },
 ];
 
 /// The reads the kernels do not include: they decode a 16z block through `tape_z_block`, which inlines the decoder.

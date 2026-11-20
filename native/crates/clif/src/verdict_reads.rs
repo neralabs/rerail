@@ -23,26 +23,44 @@ pub const UNKNOWN: u32 = 0;
 pub const FAILS: u32 = 1;
 pub const PASSES: u32 = 2;
 
+/// `verdict_entry(cache, test, sym)`: the entry of `test`'s 64 symbols about `sym`, made (both masks empty) when none
+/// is; the dead entry when the cache has no room. A read of its own, which `verdict_get` and `verdict_put` call: the
+/// cache's lookup is written once, not into each of them.
+pub fn verdict_entry(b: &mut B<'_, '_>) -> Value {
+    let (test, sym) = (b.arg(0), b.arg(1));
+    let cache = b.tape;
+    let t = b.f.ins().uextend(I64, test);
+    let t = b.f.ins().iadd_imm(t, 1);
+    let t = b.f.ins().ishl_imm(t, 32);
+    let group = b.f.ins().ushr_imm(sym, 6);
+    let group = b.f.ins().uextend(I64, group);
+    let key = b.f.ins().bor(t, group);
+    // An entry of its header and the two masks.
+    let bytes = b.c32(i64::from(c::PAYLOAD) + 16);
+    cache_get(b, cache, key, bytes, &|b, e| {
+        let zero = b.c64(0);
+        let rw = MemFlags::new().with_notrap();
+        b.f.ins().store(rw, zero, e, YES);
+        b.f.ins().store(rw, zero, e, NO);
+        b.c32(1)
+    })
+}
+
+/// `cache_open(cache, key, size)`: the cache's open lookup of `key` (`reads::cache_lookup` with no fill), taking an
+/// entry of `size` bytes on a miss (none for 0); the entry and what was found in its low bits. A read of its own,
+/// which `text_find` and `text_open` call.
+pub fn cache_open(b: &mut B<'_, '_>) -> Value {
+    let (key, size) = (b.arg(0), b.arg(1));
+    let cache = b.tape;
+    crate::reads::cache_lookup(b, cache, key, size, None)
+}
+
 impl B<'_, '_> {
-    /// The entry of `test`'s 64 symbols about `sym` (made, both masks empty, when none is), whether it is the dead
-    /// entry, and the offset of `sym`'s word in a mask from the mask, and its bit.
+    /// The entry of `test`'s 64 symbols about `sym` (`verdict_entry`), whether it is the dead entry, and the offset of
+    /// `sym`'s word in a mask from the mask, and its bit.
     fn verdict_entry(&mut self, test: Value, sym: Value) -> (Value, Value, Value, Value) {
         let cache = self.tape;
-        let t = self.f.ins().uextend(I64, test);
-        let t = self.f.ins().iadd_imm(t, 1);
-        let t = self.f.ins().ishl_imm(t, 32);
-        let group = self.f.ins().ushr_imm(sym, 6);
-        let group = self.f.ins().uextend(I64, group);
-        let key = self.f.ins().bor(t, group);
-        // An entry of its header and the two masks.
-        let bytes = self.c32(i64::from(c::PAYLOAD) + 16);
-        let e = cache_get(self, cache, key, bytes, &|b, e| {
-            let zero = b.c64(0);
-            let rw = MemFlags::new().with_notrap();
-            b.f.ins().store(rw, zero, e, YES);
-            b.f.ins().store(rw, zero, e, NO);
-            b.c32(1)
-        });
+        let e = self.call("verdict_entry", &[test, sym]);
         let dead = cache_load(self, cache, c::DEAD);
         let dead = self.f.ins().uextend(I64, dead);
         let dead = self.f.ins().iadd(cache, dead);
@@ -121,9 +139,8 @@ fn text_key(b: &mut B<'_, '_>, fns: Value, sym: Value) -> Value {
 pub fn text_find(b: &mut B<'_, '_>) -> Value {
     let (fns, sym) = (b.arg(0), b.arg(1));
     let key = text_key(b, fns, sym);
-    let cache = b.tape;
     let none = b.c32(0);
-    crate::reads::cache_lookup(b, cache, key, none, None)
+    b.call("cache_open", &[key, none])
 }
 
 /// `text_find`, or on a miss an entry taken for a text of `len` bytes (`view::cache::TAKEN`): its caller writes the text
@@ -131,9 +148,8 @@ pub fn text_find(b: &mut B<'_, '_>) -> Value {
 pub fn text_open(b: &mut B<'_, '_>) -> Value {
     let (fns, sym, len) = (b.arg(0), b.arg(1), b.arg(2));
     let key = text_key(b, fns, sym);
-    let cache = b.tape;
     let size = b.f.ins().iadd_imm(len, i64::from(c::PAYLOAD));
-    crate::reads::cache_lookup(b, cache, key, size, None)
+    b.call("cache_open", &[key, size])
 }
 
 /// An entry `text_open` took (`TAKEN`'s bit cleared or not), written: completed.
