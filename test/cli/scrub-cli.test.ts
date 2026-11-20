@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { rewriteAppendedFile, runScrubCommand, scrubHintOnce } from "../../src/cli/scrub-cli.js";
 import { openRerailDatabase, recordCheckout } from "../../src/engine/index.js";
 import { withPendingFileLock } from "../../src/harness/index.js";
+import { withoutBackupPrivileges } from "../support/platform/backup-privileges.js";
 import { NO_POSIX_MODES, POSIX_MODES } from "../support/platform/file-mode.js";
 import { linkFolder } from "../support/platform/links.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -259,7 +260,10 @@ function denyListing(folder: string): { restore: () => void } {
   return { restore: () => execFileSync(systemTool("icacls.exe"), [folder, "/remove:d", `*${me}`], { stdio: "ignore" }) };
 }
 
-/** Whether listing `folder` is refused: root reads past a mode, and an administrator's backup privilege past a deny entry. */
+/**
+ * Whether listing `folder` is refused: root reads past a mode, and on Windows a process whose Backup privilege is on past
+ * a deny entry, which {@link withoutBackupPrivileges} turns off.
+ */
 function refusesListing(folder: string): boolean {
   try {
     readdirSync(folder);
@@ -323,8 +327,10 @@ describe("rerail scrub alongside running sessions", () => {
       // As a held-steer folder another account made in a records folder both share: this one adds files, never lists.
       const listing = denyListing(pending);
       try {
-        if (!refusesListing(pending)) skip("this process lists past the denial");
-        expect(await runScrubCommand([], () => "usage")).toBe(0);
+        await withoutBackupPrivileges(async () => {
+          if (!refusesListing(pending)) skip("this process lists past the denial");
+          expect(await runScrubCommand([], () => "usage")).toBe(0);
+        });
       } finally {
         listing.restore();
       }

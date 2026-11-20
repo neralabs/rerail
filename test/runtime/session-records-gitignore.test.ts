@@ -8,6 +8,7 @@ import { RerailRuntime } from "../../src/runtime/index.js";
 import { temporaryDirectories, testEmbedder } from "../support/hook-events.js";
 import { startTestRepository } from "../support/started-repository.js";
 import { resolveSessionPaths } from "../../src/runtime/session-paths.js";
+import { withoutBackupPrivileges } from "../support/platform/backup-privileges.js";
 import { NO_POSIX_MODES, POSIX_MODES } from "../support/platform/file-mode.js";
 import { symlinkOrSkip } from "../support/platform/links.js";
 
@@ -82,7 +83,8 @@ function readsData(rights: string): boolean {
 
 /**
  * Makes `file` one this account may not read, as one another account wrote private is to it: elsewhere than Windows
- * mode 000; on Windows an ACL of its own granting SYSTEM alone, so its owner keeps only the right to change the ACL.
+ * mode 000; on Windows an ACL of its own granting SYSTEM alone, so its owner keeps only the right to change the ACL. On
+ * Windows it binds a session opened with Backup off ({@link withoutBackupPrivileges}).
  */
 async function closeToThisAccount(file: string): Promise<void> {
   if (process.platform === "win32") execFileSync("icacls.exe", [file, "/inheritance:r", "/grant:r", "*S-1-5-18:F", "/q"]);
@@ -99,8 +101,10 @@ async function openToThisAccount(file: string): Promise<void> {
  * Lets this account make a folder in `folder` but write no file there, as a records folder another account repaired
  * lets an account that could make a folder there before. On Windows an ACL of its own: this account may pass through,
  * read attributes and the ACL, and make a folder; CREATOR OWNER gives what it makes back to it; Administrators, whose
- * entry would let the test's account write, are left out. Elsewhere a folder's write bit covers files and folders
- * alike, so `inner` is made first and the folder is then mode 0555.
+ * entry would let the test's account write, are left out. It binds a session opened with Restore off
+ * ({@link withoutBackupPrivileges}): with Restore on, as Git Bash turns it on for an elevated administrator, Windows
+ * lets Node make a file there whatever the ACL says. Elsewhere a folder's write bit covers files and folders alike, so
+ * `inner` is made first and the folder is then mode 0555.
  */
 async function letMakeFoldersOnly(folder: string, inner: string): Promise<void> {
   if (process.platform === "win32") {
@@ -194,7 +198,7 @@ describe("session records in a checkout", () => {
     await writeFile(gitignore, "# Created by Rerail: session records stay out of Git.\n*\n");
     await closeToThisAccount(gitignore);
     try {
-      await openOneSession(checkout, storageRoot, databasePath);
+      await withoutBackupPrivileges(() => openOneSession(checkout, storageRoot, databasePath));
     } finally {
       await openToThisAccount(gitignore);
     }
@@ -208,7 +212,7 @@ describe("session records in a checkout", () => {
     await mkdir(storageRoot, { recursive: true });
     await letMakeFoldersOnly(storageRoot, folder);
     try {
-      await openOneSession(checkout, storageRoot, databasePath);
+      await withoutBackupPrivileges(() => openOneSession(checkout, storageRoot, databasePath));
     } finally {
       await letWriteAgain(storageRoot);
     }
