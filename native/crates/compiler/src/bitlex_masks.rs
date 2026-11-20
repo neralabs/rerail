@@ -383,6 +383,10 @@ pub struct Lowering {
     /// The marks that lose the extra pending last where a level asks for them (`, loses …`), by
     /// their index in `marks`: the questions (`program::SETTLE` mode 2).
     pub loses: HashMap<usize, Vec<::bitlex::syntax::GapPattern>>,
+    /// The marks that refuse the file where a level asks for them (`, refuses …`), by index.
+    pub refuses: HashMap<usize, Vec<::bitlex::syntax::GapPattern>>,
+    /// The marks that refuse the file where a level takes them (`, refuses taken …`), by index.
+    pub refuses_taken: HashMap<usize, Vec<::bitlex::syntax::GapPattern>>,
     /// The marks a level that may end ends at (`, ends`), by their index in `marks`.
     pub ends: Vec<usize>,
     /// Each token test (`Stmt::TokenEscape`): its kind, whether a count, its mask and count
@@ -511,6 +515,8 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         settles: Vec::new(),
         drops: HashMap::default(),
         loses: HashMap::default(),
+        refuses: HashMap::default(),
+        refuses_taken: HashMap::default(),
         ends: Vec::new(),
         token_escapes: Vec::new(),
         tested_only: Vec::new(),
@@ -982,7 +988,13 @@ impl Lowering {
                 Stmt::Check { kind, body } => self.checks.push((kind.clone(), body.clone())),
                 Stmt::Extra(kinds) => self.extra.extend(kinds.iter().cloned()),
                 Stmt::Hidden(kinds) => self.hidden.extend(kinds.iter().cloned()),
-                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next, drops, loses } => {
+                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next, drops, loses, refuses, refuses_taken } => {
+                    if !refuses_taken.is_empty() {
+                        self.refuses_taken.insert(self.marks.len(), refuses_taken.clone());
+                    }
+                    if !refuses.is_empty() {
+                        self.refuses.insert(self.marks.len(), refuses.clone());
+                    }
                     if !drops.is_empty() {
                         self.drops.insert(self.marks.len(), drops.clone());
                     }
@@ -3357,7 +3369,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 _ => None,
             };
             let words = seq[0].iter().map(|c| if let TokenElem::Word(w) = c { Some(w.clone()) } else { None }).collect();
-            marks.push(bitlex_tier2::Mark { settle: None, drop: None, lose: None, lose_flag: 0, ends: false, drops: vec![], loses: vec![], kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: Some((before, seq)), nexts: low.mark_next.get(&k).cloned().unwrap_or_default(), unless: vec![] });
+            marks.push(bitlex_tier2::Mark { settle: None, drop: None, lose: None, refuse: None, refuse_taken: None, lose_flag: 0, ends: false, drops: vec![], loses: vec![], refuses: vec![], refuses_taken: vec![], kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: Some((before, seq)), nexts: low.mark_next.get(&k).cloned().unwrap_or_default(), unless: vec![] });
             continue;
         }
         let mut expr = low.mark_exprs[k].clone();
@@ -3594,7 +3606,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             eprintln!("mark {k} {kind}: on starts {on_starts}, word {:?}, {} first bytes, words {:?}", word.as_ref().map(|w| String::from_utf8_lossy(w).into_owned()), first.iter().map(|w| w.count_ones()).sum::<u32>(), words.as_ref().map(|ws| ws.iter().map(|w| String::from_utf8_lossy(w).into_owned()).collect::<Vec<_>>()));
         }
         let unless = low.unless.get(&k).cloned().unwrap_or_default();
-        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: None, nexts, unless, settle: None, drop: None, lose: None, lose_flag: 0, ends: low.ends.contains(&k), drops: vec![], loses: vec![] });
+        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: None, nexts, unless, settle: None, drop: None, lose: None, refuse: None, refuse_taken: None, lose_flag: 0, ends: low.ends.contains(&k), drops: vec![], loses: vec![], refuses: vec![], refuses_taken: vec![] });
         // A settling mark: `SETTLE` reads its bit in the pending extras' codes, each the marks
         // of its own gap (`Records::own`), as the lean lexer's `skip` knows a line end before
         // each comment.
@@ -3621,8 +3633,9 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     for k in settle_marks {
         marks[k].settle = Some(k as u16);
     }
-    // The `drops` and `loses` questions (`Words::gap_patterns`), each mark's in turn, a drop's
-    // before a lose's: `SETTLE` names each by its first entry (`bitlex_tier2::lower` writes them
+    // The `drops`, `loses`, `refuses` and `refuses taken` questions (`Words::gap_patterns`), each
+    // mark's in turn,
+    // in that order: `SETTLE` names each by its first entry (`bitlex_tier2::lower` writes them
     // in this order).
     let mut entries = 0u16;
     for k in 0..marks.len() {
@@ -3635,9 +3648,21 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             marks[k].lose = Some(entries);
             marks[k].loses = l.clone();
             entries += l.len() as u16;
+        }
+        if let Some(r) = low.refuses.get(&k) {
+            marks[k].refuse = Some(entries);
+            marks[k].refuses = r.clone();
+            entries += r.len() as u16;
+        }
+        if let Some(r) = low.refuses_taken.get(&k) {
+            marks[k].refuse_taken = Some(entries);
+            marks[k].refuses_taken = r.clone();
+            entries += r.len() as u16;
+        }
+        if marks[k].lose.is_some() || marks[k].refuse.is_some() {
             // Its flag: one past the grammar's (`flags`) and the marks' before it.
             let named = low.tree.iter().map(|s| if let Stmt::Flags(n) = s { n.len() } else { 0 }).sum::<usize>();
-            let flag = named + marks[..k].iter().filter(|m| m.lose.is_some()).count();
+            let flag = named + marks[..k].iter().filter(|m| m.lose.is_some() || m.refuse.is_some()).count();
             if flag >= 16 {
                 return Err(format!("mark {k}'s `loses`: more than 16 flags"));
             }
@@ -4026,7 +4051,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     }
                     None => None,
                 };
-                out.push(crate::program::TokenElem { offset: *offset, kinds: set, words: words.clone(), except, not: *not, end: *end, run: *run, nests, ending, without, with, first: [0; 4] });
+                out.push(crate::program::TokenElem { offset: *offset, kinds: set, words: words.clone(), except, not: *not, end: *end, run: *run, nests, ending, without, with, first: [0; 4], since: false });
             }
             tms.push(crate::program::TokenMark { order: *order, elems: out, refuses: *refuses, unless: *unless });
         }
@@ -4041,7 +4066,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         let mut gps = Vec::new();
         for (order, unless, elems) in &lowered.gap_patterns {
             let mut out = Vec::new();
-            for (offset, names, words, written, marks_named, first) in elems {
+            for (offset, names, words, written, marks_named, first, since) in elems {
                 let not = written;
                 let (extras, grammar): (Vec<&String>, Vec<&String>) = names.iter().partition(|n| extra_kinds.contains(n));
                 let (mut with, mut without) = (0u32, 0u32);
@@ -4068,14 +4093,20 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                             not = !not;
                         }
                     }
-                    ([kind], true) if words.is_empty() && !not => {
-                        let own = extra_marks(kind);
-                        with |= own;
-                        // The first kind's code holds the extra's bit alone: none of the others'.
-                        without |= all_kinds & !own;
+                    (chosen, true) if words.is_empty() && !not => {
+                        // The bits every kind chosen holds, and none of those the others hold
+                        // alone (the first kind's code holds the extra's bit alone): exactly the
+                        // kinds chosen, else refused.
+                        let common = chosen.iter().fold(all_kinds, |a, k| a & extra_marks(k));
+                        let any = chosen.iter().fold(0, |a, k| a | extra_marks(k));
+                        with |= common;
+                        without |= all_kinds & !any;
+                        if extra_kinds.iter().any(|k| (extra_marks(k) & common == common && extra_marks(k) & all_kinds & !any == 0) != chosen.contains(&k)) {
+                            return Err(format!("a gap pattern's element of extra kinds {chosen:?} that their bits do not tell apart"));
+                        }
                         not = true;
                     }
-                    _ => return Err("a gap pattern's element of one extra's kind alone, or of grammar kinds and words".into()),
+                    _ => return Err("a gap pattern's element of extras' kinds alone, or of grammar kinds and words".into()),
                 }
                 for (m, w) in marks_named {
                     let k = low.marks.iter().position(|x| &x.0 == m).ok_or_else(|| format!("`with {m}`: no such mark"))?;
@@ -4094,8 +4125,8 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     set[usize::from(b / 64)] |= 1 << (b % 64);
                 }
                 // A `~` the grammar wrote, before the first record, holds there.
-                let end = *written && *offset < 0;
-                out.push(crate::program::TokenElem { offset: *offset, kinds: kind_set, words: words.clone(), except, not, end, without, with, first: set, ..Default::default() });
+                let end = *written && (*offset < 0 || *since && *offset == 0);
+                out.push(crate::program::TokenElem { offset: *offset, kinds: kind_set, words: words.clone(), except, not, end, without, with, first: set, since: *since, ..Default::default() });
             }
             gps.push(crate::program::TokenMark { order: *order, elems: out, refuses: false, unless: *unless });
         }

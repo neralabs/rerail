@@ -122,15 +122,9 @@ tree kotlin {
     assert_eq!(check_documents("drops", &c, b"pai.*\n/ ", &[], &fixed, &|_, _, _, _| None), None);
 }
 
-/// A mark that loses (`, loses W`, decision 0451): where a level asks for the line break and
-/// the next line goes on after a block comment that starts it (`W`), the comment is lost: of no
-/// width at the token after it, and placed after that token, as the lean lexer's `asi` loses it.
-/// A level asks where it takes the mark, or where it may end and its call returns to one that
-/// does (tier 2's flag, the lean parser's `stmt`): in a statement's call chain, not inside `(`.
-/// Bitlex's reference and every executor.
-#[test]
-fn a_mark_that_loses_in_the_reference() {
-    let source = r#"lexer t
+/// The grammar of `a_mark_that_loses_in_the_reference`.
+fn a_mark_that_loses_source() -> String {
+    r#"lexer t
 class ws        = ' ' '\t' '\n'
 class lf        = '\n'
 class slash     = '/'
@@ -163,8 +157,19 @@ tree t {
   hidden line
   extra comment
 }
-"#;
-    let c = compile_step("loses", source);
+"#.to_owned()
+}
+
+/// A mark that loses (`, loses W`, decision 0451): where a level asks for the line break and
+/// the next line goes on after a block comment that starts it (`W`), the comment is lost: of no
+/// width at the token after it, and placed after that token, as the lean lexer's `asi` loses it.
+/// A level asks where it takes the mark, or where it may end and its call returns to one that
+/// does (tier 2's flag, the lean parser's `stmt`): in a statement's call chain, not inside `(`.
+/// Bitlex's reference and every executor.
+#[test]
+fn a_mark_that_loses_in_the_reference() {
+    let source = a_mark_that_loses_source();
+    let c = compile_step("loses", &source);
     let fixed = [
         "a\n/* c */.b\n",
         "a\n  /* c */ .b(x)\n/* d */ .e\nf\n",
@@ -181,6 +186,38 @@ tree t {
     assert_eq!(widths(fixed[2]), [7]);
     assert_eq!(widths(fixed[3]), [7, 0]);
     assert_eq!(check_documents("loses", &c, b"ab.(),/* \n", &[], &fixed, &|_, _, _, _| None), None);
+}
+
+/// A mark that refuses (`, refuses Q`, decision 0451): where a level asks for the line break
+/// and its question holds, the file is refused, as where the lean lexer's `asi` reads what the
+/// grammar does not say yet. Here a block comment that starts a line before a `(`, and one
+/// before another comment, however many follow (`since`, from the grammar token before). Asked where `loses` is, whether the mark holds or
+/// not: inside `(` it is not.
+/// Bitlex's reference and every executor.
+#[test]
+fn a_mark_that_refuses() {
+    let source = a_mark_that_loses_source().replace(r#"unless before ".", end, settles, ends, loses after comment with line before ".""#, r#"unless before "." | "(", end, settles, ends, loses after comment with line before ".",
+  refuses after comment with line before "(",
+  refuses since ~"," comment with line comment"#);
+    let c = compile_step("refuses", &source);
+    let fixed = ["a\n/* c */.b\n", "a\n/* c */(b)\n", "a(b\n/* c */(d))\n", "a\n/* c */ /* d */\nb\n", "a(b\n/* c */ /* d */.e)\n", "a\n/* c */\nb\n", "a\n/* c */ /* d */", "a\n/* c */ /* d */ /* e */\nb\n", "a /* c */\n/* d */ /* e */\nb\n", "/* c */ /* d */\na\n"];
+    let refused: Vec<bool> = fixed.iter().map(|d| reference(&c, d.as_bytes()).is_none()).collect();
+    assert_eq!(refused, [false, true, false, true, false, false, true, true, false, false]);
+    assert_eq!(check_documents("refuses", &c, b"ab.(),/* \n", &[], &fixed, &|_, _, _, _| None), None);
+}
+
+/// A mark that refuses where it is taken (`, refuses taken Q`, decision 0451): only where a level
+/// takes the mark, which holds there, as the lean lexer's `asi` reads on in a constructor's
+/// context. Here a line break after a block comment that starts the line: not before a `.`,
+/// where the mark does not hold, nor inside `(`. Bitlex's reference and every executor.
+#[test]
+fn a_mark_that_refuses_where_taken() {
+    let source = a_mark_that_loses_source().replace(r#"loses after comment with line before ".""#, r#"refuses taken after comment with line"#);
+    let c = compile_step("refuses_taken", &source);
+    let fixed = ["a\n/* c */\nb\n", "a\n/* c */.b\n", "a(b\n/* c */.d)\n", "a\nb\n", "a /* c */\nb\n", "a\n/* c */ b\n"];
+    let refused: Vec<bool> = fixed.iter().map(|d| reference(&c, d.as_bytes()).is_none()).collect();
+    assert_eq!(refused, [true, false, false, false, false, true]);
+    assert_eq!(check_documents("refuses_taken", &c, b"ab.(),/* \n", &[], &fixed, &|_, _, _, _| None), None);
 }
 
 /// A pair table's triples (`pairs P = "AB" … "ABC"`, decision 0451): a token of one byte, a

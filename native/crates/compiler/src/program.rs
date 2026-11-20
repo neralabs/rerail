@@ -104,8 +104,12 @@ pub const CHECK: u8 = 0x66;
 /// (`Words::gap_patterns`, its first entry), the extra pending last is dropped: no node of the
 /// tape (decision 0406, the lean lexer's swallowed comment). `m=2`, and `m=3+F` where flag `F`
 /// is set (`mark … , loses …`): where gap pattern `operand` holds, the extra pending last is
-/// lost: of no width, after the token (decision 0451, the lean lexer's `asi`).
+/// lost: of no width, after the token (decision 0451, the lean lexer's `asi`). `m=19`, and
+/// `m=20+F` where flag `F` is set (`mark … , refuses …`): where gap pattern `operand` holds, the
+/// file is refused (what the lean lexer's `asi` reads there the grammar does not say yet).
 pub const SETTLE: u8 = 0x84;
+/// `SETTLE`'s first refusing mode (`m=19`; `m=20+F` with a flag).
+pub const SETTLE_REFUSE: u8 = 19;
 
 // The preprocessing words (decision 0348, `pp_words`): tier 2's words over a stack of token
 // sources (a file's tape, a range of the TU's arena), with a token register `T`, a macro register
@@ -520,6 +524,11 @@ pub struct TokenElem {
     /// The bytes the record's token may begin with (`starting "B"`, a gap pattern's only): a
     /// set of 256 bits, none for no test. The lean lexer's `asi` reads the byte after a comment.
     pub first: [u64; 4],
+    /// A gap pattern's `since` (decision 0451): `offset` counts from the grammar token before
+    /// the token (0; none before the file's first), and the record must be before the token.
+    /// The first comment after a line break, however many follow it, where the lean lexer's
+    /// `asi` decides.
+    pub since: bool,
 }
 
 /// One side of a run's depth (`TokenElem::nests`): its counter (0 to 3), whether it opens, and

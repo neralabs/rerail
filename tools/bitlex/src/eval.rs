@@ -47,6 +47,12 @@ pub struct Token {
     /// The marks whose `loses` mask holds at this token's start: where a level asks for one
     /// of them here, the extra before the token is of no width, at its start (`tree`).
     pub lose: Vec<String>,
+    /// The marks whose `refuses` question holds at this token's start (at the file's end, on
+    /// the marks put there): where a level asks for one of them here, the file is refused.
+    pub refuse: Vec<String>,
+    /// A mark's: its `refuses taken` question holds at the token it is before, so a level
+    /// that takes it refuses the file.
+    pub refuse_taken: bool,
 }
 
 /// A `tree` section's grammar (docs/parser-generators/18-tree-as-grammar.md).
@@ -136,6 +142,10 @@ pub struct Ev<'a> {
     settles: HashMap<usize, Vec<crate::syntax::GapPattern>>,
     /// Each mark's `loses` questions, by its index in `marks`.
     loses: HashMap<usize, Vec<crate::syntax::GapPattern>>,
+    /// Each mark's `refuses` questions, by its index in `marks`.
+    refuses: HashMap<usize, Vec<crate::syntax::GapPattern>>,
+    /// Each mark's `refuses taken` questions, by its index in `marks`.
+    refuses_taken: HashMap<usize, Vec<crate::syntax::GapPattern>>,
     /// A mark's `else escape` reason (`Stmt::Mark`), by its index in `marks`.
     unplaced: HashMap<usize, String>,
     /// A mark's `before`s and `unless before`s (`Stmt::Mark`), by its index in `marks`: the
@@ -217,6 +227,8 @@ impl<'a> Ev<'a> {
             unplaced: HashMap::new(),
             settles: HashMap::new(),
             loses: HashMap::new(),
+            refuses: HashMap::new(),
+            refuses_taken: HashMap::new(),
             tables,
             tree: None,
             byte_classes: HashMap::new(),
@@ -454,8 +466,14 @@ impl<'a> Ev<'a> {
             Stmt::Remember(names) => self.tree.get_or_insert_with(TreeDecl::default).remember.extend(names.iter().cloned()),
             // Applied by the parser (`A as IMPLIED` in the rule's body).
             Stmt::Implied { .. } => {}
-            Stmt::Mark { kind, at, end, unless, unplaced, checks, next, settles, drops, loses, .. } => {
+            Stmt::Mark { kind, at, end, unless, unplaced, checks, next, settles, drops, loses, refuses, refuses_taken, .. } => {
                 let m = self.mask(at)?;
+                if !refuses_taken.is_empty() {
+                    self.refuses_taken.insert(self.marks.len(), refuses_taken.clone());
+                }
+                if !refuses.is_empty() {
+                    self.refuses.insert(self.marks.len(), refuses.clone());
+                }
                 if !loses.is_empty() {
                     self.loses.insert(self.marks.len(), loses.clone());
                 }
@@ -1162,7 +1180,7 @@ impl<'a> Ev<'a> {
             for j in i..end {
                 covered.set(j)
             }
-            toks.push(Token { kind: kinds[k].clone(), start: i, end, soft: None, mark: false, settle: None, lose: vec![] });
+            toks.push(Token { kind: kinds[k].clone(), start: i, end, soft: None, mark: false, settle: None, lose: vec![], refuse: vec![], refuse_taken: false });
         }
         // A token that starts inside the one before (tier 2 refuses it too).
         if let Some(w) = toks.windows(2).find(|w| w[1].start < w[0].end) {
@@ -1347,21 +1365,32 @@ impl<'a> Ev<'a> {
         };
         let pattern_holds = |p: &crate::syntax::GapPattern, t: usize| {
             let a = p.after.len();
-            p.after.iter().enumerate().all(|(j, e)| raw_is((t + j).checked_sub(a), e)) && p.before.iter().enumerate().all(|(j, e)| raw_is(Some(t + j).filter(|&i| i < toks.len()), e))
+            // `since`: from the grammar token before (none: before the file's first), each
+            // before the token.
+            let g = (0..t).rev().find(|&i| !is_extra(i)).map_or(0, |g| g + 1);
+            let after = |j: usize, e: &[TokenElem]| if p.since { (g + j).checked_sub(1).map_or(true, |i| i < t) && raw_is((g + j).checked_sub(1), e) } else { raw_is((t + j).checked_sub(a), e) };
+            p.after.iter().enumerate().all(|(j, e)| after(j, e)) && p.before.iter().enumerate().all(|(j, e)| raw_is(Some(t + j).filter(|&i| i < toks.len()), e))
         };
         // None of the `unless` entries, and one of the others.
         let asks = |ps: &[crate::syntax::GapPattern], t: usize| !ps.is_empty() && !ps.iter().any(|p| p.unless && pattern_holds(p, t)) && ps.iter().any(|p| !p.unless && pattern_holds(p, t));
         let drop_at: Vec<Vec<bool>> = (0..toks.len()).map(|t| (0..self.marks.len()).map(|k| !is_extra(t) && self.settles.get(&k).is_some_and(|d| asks(d, t))).collect()).collect();
         let lose_at: Vec<Vec<bool>> = (0..toks.len()).map(|t| (0..self.marks.len()).map(|k| !is_extra(t) && self.loses.get(&k).is_some_and(|l| asks(l, t))).collect()).collect();
+        let refuse_taken_at: Vec<Vec<bool>> = (0..=toks.len()).map(|t| (0..self.marks.len()).map(|k| (t == toks.len() || !is_extra(t)) && self.refuses_taken.get(&k).is_some_and(|r| asks(r, t))).collect()).collect();
+        let refuse_at: Vec<Vec<bool>> = (0..=toks.len()).map(|t| (0..self.marks.len()).map(|k| (t == toks.len() || !is_extra(t)) && self.refuses.get(&k).is_some_and(|l| asks(l, t))).collect()).collect();
         let settle = |k: usize, bit: usize, at: Option<usize>| self.settles.get(&k).map(|_| (bit, at.is_some_and(|t| drop_at[t][k])));
+        let n_toks = toks.len();
         let mut out = Vec::with_capacity(toks.len());
         for (t, mut tok) in toks.into_iter().enumerate() {
             for (k, (kind, _, _)) in self.marks.iter().enumerate() {
                 if before[t][k] {
-                    out.push(Token { kind: kind.clone(), start: tok.start, end: tok.start, soft: None, mark: true, settle: settle(k, least[t][k].min(tok.start), Some(t)), lose: vec![] });
+                    let refuse_taken = refuse_taken_at[t][k];
+                    out.push(Token { kind: kind.clone(), start: tok.start, end: tok.start, soft: None, mark: true, settle: settle(k, least[t][k].min(tok.start), Some(t)), lose: vec![], refuse: vec![], refuse_taken });
                 }
                 if lose_at[t][k] {
                     tok.lose.push(kind.clone());
+                }
+                if refuse_at[t][k] {
+                    tok.refuse.push(kind.clone());
                 }
             }
             out.push(tok);
@@ -1369,7 +1398,9 @@ impl<'a> Ev<'a> {
         // A bit after the last grammar token's start puts no mark; `, end` puts one at the end.
         for (k, (kind, _, end)) in self.marks.iter().enumerate() {
             if *end {
-                out.push(Token { kind: kind.clone(), start: self.n, end: self.n, soft: None, mark: true, settle: settle(k, least_end[k], None), lose: vec![] });
+                // The marks asked at the end that refuse there, on each mark put at the end.
+                let refuse = self.marks.iter().enumerate().filter(|&(j, _)| refuse_at[n_toks][j]).map(|(_, m)| m.0.clone()).collect();
+                out.push(Token { kind: kind.clone(), start: self.n, end: self.n, soft: None, mark: true, settle: settle(k, least_end[k], None), lose: vec![], refuse, refuse_taken: refuse_taken_at[n_toks][k] });
             }
         }
         Ok(out)

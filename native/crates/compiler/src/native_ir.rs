@@ -173,6 +173,9 @@ pub enum StructuralOperation {
     /// token, the extra pending last lost, made again by the next `TOKEN` after the token's
     /// leaf, of no width (a mark's `loses`).
     LoseLast { pattern: u16, flag: Option<u16> },
+    /// `SETTLE m=19`, and `m=20+f` with flag `f` set: where gap pattern `pattern` holds at the
+    /// token, the file refused (a mark's `refuses`).
+    RefuseIf { pattern: u16, flag: Option<u16> },
     /// To switch on this token again (`again`), or to take the next.
     Return { again: bool },
     Accept,
@@ -246,6 +249,7 @@ impl StructuralOperation {
             Self::SettleBefore { mark } => (crate::program::SETTLE, 0, mark),
             Self::DropLast { pattern } => (crate::program::SETTLE, 1, pattern),
             Self::LoseLast { pattern, flag } => (crate::program::SETTLE, flag.map_or(2, |f| 3 + f as u8), pattern),
+            Self::RefuseIf { pattern, flag } => (crate::program::SETTLE, flag.map_or(crate::program::SETTLE_REFUSE, |f| crate::program::SETTLE_REFUSE + 1 + f as u8), pattern),
             Self::Return { again } => (RETURN, u8::from(again), 0),
             Self::Accept => (ACCEPT, 0, 0),
             Self::Text { .. } | Self::Assert { .. } => {
@@ -511,6 +515,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
             },
             crate::program::CHECK => StructuralOperation::Check { check: operand },
             crate::program::SETTLE if mode == 1 => StructuralOperation::DropLast { pattern: operand },
+            crate::program::SETTLE if mode >= crate::program::SETTLE_REFUSE => StructuralOperation::RefuseIf { pattern: operand, flag: (mode > crate::program::SETTLE_REFUSE).then(|| u16::from(mode - crate::program::SETTLE_REFUSE - 1)) },
             crate::program::SETTLE if mode >= 2 => StructuralOperation::LoseLast { pattern: operand, flag: (mode > 2).then(|| u16::from(mode - 3)) },
             crate::program::SETTLE => StructuralOperation::SettleBefore { mark: operand },
             crate::program::COUNT => StructuralOperation::Count { count: operand, up: mode == 0, max: program.counts[usize::from(operand)] },

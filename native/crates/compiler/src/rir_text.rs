@@ -100,6 +100,9 @@ fn mark_rows(out: &mut String, row: &str, marks: &[crate::program::TokenMark]) {
             if e.run {
                 out.push_str(" run");
             }
+            if e.since {
+                out.push_str(" since");
+            }
             if e.without != 0 {
                 let _ = write!(out, " w{:x}", e.without);
             }

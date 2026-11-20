@@ -565,6 +565,8 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     elems.last_mut().ok_or("an `end` before its element")?.end = true;
                 } else if w == "run" {
                     elems.last_mut().ok_or("a `run` before its element")?.run = true;
+                } else if w == "since" {
+                    elems.last_mut().ok_or("a `since` before its element")?.since = true;
                 } else if let Some(h) = w.strip_prefix('w') {
                     let bits = u32::from_str_radix(h, 16).map_err(|_| format!("a bad `without` `{w}`"))?;
                     elems.last_mut().ok_or("a `without` before its element")?.without = bits;

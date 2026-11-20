@@ -743,6 +743,12 @@ fn show() {
     let c = compiled().expect("compiles");
     let r = c.program.block_programs[0].records.as_ref();
     eprintln!("tier 2: {} words; the code holds {:?} marks and {:?} bits in all", c.program.words.len(), r.map(|r| r.mark_bits()), r.map(|r| r.marks.len()));
+    // `RERAIL_KOTLIN_GAPS`: the gap patterns (`Words::gap_patterns`), each entry's elements.
+    if std::env::var_os("RERAIL_KOTLIN_GAPS").is_some() {
+        for (i, m) in c.program.gap_patterns.iter().enumerate() {
+            eprintln!("gap pattern {i}: order {} unless {} {:?}", m.order, m.unless, m.elems.iter().map(|e| (e.offset, e.kinds, &e.words, e.not, e.end, e.with, e.without)).collect::<Vec<_>>());
+        }
+    }
     // `RERAIL_KOTLIN_WORDS=PC`: tier 2's words from 20 lines before its to 20 after.
     if let Ok(pc) = std::env::var("RERAIL_KOTLIN_WORDS") {
         let lines: Vec<&str> = c.words.lines().collect();
@@ -945,7 +951,7 @@ fn tier1_records() {
         let run = c.program.block_programs[0].run(&src);
         let cpu = c.parser.tier1.extract(&src);
         let same = run.positions == cpu.positions && run.codes == cpu.codes && run.totals == cpu.totals;
-        eprintln!("== {p}: {}", if same { "the same" } else { "DIFFERS" });
+        eprintln!("== {p}: {} (totals {:?}: a refusal's counts)", if same { "the same" } else { "DIFFERS" }, cpu.totals);
         // `RERAIL_KOTLIN_RECORDS`: the CPU's records, each start, last, code and text, and the
         // records' marks (`Records::marks`) and blank marks (`Records::blanks`).
         if std::env::var_os("RERAIL_KOTLIN_RECORDS").is_some() {

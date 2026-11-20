@@ -551,3 +551,54 @@ The changes:
   records tests pass. The corpus is 450 the same, 41 refused, 0 differ.
 - `tier1_records` over the corpus: the interpreter's and the CPU's records are equal on every
   file tier 1 keeps. On three refused files the CPU stops at the refusal, as it should.
+
+## Item 4, comments, step 5: the comment escapes become questions that refuse (2026-11-19)
+
+Three stage-1 escapes refused a file for a block comment the lean lexer's `asi` reads through
+where the grammar does not say yet:
+- before `catch`, `finally`, `else` or `else ->`;
+- before another comment;
+- before a class header's primary constructor, or its annotations or visibility modifier.
+
+They needed `asked_blk`, `after_asked` and eleven more masks: fills over bytes for what tier 2
+already knows at the token. Now each is a question tier 2 asks where the lean parser would ask
+`asi`, over the records, as `drops` and `loses` are.
+
+- **`refuses Q`** (a mark's clause). Asked where `loses` is: at each test of the mark, and at a
+  level's end under the mark's flag. Where `Q` holds, the file is refused. Tier 2 writes it
+  `SETTLE m=19` (`m=20+F` with flag `F`), the native IR `RefuseIf`. It is asked whether or not
+  the mark holds, since `semi` does not hold before `catch`.
+- **`refuses taken Q`**. Asked in each arm that takes the mark, so only where it holds.
+  `head_ctor` uses it: the old escape refused only where the run reaches `constructor`, and so
+  does `head_ctor`'s `before`. Asked at every test, a comment before any `@` in a header refused.
+- **`since A …`** (a question's form). The elements count from the grammar token before the
+  token (none before the file's first), and each lies before the token. Its second element is
+  the first comment after the line break, where `asi` decides, however many comments follow.
+  Counting back from the token missed `/* a */ // b // c`. Tier 2 finds that token by a short
+  loop back over the extras.
+- **At the file's end.** A question is asked with the token past the last record. `drops` and
+  `loses` need a token, so they keep an `!at_end` of their own. Bitlex's root asks for its
+  first marks before any token, as the machine's first state does.
+- **An element of several extra kinds** (`line_comment | multiline_comment`) is allowed where the
+  kinds' bits tell them apart from the others. Kotlin's comments share 0x80.
+- **Fixed on the way:** in Cranelift and `rust_stream`, an element with `end` past either end
+  answered the whole question as holding, without testing the elements after it. The
+  interpreter tests them. Nothing asked such a question before `refuses`.
+
+Kotlin's `semi` now ends:
+
+    refuses after ~";" multiline_comment with semi before "catch" | "finally" | "else",
+    refuses since ~";" multiline_comment with semi line_comment | multiline_comment
+
+`head_ctor` takes `refuses taken after ~";" multiline_comment with semi`.
+
+**Gone:** `asked_blk`, `after_asked`, `else_blk`, `else_next`, `ann_blk`, `ann_ctor`, `else_asked`,
+`arrow_asked`, `ctor_stop`, `vis_w`, `class_head`, `head_stop`, `class_kw`, and the keyword masks
+only they read (`else_w`, `as_w`, `where_w`, `catch_w`, `finally_w`, `by_w`, `ctor_w`).
+
+**Result:**
+- Stage 1 is 1,000 operations, from 1,332.
+- Tapes unchanged. The corpus is 450 the same, 41 refused, 0 differ: the same files as at step
+  4. The compiler's tests (133, with `a_mark_that_refuses` and
+  `a_mark_that_refuses_where_taken`), Kotlin's (52), `kotlin_aot`'s (4), Bitlex's (11) and the
+  Metal records tests pass.

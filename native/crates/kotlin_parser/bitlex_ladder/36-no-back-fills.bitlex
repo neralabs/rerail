@@ -219,35 +219,11 @@ error "a byte no token takes" by tokens when code & ~ws & ~word_run & ~number & 
 
 # A word ends here (no word byte after it) and starts here (none before it).
 mask kw_start   = w & ~prev(w)
-mask else_w     = kw_start & text("else") & ~next(w, 4)
-mask as_w       = kw_start & text("as") & ~next(w, 2)
-mask where_w    = kw_start & text("where") & ~next(w, 5)
-mask catch_w    = kw_start & text("catch") & ~next(w, 5)
-mask finally_w  = kw_start & text("finally") & ~next(w, 7)
-mask by_w       = kw_start & text("by") & ~next(w, 2)
-mask ctor_w     = kw_start & text("constructor") & ~next(w, 11)
 
 # --- The scanner's semicolon -----------------------------------------------------------------
 
 # A byte of code that is not blank, or a string's opener: where a token starts or goes on.
 mask solid      = (code | opens) & ~ws
-# What a line may start with and go on the line before: tree-sitter-kotlin's scanner, which
-# inserts no semicolon before these (`scan_automatic_semicolon`). `by` and `constructor` go on
-# everywhere here: they are keywords of this grammar, so a line they start where the scanner
-# would end the one before is refused.
-# A class's header, from `class` to its `(`, `{` or `=`: where a block comment before a primary
-# constructor's line goes on (`goes_now`, `ann_ctor`). The constructor's line itself is the class
-# rule's (`head_ctor`).
-mask class_kw   = kw_start & text("class") & ~next(w, 5) & ~prev(text("::"), 2)
-# A class's header, and the run back from `constructor`, stop at a declaration's keyword: in `class A` then `internal
-# class B private constructor(…)`, A's header ends at its line.
-mask head_stop  = class_kw | kw_start & (text("fun") & ~next(w, 3) | text("val") & ~next(w, 3) | text("var") & ~next(w, 3) | text("object") & ~next(w, 6) | text("interface") & ~next(w, 9))
-mask class_head = fill(class_kw, code & (lbrace | text("(") | text("=") | semicolon) | head_stop)
-mask vis_w      = kw_start & (text("private") & ~next(w, 7) | text("protected") & ~next(w, 9) | text("internal") & ~next(w, 8) | text("public") & ~next(w, 6))
-# The `constructor` that an annotation or a visibility modifier in a class's header reaches over
-# words, blanks, dots and `@`s (`ann_ctor`, from `S`'s bytes): the primary constructor's
-# modifiers. Told at the `constructor`, as the lean lexer's `modifier_then_constructor` reads on.
-mask ctor_stop  = ctor_w & class_head | ~(code & (word | ws | dot | at_sign)) | head_stop
 # A line break in code where the next token does not go on the line: the statement's end. Before
 # a `}`, a mark of its own: a block's statements may end with one, a class body's members must.
 # A line break after a `;` (and blanks or comments): the `;` was the semicolon.
@@ -257,28 +233,6 @@ mask lf_end     = lf & code & ~after_semi
 # A `}` after a `;`: the `;` closed the line, so the `}` closes as after a line break.
 mask close_at   = lf_end | code & rbrace & (prev(after_semi) | prev(code & semicolon))
 
-# A block comment the lean lexer's `asi` reads: one that starts the line after a line break where
-# a semicolon may come (`asked_blk`). What follows it decides, as there. Each test is told at the
-# byte that decides it, after the comment, as the lexer reads on: the first solid byte after the
-# comment (`after_asked`), and after an `else` there, the solid byte after the word. A `*/` in a
-# string, or a comment inside a line, is no such comment.
-mask asked_blk  = fill(o_block & prev(fill(lf_end & prev(fill(solid, lf)), solid)), block_end)
-mask after_asked = solid & prev(fill(block_end & prev(asked_blk), solid))
-# Not read yet: `catch`, `finally`, a header's `constructor`, `else` but a `when` entry's
-# (`else ->`), and an annotation or a visibility modifier before a header's `constructor`.
-mask else_blk   = else_w & after_asked
-mask else_next  = solid & (prev(else_blk, 4) | prev(fill(prev(else_blk, 4) & ~solid, solid)))
-mask ann_blk    = code & (at_sign | vis_w) & class_head & after_asked
-mask ann_ctor   = ctor_w & class_head & prev(fill(ann_blk, ctor_stop))
-escape "a block comment before a token that goes on the line" when (catch_w | finally_w | ctor_w & class_head) & after_asked | else_next & ~text("->") | ann_ctor
-# After a token's line, before another comment, the scanner reads it through and the tree keeps
-# a comment of no width where the next one starts: not read yet.
-escape "a block comment that starts a line, before a comment" when (o_line | o_block) & prev(fill(block_end & prev(asked_blk), ~ws))
-# A `when` entry's `else ->` after one: the scanner swallows the comment there too, which the
-# grammar does not say yet (the `->`).
-mask else_asked = else_w & after_asked
-mask arrow_asked = code & text("->") & (prev(else_asked, 4) | prev(fill(prev(else_asked, 4) & ~solid, solid)))
-escape "a block comment before `else ->`" when arrow_asked
 # The first token of each line, and the bytes of a line from an `@` or a visibility modifier
 # that starts it (an accessor's, `acc_word`).
 mask line_first = solid & prev(fill(lf & code, solid))
@@ -391,8 +345,10 @@ skip ws
 # takes this mark there, before `semi` (declared first). After it, `semi` ends no level at that
 # token: the level has made the line break's one decision, as the lean parser's. A modifier has
 # `constructor` on its line (`without semi`), as the lean lexer reads them; annotations may end
-# theirs.
-mark head_ctor  = lf & code, before "constructor", before "public" | "private" | "internal" | "protected" "constructor" without semi, before "@" (~("fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "{" | "}" | ";" | ":" | "=" | "constructor" | "public" | "private" | "internal" | "protected"))* nest ("(" to ")") "constructor", before "@" (~("fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "{" | "}" | ";" | ":" | "=" | "constructor"))* nest ("(" to ")") ending ("public" | "private" | "internal" | "protected") "constructor" without semi
+# theirs. A block comment that starts the line before them the scanner reads through, where the
+# grammar does not say yet: refused where the class's rule takes the mark (`refuses taken`).
+mark head_ctor  = lf & code, before "constructor", before "public" | "private" | "internal" | "protected" "constructor" without semi, before "@" (~("fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "{" | "}" | ";" | ":" | "=" | "constructor" | "public" | "private" | "internal" | "protected"))* nest ("(" to ")") "constructor", before "@" (~("fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "{" | "}" | ";" | ":" | "=" | "constructor"))* nest ("(" to ")") ending ("public" | "private" | "internal" | "protected") "constructor" without semi,
+  refuses taken after ~";" multiline_comment with semi
 # A block comment first on the line after a line break where a semicolon may come (not after a
 # `;`): the lean lexer's `asi` reads it through, then decides by the token after it, as `semi`'s
 # questions do at that token (decision 0451), the comment's record holding `semi`'s bit of its
@@ -408,11 +364,18 @@ mark head_ctor  = lf & code, before "constructor", before "public" | "private" |
 #   reads the comment as part of the line, and tree-sitter loses its bytes: a comment of no
 #   width at the token after it (`asi`'s `lost`). Wherever tier 2 asks for `semi` (`loses`), as
 #   the lean parser asks `asi` only where its state takes a semicolon.
+# - Before `catch`, `finally` or `else`, and before another comment, the scanner reads the
+#   comment through and the tree keeps it where the grammar does not say yet: the file is
+#   refused there (`refuses`), as the lean lexer reads them where `asi` is asked. Another
+#   comment is read after the first after the line break, however many follow (`since`: from
+#   the grammar token before).
 mark semi       = lf & code unless after ";", unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | ">=" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?." | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "where" | "catch" | "finally" | "by", unless before "else" ~"->", unless before "else" end, end, settles, ends,
   drops after ~";" multiline_comment with semi before starting "aew",
   drops unless after multiline_comment before "as" | "where" | "else",
   loses after ~";" multiline_comment with semi before starting ",.:*%><={[(?|&/",
-  loses after ~";" multiline_comment with semi before "!=" | "!==" | "as" | "where" | "by"
+  loses after ~";" multiline_comment with semi before "!=" | "!==" | "as" | "where" | "by",
+  refuses after ~";" multiline_comment with semi before "catch" | "finally" | "else",
+  refuses since ~";" multiline_comment with semi line_comment | multiline_comment
 mark semi_close = close_at, before "}", settles, ends
 # Something between two tokens: a blank or a comment. A token without it touches the token
 # before, as the lean parser's `adjacent(0)` asks.

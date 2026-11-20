@@ -182,7 +182,7 @@ pub struct Lowered {
 /// One element of a gap pattern, as `Lowered::gap_patterns` holds it: its offset from the token,
 /// its kinds' names, its words (strings), whether it is a `~` of them, the marks it holds with or
 /// without (each its name and whether with), and the bytes it may start with (`starting`).
-pub type GapElemRow = (i8, Vec<String>, Vec<u16>, bool, Vec<(String, bool)>, Vec<u8>);
+pub type GapElemRow = (i8, Vec<String>, Vec<u16>, bool, Vec<(String, bool)>, Vec<u8>, bool);
 
 /// A mark (a token of no width) as tier 2 tests it: its kind, the mask of its bits at token
 /// starts, and whether it is hidden (skipped where no arm takes it).
@@ -224,7 +224,15 @@ pub struct Mark {
     /// The questions themselves (`GapPattern`), whose rows `lower` writes (`Lowered::gap_patterns`).
     pub drops: Vec<::bitlex::syntax::GapPattern>,
     pub loses: Vec<::bitlex::syntax::GapPattern>,
-    /// With `lose`: the flag set where a level is at the mark's level (decision 0451), the lean
+    /// `, refuses …`: its questions' first entry, at whose tokens each test of the mark refuses
+    /// the file (`SETTLE m=19`), and the questions.
+    pub refuse: Option<u16>,
+    pub refuses: Vec<::bitlex::syntax::GapPattern>,
+    /// `, refuses taken …`: its questions' first entry, asked in each arm that takes the mark
+    /// (`SETTLE m=19`, where it holds), and the questions.
+    pub refuse_taken: Option<u16>,
+    pub refuses_taken: Vec<::bitlex::syntax::GapPattern>,
+    /// With `lose` or `refuse`: the flag set where a level is at the mark's level (decision 0451), the lean
     /// parser's `stmt`. A call sets it where the state it returns to takes the mark, keeps its
     /// caller's where that state ends at it, and clears it elsewhere (`lose_flags`).
     pub lose_flag: u16,
@@ -480,6 +488,10 @@ impl Emit<'_> {
     fn acts(&mut self, arm: usize) {
         let a = &self.arms[arm];
         let (token, to, ret) = (a.token, a.to, a.push.clone());
+        // `refuses taken`: an arm that takes the mark asks first.
+        if let Some(r) = self.marks.iter().find(|m| m.kind == token).and_then(|m| m.refuse_taken) {
+            self.push("SETTLE", crate::program::SETTLE_REFUSE, Arg::Num(r));
+        }
         // A remembered token is the word of the level it is taken at: after the calls the arm
         // makes, which keep their caller's (`PUSH`), so the innermost level's.
         let mut remember = None;
@@ -914,6 +926,14 @@ impl Emit<'_> {
             // before the token has no width.
             // At the mark's level (it takes the mark): always; where the level may end at it,
             // where the flag says a caller's level is the mark's; never where it refuses.
+            // `refuses`: asked first, the same way.
+            let refuse = crate::program::SETTLE_REFUSE;
+            match (m.refuse, at) {
+                (Some(r), AtMark::Arm(_)) => self.push("SETTLE", refuse, Arg::Num(r)),
+                (Some(r), AtMark::End) => self.push("SETTLE", refuse + 1 + m.lose_flag as u8, Arg::Num(r)),
+                _ => {}
+            }
+            let m = &self.marks[k];
             match (m.lose, at) {
                 (Some(l), AtMark::Arm(_)) => self.push("SETTLE", 2, Arg::Num(l)),
                 (Some(l), AtMark::End) => self.push("SETTLE", 3 + m.lose_flag as u8, Arg::Num(l)),
@@ -980,7 +1000,7 @@ impl Emit<'_> {
     /// `i` returning to state `ret[i]`: set where that state takes the mark (the level it returns
     /// to is the mark's), kept where it ends at it (its caller decides), else cleared.
     fn lose_flags(&self, ret: &[u16], flags: &mut Vec<(u8, u16, bool)>) {
-        for (k, m) in self.marks.iter().enumerate().filter(|(_, m)| m.lose.is_some()) {
+        for (k, m) in self.marks.iter().enumerate().filter(|(_, m)| m.lose.is_some() || m.refuse.is_some()) {
             for (i, &p) in ret.iter().enumerate() {
                 match self.tests_at(usize::from(p)).iter().find(|t| t.0 == k).map(|t| t.1) {
                     Some(AtMark::Arm(_)) => flags.push((i as u8, m.lose_flag, true)),
@@ -1430,12 +1450,13 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
     // in this order), their elements at offsets from the token: `after`'s before it, the last
     // at -1; `before`'s from it.
     let mut gap_patterns = Vec::new();
-    for (p, qs) in marks.iter().flat_map(|m| [&m.drops, &m.loses]).filter(|q| !q.is_empty()).enumerate() {
+    for (p, qs) in marks.iter().flat_map(|m| [&m.drops, &m.loses, &m.refuses, &m.refuses_taken]).filter(|q| !q.is_empty()).enumerate() {
         for q in qs.iter() {
+            // `since`: `after`'s from the grammar token before (0).
             let a = q.after.len() as i8;
-            let at = q.after.iter().enumerate().map(|(i, x)| (i as i8 - a, x)).chain(q.before.iter().enumerate().map(|(i, x)| (i as i8, x)));
+            let at = q.after.iter().enumerate().map(|(i, x)| if q.since { (i as i8, true, x) } else { (i as i8 - a, false, x) }).chain(q.before.iter().enumerate().map(|(i, x)| (i as i8, false, x)));
             let mut elems = Vec::new();
-            for (offset, choices) in at {
+            for (offset, since, choices) in at {
                 let (not, choices) = match choices.as_slice() {
                     [::bitlex::syntax::TokenElem::Not(inner)] => (true, inner.as_slice()),
                     c => (false, c),
@@ -1451,7 +1472,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
                         _ => return Err("a gap pattern's element of kinds, words, `with`, `without` and `starting`".into()),
                     }
                 }
-                elems.push((offset, kinds, words, not, marks_named, first));
+                elems.push((offset, kinds, words, not, marks_named, first, since));
             }
             gap_patterns.push((p as u8, q.unless, elems));
         }

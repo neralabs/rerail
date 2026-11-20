@@ -367,7 +367,7 @@ pub unsafe extern \"C\" fn tier2_entry(ctx: u64) -> u64 {
         }
     }
     for (i, m) in n.gap_patterns.iter().enumerate() {
-        gap_pattern(out, i, m);
+        gap_pattern(out, i, m, n.extras.first().map(|e| e.0));
         if i == 0 || n.gap_patterns[i - 1].order != m.order {
             gap_patterns(out, i, &n.gap_patterns);
         }
@@ -1501,14 +1501,28 @@ fn pattern_body(out: &mut String, i: usize, m: &TokenMark, body: &mut String, fr
 /// offset from the token's, as the lexer wrote them, extras included; its `starting`, the
 /// record's first byte, as the lean lexer's `asi` reads the byte after a comment. At the
 /// stream's end, no token: none holds.
-fn gap_pattern(out: &mut String, i: usize, m: &TokenMark) {
+fn gap_pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: Option<u8>) {
     let mut body = String::new();
+    // `since`: one past the grammar token before (0: none before the file's first), back over
+    // the extras from the token.
+    if m.elems.iter().any(|el| el.since) {
+        let extra = extra_bit.map_or("false".to_owned(), |b| format!("unsafe {{ *self.codes.add((g - 1) * self.rs) }} >> {} & 1 == 1", 16 + u32::from(b)));
+        writeln!(body, "        let mut g = here;\n        while g > 0 && {extra} {{\n            g -= 1;\n        }}").unwrap();
+    }
     for el in &m.elems {
         let o = el.offset;
-        let none = if el.end { "true" } else { "false" };
-        let at = if o < 0 { format!("here.checked_sub({})", -i32::from(o)) } else if o == 0 { "Some(here)".into() } else { format!("Some(here + {o}).filter(|&j| j < self.n)") };
-        let j = if o == 0 { "        let j = here;\n".to_string() } else { format!("        let Some(j) = {at} else {{ return {none} }};\n") };
-        body.push_str(&j);
+        // The token's own record and those after it: none past the last (at the end, the
+        // token's own is none). A `since`'s from the grammar token before, before the token.
+        let at = if el.since && o == 0 {
+            "g.checked_sub(1)".to_owned()
+        } else if el.since {
+            format!("Some(g + {}).filter(|&j| j < here)", o - 1).replace("g + 0", "g")
+        } else if o < 0 { format!("here.checked_sub({})", -i32::from(o)) } else if o == 0 { "Some(here).filter(|&j| j < self.n)".into() } else { format!("Some(here + {o}).filter(|&j| j < self.n)") };
+        // Past either end, an element with `end` holds, and the next is tested.
+        body.push_str(&if el.end { format!("        if let Some(j) = {at} {{\n") } else { format!("        let Some(j) = {at} else {{ return false }};\n") });
+        // Its tests: inside the `if let` of an `end` element, one deeper.
+        let mut tests = String::new();
+        let body_end = std::mem::take(&mut body);
         let test = element_test(el);
         if test != "true" {
             // A `~` of one `matches!`: its test, not negated twice.
@@ -1516,15 +1530,22 @@ fn gap_pattern(out: &mut String, i: usize, m: &TokenMark) {
                 Some(t) => t.to_string(),
                 None => format!("!({test})"),
             };
-            writeln!(body, "        let c = unsafe {{ *self.codes.add(j * self.rs) }};\n        if {fails} {{ return false; }}").unwrap();
+            writeln!(tests, "        let c = unsafe {{ *self.codes.add(j * self.rs) }};\n        if {fails} {{ return false; }}").unwrap();
         }
         // `starting`: the token's first byte, as the lean lexer's `asi` matches it.
         if el.first != [0; 4] {
             let bytes: Vec<String> = (0..=255u8).filter(|&b| el.first_holds(b)).map(|b| byte_literal(usize::from(b))).collect();
-            writeln!(body, "        let b = unsafe {{ *self.bytes.add(*self.starts.add(j * self.rs) as usize) }};\n        if !matches!(b, {}) {{ return false; }}", bytes.join(" | ")).unwrap();
+            writeln!(tests, "        let b = unsafe {{ *self.bytes.add(*self.starts.add(j * self.rs) as usize) }};\n        if !matches!(b, {}) {{ return false; }}", bytes.join(" | ")).unwrap();
+        }
+        body = body_end;
+        if el.end {
+            body.extend(tests.lines().map(|l| format!("    {l}\n")));
+            body.push_str("        }\n");
+        } else {
+            body.push_str(&tests);
         }
     }
-    writeln!(out, "    /// Gap pattern entry {i}'s records follow.\n    #[inline(never)]\n    fn gap_{i}(&self) -> bool {{\n        if self.at_end {{ return false; }}\n        let here = self.next as usize - 1;\n{body}        true\n    }}\n").unwrap();
+    writeln!(out, "    /// Gap pattern entry {i}'s records follow.\n    #[inline(never)]\n    fn gap_{i}(&self) -> bool {{\n        // The token's record (at the end, past the last: `refuses` asks there).\n        let here = self.next as usize - usize::from(!self.at_end);\n{body}        true\n    }}\n").unwrap();
 }
 
 /// A gap pattern's entries together, from `first`, as the token marks' (`patterns`).
@@ -1922,10 +1943,15 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
         // Taken out, its kind kept: the `TOKEN` that takes the token makes it again after it.
         // The lean lexer's `asi`: a comment pending, then the question at the token.
         Op::LoseLast { pattern, flag } => match flag {
-            Some(f) => format!("if flags & {} != 0 && s.pending != 0 && s.lost == 0 && s.gaps_{pattern}() {{\n    s.lose();\n}}\n{}", 1u32 << f, jump(0)?),
-            None => format!("if s.pending != 0 && s.lost == 0 && s.gaps_{pattern}() {{\n    s.lose();\n}}\n{}", jump(0)?),
+            Some(f) => format!("if flags & {} != 0 && s.pending != 0 && s.lost == 0 && !s.at_end && s.gaps_{pattern}() {{\n    s.lose();\n}}\n{}", 1u32 << f, jump(0)?),
+            None => format!("if s.pending != 0 && s.lost == 0 && !s.at_end && s.gaps_{pattern}() {{\n    s.lose();\n}}\n{}", jump(0)?),
         },
-        Op::DropLast { pattern } => format!("if s.pending != 0 && s.gaps_{pattern}() {{ s.pending -= 1; s.nodes -= 1; if s.pending == 0 {{ s.last_end = s.start; }} }}\n{}", jump(0)?),
+        // `refuses`: the question holding at the token, at the mark's level.
+        Op::RefuseIf { pattern, flag } => match flag {
+            Some(f) => format!("if flags & {} != 0 && s.gaps_{pattern}() {{\n    return Err(false);\n}}\n{}", 1u32 << f, jump(0)?),
+            None => format!("if s.gaps_{pattern}() {{\n    return Err(false);\n}}\n{}", jump(0)?),
+        },
+        Op::DropLast { pattern } => format!("if s.pending != 0 && !s.at_end && s.gaps_{pattern}() {{ s.pending -= 1; s.nodes -= 1; if s.pending == 0 {{ s.last_end = s.start; }} }}\n{}", jump(0)?),
         Op::Mark { mask, order, end, keep, word: mark_word, pattern } => {
             let k = u32::from(order);
             // A token mark past the code's (decision 0407): live at every token, its tokens

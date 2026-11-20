@@ -1912,25 +1912,73 @@ fn token_patterns(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, marks: &[crate::
 /// each element the record at its offset, as the lexer wrote them, extras included; past either
 /// end, an element with `end` holds; its `starting`, the record's first byte, as the lean
 /// lexer's `asi` reads it. 1 or 0.
-fn gap_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::program::TokenMark) -> Value {
+fn gap_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::program::TokenMark, extra_bit: Option<u8>, heads: &mut Vec<(Block, Step)>) -> Value {
     let flags = MemFlags::trusted();
     let (codes, starts, bytes, n) = ((e.ctx)(f, CODES), (e.ctx)(f, STARTS), (e.ctx)(f, BYTES), (e.ctx)(f, NSTARTS));
     let stride = (e.ctx)(f, RECORD_STRIDE);
+    // The token's record (at the stream's end, past the last: `refuses` asks there).
     let next = (e.get)(f, Mem::Next);
-    let here = f.ins().iadd_imm(next, -1);
+    let at_end = (e.get)(f, Mem::AtEnd);
+    let not_end = f.ins().icmp_imm(IntCC::Equal, at_end, 0);
+    let not_end = f.ins().uextend(types::I64, not_end);
+    let here = f.ins().isub(next, not_end);
     let (no, yes, done) = (f.create_block(), f.create_block(), f.create_block());
     f.append_block_param(done, types::I64);
-    // At the stream's end no token: none holds.
-    let at_end = (e.get)(f, Mem::AtEnd);
-    let token = f.create_block();
-    f.ins().brif(at_end, no, &[], token, &[]);
-    f.switch_to_block(token);
+    // `since`: one past the grammar token before (0: none before the file's first), back over
+    // the extras from the token: a stated loop, a few records at most (the comments of a gap).
+    let since = match extra_bit.filter(|_| m.elems.iter().any(|el| el.since)) {
+        Some(b) => {
+            let (head, test, found) = (f.create_block(), f.create_block(), f.create_block());
+            f.append_block_param(head, types::I64);
+            f.append_block_param(found, types::I64);
+            f.ins().jump(head, &[BlockArg::from(here)]);
+            f.switch_to_block(head);
+            heads.push((head, Step::Token));
+            let g = f.block_params(head)[0];
+            let first = f.ins().icmp_imm(IntCC::Equal, g, 0);
+            f.ins().brif(first, found, &[BlockArg::from(g)], test, &[]);
+            f.switch_to_block(test);
+            let j = f.ins().iadd_imm(g, -1);
+            let off = f.ins().imul(j, stride);
+            let a = f.ins().iadd(codes, off);
+            let c = f.ins().uload32(flags, a, 0);
+            let x = f.ins().ushr_imm(c, i64::from(crate::records::MARK_SHIFT) + i64::from(b));
+            let x = f.ins().band_imm(x, 1);
+            f.ins().brif(x, head, &[BlockArg::from(j)], found, &[BlockArg::from(g)]);
+            f.switch_to_block(found);
+            Some(f.block_params(found)[0])
+        }
+        // No extras: the grammar token before is the record before.
+        None => Some(here).filter(|_| m.elems.iter().any(|el| el.since)),
+    };
     for el in &m.elems {
-        let j = f.ins().iadd_imm(here, i64::from(el.offset));
-        // Past either end (a negative index is past the last too, unsigned).
-        let inside = f.ins().icmp(IntCC::UnsignedLessThan, j, n);
-        let on = f.create_block();
-        f.ins().brif(inside, on, &[], if el.end { yes } else { no }, &[]);
+        let (on, past) = (f.create_block(), f.create_block());
+        let j = match since.filter(|_| el.since) {
+            Some(g) => {
+                // From the grammar token before, before the token; before the file's first,
+                // an element with `end` holds, and the next element is tested.
+                let j = f.ins().iadd_imm(g, i64::from(el.offset) - 1);
+                let inside = f.ins().icmp(IntCC::UnsignedLessThan, j, here);
+                let out = f.create_block();
+                f.ins().brif(inside, on, &[], out, &[]);
+                f.switch_to_block(out);
+                if el.end {
+                    let none = f.ins().icmp_imm(IntCC::Equal, j, -1);
+                    f.ins().brif(none, past, &[], no, &[]);
+                } else {
+                    f.ins().jump(no, &[]);
+                }
+                j
+            }
+            None => {
+                // Past either end (a negative index is past the last too, unsigned): an
+                // element with `end` holds there, and the next element is tested.
+                let j = f.ins().iadd_imm(here, i64::from(el.offset));
+                let inside = f.ins().icmp(IntCC::UnsignedLessThan, j, n);
+                f.ins().brif(inside, on, &[], if el.end { past } else { no }, &[]);
+                j
+            }
+        };
         f.switch_to_block(on);
         let off = f.ins().imul(j, stride);
         let a = f.ins().iadd(codes, off);
@@ -1956,6 +2004,8 @@ fn gap_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::program:
             f.ins().brif(bit, on, &[], no, &[]);
             f.switch_to_block(on);
         }
+        f.ins().jump(past, &[]);
+        f.switch_to_block(past);
     }
     f.ins().jump(yes, &[]);
     f.switch_to_block(yes);
@@ -1970,11 +2020,11 @@ fn gap_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::program:
 
 /// A gap pattern's entries together, from `first`: none of the `unless` ones and one of the
 /// others (`program::patterns_hold`).
-fn gap_patterns(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, marks: &[crate::program::TokenMark], first: usize) -> Value {
+fn gap_patterns(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, marks: &[crate::program::TokenMark], first: usize, extra_bit: Option<u8>, heads: &mut Vec<(Block, Step)>) -> Value {
     let order = marks[first].order;
     let (mut none_of, mut one_of): (Option<Value>, Option<Value>) = (None, None);
     for m in marks[first..].iter().take_while(|m| m.order == order) {
-        let v = gap_pattern(f, e, m);
+        let v = gap_pattern(f, e, m, extra_bit, heads);
         if m.unless {
             none_of = Some(none_of.map_or(v, |a| f.ins().bor(a, v)));
         } else {
@@ -4807,12 +4857,17 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     // `drops`: an extra pending, and the question holding at the token (the lean
                     // lexer's `asi`): the extra pending last dropped; the next node made takes
                     // its row and cells.
+                    // A token's question: none at the stream's end.
                     let start = mget(&mut f, Mem::Start);
                     let pending = mget(&mut f, Mem::Pending);
+                    let some = f.ins().icmp_imm(IntCC::NotEqual, pending, 0);
+                    let at_end = mget(&mut f, Mem::AtEnd);
+                    let not_end = f.ins().icmp_imm(IntCC::Equal, at_end, 0);
+                    let some = f.ins().band(some, not_end);
                     let ask = f.create_block();
-                    f.ins().brif(pending, ask, &[], fall, &[]);
+                    f.ins().brif(some, ask, &[], fall, &[]);
                     f.switch_to_block(ask);
-                    let holds = gap_patterns(&mut f, &env, &native.gap_patterns, usize::from(pattern));
+                    let holds = gap_patterns(&mut f, &env, &native.gap_patterns, usize::from(pattern), native.extras.first().map(|e| e.0), &mut heads);
                     let drop = f.create_block();
                     f.ins().brif(holds, drop, &[], fall, &[]);
                     f.switch_to_block(drop);
@@ -4828,6 +4883,25 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     mset(&mut f, Mem::Nodes, n);
                     f.ins().jump(fall, &[]);
                 }
+                Op::RefuseIf { pattern, flag } => {
+                    // `refuses`: the question holding at the token, at the mark's level.
+                    let ask = f.create_block();
+                    match flag {
+                        Some(k) => {
+                            let fl = mget(&mut f, Mem::Flags);
+                            let fl = f.ins().ushr_imm(fl, i64::from(k));
+                            let fl = f.ins().band_imm(fl, 1);
+                            f.ins().brif(fl, ask, &[], fall, &[]);
+                        }
+                        None => {
+                            f.ins().jump(ask, &[]);
+                        }
+                    }
+                    f.switch_to_block(ask);
+                    let holds = gap_patterns(&mut f, &env, &native.gap_patterns, usize::from(pattern), native.extras.first().map(|e| e.0), &mut heads);
+                    let at = f.ins().iconst(types::I64, pc as i64 + 1);
+                    f.ins().brif(holds, refuse, &[BlockArg::from(at)], fall, &[]);
+                }
                 Op::LoseLast { pattern, flag } => {
                     // `loses`: an extra pending, and the question holding at the token (the lean
                     // lexer's `asi`): the extra pending last taken out, its kind kept: the
@@ -4839,6 +4913,10 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     let lost = mget(&mut f, Mem::Lost);
                     let none = f.ins().icmp_imm(IntCC::Equal, lost, 0);
                     let some = f.ins().band(some, none);
+                    // A token's question: none at the stream's end.
+                    let at_end = mget(&mut f, Mem::AtEnd);
+                    let not_end = f.ins().icmp_imm(IntCC::Equal, at_end, 0);
+                    let some = f.ins().band(some, not_end);
                     let some = f.ins().uextend(types::I64, some);
                     // Where a caller's level is the mark's: its flag.
                     let some = match flag {
@@ -4853,7 +4931,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     let ask = f.create_block();
                     f.ins().brif(some, ask, &[], fall, &[]);
                     f.switch_to_block(ask);
-                    let holds = gap_patterns(&mut f, &env, &native.gap_patterns, usize::from(pattern));
+                    let holds = gap_patterns(&mut f, &env, &native.gap_patterns, usize::from(pattern), native.extras.first().map(|e| e.0), &mut heads);
                     let lose = f.create_block();
                     f.ins().brif(holds, lose, &[], fall, &[]);
                     f.switch_to_block(lose);
@@ -6121,6 +6199,7 @@ fn ctx_reads(op: &Op, wrapping: bool) -> Vec<i32> {
         Op::SettleBefore { .. } => vec![CODES, RECORD_STRIDE, ROWS],
         Op::DropLast { .. } => vec![CODES, STARTS, BYTES, NSTARTS, RECORD_STRIDE],
         Op::LoseLast { .. } => vec![CODES, STARTS, BYTES, NSTARTS, RECORD_STRIDE, ROWS],
+        Op::RefuseIf { .. } => vec![CODES, STARTS, BYTES, NSTARTS, RECORD_STRIDE],
         Op::Open { .. } => vec![ROWS, OPEN],
         Op::Close { .. } => vec![OPEN, ROWS],
         Op::Leaf { .. } => vec![ROWS],
