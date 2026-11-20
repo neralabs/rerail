@@ -1372,8 +1372,22 @@ fn the_run_after_a_cold_one_writes_nothing() {
     let temp = tempfile::tempdir().unwrap();
     // `RERAIL_TEST_KEEP=<dir>`: the runs' store and outputs left there, to look at.
     let kept = std::env::var_os("RERAIL_TEST_KEEP").map(std::path::PathBuf::from);
-    cold_then_warm(kept.as_deref().unwrap_or(temp.path()));
+    cold_then_warm(kept.as_deref().unwrap_or(temp.path()), None, PICKLE_PACKAGE);
 }
+
+/// The same with tape values (decision 0431): a policy that parses string annotations. The warm run reads each
+/// file's rows from its memo entry and parses no string, so the entry names the values it was made of (`memo::VALUES`)
+/// and the warm run names their sources as the cold one did, which parsed them.
+#[test]
+fn the_run_after_a_cold_one_with_tape_values_writes_nothing() {
+    let temp = tempfile::tempdir().unwrap();
+    let c408 = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/ruff-c408-unnecessary-collection-call.rr");
+    let files = [("pkg/__init__.py", ""), ("pkg/a.py", "from typing import List\n\na: \"dict()\" = {}\nb: List[\"list()\"] = []\n"), ("main.py", "c: \"tuple()\" = ()\n")];
+    cold_then_warm(temp.path(), Some(&c408), &files);
+}
+
+/// `cold_then_warm`'s sources by default: a small Python package and a file importing it.
+const PICKLE_PACKAGE: &[(&str, &str)] = &[("pkg/__init__.py", ""), ("pkg/loader.py", "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n"), ("main.py", "from pkg.loader import load\nload(b'x')\n")];
 
 /// The same, over sources reached through a symlink, as every run under macOS's `$TMPDIR` is (`/var` is
 /// `/private/var`): the run reads its files by their canonical paths, so the corpus walk reads the real part of the
@@ -1385,16 +1399,18 @@ fn the_run_after_a_cold_one_through_a_symlink_writes_nothing() {
     let temp = tempfile::tempdir().unwrap();
     std::fs::create_dir(temp.path().join("real")).unwrap();
     std::os::unix::fs::symlink(temp.path().join("real"), temp.path().join("link")).unwrap();
-    cold_then_warm(&temp.path().join("link"));
+    cold_then_warm(&temp.path().join("link"), None, PICKLE_PACKAGE);
 }
 
-/// A cold run over a small Python package under `base`, then a warm one under `RERAIL_WARM=list`, which writes nothing.
-fn cold_then_warm(base: &std::path::Path) {
+/// A cold run of `program` (else the pickle pack's) over `files` under `base`, then a warm one under
+/// `RERAIL_WARM=list`, which writes nothing.
+fn cold_then_warm(base: &std::path::Path, program: Option<&std::path::Path>, files: &[(&str, &str)]) {
     let src = base.join("src");
-    std::fs::create_dir_all(src.join("pkg")).unwrap();
-    std::fs::write(src.join("pkg/__init__.py"), "").unwrap();
-    std::fs::write(src.join("pkg/loader.py"), "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n").unwrap();
-    std::fs::write(src.join("main.py"), "from pkg.loader import load\nload(b'x')\n").unwrap();
+    for (path, text) in files {
+        let at = src.join(path);
+        std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+        std::fs::write(at, text).unwrap();
+    }
     // Past the observer's racy window: a file changed within it of its answer is hashed again by the next run, and
     // its answer recorded again (`RACY_NS`). The claim is of sources older than that; a cold run fast enough to read
     // them inside it made the warm run's writes (the answers, the manifest, the statistics).
@@ -1414,6 +1430,9 @@ fn cold_then_warm(base: &std::path::Path) {
             .env("RERAIL_TAPE_CACHE", &store)
             .env("RERAIL_CHILD_RUN", &src)
             .env("RERAIL_CHILD_OUT", base.join("out"));
+        if let Some(program) = program {
+            child.env("RERAIL_CHILD_PROGRAM", program);
+        }
         if warm {
             child.env("RERAIL_WARM", "list");
         }

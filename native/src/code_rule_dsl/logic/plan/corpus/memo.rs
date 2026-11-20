@@ -60,6 +60,13 @@ pub(super) fn same_guests(a: &Entry, b: &Entry) -> bool {
     of(a) == of(b)
 }
 
+/// An entry's `outputs` key of the requests its chunk's fixpoint answered with tape values at a string of its file,
+/// or of a value it asked for (decision 0431 §8: `rr_embed_req`'s rows, the string node and its grammar), in the order
+/// answered. A chunk that reads the entry makes its values in the corpus batch from them, as the fixpoint admitted
+/// them (`Guests::admit`): each tape found by its text among the root's last runs' and its source named in the
+/// manifest (0431 R6), as the run that parsed it named it. Not an output.
+pub(super) const VALUES: &str = "values:";
+
 /// The words `identity` is held by in `COVERED`.
 pub(super) fn covered_words(identity: &[u8; 32]) -> [i64; 2] {
     [i64::from_le_bytes(identity[..8].try_into().expect("8 bytes")), i64::from_le_bytes(identity[8..16].try_into().expect("8 bytes"))]
