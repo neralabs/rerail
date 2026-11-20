@@ -274,7 +274,6 @@ UKL_INLINE void p1_grp_settle(UKL_GLOBAL const uint32_t* n_grp, UKL_GLOBAL const
 
 // P1's refusals (`P1_FLAGS`): a store's room, and the cases a later step of 0467 builds.
 #define P1_ROOM (1u)
-#define P1_EXPANDED_NAME (2u)
 #define P1_EMBED (4u)
 #define P1_LINE (8u)
 #define P1_ITERATIONS (16u)
@@ -285,55 +284,6 @@ typedef struct PpReq { uint32_t key_lo, key_hi, file, start, len, flags; } PpReq
 
 UKL_INLINE void p1_once_reset(UKL_GLOBAL uint32_t* once, uint32_t n_files, uint32_t f) {
     if (f < n_files) once[f] = PP_NONE;
-}
-
-// Directive word `w`: an active include's file, by its key in the table (`cand`: the file, or
-// `PP_NONE`), a request where the table has no row; an active `#pragma once`'s first slot for its
-// file; the refused directives flagged.
-UKL_INLINE void p1_inc_find(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32_t* n_nodes, UKL_GLOBAL const PpNode* nodes,
-                            UKL_GLOBAL const uint32_t* n_dirs, UKL_GLOBAL const uint32_t* dir_bases, UKL_GLOBAL const PpDir* rows, UKL_GLOBAL const uint32_t* acts, UKL_GLOBAL const uint32_t* dactive, UKL_GLOBAL const uint32_t* dslot,
-                            UKL_GLOBAL const uint64_t* ft_keys, UKL_GLOBAL const uint32_t* ft_files, uint32_t n_ft, UKL_GLOBAL const uint32_t* found_by, UKL_GLOBAL const uint32_t* unit_file, uint32_t max_depth,
-                            UKL_GLOBAL uint32_t* cand, UKL_GLOBAL uint32_t* once, UKL_GLOBAL PpReq* reqs, UKL_GLOBAL uint32_t* n_reqs, uint32_t req_cap, UKL_GLOBAL uint32_t* flags, uint32_t w) {
-    if (w >= n_dirs[0]) return;
-    cand[w] = PP_NONE;
-    if (dactive[w] == 0u) return;
-    uint32_t i, r = p1_row_of(insts, n_nodes[0], dir_bases, w, &i);
-    PpDir d = rows[r];
-    uint32_t f = insts[i].file;
-    if (d.kind == K_EMBED) { ukl_atomic_or(flags, P1_EMBED); return; }
-    if (d.kind == K_LINE || d.kind == K_LINE_MARKER) { ukl_atomic_or(flags, P1_LINE); return; }
-    if (d.kind == PK_PRAGMA && acts[r] == A_ONCE) { ukl_atomic_min(&once[f], dslot[w]); return; }
-    if (d.kind != K_INCLUDE && d.kind != K_INCLUDE_NEXT && d.kind != K_IMPORT) return;
-    // Past the depth's bound, nothing is searched nor entered (`Pp::include`).
-    if (nodes[i].depth + 1u > max_depth) return;
-    Tape t = tape_at(data, files, f);
-    uint32_t end = d.node + node_size(t, d.node), j = d.node + 3u;
-    if (j >= end) return;
-    uint32_t k = node_kind(t, j), s = node_start(t, j), e = node_end(t, j);
-    bool angle = k == K_HEADER;
-    bool quoted = k == PK_LITERAL && e - s >= 2u && data[pf_src(files[f]) + s] == ((uint8_t)('"'));
-    if (!angle && !quoted) { ukl_atomic_or(flags, P1_EXPANDED_NAME); return; }
-    uint32_t start = s + 1u, len = e - s - 2u;
-    bool main_root = nodes[i].parent == PP_NONE && nodes[i].pdir == 1u;
-    bool next = d.kind == K_INCLUDE_NEXT && !main_root;
-    // The including file by its index in its unit (a batch's units' tables are each the unit's own).
-    uint64_t ctx = next ? (0x80000000ul | ((uint64_t)(found_by[f] + 1u))) : !angle ? (0x40000000ul | ((uint64_t)(f - unit_file[nodes[i].unit]))) : 0ul;
-    // The key the table's rows hold (the request's), then the unit's row of it.
-    uint64_t base = key_mix(name_key((UKL_GLOBAL const uint64_t*)data, pf_src(files[f]) + start, len), ctx | (angle ? (1ul << 40) : 0ul));
-    uint64_t key = key_mix(base, ((uint64_t)(nodes[i].unit)) + 1ul);
-    uint32_t c = pb_lower_bound(ft_keys, n_ft, key);
-    if (c < n_ft && ft_keys[c] == key) {
-        uint32_t found = ft_files[c];
-        cand[w] = found;
-        if (found != PP_NONE && d.kind == K_IMPORT) ukl_atomic_min(&once[found], dslot[w]);
-        return;
-    }
-    uint32_t at = ukl_atomic_add(n_reqs, 1u);
-    if (at >= req_cap) { ukl_atomic_or(flags, P1_ROOM); return; }
-    PpReq q;
-    q.key_lo = (uint32_t)(base); q.key_hi = (uint32_t)(base >> 32); q.file = f; q.start = start; q.len = len;
-    q.flags = (angle ? 1u : 0u) | (next ? 2u : 0u);
-    reqs[at] = q;
 }
 
 // Directive word `w`'s found file entered, or not: past an earlier `#pragma once` or `#import`

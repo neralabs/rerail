@@ -185,22 +185,20 @@ pub const NO_PARENT: u32 = u32::MAX;
 pub const NOT_FOUND: u32 = u32::MAX;
 
 /// An include the file table has no row for (decision 0467 §1): its key (unit-free; the table's
-/// row takes it), the including file, its name's bytes in that file's source, and whether it is
-/// `<…>` and an `#include_next` (the main file's is an `#include`). The host answers it and nothing else.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// row takes it), the including file, its name, and whether it is `<…>` and an `#include_next`
+/// (the main file's is an `#include`). The host answers it and nothing else.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Request {
     pub key: u64,
     pub file: u32,
-    pub start: u32,
-    pub len: u32,
+    /// The name, as the device spelled it (phase 2: a literal's bytes, or an expansion's).
+    pub name: Vec<u8>,
     pub angle: bool,
     pub next: bool,
 }
 
 /// P1's refusals (`pp_p1.uglykl`'s `P1_*`): the cases a later step of decision 0467 builds.
 pub const P1_ROOM: u32 = 1;
-pub const P1_EXPANDED_NAME: u32 = 2;
 pub const P1_EMBED: u32 = 4;
 pub const P1_LINE: u32 = 8;
 pub const P1_ITERATIONS: u32 = 16;
@@ -386,6 +384,11 @@ pub struct Vis {
     // and `true`, and whether `true` is 1; the operators' table and the configuration's answers.
     if_count: Buf,
     if_first: Buf,
+    if_kind: Buf,
+    // The requests' names: the device's bytes, their top and room.
+    rnames: Buf,
+    rntop: Buf,
+    rn_cap: u32,
     if_at: Buf,
     if_scan: Scan,
     if_nodes: Buf,
@@ -540,6 +543,10 @@ impl Vis {
             max_depth: lay.max_depth,
             if_count: zeroed(nd)?,
             if_first: zeroed(nd)?,
+            if_kind: zeroed(nd)?,
+            rnames: arena.zeroed::<u8>(nd * 64 + 4096)?,
+            rntop: zeroed(1)?,
+            rn_cap: (nd * 64 + 4096) as u32,
             if_at: zeroed(nd)?,
             if_scan: Scan::new(arena)?,
             if_nodes: zeroed(top)?,
@@ -638,7 +645,7 @@ impl Vis {
         l.at("P1_NODES", &self.nodes).at("P1_DEPTHN", &self.depth).at("P1_NDIRS", &self.p1_ndirs).at("P1_NGAPS", &self.p1_ngaps);
         l.word("N_FT", self.n_ft).at("P1_FTKEYS", &self.ft_keys).at("P1_FTFILES", &self.ft_files).at("P1_FOUNDBY", &self.found_by).at("P1_UFILE", &self.unit_file).word("P1_MAXDEPTH", self.max_depth);
         l.at("P1_LIVE", &self.live);
-        l.at("IF_COUNT", &self.if_count).at("IF_FIRST", &self.if_first).at("IF_AT", &self.if_at).at("IF_TOTAL", &self.if_scan.total).at("IF_NODES", &self.if_nodes);
+        l.at("IF_COUNT", &self.if_count).at("IF_FIRST", &self.if_first).at("IF_KIND", &self.if_kind).at("P1_RNAMES", &self.rnames).at("P1_RNTOP", &self.rntop).word("RNC", self.rn_cap).at("IF_AT", &self.if_at).at("IF_TOTAL", &self.if_scan.total).at("IF_NODES", &self.if_nodes);
         l.at("IF_OPS", &self.if_ops).at("IF_VAL", &self.if_val).at("IF_KEYS", &self.if_keys).word("IF_TRUE", self.true_is_one).word("N_IFOP", self.n_ifop);
         l.at("IF_OPKEYS", &self.op_keys).at("IF_OPKINDS", &self.op_kinds).word("N_FEAT", self.n_feat).at("IF_FEATKEYS", &self.feat_keys).at("IF_FEATVALS", &self.feat_vals);
         l.at("P1_MADE", &self.made).at("P1_MADEF", &self.made_file).at("P1_ENTER", &self.enter).at("P1_CAND", &self.cand).at("P1_ONCE", &self.once);
@@ -700,7 +707,13 @@ impl Vis {
         let raw = unsafe { std::slice::from_raw_parts(self.reqs.host().cast::<[u32; 6]>(), n) };
         let mut out: Vec<Request> = raw
             .iter()
-            .map(|q| Request { key: u64::from(q[0]) | (u64::from(q[1]) << 32), file: q[2], start: q[3], len: q[4], angle: q[5] & 1 != 0, next: q[5] & 2 != 0 })
+            .map(|q| {
+                // copy: not block data (a request's name, the host's search key: decision 0467 §1)
+                // SAFETY: the device finished; a request's name lies within the names' room.
+                let (at, n) = ((q[3] as usize).min(self.rn_cap as usize), q[4] as usize);
+                let name = unsafe { std::slice::from_raw_parts(self.rnames.host().add(at), n.min(self.rn_cap as usize - at)).to_vec() };
+                Request { key: u64::from(q[0]) | (u64::from(q[1]) << 32), file: q[2], name, angle: q[5] & 1 != 0, next: q[5] & 2 != 0 }
+            })
             .collect();
         out.sort_unstable_by_key(|q| (q.key, q.file));
         out.dedup_by_key(|q| q.key);
@@ -871,7 +884,8 @@ impl Exp {
             slots: zeroed(q)?,
             qctl: zeroed(4)?,
             ctl: arena.from_slice(&ctl)?,
-            out: zeroed(out)?,
+            // The refs, then each one's space flag.
+            out: zeroed(2 * out)?,
         })
     }
 

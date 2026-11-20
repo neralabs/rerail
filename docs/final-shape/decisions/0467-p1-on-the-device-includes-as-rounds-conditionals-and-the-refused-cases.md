@@ -298,3 +298,22 @@ row.
     units equal, at most 2 rounds of 4 launches; refused: `#line` 2, a call across a stretch's
     end 1, an expanded include name 3 (one more than step 4: a `__has_include` of a macro,
     step 6). GPU time 206 ms against 184 ms: each iteration expands the tests' lines.
+- **Step 6: expanded include names (§5; R5).** `pp_if.uglykl`.
+  - A macro-form include's line (`#include MACRO`, `#include_next`, `#import`, within the
+    depth's bound) is a line of §4's pass, its names looked up as text's are; a header test's
+    operand that starts with neither a string nor `<` is expanded too (`Pp::header_of`).
+  - The output keeps each token's space flag beside its ref, so the name is spelled from the
+    expansion as `header_of` spells it: a string's bytes inside its quotes, or the tokens from
+    `<` to `>`, a blank where space was before one (`p1_header_of`, `p1_header_bytes`).
+  - One lookup serves the includes and the header tests (`p1_find`, `p1_find_header`), so a
+    literal name and an expanded one are keyed alike. A request carries its name's bytes, as
+    the device spelled them (`P1_RNAMES`): the host searches for them and reads no source.
+  - The refusal `P1_EXPANDED_NAME` goes.
+  - R5: `expanded_include_names_are_the_spikes`, 7 shapes in C and C++: a string, `<…>` from
+    object-like and function-like macros, a stringized operand, names defined in an earlier
+    header, a name with blanks, a name that spells nothing, one not found, `#include_next` of a
+    macro, `__has_include` of macros. The tree, every name's meaning and the output are the
+    spike's.
+  - All 24 evaluator tests pass; the Metal gates pass. The corpus, from main files: 3,132 units
+    equal, at most 2 rounds of 4 launches; refused: `#line` 2, a call across a stretch's end 1.
+    GPU time 251 ms against 206 ms, at a load average of 55 (not comparable).

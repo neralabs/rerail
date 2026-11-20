@@ -1010,7 +1010,9 @@ UKL_INLINE Walked px_walk(Ar a, uint32_t k, uint32_t lane, bool place __UKL_PARA
         if (place) {
             if (alive && child == 0u) {
                 if (dest == 0u) {
-                    if (off < a.out_cap) a.out[off] = a.tok[first + j]; else px_refuse(a.ctl, X_ROOM);
+                    // The output's refs, then each one's space flag.
+                    if (off < a.out_cap) { a.out[off] = a.tok[first + j]; a.out[a.out_cap + off] = a.tflag[first + j] & T_SPACE; }
+                    else px_refuse(a.ctl, X_ROOM);
                 } else {
                     uint32_t f = a.tflag[first + j];
                     a.tok[off] = a.tok[first + j];
@@ -2010,12 +2012,18 @@ UKL_INLINE void px_top_sizes(UKL_GLOBAL uint32_t* state, UKL_GLOBAL const uint32
 
 // Each top token at its place (`obase`, the sizes' scan), and each live outermost call's list's
 // base and its exits' chain's, their PLACE pushed.
-UKL_INLINE void px_top_place(UKL_GLOBAL const uint32_t* state, UKL_GLOBAL const uint32_t* oid, UKL_GLOBAL PxList* lists, UKL_GLOBAL const uint32_t* n_toks, UKL_GLOBAL const uint32_t* obase, UKL_GLOBAL const uint32_t* text_nodes, UKL_GLOBAL const uint32_t* gat, UKL_GLOBAL const uint32_t* n_gaps, UKL_GLOBAL const uint32_t* firsts, UKL_GLOBAL uint32_t* out, UKL_GLOBAL uint32_t* slots, UKL_GLOBAL uint32_t* qctl, UKL_GLOBAL uint32_t* ctl, uint32_t out_cap, uint32_t q_cap, uint32_t s) {
+UKL_INLINE void px_top_place(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, UKL_GLOBAL const uint32_t* bases, uint32_t n_files, UKL_GLOBAL const uint32_t* state, UKL_GLOBAL const uint32_t* oid, UKL_GLOBAL PxList* lists, UKL_GLOBAL const uint32_t* n_toks, UKL_GLOBAL const uint32_t* obase, UKL_GLOBAL const uint32_t* text_nodes, UKL_GLOBAL const uint32_t* gat, UKL_GLOBAL const uint32_t* n_gaps, UKL_GLOBAL const uint32_t* firsts, UKL_GLOBAL uint32_t* out, UKL_GLOBAL uint32_t* slots, UKL_GLOBAL uint32_t* qctl, UKL_GLOBAL uint32_t* ctl, uint32_t out_cap, uint32_t q_cap, uint32_t s) {
     if (s >= n_toks[0]) return;
     uint32_t st = state[s];
     if (st == 0u) {
-        if (obase[s] < out_cap) out[obase[s]] = top_ref(text_nodes, gat, n_gaps[0], firsts, s);
-        else px_refuse(ctl, X_ROOM);
+        if (obase[s] < out_cap) {
+            Ux u; u.files = files; u.data = data; u.bases = bases; u.n_files = n_files;
+            uint32_t g = top_ref(text_nodes, gat, n_gaps[0], firsts, s);
+            out[obase[s]] = g;
+            out[out_cap + obase[s]] = top_space(u, g) ? T_SPACE : 0u;
+        } else {
+            px_refuse(ctl, X_ROOM);
+        }
     } else if (st == 1u) {
         UklWorkQueue q; q.slots = slots; q.control = qctl; q.capacity = q_cap;
         uint32_t c = oid[s], b = obase[s];

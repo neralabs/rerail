@@ -306,7 +306,6 @@ fn unit_of(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, pat
         Refused::NoMain => "the main file is not read",
         Refused::P1(f) if f & P1_IF_DEFINED != 0 => "defined made by a macro in an #if",
         Refused::P1(f) if f & P1_IF_BIG != 0 => "an #if past the evaluator's room",
-        Refused::P1(f) if f & P1_EXPANDED_NAME != 0 => "an expanded include name",
         Refused::P1(f) if f & P1_LINE != 0 => "#line",
         Refused::P1(f) if f & P1_EMBED != 0 => "#embed",
         Refused::P1(f) if f & P1_ROOM != 0 => "P1's room",
@@ -473,6 +472,34 @@ fn the_include_tree_is_the_spikes() {
             // The last shape includes itself: the depth's bound ends it.
             cfg.max_depth = 6;
             lookups_agree(cfg, &mut io, "main.c", cpp, &format!("shape {k}")).unwrap();
+        }
+    }
+}
+
+/// R5 of decision 0467 (expanded names, step 6): an include whose name is a macro's expansion,
+/// and a header test whose operand is one, resolve on the device as `Pp::header_of` spells the
+/// name: a string, an object-like or function-like macro giving `<…>` (its tokens joined, a
+/// blank where space was), a stringized operand, a name defined in an earlier header, a name
+/// that spells nothing or no header found, `#include_next` of a macro, and `__has_include` of a
+/// macro; the tree, every name's meaning and the output are the spike's.
+#[test]
+fn expanded_include_names_are_the_spikes() {
+    use rerail_c_pp::Config;
+    use rerail_c_pp::files::{DirKind, Search};
+    let shapes: &[&[(&str, &str)]] = &[
+        &[("main.c", "#define H \"a.h\"\n#include H\nA\n"), ("a.h", "#define A a\n")],
+        &[("main.c", "#define S <b.h>\n#include S\n#define P(x) <x.h>\n#include P(c)\nB C\n"), ("inc/b.h", "#define B b\n"), ("inc/c.h", "#define C c\n")],
+        &[("main.c", "#define Q(x) #x\n#include Q(a.h)\n#define J(d, f) <d/f.h>\n#include J(sub, d)\nA D\n"), ("a.h", "#define A a\n"), ("inc/sub/d.h", "#define D d\n")],
+        &[("main.c", "#include \"names.h\"\n#include NAME\n#include SYS\nX Y\n"), ("names.h", "#define NAME \"x.h\"\n#define SYS < y.h >\n"), ("x.h", "#define X x\n"), ("inc/y.h", "#define Y y\n")],
+        &[("main.c", "#define SP < sub /d.h>\n#include SP\n#define E\n#include E\n#define M \"missing.h\"\n#include M\nZ\n"), ("inc/sub/d.h", "#define Z z\n")],
+        &[("main.c", "#define N <n.h>\n#include N\nV\n"), ("inc/n.h", "#define NEXT <n.h>\n#define V 1\n#include_next NEXT\n"), ("sys/n.h", "#undef V\n#define V 2\n")],
+        &[("main.c", "#define H \"a.h\"\n#define G <b.h>\n#define NO <none.h>\n#if __has_include(H) && __has_include(G) && !__has_include(NO)\nyes\n#else\nno\n#endif\n"), ("a.h", ""), ("inc/b.h", "")],
+    ];
+    for (k, files) in shapes.iter().enumerate() {
+        for cpp in [false, true] {
+            let m: std::collections::HashMap<String, Vec<u8>> = files.iter().map(|(p, s)| (p.to_string(), s.as_bytes().to_vec())).collect();
+            let mut io = Search::new(vec![("inc".into(), DirKind::Angle), ("sys".into(), DirKind::System)], move |p: &str| m.get(p).cloned());
+            lookups_agree(Config::new(crate::pp::options(cpp)), &mut io, "main.c", cpp, &format!("shape {k}")).unwrap();
         }
     }
 }

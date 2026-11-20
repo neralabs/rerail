@@ -160,8 +160,7 @@ pub fn run<T>(cfg: &Config, io: &mut dyn Files, main: &str, cpp: bool, mut eval:
         }
         // The host's part: each request answered, by the search and a read.
         for q in requests {
-            let (s, e) = (q.start as usize, (q.start + q.len) as usize);
-            let name = loaded.files[q.file as usize][s..e].to_vec();
+            let name = q.name;
             let includer = loaded.paths[q.file as usize].clone();
             let next_after = q.next.then(|| Some(loaded.found_by[q.file as usize]).filter(|&k| k != NOT_FOUND));
             let file = match io.find(&name, q.angle, &includer, next_after) {
