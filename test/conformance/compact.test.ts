@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
 
-import { NESTING_RUN_LIMIT, REPEATED_SHARE_LIMIT, SIZE_FLAG_BYTES, compactGate } from "../../conformance/languages/checks/compact.js";
+import { NESTING_RUN_LIMIT, REPEATED_SHARE_LIMIT, SIZE_FLAG_BYTES, compactGate, type RepetitionExemption } from "../../conformance/languages/checks/compact.js";
 
 const FLAGGED = SIZE_FLAG_BYTES + 1;
 
@@ -116,17 +116,23 @@ test("compact follows a query into its language's shared define utilities", () =
   assert.equal(cyclic.metrics.nestingRun, 2);
 });
 
-test("compact passes a run a rule declares is not a copy, and fails the declaration once the run is gone", () => {
-  const chain = (depth: number): Record<string, unknown> => (depth === 1 ? { kind: "parenthesized_expression" } : { kind: "parenthesized_expression", has: chain(depth - 1) });
-  const repetition = (bytes: number, depth: number, exempt?: string) => compactGate(bytes, rule(chain(depth)), exempt).checks.find((check) => check.id === "no-written-out-repetition");
+test("compact passes the runs a rule declares are not copies, fails a run it does not declare, and fails the declaration once they are gone", () => {
+  const chain = (depth: number, kind = "parenthesized_expression"): Record<string, unknown> => (depth === 1 ? { kind } : { kind, has: chain(depth - 1, kind) });
+  const repetition = (bytes: number, body: Record<string, unknown>, exempt?: RepetitionExemption) => compactGate(bytes, rule(body), exempt).checks.find((check) => check.id === "no-written-out-repetition");
   const reason = "each step is the next enclosing expression";
-  assert.deepEqual(repetition(FLAGGED, 3, reason), { id: "no-written-out-repetition", ok: true, detail: `exempt (${reason}); the most times one node kind occurs along a single nesting path: 3 (limit ${NESTING_RUN_LIMIT})` });
+  const exempt = { runs: { parenthesized_expression: 3 }, reason };
+  const measured = (most: number, long: string) => `the most times one node kind occurs along a single nesting path: ${most} (limit ${NESTING_RUN_LIMIT})${long === "" ? "" : `; runs of ${NESTING_RUN_LIMIT} or more: ${long}`}`;
+  assert.deepEqual(repetition(FLAGGED, chain(3), exempt), { id: "no-written-out-repetition", ok: true, detail: `exempt (${reason}); ${measured(3, "parenthesized_expression 3")}` });
   // Without the declaration the same run still fails.
-  assert.equal(repetition(FLAGGED, 3)!.ok, false);
-  // Once the run is under the limit, or the document under the flag, the declaration is stale.
-  assert.deepEqual(repetition(FLAGGED, 2, reason), { id: "no-written-out-repetition", ok: false, detail: `stale exemption (${reason}): the most times one node kind occurs along a single nesting path: 2 (limit ${NESTING_RUN_LIMIT}); remove the exemption` });
-  assert.deepEqual(repetition(100, 3, reason), { id: "no-written-out-repetition", ok: false, detail: `stale exemption (${reason}): 100 bytes, under the ${SIZE_FLAG_BYTES}-byte flag; remove the exemption` });
-  assert.equal(repetition(100, 3), undefined);
+  assert.equal(repetition(FLAGGED, chain(3))!.ok, false);
+  // A run the declaration does not name, or a longer one than it names, was not judged: the declaration covers neither.
+  const notDeclared = (most: number, long: string) => `the exemption (${reason}) excuses parenthesized_expression 3, not the runs measured; ${measured(most, long)}; declare those runs if they are not copies either, or rewrite the repetition`;
+  assert.deepEqual(repetition(FLAGGED, { all: [chain(3), { has: chain(6, "call_expression") }] }, exempt), { id: "no-written-out-repetition", ok: false, detail: notDeclared(6, "call_expression 6, parenthesized_expression 3") });
+  assert.deepEqual(repetition(FLAGGED, chain(4), exempt), { id: "no-written-out-repetition", ok: false, detail: notDeclared(4, "parenthesized_expression 4") });
+  // Once every run is under the limit, or the document under the flag, the declaration is stale.
+  assert.deepEqual(repetition(FLAGGED, chain(2), exempt), { id: "no-written-out-repetition", ok: false, detail: `stale exemption (${reason}): ${measured(2, "")}; remove the exemption` });
+  assert.deepEqual(repetition(100, chain(3), exempt), { id: "no-written-out-repetition", ok: false, detail: `stale exemption (${reason}): 100 bytes, under the ${SIZE_FLAG_BYTES}-byte flag; remove the exemption` });
+  assert.equal(repetition(100, chain(3)), undefined);
 });
 
 test("compact reports recursive utilities called by id or with parameters, per query", () => {

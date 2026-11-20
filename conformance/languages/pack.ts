@@ -3,6 +3,7 @@ import { dirname, join, matchesGlob, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { CODE_RULE_LANGUAGE_FAMILIES, compareDeterministicStrings, RULE_PACK_RULE_ID } from "../../src/engine/index.js";
+import { repetitionExemptionSchema } from "./manifest.js";
 
 export const HARNESS_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 export const RERAIL_ROOT = resolve(HARNESS_DIRECTORY, "..", "..");
@@ -85,8 +86,8 @@ export type CapabilityExemption = z.infer<typeof exemptionSchema>;
 const suppressionExemptionSchema = z.strictObject({ rule: nonEmpty, reason: z.string().trim().min(20) });
 export type SuppressionExemption = z.infer<typeof suppressionExemptionSchema>;
 
-/** An own rule whose run of one node kind along a nesting path is not a copy, as gates.yaml's `repetition_exempt` is a port's. */
-const repetitionExemptionSchema = z.strictObject({ rule: nonEmpty, reason: nonEmpty });
+/** An own rule's runs of one node kind along a nesting path, and why they are not copies, as gates.yaml's `repetition_exempt` is a port's. */
+const ownRepetitionExemptionSchema = z.strictObject({ rule: nonEmpty, ...repetitionExemptionSchema.shape });
 
 const familySchema = z.enum(CODE_RULE_LANGUAGE_FAMILIES);
 
@@ -113,10 +114,11 @@ export const packSchema = z
      */
     own: z.array(z.string().regex(RULE_PACK_RULE_ID, "rule ids are lowercase kebab-case")).default([]),
     /**
-     * Own rules, by `rule`, whose `reason` says why their run of one node kind along a nesting path is not a copy
-     * written out: compact's no-written-out-repetition passes the run, and fails the exemption once it is stale.
+     * Own rules, by `rule`, with the `runs` of one node kind along a nesting path that compact's no-written-out-repetition
+     * measures and the `reason` they are not copies written out: the check passes those runs, and fails the exemption
+     * once it is stale.
      */
-    repetitionExemptions: z.array(repetitionExemptionSchema).default([]),
+    repetitionExemptions: z.array(ownRepetitionExemptionSchema).default([]),
     /** Expected-findings directory, relative to the pack directory; default `upstream/` beside conformance.json. */
     oracles: nonEmpty.optional(),
   })

@@ -43,12 +43,14 @@ test("upstream.lints and rules are required, and a rule's facts take only deprec
   assert.throws(() => parseGatesManifest(gates("", '[".py"]', "rules:\n  B101:\n    deprecated: null\n    recommended: null\n    tests: []\n"), "gates.yaml"), /\/rules\/B101: /u);
 });
 
-test("a rule's repetition_exempt carries a reason", () => {
+test("a rule's repetition_exempt names its runs, each at the limit or over, and carries a reason", () => {
   const facts = (extra: string) => `rules:\n  B101:\n    deprecated: null\n    recommended: null\n${extra}`;
-  assert.deepEqual(parseGatesManifest(gates("", '[".py"]', facts("    repetition_exempt: each step is the next enclosing block\n")), "gates.yaml").rules.B101, {
+  const exempt = (value: string) => parseGatesManifest(gates("", '[".py"]', facts(`    repetition_exempt: ${value}\n`)), "gates.yaml");
+  assert.deepEqual(exempt("{ runs: { block: 3 }, reason: each step is the next enclosing block }").rules.B101, {
     deprecated: null,
     recommended: null,
-    repetition_exempt: "each step is the next enclosing block",
+    repetition_exempt: { runs: { block: 3 }, reason: "each step is the next enclosing block" },
   });
-  assert.throws(() => parseGatesManifest(gates("", '[".py"]', facts('    repetition_exempt: ""\n')), "gates.yaml"), /\/rules\/B101\/repetition_exempt: /u);
+  for (const refused of ['{ runs: { block: 3 }, reason: "" }', "{ reason: each step is the next enclosing block }", "{ runs: {}, reason: why }", "{ runs: { block: 2 }, reason: why }", "each step is the next enclosing block"])
+    assert.throws(() => exempt(refused), /\/rules\/B101\/repetition_exempt/u, refused);
 });

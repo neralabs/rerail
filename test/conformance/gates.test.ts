@@ -217,24 +217,25 @@ function nestedBlocks(path: string): void {
 
 const repetitionCheck = (checks: { id: string }[]) => checks.find(check => check.id === "no-written-out-repetition");
 const REASON = "each step is the next enclosing block";
+const RUNS = { block: 3 };
 
 describe("a declared repetition exemption", () => {
   const editJson = (path: string, edit: (value: Record<string, unknown>) => Record<string, unknown>): void =>
     writeFileSync(path, JSON.stringify(edit(JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>)));
   const portCompact = () => judgeDocuments(root, loadEngine(), loadPack(pack), "examplelint").rules["packs/valid/rules/assert-used.json"]!.compact;
 
-  it("passes a port's run with gates.yaml's repetition_exempt reason, and fails it once the run is gone", () => {
+  it("passes a port's run with gates.yaml's repetition_exempt runs and reason, and fails it once the run is gone", () => {
     nestedBlocks(join(pack, "rules", "assert-used.json"));
     expect(repetitionCheck(portCompact())).toMatchObject({ ok: false });
-    writeFileSync(join(pack, "upstream", "examplelint", "gates.yaml"), `${GATES("{ config: default, options: [] }")}    repetition_exempt: ${REASON}\n`);
-    expect(repetitionCheck(portCompact())).toEqual({ id: "no-written-out-repetition", ok: true, detail: `exempt (${REASON}); the most times one node kind occurs along a single nesting path: 3 (limit 3)` });
+    writeFileSync(join(pack, "upstream", "examplelint", "gates.yaml"), `${GATES("{ config: default, options: [] }")}    repetition_exempt: { runs: { block: 3 }, reason: ${REASON} }\n`);
+    expect(repetitionCheck(portCompact())).toEqual({ id: "no-written-out-repetition", ok: true, detail: `exempt (${REASON}); the most times one node kind occurs along a single nesting path: 3 (limit 3); runs of 3 or more: block 3` });
     cpSync(fixturesPath("packs", "valid", "rules", "assert-used.json"), join(pack, "rules", "assert-used.json"));
     expect(repetitionCheck(portCompact())).toMatchObject({ ok: false, detail: expect.stringMatching(/^stale exemption \(each step is the next enclosing block\): \d+ bytes, under the 15360-byte flag/u) });
   });
 
-  it("passes an own rule's run with conformance.json's repetitionExemptions reason, and fails the rule once the run is gone", () => {
+  it("passes an own rule's run with conformance.json's repetitionExemptions runs and reason, and fails the rule once the run is gone", () => {
     const conformance = join(pack, "conformance.json");
-    editJson(conformance, value => ({ ...value, own: ["pass-statement"], repetitionExemptions: [{ rule: "pass-statement", reason: REASON }] }));
+    editJson(conformance, value => ({ ...value, own: ["pass-statement"], repetitionExemptions: [{ rule: "pass-statement", runs: RUNS, reason: REASON }] }));
     nestedBlocks(join(pack, "rules", "pass-statement.json"));
     const exempt = judgeOwnRules(root, loadEngine(), loadPack(pack)).rules[0]!;
     expect(exempt).toMatchObject({ pass: true });
@@ -243,14 +244,16 @@ describe("a declared repetition exemption", () => {
     expect(judgeOwnRules(root, loadEngine(), loadPack(pack)).rules[0]).toMatchObject({ pass: false, stoppedAt: "compact", failure: { check: "no-written-out-repetition", why: expect.stringContaining("stale exemption") } });
   });
 
-  it("is refused without a reason, for a rule that is not an own rule, and twice for one rule", () => {
+  it("is refused without a reason or runs, with a run under the limit, for a rule that is not an own rule, and twice for one rule", () => {
     const conformance = join(pack, "conformance.json");
     const exempting = (exemptions: unknown[]) => editJson(conformance, value => ({ ...value, own: ["pass-statement"], repetitionExemptions: exemptions }));
-    exempting([{ rule: "pass-statement", reason: "" }]);
-    expect(() => loadPack(pack)).toThrow(/repetitionExemptions/u);
-    exempting([{ rule: "assert-used", reason: REASON }]);
+    for (const refused of [{ runs: RUNS, reason: "" }, { reason: REASON }, { runs: {}, reason: REASON }, { runs: { block: 2 }, reason: REASON }]) {
+      exempting([{ rule: "pass-statement", ...refused }]);
+      expect(() => loadPack(pack)).toThrow(/repetitionExemptions/u);
+    }
+    exempting([{ rule: "assert-used", runs: RUNS, reason: REASON }]);
     expect(() => loadPack(pack)).toThrow(/repetition exemption for assert-used, which is not an own rule/u);
-    exempting([{ rule: "pass-statement", reason: REASON }, { rule: "pass-statement", reason: REASON }]);
+    exempting([{ rule: "pass-statement", runs: RUNS, reason: REASON }, { rule: "pass-statement", runs: RUNS, reason: REASON }]);
     expect(() => loadPack(pack)).toThrow(/duplicate repetition exemption for pass-statement/u);
   });
 });

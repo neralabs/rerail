@@ -39,7 +39,9 @@ rules:
   "vue/no-async-in-computed-properties":
     deprecated: null
     recommended: { config: "flat/recommended", options: [] }
-    repetition_exempt: "each object step is a different object, a computed property's { get, set } object, the computed object that holds it and the component's options object; each pair step is likewise a different pair, the get pair, the computed property's pair and the computed pair around them"
+    repetition_exempt:
+      runs: { object: 3, pair: 3 }
+      reason: "each object step is a different object, a computed property's { get, set } object, the computed object that holds it and the component's options object; each pair step is likewise a different pair, the get pair, the computed property's pair and the computed pair around them"
   "vue/no-child-content":
     deprecated: null
     recommended: { config: "flat/recommended", options: [] }
@@ -61,7 +63,9 @@ rules:
   "vue/no-mutating-props":
     deprecated: null
     recommended: { config: "flat/recommended", options: [] }
-    repetition_exempt: "each step is a separate lookup on the way from a mutated name, in the template or the script, to the props declaration it names, such as the name, the props variable and the defineProps callee. Some steps land on a node an earlier step already reached, from a different side and with a different question: the withDefaults call around defineProps and that call's arguments, reached once going down from the props variable and once from defineProps checking its wrapper, and the file's one program root, which all three steps of the program run land on"
+    repetition_exempt:
+      runs: { arguments: 3, call_expression: 4, identifier: 3, member_expression: 3, program: 3 }
+      reason: "each step is a separate lookup on the way from a mutated name, in the template or the script, to the props declaration it names, such as the name, the props variable and the defineProps callee. Some steps land on a node an earlier step already reached, from a different side and with a different question: the withDefaults call around defineProps and that call's arguments, reached once going down from the props variable and once from defineProps checking its wrapper, and the file's one program root, which all three steps of the program run land on"
   "vue/no-ref-as-operand":
     deprecated: null
     recommended: { config: "flat/recommended", options: [] }
@@ -71,7 +75,9 @@ rules:
   "vue/no-side-effects-in-computed-properties":
     deprecated: null
     recommended: { config: "flat/recommended", options: [] }
-    repetition_exempt: "each object step is a different object, a computed property's { get, set } object, the computed object that holds it and the component's options object; each pair step is likewise a different pair, the get pair, the computed property's pair and the computed pair around them"
+    repetition_exempt:
+      runs: { object: 3, pair: 3 }
+      reason: "each object step is a different object, a computed property's { get, set } object, the computed object that holds it and the component's options object; each pair step is likewise a different pair, the get pair, the computed property's pair and the computed pair around them"
   "vue/no-template-shadow":
     deprecated: null
     recommended: { config: "flat/recommended", options: [] }
@@ -99,11 +105,15 @@ rules:
   "vue/require-valid-default-prop":
     deprecated: null
     recommended: { config: "flat/recommended", options: [] }
-    repetition_exempt: "each step is a different node around a prop's default. The objects are a prop's options object, the props object and the component object, or the withDefaults defaults object, the defineProps argument and a prop's options; the pairs are the default, prop and props pairs, or the defaults entry, the prop and its type pair; the calls are the default's own call, defineProps and withDefaults"
+    repetition_exempt:
+      runs: { call_expression: 3, object: 3, pair: 3 }
+      reason: "each step is a different node around a prop's default. The objects are a prop's options object, the props object and the component object, or the withDefaults defaults object, the defineProps argument and a prop's options; the pairs are the default, prop and props pairs, or the defaults entry, the prop and its type pair; the calls are the default's own call, defineProps and withDefaults"
   "vue/return-in-computed-property":
     deprecated: null
     recommended: { config: "flat/recommended", options: [] }
-    repetition_exempt: "each object step is a different object, a computed property's { get, set } object, the computed object that holds it and the component's options object; each pair step is likewise a different pair, the get pair, the computed property's pair and the computed pair around them"
+    repetition_exempt:
+      runs: { object: 3, pair: 3 }
+      reason: "each object step is a different object, a computed property's { get, set } object, the computed object that holds it and the component's options object; each pair step is likewise a different pair, the get pair, the computed property's pair and the computed pair around them"
   "vue/v-on-event-hyphenation":
     deprecated: null
     recommended: { config: "flat/recommended", options: ["always",{"autofix":true}] }

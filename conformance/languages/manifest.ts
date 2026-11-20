@@ -8,6 +8,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseDocument } from "yaml";
 import { z } from "zod";
+import { NESTING_RUN_LIMIT } from "./checks/compact.js";
 
 /** Every tool-pack's manifest: `packs/<pack>/upstream/<tool>/gates.yaml`. */
 export const GATES_MANIFEST = "gates.yaml";
@@ -20,6 +21,17 @@ const commit = z.string().regex(/^[0-9a-f]{40}$/u, "a full commit sha");
 const githubRepository = z.string().regex(/^https:\/\/github\.com\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/u, "a https://github.com/<owner>/<name> URL");
 /** A directory under scripts/pack-data/runtimes/ that pins a runtime by its manifest. */
 const runtimeDirectory = z.string().regex(/^[a-z0-9._-]+$/u, "a directory under scripts/pack-data/runtimes/");
+
+/**
+ * A rule's exemption from compact's no-written-out-repetition (checks/compact.ts, `RepetitionExemption`): `runs`, each
+ * node kind whose run along a nesting path reaches the limit, with its length, and `reason`, why those runs are not
+ * copies written out (each step is a separate lookup or a different node, not one copy per nesting level). A port
+ * declares it in gates.yaml, an own rule in conformance.json.
+ */
+export const repetitionExemptionSchema = z.strictObject({
+  runs: z.record(nonEmpty, z.number().int().min(NESTING_RUN_LIMIT)).refine((runs) => Object.keys(runs).length > 0, "names at least one run"),
+  reason: nonEmpty,
+});
 
 /** A list whose items are all different. */
 function unique<T extends z.ZodType>(item: T) {
@@ -45,15 +57,15 @@ const fileType = z.string().regex(/^(?:\.[a-z0-9]+)+$/u, "a file type such as .p
  * with its options, or null. `rename_exempt`, when given, says why the rule's meaning is the very names the rename
  * variants change (a typo check against fixed export names, say): holds-under-rename then does not fail the rule when
  * the renaming takes every finding, though an FP, FN or engine failure on its variants still fails it.
- * `repetition_exempt`, when given, says why the port's run of one node kind along a nesting path is not a copy written
- * out (each step lands on a different node, such as successive ancestors): compact's no-written-out-repetition then
- * passes the run, and fails the exemption as stale once the port no longer needs it.
+ * `repetition_exempt`, when given, names the port's runs of one node kind along a nesting path and says why they are
+ * not copies written out (`repetitionExemptionSchema`): compact's no-written-out-repetition then passes the document
+ * while its runs are exactly those, and fails the exemption as stale once the port no longer needs it.
  */
 const upstreamRuleFactsSchema = z.strictObject({
   deprecated: z.string().min(1).nullable(),
   recommended: z.strictObject({ config: nonEmpty, options: z.array(z.json()) }).nullable(),
   rename_exempt: nonEmpty.optional(),
-  repetition_exempt: nonEmpty.optional(),
+  repetition_exempt: repetitionExemptionSchema.optional(),
 });
 export type UpstreamRuleFacts = z.infer<typeof upstreamRuleFactsSchema>;
 

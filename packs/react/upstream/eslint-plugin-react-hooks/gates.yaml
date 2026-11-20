@@ -44,7 +44,9 @@ rules:
   "react-hooks/purity":
     deprecated: null
     recommended: { config: "flat.recommended", options: [] }
-    repetition_exempt: "The call_expression steps are the impure call, the call or new expression that takes or invokes the callback holding it, the useMemo-style call whose callback is the render function, then the memo or forwardRef call wrapping the component or a hook call the component makes, which can be that same useMemo call. The three arguments steps are the argument lists of the taking, useMemo-style and memo or forwardRef calls."
+    repetition_exempt:
+      runs: { arguments: 3, call_expression: 4 }
+      reason: "The call_expression steps are the impure call, the call or new expression that takes or invokes the callback holding it, the useMemo-style call whose callback is the render function, then the memo or forwardRef call wrapping the component or a hook call the component makes, which can be that same useMemo call. The three arguments steps are the argument lists of the taking, useMemo-style and memo or forwardRef calls."
   "react-hooks/refs":
     deprecated: null
     recommended: { config: "flat.recommended", options: [] }
@@ -54,11 +56,15 @@ rules:
   "react-hooks/set-state-in-effect":
     deprecated: null
     recommended: { config: "flat.recommended", options: [] }
-    repetition_exempt: "Each call_expression step is a different call: the setter call, the useEffect-style call whose callback holds it, and the memo or forwardRef call whose callback is the component."
+    repetition_exempt:
+      runs: { call_expression: 3 }
+      reason: "Each call_expression step is a different call: the setter call, the useEffect-style call whose callback holds it, and the memo or forwardRef call whose callback is the component."
   "react-hooks/set-state-in-render":
     deprecated: null
     recommended: { config: "flat.recommended", options: [] }
-    repetition_exempt: "Each call_expression step is a different call: the setter call, the useMemo call whose callback holds it, and the memo or forwardRef call whose callback is the component."
+    repetition_exempt:
+      runs: { call_expression: 3 }
+      reason: "Each call_expression step is a different call: the setter call, the useMemo call whose callback holds it, and the memo or forwardRef call whose callback is the component."
   "react-hooks/static-components":
     deprecated: null
     recommended: { config: "flat.recommended", options: [] }

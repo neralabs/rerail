@@ -298,9 +298,10 @@ It records:
   the rule to apply to its `pack.json` examples' paths. The tool-pack run does not report them as unmapped and the
   not-gated check does not ask for them on the frozen list. Each must ship in `pack.json` with examples, which are
   their proof, must set no `violation.suppress` (check 2), and must have no port entry;
-- `repetitionExemptions`: own rules, by `rule`, each with a non-empty `reason` why its run of one node kind along a
-  nesting path is not a copy written out, which the `compact` gate's `no-written-out-repetition` then passes; an
-  exemption the rule no longer needs fails it as stale. A port declares the same in its `gates.yaml` entry
+- `repetitionExemptions`: own rules, by `rule`, each with its `runs` (each node kind whose run along a nesting path
+  reaches three, with its length) and a non-empty `reason` why they are not copies written out, which the `compact`
+  gate's `no-written-out-repetition` then passes while they are exactly the runs measured; an exemption the rule no
+  longer needs fails it as stale. A port declares the same in its `gates.yaml` entry
   (`repetition_exempt`).
 
 A port whose document is under `candidates/` is scored on the fixtures, whose expected findings must cover it, and

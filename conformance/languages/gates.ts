@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import type { Check } from "./checks/check.js";
-import { compactGate } from "./checks/compact.js";
+import { compactGate, type RepetitionExemption } from "./checks/compact.js";
 import { conformanceChecks, conformanceOf } from "./checks/conformance.js";
 import type { Engine } from "./checks/engine.js";
 import { loadAsBundled, loadsGate, type RuleDocument } from "./checks/loads.js";
@@ -159,14 +159,14 @@ function toolDocuments(root: string, loaded: LoadedPack, tool: string) {
 
 /**
  * One document's `loads` and `compact` gates; `linted` and `outOfScope` as `loadsGate` takes them, `repetitionExempt`
- * as `compactGate` does: the reason gates.yaml (a port) or conformance.json (an own rule) declares.
+ * as `compactGate` does: the runs and reason gates.yaml (a port) or conformance.json (an own rule) declares.
  */
 function judgeDocument(
   engine: Engine,
   document: RuleDocument,
   pack: string,
   scratch: string,
-  { linted, outOfScope, repetitionExempt }: { linted: readonly string[]; outOfScope?: string; repetitionExempt?: string | undefined },
+  { linted, outOfScope, repetitionExempt }: { linted: readonly string[]; outOfScope?: string; repetitionExempt?: RepetitionExemption | undefined },
 ): Record<OwnGateId, Check[]> {
   const loads = loadsGate(engine, document, pack, scratch, linted, outOfScope);
   const parsed = loads.resolved ?? loads.document;
@@ -286,7 +286,7 @@ export function judgeToolPack(
 export function judgeOwnRules(root: string, engine: Engine, loaded: LoadedPack): ToolPackVerdict {
   const pack = loaded.pack.pack;
   const own = ownRules(root, loaded);
-  const repetitionExempt = new Map(loaded.pack.repetitionExemptions.map((exemption) => [exemption.rule, exemption.reason]));
+  const repetitionExempt = new Map(loaded.pack.repetitionExemptions.map(({ rule, runs, reason }) => [rule, { runs, reason }]));
   const scratch = mkdtempSync(join(tmpdir(), "rerail-gates-"));
   try {
     const rules = packDocuments(root, pack).filter((document) => own.has(document.path)).map(({ path, location }): OwnVerdict => {

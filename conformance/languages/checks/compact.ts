@@ -46,8 +46,22 @@ export interface SizeMetrics {
   repeatedShare: number;
   /** The most times one node kind (or pattern) definitely occurs along a single nesting path, through utilities and `count`. */
   nestingRun: number;
+  /** Each node kind (`pattern:<text>` for a pattern) whose run reaches `NESTING_RUN_LIMIT`, with its run. */
+  longRuns: NestingRuns;
   /** Utilities that reach themselves through `matches`. Reported, not judged: recursion is how the DSL walks trees. */
   recursiveUtils: string[];
+}
+
+/** Runs of one node kind along a nesting path, by kind: a pattern's key is `pattern:<text>`. */
+export type NestingRuns = Record<string, number>;
+
+/**
+ * A rule's declared exemption from no-written-out-repetition: `reason`, why its runs are not a copy written out, and
+ * `runs`, the runs it excuses, which must be the runs the check measures (`NestingRuns`, those at the limit or over).
+ */
+export interface RepetitionExemption {
+  reason: string;
+  runs: NestingRuns;
 }
 
 export interface CompactResult {
@@ -142,7 +156,7 @@ function repeatedStructureBytes(clauses: unknown): number {
 }
 
 function nodeLabel(node: Record<string, unknown>): string | undefined {
-  if (typeof node.kind === "string") return `kind:${node.kind}`;
+  if (typeof node.kind === "string") return node.kind;
   if (typeof node.pattern === "string") return `pattern:${node.pattern}`;
   return undefined;
 }
@@ -188,15 +202,15 @@ function isAstQuery(value: Record<string, unknown>): value is Record<string, unk
 }
 
 /**
- * The most times one node kind (or pattern) occurs along a single nesting path. A path counts what each node
- * definitely is: its own kind, its `all` parts, a one-item `any`, and the utilities it calls (each at most once per
+ * Each node kind's (or pattern's) longest run: the most times it occurs along a single nesting path. A path counts
+ * what each node definitely is: its own kind, its `all` parts, a one-item `any`, and the utilities it calls (each at most once per
  * path, so recursion walks a tree instead of counting), its own or its language's shared ones. Each alternative of a
  * larger `any` is its own branch, and `not` says what a node is not, so neither is merged into the node. `has`,
  * `inside`, `follows`, `precedes` and their `count` forms move to the next node.
  */
-function longestNestingRun(clauses: unknown): number {
+function nestingRuns(clauses: unknown): Map<string, number> {
   const shared = sharedUtilities(clauses);
-  let longest = 0;
+  const longest = new Map<string, number>();
   const walkLevel = (start: Record<string, unknown>, utils: Record<string, unknown>, counts: Map<string, number>, level: Set<string>, onPath: Set<string>): void => {
     const definite: Record<string, unknown>[] = [];
     const alternatives: Record<string, unknown>[][] = [];
@@ -225,7 +239,7 @@ function longestNestingRun(clauses: unknown): number {
       if (label === undefined || here.has(label)) continue;
       here.add(label);
       next.set(label, (next.get(label) ?? 0) + 1);
-      longest = Math.max(longest, next.get(label)!);
+      longest.set(label, Math.max(longest.get(label) ?? 0, next.get(label)!));
     }
     for (const part of definite) {
       for (const relation of RELATIONS) if (isRecord(part[relation])) walkLevel(part[relation] as Record<string, unknown>, utils, next, new Set(), called);
@@ -289,41 +303,61 @@ function recursiveUtilities(clauses: unknown): string[] {
   return [...recursive].sort();
 }
 
-/** The run the walk measured, against its limit: what a no-written-out-repetition detail reports. */
+/** `runs` as text, by kind: `call_expression 3, pair 4`. */
+function runsText(runs: NestingRuns): string {
+  return Object.keys(runs)
+    .sort()
+    .map((kind) => `${kind} ${runs[kind]}`)
+    .join(", ");
+}
+
+/** The runs the walk measured, against their limit: what a no-written-out-repetition detail reports. */
 function measuredRun(metrics: SizeMetrics): string {
-  return `the most times one node kind occurs along a single nesting path: ${metrics.nestingRun} (limit ${NESTING_RUN_LIMIT})`;
+  const long = Object.keys(metrics.longRuns).length === 0 ? "" : `; runs of ${NESTING_RUN_LIMIT} or more: ${runsText(metrics.longRuns)}`;
+  return `the most times one node kind occurs along a single nesting path: ${metrics.nestingRun} (limit ${NESTING_RUN_LIMIT})${long}`;
 }
 
 /**
- * no-written-out-repetition, or nothing for an unflagged document with no exemption. A declared exemption (`exempt`,
- * its reason) passes a flagged document whose run reaches the limit, and fails as stale where the check would pass
- * without it: under the flag, or under the limit, the run it excused is gone.
+ * no-written-out-repetition, or nothing for an unflagged document with no exemption. A declared exemption passes a
+ * flagged document whose runs at the limit are exactly the runs it excuses, kind and length. It fails where they
+ * differ, since a run it does not name, or a longer one, was not judged; and as stale where the check would pass
+ * without it: under the flag, or under the limit, the runs it excused are gone.
  */
-function repetitionCheck(metrics: SizeMetrics, exempt: string | undefined): Check[] {
+function repetitionCheck(metrics: SizeMetrics, exempt: RepetitionExemption | undefined): Check[] {
   const needed = metrics.flagged && metrics.nestingRun >= NESTING_RUN_LIMIT;
   if (exempt === undefined) return metrics.flagged ? [{ id: "no-written-out-repetition", ok: !needed, detail: measuredRun(metrics) }] : [];
-  if (needed) return [{ id: "no-written-out-repetition", ok: true, detail: `exempt (${exempt}); ${measuredRun(metrics)}` }];
+  if (needed) {
+    const excused = runsText(exempt.runs);
+    if (excused === runsText(metrics.longRuns)) return [{ id: "no-written-out-repetition", ok: true, detail: `exempt (${exempt.reason}); ${measuredRun(metrics)}` }];
+    const detail = `the exemption (${exempt.reason}) excuses ${excused}, not the runs measured; ${measuredRun(metrics)}; declare those runs if they are not copies either, or rewrite the repetition`;
+    return [{ id: "no-written-out-repetition", ok: false, detail }];
+  }
   const now = metrics.flagged ? measuredRun(metrics) : `${metrics.rawBytes} bytes, under the ${SIZE_FLAG_BYTES}-byte flag`;
-  return [{ id: "no-written-out-repetition", ok: false, detail: `stale exemption (${exempt}): ${now}; remove the exemption` }];
+  return [{ id: "no-written-out-repetition", ok: false, detail: `stale exemption (${exempt.reason}): ${now}; remove the exemption` }];
 }
 
 /**
  * compact: a document over 15 KiB is flagged and inspected. It goes back for a rewrite when a third or more of its
  * clauses is structure written out over and over (three or more same-shaped siblings, or verbatim copies), or when one
  * node kind occurs three or more times along a single nesting path (repetition `count` or a regex quantifier would express).
- * Otherwise the size is justified. `repetitionExempt`, the reason a rule declares that its run is not a copy (each
- * step lands on a different node), excuses the run (`repetitionCheck`).
+ * Otherwise the size is justified. `repetitionExempt`, a rule's declared reason that its runs are not copies (each
+ * step is a separate lookup or a different node, not one copy per nesting level), excuses the runs it names
+ * (`repetitionCheck`).
  */
-export function compactGate(rawBytes: number, document: { clauses?: unknown }, repetitionExempt?: string): CompactResult {
+export function compactGate(rawBytes: number, document: { clauses?: unknown }, repetitionExempt?: RepetitionExemption): CompactResult {
   const clausesText = canonicalJson(document.clauses ?? null);
   const repeatedBytes = repeatedStructureBytes(document.clauses);
+  const runs = nestingRuns(document.clauses);
+  const longRuns: NestingRuns = {};
+  for (const [kind, run] of runs) if (run >= NESTING_RUN_LIMIT) longRuns[kind] = run;
   const metrics: SizeMetrics = {
     rawBytes,
     canonicalBytes: canonicalJson(document).length,
     flagged: rawBytes > SIZE_FLAG_BYTES,
     repeatedBytes,
     repeatedShare: clausesText.length === 0 ? 0 : repeatedBytes / clausesText.length,
-    nestingRun: longestNestingRun(document.clauses),
+    nestingRun: Math.max(0, ...runs.values()),
+    longRuns,
     recursiveUtils: recursiveUtilities(document.clauses),
   };
   if (!metrics.flagged) {
