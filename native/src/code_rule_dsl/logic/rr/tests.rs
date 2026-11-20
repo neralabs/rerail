@@ -212,7 +212,7 @@ Seen(n, t) :- selected(d, t), kind(n, "identifier"), docof(n, d).
 }
 
 fn repo() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("..")
 }
 
 fn rule_syntax() -> PathBuf {
@@ -841,7 +841,7 @@ fn difference(a: &front::Program, b: &front::Program) -> Option<String> {
 /// The authored `.rdl` programs, as (name, text): T's, the pinned goldens, the data-layer programs (each after its
 /// prelude) and the serverplan-quality program.
 fn authored() -> Vec<(String, String, PathBuf)> {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl");
+    let src = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl");
     let mut out = Vec::new();
     for dir in ["typing/programs", "logic/plan/golden/programs"] {
         let mut found = Vec::new();
@@ -958,7 +958,7 @@ fn rdl_programs_translate_to_the_same_program() {
 /// read back as themselves.
 #[test]
 fn rr_programs_print_as_themselves() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/programs/data_layer");
+    let dir = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/programs/data_layer");
     let prelude = std::fs::read_to_string(dir.join("prelude.rerail")).unwrap();
     let mut found = Vec::new();
     files(&dir, "rerail", &mut found);
@@ -2711,6 +2711,49 @@ names(t) :- kind(s, "string"), parsed(s, "braceFormat", r), within(x, r), kind(x
     assert_eq!(names, [["a"], ["b"], ["w"]], "`inside` climbs to a guest's field");
 }
 
+/// The `try` statements of `py` in a `with` block's body, read through a relation an annotation's root may fill too
+/// (as `sym_of` is), with `negated` (`!inside`, `within_stop` or `!has`) excluding those a def is around or in. Hiding
+/// clones the rule for annotation nodes, its axis over a copy of the kind set; folding that set into its original left
+/// the clone's axis on a set that no longer was, with no rows, so the negation held for every `try`.
+fn tries_in_the_block(name: &str, py: &str, negated: &str) -> Vec<Vec<String>> {
+    let rule = format!(
+        r#"
+.decl body(b: node)
+body(b) :- kind(w, "with_statement"), field(w, "body", b).
+body(r) :- kind(s, "string"), parsed(s, "annotation", r).
+.decl attempt(t: node)
+attempt(t) :- kind(t, "try_statement").
+.decl found(l: number)
+found(l) :- attempt(t), body(b), {negated}, line(t, l).
+.output found
+"#
+    );
+    guests_run(name, &[("a.py", py)], &rule, &["found"]).remove(0)
+}
+
+/// A `try` on line 2, and one on line 7 inside a def nested in the block.
+const TRY_IN_A_NESTED_DEF: &str = "with lock:\n    try:\n        pass\n    except E:\n        pass\n    def later():\n        try:\n            pass\n        except E:\n            pass\n";
+
+/// `!inside(t, _, S)` over a node of a relation an annotation may fill holds only where no ancestor is in S.
+#[test]
+fn a_negated_inside_over_a_maybe_annotation_node_reads_its_kind_set() {
+    assert_eq!(tries_in_the_block("negatedinside", TRY_IN_A_NESTED_DEF, "within(t, b), !inside(t, _, \"function_definition\")"), [["2"]]);
+}
+
+/// `within_stop(t, b, S)` from a node of a relation an annotation may fill stops at S.
+#[test]
+fn within_stop_over_a_maybe_annotation_node_stops_at_its_kind_set() {
+    assert_eq!(tries_in_the_block("withinstop", TRY_IN_A_NESTED_DEF, "within_stop(t, b, \"function_definition\")"), [["2"]]);
+}
+
+/// `!has(t, _, S)` over a node of a relation an annotation may fill holds only where no descendant is in S: the `try`
+/// on line 6 holds a def.
+#[test]
+fn a_negated_has_over_a_maybe_annotation_node_reads_its_kind_set() {
+    let py = "with lock:\n    try:\n        pass\n    except E:\n        pass\n    try:\n        def later():\n            pass\n    except E:\n        pass\n";
+    assert_eq!(tries_in_the_block("negatedhas", py, "within(t, b), !has(t, _, \"function_definition\")"), [["2"]]);
+}
+
 /// `.scope` selects a repository's files (`core.rerail`): a finding in a document outside `dirs`, or under a `tests`
 /// part with `tests false`, is dropped; `.scope given` (files a test gives) keeps them all.
 #[test]
@@ -3212,6 +3255,61 @@ fn a_named_rule_file_is_read_with_or_without_tests() {
     assert_eq!(walked, Ok(serde_json::json!([])));
 }
 
+/// A file's tests run again add no corpus root to the store: each test runs in the same directory every run
+/// (`testing::in_work`), so the store's root for it, and the frames kept by its path, are the last run's. A directory
+/// of each run's own made the store a root and its frames more on every run of the same tests.
+#[test]
+fn running_a_files_tests_again_adds_no_root_to_the_store() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-test-again");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("t.rerail");
+    std::fs::write(&file, r#".policy "t:again" revision 1
+.language python
+.scope include "**/*.py"
+.violation Call(at: node) code "C1" "a call"
+Call(c) :- kind(c, "call").
+.test one
+    .fixture "a.py" ```
+        f()
+        ```
+    .expect C1 at "a.py":1
+.end
+"#).unwrap();
+    let roots = || -> std::collections::BTreeSet<String> {
+        let store = crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().expect("the test's store");
+        let c = rusqlite::Connection::open_with_flags(&store, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        let mut st = c.prepare("SELECT path FROM corpus_roots").unwrap();
+        st.query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap()
+    };
+    let mut seen = Vec::new();
+    for _ in 0..2 {
+        let report = super::testing::report(std::slice::from_ref(&file), None).unwrap();
+        assert_eq!(report[0]["status"], "pass", "{report}");
+        seen.push(roots());
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert!(!seen[0].is_empty(), "the test's run recorded its root");
+    assert_eq!(seen[1], seen[0], "the store's corpus roots after the first run, then after the second");
+}
+
+/// A test's directory is the same every run over one store, so the store keeps one root for it; with no store
+/// (`RERAIL_TAPE_CACHE=off`) nothing is kept, and each run has a directory of its own, so two processes at once never
+/// share one.
+#[test]
+fn a_tests_directory_is_the_stores_or_the_runs_own() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-test-dirs");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("t.rerail");
+    std::fs::write(&file, "").unwrap();
+    let store = dir.join("store.sqlite");
+    let at = |store: Option<&std::path::Path>| super::testing::in_work(store, &file, "t", |work| work.to_owned()).unwrap();
+    let (first, second) = (at(Some(&store)), at(Some(&store)));
+    let (own, other) = (at(None), at(None));
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(first, second, "over one store, the same directory");
+    assert_ne!(own, other, "with no store, each run's own");
+}
+
 /// A test's block is checked as it is parsed: closed by `.end`, not nested, and no `.end` outside one.
 #[test]
 fn test_blocks_parse_only_whole() {
@@ -3291,6 +3389,95 @@ reach(a, c) :- reach(a, b), edge(b, c).
     ]);
 }
 
+/// A tool call is a test's input (`.tool_call`, `docs/rule-syntax/tool-calls.md`): the run is given the test's calls,
+/// "1", "2", … in order, and a `.scope tool_calls` policy's finding is at the call (path "", line 0, `at` its id). A
+/// call of another tool, a `--dry-run`, or the command in another argument is no finding.
+#[test]
+fn a_tests_tool_calls_are_its_runs_and_a_finding_is_at_the_call() {
+    let policy = r#".policy "t:tool-calls" revision 1
+.mode steer
+.scope tool_calls
+.violation Push(at: symbol) code "no-push" "a push from call {at}"
+Push(c) :- tool_call(c, "Bash"), tool_input(c, "command", s), match("(?s:.*)(?:\\bgit\\s+push\\b)(?s:.*)", s), !match("(?s:.*)(?:--dry-run)(?s:.*)", s).
+.test caught exactly
+    .tool_call "Bash" `{"command": "cd x &&\ngit push origin main"}`
+    .tool_call "Bash" `{"command": "git status"}`
+    .expect "no-push"
+.end
+.test passes
+    .tool_call "Bash" `{"command": "git push --dry-run"}`
+    .tool_call "Read" `{"command": "git push"}`
+    .tool_call "Bash" `{"description": "git push"}`
+    .expect no "no-push"
+.end
+.test says_which_call
+    .tool_call "Bash" `{"command": "ls"}`
+    .tool_call "Bash" `{"command": "git push"}`
+    .expect no "no-push"
+.end
+"#;
+    assert_eq!(run_tests_of("rr-tool-calls", policy), [
+        ("caught".to_owned(), Ok(vec![])),
+        ("passes".to_owned(), Ok(vec![])),
+        ("says_which_call".to_owned(), Ok(vec!["line 20: .expect no no-push: reported no-push at call \"2\"".to_owned()])),
+    ]);
+    let refused = run_tests_of("rr-tool-call-bad", ".decl r(x: symbol)\n.test t\n    .tool_call \"Bash\" `[1]`\n.end\n");
+    assert!(matches!(&refused[..], [(_, Err(e))] if e.contains(":3: `.tool_call \"<tool>\"`")), "{refused:?}");
+    // An empty fence (two backticks and nothing else) is refused with its line, not read past its ends.
+    for (directive, usage) in [(".tool_call \"Bash\" ``", ":3: `.tool_call \"<tool>\"`"), (".fixture \"a.py\" ``", ":3: `.fixture \"<path>\"` then a fenced text")] {
+        let refused = run_tests_of("rr-empty-fence", &format!(".decl r(x: symbol)\n.test t\n    {directive}\n.end\n"));
+        assert!(matches!(&refused[..], [(_, Err(e))] if e.contains(usage)), "{directive}: {refused:?}");
+    }
+}
+
+/// A policy reads tool calls when it says so, `.scope tool_calls` (as a JSON rule that reads `input` samples tool
+/// calls), and then reads no file, its findings at a call (`at: symbol`).
+#[test]
+fn a_policy_reads_tool_calls_only_under_scope_tool_calls() {
+    let head = ".policy \"t\" revision 1\n";
+    let reads = "V(c) :- tool_input(c, \"command\", s), match(\"ls\", s).\n";
+    let program = super::read_text(&format!("{head}.scope tool_calls\n.violation V(at: symbol) \"v\"\n{reads}")).unwrap().lower(false).unwrap();
+    assert_eq!(program.doc_scopes, Some(Vec::new()), "a policy of tool calls reads no document");
+    for (text, why) in [
+        (format!("{head}.decl r(s: symbol)\nr(s) :- tool_input(_, \"command\", s).\n.output r\n"), "a policy that reads tool calls says `.scope tool_calls`"),
+        (format!("{head}.scope tool_calls\n.violation V(at: node) \"v\"\nV(n) :- kind(n, \"call\").\n"), "findings are at a tool call, `at: symbol`"),
+        (format!("{head}.violation V(at: symbol) \"v\"\nV(s) :- tool_input(_, \"command\", s).\n"), "says `.scope tool_calls`"),
+        (format!("{head}.violation V(at: symbol) \"v\"\n.decl w(s: symbol)\nw(\"a\").\nV(s) :- w(s).\n"), "only in a `.scope tool_calls` policy"),
+        (format!("{head}.scope tool_calls\n.scope include \"**/*.py\"\n.violation V(at: symbol) \"v\"\n{reads}"), "no `.scope include \"**/*.py\"` beside it"),
+        // A call's message names its id (`{at}`), never a property of it: a call has no line or name.
+        (format!("{head}.scope tool_calls\n.violation V(at: symbol) \"v {{at.line}}\"\n{reads}"), "{at.line}: a tool call has only its id"),
+        (format!("{head}.scope tool_calls\n.violation V(at: symbol) \"v {{at.name}}\"\n{reads}"), "{at.name}: a tool call has only its id"),
+    ] {
+        let error = super::read_text(&text).unwrap().lower(false).unwrap_err().to_string();
+        assert!(error.contains(why), "{text}: {error}");
+    }
+}
+
+/// A run of a file policy and a tool-call policy together (`docs/rule-syntax/tool-calls.md`): each finds what it finds
+/// alone, the file's finding at its path and line, the call's at the call.
+#[test]
+fn a_run_of_file_and_tool_call_policies_finds_both() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.py"), "x = 1\nf()\n").unwrap();
+    let file = dir.path().join("calls-file.rerail");
+    std::fs::write(&file, ".policy \"t:calls-file\" revision 1\n.language python\n.violation Call(at: node) code \"C1\" \"a call\"\nCall(c) :- kind(c, \"call\").\n").unwrap();
+    let tool = dir.path().join("calls-tool.rerail");
+    std::fs::write(&tool, ".policy \"t:calls-tool\" revision 1\n.scope tool_calls\n.violation Push(at: symbol) code \"no-push\" \"a push in call {at}\"\nPush(c) :- tool_input(c, \"command\", s), match(\"(?s:.*)(?:git push)(?s:.*)\", s).\n").unwrap();
+    let calls = serde_json::json!({ "toolCalls": [{"id": "e1", "tool": "Bash", "input": {"command": "git push"}}, {"id": "e2", "tool": "Bash", "input": {"command": "ls"}}] });
+    let report = crate::code_rule_dsl::tools::run_policies(&[file, tool], &root, &dir.path().join("out"), &calls).unwrap();
+    let mut found: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|d| (d["code"].clone(), d["path"].clone(), d["line"].clone(), d["at"].as_str().map(str::to_owned))).collect();
+    found.sort_by_key(|f| f.0.to_string());
+    assert_eq!(found, [
+        (serde_json::json!("C1"), serde_json::json!("a.py"), serde_json::json!(2), None),
+        (serde_json::json!("no-push"), serde_json::json!(""), serde_json::json!(0), Some("e1".to_owned())),
+    ], "{report}");
+    // The message names the call by its id (`{at}`).
+    let messages: Vec<&str> = report["diagnostics"].as_array().unwrap().iter().filter(|d| d["code"] == "no-push").filter_map(|d| d["message"].as_str()).collect();
+    assert_eq!(messages, ["a push in call e1"], "{report}");
+}
+
 /// What a test may not do is refused with its line: give a core relation, give one no rule declares, use a set that
 /// is not there, or have two fixtures at one path.
 #[test]
@@ -3345,7 +3532,7 @@ fn a_flattened_file_keeps_its_tests() {
 #[test]
 fn converted_cases_are_tests() {
     let rule = repo().join("packs/rerail/rules/rerail-fixed-value-lists.json");
-    let cases = Path::new(env!("RERAIL_FIXTURES_DIR")).join("rerail/rerail-fixed-value-lists.cases.json");
+    let cases = Path::new(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("rerail/rerail-fixed-value-lists.cases.json");
     let report = crate::code_rule_dsl::tools::convert_rr_with(&[(rule, Some(cases.clone()))]);
     let tests = report[0]["tests"].as_str().unwrap_or_else(|| panic!("{report}"));
     let n: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&cases).unwrap()).unwrap();
@@ -3365,7 +3552,7 @@ fn converted_cases_are_tests() {
 /// program it lowers to with each candidate stratified whole.
 #[test]
 fn aggregate_demand_keeps_the_candidates_a_whole_stratification_keeps() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer");
+    let dir = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer");
     let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|e| e == "rerail")).collect();
     paths.sort();
     let (mut read, mut demanded) = (0, 0);
@@ -3390,7 +3577,7 @@ fn aggregate_demand_keeps_the_candidates_a_whole_stratification_keeps() {
 /// A file that is no program of its own (a library module's part) is passed over. `RERAIL_IDEMPOTENCY_DUMP=<dir>`
 /// writes both prints of each that differs.
 fn lowers_back(dirs: &[&str], k: usize, n: usize) {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax");
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax");
     let mut paths: Vec<_> = dirs
         .iter()
         .flat_map(|d| std::fs::read_dir(root.join(d)).unwrap().map(|e| e.unwrap().path()))
@@ -3485,7 +3672,7 @@ fn lowering_is_idempotent_other_packs() {
 /// each group within the time a test may take), `front::prune` of the program lowered from the rest is the program lowered whole, pruned: the same rules (each helper of the lowering's, numbered as it is met,
 /// as many), natives and outputs, the same inputs read, and the same declarations of the relations those rules name.
 fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usize)) -> usize {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax");
+    let manifest = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax");
     let mut pending: Vec<PathBuf> = dirs.iter().map(|d| manifest.join(d)).collect();
     let mut paths = Vec::new();
     while let Some(dir) = pending.pop() {
@@ -3931,4 +4118,62 @@ ends(l) :- kind(n, "expression_statement"), last_token(n, t), line(t, l).
     assert_eq!(cv, ["1", "2"], "the cross-file reader's values");
     // With `value`'s round undone the program still has core.rerail's shape: its token leaves are made.
     assert_eq!(ends, ["1"], "a token leaf's reader");
+}
+
+/// The modules `demand_split_child` reads, and the builtin references each holds.
+const SPLIT_MODULES: usize = 32;
+const SPLIT_REFERENCES: usize = 4;
+
+/// python/calls over `SPLIT_MODULES` modules of `SPLIT_REFERENCES` builtin references each: no demand split's rows grow
+/// as the references times the modules (`plan::demand::over::disconnected`). `builtin_ref`'s split with `docof` cut
+/// was every reference against every module (8,801 rows of work in its `pre_<i>` here, over the 4,096 of references
+/// times modules; 129.7M rows on edx-platform's 4,459 files). The profile is the process's, so the run is a child
+/// process of its own (`demand_split_child`), its rows read from its `heads.tsv`.
+#[test]
+fn a_demand_split_stays_linear_in_the_modules() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("src");
+    std::fs::create_dir_all(&root).unwrap();
+    // Plain nodes make the program's rarer kinds anchors (fewer than 1/32 of the nodes), so `docof` is a candidate.
+    let filler = (1..=300).map(|i| i.to_string()).collect::<Vec<_>>().join(", ");
+    let source = format!("x = len([1])\nprint(x)\ny = len(\"ab\")\nprint(y)\nDATA = [{filler}]\n");
+    assert_eq!(source.matches("len(").count() + source.matches("print(").count(), SPLIT_REFERENCES);
+    for m in 0..SPLIT_MODULES {
+        std::fs::write(root.join(format!("m{m}.py")), &source).unwrap();
+    }
+    let rule = directory.path().join("calls.rerail");
+    std::fs::write(&rule, ".policy \"split-linear\" revision 1\n.language python\n.scope include \"**/*.py\"\n#include \"python/calls.rerail\"\n.violation P(at: node) \"c\"\nP(c) :- call_target(c, f), kind(f, \"nothing_has_this_kind\").\n").unwrap();
+    let profile = directory.path().join("profile");
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+    child
+        .args(["--exact", "code_rule_dsl::logic::rr::tests::demand_split_child", "--ignored", "--nocapture"])
+        .env("RERAIL_PROFILE", &profile)
+        .env("RERAIL_TAPE_CACHE", "off")
+        .env("DEMAND_SPLIT_RULE", &rule)
+        .env("DEMAND_SPLIT_ROOT", &root)
+        .env("DEMAND_SPLIT_OUT", directory.path().join("out"));
+    let status = crate::code_rule_dsl::logic::plan::corpus::switches::started(|| child.status()).unwrap();
+    assert!(status.success());
+    // part, head, cpu_s, work (rows into the head's steps), plans
+    let heads = std::fs::read_to_string(profile.join("heads.tsv")).unwrap();
+    let rows: Vec<(&str, &str, u64)> = heads.lines().skip(1).map(|l| {
+        let c: Vec<&str> = l.split('\t').collect();
+        (c[0], c[1], c[3].parse().unwrap())
+    }).collect();
+    assert!(rows.iter().any(|(part, _, _)| part.contains("typing programs")), "the typing program ran: {heads}");
+    let product = (SPLIT_MODULES * SPLIT_MODULES * SPLIT_REFERENCES) as u64;
+    for (part, head, work) in &rows {
+        if head.starts_with("pre_") || head.starts_with("demand_") {
+            assert!(*work < product / 4, "{head} ({part}): {work} rows, against {product} for every reference times every module");
+        }
+    }
+}
+
+#[test]
+#[ignore = "child process of a_demand_split_stays_linear_in_the_modules"]
+fn demand_split_child() {
+    let var = |k: &str| {
+        std::path::PathBuf::from(std::env::var_os(k).unwrap_or_else(|| panic!("{k} unset: run by a_demand_split_stays_linear_in_the_modules")))
+    };
+    crate::code_rule_dsl::tools::run_rr(&var("DEMAND_SPLIT_RULE"), &var("DEMAND_SPLIT_ROOT"), &var("DEMAND_SPLIT_OUT"), &serde_json::Value::Null).unwrap();
 }

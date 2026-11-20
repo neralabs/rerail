@@ -41,7 +41,7 @@ language or capability.
 Each language family has one adapter type, and every engine call site asks it instead of matching on a language.
 
 - **Adapter:** the trait each family's type implements: `Python`, `Ecma`, `Php`, `Blade`, `Rust`, `Vue`, `Sql`, `Rr`,
-  `Json` or `Java`.
+  `Json`, `Format`, `Java`, `Csharp`, `Html`, `Css`, `Markdown`, `Go` or `C`.
 - **Concern traits:** one per capability (`ScopeRules`, `ValueRules`, ...); a concern the family lacks is `Refused`.
 - **Embedding family:** Blade and Vue read the embedded language's semantics over an embedded program.
 
@@ -58,7 +58,14 @@ Each language family has one adapter type, and every engine call site asks it in
 | `sql` | `sql` | `scope`, `value`, `arguments`; `calls` and `formatArgs` `Refused` | `sqlfluff` |
 | `rr` | `rr` (`.rerail` rule files, the engine's own grammar `native:rr`) | none: all five `Refused`; rules match its kinds and text | none |
 | `json` | `json` | none: all five `Refused` (rules read its tree) | none |
+| `format` | `python-format`, `eslint-directive` (grammars of a string's value, which a `.rerail` rule reads with `parsed`) | none: all five `Refused` | none |
 | `java` | `java` | none yet: all five `not-supported-yet` | none |
+| `csharp` | `csharp` | none yet: all five `not-supported-yet` | none |
+| `html` | `html` | none yet: all five `not-supported-yet` | none |
+| `css` | `css` | none yet: all five `not-supported-yet` | none |
+| `markdown` | `markdown` (and `markdown-inline`, the content of its `inline` nodes) | none yet: all five `not-supported-yet` | none |
+| `go` | `go` | none yet: all five `not-supported-yet` | none |
+| `c` | `c`, `cpp` (`.h` is C++) | none yet: all five `not-supported-yet` | none |
 
 <details>
 <summary>What each concern trait holds</summary>
@@ -78,8 +85,8 @@ Each language family has one adapter type, and every engine call site asks it in
 <details>
 <summary>How dispatch, refusals and embedding work</summary>
 
-- **Adapter files:** `Python` (`adapter/scope.rs`, `value.rs`, ...), `Rust` (`adapter/rust.rs`), `Vue`
-  (`adapter/vue.rs`), `Sql` (`adapter/sql.rs`), `Rr` (`adapter/rr.rs`) and `Json` (`adapter/json.rs`).
+- **Adapter files:** each family's type is in `adapter/<family>.rs` (`Python` in `adapter/python.rs`, `Ecma` in
+  `adapter/ecma.rs`, ...); the concern traits' shared code is in `adapter/scope.rs`, `value.rs` and the rest.
 - **`with_adapter!`** is the one exhaustive match on a family. It, `Family`, `GrammarDialect`, `Family::of` and
   `honours` are generated from the registry; no enum is edited by hand.
 - **Every other call site** asks the adapter. One that needs a concern's associated type calls a function generic over
@@ -123,7 +130,7 @@ segments mapping that text to the file's bytes.
 
 ### The Java adapter
 
-`adapter/java.rs` reads Java from tree-sitter-java's syntax alone (`ast-grep:Java`, tape tag 15). Its files parse and
+`adapter/java.rs` reads Java from tree-sitter-java's syntax alone (`ast-grep:Java`, tape tag 18). Its files parse and
 its structural terms run; no semantic capability is read yet.
 
 <details>

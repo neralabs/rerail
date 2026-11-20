@@ -107,7 +107,7 @@ runs the same rules ([design](repository-packs.md)):
 {
   "schema": "rerail.packs/1",
   "packs": [
-    { "id": "complexity", "version": "0.1.8" },
+    { "id": "complexity", "version": "0.1.9", "config": { "ceiling": 10 } },
     { "id": "typescript", "version": "0.1.8", "folders": ["web"] },
     { "id": "@acme/rerail-pack-sql", "version": "1.2.0" },
     { "path": "packs/acme" }
@@ -119,16 +119,20 @@ runs the same rules ([design](repository-packs.md)):
 - **`path`**: a pack kept in the repository, its folder relative to the repository's root.
 - **`folders`** (optional, on either kind): the folders the pack judges, relative to the repository's root. Left out,
   the pack judges the whole repository.
+- **`config`** (optional, on either kind): option values for the pack's rules, option name to value. Each applies to
+  every rule of the pack that declares the option, as a rule setting's `config` would; left out, the rules run at
+  their defaults. The complexity pack's `ceiling` is one ([its README](../packs/complexity/README.md)).
 
-With the file, the scan runs exactly those packs, each in its folders and starting with its own `on` and `mode`, and
-the tree's own rules. Your Rerail home's installed packs, attachments and rule settings are not used; its approvals
-are.
+With the file, the scan runs exactly those packs, each in its folders, starting with its own `on` and `mode` and at the
+options its `config` sets, and the tree's own rules. Your Rerail home's installed packs, attachments and rule settings
+are not used; its approvals are. With `--rules-ref`, the options are the ref's file's, like the packs.
 
 **`--pack` replaces the listed packs**, for trying packs the repository does not list yet: `rerail scan --pack x` runs
 only the home's installed version of each `--pack` and the tree's own rules (from the working tree, or `--rules-ref`),
-and none of the file's packs. The report's `packs` then names each with `"from": "home"`, never `npm` or
-`repository`, so a scan that overrode the file shows it. Approval works as without the file: a third party's pack, or
-one installed from a folder, runs in Log until approved. Without `--pack`, the file decides.
+and none of the file's packs, nor the options its `config` sets: the `--pack` packs run at their rules' defaults. The
+report's `packs` then names each with `"from": "home"`, never `npm` or `repository`, so a scan that overrode the file
+shows it. Approval works as without the file: a third party's pack, or one installed from a folder, runs in Log until
+approved. Without `--pack`, the file decides.
 
 <details>
 <summary>How listed packs are read, fetched and checked</summary>
@@ -142,8 +146,11 @@ one installed from a folder, runs in Log until approved. Without `--pack`, the f
 - **Every listed pack must run.** One the catalog leaves out (its core range, a clash with another listed pack, a rule
   that does not compile) fails the scan, naming it and why.
 - **A bad file fails the scan**, saying what is wrong: not JSON, a repeated key, a `schema` other than
-  `rerail.packs/1`, a key the format does not define, a version that is a range or tag, a pack listed twice, or
-  `folders` that are empty or repeat a folder.
+  `rerail.packs/1`, a key the format does not define, a version that is a range or tag, a pack listed twice,
+  `folders` that are empty or repeat a folder, or a `config` that is not an object of options.
+- **Every option must apply.** An option in `config` that no rule of the pack declares, or a value a rule declaring it
+  does not allow (a ceiling of `0`, `1.5` or `"10"`), fails the scan with a message naming the file, the pack and the
+  option, and the value a rule refuses.
 - **Approval.** A `path` pack counts as installed from a folder: it runs in Log until a person approves that content
   (`rerail rules approve <package> --repo <checkout>`, which lists it), even when its `package.json` names
   `@neralabs`. A third party's published pack waits for approval as it does installed; Rerail's own need none.
@@ -201,7 +208,7 @@ rerail scan --repo ./head --scope git-diff --base origin/main --rules-ref origin
   "paths": null | ["src/a.ts"],          // the files scanned, when not the whole checkout
   "rulesSource": { "kind": "home" } | { "kind": "worktree" } | { "kind": "ref", "ref": "origin/main" } | null,
   "packs": [                             // the rule packs it ran, besides the tree's own rules
-    { "id": "complexity", "packageName": "@neralabs/rerail-pack-complexity", "version": "0.1.8", "from": "npm" | "home" },
+    { "id": "complexity", "packageName": "@neralabs/rerail-pack-complexity", "version": "0.1.9", "from": "npm", "config": { "ceiling": 10 } },
     { "id": "typescript", "packageName": "@neralabs/rerail-pack-typescript", "version": "0.1.8", "from": "npm", "folders": ["web"] },
     { "id": "acme", "packageName": "@acme/rerail-pack-acme", "version": "1.0.0", "from": "repository", "path": "packs/acme" }
   ],
@@ -226,7 +233,7 @@ rerail scan --repo ./head --scope git-diff --base origin/main --rules-ref origin
 - **`fingerprint`**: stable across scans, so you can tell new findings from existing ones.
 - **`packs`**: `npm` and `repository` for packs `.rerail/packs.json` lists, `home` for the home's installed packs that
   ran (its configuration, or `--pack`, which replaces the file's packs); `folders` when the file keeps a pack to some
-  folders. Each rule's `source.packId` names its pack.
+  folders, and `config` when it sets the pack's options. Each rule's `source.packId` names its pack.
 - **`failures`**: execution failures and coverage gaps, as an audit records them ([reference](reference.md#scan-and-settings-controls)).
   The scan adds its own: `rule-left-out` for a rule file at `--rules-ref` that does not load, and
   `checkout-not-audited` for each checkout it meant to audit, when it had files to scan and no audit ran.

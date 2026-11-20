@@ -1,13 +1,14 @@
 /**
  * Internal testing: the packs a headless `rerail scan` runs when the repository declares them in `.rerail/packs.json`
  * (docs/repository-packs.md). The file, and every pack it keeps in the repository, come from the tree the scan's rules
- * come from: the working tree, or the `--rules-ref` commit. A published pack is installed at its exact version into the
- * scan's own folder, never the Rerail home's, so what the home has installed changes nothing. A listed pack that does
- * not load fails the scan.
+ * come from: the working tree, or the `--rules-ref` commit, and so do the option values it sets for a pack's rules.
+ * A published pack is installed at its exact version into the scan's own folder, never the Rerail home's, so what the
+ * home has installed changes nothing. A listed pack that does not run, or an option its rules refuse, fails the scan.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join, relative } from "node:path";
-import type { RuleCatalog } from "../engine/catalog/repository-model.js";
+import { declaredPackRuleConfigs, type DeclaredRuleConfig } from "../engine/catalog/packs-file/pack-config.js";
+import type { RuleCatalog, RuleConfig } from "../engine/catalog/repository-model.js";
 import { activeCoreVersion, installedPacksPrefix } from "../engine/catalog/rule-catalog.js";
 import {
   checkPackFolders,
@@ -41,6 +42,8 @@ export interface ScanPack {
   readonly path?: string;
   /** The folders `.rerail/packs.json` gives it; absent when it judges the whole repository. */
   readonly folders?: readonly string[];
+  /** The option values `.rerail/packs.json` sets for its rules; absent when they run at their defaults. */
+  readonly config?: RuleConfig;
 }
 
 /** Where a scan attaches one of its packs: the whole repository (`""`) or one folder. */
@@ -59,13 +62,14 @@ export interface DeclaredPacks {
 }
 
 /**
- * The catalog a scan runs on when the repository declares its packs, those packs as the report names them, and where
- * each is attached.
+ * The catalog a scan runs on when the repository declares its packs, those packs as the report names them, where
+ * each is attached, and the option values the file sets for their rules.
  */
 export interface DeclaredScanPacks {
   readonly catalog: RuleCatalog;
   readonly packs: readonly ScanPack[];
   readonly attachments: readonly ScanPackAttachment[];
+  readonly ruleConfigs: readonly DeclaredRuleConfig[];
 }
 
 /** A file of a pack at a ref larger than this is left out, and the pack then fails to load with why. */
@@ -171,6 +175,7 @@ function loadedPack(catalog: RuleCatalog, entry: DeclaredPackDirectory): ScanPac
     version: found.version,
     ...(pack.kind === "published" ? { from: "npm" as const } : { from: "repository" as const, path: pack.path }),
     ...(pack.folders === undefined ? {} : { folders: pack.folders }),
+    ...(pack.config === undefined ? {} : { config: pack.config }),
   };
 }
 
@@ -186,18 +191,21 @@ function checkPackFoldersAtCommit(root: string, commit: string, label: string, p
   }
 }
 
-/**
- * The catalog of the packs `declared` lists, for a scan of the checkout at `root`: its repository packs read from the
- * working tree, or from `declared.commit`; its published packs installed under `scratch`. Every listed pack must
- * load, at the version listed: one that does not fails the scan, naming it and why.
- */
-export async function declaredScanPacks(
-  root: string, declared: DeclaredPacks, scratch: string, storeOf: (home: string) => PackStore = npmPackStore,
-): Promise<DeclaredScanPacks> {
+/** Checks every folder the declared packs name: in the working tree, or at `declared.commit`. */
+function checkDeclaredFolders(root: string, declared: DeclaredPacks): void {
   for (const pack of declared.packs) {
     if (declared.commit === undefined) checkPackFolders(root, pack);
     else checkPackFoldersAtCommit(root, declared.commit, declared.label, pack);
   }
+}
+
+/**
+ * The folder each declared pack is read from: a published pack installed under `scratch`; a repository pack in the
+ * working tree, or written under `scratch` from `declared.commit`.
+ */
+async function declaredPackDirectories(
+  root: string, declared: DeclaredPacks, scratch: string, storeOf: (home: string) => PackStore,
+): Promise<DeclaredPackDirectory[]> {
   const published = await installPublished(declared.packs.filter((pack): pack is PublishedPack => pack.kind === "published"), scratch, declared.label, storeOf);
   const directories: DeclaredPackDirectory[] = [];
   for (const [index, pack] of declared.packs.entries()) {
@@ -211,20 +219,44 @@ export async function declaredScanPacks(
       : await repositoryPackAtCommit(root, declared.commit, declared.label, pack, join(scratch, "repository-packs", String(index)));
     directories.push({ pack, directory, checkoutPath });
   }
-  const catalog = declaredPackCatalog(directories, { coreVersion: activeCoreVersion(), compile: true });
+  return directories;
+}
+
+/**
+ * Each declared pack as `catalog` loaded it, beside its declaration. Throws, naming `label` and each pack, when one did
+ * not load or npm installed another version than the one listed.
+ */
+function loadedDeclaredPacks(catalog: RuleCatalog, directories: readonly DeclaredPackDirectory[], label: string): Array<{ pack: DeclaredPack; loaded: ScanPack }> {
   const problems: string[] = [];
-  const packs: ScanPack[] = [];
-  const attachments: ScanPackAttachment[] = [];
+  const loaded: Array<{ pack: DeclaredPack; loaded: ScanPack }> = [];
   for (const entry of directories) {
-    const loaded = loadedPack(catalog, entry);
+    const found = loadedPack(catalog, entry);
     const skipped = catalog.skipped.find(left => left.path === entry.directory);
-    if (loaded === undefined) problems.push(`${declaredPackLabel(entry.pack)}: ${skipped?.reason ?? "it did not load"}`);
-    else if (entry.pack.kind === "published" && loaded.version !== entry.pack.version) problems.push(`${declaredPackLabel(entry.pack)}: npm installed ${loaded.version ?? "no version"}`);
-    else {
-      packs.push(loaded);
-      for (const folder of packAttachmentFolders(entry.pack)) attachments.push({ packId: loaded.id, folder });
-    }
+    if (found === undefined) problems.push(`${declaredPackLabel(entry.pack)}: ${skipped?.reason ?? "it did not load"}`);
+    else if (entry.pack.kind === "published" && found.version !== entry.pack.version) problems.push(`${declaredPackLabel(entry.pack)}: npm installed ${found.version ?? "no version"}`);
+    else loaded.push({ pack: entry.pack, loaded: found });
   }
-  if (problems.length > 0) throw new Error(`${declared.label} lists packs that do not run: ${problems.join("; ")}`);
-  return { catalog, packs, attachments };
+  if (problems.length > 0) throw new Error(`${label} lists packs that do not run: ${problems.join("; ")}`);
+  return loaded;
+}
+
+/**
+ * The catalog of the packs `declared` lists, for a scan of the checkout at `root`: its repository packs read from the
+ * working tree, or from `declared.commit`; its published packs installed under `scratch`. Every listed pack must
+ * load, at the version listed: one that does not fails the scan, naming it and why. So does a `config` its rules do
+ * not declare or allow (`declaredPackRuleConfigs`).
+ */
+export async function declaredScanPacks(
+  root: string, declared: DeclaredPacks, scratch: string, storeOf: (home: string) => PackStore = npmPackStore,
+): Promise<DeclaredScanPacks> {
+  checkDeclaredFolders(root, declared);
+  const directories = await declaredPackDirectories(root, declared, scratch, storeOf);
+  const catalog = declaredPackCatalog(directories, { coreVersion: activeCoreVersion(), compile: true });
+  const loaded = loadedDeclaredPacks(catalog, directories, declared.label);
+  return {
+    catalog,
+    packs: loaded.map(({ loaded: pack }) => pack),
+    attachments: loaded.flatMap(({ pack, loaded: { id } }) => packAttachmentFolders(pack).map(folder => ({ packId: id, folder }))),
+    ruleConfigs: loaded.flatMap(({ pack, loaded: { id } }) => declaredPackRuleConfigs(catalog, pack, id, declared.label)),
+  };
 }

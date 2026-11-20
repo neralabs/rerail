@@ -125,7 +125,7 @@ fn a_bad_statement_is_one_error_and_parsing_resumes() {
 /// grammar implies, once (a named-only tape, RER-131).
 #[test]
 fn every_rule_file_tapes_and_its_leaves_cover_it() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax");
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax");
     let mut files = Vec::new();
     let mut pending = vec![root];
     while let Some(dir) = pending.pop() {
@@ -215,7 +215,7 @@ fn a_rule_about_rules_runs_over_rule_files() {
     std::fs::write(root.join("rules/b.rerail"), ".decl g(x: symbol)\n.input g(IO=file, filename=\"g.csv\")\n").unwrap();
     std::fs::write(root.join("rules/c.rerail"), ".decl h(x: symbol)\n.input h(IO=file, filename=\"../up.csv\")\n").unwrap();
     std::fs::write(root.join("x.py"), "print(1)\n").unwrap();
-    let rule = Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/rr/rr-input-outside-repository.rerail");
+    let rule = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/rr/rr-input-outside-repository.rerail");
     let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &root.join("out"), &serde_json::Value::Null).unwrap();
     let mut found: Vec<(String, i64)> = report["diagnostics"]
         .as_array()
@@ -288,7 +288,7 @@ fn python_and_rr_policies_run_over_one_repository() {
         ".language python\n.violation eval_call(at: node) code \"PY1\" \"eval\"\neval_call(c) :- node(_, c, \"call\", _, _), field(c, \"function\", f), text(f, \"eval\").\n",
     )
     .unwrap();
-    let rr = Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/rr/rr-input-outside-repository.rerail");
+    let rr = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/rr/rr-input-outside-repository.rerail");
     let report = crate::code_rule_dsl::tools::run_policies(&[python.clone(), rr], &root, &root.join("out"), &serde_json::Value::Null).unwrap();
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_file(&python);
@@ -328,7 +328,7 @@ fn a_batchs_policies_of_one_language_run_as_one_pack() {
          pr_call(c) :- node(_, c, \"call\", _, _), field(c, \"function\", f), text(f, \"print\").\n",
     )
     .unwrap();
-    let rr = Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/rr/rr-input-outside-repository.rerail");
+    let rr = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/rr/rr-input-outside-repository.rerail");
     let paths = [a.clone(), rr.clone(), b.clone(), c.clone()];
     let batch = crate::code_rule_dsl::tools::run_policies(&paths, &root, &root.join("out"), &serde_json::Value::Null).unwrap();
     let codes = |report: &serde_json::Value| -> Vec<String> {
@@ -373,6 +373,41 @@ fn a_batchs_policies_of_one_language_run_as_one_pack() {
     assert!(any(&w0, "\"ev\"") && !any(&w0, "\"ex\""), "{w0:?}");
     assert!(any(&w2, "\"ex\"") && !any(&w2, "\"ev\""), "{w2:?}");
     assert!(any(&w1, "rules/a.rerail"), "{w1:?}");
+}
+
+/// A policy's findings are its run alone's whatever else shares its pack (RUF060 beside C417). `anns` reads
+/// `list_like` from a string annotation, so hiding copies it for the annotation, and folding the copy widened
+/// `list_like` to take the annotations in (`hiding::fold_own`). `cmps` reads it through `empty_literal` from the file:
+/// beside `anns` it found the annotation's `1 in []` as well, which it does not alone. It reads it as hiding left it.
+#[test]
+fn a_policy_beside_one_that_reads_annotations_finds_what_it_finds_alone() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("corun-annotations");
+    let (src, rules) = (root.join("src"), root.join("rules"));
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::create_dir_all(&rules).unwrap();
+    std::fs::write(src.join("x.py"), "a = 1 in []\nx: \"1 in []\" = 1\n").unwrap();
+    // Both include the same library, which asks for the annotations' trees: they ask the same guests, one pack.
+    let policy = |name: &str, body: &str| {
+        let path = rules.join(format!("{name}.rerail"));
+        std::fs::write(&path, format!(".policy \"t:{name}\" revision 1\n.language python\n#include \"python/ruff.rerail\"\n{body}\n")).unwrap();
+        path
+    };
+    let cmps = policy("cmps", ".violation Cmp(at: node) code \"cmp\" \"in an empty list\"\nCmp(c) :- cmp(c, \"in\", _, r), empty_literal(r, _).");
+    let anns = policy("anns", ".violation Ann(at: node) code \"ann\" \"a list in an annotation\"\nAnn(e) :- annotation(e), list_like(e, _).");
+    let found = |report: &serde_json::Value, policy: &str| -> Vec<(u64, String)> {
+        let rows = report["diagnostics"].as_array().unwrap().iter().filter(|d| d["policy"] == policy);
+        let mut found: Vec<(u64, String)> = rows.map(|d| (d["line"].as_u64().unwrap_or(0), d["code"].as_str().unwrap_or("").to_owned())).collect();
+        found.sort();
+        found
+    };
+    let run = |paths: &[PathBuf], out: &str| crate::code_rule_dsl::tools::run_policies(paths, &src, &root.join(out), &serde_json::Value::Null).unwrap();
+    let (alone, beside) = (run(std::slice::from_ref(&cmps), "alone"), run(&[cmps, anns], "beside"));
+    let _ = std::fs::remove_dir_all(&root);
+    let together: Vec<u64> = beside["runs"].as_array().unwrap().iter().map(|r| r["together"].as_u64().unwrap_or(0)).collect();
+    assert_eq!(together, [2, 2], "one pack: {beside:#}");
+    assert_eq!(found(&beside, "t:anns"), [(2, "ann".to_owned())], "the annotation's list is read: {beside:#}");
+    assert_eq!(found(&alone, "t:cmps"), [(1, "cmp".to_owned())], "{alone:#}");
+    assert_eq!(found(&beside, "t:cmps"), found(&alone, "t:cmps"), "{beside:#}");
 }
 
 /// A batch's policies of a language of several dialects (`.language typescript`) run as one pack a dialect, as a
@@ -427,6 +462,47 @@ fn a_batchs_policies_of_several_dialects_run_as_one_pack_a_dialect() {
     assert!(written.iter().all(|w| w.contains("\"call\"")), "{written:?}");
 }
 
+/// A policy that reads `within(n, a)` finds in a pack, in either order, what it finds alone. A pack's programs are
+/// lowered in their libraries' scope (`rr::Text::lower_in`), which took the program's declaration of `within` out as
+/// the library's; the library part, whose rules read no `within`, declared none, and the run panicked (`no declaration
+/// of within`) where each policy alone ran.
+#[test]
+fn a_policy_that_reads_within_finds_in_a_pack_in_either_order_what_it_finds_alone() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rrwithinpack");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.js"), "const f = (y) => y + z;\ndebugger;\nw;\n").unwrap();
+    let policy = |name: &str, body: &str| {
+        let path = dir.join(format!("{name}.rerail"));
+        std::fs::write(&path, format!(".policy \"t:{name}\" revision 1\n.language javascript\n{body}\n")).unwrap();
+        path
+    };
+    let under = policy("under", ".violation Under(at: node, name: symbol) code \"under\" \"{name}\"\nUnder(n, x) :- kind(n, \"identifier\"), within(n, a), kind(a, \"arrow_function\"), text(n, x).");
+    let stops = policy("stops", ".violation Stop(at: node) code \"stop\" \"stop\"\nStop(n) :- kind(n, \"debugger_statement\").");
+    let found = |report: &serde_json::Value| -> Vec<(String, String, u64)> {
+        let mut found: Vec<(String, String, u64)> = report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| (d["code"].as_str().unwrap_or("").to_owned(), d["message"].as_str().unwrap_or("").to_owned(), d["line"].as_u64().unwrap_or(0)))
+            .collect();
+        found.sort();
+        found
+    };
+    let run = |paths: &[std::path::PathBuf], out: &str| crate::code_rule_dsl::tools::run_policies(paths, &dir, &dir.join(out), &serde_json::Value::Null).unwrap_or_else(|e| panic!("{out}: {e}"));
+    let mut alone: Vec<_> = [&under, &stops].into_iter().enumerate().flat_map(|(k, p)| found(&run(std::slice::from_ref(p), &format!("alone{k}")))).collect();
+    alone.sort();
+    let first = run(&[under.clone(), stops.clone()], "first");
+    let second = run(&[stops.clone(), under.clone()], "second");
+    let _ = std::fs::remove_dir_all(&dir);
+    let e = |c: &str, m: &str, l: u64| (c.to_owned(), m.to_owned(), l);
+    assert_eq!(alone, [e("stop", "stop", 2), e("under", "y", 1), e("under", "y", 1), e("under", "z", 1)]);
+    assert_eq!(found(&first), alone, "{first:#}");
+    assert_eq!(found(&second), alone, "{second:#}");
+    let together = |report: &serde_json::Value| -> Vec<u64> { report["runs"].as_array().unwrap().iter().map(|r| r["together"].as_u64().unwrap_or(0)).collect() };
+    assert_eq!(together(&first), [2, 2], "one pack: {first:#}");
+    assert_eq!(together(&second), [2, 2], "one pack: {second:#}");
+}
+
 /// A pack's programs make one set of guests (decision 0055), and a rule that reaches a guest reads every one the run
 /// made: `ruff-classes.rerail`'s `ann_input` asks for the annotation in `Literal["dict({})"]`, and C408, which reads
 /// string annotations, found a `dict({})` call there once a policy that only includes that file ran beside it. A
@@ -441,7 +517,7 @@ fn a_policy_reads_in_a_pack_only_the_guests_it_asks_for_alone() {
         "from typing import List, Literal, cast\n\na: \"dict({})\" = 1\nb: \"dict(\" \"{})\" = 1\nc: List[\"dict({1: 2})\"] = []\nd: Literal[\"dict({})\"] = 1\ne = cast(\"(dict)({ })\", None)\n",
     )
     .unwrap();
-    let c408 = Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/ruff-c408-unnecessary-collection-call.rerail");
+    let c408 = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/ruff-c408-unnecessary-collection-call.rerail");
     let text = std::fs::read_to_string(&c408).unwrap();
     let twin = dir.join("twin.rerail");
     std::fs::write(&twin, text.replace("\"ruff-c408-unnecessary-collection-call\"", "\"t:c408-twin\"")).unwrap();
@@ -479,7 +555,7 @@ fn a_reader_that_only_negates_a_demanded_relation_reads_it_whole() {
     let root = crate::code_rule_dsl::fixtures::temp().with_extension("negation-only-reader");
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("x.py"), "x = 1\n").unwrap();
-    let policy = Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer/plan-helpers-allowlist.rerail");
+    let policy = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer/plan-helpers-allowlist.rerail");
     let codes = |out: &str| -> Vec<String> {
         let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &root, &root.join(out), &serde_json::Value::Null).unwrap();
         report["diagnostics"].as_array().unwrap().iter().map(|d| d["code"].as_str().unwrap_or("").to_owned()).collect()
@@ -505,7 +581,7 @@ fn a_policy_refused_its_kept_inputs_runs_again_over_its_store() {
     let root = crate::code_rule_dsl::fixtures::temp().with_extension("kept-route-refused");
     std::fs::create_dir_all(root.join("_internal")).unwrap();
     std::fs::write(root.join("_internal/__init__.py"), "\"\"\"Internal helpers.\"\"\"\n\ndef get(o, name):\n    return getattr(o, name)\n").unwrap();
-    let policy = Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer/public-api-triples.rerail");
+    let policy = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer/public-api-triples.rerail");
     let run = |out: &str| -> Vec<String> {
         let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &root, &root.join(out), &serde_json::Value::Null).unwrap_or_else(|e| panic!("run {out}: {e}"));
         let mut codes: Vec<String> = report["diagnostics"].as_array().unwrap().iter().map(|d| d.to_string()).collect();
@@ -524,7 +600,7 @@ fn a_policy_refused_its_kept_inputs_runs_again_over_its_store() {
 #[test]
 fn statements_from_the_tape_are_the_parsers() {
     // The rule library and packs, and the engine's own programs (typing's, and the pinned golden ones).
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let mut pending = vec![manifest.join("../docs/rule-syntax"), manifest.join("src/code_rule_dsl/typing/programs"), manifest.join("src/code_rule_dsl/logic/plan/golden/programs")];
     let mut checked = 0;
     while let Some(dir) = pending.pop() {

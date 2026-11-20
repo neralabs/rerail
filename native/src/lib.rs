@@ -38,19 +38,21 @@ pub mod git_access {
     #[cfg(test)]
     mod tests;
 }
+pub mod git_start;
 pub use rerail_store::git_workspace;
 pub use rerail_store::source_tree;
 pub use rerail_w::git_ignore;
 mod main_instance;
 mod model;
 pub use rerail_w::panic_boundary;
+mod path_owner;
 pub mod process;
 pub use rerail_logic::threads;
 /// The browser's long-lived engine: `rerail_command` and its buffers (wasm/README.md).
 #[cfg(target_family = "wasm")]
 pub mod reactor;
 mod rules;
-pub mod tree_watch;
+pub use rerail_tree_watch::tree_watch;
 
 use model::{ModelFingerprint, shared_model, verify_model};
 use napi::{Error, Result, Status, bindgen_prelude::Float32Array};

@@ -8,7 +8,7 @@ import { checkoutRealpath, withinCheckout } from "../engine/catalog/checkout-con
 import { RERAIL_HOSTS } from "../engine/adapter-contract.js";
 import { internalTesting } from "../engine/internal-testing.js";
 import { agentTranscriptPayload } from "../engine/transcript-boundary.js";
-import { sensitiveByName } from "../engine/path-boundary.js";
+import { CHECKOUT_PATH_RESOLUTIONS, checkoutPathBoundary, sensitiveByName, type CheckoutPathBoundary } from "../engine/path-boundary.js";
 import { audits, presentationPreferences, PRESENTATION_HOSTS, events, workLinks } from "../engine/storage/schema.js";
 import {
   auditControlsSchema,
@@ -20,7 +20,7 @@ import {
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 import { approvalKey, packSubject, readApprovals } from "../engine/catalog/rule-approval.js";
 import { rulePackListSchema } from "./rule-pack-contracts.js";
-import { SESSION_EVENT_PAGE_LIMIT, type StoredSessionSummary } from "../runtime/session-store.js";
+import { SESSION_EVENT_PAGE_LIMIT, type DeclinedViolations, type DeclineNote, type StoredSessionSummary } from "../runtime/session-store.js";
 import type { ApiCaller } from "../engine/catalog/repository-model.js";
 import { ApiError, defineOperation, experimentalSummary, type Operation, type RerailApiStores } from "./operation.js";
 import { mergeAssistOperations } from "./merge-assist-operations.js";
@@ -69,15 +69,78 @@ const codeRuleViolationSchema: z.ZodType<CodeRuleViolation> = z.object({
   fix: codeRuleViolationFixSchema.optional(),
 }).strict();
 
+/** A boundary for paths under `root` when it is an absolute folder whose real path lies inside `checkout`; else none. */
+function boundaryInside(checkout: string, root: string): CheckoutPathBoundary | undefined {
+  if (!isAbsolute(root)) return undefined;
+  try {
+    const real = checkoutRealpath(root);
+    return within(checkout, real) === undefined ? undefined : checkoutPathBoundary(real);
+  } catch {
+    // The folder is gone since its audit ran.
+    return undefined;
+  }
+}
+
 /**
- * A violation as a coding agent may see it: in a file secret-like by name, the rule and the place only, as the
- * in-session steer says it. The message may carry the file's text through the rule's metavariables, `variables` are
- * that text, and the fix is its replacement; a person reads them in the dashboard.
+ * Whether a finding's path is secret-like for a coding agent at work in `checkout`: by its name, or by where it leads
+ * from `root`, the folder its audit ran in. The runtime keeps the path relative to that folder and its steer judged it
+ * there, so from a session in `web`, `conf/config.py` with `web/conf` a link to `../.aws` is one. A folder outside
+ * `checkout` (a worktree beside it, one a link leads out to, one gone or not recorded) is not read: its findings are
+ * judged by name. One judge serves one answer: it reads each folder's real path once and resolves at most
+ * CHECKOUT_PATH_RESOLUTIONS distinct paths across all its folders, past which it judges by name.
  */
-function agentViolation(caller: ApiCaller, violation: CodeRuleViolation): CodeRuleViolation {
-  if (caller.kind === "person" || violation.path === undefined || !sensitiveByName(violation.path)) return violation;
-  const { fix: _fix, ...rest } = violation;
-  return { ...rest, message: SECRET_FILE_FINDING_MESSAGE, variables: {} };
+function recordedPathJudge(checkout: string): (root: string | undefined, path: string) => boolean {
+  const boundaries = new Map<string, CheckoutPathBoundary | undefined>();
+  const resolved = new Set<string>();
+  const boundaryOf = (root: string | undefined): CheckoutPathBoundary | undefined => {
+    if (root === undefined) return undefined;
+    if (!boundaries.has(root)) boundaries.set(root, boundaryInside(checkout, root));
+    return boundaries.get(root);
+  };
+  return (root, path) => {
+    if (sensitiveByName(path)) return true;
+    const boundary = boundaryOf(root);
+    const key = `${root}\0${path}`;
+    if (boundary === undefined || (!resolved.has(key) && resolved.size >= CHECKOUT_PATH_RESOLUTIONS)) return false;
+    resolved.add(key);
+    return boundary.sensitive(path);
+  };
+}
+
+/**
+ * Violations as `caller` may see them, each with the folder its audit ran in. A coding agent sees one in a secret-like
+ * file ({@link recordedPathJudge}) by rule and place only, as the in-session steer says it: the message may carry the
+ * file's text through the rule's metavariables, `variables` are that text, and the fix is its replacement; a person
+ * reads them in the dashboard. Make one view per answer.
+ */
+function violationView(caller: ApiCaller): (violation: CodeRuleViolation, root: string | undefined) => CodeRuleViolation {
+  if (caller.kind === "person") return violation => violation;
+  // Defensive: every list calls historyScope first, which refuses an agent with no checkout.
+  const sensitive = caller.checkout === undefined ? (_root: string | undefined, path: string) => sensitiveByName(path) : recordedPathJudge(caller.checkout);
+  return (violation, root) => {
+    if (violation.path === undefined || !sensitive(root, violation.path)) return violation;
+    const { fix: _fix, ...rest } = violation;
+    return { ...rest, message: SECRET_FILE_FINDING_MESSAGE, variables: {} };
+  };
+}
+
+/** Rule `id`'s declined violations as `rules_activity` reports them; zeros for a rule with none. */
+function declinedOf(declined: ReadonlyMap<string, DeclinedViolations>, id: string) {
+  const counts = declined.get(id);
+  return { declinedViolations: counts?.declined ?? 0, declinedLoggedViolations: counts?.alsoLogged ?? 0 };
+}
+
+/** A steer as `violations_list` names it: the audit that steered and the rule it steered on. */
+const steerKey = (auditId: string, ruleId: string) => `${auditId}\u0000${ruleId}`;
+
+/** The reasons of decline notes, oldest first, by the steer each declined. */
+function declineReasonsBySteer(notes: ReadonlyArray<DeclineNote & { auditId: string }>): Map<string, string[]> {
+  const reasons = new Map<string, string[]>();
+  for (const note of notes) {
+    const key = steerKey(note.auditId, note.ruleId);
+    reasons.set(key, [...reasons.get(key) ?? [], note.reason]);
+  }
+  return reasons;
 }
 
 const auditFailureSchema: z.ZodType<AuditFailure> = z.object({
@@ -268,10 +331,53 @@ const ruleActivitySchema = z.object({
   lastSeenAt: z.number().int().nullable(),
   audits: z.number().int().nonnegative().describe("Distinct audits in range that compiled this rule, so a zero violation count over a positive number of audits is evidence rather than silence."),
   loggedViolations: z.number().int().nonnegative().describe("Of distinctViolations, those recorded in Log mode at the time, whatever the rule's mode is now."),
+  declinedViolations: z.number().int().nonnegative().describe("Of distinctViolations, those of a steer the coding agent declined with `rerail feedback`. A steer with no note is not known to be followed: an agent can decline without recording why."),
+  declinedLoggedViolations: z.number().int().nonnegative().describe("Of declinedViolations, those also in loggedViolations (recorded in Log mode by another audit in range). Counting each violation once, as Log only, steered or declined, a declined one is declined: Log only is loggedViolations less these, steered the rest."),
   rerails: z.number().int().nonnegative(),
   ...inactiveField,
   removed: z.literal(true).optional().describe("Set on a rule no longer among the rules reported (taken out of the repository, or no longer installed or in the library) that has violations in range: listed for its history, with nothing to turn off."),
 }).strict();
+
+type RuleActivity = z.infer<typeof ruleActivitySchema>;
+
+/** What `rules_activity` reads for a range: each rule's audit totals, steer deliveries and declined violations. */
+interface RuleActivityCounts {
+  activity: ReturnType<RerailApiStores["audits"]["ruleActivity"]>;
+  rerails: ReadonlyMap<string, number>;
+  declined: ReadonlyMap<string, DeclinedViolations>;
+}
+
+/**
+ * A catalog rule's activity. Every rule is reported, so a caller never has to infer absence from a missing key; a
+ * conversation rule writes no audit (so nothing of it is steered or declined) and an inactive code rule is never
+ * evaluated, so neither is measured.
+ */
+function catalogRuleActivity(
+  { id, kind, rule }: ReturnType<typeof activityRules>[number],
+  counts: RuleActivityCounts,
+): RuleActivity {
+  const { inactive } = inactiveOf(kind, rule);
+  const totals = kind === "conversation" ? undefined : counts.activity.get(id);
+  return {
+    measured: kind !== "conversation" && inactive === undefined,
+    distinctViolations: totals?.distinctViolations ?? 0,
+    sessions: totals?.sessions ?? 0,
+    lastSeenAt: totals?.lastSeenAt ?? null,
+    audits: totals?.audits ?? 0,
+    loggedViolations: totals?.loggedViolations ?? 0,
+    ...declinedOf(counts.declined, id),
+    rerails: kind === "conversation" ? 0 : counts.rerails.get(id) ?? 0,
+    ...(inactive === undefined ? {} : { inactive }),
+  };
+}
+
+/** A rule taken out since keeps its violations: History still lists it, marked removed, while it has some in range. */
+function addRemovedRuleActivity(rules: Record<string, RuleActivity>, counts: RuleActivityCounts): void {
+  for (const [id, totals] of counts.activity) {
+    if (rules[id] !== undefined || totals.distinctViolations === 0) continue;
+    rules[id] = { measured: true, ...totals, ...declinedOf(counts.declined, id), rerails: counts.rerails.get(id) ?? 0, removed: true };
+  }
+}
 
 const violationRecordSchema = z.object({
   id: z.string(),
@@ -288,6 +394,7 @@ const violationRecordSchema = z.object({
   at: z.number().int().describe("Start time of the audit that reported the violation."),
   host: z.string().nullable().describe("The coding agent of the violation's session; null when the session is not recorded."),
   logged: z.boolean().describe("Rerail recorded the violation without telling the coding agent: the audit ran in Log mode, or the rule was in Log mode then. `mode` is the rule's mode alone."),
+  declinedReasons: z.array(z.string()).describe("The reasons the coding agent recorded with `rerail feedback` for declining the steer of this violation's audit and rule, oldest first; empty when no note declined it, and always for a logged violation."),
 }).strict();
 
 const repositoryPathSchema = z.string().refine(value => value === "" || isAbsolute(value), "Repository must be an absolute path or empty for the database default.");
@@ -400,30 +507,17 @@ export const operations: readonly Operation[] = [
     }),
     handler: (stores, input, caller) => {
       const ids = historyScope(stores, caller, input.repository);
-      const activity = stores.audits.ruleActivity(input.since, ids);
-      const rerails = stores.reader.steersByRule(input.since, ids);
-      const rules: Record<string, z.infer<typeof ruleActivitySchema>> = {};
+      const counts: RuleActivityCounts = {
+        activity: stores.audits.ruleActivity(input.since, ids),
+        rerails: stores.reader.steersByRule(input.since, ids),
+        declined: stores.reader.declinedByRule(input.since, ids),
+      };
+      const rules: Record<string, RuleActivity> = {};
       // A coding agent's rules are its own repository's, as its counts are: never the machine's whole library.
-      for (const { id, kind, rule } of activityRules(stores, callerRepositoryKey(stores, caller) ?? input.repository)) {
-        // Every rule is reported, so a caller never has to infer absence from a missing key.
-        const { inactive } = inactiveOf(kind, rule);
-        const totals = kind === "conversation" ? undefined : activity.get(id);
-        rules[id] = {
-          measured: kind !== "conversation" && inactive === undefined,
-          distinctViolations: totals?.distinctViolations ?? 0,
-          sessions: totals?.sessions ?? 0,
-          lastSeenAt: totals?.lastSeenAt ?? null,
-          audits: totals?.audits ?? 0,
-          loggedViolations: totals?.loggedViolations ?? 0,
-          rerails: kind === "conversation" ? 0 : rerails.get(id) ?? 0,
-          ...(inactive === undefined ? {} : { inactive }),
-        };
+      for (const entry of activityRules(stores, callerRepositoryKey(stores, caller) ?? input.repository)) {
+        rules[entry.id] = catalogRuleActivity(entry, counts);
       }
-      // A rule taken out since keeps its violations: History still lists it, marked removed.
-      for (const [id, totals] of activity) {
-        if (rules[id] !== undefined || totals.distinctViolations === 0) continue;
-        rules[id] = { measured: true, ...totals, rerails: rerails.get(id) ?? 0, removed: true };
-      }
+      addRemovedRuleActivity(rules, counts);
       return {
         since: input.since,
         rules,
@@ -567,9 +661,11 @@ export const operations: readonly Operation[] = [
       const readable = ids === undefined || stores.audits.list({ auditId: input.auditId, limit: 1 }, ids).total > 0;
       const page = readable ? stores.audits.listRepositoryAuditEntries(repositoryAuditEntryQuery(input)) : undefined;
       if (page === undefined) throw new ApiError(404, "repository-audit-not-found", `repository audit ${input.auditId} does not exist`);
+      const view = violationView(caller);
+      const root = stores.audits.workspaceRoots([input.auditId]).get(input.auditId);
       return {
         entries: page.entries.map(entry => entry.kind === "violation"
-          ? { kind: "violation" as const, violation: agentViolation(caller, codeRuleViolationSchema.parse(entry.payload)) }
+          ? { kind: "violation" as const, violation: view(codeRuleViolationSchema.parse(entry.payload), root) }
           : { kind: "failure" as const, failure: auditFailureSchema.parse(entry.payload) }),
         total: page.total,
       };
@@ -584,7 +680,9 @@ export const operations: readonly Operation[] = [
     output: z.object({ audits: z.array(auditRecordSchema), total: z.number().int().nonnegative() }),
     handler: (stores, input, caller) => {
       const page = stores.audits.list(auditQuery(input), historyScope(stores, caller, input.repository));
-      return caller.kind === "person" ? page : { ...page, audits: page.audits.map(audit => ({ ...audit, violations: audit.violations.map(violation => agentViolation(caller, violation)) })) };
+      if (caller.kind === "person") return page;
+      const view = violationView(caller);
+      return { ...page, audits: page.audits.map(audit => ({ ...audit, violations: audit.violations.map(violation => view(violation, audit.workspaceRoot)) })) };
     },
   }),
   defineOperation({
@@ -609,11 +707,15 @@ export const operations: readonly Operation[] = [
         ...(input.ruleId === undefined ? {} : { ruleId: input.ruleId }),
         ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
       }, historyScope(stores, caller, input.repository));
+      const view = violationView(caller);
+      const roots = stores.audits.workspaceRoots([...new Set(page.violations.map(v => v.auditId))]);
+      const reasons = declineReasonsBySteer(stores.reader.placedDeclineNotes([...new Set(page.violations.map(v => v.sessionId))]));
       return {
         total: page.total,
         violations: page.violations.map(({ violation: found, sessionId, auditId, at, host, logged }) => {
-          const { id, ruleId, clauseId, code, mode, message, path, span, fix } = agentViolation(caller, found);
-          return { id, ruleId, clauseId, code, mode, message, path: path ?? null, span: span ?? null, fix: fix ?? null, sessionId, auditId, at, host, logged };
+          const { id, ruleId, clauseId, code, mode, message, path, span, fix } = view(found, roots.get(auditId));
+          const declinedReasons = logged ? [] : reasons.get(steerKey(auditId, ruleId)) ?? [];
+          return { id, ruleId, clauseId, code, mode, message, path: path ?? null, span: span ?? null, fix: fix ?? null, sessionId, auditId, at, host, logged, declinedReasons };
         }),
         nextCursor: page.nextCursor,
       };
@@ -634,6 +736,7 @@ export const operations: readonly Operation[] = [
       sessions: z.array(sessionSummarySchema.extend({
         violationCount: z.number().int().nonnegative().describe("Violations in the session's history, as `violations_list` with its `sessionId` counts them."),
         steeredViolations: z.number().int().nonnegative().describe("Of violationCount, those no audit recorded in Log mode (steered, or blocked)."),
+        declinedViolations: z.number().int().nonnegative().describe("Of steeredViolations, those of a steer the coding agent declined, as `sessions_get` counts them in `declined`."),
         lastEventAt: z.number().int().nullable().describe("Epoch milliseconds the session's newest event was observed; null when it has none."),
       })),
       total: z.number().int().nonnegative(),
@@ -659,11 +762,20 @@ export const operations: readonly Operation[] = [
         ignoredEdits: z.number().int().nonnegative().describe("Tool edits of files no rule checked because Git ignores them (`ignored-edit` events name each file and the ignore file, line and pattern)."),
         ignoreRuleChanges: z.number().int().nonnegative().describe("Changes to Git's ignore rules seen during the session that can make them ignore more: a pattern added, a negation (`!pattern`) removed, or, in a file with a negation, its patterns reordered or repeated. Each `ignore-rules-changed` event names the file and those patterns; comments, blank lines and duplicates in a file without a negation are not changes."),
       }).describe("Over the whole transcript, however much of it a reader has loaded."),
+      declined: z.object({
+        violations: z.number().int().nonnegative().describe("Steered violations of a declined steer: its audit's violations of the rule, each counted once."),
+        notes: z.array(z.object({
+          ruleId: z.string(),
+          reason: z.string().describe("The one line the coding agent gave the person for not following the steer."),
+          recordedAt: z.number().int(),
+          auditId: z.string().nullable().describe("The audit whose steer it declined: the latest in the session to steer the rule's violations and start at or before the note; null when none did."),
+        })).describe("Oldest first."),
+      }).describe("Steers the coding agent declined, from the notes it recorded with `rerail feedback`. A steer with no note is not known to be followed: an agent can decline without recording why."),
     }),
     handler: (stores, input, caller) => {
       const response = sessionResponse(stores, caller, input.sessionId);
       if (response === null) throw sessionNotFound(input.sessionId);
-      return { ...response, gaps: stores.reader.gaps(input.sessionId) };
+      return { ...response, gaps: stores.reader.gaps(input.sessionId), declined: stores.reader.declines(input.sessionId) };
     },
   }),
   defineOperation({

@@ -535,7 +535,18 @@ boundary judges paths by secret-like name and, where a checkout is known, by sym
 - **Symlink targets count** wherever a checkout root is known (`checkoutPathBoundary`): a tracked
   `docs/a.md -> ../.env` is secret-like. Targets are judged by secret-like name only, so a pnpm `node_modules/<pkg>`
   link into `.pnpm/` passes. Only path-shaped words (a `/` or `\`, a leading `.` or `~`, or a dot-extension) are
-  looked up on disk; every word is still judged by name.
+  looked up on disk, and not a word that may be a URL's host and path where the lookup would reach another machine:
+  on Windows a share on another machine written with `//` right after a `:`, unless `file` or `smb` stands before it
+  (`//host/api` in `https://host/api` or `${SCHEME}://host/api`), and on Linux and macOS a web URL's host and path
+  under the automount root `/net` (`/NET` too on macOS) on another machine, written with `//`. Every other
+  path-shaped word is looked up: a `file:` or `smb:` URL's host and path, a URL's with no host
+  (`unix:///run/app.sock`), on Linux and macOS a `//` word as a local path, and on Windows a share written with
+  backslashes after a `:` (`/LOG:\\host\share\run.txt`), a device path (`\\?\...`, `\\.\...`) that does not go on
+  to the network redirector and a share on the loopback host wherever they stand, and a drive path written with
+  doubled backslashes (`"C:\\Users\\me"` in JSON) as `C:\Users\me` is. A word is read as its lookup opens it, so `.`
+  and `..` names do not hide the redirector, and the loopback host in any spelling the address parser reads
+  (`127.1`, `2130706433`) is this machine, as is the name the system gives it (`os.hostname()`, in any letter case).
+  Every word is still judged by name.
 
 </details>
 
@@ -544,8 +555,10 @@ boundary judges paths by secret-like name and, where a checkout is known, by sym
 
 - Names cannot see `printenv`, or a path the shell builds at run time such as `base64 -d <<< LmVudg== | xargs cat`.
 - User prompts and assistant messages pass whole.
-- `violations_list`, `audits_list`, `repository_audit_entries_list` and `rerail rules evidence` judge findings by name
-  only, not symlink target.
+- `violations_list`, `audits_list` and `repository_audit_entries_list` judge a finding's file by where it links from
+  the folder it was recorded in, for the first 256 paths of an answer, past those by name only. A finding recorded in a
+  folder outside the agent's own checkout, such as a worktree beside it, is judged by name only.
+  `rerail rules evidence` judges findings by name only.
 - A link named without a separator, leading dot or extension (`notes -> .env`, read as `cat notes`) is not looked up
   on disk, so its target is not judged.
 
@@ -580,10 +593,15 @@ audit errors, and Rerail's `daemon.log` lines. Rule matching and steers use the 
 - **Secret-like files.** A tool result for a call naming a secret-like path is stored without its output
   (`callNamesSecretPath` in `persistEvent`, `src/runtime/runtime.ts`). The judgment goes to the session ledger
   (`secret-call`, `secret-result`), so a result arriving after a daemon restart or host reconnect is withheld too.
-  Preimages of a secret-like file, or one whose text holds a secret, keep only a hash and size. A finding in a
-  secret-like file that a session still owes its agent when its memory is freed, or when the daemon stops or restarts,
-  is kept in the ledger without its message or fix, as its steer withholds them. Each steer and finding it owes then
-  keeps the SHA-256 of each file it names, as a preimage does, so a file changed meanwhile drops it.
+  Preimages of a secret-like file, or one whose text holds a secret, keep only a hash and size. A file is secret-like
+  there by the path the tool named or by its real path in its checkout, so a file reached through a link to a folder
+  (`conf -> .aws`) or by a Windows short name of a folder or a file (`AWS~1`, `WP-CON~1.PHP`) is judged as the file it
+  is. As with text that holds a secret, the session keeps in memory the text of a file secret-like only by its real
+  path, so at the runtime `rewind` can still put back a write that names the link path, unless the daemon restarts
+  first, since the ledger keeps only the hash and size. A finding in a secret-like file that a session still owes its
+  agent when its memory is freed, or when the daemon stops or restarts, is kept in the ledger without its message or
+  fix, as its steer withholds them. Each steer and finding it owes then keeps the SHA-256 of each file it names, as a
+  preimage does, so a file changed meanwhile drops it.
 - **Erasure.** Database writers use `secure_delete`. `rerail reset` checkpoints the WAL, runs `VACUUM`, and checkpoints
   again, so deleted history cannot be read back from the file.
 - **History stored by older versions.** `rerail scrub` redacts the database, its pre-update copy, every recorded
@@ -721,8 +739,8 @@ On Unix, Rerail creates its files private and tightens existing ones. On Windows
 
 - The content store's folder is created 0700 and its database 0600; SQLite gives `-wal` and `-shm` the same mode.
 - On open, Rerail tightens the home and these files if other users could read them and the person owns them:
-  `rerail.sqlite*`, `harness.sqlite*`, `daemon.json*`, `access-token*`, `daemon.log*`, `*.pre-update`. It never
-  follows a symlink to do so.
+  `rerail.sqlite*`, `harness.sqlite*`, `daemon.json*`, `access-token*`, `daemon.log*`, `claude-status-lines/`, `*.pre-update`. It
+  never follows a symlink to do so.
 - The rule-pack staging folder is created 0700.
 
 **Mitigated on every system** (`src/daemon/daemon.ts:loadDaemonTls`): a daemon TLS key other accounts can read, by its
@@ -772,6 +790,11 @@ should not widen it.
 - The Claude status-line wrapper runs an inherited `statusLine` command, re-read from the working directory's
   `.claude/settings*.json`, through a shell: `shell: true`, or Git Bash's `bash -c` on Windows when Rerail finds one
   (`src/hosts/claude/claude-status.ts`, `src/setup/claude-status-store.ts`).
+- Claude Code's status command on macOS and Linux has its shell read `claude-status.sh` from the installed package and
+  print `<Rerail home>/claude-status-lines/<session id>`, which the daemon writes (0600, in a 0700 folder). The session id comes
+  from Claude Code's JSON on stdin; the script takes only `[A-Za-z0-9_-]`, so an id cannot name a file outside the
+  folder. The lines hold terminal escapes (colour, OSC 8 links); the daemon strips control characters from every
+  label and address it puts in them (`src/presentation/claude-status-files.ts`).
 - `hooks/cursor.json` uses the relative path `./dist/hosts/cursor/cursor-hook.js`. [INFERENCE: exposed only if Cursor
   runs plugin hooks with the project as working directory. `rerail setup` writes absolute paths.]
 

@@ -190,6 +190,7 @@ A setting's fields:
 - **`mode`**: Log, Steer or Block. Block is in [internal testing](../README.md#internal-testing) and is delivered like Steer.
 - **`suppressions`**: `honour` or `ignore` linters' suppression comments (`// eslint-disable-next-line`, `# noqa`, `# nosec`, ...). A ported rule reads the comments of the linter it ports, where its document's `suppress` names them. Under `ignore`, no linter's comment silences it.
 - **`config`**: option values of one code rule by Rerail, by option name. They replace the defaults its document's `define.options` declare, and the document is resolved again with them. It is set on a rule, not a pack, for the whole repository (folder `""`), because one compiled rule runs in every folder of a checkout. Library rules take no `config`: edit the rule instead. An option the document doesn't declare, or a value its declaration doesn't allow, is refused with `400 invalid-setting`.
+  A repository that lists its packs in `.rerail/packs.json` can set options on a pack's entry, for every rule of the pack that declares them; in internal testing, a headless scan applies them as this setting ([repository packs](repository-packs.md)).
 
 A null field leaves it to the next owner.
 
@@ -317,6 +318,7 @@ Anything else is refused with `403 agent-not-permitted` and the dashboard URL wh
 - Its first approval switches the original off there with a repository setting: at once for a person's write, which is approved as saved, and for a coding agent's copy when a person approves it.
 - Until then the original keeps running beside the copy, which runs in Log, so writing a copy never weakens a rule.
 - The original stays a reference to its installed pack.
+- `repository_rules_get` names the original in the copy's `copiedFromRuleId` (`null` for every other rule), so the dashboard can say that approving the copy turns the original off.
 
 </details>
 

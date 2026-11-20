@@ -4,7 +4,6 @@ use crate::code_rule_dsl::{
     tape::TAPE_FORMAT_VERSION,
 };
 use crate::content_store::prefilter::TOO_BIG;
-use std::path::Path;
 
 pub(in crate::code_rule_dsl) use crate::code_rule_dsl::fixtures::{document, open, temp};
 
@@ -192,7 +191,7 @@ fn kind_positions_are_every_preorder_of_the_kind_and_feed_kind_frequencies() {
 fn no_relation_stores_a_row_per_node() {
     let store = open(&temp());
     let mut nodes = 0_usize;
-    let here = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/prefilter");
+    let here = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/prefilter");
     let mut files = std::fs::read_dir(&here).unwrap().map(|entry| entry.unwrap().path()).filter(|path| path.extension().is_some_and(|e| e == "rs")).collect::<Vec<_>>();
     files.sort();
     for path in &files {

@@ -44,6 +44,13 @@ describe(".rerail/packs.json", () => {
     ]);
   });
 
+  it("reads the option values an entry sets for its pack's rules, beside its folders", () => {
+    expect(parsePacksFile(file([{ id: "complexity", version: "0.1.9", config: { ceiling: 10 } }, { path: "packs/acme", folders: ["api"], config: { "max-depth": 3 } }]))).toEqual([
+      { kind: "published", packageName: "@neralabs/rerail-pack-complexity", id: "complexity", version: "0.1.9", config: { ceiling: 10 } },
+      { kind: "repository", path: "packs/acme", folders: ["api"], config: { "max-depth": 3 } },
+    ]);
+  });
+
   it.each([
     [file([{ id: "complexity", version: "0.1.8" }, { id: "@neralabs/rerail-pack-complexity", version: "0.1.9" }]), "lists @neralabs/rerail-pack-complexity twice"],
     [file([{ id: "complexity", version: "latest" }]), "packs[0].version must be one exact version"],
@@ -59,6 +66,9 @@ describe(".rerail/packs.json", () => {
     [file([{ id: "complexity", version: "0.1.8", folders: ["/srv"] }]), "packs[0].folders[0] \"/srv\" is absolute"],
     [file([{ id: "complexity", version: "0.1.8", folders: [3] }]), "packs[0].folders[0] is not a string"],
     [file([{ id: "complexity", version: "0.1.8", folders: ["web", "web"] }]), "packs[0].folders lists web twice"],
+    [file([{ id: "complexity", version: "0.1.8", config: 10 }]), "packs[0].config must be an object of option names and their values"],
+    [file([{ id: "complexity", version: "0.1.8", config: [10] }]), "packs[0].config must be an object of option names and their values"],
+    [file([{ id: "complexity", version: "0.1.8", config: {} }]), "packs[0].config must be an object of option names and their values"],
     [file([], { rules: [] }), "is not a rerail.packs/1 document"],
     [JSON.stringify({ format: "rerail.packs/v1", packs: [] }), "is not a rerail.packs/1 document"],
     ["{\"schema\": \"rerail.packs/1\", \"schema\": \"rerail.packs/1\", \"packs\": []}", "schema"],

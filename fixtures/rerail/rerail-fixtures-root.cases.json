@@ -47,6 +47,10 @@
     {
       "path": "native/src/code_rule_dsl/compile/parse/ruff.rs",
       "content": "macro_rules! fixture {\n    ($name:literal) => {\n        (\n            $name,\n            include_str!(concat!(\n                env!(\"RERAIL_FIXTURES_DIR\"),\n                \"/python/literal/ruff/\",\n                $name\n            )),\n        )\n    };\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/mod.rs",
+      "content": "macro_rules! fixtures_dir {\n    () => {\n        env!(\"RERAIL_ORACLES_DIR\", \"Rerail fixtures not found\")\n    };\n}\n"
     }
   ],
   "passed": [
@@ -67,8 +71,8 @@
       "content": "//! Forte against its own records (`fixtures/blade/blade/forte`); never `include_str!(\"../../../../fixtures/x\")`.\n// Not \"../../fixtures/rust\" either: oracle!(\"rust/x\") is the one route.\nconst SAMPLE: &str = r#\"import data from \"../fixtures/data.json\";\"#;\nconst NAMES: &[&str] = &[\"fixtures/clippy/needless_return.rs\", \"fixtures\"];\nconst HELP: &str = \"set RERAIL_ORACLES_DIR to a fixtures directory\";\nconst CAPS: &str = include_str!(\"../capabilities.json\");\n"
     },
     {
-      "path": "native/src/code_rule_dsl/mod.rs",
-      "content": "macro_rules! fixtures_dir {\n    () => {\n        env!(\"RERAIL_ORACLES_DIR\", \"Rerail fixtures not found\")\n    };\n}\n"
+      "path": "native/src/code_rule_dsl/fixtures.rs",
+      "content": "macro_rules! __rerail_oracle {\n    ($($path:expr),+ $(,)?) => {\n        include_str!(concat!(env!(\"RERAIL_FIXTURES_DIR\", \"Rerail fixtures not found\"), \"/\", $($path),+))\n    };\n}\n\npub fn dir() -> &'static str {\n    static DIR: std::sync::LazyLock<String> =\n        std::sync::LazyLock::new(|| std::env::var(\"RERAIL_FIXTURES_DIR\").expect(\"RERAIL_FIXTURES_DIR is not set\"));\n    &DIR\n}\n"
     },
     {
       "path": "native/build.rs",

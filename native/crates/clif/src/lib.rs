@@ -13,7 +13,9 @@
 //!   one stays a call of the read compiled once in the module.
 #[cfg(feature = "ir")]
 pub mod inline;
-#[cfg(feature = "ir")]
+// The browser build has no JIT (`wasm/README.md`), so no JIT of the reads either: the manifest
+// leaves cranelift-jit out there.
+#[cfg(all(feature = "ir", not(target_family = "wasm")))]
 pub mod jit;
 #[cfg(feature = "ir")]
 pub mod reads;

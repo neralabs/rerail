@@ -1,0 +1,1 @@
+The dashboard's banners read in plain text colours, and those about approval show a dashed check; day one's banner names your rule packs and how many rules steer; pack cards are all one size; and the top bar and Settings show the version of Rerail on this computer.
