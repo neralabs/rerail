@@ -10411,7 +10411,8 @@ fn preload_root(root: &Path) {
     });
 }
 
-/// One directory of the walk: the subdirectories `enters` allows go to `pending`, the files to `out`.
+/// One directory of the walk: the subdirectories `enters` allows go to `pending`, the files to `out`, named with `/`
+/// (`slashed`) as Git's listing names them.
 fn walk_directory(root: &Path, dir: &Path, enters: fn(&str) -> bool, pending: &mut Vec<std::path::PathBuf>, out: &mut Vec<String>) -> Result<()> {
     let listing = observe(|o| o.listing(dir)).ok_or_else(|| Error::Plan(format!("{}: not a readable directory", dir.display())))?;
     for (name, is_dir) in listing.iter() {
@@ -10419,10 +10420,17 @@ fn walk_directory(root: &Path, dir: &Path, enters: fn(&str) -> bool, pending: &m
         if *is_dir {
             pending.extend(enters(name).then_some(path));
         } else if path.is_file() {
-            out.push(path.strip_prefix(root).map_err(|e| Error::Plan(e.to_string()))?.to_string_lossy().into_owned());
+            out.push(slashed(&path.strip_prefix(root).map_err(|e| Error::Plan(e.to_string()))?.to_string_lossy(), std::path::MAIN_SEPARATOR));
         }
     }
     Ok(())
+}
+
+/// A relative path whose parts `separator` divides (the platform's: `\` on Windows), with `/` between them, as every
+/// reader of the corpus's paths takes them (scope globs, artifact digests, Git's listing). Elsewhere a `\` is a
+/// character of a name, and is kept.
+fn slashed(relative: &str, separator: char) -> String {
+    relative.split(separator).collect::<Vec<_>>().join("/")
 }
 
 /// The corpus's files under `root` (`corpus_paths`), relative and in path order: each grammar's, by the language
@@ -10850,6 +10858,14 @@ pub mod tests {
         let mut every: Vec<String> = listed.iter().map(|p| p.to_string()).chain(skipped).chain(["vendor-1.0.dist-info/RECORD".to_owned()]).collect();
         every.sort();
         assert_eq!(files(site.path()), every, "a site directory");
+    }
+
+    /// A walked path is named with `/` on every platform, as Git's listing names it: Windows' `\` divides its parts,
+    /// elsewhere it is a character of a name.
+    #[test]
+    fn a_walked_path_is_named_with_slashes() {
+        assert_eq!(super::slashed(r"pkg\sub\a.py", '\\'), "pkg/sub/a.py");
+        assert_eq!(super::slashed(r"pkg/odd\name.py", '/'), r"pkg/odd\name.py");
     }
 
     /// A corpus in a directory Git ignores has no file Git sees, and that answer is kept too (`git_files`'s record):
