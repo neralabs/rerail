@@ -1998,7 +1998,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    */
   async #sessionRulesBuilt(sessionId: string): Promise<void> {
     const state = this.#sessions.get(sessionId);
-    if (state === undefined || state.closed) return;
+    if (!recordsCoverage(state)) return;
     // A build that fails here is the coverage's to report, as it builds the rules itself then.
     await this.#catalogs.prepare(state.checkout.root).catch(() => undefined);
   }

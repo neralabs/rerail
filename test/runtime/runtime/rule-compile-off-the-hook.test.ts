@@ -12,13 +12,17 @@ import { setUpTestRepository } from "../../support/repository-rules.js";
 /**
  * The engine's rule compiles, as the daemon asks for them: each one run on the JS thread, the daemon's one thread, is
  * counted; each one run off it is counted too, and one of a rule whose id `hold` names waits until `release` is called.
+ * `withoutAsync` stands in an engine built before `compileAsync`, which lacks it; `offThreadDone` names each compile off
+ * the thread that ended.
  */
 const compiles = vi.hoisted(() => ({
   onThread: 0,
   offThread: 0,
   offThreadIds: [] as string[],
+  offThreadDone: [] as string[],
   holding: 0,
   hold: undefined as { id: string; released: Promise<void> } | undefined,
+  withoutAsync: false,
 }));
 
 vi.mock("../../../src/engine/native/native.js", async importOriginal => {
@@ -26,6 +30,22 @@ vi.mock("../../../src/engine/native/native.js", async importOriginal => {
   let counted: NativeBinding | undefined;
   const count = (binding: NativeBinding): NativeBinding => {
     const engine = binding.CodeRuleDslRuntime;
+    const compileAsync = async (...args: Parameters<typeof engine.compile>) => {
+      const id = (JSON.parse(args[0]) as { id: string }).id;
+      compiles.offThread += 1;
+      compiles.offThreadIds.push(id);
+      const hold = compiles.hold;
+      if (hold?.id === id) {
+        compiles.holding += 1;
+        await hold.released;
+        compiles.holding -= 1;
+      }
+      try {
+        return await engine.compileAsync!(...args);
+      } finally {
+        compiles.offThreadDone.push(id);
+      }
+    };
     const runtime = {
       pythonAstBatch: (documents: string) => engine.pythonAstBatch(documents),
       testRr: (paths: string, filter?: string | null) => engine.testRr(paths, filter),
@@ -33,24 +53,17 @@ vi.mock("../../../src/engine/native/native.js", async importOriginal => {
         compiles.onThread += 1;
         return engine.compile(...args);
       },
-      compileAsync: async (...args: Parameters<typeof engine.compile>) => {
-        compiles.offThread += 1;
-        compiles.offThreadIds.push((JSON.parse(args[0]) as { id: string }).id);
-        const hold = compiles.hold;
-        if (hold !== undefined && args[0].includes(`"id":"${hold.id}"`)) {
-          compiles.holding += 1;
-          await hold.released;
-          compiles.holding -= 1;
-        }
-        // Absent from an engine built before the daemon compiled rules off its thread: the call fails there.
-        const off = (engine as unknown as { compileAsync: typeof engine.compileAsync }).compileAsync;
-        return await off(...args);
+      get compileAsync() {
+        return compiles.withoutAsync ? undefined : compileAsync;
       },
     };
     return new Proxy(binding, { get: (target, key) => (key === "CodeRuleDslRuntime" ? runtime : Reflect.get(target, key)) });
   };
   return { ...actual, loadNativeBinding: () => (counted ??= count(actual.loadNativeBinding())) };
 });
+
+/** Settles once every task the JS thread has queued now has run: what a compile that ended starts next has started. */
+const queuedWorkRan = () => new Promise<void>(resolve => setImmediate(resolve));
 
 const temporaryDirectory = temporaryDirectories("rerail-rule-compile-");
 
@@ -96,17 +109,17 @@ async function repository(path: string): Promise<string> {
  * Two repositories, each running a pack of its own: the sessions' folder, and a sibling one of them edits by absolute
  * path. A first daemon opens a session there (`editFirst`: and edits the sibling, so the session's record shows it); the
  * sibling's rule then changes, so the daemon started after it finds no compiled copy of it anywhere, as a restart into a
- * repository no other one shares rules with does.
+ * repository no other one shares rules with does. `siblingPack` names the sibling's pack, whose rule is `<id>-needle`.
  */
-async function restartedDaemon(editFirst: boolean) {
+async function restartedDaemon(editFirst: boolean, siblingPack = "rcsibling") {
   const root = await realpath(await temporaryDirectory({ started: false }));
   const databasePath = join(root, "rerail.sqlite");
   const folder = await repository(join(root, "session"));
   const sibling = await repository(join(root, "sibling"));
   installNeedlePack(join(root, "packs"), "rcsession", "No NEEDLE in the session's folder");
-  installNeedlePack(join(root, "packs"), "rcsibling", "No NEEDLE in the sibling");
+  installNeedlePack(join(root, "packs"), siblingPack, "No NEEDLE in the sibling");
   setUpTestRepository(folder, { packs: ["rcsession"] }, databasePath);
-  setUpTestRepository(sibling, { packs: ["rcsibling"] }, databasePath);
+  setUpTestRepository(sibling, { packs: [siblingPack] }, databasePath);
   const open = () => new RerailRuntime({ storageRoot: join(root, "sessions"), databasePath, workspaceRoot: folder, embedder: testEmbedder, autostart: false });
   const first = { host: "claude-code" as const, sessionId: "first", cwd: folder };
   const second = { host: "claude-code" as const, sessionId: "second", cwd: folder };
@@ -137,7 +150,7 @@ async function restartedDaemon(editFirst: boolean) {
     await earlier.result();
   }
   await before.dispose();
-  installNeedlePack(join(root, "packs"), "rcsibling", "No NEEDLE in the sibling, still", "1.0.1");
+  installNeedlePack(join(root, "packs"), siblingPack, "No NEEDLE in the sibling, still", "1.0.1");
   const runtime = open();
   /** What the sibling's checks recorded, to show beside a steer that did not come. */
   const checks = () => JSON.stringify(sessionDatabaseQuery(root, "SELECT session_id, status, violations_json, failures_json FROM audits ORDER BY started_at"));
@@ -274,6 +287,115 @@ describe("a session that opens", () => {
       await runtime.codeRulesOpened(session.sessionId);
       expect(compiles.onThread).toBe(0);
     } finally {
+      await runtime.dispose();
+    }
+  }, 60_000);
+});
+
+/**
+ * A session folder with a started repository kept in a folder it ignores (`nested`), and a sibling repository beside it,
+ * each running the packs named, every pack holding one needle rule `<pack>-needle`.
+ */
+async function nestedAndSibling(packs: { session: string; nested: readonly string[]; sibling: readonly string[] }) {
+  const root = await realpath(await temporaryDirectory({ started: false }));
+  const databasePath = join(root, "rerail.sqlite");
+  const folder = await repository(join(root, "session"));
+  await writeFile(join(folder, ".gitignore"), ".scratch/\n");
+  const nested = await repository(join(folder, ".scratch", "nested"));
+  const sibling = await repository(join(root, "sibling"));
+  for (const id of [packs.session, ...packs.nested, ...packs.sibling]) installNeedlePack(join(root, "packs"), id, `No NEEDLE (${id})`);
+  setUpTestRepository(folder, { packs: [packs.session] }, databasePath);
+  setUpTestRepository(nested, { packs: [...packs.nested] }, databasePath);
+  setUpTestRepository(sibling, { packs: [...packs.sibling] }, databasePath);
+  const open = () => new RerailRuntime({ storageRoot: join(root, "sessions"), databasePath, workspaceRoot: folder, embedder: testEmbedder, autostart: false });
+  /** `pack`'s rule changed, so no compiled copy of it is left in this process. */
+  const change = (pack: string) => installNeedlePack(join(root, "packs"), pack, `No NEEDLE (${pack}), still`, "1.0.1");
+  return { folder, nested, sibling, open, change };
+}
+
+let writes = 0;
+
+/** A Write of `content` to `path` in `session`: its call and its result. */
+function write(runtime: RerailRuntime, session: { host: "claude-code"; sessionId: string; cwd: string }, path: string, content: string) {
+  writes += 1;
+  const toolCallId = `w${writes}`;
+  const common = { sessionId: session.sessionId, session, toolCallId, toolName: "Write" } as const;
+  return {
+    call: () => runtime.ingest({ kind: "call", eventId: `${toolCallId}-call`, ...common, input: { file_path: path, content } }),
+    result: async () => {
+      await writeFile(path, content);
+      return await runtime.ingest({ kind: "result", eventId: `${toolCallId}-result`, ...common, output: "ok" });
+    },
+  };
+}
+
+describe("a tool call while rules are built ahead", () => {
+  it("is answered while one rule built ahead compiles, when the rule it needs waits on that line behind it", async () => {
+    const setup = await nestedAndSibling({ session: "rcjsession", nested: ["rcjheld"], sibling: ["rcjbehind"] });
+    const holds = { host: "claude-code" as const, sessionId: "holds", cwd: setup.folder };
+    const edits = { host: "claude-code" as const, sessionId: "edits", cwd: setup.folder };
+    // In an earlier daemon the second session edited the sibling: its record names the sibling first to build ahead.
+    const before = setup.open();
+    await before.ingest({ kind: "session-start", eventId: "before-start", session: edits });
+    await before.codeRulesOpened(edits.sessionId);
+    const earlier = write(before, edits, join(setup.sibling, "api", "x.py"), "def x():\n    return 2\n");
+    await earlier.call();
+    await earlier.result();
+    await before.dispose();
+    setup.change("rcjheld");
+    setup.change("rcjbehind");
+    const runtime = setup.open();
+    const released = Promise.withResolvers<void>();
+    compiles.hold = { id: "rcjheld-needle", released: released.promise };
+    compiles.offThreadIds.length = 0;
+    try {
+      // The first session builds the nested repository's rules ahead: its compile is held.
+      await runtime.ingest({ kind: "session-start", eventId: "holds-start", session: holds });
+      await runtime.codeRulesOpened(holds.sessionId);
+      await vi.waitFor(() => expect(compiles.holding).toBe(1), { timeout: 10_000, interval: 10 });
+      // The second session builds the sibling's rules ahead: its rule waits on the same line, behind the held one.
+      await runtime.ingest({ kind: "session-start", eventId: "edits-start", session: edits });
+      await runtime.codeRulesOpened(edits.sessionId);
+      expect(compiles.offThreadIds).not.toContain("rcjbehind-needle");
+
+      const edit = write(runtime, edits, join(setup.sibling, "api", "x.py"), "NEEDLE = 1\n");
+      let answered = false;
+      const call = edit.call().finally(() => { answered = true; });
+      await vi.waitFor(() => expect(answered).toBe(true), { timeout: 10_000, interval: 10 });
+      await call;
+      expect(compiles.holding).toBe(1);
+      expect(ruleIds(await edit.result())).toContain("rcjbehind-needle");
+    } finally {
+      released.resolve();
+      compiles.hold = undefined;
+      await runtime.dispose();
+    }
+  }, 60_000);
+});
+
+describe("a session that ends while it builds rules ahead", () => {
+  it("compiles none of the rules still waiting to be built for it alone", async () => {
+    const setup = await nestedAndSibling({ session: "rcwsession", nested: ["rcwa", "rcwb"], sibling: [] });
+    const runtime = setup.open();
+    const session = { host: "claude-code" as const, sessionId: "ends", cwd: setup.folder };
+    const released = Promise.withResolvers<void>();
+    compiles.hold = { id: "rcwa-needle", released: released.promise };
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "start", session });
+      await runtime.codeRulesOpened(session.sessionId);
+      // The nested repository's two rules are on the line of rules built ahead: the first compiles, held; the second waits.
+      await vi.waitFor(() => expect(compiles.holding).toBe(1), { timeout: 10_000, interval: 10 });
+      expect(compiles.offThreadIds).not.toContain("rcwb-needle");
+
+      await runtime.ingest({ kind: "session-end", eventId: "end", sessionId: session.sessionId });
+      await runtime.closeSession(session.sessionId);
+      released.resolve();
+      await vi.waitFor(() => expect(compiles.offThreadDone).toContain("rcwa-needle"), { timeout: 10_000, interval: 10 });
+      await queuedWorkRan();
+      expect(compiles.offThreadIds).not.toContain("rcwb-needle");
+    } finally {
+      released.resolve();
+      compiles.hold = undefined;
       await runtime.dispose();
     }
   }, 60_000);

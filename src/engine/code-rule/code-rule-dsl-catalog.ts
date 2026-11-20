@@ -86,7 +86,7 @@ type HeldOutcome =
 export class CompiledRuleCache {
   readonly #outcomes = new Map<string, { readonly sourceDigest: string; readonly outcome: HeldOutcome }>();
   /** The compiles asked of `compileOffThread` that have not ended, by key, each for the source it was asked for. */
-  readonly #compiling = new Map<string, { readonly sourceDigest: string; readonly outcome: Promise<CompileOutcome>; readonly job: CompileJob }>();
+  readonly #compiling = new Map<string, Compiling>();
   /** Compiles a tool call waits for. */
   readonly #now = new CompileLine();
   /** Compiles of rules built before any call asks for them: never ahead of one a call waits for. */
@@ -110,25 +110,46 @@ export class CompiledRuleCache {
   /**
    * `compile`, with the engine's compile run on a thread of Node's worker pool: the JS thread, which answers every
    * session's hooks, runs other work meanwhile. One rule compiles at a time on each line, so the pool keeps threads for
-   * file reads; `ahead` puts the rule on the line of rules built before any call asks, and a later ask that is not
-   * `ahead` moves it to the other line if it has not started. A rule asked for twice compiles once.
+   * file reads; `aheadFor`, the session that builds the rule before any call asks, puts it on the line of such rules, and
+   * a later ask without it moves it to the other line if it has not started. A rule asked for twice compiles once. A rule
+   * only closed sessions asked ahead for, still waiting there, is taken out (`releaseAhead`), and this rejects.
    */
   async compileOffThread(
     capabilities: CodeRuleCapabilities,
     rule: { readonly policyId: string; readonly sourceText: string; readonly sourceDigest: string; readonly config: string },
-    ahead = false,
+    aheadFor?: object,
   ): Promise<CompileOutcome> {
     const key = compileKey(capabilities, rule.policyId, rule.config);
-    const known = this.#held(key, rule.sourceDigest) ?? this.#joined(key, rule.sourceDigest, ahead);
+    const known = this.#held(key, rule.sourceDigest) ?? this.#joined(key, rule.sourceDigest, aheadFor);
     if (known !== undefined) return await known;
-    return await this.#queued(key, capabilities, rule, ahead);
+    return await this.#queued(key, capabilities, rule, aheadFor);
   }
 
-  /** The compile of this source already asked for, moved to the line of calls when the ask is not `ahead` and it has not started. */
-  #joined(key: string, sourceDigest: string, ahead: boolean): Promise<CompileOutcome> | undefined {
+  /**
+   * Takes out of the line of rules built ahead each rule that `user`, a session that closed, was the last to ask ahead
+   * for and that has not started, so it never compiles for nobody; its asks reject.
+   */
+  releaseAhead(user: object): void {
+    for (const [key, compiling] of this.#compiling) {
+      if (compiling.askers?.delete(user) !== true || compiling.askers.size > 0 || !this.#ahead.take(compiling.job)) continue;
+      this.#compiling.delete(key);
+      compiling.drop();
+    }
+  }
+
+  /**
+   * The compile of this source already asked for: an ask without `aheadFor` moves it to the line of calls if it has not
+   * started, and keeps it from being taken out; one with it adds its session to those it compiles for.
+   */
+  #joined(key: string, sourceDigest: string, aheadFor: object | undefined): Promise<CompileOutcome> | undefined {
     const running = this.#compiling.get(key);
     if (running?.sourceDigest !== sourceDigest) return undefined;
-    if (!ahead && this.#ahead.take(running.job)) this.#now.add(running.job);
+    if (aheadFor !== undefined) {
+      running.askers?.add(aheadFor);
+      return running.outcome;
+    }
+    running.askers = undefined;
+    if (this.#ahead.take(running.job)) this.#now.add(running.job);
     return running.outcome;
   }
 
@@ -137,13 +158,16 @@ export class CompiledRuleCache {
     key: string,
     capabilities: CodeRuleCapabilities,
     rule: { readonly policyId: string; readonly sourceText: string; readonly sourceDigest: string },
-    ahead: boolean,
+    aheadFor: object | undefined,
   ): Promise<CompileOutcome> {
     const compiled = Promise.withResolvers<CompileOutcome>();
     const job: CompileJob = async () => compiled.resolve(await this.#compileNow(key, capabilities, rule));
-    const entry = { sourceDigest: rule.sourceDigest, outcome: compiled.promise, job };
+    const entry: Compiling = {
+      sourceDigest: rule.sourceDigest, outcome: compiled.promise, job, askers: aheadFor === undefined ? undefined : new Set([aheadFor]),
+      drop: () => compiled.reject(new Error(`Rule ${rule.policyId} was asked for only by sessions that closed before it compiled`)),
+    };
     this.#compiling.set(key, entry);
-    (ahead ? this.#ahead : this.#now).add(job);
+    (aheadFor === undefined ? this.#now : this.#ahead).add(job);
     try {
       return await compiled.promise;
     } finally {
@@ -182,6 +206,17 @@ function compileKey(capabilities: CodeRuleCapabilities, policyId: string, config
 
 /** One compile waiting for its line; it never rejects. */
 type CompileJob = () => Promise<void>;
+
+/** A compile asked of `compileOffThread` that has not ended. */
+interface Compiling {
+  readonly sourceDigest: string;
+  readonly outcome: Promise<CompileOutcome>;
+  readonly job: CompileJob;
+  /** The sessions it is built ahead for while only such asks wait for it; undefined once a call asked for it. */
+  askers: Set<object> | undefined;
+  /** Rejects `outcome` once the job is taken out of its line (`releaseAhead`), so no ask waits for it. */
+  readonly drop: () => void;
+}
 
 /** Compile jobs run one at a time, in the order they were added. */
 class CompileLine {
@@ -433,14 +468,14 @@ export class CheckoutCodeRuleCatalog implements CodeRuleDslCatalog {
 
   /**
    * `source`'s catalog as the constructor builds it, with each rule no live catalog holds compiled off the JS thread
-   * (`CompiledRuleCache.compileOffThread`), so the daemon answers other sessions while they compile. `ahead`: built
-   * before any tool call asks for it.
+   * (`CompiledRuleCache.compileOffThread`), so the daemon answers other sessions while they compile. `aheadFor`: the
+   * session it is built for before any tool call asks for it.
    */
-  static async built(source: CheckoutRuleSource, capabilities: CodeRuleCapabilities, ahead = false): Promise<CheckoutCodeRuleCatalog> {
+  static async built(source: CheckoutRuleSource, capabilities: CodeRuleCapabilities, aheadFor?: object): Promise<CheckoutCodeRuleCatalog> {
     const sourceSignature = source.signature();
     const plan = catalogPlan(source.load());
     const outcomes = await Promise.all(plan.entries.map(async entry =>
-      "compile" in entry ? await compiledRules.compileOffThread(capabilities, entry.compile, ahead) : undefined));
+      "compile" in entry ? await compiledRules.compileOffThread(capabilities, entry.compile, aheadFor) : undefined));
     return new CheckoutCodeRuleCatalog(source, capabilities, { plan, outcomes, sourceSignature });
   }
 
@@ -492,10 +527,46 @@ export class CheckoutCodeRuleCatalog implements CodeRuleDslCatalog {
 /**
  * The build of `entry`'s catalog an ask can wait for: the one under way, unless it was asked ahead and this ask is a
  * call's, which builds its own so the rules it needs move to the line of calls (`CompiledRuleCache.compileOffThread`).
+ * A session asking ahead (`aheadFor`) is added to those an ahead build is for.
  */
-function joinedBuild(entry: CheckoutEntry, ahead: boolean): Promise<void> | undefined {
+function joinedBuild(entry: CheckoutEntry, aheadFor: object | undefined): Promise<void> | undefined {
   const running = entry.building;
-  return running !== undefined && (ahead || !running.ahead) ? running.done : undefined;
+  if (running === undefined) return undefined;
+  if (aheadFor === undefined) return running.users === undefined ? running.done : undefined;
+  running.users?.add(aheadFor);
+  return running.done;
+}
+
+/**
+ * Keeps `built`, built for `users` ahead of any call (undefined: for a call), as `entry`'s catalog, unless each of them
+ * closed meanwhile. Another ask may have built it meanwhile: the first one built stays, the one every lane of the
+ * checkout holds, and a call's build keeps it.
+ */
+function keptBuilt(entry: CheckoutEntry, built: CheckoutCodeRuleCatalog, users: ReadonlySet<object> | undefined): void {
+  if (entry.catalog !== undefined) {
+    if (users === undefined) heldFor(entry, undefined);
+    return;
+  }
+  if (users?.size === 0) return;
+  entry.catalog = built;
+  entry.heldAheadFor = users === undefined ? undefined : new Set(users);
+}
+
+/** Notes an ask of `entry`'s built catalog: a session asking ahead (`aheadFor`) holds it with the others, any other ask keeps it. */
+function heldFor(entry: CheckoutEntry, aheadFor: object | undefined): void {
+  if (aheadFor === undefined) entry.heldAheadFor = undefined;
+  else entry.heldAheadFor?.add(aheadFor);
+}
+
+/**
+ * Lets go of `user`, a session that closed, in `entry`: an ahead build under way is no longer for it, and a catalog
+ * built ahead that only it held and nobody read is dropped, so the engine frees the rules no other catalog holds.
+ */
+function releasedFor(entry: CheckoutEntry, user: object): void {
+  entry.building?.users?.delete(user);
+  if (entry.heldAheadFor?.delete(user) !== true || entry.heldAheadFor.size > 0) return;
+  entry.catalog = undefined;
+  entry.heldAheadFor = undefined;
 }
 
 /** A planned rule with its compile's outcome: its entry, provenance and version line, or why it is quarantined. */
@@ -575,8 +646,13 @@ export interface ConversationRuleSource {
 
 interface CheckoutEntry {
   readonly root: string;
-  /** The build of its catalog off the thread under way (`prepare`), and whether it was asked ahead of any call. */
-  building?: { readonly ahead: boolean; readonly done: Promise<void> } | undefined;
+  /**
+   * The build of its catalog off the thread under way (`prepare`), and the sessions it is built for ahead of any call
+   * that have not closed; undefined for a call's build.
+   */
+  building?: { readonly users: Set<object> | undefined; readonly done: Promise<void> } | undefined;
+  /** The open sessions its catalog was built ahead for, while nothing else asked for it; undefined once something did. */
+  heldAheadFor?: Set<object> | undefined;
   location: RepositoryIdentityLocation | undefined;
   checkout: CheckoutContext | undefined;
   parents: readonly string[];
@@ -686,7 +762,13 @@ export class CheckoutCatalogs {
   catalog(root: string): CheckoutCodeRuleCatalog {
     const entry = this.#entry(root);
     entry.catalog ??= new CheckoutCodeRuleCatalog(this.#sourceOf(entry), this.#capabilities);
+    heldFor(entry, undefined);
     return entry.catalog;
+  }
+
+  /** Whether `root`'s catalog is built and held here, the one `catalog` gives without compiling. */
+  holdsCatalog(root: string): boolean {
+    return this.#entries.get(root)?.catalog !== undefined;
   }
 
   /**
@@ -699,23 +781,32 @@ export class CheckoutCatalogs {
 
   /**
    * Builds `root`'s catalog, the one `catalog` then gives, with each rule no live catalog holds compiled off the JS
-   * thread (`CheckoutCodeRuleCatalog.built`); settles once it is built, at once when it already was. `ahead`: built
-   * before any tool call asks for it, so a call's own rules never wait behind it.
+   * thread (`CheckoutCodeRuleCatalog.built`); settles once it is built, at once when it already was. `aheadFor`: the
+   * session it is built for before any tool call asks for it, so a call's own rules never wait behind it; once that
+   * session and every other it was built ahead for closed (`releaseAhead`), a catalog nothing else asked for is dropped.
    */
-  async prepare(root: string, ahead = false): Promise<void> {
+  async prepare(root: string, aheadFor?: object): Promise<void> {
     if (this.#closed) return;
     const entry = this.#entry(root);
-    if (entry.catalog !== undefined) return;
-    await (joinedBuild(entry, ahead) ?? this.#build(entry, ahead));
+    if (entry.catalog === undefined) await (joinedBuild(entry, aheadFor) ?? this.#build(entry, aheadFor));
+    else heldFor(entry, aheadFor);
+  }
+
+  /**
+   * Lets go of what `user`, a session that closed, asked for ahead of any call (`prepare`): each catalog built for it
+   * alone that nothing else asked for is dropped, one building for it alone is not kept, and its rules still waiting
+   * on the line of rules built ahead never compile.
+   */
+  releaseAhead(user: object): void {
+    for (const entry of this.#entries.values()) releasedFor(entry, user);
+    compiledRules.releaseAhead(user);
   }
 
   /** `entry`'s catalog built off the thread; while it builds, an ask of the same kind joins it (`joinedBuild`). */
-  async #build(entry: CheckoutEntry, ahead: boolean): Promise<void> {
-    const done = CheckoutCodeRuleCatalog.built(this.#sourceOf(entry), this.#capabilities, ahead).then(built => {
-      // Another ask may have built it meanwhile: the first one built stays, the one every lane of the checkout holds.
-      entry.catalog ??= built;
-    });
-    const building = { ahead, done };
+  async #build(entry: CheckoutEntry, aheadFor: object | undefined): Promise<void> {
+    const users = aheadFor === undefined ? undefined : new Set([aheadFor]);
+    const done = CheckoutCodeRuleCatalog.built(this.#sourceOf(entry), this.#capabilities, aheadFor).then(built => keptBuilt(entry, built, users));
+    const building = { users, done };
     entry.building = building;
     try {
       await done;

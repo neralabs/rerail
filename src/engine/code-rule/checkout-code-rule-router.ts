@@ -186,12 +186,21 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     const repositories = new Set([this.#repositoryOf(starting)]);
     const roots: string[] = [];
     for (const root of [...this.#options.catalogs.checkoutsEditedBy(sessionId), ...nested]) {
-      const repository = this.#repositoryOf(root);
-      if (repositories.has(repository) || roots.length >= BUILT_AHEAD_REPOSITORIES) continue;
+      const repository = this.#aheadRepositoryOf(root);
+      if (repository === undefined || repositories.has(repository) || roots.length >= BUILT_AHEAD_REPOSITORIES) continue;
       repositories.add(repository);
       roots.push(root);
     }
     return roots;
+  }
+
+  /** `#repositoryOf(root)`, or undefined when its record cannot be read: that checkout is left out, the others still build. */
+  #aheadRepositoryOf(root: string): string | undefined {
+    try {
+      return this.#repositoryOf(root);
+    } catch {
+      return undefined;
+    }
   }
 
   /** The repository `root` is a checkout of, or `root` itself while it is not recorded. */
@@ -199,11 +208,14 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     return this.#options.catalogs.checkout(root)?.repositoryKey ?? root;
   }
 
-  /** `root`'s catalog built off the thread, while it may run rules and has no lane; a failure is left to its lane's open. */
+  /**
+   * `root`'s catalog built off the thread, while it may run rules and has no lane; a failure is left to its lane's open.
+   * `ahead`: built for this session before any call asks, and let go of when the session closes (`interrupt`).
+   */
   async #prepare(root: string, ahead: boolean): Promise<void> {
     try {
       if (this.#closing || this.#lanes.has(root) || !this.#mayRun(root)) return;
-      await this.#options.catalogs.prepare(root, ahead);
+      await this.#options.catalogs.prepare(root, ahead ? this : undefined);
     } catch {
       // The lane's open builds the catalog on the thread as before, and reports what fails there.
     }
@@ -620,12 +632,14 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   /**
    * Stops every lane. A lane no walk or tool call used since the last refresh reads its rules once more first: a rule a
    * file written in its checkout's `.rerail/rules` leaves unrunnable there is recorded as skipped when the session ends,
-   * if not before.
+   * if not before. The rules the session built ahead that no lane took are let go of, and those still waiting to compile
+   * for it alone never do (`CheckoutCatalogs.releaseAhead`).
    */
   interrupt(options?: AuditorCloseOptions): void {
     if (this.#closing) return;
     for (const lane of [...this.#lanes.values()]) if (lane.refreshed !== this.#refreshes) this.#readRulesAgain(lane);
     this.#closing = true;
+    this.#options.catalogs.releaseAhead(this);
     for (const lane of this.#lanes.values()) lane.enforcer.interrupt(options);
   }
 
