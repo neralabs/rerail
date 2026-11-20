@@ -26,6 +26,7 @@ pub(super) struct Jit {
     _module: rerail_clif::jit::Writer,
     w_open: unsafe extern "C" fn(*const u8, u32, u64) -> u32,
     w_close: unsafe extern "C" fn(*const u8, u64) -> u32,
+    w_leaf: unsafe extern "C" fn(*const u8, u32, u64, u64) -> u32,
     w_commit: unsafe extern "C" fn(*const u8) -> u32,
     w_retag: unsafe extern "C" fn(*const u8, u32, u32) -> u32,
     w_set_start: unsafe extern "C" fn(*const u8, u32, u64) -> u32,
@@ -44,6 +45,7 @@ impl Jit {
             Box::leak(Box::new(Jit {
                 w_open: std::mem::transmute::<*const u8, unsafe extern "C" fn(*const u8, u32, u64) -> u32>(m.function("w_open")),
                 w_close: std::mem::transmute::<*const u8, unsafe extern "C" fn(*const u8, u64) -> u32>(m.function("w_close")),
+                w_leaf: std::mem::transmute::<*const u8, unsafe extern "C" fn(*const u8, u32, u64, u64) -> u32>(m.function("w_leaf")),
                 w_commit: std::mem::transmute::<*const u8, unsafe extern "C" fn(*const u8) -> u32>(m.function("w_commit")),
                 w_retag: std::mem::transmute::<*const u8, unsafe extern "C" fn(*const u8, u32, u32) -> u32>(m.function("w_retag")),
                 w_set_start: std::mem::transmute::<*const u8, unsafe extern "C" fn(*const u8, u32, u64) -> u32>(m.function("w_set_start")),
@@ -395,6 +397,16 @@ impl Writer {
 
     /// The next node opened, of `number`, at `start` (`w_open`): its index.
     pub fn open(&mut self, number: u32, start: u64) -> usize {
+        let i = self.room_to_open();
+        let desc = self.desc();
+        // SAFETY: the state's parts lie in their buffers, each with the room the op can need, reserved above.
+        call!(self, w_open(desc, number, start));
+        i
+    }
+
+    /// The room the next node's `w_open` (or `w_leaf`) can need: the open nodes' one more, and at a block's first
+    /// node the block's. The node's index.
+    fn room_to_open(&mut self) -> usize {
         let (i, open) = (self.state.n as usize, self.state.open_len as usize);
         self.reserve(part::OPEN, (open + 1) * OPEN as usize);
         if i.is_multiple_of(Z) {
@@ -417,9 +429,6 @@ impl Writer {
             }
             self.reserve_final(1);
         }
-        let desc = self.desc();
-        // SAFETY: the state's parts lie in their buffers, each with the room the op can need, reserved above.
-        call!(self, w_open(desc, number, start));
         i
     }
 
@@ -441,8 +450,11 @@ impl Writer {
 
     /// A closed node with no children.
     pub fn leaf(&mut self, number: u32, start: u64, end: u64) -> usize {
-        let i = self.open(number, start);
-        self.close(end);
+        // A leaf's close makes no block final (`w_leaf`): the room is its open's.
+        let i = self.room_to_open();
+        let desc = self.desc();
+        // SAFETY: as `open`'s.
+        call!(self, w_leaf(desc, number, start, end));
         i
     }
 

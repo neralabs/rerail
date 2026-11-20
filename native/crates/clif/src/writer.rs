@@ -266,7 +266,7 @@ mod ops {
         Op { name: "w_open", params: &[I32, I64], ret: I32, public: true, hot: false, body: open },
         Op { name: "w_close", params: &[I64], ret: I32, public: true, hot: false, body: close },
         Op { name: "w_leaf", params: &[I32, I64, I64], ret: I32, public: true, hot: false, body: leaf },
-        Op { name: "w_commit", params: &[], ret: I32, public: true, hot: false, body: commit },
+        Op { name: "w_commit", params: &[], ret: I32, public: true, hot: true, body: commit },
         Op { name: "w_retag", params: &[I32, I32], ret: I32, public: true, hot: false, body: retag },
         Op { name: "w_set_start", params: &[I32, I64], ret: I32, public: true, hot: false, body: set_start },
         Op { name: "w_finish", params: &[], ret: I32, public: true, hot: false, body: finish },
@@ -291,6 +291,7 @@ mod ops {
         Op { name: "w_lz4_find", params: &[I64, I64, I64, I64, I64], ret: I64, public: false, hot: true, body: lz4_find },
         Op { name: "w_hash", params: &[I64, I64], ret: I64, public: false, hot: false, body: hash },
         Op { name: "w_eq", params: &[I64, I64, I64], ret: I32, public: false, hot: false, body: eq },
+        Op { name: "w_commit_blocks", params: &[I32, I32], ret: I32, public: false, hot: false, body: commit_blocks },
     ];
 
     pub fn op(name: &str) -> Option<&'static Op> {
@@ -1088,6 +1089,13 @@ mod ops {
     /// `w_open(number, start)`: a node at the end, in preorder, open.
     fn open(w: &mut W<'_, '_>) {
         let (number, start) = (w.arg(0), w.arg(1));
+        open_node(w, number, start, true);
+        w.ok();
+    }
+
+    /// Node `N`, of `number`, opened at `start`: its code, its gap, its checkpoint, the slot of the node before it.
+    /// Pushed on the open nodes where `push` (`open`); a leaf (`leaf`) is closed at once, so it never is. Its index.
+    fn open_node(w: &mut W<'_, '_>, number: Value, start: Value, push: bool) -> Value {
         let i = w.get32(at::N);
         let prev = w.get64(at::PREV_START);
         let len = w.get64(at::SOURCE_LEN);
@@ -1158,16 +1166,18 @@ mod ops {
         w.if_(checkpoint, |w| put_checkpoint(w, b, j, start));
         w.set64(at::PREV_START, start);
         w.set32(at::N, i1);
-        let opens = w.part(part::OPEN);
-        let t = w.index(opens, open_len, i64::from(OPEN));
-        w.st(i, t, 0);
-        let z = w.zero32();
-        w.st(z, t, 4);
-        let none = w.c32(i64::from(NONE));
-        w.st(none, t, 8);
-        w.st(start, t, 16);
-        let ol = w.f.ins().iadd_imm(open_len, 1);
-        w.set32(at::OPEN_LEN, ol);
+        if push {
+            let opens = w.part(part::OPEN);
+            let t = w.index(opens, open_len, i64::from(OPEN));
+            w.st(i, t, 0);
+            let z = w.zero32();
+            w.st(z, t, 4);
+            let none = w.c32(i64::from(NONE));
+            w.st(none, t, 8);
+            w.st(start, t, 16);
+            let ol = w.f.ins().iadd_imm(open_len, 1);
+            w.set32(at::OPEN_LEN, ol);
+        }
         let later = w.f.ins().icmp_imm(IntCC::NotEqual, b, 0);
         let settle = w.f.ins().band(first, later);
         w.if_(settle, |w| {
@@ -1176,7 +1186,7 @@ mod ops {
             let r = w.call("w_settle", &[pb]);
             w.ret_if(r);
         });
-        w.ok();
+        i
     }
 
     /// Node `j` of block `b`'s checkpoint: `start` at the checkpoints' width.
@@ -1225,7 +1235,13 @@ mod ops {
             let r = w.call("w_put", &[zero, i, s]);
             w.ret_if(r);
         });
+        // The node's block is final only once a node past its end is made (`settle`): until then, no call.
         let (b, _) = w.node_block(i);
+        let b1 = w.f.ins().iadd_imm(b, 1);
+        let end = w.f.ins().imul_imm(b1, i64::from(Z));
+        let short = w.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, n, end);
+        let z = w.zero32();
+        w.if_(short, |w| w.ret(z));
         let r = w.call("w_settle", &[b]);
         w.f.ins().return_(&[r]);
         let after = w.f.create_block();
@@ -1234,12 +1250,20 @@ mod ops {
         w.f.ins().return_(&[z]);
     }
 
-    /// `w_leaf(number, start, end)`: a closed node with no children.
+    /// `w_leaf(number, start, end)`: a closed node with no children: `open` then `close`, as one. It is never on the
+    /// open nodes, it holds no inner slot (its size is 1), and its block is not final at its close (the node count is
+    /// one past it, inside its block), so neither push nor pop nor settle.
     fn leaf(w: &mut W<'_, '_>) {
         let (number, start, end) = (w.arg(0), w.arg(1), w.arg(2));
-        let r = w.call("w_open", &[number, start]);
-        w.ret_if(r);
-        let r = w.call("w_close", &[end]);
+        let i = open_node(w, number, start, false);
+        let len = w.get64(at::SOURCE_LEN);
+        let before = w.f.ins().icmp(IntCC::UnsignedLessThan, end, start);
+        let past = w.f.ins().icmp(IntCC::UnsignedGreaterThan, end, len);
+        let bad = w.f.ins().bor(before, past);
+        w.fail_if(bad, fail::BOUNDS, i);
+        let two = w.c32(2);
+        let l = w.f.ins().isub(end, start);
+        let r = w.call("w_put", &[two, i, l]);
         w.f.ins().return_(&[r]);
         let after = w.f.create_block();
         w.f.switch_to_block(after);
@@ -1247,13 +1271,25 @@ mod ops {
         w.f.ins().return_(&[z]);
     }
 
-    /// `w_commit()`: the nodes so far final but for the open ones.
+    /// `w_commit()`: the nodes so far final but for the open ones. Called at every node (tier 2's), so hot: the
+    /// frontier moved, and the blocks it passed settled (`w_commit_blocks`) only where it passed a block's end.
     fn commit(w: &mut W<'_, '_>) {
         let frontier = w.get32(at::FRONTIER);
         let was = w.f.ins().ushr_imm(frontier, Z.trailing_zeros() as i64);
         let n = w.get32(at::N);
         w.set32(at::FRONTIER, n);
         let to = w.f.ins().ushr_imm(n, Z.trailing_zeros() as i64);
+        let passed = w.f.ins().icmp(IntCC::UnsignedLessThan, was, to);
+        w.if_(passed, |w| {
+            let r = w.call("w_commit_blocks", &[was, to]);
+            w.ret(r);
+        });
+        w.ok();
+    }
+
+    /// `w_commit_blocks(was, to)`: blocks `was..to` settled, the frontier past them (`commit`).
+    fn commit_blocks(w: &mut W<'_, '_>) {
+        let (was, to) = (w.arg(0), w.arg(1));
         let b = w.var(I32, was);
         w.while_(
             |w| {
