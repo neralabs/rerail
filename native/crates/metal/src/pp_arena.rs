@@ -261,9 +261,21 @@ impl Sort {
     }
 }
 
-/// The groups of the persistent grid at most (decision 0460 §4); a run whose barrier fails runs
-/// again with half as many.
-pub const GROUPS: u64 = 32;
+/// The persistent grid's groups with no core count (decision 0460 §4).
+pub const GROUPS_UNKNOWN: u64 = 8;
+
+/// The groups of the persistent grid (decision 0460 §4): the device's resident count at the grid
+/// kernels' threadgroup memory (`Device::resident_groups`: its GPU cores, IORegistry's
+/// `gpu-core-count` on a Mac, times the groups a core holds); `GROUPS_UNKNOWN` with no count. A run
+/// whose barrier fails runs again with half as many.
+pub fn groups() -> u64 {
+    static G: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *G.get_or_init(|| {
+        let Ok(device) = lane::device() else { return GROUPS_UNKNOWN };
+        let local = ["pp_setup", "px_expand"].iter().map(|k| kernel(k).threadgroup_bytes()).max().unwrap_or(0);
+        device.resident_groups(TG as u32, local).unwrap_or(GROUPS_UNKNOWN)
+    })
+}
 
 /// The arena's stores the persistent kernels read, by slot: `pp_grid.uglykl`'s `S_*`, made from
 /// this list (`source`), and a run's offsets (`Lay`). A word slot holds a value, not an offset.

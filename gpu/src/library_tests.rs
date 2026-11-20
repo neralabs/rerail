@@ -606,18 +606,31 @@ fn hash_tables_build_and_probe() {
     assert_eq!(keys.len(), 64, "{}: each slot holds a distinct key", crate::device::backend());
 }
 
+/// The grids a grid test runs at: 1, 8 and 32 groups, and the device's resident count for `f` at `lsz` threads a
+/// group (`Device::resident_groups`, R5 of decision 0460), when the device gives its cores.
+fn grid_sizes(f: &crate::device::ComputeFunction, lsz: u32) -> Vec<u32> {
+    let mut g = vec![1u32, 8, 32];
+    if let Some(r) = crate::shared::get().and_then(|s| s.device.resident_groups(lsz, f.threadgroup_bytes())) {
+        eprintln!("{}: the device holds {r} groups of {lsz} at {} bytes of threadgroup memory", crate::device::backend(), f.threadgroup_bytes());
+        if !g.contains(&(r as u32)) {
+            g.push(r as u32);
+        }
+    }
+    g
+}
+
 /// A grid's control words, zero (`ukl/grid.h`).
 fn grid_ctl() -> crate::device::Buffer {
     buffer_of(&[0u32; 3]).unwrap()
 }
 
-/// R6 of decision 0460: 10,000 grid barriers in a row, at 1, 8 and 32 groups, each round's reads seeing every
+/// R6 of decision 0460: 10,000 grid barriers in a row, at 1, 8 and 32 groups and the device's resident count, each round's reads seeing every
 /// group's writes before it, and no barrier failed.
 #[test]
 fn grid_barriers_see_every_groups_writes() {
     let Some((p, mut q)) = setup() else { return };
     let lsz = 256u32.min(crate::device::max_threadgroup());
-    for groups in [1u32, 8, 32] {
+    for groups in grid_sizes(p.function("t_grid_barrier").unwrap(), lsz) {
         let rounds = 5_000u32;
         let (ctl, slots, out) = (grid_ctl(), alloc::<u32>((groups * lsz) as usize).unwrap(), buffer_of(&vec![0u32; groups as usize]).unwrap());
         launch(&q, p.function("t_grid_barrier").unwrap())
@@ -659,13 +672,13 @@ fn a_grid_past_residency_fails_its_barrier() {
 }
 
 /// R5 of decision 0460: the grid's exclusive scan equals the host's from 0 to 10^6 values, across tile and share
-/// boundaries, at 1, 8 and 32 groups, its count read on the device.
+/// boundaries, at 1, 8 and 32 groups and the device's resident count, its count read on the device.
 #[test]
 fn the_grid_scan_equals_the_host() {
     let Some((p, mut q)) = setup() else { return };
     let mut rng = Rng(41);
     let lsz = 256u32.min(crate::device::max_threadgroup());
-    for groups in [1u32, 8, 32] {
+    for groups in grid_sizes(p.function("t_grid_scan").unwrap(), lsz) {
         for n in [0u32, 1, 255, 256, 257, 8 * 256 + 3, 65_537, 1_000_000] {
             let vals: Vec<u32> = (0..n).map(|_| if n % 2 == 1 { rng.next() as u32 } else { rng.below(5) as u32 }).collect();
             // The buffers have room past the count: the scan reads `count`, not their length.
@@ -703,7 +716,7 @@ fn the_grid_segmented_scans_equal_the_host() {
     let Some((p, mut q)) = setup() else { return };
     let mut rng = Rng(43);
     let lsz = 256u32.min(crate::device::max_threadgroup());
-    for groups in [1u32, 8, 32] {
+    for groups in grid_sizes(p.function("t_grid_seg").unwrap(), lsz) {
         for n in [0u32, 1, 255, 257, 8 * 256 + 3, 65_537, 1_000_000] {
             for op in [0u32, 1] {
                 let vals: Vec<u32> = (0..n).map(|_| rng.below(1000) as u32).collect();
@@ -733,7 +746,7 @@ fn the_grid_segmented_scans_equal_the_host() {
     }
 }
 
-/// R5: the grid's sort is stable and equals the host's from 0 to 10^6 keys, at 8 to 64 bits, at 1, 8 and 32 groups;
+/// R5: the grid's sort is stable and equals the host's from 0 to 10^6 keys, at 8 to 64 bits, at 1, 8 and 32 groups and the device's resident count;
 /// the few rows' path (ranks over the grid) at 1 to 32 groups; and a sort told its rows' low bits are in order.
 #[test]
 fn the_grid_sort_is_stable_and_equals_the_host() {
@@ -742,7 +755,7 @@ fn the_grid_sort_is_stable_and_equals_the_host() {
         return;
     }
     let mut rng = Rng(47);
-    for groups in [1u32, 8, 32] {
+    for groups in grid_sizes(p.function("t_grid_sort").unwrap(), 256) {
         // 4,099 keys of 64 bits that differ only in their low byte and in bit 40: two of the eight digits vary, so
         // the sort runs two passes and moves nothing; 4,101 differ in the low byte alone: one pass, then a move to
         // where an even count of digits leaves the rows.

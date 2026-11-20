@@ -99,7 +99,7 @@ pub fn definitions(unit: &Unit) -> Result<(crate::pp_eval::Evaluated, DefsRead),
 
 /// `definitions` from rung `rung`.
 pub fn definitions_from(unit: &Unit, rung: u32) -> Result<(crate::pp_eval::Evaluated, DefsRead), Error> {
-    let mut groups = crate::pp_arena::GROUPS;
+    let mut groups = crate::pp_arena::groups();
     let (front, defs) = loop {
         let arena = Arena::new();
         let front = Front::new(&arena, unit, false, groups)?;
@@ -627,7 +627,7 @@ pub const SCRATCH: u32 = 0x8000_0000;
 /// The front passes, the definitions, the lookups and the expansion over `unit` laid out as
 /// `lay`, in one command buffer; from rung `rung`, and at the next where a store's room ran out.
 pub fn expand_from(unit: &Unit, lay: &Layout, rung: u32) -> Result<Expanded, Error> {
-    expand_at(unit, lay, rung, crate::pp_arena::GROUPS)
+    expand_at(unit, lay, rung, crate::pp_arena::groups())
 }
 
 /// `expand_from` on a grid of `groups` groups at first (halved after a failed barrier).
@@ -678,7 +678,7 @@ pub fn expand(unit: &Unit, lay: &Layout) -> Result<Expanded, Error> {
 /// command buffer: each active stretch token's meaning (`L_*`, or the directive row of its
 /// definition), in the layout's order.
 pub fn lookups(unit: &Unit, lay: &Layout) -> Result<(crate::pp_eval::Evaluated, Vec<u32>), Error> {
-    let (mut rung, mut groups) = (0, crate::pp_arena::GROUPS);
+    let (mut rung, mut groups) = (0, crate::pp_arena::groups());
     loop {
         let arena = Arena::new();
         let front = Front::new(&arena, unit, false, groups)?;

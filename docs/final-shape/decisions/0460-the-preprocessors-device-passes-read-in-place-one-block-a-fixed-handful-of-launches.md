@@ -431,3 +431,37 @@ with the unit, because each primitive's number of levels was chosen by its capac
   - MSL's references into device memory (`device PxList& L`): 15 functions. They are pointers now.
   - One `__UKL_ARGS` placed inside the wrong call: Metal's `__UKL_ARGS` is empty, so only
     OpenCL's front end could catch it.
+- **G is the device's resident count (§4, R5).**
+  - `Device::gpu_cores` reads IORegistry's `gpu-core-count` from the entry whose ID is the
+    `MTLDevice`'s registry ID. Other devices give no count.
+  - `Device::resident_groups(threads, local)` is the cores times the groups a core holds, each
+    core taken at its least: one group of the device's largest (`max_threadgroup`, 1,024 threads,
+    so 4 groups of 256), and `maxThreadgroupMemoryLength` of threadgroup memory over the kernel's
+    own (`ComputeFunction::threadgroup_bytes`, from its pipeline).
+  - `pp_arena::groups()` is that count at the grid kernels' threadgroup memory (the larger of
+    `pp_setup`'s and `px_expand`'s), and `GROUPS_UNKNOWN` (8) with no count. `GROUPS = 32` is gone.
+  - On the M5 Max: 40 cores at 12,432 bytes a group, so 2 groups a core and G = 80
+    (`the_grid_is_the_devices_resident_count`).
+  - The library's grid tests run at 1, 8 and 32 groups and at the device's count for each kernel
+    (`grid_sizes`): 40 to 160 groups on the M5 Max, all passing.
+  - All 18 evaluator tests pass at G = 80. The corpus: 3,132 units equal, the same 3 refused, 4
+    launches each.
+  - Measured, not a check: the three slices' GPU time is 168 ms at G = 80, against 147 ms at
+    G = 32 (M5 Max, load average 28 to 37 both times). Most units are small, and a barrier costs
+    more with more groups.
+- **The grid primitives run on UKL's CPU backend too (R5, R6).**
+  - Before this, the CPU ran a launch's groups one after another, so a grid barrier at more than
+    one group could not pass there.
+  - The shim (`ukl_cpu_shim.h`) now runs up to the launch's resident count of groups at once. Each
+    is a coroutine with its own scheduler, threads' stacks and threadgroup memory, and takes the
+    launch's next group when its own ends.
+  - `ukl_poll_yield()` (`backend.h`) suspends a thread that polls another group's progress: the
+    grid barrier's poll, and the work queue's idle polls. Once its whole group polls, the group
+    yields to the next. On a GPU it is nothing.
+  - On the CPU a poll is a round of every other group, so `UKL_GRID_SPINS` there is 1,000.
+  - The host gives the resident count (8,192 threads at once over a group's threads, at most 64
+    groups), and stacks and threadgroup memory for each.
+  - `RERAIL_GPU=cpu`: the five grid tests pass at 1, 8 and 32 groups, and the 4,096-group grid
+    fails its bound in 1.4 s without hanging. The library's other 18 tests pass on the CPU, all
+    23 on Metal, and `rerail-ukl`'s 8 under cargo.
+  - The CPU run of the grid tests takes 123 s (10^6-key sorts on coroutines).

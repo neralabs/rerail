@@ -191,6 +191,13 @@ UKL_INLINE uint32_t ukl_sg_ballot(bool b __UKL_PARAMS) { return __ukl_cpu_ballot
 UKL_INLINE void ukl_sg_barrier() { __ukl_cpu_wait(__UKL_AT_SG); }
 UKL_INLINE void ukl_tg_barrier() { __ukl_cpu_wait(__UKL_AT_TG); }
 UKL_INLINE void ukl_tg_barrier_device() { __ukl_cpu_wait(__UKL_AT_TG); }
+// A poll of another group's progress (a grid barrier's): the thread suspends, and once its whole group polls, the
+// group yields to the others that run with it (ukl_cpu_shim.h). So a poll there is a round of every other group, and
+// a grid barrier's bound is a thousand rounds, not a GPU's million spins.
+#define ukl_poll_yield() __ukl_cpu_wait(__UKL_YIELD)
+#ifndef UKL_GRID_SPINS
+#define UKL_GRID_SPINS 1000u
+#endif
 
 UKL_INLINE uint32_t ukl_atomic_load(UKL_GLOBAL uint32_t* p) { return __atomic_load_n(p, __ATOMIC_RELAXED); }
 UKL_INLINE void ukl_atomic_store(UKL_GLOBAL uint32_t* p, uint32_t v) { __atomic_store_n(p, v, __ATOMIC_RELAXED); }
@@ -360,4 +367,9 @@ UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { atom
 // 0; elsewhere the define `UKL_CONSTANT_0` each value's program is compiled with (`rerail_gpu::kernels::program_with`).
 #ifndef UKL_CONSTANT_U32
 #define UKL_CONSTANT_U32(name) static const uint32_t name = (UKL_CONSTANT_0);
+#endif
+
+// A poll of another group's progress: nothing on a GPU, where the groups run at once.
+#ifndef ukl_poll_yield
+#define ukl_poll_yield() ((void)0)
 #endif

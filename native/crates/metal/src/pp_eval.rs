@@ -416,7 +416,7 @@ pub fn run_timed<'a>(f: impl FnOnce(&Enc<'a>) -> Result<(), Error>) -> Result<(u
 
 /// The front passes over `unit`, read back (`nodes`: each node as the device's reader gives it).
 pub fn evaluate(unit: &Unit, nodes: bool) -> Result<Evaluated, Error> {
-    let mut groups = crate::pp_arena::GROUPS;
+    let mut groups = crate::pp_arena::groups();
     loop {
         let arena = Arena::new();
         let front = Front::new(&arena, unit, nodes, groups)?;

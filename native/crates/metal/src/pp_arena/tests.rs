@@ -188,3 +188,19 @@ fn the_source_is_opencl_c_1_2() {
     }
     assert!(o.status.success(), "the evaluator is not OpenCL C 1.2 ({}):\n{errors}", file.display());
 }
+
+/// §4 of decision 0460: the grid is the device's resident count at the grid kernels' threadgroup
+/// memory (`Device::resident_groups`), and `GROUPS_UNKNOWN` on a device that gives no cores.
+#[test]
+fn the_grid_is_the_devices_resident_count() {
+    let device = lane::device().unwrap();
+    let local = ["pp_setup", "px_expand"].iter().map(|k| kernel(k).threadgroup_bytes()).max().unwrap();
+    match device.gpu_cores() {
+        Some(cores) => {
+            eprintln!("{cores} GPU cores, {local} bytes of threadgroup memory a group: {} groups", groups());
+            assert_eq!(Some(groups()), device.resident_groups(TG as u32, local));
+            assert!(groups() >= cores as u64, "a core holds a group at least");
+        }
+        None => assert_eq!(groups(), GROUPS_UNKNOWN),
+    }
+}

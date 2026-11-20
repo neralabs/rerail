@@ -58,6 +58,7 @@ UKL_INLINE bool ukl_grid_barrier(UklGrid g, UKL_LOCAL uint32_t* flag)
             } else {
                 uint32_t now = gen, spins = 0u;
                 while (now == gen && spins < UKL_GRID_SPINS) {
+                    ukl_poll_yield();
                     now = ukl_atomic_load(&g.ctl[1]);
                     spins++;
                 }
