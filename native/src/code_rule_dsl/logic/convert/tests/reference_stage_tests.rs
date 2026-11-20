@@ -508,6 +508,25 @@ const CASES: &[(&str, &[(&str, &str)])] = &[
             ),
         ],
     ),
+    // A type alias's type parameters bind their names; their bounds and defaults are reads (W's scope table reads
+    // them lazily), as a `def`'s and a `class`'s are (`tp_alias_read`; on all, 19 reads of `get_history.py`).
+    (
+        "a-type-aliass-bounds",
+        &[(
+            "a.py",
+            "class Base:\n    pass\n\n\ntype A[T: Base, R: dict[str, Base] = Base] = list[T]\n\n\ndef f():\n    return g()\n\n\ndef g():\n    return Base()\n",
+        )],
+    ),
+    // Under `from __future__ import annotations`, an annotation in a generic function's body that names a type
+    // parameter the module also binds (`T = TypeVar("T")` beside `def a[T]`) reads the module's (W's
+    // `forward_module`): a reference, not a local (on all, 199 references of `typed_field.py`, `schema_def.py`, …).
+    (
+        "a-type-parameter-the-module-binds-read-late",
+        &[(
+            "pkg/tp.py",
+            "from __future__ import annotations\n\nfrom typing import TypeVar\n\nT = TypeVar(\"T\")\n\n\nclass S:\n    def a[T](self, x: T) -> T:\n        def inner() -> T:\n            return x\n        return inner()\n\n    def b[T](self, x: T) -> T:\n        y: T = x\n        return y\n\n\nclass G[U]:\n    def m(self, x: U) -> U:\n        y: U = x\n        return y\n\n\ndef use():\n    return S().a(1), G().m(2)\n",
+        )],
+    ),
     // W's graph reads Python 3.10's builtins (Ruff's default target): `ExceptionGroup` is a module name there.
     (
         "a-later-builtin",

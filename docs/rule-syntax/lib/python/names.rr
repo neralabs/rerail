@@ -494,8 +494,14 @@ bind_only(id) :- field(f, "parameters", ps), child(ps, p, _), kind(p, "typed_par
 // annotation, `dict[str, T]`, are `type_parameter` nodes too, and are reads).
 bind_only(i) :- tp_site(_, i).
 // A type alias's left side declares: `type A[T] = ...`. tree-sitter's grammar (and the tape's) also parses a statement
-// `type(self).x = v` as a type alias, whose left side W's walk reads nothing of.
-bind_only(i) :- kind(t, "type_alias_statement"), field(t, "left", l), within(i, l), kind(i, "identifier").
+// `type(self).x = v` as a type alias, whose left side W's walk reads nothing of. A type parameter's bound and default
+// (`type A[T: B = D] = ...`) are reads, as a `def`'s and a `class`'s are (W's scope table reads them lazily).
+bind_only(i) :- kind(t, "type_alias_statement"), field(t, "left", l), within(i, l), kind(i, "identifier"),
+    !tp_alias_read(i).
+// tp_alias_read(i): identifier i is in a type parameter of a type alias, and is not the parameter's name.
+.decl tp_alias_read(i: node)
+tp_alias_read(i) :- kind(t, "type_alias_statement"), field(t, "left", l), child(l, g, 0), kind(g, "generic_type"),
+    child(g, tp, _), kind(tp, "type_parameter"), within(i, tp), kind(i, "identifier"), !tp_site(t, i).
 bind_only(n) :- (kind(i, "import_statement") ; kind(i, "import_from_statement") ; kind(i, "future_import_statement")),
     within(n, i), kind(n, "identifier").
 bind_only(n) :- (kind(g, "global_statement") ; kind(g, "nonlocal_statement")), child(g, n, _), kind(n, "identifier").

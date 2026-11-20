@@ -396,6 +396,31 @@ The rows on `all` differ from W's in five stages, the same with the step on or o
 (`get_history.py`, and `look` lands on another scope in `test_staged_large_column_application.py`), `ref` 197, and
 `open_name` 1 and `open` 6. They are not this step's. They come next, before step 2.
 
+### The rows on `all`: two rules fixed, the rest W's departures from Python
+
+`RERAIL_STAGE_DIFFS=1` listed every differing row. Each kind was cut down to a case of a few lines
+(`each_stage_of_ws_reference_graph_is_the_rules_on_the_cases`). Two were the rules':
+
+- **A type alias's bounds** (`type A[T: B = D] = …`). Every identifier of the alias's left side was a binding, so the
+  bounds and defaults, which W reads, were not reads (`tp_alias_read`). This was the 19 `load` rows.
+- **A type parameter read late.** Under `from __future__ import annotations`, an annotation in a generic function's
+  body that names a type parameter the module also binds (`T = TypeVar("T")` beside `def a[T]`) reads the module's
+  `T`, as W's `forward_module` does. The rules made every type parameter's read a local. Now a forward read
+  (`rf_forward`) is not one. This was 190 `ref` rows and all six `open` rows.
+
+After them, on `all`: `load`, `def`, `link`, `edge` and `open` equal W's, and `look` has the same count. What is left
+reaches no edge and no open definition. It is W's scope model departing from Python's, which the rules keep, since
+`python/names.rr` serves the engine's other programs too:
+
+- `look` (29 rows each way):
+  - W binds an assignment to a `nonlocal` name in the nearest enclosing function, not the one that owns the name.
+  - In an annotation that names its own generic class (`self: C[T]`), W finds no binding.
+- `ref` (9 rows only W's, 2 only the rules'), all reads whose order decides:
+  - a read of an `except … as e` name from a lambda in the handler;
+  - a read before the function's own later import of the name;
+  - a class annotation naming a class the function binds later.
+- `open_name` (1 row).
+
 ## Open
 
 - The dead-code program's own per-file strata (6.8 s) and its `demand_*` rules have not been examined here.

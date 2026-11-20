@@ -173,8 +173,10 @@ rf_local(i, t) :- rf_expr(i, i, t), rf_param_of(i, t).
 rf_local(i, t) :- rf_expr(i, i, t), rf_bind(i, x, s), !kind(s, "module"), param(s, x, _), asg(s, x, _, a), a < i,
     !within(i, a).
 rf_local(i, t) :- rf_expr(i, i, t), rf_bind(i, x, s), kind(s, "lambda"), param(s, x, _), nearest(s, t, fdef).
-// A type parameter's read (tp_ref): W's walk finds it in the definition's type-parameter scope, a local.
-rf_local(i, t) :- rf_expr(i, i, t), tp_ref(i, _).
+// A type parameter's read (tp_ref): W's walk finds it in the definition's type-parameter scope, a local. Not a forward
+// read (rf_forward): under `from __future__ import annotations`, `y: T` in a generic function's body names the
+// module's T where the module binds one (`T = TypeVar("T")` beside `def f[T]`), as W's `forward_module` reads it.
+rf_local(i, t) :- rf_expr(i, i, t), tp_ref(i, _), !rf_forward(i, _, _).
 
 // ---- the module's bindings of a name, as a function's body reads them --------------------------------------------
 // rf_mbind(m, x, site, form): module or class scope m binds x at site, in form ("def", "class", "assign", "import",
