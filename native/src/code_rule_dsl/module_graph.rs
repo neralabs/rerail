@@ -729,7 +729,8 @@ struct Miss {
 /// The summaries of the walked `sources` by workspace path, but the overlay's source, whose text
 /// replaces disk's: each from the disk cache while its `Stamp` stands, else read from disk and
 /// cached once settled (`SETTLED_AFTER`). `None` where a source cannot be read and the cache holds
-/// no summary of its last write.
+/// no summary of its last write; the summary of that write stands in for one it can, uncached, so
+/// the next walk reads the source again.
 fn disk_summaries(
     folder: &str,
     sources: Vec<Walked>,
@@ -741,10 +742,13 @@ fn disk_summaries(
     let clock = crate::git_workspace::file_clock();
     let mut read = Vec::new();
     for miss in misses {
-        let Some(summary) = read_miss(&miss)? else {
+        let (Some(summary), from_disk) = read_miss(&miss)? else {
             continue;
         };
-        if let Some(stamp) = miss.stamp.filter(|stamp| settled(stamp, now, clock)) {
+        if let Some(stamp) = miss
+            .stamp
+            .filter(|stamp| from_disk && settled(stamp, now, clock))
+        {
             read.push((miss.absolute, (stamp, Arc::new(summary.clone()))));
         }
         files.insert(miss.path, summary);
@@ -799,14 +803,15 @@ fn kept(stamp: Option<Stamp>, cached: Option<&CachedSummary>) -> Option<Arc<Summ
     stamp?.same_write(cached).then(|| Arc::clone(summary))
 }
 
-/// The summary of the source `miss` names, read from disk: `Some(None)` where it is gone since its
-/// folder was listed or `summarize` leaves it out. Where it cannot be read, the summary cached for
-/// its last write (`Miss::kept`), else `None`.
-fn read_miss(miss: &Miss) -> Option<Option<Summary>> {
+/// The summary of the source `miss` names, read from disk, and `true`: no summary where it is gone
+/// since its folder was listed or `summarize` leaves it out. Where it cannot be read, the summary
+/// cached for its last write (`Miss::kept`) and `false`, since the source may hold other bytes
+/// under the same last write; else `None`.
+fn read_miss(miss: &Miss) -> Option<(Option<Summary>, bool)> {
     match source_text(&miss.absolute, miss.length) {
-        Ok(source) => Some(summarize(&miss.path, &source)),
-        Err(error) if gone(&error) => Some(None),
-        Err(_) => miss.kept.as_deref().cloned().map(Some),
+        Ok(source) => Some((summarize(&miss.path, &source), true)),
+        Err(error) if gone(&error) => Some((None, true)),
+        Err(_) => miss.kept.as_deref().map(|kept| (Some(kept.clone()), false)),
     }
 }
 
