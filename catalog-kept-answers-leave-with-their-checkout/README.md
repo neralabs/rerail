@@ -1,6 +1,6 @@
 # Kept Git answers leave with their checkout; commondir read as Git does
 
-For the pull request of branch `JeanFrancoisGagne/catalog-kept-answers-leave-with-their-checkout`, not opened yet, head 1ca3a148b. [report.html](report.html) is the same report as one page: download it and open it.
+For the pull request of branch `JeanFrancoisGagne/catalog-kept-answers-leave-with-their-checkout`, not opened yet, head 24cfab825. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -10,7 +10,7 @@ For the pull request of branch `JeanFrancoisGagne/catalog-kept-answers-leave-wit
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 323 lines in 4 files: 114 ship, 209 are tests and text | Fast. Low risk, no high-risk path. | Nothing. No CI run on GitHub yet: not pushed. | 2 |
+| 429 lines in 4 files: 150 ship, 279 are tests and text | Fast. Low risk, no high-risk path. | Nothing. No CI run on GitHub yet: not pushed. | 2 |
 
 ## 2. Intent, and the gap
 
@@ -32,10 +32,10 @@ Found on 19 November 2026 in the review of #813, by a maintainer and the automat
 
 ## 3. Where to look
 
-1. **Read first**, 10 min: `repository-identity.ts`: `keepList`, `forgetGone`, `registryPlace`. Can an answer still served, for a checkout that stays, be dropped?
-2. 10 min: `git-placement.ts` and `checkout-control.ts`: `commonOf`, `commonFolderOf`, `forgetGoneConfigs`, `realpathNamesInTurn`.
+1. **Read first**, 10 min: `repository-identity.ts`: `keepList`, `forgetGone`, `forgetGoneFrom`, `keepAcceptance`. Can an answer still served, for a checkout that stays, be dropped?
+2. 10 min: `git-placement.ts` and `checkout-control.ts`: `commonOf`, `commonFolderOf`, `forgetGoneConfigs`, `realpathNamesInTurn`, `storedForm`.
 
-**Then skim**, 5 min: The tests: five cases in one new file count each map and compare each list and placement with Git's own.
+**Then skim**, 5 min: The tests: eight cases in one new file count each map, ask through other spellings of a folder, and compare each list and placement with Git's own.
 
 ## 4. Risk against verification
 
@@ -78,7 +78,7 @@ Nothing has to merge first: it stands on `main` cccb25a8d, merged in, which hold
 
 </details>
 
-<details><summary><b>8. What is not covered</b>: 2 not verified, 3 limits that stay</summary>
+<details><summary><b>8. What is not covered</b>: 2 not verified, 4 limits that stay</summary>
 
 1. **macOS** never ran.
 2. **A clone deleted for good** keeps its main checkout's answers until a repository is listed at its path again.
@@ -88,6 +88,7 @@ Nothing has to merge first: it stands on `main` cccb25a8d, merged in, which hold
 - The `.git` file's `gitdir:` text is still resolved as text.
 - A whole daemon's memory is read as its heap after a full collection: no public surface counts kept answers.
 - A worktree away from its path when its repository's list changes is placed again when it is back: one Git process for a worktree Git places, where `main` starts none; answers equal Git's at both.
+- On Linux x64 and Windows 11 Git's answers and the files' spell a common Git folder alike; the stored-form match of kept answers is for macOS, which never ran.
 
 </details>
 
@@ -101,14 +102,14 @@ The description on GitHub is the record: "How you tested it" holds the runs on `
 
 | Where | What ran | Result |
 |---|---|---|
-| Linux x64 | The five new cases, over `main`'s source and here | Over `main`'s source 5 of 5 fail at their own assertions; here 20 of 20 runs pass. |
-| Windows 11 | The five new cases, over `main`'s source and here, in turn on one machine | Over `main`'s source the three counting cases fail 20 of 20, the two `commondir` cases pass; here all five pass 20 of 20. |
-| Linux x64 | The 12 changed, new and importing test files, here and at `main` | Here 248 passed, 14 skipped, none failed; `main` 243 passed, 14 skipped, none failed (11 files). |
-| Windows 11 | The 12 changed, new and importing test files, here and at `main` | Here 258 passed, 9 skipped, none failed, nothing outside `main`'s Windows baseline; `main` 253 passed. |
+| Linux x64 | The eight new cases: five over `main`'s source, three at 1ca3a148b, and here | Over `main`'s source 5 of 5 fail at their own assertions; at 1ca3a148b the link case fails (config facts of removed worktrees kept); here 20 of 20 runs pass. |
+| Windows 11 | The eight new cases: over `main`'s source, at 1ca3a148b and here, in turn on one machine | Over `main`'s source the three counting cases fail 20 of 20, the two `commondir` cases pass; at 1ca3a148b the three spelling cases fail 20 of 20; here all eight pass 20 of 20. |
+| Linux x64 | The 13 changed, new and importing test files, here and at 1ca3a148b | Here 329 passed, 16 skipped, none failed; 1ca3a148b 328 passed, 14 skipped, none failed. |
+| Windows 11 | The 13 changed, new and importing test files, here and at 1ca3a148b | Here 341 passed, 9 skipped, none failed, nothing outside `main`'s Windows baseline; 1ca3a148b 338 passed. |
 | Linux x64 | CI's lint and type-check job, and the automated reviewer's rules | Passed; no new finding. |
 | Linux x64 | One Node process: 200 worktrees placed and removed, three rounds | `main` 603 answers, 600 acceptances, 13,944 KiB heap; here 3, 0, 12,890 KiB. |
 | Linux x64 | The built daemon and hook: 200 worktrees recorded, removed, then an event in a checkout that stays | Every run here holds about 700 fewer heap objects than every run at `main`; Git processes per event equal at both; a hand-written `commondir` answered as Git's at both. |
 
-**Sources.** The branch at 1ca3a148b and its diff against `main` cccb25a8d, read on 19 November 2026; runs on two Linux x64 machines and one Windows 11 virtual machine.
+**Sources.** The branch at 24cfab825 and its diff against `main` cccb25a8d, read on 19 November 2026; runs on three Linux x64 machines and Windows 11 virtual machines.
 
 </details>
