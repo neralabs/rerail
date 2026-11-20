@@ -3,11 +3,11 @@
 Scripts: `../experiments/m1/` (removed; at 7efcac9c67) (recordings not checked in). Stopped early by direction; the per-rule table is complete. The per-rule table below is complete: all 8 rules ran twice. The stage breakdown is complete for serverplan-steps only. The 60-rule run was skipped because it isn't cheap: serverplan-quality alone needs 10 GiB and about 350–410 s CPU, and DLRE's own first-50 run took 1,990 s wall before the all-60 run was cancelled.
 
 ## Setup
-- **Timing addon (runs -1 and -2):** the Pulling-it-all-together build, `Pulling-it-all-together:native/rerail_engine.darwin-arm64.node` (sha256 `c5a261c0…`).
+- **Timing addon (runs -1 and -2):** the PIAT build, `PIAT:native/rerail_engine.darwin-arm64.node` (sha256 `c5a261c0…`).
   - It was built at 09:38, after every native source file was last changed. The tree is the staged DLRE merge at `d3470da2`, which is exactly the head DLRE measured its gate at.
   - It is a production release build: thin LTO, one codegen unit, embedded jemalloc, and no `code-rule-profile` feature, so it records no stage spans.
 - **Profile addon (-prof runs):** DLRE's `.rerail/profiles/full-scale-direction-20261025/matched-addon/engine.node` (`0b748ebd…`). It comes from the same `d3470da2` engine, but with opt-level 1, `code-rule-profile` and the system-malloc shim. Its absolute times are inflated; use it for proportions only.
-- **Driver:** unchanged `conformance/data-layer/suite.ts`. The recording is `all-60-recording.json` (pinned commit `2b1504ad`, 9,021 files, 137.9 MB), filtered to one rule each. I used the Pulling-it-all-together policies, 4 native workers, and no `--cold-only`.
+- **Driver:** unchanged `conformance/data-layer/suite.ts`. The recording is `all-60-recording.json` (pinned commit `2b1504ad`, 9,021 files, 137.9 MB), filtered to one rule each. I used the PIAT policies, 4 native workers, and no `--cold-only`.
 - **Command (from `scratchpad/m1/run_one.sh`):**
   `RERAIL_ENGINE_PATH=<addon> RERAIL_NATIVE_WORKERS=4 /usr/bin/time -lp -o resource.txt node --import tsx conformance/data-layer/suite.ts --recording recordings/<rule>.json --output parity.json --policies packs/data-layer/candidates/rules --progress`
 - **Columns:** "Cold" is the driver's measurement for a fresh process. "Ingest" is the per-file applies (parse, SQL anchor selection, AST matching). "Global" is the repository-wide relational apply. "Edit" is the warm one-file edit of the SQL dialect package's connection module.

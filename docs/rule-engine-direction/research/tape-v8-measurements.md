@@ -205,7 +205,7 @@ What the SQL numbers say:
 S=<scratch folder>/v8spike    # the spike's folder, with crate/ and results/ (not kept)
 git clone --depth 1 --branch v3.13.0 --filter=blob:none --sparse https://github.com/python/cpython.git $S/corpora/cpython && (cd $S/corpora/cpython && git sparse-checkout set Lib)
 (cd $S/crate && CARGO_TARGET_DIR=../target cargo build --release)
-B=$S/target/release/v8spike; R=<Pulling-it-all-together worktree>; D=<data-layer checkout>
+B=$S/target/release/v8spike; R=<PIAT worktree>; D=<data-layer checkout>
 $B measure cpython-3.13-Lib python $S/corpora/cpython/Lib > $S/results/cpython.json
 $B measure data-layer-impl python $D/impl > $S/results/ndl-impl.json
 $B measure rerail-ts typescript $R/src $R/test $R/conformance $R/benchmark $R/scripts > $S/results/rerail-ts.json

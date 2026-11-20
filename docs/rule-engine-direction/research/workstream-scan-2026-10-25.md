@@ -11,7 +11,7 @@ The scan was read-only. Each section is measured against `docs/rule-engine-direc
 | SSC worktree (branch `sql-capture-demand-spikes`, uncommitted: −3,753 lines plus new `fragments.rs`) | `docs/sql-matcher-fragment-transition.md`: "generic SQL state machine is a rejected compiler architecture"; native matcher fragments behind one batched vtab filter | SQL composes typed relations; native fragments own sequential semantics | Converges (README §4, principle 1; HI D73). Still holds "exact work charges" open |
 | Facts-engine `facts-plan` (7 commits past `facts-engine`, tip `9a901915`, 10-23) | `docs/facts/DECISION-CROSSFILE.md`; Y1 maintained reference graph; Y2 local queries | Not "which engine" but a maintained compact reference graph plus rules rewritten as local queries | Converges with authored-sql.md (engine-owned shared relations). New, decision-relevant evidence for per-edit cross-file rules |
 | Facts-engine `facts-engine`, `sql-dl60`, `sql-set-composition` | Nothing new | — | — |
-| Tempo Metal (`scale-test-the-re-railer`, 6 commits `a091aa063..e95613625`) | Fixes to terminal ownership, retirement and containment | The full-corpus run still fails | Still on the old `policy_dsl` transducer. Full run 701.9 s, about 2 GB tracked, 577 dispatches against a 600 limit, failing on containment memory |
+| The predecessor's Metal work (a branch of the predecessor repository, 6 commits `a091aa063..e95613625`) | Fixes to terminal ownership, retirement and containment | The full-corpus run still fails | Still on the old `policy_dsl` transducer. Full run 701.9 s, about 2 GB tracked, 577 dispatches against a 600 limit, failing on containment memory |
 | SQL index prototype | No new commits (origin tip `9449260`) | — | — |
 | PR 2539 | OPEN, last update 2026-08-12 | — | — |
 | Other branches | `rule-pack-generators` (4 files), plus one-line touches in `eslint-test-set` and one other branch | Pack generation | Not engine execution |
@@ -132,7 +132,7 @@ Its conclusion: the target is unreachable "over these rules as authored". It tak
 - Phase 5 should re-express the dead-code and exported-families rules as local queries.
 - Treat "one maintained reference graph" as a decision record candidate.
 
-## Tempo Metal
+## The predecessor's Metal work
 
 - Six commits fix terminal ownership and retirement, and containment with maximal anchors.
 - Handover: frozen full run on `441c218c3`, 577 dispatches complete, failing at containment scratch (22.6 MB request with 1.995 GB reserved), 701.9 s, process-group RSS 3.24 GB, 600-dispatch limit.
@@ -142,7 +142,7 @@ Its conclusion: the target is unreachable "over these rules as authored". It tak
 - It is making progress on correctness and memory ownership, but it is still a full-corpus batch executor on the pre-v7 `policy_dsl` transducer in another repo.
 - The direction needs the GPU for per-edit, where the README's limiting factor is launch count per file. The current trajectory (more dispatches, about 2 GB) is the opposite regime.
 - Its exactness work (ordering, complete-value grouping) partly serves exact output order, which findings-contract §3 drops.
-- Keep the affordances (typed output pages, IN-demand). Phase 6 should port onto v7 behind the `terminal_match` contract rather than chase full-corpus parity in Tempo.
+- Keep the affordances (typed output pages, IN-demand). Phase 6 should port onto v7 behind the `terminal_match` contract rather than chase full-corpus parity in the predecessor.
 - Re-pin at `e95613625`.
 
 ## Changes to the integration plan
@@ -151,5 +151,5 @@ Its conclusion: the target is unreachable "over these rules as authored". It tak
 2. SSC: prefer merging after the fragment transition is committed; otherwise expect to delete the interpreter emitters in phase 5.
 3. DLRE: plan a phase-1b re-merge of its execution-owner work and `full_repository.py`. The same files will conflict again (`file_tape` Option, `FileImage`).
 4. Add `facts-plan` (Y1/Y2) as a phase-7 input and a decision-record candidate.
-5. Tempo: re-pin at `e95613625`.
-6. Three streams (N1562 `semantics.rs`/EffectSummary, SSC "open semantics", Tempo ordering) still encode exact operational semantics. They need to hear decision 0001 before investing further.
+5. The predecessor: re-pin at `e95613625`.
+6. Three streams (N1562 `semantics.rs`/EffectSummary, SSC "open semantics", the predecessor's ordering) still encode exact operational semantics. They need to hear decision 0001 before investing further.

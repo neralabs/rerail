@@ -1,6 +1,6 @@
 # Unified rule engine: architecture and integration plan
 
-Status: integration in progress on `Pulling-it-all-together`. The direction and its evidence are in `README.md`; the lessons are in `lessons-ledger.md`.
+Status: integration in progress on the PIAT branch of this repository. The direction and its evidence are in `README.md`; the lessons are in `lessons-ledger.md`.
 
 ## Principles
 
@@ -53,7 +53,7 @@ The normative module map is `spec.md` §16. It is transducer-centric: `engine/tr
 | main | `tape/`, `content_store/`, `matcher/` (parity oracle and rehydration), `workspace/`, `eval/` |
 | DLRE | anchor SQL → `engine/plan/` scope; producer contracts → relation catalog; reachability/forest → `engine/vtab/graph.rs`; fact extraction → `engine/transducer/facts/`; `relational/` frozen (decision 0002); parity harness → gate |
 | N1562 | `packed/` → `engine/transducer/ir/` and `exec/{cpu,jit}`; lowering → `engine/transducer/lower/`; `sql_backend` → `engine/vtab/transducer.rs`; `semantic_facts` → `facts/`; `query/plan/` → `engine/plan/`; stats tables → `engine/stats/` |
-| Tempo | IR word layout → `engine/transducer/ir/`; Metal executor → `exec/metal/` |
+| The predecessor | IR word layout → `engine/transducer/ir/`; Metal executor → `exec/metal/` |
 | SSC (`c17d2e47`) | `sql/fragments/` → `engine/vtab/` (boundary, demand handle, typed cells, outcome codes); `sql/engine/` session and compile cache → `engine/plan/`; `queries()` publication → `engine/compose/`; `statistics.rs` → `engine/stats/`; `structural.rs`, `candidates.rs` → `engine/fallback/`; checker → gate tooling; crossfile/select_when → `engine/compose/` |
 | facts-engine | `facts_memo.rs` → `content_store/`; gate and mutant discipline |
 
@@ -69,7 +69,7 @@ These are kept in history and mined for tests and shapes, but not wired into pro
 
 **Measure before merging.** Each phase begins with the measurements that justify it, run on the gate corpora and recorded as a decision record. A merge whose motivating measurement has not been run does not start. Within a phase, tests follow `test-budget-governance`: targeted tests in the inner loop, full suites once at the phase gate, in the background.
 
-The order is transducer-first (decision 0004). N1562 is the key merge, because it carries the packed IR, executors, lowering and vtab boundary. Tempo's IR and Metal executor come next. SSC contributes only the pure-SQL emitter, statistics reader and cross-file pieces.
+The order is transducer-first (decision 0004). N1562 is the key merge, because it carries the packed IR, executors, lowering and vtab boundary. The predecessor's IR and Metal executor come next. SSC contributes only the pure-SQL emitter, statistics reader and cross-file pieces.
 
 ### Pre-merge measurements
 
@@ -97,7 +97,7 @@ M1, M2 and M7 are cheap and settle most of the range; M4 and M5 carry the parity
 |---|---|---|---|---|
 | 1 | DLRE onto current main | `git merge` of DLRE committed tip | — | native build, cargo tests for touched modules, vitest engine tests |
 | 2 | N1562: packed IR, CPU interpreter/JIT, lowering, `sql_backend` vtab, `semantic_facts`, `query/plan/`, contract goldens | `git merge` of `sql-rerailer` | M1, M2 ✓, M7 ✓. Note: N1562's packed IR lowers none of the M2/M7 rules today (`research/m2-m7.md`); the merge brings infrastructure, and the M2 prototype's techniques must be ported into it | builds; packed and contract tests pass; differential test interpreter vs native matcher on the finding-key set |
-| 3 | Tempo IR and Metal executor | merge or port from the predecessor repository's checkout onto the v7 tape; reconcile word layouts into one IR | metal-recursion and metal-enqueue results (recorded) | Metal parity on macOS; `metal_coverage` gate wired |
+| 3 | The predecessor's IR and Metal executor | merge or port from the predecessor repository's checkout onto the v7 tape; reconcile word layouts into one IR | metal-recursion and metal-enqueue results (recorded) | Metal parity on macOS; `metal_coverage` gate wired |
 | 4 | SSC at `c17d2e47`: typed-fragment vtab boundary and demand handles (`sql/fragments/`), session, compile cache and execution budget (`sql/engine/`), resident partitioning, statistics reader, structural pure-SQL emitter, checker tooling | `git merge` of `sql-capture-demand-spikes`; frame compiler and `retired_control.rs` not wired | M3 | builds; fallback differential tests |
 | 5 | Restructure into `engine/` | `git mv` plus path fixes only | — | builds; same tests pass |
 | 6 | Mutate toward the spec | findings consolidation and set-based parity first (0001); IR extensions E1–E14 and set stage; fusion; statistics from SQL; plan cache; re-express the 10 authored-SQL rules and remove `relational/` (0002); v9np tape (0003); remove executors not carried forward | M4, M5, M6, M8, M9 per item | set-based parity suites; end-to-end gate recorded against §19 of the spec |
@@ -113,4 +113,4 @@ M1, M2 and M7 are cheap and settle most of the range; M4 and M5 carry the parity
 | N1562 | `sql-rerailer` | `16343282` (uncommitted work in its worktree is excluded) |
 | Facts-engine SQL+DLRE merge (reference) | `sql-dl60` | `e6d2ac73` |
 | Facts-engine | `facts-engine` | `685db3f7` |
-| Tempo Metal | `scale-test-the-re-railer` | `a091aa063` (approximate; re-pin at phase 3) |
+| The predecessor's Metal work | a branch of the predecessor repository | `a091aa063` (approximate; re-pin at phase 3) |

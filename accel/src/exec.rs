@@ -60,17 +60,32 @@ pub fn threads() -> usize {
 ///
 /// With `this_thread`, the calling thread is the pool's thread 0, so the work it does itself, and its waits that run
 /// other jobs ([`help_until`]), are the pool's too: a program's main thread, called before any other thread uses the
-/// pool. Without it (a library, a test), the pool's threads are its own. A pool already made stays as it is.
+/// pool. It is recorded as such ([`Bell::wait_as`]). Without it (a library, a test), the pool's threads are its own.
+/// A pool already made stays as it is.
 pub fn configure(this_thread: bool) {
     static MADE: OnceLock<()> = OnceLock::new();
     MADE.get_or_init(|| {
+        if this_thread {
+            let _ = MAIN.set(std::thread::current().id());
+        }
         let b = rayon::ThreadPoolBuilder::new().num_threads(threads()).thread_name(|i| format!("rerail-cpu {i}")).stack_size(POOL_STACK);
         let _ = if this_thread { b.use_current_thread() } else { b }.build_global();
     });
 }
 
-/// A pool thread's stack: pages are committed only as they are touched, so this is address space, not memory.
-const POOL_STACK: usize = 16 << 20;
+/// The program's main thread, which [`configure`] took into the pool. Recorded, not asked of the system: Windows has
+/// no call that says which thread is a process's main one.
+static MAIN: OnceLock<std::thread::ThreadId> = OnceLock::new();
+
+/// Whether this is one of the pool's threads running a job: on the pool, and not the main thread [`configure`] took
+/// into it.
+fn in_a_job() -> bool {
+    on_pool() && MAIN.get() != Some(&std::thread::current().id())
+}
+
+/// A pool thread's stack: pages are committed only as they are touched, so this is address space, not memory. A
+/// thread that runs a job's work off the pool (`rerail_engine`'s `threads::beside`) takes the same.
+pub const POOL_STACK: usize = 16 << 20;
 
 /// The stack a wait keeps free before it runs another's job on its frames ([`help_once`]).
 const HELP_STACK_MARGIN: usize = 4 << 20;
@@ -324,8 +339,14 @@ impl Bell {
     }
 
     /// Waits until `poll` gives a value, recorded under `site` ([`waits`]), running no job: it polls each time the
-    /// bell rings, and at least every millisecond (a ring is never needed for the wait to end).
+    /// bell rings, and at least every millisecond (a ring is never needed for the wait to end). On one of the pool's
+    /// threads running a job (a run nested in one, as the typing run `bridge::facts` starts) it runs the pool's jobs
+    /// instead ([`help_until_as`]): a job that waited running none would hold its pool thread for the whole nested run,
+    /// and with 2 threads the main thread and the typing run's both waited for chunks no thread was left to build.
     pub fn wait_as<T>(&self, site: &'static str, mut poll: impl FnMut() -> Option<T>) -> T {
+        if in_a_job() {
+            return help_until_as(site, poll);
+        }
         let mut wait = Waiting::new(site);
         loop {
             let seen = *self.rung.lock().unwrap_or_else(|p| p.into_inner());

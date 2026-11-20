@@ -3923,7 +3923,7 @@ describe("CodeRuleBridge", () => {
     await readGitHead(other);
     const root = await workspace();
     git(root, "init", "--quiet");
-    const bridge = new CodeRuleBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), {
+    const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), {
       onIgnoreRulesChanged: () => undefined,
     });
 
