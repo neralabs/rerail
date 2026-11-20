@@ -817,6 +817,11 @@ describe("validatePack", () => {
         { rules: [expect.stringContaining("must stay inside the example's repository")], proof: [unparsed], examples: [unparsed] },
       ],
       [
+        "an example whose own file is outside its repository",
+        editEntry(ASSERT, examples({ path: "../../a.py", text: "assert x\n" }, passes)),
+        { rules: [expect.stringContaining("must stay inside the example's repository")], proof: [unparsed], examples: [unparsed] },
+      ],
+      [
         "a description with code in it",
         editRule(ASSERT, text => text.replace("instead of asserting", "instead of `assert`")),
         { text: ["rules/rr-sample-assert.rerail: description holds code (backticks): Raise an exception instead of `assert`, since Python strips asserts when it runs with optimization."] },

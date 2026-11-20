@@ -425,31 +425,45 @@ export function readRuleCatalog(packDirectories: readonly string[], options: Rul
   };
 }
 
+/** A file's modification time and size, or `-` when it cannot be read. */
+function fileStamp(path: string): string {
+  try {
+    const info = statSync(path);
+    return `${info.mtimeMs}:${info.size}`;
+  } catch {
+    return "-";
+  }
+}
+
 /**
  * A cheap stamp of what is installed and what checks it: changes when npm installs, removes or updates a pack, a pack's
  * files move, or another core version becomes active (its range decides which packs load). It does not see an edit to
- * a rule document inside a pack linked from a folder (`rerail packs add <folder>`); touch its `pack.json` to reload.
+ * a JSON rule document inside a pack linked from a folder (`rerail packs add <folder>`); touch its `pack.json` to
+ * reload. An edit to a `.rerail` rule's files is seen by `rerailFilesStamp`.
  */
 function installedStamp(home: string, directories: readonly string[], coreVersion: string): string {
-  const stamp = (path: string): string => {
-    try {
-      const info = statSync(path);
-      return `${info.mtimeMs}:${info.size}`;
-    } catch {
-      return "-";
-    }
-  };
   const prefix = installedPacksPrefix(home);
   const lock = join(prefix, "node_modules", ".package-lock.json");
-  return [home, coreVersion, stamp(lock), stamp(join(prefix, "package.json")), ...directories.flatMap(directory => [directory, stamp(join(directory, "package.json")), stamp(join(directory, "pack.json"))])].join("\0");
+  return [home, coreVersion, fileStamp(lock), fileStamp(join(prefix, "package.json")), ...directories.flatMap(directory => [directory, fileStamp(join(directory, "package.json")), fileStamp(join(directory, "pack.json"))])].join("\0");
 }
 
-let installed: { readonly stamp: string; readonly catalog: RuleCatalog } | undefined;
+/**
+ * A stamp of every file the catalog's `.rerail` rules were read from: each rule file and each file it includes. The
+ * `.rerail` runner reads them from disk, so an edit to any of them reloads the catalog, which gives the rule, and its
+ * pack's approval, a new digest: an edit someone has not approved runs in Log, as a JSON rule's would.
+ */
+function rerailFilesStamp(catalog: RuleCatalog): string {
+  const paths = new Set([...catalog.documents.values()].flatMap(document => (document.kind === "rerail" ? [document.rule.path, ...document.rule.includes.map(file => file.path)] : [])));
+  return [...paths].map(path => `${path}\0${fileStamp(path)}`).join("\0");
+}
+
+let installed: { readonly stamp: string; readonly rerailFiles: string; readonly catalog: RuleCatalog } | undefined;
 
 /**
  * The catalog of the packs installed in the Rerail home `home`, checked against its active core and the engine. It is
- * read again whenever the installed packs or the active core change (`rerail packs add`, `remove`, set-up installing
- * them, `rerail update`), so a running daemon and every catalog built on it follow an install without a restart;
+ * read again whenever the installed packs, a `.rerail` rule's files or the active core change (`rerail packs add`,
+ * `remove`, set-up installing them, `rerail update`), so a running daemon and every catalog built on it follow an
+ * install without a restart;
  * otherwise each call returns the same one. A pack on disk the person did not install is left out with why
  * (`unrecordedPacks`), after those the catalog read. The engine's verdict on each pack is kept in the home
  * (`packCompileChecks`), so only a pack it has not seen under this engine is compiled.
@@ -458,11 +472,11 @@ export function loadRuleCatalog(home: string = defaultRerailHome()): RuleCatalog
   const directories = installedPackDirectories(home);
   const coreVersion = activeCoreVersion(home);
   const stamp = installedStamp(home, packDirectoriesOnDisk(home), coreVersion);
-  if (installed?.stamp !== stamp) {
+  if (installed?.stamp !== stamp || installed.rerailFiles !== rerailFilesStamp(installed.catalog)) {
     const compileChecks = packCompileChecks(home);
     const catalog = readRuleCatalog(directories, { coreVersion, compile: true, compileChecks, localSources: localSources(home, directories) });
     compileChecks.save();
-    installed = { stamp, catalog: { ...catalog, skipped: [...catalog.skipped, ...unrecordedPacks(home)] } };
+    installed = { stamp, rerailFiles: rerailFilesStamp(catalog), catalog: { ...catalog, skipped: [...catalog.skipped, ...unrecordedPacks(home)] } };
   }
   return installed.catalog;
 }

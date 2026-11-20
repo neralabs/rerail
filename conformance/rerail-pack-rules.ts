@@ -5,7 +5,7 @@
  */
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, matchesGlob, relative, sep } from "node:path";
+import { dirname, isAbsolute, join, matchesGlob, relative, resolve, sep } from "node:path";
 import {
   describeRerailRules,
   loadNativeBinding,
@@ -78,15 +78,25 @@ function inScope(described: RerailDescription, path: string): boolean {
   return (include.length === 0 || include.some(glob => matchesGlob(path, glob))) && !exclude.some(glob => matchesGlob(path, glob));
 }
 
-/** The example's repository written to a new folder: its own file and the files `with` names. */
+/**
+ * The example's repository written to a new folder: its own file and the files `with` names. pack.json's schema
+ * already refuses a path that leaves it; one that would is refused here too, and nothing is written outside it.
+ */
 function writeCorpus(path: string, example: RerailExample): string {
   const root = mkdtempSync(join(tmpdir(), "rerail-pack-example-"));
-  for (const file of [{ path, text: example.text }, ...(example.with ?? [])]) {
-    const target = join(root, file.path);
-    mkdirSync(dirname(target), { recursive: true });
-    writeFileSync(target, file.text);
+  try {
+    for (const file of [{ path, text: example.text }, ...(example.with ?? [])]) {
+      const target = resolve(root, file.path);
+      const inside = relative(root, target);
+      if (inside === "" || inside.startsWith("..") || isAbsolute(inside)) throw new Error(`${file.path} is not a file inside the example's repository`);
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, file.text);
+    }
+    return root;
+  } catch (error) {
+    rmSync(root, { recursive: true, force: true });
+    throw error;
   }
-  return root;
 }
 
 /** The codes of the rule's findings on `path` in the example's repository, or why the run gave none to judge. */

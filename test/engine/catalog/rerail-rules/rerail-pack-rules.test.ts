@@ -13,7 +13,7 @@ import { keptRerailDescriber } from "../../../../src/engine/catalog/rerail-rules
 import { packCompileChecks, PACK_COMPILE_CHECKS_FILE } from "../../../../src/engine/catalog/pack-compile-checks.js";
 import type { RerailDescription } from "../../../../src/engine/catalog/rerail-rules/rerail-rule.js";
 import { packApprovalDigest } from "../../../../src/engine/catalog/rule-approval.js";
-import { catalogDigest, readRuleCatalog } from "../../../../src/engine/catalog/rule-catalog.js";
+import { catalogDigest, loadRuleCatalog, readRuleCatalog } from "../../../../src/engine/catalog/rule-catalog.js";
 import { setRuleSetting } from "../../../../src/engine/catalog/rule-configuration.js";
 import { readRulePack } from "../../../../src/engine/catalog/rule-packs.js";
 import { CheckoutCatalogs } from "../../../../src/engine/code-rule/code-rule-dsl-catalog.js";
@@ -93,6 +93,18 @@ describe("a pack's rules written in .rerail", { timeout: CHILD_TIMEOUT }, () => 
     const here = readRulePack(samplePack());
     const there = readRulePack(samplePack());
     expect(catalogDigest([there])).toBe(catalogDigest([here]));
+  });
+
+  it("reads an installed pack again when a file its .rerail rule includes changes, so the edit waits for approval", () => {
+    // A folder install runs in Log until approved; the runner reads the files from disk, so the catalog must see an edit.
+    const installed = installPackDirectory(samplePack(), "rr-sample");
+    const before = loadRuleCatalog();
+    appendFileSync(join(installed, LIBRARY), "// an edit\n");
+    const after = loadRuleCatalog();
+    expect(after).not.toBe(before);
+    expect(ruleDocumentDigest(after.documents.get("rr-sample-print-call")!)).not.toBe(ruleDocumentDigest(before.documents.get("rr-sample-print-call")!));
+    expect(packApprovalDigest(after, after.packs.get("rr-sample")!)).not.toBe(packApprovalDigest(before, before.packs.get("rr-sample")!));
+    expect(loadRuleCatalog()).toBe(after);
   });
 
   it("leaves out a pack whose .rerail rule the engine refuses, in the engine's words", () => {
@@ -191,6 +203,10 @@ describe("the checkout catalog's .rerail rules", { timeout: CHILD_TIMEOUT }, () 
         { id: "rr-sample-print-call", path: join(installed, "rules", "rr-sample-print-call.rerail"), scope: { include: ["**/*.py"], exclude: [] }, language: "python", placement: [{ folder: "", mode: "steer" }] },
       ]);
       expect(catalog.status.ruleCount).toBe(3);
+      const printCall = catalog.snapshot().rerailRules.find(entry => entry.id === "rr-sample-print-call")!;
+      const printCallFile = join(installed, "rules", "rr-sample-print-call.rerail");
+      expect(printCall.files[0]).toEqual({ path: printCall.path, sha256: createHash("sha256").update(readFileSync(printCallFile)).digest("hex") });
+      expect(printCall.files.map(file => file.path)).toContain(realpathSync(join(installed, LIBRARY)));
 
       setRuleSetting(database, { owner: { kind: "repository", repositoryKey: key }, folder: "legacy", targetKind: "rule", targetId: "rr-sample-assert", on: null, mode: "log" });
       setRuleSetting(database, { owner: { kind: "repository", repositoryKey: key }, folder: "", targetKind: "rule", targetId: "rr-sample-print-call", on: null, mode: null, config: { ceiling: 3 } });
