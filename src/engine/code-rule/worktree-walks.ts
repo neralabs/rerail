@@ -838,11 +838,8 @@ export class WorktreeWalks {
     const previous = this.#kept.get(root)?.findings.snapshot;
     const request: WorktreeScan = {
       root,
-      previous: previous?.sources ?? new Map(),
-      captureChanges: previous !== undefined,
+      ...this.#lastRead(root),
       startedAt: Math.min(...watchers.map(walk => walk.startedAt)),
-      baselineRoots: this.#kept.get(root)?.findings.failedRoots ?? new Set(),
-      previousErrors: this.#kept.get(root)?.findings.errors ?? [],
       observedAt: read.observedAt,
       skip: begun.skip,
     };
@@ -859,6 +856,13 @@ export class WorktreeWalks {
       return { findings, scan };
     }
     return undefined;
+  }
+
+  /** What a read of `root` asks with of what the last read kept (`WorktreeScan`): nothing for a first read. */
+  #lastRead(root: string): Pick<WorktreeScan, "previous" | "captureChanges" | "baselineRoots" | "previousErrors"> {
+    const kept = this.#kept.get(root)?.findings;
+    if (kept === undefined) return { previous: new Map(), captureChanges: false, baselineRoots: new Set(), previousErrors: [] };
+    return { previous: kept.snapshot.sources, captureChanges: true, baselineRoots: kept.failedRoots, previousErrors: kept.errors };
   }
 
   #deliver(watching: Watching, delivery: NonNullable<Watching["waiting"]>): void {
