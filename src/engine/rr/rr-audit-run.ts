@@ -9,8 +9,8 @@ import type { AuditFailure, RepositoryAuditRuleProvenance } from "../audit/audit
 import { folderContains } from "../catalog/repository-model.js";
 import type { CodeRuleViolation } from "../code-rule/code-rule.js";
 import type { RerailRuleEntry } from "../code-rule/code-rule-dsl-catalog.js";
-import type { RrRun, RrRunOutcome } from "./rr-runner.js";
-import { leftRun, type RrRunEnd, runInTurn } from "./rr-run-slots.js";
+import type { RrRun } from "./rr-runner.js";
+import { leftRun, PROCESS_SLOTS, type RrRunEnd, type RrRunSlots } from "./rr-run-slots.js";
 import { unchangedRules } from "./rr-rule-files.js";
 import { insideAny } from "./rr-rule-scope.js";
 import { rrRunFailures, rrStoppedFailures, rrViolations } from "./rr-violations.js";
@@ -37,28 +37,22 @@ function isOn(rule: RerailRuleEntry): boolean {
   return rule.placement.some(entry => entry.mode !== null);
 }
 
-/** The outcome of a run with no rule left to run: nothing found, no child started. */
-const NOTHING_RUN: RrRunOutcome = { status: "completed", findings: [], failures: [], files: 0, wallMs: 0, peakRssBytes: 0 };
-
 export class RrAuditRun {
   readonly #request: RrAuditRequest;
   /** The rules on somewhere in the checkout: what the audit carries. */
   readonly #placed: readonly RerailRuleEntry[];
-  /** Of those, the rules whose files are as the catalog read them: what the child runs. */
-  readonly #rules: readonly RerailRuleEntry[];
+  /** Of those, the rules the child runs: those whose files were as the catalog read them when its turn came. */
+  #rules: readonly RerailRuleEntry[] = [];
   /** A failure for each rule left out because a file of it changed (`rr-rule-files.ts`). */
-  readonly #changed: readonly AuditFailure[];
-  readonly #run: (run: RrRun) => Promise<RrRunEnd>;
+  #changed: readonly AuditFailure[] = [];
+  readonly #slots: RrRunSlots;
   readonly #controller = new AbortController();
   #outcome: Promise<RrRunEnd> | undefined;
 
-  constructor(request: RrAuditRequest, run: (run: RrRun) => Promise<RrRunEnd> = runInTurn) {
+  constructor(request: RrAuditRequest, slots: RrRunSlots = PROCESS_SLOTS) {
     this.#request = request;
     this.#placed = request.rules.filter(isOn);
-    const unchanged = unchangedRules(this.#placed);
-    this.#rules = unchanged.rules;
-    this.#changed = unchanged.failures;
-    this.#run = run;
+    this.#slots = slots;
   }
 
   /** Whether the audit carries no `.rerail` rule. */
@@ -71,11 +65,22 @@ export class RrAuditRun {
     return this.#placed.map(rule => rule.provenance);
   }
 
-  /** Starts the run, once only; with no rule left to run, no child starts. */
+  /** Asks for the run's turn, once only; its child starts with the rules left to run then, and none starts without. */
   start(): void {
-    if (this.#rules.length === 0) this.#outcome ??= Promise.resolve(NOTHING_RUN);
-    this.#outcome ??= this.#run({ root: this.#request.root, policies: this.#rules.map(rule => rule.path), signal: this.#controller.signal })
+    this.#outcome ??= this.#slots.run({ signal: this.#controller.signal, start: () => this.#run() })
       .catch((error: unknown): RrRunEnd => ({ status: "failed", message: String(error) }));
+  }
+
+  /**
+   * The run, made as its child is about to start: a rule whose file changed since the catalog read it is left out,
+   * with a failure, so the child never reads text nobody approved. Undefined with no rule left.
+   */
+  #run(): RrRun | undefined {
+    const { rules, failures } = unchangedRules(this.#placed);
+    this.#rules = rules;
+    this.#changed = failures;
+    if (rules.length === 0) return undefined;
+    return { root: this.#request.root, policies: rules.map(rule => rule.path), signal: this.#controller.signal };
   }
 
   /** Kills the run: the audit it belongs to ended without it. */

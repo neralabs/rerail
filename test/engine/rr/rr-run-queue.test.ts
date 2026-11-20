@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { editRunTiming } from "../../../src/engine/rr/rr-edit-runs.js";
 import { type RrClaim, type RrRunOwner, RrRunQueue } from "../../../src/engine/rr/rr-run-queue.js";
-import { type RrRunEnd, RrRunSlots } from "../../../src/engine/rr/rr-run-slots.js";
+import { NOTHING_RUN, type RrRunEnd, RrRunSlots } from "../../../src/engine/rr/rr-run-slots.js";
 import type { RrBudgets, RrRun, RrRunOutcome } from "../../../src/engine/rr/rr-runner.js";
 
 const QUIET_MS = 10_000;
@@ -17,7 +17,7 @@ function heldRunner() {
     request.signal?.addEventListener("abort", () => resolve({ status: "killed", reason: "aborted", wallMs: 1, peakRssBytes: 1, budgets: BUDGETS }));
     return promise;
   };
-  return { runs, run };
+  return { runs, run, slots: new RrRunSlots(run) };
 }
 
 /** An owner that hands over the files written since its last claim, and keeps each claim's outcome. */
@@ -40,7 +40,7 @@ class Owner implements RrRunOwner {
     if (this.#written.length === 0) return undefined;
     this.claimed.push(this.#written);
     this.#written = [];
-    return { policies: [this.#policy], settle: outcome => this.outcomes.push(outcome) };
+    return { policies: () => [this.#policy], settle: outcome => this.outcomes.push(outcome) };
   }
 }
 
@@ -55,7 +55,7 @@ afterEach(() => {
 describe("a checkout's queue of .rerail runs after edits", () => {
   it("starts one run for a burst of writes, once the checkout has been quiet", async () => {
     const runner = heldRunner();
-    const queue = new RrRunQueue("/repo", { deadlineMs: 60_000, quietMs: QUIET_MS }, runner.run);
+    const queue = new RrRunQueue("/repo", { deadlineMs: 60_000, quietMs: QUIET_MS }, runner.slots);
     const owner = new Owner("/rules/a.rerail");
     owner.write(queue, "a.py");
     await vi.advanceTimersByTimeAsync(QUIET_MS - 1);
@@ -69,7 +69,7 @@ describe("a checkout's queue of .rerail runs after edits", () => {
 
   it("starts a waiting run at once when the turn ends", async () => {
     const runner = heldRunner();
-    const queue = new RrRunQueue("/repo", { deadlineMs: 60_000, quietMs: QUIET_MS }, runner.run);
+    const queue = new RrRunQueue("/repo", { deadlineMs: 60_000, quietMs: QUIET_MS }, runner.slots);
     const owner = new Owner("/rules/a.rerail");
     owner.write(queue, "a.py");
     queue.flush();
@@ -79,7 +79,7 @@ describe("a checkout's queue of .rerail runs after edits", () => {
 
   it("runs one run at a time, and gathers every session's writes made meanwhile into the next", async () => {
     const runner = heldRunner();
-    const queue = new RrRunQueue("/repo", { deadlineMs: 60_000, quietMs: QUIET_MS }, runner.run);
+    const queue = new RrRunQueue("/repo", { deadlineMs: 60_000, quietMs: QUIET_MS }, runner.slots);
     const first = new Owner("/rules/a.rerail");
     const second = new Owner("/rules/b.rerail");
     first.write(queue, "a.py");
@@ -100,7 +100,7 @@ describe("a checkout's queue of .rerail runs after edits", () => {
 
   it("never runs a queued run in a form newer writes made stale: the run takes the writes made up to its start", async () => {
     const runner = heldRunner();
-    const queue = new RrRunQueue("/repo", { deadlineMs: 60_000, quietMs: QUIET_MS }, runner.run);
+    const queue = new RrRunQueue("/repo", { deadlineMs: 60_000, quietMs: QUIET_MS }, runner.slots);
     const owner = new Owner("/rules/a.rerail");
     owner.write(queue, "a.py");
     queue.flush();
@@ -118,7 +118,7 @@ describe("a checkout's queue of .rerail runs after edits", () => {
 
   it("kills the run a leaving owner was alone in, and settles a claim at once when another owner is still in the run", async () => {
     const runner = heldRunner();
-    const queue = new RrRunQueue("/repo", { deadlineMs: 60_000, quietMs: QUIET_MS }, runner.run);
+    const queue = new RrRunQueue("/repo", { deadlineMs: 60_000, quietMs: QUIET_MS }, runner.slots);
     const first = new Owner("/rules/a.rerail");
     const second = new Owner("/rules/b.rerail");
     first.write(queue, "a.py");
@@ -138,8 +138,8 @@ describe("a checkout's queue of .rerail runs after edits", () => {
 describe("a checkout's queue when an owner fails", () => {
   it("settles every other owner's claim when one owner's settle throws, and leaves no rejection unhandled", async () => {
     const runner = heldRunner();
-    const queue = new RrRunQueue("/repo", { deadlineMs: 60_000, quietMs: QUIET_MS }, runner.run);
-    const failing: RrRunOwner = { claim: () => ({ policies: ["/rules/a.rerail"], settle: () => { throw new Error("the audit store is closed"); } }) };
+    const queue = new RrRunQueue("/repo", { deadlineMs: 60_000, quietMs: QUIET_MS }, runner.slots);
+    const failing: RrRunOwner = { claim: () => ({ policies: () => ["/rules/a.rerail"], settle: () => { throw new Error("the audit store is closed"); } }) };
     const other = new Owner("/rules/b.rerail");
     const unhandled = vi.fn();
     process.on("unhandledRejection", unhandled);
@@ -164,23 +164,45 @@ describe("a checkout's queue when an owner fails", () => {
 });
 
 describe("the .rerail runs of one process", () => {
-  it("start one child at a time, the next once the one before ends, and drop a run aborted while it waits", async () => {
+  /** A turn that makes the run over `root` when its turn comes, noting when that was. */
+  const turn = (root: string, made: string[], signal?: AbortSignal) => ({
+    signal,
+    start: () => { made.push(root); return { root, policies: [`/rules${root}.rerail`] }; },
+  });
+
+  it("start one child at a time, make each run only when its turn comes, and drop a run aborted while it waits", async () => {
     const runner = heldRunner();
-    const slots = new RrRunSlots(runner.run);
-    const first = slots.run({ root: "/a", policies: ["/rules/a.rerail"] });
+    const made: string[] = [];
+    const first = runner.slots.run(turn("/a", made));
     const waiting = new AbortController();
-    const dropped = slots.run({ root: "/b", policies: ["/rules/b.rerail"], signal: waiting.signal });
-    const third = slots.run({ root: "/c", policies: ["/rules/c.rerail"] });
+    const dropped = runner.slots.run(turn("/b", made, waiting.signal));
+    const third = runner.slots.run(turn("/c", made));
     await vi.advanceTimersByTimeAsync(0);
     expect(runner.runs.map(({ run }) => run.root)).toEqual(["/a"]);
+    // The runs behind are made only at their turn: what they carry is decided then.
+    expect(made).toEqual(["/a"]);
     waiting.abort();
     expect(await dropped).toEqual({ status: "left" });
     runner.runs[0]!.end(COMPLETED);
     expect(await first).toEqual(COMPLETED);
     await vi.advanceTimersByTimeAsync(0);
-    expect(runner.runs.map(({ run }) => run.root)).toEqual(["/a", "/c"]);
+    expect(made).toEqual(["/a", "/c"]);
     runner.runs[1]!.end(COMPLETED);
     expect(await third).toEqual(COMPLETED);
+  });
+
+  it("settles a run whose signal was aborted before it asked at once, behind a run still going", async () => {
+    const runner = heldRunner();
+    const made: string[] = [];
+    void runner.slots.run(turn("/a", made));
+    expect(await runner.slots.run(turn("/b", made, AbortSignal.abort()))).toEqual({ status: "left" });
+    expect(made).toEqual(["/a"]);
+  });
+
+  it("starts no child for a turn with nothing left to run", async () => {
+    const runner = heldRunner();
+    expect(await runner.slots.run({ start: () => undefined })).toEqual(NOTHING_RUN);
+    expect(runner.runs).toEqual([]);
   });
 });
 

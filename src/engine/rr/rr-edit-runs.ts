@@ -65,10 +65,12 @@ interface Gathered {
 /** A run that carries this session's gathered files. */
 interface Flight {
   readonly files: readonly Gathered[];
-  /** The rules it runs: those the files take whose own files are as the catalog read them. */
-  readonly rules: readonly RerailRuleEntry[];
-  /** A failure for each rule the files take that was left out because a file of it changed (`rr-rule-files.ts`). */
-  readonly changed: readonly AuditFailure[];
+  /** The rules the files take, recorded with the audit. */
+  readonly taken: readonly RerailRuleEntry[];
+  /** Of those, the rules the child runs: those whose own files were as the catalog read them when its turn came. */
+  rules: readonly RerailRuleEntry[];
+  /** A failure for each rule taken but left out because a file of it changed (`rr-rule-files.ts`). */
+  changed: readonly AuditFailure[];
   readonly auditId: string | undefined;
   /** Set when the rules changed while it ran: its files went back to be run with the new rules. */
   requeued: boolean;
@@ -162,14 +164,20 @@ export class RerailEditRuns implements RrRunOwner {
     const taken = this.#host.rules().filter(rule => files.some(file => takes(rule, file.edit.path)));
     if (this.#closed || taken.length === 0) return undefined;
     this.#rulesKey = rulesKey(this.#host.rules());
-    const { rules, failures } = unchangedRules(taken);
-    const flight: Flight = { files, rules, changed: failures, auditId: this.#startAudit(files, taken), requeued: false };
-    if (rules.length === 0) {
-      this.#finish(flight, { status: "failed", violations: [], failures });
-      return undefined;
-    }
+    const flight: Flight = { files, taken, rules: [], changed: [], auditId: this.#startAudit(files, taken), requeued: false };
     this.#flight = flight;
-    return { policies: rules.map(rule => rule.path), settle: outcome => this.#settle(flight, outcome) };
+    return { policies: () => this.#policies(flight), settle: outcome => this.#settle(flight, outcome) };
+  }
+
+  /**
+   * The policies `flight`'s child runs, decided as it is about to start: a rule whose file changed since the catalog
+   * read it is left out, with a failure, so the child never reads text nobody approved.
+   */
+  #policies(flight: Flight): string[] {
+    const { rules, failures } = unchangedRules(flight.taken);
+    flight.rules = rules;
+    flight.changed = failures;
+    return rules.map(rule => rule.path);
   }
 
   /** A file of a flight that was left goes back to wait, behind any newer edit of it, keeping the older preimage. */

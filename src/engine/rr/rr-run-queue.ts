@@ -10,12 +10,12 @@
  */
 import { resolve } from "node:path";
 import type { RrRun } from "./rr-runner.js";
-import { LEFT_RUN, type RrRunEnd, runInTurn } from "./rr-run-slots.js";
+import { LEFT_RUN, PROCESS_SLOTS, type RrRunEnd, type RrRunSlots } from "./rr-run-slots.js";
 
-/** What an owner hands a run as it starts: the policies its files need, and where the run's outcome goes. */
+/** What an owner hands a run as it is queued: the policies it needs once its turn comes, and where its end goes. */
 export interface RrClaim {
-  /** The rule files to run (absolute). */
-  readonly policies: readonly string[];
+  /** The rule files to run (absolute), asked when the run's turn comes and its child is about to start. */
+  policies(): readonly string[];
   /** Called once, with how the run ended; `left` when the owner left the run before it ended. */
   settle(end: RrRunEnd): void;
 }
@@ -39,7 +39,7 @@ type Running = { readonly claims: Map<RrRunOwner, RrClaim>; readonly controller:
 export class RrRunQueue {
   readonly #root: string;
   readonly #timing: RrRunTiming;
-  readonly #run: (run: RrRun) => Promise<RrRunEnd>;
+  readonly #slots: RrRunSlots;
   readonly #waiting = new Set<RrRunOwner>();
   #running: Running | undefined;
   #timer: NodeJS.Timeout | undefined;
@@ -47,10 +47,10 @@ export class RrRunQueue {
   /** Set when the turn ended with work waiting: the next run starts without waiting for quiet. */
   #flushed = false;
 
-  constructor(root: string, timing: RrRunTiming, run: (run: RrRun) => Promise<RrRunEnd> = runInTurn) {
+  constructor(root: string, timing: RrRunTiming, slots: RrRunSlots = PROCESS_SLOTS) {
     this.#root = root;
     this.#timing = timing;
-    this.#run = run;
+    this.#slots = slots;
   }
 
   /** `owner` wrote files it has gathered: it joins the next run, which starts once the checkout is quiet. */
@@ -123,9 +123,8 @@ export class RrRunQueue {
   }
 
   async #runOnce(running: Running): Promise<void> {
-    const policies = [...new Set([...running.claims.values()].flatMap(claim => claim.policies))].sort();
-    const run = { root: this.#root, policies, deadlineMs: this.#timing.deadlineMs, signal: running.controller.signal };
-    const outcome = await this.#run(run).catch((error: unknown): RrRunEnd => ({ status: "failed", message: String(error) }));
+    const turn = { signal: running.controller.signal, start: () => this.#request(running) };
+    const outcome = await this.#slots.run(turn).catch((error: unknown): RrRunEnd => ({ status: "failed", message: String(error) }));
     // Each claim settles on its own: one that throws leaves the others' audits to finish.
     for (const claim of running.claims.values()) {
       try {
@@ -134,6 +133,13 @@ export class RrRunQueue {
         report("a .rerail run's outcome was not recorded", error);
       }
     }
+  }
+
+  /** The run of `running`'s claims, made when its turn comes; undefined when none of them has a policy left to run. */
+  #request(running: Running): RrRun | undefined {
+    const policies = [...new Set([...running.claims.values()].flatMap(claim => claim.policies()))].sort();
+    if (policies.length === 0) return undefined;
+    return { root: this.#root, policies, deadlineMs: this.#timing.deadlineMs, signal: running.controller.signal };
   }
 }
 

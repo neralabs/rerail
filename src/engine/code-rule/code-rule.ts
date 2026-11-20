@@ -5,7 +5,7 @@ import { sensitiveByName } from "../path-boundary.js";
 import type { CodeRuleDialectLabel, CodeRuleLanguageId } from "./code-rule-languages.js";
 import type { CodeRuleDslSemanticAstRuleFields, CodeRuleDslSemanticCompareText, CodeRuleDslSuppress } from "./code-rule-semantic.js";
 import { inlineCode, steerBlock, steerRules, steerText, type SteerFinding, type SteerShell, type SteerTrigger } from "./rerail-steer.js";
-import { steerOrigin, steerTitle, type SteerRuleSource } from "./steer-origin.js";
+import { steerNaming, type SteerRuleSource } from "./steer-origin.js";
 
 export type CodeRuleDslScalar = boolean | number | string | null;
 export type CodeRuleDslValue = CodeRuleDslScalar | CodeRuleDslValue[] | { [key: string]: CodeRuleDslValue };
@@ -1752,9 +1752,10 @@ export function buildSteer(
   shell?: SteerShell,
 ): { content: string; ruleIds: string[]; rules: SteerRule[] } {
   const findings = steerFindings(violations, sensitive);
+  const naming = steerNaming(sourceOf);
   return {
     content: steerBlock(trigger, findings, shell),
     ruleIds: steerRuleIds(violations),
-    rules: steerRules(findings, ruleId => steerOrigin(ruleId, sourceOf(ruleId)), ruleId => steerTitle(ruleId, sourceOf(ruleId))),
+    rules: steerRules(findings, naming.origin, naming.title),
   };
 }

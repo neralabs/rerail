@@ -10,6 +10,7 @@ import type { RerailRuleEntry } from "../../../src/engine/code-rule/code-rule-ds
 import { RrAuditRun } from "../../../src/engine/rr/rr-audit-run.js";
 import { RerailEditRuns } from "../../../src/engine/rr/rr-edit-runs.js";
 import { RrRunQueue } from "../../../src/engine/rr/rr-run-queue.js";
+import { RrRunSlots } from "../../../src/engine/rr/rr-run-slots.js";
 import type { RrBudgets, RrFinding, RrRun, RrRunOutcome } from "../../../src/engine/rr/rr-runner.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
@@ -68,7 +69,7 @@ function session(rules: RerailRuleEntry[], scope: AuditScope = "touched-files") 
       steers.push({ content, metadata });
     },
   };
-  const queue = new RrRunQueue(root, { deadlineMs: 30_000, quietMs: 1 }, runner);
+  const queue = new RrRunQueue(root, { deadlineMs: 30_000, quietMs: 1 }, new RrRunSlots(runner));
   const edits = new RerailEditRuns({
     sessionId: "session",
     workspaceRoot: root,
@@ -200,14 +201,14 @@ describe("an audit's .rerail run", () => {
     const assert = rule("rr-sample-assert", [{ folder: "", mode: "steer" }]);
     const off = rule("rr-off", [{ folder: "", mode: null }]);
     const run = new RrAuditRun({ root, rules: [assert, off], paths: ["src"], nestedCheckouts: ["src/vendored"] },
-      async request => {
+      new RrRunSlots(async request => {
         expect(request.policies).toEqual([assert.path]);
         return completed([
           finding("rr-sample-assert", "src/a.py", 0, 0, 5),
           finding("rr-sample-assert", "src/vendored/b.py", 0, 0, 5),
           finding("rr-sample-assert", "tests/c.py", 0, 0, 5),
         ]);
-      });
+      }));
     expect(run.provenance.map(entry => entry.ruleId)).toEqual(["rr-sample-assert"]);
     run.start();
     expect((await run.results()).violations.map(violation => violation.path)).toEqual(["src/a.py"]);
@@ -216,14 +217,16 @@ describe("an audit's .rerail run", () => {
   it("kills its child when stopped while the audit waits for it, and gives the audit no results to record as complete", async () => {
     const assert = rule("rr-sample-assert", [{ folder: "", mode: "steer" }]);
     let signal: AbortSignal | undefined;
-    const run = new RrAuditRun({ root, rules: [assert], paths: undefined, nestedCheckouts: [] }, request => {
+    const run = new RrAuditRun({ root, rules: [assert], paths: undefined, nestedCheckouts: [] }, new RrRunSlots(request => {
       signal = request.signal;
       const { promise, resolve } = Promise.withResolvers<RrRunOutcome>();
       request.signal?.addEventListener("abort", () => resolve({ status: "killed", reason: "aborted", wallMs: 1, peakRssBytes: 1, budgets: BUDGETS }));
       return promise;
-    });
+    }));
     run.start();
     const results = run.results();
+    // Its turn has come and its child started: the audit now waits for it.
+    await vi.waitFor(() => expect(signal).toBeDefined());
     run.abort();
     expect(signal?.aborted).toBe(true);
     await expect(results).rejects.toThrow("its session closed");

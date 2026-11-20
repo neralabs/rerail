@@ -76,7 +76,7 @@ async function stopDaemon(): Promise<void> {
 }
 
 interface HookAnswer {
-  output: { hookSpecificOutput?: { additionalContext?: string } };
+  output: { hookSpecificOutput?: { additionalContext?: string }; systemMessage?: string };
   stderr: string;
 }
 
@@ -206,11 +206,16 @@ describe("rules written in .rerail, against a daemon of this build", () => {
       { ruleId: "rr-sample-print-call", path: "app/main.py", mode: "log", line: 0 },
     ]));
     await session.prompt();
-    const steered = [contextOf(stop), contextOf(await session.read("app/views.py"))].join("\n");
+    const answers = [stop, await session.read("app/views.py")];
+    const steered = answers.map(contextOf).join("\n");
     expect(steered).toContain("[rr-sample-assert]");
     expect(steered).toContain("[rr-sample-deprecated-call]");
     expect(steered).toContain("report.py");
     expect(steered).not.toContain("[rr-sample-print-call]");
+    // The person's line names each rule by the title its pack.json gives it.
+    const lines = answers.map(answer => answer.output.systemMessage ?? "").join("\n");
+    expect(lines).toContain("No assert statements");
+    expect(lines).toContain("No calls to deprecated functions");
   }, 240_000);
 
   it("does not run a rule turned off where the file was written", async () => {

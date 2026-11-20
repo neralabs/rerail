@@ -10,6 +10,7 @@ import type { SteerTarget } from "../code-rule/edit-findings/steer-publication.j
 import { RrAuditRun, type RrAuditResults } from "./rr-audit-run.js";
 import { editRunTiming, RerailEditRuns } from "./rr-edit-runs.js";
 import { type RrRunTiming, RrRunQueue, rrRunQueue } from "./rr-run-queue.js";
+import { RrRunSlots } from "./rr-run-slots.js";
 
 export interface CheckoutRerailHost {
   readonly sessionId: string;
@@ -39,7 +40,7 @@ function editQueue(root: string): RrRunQueue {
     timing = editRunTiming();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return new RrRunQueue(root, { deadlineMs: 0, quietMs: 0 }, async () => ({ status: "failed", message }));
+    return new RrRunQueue(root, { deadlineMs: 0, quietMs: 0 }, new RrRunSlots(async () => ({ status: "failed", message })));
   }
   return rrRunQueue(root, timing);
 }
