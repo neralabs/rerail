@@ -4540,7 +4540,11 @@ impl Model {
                     // (`step`'s greedy cut), `rr_agg15($a, $b, $p) :- rr_ctx16($a, $b, $p), bcgp_line($p, $l, _),
                     // !bcgp_at_line($p, $l), $l > $a, $l < $b` led from the pairs (64.8 K) and read every line of
                     // each pair's file: 28.6 s against 5.4 s led from the lines.
-                    if head_bits.is_some_and(|h| h & !*bound == 0) && out > left {
+                    // Only a step joined by a bound variable, as `step`'s cut: a cross product reads its rows until one
+                    // passes the rest (Q240). Cut there too, `p155_rr_demand_agg_rr_agg3($t)` (a dict's keys and values
+                    // unwrapped) was led from its 233 targets through two unjoined `unparen` scans of 69,690 rows each,
+                    // priced at 461 work, and ran past 100 s on 300 files where `child` probes first read a few rows.
+                    if head_bits.is_some_and(|h| h & !*bound == 0) && !crossed && out > left {
                         out = left;
                     }
                     let fan = if left > 0.0 { out / left } else { 0.0 };
