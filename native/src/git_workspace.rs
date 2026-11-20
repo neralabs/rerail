@@ -128,17 +128,22 @@ pub fn ran_with_a_git_setup(_module: &str, _name: &str) -> bool {
 pub fn ran_with_a_git_setup(module: &str, name: &str) -> bool {
     const SYSTEM_CONFIG: &str = "RERAIL_TEST_GIT_SYSTEM_CONFIG";
     if let Some(config) = std::env::var_os(SYSTEM_CONFIG) {
-        crate::git_access::setup::install(std::sync::Arc::new(crate::git_access::setup::GitSetup {
-            system_config: Some(PathBuf::from(config)),
-            installation_config: None,
-        }));
+        crate::git_access::setup::install(std::sync::Arc::new(
+            crate::git_access::setup::GitSetup {
+                system_config: Some(PathBuf::from(config)),
+                installation_config: None,
+            },
+        ));
         return false;
     }
     let folder =
         std::env::temp_dir().join(format!("rerail-git-setup-{}-{name}", std::process::id()));
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(folder.join("gitconfig"), b"").unwrap();
-    let test = format!("{}::{name}", module.split_once("::").map_or(module, |(_, path)| path));
+    let test = format!(
+        "{}::{name}",
+        module.split_once("::").map_or(module, |(_, path)| path)
+    );
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args([test.as_str(), "--exact", "--nocapture", "--test-threads=1"])
         .env(SYSTEM_CONFIG, folder.join("gitconfig"))
