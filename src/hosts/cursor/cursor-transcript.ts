@@ -230,6 +230,14 @@ export async function transcriptCarriesText(input: HookInput, descriptor: Adapte
   return path !== undefined && await transcriptThere(path);
 }
 
+/** Points `state` at the transcript at `path`, read from its start when the session named another before. */
+function followTranscript(state: CursorTranscriptState, path: string): void {
+  if (state.path === path) return;
+  state.path = path;
+  state.offset = 0;
+  state.latestAssistantText = "";
+}
+
 /**
  * Recovers Cursor's append-only JSONL transcript when the CLI does not supply text hooks.
  * The caller keeps Cursor's per-session hook lock through the whole ingest, its checks included (`SessionLock.kept`),
@@ -248,11 +256,7 @@ export async function ingestCursorTranscript(
 
   const path = namedTranscript(input);
   if (path === undefined) return false;
-  if (state.path !== path) {
-    state.path = path;
-    state.offset = 0;
-    state.latestAssistantText = "";
-  }
+  followTranscript(state, path);
 
   const snapshot = await readUnreadSnapshot(path, state.offset);
   const previousOffset = state.offset;
