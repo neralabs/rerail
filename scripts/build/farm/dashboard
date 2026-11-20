@@ -57,7 +57,10 @@ class Machine:
         return farm.ssh(self.name, "exec /usr/bin/python3 -u -c " + shlex.quote(open(SAMPLER).read()), "dash")
 
     def guest(self):
-        """This machine's guest record and settings (guest.py), when it is a guest."""
+        """This machine's guest record and settings (guest.py), when it is a guest: its entry read
+        afresh, so a host made a guest or no longer one shows as such without a restart."""
+        if self.host is not None:
+            self.host = farm.entry(self.name) or self.host
         base, g = guest.spec(self.host)
         if g is None:
             return None
