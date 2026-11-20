@@ -17,8 +17,10 @@ It also links that libc (newer than the copy Rust bundles) and libc++.
 
 On Linux, in place of `brew install`, unpack a [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) release
 (clang, llvm-ar, and one sysroot holding wasi-libc and libc++) and name it before sourcing `env.sh`:
-`export WASI_SDK_PATH=<its folder>`. CI runs the check above that way on every change to the engine (the
-Rust engine's fmt and clippy job in `.github/workflows/ci.yml`), since no other job builds this target.
+`export WASI_SDK_PATH=<its folder>`. CI runs the check above that way on every change to the engine, and
+checks the one-language build below too (`cargo check` with its arguments, which also checks the library the
+explorer builds with them), in the Rust engine's fmt and clippy job in `.github/workflows/ci.yml`, since no
+other job builds this target.
 
 ## One build per language, without the Node addon
 
