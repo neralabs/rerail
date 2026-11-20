@@ -451,23 +451,11 @@ mark apart      = ws & code | o_line | o_block
 # where the declaration's name may come: the rule takes it there, and no level ends on it.
 mark recv       = rstart & decl_run, before simple_identifier | backtick_name (simple_identifier | backtick_name | "in" | "." | "<" | ">" | "," | "?" | "*")* "." simple_identifier | backtick_name ~("." | "<" | ">" | "?." | ","), unless before simple_identifier | backtick_name "by"
 mark dotted     = code & dot & decl_run | del_brace, before "." simple_identifier | backtick_name ~("." | "<" | ">" | "?." | ","), before "{"
-# A `<` that opens type arguments in an expression (the lean parser's `type_args_end`): the tokens
-# from it are a type's (names, `, . ? * @ : -> ( ) [ ] < >`) up to a `>` that `(`, `{`, `.`, `?.`
-# or `::` follows. It touches the name before it, as a comparison's `<` seldom does (the lean
-# parser does not ask: a spaced `f <T>()` is refused, read as a comparison). In a type it opens
-# type arguments or parameters anyway, which take it. Where no rule takes it, the file is refused.
-# The run counts `<` `>` and `(` `)` as the lean parser does: the `>` is the one whose depth closes
-# the `<`, and a `)` with no `(` ends the run.
-# And a parenthesized type's `(`: after a `:`, before another `(`; and a `suspend` there.
-mask colon_ty   = code & text(":") & ~text("::") & ~prev(text(":")) & ~prev(text("?"))
-mask after_ty   = prev(fill(prev(colon_ty), solid))
-# And a function type's receiver's first name: names, dots and type arguments from it to a `.`
-# before a `(`.
-# One mark: each `before` starts with its own token (a receiver's name not `suspend`).
-mask frecv_at   = w & ~prev(w | dot | text("<") | text(">")) & ~text("suspend")
-mark generic    = code & text("<") & ~text("<=") & prev(w) | code & text("(") & after_ty | code & text("suspend") & ~next(w, 7) & after_ty, before "<" (simple_identifier | backtick_name | "in" | "," | "." | "?" | "*" | "@" | ":" | "->" | "(" | ")" | "[" | "]" | "<" | ">")* nest ("<" to ">") ("(" to ")") ">" "(" | "{" | "." | "?." | "::", before "(" "(", before "suspend" "("
 # A function type's receiver's first name (`fn_recv`): where a type starts, the type rule's
 # decision, as the lean parser's at the type's first token.
+# A function type's receiver's first name: names, dots and type arguments from it to a `.`
+# before a `(`.
+mask frecv_at   = w & ~prev(w | dot | text("<") | text(">")) & ~text("suspend")
 mark fn_recv    = frecv_at, before simple_identifier (simple_identifier | "." | "<" | ">")* "." "("
 # A decimal number with a fraction, an exponent or an `f`: a real one.
 mark real       = empty, at integer_literal when count(frac_dot | e_at | f_at) at least 1
@@ -519,12 +507,21 @@ mark wild       = tokens "." "*"
 mark obj_lit    = tokens after ~"companion" "object" ":" | "{"
 # A function type's receiver's `.`: a `(` after it (no expression has `.(`).
 mark ft_dot_at  = tokens "." "("
+# A `<` that opens type arguments in an expression (the lean parser's `type_args_end`): the tokens
+# from it are a type's (names, `, . ? * @ : -> ( ) [ ] < >`) up to a `>` that `(`, `{`, `.`, `?.`
+# or `::` follows. It touches the word before it (`without apart`), as a comparison's `<`
+# seldom does (the lean parser does not ask: a spaced `f <T>()` is refused, read as a comparison). In a type it opens
+# type arguments or parameters anyway, which take it. Where no rule takes it, the file is refused.
+# The run counts `<` `>` and `(` `)` as the lean parser does: the `>` is the one whose depth closes
+# the `<`, and a `)` with no `(` ends the run.
+# And a parenthesized type's `(`, after a type's `:`, before another `(`; and a `suspend` there.
+mark generic    = tokens after simple_identifier "<" without apart (simple_identifier | backtick_name | "in" | "," | "." | "?" | "*" | "@" | ":" | "->" | "(" | ")" | "[" | "]" | "<" | ">")* nest ("<" to ">") ("(" to ")") ">" "(" | "{" | "." | "?." | "::"
+mark generic    = tokens after ":" "(" | "suspend" "("
 # A name before `::`, but `this` (a hard keyword, as every one): a callable reference's receiver.
 mark cref       = tokens simple_identifier "::"
 # A name and `=` (or an assignment's operator): an assignment to it, or a named argument; and a
 # name and `:`, a function type's named parameter (`(url: String) -> Unit`).
-mark named      = tokens simple_identifier "=" | "+=" | "-=" | "*=" | "/=" | "%="
-mark named      = tokens simple_identifier ":"
+mark named      = tokens simple_identifier "=" | "+=" | "-=" | "*=" | "/=" | "%=" | ":"
 # A `!` after a line break before `in` or `is`: a `when` entry's negated test.
 mark named      = tokens "!" with semi "in" | "is"
 # An enum class's `enum`, a soft word elsewhere.

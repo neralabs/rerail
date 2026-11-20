@@ -352,3 +352,23 @@ unchanged: 448 the same, 43 refused, 0 differ. The block program went from 1,559
 `when` entry's negated test. It is now `named`'s third token mark, `tokens "!" with semi "in" |
 "is"`, beside its two others. The corpus is unchanged (448 the same, 0 differ). The Kotlin (52)
 and `kotlin_aot` (4) tests pass. The block program went from 1,507 operations to 1,495.
+
+## Item 3, `generic`: two token marks (2026-11-19)
+
+`generic`'s mask had three byte questions, and each is a question about tokens:
+- a `<` touching the word before it, `prev(w)`: now `after simple_identifier "<" without apart`;
+- a `(` first after a type's `:` (`colon_ty`, `after_ty`, a fill): now `after ":" "("`;
+- a `suspend` there: also `after ":"`.
+
+```
+mark generic = tokens after simple_identifier "<" without apart (…)* nest ("<" to ">") ("(" to ")") ">" "(" | …
+mark generic = tokens after ":" "(" | "suspend" "("
+```
+
+The `:` token is its own word. `::` and `?:` are pairs, so `colon_ty`'s exclusions come free. A
+number before `<` is left out. Its kinds share their first byte (`0`), so a token element cannot
+name them yet, and no Kotlin type's arguments follow a number. `named`'s two name definitions
+share their first element and are now one, so the mark orders stay within 32.
+
+The corpus is unchanged (448 the same, 0 differ). The Kotlin (52) and `kotlin_aot` (4) tests
+pass. The block program went from 1,495 operations to 1,471.
