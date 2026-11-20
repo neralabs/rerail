@@ -615,7 +615,6 @@ jobs:
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
           components: rustfmt, clippy
-          targets: wasm32-wasip1
 
       # sccache, starting from main's newest clippy store (an artifact): the dependencies' check builds are fetched.
       - id: compile-cache
@@ -632,13 +631,16 @@ jobs:
       # shape a page ships, the rule explorer's (the binary and its library, `headless` and one language, without
       # `tape-cache` or `dump-cli`), since code gated on those features compiles only there. wasi-sdk brings the
       # clang, llvm-ar, wasi-libc and libc++ that native/wasm/env.sh takes from Homebrew on macOS. Only when the change
-      # reaches the engine (`rust-engine`), and before the save, so main's store keeps these compiles too.
+      # reaches the engine (`rust-engine`), which is also when the target's standard library is installed, and before
+      # the save, so main's store keeps these compiles too.
       - name: Check the engine's browser build (wasm32-wasip1)
         if: needs.changes.outputs.rust-engine != 'false'
         env:
+          RUST_CHANNEL: ${{ steps.rust-toolchain.outputs.channel }}
           WASI_SDK: wasi-sdk-34.0-x86_64-linux
           WASI_SDK_SHA256: b761e3a0721dbae9c09a0059e5fdb2bf917d1b4a8a7b430fb3b5aafb0984b2c4
         run: |
+          rustup target add wasm32-wasip1 --toolchain "$RUST_CHANNEL"
           curl -sSfL --retry 3 -o "$RUNNER_TEMP/$WASI_SDK.tar.gz" \
             "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/$WASI_SDK.tar.gz"
           echo "$WASI_SDK_SHA256  $RUNNER_TEMP/$WASI_SDK.tar.gz" | sha256sum -c -

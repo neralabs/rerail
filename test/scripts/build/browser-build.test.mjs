@@ -43,4 +43,10 @@ describe("CI's check of the browser build", () => {
     expect(job.steps.indexOf(save)).toBeGreaterThan(job.steps.indexOf(check));
     expect(save.if).toContain("!cancelled()");
   });
+
+  it("installs the wasm32-wasip1 standard library only in the check, which runs when a change reaches the engine", () => {
+    const toolchain = job.steps.find((step) => step.uses?.startsWith("dtolnay/rust-toolchain@"));
+    expect(toolchain.with.targets).toBeUndefined();
+    expect(check.run).toContain("rustup target add wasm32-wasip1");
+  });
 });
