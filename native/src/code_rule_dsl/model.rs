@@ -780,7 +780,7 @@ impl CompiledClause {
 
     /// Whether the workspace resolves an `importTarget` for the clause file by file: a file-local
     /// forbid whose matcher reads one (`Query::reads_import_targets`), which reads the file an
-    /// import names.
+    /// import names; `add_code_rule` registers such a clause's import view by the same two tests.
     pub fn reads_import_targets_locally(&self) -> bool {
         let ClauseKind::Forbid(query) = &self.kind else {
             return false;
