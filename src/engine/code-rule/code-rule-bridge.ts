@@ -3003,7 +3003,8 @@ export class CodeRuleBridge {
    * session's edit. Of those, only a source this session had changed is still audited, as the source it now is with no
    * generated lines and in `log` mode: the evaluator holds its older text, and steers queued for that text are out of
    * date. Any other is the same to the evaluator as the files it never saw. The walk of the other worktrees drops every
-   * change of a checkout whose `.git` entry is gone once its Git has been read (`#checkoutStands`).
+   * change of a checkout in a worktree it may show the session first (`#mayFirstSee`), or finds a file of gone in, whose
+   * `.git` entry is gone once its Git has been read (`#checkoutStands`).
    */
   async #separateOwnWrites(
     discovery: SourceDiscovery,
@@ -3016,7 +3017,7 @@ export class CodeRuleBridge {
     sorted.unwritten.push(...unowned);
     for (const [checkout, group] of owned) {
       const verdicts = await this.#gitVerdicts(discovery, checkout, group, uncaptured);
-      if (await this.#checkoutStands(discovery, walk, checkout)) this.#sortByVerdicts(group, verdicts, sorted);
+      if (await this.#checkoutStands(discovery, walk, checkout, group)) this.#sortByVerdicts(group, verdicts, sorted);
     }
     const { unwritten, notOwn } = sorted;
     const own = walk.inSession ? await this.#claimOwnWrites(discovery, walk, unwritten, uncaptured, notOwn) : unwritten;
@@ -3024,20 +3025,23 @@ export class CodeRuleBridge {
   }
 
   /**
-   * Whether `checkout` is still the checkout whose Git gave the walk its verdicts. In another worktree only Git's
-   * verdicts tell Git's own files from writes: at the walk's first sight of it, every file stamped since the session
-   * opened (`#firstSightPaths`); later, each file it saw there that is gone. `git worktree remove` deletes the
-   * worktree's files, its `.git` entry among them, before Git stops listing the worktree, and a Git started there once
-   * the entry is gone reads no checkout, or the one around the worktree, so each of those files would be taken for a
-   * write. So the entry is looked for once Git has answered: still there, Git read this checkout; gone, the worktree is
-   * being removed or was, its files went with it, as a worktree gone before the walk is applied took its own
-   * (`#syncWorktrees`), and none of them is an edit.
+   * Whether `checkout` is still the checkout whose Git gave the walk its verdicts, given its changes `group`. In another
+   * worktree only Git's verdicts tell Git's own files from writes: at the walk's first sight of it, every file stamped
+   * since the session opened (`#firstSightPaths`); in one it knew, each file it saw there that is gone. `git worktree
+   * remove` deletes the worktree's files, its `.git` entry among them, before Git stops listing the worktree, and a Git
+   * started there once the entry is gone reads no checkout, or the one around the worktree, so each of those files
+   * would be taken for a write. There the entry is looked for once Git has answered: still there, Git read this
+   * checkout; gone, the worktree is being removed or was, its files went with it, as a worktree gone before the walk is
+   * applied took its own (`#syncWorktrees`), and none of them is an edit. A walk that finds only writes in a worktree it
+   * knew, as it does on most walks, looks for nothing.
    */
-  async #checkoutStands(discovery: SourceDiscovery, walk: WalkStart, checkout: string): Promise<boolean> {
+  async #checkoutStands(discovery: SourceDiscovery, walk: WalkStart, checkout: string, group: readonly CodeRuleEdit[]): Promise<boolean> {
     if (walk.inSession) return true;
     const named = sessionPath(discovery.root, checkout);
     const worktree = walk.worktrees.has(named) ? named : rootHolding(walk.worktrees, named);
-    return worktree === undefined || await stillACheckout(checkout);
+    if (worktree === undefined) return true;
+    const mayBeRemoved = this.#mayFirstSee(discovery, worktree) || group.some(edit => edit.deleted === true);
+    return !mayBeRemoved || await stillACheckout(checkout);
   }
 
   /**
