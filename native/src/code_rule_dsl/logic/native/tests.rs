@@ -204,6 +204,8 @@ fn a_declared_lattice_replaces_the_join() {
         fn top(&self) -> i64 { 0b111 }
         fn finite(&self) -> bool { true }
     }
+    // The test's run holds the lattice it declares (decision 0442).
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     super::declare("bits", std::sync::Arc::new(Or));
     let db = connection();
     db.execute_batch(

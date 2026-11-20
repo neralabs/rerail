@@ -42,7 +42,9 @@ pub struct ViewDoc {
     /// A guest's placement in its host (`Placement`): 0 none (a file's own tree), `PLACED_COPIED` (host byte = guest
     /// byte + `delta`, clamped to `within`), `PLACED_AT` (every span at `within`).
     pub placement: u32,
-    pub pad: u32,
+    /// The key of the file the document is part of (decision 0431 §4): its own, or a program's file's. Its
+    /// `docof`; its ids keep `key`.
+    pub file: u32,
     pub delta: i64,
     pub within_lo: u32,
     pub within_hi: u32,
@@ -102,6 +104,7 @@ pub mod at {
     pub const SOURCE_LEN: i32 = offset_of!(ViewDoc, source_len) as i32;
     pub const LINES: i32 = offset_of!(ViewDoc, lines) as i32;
     pub const PLACEMENT: i32 = offset_of!(ViewDoc, placement) as i32;
+    pub const FILE: i32 = offset_of!(ViewDoc, file) as i32;
     pub const DELTA: i32 = offset_of!(ViewDoc, delta) as i32;
     pub const WITHIN_LO: i32 = offset_of!(ViewDoc, within_lo) as i32;
     pub const WITHIN_HI: i32 = offset_of!(ViewDoc, within_hi) as i32;
@@ -137,7 +140,7 @@ pub fn ukl() -> String {
         ("uint32_t", "source_len", offset_of!(ViewDoc, source_len)),
         ("Run", "lines", offset_of!(ViewDoc, lines)),
         ("uint32_t", "placement", offset_of!(ViewDoc, placement)),
-        ("uint32_t", "pad", offset_of!(ViewDoc, pad)),
+        ("uint32_t", "file", offset_of!(ViewDoc, file)),
         ("int64_t", "delta", offset_of!(ViewDoc, delta)),
         ("uint32_t", "within_lo", offset_of!(ViewDoc, within_lo)),
         ("uint32_t", "within_hi", offset_of!(ViewDoc, within_hi)),
@@ -502,7 +505,7 @@ impl B<'_, '_> {
         let c = self.f.ins().icmp_imm(IntCC::Equal, col, 0);
         self.either(I64, c, |b| b.loc_id(l), |b| {
             if place == Place::Docof {
-                return b.entry_u32(at::KEY);
+                return b.entry_u32(at::FILE);
             }
             let span = b.loc_span(l);
             let span = b.placed(span);

@@ -5,7 +5,12 @@ edition = "2024"
 publish = false
 description = "Spike for decision 0266: blocks holding nested, self-relative structures; base + delta; freeze; read and written on CPU and GPU."
 
+[features]
+# The tests' shared object for reads outside a run (decision 0442).
+test-hooks = ["rerail-context/test-hooks"]
+
 [dependencies]
+rerail-context = { path = "../context" }
 libc = "0.2.189"
 rayon = "=1.12.0"
 
@@ -28,3 +33,7 @@ block = "0.1.6"
 # (examples/paces; decision 0440 §3.3). Above this crate (through the C lexer and the tape crate), so a
 # dev-dependency: the crate itself never preprocesses.
 rerail-ukl = { path = "../ukl" }
+
+[dev-dependencies]
+rerail-blocks = { path = ".", features = ["test-hooks"] }
+rerail-context = { path = "../context", features = ["test-hooks"] }

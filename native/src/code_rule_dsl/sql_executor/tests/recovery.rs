@@ -396,6 +396,8 @@ fn both_sql_entry_points_share_custom_lattices_and_logical_zero_arity_outputs() 
             true
         }
     }
+    // The test's run holds the lattice it declares; the executor's run joins it (decision 0442).
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     native::declare("shared_sql_test_bits", Arc::new(Bits));
     let program = ".lattice shared_sql_test_bits<number> { Lub -> @shared_sql_test_bits }\n.decl seed(k:number,v:number)\nseed(1,3). seed(1,8).\n.decl smallest(k:number,v:min<>) widen 10\nsmallest(k,v) :- seed(k,v).\n.decl largest(k:number,v:max<>) widen 10\nlargest(k,v) :- seed(k,v).\n.decl best(v:min<>) widen 10\nbest(v) :- seed(_,v).\n.decl permission(k:number,v:shared_sql_test_bits<>) widen 3\n.decl bit(k:number,v:number)\nbit(1,1). bit(1,2).\npermission(k,v) :- bit(k,v).\n.decl flag()\nflag() :- seed(1,3).\n.decl total(n:number)\ntotal(n) :- n = count : {seed(_,_)}.\n.output smallest,largest,best,permission,flag,total\n";
     let (_d, mut e) = executor();

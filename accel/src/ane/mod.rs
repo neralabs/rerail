@@ -104,14 +104,16 @@ fn hex(k: &[u8; 32]) -> String {
     k.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// The process's model store, when its host has one (the engine's content store: compiled models are facts there,
-/// decision 0098 §3); `None` keeps them in memory.
-static STORE: std::sync::RwLock<Option<Arc<dyn ModelStore>>> = std::sync::RwLock::new(None);
+/// The caller's model store, when its host has one (the engine's content store: compiled models are facts there,
+/// decision 0098 §3); `None` keeps them in memory. Its caller's (decision 0442: `rerail_context::Shared`): a store is
+/// a caller's resource.
+#[derive(Default)]
+struct Store(std::sync::RwLock<Option<Arc<dyn ModelStore>>>);
 
 /// Makes `store` where this process's Neural Engine models are kept from now on: JIT-compiled models are written
 /// there and read back by later runs. AOT models are part of the executable and never stored.
 pub fn set_store(store: Arc<dyn ModelStore>) {
-    *STORE.write().unwrap() = Some(store);
+    *rerail_context::shared::<Store>().0.write().unwrap() = Some(store);
 }
 
 /// The host's store when set, else memory.
@@ -120,13 +122,13 @@ struct HostStore(MemoryStore);
 
 impl ModelStore for HostStore {
     fn get(&self, key: &[u8; 32]) -> Option<Arc<[u8]>> {
-        match STORE.read().unwrap().as_ref() {
+        match rerail_context::shared::<Store>().0.read().unwrap().as_ref() {
             Some(s) => s.get(key),
             None => self.0.get(key),
         }
     }
     fn put(&self, key: [u8; 32], archive: Arc<[u8]>) {
-        match STORE.read().unwrap().as_ref() {
+        match rerail_context::shared::<Store>().0.read().unwrap().as_ref() {
             Some(s) => s.put(key, archive),
             None => self.0.put(key, archive),
         }

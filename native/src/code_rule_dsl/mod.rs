@@ -1701,9 +1701,6 @@ pub(crate) mod logic {
         #[cfg(test)]
         pub mod tests;
         #[allow(unused_imports)]
-        #[cfg(test)]
-        pub(crate) use crate::code_rule_dsl::logic::native::setfix::DERIVATIONS;
-        #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::native::setfix::{forget_engine, forget_scope};
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::native::setfix::{flush_symbols, forget_inputs, intern_batch, keep_inputs, register_symbols, sym_text_of};
@@ -4685,6 +4682,8 @@ pub(crate) fn install_languages() {
     embed::install_embedders(vec![
         #[cfg(feature = "lang-blade")]
         (language::Via::CompiledView, &embed::compiled_view::CompiledView),
+        #[cfg(feature = "lang-html")]
+        (language::Via::RawText, &embed::raw_text::RawText),
         #[cfg(feature = "lang-vue")]
         (language::Via::ScriptBlock, &embed::script_block::ScriptBlock),
         #[cfg(any(test, feature = "test-hooks"))]

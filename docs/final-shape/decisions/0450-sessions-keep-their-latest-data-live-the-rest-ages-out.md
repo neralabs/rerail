@@ -11,7 +11,7 @@ The store holds its bytes in three forms:
 
 | Form | What uses it |
 |---|---|
-| **Segments**, raw, mapped, read in place | sources and tapes (all, since floor 7), the memo's entries (`.memo`, 0295 step 4), atoms (`.atoms`), kept facts (`.facts`, 0443) |
+| **Segments**, raw, mapped, read in place | sources and tapes (all, since floor 7), the memo's entries (`.memo`, 0295 step 4), atoms (`.atoms`), kept facts (`.facts`, 0456) |
 | **zstd in a row** | per-file check results and call summaries (`local_check_results`, `context_check_results`), the facts memo (`facts_results`, `facts_completions.counts`), per-directory result pages (`tree_pages`) |
 | **Raw blob in a row** | `cross_blocks`, `compiled_plans.program`, `accel_models.archive`, `corpus_manifests.sources`, prefilter and term postings |
 
@@ -105,7 +105,7 @@ keeps a store of its own (`session.sqlite`) or binds a store session in the shar
   mechanism ... for any program that declares it".
 - **Since then:** no shipped program declares `.pragma "cross-memo"`. Only tests switch it on: `typing/oracle_tests.rs`
   through `RERAIL_PYTHON_CROSS_MEMO`, `logic/plan/corpus/tests.rs` and `findings/tests/rr_comparison.rs`. Every later
-  commit touching `cross_memo.rs` carries it through refactors (versions, atoms, clippy). Kept facts (0438, 0443) now
+  commit touching `cross_memo.rs` carries it through refactors (versions, atoms, clippy). Kept facts (0438, 0456) now
   do what it did for the edit: a run binds the previous run's relations where they lie and derives only what changed.
 - **Half of it is not the memo, and is about to be on the product path.** `components.rr` derives the import
   closure (`rr_cx_reach`, `rr_cx_sees`, the edges and components). `calls_cx.rr` and `calls_p3.rr` read it without
@@ -122,6 +122,8 @@ program that reads an `rr_cx_` relation (`import_closure.rs`). Its component key
 encoding the memo's blocks used is the frames' too, and stays (`content_store/delta_columns.rs`). The `components`
 native (SCCs with a Merkle key) stays a language feature with no shipped user. This supersedes 0094 §7's "kept from
 it: the `cross_rows` store" and 0083's "the mechanism stays for any program that declares it".
+On final-rerail-shape-rr-align the frames are retired (0439), so with this merge the encoding had no user left and
+went too.
 
 ## Order of work
 

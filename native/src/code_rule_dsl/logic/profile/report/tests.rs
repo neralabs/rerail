@@ -1,6 +1,6 @@
     use super::*;
     use super::super::{
-        behind_the_run, decision, device, executor, fallback, one_run, planned, reset, set, span, sql_in_wave, stratum, waves,
+        behind_the_run, decision, device, executor, fallback, planned, reset, set, span, sql_in_wave, stratum, waves,
         RulePlan, StepPlan,
     };
 
@@ -8,7 +8,7 @@
     /// issued it (`based`, `here`), as if it ran there; without a base, at the profile's root as before.
     #[test]
     fn a_jobs_spans_open_under_the_run_that_issued_it() {
-        let _serial = one_run();
+        let _serial = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         set(true);
         reset();
         let under = {
@@ -39,7 +39,7 @@
 
     #[test]
     fn explain_shows_engines_plans_devices_and_decisions() {
-        let _serial = one_run();
+        let _serial = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         // This thread is a run's, before its waves until it opens them: SQL outside them is the run's own, even while
         // another test's run is in its waves (a thread of no run goes by the process's count).
         let _run = crate::code_rule_dsl::logic::profile::run_begins();
@@ -118,7 +118,7 @@
     }
     #[test]
     fn projection_reason_traces_real_consumers_and_ignores_dead_scalars() {
-        let _lock = super::super::one_run();
+        let _lock = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         super::super::reset();
         super::super::set(true);
         let p = crate::code_rule_dsl::logic::rr::parse_version(

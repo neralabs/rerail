@@ -27,8 +27,7 @@ pub(super) type Out<'a> = (Strand<'a>, usize, Option<Result<(Option<String>, Opt
 /// Whether the components issued together share one device wave (decision 0123 §6). `RERAIL_LEVEL_WAVE=off` flushes
 /// one a component, as before (a measurement aid).
 fn level_wave() -> bool {
-    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_LEVEL_WAVE").map_or(true, |v| v != "off"));
-    *ON
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_LEVEL_WAVE").map_or(true, |v| v != "off"))
 }
 
 /// A component's members.

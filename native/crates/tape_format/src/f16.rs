@@ -1289,9 +1289,10 @@ impl Tape16Z {
         match kind {
             RAW => Ok(bytes),
             LZ4 => {
-                scratch.resize(self.decoded(j), 0);
-                lz4::decompress(bytes, scratch)?;
-                Ok(scratch)
+                let ((s, l), len) = (self.span(j), self.decoded(j));
+                scratch.resize(len + 8, 0);
+                decode_block(&self.buf, HEAD16 + s, HEAD16 + s + l, scratch, len)?;
+                Ok(&scratch[..len])
             }
             // Another piece that is not a repeat (`from_bytes`).
             _ => self.piece_bytes(u32_at(bytes, 0) as usize, scratch),
@@ -1576,8 +1577,24 @@ impl Tape for F16Z<'_> {
     }
 }
 
-/// LZ4's block format (`lz4-sys`): `LZ4_decompress_safe` to read; HC level 4 to write in the reference writer (0156
-/// §2.1 chose 9; decision 0426 §6 takes 4, which the writer's ops in CLIF port exactly, and write by).
+/// The LZ4 piece at `buf[from..to]` decoded into `dst[..len]` by the reads' decoder (`tape_lz4`, the one the JIT and
+/// the kernels decode with, decision 0353 step 4b); `dst` has 8 bytes of room after `len`, which a match's copies may
+/// write. A piece that does not decode to its length is a corrupt tape.
+fn decode_block(buf: &[u8], from: usize, to: usize, dst: &mut [u8], len: usize) -> Result<(), String> {
+    if from > to || to > buf.len() || to > u32::MAX as usize {
+        return Err(format!("a 16z piece at {from}..{to} of a tape of {} bytes", buf.len()));
+    }
+    if dst.len() < len + 8 {
+        return Err(format!("a 16z piece's room of {} bytes for {len} and 8 after them", dst.len()));
+    }
+    // SAFETY: `dst` holds `len` bytes and the 8 the decoder may write past them; its loads of the tape are checked.
+    let n = unsafe { reads::tape_lz4(buf, &TapeView::default(), from as u32, to as u32, dst.as_mut_ptr() as u64, len as u64) };
+    if n as usize == len { Ok(()) } else { Err(format!("a 16z piece decodes to {n} bytes, not {len}")) }
+}
+
+/// LZ4's block format (`lz4-sys`), compressed: HC level 4 in the reference writer (0156 §2.1 chose 9; decision 0426
+/// §6 takes 4, which the writer's ops in CLIF port exactly, and write by). Decoded by `decode_block`.
+#[cfg(any(test, feature = "reference"))]
 mod lz4 {
     use std::os::raw::c_char;
 
@@ -1603,14 +1620,6 @@ mod lz4 {
             out.truncate(k as usize);
             out
         }
-    }
-
-    /// `src` into `dst`, which is exactly the piece's length.
-    pub fn decompress(src: &[u8], dst: &mut [u8]) -> Result<(), String> {
-        let (Ok(n), Ok(cap)) = (i32::try_from(src.len()), i32::try_from(dst.len())) else { return Err("a 16z piece past 2 GB".into()) };
-        // SAFETY: LZ4 reads at most `src.len()` bytes and writes at most `dst.len()`.
-        let k = unsafe { lz4_sys::LZ4_decompress_safe(src.as_ptr() as *const c_char, dst.as_mut_ptr() as *mut c_char, n, cap) };
-        if k == cap { Ok(()) } else { Err(format!("a 16z piece decodes to {k} bytes, not {cap}")) }
     }
 }
 
@@ -2907,5 +2916,49 @@ DEFINE_KERNEL2(tests, t_reads,
             }
         }
         assert!(shrunk >= 2 * 20 && differs > 0, "{shrunk} inputs compressed, {differs} unlike HC 9");
+    }
+
+    /// The one decoder (`tape_lz4`, the reads' in CLIF) decodes what LZ4 compressed: literal runs of every length
+    /// mod 8, matches at every offset under 8 (which it widens as LZ4's reference decoder does) and far ones, and
+    /// lengths past 15 (their extension bytes); a piece cut short decodes to less than its length.
+    #[test]
+    fn the_reads_decoder_decodes_what_lz4_compressed() {
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for case in 0..400 {
+            let mut raw = Vec::new();
+            while raw.len() < 64 + case * 37 {
+                match next() % 4 {
+                    // A run repeating its last `off` bytes (a match at an offset under 8, or far).
+                    0 | 1 if raw.len() > 16 => {
+                        let off = if next() % 2 == 0 { 1 + (next() % 7) as usize } else { 8 + (next() % 9) as usize };
+                        let off = off.min(raw.len());
+                        for _ in 0..(4 + next() % 300) {
+                            raw.push(raw[raw.len() - off]);
+                        }
+                    }
+                    // Literals.
+                    _ => raw.extend((0..1 + next() % 40).map(|_| next() as u8)),
+                }
+            }
+            let packed = lz4::compress(&raw);
+            let mut buf = vec![0xaau8; 5];
+            buf.extend_from_slice(&packed);
+            let mut dst = vec![0u8; raw.len() + 8];
+            decode_block(&buf, 5, buf.len(), &mut dst, raw.len()).unwrap();
+            assert_eq!(&dst[..raw.len()], &raw[..], "case {case}");
+            // Cut short: fewer bytes, never past them, and refused.
+            let cut = 5 + packed.len() / 2;
+            let mut dst = vec![0u8; raw.len() + 8];
+            assert!(decode_block(&buf[..cut], 5, cut, &mut dst, raw.len()).is_err(), "case {case}: a piece cut short is refused");
+            // SAFETY: `dst` holds the piece's length and 8 more.
+            let n = unsafe { reads::tape_lz4(&buf[..cut], &TapeView::default(), 5, cut as u32, dst.as_mut_ptr() as u64, raw.len() as u64) };
+            assert!((n as usize) < raw.len(), "case {case}: a piece cut short decodes less");
+        }
     }
 }

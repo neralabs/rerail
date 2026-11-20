@@ -196,7 +196,7 @@ const GPU_PER_SUBMISSION: f64 = 0.15e-3;
 /// the GPU had to be twice the cheaper (`MARGIN`, 2), against estimates 8 times off (decision 0320).
 pub(in crate::code_rule_dsl) const GPU_BIAS: f64 = 2.0;
 
-/// How long a stratum placed on the device may wait for the device's memory before it runs on the CPU instead (Q180):
+/// How long a stratum placed on the device may wait for the device's memory before it runs on the CPU instead (Q203):
 /// the CPU's price for its `work` units of planned work less the device's, at the prices it was placed by. Never
 /// negative.
 pub fn worth_waiting(work: f64) -> f64 {
@@ -217,8 +217,7 @@ pub fn admission_patience(work: f64) -> f64 {
 
 /// `GPU_BIAS`, or `RERAIL_GPU_BIAS` when set: a measurement aid only, to refit the bias over runs at several.
 pub(in crate::code_rule_dsl) fn gpu_bias() -> f64 {
-    static BIAS: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
-    *BIAS.get_or_init(|| std::env::var("RERAIL_GPU_BIAS").ok().and_then(|v| v.parse().ok()).filter(|b: &f64| *b > 0.0).unwrap_or(GPU_BIAS))
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_GPU_BIAS").ok().and_then(|v| v.parse().ok()).filter(|b: &f64| *b > 0.0).unwrap_or(GPU_BIAS))
 }
 
 /// Where a thread's run may place strata: the CPU only, the device where it is the cheaper (the Metal binding), or
@@ -239,6 +238,7 @@ thread_local! {
 /// Carries the binding to a job on another thread (`run_state`).
 pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
     c.copy(&["DEVICE"], &DEVICE);
+    c.cloned(&["RECORDED"], &RECORDED);
 }
 
 /// Whether this thread's run may use the device.
@@ -247,11 +247,11 @@ pub(in crate::code_rule_dsl) fn device() -> bool {
 }
 
 /// Sets whether this thread's run may place strata on the device; the previous value, to restore. `RERAIL_DEVICE=always`
-/// makes a Metal binding `Always`.
+/// makes a Metal binding `Always`, and so does a caller's `Always` (a test's, `set_binding`).
 pub(in crate::code_rule_dsl) fn set_device(on: bool) -> bool {
     let b = match on {
         false => Binding::Cpu,
-        true if always_env() => Binding::Always,
+        true if always_env() || binding() == Binding::Always => Binding::Always,
         true => Binding::Metal,
     };
     set_binding(b) != Binding::Cpu
@@ -274,8 +274,7 @@ pub fn set_binding(b: Binding) -> Binding {
 }
 
 fn always_env() -> bool {
-    static ALWAYS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ALWAYS.get_or_init(|| std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "always"))
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "always"))
 }
 
 /// A stratum's shape: its forms, and its planned work.
@@ -596,26 +595,45 @@ pub struct Ran {
     pub why: String,
 }
 
-static RECORDING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-static RECORDED: std::sync::Mutex<Vec<(String, Ran)>> = std::sync::Mutex::new(Vec::new());
+/// The placements kept while `recording` (decision 0442: the recording caller's, held by its thread and carried to
+/// its runs' jobs, `carried`).
+type Recorded = std::sync::Arc<std::sync::Mutex<Vec<(String, Ran)>>>;
 
-/// While the guard lives, every native stratum's placement is kept (`recorded`).
+thread_local! {
+    static RECORDED: std::cell::RefCell<Option<Recorded>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The recording under way for this thread's runs, if one is.
+fn recorded_here() -> Option<Recorded> {
+    RECORDED.with(|r| r.borrow().clone())
+}
+
+/// While the guard lives, every native stratum's placement in this caller's runs is kept (`recorded`).
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn recording() -> impl Drop {
-    struct On;
+    struct On(Option<Recorded>);
     impl Drop for On {
         fn drop(&mut self) {
-            RECORDING.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            let was = self.0.take();
+            RECORDED.with(|r| *r.borrow_mut() = was);
         }
     }
-    RECORDING.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    On
+    let was = RECORDED.with(|r| {
+        let mut r = r.borrow_mut();
+        let was = r.clone();
+        if r.is_none() {
+            *r = Some(Default::default());
+        }
+        was
+    });
+    On(was)
 }
 
 /// The kept placements of strata whose key starts with `prefix` (taken).
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn recorded(prefix: &str) -> Vec<(String, Ran)> {
-    let mut all = RECORDED.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(all) = recorded_here() else { return Vec::new() };
+    let mut all = all.lock().unwrap_or_else(|e| e.into_inner());
     let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut *all).into_iter().partition(|(k, _)| k.starts_with(prefix));
     *all = rest;
     mine
@@ -636,9 +654,7 @@ pub(in crate::code_rule_dsl) fn record(key: &str, placed: &Placement, refused: O
         };
         profile::executor(key, ran, None, device);
     }
-    if RECORDING.load(std::sync::atomic::Ordering::Relaxed) == 0 {
-        return;
-    }
+    let Some(recorded) = recorded_here() else { return };
     let ran = match (placed.gpu, refused) {
         (true, Some(None)) => Ran { device: true, why: "device".into() },
         (true, Some(Some(why))) => Ran { device: false, why: format!("refused: {why}") },
@@ -646,7 +662,7 @@ pub(in crate::code_rule_dsl) fn record(key: &str, placed: &Placement, refused: O
         (false, _) if !placed.missing.is_empty() => Ran { device: false, why: format!("no {}", placed.missing.iter().map(|f| f.name()).collect::<Vec<_>>().join(", no ")) },
         (false, _) => Ran { device: false, why: placed.why() },
     };
-    RECORDED.lock().unwrap_or_else(|e| e.into_inner()).push((key.to_owned(), ran));
+    recorded.lock().unwrap_or_else(|e| e.into_inner()).push((key.to_owned(), ran));
 }
 
 /// Keeps a stratum that fell back to SQLite while recording: the class of literal the native engine had no step
@@ -654,10 +670,8 @@ pub(in crate::code_rule_dsl) fn record(key: &str, placed: &Placement, refused: O
 /// `lacking`: the device's hazards for the stratum besides (`Shape::lacking`).
 pub(in crate::code_rule_dsl) fn record_fallback(key: &str, class: &str, why: &str, lacking: Vec<String>) {
     crate::code_rule_dsl::logic::profile::executor(key, "SQLite", Some(format!("{class} ({why})")), lacking);
-    if RECORDING.load(std::sync::atomic::Ordering::Relaxed) == 0 {
-        return;
-    }
-    RECORDED.lock().unwrap_or_else(|e| e.into_inner()).push((key.to_owned(), Ran { device: false, why: format!("sqlite: {class} ({why})") }));
+    let Some(recorded) = recorded_here() else { return };
+    recorded.lock().unwrap_or_else(|e| e.into_inner()).push((key.to_owned(), Ran { device: false, why: format!("sqlite: {class} ({why})") }));
 }
 
 /// Whether this thread's run may place strata on the device.
@@ -787,8 +801,7 @@ pub(in crate::code_rule_dsl) fn place(shape: &Shape) -> Placement {
 /// A measurement aid only: `RERAIL_DEVICE_JOINS=off` keeps every stratum's joins on the CPU under a device binding,
 /// so a run can be paired against the same binding with them on. Placement still prices and reports as usual.
 pub(crate) fn device_joins_off() -> bool {
-    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *OFF.get_or_init(|| std::env::var("RERAIL_DEVICE_JOINS").is_ok_and(|v| v == "off"))
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_DEVICE_JOINS").is_ok_and(|v| v == "off"))
 }
 
 #[cfg(test)]

@@ -136,6 +136,18 @@ pub fn translate_reads(funcs: &[(u32, ir::Function, bool)], entries: &[(u32, &st
             let args: Vec<String> = (2..types.len()).map(|i| format!(", a{i}")).collect();
             let [ret] = f.signature.returns.as_slice() else { return Err(format!("{n}: a read returns one value")) };
             let ret = ty(ret.value_type)?.0;
+            // A read that takes an address past the tape and its view (`tape_lz4`'s destination) writes or reads
+            // there unchecked: unsafe, its address the caller's to give.
+            if types[2..].contains(&"u64") {
+                writeln!(
+                    out,
+                    "/// The read `{n}` of the tape in `tape`, whose `view`'s offsets count from its first byte.\n///\n/// # Safety\n/// Each address it takes is valid for what the read says it does there.\n#[inline(always)]\npub unsafe fn {n}(tape: &[u8], view: &rerail_clif::view::TapeView, {}) -> {ret} {{\n    // SAFETY: the caller's for the addresses; each load of the tape is checked against `tape` (`ld`).\n    unsafe {{ f{entry}(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64{}) }}\n}}\n",
+                    params.join(", "),
+                    args.concat()
+                )
+                .unwrap();
+                continue;
+            }
             writeln!(
                 out,
                 "/// The read `{n}` of the tape in `tape`, whose `view`'s offsets count from its first byte.\n#[inline(always)]\npub fn {n}(tape: &[u8], view: &rerail_clif::view::TapeView, {}) -> {ret} {{\n    // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).\n    unsafe {{ f{entry}(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64{}) }}\n}}\n",
@@ -795,8 +807,10 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
             set(format!("({} as {} as {s}) as {u}", args[0], from.1))
         }
         // A read's load of the tape: checked against its bytes (`translate_reads`).
+        // The tape's loads are read-only and not marked aligned (the view's fields are); a load that may be written
+        // (a 16z block's slot, which the decoder bounds itself, decision 0427) is not the tape's.
         Opcode::Load | Opcode::Uload8 | Opcode::Uload16 | Opcode::Uload32
-            if read_style(u32::MAX).is_some() && CHECKED.with(std::cell::Cell::get) && !data.memflags().is_some_and(|m| m.aligned()) =>
+            if read_style(u32::MAX).is_some() && CHECKED.with(std::cell::Cell::get) && data.memflags().is_some_and(|m| m.readonly() && !m.aligned()) =>
         {
             let base = name(dfg.block_params(f.layout.entry_block().ok_or("no entry block")?)[0]);
             let t = match op {

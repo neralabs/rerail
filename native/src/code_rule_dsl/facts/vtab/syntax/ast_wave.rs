@@ -7,7 +7,8 @@ use std::sync::Mutex;
 
 /// The process's lowered matchers, by their text and their base policy's: lowered once.
 type Lowered = Result<(Arc<crate::code_rule_dsl::transducer::packed::LoweredMatcher>, Vec<crate::code_rule_dsl::matcher::DocumentGate>, Arc<crate::code_rule_dsl::waves::policies::Captor>), String>;
-static LOWERED: std::sync::LazyLock<Mutex<HashMap<(String, String), Lowered>>> = std::sync::LazyLock::new(Default::default);
+#[derive(Default)]
+struct LoweredWaves(Mutex<HashMap<(String, String), Lowered>>);
 
 /// The engine's compiler of `ast` matchers (`waves::policies::lower_matcher`), registered at load.
 pub(crate) struct Compiler;
@@ -29,7 +30,8 @@ fn compiled(matchers: &[(String, String, Vec<String>)], demand: &[Option<Vec<usi
         .map(|(k, (rel, text, captures))| {
             let key = (text.clone(), base_text.clone());
             let got = {
-                let mut kept = LOWERED.lock().unwrap_or_else(|p| p.into_inner());
+                let held_ = crate::code_rule_dsl::logic::profile::shared::<LoweredWaves>();
+                let mut kept = held_.0.lock().unwrap_or_else(|p| p.into_inner());
                 kept.entry(key)
                     .or_insert_with(|| crate::code_rule_dsl::waves::policies::lower_matcher(text, base).map(|(m, g, c)| (Arc::new(m), g, Arc::new(c))))
                     .clone()
@@ -183,7 +185,7 @@ fn matched(
     let Some(wave) = &matchers.wave else { return Ok(Vec::new()) };
     let metal = matches!(binding, crate::code_rule_dsl::typing::file_local::Binding::Metal);
     // Each tape's document in the batch; the tapes outside it take no part.
-    let at: Vec<Option<&Projected>> = tapes.iter().map(|(facts, _, _)| batch.docs.iter().find(|p| Arc::ptr_eq(&p.facts, facts))).collect();
+    let at: Vec<Option<&Projected>> = tapes.iter().map(|(facts, _, _)| batch.docs.iter().find(|p| Arc::ptr_eq(&p.facts, facts)).map(|p| &**p)).collect();
     let held: Vec<usize> = (0..tapes.len()).filter(|&i| at[i].is_some()).collect();
     // A matcher runs where its gates hold and W admits the file: its `syntax` (valid or invalid) and text literals.
     let errors: Vec<crate::code_rule_dsl::soundness::SyntaxErrors> = held.iter().map(|&i| crate::code_rule_dsl::soundness::SyntaxErrors::of_doc(&tapes[i].1)).collect();
@@ -219,7 +221,7 @@ fn matched(
         let program = MatcherWave { wave: Arc::clone(wave), tapes: docs, active, gpu };
         let kernel = rerail_accel::Kernel::Program(rerail_accel::kernel::ProgramKernel(Arc::new(program)));
         let ex = crate::code_rule_dsl::logic::lanes::executor_for(metal);
-        let (mut done, _) = crate::code_rule_dsl::logic::lanes::prof::run_on(ex, "ast matcher wave", rerail_accel::Batch(vec![rerail_accel::Launch::new(kernel)])).map_err(StoreError::Invalid)?;
+        let (mut done, _) = crate::code_rule_dsl::logic::lanes::prof::run_on(&ex, "ast matcher wave", rerail_accel::Batch(vec![rerail_accel::Launch::new(kernel)])).map_err(StoreError::Invalid)?;
         let done = done.remove(0);
         let rerail_accel::kernel::Output::Program(r) = done.out else {
             return Err(StoreError::Invalid("ast matcher wave: not a program's result".into()));

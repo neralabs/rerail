@@ -35,8 +35,17 @@ pub(in crate::code_rule_dsl) fn compiled(
 /// where its body is the same wave's matchers. `None` where any read is not so joined: negated, in an aggregate, an
 /// output, or joined only with what the batch's rows or the inputs fill.
 pub fn demanded_by_roots(v: &Version, matchers: &[(String, String, Vec<String>)]) -> Vec<Option<Vec<usize>>> {
-    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
     let outputs = v.output_names();
+    // The relations something besides matchers' roots fills: the inputs, native and lattice relations, and the
+    // relations with fact rows (read once, for every matcher's walk).
+    let filled_elsewhere: BTreeSet<String> = v
+        .input_names()
+        .into_iter()
+        .chain(v.natives().into_keys())
+        .chain(v.lattice().into_keys())
+        .chain(v.fact_names().into_iter().filter(|rel| v.has_fact_rows(rel)))
+        .collect();
     let index: HashMap<&str, usize> = matchers.iter().enumerate().map(|(k, (rel, _, _))| (rel.as_str(), k)).collect();
     let mut known = HashMap::new();
     matchers
@@ -65,7 +74,7 @@ pub fn demanded_by_roots(v: &Version, matchers: &[(String, String, Vec<String>)]
                             return None;
                         }
                         other.args().enumerate().find_map(|(column, arg)| {
-                            (arg.var() == Some(node)).then(|| filled_by_roots(v, &index, v.rel_name(other.rel()), column, &mut known, &mut Vec::new())).flatten()
+                            (arg.var() == Some(node)).then(|| filled_by_roots(&filled_elsewhere, v, &index, v.rel_name(other.rel()), column, &mut known, &mut Vec::new())).flatten()
                         })
                     });
                     match roots {
@@ -82,6 +91,7 @@ pub fn demanded_by_roots(v: &Version, matchers: &[(String, String, Vec<String>)]
 /// The matchers whose roots hold every value of `rel`'s `column`, where only they fill it: a matcher's own relation's
 /// node, or a derived relation whose every rule binds the column from such a column of a positive atom.
 fn filled_by_roots(
+    filled_elsewhere: &BTreeSet<String>,
     v: &Version,
     index: &HashMap<&str, usize>,
     rel: &str,
@@ -98,12 +108,7 @@ fn filled_by_roots(
         return found.clone();
     }
     // A cycle, an input, a native or lattice relation, or a relation with facts: not only matchers' roots.
-    if visiting.contains(&key)
-        || v.input_names().iter().any(|input| input == rel)
-        || v.natives().contains_key(rel)
-        || v.lattice().contains_key(rel)
-        || v.has_fact_rows(rel)
-    {
+    if visiting.contains(&key) || filled_elsewhere.contains(rel) {
         return None;
     }
     visiting.push(key.clone());
@@ -120,7 +125,7 @@ fn filled_by_roots(
             if atom.neg() {
                 return None;
             }
-            atom.args().enumerate().find_map(|(c, arg)| (arg.var() == Some(var)).then(|| filled_by_roots(v, index, v.rel_name(atom.rel()), c, known, visiting)).flatten())
+            atom.args().enumerate().find_map(|(c, arg)| (arg.var() == Some(var)).then(|| filled_by_roots(filled_elsewhere, v, index, v.rel_name(atom.rel()), c, known, visiting)).flatten())
         });
         match (from, found.as_mut()) {
             (Some(from), Some(found)) => found.extend(from),

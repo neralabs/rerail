@@ -31,7 +31,8 @@ use cranelift_frontend::FunctionBuilder;
 /// `clif_rust`'s Rust has, and the vendored Cranelift's aarch64 lowering since 0381: `cmtst`): a
 /// class's lane is then the test itself, not its complement. On by default where the vendored
 /// Cranelift is built for aarch64 (`cranelift_clmul`, its mark); upstream's has no `cmtst`.
-pub static BIT_TEST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(cfg!(all(cranelift_clmul, target_arch = "aarch64")));
+pub const BIT_TEST_DEFAULT: bool = cfg!(all(cranelift_clmul, target_arch = "aarch64"));
+/// The run's choice: `native_cpu_codegen::Options::bit_test`, `BIT_TEST_DEFAULT` unless its caller sets it.
 
 /// How far back a byte-local value may look: the bytes before a file (`FRONT`).
 const MAX_LAG: u8 = 16;
@@ -1301,7 +1302,7 @@ impl<'a> Lanes<'a> {
     }
 
     /// The bytes with any of `bits` set in `v`. Where the backend tests bits in one instruction
-    /// (`BIT_TEST`: NEON's `vtst`, as the lean lexer's window reads its classes), the test
+    /// (`Options::bit_test`: NEON's `vtst`, as the lean lexer's window reads its classes), the test
     /// itself; else its complement, a compare with zero, the polarity free.
     /// A pair of tables' AND at chunk `c`, lag `lag`: the byte before's classes and this
     /// byte's, made once for every pair of their bits.
@@ -1381,7 +1382,7 @@ impl<'a> Lanes<'a> {
     fn none_of(&mut self, f: &mut FunctionBuilder<'_>, v: Value, bits: u8) -> Lane {
         let sel = self.splat(f, bits);
         let picked = f.ins().band(v, sel);
-        if BIT_TEST.load(std::sync::atomic::Ordering::Relaxed) {
+        if crate::native_cpu_codegen::options().bit_test.load(std::sync::atomic::Ordering::Relaxed) {
             return Lane::V(f.ins().icmp(IntCC::NotEqual, picked, self.zero16), false);
         }
         Lane::V(f.ins().icmp(IntCC::Equal, picked, self.zero16), true)

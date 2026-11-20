@@ -7,7 +7,7 @@ description = "Kotlin's Bitlex grammar, compiled to tier 1 and tier 2: tree-sitt
 
 [features]
 # The compiler's test hooks, for a build with `--features test-hooks` (scripts/check/check_dev_features.py).
-test-hooks = ["rerail-compiler/test-hooks"]
+test-hooks = ["rerail-kotlin-lean/test-hooks", "rerail-tape-format/test-hooks", "rerail-compiler/test-hooks"]
 
 [dependencies]
 rerail-compiler = { path = "../compiler" }

@@ -42,7 +42,9 @@ const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_RE
     // The stores a measurement keeps apart (the cost model's, the rule images'): a plan's costs and a program's stored
     // form, never the run's outputs.
     "RERAIL_COSTS", "RERAIL_IMAGE_STORE", "RERAIL_EXPORT_IMAGES",
-    "RERAIL_FRAMES_TRACE"];
+    "RERAIL_FRAMES_TRACE",
+    // The memory ceiling (decision 0462): a run past it is stopped and keeps nothing; one under it outputs the same.
+    "RERAIL_MEMORY_MAX_MB"];
 
 /// Whether a switch only measures a run, never changes what it outputs: left out of the run's key.
 pub fn measures_only(name: &str) -> bool {

@@ -56,8 +56,8 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/metal/src/buffer_observation.rs", "ACTIVE", Thread, "this thread's scratch or counters in a backend"),
     ("crates/metal/src/launch.rs", "EVALUATION", Thread, "this thread's scratch or counters in a backend"),
     ("crates/metal/src/test_pool.rs", "LEDGERS", Thread, "this thread's share of the test pool"),
-    ("crates/metal/src/test_pool.rs", "MEASURED", Thread, "this thread's test reads the driver's figure itself"),
-    ("crates/metal/src/test_pool.rs", "WORKING_SET", Thread, "this thread's test's working set for the device"),
+    ("crates/metal/src/test_pool.rs", "MEASURED", Thread, "this thread's test reads the driver's own figure (a test switch, per thread as the test pool is)"),
+    ("crates/metal/src/test_pool.rs", "WORKING_SET", Thread, "this thread's test's working set for the device (a test switch, per thread as the test pool is)"),
     ("crates/prof/src/lib.rs", "LEFT", Thread, "this thread's sampling countdown"),
     ("crates/prof/src/lib.rs", "SPAN", Thread, "this thread's sampled span"),
     ("crates/prof/src/lib.rs", "THREAD_IX", Thread, "this thread's number in the heap samples taken with no span open"),
@@ -96,12 +96,13 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/lanes.rs", "SUSPENDABLE", Thread, "this thread's device queue: what it issued, it flushes and waits for"),
     ("src/code_rule_dsl/logic/native/setfix.rs", "GROWN", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
     ("src/code_rule_dsl/logic/native/setfix.rs", "MIXED", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
-    ("src/code_rule_dsl/logic/native.rs", "OWN_LATTICES", Carried, ""),
+    ("crates/context/src/lib.rs", "RUN", Carried, ""),
     ("src/code_rule_dsl/logic/native/setfix.rs", "WALKS_WHOLE", Carried, ""),
     ("src/code_rule_dsl/facts/rows.rs", "CHUNK", Carried, ""),
-    ("src/code_rule_dsl/facts/rows.rs", "GIVEN", Thread, "what this thread's chunk scopes gave their chunks of its own allocation"),
-    ("src/code_rule_dsl/facts/rows.rs", "TOP", Thread, "this thread's innermost chunk scope's allocation at its entry"),
-    ("src/code_rule_dsl/mod.rs", "COUNTERS", Thread, "this thread's allocator counters (jemalloc's, per thread)"),
+    ("src/code_rule_dsl/facts/rows.rs", "GIVEN", Thread, "the bytes this thread's chunk scopes gave their chunks: the thread's own allocation counts, read against its jemalloc net"),
+    ("src/code_rule_dsl/facts/rows.rs", "NET", Thread, "inside rows.rs's tests module (a test build only): a test's stand-in for the allocator's net counter"),
+    ("src/code_rule_dsl/facts/rows.rs", "TOP", Thread, "this thread's innermost chunk scope's entry figures: the thread's own allocation counts"),
+    ("src/code_rule_dsl/mod.rs", "COUNTERS", Thread, "jemalloc's counters of this thread's allocations"),
     ("src/code_rule_dsl/logic/native/setfix.rs", "IN_MORSELS", Thread, "the walks this thread ran in morsels, read by tests"),
     ("src/code_rule_dsl/logic/native/setfix.rs", "VARIANTS", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
     ("src/code_rule_dsl/logic/native/setfix/closure.rs", "SEMI_NAIVE_HERE", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
@@ -112,7 +113,6 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/native/setfix/device.rs", "FLUSHED", Thread, "this thread's device waves and launches"),
     ("src/code_rule_dsl/logic/native/setfix/device.rs", "GROWTH", Thread, "this thread's device waves and launches"),
     ("src/code_rule_dsl/logic/native/setfix/device.rs", "LAST", Thread, "this thread's device waves and launches"),
-    ("src/code_rule_dsl/logic/native/setfix/device.rs", "OWN_TEXTS", Thread, "the component whose plans this thread compiles"),
     ("src/code_rule_dsl/logic/native/setfix/device.rs", "RESIDENT", Thread, "this thread's device waves and launches"),
     ("src/code_rule_dsl/logic/native/setfix/device.rs", "SUSPENDED", Thread, "this thread's device waves and launches"),
     ("src/code_rule_dsl/logic/native/setfix/device.rs", "TESTS", Thread, "device text tests by pattern: any thread's gives the same"),
@@ -134,28 +134,39 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/git_snapshot.rs", "REPOSITORY", Thread, "a worker-local gix handle keyed by view and pack epoch"),
     ("src/code_rule_dsl/logic/plan/corpus.rs", "THREAD_STORE", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus.rs", "RUNS_UNDER_WAY", Carried, ""),
+    ("src/code_rule_dsl/logic/plan/corpus.rs", "STORE", Carried, "the testing store its caller set (`use_store`), carried to its runs' jobs (decision 0442)"),
     ("src/code_rule_dsl/logic/plan/corpus/maintain.rs", "BY_LEVELS", Thread, "counts of this thread's own runs, which a test reads beside others (decision 0204)"),
+    ("src/code_rule_dsl/logic/plan/corpus/inputs.rs", "OPTIONS", Carried, "the caller's options for its runs' inputs (decision 0442)"),
+    ("src/code_rule_dsl/logic/plan/joins.rs", "DRAIN", Carried, "the caller's choice: whether its runs' ends serve the waiting searches (decision 0442)"),
+    ("src/code_rule_dsl/logic/plan/corpus/phases.rs", "BATCH", Carried, "the batch under way: its caller's, carried to its runs' jobs (decision 0442)"),
     ("src/code_rule_dsl/logic/plan/corpus/phases.rs", "HANDED_DOWN", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus/phases.rs", "PHASE_ONE", Carried, ""),
+    ("src/code_rule_dsl/logic/plan/corpus/phases.rs", "READING", Carried, "the reading under way: its caller's, carried to its runs' jobs (decision 0442)"),
     ("src/code_rule_dsl/logic/plan/corpus/phases.rs", "RUNNING", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus/session.rs", "BOUND", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus/session.rs", "FULL", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus/switches.rs", "DEPTH", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus/test_store.rs", "FILLING", Thread, "this thread fills the test store's template: its own runs take the switches without making it first"),
     ("src/reactor.rs", "KEPT", Outermost, "the reactor's session between its commands, taken by each command (decision 0204)"),
+    ("src/reactor.rs", "SHARED", Outermost, "what the instance's commands share by design (decision 0442): its one caller's object"),
     ("src/code_rule_dsl/logic/plan/corpus/test_store.rs", "HANDED", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus/test_store.rs", "OWN", Carried, ""),
     ("src/code_rule_dsl/logic/plan/demand.rs", "WHOLE", Carried, ""),
     ("src/code_rule_dsl/logic/plan/keeps.rs", "OBSERVED_AT", Carried, ""),
     ("src/code_rule_dsl/logic/plan/keeps.rs", "OWN_OBSERVED", Carried, ""),
     ("src/code_rule_dsl/logic/plan/placement.rs", "DEVICE", Carried, ""),
+    ("src/code_rule_dsl/logic/plan/placement.rs", "RECORDED", Carried, "the recording caller's kept placements (decision 0442)"),
     ("src/code_rule_dsl/logic/profile.rs", "DECIDING", Call, "the decisions of the step open on this thread (decision 0269): a pool job's are the profile's alone"),
     ("src/code_rule_dsl/logic/profile.rs", "BEHIND", Thread, "marks the store's writer thread"),
     ("src/code_rule_dsl/logic/profile.rs", "QUIET", Call, "a debug build's tree check beside a pass, its decisions unrecorded for the call (`quiet`): a pool job it starts records its own"),
     ("src/code_rule_dsl/logic/profile.rs", "HELD", Thread, "whether this thread holds the profile's state"),
-    ("src/code_rule_dsl/logic/profile.rs", "SHARD", Thread, "this thread's profile records, merged into the run's as they are read"),
+    ("src/code_rule_dsl/logic/profile.rs", "SHARD", Thread, "this thread's shard of its run's profile records, merged into them as they are read (decision 0442)"),
     ("src/code_rule_dsl/logic/profile.rs", "STACK", Thread, "this thread's open spans; a job opens its span under its caller's (`profile::here`, carried)"),
     ("src/code_rule_dsl/logic/profile.rs", "STAGE", Carried, ""),
+    ("src/code_rule_dsl/logic/profile.rs", "ON", Carried, "whether the caller's runs are profiled (decision 0442)"),
+    ("src/code_rule_dsl/logic/profile.rs", "DIR", Carried, "where the caller's next profile is written (decision 0442)"),
+    ("src/code_rule_dsl/logic/profile.rs", "COMMAND", Outermost, "the command's clocks, on the thread that runs it and its outermost run"),
+    ("crates/context/src/lib.rs", "SEEN", Thread, "this thread's copy of the settings its run under way read, held with that run (decision 0442)"),
     ("src/code_rule_dsl/logic/profile.rs", "WARM_SCOPE", Thread, "the warm check's mark of the transaction a store writer has open on this thread; its commit hook runs on it"),
     ("src/code_rule_dsl/logic/rr.rs", "READS", Call, "the libraries read while `recording` runs; a job records its own and hands them back (`rr::recorded_on_worker`)"),
     ("src/code_rule_dsl/logic/strings/git.rs", "GIT_EVALUATION", Carried, ""),
@@ -298,8 +309,13 @@ impl<T: Clone + Send + Sync + 'static, G: 'static> Part for Shared<T, G> {
 
 /// The modules whose thread-locals are carried, each taking its own.
 const CARRIERS: &[fn(&mut Capture)] = &[
+    // The run first: entered first, it is put back last, so every other part's guard drops inside it (a plans
+    // guard's drop counts into the run).
+    super::run::carried,
     super::plan::corpus::carried,
     super::plan::corpus::phases::carried,
+    super::plan::corpus::inputs::carried,
+    super::plan::joins::carried,
     super::plan::carried,
     super::plan::keeps::carried,
     super::plan::choices::carried,
@@ -309,7 +325,6 @@ const CARRIERS: &[fn(&mut Capture)] = &[
     super::plan::corpus::switches::carried,
     super::plan::corpus::session::carried,
     super::native::setfix::carried,
-    super::native::carried,
     #[cfg(any(test, feature = "test-hooks"))]
     super::plan::corpus::test_store::carried,
     carried_elsewhere,
@@ -322,6 +337,8 @@ fn carried_elsewhere(c: &mut Capture) {
     c.copy(&["IN_PHASE_0"], &crate::code_rule_dsl::phase_clock::IN_PHASE_0);
     c.copy(&["WAVES"], &crate::content_store::write_back::WAVES);
     c.copy(&["STAGE"], &super::profile::STAGE);
+    c.copy(&["ON"], &super::profile::ON);
+    c.cloned(&["DIR"], &super::profile::DIR);
     c.part(&["CURRENT"], Shared(crate::code_rule_dsl::sql_admission::current(), crate::code_rule_dsl::sql_admission::enter_current));
 }
 

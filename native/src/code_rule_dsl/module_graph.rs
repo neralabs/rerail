@@ -634,8 +634,8 @@ impl Stamp {
 type CachedSummary = (Stamp, Arc<Summary>);
 
 /// Summaries of files on disk, by absolute path, across calls.
-static DISK_SUMMARIES: LazyLock<Mutex<HashMap<PathBuf, CachedSummary>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+#[derive(Default)]
+struct DiskSummaries(Mutex<HashMap<PathBuf, CachedSummary>>);
 /// The disk cache is dropped whole beyond this many entries.
 const MAX_CACHED_SUMMARIES: usize = 200_000;
 /// A file modified less than this long before it is read is not cached: a rewrite within the
@@ -682,7 +682,8 @@ pub fn on_disk(
     let mut hits = Vec::with_capacity(sources.len());
     let mut misses = Vec::new();
     {
-        let cache = DISK_SUMMARIES.lock();
+        let held_ = crate::code_rule_dsl::logic::profile::shared::<DiskSummaries>();
+        let cache = held_.0.lock();
         for (relative, absolute, metadata) in sources {
             let path = join(folder, &relative);
             // The overlay's text replaces this source's below; disk's is not read.
@@ -730,7 +731,8 @@ pub fn on_disk(
         files.insert(path, summary);
     }
     if !read.is_empty() {
-        let mut cache = DISK_SUMMARIES.lock();
+        let held_ = crate::code_rule_dsl::logic::profile::shared::<DiskSummaries>();
+        let mut cache = held_.0.lock();
         if cache.len() > MAX_CACHED_SUMMARIES {
             cache.clear();
         }

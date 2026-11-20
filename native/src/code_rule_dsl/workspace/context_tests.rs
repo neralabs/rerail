@@ -144,6 +144,7 @@ fn apply_json(workspace: &CodeRuleDslWorkspace, revision: u32, files: Value) -> 
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": revision, "files": files, "removed": [] }).to_string(),
         request_buffer: None,
         request_direct: None,
@@ -183,6 +184,7 @@ fn apply_buffer(workspace: &CodeRuleDslWorkspace, revision: u32, files: &Value) 
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: String::new(),
         request_buffer: Some(buffer_request(revision, files)),
         request_direct: None,
@@ -488,6 +490,7 @@ fn apply_host(workspace: &CodeRuleDslWorkspace, revision: u32, files: Value, rem
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": revision, "files": files, "removed": removed })
             .to_string(),
         request_buffer: None,
@@ -1348,6 +1351,7 @@ fn an_interactive_apply_runs_while_a_repository_index_plans_its_restore() {
     let mut edit = WorkspaceApplyTask {
         state: Arc::clone(&session.state),
         closed: Arc::clone(&session.closed),
+        shared: Arc::clone(&session.shared),
         request_json: json!({ "revision": 1, "removed": [], "files": [
             { "path": "edit.py", "language": "python", "source": "helper()\n" }] })
         .to_string(),
@@ -1992,6 +1996,7 @@ fn package_marker_overlays_refresh_unchanged_siblings_for_json_and_buffer_reques
     let mut remove = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": 3, "files": [], "removed": ["pkg/__init__.py"] })
             .to_string(),
         request_buffer: None,
@@ -2032,6 +2037,7 @@ fn removing_a_package_marker_never_reintroduces_the_removed_file() {
     let mut remove = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": 2, "files": [], "removed": ["pkg/__init__.py"] })
             .to_string(),
         request_buffer: None,
@@ -3435,6 +3441,7 @@ fn node_references_resolve_through_the_store_and_refuse_stale_versions() {
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": 3, "files": [], "removed": ["a.py"] }).to_string(),
         request_buffer: None,
         request_direct: None,
@@ -3555,6 +3562,7 @@ fn evicted_resident_and_unstored_workspaces_publish_the_same_results() {
             let mut task = WorkspaceApplyTask {
                 state: Arc::clone(&workspace.state),
                 closed: Arc::clone(&workspace.closed),
+                shared: Arc::clone(&workspace.shared),
                 request_json: json!({ "revision": revision, "files": files, "removed": removed })
                     .to_string(),
                 request_buffer: None,
@@ -3776,6 +3784,7 @@ fn a_bulk_restored_package_marker_names_unhosted_files_and_its_removal_rederives
     let mut remove = WorkspaceApplyTask {
         state: Arc::clone(&restored.state),
         closed: Arc::clone(&restored.closed),
+        shared: Arc::clone(&restored.shared),
         request_json:
             json!({ "revision": next + 1, "files": [], "removed": ["alpha/__init__.py"] })
                 .to_string(),
@@ -4548,6 +4557,7 @@ fn a_request_that_fails_partway_leaves_the_package_context_unchanged() {
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": 2, "removed": ["../escape.ts"], "files": [
             file("app/page.tsx", "tsx", &page("../lib/b")),
             file("tsconfig.json", "json", "{}"),

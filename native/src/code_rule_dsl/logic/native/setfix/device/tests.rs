@@ -1081,7 +1081,7 @@
             // At the host's second line (byte 10 of "import os\nx = f(1, y=2)\n"): the guest's two lines are the
             // host's line 2.
             let place = Placement::Copied { delta: 10, within: [10, 24] };
-            let guest = Guest { host: 7, at: 7 << 32, grammar: "python".to_owned(), role: "program".to_owned(), root: 0, place: place.clone(), in_file: place, made: Made::Host };
+            let guest = Guest { host: 7, file: 7, at: 7 << 32, grammar: "python".to_owned(), role: "program".to_owned(), root: 0, place: place.clone(), in_file: place, made: Made::Host };
             docs.push(Document { key: 100, core: "/w#core:d0.py#guest:python:0".to_owned(), digest: core::digest(&facts), path: "d0.py".to_owned(), facts, tape: None, guest: Some(Arc::new(guest)), module: None });
             let core_views = shaped(&store, docs, &Projection::core()).unwrap();
             {
@@ -1171,8 +1171,8 @@
         // the same rows on a second solve.
         let chunk = batch.chunk();
         let read = |c: &crate::code_rule_dsl::facts::nearest::InChunk| -> Vec<(i64, i64)> { (0..c.rows.len()).map(|r| (c.rows.get(r, 0), c.rows.get(r, 1))).collect() };
-        let once = mj::axis_in_chunk(chunk, None, true).unwrap();
-        let again = mj::axis_in_chunk(chunk, None, true).unwrap();
+        let once = mj::axis_in_chunk(&[chunk], None, true).unwrap();
+        let again = mj::axis_in_chunk(&[chunk], None, true).unwrap();
         assert!(once.rows.len() > 0);
         assert_eq!(once.rows.len() as usize, Within::new(Arc::clone(&batch), Mode::Tree).len());
         // Room for its rows, rounded up to whole chunks: not a bound sized before the count.
@@ -1183,7 +1183,7 @@
         let _ = std::fs::remove_file(&store_path);
     }
 
-    /// Q180: a stage's table before it runs is the planner's estimate of its rows with a margin, not its input
+    /// Q203: a stage's table before it runs is the planner's estimate of its rows with a margin, not its input
     /// doubled: rr_token_req's tables were 730,304 rows for 7,453 made, and refused past the device's budget. The
     /// growth a stage was seen to have still sizes it first, a scan holds its relation's rows at most, and a rule the
     /// planner did not price keeps doubling.

@@ -1013,7 +1013,7 @@ mod executor_tests {
             "the lookup asked for a device lane"
         );
         assert!(
-            std::ptr::eq(ex, crate::code_rule_dsl::logic::lanes::executor_for(false)),
+            std::sync::Arc::ptr_eq(&ex, &crate::code_rule_dsl::logic::lanes::executor_for(false)),
             "not the run's executor"
         );
     }

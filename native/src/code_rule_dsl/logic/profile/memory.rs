@@ -172,10 +172,9 @@ pub(super) struct Sampled {
     pub(super) heap_in_at: u64,
 }
 
-/// `RERAIL_HEAP_AT`'s text, read once.
-fn heap_at_text() -> Option<&'static str> {
-    static AT: std::sync::LazyLock<Option<String>> = std::sync::LazyLock::new(|| std::env::var("RERAIL_HEAP_AT").ok().filter(|t| !t.is_empty()));
-    AT.as_deref()
+/// `RERAIL_HEAP_AT`'s text, read once a run.
+fn heap_at_text() -> Option<String> {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_HEAP_AT").ok().filter(|t| !t.is_empty()))
 }
 
 pub(super) static SAMPLED: std::sync::LazyLock<std::sync::Mutex<Sampled>> = std::sync::LazyLock::new(Default::default);
@@ -243,7 +242,7 @@ pub(super) fn sample() {
                 if let Some(text) = heap_at_text()
                     && rerail_prof::heap::on()
                     && now >= s.heap_in_at + (16 << 20)
-                    && sample.open.iter().any(|p| p.contains(text))
+                    && sample.open.iter().any(|p| p.contains(text.as_str()))
                 {
                     s.heap_in_at = now;
                     drop(s);

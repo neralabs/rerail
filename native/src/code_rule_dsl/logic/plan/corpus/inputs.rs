@@ -146,33 +146,61 @@ impl Readers {
     }
 }
 
-/// Where `artifact=` inputs are read: `--facts DIR` (`set_facts_dir`), else `<root>/.rerail/facts`
-/// (data-layer/RUN-FACTS.md section 2). Never the repository tree itself.
-static FACTS_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+/// The caller's options for its runs' inputs (`logic --facts`, `--require-facts`, `--base`): held by the thread
+/// that set them and carried to its runs' jobs (`carried`; decision 0442), so two callers never take each other's.
+#[derive(Clone, Default)]
+struct Options {
+    /// Where `artifact=` inputs are read: `--facts DIR` (`set_facts_dir`), else `<root>/.rerail/facts`
+    /// (data-layer/RUN-FACTS.md section 2). Never the repository tree itself.
+    facts_dir: Option<PathBuf>,
+    /// `--require-facts` (data-layer/RUN-FACTS.md section 5, the CI column): an artifact that is missing, stale or
+    /// malformed fails the run, and so does a failed one unless the policy reports it.
+    require_facts: bool,
+    /// The reference a change is compared against: `--base REV`, any revision spec (`origin/main`, an id).
+    /// `git_rev("base", …)`, which `at="base"` inputs are read at, is the merge base of HEAD and it.
+    base: Option<String>,
+}
 
-/// `logic --facts DIR`: the run's facts directory, for the process.
+thread_local! {
+    static OPTIONS: std::cell::RefCell<Options> = const { std::cell::RefCell::new(Options { facts_dir: None, require_facts: false, base: None }) };
+}
+
+/// Carries the caller's options to a job of its run on another thread (`run_state`).
+pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
+    c.cloned(&["OPTIONS"], &OPTIONS);
+}
+
+/// `logic --facts DIR`: the facts directory of this caller's runs.
 pub fn set_facts_dir(dir: PathBuf) -> std::result::Result<(), String> {
-    FACTS_DIR.set(dir).map_err(|_| "the facts directory is already set".to_owned())
+    OPTIONS.with(|o| {
+        let mut o = o.borrow_mut();
+        if o.facts_dir.is_some() {
+            return Err("the facts directory is already set".to_owned());
+        }
+        o.facts_dir = Some(dir);
+        Ok(())
+    })
 }
 
 fn facts_dir(root: &Path) -> PathBuf {
-    FACTS_DIR.get().cloned().unwrap_or_else(|| root.join(".rerail").join("facts"))
+    OPTIONS.with(|o| o.borrow().facts_dir.clone()).unwrap_or_else(|| root.join(".rerail").join("facts"))
 }
 
-/// `logic --require-facts` (data-layer/RUN-FACTS.md section 5, the CI column): an artifact that is missing,
-/// stale or malformed fails the run, and so does a failed one unless the policy reports it.
-static REQUIRE_FACTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
+/// `logic --require-facts`, for this caller's runs.
 pub fn require_facts() {
-    REQUIRE_FACTS.store(true, std::sync::atomic::Ordering::Relaxed);
+    OPTIONS.with(|o| o.borrow_mut().require_facts = true);
 }
 
-/// The reference a change is compared against: `logic --base REV`, any revision spec (`origin/main`, an id).
-/// `git_rev("base", …)`, which `at="base"` inputs are read at, is the merge base of HEAD and it.
-static BASE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-
+/// `logic --base REV`, for this caller's runs.
 pub fn set_base(rev: String) -> std::result::Result<(), String> {
-    BASE.set(rev).map_err(|_| "the base revision is already set".to_owned())
+    OPTIONS.with(|o| {
+        let mut o = o.borrow_mut();
+        if o.base.is_some() {
+            return Err("the base revision is already set".to_owned());
+        }
+        o.base = Some(rev);
+        Ok(())
+    })
 }
 
 fn unreadable(detail: impl std::fmt::Display) -> Failure { Failure { kind: "unreadable", detail: detail.to_string() } }
@@ -384,10 +412,12 @@ pub fn stamp(raw: &Path, out: &Path, root: &Path, declared: &BTreeMap<String, Ve
 /// What the readers of the last `populate` read, as the whole-run cutoff records it (`Report::consulted`, `reuse`):
 /// `("input", path, digest)` for a repository file, `("input_dir", dir, listing)`, `("artifact", name, digest of
 /// the stamped file and of its inputs)` and `("base", "REV\tpath", digest)`. `still` checks each again.
-static CONSULTED: std::sync::Mutex<Vec<(String, String, String)>> = std::sync::Mutex::new(Vec::new());
+/// The run's own (`run::local`, decision 0442).
+#[derive(Default)]
+struct Consulted(std::sync::Mutex<Vec<(String, String, String)>>);
 
 pub(super) fn take_consulted() -> Vec<(String, String, String)> {
-    std::mem::take(&mut *CONSULTED.lock().unwrap_or_else(|e| e.into_inner()))
+    crate::code_rule_dsl::logic::run::local_if_any::<Consulted>().map(|c| std::mem::take(&mut *c.0.lock().unwrap_or_else(|e| e.into_inner()))).unwrap_or_default()
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -424,7 +454,8 @@ fn artifact_entry(text: &ReadResult<String>, digest: &ReadResult<String>) -> Str
 /// input withholds removed. What it reads of the rules is `shape`'s.
 pub(super) fn populate(program: &mut Edit<'_>, shape: &super::shape::Shape, root: &Path) -> Result<()> {
     let declared = artifacts(&program.settings())?;
-    let base = BASE.get().map(String::as_str);
+    let base = OPTIONS.with(|o| o.borrow().base.clone());
+    let base = base.as_deref();
     let mut consulted = Vec::new();
     let mut base_read = base_reader(root, base);
     let seen = std::cell::RefCell::new(Vec::new());
@@ -476,8 +507,8 @@ pub(super) fn populate(program: &mut Edit<'_>, shape: &super::shape::Shape, root
             Value::Int(i64::from(crate::code_rule_dsl::tape::formats::stored_version())),
         ].into()]);
     }
-    CONSULTED.lock().unwrap_or_else(|e| e.into_inner()).extend(consulted);
-    if REQUIRE_FACTS.load(std::sync::atomic::Ordering::Relaxed) {
+    crate::code_rule_dsl::logic::run::local::<Consulted>().0.lock().unwrap_or_else(|e| e.into_inner()).extend(consulted);
+    if OPTIONS.with(|o| o.borrow().require_facts) {
         required_by(program, shape)?;
     }
     Ok(())

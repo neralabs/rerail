@@ -66,7 +66,9 @@ crates below it.
 
 The farm's wrapper runs `scripts/dev/clean-target` on each target directory every 15 minutes: it removes the
 builds no current build was made from, debug objects no binary names, and stale incremental state.
-Never run a full `cargo clean`.
+Never run a full `cargo clean`. Under 200 GB of free disk on this Mac, the farm removes the least recently built
+worktrees' build outputs on its own (`scripts/build/farm/free-local`; the farm's README, "This Mac's disk floor"): a
+build of an idle worktree may then start from incremental state lost, or from nothing.
 
 ### Test tiers (cargo-nextest)
 
@@ -100,6 +102,7 @@ the file there are no hosts, and every command below runs here instead.
 
 ```
 scripts/build/farm/status                          # which hosts are usable now, and why not
+scripts/build/farm/dashboard --open                # a live page: each host's CPU, GPU, memory, disk, jobs, links
 scripts/build/farm/diagnose [DIR | --all]          # why a checkout's builds miss the shared cache
 scripts/dev/test-remote -- cargo nextest run --lib --profile gate
 scripts/dev/test-remote -- cargo nextest run --lib -E 'test(/some::filter/)'
@@ -116,8 +119,12 @@ on a slow link, or short of disk, or its copy can have been cleaned. The scripts
 themselves: a host reached over the wrong link is moved back to its fast one when it can
 be, a host that fails a probe is skipped, with a growing back-off, and a lost connection
 reruns the command here at `nice -n 19`. Don't work around a host that is down. Run
-`status` to see why, and go on locally. `--remote-only` exits 69 when no host can take the
-command. A host may be a Linux machine: it takes a command when every Mac slot is busy (never a
+`status` to see why, and go on locally. Never wait for a host to be idle or less loaded: a
+usable host takes the command whatever its load, and `test-remote` itself waits only for a
+free test slot. Its busy CPU and load average in `status` are information, not a gate. `--remote-only` exits 69 when no host can take the
+command. Several commands of one checkout may run at once: on one host they share its copy of the
+checkout when their files are the same, and otherwise one waits for the other or takes another
+host, so a command never reads another's files. A host may be a Linux machine: it takes a command when every Mac slot is busy (never a
 Metal one or a `--tree` run), and the command is then a Linux build and run, as CI's; its line
 says `(Linux: ...)`, and `--os macos` keeps a command on a Mac. It also compiles this Mac's library
 crates, in a container, to the very bytes this Mac would (the farm's README, "Mac compiles on a Linux host"). Both scripts run the installed farm (`~/.local/share/rerail-farm`), whatever version

@@ -41,7 +41,7 @@ use rusqlite::{Connection, params};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 mod listing;
 
@@ -423,7 +423,7 @@ impl Observer {
             _ => None,
         });
         let (generation, floor) = (meta_int(LISTING_GEN).unwrap_or(0), meta_int(LISTING_FLOOR).unwrap_or(0));
-        Observer { db, entries, dirty: Vec::new(), racy: Vec::new(), aliases, new_aliases: Vec::new(), canon, new_canon: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, open: 0, stored_roots, volumes, cookies, own, unreported: Vec::new(), changes: BTreeMap::new(), generation, floor, list_max: list_max(), journal_settle: std::time::Duration::ZERO, settle_ns: JOURNAL_SETTLE_NS, wait_least_ns: JOURNAL_WAIT_LEAST.load(std::sync::atomic::Ordering::Relaxed) }
+        Observer { db, entries, dirty: Vec::new(), racy: Vec::new(), aliases, new_aliases: Vec::new(), canon, new_canon: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, open: 0, stored_roots, volumes, cookies, own, unreported: Vec::new(), changes: BTreeMap::new(), generation, floor, list_max: list_max(), journal_settle: std::time::Duration::ZERO, settle_ns: JOURNAL_SETTLE_NS, wait_least_ns: journal_wait_least() }
     }
 
     /// Records `dir` as a directory a run writes its outputs into: rerail's own (decision 0284), for this observer
@@ -467,7 +467,7 @@ impl Observer {
 
     /// Whether `path` is one of rerail's own files (decision 0284): this observer's or the process's.
     fn is_own(&self, path: &Path) -> bool {
-        self.own.iter().any(|o| owned_by(o, path)) || OWN.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|o| owned_by(o, path))
+        self.own.iter().any(|o| owned_by(o, path)) || rerail_prof::code_rule_dsl::logic::profile::machine::<OwnFiles>().0.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|o| owned_by(o, path))
     }
 
     /// The kind and stat of an own file, asked of the system each time: no answer is kept (decision 0284).
@@ -627,8 +627,7 @@ impl Observer {
         for root in self.roots.iter_mut().filter(|r| !r.trusted && under(&path, &r.path)) {
             root.checked.insert(path.to_owned());
         }
-        static SHOW: OnceLock<bool> = OnceLock::new();
-        if *SHOW.get_or_init(|| std::env::var_os("RERAIL_OBSERVED_PATHS").is_some()) {
+        if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_OBSERVED_PATHS").is_some()) {
             let under = self.roots.iter().find(|r| under(&path, &r.path)).map(|r| if r.trusted { "trusted root, no answer" } else { "untrusted root" }).unwrap_or("no root");
             eprintln!("rerail: stat {} ({under})", path.display());
         }
@@ -1871,8 +1870,7 @@ fn listing_cursor(text: &str) -> Option<u64> {
 
 /// `LIST_MAX`, or `RERAIL_LIST_MAX`.
 fn list_max() -> usize {
-    static MAX: OnceLock<usize> = OnceLock::new();
-    *MAX.get_or_init(|| std::env::var("RERAIL_LIST_MAX").ok().and_then(|v| v.parse().ok()).unwrap_or(LIST_MAX))
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_LIST_MAX").ok().and_then(|v| v.parse().ok()).unwrap_or(LIST_MAX))
 }
 
 /// How many paths the journal may name under a root, none of them an answer kept, while its stored cursor stays: a
@@ -1975,13 +1973,16 @@ const CANONICAL: &str = "canonical:";
 /// The prefix of a directory runs wrote their outputs into, as `observer_meta` keeps it (`own_output`).
 const OWN_OUTPUT: &str = "own:";
 
-/// rerail's own files the process names (decision 0284, `own`): the cost statistics' file.
-static OWN: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+/// rerail's own files the machine names (decision 0284, `own`): the cost statistics' file, the machine's (decision
+/// 0442).
+#[derive(Default)]
+struct OwnFiles(Mutex<Vec<PathBuf>>);
 
-/// Names `path` as one of rerail's own files for every observer of the process (decision 0284): it, what is under
+/// Names `path` as one of rerail's own files for every observer on the machine (decision 0284): it, what is under
 /// it, and every file named after it beside it (`<path>-wal`, `<path>.upkeep`) are outside the observer.
 pub fn own(path: &Path) {
-    let mut own = OWN.lock().unwrap_or_else(|e| e.into_inner());
+    let held = rerail_prof::code_rule_dsl::logic::profile::machine::<OwnFiles>();
+    let mut own = held.0.lock().unwrap_or_else(|e| e.into_inner());
     for p in spellings(path) {
         if !own.contains(&p) {
             own.push(p);
@@ -2365,12 +2366,14 @@ impl DigestRead {
     }
 }
 
-static OBSERVERS: OnceLock<Mutex<HashMap<Option<PathBuf>, Observer>>> = OnceLock::new();
+/// The shared object's observers, one per store (decision 0442).
+#[derive(Default)]
+struct Observers(Mutex<HashMap<Option<PathBuf>, Observer>>);
 
 /// Waits until every observer's queued writes are in its store: the run's end, beside the content store's writer.
 pub fn written() {
-    if let Some(all) = OBSERVERS.get() {
-        all.lock().unwrap_or_else(|e| e.into_inner()).values().for_each(Observer::written);
+    if let Some(all) = rerail_prof::code_rule_dsl::logic::profile::shared_object().and_then(|shared| shared.get_if_any::<Observers>()) {
+        all.0.lock().unwrap_or_else(|e| e.into_inner()).values().for_each(Observer::written);
     }
 }
 
@@ -2378,17 +2381,17 @@ pub fn written() {
 /// test's own). Every run's end waits on each observer the process holds (`written`), so one kept past its store's
 /// life is a cost to every later run.
 pub fn forget(store: &Path) {
-    let gone = OBSERVERS.get().and_then(|all| all.lock().unwrap_or_else(|e| e.into_inner()).remove(&Some(store.to_path_buf())));
+    let gone = rerail_prof::code_rule_dsl::logic::profile::shared::<Observers>().0.lock().unwrap_or_else(|e| e.into_inner()).remove(&Some(store.to_path_buf()));
     if let Some(observer) = gone {
         observer.written();
     }
 }
 
-/// Runs `f` with the observer of the P0 store at `store` (`None`: in memory, for the process). One observer per
-/// store, for the process.
+/// Runs `f` with the observer of the P0 store at `store` (`None`: in memory, for the shared object). One observer per
+/// store, for the shared object.
 pub fn with<T>(store: Option<&Path>, f: impl FnOnce(&mut Observer) -> T) -> T {
-    let all = OBSERVERS.get_or_init(Default::default);
-    let mut all = all.lock().unwrap_or_else(|e| e.into_inner());
+    let all = rerail_prof::code_rule_dsl::logic::profile::shared::<Observers>();
+    let mut all = all.0.lock().unwrap_or_else(|e| e.into_inner());
     let key = store.map(Path::to_path_buf);
     let observer = all.entry(key.clone()).or_insert_with(|| Observer::open(key.as_deref()));
     f(observer)
@@ -3569,33 +3572,44 @@ mod tests {
     }
 }
 
-/// Whether the observer asks the file system's journal (decision 0105). On unless `RERAIL_JOURNAL=off`, or turned off
-/// by `set_journal`: the engine's tests do (each run of a test waits for its cookie's event, up to `journal`'s `WAIT`, and a test
-/// makes many runs), and the journal's own tests here keep it on.
-static JOURNAL: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
-
+/// Whether the observer asks the file system's journal (decision 0105): on unless `RERAIL_JOURNAL=off` (a run's
+/// setting). A test build may turn it off or on for its process (`set_journal`): the engine's tests do (each run of a
+/// test waits for its cookie's event, up to `journal`'s `WAIT`, and a test makes many runs), and the journal's own
+/// tests here keep it on.
 fn journal_on() -> bool {
-    use std::sync::atomic::Ordering;
-    match JOURNAL.load(Ordering::Relaxed) {
-        1 => true,
-        2 => false,
-        _ => {
-            let on = !std::env::var("RERAIL_JOURNAL").is_ok_and(|v| v == "off");
-            JOURNAL.store(if on { 1 } else { 2 }, Ordering::Relaxed);
-            on
-        }
+    #[cfg(any(test, feature = "test-hooks"))]
+    match JOURNAL.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => return true,
+        2 => return false,
+        _ => {}
     }
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| !std::env::var("RERAIL_JOURNAL").is_ok_and(|v| v == "off"))
 }
 
-/// Turns the observer's use of the journal on or off for the process, whatever `RERAIL_JOURNAL` says.
+/// A test build's choice of the journal (`set_journal`): 0 none (the setting's), 1 on, 2 off.
+#[cfg(any(test, feature = "test-hooks"))]
+static JOURNAL: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Turns the observer's use of the journal on or off for a test build's process, whatever `RERAIL_JOURNAL` says.
+#[cfg(any(test, feature = "test-hooks"))]
 pub fn set_journal(on: bool) {
     JOURNAL.store(if on { 1 } else { 2 }, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// The least the observers made after this wait for the journal ([`JOURNAL_WAIT_LEAST_NS`] until set): a test that
 /// asks for the journal's answer whatever it costs raises it (Q221).
-static JOURNAL_WAIT_LEAST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(JOURNAL_WAIT_LEAST_NS);
+/// On the shared object (decision 0442): set by its owner, read by the observers its runs make.
+struct JournalWaitLeast(std::sync::atomic::AtomicU64);
+impl Default for JournalWaitLeast {
+    fn default() -> Self {
+        JournalWaitLeast(std::sync::atomic::AtomicU64::new(JOURNAL_WAIT_LEAST_NS))
+    }
+}
+
+fn journal_wait_least() -> u64 {
+    rerail_prof::code_rule_dsl::logic::profile::shared::<JournalWaitLeast>().0.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 pub fn set_journal_wait_least(wait: std::time::Duration) {
-    JOURNAL_WAIT_LEAST.store(wait.as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+    rerail_prof::code_rule_dsl::logic::profile::shared::<JournalWaitLeast>().0.store(wait.as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
 }

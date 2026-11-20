@@ -3,7 +3,6 @@ use parking_lot::{Mutex, RwLock};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
-use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 
 const VERSION: i64 = 4;
@@ -209,7 +208,8 @@ fn median<T: Ord + Copy>(values: impl Iterator<Item = T>) -> Option<T> {
 pub fn estimate(operation: Operation, inputs: &Inputs, strategy: Strategy) -> Estimate {
     // The stored observations, read once the run has work (`costs::begin_read`), or now.
     super::ready();
-    let model = MODEL.read();
+    let st_ = plans();
+    let model = st_.model.read();
     let samples = model
         .0
         .get(&Cohort::new(operation, inputs, strategy))
@@ -224,51 +224,62 @@ pub fn estimate(operation: Operation, inputs: &Inputs, strategy: Strategy) -> Es
     }
 }
 
-static MODEL: LazyLock<RwLock<Model>> = LazyLock::new(RwLock::default);
-static ENABLED: AtomicBool = AtomicBool::new(false);
-static QUEUE: Mutex<VecDeque<Report>> = Mutex::new(VecDeque::new());
-static DROPPED: AtomicU64 = AtomicU64::new(0);
-static WRITE_ERRORS: AtomicU64 = AtomicU64::new(0);
+/// The SQL plans' learned model on this machine and the reports queued for its store (decision 0442: the machine's,
+/// as the learned cost model is): whether they are kept, and the reports dropped and the writes that failed.
+#[derive(Default)]
+struct Plans {
+    model: RwLock<Model>,
+    enabled: AtomicBool,
+    queue: Mutex<VecDeque<Report>>,
+    dropped: AtomicU64,
+    write_errors: AtomicU64,
+}
+
+fn plans() -> std::sync::Arc<Plans> {
+    crate::code_rule_dsl::logic::profile::machine::<Plans>()
+}
 
 pub fn enable() {
-    ENABLED.store(true, Relaxed);
+    plans().enabled.store(true, Relaxed);
 }
 
 pub fn enabled() -> bool {
-    ENABLED.load(Relaxed)
+    plans().enabled.load(Relaxed)
 }
 
 pub fn status() -> serde_json::Value {
     serde_json::json!({
         "enabled": enabled(),
-        "dropped_reports": DROPPED.load(Relaxed),
-        "write_errors": WRITE_ERRORS.load(Relaxed),
+        "dropped_reports": plans().dropped.load(Relaxed),
+        "write_errors": plans().write_errors.load(Relaxed),
     })
 }
 
 pub fn submit(report: Report) {
-    let mut queue = QUEUE.lock();
+    let st_ = plans();
+    let mut queue = st_.queue.lock();
     if queue.len() == QUEUE_LIMIT {
         queue.pop_front();
-        DROPPED.fetch_add(1, Relaxed);
+        plans().dropped.fetch_add(1, Relaxed);
     }
     queue.push_back(report);
 }
 
 pub fn take() -> VecDeque<Report> {
-    std::mem::take(&mut *QUEUE.lock())
+    std::mem::take(&mut *plans().queue.lock())
 }
 
 pub fn retry(mut reports: VecDeque<Report>) {
     if reports.is_empty() {
         return;
     }
-    WRITE_ERRORS.fetch_add(1, Relaxed);
-    let mut queue = QUEUE.lock();
+    plans().write_errors.fetch_add(1, Relaxed);
+    let st_ = plans();
+    let mut queue = st_.queue.lock();
     reports.append(&mut queue);
     let excess = reports.len().saturating_sub(QUEUE_LIMIT);
     reports.drain(..excess);
-    DROPPED.fetch_add(excess as u64, Relaxed);
+    plans().dropped.fetch_add(excess as u64, Relaxed);
     *queue = reports;
 }
 
@@ -325,7 +336,8 @@ pub fn insert(
 }
 
 pub fn learn(ids: Vec<i64>, reports: &VecDeque<Report>) {
-    let mut model = MODEL.write();
+    let st_ = plans();
+    let mut model = st_.model.write();
     for (id, report) in ids.into_iter().zip(reports) {
         model.learn(id, report);
     }
@@ -357,7 +369,8 @@ pub fn read(db: &Connection, machine: &str, threads: i64) -> rusqlite::Result<()
             reports.push((id, report));
         }
     }
-    let mut model = MODEL.write();
+    let st_ = plans();
+    let mut model = st_.model.write();
     for (id, report) in reports.into_iter().rev() {
         model.learn(id, &report);
     }

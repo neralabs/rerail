@@ -15,7 +15,7 @@
 //! may hold buffers while it waits on another thread that needs some), and after it the
 //! reservation goes ahead: the bound is on memory, never on correctness.
 use std::sync::atomic::AtomicUsize;
-use std::sync::{Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 /// What the tests' Metal buffers may hold at once: the engine's 1 GB RAM budget.
@@ -23,31 +23,29 @@ const TEST_DEVICE_BYTES: usize = 1 << 30;
 /// The longest a reservation waits for room.
 const ADMISSION_WAIT: Duration = Duration::from_secs(30);
 
+#[derive(Default)]
 struct Ledgers {
-    pool: &'static AtomicUsize,
-    peak: &'static AtomicUsize,
+    pool: Arc<AtomicUsize>,
+    peak: Arc<AtomicUsize>,
 }
 
 thread_local! {
-    // Leaked: a reservation can outlive its thread (a cached buffer, or one dropped elsewhere),
-    // and it releases into the ledger it was charged to. Two words per test thread.
-    static LEDGERS: Ledgers = Ledgers {
-        pool: Box::leak(Box::new(AtomicUsize::new(0))),
-        peak: Box::leak(Box::new(AtomicUsize::new(0))),
-    };
+    // A reservation can outlive its thread (a cached buffer, or one dropped elsewhere): it holds the ledger it was
+    // charged to, and releases into it.
+    static LEDGERS: Ledgers = Ledgers::default();
 }
 
 static HELD: Mutex<usize> = Mutex::new(0);
 static RELEASED: Condvar = Condvar::new();
 
 /// This thread's pool ledger.
-pub fn pool() -> &'static AtomicUsize {
-    LEDGERS.with(|ledgers| ledgers.pool)
+pub fn pool() -> Arc<AtomicUsize> {
+    LEDGERS.with(|ledgers| Arc::clone(&ledgers.pool))
 }
 
 /// The most this thread's pool ledger has held.
-pub fn pool_peak() -> &'static AtomicUsize {
-    LEDGERS.with(|ledgers| ledgers.peak)
+pub fn pool_peak() -> Arc<AtomicUsize> {
+    LEDGERS.with(|ledgers| Arc::clone(&ledgers.peak))
 }
 
 thread_local! {
@@ -103,8 +101,8 @@ mod tests {
 
     #[test]
     fn each_thread_has_its_own_pool_ledger() {
-        let here = pool() as *const AtomicUsize as usize;
-        let there = std::thread::spawn(|| pool() as *const AtomicUsize as usize).join().unwrap();
+        let here = Arc::as_ptr(&pool()) as usize;
+        let there = std::thread::spawn(|| Arc::as_ptr(&pool()) as usize).join().unwrap();
         assert_ne!(here, there);
         assert_eq!(pool().load(Ordering::Acquire), 0, "a fresh test thread starts empty");
     }

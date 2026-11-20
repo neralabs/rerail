@@ -399,42 +399,19 @@ fn rr_steps_parse_as_the_reference_and_the_engine() {
     assert!(differ.is_empty(), "{} steps differ:\n{}", differ.len(), differ.join("\n"));
 }
 
-/// Cases a later step sends to the engine by design: from the step named on, the reference
-/// refuses the document for the reason given, and the engine parses it with no `ERROR`. Step 22
-/// checks a number at its token (decision 0177, "A number's checks at its token"): a float's
-/// second `.` (`1.2.3`, from 2b6e570bd2) and a number of 19 digits or more, a fraction after
-/// them or not (from 69756c977c) are the engine's to read.
-const TO_THE_ENGINE: &[(&str, &str, &str)] = &[
-    (".scope 1.2.3\n.mode 1.2.3.4\nr(x) :- x = 1.2.", "22", "escape: a float's `.` after a fraction"),
-    ("r(x) :- x = 1.05, y = 007.5, z = 12345678901234567890.5, (a - 1.5) * 2.0 > b, c = -0.5.", "22", "escape: a number of 19 digits or more"),
-];
-
-/// Each case parses from the step that names it on, but where a later step sends it to the
-/// engine (`TO_THE_ENGINE`): from there it is refused for its reason, and the engine's tree has
-/// no `ERROR`.
+/// Each case parses from the step that names it on, and the engine's tree has no `ERROR`.
 #[test]
 fn rr_cases_parse_from_their_steps() {
-    for (doc, ..) in TO_THE_ENGINE {
-        assert!(CASES.iter().any(|c| c.0 == *doc), "{doc:?}: not a case");
-    }
     let mut missing = Vec::new();
     for (name, source) in steps_in(DIR) {
         let c = rerail_compiler::ladder::compile_step(&name, &source);
         for &(doc, from) in CASES {
-            if name.as_str() < from {
-                continue;
-            }
-            let refused = rerail_compiler::ladder::reference(&c, doc.as_bytes()).is_none();
-            let why = refused.then(|| rerail_compiler::ladder::refusal(&c, doc.as_bytes()));
-            match (TO_THE_ENGINE.iter().find(|t| t.0 == doc && name.as_str() >= t.1), why) {
-                (None, Some(why)) => missing.push(format!("{name}: {doc:?}: {why}")),
-                (Some(&(_, _, want)), why) if !why.as_deref().is_some_and(|w| w.starts_with(want)) => missing.push(format!("{name}: {doc:?}: the engine's by `{want}`, the step's: {why:?}")),
-                (Some(_), _) if engine(doc).1 => missing.push(format!("{name}: {doc:?}: the engine's tree has an ERROR")),
-                _ => {}
+            if name.as_str() >= from && rerail_compiler::ladder::reference(&c, doc.as_bytes()).is_none() {
+                missing.push(format!("{name}: {doc:?}: {}", rerail_compiler::ladder::refusal(&c, doc.as_bytes())));
             }
         }
     }
-    assert!(missing.is_empty(), "cases a step refuses, or does not send to the engine as it should:\n{}", missing.join("\n"));
+    assert!(missing.is_empty(), "cases a step refuses:\n{}", missing.join("\n"));
 }
 
 /// `refuse M in L`: the compiler takes it only where a refused mark is refused between the

@@ -22,22 +22,35 @@ use crate::launch;
 pub fn metal_buffer_limit() -> usize {
     rerail_accel::budget::metal()
 }
-#[cfg(not(any(test, feature = "test-hooks")))]
-static METAL_BUFFER_BYTES: AtomicUsize = AtomicUsize::new(0);
-/// The most `METAL_BUFFER_BYTES` has held.
-#[cfg(not(any(test, feature = "test-hooks")))]
-static METAL_BUFFER_PEAK: AtomicUsize = AtomicUsize::new(0);
+/// The device's state on this machine (decision 0442: the machine's): the pool's ledger and the most it held, the
+/// bytes of private buffers and the allocations' lock. The compiled pipelines are the store of compiled kernels'
+/// (`rerail_accel::gpu::kernels`, decision 0395).
+/// A reservation holds the ledger it charged, so its drop on any thread goes back to it.
+#[derive(Default)]
+pub(crate) struct DeviceState {
+    /// The pool's ledger and its most (a test build's are its thread's: `test_pool`).
+    #[cfg(not(any(test, feature = "test-hooks")))]
+    pool: Arc<AtomicUsize>,
+    #[cfg(not(any(test, feature = "test-hooks")))]
+    peak: Arc<AtomicUsize>,
+    private: AtomicUsize,
+    allocation: Mutex<()>,
+}
+
+pub(crate) fn state() -> Arc<DeviceState> {
+    rerail_context::machine::<DeviceState>()
+}
 
 /// The pool's ledger: the bytes reserved now.
 #[cfg(not(any(test, feature = "test-hooks")))]
-fn pool() -> &'static AtomicUsize {
-    &METAL_BUFFER_BYTES
+fn pool() -> Arc<AtomicUsize> {
+    Arc::clone(&state().pool)
 }
 
 /// The most the pool's ledger has held.
 #[cfg(not(any(test, feature = "test-hooks")))]
-fn pool_peak() -> &'static AtomicUsize {
-    &METAL_BUFFER_PEAK
+fn pool_peak() -> Arc<AtomicUsize> {
+    Arc::clone(&state().peak)
 }
 
 /// Whether the driver refuses a buffer of `length` more: past the device's largest buffer, or past the OS's working
@@ -106,7 +119,7 @@ pub fn buffer_free() -> usize {
 /// ledger, the relational leases and reservations (`gpu::shared::bound_bytes`), less nothing for idle buffers, which
 /// room is made of. Sized from `buffer_free` instead, a matcher wave's workspace was three quarters of the budget
 /// while the chunk's row blocks held 275-384 MB of it: refused at every size, split down to one tape, then failed
-/// (Q180). A test's ledger is its thread's: as `acquire`, the pool's leases are not counted there.
+/// (Q203). A test's ledger is its thread's: as `acquire`, the pool's leases are not counted there.
 pub fn buffer_room() -> usize {
     let bound = if cfg!(any(test, feature = "test-hooks")) { 0 } else { rerail_accel::gpu::shared::bound_bytes() };
     metal_buffer_limit().saturating_sub(pool().load(Ordering::Acquire) + bound)
@@ -127,15 +140,13 @@ pub fn peak_mb() -> usize {
 pub fn driver_mb() -> usize {
     rerail_accel::gpu::shared::opened_device().map_or(0, |device| (device.current_allocated_size() >> 20) as usize)
 }
-static METAL_PRIVATE_BYTES: AtomicUsize = AtomicUsize::new(0);
-static METAL_ALLOCATION_LOCK: Mutex<()> = Mutex::new(());
 static PRIVATE_RESERVATION_KEY: u8 = 0;
 const METAL_UPLOAD_CHUNK_BYTES: usize = 8 * 1024 * 1024;
 
 pub fn buffer_usage() -> (usize, usize) {
     (
         pool().load(Ordering::Acquire),
-        METAL_PRIVATE_BYTES.load(Ordering::Acquire),
+        state().private.load(Ordering::Acquire),
     )
 }
 
@@ -172,7 +183,9 @@ fn retain_buffer_owner<T: 'static>(buffer: &metal::BufferRef, owner: T) {
 
 struct BufferReservation {
     bytes: usize,
-    ledger: &'static AtomicUsize,
+    ledger: Arc<AtomicUsize>,
+    /// The machine's device state it counts its private bytes in.
+    on: Arc<DeviceState>,
     private: bool,
     /// Admitted to the tests' weighted bound (`test_pool`).
     #[cfg(any(test, feature = "test-hooks"))]
@@ -182,11 +195,11 @@ struct BufferReservation {
 }
 
 impl BufferReservation {
-    fn acquire(bytes: usize, ledger: &'static AtomicUsize, limit: usize) -> Result<Self, Error> {
+    fn acquire(bytes: usize, ledger: Arc<AtomicUsize>, limit: usize) -> Result<Self, Error> {
         // The device pool's ledger shares the one Metal budget with the pool's live leases (the residency's slabs,
         // the device blocks, relational work: 0266 §16), so a reservation counts them; room is made in the pool's one
         // order (idle buffers, then the residency's least recently used slabs).
-        let pooled = std::ptr::eq(ledger, pool());
+        let pooled = Arc::ptr_eq(&ledger, &pool());
         // One account (Q203): the pool's leases and the admissions' reservations not yet leased (`bound_bytes`), as
         // `make_room` counts them; counting the leases alone, a reservation took room a stratum had been admitted to.
         // A test's ledger is its thread's, the pool's leases the process's: tests are bounded by `test_pool`.
@@ -236,6 +249,7 @@ impl BufferReservation {
         Ok(Self {
             bytes,
             ledger,
+            on: state(),
             private: false,
             #[cfg(any(test, feature = "test-hooks"))]
             admitted: pooled,
@@ -249,7 +263,7 @@ impl BufferReservation {
     }
 
     fn private(mut self) -> Self {
-        METAL_PRIVATE_BYTES.fetch_add(self.bytes, Ordering::AcqRel);
+        self.on.private.fetch_add(self.bytes, Ordering::AcqRel);
         self.private = true;
         self
     }
@@ -263,7 +277,7 @@ impl Drop for BufferReservation {
             test_pool::release(self.bytes);
         }
         if self.private {
-            METAL_PRIVATE_BYTES.fetch_sub(self.bytes, Ordering::AcqRel);
+            self.on.private.fetch_sub(self.bytes, Ordering::AcqRel);
         }
     }
 }
@@ -474,7 +488,8 @@ impl MappedBuffer {
             rerail_prof::count_named(format!("alloc_kb.{}", std::panic::Location::caller()), mapping.length >> 10);
         }
         // A lock over no data: a panic elsewhere while it was held leaves nothing to distrust.
-        let _allocation = METAL_ALLOCATION_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let st_ = state();
+        let _allocation = st_.allocation.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if driver_refuses(device, mapping.length)
         {
             if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
@@ -537,7 +552,8 @@ impl MappedBuffer {
         storage: MTLResourceOptions,
     ) -> Result<Self, Error> {
         // A lock over no data: a panic elsewhere while it was held leaves nothing to distrust.
-        let _allocation = METAL_ALLOCATION_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let st_ = state();
+        let _allocation = st_.allocation.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if driver_refuses(device, length)
         {
             if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
@@ -729,7 +745,7 @@ pub fn evaluation_scope() -> launch::LaunchScope {
 /// (`rerail_accel::gpu::kernels`, decision 0395).
 pub fn drop_pipelines() {
     rerail_accel::gpu::kernels::release();
-    if let Ok(mut kernels) = crate::block_program::serial::KERNELS.lock() {
+    if let Ok(mut kernels) = crate::block_program::serial::kernels().0.lock() {
         kernels.clear();
     }
 }
@@ -893,22 +909,22 @@ mod memory_budget_tests {
 
     #[test]
     fn reservations_enforce_aggregate_limit_and_release_on_drop() {
-        static LEDGER: AtomicUsize = AtomicUsize::new(0);
-        let first = BufferReservation::acquire(60, &LEDGER, 100).unwrap();
+        let ledger = Arc::new(AtomicUsize::new(0));
+        let first = BufferReservation::acquire(60, Arc::clone(&ledger), 100).unwrap();
         assert!(matches!(
-            BufferReservation::acquire(41, &LEDGER, 100),
+            BufferReservation::acquire(41, Arc::clone(&ledger), 100),
             Err(Error::BackendCapacity)
         ));
-        let second = BufferReservation::acquire(40, &LEDGER, 100).unwrap();
+        let second = BufferReservation::acquire(40, Arc::clone(&ledger), 100).unwrap();
         assert!(matches!(
-            BufferReservation::acquire(usize::MAX, &LEDGER, 100),
+            BufferReservation::acquire(usize::MAX, Arc::clone(&ledger), 100),
             Err(Error::BackendCapacity)
         ));
-        assert_eq!(LEDGER.load(Ordering::Acquire), 100);
+        assert_eq!(ledger.load(Ordering::Acquire), 100);
         drop(first);
-        let third = BufferReservation::acquire(60, &LEDGER, 100).unwrap();
+        let third = BufferReservation::acquire(60, Arc::clone(&ledger), 100).unwrap();
         drop((second, third));
-        assert_eq!(LEDGER.load(Ordering::Acquire), 0);
+        assert_eq!(ledger.load(Ordering::Acquire), 0);
     }
 
     #[test]
@@ -1018,24 +1034,24 @@ mod memory_budget_tests {
 
     #[test]
     fn owned_metal_reference_keeps_its_budget_reservation() {
-        static LEDGER: AtomicUsize = AtomicUsize::new(0);
+        let ledger = Arc::new(AtomicUsize::new(0));
         let device = Device::system_default().unwrap();
         for storage in [
             MTLResourceOptions::StorageModePrivate,
             MTLResourceOptions::StorageModeShared,
         ] {
             let reservation =
-                Arc::new(BufferReservation::acquire(16_384, &LEDGER, 16_384).unwrap());
+                Arc::new(BufferReservation::acquire(16_384, Arc::clone(&ledger), 16_384).unwrap());
             let weak = Arc::downgrade(&reservation);
             let buffer =
                 MappedBuffer::owned_allocation(&device, 16_384, reservation, storage).unwrap();
             let retained = buffer.buffer.clone();
             drop(buffer);
             assert!(weak.upgrade().is_some());
-            assert_eq!(LEDGER.load(Ordering::Acquire), 16_384);
+            assert_eq!(ledger.load(Ordering::Acquire), 16_384);
             drop(retained);
             assert!(weak.upgrade().is_none());
-            assert_eq!(LEDGER.load(Ordering::Acquire), 0);
+            assert_eq!(ledger.load(Ordering::Acquire), 0);
         }
     }
 

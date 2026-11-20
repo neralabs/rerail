@@ -828,9 +828,8 @@ pub struct LoweredWave {
     feeds: Vec<BTreeSet<usize>>,
     /// The level passes fused into one walk, built at their first batch (`Packs`).
     packs: Packs,
-    /// The sources of its pattern kernels on Metal, by the batch's tape format (each reads its format's tapes), made
-    /// at the first ask for that format (`metal_ready`).
-    metal_sources: std::sync::Mutex<std::collections::HashMap<u32, Result<Vec<String>, Error>>>,
+    /// The sources of its pattern kernels on Metal, made at the first ask (`metal_ready`).
+    metal_sources: [std::sync::OnceLock<Result<Vec<String>, Error>>; 2],
 }
 
 impl LoweredWave {
@@ -1193,8 +1192,8 @@ impl LoweredWave {
     /// kernels are not runs on the CPU meanwhile; they are compiled as the mode says.
     pub fn metal_ready(&self, format: u32) -> bool {
         let Some(device) = super::device::matcher() else { return true };
-        let mut sources = self.metal_sources.lock().unwrap_or_else(|p| p.into_inner());
-        match sources.entry(format).or_insert_with(|| device.wave_pattern_sources(self, format)) {
+        // The sources by the tape view the batch's format reads (`pattern_variant`).
+        match self.metal_sources[device.pattern_variant(format)].get_or_init(|| device.wave_pattern_sources(self, format)) {
             Ok(sources) => device.patterns_ready(sources, format),
             // No Metal form of its patterns: the Metal run says why (`roots_batch`).
             Err(_) => true,
@@ -2089,7 +2088,6 @@ fn formulas(
 ) -> Vec<Option<Vec<(usize, Vec<u64>)>>> {
     use super::compile_sets::{Index, Reader, Set};
     use rayon::prelude::*;
-    static CHECK: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_SETS_CHECK").is_some());
     if !formulas_on() {
         return vec![None; level.len()];
     }
@@ -2136,7 +2134,7 @@ fn formulas(
                         Plan::Fact(fact) => Some(Arc::unwrap_or_clone(fact.nth_bits(view, &index.siblings).expect("a node set"))),
                         Plan::Set { walk, program, domain, set } => walk.texts(program, view).map(|texts| {
                             let bits = Reader { tape: view, index, labels: &sets[tape], texts: &texts }.eval(set);
-                            if *CHECK {
+                            if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_SETS_CHECK").is_some()) {
                                 // The domain read exactly, as the formula reads it (a demand's set too).
                                 let within = Reader { tape: view, index, labels: &sets[tape], texts: &[] }.eval(&domain.set());
                                 let starts = (0..view.transducer_len() as u32).filter(|&node| within[node as usize / 64] >> (node % 64) & 1 != 0);
@@ -2229,7 +2227,7 @@ fn label_level<'a>(
             "packed" => packed_ns / packed as u128,
             _ => *wall,
         }).collect::<Vec<_>>();
-        write_census(file, level, &routes, &walls, &found, tapes, sets);
+        write_census(&file, level, &routes, &walls, &found, tapes, sets);
     }
     drop(views);
     let (mut changed, mut given) = (false, Vec::new());
@@ -2908,18 +2906,17 @@ struct Demand {
 /// Whether an `all`'s labels start where the kinds allow alone (`RERAIL_DEMAND_SETS=off`, a measurement switch: as
 /// before decision 0424).
 fn demand_sets_off() -> bool {
-    static OFF: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_DEMAND_SETS").is_ok_and(|mode| mode == "off"));
-    *OFF
+    crate::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_DEMAND_SETS").is_ok_and(|mode| mode == "off"))
 }
 
 /// Where the label census goes (`RERAIL_LABEL_CENSUS=<file>`): a line per label pass a host level evaluates, its
 /// route, starts and members. A measurement switch: off, nothing is noted or written.
-fn census() -> Option<&'static std::sync::Mutex<std::fs::File>> {
-    static FILE: std::sync::LazyLock<Option<std::sync::Mutex<std::fs::File>>> = std::sync::LazyLock::new(|| {
+fn census() -> Option<std::sync::Arc<std::sync::Mutex<std::fs::File>>> {
+    // The run's setting (decision 0442): opened once a run, appended to.
+    crate::code_rule_dsl::logic::profile::setting(|| {
         let path = std::env::var_os("RERAIL_LABEL_CENSUS")?;
-        std::fs::OpenOptions::new().create(true).append(true).open(path).ok().map(std::sync::Mutex::new)
-    });
-    FILE.as_ref()
+        std::fs::OpenOptions::new().create(true).append(true).open(path).ok().map(|f| std::sync::Arc::new(std::sync::Mutex::new(f)))
+    })
 }
 
 /// A short form of `tree` for the census: kinds as `k145`, labels' rules nested, long ones cut.

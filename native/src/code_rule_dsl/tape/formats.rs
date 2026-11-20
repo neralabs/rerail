@@ -42,8 +42,7 @@ impl Format {
         if let Some(format) = AS_RUN.with(std::cell::Cell::get) {
             return format;
         }
-        static RUN: OnceLock<Format> = OnceLock::new();
-        *RUN.get_or_init(|| match std::env::var("RERAIL_TAPE").as_deref() {
+        rerail_prof::code_rule_dsl::logic::profile::setting(|| match std::env::var("RERAIL_TAPE").as_deref() {
             Err(_) | Ok("" | "16") => Format::F16,
             Ok("15") => Format::F15,
             Ok("16z") => Format::F16Z,

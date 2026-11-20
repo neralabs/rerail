@@ -939,8 +939,6 @@ pub(in crate::code_rule_dsl) struct ObservedShared {
 /// The jobs' sums handed in before one of them folds them in: the lag of an estimate read in a job.
 const FOLD_EVERY: usize = 256;
 
-/// Folds of the observed sums (decision 0301), for the profile.
-pub(super) static FOLDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 impl ObservedShared {
     fn observing(on: bool) -> Self {
@@ -981,7 +979,7 @@ impl ObservedShared {
             next.add(p);
         }
         self.published.store(Some(Arc::new(next)));
-        FOLDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        run_counts().folds.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// `f` on the run's sums, as a thread observing outside a job does: folded and published at once.
@@ -1988,10 +1986,23 @@ pub mod tests {
         let (_, planned) = calibrated_rows(f, &model, &body).unwrap();
         let ((order, _, _), _) = model.plan_rule_step_rows(f, &body, None).unwrap();
         let mut prepared = super::super::prepared::Prepared::default();
-        prepared.0.insert(super::super::line_key(&body, None), super::super::prepared::PreparedPlan { order, work_per_node: 1e-6, rows_per_node: 0.0 });
+        prepared.0.insert(super::super::line_key(&body, None), super::super::prepared::PreparedPlan { order, work_per_node: 1e-6, rows_per_node: 0.0, assumed: Vec::new() });
         model.stats.prepared = Arc::new(prepared);
         let (_, taken) = calibrated_rows(f, &model, &body).unwrap();
         assert!(planned >= 1_000.0, "r planned at {planned} rows");
         assert_eq!(taken, planned, "a prepared plan's rows (0) taken for its steps' ({planned})");
     }
+}
+
+/// The run's counts of this module's work (decision 0442: a run's own, `run::local`).
+#[derive(Default)]
+pub struct KeepsCounts {
+    /// Folds of the observed sums (decision 0301), for the profile.
+    pub folds: std::sync::atomic::AtomicU64,
+}
+
+/// The run's `KeepsCounts`.
+#[inline]
+pub fn run_counts() -> std::sync::Arc<KeepsCounts> {
+    crate::code_rule_dsl::logic::run::local::<KeepsCounts>()
 }

@@ -720,7 +720,6 @@ impl ContentStore {
     pub fn forget(path: &Path) {
         // Its upkeep jobs first: one holds a read connection on the file.
         rerail_accel::upkeep::forget_file(path);
-        upkeep::forget(path);
         held::forget_snapshot(&path.to_string_lossy());
         atoms::forget_identity(&path.to_string_lossy());
     }

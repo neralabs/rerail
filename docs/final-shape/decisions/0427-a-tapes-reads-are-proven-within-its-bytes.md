@@ -1,6 +1,7 @@
 # 0427: A tape's reads are proven within its bytes, whatever the bytes hold
 
-Numbered 0403 where it was written; 0462 on the sync branch until 2026-11-19.
+Numbered 0403 where it was written (the sync branch's 0403 is "a `prev` reads the chunk before, chunk 0
+included"); 0462 on the sync branch and 0463 on final-rerail-shape-rr-align until 2026-11-19, and 0427 on django-bugs.
 
 Status: decided (2026-11-18), by the user, on Q265: "That's not just a correctness issue but a security issue too.
 That means both identifying and fixing the root-cause for corruption, and ensuring that (at least behind a flag)

@@ -33,6 +33,7 @@
 // cratify: `compiled_view` is rerail-lang-php's (it mounts it)
 // cratify: `script_block` is rerail-lang-ecma's (it mounts it)
 pub mod host;
+pub mod raw_text;
 pub mod segments;
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod test_script;
@@ -123,8 +124,13 @@ pub struct Program {
 pub trait Embedder: Send + Sync {
     /// The program the host whose tape's root is `root`, over `source`, embeds; `None` where it
     /// embeds none. The tape is read in place (`host`), whichever parser wrote it.
-    fn build(&self, root: HostNode<'_>, source: &str, budget: &dyn Fn() -> bool)
-    -> Option<Program>;
+    fn build(&self, root: HostNode<'_>, source: &str, budget: &dyn Fn() -> bool) -> Option<Program>;
+
+    /// Every program the host embeds through this `via`: a program per place for an embedding that has several (an
+    /// HTML file's scripts and styles, decision 0431 §4), else `build`'s one.
+    fn build_all(&self, root: HostNode<'_>, source: &str, budget: &dyn Fn() -> bool) -> Vec<Program> {
+        self.build(root, source, budget).into_iter().collect()
+    }
 }
 
 static EMBEDDERS: std::sync::OnceLock<

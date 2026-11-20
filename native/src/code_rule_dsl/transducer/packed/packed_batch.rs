@@ -351,7 +351,7 @@ impl PackedBatch {
         materialize_tasks: bool,
         layout: Layout,
     ) -> Result<Self, Error> {
-        static PACKED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(11, "7", "the transducer's packed batch: sources and line starts (PackedBatch)");
+        const PACKED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(11, "7", "the transducer's packed batch: sources and line starts (PackedBatch)");
         let copying = PACKED.start();
         let batch = Self::build_tapes_in(programs, files, anchors, materialize_tasks, layout);
         copying.done(batch.as_ref().map_or(0, |b| b.source.len() + std::mem::size_of_val(b.line_starts.as_slice())));

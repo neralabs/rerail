@@ -251,7 +251,7 @@ fn a_views_filter_scan_holds_the_rows_a_per_row_read_finds() {
     assert!(tried >= 4 * 3, "the four views were tried");
 }
 
-/// Q183: a lookup of `node` by kind (`lookup_read`, a join's `kind($c, #k)` read where the view lies) gives every row
+/// Q220: a lookup of `node` by kind (`lookup_read`, a join's `kind($c, #k)` read where the view lies) gives every row
 /// of that kind, each with the values a per-row read gives, from the batch's index by kind (`Batch::by_kind`), for
 /// every kind of four documents, common and rare; and `lookup` gives the same rows.
 #[test]

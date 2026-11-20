@@ -218,7 +218,7 @@ fn place(
         // copy (0353 step 7): an in-memory tape and its source copied into a slab (row 13). It goes: a parse writes
         // its tape into its room (step 4a), and the residency takes that room as it lies.
         Parts::Bytes(image, text) => {
-            static INTO_SLAB: rerail_prof::copies::Site = rerail_prof::copies::Site::new(13, "7", "an in-memory tape and its source copied into a slab (residency::place)");
+            const INTO_SLAB: rerail_prof::copies::Site = rerail_prof::copies::Site::new(13, "7", "an in-memory tape and its source copied into a slab (residency::place)");
             INTO_SLAB.time(|| {
                 // copy (0353 step 7): the tape (row 13).
                 tape.copy_from_slice(image);

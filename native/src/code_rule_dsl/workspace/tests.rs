@@ -8,7 +8,7 @@ use super::persisted::{decode_local_result, encode_local_result, grammar_version
 use super::results::{
     RESULT_PAGE_EVICTED_RESTORES, RESULT_PAGE_SORTS, RESULT_PAGE_WITNESSES_VISITED,
 };
-use super::storage::{CONTENT_STORES, StorageContext, index_stored_tapes, shared_content_store};
+use super::storage::{ContentStores, StorageContext, index_stored_tapes, shared_content_store};
 use super::*;
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use crate::content_store::{ContentStore, GitTree, HashKey};
@@ -39,7 +39,7 @@ pub(super) fn git(root: &std::path::Path, arguments: &[&str]) {
 }
 
 #[test]
-fn content_store_registry_shares_one_process_store() {
+fn content_store_registry_shares_one_store_per_shared_object() {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -54,7 +54,7 @@ fn content_store_registry_shares_one_process_store() {
     assert!(StdArc::ptr_eq(&first.1, &second.1));
     drop(first);
     drop(second);
-    CONTENT_STORES.lock().unwrap().remove(&path);
+    crate::code_rule_dsl::logic::profile::shared::<ContentStores>().0.lock().unwrap().remove(&path);
     for suffix in ["", "-wal", "-shm"] {
         let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
     }
@@ -308,6 +308,7 @@ fn poisoned_state_rejections_and_close_release_resident_sources() {
         let mut task = WorkspaceApplyTask {
             state: Arc::clone(&workspace.state),
             closed: Arc::clone(&workspace.closed),
+            shared: Arc::clone(&workspace.shared),
             request_json: request.clone(),
             request_buffer: None,
             request_direct: None,
@@ -345,7 +346,7 @@ fn poisoned_state_rejections_and_close_release_resident_sources() {
 fn a_panic_holding_the_cpu_slot_leaves_the_next_apply_free_to_run() {
     let _slot = WORKSPACE_TEST_SLOT.lock();
     let panicked = crate::panic_boundary::contain_panic::<()>("apply", || {
-        let _held = super::api::cpu_slot().lock();
+        let _held = super::api::cpu_slot().lock_arc();
         panic!("apply panicked holding the CPU slot");
     });
     assert!(panicked.is_err());
@@ -353,6 +354,7 @@ fn a_panic_holding_the_cpu_slot_leaves_the_next_apply_free_to_run() {
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": 1, "files": [], "removed": [] }).to_string(),
         request_buffer: None,
         request_direct: None,
@@ -438,6 +440,7 @@ fn tape_workspace_matches_native_after_edit_noop_and_invalid_revision() {
         let mut task = WorkspaceApplyTask {
             state: Arc::clone(&workspace.state),
             closed: Arc::clone(&workspace.closed),
+            shared: Arc::clone(&workspace.shared),
             request_json: apply(revision, if submit { vec![file(source)] } else { vec![] }),
             request_buffer: None,
             request_direct: None,
@@ -486,6 +489,7 @@ fn tape_workspace_matches_native_after_edit_noop_and_invalid_revision() {
     let mut bad = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: apply(9, vec![file("print('wrong')\n")]),
         request_buffer: None,
         request_direct: None,
@@ -494,6 +498,7 @@ fn tape_workspace_matches_native_after_edit_noop_and_invalid_revision() {
     let mut verify = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: apply(10, vec![]),
         request_buffer: None,
         request_direct: None,
@@ -634,6 +639,7 @@ fn deferred_global_flush_uses_complete_taped_evidence() {
         let mut task = WorkspaceApplyTask {
             state: Arc::clone(&workspace.state),
             closed: Arc::clone(&workspace.closed),
+            shared: Arc::clone(&workspace.shared),
             request_json: json!({ "revision": revision, "files": files,
                 "removed": [], "deferGlobal": deferred })
             .to_string(),
@@ -706,6 +712,7 @@ fn tape_test_apply(workspace: &CodeRuleDslWorkspace, revision: u32, files: Vec<V
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": revision, "files": files, "removed": [] }).to_string(),
         request_buffer: None,
         request_direct: None,
@@ -735,6 +742,7 @@ fn binary_workspace_request_matches_json_and_rejects_malformed_lengths() {
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: String::new(),
         request_buffer: Some(buffer.clone()),
         request_direct: None,
@@ -1212,6 +1220,7 @@ fn close_during_live_native_tree_or_restored_doc_cancels_and_releases_source() {
             let mut task = WorkspaceApplyTask {
                 state: Arc::clone(&owner.state),
                 closed: Arc::clone(&owner.closed),
+                shared: Arc::clone(&owner.shared),
                 request_json: json!({
                     "revision": revision, "files": files, "removed": []
                 })
@@ -1263,6 +1272,7 @@ fn close_during_live_native_tree_or_restored_doc_cancels_and_releases_source() {
         let mut later = WorkspaceApplyTask {
             state: Arc::clone(&workspace.state),
             closed: Arc::clone(&workspace.closed),
+            shared: Arc::clone(&workspace.shared),
             request_json: json!({ "revision": revision + 1, "files": [],
                 "removed": [] })
             .to_string(),
@@ -1576,6 +1586,7 @@ fn rejected_inline_staging_does_not_retain_new_scope_or_grammar_candidates() {
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({
             "revision": 1,
             "files": [{"path": "src/a/live.ts", "language": "typescript", "source": "safe"}],
@@ -1653,6 +1664,7 @@ fn apply_revisions(clauses: Vec<Value>, revisions: Vec<Value>) -> Vec<Value> {
             let mut task = WorkspaceApplyTask {
                 state: Arc::clone(&workspace.state),
                 closed: Arc::clone(&workspace.closed),
+                shared: Arc::clone(&workspace.shared),
                 request_json: json!({ "revision": index + 1, "files": files, "removed": [] })
                     .to_string(),
                 request_buffer: None,
@@ -2393,6 +2405,7 @@ fn regex_group_transform_limit_is_local_to_its_clause_in_native_and_workspace_ev
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": 1, "files": [file], "removed": [] }).to_string(),
         request_buffer: None,
         request_direct: None,
@@ -2474,6 +2487,7 @@ fn matching_stops_after_decision_or_witness_budget_in_native_and_workspace() {
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": 1, "files": [file], "removed": [] }).to_string(),
         request_buffer: None,
         request_direct: None,
@@ -2540,6 +2554,7 @@ fn suppressible_each_stops_at_the_witness_overflow_in_native_and_workspace() {
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": 1, "files": [file], "removed": [] }).to_string(),
         request_buffer: None,
         request_direct: None,
@@ -2609,6 +2624,7 @@ fn roots_past_max_visited_nodes_are_not_matched_in_native_and_workspace() {
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": 1, "files": [file], "removed": [] }).to_string(),
         request_buffer: None,
         request_direct: None,
@@ -2675,6 +2691,7 @@ fn a_clause_whose_root_kinds_the_presence_lacks_does_not_run() {
         let mut task = WorkspaceApplyTask {
             state: Arc::clone(&workspace.state),
             closed: Arc::clone(&workspace.closed),
+            shared: Arc::clone(&workspace.shared),
             request_json: json!({ "revision": 1, "files": [file], "removed": [] }).to_string(),
             request_buffer: None,
             request_direct: None,
@@ -2728,6 +2745,7 @@ fn workspace_visits_grow_with_the_file_by_max_visits_per_node() {
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": 1, "files": [file], "removed": [] }).to_string(),
         request_buffer: None,
         request_direct: None,
@@ -2815,6 +2833,7 @@ fn select_when_exists_leaf_decides_at_first_witness_in_native_and_workspace() {
         let mut task = WorkspaceApplyTask {
             state: Arc::clone(&workspace.state),
             closed: Arc::clone(&workspace.closed),
+            shared: Arc::clone(&workspace.shared),
             request_json: json!({ "revision": 1, "files": [file.clone()], "removed": [] })
                 .to_string(),
             request_buffer: None,
@@ -3763,6 +3782,7 @@ fn positional_index_lives_with_the_workspace_across_applies_and_deletions() {
     let mut remove = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({"revision":6,"files":[],"removed":["a.py"]}).to_string(),
         request_buffer: None,
         request_direct: None,
@@ -3801,6 +3821,7 @@ fn apply_import_files(
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": revision, "files": files, "removed": removed,
             "deferGlobal": defer })
         .to_string(),

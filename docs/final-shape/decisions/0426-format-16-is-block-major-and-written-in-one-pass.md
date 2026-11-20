@@ -2,7 +2,7 @@
 
 Status: accepted (2026-11-18)
 
-Numbered 0399 where it was written (the hub's 0399 is "a `\u` escape's checks run at its token"), and 0434 on the sync branch until 2026-11-19.
+Numbered 0399 where it was written (the hub's 0399 is "a `\u` escape's checks run at its token"), 0434 on the sync branch and on final-rerail-shape-rr-align until 2026-11-19, and 0426 on django-bugs.
 
 ## Intro
 

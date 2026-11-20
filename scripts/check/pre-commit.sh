@@ -48,3 +48,5 @@ npm run --silent check:ui-tokens
 python3 scripts/check/check_dev_features.py
 # Blocks are never copied into another data structure (decision 0353): a commit that adds a copy is refused.
 python3 scripts/check/check_no_block_copies.py
+# No process-global state (decision 0442): a commit that adds a static the list does not hold is refused.
+python3 scripts/check/check_no_global_state.py

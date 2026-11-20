@@ -38,7 +38,7 @@ typedef struct ViewDoc {
     uint32_t source_len;
     Run lines;
     uint32_t placement;
-    uint32_t pad;
+    uint32_t file;
     int64_t delta;
     uint32_t within_lo;
     uint32_t within_hi;
@@ -58,7 +58,7 @@ UKL_STATIC_ASSERT(__builtin_offsetof(ViewDoc, ends) == 88, "ViewDoc.ends");
 UKL_STATIC_ASSERT(__builtin_offsetof(ViewDoc, source_len) == 92, "ViewDoc.source_len");
 UKL_STATIC_ASSERT(__builtin_offsetof(ViewDoc, lines) == 96, "ViewDoc.lines");
 UKL_STATIC_ASSERT(__builtin_offsetof(ViewDoc, placement) == 112, "ViewDoc.placement");
-UKL_STATIC_ASSERT(__builtin_offsetof(ViewDoc, pad) == 116, "ViewDoc.pad");
+UKL_STATIC_ASSERT(__builtin_offsetof(ViewDoc, file) == 116, "ViewDoc.file");
 UKL_STATIC_ASSERT(__builtin_offsetof(ViewDoc, delta) == 120, "ViewDoc.delta");
 UKL_STATIC_ASSERT(__builtin_offsetof(ViewDoc, within_lo) == 128, "ViewDoc.within_lo");
 UKL_STATIC_ASSERT(__builtin_offsetof(ViewDoc, within_hi) == 132, "ViewDoc.within_hi");
@@ -1388,7 +1388,7 @@ UKL_INLINE uint64_t clif_view_loc_docof(UKL_GLOBAL const uint8_t* t,uint64_t a0,
   uint64_t v41=v10|v40;
   {uint64_t t0=v41;v7=t0;}
  }else{
-  uint32_t v42=((uint32_t)(*(UKL_GLOBAL const uint32_t*)(t+v0)));
+  uint32_t v42=((uint32_t)(*(UKL_GLOBAL const uint32_t*)(t+(v0+((uint64_t)(((int64_t)(116))))))));
   uint64_t v43=((uint64_t)(v42));
   {uint64_t t0=v43;v7=t0;}
  }

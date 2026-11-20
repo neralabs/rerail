@@ -6,6 +6,8 @@ publish = false
 description = "The engine's tape as bytes: format 15 (v9np), its constants and a writer a parser writes it with; format 16 and its fixed blocks; one API over them, read in place (0293)."
 
 [features]
+# The tests' shared object for reads outside a run (decision 0442).
+test-hooks = ["rerail-clif/test-hooks"]
 # The hand-written reference writer of format 16 (`f16::reference`), which the writer's ops are checked against: the
 # tests', and the lab's (decision 0426 §6, R16). No build of the engine turns it on.
 reference = []
@@ -24,6 +26,7 @@ memchr = "=2.8.3"
 rerail-simd8 = { path = "../simd8" }
 
 [dev-dependencies]
+rerail-tape-format = { path = ".", features = ["test-hooks"] }
 # The reads in Cranelift's IR, JIT-compiled and run against this crate's readers (decision 0310).
 rerail-clif = { path = "../clif" }
 # The reads as UKL, run on the process's GPU (Metal, CUDA) against this crate's readers (decision 0440 step 6).

@@ -69,7 +69,7 @@ pub trait Backing: Send + Sync {
 
 /// The bytes zeroed as blocks' memory was handed out again (a free list's chunk, a dirty block's allocation).
 pub fn zeroed_bytes() -> u64 {
-    ZEROED.load(Relaxed)
+    rerail_context::with_local::<Zeroed, _>(|z| z.0.load(Relaxed))
 }
 
 /// `zeroed_bytes` counted on this thread alone: what a caller's own allocations zeroed, which the other threads'
@@ -78,7 +78,9 @@ pub fn zeroed_bytes_here() -> u64 {
     ZEROED_HERE.with(std::cell::Cell::get)
 }
 
-static ZEROED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// The run's count (decision 0442: a measurement of the run's).
+#[derive(Default)]
+struct Zeroed(std::sync::atomic::AtomicU64);
 
 thread_local! {
     static ZEROED_HERE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
@@ -90,7 +92,7 @@ thread_local! {
 /// `p..p + len` is writable memory of a block.
 unsafe fn zero(p: *mut u8, len: usize) {
     unsafe { std::ptr::write_bytes(p, 0, len) };
-    ZEROED.fetch_add(len as u64, Relaxed);
+    rerail_context::with_local::<Zeroed, _>(|z| z.0.fetch_add(len as u64, Relaxed));
     ZEROED_HERE.with(|z| z.set(z.get() + len as u64));
 }
 

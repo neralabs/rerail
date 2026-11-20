@@ -96,10 +96,12 @@ pub(super) fn holds(kept: f64, now: f64) -> bool {
     now <= kept.max(1.0) * GROWTH
 }
 
-/// The choices kept in this process, by key.
-fn kept() -> &'static Mutex<HashMap<[u8; 32], Chosen>> {
-    static KEPT: std::sync::OnceLock<Mutex<HashMap<[u8; 32], Chosen>>> = std::sync::OnceLock::new();
-    KEPT.get_or_init(Default::default)
+/// The choices kept by key, the caller's (decision 0442: the shared object's).
+#[derive(Default)]
+struct KeptChoices(Mutex<HashMap<[u8; 32], Chosen>>);
+
+fn kept() -> std::sync::Arc<KeptChoices> {
+    crate::code_rule_dsl::logic::profile::shared::<KeptChoices>()
 }
 
 /// At most this many programs' choices are kept in the process.
@@ -180,7 +182,7 @@ pub(super) fn lookup(key: &[u8; 32], nodes: f64) -> Option<Chosen> {
     // Memory is ahead of the store (decision 0102): choices this process holds are the newest there are, so the store
     // is read only for a program this process has not planned. Nor does the read wait for the writer: what a queued
     // write holds is in memory already.
-    if let Some(c) = kept().lock().expect("the kept choices").get(key) {
+    if let Some(c) = kept().0.lock().expect("the kept choices").get(key) {
         return holds(c.nodes, nodes).then(|| c.clone());
     }
     // Decoded when first looked up: a run asks for a few of the entries read at its start (decoding them all there was
@@ -215,7 +217,8 @@ fn queued(prepared: &[u8; 32], key: &[u8; 32]) -> crate::content_store::write_ba
 }
 
 fn keep(key: [u8; 32], chosen: Chosen) {
-    let mut kept = kept().lock().expect("the kept choices");
+    let held = kept();
+    let mut kept = held.0.lock().expect("the kept choices");
     if kept.len() >= KEPT_PROGRAMS && !kept.contains_key(&key) {
         kept.clear();
     }

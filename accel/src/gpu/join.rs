@@ -95,13 +95,15 @@ pub fn gpu_seconds(command: &CommandBufferRef) -> f64 {
     (end - start).max(0.0)
 }
 
-/// Why a failed command buffer failed: its error's description and code, once per process for each description
-/// (a wave's strata are refused to the CPU with no more than `BackendFailure` otherwise).
+/// Why a failed command buffer failed: its error's description and code, once a run for each description (a wave's
+/// strata are refused to the CPU with no more than `BackendFailure` otherwise).
 #[allow(unexpected_cfgs)]
 pub fn say_failure(command: &CommandBufferRef) {
     use objc::runtime::Object;
     use objc::{msg_send, sel, sel_impl};
-    static SAID: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    /// The descriptions said: the run's own (decision 0442).
+    #[derive(Default)]
+    struct Said(std::sync::Mutex<Vec<String>>);
     // SAFETY: `error` is an NSError or nil; its description an NSString, read as UTF-8 while the error lives.
     let why = unsafe {
         let error: *mut Object = msg_send![command, error];
@@ -115,11 +117,13 @@ pub fn say_failure(command: &CommandBufferRef) {
             format!("{text} (code {code})")
         }
     };
-    let mut said = SAID.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if !said.contains(&why) {
-        eprintln!("rerail: a command buffer the GPU failed: {why}");
-        said.push(why);
-    }
+    rerail_context::with_local::<Said, _>(|said| {
+        let mut said = said.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !said.contains(&why) {
+            eprintln!("rerail: a command buffer the GPU failed: {why}");
+            said.push(why);
+        }
+    });
 }
 
 /// A Metal library, function or pipeline that does not compile is fatal (decision 0382): the run stops, naming the

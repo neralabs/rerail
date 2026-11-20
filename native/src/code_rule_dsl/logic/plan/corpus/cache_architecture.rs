@@ -53,9 +53,6 @@ const NOT_CACHES: &[&str] = &[
     "analysis_scope_generation", "analysis_directory_acquisition", "analysis_scope_release", "analysis_scope_collect", "analysis_scope_pending",
     "corpus_roots", "corpus_manifests", "corpus_manifest_plans", "corpus_live", "corpus_plans", "corpus_plan_relations",
     "corpus_decided", "corpus_swept", "corpus_state",
-    // Each guest's key by its identity (decision 0391): a name, as `strings`. The observer's journal of what it saw
-    // change (decision 0400): bookkeeping of observations.
-    "guest_keys", "observed_changes",
     "x", "rows", "facts", "x.node_type", "s.stat_col", "s.stat_docrange", "s.stat_edge", "s.stat_kind", "s.stat_meta", "s.stat_val",
 ];
 

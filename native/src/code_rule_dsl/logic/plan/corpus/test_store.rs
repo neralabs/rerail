@@ -341,9 +341,9 @@ fn beside(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// The files of folder `from` cloned into `to` (made), where there is one, and its folders' the same way: the kept
-/// facts are a folder a space (`<store>.facts/<space>/`, decision 0401), whose blocks the store's rows name. A copy
-/// that took the top level alone held rows naming files it lacked ("a space's kept facts: No such file or directory").
+/// The files of folder `from` cloned into `to` (made), where there is one, and its folders' in turn: the kept facts
+/// are a folder a space (`kept_facts::space_dir`, `.facts/<space>/`), and a copy that took the top level alone held
+/// rows naming files it lacked ("a space's kept facts: No such file or directory").
 fn clone_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     let Ok(entries) = std::fs::read_dir(from) else { return Ok(()) };
     std::fs::create_dir_all(to)?;

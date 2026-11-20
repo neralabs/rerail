@@ -608,8 +608,11 @@ fn json_batch_cost_per_block() {
     println!("cranelift, one call: {:.3} ns per block, {:.2} GB/s (CPU time, best of 3)", s / blocks as f64 * 1e9, total as f64 / s / 1e9);
     #[cfg(target_os = "macos")]
     if std::env::var_os("RERAIL_CPU_ONLY").is_none() {
-        use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, REPEATED_LAUNCHES, run_split};
-        let before = REPEATED_LAUNCHES.load(std::sync::atomic::Ordering::Relaxed);
+        use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, RepeatedLaunches, run_split};
+        // The count is the run's (decision 0442).
+        let _run = rerail_context::test_run();
+        let repeated = rerail_context::local::<RepeatedLaunches>();
+        let before = repeated.0.load(std::sync::atomic::Ordering::Relaxed);
         for executor in [Executor::Generated(ClassStrategy::Lookup), Executor::Generated(ClassStrategy::Planes), Executor::Interpreter] {
             for width in LaneWidth::ALL {
                 let (mut best, mut launches) = (f64::MAX, 0);
@@ -627,7 +630,7 @@ fn json_batch_cost_per_block() {
                 );
             }
         }
-        println!("repeated launches: {}", REPEATED_LAUNCHES.load(std::sync::atomic::Ordering::Relaxed) - before);
+        println!("repeated launches: {}", repeated.0.load(std::sync::atomic::Ordering::Relaxed) - before);
     }
 }
 

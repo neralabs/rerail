@@ -15,7 +15,7 @@ use metal::{ComputePipelineState, Device, MTLSize};
 use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::ops::{Deref, DerefMut};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, Mutex};
 
 #[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
@@ -53,16 +53,17 @@ pub use rerail_metal::pool as blocks;
 
 const METAL_JIT_CACHE_LIMIT: usize = 32;
 pub(super) const EXECUTION_LANES: usize = 64;
-static JIT_CACHE: LazyLock<Mutex<BTreeMap<String, Engine>>> =
-    LazyLock::new(|| Mutex::new(BTreeMap::new()));
+#[derive(Default)]
+struct MetalPrograms(Mutex<BTreeMap<String, Engine>>);
 const METAL_WORKSPACE_POOL_LIMIT: usize = 4;
-static METAL_WORKSPACE_POOL: LazyLock<Mutex<Vec<MetalWorkspace>>> =
-    LazyLock::new(|| Mutex::new(Vec::new()));
+#[derive(Default)]
+struct MetalWorkspaces(Mutex<Vec<MetalWorkspace>>);
 
 /// Frees the workspaces kept for reuse; whether there were any. Kept workspaces count against the
 /// buffer budget, so a run that misses capacity frees them before anything else (`label_passes::run`).
 pub(super) fn release_workspaces() -> bool {
-    let released = METAL_WORKSPACE_POOL.lock().map(|mut pool| std::mem::take(&mut *pool)).unwrap_or_default();
+    let held_ = crate::code_rule_dsl::logic::profile::machine::<MetalWorkspaces>();
+    let released = held_.0.lock().map(|mut pool| std::mem::take(&mut *pool)).unwrap_or_default();
     !released.is_empty()
 }
 
@@ -70,7 +71,8 @@ pub(super) fn release_workspaces() -> bool {
 /// the pool is not being taken from now (it is called from inside allocations, the pool's lock perhaps this thread's).
 /// Kept between waves, they held the budget's room until a wave was refused and freed them all.
 fn evict_workspace() -> bool {
-    let Ok(mut pool) = METAL_WORKSPACE_POOL.try_lock() else { return false };
+    let held_ = crate::code_rule_dsl::logic::profile::machine::<MetalWorkspaces>();
+    let Ok(mut pool) = held_.0.try_lock() else { return false };
     let Some(at) = (0..pool.len()).max_by_key(|&i| MetalWorkspace::bytes_for(pool[i].totals, pool[i].scheduler_bytes, pool[i].output_storage_bytes, pool[i].task_capacity)) else { return false };
     let gone = pool.swap_remove(at);
     drop(pool);
@@ -229,9 +231,12 @@ impl MetalWorkspaceLease {
             .and_then(|tasks| tasks.checked_add(1))
             .and_then(|tasks| tasks.checked_mul(2))
             .ok_or(Error::BackendCapacity)?;
+        // The workspaces' evictor, registered once: code the pool calls (`gpu::shared::set_evictor`), which reads the
+        // machine's workspaces.
         static EVICTOR: std::sync::Once = std::sync::Once::new();
         EVICTOR.call_once(|| rerail_accel::gpu::shared::set_evictor(evict_workspace));
-        let mut pool = METAL_WORKSPACE_POOL.lock().unwrap();
+        let held_ = crate::code_rule_dsl::logic::profile::machine::<MetalWorkspaces>();
+        let mut pool = held_.0.lock().unwrap();
         let reusable = pool.iter().position(|workspace| {
             workspace.generation <= u32::MAX - generation_span
                 && workspace.fits(totals, scheduler_bytes, output_storage_bytes, task_capacity)
@@ -288,7 +293,8 @@ impl Drop for MetalWorkspaceLease {
             return;
         };
         workspace.generation = workspace.generation.saturating_add(self.generation_span);
-        let mut pool = METAL_WORKSPACE_POOL.lock().unwrap();
+        let held_ = crate::code_rule_dsl::logic::profile::machine::<MetalWorkspaces>();
+        let mut pool = held_.0.lock().unwrap();
         if pool.len() < METAL_WORKSPACE_POOL_LIMIT {
             pool.push(workspace);
         }
@@ -617,8 +623,10 @@ const INTERPRETER_FETCH: &str =
 /// The interpreter over resident tapes (the label passes'), compiled once (until the residency's
 /// drop releases it with the other pipelines' caches: it is held by the label runs' callers).
 pub(super) fn compile_resident_interpreter_cached() -> Result<Engine, Error> {
-    static INTERPRETER: Mutex<Option<Engine>> = Mutex::new(None);
-    let mut cached = INTERPRETER.lock().map_err(|_| Error::BackendFailure)?;
+    #[derive(Default)]
+    struct ResidentInterpreter(Mutex<Option<Engine>>);
+    let held_ = crate::code_rule_dsl::logic::profile::machine::<ResidentInterpreter>();
+    let mut cached = held_.0.lock().map_err(|_| Error::BackendFailure)?;
     if let Some(engine) = &*cached {
         return Ok(engine.clone());
     }
@@ -639,8 +647,10 @@ pub fn compile_interpreter() -> Result<Engine, Error> {
 /// once per process. A program whose flags carry a route (bit 31; bit 30 captured nodes, bits 8..30
 /// the label) marks its label as each result is published; other programs run as in `run_batch`.
 pub(in crate::code_rule_dsl) fn compile_sweep_cached() -> Result<ComputePipelineState, Error> {
-    static SWEEP: Mutex<Option<ComputePipelineState>> = Mutex::new(None);
-    let mut cached = SWEEP.lock().map_err(|_| Error::BackendFailure)?;
+    #[derive(Default)]
+    struct Sweep(Mutex<Option<ComputePipelineState>>);
+    let held_ = crate::code_rule_dsl::logic::profile::machine::<Sweep>();
+    let mut cached = held_.0.lock().map_err(|_| Error::BackendFailure)?;
     if let Some(pipeline) = &*cached {
         return Ok(pipeline.clone());
     }
@@ -685,8 +695,10 @@ pub(super) fn program_buffer_key(programs: &[Program]) -> Result<ProgramBufferKe
 
 /// The interpreter, compiled once per process: a lowered matcher dispatches it once per pass.
 pub(in crate::code_rule_dsl) fn compile_interpreter_cached() -> Result<Engine, Error> {
-    static INTERPRETER: Mutex<Option<Engine>> = Mutex::new(None);
-    let mut cached = INTERPRETER.lock().map_err(|_| Error::BackendFailure)?;
+    #[derive(Default)]
+    struct Interpreter(Mutex<Option<Engine>>);
+    let held_ = crate::code_rule_dsl::logic::profile::machine::<Interpreter>();
+    let mut cached = held_.0.lock().map_err(|_| Error::BackendFailure)?;
     if let Some(engine) = &*cached {
         return Ok(engine.clone());
     }
@@ -698,12 +710,12 @@ pub(in crate::code_rule_dsl) fn compile_interpreter_cached() -> Result<Engine, E
 /// Whether `programs`' kernel is compiled (`compile_jit_cached`), without compiling it.
 pub(in crate::code_rule_dsl) fn jit_ready(programs: &[Program]) -> Result<bool, Error> {
     let key = jit_cache_key(programs)?;
-    Ok(JIT_CACHE.lock().map_err(|_| Error::BackendFailure)?.contains_key(&key))
+    Ok(crate::code_rule_dsl::logic::profile::shared::<MetalPrograms>().0.lock().map_err(|_| Error::BackendFailure)?.contains_key(&key))
 }
 
 pub(in crate::code_rule_dsl) fn compile_jit_cached(programs: &[Program]) -> Result<Engine, Error> {
     let key = jit_cache_key(programs)?;
-    if let Some(engine) = JIT_CACHE
+    if let Some(engine) = crate::code_rule_dsl::logic::profile::shared::<MetalPrograms>().0
         .lock()
         .map_err(|_| Error::BackendFailure)?
         .get(&key)
@@ -712,7 +724,8 @@ pub(in crate::code_rule_dsl) fn compile_jit_cached(programs: &[Program]) -> Resu
         return Ok(engine);
     }
     let engine = compile_jit(programs)?;
-    let mut cache = JIT_CACHE.lock().map_err(|_| Error::BackendFailure)?;
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<MetalPrograms>();
+    let mut cache = held_.0.lock().map_err(|_| Error::BackendFailure)?;
     if let Some(existing) = cache.get(&key) {
         return Ok(existing.clone());
     }

@@ -1979,10 +1979,12 @@ fn spike_o125_replay() {
         }
     };
     let session = session::start(&base.join("session")).unwrap();
+    // One run holds the steps' runs (they join it), so the derivations they count are its own to read (decision 0442).
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     // `O125_DERIVATIONS=<dir>` (with `RERAIL_SPIKE_DERIVATIONS`): each run's rows derived and rows new, by relation,
     // `<dir>/<step>-<run>.tsv`: the derivations a counting scheme would keep a count of.
     let derivations = |step: usize, what: &str| {
-        let taken = std::mem::take(&mut *crate::code_rule_dsl::logic::native::DERIVATIONS.lock().unwrap());
+        let taken = crate::code_rule_dsl::logic::run::local_if_any::<crate::code_rule_dsl::logic::native::Derivations>().map(|d| std::mem::take(&mut *d.0.lock().unwrap())).unwrap_or_default();
         if let Some(dir) = std::env::var_os("O125_DERIVATIONS").map(PathBuf::from) {
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(dir.join(format!("{step:02}-{what}.tsv")), taken.iter().map(|(r, (d, n))| format!("{r}\t{d}\t{n}\n")).collect::<String>()).unwrap();

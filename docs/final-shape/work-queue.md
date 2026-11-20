@@ -772,6 +772,11 @@ pass.
     the background (e127, "Waits": `the store's collection`). It is in "from main to report" (2.16 s) but in no
     phase (1.83 s).
   - stats 0.08 s, cross 0.08 s, the rest 0.09 s.
+- **Closed** (2026-11-19, rr-align with phased-facts merged, b40e2fa76 and on; ep2 on m3, load 42-86): B101's
+  body edited each run. a0 cold 1,173.1 G; warm a1 21.8 G and 238 MB, a2 19.2 G and 199 MB, two more 18.8 G and
+  196-197 MB (before the hub merge, 20.7 G and 230 MB; at 80 G when found). Each warm run splices 1 of 317
+  programs into the kept link (0373, fb5de313d); the Metal driver holds 0 MB (the cost
+  model trains only on an idle machine, 0190 §10); rows 0 differing from h1 on every run.
 
 ### Q19. A new process reads every kept frame of the cross part, its own or not
 
@@ -1545,7 +1550,7 @@ pass.
 - **Done** (2026-11-19): `Observed::start` and `end` are `unsafe fn`, their contract written (`# Safety`: a live
   statement of the observed connection, for the call's length), and both callers (the admission's and the
   profiler's trace callbacks, the only holders of a live statement) state why they keep it. The same run stopped
-  next in `rerail-device-metal` on Q252. `cargo clippy -p rerail-engine --lib --tests` runs to the end (rc 0, 1,527
+  next in `rerail-device-metal` on Q329. `cargo clippy -p rerail-engine --lib --tests` runs to the end (rc 0, 1,527
   warnings); the 6 `sql_admission` tests pass.
 
 ### Q329. (Q218 on final-rerail-shape-rr-align; Q252 here until 2026-11-19, the hub's Q252 is its Metal parity tests) metal_join's `Words` made a `&mut [u32]` from `&self`, over a buffer the GPU writes too
@@ -2850,7 +2855,7 @@ submitted" now hold device memory at once.
     `host_pages_wrapped_past_the_budget_leave_the_budgets_buffers`,
     `two_works_past_the_budget_together_both_run_on_the_device_in_turn`,
     `a_level_larger_than_the_room_runs_in_the_lanes_that_fit`.
-  - (2) Kept facts in one format: final-rerail-shape-rr-align's chain (0443, was 0402) merged (40e610525), the
+  - (2) Kept facts in one format: final-rerail-shape-rr-align's chain (0456 here; 0443 there, was 0402) merged (40e610525), the
     gathering kept as one append a space a wave.
   - (4) The inputs' frames job (641515550): since the chain, a granule's frame is metadata, yet its job still
     encoded the rows into the frames' segments (dropped by the writer) and copied them twice for the kept entry.
@@ -2926,17 +2931,27 @@ submitted" now hold device memory at once.
     slot of the run's program, handed to each run by `Hooks::normalized`), not one each: each chunk's own
     version held every analysis again. Test: corpus::tests::a_runs_chunks_normalize_the_program_once (2 and 8
     chunks normalize the same number of times; with the hand-over off, 20 against 8). Under Relax, then cargo on a
-    Linux host (4c281bc2d made the engine build there again). Its profiled pair (ab75) is not run yet: the M3 ran
-    out of disk in its build twice (the host's own use), the M1 Max is unreachable, and Linux has no Metal.
+    Linux host (4c281bc2d made the engine build there again). ab75 (M3, t68, ab74's two chunk sizes): 635.8 G /
+    11 chunks against 679.7 G / 17, ~7.3 G a chunk, as ab74's ~7.2 G: no change a chunk. Both runs are 16-23 G
+    under ab74, but the host's load fell (73 and 85 then, 41 and 35 now), and instructions follow load (above).
+    The normalize was never the 12 ms a chunk measured in isolation: its span's own CPU is 0.00 s in both
+    pairs, its allocation 3-4 MB a run, now 0. Kept, as one version a run is the shape; it saves nothing
+    measurable.
   - (ii, what is left, from ab71's samples at 16 chunks) The stratum's program-only setup (its cycles, gates,
     levels, the rules it leaves out, types) is under 1% of `native_stratum_`'s own samples: made once a run, it
     would save almost nothing. Its samples outside the drive go to planning (`plan_rule_reused_in` 2,969, of
     which `plan_search` 1,976: searches, not a kept plan taken), opening (`Fx::open` 2,396: binding the joins to
     the chunk's relations, `join_rule_bound` 1,973, `view` and `InRel::index` in it) and, inside opening,
     `Interner::for_loading` waiting on the shared symbols' lock (2,004 samples parked behind `sym_atom` and
-    `sym_cat`'s writes) to clone an arena handle that never changes. Next: whether a plan another chunk searched
-    is taken by the chunks after it (the plan cache's counts at 9 and 17 chunks), then the joins' binding; the
-    lock is wall time, not instructions, and is fixed apart (the handle kept outside the lock).
+    `sym_cat`'s writes) to clone an arena handle that never changes. The lock is wall time, not instructions, and
+    is fixed apart (the handle kept outside the lock).
+  - (ii, planning, ab75's plan cache at 11 and 17 chunks) Searches 2,872 -> 4,238, but nodes searched only
+    482,936 -> 524,104 (+8.5%), and the planning spans grow ~0.2 s in all (re-price 0.06 -> 0.16 s, a kept plan's
+    sizes 0.08 -> 0.15). Searched with no plan kept: 1,421 and 1,429, once a key a run, as it should be. What
+    grows with the chunks: a kept order priced under a search that ran a search's work (0123 §7), searched
+    again each chunk, 1,058 -> 2,142, and "the distributions moved" 393 -> 667. Small: planning is not where a
+    chunk's 7 G goes. The growth 11 -> 17 by span is the joins' runs (`engine run (joins)` +1.63 s, `native`
+    +0.43, morsels +0.31), then spec +0.26 and issued components +0.26. Next: the joins' fixed setup a run.
   - (accounting, before 7562bf8a94) Thread CPU counts the jobs rayon's own joins steal: the text tests' "0.366 -> 1.795 s CPU" is
     other chunks' work run inside `Searchers::evaluate`'s `par_iter` (its own samples are equal, 365 -> 7284
     of which 6800 stolen); span `own_s` under any `par_iter` is inflated the same way. `exec::helped` covers
@@ -3269,7 +3284,7 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
 - **Waits on the user:** 5b–5e (a complete `clif_msl`, rounds as batches) build out a shape the
   numbers say loses to one core. Question 3 below.
 
-### Q325. (Q271 on final-rerail-shape until 2026-11-19; Q187 where written, Q218 until the first hub merge, Q250 until the second; the hub's Q187 is `parser_tests`) The label kernels' time follows `label_formula`'s (file, formula) pairs
+### Q325. (Q271 on final-rerail-shape until 2026-11-19; Q187 where written, Q218 until the first hub merge, Q250 until the second, Q288 on final-rerail-shape-rr-align; the hub's Q187 is `parser_tests`) The label kernels' time follows `label_formula`'s (file, formula) pairs
 
 - **Found** (2026-11-18, 0424): the label passes' walk steps fell from 65.8 M to 19.8 M (internal_dead_code)
   and 19.3 M to 7.4 M (public_api_triples). `label_micro_8` + `label_micro` went from 80.9 to 66.7 ms and from
@@ -3341,7 +3356,7 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
   think this is mostly fixed by using an accessor"). The reach is descendant images, a level each time a member sits
   below a blocker. A chain's pass went from 0.8–6.8 ms to 22–225 µs, with the rows the same as native.
 
-### Q317. (Q251 on final-rerail-shape until 2026-11-19; Q219 until the hub merge) A level's fact constraints are uploaded rows (done)
+### Q317. (Q251 on final-rerail-shape until 2026-11-19; Q219 until the hub merge, Q289 on final-rerail-shape-rr-align) A level's fact constraints are uploaded rows (done)
 
 - **Found** (2026-11-18, Q325's measurements): `Runner::level` uploaded the facts' `(node, label)` pairs once per
   pattern kernel group, the same buffer each time: 32 MB (8.1 M words) on 15 fixtures. Fixed: once a level (0425).
@@ -3599,9 +3614,9 @@ inventory of today's copies (12 sites, marked `copy (0353 step N)`) and the plan
 
 Q86 (step 6's prices) waits for step 4: most of what it prices goes.
 
-Q68 after step 5: the refusals that remain on hogql are 2 a run (binding tables, one index of 0.8 M rows). The
+Q86 after step 5: the refusals that remain on hogql are 2 a run (binding tables, one index of 0.8 M rows). The
 device-budget failures surfaced as a bare `BackendFailure`: a `String` error turned into `Error` loses its text
-(`compiler::Error::from`), so a refusal names no cause; naming it is part of Q68.
+(`compiler::Error::from`), so a refusal names no cause; naming it is part of Q86.
 
 ### Q58. 0325's FACTS blocks raise a CPU run's footprint, and the memory line cuts a third more chunks
 
@@ -4934,6 +4949,21 @@ after the phases went on the run path (0083).
     rules run in 60 s (profiled) instead of past 180 s. All 57 rules run over the 50 files.
   - `RERAIL_KEEPS_TRACE=<text>` prints the pricing's estimates for relations whose names hold the text.
 
+### Q332. (Q287 on final-rerail-shape-rr-align until 2026-11-19) 0458's corpus batch is made again on every warm run: ep2's warm edit 18.8 G and 197 MB to 57.5 G and 545 MB (open)
+
+- **Found** (2026-11-19, rr-align's roll-up of phased-facts 10158b23ccd, 0458 steps 1-4; ep2 on m3): rows 0
+  differing on every run, but each warm run (B101's constant edited, 1 of 300 files' rows unchanged in kind) makes
+  the whole corpus batch in its stats phase: 2.48 s of the run's 3.6 s. `the corpus batch (decision 0458)` parses
+  the files with tree-sitter (`tape parse`) and projects and interns every document's rows (`project and intern`:
+  relations 73 MB, document rows' digests 48 MB, extra document rows 39 MB, span prefilter 38 MB, node rows 30 MB).
+  a1 63.7 G and 550 MB, a2 60.5 G and 545 MB, two more 57.5 G and 545-547 MB; before the four commits (b40e2fa76 and
+  on) 18.8 G and 196-197 MB.
+- **Keep**: 0458's shape (the cross part reads its base relations off every file's tape; none kept); an unchanged
+  file costs nothing (0104, no reads of unchanged data).
+- **Done when**: a warm run reads its unchanged files' batch rows where they lie (or never makes them), parses no
+  unchanged file, and ep2's warm edit is back near 19 G and 200 MB.
+- **Record**: open; the phased-facts branch's (0458 Open), measured here.
+
 ### Q286. A warm run on a Linux host writes the observer's journal cursor (`the_run_after_a_cold_one_writes_nothing`) (open)
 
 Found 2026-11-19, running the corpus tests on a Linux farm host while building 0458 steps 1–3.
@@ -4986,6 +5016,11 @@ Found 2026-11-18, the 57 data-layer rules over corpus0's first 50 files, the pro
   `cross_views_tests` R1–R3 and R5, the maintain, partial-hit and guest tests, and 273 of 275 corpus tests on a Linux
   host (the two others are Q286, and pass on the M5). Next: step 4, the memo entries' base rows and the kept base
   granules go.
+- **0458 step 4, the kept granules gone** (2026-11-19): a base relation kept as its documents' digest, with one
+  documents' table; the changed files' old documents made on every route; the old version read in place
+  (`input_delta::Before`). R4 passes for the chain; 275 of 277 corpus tests on a Linux host (Q286's two), and on
+  the M5 the warm-run, cycle, new-process and 0458 tests. Next: the memo entries' base rows (copy 2), then R4 over the
+  memo too.
 
 ### Q284. (Q243 here before the hub merge 535cc2c8b) A strict run over 300 files ends at the writer's back-pressure: one input's kept facts are one 49 MB job (done)
 
@@ -5662,7 +5697,7 @@ native join it falls back to the planner's whole-rule order.
   budget tests. Reviewer: an ordinary body's search is unchanged (`pre` empty: every new branch is skipped, and
   its key's digest is as before).
 
-### Q240. (Q146 on django-bugs at cf28cfd53) A findings key computed whole starts from every node: its existential tail is priced at full fanout
+### Q240. (Q146 on django-bugs at cf28cfd53) (done) A findings key computed whole starts from every node: its existential tail is priced at full fanout
 
 - **Seen** (2026-11-18, PostHog cold on the M3, after c6917fd26): `xk_fz…_violation_3($v) :- node($v, $n, _, _, _),
   line($n, _), col($n, _), fzk…_violation($v)` (and `xk_…rr_diagnostic_…_2`) made 77 M + 39 M native work, 12.5 +
@@ -5677,7 +5712,48 @@ native join it falls back to the planner's whole-rule order.
   engine runs (a row a binding at most), so `fzk`'s order wins in every chunk; then the gap to sd1 (2,589 G) is
   measured again. Also timing-dependent still: the inline-or-store and demand choice kept per program (decision
   0090 §5) is the first chunk's to plan at its scale.
+- **Found** (2026-11-18): the search is the fault, not the price. The fixed-order pricer (`step`, plan.rs, after
+  693247ec4) prices a step past the head's last binding as one witness; the subset search prices through its own
+  `priced` and does not. With PostHog's statistics the search took `col` first (903,406 est.) where the same pricer,
+  given `fzk` first, priced it at 1,112: the search never weighed that order as it is priced. Probed per path: the
+  `col`-first plans were each a fresh search (first sight or replanned), never a kept plan.
+- **Tried, reverted**: the same cap in the search (head bound by an earlier join). It is wrong as the engine stands:
+  the walk ends a step at the first witness (`cut_from = tail(j)`, setfix) only in its row-by-row path. A fused
+  step (an atom and its filters, a chunk of candidates at a time, `rowcode`) runs every candidate, and a collecting
+  walk has no cut (`cut_from = usize::MAX`). Priced as one row, `demand_fzk($d), col($v, $c), …` (a cross product)
+  made 1.4 G rows and `doc_tape`'s `loaded` 443 M; PostHog ran past 9 minutes and was stopped. A test of the search
+  alone (`m(v, n), l(n, y), c(n, z), k(v)`: `k` leads) was red before the cap and green with it.
+- **Wanted, in order**: (1) the fused path ends its chunk loop at the first row made past `cut_from`, as the
+  row-by-row path does, and a collecting walk's cut is decided (does it need every row past the tail?); (2) then the
+  search prices past the head's last binding as `step` does, connected steps only, never a cross product; (3) the
+  test above, and PostHog against sd1.
+- **Done** (2026-11-18):
+  - (1) The fused path (setfix.rs, `flush` and its candidate loop) ends at the first row made past `cut_from`, as the
+    row-by-row path does. Test `a_fused_step_past_the_bound_head_stops_at_its_first_witness` (cut_tests.rs): 10,000
+    rows reached `l` before, 20 after. Collecting walks keep no cut: they are a trial's (setfix.rs 3058, 3110),
+    `run_join_collect`'s and a closure's per-value search, whose callers read the rows they collect. The stratum
+    walk and the paired walk take the cut.
+  - (2) A flat one-witness cap was still wrong where few candidates are witnesses: `doc_tape`'s
+    `doc_key → loaded → doc_module(p, m)` reads every `loaded` row for each key (443 M rows, 128 s) because one in
+    15,000 passes. So the search and the fixed-order pricer price the tail by its witnesses a binding instead
+    (`witnessed`, plan.rs): past the first join made with every head variable bound (work `base`, rows `h`), the
+    tail's work is scaled by `h / rows`. Every candidate a witness reads one a binding; few witnesses read in full.
+    `step`'s cap applies only to a step joined by a bound variable, never a cross product.
+  - (3) Tests: `the_search_prices_the_steps_past_a_bound_head_as_one_witness` (plan/tests.rs: `k` leads, work under
+    2,000; red without it). `heavy_values_price_a_skewed_three_way_self_join_by_its_third_moment` now has a head that
+    reads `c`, as its comment's count needs every row.
+  - PostHog cold on the M3 (load 35–51), 29,747 findings, hash fa0efeaed6ff, every run:
 
+    | run | instructions | join work | native CPU |
+    |---|---|---|---|
+    | sd1 | 2,589 G | 546 M | 79.7 s |
+    | fx1 (before) | 2,888 G | 561 M | 85.1 s |
+    | qd143317 | 2,625 G | 451 M | 67.7 s |
+    | qe143408 | 2,635 G | 449 M | 72.1 s |
+    | qf143646 (default chunking) | 2,542 G | | |
+
+    The `xk_…` relations are gone from the per-head comparison (77 + 39 M work to under 1 M), and join work is 18 %
+    under sd1's. Warm: 119–124 G (fx2 143 G, q94n 157 G).
 
 ### Q209. (Q175 on cost-classifier-metal-rf) (done) A rebased version's request record sat on other rules (`a_library_held_once_is_read_by_each_policy_in_its_own_scope`, half its runs)
 
@@ -5802,7 +5878,7 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   checks it against the tree's; 252 tests of preparation, program_image, the corpus, the merges, simplify and rr
   pass (M3).
 
-### Q226. (Q180 on cost-classifier-metal-rf) The version after `simplify` keeps a request record by place where the tree's states it by rule
+### Q226. (Q180 on cost-classifier-metal-rf) The version after `simplify` keeps a request record by place where the tree's states it by rule (done)
 
 - **Found** (2026-11-18, the same run past Q225): the preparation's check after `simplify` fails. `rr_value_req`'s
   record on the version has more entries than rules, and its readers sit on other rules; the tree's is by rule.
@@ -5812,6 +5888,17 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   A debug assert at every pipeline step that a request relation's entries match its rules, or the step stated none,
   would find each such pass at once, not one per run.
 - **Done when**: a debug run of corpus0 x B-now passes every stage check.
+- **Done** (2026-11-18): a probe on the pipeline's steps named it: `inline filters` made three of `rr_value_req`'s
+  rules (51 to 54) and did not state the record, so `request rules another subsumes` read it misaligned (51 entries,
+  54 rules) and kept it whole while dropping 28 rules; past it, a text pass replaced one rule (the count the same).
+  Not one pass's fault but the shape: the pipeline carried the record by rule and stated it only at its end. Now it
+  states it again after any step whose rules leave the version's record other than the carried one
+  (`AskedByRule::restated`), so every pass reads it aligned, as the tree's passes state it after each.
+  Past the stages, the prepared program's header check compared ruleless images by digest, the record by place
+  under two rule orders; it now leaves the record out (checked by rule after the merges) and prints the
+  differences. And Q179's test never built its repeat (the parser keeps one of a rule written twice): it adds it
+  after parsing now. Debug run of corpus0 x B-now: every check passes, 463 findings, d067ec2ebf6f. Tests:
+  `a_request_record_a_step_misaligns_is_stated_again_at_once`, Q179's, and the record tests (cargo, M3).
 
 ### Q227. (Q182 on cost-classifier-metal-rf) Relax cannot load the engine under `RELAX_SHARE` (a patched `native/vendor` crate)
 
@@ -6129,6 +6216,13 @@ Open:
   fixed. Kept both, as the user asked: `product_demand::fixed_vars` fixes a variable set to or looked up by constants
   alone, or reached from fixed values through a declared key or few-row fan-out, either enough. A refusal names its
   product rules and both ways to bound a side (decision 0361, "A product's side").
+- **Also seen** (Q263 on django-bugs, 2026-11-19): the same refusal in `base` on the M1 Max and the M3, in
+  `quoted_annotations_are_read_as_their_code`,
+  `a_protocols_subclass_is_a_class_and_a_methods_self_annotation_declares_an_attribute`,
+  `a_call_is_typed_by_the_overloads_its_positional_arguments_fit` and
+  `imports_resolve_through_site_packages_stubs_and_declarations_in_pep_561_order`. The planner refuses the typing
+  program (`typing/programs/calls.rerail`'s `base`, which reads no guest relation) before any batch is built, so it is
+  not decision 0431's.
 
 ### Q250. Four observer tests fail at the hub's tip
 
@@ -6199,6 +6293,53 @@ Open:
   after column 0 is now relative and searched within column 0's range (`ColDec::held`): ep2's facts file 140 →
   120 MB, rows 0 differ.
 
+### Q333. (Q290 on final-rerail-shape-rr-align until 2026-11-19; Q184 on cost-classifier-metal-rf) Derived relations' sizes estimated at preparation are off by over 2x about half the time
+
+- **Found** (2026-11-18, 0361 step 5): sizing derived relations from their rules' plans (summed up the strata from
+  the facts, at a nominal scale) let 7,881 lines be prepared on corpus0 x B-now, but their orders ran the joins 70%
+  longer. With each plan checked against the sizes it assumed (`Prepared::take`, `PRICE_DRIFT`), 2,870 of 6,063 were
+  refused, and the run is neutral: the estimates miss by over 2x as often as not.
+- **Next**: size them from what runs saw, not from the facts alone: a run knows each derived relation's rows when
+  it plans the strata above it. Kept per node with the prepared plans (by the version's identity, Q183's entry), a
+  later process prepares from them, and the check keeps them honest. Measure the refused share first and after.
+- **Done when**: a cold run's refused prepared lines are under a tenth of those taken, with the joins' CPU no worse
+  than with prepared plans off.
+- **Tried, dropped** (2026-11-18): each refusal noted the rows per node the run held of the relations the plan
+  assumed, and at the run's end the version's plans were made again with them in place of the estimates (the
+  columns' distinct values scaled with them), kept for the next run. corpus0 x B-now, profiling, M3: a second run on
+  the same store over the corpus edited (a comment line added to every file, so nothing is reused) refused 938 lines
+  against 3,382, but took 1,263 billion instructions against 963 with prepared plans off (+31%; joins 41.3 s ->
+  51.4 s); the commit before it, 987 (+2.5%); with derived estimates off, 967 (+0.5%); 463 findings, d067ec2ebf6f, in
+  every one. Correcting a relation's rows lets more lines take a plan whose distributions are still estimates, and a
+  line's plan taken on a kept-plan miss is kept (`decide`), so its order outlives the run. The diff is not in the
+  tree. What the next attempt needs: a plan priced on the run's statistics is what a search gives at 0.1-0.3 s a run
+  (search) and 1-2 s (statistics) of about 85 s; a prepared plan has to be priced as well as that to pay.
+
+### Q334. (Q291 on final-rerail-shape-rr-align until 2026-11-19; Q185 on cost-classifier-metal-rf) A lowered program's identity is its store's: kept plans and prepared plans miss across stores
+
+- **Found** (2026-11-18, while measuring Q333): the same rules lowered on two fresh stores give versions of other
+  identities (`manager::identity`): a lowered rule holds a name as the store's atom (decision 0270, `#n2708` on
+  one, `#n13220` on another), and every hash over the rules' text moves with it: rule hashes, the file-local
+  helpers' names (`fl<hash>_…`, `typing::file_local::helper_name` hashes the rule's text, atoms included), the version
+  identity and `line_key`. Within one store all of them hold (the atoms are the store's for good), so a project's
+  later runs read what its earlier ones kept. A run on a new store (CI, a fresh checkout) never reads another
+  store's kept or prepared plans, even for the same rules.
+- **Next**: decide whether plans should move across stores at all. If so, key them by the program before lowering,
+  or hash a branded name by its text (as `relocate` maps names by their strings), helpers' names included.
+- **Done when**: two fresh stores give the same rules one identity, and a test lowers them on two numberings and
+  finds the same keys.
+
+### Q335. (Q292 on final-rerail-shape-rr-align until 2026-11-19; Q186 on cost-classifier-metal-rf) The node-product rewrite on the version (0473)
+
+- **Found** (2026-11-18, while porting Release-debugging's product demand): `product_demand::rewrite` and its
+  `upstream`/`nullable` passes edit the front tree. On the version path (0281) it runs as a `Pipeline::made` step
+  that decodes the tree, rewrites it, and builds a new version. Finding the products is already on the version, so
+  a program with no product decodes nothing; SLF001 and any rule with a product decode once.
+- **Next**: write the rewrite as a `ProgramPass` over the version (`ProgramW::rule`), as `push.rs` did for the
+  local joins.
+- **Done when**: a run with a product decodes no tree (`trees_decoded` 0), and a test compares the pass with the
+  tree's rewrite on the module's programs.
+
 ### Q270. No inline rows: every source and tape is in a segment, uncompressed — done 2026-11-19
 
 - **Ask** (the user, 2026-11-19): "why do we have inline sql rows? In which circumstances are they used? We should not
@@ -6222,10 +6363,196 @@ Open:
 
 ### Q271. Sessions own the store's data: latest live in segments, the rest aged (decision 0450)
 
-- **Decided** (the user, 2026-11-19): 0450 §1. **Open**: §2, what a session is (proposed); §3, the cross-file memo
-  (surveyed: no shipped program declares it, it does not pay on an edit, its format is decoded into columns).
-- **Next**: once §2 and §3 are agreed, 0450's order of work, starting with results, call summaries and tree pages
-  in segments.
+- **Decided** (the user, 2026-11-19): 0450 §1, §2 (a store session) and §3 (the cross-file memo removed). Steps 2–4
+  of 0450's order of work are built (store floor 8 on sync-integration-hub-tape; 9 on rr-align, where 0456's kept
+  facts and the retired frames are joined with it).
+- **Next**: the rest of 0450's order of work.
+
+### Q336. (Q295 on final-rerail-shape-rr-align until 2026-11-19) Four observer tests fail at random on the M3 under load, at HEAD as after roll-up 6
+
+- **Found** (2026-11-19, verifying roll-up 6's merge of sync-integration-hub-tape): run one at a time on m3 (load
+  17–28), `a_watched_root_is_not_statted_where_the_journal_says_nothing_changed`,
+  `an_inner_root_is_answered_by_the_root_above_it`,
+  `a_canonical_path_is_resolved_again_only_where_the_journal_names_a_change` and
+  `rerails_own_files_are_outside_the_observer` (rerail-store) each failed in some of four runs and passed in
+  others, alternating HEAD's `observe.rs` and the merge's in one job. The merge's change there is a refactor
+  (`settle_one`) and a new test. They are flaky, and the merge did not cause it. The last one's message: "the
+  journal's news of own files forgets nothing: 2 stats", so the third run's journal named the own files the
+  second run wrote: the journal's latency outran the 300 ms sleeps.
+- **Next**: find what each one waits on. Replace the sleeps with a wait on the journal's own cursor (the event
+  ids FSEvents gives past the writes), so a loaded host cannot reorder them.
+
+### Q337. (Q296 on final-rerail-shape-rr-align until 2026-11-19; Q241 on django-bugs) A warm run sometimes stops on a strict-SQL read of `atom_key` inside the waves
+
+- **Seen** (2026-11-18, PostHog warm on the M3 over qe143408's store): rc 134, `RERAIL_SQL_STRICT`: `SELECT id FROM
+  atom_key WHERE h IN rarray(?1)` from `Atoms::find` ← `intern_all` ← `ContentStore::intern_atoms` ←
+  `vtab::syntax::Batch::build` ← `run_observed`, span `answer load / a chunk projected / project and intern / intern
+  atoms`. Intermittent: over the same store the Q240 engine aborted once and passed twice. The engine from before
+  Q240 (fx2) aborted too. Warm runs over qd143317 and qf143646 passed.
+- **Wanted**: the projected chunk's atoms found without SQL inside the waves (decision 0104: one read before the
+  first wave), or this read moved before it; then a warm run over qe143408's store passes every time.
+
+### Q338. (Q297 on final-rerail-shape-rr-align until 2026-11-19; Q242 on django-bugs) (done) A prepared plan priced a kind's constant as one kind in 200: PostHog's `param` read 10.4 M rows
+
+- **Seen** (2026-11-18, PostHog cold on the M3 after merging the hub at ffc390de8): join work 451 → 555 M. `param`'s
+  two rules (5.3 → 93.2 M) and `tp_decl`'s (0 → 31 M) took prepared plans (decision 0361 step 5, `search: 0
+  subsets`) with `kind($p, #k1025)` first: 10.4 M rows. Before, the search led with `field($f, #f65559, $ps)`, 253 k.
+- **Cause**: the prepared model prices a constant on a column by its `values` fact (`values(k, kinds)`: 1 in 200,
+  `values(f, ~50)`: 1 in 50). Kind 1025 holds 16 % of the nodes and field 65559 0.4 %. A check of the prepared
+  plan's counts (step 6) would not see it: the plan's own estimate of its work was near what it read.
+- **Done**: such a rule is not prepared (`prepared.rs`, `by_values`); it is planned at run time from the constant's
+  statistics. Recorded in 0361 under step 5. PostHog cold: 2,307 and 2,226 G instructions, 444–447 M join work, warm 102 G (merged, before:
+  2,500 G, 555 M; sd1 2,589 G, 546 M); 29,747 findings, fa0efeaed6ff.
+- **Open for 0361's owner**: most rules test a kind's constant, so fewer lines are prepared. A prepared order that
+  is right for every constant needs the constants' frequencies, which no fact gives; the run's statistics have them.
+
+### Q339. (Q298 on final-rerail-shape-rr-align until 2026-11-19; Q243 on django-bugs) PostHog on Metal (2026-11-18): what a cold run still needs
+
+- **Runs** (M3 Max, profiling build at 2667b6d36, cold, `opts-m3-reuse.json`, load 36–73; every run that finished
+  gave 29,747 findings, fa0efeaed6ff):
+
+  | run | binding | chunk | Metal budget | wall | CPU | instructions | GPU busy | outcome |
+  |---|---|---|---|---|---|---|---|---|
+  | hc155001 | CPU | 262,144 | – | 69 s | 197 s | 2,226 G | – | done |
+  | qf143646 | CPU | default | – | 67 s | 232 s | 2,542 G | – | done |
+  | gm160557 | `metal` | 262,144 | 512 MB | 150 s | 208 s | 2,060 G | 8.0 s | 1,686 leases past the budget, refused to the CPU |
+  | gn161450, go161705 | `metal` | 262,144 | 4 GB, 1 GB | – | – | – | – | stopped: the AST matcher wave, `BackendCapacity` |
+  | gp161752 | `metal` | default | 4 GB | 78 s | 219 s | 1,938 G | 18.8 s | 18,252 of 152,677 runs on the GPU |
+  | ga161936 | `always` | default | 4 GB | 94 s | 236 s | 1,781 G | 44.8 s | 98,765 of 117,451 runs on the GPU; abort at exit |
+
+- **Wanted**, each its own item below: Q340 (dispatches), Q341 (big chunks), Q342 (prices), Q343 (computed terms and
+  the other refused forms), Q344 (uploads are copies), Q345 (the abort at exit).
+
+### Q340. (Q299 on final-rerail-shape-rr-align until 2026-11-19; Q244 on django-bugs) The device's work is millions of small dispatches: 5.2 M dispatches, 223 k submissions, 23 s encoding
+
+- **Seen** (ga161936, `always`): 638,337 stages in 223,563 submissions and 5,178,767 dispatches; the host's CPU
+  35.6 s (encode 23.3 s, uploads 9.5 s) for 44.8 s of GPU time. `metal` (gp161752): 58,597 submissions, 1.53 M
+  dispatches, encode 8.0 s. A chunk's stratum's stage is a dispatch of its own.
+- **Wanted**: a level's strata, across chunks, enqueued as one persistent dispatch over a work queue (the device's
+  enqueue is a work queue), so dispatches and submissions scale with levels, not chunks × strata × stages.
+
+### Q341. (Q300 on final-rerail-shape-rr-align until 2026-11-19; Q245 on django-bugs) A big chunk does not run on Metal: the AST matcher wave stops on `BackendCapacity`, leases past 512 MB
+
+- **Seen**: at 262,144-node chunks with a 1 GB or 4 GB Metal budget, `ast_wave.rs:155` panics "the ast matcher wave
+  failed on Metal: BackendCapacity" (decision 0382 §6: no CPU wave in its place), though its comment says what does
+  not fit is split (0334). At the default 512 MB the wave stays on the CPU, and 1,686 strata's leases fail
+  (`device budget: a lease of N MB past the Metal budget`); peak footprint 4.2 GB.
+- **Wanted**: the wave split to what fits; which of the interpreter's `BackendCapacity` sites it is named (the error
+  carries no origin); strata's leases sized to the budget.
+
+### Q342. (Q301 on final-rerail-shape-rr-align until 2026-11-19; Q246 on django-bugs) Placement's GPU prices are far off: `metal` costs more CPU than the CPU binding
+
+- **Seen** (gp161752): `ann_ctx` 2,236 GPU runs, 5.46 s host CPU and 1.99 s GPU, where its 758 CPU runs took 0.17 s;
+  `walk` est 3,147 ms, actual 1.45 s host + 1.51 s GPU; gm160557's `tgt` 11.3 s host on the GPU against 16 ms on the
+  CPU. The prices leave out the host's encoding and each dispatch's cost (Q340).
+- **Wanted**: the device's measured per-run host and GPU costs priced (decision 0354's learned correction trained on
+  these runs), so `metal` never costs more than the CPU binding.
+
+### Q343. (Q302 on final-rerail-shape-rr-align until 2026-11-19; Q247 on django-bugs) Strata the device has no form for: computed terms (13–18 s CPU), split, gates, several indexes
+
+- **Seen** (ga161936): `@rr_node_text` in a comparison (16 strata, 15.9 s), `@cat` in a head (4, 8.9 s), `@pkg_up`,
+  `@rx_group`, `@concat`, `@head`, `@replace_all`, `@str_between`, `@substr`, `@rr_node_value`; refused at run time:
+  "no native seed join" (`parsed_in`), "an atom over the component's own relation by several indexes"
+  (`exported/public_name`), "split has no device form" (`rr_agg7`), "a component with gates or requests".
+- **Wanted**: device forms for the text terms first (`@rr_node_text`, `@cat`): 25 s of the 32 s.
+
+### Q344. (Q303 on final-rerail-shape-rr-align until 2026-11-19; Q248 on django-bugs) Inputs' views are uploaded to the device: 0.8–1.3 GB a run, 5.9–8.8 s of host CPU
+
+- **Seen**: "uploads by what they read: views 769 MB in 5,855 ms" (ga161936), 1,274 MB in 8,756 ms (gm160557). On
+  unified memory these are copies (decision 0353): the device should read the inputs' blocks in place.
+- **Wanted**: Native-and-GPU-strata's 0353 steps 4b–5 (the transducer's kernels and the view read in place) merged,
+  then the views' uploads counted again.
+
+### Q345. (Q304 on final-rerail-shape-rr-align until 2026-11-19; Q249 on django-bugs) An `always` run aborts at exit: a thread local read during or after its destruction
+
+- **Seen** (ga161936): after the outputs were written, `main` panicked "cannot access a Thread Local Storage value
+  during or after destruction", "thread local panicked on drop, aborting" (rc 134). No backtrace.
+- **Wanted**: the drop that reads it named (a run with `RUST_BACKTRACE=1`), and fixed.
+
+- **Done** (2026-11-18, at `3200d8871`): 300 runs of `parity_random_texts` (120 six at a time, 180 twelve at a
+  time; `tmp/gpu/q124/six.sh`), each running all 1,200 cases on the device with no refusal (`--nocapture`), all
+  equal to the CPU's. What ended it is not proven: no build of the old commit was made to tell. The likeliest is
+  `683d9f62e` (Q265): before it, a device row's stores went through `rows_at`, 8 bytes whatever its column's width
+  and unbounded by its chunks, so stores made in parallel could overwrite their neighbours in whatever order the
+  threads ran. The two suspects above were read and hold: a full arena's text sets `TEXTFN_FULL` and `complete`
+  runs the stage again from its first text function in a new batch's arena; and the join's passes are one serial
+  encoder, each dispatch seeing the last's writes.
+
+### Q346. (Q305 on final-rerail-shape-rr-align until 2026-11-19; Q257 on django-bugs) Format 16's writer reserves too little tail where codes pass a byte: `finish` grows the room, copying the tape
+
+- **Found** (2026-11-18, at the merge of oscar into django-bugs): `f16::tests::ops_write_the_tape` failed 4 runs in
+  5 under the crate's parallel run, at oscar's own 7577c16b9 too. Its check that the tape is the writer's room (0426,
+  R4: nothing copied but the last block) held only when `realloc` grew the room in place. `Writer::new` reserves the
+  tail as `nodes / 2` bytes of side lists ("their usual share"); on the test's nodes the side lists are about 4.7 KB
+  for 2,001 nodes: 1,036 codes past a byte (a table of 600 codes, `low_w` 1) and 243 escaped slots.
+- **Now**: `finish_moves_only_the_last_block` (the R4 test 0426 names, missing until now) checks the room is kept
+  where codes fit a byte; `ops_write_the_tape` states that its nodes pass the reserve.
+- **Do**: size the side lists' reserve from what the writer knows (the language's code count against `low_w`, the
+  source's length against the slot and gap widths), or grow the room while the side lists fill, before the tail;
+  measure how often `finish` grows the room on hogql and PostHog first.
+- **Done when**: no tape of the PostHog corpus is copied by `finish`, and a test with a table past 256 codes holds R4.
+
+### Q347. (Q306 on final-rerail-shape-rr-align until 2026-11-19; Q261 on django-bugs) No guest documents: guests are tape values the rules make and keep (decision 0431)
+
+- **Asked** (2026-11-18, the user): "there are no guest documents. The CPU and GPU run on exactly the same data";
+  the rules decide which strings are parsed (annotations, maybe format strings), and what they make is kept as the
+  program's facts.
+- **Measured before** (PostHog cold, M3, 1ca497070): guests 32.1 s CPU (CPU binding) and 34.4 s (Metal), of which
+  the batch built again with guests 18.4 s (216 builds) and 13.7 s (402); the embed slice's rounds 10.9 s and 18.1 s.
+  Findings 29,747, fa0efeaed6ff.
+- **Design** (the user, 2026-11-18): strings the rules parse are tape values, their nodes named by the tape ("do
+  a"); programs the grammar holds are part of their file ("okay, I agree with that"); format 16 unchanged.
+- **Steps**: 0431's five. Step 1 (the record and the R1–R4 tests, ignored, each failing for its reason) is done.
+- **Done when**: R1–R8 hold, their tests pass unignored, no guest document, key range, embed slice or batch rebuild
+  is left, and PostHog's findings are unchanged on CPU and Metal.
+
+### Q348. (Q307 on final-rerail-shape-rr-align until 2026-11-19; the same test as Q292, this branch's finding; Q262 on django-bugs) (Q208 again) `r7_the_recheck_order_is_priced` fails: 2 recheck lines unpriced after "a use added"
+
+- **Seen** (2026-11-18, m1max, at 24740af51 and at 2e9d16bc8, alone and in a batch): `ran.shape.rechecks_unpriced`
+  is 2 after the "a use added" edit; Q208 (done) had it 0. Not a load or timing failure: it fails every time, in 4 s.
+- **Not 0431's**: it fails with 0431's step 2 stashed. A merge since Q208 brought it in; to bisect between Q208's
+  commit and 24740af51 on the maintain mode's recheck lines (`bound_head_order`, `plan_rule_reused`).
+- **Done when**: R7 passes, and the test names the unpriced line when it fails.
+
+### Q349. (Q308 on final-rerail-shape-rr-align until 2026-11-19; the same test as Q291, whose cause is fixed here; Q264 on django-bugs) `a_request_record_over_an_edit_is_a_run_from_scratchs` fails: "edit 2: a record to carry"
+
+- **Seen** (2026-11-19, m3, with 0431 step 4c in the tree): `program_image::tests` asserts that a run from scratch of
+  edit 2 (`reads_e("q")`, which adds a request's rule) states a request record, and it states none.
+- **Not 0431's, by its place**: the test builds versions and runs `Pipeline`'s rename pass. It reads no batch, run or
+  lowering that 4c changed. To check at 4c's parent, then on decision 0393's carried record (`set_asked`, `rebase`).
+- **Done when**: it passes.
+
+### Q350. (Q309 on final-rerail-shape-rr-align until 2026-11-19; Q265 on django-bugs) The Linux hosts' builds of `rerail-accel` miss `rerail_blocks`
+
+- **Seen** (2026-11-19): a `test-remote` run sent to a Linux host fails to compile `rerail-accel` (`cannot find module
+  or crate rerail_blocks`, 8 errors). A Mac's build of the same checkout compiles.
+- **Do**: make `rerail-accel`'s use of `rerail_blocks` match the dependency's target (a `cfg` on one and not the
+  other), so CI's Linux build compiles it.
+- **Done when**: the engine's tests build on a Linux host.
+
+### Q351. (Q310 on final-rerail-shape-rr-align until 2026-11-19; Q266 on django-bugs) An input a constant filters is uploaded to the device
+
+- **Seen** (2026-11-19, 0431 step 4c, the device): `parsed(s, "annotation", r)` binds `parsed` through a select with
+  `WHERE grammar = …` (setfix `view`): a view of the rows the constant chose (`View::ids`, `eqs`). The device reads no
+  such view in place: `resident` uploads its rows (copy 0353 step 6, row 5), whatever its source (a relation in its
+  block, a tape view). Every program with a constant on a bound input pays it.
+- **Do**: bind the source whole where it lies (`in_block`, `device_view`) and check the view's `eqs` on the device, in
+  the stages that read it (a probe by the constant, or a filter of the scan). No mask or row list made on the host.
+- **Done when**: R8's test (`cpu_and_metal_read_the_same_tape_values`) allows no upload for `parsed` (its `q266`), and
+  its HTML run (whose library, `html/embeds.rerail`, filters `child` and `node` by constants) uploads no more than a run
+  over a file with no script.
+
+### Q352. A pinned Git revision is the process's: a read under its root, from any run, goes to it
+
+- **Seen** (2026-11-19, at the merge of rr-align's 0442 into the sync branch): `git_snapshot::Snapshot` (a scan's
+  pinned commit or tree, `GitRevisionSource`) registers its view in a process static (`VIEWS`, counted in `ACTIVE`),
+  and every read of a path under its root looks there (`git_snapshot::view`). Another workspace's run over the same
+  root, in the same process, reads the pinned revision, not its files. Decision 0442 puts what is shared by design
+  in the shared object its caller passes; `global-state.txt` lists both as `shared`, not yet moved.
+- **Do**: the snapshot registered in its workspace's `Shared` (the Node API's `CodeRuleDslWorkspace::shared`), and
+  `view` reads the shared object of the run under way; a read with no run sees no snapshot.
+- **Done when**: two workspaces, one with a revision pinned on a root, read the root's files each its own way in one
+  process (a test), and both entries leave `global-state.txt`.
 
 ### Q290. (Q265 on benchmarks-on-integration; done) `ane::tests::exact_random_shapes` failed on the M3: Core ML placed a matmul on the CPU
 
