@@ -5553,6 +5553,22 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
 - **Decided** (2026-11-19, the user: "pick a for the decision"): the guest relations name a program by its file and
   place (`parsed(at, grammar, root)`), so `node`'s `d` is the file (0431 §4).
 - **Done when**: `docof` of a program's node is its file in a T program too, with a test.
+- **Done** (2026-11-20): `node`'s document column is a program's file in T's shape too. The batch dropped a
+  program's guest in T's shape (it takes the program's whole tree, not its root's subtree), and with it the file
+  key, so a projection's `file` was the program's own key. The file key is now one rule, `Guest::file_key`, that
+  both shapes' projections take. Test: `a_t_programs_docof_of_a_programs_node_is_its_file` (a T program in a
+  JavaScript run with `.embedded on`, over an HTML file's script). `doc` still has a row for the program's own key
+  (the document underneath), so a test that joins `doc` by path alone does not see the difference; the test checks
+  that the key is not the node id's.
+
+### Q271. A wildcard node in a rule is not bounded by hiding
+
+- **Seen** (2026-11-20, Q267's probe): `zo(k, d) :- node(d, _, k, _, _).`, in a T program in a JavaScript run with
+  `.embedded on`, gives the hidden HTML host's own kinds (`document`, `element`, …). Hiding bounds a node by its
+  variable (0058 §1), and a wildcard has none. `kind(_, k)` in core.rr's shape is the same case, by its place.
+- **Do**: check the case in core's shape too; bound a wildcard node column as a variable is bounded (a fresh
+  variable for it, in the hiding pass).
+- **Done when**: a rule with a wildcard node column sees no hidden document's rows, with a test in each shape.
 
 ### Q268. 0431's leftovers after step 3
 

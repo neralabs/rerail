@@ -4751,3 +4751,31 @@ fn a_run_reads_the_files_holding_its_programs_only_when_asked() {
     let [off] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("embedded-off-js", &[("b.html", html)], &calls(""), &["calls"])).unwrap();
     assert!(off.is_empty(), "by default: {off:?}");
 }
+
+/// Q267 (decision 0431 §4, "a program is named by its file and place"): where a program declares `docof` over nodes
+/// as T's programs do, it is `node`'s projection, and `node`'s document column is a program's file, so `docof` of a
+/// script's node is the HTML file that holds it, as core.rr's `docof` is.
+#[test]
+fn a_t_programs_docof_of_a_programs_node_is_its_file() {
+    let html = "<p>x</p>\n<script>f(1)</script>\n";
+    let rule = r#"
+.language javascript
+.embedded on
+.decl doc(d: number, path: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.input doc, node, text
+.decl docof(n: node, d: number)
+docof(n, d) :- node(d, n, _, _, _).
+.decl calls(x: symbol, p: symbol)
+calls(x, p) :- node(_, i, "identifier", _, _), text(i, x), docof(i, d), doc(d, p).
+.decl keys(i: node, d: number)
+keys(i, d) :- node(_, i, "identifier", _, _), docof(i, d).
+.output calls, keys
+"#;
+    let [calls, keys] = <[Vec<Vec<String>>; 2]>::try_from(guests_run("t-docof-program", &[("b.html", html)], rule, &["calls", "keys"])).unwrap();
+    assert_eq!(calls, [["f", "b.html"]], "a script's name is its HTML file's");
+    // The node's id keeps the program's own key underneath; its document is the file's, not that key.
+    assert_eq!(keys.len(), 1, "{keys:?}");
+    assert!(!keys[0][0].starts_with(&format!("guest{}:", keys[0][1])), "docof is the file's key, not the program's: {keys:?}");
+}

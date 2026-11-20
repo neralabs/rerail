@@ -94,7 +94,8 @@ code may be named by which rules asked for it, or in what order.
    programs, kept a program a document to the rules.
    As built (step 3, a program named by its file and place): `node`'s document column is the program's file on the
    CPU (`Viewed::value_of`), in CLIF (`view_reads::node`, `at::FILE`) and on the device (`view_expand`, `d.file`);
-   `core` keeps the document underneath. A lookup of `node` by document reads a file's rows, then its programs'
+   `core` keeps the document underneath. In T's shape too (Q267, 2026-11-20): a T projection takes a program's whole
+   tree, not as a guest, and its file by the same rule (`Guest::file_key`). A lookup of `node` by document reads a file's rows, then its programs'
    (`Batch::programs`, an index by file), and one kept to a document (`lookup_in`) keeps to the file and its programs.
    `guest`, `doc_role`, `doc_root`, `embed` and `embed_value` are gone from core.rr; the engine's own rules (the
    findings' syntax errors, the memo's components, `components.rr`) read `rr_program(d, file, grammar)`, the document

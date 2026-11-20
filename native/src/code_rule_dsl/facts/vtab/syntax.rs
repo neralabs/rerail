@@ -1213,6 +1213,14 @@ pub struct Guest {
     pub made: Made,
 }
 
+impl Guest {
+    /// The key `node`'s and `docof`'s document column gives a node of document `key` that is this guest (decision
+    /// 0431 §4): a program's file, in either shape; any other guest's own key, for it is no file's.
+    pub fn file_key(guest: Option<&Guest>, key: u32) -> u32 {
+        guest.filter(|g| g.made == Made::Host && g.file != 0).map_or(key, |g| g.file)
+    }
+}
+
 /// What made a guest document.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Made {
@@ -1993,7 +2001,7 @@ impl Projected {
             }
         });
         let tokens = ranks.count(Item::Token);
-        let file = guest.as_ref().map(|(g, _)| *g).filter(|g| g.made == Made::Host && g.file != 0).map_or(key, |g| g.file);
+        let file = Guest::file_key(guest.as_ref().map(|(g, _)| *g), key);
         let mut p = Projected {
             module: None,
             key,
@@ -3580,6 +3588,8 @@ impl Batch {
             let known = if guest.is_none() && core { ahead.remove(&d.key) } else { None };
             let new_span = crate::code_rule_dsl::logic::profile::span(|| "projected".into());
             let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, known, projection.node_anchors.as_ref().filter(|_| core), &block);
+            // T's shape takes a program's whole tree, not as a guest, but its nodes are its file's too (Q267).
+            p.file = Guest::file_key(d.guest.as_deref(), d.key);
             drop(new_span);
             // A program that reads `end_point` has each node's end point among the positions, after the lines.
             let nodes = p.len();
