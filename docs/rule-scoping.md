@@ -313,7 +313,7 @@ Anything else is refused with `403 agent-not-permitted` and the dashboard URL wh
 
 - `rerail rules approve <id | package>` is refused, and names the dashboard page where a person approves it; with no name it lists what waits.
 - `rerail rules import` is refused: it replaces your rules, approved ones included.
-- `rerail rules add` of a draft that changes one of your approved rules saves the draft as a copy, as below, rather than changing the rule. The rule keeps running as it is, in every repository it is added to, until a person approves the copy. A rule still waiting for approval, and a draft that says what the approved rule says, are changed in place.
+- `rerail rules add` of a draft that changes one of your approved rules saves the draft as a copy, as below, rather than changing the rule. The rule keeps running as it is, in every repository it is added to, until a person approves the copy. A rule still waiting for approval, and a draft that says what the approved rule says, are changed in place. Where the approved rule is not added, the copy would have nowhere to run, so the edit is refused until the rule is added there unchanged.
 
 Like the API's, this holds a coding agent to the path it is given. It is not a security boundary: the agent runs as you, and can unset the variable before it runs a command.
 

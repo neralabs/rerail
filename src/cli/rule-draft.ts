@@ -492,7 +492,7 @@ function draftPlacement(draft: RuleDraft, root: string, session: AgentSession | 
       }
     }
     if (editsApprovedRule(database, draft, session)) {
-      return { folders: libraryRuleFolders(database, checkout.repositoryKey, id), refusal: ownCopyRefusal(database, checkout, draft), unread: undefined };
+      return { folders: libraryRuleFolders(database, checkout.repositoryKey, id), refusal: ownCopyRefusal(database, checkout, id, draft.folder), unread: undefined };
     }
     const folders = [...libraryRuleFolders(database, checkout.repositoryKey, id), ...named];
     return { folders, refusal: copyFromElsewhereRefusal(database, checkout, id, listedRuleCatalog), unread: undefined };
@@ -808,17 +808,17 @@ function editsApprovedRule(database: RerailDatabase, draft: RuleDraft, session: 
 }
 
 /**
- * Why `rules add` refuses a coding agent's edit of your approved rule, where it does: the draft names a folder (the
- * copy is added where the rule is), the repository already has a copy of it (that copy is the one to change), or the
- * rule is not added there. `rules test` reports the same.
+ * Why `rules add` refuses a coding agent's edit of your approved rule `id`, where it does: the draft names a `folder`
+ * (the copy is added where the rule is), the repository already has a copy of it (that copy is the one to change), or
+ * the rule is not added there, so a copy would have nowhere to run. `rules test` reports the same.
  */
-function ownCopyRefusal(database: RerailDatabase, checkout: CheckoutContext, draft: RuleDraft): string | undefined {
-  const id = draft.rule.id;
+function ownCopyRefusal(database: RerailDatabase, checkout: CheckoutContext, id: string, folder: string | undefined): string | undefined {
   const name = repositoryName(checkout.checkoutPath);
-  if (draft.folder !== undefined) return `folder: ${id} is approved, so this edit is saved as a copy added where ${id} is, and the draft cannot name a folder`;
+  if (folder !== undefined) return `folder: ${id} is approved, so this edit is saved as a copy added where ${id} is, and the draft cannot name a folder`;
   const copies = rerailRuleCopiesIn(database, checkout.repositoryKey, id);
   if (copies.length > 0) return copyAddedText(id, name, copies);
-  return libraryRuleFolders(database, checkout.repositoryKey, id).length === 0 ? notAddedText(id, name) : undefined;
+  if (libraryRuleFolders(database, checkout.repositoryKey, id).length > 0) return undefined;
+  return `${id} is approved and not added to ${name}, so a copy of this edit would have nowhere to run here. Add ${id} here unchanged first, or a person changes it from a terminal of their own`;
 }
 
 /**
@@ -828,7 +828,7 @@ function ownCopyRefusal(database: RerailDatabase, checkout: CheckoutContext, dra
  */
 function addOwnRuleCopy(database: RerailDatabase, ruleCatalog: RuleCatalog, checkout: CheckoutContext, draft: RuleDraft): AddedRule {
   const sourceId = draft.rule.id;
-  const refusal = ownCopyRefusal(database, checkout, draft);
+  const refusal = ownCopyRefusal(database, checkout, sourceId, draft.folder);
   if (refusal !== undefined) throw new RuleDraftError(refusal);
   let copied: CopiedRule;
   try {
@@ -843,14 +843,16 @@ function addOwnRuleCopy(database: RerailDatabase, ruleCatalog: RuleCatalog, chec
 }
 
 /**
- * Why `rules add` refuses your copy of a By Rerail rule, made for another repository, where the original runs and the
- * copy is not added: both would steer, and approving the copy, approved already, would not turn the original off.
- * `rules test` reports the same. `ruleCatalog` is read only for such a copy.
+ * Why `rules add` refuses your copy of a rule, By Rerail or yours, made for another repository, where the original runs
+ * and the copy is not added: both would steer, and approving the copy, approved already, would not turn the original
+ * off. `rules test` reports the same. `ruleCatalog` is read only for a copy whose original is not added as your rule.
  */
 function copyFromElsewhereRefusal(database: RerailDatabase, checkout: CheckoutContext, id: string, ruleCatalog: () => RuleCatalog): string | undefined {
   const copiedFrom = getLibraryRule(database, id)?.copiedFromRuleId ?? null;
   if (copiedFrom === null || libraryRuleFolders(database, checkout.repositoryKey, id).length > 0) return undefined;
-  if (rerailRuleFolders(database, ruleCatalog(), checkout.repositoryKey, copiedFrom).length === 0) return undefined;
+  const originalRuns = libraryRuleFolders(database, checkout.repositoryKey, copiedFrom).length > 0
+    || rerailRuleFolders(database, ruleCatalog(), checkout.repositoryKey, copiedFrom).length > 0;
+  if (!originalRuns) return undefined;
   const name = repositoryName(checkout.checkoutPath);
   return `${id} is your copy of ${copiedFrom} for another repository, and ${copiedFrom} runs in ${name}, so both would steer here. To change ${copiedFrom} here: rerail rules show ${copiedFrom}`;
 }
@@ -917,8 +919,11 @@ export interface ShownRule {
   readonly notes: readonly string[];
 }
 
-/** Where saving your rule `own` changes it, seen from the repository `name` (`key`, undefined when not recorded). */
-function ownRuleNote(database: RerailDatabase, own: LibraryRule, name: string, key: string | undefined): string {
+/**
+ * Where saving your rule `own` changes it, seen from the repository `name` (`key`, undefined when not recorded). Where
+ * an edit is saved as a copy (`copied`, which {@link keptNote} says), only where it is added.
+ */
+function ownRuleNote(database: RerailDatabase, own: LibraryRule, name: string, key: string | undefined, copied: boolean): string {
   const id = own.document.rule.id;
   const using = libraryRuleRepositories(database, id);
   const elsewhere = using.filter(repository => repository.repositoryKey !== key).map(repository => repository.name);
@@ -928,6 +933,7 @@ function ownRuleNote(database: RerailDatabase, own: LibraryRule, name: string, k
       ? `${id} is yours and not added to ${name}: rules add adds it to the whole repository, or to the draft's folder.`
       : `${id} is your copy of ${original} for another repository, and is not added to ${name}. To change ${original} here: rerail rules show ${original}`;
   }
+  if (copied) return `${id} is yours, added to ${[name, ...elsewhere].join(", ")}.`;
   const also = elsewhere.length === 0 ? "" : ` It is also added to ${elsewhere.join(", ")}, where saving changes it too.`;
   return `${id} is yours, added to ${name}; saving changes it where it is.${also}`;
 }
@@ -992,8 +998,7 @@ function untitledNotes(document: RuleDocument): string[] {
  */
 function keptNote(database: RerailDatabase, checkout: CheckoutContext | undefined, own: LibraryRule, session: AgentSession): string {
   const id = own.document.rule.id;
-  const draft = { kind: own.document.kind, rule: own.document.rule } as RuleDraft;
-  const refusal = checkout === undefined ? undefined : ownCopyRefusal(database, checkout, draft);
+  const refusal = checkout === undefined ? undefined : ownCopyRefusal(database, checkout, id, undefined);
   return refusal ?? `${id} is approved, so in ${session.agent}'s session rules add saves an edit of it as a copy, which runs in Log beside ${id} until a person approves it on its page in the dashboard.`;
 }
 
@@ -1007,10 +1012,10 @@ export function showRule(id: string, repo: string, databasePath = defaultRerailD
     const own = getLibraryRule(database, id);
     if (own !== undefined) {
       const checkout = lookupCheckout(database, repo);
-      const note = ownRuleNote(database, own, repositoryName(checkout?.checkoutPath ?? repo), checkout?.repositoryKey);
       const kept = session !== undefined && isApproved(database, ruleSubject(id, own.payloadHash))
         ? [keptNote(database, checkout, own, session)]
         : [];
+      const note = ownRuleNote(database, own, repositoryName(checkout?.checkoutPath ?? repo), checkout?.repositoryKey, kept.length > 0);
       return { draft: own.document, notes: [note, ...kept, ...untitledNotes(own.document)] };
     }
     if (libraryHoldsId(database, id)) throw new RuleDraftError(`your rule ${id} could not be read; the dashboard shows why`);
