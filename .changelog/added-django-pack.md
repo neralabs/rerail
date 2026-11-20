@@ -1,0 +1,1 @@
+Set-up and `rerail packs recommend` know the Django pack (`@neralabs/rerail-pack-django`) and offer it for a repository that depends on Django or has a `manage.py`: Rerail's own rules for Django models, querysets, transactions, views and settings.

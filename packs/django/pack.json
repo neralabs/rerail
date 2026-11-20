@@ -1,0 +1,499 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "django",
+  "name": "Django",
+  "category": "framework",
+  "covers": "Rerail's own Django rules, from the Django docs and maintainers' review advice, for safe and efficient models, querysets, transactions, views and settings.",
+  "reason": "matches Django",
+  "match": {
+    "any": [
+      {
+        "dependencies": {
+          "ecosystem": "pypi",
+          "names": [
+            "django"
+          ]
+        }
+      },
+      {
+        "files": [
+          "**/manage.py"
+        ],
+        "label": "manage.py files"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "django-practice-exists-for-existence",
+      "document": "rules/django-practice-exists-for-existence.rerail",
+      "title": "Django practice: an inline queryset counted, loaded or truth-tested only to learn whether it has rows",
+      "group": "Django practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "shop/views.py",
+          "text": "from django.db import models\n\n\nclass Book(models.Model):\n    title = models.CharField(max_length=80)\n\n\ndef has_books(title):\n    if Book.objects.filter(title=title).count() > 0:\n        return True\n    return False\n"
+        },
+        "passes": {
+          "path": "shop/views.py",
+          "text": "from django.db import models\n\n\nclass Book(models.Model):\n    title = models.CharField(max_length=80)\n\n\ndef has_books(title):\n    return Book.objects.filter(title=title).exists()\n"
+        }
+      }
+    },
+    {
+      "id": "django-practice-count-not-len",
+      "document": "rules/django-practice-count-not-len.rerail",
+      "title": "Django practice: `len()` of an inline queryset whose rows are thrown away",
+      "group": "Django practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "shop/views.py",
+          "text": "from shop.models import Book\n\n\ndef book_count(author):\n    return len(Book.objects.filter(author=author))\n"
+        },
+        "passes": {
+          "path": "shop/views.py",
+          "text": "from shop.models import Book\n\n\ndef book_count(author):\n    return Book.objects.filter(author=author).count()\n"
+        }
+      }
+    },
+    {
+      "id": "django-practice-fk-id-not-relation",
+      "document": "rules/django-practice-fk-id-not-relation.rerail",
+      "title": "Django practice: `<obj>.<fk>.id` or `.pk` where the row already holds `<fk>_id`",
+      "group": "Django practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "shop/models.py",
+          "text": "from django.db import models\n\n\nclass Author(models.Model):\n    name = models.CharField(max_length=80)\n\n\nclass Book(models.Model):\n    author = models.ForeignKey(Author, on_delete=models.CASCADE)\n\n    def author_key(self):\n        return self.author.pk\n"
+        },
+        "passes": {
+          "path": "shop/models.py",
+          "text": "from django.db import models\n\n\nclass Author(models.Model):\n    name = models.CharField(max_length=80)\n\n\nclass Book(models.Model):\n    author = models.ForeignKey(Author, on_delete=models.CASCADE)\n\n    def author_key(self):\n        return self.author_id\n"
+        }
+      }
+    },
+    {
+      "id": "django-practice-select-related-in-loop",
+      "document": "rules/django-practice-select-related-in-loop.rerail",
+      "title": "Django practice: a loop over an inline queryset that reads a relation of every row",
+      "group": "Django practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "shop/views.py",
+          "text": "from django.db import models\n\n\nclass Author(models.Model):\n    name = models.CharField(max_length=80)\n\n\nclass Book(models.Model):\n    author = models.ForeignKey(Author, on_delete=models.CASCADE)\n\n\ndef names():\n    return [b.author.name for b in Book.objects.all()]\n"
+        },
+        "passes": {
+          "path": "shop/views.py",
+          "text": "from django.db import models\n\n\nclass Author(models.Model):\n    name = models.CharField(max_length=80)\n\n\nclass Book(models.Model):\n    author = models.ForeignKey(Author, on_delete=models.CASCADE)\n\n\ndef names():\n    return [b.author.name for b in Book.objects.select_related(\"author\")]\n"
+        }
+      }
+    },
+    {
+      "id": "django-practice-bulk-not-loop",
+      "document": "rules/django-practice-bulk-not-loop.rerail",
+      "title": "Django practice: one create, save or get query per loop iteration",
+      "group": "Django practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "shop/imports.py",
+          "text": "from shop.models import Book\n\n\ndef load(rows):\n    for row in rows:\n        Book.objects.create(title=row)\n"
+        },
+        "passes": {
+          "path": "shop/imports.py",
+          "text": "from shop.models import Book\n\n\ndef load(rows):\n    Book.objects.bulk_create([Book(title=row) for row in rows])\n"
+        }
+      }
+    },
+    {
+      "id": "django-practice-bulk-write-skips-hooks",
+      "document": "rules/django-practice-bulk-write-skips-hooks.rerail",
+      "title": "Django practice: a queryset bulk write on a model whose save()/delete() override or pre/post_save receiver it skips",
+      "group": "Django practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "shop/models.py",
+          "text": "from django.db import models\nfrom django.utils.text import slugify\n\n\nclass Book(models.Model):\n    title = models.CharField(max_length=80)\n    slug = models.SlugField()\n\n    def save(self, *args, **kwargs):\n        self.slug = slugify(self.title)\n        super().save(*args, **kwargs)\n\n\ndef rename(old, new):\n    Book.objects.filter(title=old).update(title=new)\n"
+        },
+        "passes": {
+          "path": "shop/models.py",
+          "text": "from django.db import models\n\n\nclass Note(models.Model):\n    title = models.CharField(max_length=80)\n\n\ndef rename(old, new):\n    Note.objects.filter(title=old).update(title=new)\n"
+        }
+      }
+    },
+    {
+      "id": "django-practice-read-modify-write",
+      "document": "rules/django-practice-read-modify-write.rerail",
+      "title": "Django practice: a numeric field read into Python, changed and saved back instead of updated with `F()`",
+      "group": "Django practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "shop/views.py",
+          "text": "from django.db import models\n\n\nclass Article(models.Model):\n    hits = models.IntegerField(default=0)\n\n\ndef read(pk):\n    a = Article.objects.get(pk=pk)\n    a.hits += 1\n    a.save()\n"
+        },
+        "passes": {
+          "path": "shop/views.py",
+          "text": "from django.db import models\nfrom django.db.models import F\n\n\nclass Article(models.Model):\n    hits = models.IntegerField(default=0)\n\n\ndef read(pk):\n    Article.objects.filter(pk=pk).update(hits=F(\"hits\") + 1)\n"
+        }
+      }
+    },
+    {
+      "id": "django-practice-get-or-create-needs-unique",
+      "document": "rules/django-practice-get-or-create-needs-unique.rerail",
+      "title": "Django practice: `get_or_create()`/`update_or_create()` whose lookup no unique field or constraint covers",
+      "group": "Django practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "shop/models.py",
+          "text": "from django.db import models\n\n\nclass Author(models.Model):\n    name = models.CharField(max_length=80)\n\n\ndef author_named(name):\n    return Author.objects.get_or_create(name=name)\n"
+        },
+        "passes": {
+          "path": "shop/models.py",
+          "text": "from django.db import models\n\n\nclass Author(models.Model):\n    email = models.EmailField(unique=True)\n\n\ndef author_with(email):\n    return Author.objects.get_or_create(email=email)\n"
+        }
+      }
+    },
+    {
+      "id": "django-practice-atomic-around-caught-db-error",
+      "document": "rules/django-practice-atomic-around-caught-db-error.rerail",
+      "title": "Django practice: a database error caught inside atomic, around queries with no savepoint of their own",
+      "group": "Django practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "shop/services.py",
+          "text": "from django.db import IntegrityError, transaction\n\n\ndef place(order):\n    with transaction.atomic():\n        try:\n            order.save()\n        except IntegrityError:\n            pass\n"
+        },
+        "passes": {
+          "path": "shop/services.py",
+          "text": "from django.db import IntegrityError, transaction\n\n\ndef place(order):\n    with transaction.atomic():\n        try:\n            with transaction.atomic():\n                order.save()\n        except IntegrityError:\n            pass\n"
+        }
+      }
+    },
+    {
+      "id": "django-practice-select-for-update-outside-atomic",
+      "document": "rules/django-practice-select-for-update-outside-atomic.rerail",
+      "title": "Django practice: a `select_for_update()` in a function that a caller chain or a framework runs with no transaction open",
+      "group": "Django practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "shop/tasks.py",
+          "text": "from celery import shared_task\n\nfrom shop.models import Hold\n\n\n@shared_task\ndef expire(pk):\n    hold = Hold.objects.select_for_update().get(pk=pk)\n    hold.delete()\n"
+        },
+        "passes": {
+          "path": "shop/tasks.py",
+          "text": "from celery import shared_task\nfrom django.db import transaction\n\nfrom shop.models import Hold\n\n\n@shared_task\ndef expire(pk):\n    with transaction.atomic():\n        hold = Hold.objects.select_for_update().get(pk=pk)\n        hold.delete()\n"
+        }
+      }
+    },
+    {
+      "id": "django-practice-enqueue-on-commit",
+      "document": "rules/django-practice-enqueue-on-commit.rerail",
+      "title": "Django practice: a task enqueued or a mail sent inside `transaction.atomic`",
+      "group": "Django practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "shop/orders.py",
+          "text": "from celery import shared_task\nfrom django.db import transaction\n\n\n@shared_task\ndef notify_order(pk):\n    pass\n\n\ndef place(order):\n    with transaction.atomic():\n        order.save()\n        notify_order.delay(order.pk)\n"
+        },
+        "passes": {
+          "path": "shop/orders.py",
+          "text": "from functools import partial\n\nfrom celery import shared_task\nfrom django.db import transaction\n\n\n@shared_task\ndef notify_order(pk):\n    pass\n\n\ndef place(order):\n    with transaction.atomic():\n        order.save()\n        transaction.on_commit(partial(notify_order.delay, order.pk))\n"
+        }
+      }
+    },
+    {
+      "id": "django-practice-dispatch-in-atomic-request",
+      "document": "rules/django-practice-dispatch-in-atomic-request.rerail",
+      "title": "Django practice: a task enqueued or a mail sent from a view, or code it calls, while ATOMIC_REQUESTS wraps the request in a transaction",
+      "group": "Django practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "shop/views.py",
+          "text": "from celery import shared_task\nfrom django.http import HttpResponse\n\nDATABASES = {\"default\": {\"ENGINE\": \"django.db.backends.postgresql\", \"ATOMIC_REQUESTS\": True}}\n\n\n@shared_task\ndef notify_order(pk):\n    pass\n\n\ndef place_order(request):\n    notify_order.delay(request.POST[\"pk\"])\n    return HttpResponse(\"ok\")\n"
+        },
+        "passes": {
+          "path": "shop/views.py",
+          "text": "from celery import shared_task\nfrom django.http import HttpResponse\n\nDATABASES = {\"default\": {\"ENGINE\": \"django.db.backends.postgresql\", \"ATOMIC_REQUESTS\": True}}\n\n\n@shared_task\ndef notify_order(pk):\n    pass\n\n\ndef place_order(request):\n    notify_order.delay_on_commit(request.POST[\"pk\"])\n    return HttpResponse(\"ok\")\n"
+        }
+      }
+    },
+    {
+      "id": "django-practice-task-arg-model-instance",
+      "document": "rules/django-practice-task-arg-model-instance.rerail",
+      "title": "Django practice: a model instance passed as an argument to a Celery task",
+      "group": "Django practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "shop/orders.py",
+          "text": "from celery import shared_task\nfrom django.db import models\n\n\nclass Order(models.Model):\n    email = models.EmailField()\n\n\n@shared_task\ndef ship_order(order):\n    pass\n\n\ndef ship(pk):\n    order = Order.objects.get(pk=pk)\n    ship_order.delay(order)\n"
+        },
+        "passes": {
+          "path": "shop/orders.py",
+          "text": "from celery import shared_task\nfrom django.db import models\n\n\nclass Order(models.Model):\n    email = models.EmailField()\n\n\n@shared_task\ndef ship_order(order_pk):\n    pass\n\n\ndef ship(pk):\n    order = Order.objects.get(pk=pk)\n    ship_order.delay(order.pk)\n"
+        }
+      }
+    },
+    {
+      "id": "django-practice-default-called-once",
+      "document": "rules/django-practice-default-called-once.rerail",
+      "title": "Django practice: a model field default that calls uuid4, random, now and the like once, at import",
+      "group": "Django practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "shop/models.py",
+          "text": "import uuid\n\nfrom django.db import models\n\n\nclass Invite(models.Model):\n    key = models.UUIDField(default=uuid.uuid4())\n"
+        },
+        "passes": {
+          "path": "shop/models.py",
+          "text": "import uuid\n\nfrom django.db import models\n\n\nclass Invite(models.Model):\n    key = models.UUIDField(default=uuid.uuid4)\n"
+        }
+      }
+    },
+    {
+      "id": "django-practice-model-init-override",
+      "document": "rules/django-practice-model-init-override.rerail",
+      "title": "Django practice: a model `__init__` that reads a field or changes the calling signature",
+      "group": "Django practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "shop/models.py",
+          "text": "from django.db import models\n\n\nclass Order(models.Model):\n    status = models.CharField(max_length=20)\n\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self._old_status = self.status\n"
+        },
+        "passes": {
+          "path": "shop/models.py",
+          "text": "from django.db import models\n\n\nclass Order(models.Model):\n    status = models.CharField(max_length=20)\n\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self._old_status = self.__dict__.get(\"status\")\n"
+        }
+      }
+    },
+    {
+      "id": "django-practice-save-ignores-update-fields",
+      "document": "rules/django-practice-save-ignores-update-fields.rerail",
+      "title": "Django practice: a model `save()` that sets a field and forwards `**kwargs` without handling `update_fields`",
+      "group": "Django practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "shop/models.py",
+          "text": "from django.db import models\nfrom django.utils.text import slugify\n\n\nclass Book(models.Model):\n    title = models.CharField(max_length=80)\n    slug = models.SlugField()\n\n    def save(self, *args, **kwargs):\n        self.slug = slugify(self.title)\n        super().save(*args, **kwargs)\n"
+        },
+        "passes": {
+          "path": "shop/models.py",
+          "text": "from django.db import models\nfrom django.utils.text import slugify\n\n\nclass Book(models.Model):\n    title = models.CharField(max_length=80)\n    slug = models.SlugField()\n\n    def save(self, *args, update_fields=None, **kwargs):\n        self.slug = slugify(self.title)\n        if update_fields is not None:\n            update_fields = {*update_fields, \"slug\"}\n        super().save(*args, update_fields=update_fields, **kwargs)\n"
+        }
+      }
+    },
+    {
+      "id": "django-practice-lazy-translation-at-import",
+      "document": "rules/django-practice-lazy-translation-at-import.rerail",
+      "title": "Django practice: non-lazy `gettext` called when the module is imported",
+      "group": "Django practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "shop/models.py",
+          "text": "from django.utils.translation import gettext as _\n\nSTATUS = [(\"draft\", _(\"Draft\"))]\n"
+        },
+        "passes": {
+          "path": "shop/models.py",
+          "text": "from django.utils.translation import gettext_lazy as _\n\nSTATUS = [(\"draft\", _(\"Draft\"))]\n"
+        }
+      }
+    },
+    {
+      "id": "django-practice-clean-field-returns-value",
+      "document": "rules/django-practice-clean-field-returns-value.rerail",
+      "title": "Django practice: a form `clean_<field>()` that can end without returning the cleaned value",
+      "group": "Django practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "accounts/forms.py",
+          "text": "from django import forms\n\n\nclass SignupForm(forms.Form):\n    email = forms.EmailField()\n\n    def clean_email(self):\n        if self.cleaned_data[\"email\"].endswith(\"@example.com\"):\n            raise forms.ValidationError(\"taken\")\n"
+        },
+        "passes": {
+          "path": "accounts/forms.py",
+          "text": "from django import forms\n\n\nclass SignupForm(forms.Form):\n    email = forms.EmailField()\n\n    def clean_email(self):\n        email = self.cleaned_data[\"email\"]\n        if email.endswith(\"@example.com\"):\n            raise forms.ValidationError(\"taken\")\n        return email\n"
+        }
+      }
+    },
+    {
+      "id": "django-practice-modelform-clean-calls-super",
+      "document": "rules/django-practice-modelform-clean-calls-super.rerail",
+      "title": "Django practice: a `clean()` override on a ModelForm or model formset that never calls the parent's `clean()`",
+      "group": "Django practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "shop/forms.py",
+          "text": "from django import forms\n\n\nclass BookForm(forms.ModelForm):\n    def clean(self):\n        if self.cleaned_data.get(\"title\") == \"x\":\n            raise forms.ValidationError(\"no\")\n        return self.cleaned_data\n"
+        },
+        "passes": {
+          "path": "shop/forms.py",
+          "text": "from django import forms\n\n\nclass BookForm(forms.ModelForm):\n    def clean(self):\n        data = super().clean()\n        if data.get(\"title\") == \"x\":\n            raise forms.ValidationError(\"no\")\n        return data\n"
+        }
+      }
+    },
+    {
+      "id": "django-practice-function-decorator-on-method",
+      "document": "rules/django-practice-function-decorator-on-method.rerail",
+      "title": "Django practice: a view decorator put on a method without `method_decorator`",
+      "group": "Django practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "shop/views.py",
+          "text": "from django.http import HttpResponse\nfrom django.views import View\nfrom django.views.decorators.cache import cache_page\n\n\nclass Catalog(View):\n    @cache_page(60)\n    def get(self, request):\n        return HttpResponse(\"ok\")\n"
+        },
+        "passes": {
+          "path": "shop/views.py",
+          "text": "from django.http import HttpResponse\nfrom django.utils.decorators import method_decorator\nfrom django.views import View\nfrom django.views.decorators.cache import cache_page\n\n\nclass Catalog(View):\n    @method_decorator(cache_page(60))\n    def get(self, request):\n        return HttpResponse(\"ok\")\n"
+        }
+      }
+    },
+    {
+      "id": "django-practice-get-handler-writes",
+      "document": "rules/django-practice-get-handler-writes.rerail",
+      "title": "Django practice: a GET/HEAD handler that writes rows, itself or through what it calls",
+      "group": "Django practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "blog/views.py",
+          "text": "from django.db import models\nfrom django.http import HttpResponse\nfrom django.views.decorators.http import require_GET\n\n\nclass Visit(models.Model):\n    path = models.CharField(max_length=200)\n\n\n@require_GET\ndef detail(request):\n    Visit.objects.create(path=request.path)\n    return HttpResponse(\"ok\")\n"
+        },
+        "passes": {
+          "path": "blog/views.py",
+          "text": "from django.db import models\nfrom django.http import HttpResponse\nfrom django.views.decorators.http import require_POST\n\n\nclass Visit(models.Model):\n    path = models.CharField(max_length=200)\n\n\n@require_POST\ndef record(request):\n    Visit.objects.create(path=request.path)\n    return HttpResponse(\"ok\")\n"
+        }
+      }
+    },
+    {
+      "id": "django-practice-host-header-without-get-host",
+      "document": "rules/django-practice-host-header-without-get-host.rerail",
+      "title": "Django practice: the Host or X-Forwarded-Host header read directly instead of `request.get_host()`",
+      "group": "Django practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "shop/views.py",
+          "text": "from django.http import HttpResponse\n\n\ndef reset_link(request):\n    host = request.META[\"HTTP_HOST\"]\n    return HttpResponse(f\"https://{host}/reset\")\n"
+        },
+        "passes": {
+          "path": "shop/views.py",
+          "text": "from django.http import HttpResponse\n\n\ndef reset_link(request):\n    host = request.get_host()\n    return HttpResponse(f\"https://{host}/reset\")\n"
+        }
+      }
+    },
+    {
+      "id": "django-practice-middleware-ignores-streaming",
+      "document": "rules/django-practice-middleware-ignores-streaming.rerail",
+      "title": "Django practice: middleware reading `response.content` without handling streaming responses",
+      "group": "Django practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "shop/middleware.py",
+          "text": "class MinifyMiddleware:\n    def process_response(self, request, response):\n        response.content = response.content.strip()\n        return response\n"
+        },
+        "passes": {
+          "path": "shop/middleware.py",
+          "text": "class MinifyMiddleware:\n    def process_response(self, request, response):\n        if not response.streaming:\n            response.content = response.content.strip()\n        return response\n"
+        }
+      }
+    },
+    {
+      "id": "django-practice-settings-runtime-assignment",
+      "document": "rules/django-practice-settings-runtime-assignment.rerail",
+      "title": "Django practice: a runtime write to `django.conf.settings`",
+      "group": "Django practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "shop/views.py",
+          "text": "from django.conf import settings\n\n\ndef enable_debug():\n    settings.DEBUG = True\n"
+        },
+        "passes": {
+          "path": "shop/views.py",
+          "text": "from django.conf import settings\n\n\ndef debug_on():\n    return settings.DEBUG\n"
+        }
+      }
+    },
+    {
+      "id": "django-practice-settings-module-import",
+      "document": "rules/django-practice-settings-module-import.rerail",
+      "title": "Django practice: an import of the project's settings module instead of `django.conf.settings`",
+      "group": "Django practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "shop/views.py",
+          "text": "from myproject.settings import DEBUG\n\n\ndef debug_on():\n    return DEBUG\n",
+          "with": [
+            {
+              "path": "myproject/settings.py",
+              "text": "INSTALLED_APPS = [\"django.contrib.auth\", \"shop\"]\nDEBUG = False\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "shop/views.py",
+          "text": "from django.conf import settings\n\n\ndef debug_on():\n    return settings.DEBUG\n",
+          "with": [
+            {
+              "path": "myproject/settings.py",
+              "text": "INSTALLED_APPS = [\"django.contrib.auth\", \"shop\"]\nDEBUG = False\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "django-practice-async-request-user",
+      "document": "rules/django-practice-async-request-user.rerail",
+      "title": "Django practice: `request.user` read inside `async def` instead of `await request.auser()`",
+      "group": "Django practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "shop/views.py",
+          "text": "from django.http import JsonResponse\n\n\nasync def profile(request):\n    if request.user.is_authenticated:\n        return JsonResponse({\"ok\": True})\n    return JsonResponse({\"ok\": False})\n"
+        },
+        "passes": {
+          "path": "shop/views.py",
+          "text": "from django.http import JsonResponse\n\n\nasync def profile(request):\n    user = await request.auser()\n    return JsonResponse({\"ok\": user.is_authenticated})\n"
+        }
+      }
+    },
+    {
+      "id": "django-practice-sync-orm-reached-from-async",
+      "document": "rules/django-practice-sync-orm-reached-from-async.rerail",
+      "title": "Django practice: a blocking ORM query in an `async def`, written there or reached through the sync functions it calls",
+      "group": "Django practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "shop/views.py",
+          "text": "from django.db import models\nfrom django.http import JsonResponse\n\n\nclass Book(models.Model):\n    title = models.CharField(max_length=80)\n\n\ndef total():\n    return Book.objects.count()\n\n\nasync def stats(request):\n    return JsonResponse({\"books\": total()})\n"
+        },
+        "passes": {
+          "path": "shop/views.py",
+          "text": "from asgiref.sync import sync_to_async\nfrom django.db import models\nfrom django.http import JsonResponse\n\n\nclass Book(models.Model):\n    title = models.CharField(max_length=80)\n\n\ndef total():\n    return Book.objects.count()\n\n\nasync def stats(request):\n    return JsonResponse({\"books\": await sync_to_async(total)()})\n"
+        }
+      }
+    }
+  ]
+}
