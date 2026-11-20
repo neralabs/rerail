@@ -112,10 +112,14 @@ impl Prepared {
 
     /// Line `line`'s plan, scaled to a run of `nodes` nodes: its order, work and rows. Taken as it is, estimates and
     /// all: the run's planning stays lean for the plans that are right, and one that turns out heavy is searched where
-    /// it runs (`Model::prepared_heavy`). `None` where it has none, or where this run searched it so.
-    pub fn take(&self, line: u128, nodes: f64) -> Option<super::Plan> {
+    /// it runs (`Model::prepared_heavy`). `None` where it has none, where this run searched it so, or where it reads
+    /// a relation the run's `shapes` left out, its facts broken (step 6): that line is planned from statistics.
+    pub fn take(&self, line: u128, nodes: f64, b: &super::body::Body<'_>, shapes: &Shapes) -> Option<super::Plan> {
         let p = self.0.get(&line)?;
         if super::prepared_searched(line) {
+            return None;
+        }
+        if !shapes.2.is_empty() && ((0..b.len()).filter_map(|i| b.atom(i)).any(|a| shapes.left_out(b.rel(a))) || p.assumed.iter().any(|(r, _)| shapes.left_out(r))) {
             return None;
         }
         run_counts().taken.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

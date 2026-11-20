@@ -2064,6 +2064,12 @@ impl Drop for KeepPlans {
             let lazy = lazy_probes_counted();
             eprintln!("plan cache: {}; budget missed: {}; statistics: {} batches of {} relations, {} late, {} answered by layouts; {} lines prepared, {} searched once heavy ({} versions' plans read, {} made); mispredicted: {} blown up, {} over-estimated; orders: {} searched, {} greedy (under a search's cost); probes: {} left unplanned at open, {} planned later", counts.join(", "), miss.join(", "), st[0], st[1], st[2], run_counts().shaped.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::run_counts().taken.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::run_counts().searched.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::run_counts().versions[0].swap(0, std::sync::atomic::Ordering::Relaxed), prepared::run_counts().versions[1].swap(0, std::sync::atomic::Ordering::Relaxed), joins::run_counts().misses[0].swap(0, std::sync::atomic::Ordering::Relaxed), joins::run_counts().misses[1].swap(0, std::sync::atomic::Ordering::Relaxed), searches[0], searches[1], lazy.0, lazy.1);
         }
+        // The layout facts the run's rows broke (decision 0361 step 6), each named in the profile as it broke.
+        if std::env::var_os("RERAIL_PLAN_CACHE_COUNTS").is_some() {
+            let b = shapes::run_broken();
+            let broken = b.facts();
+            eprintln!("layout facts: {} probe steps checked; broken: {}", b.1.swap(0, std::sync::atomic::Ordering::Relaxed), if broken.is_empty() { "none".to_owned() } else { broken.iter().map(|(r, f)| format!("{r} {f}")).collect::<Vec<_>>().join(", ") });
+        }
         compose::clear();
         // Every job that entered them has ended: the run's thread holds the last handle.
         let plans = with_plans(Option::clone);
@@ -2984,7 +2990,7 @@ impl Model {
             return self.plan_inner(pf, b, first, None, true);
         }
         // A line planned with the program (decision 0361 step 5): no key, no cache, no price.
-        if let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes) {
+        if let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes, b, &self.stats.shapes) {
             super::profile::decision("prepared plans (decision 0361 step 5)", || "a live plan taken as prepared: not searched or priced".to_owned());
             return Ok((plan, None));
         }
@@ -3251,6 +3257,45 @@ impl Model {
         })
     }
 
+    /// Decision 0361 step 6: a running line's rows step by step (`steps`, the executors' counts, decision 0203) against
+    /// the facts its probes were priced by. A probe returning past `shapes::BROKEN_BY` times the most its relation's key
+    /// or fan-out lets it, a probe on average, breaks that fact: the run notes it (`shapes::Broken`), names it in the
+    /// profile (and on stderr in a strict run), and this model's shapes leave the relation out, as every later model's
+    /// do (`Shapes::for_run`): planned from statistics for the rest of the run. Whether a fact broke here.
+    #[doc(hidden)]
+    pub fn layout_broken(&mut self, b: &Body<'_>, order: &[Step], steps: &[(u64, u64)]) -> bool {
+        if self.stats.shapes.0.is_empty() || order.len() != steps.len() {
+            return false;
+        }
+        let mut bound = VarSet::new();
+        let mut broke = false;
+        for (k, s) in order.iter().enumerate() {
+            if k > 0
+                && s.mode.is_none()
+                && let Some(a) = b.atom(s.at).filter(|a| !a.neg())
+            {
+                let rel = b.rel(a);
+                let cols: Vec<usize> = b.args(s.at).iter().enumerate().filter(|(_, t)| t.var().is_some_and(|v| bound.contains(v)) || b.constant(**t).is_some()).map(|(c, _)| c).collect();
+                let (into, made) = steps[k];
+                if let Some(fact) = self.stats.shapes.broken_at(rel, &cols, into, made) {
+                    if shapes::run_broken().note(rel, fact.clone()) {
+                        let text = format!("{rel}: {fact} broken: {into} probes made {made} rows, in {}; planned from statistics for the rest of the run", b.head_text());
+                        if super::profile::strict() {
+                            eprintln!("rerail: a layout fact broken (decision 0361 step 6): {text}");
+                        }
+                        super::profile::decision("broken layout facts (decision 0361 step 6)", || text);
+                    }
+                    broke = true;
+                }
+            }
+            bound.extend(b.vars(s.at));
+        }
+        if broke {
+            self.stats.shapes = shapes::Shapes::for_run(std::sync::Arc::clone(&self.stats.shapes));
+        }
+        broke
+    }
+
     #[doc(hidden)]
     pub fn prepared_heavy(&self, b: &Body<'_>, firsts: &[Option<usize>], running: &[Step]) -> Option<u128> {
         let (line, p) = firsts.iter().map(|f| line_key(b, *f)).find_map(|k| self.stats.prepared.0.get(&k).filter(|p| same_order(&p.order, running)).map(|p| (k, p)))?;
@@ -3395,7 +3440,7 @@ impl Model {
     ) -> Result<(Plan, Option<super::profile::RulePlan>)> {
         // A line planned with the program from its layouts (decision 0361 step 5): taken as kept, not searched.
         if fixed.is_none()
-            && let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes)
+            && let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes, b, &self.stats.shapes)
         {
             super::profile::decision("prepared plans (decision 0361 step 5)", || "a line's plan taken as prepared: not searched".to_owned());
             let explained = if explain { self.explain_order(pf, b, first, &plan.0) } else { None };
@@ -5006,7 +5051,8 @@ pub fn make_plan(p: &body::Placed, db: &Connection, mut inputs: Inputs) -> Resul
         .chain(f.fact_rels().into_iter().map(|r| f.text(r.name())).filter(|rel| !f.is_input(rel)).map(str::to_owned))
         .collect();
     let mut stats = Stats::new(db, p, &mut inputs)?;
-    stats.shapes = shapes::Shapes::of_version(&p.v);
+    // Without the relations whose facts the run's rows broke (decision 0361 step 6).
+    stats.shapes = shapes::Shapes::for_run(shapes::Shapes::of_version(&p.v));
     stats.prepared = prepared::Prepared::of_version(&p.v);
     let mut ndv = ColMap::default();
     for (rel, (_, rows)) in &inputs.batch {
@@ -9492,7 +9538,10 @@ impl<'a> Run<'a, '_> {
                     let checked = joins::check(key, work, &probes[k].2);
                     // Its rows against its order's step by step: the widest blown up, or a step far under its price.
                     let miss = self.model.line_miss(pf, &vs.at(r), Some(ai), &probes[k].2, key, c, &mut expected[line]);
-                    if (checked || miss.is_some() || self.model.prepared_horribly_slow(&vs.at(r), &[Some(ai)], &probes[k].2, work))
+                    // Its probes' rows against the facts they were priced by (decision 0361 step 6): a fact broken
+                    // leaves its relation to the statistics, and a prepared order priced by it is searched.
+                    let broken = self.model.layout_broken(&vs.at(r), &probes[k].2, c);
+                    if (checked || miss.is_some() || broken || self.model.prepared_horribly_slow(&vs.at(r), &[Some(ai)], &probes[k].2, work))
                         && self.model.prepared_heavy(&vs.at(r), &[Some(ai)], &probes[k].2).is_some()
                     {
                         replanned_at.force(k);
@@ -9760,6 +9809,10 @@ impl<'a> Run<'a, '_> {
                 // A seed or whole plan is checked here, at its cut (a probe was, above).
                 if led && let Some(key) = keys.get(line).copied().flatten() {
                     let running = order_now(&orders, &probes, &wholes);
+                    // Its rows against the facts its order was priced by (decision 0361 step 6).
+                    if let Some(steps) = counted.get(line) {
+                        self.model.layout_broken(&b, &running, steps);
+                    }
                     // Its prepared order, heavy: searched now with the run's statistics, and a better order goes on
                     // under the handoff (decision 0206), which goes back to this one where it runs slower a row.
                     if self.model.prepared_heavy(&b, &[first, None], &running).is_some() {

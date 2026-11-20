@@ -1,6 +1,6 @@
 # 0361. Relations declare their shapes, and plans come from them
 
-Status: decided (2026-11-17), being built: steps 1, 2, 3, 4, 5 and 7 built (2026-11-18). The user: "a directive which allows us to add enough data to the
+Status: decided (2026-11-17), being built: steps 1, 2, 3, 4, 5 and 7 built (2026-11-18), step 6 at the probes (2026-11-19; at the writes: Q188). The user: "a directive which allows us to add enough data to the
 relations in the .rr files that we can provide good default shapes for them (or at least name an algorithm or
 something) so that we don't need to pay for planning, or only in exceptional circumstances."
 
@@ -476,4 +476,36 @@ instructions 1,039 billion off, 1,075-1,090 on (+3.5-5%, spread over many spans,
 463 findings, d067ec2ebf6f, in all. Before this check (prepared plans taken and kept with no check) the joins ran
 70% longer. Still to come from the design: the background learning that improves the wrongly planned and the
 critical path's plans through the classifier (O166, decision 0203 §5).
+
+## Step 6: the checks (2026-11-19)
+
+**At the probes.** The executors count each step of a running line's order: the rows into it and the rows it made
+(decision 0203). Where a step probes a relation on columns that hold a key of it, or the source of a fan-out
+(`Shapes::probe_limit`), the fact bounds what a probe returns: one row for a key, the class's bound for a fan-out
+(`one`; `few`, 16; `many` bounds nothing). Past `BROKEN_BY` (8) times that bound, a probe on average, over 64
+probes at least, the fact is broken (`Shapes::broken_at`; "a fan-out class broken by large factors"). The check is
+made where 0203's are, a line at a time at its check (`Model::layout_broken`): a probe's at each chunk, a seed's or
+whole plan's at its cut. It reads the counts the executors keep, and no rows.
+
+**A broken fact.** It is the run's (`shapes::Broken`, a run local), noted once a relation, and named in the profile
+("broken layout facts"), on stderr in a strict run, and on the plan-cache counts line with the probe steps checked.
+For the rest of the run the relation is planned from statistics:
+- The run's shapes leave it out, and every relation whose facts were inferred from it (the relations its rules
+  read, kept with the shapes), in the model that found it and in every later one (`Shapes::for_run`).
+- A prepared plan reading a relation left out, or assuming a size of one, is not taken (`Prepared::take`).
+- A line that ran a prepared order priced by the fact is searched now (`prepared_heavy`).
+- A base relation left out has its columns measured at the next chunk (`sampled_statistics_unanswered`).
+
+**At the writes: not built (Q188).** A key the rules infer is proved from the facts of the relations they read, and
+the base relations, the only ones core.rr declares keys of, are tape views whose rows are never written. So a key that
+rows could break where they are written is a key a derived relation declares, and no program declares one. Every key
+a probe is bounded by is checked at the probes.
+
+**Tests** (Relax, here): `a_fan_out_the_rows_break_leaves_its_relation_to_the_statistics` (within the class, and too
+few probes, break nothing; 200 rows a probe of `few` over 100 probes breaks it, noted once; the relation and those
+inferred from it left out, in a later model too; a prepared plan reading it not taken).
+
+**At scale** (corpus0 x B-now, profiling build, an M1 Max at load 10-15): 3,350 probe steps checked, no fact broken,
+463 findings d067ec2ebf6f; 985.8 G instructions in one run and 1,004.9 and 1,017.7 G in two others, against 982.7 and
+1,045.8 G before.
 

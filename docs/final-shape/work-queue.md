@@ -3841,3 +3841,17 @@ native join it falls back to the planner's whole-rule order.
   `-no_keep_dwarf_unwind`). If the binary is simply this large, the cause is its size at opt-level 0.
 - **Done when**: the link gives no warning, or the cause is shown to be the binary's size and the choice (a smaller
   test binary, or the warning accepted with its reason) is the user's.
+
+### Q188. A key a derived relation declares is checked where its rows are written (0361 step 6)
+
+- **Found** (2026-11-19, 0361 step 6): the step's checks are built at the probes (`Model::layout_broken`): a key or
+  fan-out a probe is bounded by, against the executors' counts. A key is also to be checked where the rows are
+  written, as the decision says: dedup probes the whole row, and a key needs one more probe. No program has a subject
+  for it: core.rr declares keys only of base relations (tape views, never written), and an inferred key is proved
+  from the facts of what its rules read.
+- **Next**: when a program first declares a key of a derived relation (`.layout r key(...)` where `r` has rules),
+  probe the key's columns in that relation's block index as each row is written, in every executor that writes it
+  (setfix's CPU levels, its closures, the device's): a second row for a key breaks it (`shapes::Broken`).
+- **Done when**: a test declares a key of a derived relation whose rules break it, and the run names it broken and
+  plans the relation from statistics.
+

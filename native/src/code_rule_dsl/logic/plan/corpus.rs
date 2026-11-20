@@ -4404,7 +4404,8 @@ fn run_observed_within(
     let local_placed = super::body::Placed::whole(Arc::clone(&local_v));
     let local_f = local_placed.fields()?;
     // The base relations' layouts (core.rr's, decision 0361 item 5): the columns they answer are not counted when a
-    // chunk's base relations are measured (`sampled_statistics_unanswered`).
+    // chunk's base relations are measured (`sampled_statistics_unanswered`), but for a relation whose facts the run's
+    // rows broke (step 6, `Shapes::for_run` at each measure).
     let base_shapes = super::shapes::Shapes::of_version(&local_v);
     let constants_only = {
         // The split's (`Programs::constants`): empty where no document is read, and then so is the file-local part.
@@ -6502,7 +6503,7 @@ fn run_observed_within(
                                                 Some((first, m)) if first > 0 => (first, m),
                                                 _ => {
                                                     let _m = crate::code_rule_dsl::logic::profile::span(|| "guest statistics".into());
-                                                    let m = sampled_statistics_unanswered(rel, source.as_ref(), &base_shapes, stats.counts());
+                                                    let m = sampled_statistics_unanswered(rel, source.as_ref(), &super::shapes::Shapes::for_run(std::sync::Arc::clone(&base_shapes)), stats.counts());
                                                     if rows > 0 {
                                                         measured_once.lock().insert(key, (rows, m.clone()));
                                                     }
@@ -6618,7 +6619,7 @@ fn run_observed_within(
                 Some((first, measured)) if first > 0 => scaled_statistics(&measured, first, source.estimated_len()),
                 _ => {
                     let _measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel} ({mix})"));
-                    let measured = sampled_statistics_unanswered(&rel, source.as_ref(), &base_shapes, stats.counts());
+                    let measured = sampled_statistics_unanswered(&rel, source.as_ref(), &super::shapes::Shapes::for_run(std::sync::Arc::clone(&base_shapes)), stats.counts());
                     measured_once.lock().insert(key, (source.estimated_len(), measured.clone()));
                     measured
                 }

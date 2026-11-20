@@ -300,6 +300,8 @@ fn a_probe_is_planned_when_its_delta_first_has_rows() {
     let p = parse(src).unwrap();
     let mut outputs = Vec::new();
     for modes in ["", "program"] {
+        // The probes' counts are the run's (decision 0442): one run holds them.
+        let _run = super::super::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         let _plans = KeepPlans::start(None);
         let path = crate::code_rule_dsl::fixtures::temp();
         let store = ContentStore::open(&path).unwrap();
@@ -3220,6 +3222,64 @@ fn a_run_takes_a_prepared_plan_without_searching() {
     assert_eq!(model.prepared_heavy(&b, &[Some(0), None], &odd), None, "once a line");
     let got = model.plan_rule(f, &b, None).unwrap();
     assert_ne!(got.0, odd, "searched, not the order prepared");
+}
+
+/// Decision 0361 step 6: a probe's rows past `BROKEN_BY` times what its relation's fan-out lets a probe return break
+/// the fact. The run notes it once, the model's shapes leave the relation out (and every relation whose facts were
+/// inferred from it), as a later model's do, and a prepared plan reading it is not taken. Rows within it break nothing,
+/// nor a few probes.
+#[test]
+fn a_fan_out_the_rows_break_leaves_its_relation_to_the_statistics() {
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    let p = prepared_program();
+    let placed = body::Placed::of_program(&p).unwrap();
+    let f = placed.fields().unwrap();
+    let db = Connection::open_in_memory().unwrap();
+    let mut inputs = Inputs::file();
+    inputs.facts.clear();
+    let mut given = Stats::empty(&p);
+    for (rel, width) in [("child2", 3), ("kind2", 2), ("part", 2)] {
+        given.measured(rel, (0..width).map(|c| (format!("c{c}"), [1_000, 300, 4_000, 4_000])), []);
+        given.card.insert(rel.to_owned(), 1_000.0);
+    }
+    inputs.given = Some(given);
+    inputs.atoms = Some([0; 3]);
+    let mut model = make_plan(&placed, &db, inputs).unwrap();
+    let k = bodies_by_head(&placed).into_iter().find(|(h, _)| h == "o").unwrap().1;
+    let b = placed.body(k);
+    assert!(model.stats.shapes.0.contains_key("child2"));
+    // `o(c, k) :- child2(p, c, _), kind2(c, k), kind2(p, "x")`, run as kind2(p, "x"), child2 (`p` bound: `few`, at
+    // most 16 a probe), kind2(c, k) (`c` bound: its key).
+    let order = [Step { at: 2, mode: None }, Step { at: 0, mode: None }, Step { at: 1, mode: None }];
+    let line = crate::code_rule_dsl::logic::plan::line_key(&b, None);
+    model.stats.prepared = std::sync::Arc::new(prepared::Prepared([(line, prepared::PreparedPlan { order: order.to_vec(), work_per_node: 3.0, rows_per_node: 0.5, assumed: vec![] })].into_iter().collect()));
+    assert_eq!(model.plan_rule(f, &b, None).unwrap().0, order.to_vec(), "taken as prepared");
+    assert!(prepared::run_counts().taken.load(std::sync::atomic::Ordering::Relaxed) > 0);
+    // 10 children a parent: within `few`. 200 a parent, over 40 parents: too few probes to tell.
+    assert!(!model.layout_broken(&b, &order, &[(0, 100), (100, 1_000), (1_000, 1_000)]));
+    assert!(!model.layout_broken(&b, &order, &[(0, 40), (40, 8_000), (8_000, 8_000)]));
+    assert!(model.stats.shapes.0.contains_key("child2"));
+    // 200 a parent over 100 parents: past 8 times 16.
+    assert!(model.layout_broken(&b, &order, &[(0, 100), (100, 20_000), (20_000, 20_000)]));
+    let broken = shapes::run_broken().facts();
+    assert_eq!(broken.len(), 1, "{broken:?}");
+    assert!(broken["child2"].contains("fanout"), "{broken:?}");
+    assert!(!model.stats.shapes.0.contains_key("child2") && model.stats.shapes.left_out("child2"));
+    assert!(model.stats.shapes.0.contains_key("kind2"), "kind2's facts hold");
+    for (rel, from) in &model.stats.shapes.1 {
+        if from.contains("child2") {
+            assert!(model.stats.shapes.left_out(rel), "{rel}'s facts were inferred from child2's");
+        }
+    }
+    // A later model of the run leaves it out too; a prepared plan reading it is not taken.
+    assert!(shapes::Shapes::for_run(shapes::Shapes::of_version(&placed.v)).left_out("child2"));
+    let taken = || prepared::run_counts().taken.load(std::sync::atomic::Ordering::Relaxed);
+    let before = taken();
+    model.plan_rule(f, &b, None).unwrap();
+    assert_eq!(taken(), before, "searched, not taken as prepared");
+    // Left out, it is not checked again: noted once.
+    assert!(!model.layout_broken(&b, &order, &[(0, 100), (100, 20_000), (20_000, 20_000)]));
+    assert_eq!(shapes::run_broken().facts().len(), 1);
 }
 
 /// The prepared plans as an image stores them (decision 0333 §4): read back the same.
