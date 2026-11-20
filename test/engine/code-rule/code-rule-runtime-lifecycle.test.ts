@@ -596,6 +596,36 @@ describe("source-scoped steers", () => {
       }
     }, 60_000);
 
+    // The session starts empty when its record cannot be read as it reopens, so its turn end tells the place again: the
+    // record's own id for the place keeps it one row.
+    it("records no second copy of a place when the session reopens and its record cannot be read", async () => {
+      const root = await realpath(await temporaryDirectory());
+      const store = await realpath(await temporaryDirectory());
+      const locked = join(root, "locked");
+      await mkdir(locked);
+      await writeFile(join(locked, "a.py"), "x = 1\n");
+      const denied = new Map<string, string>();
+      await denyFolders(denied);
+      const runtime = gapRuntime(root, store);
+      const read = vi.spyOn(SqliteSessionStore.prototype, "discoveryGaps");
+      try {
+        await opened(runtime, root);
+        await turnEnd(runtime, 1);
+        denied.set(locked, "EACCES");
+        await turnEnd(runtime, 2);
+        expect(gapRows(store)).toHaveLength(1);
+        await runtime.ingest({ kind: "session-end", eventId: "end", sessionId: session.sessionId });
+        read.mockImplementationOnce(() => { throw new Error("SQLITE_BUSY: database is locked"); });
+        await opened(runtime, root, "start-again");
+        expect(read.mock.results.at(-1)?.type).toBe("throw");
+        await turnEnd(runtime, 3);
+        expect(gapRows(store).map(row => row.payload)).toEqual([{ boundary: "turn", path: "locked", reason: denial(locked) }]);
+      } finally {
+        read.mockRestore();
+        await runtime.dispose();
+      }
+    }, 60_000);
+
     it("records a place that breaks at each of 200 turn ends as one short row of its own", async () => {
       const root = await realpath(await temporaryDirectory());
       const store = await realpath(await temporaryDirectory());
