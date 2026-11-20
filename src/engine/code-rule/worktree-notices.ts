@@ -308,14 +308,21 @@ export class WorktreeNotices {
     this.#ended.delete(root);
     // Up before the read: a change made while it runs is a notice.
     if (!this.#watch.watch(root, [""])) {
-      // No folder there (it went after the walk listed it) is no failed watch: the walk Git's registry asks for once the
-      // worktree is made again watches it, where a refused watch would wait `WATCH_RETRY_MS`.
-      if (folder !== "") this.#failed.set(root, this.#now());
+      this.#refused(root, folder);
       return undefined;
     }
     const watched: Watched = { folders: new Set([""]), seen: undefined, changed: true, folder };
     this.#watched.set(root, watched);
     return watched;
+  }
+
+  /**
+   * The engine refused to watch `root`, with `folder` at its path: it is tried again after `WATCH_RETRY_MS`. No folder
+   * there (it went after the walk listed it) is no failed watch: the walk Git's registry asks for once the worktree is
+   * made again watches it.
+   */
+  #refused(root: string, folder: string): void {
+    if (folder !== "") this.#failed.set(root, this.#now());
   }
 
   /** Watches the registry `folder`, spare, with the folders it follows now (`registryFolders` on Linux); one the watch refuses is let go. */
