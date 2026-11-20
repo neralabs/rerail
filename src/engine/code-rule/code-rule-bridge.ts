@@ -3018,6 +3018,8 @@ export class CodeRuleBridge {
     for (const [checkout, group] of owned) {
       const verdicts = await this.#gitVerdicts(discovery, checkout, group, uncaptured);
       if (await this.#checkoutStands(discovery, walk, checkout, group)) this.#sortByVerdicts(group, verdicts, sorted);
+      // No preimage is recovered for a change dropped: the Git of a checkout gone would be read for nothing.
+      else for (const edit of group) uncaptured.delete(edit.path);
     }
     const { unwritten, notOwn } = sorted;
     const own = walk.inSession ? await this.#claimOwnWrites(discovery, walk, unwritten, uncaptured, notOwn) : unwritten;
