@@ -55,6 +55,7 @@
 //! `!split_dot(q, _, x)`).
 
 pub mod core;
+pub mod first;
 #[cfg(any(test, feature = "test-hooks"))]
 pub use self::core::drop_unread_core;
 pub use self::core::is_core;
@@ -508,7 +509,10 @@ pub fn seeds(scope: &[&Module]) -> Seeds {
 /// `statements` lowered as a module of a scope seeded already (`seeds`), its rules written as a version in the walk
 /// (decision 0377 step 3), which `link_seeded_parts` links without editing its rules and `rr::link_seeded_version`
 /// appends onto its scope.
-pub fn lower_module_seeded_written(statements: Vec<Statement>, seeds: &Seeds) -> Result<Module, Error> {
+pub fn lower_module_seeded_written(mut statements: Vec<Statement>, seeds: &Seeds) -> Result<Module, Error> {
+    // A group's first by an order, written as a self-join (decision 0515), is a lattice relation.
+    let firsts = first::recognize(&statements);
+    first::rewrite(&mut statements, &firsts);
     let typing = crate::code_rule_dsl::logic::profile::span(|| "type the tapes' terms".to_owned());
     let written: BTreeMap<String, Vec<String>> = statements
         .iter()
@@ -2107,6 +2111,8 @@ impl Lowerer {
             let (column, merge) = match self.lattices.get(lattice) {
                 Some((base, lub)) => (base.clone(), Some(lub.clone())),
                 None if matches!(lattice, "flat" | "min" | "max") => (lattice.to_owned(), None),
+                // The first of a group in shortlex order (`first`, decision 0515): the engine's own join.
+                None if lattice == "shortlex_min" => ("sym".to_owned(), Some("shortlex_min".to_owned())),
                 None => return Err(Error::Syntax(format!("{name}: no .lattice {lattice}"))),
             };
             let decl = LatticeDecl { keys: i, ty: column.clone(), merge, widen };

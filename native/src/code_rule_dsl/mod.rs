@@ -1847,6 +1847,8 @@ pub(crate) mod logic {
         pub mod tests;
         #[cfg(test)]
         pub mod coverage;
+        #[cfg(test)]
+        pub mod first_tests;
         #[allow(unused_imports)]
         use crate::code_rule_dsl::logic::front::{AggOp, Atom, Literal, Program, Rule, Term, Value, cmp_binds, strata};
         #[allow(unused_imports)]

@@ -596,8 +596,6 @@ rf_want(q, 1) :- rf_declared(m, x, q), rf_ref(_, "bare", m, x, _).
 rf_want(q, 1) :- rf_imported(m, x, q), rf_ref(_, "bare", m, x, _), !rf_bare_declared(m, x).
 rf_target(t, d, "bare") :- rf_ref(t, "bare", m, x, _), rf_declared(m, x, q), rf_link(q, d).
 rf_target(t, d, "bare") :- rf_ref(t, "bare", m, x, _), !rf_bare_declared(m, x), rf_imported(m, x, q), rf_link(q, d).
-.decl rf_bare_imported(m: symbol, x: symbol)
-rf_bare_imported(m, x) :- rf_imported(m, x, _).
 rf_target(t, d, "bare") :- rf_ref(t, "bare", m, x, q), q != "", !rf_bare_declared(m, x), !rf_bare_imported(m, x), rf_link(q, d).
 // unqualified: the class's own function of that name, else the module's bare name.
 .decl rf_own_fn(c: symbol, x: symbol)

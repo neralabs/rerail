@@ -147,7 +147,13 @@ impl Lattice for ShortlexMin {
         if a == TOP || b == TOP {
             return TOP;
         }
-        let key = |v: i64| u32::try_from(v).ok().and_then(|atom| self.0.with_str(atom, |s| (s.chars().count(), s.as_bytes().to_vec())));
+        // An atom this process does not hold in memory is read from the store, as the set engine's symbols are
+        // (`Interner::known`): else a stored atom would join to the top.
+        let key = |v: i64| {
+            let atom = u32::try_from(v).ok()?;
+            let of = |s: &str| (s.chars().count(), s.as_bytes().to_vec());
+            self.0.with_str(atom, of).or_else(|| self.0.value(atom).ok().flatten().map(|s| of(&s)))
+        };
         match (key(a), key(b)) {
             (Some(x), Some(y)) => if y < x { b } else { a },
             _ => TOP,

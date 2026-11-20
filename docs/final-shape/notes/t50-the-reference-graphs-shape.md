@@ -396,6 +396,16 @@ The rows on `all` differ from W's in five stages, the same with the step on or o
 (`get_history.py`, and `look` lands on another scope in `test_staged_large_column_application.py`), `ref` 197, and
 `open_name` 1 and `open` 6. They are not this step's. They come next, before step 2.
 
+### Step 2, done: the first of a group by an order (decision 0515)
+
+`X, !later` with `later` a self-join that states an order is read as a lattice relation: `min<>`, `max<>` or
+`shortlex_min<>` on the value column, and the self-join is gone. Nothing changes in `.rr`. On `all`, every stage's
+rows are as before, and `rf_method`/`rf_super`/`rf_field`'s first and later strata go from 0.907 s to 0.474 s of CPU.
+`rf_compose` (symbols under `<`, text order) and `rf_init_later` (the value is not the head's last column) are left as
+written: 0.01 s together. Two things were found on the way: `ShortlexMin` joined a stored atom it did not hold in
+memory to the top, and the device folded 0511's bounded aggregate as a plain one. Both are fixed; the second is not
+yet run on a device.
+
 ### The rows on `all`: two rules fixed, the rest W's departures from Python
 
 `RERAIL_STAGE_DIFFS=1` listed every differing row. Each kind was cut down to a case of a few lines

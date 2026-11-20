@@ -737,9 +737,34 @@ pub fn finish_checks_given(v: &crate::code_rule_dsl::logic::program_image::Versi
             }
         }
     }
-    for (relation, decl) in ProgramFields::lattice(v) {
-        if !decl.bounded() {
-            return Err(Error::UnboundedLattice { relation });
+    // A lattice of unbounded height needs `widen k` where its relation is recursive: a key's value then changes
+    // once a wave. A relation no rule of its own reads back changes once a batch (the first of a group, decision
+    // 0515), so nothing widens.
+    let unbounded: Vec<String> = ProgramFields::lattice(v).into_iter().filter(|(_, d)| !d.bounded()).map(|(r, _)| r).collect();
+    if !unbounded.is_empty() {
+        let mut reads: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+        for rule in v.rules() {
+            let into = reads.entry(v.rel_name(rule.head().rel())).or_default();
+            for l in rule.body() {
+                if let Lit::Atom(a) | Lit::Agg { atom: a, .. } = l.view() {
+                    into.insert(v.rel_name(a.rel()));
+                }
+            }
+        }
+        for relation in unbounded {
+            let (mut seen, mut stack) = (BTreeSet::new(), vec![relation.as_str()]);
+            let mut recursive = false;
+            while let Some(r) = stack.pop() {
+                for &b in reads.get(r).into_iter().flatten() {
+                    recursive |= b == relation;
+                    if seen.insert(b) {
+                        stack.push(b);
+                    }
+                }
+            }
+            if recursive {
+                return Err(Error::UnboundedLattice { relation });
+            }
         }
     }
     // An input's columns are its declaration's: the planner reads them.

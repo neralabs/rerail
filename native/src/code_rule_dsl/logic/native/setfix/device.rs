@@ -532,6 +532,9 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                 stages.push(PStage { first: i, span, kind, desc: d, npassed });
                 i += span;
             }
+            // A min or max bounded by its probe (decision 0511): the device has no fold that reads the bound, so the
+            // stratum stays on the CPU. Folding it as a plain min or max gave the group's extreme past the bound.
+            Step::Scalar { bound: Some(_), .. } => return Err("an aggregate bounded by its probe (decision 0511)".into()),
             Step::Scalar { src, keys, tests, col, kind, out, bind, .. } => {
                 // An aggregate: each binding's matching rows folded where they lie, in the relation's sort by the
                 // keys (one row out per binding with a value). A sum past 64 bits is refused at run time.

@@ -74,9 +74,11 @@ for the search.
   candidates with the bound as a filter, so nothing is made per probe. It shares no summary bag (`scalars::plan`), and
   liveness counts the bound as read.
 - **SQL**: the aggregate's subquery gains `value op bound`.
-- **The device**: not run (Metal work waits on the 2026-11-20 crash). The coverage gate's four new probes
-  (`aggregate max bounded by <`, …) are native and equal SQLite's rows. Their device column is not blessed, and the
-  gate's ledger needs it written on a Metal host (`RERAIL_COVERAGE_NO_DEVICE=1` runs the native side alone).
+- **The device**: §4's refusal was not built. The device's compile of a scalar step matched it with `..` and
+  folded a bounded step as a plain min or max. The coverage gate's device column showed the wrong rows (0515, found on
+  a run that reached Metal by mistake). The compile now refuses a bounded step (`setfix::device`), not yet run on a
+  device. The four probes (`aggregate max bounded by <`, …) are native and equal SQLite's rows. Their device column
+  needs writing on a Metal host once Metal work resumes (`RERAIL_COVERAGE_NO_DEVICE=1` runs the native side alone).
 - **Tests**: `setfix::bounded_tests`. The lowering test covers each side, either way round, and three shapes left
   alone. The step test checks 10⁴ values and 10⁴ probes against the plain search, on all four sides.
 
