@@ -43,7 +43,7 @@ export interface RerailApiStores {
   markChanged(): void;
   /**
    * When what the stores answer may have changed, for the dashboard's change stream; stores without one serve no
-   * stream, and the dashboard then reads again only on what the person does.
+   * stream, and the dashboard then reads every 5 s, as it did before the stream.
    */
   changes?(): ChangeFeed;
   /**
