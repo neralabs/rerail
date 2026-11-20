@@ -318,6 +318,7 @@ Anything else is refused with `403 agent-not-permitted` and the dashboard URL wh
 - Its first approval switches the original off there with a repository setting: at once for a person's write, which is approved as saved, and for a coding agent's copy when a person approves it.
 - Until then the original keeps running beside the copy, which runs in Log, so writing a copy never weakens a rule.
 - The original stays a reference to its installed pack.
+- `repository_rules_get` names the original in the copy's `copiedFromRuleId` (`null` for every other rule), so the dashboard can say that approving the copy turns the original off.
 
 </details>
 

@@ -49,13 +49,12 @@
 .pbody .note2{margin-top:6px;font-size:13px}
 .pask.sees-edit{margin-top:0;border:0;border-radius:var(--radius-xl);background:var(--sheet-inset);padding:16px 18px}
 .enf{margin:0 0 24px;padding:24px 18px;border-radius:var(--radius-xl);background:var(--sheet-inset)}
-.enf .lbl{font-size:14px;font-weight:600;letter-spacing:-.005em;color:var(--foreground);margin-bottom:14px}
-.enf .modes{display:flex;width:max-content}
-.enf .modes button[aria-disabled="true"]{cursor:default}
-.enf .modes button[data-v="block"]{opacity:.55}
-.enf .modes button[aria-pressed="true"][data-v="log"] .ico{color:var(--log-fg)}
-.enf .modes button[aria-pressed="true"][data-v="steer"] .ico{color:var(--steer-fg)}
-.pbody .enf > p{margin:14px 0 0;font-size:13px;line-height:1.5;color:var(--muted-foreground)}
+.enf .lbl{font-size:14px;font-weight:600;letter-spacing:-.005em;color:var(--foreground)}
+/* "On a violation" with the rule's enforcement tag at the right of the same line; what it means, and how to change it,
+ * close together under it. */
+.enf .enfhead{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+.pbody .enf > p{margin:0;font-size:13px;line-height:1.5;color:var(--muted-foreground)}
+.pbody .enf > p.enfhint{margin-top:2px}
 /* Three separate cards. */
 .pstats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:6px}
 /* Three cards of three single lines each (how many, what, over when), so numbers and words line up across them. */

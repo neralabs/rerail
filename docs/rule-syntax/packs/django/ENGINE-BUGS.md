@@ -16,9 +16,9 @@ main by #862.
 | 2 | A huge module of string literals never finishes | engine guests / `python/names.rerail` annotations | Reproduced | Fixed: with `un_locode.py`, the probe finishes on netbox in 15 s and the whole pack in 164 s (measured) |
 | 3 | Module names are taken from the repository root (src layouts) | engine `doc` facts vs Python imports | Reproduced with a 3-file probe | Fixed: a module is named from its package root (probe passes); a folder without `__init__.py` keeps its path's name |
 | 4 | `sym_of` drops relative imports of two or more dots | `lib/python/imports.rerail` | Reproduced; root cause found | Fixed: `impmod` resolves any number of dots through `rel_base` (probe passes) |
-| 5 | One tape cache per machine: concurrent runs fail | engine `tape_cache_path` | Reproduced | Partly: the default store is per build and working directory; runs started from one directory still share it |
+| 5 | One tape cache per machine: concurrent runs fail | engine `tape_cache_path` | Reproduced; root cause found | Fixed by #876: a store is one process's at a time, so runs at once from one directory and `test-rr` processes each own a store, and a named store is waited for |
 | 6 | Very large repositories do not finish | engine, scale | Observed once (PostHog); two causes found | Fixed by #878 and #882: the whole pack finishes on PostHog in 100 min (main: killed out of memory at 376 s); its 57 GiB peak is open |
-| 7 | `sym_of` has no row for an attribute of a class of the same module | `lib/python/names.rerail` | Reproduced with a probe; cause found | Present (probe fails as described) |
+| 7 | `sym_of` has no row for an attribute of a class of the same module | `lib/python/names.rerail` | Reproduced with a probe; cause found | Fixed by #898 (probe passes); workaround removed |
 | 8 | A call to a def under an outside decorator has no call target | `lib/python/calls.rerail` | Reproduced with a probe | Fixed by #875: the call targets the def and stays open (probe passes); workaround removed |
 | 9 | Rules that read the call graph take hours on large repositories | `python/calls` typing program, scale | Measured; cause found | Minutes on main (107-380 s a rule on the three largest apps); #878 cuts each rule's time to 39-73% of that (table in §9) |
 | 10 | A negated tree axis is read wrong below a node a sym_of relation found | engine: lowering or demand of `!inside`/`within_stop` | Reproduced with a probe; bisected to a merge | Fixed by #862; the three rules it broke pass their cases |
@@ -233,6 +233,14 @@ behind a file lock.
 **Suggested fix.** Wait for the writer lock with a timeout instead of failing, or key the default cache by the scanned
 root.
 
+**Cause and fix (#876).** Processes on one store share its atoms lease (decision 0049), which a run keeps across its
+waves; a second process's run waited for it in `Atoms::acquire` for 60 s (`LEASE_WAIT`) and failed busy (eight
+concurrent `run-rr` of count-not-len from one directory: 3 to 5 of 8 failed). The engine now keeps the product's
+discipline, one process per store (`corpus::owner`): the project's store and testing mode's are the first of their
+slots (`<name>.sqlite`, `<name>-2.sqlite`, …) no other process owns, and a store `RERAIL_TAPE_CACHE` names is waited
+for, the waiting process saying which process holds it. After it, the same eight runs, eight over eight repositories
+and four concurrent `test-rr` of this pack all finish. Neither workaround above is needed.
+
 **Related, not reproduced.** Authors reported that after a `run-rr` was killed, the next run into the same output
 directory failed with "content store writer is busy" even with `RERAIL_TAPE_CACHE=off`, with
 `store.sqlite-atoms.lock` left in the output directory. Three tries (kill -9 after 1, 6 and 12 s, then a new run into
@@ -305,16 +313,19 @@ A rule reporting `sym_of` of each right-hand side gives only `pkg.m.Base`; `qual
 `class Meta(Other.Meta)` gives `sym_of` `shop.base.Other.Meta` and the `class_base` row `shop.base.Other.Meta`; the
 same-module `class Meta(Base.Meta)` gives neither.
 
-**Where.** `docs/rule-syntax/lib/python/names.rerail`, `sym_of` (lines 359-362). Rule 1 goes through `qn` (lines 273-275),
-which extends a name along an attribute chain (`qn(n, @dot(q, a)) :- attr_of(n, o, a), qn(o, q)`) but starts only
-from an import binding (`ibind`). Rule 2, a local def or class, matches only the bare name (`look(n, x, s), defn(s, x,
-f), qualname(f, q)`), with no attribute step.
+**Where.** `docs/rule-syntax/lib/python/names.rerail`, `sym_of`. Rule 1 goes through `qn`, which extends a name along
+an attribute chain (`qn(n, @dot(q, a)) :- attr_of(n, o, a), qn(o, q)`) but starts only from an import binding
+(`ibind`). Rule 2, a local def or class, matched only the bare name (`look(n, x, s), defn(s, x, f), qualname(f, q)`),
+with no attribute step.
 
-**Workaround used.** get-or-create-needs-unique resolves the Meta base through its object:
-`attr_of(e, o, "Meta"), sym_of(o, bq)`.
+**Workaround used (removed).** get-or-create-needs-unique resolved the Meta base through its object:
+`attr_of(e, o, "Meta"), sym_of(o, bq)`. It now reads the Meta's `class_base` and matches it to the base's own Meta.
 
-**Suggested fix.** Extend rule 2 along attributes as `qn` does, for a name that resolves to a class of the run:
-`sym_of(n, @dot(q, a)) :- attr_of(n, o, a), sym_of(o, q), class_def(_, q)` (then `class_base` follows).
+**Fix (#898).** `sym_of(n, q) :- attr_of(n, o, a), sym_of(o, c), class_def(_, c), q = @dot(c, a), qualname(_, q)`: a
+def or class of the run read as an attribute of its class (`Base.Meta`, `Base.f`) is its qualified name, as where
+Base is imported; `class_base` follows. As for a bare name (rule 2), only definitions resolve: a value the class
+assigns (`Base.X`) has no row, as a module's own variable has none, so rules that fall back to a name heuristic for
+what does not resolve (`!sym_of(n, _)`, the logging rules' `Service.logger`) are unchanged.
 
 ---
 
