@@ -69,8 +69,9 @@ pub fn configure(this_thread: bool) {
     });
 }
 
-/// A pool thread's stack: pages are committed only as they are touched, so this is address space, not memory.
-const POOL_STACK: usize = 16 << 20;
+/// A pool thread's stack: pages are committed only as they are touched, so this is address space, not memory. A
+/// thread that runs a job's work off the pool (`rerail_engine`'s `threads::beside`) takes the same.
+pub const POOL_STACK: usize = 16 << 20;
 
 /// The stack a wait keeps free before it runs another's job on its frames ([`help_once`]).
 const HELP_STACK_MARGIN: usize = 4 << 20;
