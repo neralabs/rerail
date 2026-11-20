@@ -134,6 +134,8 @@ beforeEach(async () => {
   ui.range = 7;
   ui.panel = null;
   setNeeds(currentNeeds);
+  // One page a test: the listeners of earlier tests' pages would read again at each show.
+  visibility = [];
   setHidden(false);
   startPolling(changed => renders.push(changed));
   await settle();
