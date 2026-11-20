@@ -123,6 +123,10 @@ declare module "*/ui/derive.js" {
   export function inPack(rule: object, packId: string): boolean;
   /** Whether a stored rule came in a rule pack (`origin` "pack"), rather than from the library ("user"). */
   export function isFromPack(stored: { origin: string }): boolean;
+  /** Whether a rule (or a pack) waits for a person's approval, and runs in Log until then. */
+  export function awaitingApproval(item: { approval?: { approved: boolean } | null }): boolean;
+  /** Whether a rule waits for approval (it runs in Log) and is one created by you, from the library, not a pack's or a worktree's, nor an edited copy of a rule Rerail ships. */
+  export function awaitingYourApproval(stored: { origin: string; approval?: { approved: boolean; subject: { kind: string } } | null; copiedFromRuleId?: string | null }): boolean;
   export function publisherLabel(pack: { publisher: string }): string;
   /** The skipped entries that are files of the worktree at `checkoutPath`'s `.rerail/rules`, by file name, with why. */
   export function worktreeLeftOut(skipped: ReadonlyArray<{ path: string; reason: string }>, checkoutPath: string | null | undefined): Array<{ file: string; reason: string }>;
@@ -240,8 +244,9 @@ declare module "*/ui/pack-model.js" {
   export function sortPageRules<R extends Stored>(rules: readonly R[], sort: string): R[];
   export function shownRules<R extends Stored>(rules: readonly R[]): R[];
   export function runningOf(rules: readonly Stored[]): number;
-  export function packSwitch(rules: readonly Stored[]): { on: number; total: number; state: "true" | "false" };
-  export function switchTurnsOn(state: "true" | "false"): boolean;
+  export function packSwitch(rules: readonly Stored[]): { on: number; total: number; state: "true" | "false" | "mixed" };
+  export function switchTurnsOn(state: "true" | "false" | "mixed"): boolean;
+  export function enforcementCounts(rules: ReadonlyArray<Stored & { rule: { mode: string }; configError?: string | null }>): string;
   export function catalogKinds(packs: readonly Pack[]): Array<[string, string]>;
   export function catalogPacks<P extends Pack>(packs: readonly P[], kind: string): P[];
   export const SHEET_FILTER_AT: number;
@@ -378,4 +383,10 @@ declare module "*/ui/merge-model.js" {
   export function settingsSummary(settings: MergeAssistSettings): string;
   export interface FocusControl { act: string; i: string | null }
   export function refocusIndex(used: FocusControl & { index: number }, controls: readonly FocusControl[]): number;
+}
+
+declare module "*/ui/render/enforcement.js" {
+  type Stored = { rule: { mode: string }; approval?: { approved: boolean } | null };
+  export const MODE_READ_ONLY: string;
+  export function enforcementOf(stored: Stored): { kind: "log" | "steer"; glyph: string; label: string; tip: string };
 }

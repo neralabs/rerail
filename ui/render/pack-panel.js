@@ -4,7 +4,7 @@
  * for a large pack), and Remove pack in a footer that stays in view. Also the pack badge and the Add / Remove control
  * the catalog and the pack page share.
  */
-import { h, setContent, icon, searchIcon } from "../dom.js";
+import { h, setContent, icon, searchIcon, pendingIcon } from "../dom.js";
 import { fmt, plural } from "../format.js";
 import { awaitingApproval, categoryLabel, inPack, isRerailPack, isWorktreePack, MODE_LABEL, packSuppressions, publisherLabel } from "../derive.js";
 import { data, ui, isAttached, keptPacks, reviewing, repoName } from "../state.js";
@@ -95,7 +95,7 @@ function renderHead(pack, on) {
 function approvalLine(pack) {
   if (!awaitingApproval(pack)) return null;
   const { kind, id, digest } = pack.approval.subject;
-  return h("div.welcome.warn", { role: "status" }, icon("steered", 22), h("div", null,
+  return h("div.welcome.warn", { role: "status" }, pendingIcon(), h("div", null,
     h("b", null, "Waits for approval."),
     h("p", null, "Rerail did not publish this version, so its rules run in Log, steering no one, until a person approves what it ships. Read what its rules tell the coding agent first."),
     h("p.acts", null, h("button.btn.sm.solid", { "data-act": "approve", "data-i": id, "data-kind": kind, "data-digest": digest }, "Approve"))));

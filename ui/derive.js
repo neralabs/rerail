@@ -33,6 +33,15 @@ export const packOriginName = pack => (isRerailPack(pack) || isWorktreePack(pack
 /** Whether a rule (or a pack, from `GET /api/rule-packs`) waits for a person's approval, and runs in Log until then. */
 export const awaitingApproval = item => item.approval?.approved === false;
 
+/**
+ * Whether a rule is one created by you (the library) that waits for your approval: `/rerail-create` adds the rules it
+ * finds there, unapproved, so they run in Log until you approve them. A worktree's own rules and packs Rerail did not
+ * publish are not: someone else wrote those, and each is read on its own page before it is approved. Nor is your edited
+ * copy of a rule Rerail ships: approving it turns the original off where the copy is added, which its page says.
+ */
+export const awaitingYourApproval = stored => awaitingApproval(stored) && !isFromPack(stored) && stored.approval.subject.kind === "rule"
+  && !stored.copiedFromRuleId;
+
 /** The origin of a rule that came in a rule pack this page does not know (its pack was removed): no publisher is claimed. */
 export const UNKNOWN_PACK_ORIGIN = "From a rule pack";
 
@@ -230,6 +239,8 @@ function storedRule(entry) {
     addedAt: entry.addedAt ?? null,
     // Present for a rule Rerail did not publish: until `approved`, it runs in Log (`mode` says so).
     approval: entry.approval ?? null,
+    // Your edited copy of a rule Rerail ships (`<id>-copy`): the rule it was copied from.
+    copiedFromRuleId: entry.copiedFromRuleId ?? null,
     updatedAt: entry.updatedAt ?? null,
   };
 }

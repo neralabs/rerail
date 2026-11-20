@@ -16,6 +16,7 @@ import { RerailRuntime, type RerailRuntimeOptions } from "../../src/runtime/runt
 import { temporaryDirectories, testEmbedder } from "../support/hook-events.js";
 import { testCodeRuleCatalog } from "../support/repository-rules.js";
 import { steerLatitude } from "../support/steers.js";
+import { linkFolder } from "../support/platform/links.js";
 import { literal } from "../support/platform/text-patterns.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-steer-strategy-");
@@ -205,6 +206,36 @@ describe("The rewind steer strategy", () => {
       expect(await readFile(join(session.root, "sessions", directory, "events.jsonl"), "utf8")).not.toContain("sk-live-0123456789");
     } finally {
       stderr.mockRestore();
+      await session.runtime.dispose();
+    }
+  });
+
+  // `conf/config.py`, with `conf` a link (a junction on Windows) to `.aws`, is `.aws/config.py`: a file in a folder
+  // named like one holding secrets, whose text the session ledger never holds however the edit spells it. An ordinary
+  // file with the same text is edited first, and the ledger keeps that one's text: no secret pattern withholds it, so
+  // only the judgment by where `conf/config.py` really is keeps it out. The session keeps the text, so the edit is put
+  // back, as one of a file whose text holds a secret is.
+  it("puts back a file a link to a secret-like folder leads to, while its session ledger keeps only the file's digest", async () => {
+    const before = "REGION = 'eu-west-1'\n";
+    const session = await strategySession({ strategy: "rewind", host: "omp", files: { ".aws/config.py": before, "region.py": before } });
+    linkFolder(".aws", join(session.root, "conf"));
+    try {
+      await session.edit("w0", "region.py", "REGION = 'eu-north-1'\n");
+      const deliveries = await session.edit("w1", "conf/config.py", "NEEDLE = 1\n");
+      const directory = createHash("sha256").update("strategy").digest("hex");
+      const ledger = (await readFile(join(session.root, "sessions", directory, "events.jsonl"), "utf8")).split("\n").filter(Boolean);
+      const holding = ledger.filter(line => line.includes("eu-west-1")).map(line => JSON.parse(line) as unknown);
+      expect(holding).toEqual([expect.objectContaining({ type: "policy-call", toolCallId: "w0", preimages: { "region.py": { text: before } } })]);
+      const calls = ledger.map(line => JSON.parse(line) as { type: string; toolCallId?: string; preimages?: unknown })
+        .filter(entry => entry.type === "policy-call" && entry.toolCallId === "w1");
+      expect(calls.map(call => call.preimages)).toEqual([
+        { "conf/config.py": { withheld: { sha256: createHash("sha256").update(before).digest("hex"), bytes: Buffer.byteLength(before) } } },
+      ]);
+      expect(deliveries).toEqual(expect.arrayContaining([expect.objectContaining({ strategy: "rewind", toolCallId: "w1", rewound: ["conf/config.py"] })]));
+      // The file is secret-like where it really is, so every steer withholds the finding's message and fix.
+      for (const delivery of deliveries) expect(delivery.content).toContain("A finding here; its message and fix are withheld");
+      expect(await readFile(join(session.root, ".aws", "config.py"), "utf8")).toBe(before);
+    } finally {
       await session.runtime.dispose();
     }
   });

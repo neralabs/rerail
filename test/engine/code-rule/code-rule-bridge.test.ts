@@ -18,6 +18,7 @@ import {
   ledgerPreimage,
   MAX_TOLD_AT_ONCE,
   MAX_TOLD_GAPS,
+  type Preimage,
   type SourceObservationCache,
 } from "../../../src/engine/code-rule/code-rule-bridge.js";
 import { MAX_FINISHED_CALLS, ToolCallWindows } from "../../../src/engine/code-rule/tool-call-windows.js";
@@ -32,6 +33,7 @@ import { denyAccess, restoreAccess } from "../../support/platform/deny-access.js
 import { holdRemovals } from "../../support/platform/held-removal.js";
 import { startChurn } from "../../support/processes/churn.js";
 import { releasedInOrder } from "../../support/platform/released-in-order.js";
+import { linkFolder } from "../../support/platform/links.js";
 import { removeFolder, runningIn } from "../../support/platform/remove-folder.js";
 
 const discovery = vi.hoisted(() => ({
@@ -413,6 +415,18 @@ function auditor(auditGeneratedEdits: CodeRuleAuditor["auditGeneratedEdits"]): C
 function response(batch: CodeRuleEditBatch) {
   return { revision: batch.revision, disposition: "continue" as const, violations: [], failures: [] };
 }
+/**
+ * The 8.3 short name Windows gave the file or folder `name` in `folder`, or undefined when the volume makes none:
+ * `cmd`'s `%~snxI` then gives the long name back.
+ */
+function windowsShortName(folder: string, name: string): string | undefined {
+  const short = execFileSync("cmd", ["/d", "/c", `for %I in (${name}) do @echo %~snxI`], { cwd: folder, encoding: "utf8" }).trim();
+  return short === "" || short.toLowerCase() === name.toLowerCase() ? undefined : short;
+}
+/** Each captured preimage as the session ledger records it (`ledgerPreimage`). */
+function ledgerForms(captured: Readonly<Record<string, Preimage>>): Record<string, Preimage> {
+  return Object.fromEntries(Object.entries(captured).map(([path, preimage]) => [path, ledgerPreimage(preimage)]));
+}
 
 describe("CodeRuleBridge", () => {
   it("extracts the paths an edit tool names, any file, leaving out multi-line strings", () => {
@@ -475,6 +489,88 @@ describe("CodeRuleBridge", () => {
     await expect(bridge.begin("edit-1", "write", { path: ["src/secrets.py", "src/a.py"] })).resolves.toEqual({
       "src/secrets.py": { withheld: { sha256: createHash("sha256").update(text).digest("hex"), bytes: Buffer.byteLength(text) } },
       "src/a.py": { text: "before\n" },
+    });
+  });
+
+  // A link to a folder named like one holding secrets leads to the same files: `conf/config.py`, with `conf` a link (a
+  // junction on Windows) to `.aws`, is `.aws/config.py`, and so is `src/../conf/config.py`. The session ledger in the
+  // checkout holds only the file's digest, as for a direct edit, and never its text; the session keeps the text, so
+  // `rewind` can still put the file back. No secret pattern matches the text, so only where the file is withholds it.
+  it("records only the digest of a file a link to a secret-like folder leads to, while the session keeps its text", async () => {
+    const root = await workspace();
+    const text = "REGION = 'eu-west-1'\n";
+    expect(ledgerPreimage({ text })).toEqual({ text });
+    await mkdir(join(root, ".aws"));
+    await writeFile(join(root, ".aws", "config.py"), text);
+    linkFolder(".aws", join(root, "conf"));
+    linkFolder(join("..", ".aws"), join(root, "src", "keys"));
+    const bridge = createBridge(root, auditor(async (_sessionId, batch) => response(batch)));
+    await bridge.openWorkspace("session-1");
+    const captured = await bridge.begin("edit-1", "write", { path: ["conf/config.py", "src/keys/config.py", "src/../conf/config.py"] });
+    const withheld = { withheld: { sha256: createHash("sha256").update(text).digest("hex"), bytes: Buffer.byteLength(text) } };
+    expect(ledgerForms(captured)).toEqual({ "conf/config.py": withheld, "src/keys/config.py": withheld });
+    expect(Object.values(captured).map(preimage => preimage.text)).toEqual([text, text]);
+  });
+
+  // A spelling named like one holding secrets keeps only the digest wherever it leads: `.aws/config.py`, with `.aws` a
+  // link (a junction on Windows) to an ordinary folder, is still judged by its spelling.
+  it("captures only the digest of a file spelled through a folder named like one holding secrets that links to an ordinary one", async () => {
+    const root = await workspace();
+    const text = "REGION = 'eu-west-1'\n";
+    await mkdir(join(root, "plain"));
+    await writeFile(join(root, "plain", "config.py"), text);
+    linkFolder("plain", join(root, ".aws"));
+    const bridge = createBridge(root, auditor(async (_sessionId, batch) => response(batch)));
+    await bridge.openWorkspace("session-1");
+    await expect(bridge.begin("edit-1", "write", { path: ".aws/config.py" })).resolves.toEqual({
+      ".aws/config.py": { withheld: { sha256: createHash("sha256").update(text).digest("hex"), bytes: Buffer.byteLength(text) } },
+    });
+  });
+
+  // Where a file really is is judged from the checkout that owns it, as its spelling is: a checkout that itself sits in a
+  // folder named like one holding secrets (`.docker/app`) keeps the text of its ordinary files.
+  it("captures the text of an ordinary file in a checkout that sits in a folder named like one holding secrets", async () => {
+    const root = join(await workspace(), ".docker", "app");
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "a.py"), "x = 1\n");
+    const bridge = createBridge(root, auditor(async (_sessionId, batch) => response(batch)));
+    await bridge.openWorkspace("session-1");
+    await expect(bridge.begin("edit-1", "write", { path: "src/a.py" })).resolves.toEqual({ "src/a.py": { text: "x = 1\n" } });
+  });
+
+  // Windows opens a folder by its 8.3 short name too (`AWS~1` for `.aws`), which no name check knows.
+  it("records only the digest of a file in a secret-like folder named by its Windows short name", async ({ skip }) => {
+    skip(process.platform !== "win32", "only Windows gives a folder a short name");
+    const root = await workspace();
+    const text = "REGION = 'eu-west-1'\n";
+    expect(ledgerPreimage({ text })).toEqual({ text });
+    await mkdir(join(root, ".aws"));
+    await writeFile(join(root, ".aws", "config.py"), text);
+    const short = windowsShortName(root, ".aws");
+    if (short === undefined) return skip("this volume makes no short names");
+    const bridge = createBridge(root, auditor(async (_sessionId, batch) => response(batch)));
+    await bridge.openWorkspace("session-1");
+    const captured = await bridge.begin("edit-1", "write", { path: `${short}/config.py` });
+    expect(ledgerForms(captured)).toEqual({
+      [`${short}/config.py`]: { withheld: { sha256: createHash("sha256").update(text).digest("hex"), bytes: Buffer.byteLength(text) } },
+    });
+  });
+
+  // A file named like one holding secrets has a short name of its own (`WP-CON~1.PHP` for `wp-config.php`), which no
+  // name check knows either, with no link and no secret-like folder on the way.
+  it("records only the digest of a file named like one holding secrets, opened by its Windows short name", async ({ skip }) => {
+    skip(process.platform !== "win32", "only Windows gives a file a short name");
+    const root = await workspace();
+    const text = "<?php $region = 'eu-west-1';\n";
+    expect(ledgerPreimage({ text })).toEqual({ text });
+    await writeFile(join(root, "src", "wp-config.php"), text);
+    const short = windowsShortName(join(root, "src"), "wp-config.php");
+    if (short === undefined) return skip("this volume makes no short names");
+    const bridge = createBridge(root, auditor(async (_sessionId, batch) => response(batch)));
+    await bridge.openWorkspace("session-1");
+    const captured = await bridge.begin("edit-1", "write", { path: `src/${short}` });
+    expect(ledgerForms(captured)).toEqual({
+      [`src/${short}`]: { withheld: { sha256: createHash("sha256").update(text).digest("hex"), bytes: Buffer.byteLength(text) } },
     });
   });
 
@@ -3919,6 +4015,63 @@ describe("CodeRuleBridge and a call it takes up only after its tool wrote the fi
   ])("keeps only the digest of what a secret-like file held, and reads the edit against it where $holds", async ({ committed, previous }) => {
     expect(await lateEdit("one\n", "one\nTWO\n", editResult([" one", "+TWO"]), { file: "secrets.py", committed })).toEqual([
       { path: "src/secrets.py", language: "python", ...previous, generatedText: "one\nTWO\n" },
+    ]);
+  });
+
+  // `conf/config.py`, with `conf` a link (a junction on Windows) to `.aws`, is `.aws/config.py`: what the result says
+  // that file held keeps only its digest however the call spells the file, so the edit is read as one of `.aws/config.py`.
+  // A spelling named like one holding secrets keeps only the digest wherever it leads: `.aws/config.py` with no link,
+  // and with `.aws` a link to an ordinary folder.
+  it.each([
+    { spelled: "conf/config.py", folder: ".aws", link: "conf", where: "with conf a link to .aws" },
+    { spelled: ".aws/config.py", folder: ".aws", link: undefined, where: "with no link" },
+    { spelled: ".aws/config.py", folder: "plain", link: ".aws", where: "with .aws a link to plain" },
+  ])("keeps only the digest of what the result says $spelled held, $where", async ({ spelled, folder, link }) => {
+    const root = await workspace();
+    const real = join(root, folder, "config.py");
+    await mkdir(join(root, folder));
+    await writeFile(real, "one\n");
+    if (link !== undefined) linkFolder(folder, join(root, link));
+    await awaitClockAfter(real);
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await writeFile(real, "one\nTWO\n");
+    const path = join(root, spelled);
+    await bridge.begin("edit-1", "Edit", { file_path: path });
+    await bridge.finish("edit-1", false, { reported: claudeCodeReportedPreimage(editResult([" one", "+TWO"])(path)) });
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([
+      { path: spelled, language: "python", previousReadError: "Rerail keeps no copy of a file holding secrets", generatedText: "one\nTWO\n" },
+    ]);
+  });
+
+  // The same late call through `conf`, the file written again after the call's capture took the tool's write (a
+  // formatter, the next edit): what the result says `.aws/config.py` held keeps only its digest, whether the line diff
+  // rebuilds it from that capture or the result gives the text the tool replaced.
+  it.each([
+    {
+      says: "its line diff rebuilds from the capture", tool: "Edit", before: "one\ntwo\nthree\n", atCall: "one\nTWO\nthree\n",
+      then: "one\nTWO\nTHREE\n", input: (path: string) => ({ file_path: path }), output: editResult([" one", "-two", "+TWO", " three"]),
+    },
+    {
+      says: "it gives the text the tool replaced", tool: "Write", before: "one\n", atCall: "one\nmine = 1\n", then: "one\nmine = 1\nx = 2\n",
+      input: (path: string) => ({ file_path: path, content: "one\nmine = 1\n" }),
+      output: (path: string) => ({ type: "update", filePath: path, content: "one\nmine = 1\n", originalFile: "one\n" }),
+    },
+  ])("keeps only the digest of what conf/config.py held, with conf a link to .aws, where $says and the file changed again", async ({ tool, before, atCall, then, input, output }) => {
+    const root = await workspace();
+    const real = join(root, ".aws", "config.py");
+    await mkdir(join(root, ".aws"));
+    await writeFile(real, before);
+    linkFolder(".aws", join(root, "conf"));
+    await awaitClockAfter(real);
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await writeFile(real, atCall);
+    const path = join(root, "conf", "config.py");
+    await bridge.begin("edit-1", tool, input(path));
+    await awaitClockAfter(real);
+    await writeFile(real, then);
+    await bridge.finish("edit-1", false, { reported: claudeCodeReportedPreimage(output(path)) });
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([
+      { path: "conf/config.py", language: "python", previousReadError: "Rerail keeps no copy of a file holding secrets", generatedText: then },
     ]);
   });
 
