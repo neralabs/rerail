@@ -157,7 +157,7 @@ def classify(pid, name):
                     j = json.loads(a[at + 6:].strip())
                     argv = j.get("argv") or []
                     relax = bool(argv) and os.path.basename(argv[0]) in ("relax", "relax-linux")
-                    job = {"kind": "relax" if relax else "test", "cmd": " ".join(os.path.basename(argv[0:1][0]) if i == 0 else x
+                    job = {"kind": "windows" if j.get("windows") else "relax" if relax else "test", "cmd": " ".join(os.path.basename(argv[0:1][0]) if i == 0 else x
                                                                                   for i, x in enumerate(argv))[:160],
                            "checkout": os.path.basename(j.get("map", [""])[0] or "")}
                 except (ValueError, IndexError, AttributeError):
@@ -287,6 +287,35 @@ def input_idle():
     return int(m.group(1)) / 1e9 if m else None
 
 
+# A WSL machine: Windows' own view of the whole machine (WSL's VM included), from one typeperf
+# that stays running and prints a line every PERIOD (no process started per sample).
+WSL = LINUX and "microsoft" in os.uname().release.lower()
+WINDOWS = {}
+
+
+def windows_counters():
+    import glob
+    env = dict(os.environ)
+    socks = sorted(glob.glob("/run/WSL/*_interop"), key=lambda p: int(os.path.basename(p).split("_")[0]))
+    if socks and not env.get("WSL_INTEROP"):
+        env["WSL_INTEROP"] = socks[0]
+    ps = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+    try:
+        WINDOWS["mem_total"] = int(subprocess.run([ps, "-NoProfile", "-Command", "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory"],
+                                                  env=env, cwd="/mnt/c", capture_output=True, text=True, timeout=60).stdout.strip())
+        p = subprocess.Popen(["/mnt/c/Windows/System32/typeperf.exe", r"\Processor(_Total)\% Processor Time",
+                              r"\Memory\Available Bytes", "-si", str(int(PERIOD))], env=env, cwd="/mnt/c",
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return
+    for line in p.stdout:
+        w = [x.strip().strip('"') for x in line.strip().split('","')]
+        try:
+            WINDOWS.update(busy=float(w[1]) / 100, mem_avail=int(float(w[2])), t=time.time())
+        except (IndexError, ValueError):
+            pass
+
+
 def self_seconds():
     """The CPU this sampler and the commands it ran used so far."""
     t = os.times()
@@ -315,6 +344,8 @@ def cpu_name():
 
 def main():
     threading.Thread(target=pings, daemon=True).start()
+    if WSL:
+        threading.Thread(target=windows_counters, daemon=True).start()
     cores = os.cpu_count() or 1
     me = os.getpid()
     prev_ticks, prev_procs, prev_net, prev_t = cpu_ticks(), processes(), net_bytes(), time.time()
@@ -391,6 +422,7 @@ def main():
               "load": round(load(), 2), "mem": mem, "gpu": g, "disk": disk(imp),
               "net": {"rx": (nb[0] - prev_net[0]) / dt, "tx": (nb[1] - prev_net[1]) / dt},
               "jobs": jobs, "compiles": compiles, "fleet_jobs": len(fleet), "idle_s": idle,
+              "windows": dict(WINDOWS) if WINDOWS.get("t", 0) > now - 3 * PERIOD else None,
               "probe_cpu": round((self_cpu - prev_self) / dt, 4)})
         prev_ticks, prev_procs, prev_net, prev_t, prev_self = ticks, procs, nb, now, self_cpu
         # Forget processes gone.

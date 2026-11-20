@@ -300,6 +300,34 @@ Linux hosts are. Nothing of the farm runs on Windows itself. Set up once, as an 
   (with its `link`, WSL's `eth0`), and `setup`.
 - A laptop: on AC power, no sleep and no action on closing the lid (`powercfg`).
 
+### Windows hosts
+
+The same PC's Windows side is a host of its own (`"os": "windows"`), for Windows builds and runs
+of the tests: `scripts/dev/test-remote --os windows -- cargo nextest run ...` (or `--host`). Its
+entry names the machine's Linux entry (`"shares"`) and its farm directory on the Windows drive as
+WSL mounts it (`"windows_dir": "/mnt/c/rf"`); ssh reaches it through the same WSL (a second ssh
+name for it). Then:
+
+- One copy of a checkout per machine: the mirror sends to the Linux side's (WSL's own disk), and
+  before a Windows command the agent brings the Windows drive's copy up to it: the files changed
+  since the last time (size or time, from a manifest) in one tar stream to Windows' own `tar`,
+  the files gone removed (`windows_sync`). Through WSL's mount of the drive the mirror wrote 13
+  files a second; the stream wrote a checkout's 11,600 files in 14 s, and a repeat run's whole
+  overhead is about 2 s (2026-11-19).
+- The command runs natively: a batch file, run by Windows' `cmd` through WSL's interop at
+  `BELOWNORMAL` priority (`LOW` for `nice -n 19`, which is taken off the command), its children
+  inheriting it, with its target directory on the drive. A stopped run's Windows processes are
+  ended by their command line (`taskkill /T`).
+- Linux and Windows share the machine's test slots, so what is queued decides how many of each
+  run; the CPU is the scheduler's, and WSL hands memory back as it idles (`autoMemoryReclaim`).
+  The dashboard shows Windows' view of the whole machine on the machine's card.
+
+On Windows, once, as an administrator: Visual Studio Build Tools 2022 (the C++ workload, x64 and
+ARM64 tools, the Windows 11 SDK, CMake, Clang), long paths on (`LongPathsEnabled`), the farm's
+directory left out of Defender's scanning (`Add-MpPreference -ExclusionPath`), and in the farm's
+account rustup with the pinned toolchain (`x86_64-pc-windows-msvc`, and the ARM64 target) and
+cargo-nextest's Windows build in `%USERPROFILE%\.cargo\bin`.
+
 ### Mac compiles on a Linux host
 
 A Linux host compiles this Mac's registry libraries (`remote_eligible`: an rlib, nothing linked),
