@@ -4,7 +4,7 @@
 // and the folder is found gone, while every checkout that stays keeps its own.
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -163,6 +163,20 @@ describe("what the catalog keeps for a worktree leaves with it", () => {
   });
 });
 
+/**
+ * Writes `text` over the file at `path` in place, as Git rewrites a `.git` file. Git for Windows hides a worktree's
+ * `.git` file, and Windows refuses to make a file anew over a hidden one.
+ */
+async function rewriteInPlace(path: string, text: string): Promise<void> {
+  const file = await open(path, "r+");
+  try {
+    await file.truncate(0);
+    await file.write(text, 0);
+  } finally {
+    await file.close();
+  }
+}
+
 describe("what the catalog keeps for a worktree leaves with it however the repository's folder was reached", () => {
   /**
    * Six worktrees beside a repository `main` in `root`, each with a `config.worktree` of its own and a `.git` file
@@ -173,7 +187,7 @@ describe("what the catalog keeps for a worktree leaves with it however the repos
    */
   async function removedOnceAskedThrough(root: string, spelt: string): Promise<void> {
     const { main, worktrees } = await withWorktrees(6, true, root);
-    for (const worktree of worktrees) writeFileSync(join(worktree, ".git"), `gitdir: ../main/.git/worktrees/${basename(worktree)}\n`);
+    for (const worktree of worktrees) await rewriteInPlace(join(worktree, ".git"), `gitdir: ../main/.git/worktrees/${basename(worktree)}\n`);
     const asked = [main, ...worktrees].map(checkout => join(spelt, basename(checkout)));
     askAfter(...asked);
     const before = kept();
