@@ -1350,7 +1350,6 @@ fn lazy_probe() {
 /// step whose walk they speak of reads each text as without them, the same tape or the same refusal. The step is
 /// the ladder's last, the one it keeps (0422).
 #[test]
-#[ignore = "slow: compiles step 36 three times, ~85 s each on an M1 Max (0422 kept no smaller step); Q371"]
 fn a_step_compiles_to_one_program_and_walk_lemmas_keep_its_tapes() {
     let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/bitlex_ladder/36-no-back-fills.bitlex")).expect("step 36");
     let with = compile_text(&source).expect("step 36 compiles");

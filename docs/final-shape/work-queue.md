@@ -7853,6 +7853,9 @@ on an M3 or M5:
   each on the M1 Max, so it is ignored with this item as the reason.
   - **Done when**: a Kotlin step 36 compile takes seconds (0484's aim), or the test has a small grammar with a walk,
     and it is not ignored.
+  - 2026-11-20: it passes on Linux (131 s on spark2), so it was slow, never red. It is no longer ignored. It is in
+    nextest's slow tier (`.config/nextest.toml`): the gate runs it, with 8 minutes allowed, and the quick tier leaves
+    it out. Still open: the compile's time, three compiles of 44 s on spark2.
 
 ### Q349. Cranelift refuses corpus program `0565-mix-seed_205` by 0423's check
 
