@@ -20,7 +20,7 @@ main by #862.
 | 6 | Very large repositories do not finish | engine, scale | Observed once (PostHog); two causes found | Fixed by #878 and #882: the whole pack finishes on PostHog in 100 min (main: killed out of memory at 376 s); its 57 GiB peak is open |
 | 7 | `sym_of` has no row for an attribute of a class of the same module | `lib/python/names.rerail` | Reproduced with a probe; cause found | Present (probe fails as described) |
 | 8 | A call to a def under an outside decorator has no call target | `lib/python/calls.rerail` | Reproduced with a probe | Fixed by #875: the call targets the def and stays open (probe passes); workaround removed |
-| 9 | Rules that read the call graph take hours on large repositories | `python/calls` typing program, scale | Measured; cause found | Minutes on main (107-380 s a rule on the three largest apps); #878 cuts them to 40-70% |
+| 9 | Rules that read the call graph take hours on large repositories | `python/calls` typing program, scale | Measured; cause found | Minutes on main (107-380 s a rule on the three largest apps); #878 cuts each rule's time to 39-73% of that (table in §9) |
 | 10 | A negated tree axis is read wrong below a node a sym_of relation found | engine: lowering or demand of `!inside`/`within_stop` | Reproduced with a probe; bisected to a merge | Fixed by #862; the three rules it broke pass their cases |
 
 ---
