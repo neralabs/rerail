@@ -1,10 +1,11 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { missingClaudeHookScripts, runRegisteredClaudeHook } from "../../src/setup/registered-hooks.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
+import { fromDriveRoot } from "../support/platform/windows-paths.js";
 
 const homes: string[] = [];
 afterEach(async () => {
@@ -97,6 +98,19 @@ describe("running the registered Claude hook as Claude Code will", () => {
   it("finds a bare node on PATH, as the exec form Rerail registers on Windows names it, and never in the current folder", async () => {
     const home = await homeRunning("let t='';process.stdin.on('data',c=>t+=c).on('end',()=>{JSON.parse(t);process.stdout.write('{}');});", "node");
     expect(await runRegisteredClaudeHook(home)).toBeUndefined();
+  });
+
+  // On Windows only: elsewhere a path from the root has no drive to change with. A program start read such a name on the
+  // drive of the child's folder, and Rerail now starts a program there only by a path from a drive or a server.
+  it.runIf(process.platform === "win32")("runs a node named from the root of the current drive, with the current folder's drive", async () => {
+    const home = await homeRunning("let t='';process.stdin.on('data',c=>t+=c).on('end',()=>{JSON.parse(t);process.stdout.write('{}');});", fromDriveRoot(process.execPath));
+    const before = process.cwd();
+    process.chdir(dirname(process.execPath));
+    try {
+      expect(await runRegisteredClaudeHook(home)).toBeUndefined();
+    } finally {
+      process.chdir(before);
+    }
   });
 
   it("names a registration whose hook script is gone, the failure that leaves every session unrecorded", async () => {

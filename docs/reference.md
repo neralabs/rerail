@@ -556,7 +556,7 @@ An agent reads only its own repository's history, since transcripts hold prompts
 
 The check reads names, not a shell, so paths built at run time are missed. `rerail rules evidence` names such calls by tool only, and lists no Git-ignored standards file.
 
-Violations in secret-named files (`secrets.yaml`, `credentials.json`, `token.txt`, `gcp-key.json`, `kubeconfig`, `prod.sops.yaml`, anything under `.aws/`; `SENSITIVE_FILE_NAMES` and `SENSITIVE_FOLDER_NAMES`; hidden alone doesn't count) reach an agent by rule and place only. The steer, `violations_list`, `audits_list` and `repository_audit_entries_list` withhold the message (which metavariables may fill with file text), `variables` and fix, and the steer says so. The steer also judges a file by where it links. Audits still run, and people see full findings via `/api` and the dashboard.
+Violations in secret-named files (`secrets.yaml`, `credentials.json`, `token.txt`, `gcp-key.json`, `kubeconfig`, `prod.sops.yaml`, anything under `.aws/`; `SENSITIVE_FILE_NAMES` and `SENSITIVE_FOLDER_NAMES`; hidden alone doesn't count) reach an agent by rule and place only. The steer, `violations_list`, `audits_list` and `repository_audit_entries_list` withhold the message (which metavariables may fill with file text), `variables` and fix, and the steer says so. The steer also judges a file by where it links from the folder the session runs in, and those three lists do the same from the folder each finding was recorded in, when that folder is in the agent's checkout. Audits still run, and people see full findings via `/api` and the dashboard.
 
 </details>
 
@@ -811,8 +811,8 @@ OMP and Pi expose these natively, with slash-completion descriptions; Claude Cod
 A draft is `{ kind, rule, folder?, cases: { caught: [...], passed: [...] } }`. `rerail rules test --help` prints the format; [Writing rules](writing-rules.md#testing-a-draft) explains each field.
 
 - `rerail rules show <rule id> [--repo <dir>]` prints a rule as a draft: one of yours, or a By Rerail rule as this repository runs it (the option values and mode the repository's settings give it, not a checkout's). A note on stderr, so stdout saves as a draft file, says where saving changes it: your rule here and in which other repositories, or that it is not added here; for a By Rerail rule, your copy, the copy this repository already has, or that the rule is not added or is off here (a copy would run on).
-- `rerail rules test` validates a draft, runs its cases and a repository pass over the folders `rules add` would add the rule at, and writes nothing. It says where `rules add` would refuse the draft.
-- `rerail rules add` stores the draft in your library and adds it, on, to this repository (or the draft's `folder`). A draft that keeps a By Rerail rule's id is stored as your copy (`<id>-copy`), added where the original is in this repository; approving the copy turns the original off there ([copy on edit](rule-scoping.md#coding-agents)).
+- `rerail rules test` validates a draft, runs its cases and a repository pass over the folders `rules add` would add the rule at, and writes nothing. It says where `rules add` would refuse the draft, a draft without a `title` included; a worktree's rule file on its own is checked as it loads, with no title needed.
+- `rerail rules add` stores the draft in your library and adds it, on, to this repository (or the draft's `folder`). It refuses a rule without a `title`, the rule in your own words that the dashboard lists it by. A draft that keeps a By Rerail rule's id is stored as your copy (`<id>-copy`), added where the original is in this repository; approving the copy turns the original off there ([copy on edit](rule-scoping.md#coding-agents)).
 - The rule runs in Log until `rerail rules approve [<rule id | package> …] [--repo <dir>]` approves it as it is now ([approval](rule-scoping.md#approval)).
 
 <details>
