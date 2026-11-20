@@ -3884,14 +3884,15 @@ impl Source for Viewed {
         // lines) is on the device.
         #[cfg(target_os = "macos")]
         let loc = matches!(self.view, View::Loc(_));
-        // The directory is of Metal's addresses: the stages read it on the process's device when that is Metal.
-        let on_metal = rerail_accel::gpu::join::device().is_ok_and(|d| d.metal().is_some());
-        let in_place = (on_metal && (loc || matches!(view, device_chunk::VIEW_NODE | device_chunk::VIEW_CHILD | device_chunk::VIEW_FIELD | device_chunk::VIEW_CORE | device_chunk::VIEW_LINE)))
+        // The directory is of the process's device's addresses, which the stages read it by (decision 0440 step C):
+        // none where its buffers have none (`views_in_place`).
+        let on_device = rerail_accel::gpu::join::device().is_ok();
+        let in_place = (on_device && (loc || matches!(view, device_chunk::VIEW_NODE | device_chunk::VIEW_CHILD | device_chunk::VIEW_FIELD | device_chunk::VIEW_CORE | device_chunk::VIEW_LINE)))
             .then(|| device_chunk::views_in_place(&self.batch, chunk))
             .flatten()
             .filter(|v| (view != device_chunk::VIEW_LINE || v.lines) && (!loc || v.locs))
             .map(|v| {
-                let mut in_place = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir, kind: device_chunk::read_kind(view), buffers: v.buffers.iter().map(|b| rerail_device::device::Buffer::Native(b.clone())).collect(), cache: v.cache.clone().map(rerail_device::device::Buffer::Native), failed: 0, keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> };
+                let mut in_place = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir, kind: device_chunk::read_kind(view), buffers: v.buffers.clone(), cache: v.cache.clone(), failed: 0, keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> };
                 in_place.failed = in_place.cache_failed();
                 in_place
             });

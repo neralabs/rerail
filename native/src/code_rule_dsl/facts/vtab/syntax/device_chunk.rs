@@ -150,7 +150,7 @@ pub struct ViewsInPlace {
     pub dir: u64,
     /// The buffers the reads reach by address, which a pass that reads a view makes resident: the batch's block's
     /// (the one the addresses are of), and each slab a tape lies in.
-    pub buffers: Vec<metal::Buffer>,
+    pub buffers: Vec<rerail_device::device::Buffer>,
     /// Whether every document's lines are in a slab (`LineTable::placed`), so the `line` view is read in place too.
     pub lines: bool,
     /// Whether every document's `Loc` rows are the views' reads' (`ViewEntry::locs`: a file's own tree, core.rr's
@@ -158,7 +158,7 @@ pub struct ViewsInPlace {
     pub locs: bool,
     /// The cache a 16z document's reads decode its blocks into (decision 0353 step 4b, `view::cache`), which every
     /// stage that reads the batch's views shares: none where no tape is 16z.
-    pub cache: Option<metal::Buffer>,
+    pub cache: Option<rerail_device::device::Buffer>,
     _entries: Vec<super::view_docs::ViewEntry>,
 }
 
@@ -193,7 +193,7 @@ fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
     let n = batch.docs.len();
     let rows: *mut ViewRow = b.alloc_t(n.max(1));
     let dir: *mut ViewDir = b.alloc_t(1);
-    let mut slabs: Vec<metal::Buffer> = Vec::new();
+    let mut slabs: Vec<rerail_device::device::Buffer> = Vec::new();
     let mut entries = Vec::with_capacity(n);
     let mut lines = true;
     let loc_rows = batch.offsets(View::Loc(Place::Line));
@@ -246,7 +246,7 @@ fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
                     continue;
                 }
             };
-            if !slabs.iter().any(|s| s.gpu_address() == slab.gpu_address()) {
+            if !slabs.iter().any(|s| s.device_address() == slab.device_address()) {
                 slabs.push(slab);
             }
             // Its lines where the device reads them: else the batch's `line` view is made (counted).
@@ -257,7 +257,7 @@ fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
             match table.room().and_then(|room| crate::code_rule_dsl::tape::placed::on_device(room, bytes)) {
                 Some((address, slab)) => {
                     row.lines = address;
-                    if !slabs.iter().any(|s| s.gpu_address() == slab.gpu_address()) {
+                    if !slabs.iter().any(|s| s.device_address() == slab.device_address()) {
                         slabs.push(slab);
                     }
                 }
@@ -289,21 +289,22 @@ fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
         crate::code_rule_dsl::prof::count("zcache.blocks", zblocks);
         crate::code_rule_dsl::prof::count("zcache.entries", spec.entries as usize);
         crate::code_rule_dsl::prof::count("zcache.entry_kb", spec.entry_bytes() >> 10);
-        let cache = device.new_buffer(spec.bytes() as u64, metal::MTLResourceOptions::StorageModeShared);
+        let cache = rerail_device::device::alloc_uninitialized_array_sync::<u8>(device, spec.bytes());
         // SAFETY: the buffer's bytes, shared with the host, read by no stage yet.
         spec.init(unsafe { std::slice::from_raw_parts_mut(cache.contents().cast::<u8>(), spec.bytes()) }).expect("a cache's buffer of its size");
         for &i in &zrows {
             // SAFETY: row `i`, written above in `b`.
             let row = unsafe { &mut *rows.add(i) };
-            let rel = cache.gpu_address().wrapping_sub(row.tape) as i64;
+            // An address: the slabs' tapes had theirs, so the device's buffers have them.
+            let rel = cache.device_address().expect("a buffer's address where tapes have theirs").wrapping_sub(row.tape) as i64;
             (row.view.side[0], row.view.side[1]) = (rel as u32, (rel >> 32) as u32);
             (row.view.columns[3], row.view.columns[4]) = (spec.entry_bytes() as u32, 1);
         }
         cache
     });
     // The block's buffer made after the last allocation, so it covers them: the addresses are its.
-    let buffer = b.gpu_buffer(device);
-    let base = buffer.gpu_address();
+    let buffer = b.device_buffer(device).ok()?;
+    let base = buffer.device_address()?;
     // SAFETY: the directory just allocated in `b`.
     unsafe { dir.write(ViewDir { chunk: base, ndocs: n as u32, pad: 0, rows: base + b.offset_of(rows) as u64 }) };
     let mut buffers = vec![buffer];

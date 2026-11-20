@@ -1240,6 +1240,12 @@ of its parameters, as the engine's views do; it runs where buffers have them (no
 the CPU and OpenCL. Seen on the way: a 16z tape's in-place view reports format 16 there, so the probe's 16z cache
 branch is not reached; it was not before either.
 
+**C: the views' directory on the process's device (2026-11-19).** A tape's slab room, the views' directory and its
+16z cache are the device layer's (`tape::placed`, `device_chunk::build_views`): the slabs are the process's device's,
+whatever its backend, and a tape is read in place where that device's buffers have addresses. So the CPU reads the
+`node`, `child`, `field`, `core_node` and `line` views in place as Metal does (`views_made_on_the_device_are_the_hosts_rows`:
+10 of 10 on both), and OpenCL 1.2 makes them. The vtab's gate on Metal is gone.
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.
