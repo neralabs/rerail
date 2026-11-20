@@ -13,7 +13,8 @@
  * every file of every worktree on each walk: with 190 worktrees, about 5 s of the daemon's main thread a walk.
  */
 import { sep } from "node:path";
-import { gitHead, gitModifiedOrUntrackedPaths, GitReads, gitTrackedIgnoredReader, gitUnmergedReader } from "../git.js";
+import { gitModifiedOrUntrackedPaths, GitReads, gitTrackedIgnoredReader, gitUnmergedReader } from "../git.js";
+import { readGitHead } from "../git-head-reader.js";
 import type { ObservedSource, ScanError, Source, SourceScan } from "./code-rule-bridge.js";
 import type { TreeWatch } from "./tree-watch.js";
 import { lookMoved, type WalkFiles, type WorktreeLook, WorktreeLooks } from "./worktree-look.js";
@@ -722,7 +723,7 @@ export class WorktreeWalks {
   async #find(root: string, begun: WalkBegun): Promise<WorktreeFindings | undefined> {
     const kept = this.#kept.get(root);
     // Asked first, of every worktree: it starts the watch before a first read.
-    const noticed = this.#notices.changed(root);
+    const noticed = await this.#notices.changed(root);
     const look = await this.#lookAt(root, begun.files, kept);
     const state: WorktreeState = { ...begun.checkouts.get(root)!, observedAt: begun.observedAt, skipped: skippedIn(root, begun.skip), look };
     const findings = kept !== undefined && !noticed && !this.#mustRead(root, kept, state)
@@ -734,7 +735,8 @@ export class WorktreeWalks {
   /**
    * What Git says of the checkouts inside each of `roots` as the walk begins: the unmerged entries of each one its last
    * read passed or a session holds anything of, which cost a `stat` while its index file is as it was, and the `HEAD` of
-   * each a session asks for (`WatcherWalk.heads`), which costs a Git process. Those a session holds are read even when
+   * each a session asks for (`WatcherWalk.heads`), which costs a Git process only once a file Git reads it from changed
+   * (`readGitHead`). Those a session holds are read even when
    * nothing of their worktree was kept (a walk none of its sessions took part in dropped it), or the session would
    * take the walk against entries and a `HEAD` older than it. A checkout whose entries Git could not list is left out,
    * so the last entries a session took stay its snapshot.
@@ -749,21 +751,30 @@ export class WorktreeWalks {
     const inner = new Map<string, Omit<InnerCheckouts, "passed">>();
     const git = this.#git;
     for (const root of roots) {
-      const heads = new Map<string, string>();
-      const unmerged = new Map<string, ReadonlyMap<string, string>>();
-      for (const checkout of new Set([...this.#kept.get(root)?.findings.checkouts ?? [], ...held.get(root) ?? []])) {
-        if (checkout === root) continue;
-        if (asked.has(checkout)) {
-          const head = await git.run(signal => gitHead(checkout, { signal }));
-          if (head === undefined) continue;
-          heads.set(checkout, head);
-        }
-        const entries = await git.run(signal => this.#readUnmerged(checkout, { signal }));
-        if (entries !== undefined) unmerged.set(checkout, entries);
-      }
-      inner.set(root, { heads, unmerged });
+      const checkouts = new Set([...this.#kept.get(root)?.findings.checkouts ?? [], ...held.get(root) ?? []]);
+      checkouts.delete(root);
+      inner.set(root, await this.#readCheckoutsInside(git, checkouts, asked));
     }
     return inner;
+  }
+
+  /**
+   * `#readInner` for one worktree's `checkouts`: the `HEAD` of each one in `asked`, read through the daemon's one HEAD
+   * reader like every other walk's, and the unmerged entries of each. One whose `HEAD` names no commit is left out.
+   */
+  async #readCheckoutsInside(git: GitReads, checkouts: ReadonlySet<string>, asked: ReadonlySet<string>): Promise<Omit<InnerCheckouts, "passed">> {
+    const heads = new Map<string, string>();
+    const unmerged = new Map<string, ReadonlyMap<string, string>>();
+    for (const checkout of checkouts) {
+      if (asked.has(checkout)) {
+        const head = await git.run(signal => readGitHead(checkout, { signal }));
+        if (head === undefined) continue;
+        heads.set(checkout, head);
+      }
+      const entries = await git.run(signal => this.#readUnmerged(checkout, { signal }));
+      if (entries !== undefined) unmerged.set(checkout, entries);
+    }
+    return { heads, unmerged };
   }
 
   /** `before`, with the unmerged entries now of each checkout inside `root` that `before` had none of: a read passed it first. */
@@ -821,7 +832,7 @@ export class WorktreeWalks {
     const checkouts = new Map<string, CheckoutState>();
     const git = this.#git;
     for (const root of roots) {
-      const head = await git.run(signal => gitHead(root, { signal }));
+      const head = await git.run(signal => readGitHead(root, { signal }));
       if (head === undefined) {
         checkouts.set(root, { head, unmerged: undefined, trackedIgnored: undefined });
         continue;

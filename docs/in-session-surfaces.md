@@ -194,6 +194,8 @@ Each coding agent waits briefly after an edit for its check, so the steer lands 
 
 Slower checks steer at the next hook, reply or poll. The waits are fixed, not per rule. A hook stops waiting for a Rerail too busy to answer it within 30 seconds; a steer its answer would have carried goes to the session's next hook.
 
+One rare case misses the one-second wait: an agent writes a file into a worktree just after many of its files changed at once, such as a nested checkout moved inside it or the worktree deleted and added again, while another session is open in the repository. The walk of the other worktrees then checks every file that changed, and the steer for the new file can come one or two tool calls later. Its finding is in Log as soon as its check ends.
+
 </details>
 
 <details>

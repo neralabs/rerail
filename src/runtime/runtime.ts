@@ -165,6 +165,37 @@ async function settledWithin(work: Promise<void>, ms: number): Promise<boolean> 
   }
 }
 
+/**
+ * The edit checks a boundary stopped waiting for, until they drain, by what it waited for: `all`, every edit (a turn
+ * end, a yield), or `steering`, the edits that may steer (a tool result).
+ */
+type OverdueEditChecks = { all?: Promise<void>; steering?: Promise<void> };
+
+/**
+ * Whether a wait for the edit checks `only` names would sit behind checks an earlier boundary stopped waiting for. A
+ * wait for every edit waits for those too. A `steering` wait does only behind an overdue `steering` wait: the evaluator
+ * checks an edit that may steer before a walk's `log` edits queued ahead of it, or with them in one engine call, so a
+ * `log` backlog an overdue wait for every edit stopped on holds it back no more than it held the earlier one. Where a
+ * `steering` wait waits for those edits too, an overdue wait for every edit holds it back as well (`overdueKinds`).
+ */
+function waitsBehind(overdue: OverdueEditChecks, only: "steering" | undefined): boolean {
+  return overdue.steering !== undefined || (only === undefined && overdue.all !== undefined);
+}
+
+/**
+ * The kinds of wait an overdue wait for `only` holds back: its own, and a `steering` one behind a wait for every edit
+ * where a `steering` wait waits for a walk's `log` edits too (`CodeRuleBridge.steeringWaitsForLog`).
+ */
+function overdueKinds(only: "steering" | undefined, steeringWaitsForLog: boolean): ReadonlyArray<keyof OverdueEditChecks> {
+  if (only !== undefined) return [only];
+  return steeringWaitsForLog ? ["all", "steering"] : ["all"];
+}
+
+/** Whether a boundary stopped waiting for edit checks that still drain. */
+function anyOverdue(overdue: OverdueEditChecks): boolean {
+  return overdue.all !== undefined || overdue.steering !== undefined;
+}
+
 /** The strategy a session steers with: the saved one only while the experimental switch is on, else `message`. */
 function effectiveSteerStrategy(settings: Pick<CheckoutAuditSettings, "steerStrategy">): SteerStrategy {
   return steerStrategiesEnabled() ? settings.steerStrategy : "message";
@@ -699,8 +730,8 @@ interface RuntimeSessionState {
    * (a permission prompt, a long command). The turn's end settles them all: a call the user refused gets no result.
    */
   callsAwaitingResult: Set<string>;
-  /** The edit checks a boundary stopped waiting for, until they drain; no later boundary waits for them again. */
-  overdueEditChecks: Promise<void> | undefined;
+  /** The edit checks a boundary stopped waiting for, until they drain, by what it waited for (`OverdueEditChecks`). */
+  overdueEditChecks: OverdueEditChecks;
   /**
    * The boundaries of this session waiting for its edit checks right now: a generated-edit steer that arrives while
    * one waits rides that boundary's answer, and one that arrives while none does is held for the yield digest.
@@ -1357,7 +1388,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         await this.#waitingForEditChecks(state, false, async () => {
           await this.#finishCall(state, bridge, event);
           await this.#append(state, { type: "policy-result", toolCallId: call!.id });
-          await this.#awaitEditChecks(state, bridge, ADAPTER_CAPABILITIES[state.descriptor.host].toolSurface === "native" ? NATIVE_EDIT_CHECK_MS : HOOK_EDIT_CHECK_MS);
+          // The call's own edit may steer; a walk's `log` edits queued around it steer no one, so the result waits for none.
+          await this.#awaitEditChecks(state, bridge, ADAPTER_CAPABILITIES[state.descriptor.host].toolSurface === "native" ? NATIVE_EDIT_CHECK_MS : HOOK_EDIT_CHECK_MS, "steering");
         });
       } finally {
         if (window !== undefined) {
@@ -1404,18 +1436,19 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * A boundary's wait for the session's edit checks, capped at `capMs`. Checks run in order, so while a backlog an
-   * earlier boundary stopped waiting for is still draining, a later edit's check is behind it too: the boundary answers
-   * at once rather than spend the cap again, and those steers wait for the yield digest.
+   * A boundary's wait for the session's edit checks, capped at `capMs`; with `steering`, for those that may steer only.
+   * While checks an earlier boundary stopped waiting for still drain, a wait that would sit behind them answers at once
+   * rather than spend the cap again (`waitsBehind`), and those steers wait for the yield digest.
    */
-  async #awaitEditChecks(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, capMs: number): Promise<void> {
-    if (bridge === undefined || state.overdueEditChecks !== undefined) return;
-    const settled = bridge.settleGeneratedEdits();
+  async #awaitEditChecks(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, capMs: number, only?: "steering"): Promise<void> {
+    if (bridge === undefined || waitsBehind(state.overdueEditChecks, only)) return;
+    const settled = bridge.settleGeneratedEdits(only);
     if (await settledWithin(settled, capMs)) return;
+    const kinds = overdueKinds(only, bridge.steeringWaitsForLog());
     const overdue: Promise<void> = settled.catch(() => undefined).finally(() => {
-      if (state.overdueEditChecks === overdue) state.overdueEditChecks = undefined;
+      for (const kind of kinds) if (state.overdueEditChecks[kind] === overdue) delete state.overdueEditChecks[kind];
     });
-    state.overdueEditChecks = overdue;
+    for (const kind of kinds) state.overdueEditChecks[kind] = overdue;
   }
 
   /** A turn end that waits long holds the session's request lane: the daemon log says how long and on what; fast ones say nothing. */
@@ -2309,7 +2342,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         id: call.toolCallId, toolName: call.toolName, ...(call.agentId === undefined ? {} : { agentId: call.agentId }),
       })),
       callsAwaitingResult: new Set(),
-      overdueEditChecks: undefined,
+      overdueEditChecks: {},
       editCheckWaits: 0,
       yieldWaits: 0,
       missedFindings: [],
@@ -2517,7 +2550,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * end in a host that does not wait: a session left in memory checks it at once.
    */
   #owesAgent(state: RuntimeSessionState): boolean {
-    return state.callsAwaitingResult.size > 0 || state.overdueEditChecks !== undefined
+    return state.callsAwaitingResult.size > 0 || anyOverdue(state.overdueEditChecks)
       || ownSteers(state.pendingSteers).length > 0 || state.missedFindings.length > 0 || owedNow(state) > 0 || this.#owesScan(state);
   }
 
@@ -3028,9 +3061,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     }
   }
 
-  /** Whether the boundary that waited for this edit has already answered, so a steer now would reach the agent at some later step. */
+  /**
+   * Whether the boundary that waited for this edit has already answered, so a steer now would reach the agent at some
+   * later step: none waits, or the one that does skipped its wait behind an overdue `steering` wait (`waitsBehind`).
+   */
   #boundaryPassed(state: RuntimeSessionState): boolean {
-    return state.editCheckWaits === 0 || (state.overdueEditChecks !== undefined && state.yieldWaits === 0);
+    return state.editCheckWaits === 0 || (state.overdueEditChecks.steering !== undefined && state.yieldWaits === 0);
   }
 
   /**
@@ -3163,7 +3199,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const known = recordCheckout(this.#catalogs.database, cwd);
     if (known !== undefined && !known.git) this.#owners.addPlainRoot(known.checkoutPath);
     const start = startingCheckout(this.#owners, cwd);
-    this.#catalogs.refresh(start.checkoutRoot);
+    // The session's rule coverage reads the checkout's catalog before its evaluator opens. Other sessions' lanes in the
+    // checkout share that catalog and read it again only at their own use, so its rules are read here.
+    if (this.#catalogs.refresh(start.checkoutRoot) !== "unrecorded") this.#catalogs.catalog(start.checkoutRoot).refresh();
     return { root: start.checkoutRoot, folder: start.path, cwd };
   }
 
