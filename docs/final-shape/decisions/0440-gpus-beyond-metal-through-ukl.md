@@ -1593,6 +1593,8 @@ old suffix, `gpu/src/library_tests.ukl`, is renamed.
 - **Tested on the CPU at 64 lanes** (`RERAIL_CPU_SIMD_WIDTH=64`, now allowed): the library's 19 pass, as at 32, 8
   and 1. Two of the tests assumed 32-thread groups (a threadgroup of 32 threads, the LZ4 decoder's group): they take
   the device's width now. The test of the votes writes each mask as two words.
+- **On the devices, at 32 lanes:** Metal, Apple's OpenCL and the Arc's as before, and CUDA on the GB10 (the
+  library's 19, the device layer's 6, the lane suite's 58).
 
 - **Open:** `rerail-device-metal`'s tests register Python's and `.rr`'s packs (`test_languages`) only where two tests
   call it, while its corpus runs read `.rr` documents (`lines::of`) in tests that do not: a CPU worker panics
