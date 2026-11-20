@@ -18,7 +18,7 @@ main by #862.
 | 4 | `sym_of` drops relative imports of two or more dots | `lib/python/imports.rerail` | Reproduced; root cause found | Fixed: `impmod` resolves any number of dots through `rel_base` (probe passes) |
 | 5 | One tape cache per machine: concurrent runs fail | engine `tape_cache_path` | Reproduced | Partly: the default store is per build and working directory; runs started from one directory still share it |
 | 6 | Very large repositories do not finish | engine, scale | Observed once (PostHog); two causes found | Fixed by #878 and #882: the whole pack finishes on PostHog in 100 min (main: killed out of memory at 376 s); its 57 GiB peak is open |
-| 7 | `sym_of` has no row for an attribute of a class of the same module | `lib/python/names.rerail` | Reproduced with a probe; cause found | Present (probe fails as described) |
+| 7 | `sym_of` has no row for an attribute of a class of the same module | `lib/python/names.rerail` | Reproduced with a probe; cause found | Fixed by #898 (probe passes); workaround removed |
 | 8 | A call to a def under an outside decorator has no call target | `lib/python/calls.rerail` | Reproduced with a probe | Fixed by #875: the call targets the def and stays open (probe passes); workaround removed |
 | 9 | Rules that read the call graph take hours on large repositories | `python/calls` typing program, scale | Measured; cause found | Minutes on main (107-380 s a rule on the three largest apps); #878 cuts each rule's time to 39-73% of that (table in §9) |
 | 10 | A negated tree axis is read wrong below a node a sym_of relation found | engine: lowering or demand of `!inside`/`within_stop` | Reproduced with a probe; bisected to a merge | Fixed by #862; the three rules it broke pass their cases |
@@ -305,16 +305,17 @@ A rule reporting `sym_of` of each right-hand side gives only `pkg.m.Base`; `qual
 `class Meta(Other.Meta)` gives `sym_of` `shop.base.Other.Meta` and the `class_base` row `shop.base.Other.Meta`; the
 same-module `class Meta(Base.Meta)` gives neither.
 
-**Where.** `docs/rule-syntax/lib/python/names.rerail`, `sym_of` (lines 359-362). Rule 1 goes through `qn` (lines 273-275),
-which extends a name along an attribute chain (`qn(n, @dot(q, a)) :- attr_of(n, o, a), qn(o, q)`) but starts only
-from an import binding (`ibind`). Rule 2, a local def or class, matches only the bare name (`look(n, x, s), defn(s, x,
-f), qualname(f, q)`), with no attribute step.
+**Where.** `docs/rule-syntax/lib/python/names.rerail`, `sym_of`. Rule 1 goes through `qn`, which extends a name along
+an attribute chain (`qn(n, @dot(q, a)) :- attr_of(n, o, a), qn(o, q)`) but starts only from an import binding
+(`ibind`). Rule 2, a local def or class, matched only the bare name (`look(n, x, s), defn(s, x, f), qualname(f, q)`),
+with no attribute step.
 
-**Workaround used.** get-or-create-needs-unique resolves the Meta base through its object:
-`attr_of(e, o, "Meta"), sym_of(o, bq)`.
+**Workaround used (removed).** get-or-create-needs-unique resolved the Meta base through its object:
+`attr_of(e, o, "Meta"), sym_of(o, bq)`. It now reads the Meta's `class_base` and matches it to the base's own Meta.
 
-**Suggested fix.** Extend rule 2 along attributes as `qn` does, for a name that resolves to a class of the run:
-`sym_of(n, @dot(q, a)) :- attr_of(n, o, a), sym_of(o, q), class_def(_, q)` (then `class_base` follows).
+**Fix (#898).** `sym_of(n, @dot(q, a)) :- attr_of(n, o, a), sym_of(o, q), class_def(_, q)`: an attribute of a class
+of the run is the class's name and the attribute's, along a chain (`Base.Meta.abstract`), as `qn` extends an imported
+name; `class_base` follows. An attribute of a def or of anything not a class of the run still has no row.
 
 ---
 

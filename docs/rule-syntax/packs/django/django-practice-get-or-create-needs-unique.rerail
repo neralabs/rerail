@@ -96,8 +96,8 @@ goc_meta_opt(mc, k, v) :- dj_model(mc), class_base(mc, bq), class_def(cb, bq), !
 // (and so inherits its bases' Meta attribute) or c's Meta subclasses `B.Meta`; through a chain of such classes.
 .decl goc_meta_from(c: node, b: node)
 goc_meta_from(c, cb) :- class_base(c, bq), class_def(cb, bq), !goc_meta_class(c, _).
-goc_meta_from(c, cb) :- class_base(c, bq), class_def(cb, bq), goc_meta_class(c, mt), field(mt, "superclasses", al),
-    child(al, e, _), attr_of(e, o, "Meta"), sym_of(o, bq).
+goc_meta_from(c, cb) :- class_base(c, bq), class_def(cb, bq), goc_meta_class(c, mt), class_base(mt, mq),
+    goc_meta_class(cb, bm), class_def(bm, mq).
 goc_meta_from(c, a) :- goc_meta_from(c, b), goc_meta_from(b, a).
 // goc_meta_class(c, mt): class c's body declares `class Meta` mt.
 .decl goc_meta_class(c: node, mt: node)
