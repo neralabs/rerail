@@ -5471,6 +5471,11 @@ impl Fx<'_> {
         let _span = super::profile::span(|| "engine run (joins)".into());
         Ok(if self.direct { super::native::component::run(self.db, name, waves)? } else { self.db.query_row("SELECT set_fixpoint_run(?1, ?2)", rusqlite::params![name, waves], |r| r.get(0))? })
     }
+    /// The declared keys a second row broke since the last call (decision 0361 step 6): each relation's place and the
+    /// key's columns. T's extension engine checks none.
+    fn key_breaks(&self, name: &str) -> Result<Vec<(usize, Vec<usize>)>> {
+        if self.direct { Ok(super::native::component::key_breaks(self.db, name)?) } else { Ok(Vec::new()) }
+    }
     /// Per probe, its steps' (in, out) bindings since the last call.
     fn steps(&self, name: &str) -> Result<Vec<Vec<(i64, i64)>>> {
         let _span = super::profile::span(|| "engine step counts".into());
@@ -8859,6 +8864,17 @@ impl<'a> Run<'a, '_> {
             }
             rel_lines.push(SpecLine::Lattice { rel: ri[*r], keys: l.keys, name: f.text(l.lattice).to_owned(), widen: l.widen });
         }
+        // The keys the layouts give the stratum's own relations (decision 0361 step 6): checked where the rows are
+        // written, a second row of a key reported (`key_breaks`). A relation the run found breaking a fact has no
+        // facts left in the model's shapes, so none.
+        for r in rels.iter().filter(|r| scc.contains(r.as_str())) {
+            let Some((_, facts)) = self.model.stats.shapes.0.get(r.as_str()) else { continue };
+            for fact in facts {
+                if let crate::code_rule_dsl::logic::front::LayoutFact::Key(cols) = fact {
+                    rel_lines.push(SpecLine::Key { rel: ri[*r], cols: cols.clone() });
+                }
+            }
+        }
         // The relations the run keeps past it (a chunk's exports): in blocks of their own, so a reader that holds
         // them where they lie does not keep the run's other relations' blocks.
         let kept_rows: Vec<usize> = rels.iter().filter(|r| self.model.inputs.kept.contains(r.as_str())).map(|r| ri[*r]).collect();
@@ -9294,6 +9310,13 @@ impl<'a> Run<'a, '_> {
                 return Ok(Native::Waiting(suspended!()));
             }
             let steps = self.fx().steps(&name)?;
+            // A declared key a second row broke where the rows were written (decision 0361 step 6).
+            for (i, cols) in self.fx().key_breaks(&name)? {
+                let Some(rel) = rels.get(i).map(|r| r.to_string()) else { continue };
+                let names = self.model.stats.shapes.0.get(rel.as_str()).map(|(n, _)| n.clone()).unwrap_or_default();
+                let fact = crate::code_rule_dsl::logic::front::LayoutFact::Key(cols).show(&|c| names.get(c).cloned().unwrap_or_else(|| format!("${c}")));
+                break_fact(&mut self.model.stats, &rel, &fact, "a second row of a key, where its rows were written");
+            }
             if profiling {
                 for (k, line) in self.fx().step_cpu(&name)?.into_iter().enumerate() {
                     if stepped.len() <= k { stepped.resize(k + 1, Vec::new()); }
