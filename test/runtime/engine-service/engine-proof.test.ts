@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadNativeBinding, LOCKS_DIR } from "../../../src/engine/index.js";
 import { DAEMON_STATE_FILE, lookupDaemon, recordedDaemonStatus, recordedDaemonStatusForEvent, type DaemonState } from "../../../src/runtime/daemon-control.js";
 import { engineCapabilityProof, engineHoldsCapability, engineProof } from "../../../src/runtime/daemon/engine-proof.js";
+import { oneInstancePipeLines } from "../../support/platform/one-instance-pipe.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
 /** How far past its limit a proof may answer on a loaded test machine; the wait it must not take is 30 s. */
@@ -253,17 +254,12 @@ async function answerOrWait(answered: Promise<string>, waits: HeldWaits): Promis
  * A holder of the pipe `name` that is not an engine, as any local user can create an engine pipe's name first: one
  * instance with no input buffer, which takes one client and never reads, so a write to it waits until the holder ends,
  * which it does once the test ends. With an `answer`, it writes that to the client first. Returns once the instance
- * exists.
- *
- * The script calls .NET only, never a cmdlet: Windows PowerShell finds a cmdlet's module by reading every module on
- * PSModulePath that it has not read before ("Preparing modules for first use"), so a script that called `Add-Type`
- * first waited before its pipe existed for as long as the machine's modules take to read. That wait has no bound of its
- * own and grows with what the machine has installed; the case held it inside its 45 s.
+ * exists. Its pipe is made as `oneInstancePipeLines` makes it, through .NET calls alone, so the case's wait for
+ * `listening` waits on no module.
  */
 async function holderThatNeverReads(name: string, answer?: string): Promise<void> {
   const script = [
-    "$ErrorActionPreference = 'Stop'",
-    `$pipe = [System.IO.Pipes.NamedPipeServerStream]::new('${name}', [System.IO.Pipes.PipeDirection]::InOut, 1, [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::None, 0, 4096)`,
+    ...oneInstancePipeLines(name, { options: "None", outBufferSize: 4096 }),
     "[Console]::Out.WriteLine('listening'); [Console]::Out.Flush()",
     "$pipe.WaitForConnection()",
     ...(answer === undefined ? [] : [
