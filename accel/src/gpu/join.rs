@@ -1552,20 +1552,23 @@ pub fn prewarm() {
     crate::exec::configure(false);
     // In its caller's run (decision 0442): the pipelines are the caller's machine's.
     let run = rerail_context::job_run();
-    rayon::spawn(move || crate::exec::as_job("the GPU's prewarm", || {
+    rayon::spawn(move || {
+        // Entered before the job: `as_job` reads the job walls, the machine's.
         let _run = rerail_context::enter(run);
-        let _ = std::panic::catch_unwind(|| objc::rc::autoreleasepool(|| {
-            let _ = fused_pipe("sort_all");
-            let _ = fused_pipe("probe_all");
-            let _ = pipeline("scan", "scan_block", || SCAN_SOURCE.to_owned());
-            let _ = pipeline("scan", "scan_add", || SCAN_SOURCE.to_owned());
-            for w in [Width::W64, Width::W32, Width::W16] {
-                let _ = sort_pipes(w);
-                let _ = gather_pipe(w);
-            }
-            super::tile::prewarm();
-        }));
-    }));
+        crate::exec::as_job("the GPU's prewarm", || {
+            let _ = std::panic::catch_unwind(|| objc::rc::autoreleasepool(|| {
+                let _ = fused_pipe("sort_all");
+                let _ = fused_pipe("probe_all");
+                let _ = pipeline("scan", "scan_block", || SCAN_SOURCE.to_owned());
+                let _ = pipeline("scan", "scan_add", || SCAN_SOURCE.to_owned());
+                for w in [Width::W64, Width::W32, Width::W16] {
+                    let _ = sort_pipes(w);
+                    let _ = gather_pipe(w);
+                }
+                super::tile::prewarm();
+            }));
+        })
+    });
 }
 
 /// A batch's pairs: one buffer the probes reserve their threadgroups' pairs in with one atomic each, so no probe

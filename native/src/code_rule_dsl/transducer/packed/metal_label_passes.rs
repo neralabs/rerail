@@ -1455,22 +1455,25 @@ pub(in crate::code_rule_dsl) fn warm() {
         let shared = crate::code_rule_dsl::logic::profile::shared_here();
         // A panic leaves the kernels to be compiled where they are needed (a job's panic would end
         // the process).
-        rayon::spawn(move || rerail_accel::exec::as_job("the label kernels' warm-up", || {
+        rayon::spawn(move || {
+            // Held before the job: `as_job` reads the job walls, the machine's.
             let _in_run = crate::code_rule_dsl::logic::profile::within(shared);
-            let _ = std::panic::catch_unwind(|| {
-                // The set program's kernels first: it runs first in a wave (its candidates). The shared
-                // device is not opened here: on S7 a wave waiting on this job's open waited longer (to
-                // 0.8 s under load) than opening it itself (50-80 ms).
-                let _ = super::set_steps::kernel();
-                let _ = compile_resident_interpreter_cached();
-                // The run's format, as its tapes are placed (a 16z tape as 16): its batches' kernels.
-                let _ = pipelines(match crate::code_rule_dsl::tape::formats::Format::of_run() {
-                    crate::code_rule_dsl::tape::formats::Format::F15 => 15,
-                    _ => 16,
+            rerail_accel::exec::as_job("the label kernels' warm-up", || {
+                let _ = std::panic::catch_unwind(|| {
+                    // The set program's kernels first: it runs first in a wave (its candidates). The shared
+                    // device is not opened here: on S7 a wave waiting on this job's open waited longer (to
+                    // 0.8 s under load) than opening it itself (50-80 ms).
+                    let _ = super::set_steps::kernel();
+                    let _ = compile_resident_interpreter_cached();
+                    // The run's format, as its tapes are placed (a 16z tape as 16): its batches' kernels.
+                    let _ = pipelines(match crate::code_rule_dsl::tape::formats::Format::of_run() {
+                        crate::code_rule_dsl::tape::formats::Format::F15 => 15,
+                        _ => 16,
+                    });
+                    let _ = compile_sweep_cached();
                 });
-                let _ = compile_sweep_cached();
-            });
-        }));
+            })
+        });
     });
 }
 
