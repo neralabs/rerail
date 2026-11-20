@@ -532,3 +532,17 @@ sort again).
 - Tests: `a_sketchs_arrays_are_in_blocks`; the sketch tests (`sketch::tests`, `bounded_histograms`) pass unchanged.
 - hogql cold, profiling, format 15, load 27-38: CPU 83.6-84.8 B against 6b's 83.7-84.8 B; peak 372-410 MB against
   326-401 MB. Metal 74.9-78.6 B, 1,629 in each of 3 runs.
+
+## Built (2026-11-19, step 6d: the scalar summaries in blocks; the versions)
+
+- An input's scalar summaries (`scalars::Pool`, decision 0100) memoize each group key's summary (count, sum, min,
+  max) per bag. They were a `HashMap<Vec<i64>, Summary>` a bag, each key a heap copy. They are now open addressing in
+  a block (`scalars::Groups`): each slot is used, the key's values, then the summary in six words. A table doubles past
+  half full, and is cleared when the relation's epoch changes, as before. The pool's map from a bag to its table
+  is a handle per bag (a few per relation).
+- `InRel::vers` (decision 0364 stage 2) holds handles to the relation's versions (`Old`, `Minus`, `Plus`), each an
+  `InRel` whose rows, indexes, orders, dead rows and statistics are now in blocks (steps 5-6). Nothing of their data
+  is in the handle, so it needs no change.
+- Test: `a_bags_summaries_by_key_are_in_a_block`; the scalars tests pass unchanged.
+- hogql cold, profiling, format 15, load 16-30, seven pairs against 6c: CPU 83.6-86.3 B against 83.4-85.4 B (one pair
+  92.4 and 94.3 B, both high); Metal 75.9-81.4 B against 75.8 B, 1,629 in each of 5 runs.
