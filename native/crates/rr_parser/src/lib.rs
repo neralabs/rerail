@@ -2197,77 +2197,121 @@ pub mod tests {
     /// tokens, as a lexer marks what it reads, are the masks they replace. The old form (the
     /// masks, from the regions; a `-` a pair's second byte, as `:-`, none: the tests take a `-`
     /// token) and the new give the same tape or refusal through tier 2; the CPU's and Metal's
-    /// codes are the interpreter's, over the corpus and each case's edges: a JSON string's bad
-    /// bytes, a comment, a `-`, a leading zero, a form feed, a float before a comment and at the
-    /// file's end.
+    /// codes are the interpreter's, over every file of the corpus and each case's edges: a JSON
+    /// string's bad bytes, a comment, a `-`, a leading zero, a form feed, a float before a
+    /// comment and at the file's end, and a number tier 1 refuses. In a file tier 1 refuses at a
+    /// token, the CPU's codes stop before that token (`refusing_token`).
     #[test]
     fn the_marks_tests_are_the_masks() {
-        let new = crate::compiled().expect("compiles");
-        let old_text = crate::GRAMMAR
-            .replace("mark float_after = empty, after number when count(dot) at least 1,", "mask frac_last  = frac & ~next(frac)\nmark float_after = frac_last,")
-            .lines()
-            .filter(|l| !(l.starts_with("                   after ") || l.starts_with("                   at ")))
-            .map(|l| if l.starts_with("mark json_bad ") { "mask in_str      = f_str & ~o_str\nmark json_bad    = (in_str & ctl) | (in_str & escaped & ~jesc) | (in_str & uesc & ~h4) | o_line | o_block | (code & ff) | (code & minus & ~next(digit) & ~second) | (int & zero & ~prev(int) & next(int))\n".to_string() } else { format!("{l}\n") })
-            .collect::<String>();
-        assert!(!old_text.contains(" after string when"), "the old form has the masks alone");
-        let old = crate::compile_text(&old_text, rerail_compiler::bitlex_masks::Shape::Rules).expect("the old form compiles");
-        // `json_bad`'s tests alone, no gap (`ff`): the bits the CPU's tier 1 sets of it, its
-        // gap tier 2's (`lazy_coded`).
-        let checks_text = crate::GRAMMAR.replace("mark json_bad    = ff,\n", "mark json_bad    = empty,\n");
-        assert!(checks_text != crate::GRAMMAR, "json_bad's gap is a form feed");
-        let checks = crate::compile_text(&checks_text, rerail_compiler::bitlex_masks::Shape::Rules).expect("the tests alone compile");
-        let r = new.program.block_programs[0].records.as_ref().expect("records");
-        assert!(r.checks.iter().any(|c| matches!(c.then, rerail_compiler::records::CheckThen::After(_))), "a mark after its token");
-        assert!(r.checks.iter().any(|c| matches!(c.then, rerail_compiler::records::CheckThen::At(_))), "a mark at its token");
-        assert!(r.tested_only != 0, "float_after reads no mask");
-        // No region on the CPU: its form calls no walk (the readers read them, decision 0177).
-        assert!(new.native.cpu_form().walks.is_empty(), "the CPU walks the regions");
-        let mut inputs: Vec<Vec<u8>> = Vec::new();
-        let cases = [
-            "r(x) :- x = ps - fe.\n",
-            "r(x) :- x = ps - fe, y = \"\\\\s*\".\n",
-            "r(x) :- x = {\"a\": \"b\tc\"}.\n",
-            "r(x) :- x = {\"a\": \"b\\qc\"}.\n",
-            "r(x) :- x = {\"a\": \"\\u12\"}.\n",
-            "r(x) :- x = {\"a\": \"\\u12ab\", \"b\": 1}.\n",
-            "r(x) :- x = {\"a\": // c\n 1}.\n",
-            "r(x) :- x = {\"a\": /* c */ 1}.\n",
-            "r(x) :- x = {\"a\": -1, \"b\": - 1}.\n",
-            "r(x) :- x = {\"a\": 01, \"b\": 0.5, \"c\": 0}.\n",
-            "r(x) :- x = {\"a\":\x0c1}.\n",
-            "r(x) :- x = 1.5 /* c */ , y = 2.\n",
-            "r(x) :- x = 1.5",
-            "r(x) :- x = 1.5 // c",
-            "r(x) :- x = -0.25.\n",
-            "r(x) :- x = \"a-b\", y = \"0\\\\\".\n",
-            "r(x) :- x = 1. // \\u12\n",
-            "r(x) :- x = {\"a\": 1 /* \\u12 */}.\n",
-            "r(x) :- x = \"\\u12\".\n",
-        ];
-        for pad in [0usize, 40, 55, 60, 63] {
-            for c in cases {
-                inputs.push(format!("{}{c}", " ".repeat(pad)).into_bytes());
-            }
+        let forms = MarksForms::new();
+        let mut inputs = marks_inputs();
+        let cased = inputs.len();
+        inputs.extend(corpus().into_iter().map(String::into_bytes));
+        inputs.extend(crate::SAMPLES.iter().map(|s| s.as_bytes().to_vec()));
+        let refs: Vec<&[u8]> = inputs.iter().map(|f| f.as_slice()).collect();
+        let cpu = forms.new.parser.tier1.run_files(&refs);
+        let mut taken = [0usize; 2];
+        for (k, f) in refs.iter().enumerate() {
+            let kept = forms.check_file(k, f, &cpu[k], k < cased);
+            taken[usize::from(kept)] += usize::from(k < MARKS_PADS.len() * MARKS_CASES.len());
         }
-        // A form feed in a gap across blocks: the refill folds a passed block's bits, and the
-        // bits before the cursor's block (a backtick literal's, a comment's) by the bytes; the
-        // last start's block's bits from its carried words, the start at its block's end too.
+        #[cfg(target_os = "macos")]
+        forms.check_metal(&refs, &cpu);
+        assert!(taken[0] > 0 && taken[1] > 0, "the cases both refused and taken: {taken:?}");
+        eprintln!("{} files: the same marks; of the cases {} refused, {} taken", refs.len(), taken[0], taken[1]);
+    }
+
+    /// The pads before each of `MARKS_CASES`: the case at a block's start, and across its edge.
+    const MARKS_PADS: [usize; 5] = [0, 40, 55, 60, 63];
+
+    /// The marks test's cases.
+    const MARKS_CASES: [&str; 21] = [
+        "r(x) :- x = ps - fe.\n",
+        "r(x) :- x = ps - fe, y = \"\\\\s*\".\n",
+        "r(x) :- x = {\"a\": \"b\tc\"}.\n",
+        "r(x) :- x = {\"a\": \"b\\qc\"}.\n",
+        "r(x) :- x = {\"a\": \"\\u12\"}.\n",
+        "r(x) :- x = {\"a\": \"\\u12ab\", \"b\": 1}.\n",
+        "r(x) :- x = {\"a\": // c\n 1}.\n",
+        "r(x) :- x = {\"a\": /* c */ 1}.\n",
+        "r(x) :- x = {\"a\": -1, \"b\": - 1}.\n",
+        "r(x) :- x = {\"a\": 01, \"b\": 0.5, \"c\": 0}.\n",
+        "r(x) :- x = {\"a\":\x0c1}.\n",
+        "r(x) :- x = 1.5 /* c */ , y = 2.\n",
+        "r(x) :- x = 1.5",
+        "r(x) :- x = 1.5 // c",
+        "r(x) :- x = -0.25.\n",
+        "r(x) :- x = \"a-b\", y = \"0\\\\\".\n",
+        "r(x) :- x = 1. // \\u12\n",
+        "r(x) :- x = {\"a\": 1 /* \\u12 */}.\n",
+        "r(x) :- x = \"\\u12\".\n",
+        // A number tier 1 refuses, 19 digits and a second `.`, with tokens after it.
+        "r(x) :- x = 1234567890123456789, y = 2.\n",
+        "r(x) :- x = 1.2.3, y = 2.\n",
+    ];
+
+    /// The marks test's cases, each after each of `MARKS_PADS`; then a form feed in a gap across
+    /// blocks: the refill folds a passed block's bits, and the bits before the cursor's block (a
+    /// backtick literal's, a comment's) by the bytes; the last start's block's bits from its
+    /// carried words, the start at its block's end too.
+    fn marks_inputs() -> Vec<Vec<u8>> {
+        let mut inputs: Vec<Vec<u8>> = MARKS_PADS.iter().flat_map(|&pad| MARKS_CASES.iter().map(move |c| format!("{}{c}", " ".repeat(pad)).into_bytes())).collect();
         for pad in [0usize, 30, 60, 61, 62, 63] {
             let p = " ".repeat(pad);
             inputs.push(format!("{p}r(x) :- x = {{\"a\":\x0c{}1}}.\n", " ".repeat(70)).into_bytes());
             inputs.push(format!("{p}r(x) :- x = `\x0c{}`, y = 1.\n", "a".repeat(80)).into_bytes());
             inputs.push(format!("{p}r(x) :- x = {{\"a\": /* \x0c{} */ 1}}.\n", "c".repeat(80)).into_bytes());
         }
-        let files = corpus();
-        inputs.extend(files.iter().step_by(5).map(|f| f.as_bytes().to_vec()));
-        inputs.extend(crate::SAMPLES.iter().map(|s| s.as_bytes().to_vec()));
-        let refs: Vec<&[u8]> = inputs.iter().map(|f| f.as_slice()).collect();
-        let cpu = new.parser.tier1.run_files(&refs);
-        let lazy = lazy_bits(&new.native);
-        let coded = lazy_coded_bits(&new.native);
-        assert!(coded != 0, "json_bad: its gap tier 2's, its tests' hits tier 1's");
-        let mut taken = [0usize; 2];
-        for (k, f) in refs.iter().enumerate() {
+        inputs
+    }
+
+    /// The grammar's old form: the marks from masks, not from token tests.
+    fn old_marks_grammar() -> String {
+        crate::GRAMMAR
+            .replace("mark float_after = empty, after number when count(dot) at least 1,", "mask frac_last  = frac & ~next(frac)\nmark float_after = frac_last,")
+            .lines()
+            .filter(|l| !(l.starts_with("                   after ") || l.starts_with("                   at ")))
+            .map(|l| if l.starts_with("mark json_bad ") { "mask in_str      = f_str & ~o_str\nmark json_bad    = (in_str & ctl) | (in_str & escaped & ~jesc) | (in_str & uesc & ~h4) | o_line | o_block | (code & ff) | (code & minus & ~next(digit) & ~second) | (int & zero & ~prev(int) & next(int))\n".to_string() } else { format!("{l}\n") })
+            .collect::<String>()
+    }
+
+    /// The forms the marks test compares: the grammar (`new`), its old form (`old`), and
+    /// `json_bad`'s tests alone with no gap (`checks`); the gap marks' code bits (`lazy`) and,
+    /// of those, the bits of the marks with token tests too (`coded`).
+    struct MarksForms {
+        new: &'static crate::Compiled,
+        old: crate::Compiled,
+        checks: crate::Compiled,
+        lazy: u32,
+        coded: u32,
+    }
+
+    impl MarksForms {
+        fn new() -> Self {
+            let new = crate::compiled().expect("compiles");
+            let old_text = old_marks_grammar();
+            assert!(!old_text.contains(" after string when"), "the old form has the masks alone");
+            let old = crate::compile_text(&old_text, rerail_compiler::bitlex_masks::Shape::Rules).expect("the old form compiles");
+            // `json_bad`'s tests alone, no gap (`ff`): the bits the CPU's tier 1 sets of it, its
+            // gap tier 2's (`lazy_coded`).
+            let checks_text = crate::GRAMMAR.replace("mark json_bad    = ff,\n", "mark json_bad    = empty,\n");
+            assert!(checks_text != crate::GRAMMAR, "json_bad's gap is a form feed");
+            let checks = crate::compile_text(&checks_text, rerail_compiler::bitlex_masks::Shape::Rules).expect("the tests alone compile");
+            let r = new.program.block_programs[0].records.as_ref().expect("records");
+            assert!(r.checks.iter().any(|c| matches!(c.then, rerail_compiler::records::CheckThen::After(_))), "a mark after its token");
+            assert!(r.checks.iter().any(|c| matches!(c.then, rerail_compiler::records::CheckThen::At(_))), "a mark at its token");
+            assert!(r.tested_only != 0, "float_after reads no mask");
+            // No region on the CPU: its form calls no walk (the readers read them, decision 0177).
+            assert!(new.native.cpu_form().walks.is_empty(), "the CPU walks the regions");
+            let (lazy, coded) = (lazy_bits(&new.native), lazy_coded_bits(&new.native));
+            assert!(coded != 0, "json_bad: its gap tier 2's, its tests' hits tier 1's");
+            Self { new, old, checks, lazy, coded }
+        }
+
+        /// File `k`'s checks, `f` its bytes and `cpu` the CPU's tier 1 of it; `cased`, one of the
+        /// cases, whose tier 2 on the CPU is checked too. Whether the new form's tier 2 takes it.
+        fn check_file(&self, k: usize, f: &[u8], cpu: &rerail_compiler::block::BlockRun, cased: bool) -> bool {
+            let (new, old) = (self.new, &self.old);
             let (a, b) = (new.program.block_programs[0].run(f), old.program.block_programs[0].run(f));
             // Tier 2's result, the tape or the refusal: the old form checks some of `json_bad`'s
             // alternatives in tier 2 (`CHECK`, a look-ahead), the new marks their tokens.
@@ -2276,39 +2320,55 @@ pub mod tests {
             if let (Ok(x), Ok(y)) = (&x, &y) {
                 assert!(x == y, "file {k}: the same tape");
             }
-            if k < 5 * cases.len() {
-                taken[usize::from(x.is_ok())] += 1;
-            }
-            // The CPU's codes: the interpreter's, but the lazy marks' gaps (tier 2's).
-            let tested = checks.program.block_programs[0].run(f);
-            let want: Vec<u32> = a.codes.iter().zip(&tested.codes).map(|(&c, &t)| c & !lazy | t & coded).collect();
-            assert_eq!(cpu[k].codes, want, "file {k}: the CPU's codes");
+            // The CPU's codes: the interpreter's, but the lazy marks' gaps (tier 2's), up to the
+            // token tier 1 refuses the file at.
+            let tested = self.checks.program.block_programs[0].run(f);
+            let want: Vec<u32> = a.codes.iter().zip(&tested.codes).map(|(&c, &t)| c & !self.lazy | t & self.coded).collect();
+            let records = new.program.block_programs[0].records.as_ref().expect("records");
+            let stop = refusing_token(records, f, &a).unwrap_or(want.len());
+            assert_eq!(cpu.codes, want[..stop], "file {k}: the CPU's codes");
             // The CPU's tier 2 takes the gaps: its tape or refusal is the interpreter's, over the
             // cases (the corpus: its tape where it takes the file; two files of 500 KB it
             // refuses as before, the work queue's).
             let image = new.parser.image(f);
-            let cased = k < 5 * cases.len() + 18;
             assert!(!cased || image.is_ok() == x.is_ok(), "file {k} {:?}: the CPU's tier 2 takes it as the interpreter: {:?} / {:?}", String::from_utf8_lossy(&f[..f.len().min(80)]), image.as_ref().err(), x.as_ref().err());
             if let (Ok(i), Ok(x)) = (&image, &x) {
                 assert!(*i == rerail_compiler::stream::image(x, &new.program.readings.extras, rerail_tape_format::RR_TAG, f), "file {k}: the CPU's tape");
             }
-            assert_eq!(cpu[k].totals, a.totals, "file {k}: the CPU's refusals");
+            assert_eq!(cpu.totals, a.totals, "file {k}: the CPU's refusals");
+            x.is_ok()
         }
+
+        /// Metal's tier 1 of `refs`: Metal sets the gap marks tier 2 on the CPU tests itself, so
+        /// its codes are the interpreter's whole; the CPU's (`cpu`) are those up to its refusal.
         #[cfg(target_os = "macos")]
-        {
+        fn check_metal(&self, refs: &[&[u8]], cpu: &[rerail_compiler::block::BlockRun]) {
             use rerail_metal::block_program::serial::{Segments, run_serial_split};
             let batch: Vec<rerail_compiler::block::BatchFile<'_>> = refs.iter().map(|b| rerail_compiler::block::BatchFile { bytes: b, program: 0 }).collect();
-            let got = run_serial_split(&[&new.native], &batch, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1");
-            // Metal sets the gap marks tier 2 on the CPU tests itself: its codes are the
-            // interpreter's whole.
+            let got = run_serial_split(&[&self.new.native], &batch, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1");
             for (k, m) in got.run.files.iter().enumerate() {
-                assert_eq!(m.codes, new.program.block_programs[0].run(refs[k]).codes, "file {k}: Metal's codes");
-                assert_eq!(unlazy(&m.codes, lazy), unlazy(&cpu[k].codes, lazy), "file {k}: Metal's codes, the CPU's");
+                assert_eq!(m.codes, self.new.program.block_programs[0].run(refs[k]).codes, "file {k}: Metal's codes");
+                assert_eq!(unlazy(&m.codes[..cpu[k].codes.len()], self.lazy), unlazy(&cpu[k].codes, self.lazy), "file {k}: Metal's codes, the CPU's");
                 assert_eq!(m.totals, cpu[k].totals, "file {k}: Metal's refusals");
             }
         }
-        assert!(taken[0] > 0 && taken[1] > 0, "the cases both refused and taken: {taken:?}");
-        eprintln!("{} files: the same marks; of the cases {} refused, {} taken", refs.len(), taken[0], taken[1]);
+    }
+
+    /// The token at which the CPU's tier 1 leaves its loop, by the interpreter's tokens (`run`):
+    /// the first whose rule refuses the file, by a reader that refuses or a token test that
+    /// escapes (`records::walk`'s `read` and `checked`). There the CPU branches out of its loop
+    /// to its end, the file's flag set, as the lean lexer leaves its loop at its `BAD` token: the
+    /// file goes to the fallback, and nothing after it is read (`native_cpu_block`). Its codes
+    /// stop before that token; the interpreter's, and Metal's, go on to the file's end.
+    fn refusing_token(r: &rerail_compiler::records::Records, f: &[u8], run: &rerail_compiler::block::BlockRun) -> Option<usize> {
+        use rerail_compiler::records::{CheckThen, EndRule, read_last, test_holds};
+        let (starts, lasts) = (&run.positions[usize::from(r.starts)], &run.positions[usize::from(r.lasts)]);
+        starts.iter().zip(lasts).position(|(&s, &l)| {
+            let (s, l) = (s as usize, l as usize);
+            let k = r.ends[usize::from(f[s])];
+            let read = matches!(r.rules.get(usize::from(k)), Some(&EndRule::Read(i)) if read_last(r, &r.readers[usize::from(i)], s, f, &run.outputs).is_err());
+            read || r.checks.iter().any(|c| c.rule == k && c.then == CheckThen::Escape && test_holds(r, c, s, l, &run.outputs))
+        })
     }
 
     /// A number's checks at its token (`escape … at number when …`, decision 0177): a second
