@@ -75,7 +75,9 @@ use crate::block::{BlockOp, BlockProgram, ClassTable};
 use crate::{bitlex_prove, bitlex_tier2, grammar};
 use ::bitlex::syntax::{Arg, Expr, NExpr, Stmt, TokenElem};
 use std::cell::RefCell;
-use std::collections::HashMap;
+/// The lowering's maps: hashed with a fixed seed (`foldhash`'s), so what iterates one (a proof's order, the
+/// candidates' order) goes the same way each run: one program from one grammar.
+type HashMap<K, V> = std::collections::HashMap<K, V, foldhash::fast::FixedState>;
 
 /// A number's planes: a byte's value mod 2^32, exact for a place in a file or a distance.
 pub const NUMBER_BITS: u8 = 32;
@@ -276,7 +278,7 @@ pub fn first_bits(ops: &[BlockOp], tables: &[ClassTable], v: u16) -> Option<u32>
         memo.insert(v, b);
         b
     }
-    go(ops, tables, v, &mut HashMap::new(), 0).zero_from
+    go(ops, tables, v, &mut HashMap::default(), 0).zero_from
 }
 
 pub struct Lowering {
@@ -443,36 +445,36 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
     let mut low = Lowering {
         shape,
         program: BlockProgram::default(),
-        seen: HashMap::new(),
+        seen: HashMap::default(),
         table_products: Vec::new(),
-        classes: HashMap::new(),
-        names: HashMap::new(),
+        classes: HashMap::default(),
+        names: HashMap::default(),
         fallbacks: Vec::new(),
         untaken: Vec::new(),
-        counts: HashMap::new(),
+        counts: HashMap::default(),
         pending_counts: Vec::new(),
         pending_checks: Vec::new(),
-        back_fallbacks: HashMap::new(),
-        numbers: HashMap::new(),
+        back_fallbacks: HashMap::default(),
+        numbers: HashMap::default(),
         tokens: Vec::new(),
-        token_rules: HashMap::new(),
-        token_pairs: HashMap::new(),
-        token_reads: HashMap::new(),
-        token_closer_last: HashMap::new(),
-        token_parts: HashMap::new(),
-        token_fills: HashMap::new(),
+        token_rules: HashMap::default(),
+        token_pairs: HashMap::default(),
+        token_reads: HashMap::default(),
+        token_closer_last: HashMap::default(),
+        token_parts: HashMap::default(),
+        token_fills: HashMap::default(),
         inside: Vec::new(),
         keywords: Vec::new(),
         skip: None,
         prefix: None,
         ahead: false,
-        mask_exprs: HashMap::new(),
+        mask_exprs: HashMap::default(),
         tree: Vec::new(),
         extra: Vec::new(),
         marks: Vec::new(),
         mark_exprs: Vec::new(),
-        token_marks: HashMap::new(),
-        unless: HashMap::new(),
+        token_marks: HashMap::default(),
+        unless: HashMap::default(),
         unplaced: Vec::new(),
         settles: Vec::new(),
         ends: Vec::new(),
@@ -571,7 +573,7 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
     let mut delay = vals.iter().map(|x| x.1.d).max().unwrap_or(0);
     // Each output once, at one delay: its value's (`outputs`, the masks and the records find an
     // output by its value).
-    let mut index: HashMap<u16, u16> = HashMap::new();
+    let mut index: HashMap<u16, u16> = HashMap::default();
     let mut labels = Vec::new();
     let mut at = Vec::new();
     for (label, x) in &vals {
@@ -1370,6 +1372,28 @@ impl Lowering {
         }
     }
 
+    /// A prover over this program (`bitlex_prove::Induction`) that knows what the rounds' equations do not show
+    /// alone: a walk's regions (`block::Walk`) hide each other, as the walk opens a region only past the last
+    /// one's closer, so no two of its kinds' fills hold at one place (`NO_WALK_LEMMAS`: not told).
+    fn induction(&self, horizon: u32, conflicts: u32) -> bitlex_prove::Induction {
+        let mut settled = bitlex_prove::Induction::new(&self.program.rounds, horizon, conflicts);
+        #[cfg(any(test, feature = "test-hooks"))]
+        let told = !NO_WALK_LEMMAS.get();
+        #[cfg(not(any(test, feature = "test-hooks")))]
+        let told = true;
+        if told {
+            for walk in &self.program.walks {
+                for (i, a) in walk.kinds.iter().enumerate() {
+                    for b in &walk.kinds[i + 1..] {
+                        // One group's values are at one delay: a place is one lag in both.
+                        settled.add_lemma(vec![(a.fill, 0, true), (b.fill, 0, true)]);
+                    }
+                }
+            }
+        }
+        settled
+    }
+
     /// The operations as the prover reads them (`bitlex_prove`): with a prefix, its value zero.
     /// The prover's positions are the stream's, and every bit of the prefix's lies before the
     /// stream, where its model has no byte in any class and every carried value 0, as the cut
@@ -1642,7 +1666,7 @@ impl Lowering {
             return None;
         }
         let to = if k == 0 { self.at(to, from.d).ok()? } else { to.v };
-        let v = rebuild(self, x.v, from.v, to, k, &mut HashMap::new());
+        let v = rebuild(self, x.v, from.v, to, k, &mut HashMap::default());
         Some(Val { v, d: x.d + k, ..x })
     }
 
@@ -1839,7 +1863,7 @@ impl Lowering {
             Some(k)
         }
         let mut out = Vec::new();
-        walk(self, x.v, &mut HashMap::new(), &mut out, prefix_zero, ones)?;
+        walk(self, x.v, &mut HashMap::default(), &mut out, prefix_zero, ones)?;
         Some(out)
     }
 
@@ -2817,6 +2841,13 @@ fn mergeable(a: &crate::program::LocalCheck, b: &crate::program::LocalCheck) -> 
     a.back == b.back || a.ops.iter().chain(&b.ops).all(|op| !matches!(op, L::Fill(..)) && !matches!(op, L::Const(c) if *c != 0 && *c != u64::MAX))
 }
 
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    /// Compile with no walk lemmas (`Lowering::induction`), for the tests' oracle: the program they prove smaller
+    /// reads every file as this one does.
+    pub static NO_WALK_LEMMAS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 #[cfg(test)]
 thread_local! {
     /// Compile with tier 1's lasts as before decision 0452, for the tests' oracle.
@@ -2836,7 +2867,7 @@ fn gap_ends(low: &mut Lowering, token_rows: &[(String, Val, Val)]) -> Result<Opt
     }
     // One prover for every claim, so the lemmas of one serve the next; each claim by its lemmas,
     // then by induction on itself (`never_inductive`).
-    let settled = RefCell::new(bitlex_prove::Induction::new(&low.program.rounds, 8, 100_000));
+    let settled = RefCell::new(low.induction(8, 100_000));
     let never = |low: &Lowering, x: Val| {
         let ops = low.proof_ops();
         bitlex_prove::never(&ops, &low.program.tables, x.v, x.d) || settled.borrow_mut().never(&ops, &low.program.tables, x.v, x.d) || settled.borrow_mut().never_inductive(&ops, &low.program.tables, x.v, x.d)
@@ -2861,6 +2892,21 @@ fn gap_ends(low: &mut Lowering, token_rows: &[(String, Val, Val)]) -> Result<Opt
     let none = low.leaf(BlockOp::Const(0), false);
     let refused = low.fill(refused_next, none)?;
     let after_bad = low.andnot(after_bad, refused)?;
+    // The claims: a skip byte after a bad one, a start in the skip, a token's last in the skip or before a bad byte.
+    let from_skip = low.and(skip, after_bad)?;
+    let skip_starts = low.and(skip, starts)?;
+    let skip_starts = low.andnot(skip_starts, refused)?;
+    let mut claims_at = vec![from_skip, skip_starts];
+    for (_, _, l) in token_rows {
+        let in_skip = low.and(*l, skip)?;
+        claims_at.push(low.andnot(in_skip, refused)?);
+        claims_at.push(low.and(*l, after_bad)?);
+    }
+    // A claim a stream that begins within the window breaks is broken: no lemma rules a stream out.
+    let ops = low.proof_ops();
+    if claims_at.iter().any(|x| settled.borrow_mut().refuted(&ops, &low.program.tables, x.v, x.d)) {
+        return Ok(None);
+    }
     // Lemmas first: two regions (`fill`s, `toggle`s) at one byte only where the file is refused
     // before, as a comment opened inside another, or a quote inside a comment, escapes there. A
     // token's last inside both is then excused at any distance from that refusal. Proved or
@@ -2884,17 +2930,8 @@ fn gap_ends(low: &mut Lowering, token_rows: &[(String, Val, Val)]) -> Result<Opt
             }
         }
     }
-    let from_skip = low.and(skip, after_bad)?;
-    let skip_starts = low.and(skip, starts)?;
-    let skip_starts = low.andnot(skip_starts, refused)?;
-    if !never(low, from_skip) || !never(low, skip_starts) {
-        return Ok(None);
-    }
-    for (_, _, l) in token_rows {
-        let in_skip = low.and(*l, skip)?;
-        let in_skip = low.andnot(in_skip, refused)?;
-        let off = low.and(*l, after_bad)?;
-        if !never(low, in_skip) || !never(low, off) {
+    for x in claims_at {
+        if !never(low, x) {
             return Ok(None);
         }
     }
@@ -3149,7 +3186,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // its tokens are told apart in tier 1: the machine is masks over the whole file there, with
     // the rest of the block program, and a token it refuses joins the fallback. Tier 2 keeps
     // only the bytes a token passing it begins with.
-    let mut check_of: HashMap<usize, ByteSet> = HashMap::new();
+    let mut check_of: HashMap<usize, ByteSet> = HashMap::default();
     let mut token_checks: Vec<(usize, Vec<crate::program::LocalOp>)> = Vec::new();
     for (kind, g) in low.checks.clone() {
         let token = token_rows.iter().position(|t| t.0 == kind).ok_or_else(|| format!("check {kind}: no token row of that kind"))?;
@@ -3263,7 +3300,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // check it (or none: everywhere), its mask `A` and its check.
     let mut checks: Vec<(Vec<u16>, Option<u16>, Val, crate::program::LocalCheck)> = Vec::new();
     // With the fixed points' equations and the lemmas proved on the way, kept for every mark.
-    let mut settled = bitlex_prove::Induction::new(&low.program.rounds, 8, 100_000);
+    let mut settled = low.induction(8, 100_000);
     // Where the token loop finds the starts (decision 0177), a mark is no start mask: a mark of
     // one word is its other terms at the token's first byte (none: the word alone), a token mark
     // the word alone, any other its own mask, which the records lift to the next grammar token
@@ -3543,7 +3580,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         let inside = |r: usize| low.inside.get(r).copied().unwrap_or(false);
         let starts = |r: usize, b: usize| !inside(r) && real_first[r][b / 64] >> (b % 64) & 1 == 1;
         let mut free: Vec<u8> = (0..256usize).rev().filter(|&b| !(0..rows.len()).any(|r| starts(r, b))).map(|b| b as u8).collect();
-        let mut byte_of: HashMap<String, u8> = HashMap::new();
+        let mut byte_of: HashMap<String, u8> = HashMap::default();
         for r in 0..rows.len() {
             let kind = &token_rows[r].0;
             if !low.token_reads.contains_key(kind) {
@@ -3712,7 +3749,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // The records: a byte's kind, the class of first bytes no switch on the first byte tells
     // apart; the words, the strings. (A switch on a later byte, a keyword's, reads its byte.)
     let mut kinds = vec![0u8; 256];
-    let mut classes: HashMap<Vec<u16>, u8> = HashMap::new();
+    let mut classes: HashMap<Vec<u16>, u8> = HashMap::default();
     let mut sigs: Vec<Vec<u16>> = Vec::new();
     // A token mark's kinds (decision 0129): a column each, so a kind of the records is one
     // kind's tokens or none of them; a byte that starts that kind's tokens and another's can not
@@ -4190,7 +4227,7 @@ fn row_modes(
 ) -> Result<Vec<Vec<bool>>, String> {
     // With the fixed points' equations (a region's carry is its fills' bytes after the openers)
     // where the plain search does not prove it, as the marks' proofs.
-    let mut settled = bitlex_prove::Induction::new(&low.program.rounds, 8, 100_000);
+    let mut settled = low.induction(8, 100_000);
     let mut proved = |low: &Lowering, v: Val| {
         let ops = low.proof_ops();
         bitlex_prove::never(&ops, &low.program.tables, v.v, v.d) || settled.never(&ops, &low.program.tables, v.v, v.d)
@@ -4211,22 +4248,28 @@ fn row_modes(
             modes.push((t, x));
         }
     }
-    // Each row's mode at its start, and its flips: per toggle, `Some(bit)` when fixed.
-    let mut fixed = |low: &mut Lowering, s: Val, v: Val| -> Result<Option<bool>, String> {
+    // Each row's mode at its start, and its flips: per toggle, `Some(bit)` when fixed. Both proved, the row's
+    // start never holds (`s & ~v` and `s & v`): the row is dead, and meets no state.
+    let mut fixed = |low: &mut Lowering, s: Val, v: Val, dead: &mut bool| -> Result<Option<bool>, String> {
         let off = low.andnot(s, v)?;
         let on = low.and(s, v)?;
         Ok(match (proved(low, off), proved(low, on)) {
             (true, false) => Some(true),
             (false, true) => Some(false),
+            (true, true) => {
+                *dead = true;
+                None
+            }
             _ => None,
         })
     };
     let mut need: Vec<Vec<Option<bool>>> = Vec::new();
     let mut flip: Vec<Vec<Option<bool>>> = Vec::new();
-    for (_, s, _) in token_rows {
+    let mut dead: Vec<bool> = vec![false; token_rows.len()];
+    for (r, (_, s, _)) in token_rows.iter().enumerate() {
         let (mut n, mut f) = (Vec::new(), Vec::new());
         for &(t, x) in &modes {
-            let (tv, xv) = (fixed(low, *s, t)?, fixed(low, *s, x)?);
+            let (tv, xv) = (fixed(low, *s, t, &mut dead[r])?, fixed(low, *s, x, &mut dead[r])?);
             // The mode before the token: the toggle at its start, less `x` there.
             n.push(match (tv, xv) {
                 (Some(a), Some(b)) => Some(a != b),
@@ -4237,7 +4280,7 @@ fn row_modes(
         need.push(n);
         flip.push(f);
     }
-    let fits = |r: usize, m: u8| need[r].iter().enumerate().all(|(i, n)| n.is_none_or(|n| n == (m >> i & 1 == 1)));
+    let fits = |r: usize, m: u8| !dead[r] && need[r].iter().enumerate().all(|(i, n)| n.is_none_or(|n| n == (m >> i & 1 == 1)));
     // The modes after a row's token, from `m`.
     let after = |r: usize, m: u8| -> Vec<u8> {
         let mut out = vec![m];
@@ -4256,7 +4299,7 @@ fn row_modes(
             .collect()
     };
     // The states each level returns to.
-    let mut returns: HashMap<u16, Vec<u16>> = HashMap::new();
+    let mut returns: HashMap<u16, Vec<u16>> = HashMap::default();
     for a in arms {
         // The innermost call returns from the level it enters; each outer one from the level of
         // the call inside it, which it returns to.

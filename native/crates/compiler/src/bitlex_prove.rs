@@ -27,7 +27,10 @@
 //! stream's or before it (`within` is which), one after it may be past the end.
 
 use crate::block::{BlockOp, ClassTable};
-use std::collections::{HashMap, HashSet};
+/// The prover's maps and sets: hashed with a fixed seed (`foldhash`'s), so a search that iterates them (which
+/// value to choose next, the order of a window's clauses) goes the same way each run, and fast.
+type HashMap<K, V> = std::collections::HashMap<K, V, foldhash::fast::FixedState>;
+type HashSet<K> = std::collections::HashSet<K, foldhash::fast::FixedState>;
 
 /// A set of bytes, bit `b` for byte `b`.
 pub type ByteSet = [u64; 4];
@@ -75,7 +78,7 @@ impl<'a> Proof<'a> {
         let (cone, readers) = cone(ops, v);
         let groups = readers.iter().map(|(&lag, r)| (lag, groups(tables, r))).collect();
         let own = classes(tables, readers.get(&u32::from(d)));
-        Proof { ops, tables, d: u32::from(d), b: 0, bytes: HashMap::new(), vals: HashMap::new(), cone, groups, budget: 0, own }
+        Proof { ops, tables, d: u32::from(d), b: 0, bytes: HashMap::default(), vals: HashMap::default(), cone, groups, budget: 0, own }
     }
 
     /// Whether the value is zero with the position's byte `b`.
@@ -283,9 +286,9 @@ impl<'a> Proof<'a> {
 /// The carried values `v` reads, closed under their equations' operands, and the readers of
 /// each lag's byte.
 fn cone(ops: &[BlockOp], v: u16) -> (HashSet<(u16, u32)>, HashMap<u32, HashSet<Reader>>) {
-    let mut cone = HashSet::new();
-    let mut readers: HashMap<u32, HashSet<Reader>> = HashMap::new();
-    let mut seen = HashSet::new();
+    let mut cone = HashSet::default();
+    let mut readers: HashMap<u32, HashSet<Reader>> = HashMap::default();
+    let mut seen = HashSet::default();
     let mut work = vec![(v, 0u32)];
     while let Some((at, lag)) = work.pop() {
         if !seen.insert((at, lag)) {
@@ -345,7 +348,7 @@ fn classes(tables: &[ClassTable], readers: Option<&HashSet<Reader>>) -> Vec<(u8,
             .collect()
     };
     let mut out: Vec<(u8, ByteSet)> = Vec::new();
-    let mut at: HashMap<Vec<bool>, usize> = HashMap::new();
+    let mut at: HashMap<Vec<bool>, usize> = HashMap::default();
     for x in 0..=255u8 {
         let k = *at.entry(sig(x)).or_insert_with(|| {
             out.push((x, [0; 4]));
@@ -378,7 +381,7 @@ fn group_of(tables: &[ClassTable], readers: Option<&HashSet<Reader>>) -> [u8; 25
             })
             .collect()
     };
-    let mut first: HashMap<Vec<bool>, u8> = HashMap::new();
+    let mut first: HashMap<Vec<bool>, u8> = HashMap::default();
     for x in 0..=255u8 {
         of[usize::from(x)] = *first.entry(sig(x)).or_insert(x);
     }
@@ -499,6 +502,12 @@ impl Induction {
         proved
     }
 
+    /// Whether a stream that begins within the window has `v` at delay `d` (`prove`'s first solve): a stream's, so
+    /// no lemma rules it out and `never` and `never_inductive` both fail on `v`.
+    pub fn refuted(&mut self, ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8) -> bool {
+        matches!(self.solve(ops, tables, v, d, None, true, &[0; 4]), Outcome::Way(..))
+    }
+
     /// A lemma proved by the caller: these values (each an operation, a lag from the position
     /// as a `prev` reads it, and its value) never hold together at a position in the stream.
     /// Over carried values, it constrains a window's edge, where they are free. The caller
@@ -603,7 +612,7 @@ impl Induction {
             }
         }
         let (readers, far) = unrolled_readers(ops, nexts, &roots, reach);
-        let mut u = Unrolled { ops, tables, nexts, d: u32::from(d), reach, clauses: Vec::new(), vars: 1, memo: HashMap::new(), before: HashMap::new(), past: HashMap::new(), groups: HashMap::new(), readers: HashMap::new() };
+        let mut u = Unrolled { ops, tables, nexts, d: u32::from(d), reach, clauses: Vec::new(), vars: 1, memo: HashMap::default(), before: HashMap::default(), past: HashMap::default(), groups: HashMap::default(), readers: HashMap::default() };
         // A literal that is true.
         u.clauses.push(vec![1]);
         // Before the stream: from some lag past the position's on.
@@ -778,8 +787,8 @@ fn carried(ops: &[BlockOp], nexts: &HashMap<u16, u16>, at: u16) -> bool {
 /// And the farthest lag any operation is read at (a `within` at its byte's).
 fn unrolled_readers(ops: &[BlockOp], nexts: &HashMap<u16, u16>, roots: &[(u16, u32)], reach: u32) -> (HashMap<u32, HashSet<Reader>>, u32) {
     let mut far = 0;
-    let mut readers: HashMap<u32, HashSet<Reader>> = HashMap::new();
-    let mut seen = HashSet::new();
+    let mut readers: HashMap<u32, HashSet<Reader>> = HashMap::default();
+    let mut seen = HashSet::default();
     let mut work = roots.to_vec();
     while let Some((at, lag)) = work.pop() {
         if !seen.insert((at, lag)) {

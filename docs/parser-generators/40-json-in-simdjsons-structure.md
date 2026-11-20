@@ -593,6 +593,40 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 33, done: Kotlin's steps compile in seconds, not minutes (decision 0479)
+
+Step 29 ran Kotlin's ladder, but each step took 5 to 7 minutes to compile, almost all of it in
+the Bitlex compiler's proofs. Those steps were then run on farm hosts over about 3 hours, instead
+of the compile being fixed. The user: "no 3 hours runs ... fix the kotlin speed, starting with
+tiny examples."
+
+Measured on the small steps first, each phase apart (`RERAIL_STEP_TIMES`):
+- the proofs (`bitlex_masks::compile_shaped`) took almost all of the time;
+- Cranelift took 1 to 3 s.
+
+The cause was Kotlin's walk. Its strings, characters and comments are regions that never overlap,
+but the provers did not know this. They searched for a byte inside two regions at once, which no
+stream has.
+
+Decision 0479 makes these changes:
+- each pair of a walk's kinds is a lemma to the fixed-point prover;
+- a row whose start never holds is dead;
+- the lowering and the provers hash with a fixed seed, so one grammar compiles to one program;
+- the gap ends check stops at a real stream, before it proves its lemmas.
+
+| Step | Bitlex compile before | after |
+|---|---:|---:|
+| 09 | 31 s | 1.8 s |
+| 12 | 57 s | 1.9 s |
+| 35 | minutes | 14.5 s |
+
+The whole ladder, all 35 steps (`aot_tests::ladder_steps_rust_tapes_are_the_jits`, `RERAIL_AOT_LADDER=kotlin`,
+load about 18): 420 s wall, the Rust's build 69 s of it; the Bitlex compile 165 s of CPU over the 35 steps, Cranelift
+29 s. Every step's tapes are the JIT's. It took about 3 hours before, over farm hosts.
+
+Step 35's tier 2 is 15,424 words, down from 23,146. Kotlin's tests against the lean parser all
+pass. The corpus is unchanged: 429 the same, 62 refused, 0 differ.
+
 ## Step 32, done: the commit point moved back by an edit, shown to be unobservable in format 16
 
 Step 28 left one mutation uncovered: an edit before the commit point not moving it back (`uncode`:

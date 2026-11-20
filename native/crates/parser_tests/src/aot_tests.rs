@@ -213,14 +213,23 @@ fn documents(c: &Compiled, name: &str, ladder: &Ladder) -> (Vec<Vec<u8>>, Vec<bo
         // Only the documents that still parse joined to themselves: one that does not (its last token running on into
         // the next, a comment to the line's end) would refuse the whole join.
         let joins: Vec<&&Vec<u8>> = accepted.iter().filter(|d| c.parser.parse(&[&d[..], sep, &d[..]].concat()).is_ok()).collect();
-        let mut long = Vec::new();
-        for d in joins.iter().cycle().take(joins.len().max(1) * 400) {
+        // Joined until the join's nodes pass 3,000 (a document of comments holds few for its bytes, and the join
+        // merges their roots), to 4 MB: each round adds as many again as the nodes still short.
+        let nodes: Vec<usize> = joins.iter().map(|d| c.parser.parse(d).map_or(0, |n| n.len())).collect();
+        let (mut long, mut held, mut want) = (Vec::new(), 0, 3200);
+        let mut each = joins.iter().zip(&nodes).cycle().take(if nodes.iter().any(|&n| n > 0) { usize::MAX } else { 0 });
+        while long.len() <= 4 << 20 {
+            let Some((d, n)) = each.next() else { break };
             if !long.is_empty() {
                 long.extend_from_slice(sep);
             }
             long.extend_from_slice(d);
-            if long.len() > 100_000 {
-                break;
+            held += n;
+            if held > want {
+                match c.parser.parse(&long).map(|n| n.len()) {
+                    Ok(got) if got <= 3000 && got > 0 => want = held * 3200 / got,
+                    _ => break,
+                }
             }
         }
         if c.parser.parse(&long).is_ok_and(|n| n.len() > 3000) {
