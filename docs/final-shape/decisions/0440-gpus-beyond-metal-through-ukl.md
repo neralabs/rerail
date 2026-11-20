@@ -1516,6 +1516,41 @@ old suffix, `gpu/src/library_tests.ukl`, is renamed.
   driver); the store keeps them after. Whether SPIR-V (`cl_khr_il_program`), compiled ahead, or Xe2's native 16
   lanes compile faster is to be measured.
 
+**The Intel plan, step 2: what USM gives, measured (2026-11-20).**
+
+- **The Arc 140V under WSL2** (`cl_intel_unified_shared_memory`): host, device, and single- and cross-device shared
+  allocations have access and atomic access (not concurrent access); **shared system memory has none** (capabilities
+  0). SVM is coarse-grained buffers only (`CL_DEVICE_SVM_CAPABILITIES` 1), and no extension gives a
+  `CL_MEM_USE_HOST_PTR` buffer an address (`cl_ext_buffer_device_address` is absent).
+- **So USM gives addresses to allocations, not to wrapped memory:** a host USM allocation (`clHostMemAllocINTEL`) is a
+  pointer the kernels follow, as CUDA's `cuMemHostAlloc` is, and the pool's leases (columns, scratch, the blocks the
+  device must read) can be ones. Host memory the device reads in place by a wrap (a mapped tape file, a block it may
+  read) has none. CUDA registers such memory (`cuMemHostRegister`); OpenCL here cannot.
+- **Built** (`RERAIL_OPENCL_USM=1`): a buffer the device allocates is a host allocation (`clHostMemAllocINTEL`) whose
+  address is its own (`ClBuffer::address`, `Buffer::device_address`); a wrap has none. `Device::has_addresses`
+  (every buffer, wraps too) stays false on OpenCL, and views read in place and 16z's slabs keep the offset form
+  there. `Device::allocations_have_addresses` is what the fused sorts and probes ask (`join::Fused::can`): their
+  tables hold only leases' addresses. A host allocation is bound and copied as itself
+  (`clSetKernelArgMemPointerINTEL`, `clEnqueueMemcpyINTEL`; a copy to or from a wrap is the wrap's own write or
+  read), and a launch names the allocations it reaches by address (`use_buffer`: `CL_KERNEL_EXEC_INFO_USM_PTRS_INTEL`,
+  Metal's `useResource`).
+- **Found:** an OpenCL buffer made over a host allocation (`CL_MEM_USE_HOST_PTR`) is a copy on Intel's driver (the
+  in-place probe saw no write in its pages), so the allocation has no `cl_mem`. The opening checks both: heap
+  buffers read in place (`reads_host_pages_in_place`), then a kernel's write through an address a table holds
+  (`follows_addresses`); without the second, buffers stay the heap's. A view test asked an allocation for an
+  address to mean "the views' directory is read in place"; it asks `has_addresses` now.
+- **Results on the Arc 140V (WSL2), both ways:** the device layer's 6, accel's 60 and the lane suite's 58 pass.
+  - allocating a buffer: 1.4 µs, against 78 µs for heap memory wrapped (the driver pins it);
+  - the lane suite (warm, the fused sorts and probes on): 17.4 and 17.3 s, against 19.8 and 17.9 s;
+  - the radix sort (`host_costs`): the kernels' device time is unchanged (1,065 against 1,070 µs at 200,000 rows),
+    but its wall is 3-5 times as long from 20,000 rows (4.7 against 1.5 ms; 10-13 against 2.3 ms at 200,000);
+    1,000 rows are equal. The CPU's reads and writes of a host allocation are the heap's speed (26 and 24 GB/s,
+    against 23 and 24) and page faults are equal; the time is the driver's between kernels (more user time, a third
+    of the context switches: its wait spins). Shared allocations (`clSharedMemAllocINTEL`) are the same.
+- **So it is not the default:** the fused path gains about nothing on the suite's small inputs, and a large sort
+  loses. Open: the gap between kernels on host allocations (a native Linux or Windows driver, or Level Zero's
+  immediate command lists, may not have it; the plan's step 3 is that measurement).
+
 - **Open:** `rerail-device-metal`'s tests register Python's and `.rr`'s packs (`test_languages`) only where two tests
   call it, while its corpus runs read `.rr` documents (`lines::of`) in tests that do not: a CPU worker panics
   ("no language registered for Rr"), now and then by which test runs first, caught and run again. Every test passes

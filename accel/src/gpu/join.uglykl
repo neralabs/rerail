@@ -113,7 +113,8 @@ DEFINE_KERNEL2(join, col_narrow,
 //
 // Each job's buffers are reached through device addresses in a table the host writes (`Buffer::device_address`),
 // and made resident with the launch: a batch of any number of joins costs two dispatches. A device without
-// addresses (OpenCL 1.2) takes the radix sort and the probe join instead (`Fused::can`).
+// addresses for its allocations (OpenCL without Intel's unified shared memory) takes the radix sort and the probe
+// join instead (`Fused::can`).
 
 typedef struct SortJob {
   UKL_GLOBAL const int64_t* c[3];

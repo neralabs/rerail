@@ -1341,7 +1341,8 @@ impl ProbeOne {
 //
 // Each job's buffers are reached through device addresses in a table the host writes (`Buffer::device_address`),
 // and made resident with the launches: a batch of any number of joins costs the host two launches. A device without
-// addresses (OpenCL 1.2) takes the radix sort and the probe join instead (`Fused::can`).
+// addresses for its allocations (OpenCL without Intel's unified shared memory) takes the radix sort and the probe
+// join instead (`Fused::can`).
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -1392,9 +1393,10 @@ pub struct Fused {
 }
 
 impl Fused {
-    /// Whether the process's device can run the fused sorts and probes: their tables hold device addresses.
+    /// Whether the process's device can run the fused sorts and probes: their tables hold the addresses of leased
+    /// buffers, which the device allocated (`Device::allocations_have_addresses`).
     pub fn can() -> bool {
-        device().is_ok_and(|d| d.has_addresses())
+        device().is_ok_and(|d| d.allocations_have_addresses())
     }
 
     fn addr(&mut self, b: &Buffer) -> u64 {

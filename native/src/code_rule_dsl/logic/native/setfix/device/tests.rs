@@ -1068,11 +1068,10 @@
             }
         }
         assert_eq!(seen, 10);
-        // Read in place where the device's buffers have addresses, which the views' directory is of (Metal's, the
-        // CPU's); made elsewhere (decision 0440 step C: OpenCL 1.2's buffers have none), which the made branch above
-        // checked.
-        let addresses = rerail_device::device::alloc_uninitialized_array_sync::<u8>(device, 1).device_address().is_some();
-        let read_in_place = if addresses { 10 } else { 0 };
+        // Read in place where every buffer has an address, memory wrapped in place too, which the views' directory is
+        // of (Metal's, CUDA's, the CPU's); made elsewhere (decision 0440 step C: OpenCL's wraps have none, though
+        // its allocations may, Intel's unified shared memory), which the made branch above checked.
+        let read_in_place = if device.has_addresses() { 10 } else { 0 };
         assert_eq!(in_place, read_in_place, "node, child, field, core_node and line read in place");
         // core.rr's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
         {
