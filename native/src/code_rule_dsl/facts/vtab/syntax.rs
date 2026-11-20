@@ -3663,6 +3663,36 @@ impl Source for Viewed {
             });
         }
     }
+    fn for_rows_keyed(&self, column: usize, keys: &rustc_hash::FxHashSet<i64>, columns: &[usize], each: &mut dyn FnMut(usize, &[i64]) -> bool) -> bool {
+        // A row's own column (a node's or a location's id) names its document in its high half: only those documents
+        // are walked.
+        if column != self.own() {
+            return false;
+        }
+        let docs: rustc_hash::FxHashSet<i64> = keys.iter().map(|k| k >> 32).collect();
+        let offsets = self.batch.offsets(self.view);
+        let mut row = vec![0i64; columns.len()];
+        let mut go = true;
+        for (doc, p) in self.batch.docs.iter().enumerate() {
+            if !go {
+                break;
+            }
+            if !docs.contains(&i64::from(p.key)) {
+                continue;
+            }
+            let base = offsets[doc];
+            self.each_row(p, offsets[doc + 1] - base, columns.iter().copied().chain([column]), |i, value| {
+                if !go || !keys.contains(&value(column)) {
+                    return;
+                }
+                for (o, &c) in row.iter_mut().zip(columns) {
+                    *o = value(c);
+                }
+                go = each(base + i, &row);
+            });
+        }
+        true
+    }
     /// A column that is a row's id, or its document (`node` and `core`'s first): every row of a document has its key.
     fn documents_of(&self, column: usize, each: &mut dyn FnMut(usize, i64)) {
         let own = match self.view {

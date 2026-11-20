@@ -7723,8 +7723,18 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   the values' statistics.
 - **Measured** (cold, CPU binding, 1,629 findings each): 83.7 and 84.0 B at load 15 (from 99.7 B), against this
   morning's 81.0 and 81.9 B at load 13. Wall 2.25-2.48 s, against 1.75-1.78 s.
-- **Left (about 2.5 B):** the memo's base rows of the semi-join (0.35 s: `ast_depth` 0.12, `node` 0.09, `line`
-  0.07, `col` 0.07), 0458's copy 2. They are what the counts and a hit's statistics read. They go with 0458 step
+- **The rest is the rules', not the engine's** (found 2026-11-20): this morning's run's cross part read the base
+  relations `doc` and `tape_of`; today's reads `doc`, `node`, `line`, `col` and `ast_depth`, so the semi-join, its
+  memo rows and its statistics exist at all only with today's rules. The cause is 0431 R9's `rr_unplaced`
+  (`<finding>(n), node(d, n, …), !doc(d, …)`, merged with django-bugs' findings): `project_existentials` makes it
+  `exists_2(d) :- P(n), node(d, n, …)`, a cross-file read of `node`, and with the cross part on a base relation
+  `PushLocalJoins` keeps every finding's location lookups (`rr_diagnostic`, `violation`) in the cross part as well.
+  Pushing them anyway (an experiment: held-node lookups not counted) pushes 7 rules as this morning did and drops
+  `line` and `col`, but the pushed strata cost 0.25 s in the chunks against 0.12 s saved: no gain. The memo loop now
+  walks a semi-join's documents (`Source::for_rows_keyed`, through `Layered` too) where it looked each node up:
+  `ast_depth` 0.19 to 0.085 s, the loop 0.55 to 0.34-0.44 s. Measured 84.3-84.5 B (load 13-18).
+- **Left (about 3 B):** the memo's base rows of the semi-join (0.34 s) and the larger memo entries they make
+  (`memo remember` 0.10 s, against 0.02 s), 0458's copy 2. They are what the counts and a hit's statistics read. They go with 0458 step
   4's rest, once a hit's statistics come from somewhere else (its document's rows at its exports' nodes, or kept
   statistics). The rules' changes (#898) about cancel out: `pre_75`, `pre_65` and `parsed` +0.42 s, `param`,
   `tp_decl`, `pre_76` and others -0.66 s. The corpus batch's projection (0.34 s) is the chunks' guests' projection

@@ -389,6 +389,42 @@ impl Source for Layered {
     fn lookup_read(&self, column: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
         !self.has_parts() && self.base.lookup_read(column, value, columns, each)
     }
+    fn for_rows_keyed(&self, column: usize, keys: &rustc_hash::FxHashSet<i64>, columns: &[usize], each: &mut dyn FnMut(usize, &[i64]) -> bool) -> bool {
+        // The base's walk, then each part's rows of the keys (a value's rows are few: read whole where its source has
+        // no walk). Made on lookup, the values' rows are made as looked up, never walked (`for_rows_in`).
+        let mut going = true;
+        if !self.base.for_rows_keyed(column, keys, columns, &mut |r, row| {
+            going = each(r, row);
+            going
+        }) {
+            return false;
+        }
+        if !going || self.made.is_some() {
+            return true;
+        }
+        let mut row = vec![0i64; columns.len()];
+        self.parts(|p| {
+            for part in &p.list {
+                let at = self.base_len() + part.start;
+                let walked = going
+                    && part.src.for_rows_keyed(column, keys, columns, &mut |r, row| {
+                        going = each(at + r, row);
+                        going
+                    });
+                if walked || !going {
+                    continue;
+                }
+                for r in (0..part.src.len()).filter(|&r| keys.contains(&part.src.value(r, column))) {
+                    part.src.row_at(r, columns, &mut row);
+                    going = each(at + r, &row);
+                    if !going {
+                        break;
+                    }
+                }
+            }
+        });
+        true
+    }
     fn lookup_eq(&self, column: usize, value: i64, eqs: &[(usize, i64)]) -> Option<Vec<usize>> {
         if self.has_parts() { None } else { self.base.lookup_eq(column, value, eqs) }
     }

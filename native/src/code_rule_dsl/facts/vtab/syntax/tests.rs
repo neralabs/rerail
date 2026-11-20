@@ -233,6 +233,42 @@ fn a_views_measured_statistics_are_its_per_row_reads() {
     }
 }
 
+/// A view's walk of the rows whose own column is in a set (`for_rows_keyed`: a semi-join's rows at its exports'
+/// nodes, decision 0458) gives the rows, in row order, and the values that reading those rows one at a time gives:
+/// for every view that has it, at every third row's key, and a stop where `each` says.
+#[test]
+fn a_views_keyed_walk_gives_the_rows_a_per_row_read_finds() {
+    let store = ContentStore::open(&temp("keyed-walk")).unwrap();
+    let mut tried = 0;
+    // Each view, and the view as a chunk binds it (`Layered`, no value admitted): the same walk.
+    let views = sources(&store, documents().into_iter().take(4).collect()).unwrap();
+    let layered = views.iter().map(|(name, s)| (format!("{name} layered"), Arc::new(super::values::Layered::new(name, Arc::clone(s), Default::default())) as Arc<dyn Source>));
+    for (name, source) in views.iter().map(|(n, s)| (n.to_string(), Arc::clone(s))).chain(layered).collect::<Vec<_>>() {
+        let n = source.len();
+        let all: Vec<usize> = (0..source.columns().len()).collect();
+        for c in 0..all.len() {
+            let keys: rustc_hash::FxHashSet<i64> = (0..n).step_by(3).map(|r| source.value(r, c)).collect();
+            let mut walked: Vec<(usize, Vec<i64>)> = Vec::new();
+            if !source.for_rows_keyed(c, &keys, &all, &mut |r, row| {
+                walked.push((r, row.to_vec()));
+                true
+            }) {
+                continue;
+            }
+            let per_row: Vec<(usize, Vec<i64>)> = (0..n).filter(|&r| keys.contains(&source.value(r, c))).map(|r| (r, all.iter().map(|&k| source.value(r, k)).collect())).collect();
+            assert_eq!(walked, per_row, "{name} column {c}");
+            let mut stopped = 0;
+            source.for_rows_keyed(c, &keys, &all, &mut |_, _| {
+                stopped += 1;
+                stopped < 2
+            });
+            assert_eq!(stopped, 2.min(per_row.len()), "{name} column {c}: a stop");
+            tried += 1;
+        }
+    }
+    assert!(tried >= 8, "{tried} views walked by key");
+}
+
 /// A view's filter scan, document by document, holds the rows a per-row read finds: over several documents, for
 /// filters on each column of `node`, `child`, `field` and `tape`, and on two at once. It is the view's own scan (a
 /// merge had left it outside the `Source` impl, where the trait's per-row scan shadowed it).

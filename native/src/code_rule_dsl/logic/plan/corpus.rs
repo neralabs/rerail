@@ -7605,8 +7605,6 @@ fn run_observed_within(
                     // The rows of the nodes the exports hold, each found by its node, in node order (so in document
                     // order), where a walk read every node's row of the view.
                     Some(n) => {
-                        let mut nodes: Vec<i64> = mentioned.iter().copied().collect();
-                        nodes.sort_unstable();
                         let mut vals = vec![0i64; read.len()];
                         // Each row counted for the cross part's statistics as it is read (`semijoin_counts`).
                         let mut held = semijoin_counts.borrow_mut();
@@ -7619,6 +7617,10 @@ fn run_observed_within(
                             }
                             keep(row)
                         };
+                        // The view's walk of the documents the nodes name (`for_rows_keyed`), else each node's lookup.
+                        let walked = source.for_rows_keyed(n, &mentioned, &read, &mut |_, row| each(row[node_at.expect("a node column")], row));
+                        let mut nodes: Vec<i64> = if walked { Vec::new() } else { mentioned.iter().copied().collect() };
+                        nodes.sort_unstable();
                         for v in nodes {
                             if keyed {
                                 let Some(r) = source.key_row(n, v) else { continue };

@@ -292,6 +292,53 @@ finding(n, s) :- node(_, n, "call", _, _), field(n, "function", f), text(f, s), 
     assert_eq!(split.locations[&made[0]], [0], "{:?}", split.locations);
 }
 
+/// A cross-file rule's one plain read of a base relation that a negated base read narrows (`rr_unplaced`'s
+/// `node(d, n, _, _, _), !doc(d, _, _)`, decision 0431 R9: a finding at a node no file holds) is pushed with the
+/// negation: the chunks hand on the few nodes that pass, and the cross part reads no base relation, so a finding's
+/// location lookups are pushed too (`unrestricted`). Left, every node's row and every document went to the cross part.
+#[test]
+fn a_plain_read_a_negated_base_read_narrows_is_pushed_with_it() {
+    let text = r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl line(n: node, l: number)
+.decl docof(n: node, d: number)
+.decl text(n: node, s: symbol)
+.input doc, node, line, docof, text
+.decl def_at(n: node, s: symbol)
+def_at(n, s) :- node(_, n, "function_definition", _, _), text(n, s).
+.decl defined(s: symbol)
+defined(s) :- def_at(_, s).
+.decl hit(n: node)
+hit(n) :- node(_, n, "call", _, _), text(n, s), defined(s).
+.decl unplaced(c: symbol)
+.output unplaced
+unplaced("c") :- hit(n), node(d, n, _, _, _), !doc(d, _, _).
+// A cross-file read of the documents' relation, a row a document (`!doc(d, _, _)` of `rr_unplaced` as the
+// existentials' projection leaves it), keeps no node's row in the cross part: the lookups are pushed all the same.
+.decl named_doc(d: number)
+.output named_doc
+named_doc(d) :- doc(d, p, _), defined(p).
+.decl found(n: node, p: symbol, l: number)
+.output found
+found(n, p, l) :- hit(n), docof(n, d), doc(d, p, _), line(n, l).
+"#;
+    let v = read(text);
+    let (v, made) = pushed(v);
+    let unplaced = rules_of(&v, "unplaced");
+    assert_eq!(unplaced.len(), 1);
+    assert!(!reads(&v, unplaced[0]).iter().any(|r| r == "node" || r == "doc"), "{}", v.show_rule(unplaced[0]));
+    let found = rules_of(&v, "found");
+    assert!(!reads(&v, found[0]).iter().any(|r| r == "line" || r == "doc"), "the location lookup is pushed too: {}", v.show_rule(found[0]));
+    // No rule outside the chunks reads a base relation of nodes (`cross_reads_base`): the push's mode keeps every
+    // lookup pushed.
+    let local = &split_of(&v).local;
+    let inputs = ["node", "line", "docof", "text"];
+    for r in v.rules().filter(|r| !local.contains(v.rel_name(r.head().rel()))) {
+        assert!(!reads(&v, r).iter().any(|x| inputs.contains(&x.as_str())), "{} ({made:?})", v.show_rule(r));
+    }
+}
+
 /// Position comparisons must retain the semantic candidate filters. Document equality alone
 /// does not make their Cartesian product a bounded per-file producer.
 #[test]
