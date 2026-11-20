@@ -55,10 +55,17 @@ bnl_counter(body, v) :- bnl_loop(v, body), kind(a, "assignment"), within(a, body
     kind(r, "binary_operator"), (op(r, "+") ; op(r, "-")), child(r, e, _), text(e, lt), child(r, n, _), n != e,
     bnl_number(x, n).
 // bnl_number(x, n): field x moved by step n is a number: n is an int or float literal, or a model of the run declares
-// x as a number field (lib/django's dj_number_field).
+// x as a number field (lib/django's dj_number_field). Only the pairs bnl_step makes: field and step of a `+=`/`-=` or
+// of an `x = x ± n` assignment, so the relation stays as small as the assignments that move a field.
 .decl bnl_number(x: symbol, n: node)
-bnl_number(x, n) :- attr_of(_, _, x), unparen(n, m), (kind(m, "integer") ; kind(m, "float")).
-bnl_number(x, n) :- attr_of(_, _, x), kind(n, _), dj_has_field(_, x, _, t), dj_number_field(t).
+bnl_number(x, n) :- bnl_step(x, n), unparen(n, m), (kind(m, "integer") ; kind(m, "float")).
+bnl_number(x, n) :- bnl_step(x, n), dj_has_field(_, x, _, t), dj_number_field(t).
+// bnl_step(x, n): n is the right side of an augmented assignment to an attribute named x, or an operand of the binary
+// operator assigned to an attribute named x.
+.decl bnl_step(x: symbol, n: node)
+bnl_step(x, r) :- kind(a, "augmented_assignment"), field(a, "left", l), attr_of(l, _, x), field(a, "right", r).
+bnl_step(x, n) :- kind(a, "assignment"), field(a, "left", l), attr_of(l, _, x), field(a, "right", rr), unparen(rr, r),
+    kind(r, "binary_operator"), child(r, n, _).
 
 // bnl_model_is(c, body): c's manager belongs to a name the loop that runs body binds each iteration, as its target
 // (`for model in models: model.objects.get(...)`) or in its body (`cls = apps.get_model(...)`): each iteration may
