@@ -11,7 +11,12 @@ import { processState } from "../../../src/engine/process-liveness.js";
 import { describeRerailPolicies, describeRerailPoliciesSync, runRerailPolicies } from "../../../src/engine/rr/rr-runner.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
-/** A rule over the core library alone: each call of `shout()`. */
+/** A rule file's own library file, in a folder beside it, as a pack keeps one under `rules/lib/`. */
+const SHOUT_CALLS = `.decl shout_call(c: node)
+shout_call(c) :- kind(c, "call"), field(c, "function", f), text(f, "shout").
+`;
+
+/** A rule that reads its own library file: each call of `shout()`. */
 const SHOUT = `.policy "rr-runner-shout" revision 3
 .description "Calls of shout()."
 .language python
@@ -19,9 +24,11 @@ const SHOUT = `.policy "rr-runner-shout" revision 3
 .scope include "**/*.py"
 .scope exclude "vendor/**"
 
+#include "lib/shout-calls.rerail"
+
 .violation Shout(at: node) "shout() is called here"
     suppress ruff "T201"
-Shout(c) :- kind(c, "call"), field(c, "function", f), text(f, "shout").
+Shout(c) :- shout_call(c).
 
 .test one
     .fixture "a.py" \`shout(1)\`
@@ -64,7 +71,7 @@ afterAll(async () => {
   await removeFolder(temporary);
 });
 
-/** A checkout holding `files`, and the shout rule beside it. */
+/** A checkout holding `files`, and the shout rule, with its library file, in a folder of its own. */
 function checkout(files: Record<string, string>): { root: string; rule: string } {
   const root = realpathSync(mkdtempSync(join(temporary, "checkout-")));
   roots.push(root);
@@ -72,8 +79,10 @@ function checkout(files: Record<string, string>): { root: string; rule: string }
     mkdirSync(join(root, path, ".."), { recursive: true });
     writeFileSync(join(root, path), text);
   }
-  const rules = mkdtempSync(join(temporary, "rules-"));
+  const rules = realpathSync(mkdtempSync(join(temporary, "rules-")));
   roots.push(rules);
+  mkdirSync(join(rules, "lib"));
+  writeFileSync(join(rules, "lib", "shout-calls.rerail"), SHOUT_CALLS);
   const rule = join(rules, "shout.rerail");
   writeFileSync(rule, SHOUT);
   return { root, rule };
@@ -95,6 +104,10 @@ function byteOffset(text: string, needle: string): number {
   return Buffer.byteLength(text.slice(0, text.indexOf(needle)));
 }
 
+function sha256(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
+
 describe("describeRerailPolicies", () => {
   it("reads what each rule file states, and says why a file that does not read is refused", async () => {
     const { rule } = checkout({});
@@ -114,10 +127,11 @@ describe("describeRerailPolicies", () => {
       tests: 1,
       suppresses: true,
       fixes: false,
-      // The rule file, then what it reads: here `core.rerail`, which every rule includes.
+      // The rule file first, then what it reads, as the engine read it: `core.rerail`, then its own library file.
       files: [
-        { path: realpathSync(rule), sha256: createHash("sha256").update(SHOUT).digest("hex") },
+        { path: rule, sha256: sha256(SHOUT) },
         { path: expect.stringMatching(/[/\\]docs[/\\]rule-syntax[/\\]lib[/\\]core\.rerail$/u), sha256: expect.stringMatching(/^[0-9a-f]{64}$/u) },
+        { path: join(rule, "..", "lib", "shout-calls.rerail"), sha256: sha256(SHOUT_CALLS) },
       ],
     });
     expect(rows[1]).toEqual({ path: bad, ok: false, error: expect.stringContaining(bad) });
