@@ -513,6 +513,36 @@ mod tests {
         }
     }
 
+    /// A reused product whose readers, or the rules over them, read an answer only a node's document gives (`value`)
+    /// is factorized but not cached: a cache's readers are the cross-file part's, which has no documents to answer
+    /// it from. Decided from the program, so a run is never prepared again to find it (decision 0477).
+    #[test]
+    fn a_product_read_with_a_documents_answer_is_not_cached() {
+        let src = |reader: &str| format!("
+            .decl lhs(a: number, k: number)
+            .decl rhs(b: number, k: number)
+            .decl wide(a: number, b: number)
+            .decl value(n: number, v: symbol)
+            .decl lefts(a: number)
+            .decl rights(b: number)
+            .decl over(a: number)
+            .output rights, over
+            wide(a,b) :- lhs(a,k), rhs(b,k).
+            {reader}
+            rights(b) :- wide(_,b).
+            over(a) :- lefts(a).
+        ");
+        let cached = |reader: &str| {
+            let mut p = parse(&src(reader)).unwrap();
+            let plan = rewrite(&mut p, true, true);
+            assert_eq!(plan.factors.len(), 1, "{reader}: factorized");
+            p.nullary.iter().any(|r| r.starts_with("rr_pair_cache_"))
+        };
+        assert!(cached("lefts(a) :- wide(a,_)."), "a plain reader keeps its cache");
+        assert!(!cached("lefts(a) :- wide(a,_), value(a, _)."), "a reader of `value`");
+        assert!(!cached("lefts(a) :- wide(a,_).\n over(a) :- lefts(a), value(a, _)."), "a rule over a reader reads `value`");
+    }
+
     #[test]
     fn aggregate_recursive_and_open_negative_readers_keep_their_relation() {
         for reader in [

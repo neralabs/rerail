@@ -1384,8 +1384,36 @@ fn factorize(
         // Per relation, per rule: the parts' atoms over the rule's own variables.
         let mut stands: BTreeMap<String, Vec<(Vec<String>, Vec<Atom>)>> = BTreeMap::new();
         let mut caches = BTreeMap::new();
+        // A cached relation's readers read its guard, which is the cross-file part's: they, and every rule over
+        // them, are made there. Where one of those reads an answer only its node's document gives (`ON_REQUEST`'s
+        // functions: `value`, `str`, `node_text`), that answer is drawn into the cross-file part, which has no
+        // documents to answer it from. Such a relation is not cached, decided from the program, so a run never
+        // prepares again to find it (`Deferral::after_placement`, decision 0477: on corpus0 that replan ran the
+        // sources' phase 1 twice, 23 G instructions, and turned every cache off for one).
+        let documents_answer: BTreeSet<&str> = crate::code_rule_dsl::logic::rr::lower::ON_REQUEST.iter().flat_map(|r| r.iter())
+            .filter(|a| matches!(a.answer, crate::code_rule_dsl::logic::rr::lower::Answer::Function(_))).map(|a| a.rel).collect();
+        let mut readers_of: BTreeMap<&str, Vec<&Rule>> = BTreeMap::new();
+        for r in &prog.rules {
+            for a in r.body.iter().filter_map(Literal::atom) {
+                readers_of.entry(a.rel.as_str()).or_default().push(r);
+            }
+        }
+        let drawn_across = |rel: &str| {
+            let mut seen: BTreeSet<&str> = BTreeSet::new();
+            let mut todo = vec![rel];
+            while let Some(r) = todo.pop() {
+                if !seen.insert(r) { continue }
+                for reader in readers_of.get(r).into_iter().flatten() {
+                    if reader.body.iter().filter_map(Literal::atom).any(|a| documents_answer.contains(a.rel.as_str())) {
+                        return true;
+                    }
+                    todo.push(reader.head.rel.as_str());
+                }
+            }
+            false
+        };
         // Split a reader at most once, including when it mentions several different products.
-        let cacheable: BTreeSet<_> = chosen.keys().filter(|rel| cache_reused
+        let cacheable: BTreeSet<_> = chosen.keys().filter(|rel| cache_reused && !drawn_across(rel)
             && chosen[*rel].len() == 1 && chosen[*rel][0].1.len() == 2
             && reads[rel.as_str()].len() > 1
             && reads[rel.as_str()].iter().all(|&(ri, _)| prog.rules[ri].body.iter()
