@@ -8050,7 +8050,7 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   running order's), and the replanning paths read what broke there. The test passes un-ignored, with the hub's unit
   test and the key test; the plan, joins and shapes tests are as before (three were red before: Q378).
 
-### Q377. A test's store keeps one object segment open after its test
+### Q377. (done) A test's store keeps one object segment open after its test
 
 - **Found** (2026-11-20, at the merge of final-rerail-shape-rr-align 972dc90902):
   `a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test` failed on the m3 with four files of a probe's
@@ -8063,3 +8063,22 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
 - **Next**: find the holder of that segment's `Frozen` block after the run (a shared cache of tapes or images),
   and either drop it with the store (`ContentStore::forget`) or key it to the store's life.
 - **Done when**: the test passes un-ignored three runs in a row on the m3.
+- **Done** (2026-11-20): two holders, neither a cache of the store.
+  - The segment held the lowered program's image (0464), opened by `prepared::lookup`. The version never dropped:
+    a cycle. A part of it (a view, then an overlay of its fields) held its normal form as an analysis, in its slot
+    (0281 §2: "held by the version it is of, dropped with it"). The normal form is an edit of the part, so its
+    parent is the part: part → analyses → normal form → parent part, and the same for the stated-apart form over
+    the normal form. Nothing outside held any of them, and no drop ends a cycle. That is not the test's alone: every
+    version a run normalized stayed in memory, with all its analyses, for the life of the process.
+  - The fix: an analysis that makes a version over its own version makes it over the version's twin
+    (`Version::twin`, `manager::twin`). A twin has the same layer (image or delta, parent, ranges, digest) and
+    adopts the version's analyses, so nothing is computed again. The cache no longer points back at its holder.
+    `a_version_with_its_normal_and_apart_forms_drops_with_its_last_holder` locks it.
+  - The store's database files were held too, by pool threads. A thread's copy of a run's values (`SEEN`) was
+    dropped on leaving the run only if the run had already ended. A job that ended first left its copy, with the
+    run's locals and its shared and machine values, until the thread next entered a run. `left_run` now drops the
+    copy whenever the thread leaves the run the copy is of.
+  - Found by tracking which blocks were mapped and their versions; nothing in the shared object, the machine, the
+    tests' object or any pool thread's copy held the image. The test passes un-ignored, three runs in a row on the
+    m3. The program-image, prepared-program, normalization, run, profile, observer, workspace, lane and plan tests
+    pass, except the three plan tests that were red before (Q378).
