@@ -31,6 +31,8 @@ export interface RerailRule {
   readonly source: string;
   /** The absolute path of the installed file. */
   readonly path: string;
+  /** The SHA-256 (hex) of the file's bytes as the engine read them. */
+  readonly sha256: string;
   /** Every file the rule includes, directly or not, as the engine resolved it: a pack's own, or core's library. */
   readonly includes: readonly RerailRuleFile[];
 }
@@ -68,6 +70,7 @@ export function rerailRuleOf(described: RerailDescription, source: string): Rera
     source,
     path: described.path,
     // The engine lists the rule file first, then every file it included.
+    sha256: described.files[0]!.sha256,
     includes: described.files.slice(1),
   };
 }

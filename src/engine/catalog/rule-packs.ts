@@ -42,15 +42,18 @@ export type RulePackCategory = (typeof RULE_PACK_CATEGORIES)[number];
 
 const nonEmpty = z.string().refine(value => value.trim().length > 0, "must be a non-empty string");
 
-/**
- * Why `path`, a file an example's repository holds beside the example's own file `own`, cannot be one: it must be a
- * relative path that stays inside that repository and is not the example's own. Undefined when it can.
- */
-function exampleFileProblem(path: string, own: string | undefined): string | undefined {
+/** Why `path`, a file of an example's repository, cannot be one: it must be relative and stay inside that repository. */
+function examplePathProblem(path: string): string | undefined {
   const normalized = posix.normalize(path.replaceAll("\\", "/"));
   if (posix.isAbsolute(normalized) || win32.isAbsolute(path)) return "must be relative to the example's repository";
-  if (normalized === ".." || normalized.startsWith("../")) return "must stay inside the example's repository";
-  return own !== undefined && normalized === posix.normalize(own) ? "is the example's own path" : undefined;
+  return normalized === ".." || normalized.startsWith("../") ? "must stay inside the example's repository" : undefined;
+}
+
+/** Why `path`, a file an example is read with beside its own file `own`, cannot be one (`examplePathProblem`, or it is `own`). */
+function exampleFileProblem(path: string, own: string | undefined): string | undefined {
+  const problem = examplePathProblem(path);
+  if (problem !== undefined || own === undefined) return problem;
+  return posix.normalize(path.replaceAll("\\", "/")) === posix.normalize(own.replaceAll("\\", "/")) ? "is the example's own path" : undefined;
 }
 
 const exampleSchema = z
@@ -67,6 +70,8 @@ const exampleSchema = z
   })
   .strict()
   .superRefine((example, context) => {
+    const own = example.path === undefined ? undefined : examplePathProblem(example.path);
+    if (own !== undefined) context.addIssue({ code: "custom", path: ["path"], message: own });
     for (const [at, file] of (example.with ?? []).entries()) {
       const problem = exampleFileProblem(file.path, example.path);
       if (problem !== undefined) context.addIssue({ code: "custom", path: ["with", at, "path"], message: problem });
