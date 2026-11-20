@@ -1185,6 +1185,9 @@ impl Task for WorkspaceStorageTask {
                 discovery_milliseconds: discovery_started.elapsed().as_secs_f64() * 1000.0,
                 publication_milliseconds: 0.0,
             };
+            // The revision is the workspace's from here (decision 0442): this task's reads under its root go to it,
+            // and the workspace's state keeps the pin once storage is attached.
+            let pinned = self.snapshot.as_ref().map(|snapshot| snapshot.pin(&self.shared));
             let deferred = self.snapshot.is_some() || self.analysis_owner.is_some();
             let owner = if let Some(owner) = self.analysis_owner.take() {
                 Some(owner)
@@ -1275,6 +1278,7 @@ impl Task for WorkspaceStorageTask {
             if self.snapshot.is_some() {
                 state.import_root = Some(PathBuf::from(&self.root));
                 state.import_generation += 1;
+                state.git_source = pinned;
             }
             if let Some(owner) = owner {
                 if deferred {

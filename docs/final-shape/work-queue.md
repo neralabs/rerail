@@ -6621,7 +6621,7 @@ Open:
   its HTML run (whose library, `html/embeds.rerail`, filters `child` and `node` by constants) uploads no more than a run
   over a file with no script.
 
-### Q352. A pinned Git revision is the process's: a read under its root, from any run, goes to it
+### Q352. A pinned Git revision is the process's: a read under its root, from any run, goes to it (done 2026-11-20)
 
 - **Seen** (2026-11-19, at the merge of rr-align's 0442 into the sync branch): `git_snapshot::Snapshot` (a scan's
   pinned commit or tree, `GitRevisionSource`) registers its view in a process static (`VIEWS`, counted in `ACTIVE`),
@@ -6632,6 +6632,15 @@ Open:
   `view` reads the shared object of the run under way; a read with no run sees no snapshot.
 - **Done when**: two workspaces, one with a revision pinned on a root, read the root's files each its own way in one
   process (a test), and both entries leave `global-state.txt`.
+- **Done** (2026-11-20): the pinned revisions are the shared object's (`snapshot::Views`, with a count of pins
+  each). A revision is pinned where it is taken (`Snapshot::pin`): the workspace that attaches its storage from it
+  (`enableRevisionStorage`, the pin kept in `WorkspaceState::git_source`), a scan, a policy's inspection or load
+  (`on_revisions` in lib.rs: the entry point's object, which its runs join), or the run it is made in (the CLI's
+  `--revision`, a test's). A host's `GitRevisionSource`, made off any run, is pinned nowhere until taken. `view`
+  reads the run's object, and none with no run.
+  `a_revision_pinned_in_one_shared_object_is_read_by_its_runs_alone` is the test; `VIEWS` and `ACTIVE` left
+  `global-state.txt`. On the way: the run's Git storage batch was moved into a check before the run's later guards
+  dropped, so its binding dropped out of order (`run_handed`), which failed four `git_revision_tests`.
 
 ### Q290. (Q265 on benchmarks-on-integration; done) `ane::tests::exact_random_shapes` failed on the M3: Core ML placed a matmul on the CPU
 

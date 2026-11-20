@@ -304,11 +304,9 @@ native/src/content_store/write_back.rs::TOLD	stays	a warning said once a process
 native/src/git_access/opener.rs::ASSUME_ANOTHER_OWNER	stays	test builds only (`test-hooks`): a test's switch, set in its own child process
 native/src/git_access/pool.rs::ROOTS	stays	the opens' threads by root: the process's own threads (a stuck one outlives its run)
 native/src/git_access/setup.rs::INSTALLED	stays	code registered at load (the Git setup installed once)
-native/src/git_snapshot.rs::ACTIVE	shared	not yet moved (Q352): the count of VIEWS
 native/src/git_snapshot.rs::CHECK_SOURCES	stays	code registered at load (a hook)
 native/src/git_snapshot.rs::NEXT	stays	an id counter: append-only
 native/src/git_snapshot.rs::READ_INVENTORY	stays	code registered at load (a hook)
-native/src/git_snapshot.rs::VIEWS	shared	not yet moved (Q352): the pinned revisions a read under their roots goes to, the workspace's by design
 native/src/git_snapshot_message_pattern.rs::SYNTAX	stays	computed once from constants
 native/src/git_workspace.rs::NEXT_FIXTURE	stays	an id counter: append-only
 native/src/git_workspace.rs::SOURCE_ALIAS_HASHES	stays	exists only in a test build (cfg test-hooks): a test's observation of the process, never in a product build

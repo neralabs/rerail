@@ -288,11 +288,24 @@ pub fn content_store_file_name() -> &'static str {
     content_store::STORE_FILE_NAME
 }
 
+/// `f` on the entry point's shared object (the run under way's, else one of its own: `default_shared`), with the Git
+/// revisions it was handed pinned there (decision 0442): the runs `f` starts read the paths under their roots from them,
+/// and no other entry point's runs do.
+#[cfg(not(feature = "headless"))]
+fn on_revisions<'s, T>(snapshots: impl IntoIterator<Item = &'s git_workspace::snapshot::Snapshot>, f: impl FnOnce() -> T) -> T {
+    use code_rule_dsl::logic::profile;
+    let shared = profile::shared_object().unwrap_or_else(profile::default_shared);
+    let _in = profile::within(std::sync::Arc::clone(&shared));
+    let _pinned: Vec<_> = snapshots.into_iter().map(|snapshot| snapshot.pin(&shared)).collect();
+    f()
+}
+
 #[cfg(not(feature = "headless"))]
 #[napi]
 pub fn inspect_rr_policy(path: String, source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
-    code_rule_dsl::logic::plan::corpus::combined::inspect_separately(||
-        LoadedRrPolicy::read(&path, source.map(|source| source.pinned_snapshot()), None)?.inspection())
+    let snapshot = source.map(|source| source.pinned_snapshot());
+    on_revisions(snapshot.as_deref(), || code_rule_dsl::logic::plan::corpus::combined::inspect_separately(||
+        LoadedRrPolicy::read(&path, snapshot.clone(), None)?.inspection()))
 }
 
 #[cfg(not(feature = "headless"))]
@@ -365,10 +378,11 @@ impl LoadedRrPolicies {
             self.programs.lock().unwrap_or_else(|err| err.into_inner()).entry(key.to_owned()).or_default().insert(origin, policy);
             Ok(inspection)
         });
-        match &self.store {
+        let snapshot = source.map(|source| source.pinned_snapshot());
+        on_revisions(snapshot.as_deref(), || match &self.store {
             Some(store) => code_rule_dsl::logic::plan::corpus::with_tape_cache_path(store, None, read),
             None => read(),
-        }
+        })
     }
 }
 
@@ -445,6 +459,23 @@ impl napi::Task for ScanRrPolicies {
     type JsValue = String;
 
     fn compute(&mut self) -> Result<String> {
+        // The scan's revisions, its loaded policies' among them, are its own (decision 0442).
+        let mut snapshots: Vec<_> = self.snapshot.iter().chain(&self.policy_snapshot).cloned().collect();
+        snapshots.extend(self.policies.iter().flatten().flatten().filter_map(|policy| match &policy.location {
+            PolicyLocation::Git { snapshot, .. } => Some(std::sync::Arc::clone(snapshot)),
+            PolicyLocation::Worktree { .. } => None,
+        }));
+        on_revisions(snapshots.iter().map(|snapshot| &**snapshot), || self.scan())
+    }
+
+    fn resolve(&mut self, _env: napi::Env, output: String) -> Result<String> {
+        Ok(output)
+    }
+}
+
+#[cfg(not(feature = "headless"))]
+impl ScanRrPolicies {
+    fn scan(&mut self) -> Result<String> {
         use content_store::analysis_scope::{self, AnalysisRun, RunSource};
         use code_rule_dsl::logic::plan::corpus;
         let path = Path::new(&self.store);
@@ -543,10 +574,6 @@ impl napi::Task for ScanRrPolicies {
             for report in &mut reports { report["cacheWarnings"] = serde_json::json!([warning]); }
         }
         serde_json::to_string(&reports).map_err(|e| Error::from_reason(e.to_string()))
-    }
-
-    fn resolve(&mut self, _env: napi::Env, output: String) -> Result<String> {
-        Ok(output)
     }
 }
 

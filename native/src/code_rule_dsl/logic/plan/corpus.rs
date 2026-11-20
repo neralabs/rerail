@@ -3229,7 +3229,8 @@ fn run_handed(
             "phase0":cpu(lifecycle_observed,lifecycle_seeded),"execution":cpu(lifecycle_seeded,lifecycle_executed),
             "observerFlush":cpu(lifecycle_executed,lifecycle_written)}).to_string()
     });
-    if report.is_ok() && let Some(batch) = git_batch && !batch.is_current() {
+    // Read in place: the batch's binding (`StorageBatch`) drops with the run's other guards, in their reverse order.
+    if report.is_ok() && let Some(batch) = &git_batch && !batch.is_current() {
         return Err(Error::Plan("Git pack storage changed during rule evaluation".into()));
     }
     // The run is over: upkeep may go on. What the outermost run left due as utility work (the frames its keep
