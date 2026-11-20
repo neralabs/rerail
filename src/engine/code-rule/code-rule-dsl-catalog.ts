@@ -146,6 +146,11 @@ export interface RerailRuleEntry {
   readonly scope: { readonly include: readonly string[]; readonly exclude: readonly string[] };
   /** The language its `.language` names, or null. */
   readonly language: string | null;
+  /**
+   * The rule file, then every file it includes, each with the SHA-256 of the bytes the catalog read: a run checks
+   * them first, since the runner reads the files from disk.
+   */
+  readonly files: readonly { readonly path: string; readonly sha256: string }[];
   readonly placement: CodeRulePlacement;
   readonly provenance: RepositoryAuditRuleProvenance;
 }
@@ -356,6 +361,7 @@ function rerailBuilt(
   return {
     rerail: {
       id, path: document.path, scope: document.scope, language: document.language, placement,
+      files: [{ path: document.path, sha256: document.sha256 }, ...document.includes],
       provenance: { ruleId: id, revision: rule.revision, payloadHash: rule.payloadHash, source: { ...rule.source }, repositoryKey, checkoutPath, placement: decisions },
     },
     versioned: { id, kind: "rerail", sourceDigest: rule.payloadHash, placement, source: rule.source },

@@ -25,6 +25,7 @@ function rule(id: string, placement: CodeRulePlacement): RerailRuleEntry {
     placement,
     scope: { include: ["**/*.py"], exclude: [] },
     language: "python",
+    files: [],
     provenance: {
       ruleId: id, revision: 1, payloadHash: `hash-${id}`, source: { kind: "pack", id: "rr-sample", packId: "rr-sample" },
       repositoryKey: "repository", checkoutPath: root, placement: [],
