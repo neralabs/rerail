@@ -202,8 +202,14 @@ fn split_at_pos(mut lo: usize, mut hi: usize, less: impl Fn(usize) -> bool) -> u
 /// (`cmp_vals`, tagged when they are every column). Its writer records them: a wave's new rows are written sorted by
 /// the first order (`Fresh::settle`). A relation's rows are only appended (deleted ones stay in place, marked), so a
 /// range stays true. Ranges in an order on columns `c` are in the order on any prefix of `c` too, untagged.
+///
+/// A frozen relation's ranges are in its block (`Relation::known`, decision 0450 step 5c): `base` reads them there,
+/// holding its part. `own` are the ranges noted since (a relation's waves while it is derived), after `base`'s.
 #[derive(Clone, Default)]
-pub(super) struct Sorted(Vec<(u32, u32, Arc<[usize]>)>);
+pub(super) struct Sorted {
+    base: Option<crate::code_rule_dsl::facts::rows::Part>,
+    own: Vec<(u32, u32, Arc<[usize]>)>,
+}
 
 /// Whether the sorts past a run's own use what is known sorted (decision 0187: a wave's batch, a scan for the next
 /// step's probes, an order sorted again). `RERAIL_KNOWN_SORTED=runs` (a measurement aid) keeps it to the runs
@@ -239,7 +245,7 @@ impl Sorted {
             return;
         }
         debug_assert!((lo + 1..hi).all(|id| cmp_ids(data, k, cols, tagged(cols, k), id - 1, id).is_le()), "rows {lo}..{hi} said sorted on {cols:?} are not");
-        if let Some((_, end, c)) = self.0.last_mut()
+        if let Some((_, end, c)) = self.own.last_mut()
             && *end == lo
             && **c == *cols
             && cmp_ids(data, k, cols, tagged(cols, k), lo - 1, lo).is_le()
@@ -247,7 +253,61 @@ impl Sorted {
             *end = hi;
             return;
         }
-        self.0.push((lo, hi, cols.into()));
+        self.own.push((lo, hi, cols.into()));
+    }
+
+    /// Every range, `base`'s then `own`'s, each given to `f` (lo, hi, its columns) until it says to stop.
+    fn each(&self, f: &mut dyn FnMut(u32, u32, &[usize])) {
+        if let Some(p) = &self.base {
+            for kn in p.rel().known() {
+                let mut c = [0usize; rerail_blocks::relation::MAX_KEY];
+                let n = kn.ncols as usize;
+                for (d, &s) in c.iter_mut().zip(&kn.cols[..n]) {
+                    *d = s as usize;
+                }
+                f(kn.lo, kn.hi, &c[..n]);
+            }
+        }
+        for (a, b, c) in &self.own {
+            f(*a, *b, c);
+        }
+    }
+
+    /// The ranges written in `part`'s relation's block (decision 0450 step 5c), and read there from now on: true when
+    /// they are (they were already, or there are none), false when its block keeps others or has no room (they then
+    /// stay as they were).
+    pub(super) fn into_block(&mut self, part: &crate::code_rule_dsl::facts::rows::Part) -> bool {
+        if self.own.is_empty() && self.base.as_ref().is_some_and(|b| std::ptr::eq(b.rel(), part.rel())) {
+            return true;
+        }
+        if self.own.is_empty() && self.base.is_none() {
+            return true;
+        }
+        let mut all: Vec<(u32, u32, Vec<u16>)> = Vec::new();
+        let mut wide = false;
+        self.each(&mut |a, b, c| {
+            wide |= c.len() > rerail_blocks::relation::MAX_KEY;
+            all.push((a, b, c.iter().map(|&x| x as u16).collect()));
+        });
+        if wide {
+            return false;
+        }
+        let ranges: Vec<(u32, u32, &[u16])> = all.iter().map(|(a, b, c)| (*a, *b, &c[..])).collect();
+        let written = {
+            let _g = part.facts().ix.lock().unwrap_or_else(|e| e.into_inner());
+            // SAFETY: under its block's index lock, at the relation's freeze: nothing else writes its descriptor.
+            unsafe { part.rel().try_set_known(&part.facts().block, &ranges) }
+        };
+        if written {
+            self.base = Some(part.clone());
+            self.own = Vec::new();
+        }
+        written
+    }
+
+    /// Whether every range is read in a block (none noted since).
+    pub(super) fn in_block(&self) -> bool {
+        self.own.is_empty()
     }
     /// The parts of rows `lo..hi` known to be in the order on `cols`, in row order.
     pub(super) fn within(&self, cols: &[usize], k: usize, lo: u32, hi: u32) -> Vec<(u32, u32)> {
@@ -256,7 +316,9 @@ impl Sorted {
         if *OFF.get_or_init(|| std::env::var("RERAIL_KNOWN_SORTED").is_ok_and(|v| v == "off")) {
             return Vec::new();
         }
-        self.0.iter().filter(|(a, b, c)| *a < hi && *b > lo && implies(c, cols, k)).map(|&(a, b, _)| (a.max(lo), b.min(hi))).collect()
+        let mut out = Vec::new();
+        self.each(&mut |a, b, c| if a < hi && b > lo && implies(c, cols, k) { out.push((a.max(lo), b.min(hi))) });
+        out
     }
     /// The parts of rows `lo..hi` known to be sorted by a key (`implies_key`: column `tag`'s hash tag first, when
     /// given, then the values of `cols`), in row order.
@@ -265,11 +327,15 @@ impl Sorted {
         if *OFF.get_or_init(|| std::env::var("RERAIL_KNOWN_SORTED").is_ok_and(|v| v == "off")) {
             return Vec::new();
         }
-        self.0.iter().filter(|(a, b, c)| *a < hi && *b > lo && implies_key(c, k, tag, cols)).map(|&(a, b, _)| (a.max(lo), b.min(hi))).collect()
+        let mut out = Vec::new();
+        self.each(&mut |a, b, c| if a < hi && b > lo && implies_key(c, k, tag, cols) { out.push((a.max(lo), b.min(hi))) });
+        out
     }
     /// Rows known sorted, over every range.
     pub(super) fn rows(&self) -> u64 {
-        self.0.iter().map(|&(a, b, _)| u64::from(b - a)).sum()
+        let mut n = 0;
+        self.each(&mut |a, b, _| n += u64::from(b - a));
+        n
     }
 }
 

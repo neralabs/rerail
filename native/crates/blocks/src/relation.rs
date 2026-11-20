@@ -109,6 +109,21 @@ structure! {
         /// An open relation's set test (`insert_unique`): slots holding row id + 1.
         pub pending: Span<u32>,
         pub pend_used: AtomicU64,
+        /// Its row ranges known to be in an order already (decision 0180), written once when it is frozen into an
+        /// input (decision 0450 step 5c), in row order; and the bytes of their chunk, given back at its release.
+        pub known: Span<Known>,
+        pub known_kept: AtomicU64,
+    }
+}
+
+structure! {
+    /// Rows `lo..hi` of a relation are in the order on `cols` (`ncols` of them; decision 0180): a writer wrote them
+    /// sorted, so an order built later takes them in place.
+    pub struct Known {
+        pub lo: u32,
+        pub hi: u32,
+        pub ncols: u32,
+        pub cols: [u16; MAX_KEY],
     }
 }
 
@@ -258,6 +273,10 @@ impl Relation {
     /// It lies in `block`, and no one reads or writes it after (its last holder's).
     pub unsafe fn release(&self, block: &Block) -> usize {
         let given = unsafe { self.rows.release(block) + self.killed.release(block) };
+        let kept = self.known_kept.load(Acquire) as usize;
+        if kept > 0 {
+            block.free_chunk_fit(block.offset_of(self.known.as_ptr()), kept);
+        }
         // Its added indexes, and their directory: chunks of the block's.
         if self.flags.load(Acquire) & ADDED != 0 {
             // SAFETY: the caller's: this is the relation's last use.
@@ -332,6 +351,42 @@ impl Relation {
         let found = (0..n).find(|&i| ix[i].ordered == 0 && built(i) == cols.len() && ix[i].key[..cols.len()] == *cols && ix[i].rows.len() == rows as usize);
         std::sync::atomic::fence(Acquire);
         found
+    }
+
+    /// Its row ranges known to be in an order (`Known`): none until `try_set_known`.
+    pub fn known(&self) -> &[Known] {
+        if self.known_kept.load(Acquire) == 0 {
+            return &[];
+        }
+        self.known.as_slice()
+    }
+
+    /// Writes its known ranges (decision 0450 step 5c), once: `(lo, hi, cols)` each, in row order. False when they
+    /// were written already, a key is past `MAX_KEY`, or `block` has no room.
+    ///
+    /// # Safety
+    /// It lies in `block`, and nothing else writes its descriptor meanwhile (its writer's, at freeze).
+    pub unsafe fn try_set_known(&self, block: &Block, ranges: &[(u32, u32, &[u16])]) -> bool {
+        if ranges.is_empty() {
+            return true;
+        }
+        if self.known_kept.load(Acquire) != 0 || ranges.iter().any(|(_, _, c)| c.len() > MAX_KEY) {
+            return false;
+        }
+        let Some((at, kept)) = block.try_alloc_chunk_fit(ranges.len() * size_of::<Known>(), 8) else { return false };
+        let p = block.ptr::<Known>(at);
+        // SAFETY: `p` holds `ranges.len()` entries, this relation's alone; the caller's for its descriptor.
+        unsafe {
+            for (i, &(lo, hi, cols)) in ranges.iter().enumerate() {
+                let mut c = [0u16; MAX_KEY];
+                c[..cols.len()].copy_from_slice(cols);
+                p.add(i).write(Known { lo, hi, ncols: cols.len() as u32, cols: c });
+            }
+            let me = std::ptr::from_ref(self).cast_mut();
+            Span::set(&raw mut (*me).known, p, ranges.len());
+        }
+        self.known_kept.store(kept as u64, Release);
+        true
     }
 
     /// The sorted order on `cols` over `rows` rows (decision 0450 step 5b), built: its number.

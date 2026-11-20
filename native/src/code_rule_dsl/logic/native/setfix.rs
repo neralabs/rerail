@@ -4051,6 +4051,10 @@ impl Csr {
             .map_or(&[], |&(_, start, len)| &self.ids[start as usize..][..len as usize])
     }
 }
+/// Frozen relations whose known-sorted ranges are read in their block, and those whose are not (a key past the
+/// block's `MAX_KEY`, or no room).
+pub static SORTED_KEPT: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+
 /// A frozen relation's orders (`in_block_orders`): put in its block's directory; read in another relation's directory
 /// (a maintained relation's, `Rel::based`); kept as they were, their arrays in another block or the directory full.
 pub static ORDERS_KEPT: [std::sync::atomic::AtomicU64; 3] = [const { std::sync::atomic::AtomicU64::new(0) }; 3];
@@ -4058,7 +4062,8 @@ pub static ORDERS_KEPT: [std::sync::atomic::AtomicU64; 3] = [const { std::sync::
 /// A frozen relation's orders `idx` (rows `rows`, `n` of `k` values) in its block (decision 0450 step 5b, the user's
 /// choice): each that holds every row, merged into one run, its arrays handed to the directory of the relation that
 /// holds its last rows (`Relation::try_add_order`), where any reader finds it by its key, the device too. What is
-/// returned are handles to them, which read them there (`Run::in_block`) and keep that relation. An order read in
+/// returned are handles to them, which read them there (`Run::in_block`) and keep that relation. A key is at most
+/// the block's `MAX_KEY` (8) columns: a wider order stays as it was. An order read in
 /// an older relation's directory already (a maintained relation's, `Rel::based`) stays read there. One whose arrays
 /// lie in another block, over fewer rows, or whose directory is full, stays as it was, in its blocks.
 fn in_block_orders(idx: Vec<Index>, rows: &Rows, k: usize, n: usize) -> Vec<Index> {
@@ -4066,7 +4071,7 @@ fn in_block_orders(idx: Vec<Index>, rows: &Rows, k: usize, n: usize) -> Vec<Inde
     let part = ib.part.as_ref().expect("a part's relation");
     let mut out = Vec::with_capacity(idx.len());
     for ix in idx {
-        if ix.rows() != n || ix.cols.is_empty() || ix.cols.len() > MAX_KEY {
+        if ix.rows() != n || ix.cols.is_empty() || ix.cols.len() > rerail_blocks::relation::MAX_KEY {
             ORDERS_KEPT[2].fetch_add(1, AtomicOrdering::Relaxed);
             out.push(ix);
             continue;
@@ -5205,7 +5210,12 @@ impl InRel {
         rel.count_dead();
         let rows = rel.data.freeze(rel.n);
         let chains = in_block_orders(rel.idx, &rows, rel.k, rel.n);
-        InRel { vers: Default::default(), viewed: false, keyed: None, k: rel.k, n: rel.n, rows, view: None, base: false, types: rel.types, stored: rel.stored, idx: Mutex::new(HashMap::default()), chains, sorted: rel.sorted,
+        // Its known-sorted ranges in its block too (decision 0450 step 5c).
+        let mut sorted = rel.sorted;
+        if let Some(p) = rows.parts().last() {
+            SORTED_KEPT[usize::from(!sorted.into_block(p))].fetch_add(1, AtomicOrdering::Relaxed);
+        }
+        InRel { vers: Default::default(), viewed: false, keyed: None, k: rel.k, n: rel.n, rows, view: None, base: false, types: rel.types, stored: rel.stored, idx: Mutex::new(HashMap::default()), chains, sorted,
                 sketches: rel.sketches, serves: rel.serves, dead: rel.dead, ndead: rel.ndead, summaries: rel.summaries, measured: Default::default(), counted: Default::default(), tables: Default::default(), name: std::sync::OnceLock::from(rel.table), from: rel.from, uid: Default::default(), level: rel.level, stats: rel.stats }
     }
     /// What `delta_since_mark` needs of this relation later, without holding it: its address, rows and dead rows.

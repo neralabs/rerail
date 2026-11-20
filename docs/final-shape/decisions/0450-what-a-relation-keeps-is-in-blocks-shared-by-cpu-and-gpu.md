@@ -441,3 +441,18 @@ sort again).
 - hogql cold, profiling, format 15, three pairs against step 7's build each:
   - CPU, load 32-36: 83.1-84.0 B against 83.0-83.5 B. Even.
   - Metal, the final build, seven runs at load 19-24: 75.5-79.2 B, against 76.2-77.2 B for step 7 at load 24-27.
+
+## Built (2026-11-19, step 5c: the known-sorted ranges in the block)
+
+- A relation's row ranges known to be in an order (decision 0180: `runs::Sorted`) are written once at its freeze in
+  its block's relation descriptor (`Relation::known`, a span of `Known { lo, hi, ncols, cols }`, given back at its
+  release; `try_set_known`). `Sorted` now holds the part whose block keeps its ranges (`base`) and the ranges noted
+  since (`own`, while a relation is derived). A frozen input's `own` is empty: its ranges are read in the block.
+  A maintained relation (`Rel::based`) starts from the old relation's part.
+- Not written (kept as they were): a key past the block's `MAX_KEY` (8), or a block with no room. The profile counts
+  both ("frozen orders"). On hogql all were written: 257 relations in one phase and 18 in another, 0 not.
+- Found on the way: `in_block_orders` compared a key with setfix's `MAX_KEY` (64), not the block's (8). An order of
+  9 or more columns would have failed `try_add_order`'s check. It now stays as it was.
+- Test: `a_frozen_relations_known_sorted_ranges_are_in_its_block`.
+- hogql cold, profiling, format 15, load 24-28: CPU 83.5-83.7 B against 5b's 83.3-83.8 B; Metal 74.7-76.3 B, 1,629
+  findings in each run.

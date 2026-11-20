@@ -123,3 +123,24 @@ fn a_based_relation_reads_its_old_orders_in_the_block() {
     let based = super::Rel::based("edge", &[b'i', b'i'], &old, None).expect("based on the old relation");
     assert_eq!(based.idx.iter().map(|o| o.first_ids()).collect::<Vec<_>>(), at, "the same ids, where they lie");
 }
+
+/// Decision 0450 step 5c: a frozen relation's row ranges known to be in an order are in its block's descriptor,
+/// read there (`Relation::known`); it keeps no list of them.
+#[test]
+fn a_frozen_relations_known_sorted_ranges_are_in_its_block() {
+    let n = 4000;
+    let mut rel = super::Rel::new("edge", &[b'i', b'i']);
+    let cols = rel.idx[0].cols.clone();
+    for id in 0..n as i64 {
+        rel.push(&[0, id]);
+    }
+    // Its rows (one value of column 0, then ascending) were written in the order on its first order's columns (a wave's, `Fresh::settle`).
+    let data = rel.data.shared(n);
+    rel.sorted.note(&data, 2, &cols, 0, (n / 2) as u32);
+    let rel = InRel::moved(rel);
+    assert!(rel.sorted.in_block(), "no ranges of its own");
+    let ib = directory(&rel);
+    let known = ib.relation().known();
+    assert_eq!(known.iter().map(|kn| (kn.lo, kn.hi)).collect::<Vec<_>>(), vec![(0, (n / 2) as u32)]);
+    assert_eq!(rel.sorted.within(&cols, 2, 100, 200), vec![(100, 200)], "read from the block");
+}

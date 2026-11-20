@@ -6857,7 +6857,11 @@ fn run_observed(
             crate::code_rule_dsl::logic::profile::decision("frozen orders", || {
                 let k = &crate::code_rule_dsl::logic::native::setfix::ORDERS_KEPT;
                 let at = |i: usize| k[i].load(std::sync::atomic::Ordering::Relaxed);
-                format!("{} in their relation's block directory, {} read in an older relation's, {} kept as they were (decision 0450 step 5b)", at(0), at(1), at(2))
+                let sk = &crate::code_rule_dsl::logic::native::setfix::SORTED_KEPT;
+                format!(
+                    "{} in their relation's block directory, {} read in an older relation's, {} kept as they were (decision 0450 step 5b); known-sorted ranges of {} relations in their block, {} not (5c)",
+                    at(0), at(1), at(2), sk[0].load(std::sync::atomic::Ordering::Relaxed), sk[1].load(std::sync::atomic::Ordering::Relaxed)
+                )
             });
             crate::code_rule_dsl::logic::profile::decision("chunk size", || {
                 let by = match d.by {
