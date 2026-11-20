@@ -1443,6 +1443,10 @@ describe("CodeRuleBridge", () => {
     const gone = (syscall: string, path: string) => async (): Promise<void> => {
       throw Object.assign(new Error(`ENOENT: no such file or directory, ${syscall} '${path}'`), { code: "ENOENT", syscall, path });
     };
+    /** An error as Node gives it for a path that is no folder, or one of whose folders is a file. */
+    const notAFolder = (syscall: string, path: string) => async (): Promise<void> => {
+      throw Object.assign(new Error(`ENOTDIR: not a directory, ${syscall} '${path}'`), { code: "ENOTDIR", syscall, path });
+    };
 
     it("tells the gap callback each place once, keyed by its path and its error's code, and says them in path order", async () => {
       const root = await workspace();
@@ -1547,6 +1551,26 @@ describe("CodeRuleBridge", () => {
       // The folder the session works in is no listed path: one Rerail cannot find stays a gap, as before.
       discovery.lstats.set(root, [gone("lstat", root)]);
       await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(`.: ENOENT: no such file or directory, lstat '${root}'`));
+    });
+
+    it("leaves out a path its folder's listing named that a file replaced, or whose folder a file replaced, when the walk examines it", async () => {
+      const root = await workspace();
+      const onDiscoveryGaps = vi.fn();
+      const bridge = gapBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
+      await bridge.openWorkspace("session-1");
+      await bridge.checkpoint("turn");
+      // Listed, then ENOTDIR: a folder that is a file by the walk's opendir, a file whose folder is a file by its lstat.
+      const listed = join(root, "src", "listed");
+      const file = join(root, "src", "temp.py");
+      await mkdir(listed);
+      await writeFile(file, "t = 1\n");
+      discovery.directories.set(listed, [notAFolder("opendir", listed)]);
+      discovery.lstats.set(file, [notAFolder("lstat", file)]);
+
+      await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({ failures: [] }));
+      expect(onDiscoveryGaps).not.toHaveBeenCalled();
+      expect(discovery.directories.get(listed)).toEqual([]);
+      expect(discovery.lstats.get(file)).toEqual([]);
     });
 
     it("looks again at a path that refused it with EPERM, as Windows refuses one being removed: gone then is absent, refused again is a gap", async () => {

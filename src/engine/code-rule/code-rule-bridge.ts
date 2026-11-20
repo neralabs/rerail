@@ -1314,13 +1314,14 @@ function hasErrorCode(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
 }
 /**
- * A path removed while the walk examined it: ENOENT from its lstat, opendir, open or read, or the real path of one being
- * removed, which on Windows can fail with EBADF.
+ * A path removed while the walk examined it: ENOENT from its lstat, opendir, open or read, ENOTDIR from those where a
+ * folder on its path, or the folder itself, was replaced by a file, or the real path of one being removed, which on
+ * Windows can fail with EBADF.
  */
 function vanished(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const { code, syscall } = error as NodeJS.ErrnoException;
-  return code === "ENOENT" || (code === "EBADF" && syscall === "realpath");
+  return code === "ENOENT" || code === "ENOTDIR" || (code === "EBADF" && syscall === "realpath");
 }
 /**
  * A path a folder's listing named that was gone when the walk examined it: nothing is left there to check, so it is no
