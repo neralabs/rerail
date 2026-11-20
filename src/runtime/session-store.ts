@@ -3,10 +3,10 @@ import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { deserialize, serialize } from "node:v8";
-import { and, asc, count, desc, eq, gt, gte, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, gte, inArray, isNull, lt, ne, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import type { AdapterSession } from "../engine/adapter-contract.js";
-import type { DiscoveryPendingBoundary, IgnoredEdit } from "../engine/code-rule/code-rule-bridge.js";
+import type { DiscoveryGap, DiscoveryPendingBoundary, IgnoredEdit } from "../engine/code-rule/code-rule-bridge.js";
 import type { IgnoreRulesChange } from "../engine/code-rule/ignore-rule-files.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { isWorktreePack, WORKTREE_PACK_ID, worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
@@ -59,7 +59,10 @@ export interface SessionEventRecord {
   eventId: string;
   kind: string;
   observedAt: number;
-  /** The stable JSON form of the payload; `{ "encoding": "node:v8" }` when it was not JSON-representable. */
+  /**
+   * The stable JSON form of the payload; `{ "encoding": "node:v8" }` when it was not JSON-representable, and null where
+   * the stored text is no JSON.
+   */
   payload: unknown;
 }
 
@@ -80,9 +83,24 @@ export interface SessionGaps {
   ignoredEdits: number;
   /** Changes seen during the session that make Git's ignore rules ignore more (`ignore-rules-changed`). */
   ignoreRuleChanges: number;
+  /** The places the session's walks could not check that its record holds, each once (`source-discovery-gap`). */
+  discoveryGaps: number;
+  /** The walks met more such places than the record takes (`DiscoveryGap.more`): `discoveryGaps` holds the first of them. */
+  discoveryGapsMore: boolean;
 }
 
-const NO_GAPS: SessionGaps = { droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0 };
+/** A `source-discovery-gap` event's payload, as `recordDiscoveryGap` writes it. */
+const discoveryGapPayloadSchema = z.object({ boundary: z.string(), path: z.string().optional(), reason: z.string() });
+
+/** A place a session's walks could not check (`source-discovery-gap`), and when it was first met. */
+export type DiscoveryGapRecord = z.infer<typeof discoveryGapPayloadSchema> & { readonly observedAt: number };
+
+/** The id of the one record that says the walks met more places than the record takes (`DiscoveryGap.more`): no place. */
+const MORE_DISCOVERY_GAPS_EVENT = "source-discovery-gap:more";
+
+const NO_GAPS: SessionGaps = {
+  droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0, discoveryGaps: 0, discoveryGapsMore: false,
+};
 
 /** A coding agent's note on a steer it declined (`rerail feedback`), with the audit whose steer it was. */
 export interface DeclineNote {
@@ -312,6 +330,43 @@ function listWorkLinks(database: RerailDatabase, sessionId: string): WorkLinkRec
   return database.select().from(workLinks).where(eq(workLinks.sessionId, sessionId)).orderBy(asc(workLinks.linkId)).all();
 }
 
+/** The event that records `gap` in the session `sessionId` (`recordDiscoveryGap`): its id is the gap's key's digest. */
+function discoveryGapEvent(sessionId: string, gap: DiscoveryGap): SessionEvent {
+  return {
+    sessionId,
+    eventId: gap.more === true ? MORE_DISCOVERY_GAPS_EVENT : `source-discovery-gap:${createHash("sha256").update(gap.key).digest("hex")}`,
+    kind: "source-discovery-gap",
+    payload: { boundary: gap.boundary, ...(gap.path === undefined ? {} : { path: gap.path }), reason: gap.reason },
+  };
+}
+
+/**
+ * The first `limit` places the session's walks could not check, in the order the session met them, and with `more` the
+ * record that says they met more (`MORE_DISCOVERY_GAPS_EVENT`) where it falls. Indexed by session and kind.
+ */
+function listDiscoveryGaps(database: RerailDatabase, sessionId: string, limit: number, more: boolean): DiscoveryGapRecord[] {
+  return database
+    .select({ observedAt: events.observedAt, payloadJson: events.payloadJson })
+    .from(events)
+    .where(and(eq(events.sessionId, sessionId), eq(events.kind, "source-discovery-gap"), more ? undefined : ne(events.eventId, MORE_DISCOVERY_GAPS_EVENT)))
+    .orderBy(asc(events.sequence))
+    .limit(limit)
+    .all()
+    .flatMap(({ observedAt, payloadJson }) => {
+      const payload = discoveryGapPayloadSchema.safeParse(parsedRow(payloadJson));
+      return payload.success ? [{ ...payload.data, observedAt }] : [];
+    });
+}
+
+/** A row's payload, or null when its text is no JSON: a read takes that row as one with no payload and fails on none. */
+function parsedRow(payloadJson: string): unknown {
+  try {
+    return JSON.parse(payloadJson) as unknown;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The HUD's Merge Assist segment for the session, absent when it has none: from the checkout it started in, as its
  * coverage names it (`owners`), else the deepest recorded checkout holding its working folder read through symlinks,
@@ -432,6 +487,30 @@ export class SqliteSessionStore {
     }, session, attribution);
   }
 
+  /**
+   * Marks a place a boundary's walks could not check, so shell writes there went unchecked: its path and why. A place is
+   * recorded once per session and key (its path and its reason's kind, `DiscoveryGap.key`), at the first boundary that
+   * meets it: its id is the key's digest, so a place every later turn end meets again, in whatever order, a daemon
+   * restart and a reopened session add no copy of it. The record that says the walks met more places than the record
+   * takes (`DiscoveryGap.more`) has an id of its own (`MORE_DISCOVERY_GAPS_EVENT`), which `gaps` counts apart.
+   */
+  recordDiscoveryGap(session: AdapterSession, gap: DiscoveryGap, attribution?: SessionAttribution): void {
+    this.append(discoveryGapEvent(session.sessionId, gap), session, attribution);
+  }
+
+  /**
+   * `recordDiscoveryGap` for each of `gaps`, in one record write, so one transaction: a write each would wait for the
+   * disk once per place, 4 ms a place on Linux, and a turn end that first meets 1,000 places would answer 4 s late. All
+   * of them or none. A write that finds the session's row gone puts it back inside the transaction, and `onRowPutBack`
+   * is told once it has committed (`#eventWrite`): its claim write goes through another connection, which would wait out
+   * the busy timeout (5 s) behind this one's write lock and fail, holding the turn end that long.
+   */
+  recordDiscoveryGaps(session: AdapterSession, gaps: readonly DiscoveryGap[], attribution?: SessionAttribution): void {
+    const rows = gaps.map(gap => eventRow(discoveryGapEvent(session.sessionId, gap), attribution?.observedAt));
+    const bytes = rows.reduce((total, row) => total + rowBytes(row), 0);
+    this.#records.write(this.#eventWrite(rows, this.#sessionRestore(session, attribution)), bytes);
+  }
+
   /** Marks a code-rule boundary answered before the session's evaluator had opened: what it would have checked reaches a later boundary. */
   recordCodeRulesPending(session: AdapterSession, boundary: CodeRulesPendingBoundary, attribution?: SessionAttribution): void {
     this.append({
@@ -470,7 +549,7 @@ export class SqliteSessionStore {
     const unchanged = (database: RerailDatabase): boolean => latestCoverage(database, session.sessionId) === payloadJson;
     const row = eventRow({ sessionId: session.sessionId, kind: "rule-coverage", payload: coverage });
     const restore = this.#sessionRestore(session);
-    const write = this.#eventWrite(row, restore);
+    const write = this.#eventWrite([row], restore);
     this.#records.writeUnless(() => unchanged(this.#database), database => {
       if (!unchanged(database)) write(database);
     }, rowBytes(row));
@@ -479,19 +558,23 @@ export class SqliteSessionStore {
   append(event: SessionEvent, session?: AdapterSession, attribution?: SessionAttribution): string {
     const row = eventRow(event, attribution?.observedAt);
     const restore = session === undefined ? undefined : this.#sessionRestore(session, attribution);
-    this.#records.write(this.#eventWrite(row, restore), rowBytes(row));
+    this.#records.write(this.#eventWrite([row], restore), rowBytes(row));
     return row.eventId;
   }
 
   /**
-   * The record write of `row` (`insertEvent`). When it puts the session's row back, the store's owner is told
-   * (`onRowPutBack`) once the write's transaction has ended, in a microtask: the owner writes on its own connection,
-   * which would wait for the lock this write holds. A write kept until the lock is given back tells it then.
+   * The record write of `rows` (`insertEvent`), one transaction for all of them. When one puts the session's row back,
+   * the store's owner is told (`onRowPutBack`) once, after the write's transaction has ended, in a microtask: the owner
+   * writes on its own connection, which would wait for the lock this write holds. A write kept until the lock is given
+   * back tells it then.
    */
-  #eventWrite(row: EventRow, restore: typeof sessions.$inferInsert | undefined): RecordWrite {
+  #eventWrite(rows: readonly EventRow[], restore: typeof sessions.$inferInsert | undefined): RecordWrite {
     return database => {
+      let putBack: string | undefined;
+      for (const row of rows) if (insertEvent(database, row, restore)) putBack = row.sessionId;
       const told = this.#onRowPutBack;
-      if (insertEvent(database, row, restore) && told !== undefined) queueMicrotask(() => told(row.sessionId));
+      const sessionId = putBack;
+      if (sessionId !== undefined && told !== undefined) queueMicrotask(() => told(sessionId));
     };
   }
 
@@ -543,6 +626,14 @@ export class SqliteSessionStore {
   #recorded(): RerailDatabase {
     flushRecordWrites(this.path);
     return this.#database;
+  }
+
+  /**
+   * The first `limit` places the record holds that the session's walks could not check (`recordDiscoveryGap`), in the order
+   * met, with the record that says they met more where it falls: the bridge reads it as its bound.
+   */
+  discoveryGaps(sessionId: string, limit: number): readonly DiscoveryGapRecord[] {
+    return listDiscoveryGaps(this.#recorded(), sessionId, limit, true);
   }
 
   close(): void {
@@ -716,24 +807,33 @@ export class SqliteSessionReader {
   /**
    * What the session's whole transcript says it missed, however much of it a reader has loaded: events its host
    * never delivered (`events-dropped` counts), boundaries that answered before the shell-write check finished or
-   * before code rules were running, tool edits of files Git ignores, and changes to Git's ignore rules. Indexed by
-   * session and kind.
+   * before code rules were running, tool edits of files Git ignores, changes to Git's ignore rules, and what the
+   * shell-write check could not check, the record that says it met more of those than the record takes counted apart
+   * (`MORE_DISCOVERY_GAPS_EVENT`). Indexed by session and kind.
    */
   gaps(sessionId: string): SessionGaps {
     const database = this.#database.open();
     if (database === undefined) return { ...NO_GAPS };
-    const row = database.all<SessionGaps>(sql`
+    const row = database.all<Omit<SessionGaps, "discoveryGapsMore"> & { discoveryGapsMore: number }>(sql`
       SELECT
         coalesce(sum(CASE WHEN ${events.kind} = 'events-dropped' THEN coalesce(json_extract(${events.payloadJson}, '$.count'), 0) END), 0) AS droppedEvents,
         count(*) FILTER (WHERE ${events.kind} = 'source-discovery-pending') AS uncheckedBoundaries,
         count(*) FILTER (WHERE ${events.kind} = 'code-rules-pending') AS codeRulesPendingBoundaries,
         count(*) FILTER (WHERE ${events.kind} = 'ignored-edit') AS ignoredEdits,
-        count(*) FILTER (WHERE ${events.kind} = 'ignore-rules-changed') AS ignoreRuleChanges
+        count(*) FILTER (WHERE ${events.kind} = 'ignore-rules-changed') AS ignoreRuleChanges,
+        count(*) FILTER (WHERE ${events.kind} = 'source-discovery-gap' AND ${events.eventId} <> ${MORE_DISCOVERY_GAPS_EVENT}) AS discoveryGaps,
+        count(*) FILTER (WHERE ${events.kind} = 'source-discovery-gap' AND ${events.eventId} = ${MORE_DISCOVERY_GAPS_EVENT}) AS discoveryGapsMore
       FROM ${events}
       WHERE ${events.sessionId} = ${sessionId}
-        AND ${events.kind} IN ('events-dropped', 'source-discovery-pending', 'code-rules-pending', 'ignored-edit', 'ignore-rules-changed')
+        AND ${events.kind} IN ('events-dropped', 'source-discovery-pending', 'code-rules-pending', 'ignored-edit', 'ignore-rules-changed', 'source-discovery-gap')
     `)[0];
-    return row ?? { ...NO_GAPS };
+    return row === undefined ? { ...NO_GAPS } : { ...row, discoveryGapsMore: row.discoveryGapsMore > 0 };
+  }
+
+  /** The first `limit` places the session's walks could not check, in the order the session met them; no record that says they met more. */
+  discoveryGaps(sessionId: string, limit: number): readonly DiscoveryGapRecord[] {
+    const database = this.#database.open();
+    return database === undefined ? [] : listDiscoveryGaps(database, sessionId, limit, false);
   }
 
   /**
@@ -838,7 +938,9 @@ export class SqliteSessionReader {
       .limit(limit)
       .all();
     if (backwards) rows.reverse();
-    return rows.map(({ payloadJson, ...row }) => ({ ...row, payload: JSON.parse(payloadJson) as unknown }));
+    // A row whose text is no JSON keeps its place with no payload: the page stays whole, so a reader's next page and
+    // its "earlier events" read as for any other page.
+    return rows.map(({ payloadJson, ...row }) => ({ ...row, payload: parsedRow(payloadJson) }));
   }
 
   workLinks(sessionId: string): readonly WorkLinkRecord[] {

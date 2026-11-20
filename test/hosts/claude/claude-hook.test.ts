@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer, type Server } from "node:http";
@@ -6,13 +7,17 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { type AdapterDelivery, conflictNote, defaultRerailDatabasePath, type RerailEventLoop, sessionStartNote } from "../../../src/engine/index.js";
+import { type AdapterDelivery, codeRuleSchema, conflictNote, defaultRerailDatabasePath, type RerailEventLoop, sessionStartNote } from "../../../src/engine/index.js";
+import { SqliteSessionReader } from "../../../src/runtime/index.js";
 import { claudeHookOutput, handleClaudeEvent } from "../../../src/hosts/claude/claude-hook-adapter.js";
 import { runClaudeHook } from "../../../src/hosts/claude/claude-hook.js";
 import { bindSteerReceipt, type HookInput, type HookOptions } from "../../../src/harness/index.js";
 import { dashboardOrigin, presentedSessionNoteRules } from "../../../src/presentation/index.js";
 import { answering, countingDaemon, type CountingDaemon, hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "../../support/hook-events.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
+import { setUpTestRepository } from "../../support/repository-rules.js";
+import { startChurn } from "../../support/processes/churn.js";
+import { denyAccess, restoreAccess } from "../../support/platform/deny-access.js";
 import { editSteer, steeredRules } from "../../support/steers.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/native-daemon.js";
 import { testEngineEndpoint } from "../../support/platform/engine-endpoint.js";
@@ -305,6 +310,175 @@ describe("Claude Code hook with a running daemon", () => {
     expect(await ledgerSamples(root, "reply-session", "message")).toEqual([
       { eventId: "reply-session:message:m1:3", text: "Here is the plan:\n\nFix the test." },
     ]);
+  });
+
+  describe("a session whose turn ends cannot check part of the repository", () => {
+    /** A regex rule on every Python file, so the session's code rules run and its turn ends walk the repository. */
+    const PYTHON_RULE = codeRuleSchema.parse({
+      format: "rerail.policy/v1", id: "test:needle", revision: 1, mode: "log", scope: { include: ["**/*.py"], exclude: [] },
+      clauses: [{ id: "needle", violation: { code: "NEEDLE", anchor: "witness.span", message: "No needle" }, forbid: { regex: { pattern: "NEEDLE", source: "file.content" } } }],
+    });
+    const denied: string[] = [];
+    afterEach(async () => {
+      for (const folder of denied.splice(0)) await restoreAccess(folder);
+    });
+
+    /** A Git repository under `root` with the rule on, and a daemon serving it, as a person's started repository is. */
+    async function startedRepository(root: string): Promise<string> {
+      const repository = join(root, "repository");
+      await mkdir(join(repository, "src"), { recursive: true });
+      await writeFile(join(repository, "src", "app.py"), "def app():\n    return 1\n");
+      execFileSync("git", ["init", "-q"], { cwd: repository });
+      setUpTestRepository(repository, { library: [{ kind: "code", rule: PYTHON_RULE }] });
+      vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+      await startNativeTestDaemon(repository);
+      return repository;
+    }
+    /** A replayed Claude Code session in `repository`: its start, then each turn's prompt and the Stop that ends it. */
+    function claudeSession(repository: string, id: string) {
+      const options = daemonHookOptions(repository, { keepDatabase: false });
+      const common = { session_id: id, cwd: repository };
+      let turn = 0;
+      return {
+        start: (source = "startup") => runClaudeHook({ ...common, hook_event_name: "SessionStart", source }, options),
+        async turn() {
+          turn += 1;
+          await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: `p${turn}`, prompt: "Tidy the app." }, options);
+          return await runClaudeHook({ ...common, hook_event_name: "Stop", prompt_id: `p${turn}`, stop_hook_active: false, last_assistant_message: "Done." }, options);
+        },
+        /** Ends turns until one ends with the session's code rules running, so its walk ran; at most 30. */
+        async walked() {
+          for (let tries = 0; tries < 30; tries += 1) {
+            const pending = kindCount(id, "code-rules-pending");
+            await this.turn();
+            if (kindCount(id, "code-rules-pending") === pending) return;
+          }
+          throw new Error(`${id}: the session's code rules never ran`);
+        },
+      };
+    }
+    function kindCount(sessionId: string, kind: string): number {
+      const database = new Database(defaultRerailDatabasePath(), { readonly: true });
+      try {
+        return database.prepare<[string, string], { n: number }>("SELECT count(*) AS n FROM events WHERE session_id = ? AND kind = ?").get(sessionId, kind)!.n;
+      } finally {
+        database.close();
+      }
+    }
+    /** The session's `source-discovery-gap` rows, each payload but its boundary, in the order recorded. */
+    function gapRows(sessionId: string): unknown[] {
+      const database = new Database(defaultRerailDatabasePath(), { readonly: true });
+      try {
+        return database.prepare<[string], { payload: string }>(
+          "SELECT payload_json AS payload FROM events WHERE session_id = ? AND kind = 'source-discovery-gap' ORDER BY sequence",
+        ).all(sessionId).map(row => {
+          const { boundary: _boundary, ...place } = JSON.parse(row.payload) as Record<string, unknown>;
+          return place;
+        });
+      } finally {
+        database.close();
+      }
+    }
+    /** The places recorded for the session, each with why, once what a person reads (count and list) says the same. */
+    function gapPlaces(sessionId: string): unknown[] {
+      const rows = gapRows(sessionId);
+      const reader = new SqliteSessionReader(defaultRerailDatabasePath());
+      try {
+        expect(reader.gaps(sessionId).discoveryGaps).toBe(rows.length);
+        expect(reader.discoveryGaps(sessionId, 1_000).map(({ path, reason }) => ({ path, reason }))).toEqual(rows);
+        return rows;
+      } finally {
+        reader.close();
+      }
+    }
+    /** Takes the folder's rights away (`denyAccess`); whether that holds for the daemon these tests start. */
+    async function deny(folder: string): Promise<boolean> {
+      denied.push(folder);
+      return await denyAccess(folder);
+    }
+    /** Whether a denial holds for this process, asked of a scratch folder under `root` before any session walks. */
+    async function denialHolds(root: string): Promise<boolean> {
+      const scratch = join(root, "denial-probe");
+      await mkdir(scratch);
+      const holds = await deny(scratch);
+      await restoreAccess(scratch);
+      return holds;
+    }
+    /** Why a folder the user is denied is a place: EACCES on POSIX; on Windows EPERM, whose look again finds it still there. */
+    function deniedReason(folder: string, place: string): unknown {
+      if (process.platform !== "win32") return `EACCES: permission denied, opendir '${folder}'`;
+      return expect.stringMatching(new RegExp(`^EPERM: operation not permitted, opendir '.+[\\\\/]${place.replaceAll("/", "[\\\\/]")}'$`));
+    }
+
+    it("records ten places that never change once each over 20 turn ends, and answers each Stop as before", { timeout: 180_000 }, async () => {
+      const root = await temporaryDirectory({ started: false });
+      const repository = await startedRepository(root);
+      // Folders the user may not read, where a denial holds for this process; where it does not (root, or a Windows token
+      // holding the backup privilege), Python files too large to read.
+      const denies = await denialHolds(root);
+      const places = Array.from({ length: 10 }, (_, index) => `src/pkg${index}`);
+      for (const place of places) {
+        await mkdir(join(repository, place));
+        await writeFile(join(repository, place, "a.py"), "a = 1\n");
+        if (!denies) await writeFile(join(repository, place, "big.py"), "x = 1\n".repeat(170_000));
+      }
+      const session = claudeSession(repository, "places-session");
+      await session.start();
+      await session.walked();
+      if (denies) for (const place of places) expect(await deny(join(repository, place))).toBe(true);
+      for (let turn = 0; turn < 20; turn += 1) expect(await session.turn()).toEqual({});
+
+      const reasons = places.map(place => (denies ? deniedReason(join(repository, place), place) : "Source exceeds 1000000 byte policy limit"));
+      expect(gapRows("places-session")).toHaveLength(10);
+      expect(gapPlaces("places-session")).toEqual(places.map((place, index) => ({ path: denies ? place : `${place}/big.py`, reason: reasons[index] })));
+    });
+
+    it("records nothing of the folders and files a running process makes and removes beside 30 turn ends", { timeout: 180_000 }, async () => {
+      const root = await temporaryDirectory({ started: false });
+      const repository = await startedRepository(root);
+      const churn = join(repository, "src", "churn");
+      await mkdir(churn);
+      const session = claudeSession(repository, "churn-session");
+      await session.start();
+      await session.walked();
+      const loop = startChurn(churn);
+      let rounds = 0;
+      try {
+        for (let turn = 0; turn < 30; turn += 1) expect(await session.turn()).toEqual({});
+      } finally {
+        rounds = await loop.stop();
+      }
+      expect(rounds).toBeGreaterThan(30);
+      expect(gapRows("churn-session")).toEqual([]);
+      expect(gapPlaces("churn-session")).toEqual([]);
+    });
+
+    it("records no second copy of a folder whose files it saw, after the daemon restarts and the session resumes", { timeout: 180_000 }, async ({ skip }) => {
+      const root = await temporaryDirectory({ started: false });
+      const repository = await startedRepository(root);
+      const locked = join(repository, "src", "locked");
+      await mkdir(locked);
+      await writeFile(join(locked, "a.py"), "a = 1\n");
+      const session = claudeSession(repository, "restart-session");
+      await session.start();
+      await session.walked();
+      if (!await deny(locked)) skip("this process reads a folder its user is denied: root, or a Windows token holding the backup privilege");
+      for (let turn = 0; turn < 2; turn += 1) await session.turn();
+      const recorded = gapRows("restart-session");
+      // The parent lists the folder and the folder refuses its own listing: with EACCES on POSIX, with EPERM on Windows,
+      // whose look again finds the folder still there, as a folder the user is denied stays.
+      const reason = process.platform === "win32"
+        ? expect.stringMatching(/^EPERM: operation not permitted, opendir '.+[\\/]src[\\/]locked'$/)
+        : `EACCES: permission denied, opendir '${locked}'`;
+      expect(recorded).toEqual([{ path: "src/locked", reason }]);
+
+      await closeNativeTestDaemons();
+      await startNativeTestDaemon(repository);
+      await session.start("resume");
+      await session.walked();
+      for (let turn = 0; turn < 3; turn += 1) await session.turn();
+      expect(gapPlaces("restart-session")).toEqual(recorded);
+    });
   });
 });
 

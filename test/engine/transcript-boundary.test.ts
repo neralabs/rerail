@@ -449,6 +449,9 @@ describe("the transcript boundary for coding agents", () => {
     expect(agentTranscriptPayload("ignored-edit", { path: "scratch/a.ts", source: ".git/info/exclude", line: 7, pattern: "scratch/" }))
       .toEqual(WITHHELD_PAYLOAD);
     expect(agentTranscriptPayload("ignore-rules-changed", { path: ".git/info/exclude", via: "observed" })).toEqual(WITHHELD_PAYLOAD);
+    // What a walk could not read names folders and files the agent may not see, and is the person's record, not the agent's.
+    expect(agentTranscriptPayload("source-discovery-gap", { boundary: "turn", path: ".secrets", reason: "EACCES: permission denied, opendir '/repo/.secrets'" }))
+      .toEqual(WITHHELD_PAYLOAD);
   });
 
   it("withholds a call that names a file linked to a secret in the session's checkout", context => {

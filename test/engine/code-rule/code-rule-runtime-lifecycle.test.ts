@@ -1,12 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { mkdir, opendir, realpath, rm, writeFile } from "node:fs/promises";
 import type * as FsPromises from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AdapterDelivery, RerailHost } from "../../../src/engine/adapter-contract.js";
 import type { CodeRuleAuditor, RuleSteerDelivery } from "../../../src/engine/code-rule/code-rule.js";
 import { languageFor, NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
-import { CodeRuleBridge } from "../../../src/engine/code-rule/code-rule-bridge.js";
+import { CodeRuleBridge, MAX_TOLD_AT_ONCE, MAX_TOLD_GAPS } from "../../../src/engine/code-rule/code-rule-bridge.js";
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 import { codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
 import { RerailRuntime, SqliteSessionReader, SqliteSessionStore } from "../../../src/runtime/index.js";
@@ -15,6 +16,7 @@ import { RerailRuntime, SqliteSessionReader, SqliteSessionStore } from "../../..
 type SuspendedSessions = NonNullable<ConstructorParameters<typeof RerailRuntime>[0]["suspendedSessions"]>;
 type SessionSuspension = Parameters<SuspendedSessions["keep"]>[0];
 import { temporaryDirectories, testEmbedder } from "../../support/hook-events.js";
+import { type ReleasedInOrder, releasedInOrder } from "../../support/platform/released-in-order.js";
 import { testCodeRuleCatalog } from "../../support/repository-rules.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 import { gateStorageAttachments } from "../support/storage-attach-gate.js";
@@ -459,6 +461,432 @@ describe("source-scoped steers", () => {
       reader.close();
       vi.mocked(opendir).mockRestore();
     }
+  });
+
+  describe("what a session's turn ends could not check", () => {
+    const session = { host: "claude-code" as const, sessionId: "unread", cwd: "" };
+    /**
+     * A runtime over the session's folder `root` whose code rules read every file and find nothing, its home in `store`.
+     * Its turn ends wait for their walks however long this machine takes, so each records its own walk's places.
+     */
+    function gapRuntime(root: string, store: string): RerailRuntime {
+      return new RerailRuntime({
+        storageRoot: join(store, "sessions"), databasePath: join(store, "rerail.sqlite"), workspaceRoot: root, autostart: false, embedder: testEmbedder,
+        discoveryWaitMs: Number.POSITIVE_INFINITY,
+        createAuditor: () => ({
+          openWorkspace: async () => undefined,
+          acceptsPath: () => true,
+          auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue", violations: [], failures: [] }),
+          close: async () => undefined,
+        }),
+      });
+    }
+    async function opened(runtime: RerailRuntime, root: string, eventId = "start"): Promise<void> {
+      await runtime.ingest({ kind: "session-start", eventId, session: { ...session, cwd: root } });
+      await runtime.codeRulesOpened(session.sessionId);
+    }
+    const turnEnd = (runtime: RerailRuntime, turn: number) => runtime.ingest({ kind: "turn-end", eventId: `turn-${turn}`, sessionId: session.sessionId, text: "" });
+    /** Each `source-discovery-gap` row of the session, in the order recorded: its payload and the bytes it takes. */
+    function gapRows(store: string): Array<{ payload: unknown; bytes: number }> {
+      const database = new Database(join(store, "rerail.sqlite"), { readonly: true });
+      try {
+        return database.prepare<[string], { payloadJson: string; bytes: number }>(
+          "SELECT payload_json AS payloadJson, length(payload_json) + length(payload_v8) AS bytes FROM events WHERE session_id = ? AND kind = 'source-discovery-gap' ORDER BY sequence",
+        ).all(session.sessionId).map(row => ({ payload: JSON.parse(row.payloadJson) as unknown, bytes: row.bytes }));
+      } finally {
+        database.close();
+      }
+    }
+    const DESCRIPTIONS: Readonly<Record<string, string>> = { EACCES: "permission denied", EMFILE: "too many open files" };
+    const denial = (folder: string, code = "EACCES") => `${code}: ${DESCRIPTIONS[code]}, opendir '${folder}'`;
+    /**
+     * Makes every walk fail to open each folder of `denied` (by its code there) as a folder the user may not read does.
+     * With `released` (`releasedInOrder`), the denial of the folder at index i of `order` at its call k waits for it as
+     * call i of round k, so the walks meet them in the orders it names. Returns each denial in the order the walks met
+     * them: the folder's index in `order` and its call.
+     */
+    async function denyFolders(
+      denied: ReadonlyMap<string, string>, order: readonly string[] = [], released?: ReleasedInOrder,
+    ): Promise<ReadonlyArray<{ slot: number; call: number }>> {
+      const actual = await vi.importActual<typeof FsPromises>("node:fs/promises");
+      const calls = new Map<string, number>();
+      const met: Array<{ slot: number; call: number }> = [];
+      vi.mocked(opendir).mockImplementation(async (...args) => {
+        const folder = String(args[0]);
+        const code = denied.get(folder);
+        if (code === undefined) return actual.opendir(...args);
+        const call = calls.get(folder) ?? 0;
+        calls.set(folder, call + 1);
+        await released?.(call, order.indexOf(folder));
+        met.push({ slot: order.indexOf(folder), call });
+        throw Object.assign(new Error(denial(folder, code)), { code });
+      });
+      return met;
+    }
+    afterEach(() => {
+      vi.mocked(opendir).mockRestore();
+    });
+
+    it("records each of ten places that stay unreadable once, over ten turn ends whose walks each meet them in another order", async () => {
+      const root = await realpath(await temporaryDirectory());
+      // Rerail's own files outside the session's folder, as its home is: the walk reads only the folder's.
+      const store = await realpath(await temporaryDirectory());
+      const folders = Array.from({ length: 10 }, (_, index) => join(root, `pkg${index}`));
+      for (const folder of folders) {
+        await mkdir(folder);
+        await writeFile(join(folder, "a.py"), "a = 1\n");
+      }
+      const denied = new Map<string, string>();
+      // Walk k ends folder k's denial first, then the next ones in turn: these ten orders are all the rounds give, so
+      // ten turn ends meet each of them once.
+      const orderOf = (walk: number) => folders.map((_, turn) => (turn + walk) % folders.length);
+      const released = releasedInOrder(folders.length, orderOf);
+      const met = await denyFolders(denied, folders, released);
+      const runtime = gapRuntime(root, store);
+      const reader = new SqliteSessionReader(join(store, "rerail.sqlite"));
+      try {
+        await opened(runtime, root);
+        expect(await turnEnd(runtime, 0)).toEqual([]);
+        for (const folder of folders) denied.set(folder, "EACCES");
+        // The turn end's answer is what it was before: each place goes on the record, not to the agent.
+        for (let turn = 1; turn <= folders.length; turn += 1) expect(await turnEnd(runtime, turn)).toEqual([]);
+        const walks: number[][] = [];
+        for (const { slot, call } of met) (walks[call] ??= []).push(slot);
+        expect(walks).toEqual(folders.map((_, walk) => orderOf(walk)));
+        expect(gapRows(store).map(row => row.payload)).toEqual(folders.map((folder, index) => ({ boundary: "turn", path: `pkg${index}`, reason: denial(folder) })));
+        expect(reader.gaps(session.sessionId)).toMatchObject({ discoveryGaps: 10, uncheckedBoundaries: 0 });
+      } finally {
+        released.drain();
+        await runtime.dispose();
+        reader.close();
+      }
+    }, 60_000);
+
+    it("records no second copy of a place whose files it saw, after the session reopens and after a restart", async () => {
+      const root = await realpath(await temporaryDirectory());
+      const store = await realpath(await temporaryDirectory());
+      const locked = join(root, "locked");
+      await mkdir(locked);
+      await writeFile(join(locked, "a.py"), "x = 1\n");
+      const denied = new Map<string, string>();
+      await denyFolders(denied);
+      const first = gapRuntime(root, store);
+      try {
+        await opened(first, root);
+        await turnEnd(first, 1);
+        denied.set(locked, "EACCES");
+        await turnEnd(first, 2);
+        expect(gapRows(store)).toHaveLength(1);
+        await first.ingest({ kind: "session-end", eventId: "end", sessionId: session.sessionId });
+        await opened(first, root, "start-again");
+        await turnEnd(first, 3);
+        expect(gapRows(store)).toHaveLength(1);
+      } finally {
+        await first.dispose();
+      }
+      // A restarted runtime's walk never saw the folder's files: the place is the same.
+      const second = gapRuntime(root, store);
+      try {
+        await opened(second, root, "start-after-restart");
+        await turnEnd(second, 4);
+        expect(gapRows(store)).toHaveLength(1);
+        expect(gapRows(store).map(row => row.payload)).toEqual([{ boundary: "turn", path: "locked", reason: denial(locked) }]);
+      } finally {
+        await second.dispose();
+      }
+    }, 60_000);
+
+    // The session starts empty when its record cannot be read as it reopens, so its turn end tells the place again: the
+    // record's own id for the place keeps it one row.
+    it("records no second copy of a place when the session reopens and its record cannot be read", async () => {
+      const root = await realpath(await temporaryDirectory());
+      const store = await realpath(await temporaryDirectory());
+      const locked = join(root, "locked");
+      await mkdir(locked);
+      await writeFile(join(locked, "a.py"), "x = 1\n");
+      const denied = new Map<string, string>();
+      await denyFolders(denied);
+      const runtime = gapRuntime(root, store);
+      const read = vi.spyOn(SqliteSessionStore.prototype, "discoveryGaps");
+      try {
+        await opened(runtime, root);
+        await turnEnd(runtime, 1);
+        denied.set(locked, "EACCES");
+        await turnEnd(runtime, 2);
+        expect(gapRows(store)).toHaveLength(1);
+        await runtime.ingest({ kind: "session-end", eventId: "end", sessionId: session.sessionId });
+        read.mockImplementationOnce(() => { throw new Error("SQLITE_BUSY: database is locked"); });
+        await opened(runtime, root, "start-again");
+        expect(read.mock.results.at(-1)?.type).toBe("throw");
+        await turnEnd(runtime, 3);
+        expect(gapRows(store).map(row => row.payload)).toEqual([{ boundary: "turn", path: "locked", reason: denial(locked) }]);
+      } finally {
+        read.mockRestore();
+        await runtime.dispose();
+      }
+    }, 60_000);
+
+    it("records a place that breaks at each of 200 turn ends as one short row of its own", async () => {
+      const root = await realpath(await temporaryDirectory());
+      const store = await realpath(await temporaryDirectory());
+      const denied = new Map<string, string>();
+      await denyFolders(denied);
+      const runtime = gapRuntime(root, store);
+      try {
+        await opened(runtime, root);
+        for (let turn = 1; turn <= 200; turn += 1) {
+          const folder = join(root, `f${String(turn).padStart(3, "0")}`);
+          await mkdir(folder);
+          denied.set(folder, "EACCES");
+          await turnEnd(runtime, turn);
+        }
+        const rows = gapRows(store);
+        expect(rows).toHaveLength(200);
+        expect(new Set(rows.map(row => JSON.stringify(row.payload))).size).toBe(200);
+        // A row holds its own place, never one before it: its size does not grow with the places before it.
+        const limit = 2 * (200 + root.length);
+        expect(rows.filter(row => row.bytes > limit)).toEqual([]);
+        expect(rows.reduce((sum, row) => sum + row.bytes, 0)).toBeLessThan(200 * limit);
+      } finally {
+        await runtime.dispose();
+      }
+    }, 120_000);
+
+    it("records a place that breaks, heals and breaks again in one session once, and once more when it breaks for another reason", async () => {
+      const root = await realpath(await temporaryDirectory());
+      const store = await realpath(await temporaryDirectory());
+      const locked = join(root, "locked");
+      await mkdir(locked);
+      const denied = new Map<string, string>();
+      await denyFolders(denied);
+      const runtime = gapRuntime(root, store);
+      try {
+        await opened(runtime, root);
+        denied.set(locked, "EACCES");
+        await turnEnd(runtime, 1);
+        denied.delete(locked);
+        await turnEnd(runtime, 2);
+        denied.set(locked, "EACCES");
+        await turnEnd(runtime, 3);
+        expect(gapRows(store).map(row => row.payload)).toEqual([{ boundary: "turn", path: "locked", reason: denial(locked) }]);
+        denied.set(locked, "EMFILE");
+        await turnEnd(runtime, 4);
+        expect(gapRows(store).map(row => row.payload)).toEqual([
+          { boundary: "turn", path: "locked", reason: denial(locked) },
+          { boundary: "turn", path: "locked", reason: denial(locked, "EMFILE") },
+        ]);
+      } finally {
+        await runtime.dispose();
+      }
+    }, 60_000);
+
+    const OVERSIZE = "Source exceeds 1000000 byte policy limit";
+    /** An unlisted file past the byte limit: a file with no language is read as text, and this one is too large to read. */
+    async function writeTooLarge(path: string): Promise<void> {
+      await writeFile(path, "x\n".repeat(500_001));
+    }
+    /** Makes the store refuse every `source-discovery-gap` row while `refuse` holds, as a database that refuses a write does. */
+    function refuseGapRows(store: string, refuse: boolean): void {
+      const database = new Database(join(store, "rerail.sqlite"));
+      try {
+        database.exec(refuse
+          ? "CREATE TRIGGER refuse_gap_rows BEFORE INSERT ON events WHEN NEW.kind = 'source-discovery-gap' BEGIN SELECT RAISE(ABORT, 'refused by the test'); END"
+          : "DROP TRIGGER refuse_gap_rows");
+      } finally {
+        database.close();
+      }
+    }
+
+    it(`records each of ${MAX_TOLD_AT_ONCE + 4} places a turn end meets, those past the first ${MAX_TOLD_AT_ONCE} at the next, an unlisted file too large to read among them`, async () => {
+      const root = await realpath(await temporaryDirectory());
+      const store = await realpath(await temporaryDirectory());
+      const folders = Array.from({ length: MAX_TOLD_AT_ONCE + 3 }, (_, index) => join(root, `a${String(index).padStart(3, "0")}`));
+      for (const folder of folders) await mkdir(folder);
+      const denied = new Map<string, string>();
+      await denyFolders(denied);
+      const runtime = gapRuntime(root, store);
+      const reader = new SqliteSessionReader(join(store, "rerail.sqlite"));
+      try {
+        await opened(runtime, root);
+        await turnEnd(runtime, 0);
+        for (const folder of folders) denied.set(folder, "EACCES");
+        // After every folder in path order.
+        await mkdir(join(root, "zz"));
+        await writeTooLarge(join(root, "zz", "big.raw"));
+        expect(await turnEnd(runtime, 1)).toEqual([]);
+        expect(gapRows(store)).toHaveLength(MAX_TOLD_AT_ONCE);
+        expect(await turnEnd(runtime, 2)).toEqual([]);
+        expect(gapRows(store).map(row => (row.payload as { path?: string }).path)).toEqual([...folders.map(folder => basename(folder)), "zz/big.raw"]);
+        expect(reader.gaps(session.sessionId)).toMatchObject({ discoveryGaps: MAX_TOLD_AT_ONCE + 4 });
+      } finally {
+        await runtime.dispose();
+        reader.close();
+      }
+    }, 120_000);
+
+    it("records at the next turn end what a turn end whose record write failed could not, an unlisted file too large to read among it", async () => {
+      const root = await realpath(await temporaryDirectory());
+      const store = await realpath(await temporaryDirectory());
+      const locked = join(root, "locked");
+      await mkdir(locked);
+      const denied = new Map<string, string>();
+      await denyFolders(denied);
+      const runtime = gapRuntime(root, store);
+      const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      try {
+        await opened(runtime, root);
+        await turnEnd(runtime, 0);
+        denied.set(locked, "EACCES");
+        await writeTooLarge(join(root, "big.raw"));
+        refuseGapRows(store, true);
+        expect(await turnEnd(runtime, 1)).toEqual([]);
+        expect(gapRows(store)).toEqual([]);
+        expect(stderr).toHaveBeenCalledWith(expect.stringContaining("recording failed"));
+        refuseGapRows(store, false);
+        expect(await turnEnd(runtime, 2)).toEqual([]);
+        expect(gapRows(store).map(row => row.payload)).toEqual([
+          { boundary: "turn", path: "big.raw", reason: OVERSIZE },
+          { boundary: "turn", path: "locked", reason: denial(locked) },
+        ]);
+      } finally {
+        stderr.mockRestore();
+        await runtime.dispose();
+      }
+    }, 60_000);
+
+    /**
+     * How many times the store is asked to record places (`recordDiscoveryGaps`) while `run` runs: none from a bridge that
+     * read, as the session opened, that the record holds all it takes.
+     */
+    async function recordCalls(run: () => Promise<unknown>): Promise<number> {
+      const record = vi.spyOn(SqliteSessionStore.prototype, "recordDiscoveryGaps");
+      try {
+        await run();
+        return record.mock.calls.length;
+      } finally {
+        record.mockRestore();
+      }
+    }
+
+    it(`records no place past the session's ${MAX_TOLD_GAPS} after the session reopens, nor after a restart, asks the store for none, and counts the places recorded and that it met more`, async () => {
+      const root = await realpath(await temporaryDirectory());
+      const store = await realpath(await temporaryDirectory());
+      const folders = Array.from({ length: 1_500 }, (_, index) => join(root, `f${String(index).padStart(4, "0")}`));
+      for (const folder of folders) await mkdir(folder);
+      // Before the others in path order: a bridge that counted the session's places from 0 again would record these first.
+      const earlier = Array.from({ length: 50 }, (_, index) => join(root, `a${String(index).padStart(2, "0")}`));
+      for (const folder of earlier) await mkdir(folder);
+      const denied = new Map<string, string>();
+      await denyFolders(denied);
+      const untold = { boundary: "turn", reason: `The walks could not check more than ${MAX_TOLD_GAPS} places; the rest are not recorded` };
+      const first = gapRuntime(root, store);
+      try {
+        await opened(first, root);
+        for (const folder of folders) denied.set(folder, "EACCES");
+        for (let turn = 1; turn <= MAX_TOLD_GAPS / MAX_TOLD_AT_ONCE + 1; turn += 1) await turnEnd(first, turn);
+        expect(gapRows(store)).toHaveLength(MAX_TOLD_GAPS + 1);
+        expect(gapRows(store).at(-1)?.payload).toEqual(untold);
+        for (const folder of earlier) denied.set(folder, "EACCES");
+        await first.ingest({ kind: "session-end", eventId: "end", sessionId: session.sessionId });
+        // The reopened session's bridge reads that the record holds all it takes: it asks the store for nothing more.
+        expect(await recordCalls(async () => {
+          await opened(first, root, "start-again");
+          await turnEnd(first, 20);
+        })).toBe(0);
+        expect(gapRows(store)).toHaveLength(MAX_TOLD_GAPS + 1);
+      } finally {
+        await first.dispose();
+      }
+      const second = gapRuntime(root, store);
+      const reader = new SqliteSessionReader(join(store, "rerail.sqlite"));
+      try {
+        expect(await recordCalls(async () => {
+          await opened(second, root, "start-after-restart");
+          for (let turn = 21; turn <= 22; turn += 1) await turnEnd(second, turn);
+        })).toBe(0);
+        expect(gapRows(store)).toHaveLength(MAX_TOLD_GAPS + 1);
+        // The record that says the walks met more is no place: the count is of the places recorded, the first met.
+        expect(reader.gaps(session.sessionId)).toMatchObject({ discoveryGaps: MAX_TOLD_GAPS, discoveryGapsMore: true });
+        expect(reader.discoveryGaps(session.sessionId, 20).map(gap => gap.path)).toEqual(folders.slice(0, 20).map(folder => basename(folder)));
+      } finally {
+        await second.dispose();
+        reader.close();
+      }
+    }, 180_000);
+
+    /**
+     * Removes the session's row, with every row that names it, in one commit of another connection, as a database put back
+     * from a copy taken before the session began does.
+     */
+    function removeSessionRow(store: string): void {
+      const database = new Database(join(store, "rerail.sqlite"));
+      try {
+        database.pragma("busy_timeout = 5000");
+        database.transaction(() => {
+          for (const table of ["events", "work_links", "steer_feedback", "audits", "audit_requests", "repository_audits", "policy_session_owners", "sessions"])
+            database.prepare(`DELETE FROM ${table} WHERE session_id = ?`).run(session.sessionId);
+        })();
+      } finally {
+        database.close();
+      }
+    }
+    /** The session's row and its claim (`policy_session_owners`) as the database holds them. */
+    function rowAndClaim(store: string): { session: unknown; claim: unknown } {
+      const database = new Database(join(store, "rerail.sqlite"), { readonly: true });
+      try {
+        return {
+          session: database.prepare("SELECT ended_at AS endedAt FROM sessions WHERE session_id = ?").get(session.sessionId),
+          claim: database.prepare("SELECT delivery, active, token FROM policy_session_owners WHERE session_id = ?").get(session.sessionId),
+        };
+      } finally {
+        database.close();
+      }
+    }
+    /** How long a write waits for another connection's write lock before it fails (`busy_timeout`, database.ts). */
+    const BUSY_TIMEOUT_MS = 5_000;
+
+    // The turn end's own event puts a removed row back before the walk. A row removed while the walk runs is first found
+    // gone by the first place's write, in the transaction that writes the turn end's places; the claim that the put-back
+    // writes again goes through another connection, which would wait out the busy timeout behind that transaction. The
+    // second place's write finds the row back, so the claim comes back only if the first place's put-back counts.
+    it("writes the session's claim again at once when the first of a turn end's two places finds its row gone, and records each place once", async () => {
+      const root = await realpath(await temporaryDirectory());
+      const store = await realpath(await temporaryDirectory());
+      const locked = join(root, "locked");
+      const locked2 = join(root, "locked2");
+      await mkdir(locked);
+      await mkdir(locked2);
+      const runtime = gapRuntime(root, store);
+      const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      try {
+        await opened(runtime, root);
+        await turnEnd(runtime, 1);
+        const claimed = rowAndClaim(store);
+        expect(claimed).toEqual({ session: { endedAt: null }, claim: expect.objectContaining({ active: 1 }) });
+        const actual = await vi.importActual<typeof FsPromises>("node:fs/promises");
+        let removals = 0;
+        vi.mocked(opendir).mockImplementation(async (...args) => {
+          const folder = String(args[0]);
+          if (folder !== locked && folder !== locked2) return actual.opendir(...args);
+          if (removals === 0) removeSessionRow(store);
+          removals += 1;
+          throw Object.assign(new Error(denial(folder)), { code: "EACCES" });
+        });
+        const startedAt = performance.now();
+        expect(await turnEnd(runtime, 2)).toEqual([]);
+        const tookMs = performance.now() - startedAt;
+        expect({ removed: removals > 0, ...rowAndClaim(store) }).toEqual({ removed: true, ...claimed });
+        expect(gapRows(store).map(row => row.payload)).toEqual([
+          { boundary: "turn", path: "locked", reason: denial(locked) },
+          { boundary: "turn", path: "locked2", reason: denial(locked2) },
+        ]);
+        expect(stderr.mock.calls.map(([text]) => String(text)).filter(text => text.includes("claim"))).toEqual([]);
+        expect(tookMs).toBeLessThan(BUSY_TIMEOUT_MS);
+      } finally {
+        stderr.mockRestore();
+        await runtime.dispose();
+      }
+    }, 60_000);
   });
 
   it("passes how long the session's code-rule evaluator took to open to the timing log", async () => {

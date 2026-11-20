@@ -1,0 +1,56 @@
+.policy "rerail-language-facts-from-registry" revision 2
+.description "Take file suffixes and language names from the language registry or its generated tables, not a hand-kept list in shared engine or host code; a family's own modules may keep theirs."
+.language typescript
+.mode log
+.scope include "src/**/*.ts"
+.scope exclude "**/tests/**", "**/*.test.ts", "**/*.generated.ts"
+// rerail-language-facts-from-registry for the host's code-rule modules (src/engine/code-rule/, src/code-rule*.ts):
+// suffixes and language names come from the registry (CODE_RULE_DIALECT_SUFFIXES, SOURCE_LANGUAGES,
+// LANGUAGE_REGISTRY), not a hand-kept list. The Rust half is rerail-language-facts-from-registry.rerail.
+//   const SUFFIXES = [".py", ".ts"];                    HOST_HAND_KEPT_LANGUAGE_LIST (an array of two facts or more)
+//   type Label = "python" | "typescript";               HOST_HAND_KEPT_LANGUAGE_LIST (a union of fact literal types)
+//   const BY_SUFFIX = { py: "python", rs: "rust" };     HOST_HAND_KEPT_LANGUAGE_LIST (an object of fact values)
+//   const FORMATS = [".json", ".yaml"];                 not reported
+// A fact is a string naming a suffix ("py", ".tsx", "blade.php") or a language ("python", "ecma").
+
+.decl fact(n: node)
+fact(n) :- kind(n, "string"), match("[\"'](?:\\.?(?:py|pyi|ts|tsx|mts|cts|js|jsx|mjs|cjs|php|vue|rs|sql|blade\\.php)|python|typescript|javascript|blade|rust|ecma)[\"']", n).
+
+.violation HOST_HAND_KEPT_LANGUAGE_LIST(at: node) "Take these suffixes or language names from the registry (CODE_RULE_DIALECT_SUFFIXES, SOURCE_LANGUAGES, LANGUAGE_REGISTRY) instead of listing them; lists of formats outside the registry may stay."
+HOST_HAND_KEPT_LANGUAGE_LIST(n) :- host_list(n), docof(n, d), doc(d, p, _), match("(?s:.*)(?:(?:^|/)src/(?:engine/code-rule/|code-rule[^/]*\\.ts$))(?s:.*)", p).
+.decl host_list(n: node)
+host_list(n) :- kind(n, "array"), k = count : { child(n, f, _), fact(f) }, k >= 2.
+// The outermost union: `"a" | "b" | "c"` nests as (("a" | "b") | "c").
+host_list(n) :- kind(n, "union_type"), child(p, n, _), !kind(p, "union_type"),
+    k = count : { has(n, t, "literal_type"), child(t, f, _), fact(f) }, k >= 2.
+host_list(n) :- kind(n, "object"), k = count : { child(n, e, _), kind(e, "pair"), field(e, "value", f), fact(f) }, k >= 2.
+
+// The pack's Rust example, as the host would write it.
+.test hand_kept_lists_are_reported exactly
+    .fixture "src/engine/code-rule/suffixes.ts" ```
+        const SUFFIXES = [".py", ".ts"];
+        type Label = "python" | "typescript" | "rust";
+        const BY_SUFFIX = { py: "python", rs: "rust" };
+        ```
+    .fixture "src/code-rule-languages.ts" ```
+        export const SOURCE_LANGUAGES = ["python", "typescript"];
+        ```
+    .expect HOST_HAND_KEPT_LANGUAGE_LIST at "src/engine/code-rule/suffixes.ts":1
+    .expect HOST_HAND_KEPT_LANGUAGE_LIST at "src/engine/code-rule/suffixes.ts":2
+    .expect HOST_HAND_KEPT_LANGUAGE_LIST at "src/engine/code-rule/suffixes.ts":3
+    .expect HOST_HAND_KEPT_LANGUAGE_LIST at "src/code-rule-languages.ts":1
+.end
+
+// Other formats, one fact, files outside the code-rule modules, and tests.
+.test other_lists_and_files_pass exactly
+    .fixture "src/engine/code-rule/formats.ts" ```
+        const FORMATS = [".json", ".yaml"];
+        const ONE = [".py", ".json"];
+        ```
+    .fixture "src/cli/languages.ts" ```
+        const SUFFIXES = [".py", ".ts"];
+        ```
+    .fixture "src/engine/code-rule/suffixes.test.ts" ```
+        const SUFFIXES = [".py", ".ts"];
+        ```
+.end
