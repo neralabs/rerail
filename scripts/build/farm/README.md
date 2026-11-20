@@ -268,6 +268,38 @@ attended. `setup` installs the pinned toolchain with the host's rustup; rustup i
     curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --default-toolchain none --profile minimal
     curl -LsSf https://get.nexte.st/<version>/linux-arm | tar zxf - -C ~/.cargo/bin
 
+(`linux` in place of `linux-arm` on an x86_64 host.)
+
+An x86_64 Linux host takes test commands, but not this Mac's compiles (`"mac_compiles": false`):
+its rustc, compiling for `aarch64-apple-darwin`, gave 12 of `test-mac-compiles`' 42 outputs other
+bytes than this Mac's (proc-macro2, regex-automata, libc; 2026-11-19). The agent uses the host's
+own triple for its rustc and its proc-macro builds (farm 39), so the test can be run there again.
+
+### Windows PCs, through WSL
+
+A Windows PC joins as a Linux host: its WSL2 Ubuntu 24.04, reached by ssh directly, as the other
+Linux hosts are. Nothing of the farm runs on Windows itself. Set up once, as an administrator:
+
+- Windows' OpenSSH server (`Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0`, the
+  service automatic, PowerShell its shell), and a local administrator account for the farm,
+  this Mac's key in `C:\ProgramData\ssh\administrators_authorized_keys` (icacls: Administrators
+  and SYSTEM only). An Azure AD account cannot log in by key (sshd resets the connection), and
+  a local account keeps the farm's files apart from the PC's user's.
+- WSL (the features by `dism /online /enable-feature`, `Microsoft-Windows-Subsystem-Linux` and
+  `VirtualMachinePlatform`, then Microsoft's WSL release MSI: the inbox `wsl --install` refuses
+  over ssh), a restart, `wsl --install Ubuntu-24.04 --no-launch`.
+- In the account's `.wslconfig`: `networkingMode=mirrored` (WSL has the PC's address), `memory`,
+  `processors`, `vmIdleTimeout=-1`, and `instanceIdleTimeout=-1` under `[general]`. The Hyper-V
+  firewall lets WSL's VMs take connections in (`Set-NetFirewallHyperVVMSetting` for WSL's creator
+  id, a rule for the port), and a task at startup, as the account (S4U), runs
+  `wsl.exe -d Ubuntu-24.04 -u root -- sleep infinity`, so WSL runs from boot with no one signed in.
+- In Ubuntu: systemd (`/etc/wsl.conf`), the packages a Linux host has (build-essential, cmake,
+  clang, libclang-dev, libssl-dev, pkg-config, git, zstd, python3, docker.io), a `farm` user in
+  `docker` with this Mac's key, and sshd on a port of its own (Windows' sshd has 22), password
+  logins off. Then rustup and cargo-nextest as above, the host in `farm.json` as `"os": "linux"`
+  (with its `link`, WSL's `eth0`), and `setup`.
+- A laptop: on AC power, no sleep and no action on closing the lid (`powercfg`).
+
 ### Mac compiles on a Linux host
 
 A Linux host compiles this Mac's registry libraries (`remote_eligible`: an rlib, nothing linked),

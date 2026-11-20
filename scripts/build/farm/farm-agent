@@ -296,7 +296,9 @@ def xc_container(home):
 # The Linux builds of the proc-macros a Mac's compile loads, and of what they link: one directory a
 # recorded compile (by its record's hash), shared by every proc-macro that links it.
 XC_PM = os.path.join(FARM, "xc-pm.noindex")
-TRIPLE_LINUX = b"aarch64-unknown-linux-gnu"
+# This host's own target (an x86_64 host as well as an ARM one): its rustc, and its proc-macros' builds.
+HOST_TRIPLE = ("x86_64" if os.uname().machine in ("x86_64", "amd64") else "aarch64") + "-unknown-linux-gnu"
+TRIPLE_LINUX = HOST_TRIPLE.encode()
 TRIPLE_MAC = b"aarch64-apple-darwin"
 
 
@@ -338,7 +340,7 @@ def pm_build(pm, toolchain):
     build machine's SVH into the Linux library (`svh_at`) and writes it beside the dylib's copy, as
     `.so`: the compile in the container loads it from there. None, or why it could not."""
     import fcntl, hashlib, shutil
-    rustc = os.path.expanduser(f"~/.rustup/toolchains/{toolchain}-aarch64-unknown-linux-gnu/bin/rustc")
+    rustc = os.path.expanduser(f"~/.rustup/toolchains/{toolchain}-{HOST_TRIPLE}/bin/rustc")
     built = {}  # the build machine's stem -> this host's output directory
     closure = {}  # the build machine's stem -> the directories of all it links (rustc's -L dependency)
     for rec in pm["calls"]:
@@ -423,7 +425,7 @@ def pm_build(pm, toolchain):
 def xc_argv(job):
     """The `docker exec` that runs the build machine's compile `job` in the container."""
     xc = job["xc"]
-    rustc = f"/opt/rustup/toolchains/{xc['toolchain']}-aarch64-unknown-linux-gnu/bin/rustc"
+    rustc = f"/opt/rustup/toolchains/{xc['toolchain']}-{HOST_TRIPLE}/bin/rustc"
     args = job["argv"][1:]
     # On the Mac the target is the host's: named here, it is the same compile (the outputs' bytes too).
     if not any(a == "--target" or a.startswith("--target=") for a in args):
