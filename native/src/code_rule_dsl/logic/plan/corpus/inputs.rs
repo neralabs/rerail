@@ -869,8 +869,10 @@ grew(e) :- now_entry(e), !was(_, e).
 
     /// The digest covers the files the globs match, by content: a change to an unmatched file keeps it, and so does
     /// one under a directory the host's walk never enters (`vendor`, `.rerail`); a hidden directory's (`.github`) counts.
+    /// Its lines name each file with `/` on every platform, so a walk on Windows digests as Git's listing does.
     #[test]
     fn an_artifacts_digest_moves_only_with_its_inputs() {
+        use sha2::Digest as _;
         let root = std::env::temp_dir().join(format!("rerail-artifact-digest-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("pkg")).unwrap();
@@ -879,6 +881,9 @@ grew(e) :- now_entry(e), !was(_, e).
         std::fs::write(root.join("README.md"), "one\n").unwrap();
         let globs = vec!["**/*.py".to_owned()];
         let first = inputs_digest(&root, &globs).unwrap();
+        let line = format!("pkg/a.py\0{}\n", blob_id(b"x = 1\n"));
+        let named = sha2::Sha256::digest(line.as_bytes()).iter().map(|b| format!("{b:02x}")).collect::<String>();
+        assert_eq!(first, format!("sha256:{named}"), "pkg/a.py, named with `/`");
         std::fs::write(root.join("README.md"), "two\n").unwrap();
         std::fs::write(root.join(".rerail/facts/x.py"), "hidden\n").unwrap();
         std::fs::create_dir_all(root.join("vendor")).unwrap();
