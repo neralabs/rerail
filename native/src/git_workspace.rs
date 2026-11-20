@@ -21,6 +21,23 @@ use std::{
     os::unix::fs::MetadataExt,
 };
 
+/// The folders no repository walk enters, by name: the host's `IGNORED_DIRECTORIES`
+/// (`src/engine/code-rule/ignored-directories.ts`), which `npm run generate:ignored-directories` writes
+/// here as data. The engine's corpus listing, its artifact inputs, its `file` facts and its server graphs
+/// read it, so a `.rerail` run reads the files the host's walk reads.
+pub fn ignored_directories() -> &'static [String] {
+    static NAMES: std::sync::LazyLock<Vec<String>> = std::sync::LazyLock::new(|| {
+        serde_json::from_str(include_str!("ignored_directories.generated.json"))
+            .expect("ignored_directories.generated.json is a list of folder names")
+    });
+    &NAMES
+}
+
+/// Whether no repository walk enters a folder of this name (`ignored_directories`).
+pub fn ignored_directory(name: &str) -> bool {
+    ignored_directories().iter().any(|ignored| ignored == name)
+}
+
 /// Rerail's records folder (`records_folder`) is among them: Git status leaves a file tracked there
 /// unread, which another account sharing the checkout may not read, and the walk never enters it.
 const BUILTIN_IGNORE: &[u8] =

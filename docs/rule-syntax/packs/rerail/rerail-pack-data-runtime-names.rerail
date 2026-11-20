@@ -1,0 +1,59 @@
+.policy "rerail-pack-data-runtime-names" revision 2
+.description "Take a pack-data recipe's tool runtime from the upstream runtime its gates manifest names, never a versioned name written or built in the recipe, so a version bump reaches it."
+.language typescript
+.mode steer
+.scope include "scripts/pack-data/recipes/**/*.ts"
+.scope exclude "**/*.test.ts", "**/fixtures/**"
+// A recipe takes its tool's runtime from `readGatesManifest(root, pack, tool).upstream.runtime`, so a version bump
+// in gates.yaml reaches it. Two ways to restate it, as the JSON's clauses:
+//   await uvRuntime(`lizard-${version}`, cache, runner)     COMPOSED_RUNTIME_NAME (a name built from a version)
+//   const dir = "eslint-" + eslintVersion;                   COMPOSED_RUNTIME_NAME
+//   await npmRuntime("eslint-9.12.0", cache, runner)         VERSIONED_RUNTIME_LITERAL (a release written out)
+//   await npmRuntime(upstream.runtime, cache, runner)        not reported
+// The first is a text search over the file (a finding where the match starts); the second tests each string and
+// template literal's text, an unanchored search as ast-grep's `regex`. The regexes are the JSON's, copied exactly.
+
+.violation COMPOSED_RUNTIME_NAME(at: span) "Pass the `upstream.runtime` of `readGatesManifest(root, pack, tool)` instead of a name built from a version, so a bump or a renamed runtime is followed."
+COMPOSED_RUNTIME_NAME(m) :- source(_, sp), match_all("\\b(?:npmRuntime|uvRuntime|composerRuntime|pinnedPhp|runtimeFile)\\(\\s*`[^`]*(?:-\\$\\{|\\}-)|\\bRUNTIMES_DIRECTORY\\s*,\\s*`[^`]*(?:-\\$\\{|\\}-)|(?i:-\\$\\{[^}]*version[^}]*\\}|[\\\"'][a-z][a-z0-9_.-]*-[\\\"']\\s*\\+\\s*[\\w.]*version|\\+\\s*[\\\"']-[\\\"']\\s*\\+\\s*[\\w.]*version)", sp, m).
+
+.violation VERSIONED_RUNTIME_LITERAL(at: node) "Read this runtime from the `upstream.runtime` of `readGatesManifest(root, pack, tool)` instead of writing its release; leave it if it names no folder under scripts/pack-data/runtimes."
+VERSIONED_RUNTIME_LITERAL(n) :- kind(n, "string"),
+    match("(?s:.*)[\"'/][a-z][a-z0-9_.-]*-\\d+\\.\\d+(?:\\.\\d+)*(?:-[0-9a-z.]+)?[/\"'](?s:.*)", n).
+VERSIONED_RUNTIME_LITERAL(n) :- kind(n, "template_string"),
+    match("(?s:.*)[`/][a-z][a-z0-9_.-]*-\\d+\\.\\d+(?:\\.\\d+)*(?:-[0-9a-z.]+)?[/`](?s:.*)", n).
+
+// The pack's example (packs/rerail/pack.json).
+.test a_composed_name_is_reported exactly
+    .fixture "scripts/pack-data/recipes/complexity.ts" ```
+        const lizard = join((await uvRuntime(`lizard-${version}`, runtimeCache, runner)).directory, ".venv", "bin", "lizard");
+        ```
+    .expect COMPOSED_RUNTIME_NAME at "scripts/pack-data/recipes/complexity.ts":1
+.end
+
+.test other_compositions_and_literals_are_reported exactly
+    .fixture "scripts/pack-data/recipes/eslint.ts" ```
+        const dir = join(RUNTIMES_DIRECTORY, `eslint-${tag}`);
+        const name = "eslint-" + eslintVersion;
+        const tools = await npmRuntime("eslint-9.12.0", runtimeCache, runner);
+        const bin = `runtimes/ruff-0.6.4/bin/ruff`;
+        ```
+    .expect COMPOSED_RUNTIME_NAME at "scripts/pack-data/recipes/eslint.ts":1
+    .expect COMPOSED_RUNTIME_NAME at "scripts/pack-data/recipes/eslint.ts":2
+    .expect VERSIONED_RUNTIME_LITERAL at "scripts/pack-data/recipes/eslint.ts":3
+    .expect VERSIONED_RUNTIME_LITERAL at "scripts/pack-data/recipes/eslint.ts":4
+.end
+
+// The pack's passing example, a version that names no runtime, and the files the scope leaves out.
+.test the_manifest_runtime_passes exactly
+    .fixture "scripts/pack-data/recipes/javascript.ts" ```
+        const { upstream } = readGatesManifest(root, pack, tool);
+        const tools = await npmRuntime(upstream.runtime, runtimeCache, runner);
+        const label = `version ${upstream.version}`;
+        ```
+    .fixture "scripts/pack-data/recipes/javascript.test.ts" ```
+        const tools = await npmRuntime("eslint-9.12.0", runtimeCache, runner);
+        ```
+    .fixture "scripts/pack-data/recipes/fixtures/a.ts" ```
+        const tools = await npmRuntime(`eslint-${version}`, runtimeCache, runner);
+        ```
+.end

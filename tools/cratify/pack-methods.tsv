@@ -21,6 +21,7 @@ Adapter	path_module	fn	path_module
 Adapter	cooked_template	fn	cooked_template
 SyntaxRules	parse_literal	free	syntax_parse_literal
 SyntaxRules	DOLLAR_NAMES	const	syntax_dollar_names
+SyntaxRules	body_pattern	fn	syntax_body_pattern
 SyntaxRules	feature	fn	syntax_feature
 SyntaxRules	compile_language_options	fn	syntax_compile_language_options
 SyntaxRules	compile_when	fn	syntax_compile_when
