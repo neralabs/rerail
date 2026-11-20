@@ -77,3 +77,49 @@ fn a_relations_index_holds_no_table_of_its_own() {
     let ix = rel.index(&[0]);
     assert!(ix.table.is_empty() && ix.ids.is_empty() && ix.order.get().is_none(), "no table, ids or order");
 }
+
+/// A relation `Rel` derived of `n` rows `(id % 7, id)`, asked for an order on column 1 too, frozen into an input.
+fn frozen(n: usize) -> std::sync::Arc<InRel> {
+    let mut rel = super::Rel::new("edge", &[b'i', b'i']);
+    rel.want(&[1]);
+    for r in rows(n).chunks_exact(2) {
+        rel.push(r);
+    }
+    std::sync::Arc::new(InRel::moved(rel))
+}
+
+/// The block relation that holds a frozen relation's last rows: its orders' directory.
+fn directory(rel: &InRel) -> crate::code_rule_dsl::facts::rows::InBlock {
+    rel.rows.last_in_block().expect("its rows in a block")
+}
+
+/// Decision 0450 step 5b (the user, 2026-11-19: one sorted order): a frozen relation's kept orders are one sorted
+/// order each in its block's index directory, found there by key, as the device can find them; the relation's own
+/// handles to them hold nothing of their own.
+#[test]
+fn a_frozen_relations_orders_are_in_its_blocks_directory() {
+    let n = 5000;
+    let rel = frozen(n);
+    let ib = directory(&rel);
+    let r = ib.relation();
+    // Column 1 asked for, the dedup order became `[1, 0]` (`Rel::want`): one order, found by its key.
+    let i = r.find_order(&[1, 0], n as u32).expect("the order on [1, 0] in the directory");
+    assert_eq!(rerail_blocks::relation::Relation::order_rows(r.index(i)), n, "every row, in one run");
+    assert_eq!(r.orders().count(), rel.chains.len(), "every order kept is in the directory");
+    assert!(!rel.chains.is_empty() && rel.chains.iter().all(|o| o.runs() == 1 && o.borrowed()), "handles to the block's orders, one run each");
+    // A probe through the order on column 1 finds its row.
+    let mut got = Vec::new();
+    rel.probe_each(&[1], &[1234], &mut |row| got.push((row(0), row(1))));
+    assert_eq!(got, vec![(1234 % 7, 1234)]);
+}
+
+/// The orders a maintained relation restarts from (`Rel::based`) are the block's, read where they lie: nothing of
+/// them is copied, and the old relation's block holds them while the new one reads them.
+#[test]
+fn a_based_relation_reads_its_old_orders_in_the_block() {
+    let n = 3000;
+    let old = frozen(n);
+    let at: Vec<*const u32> = old.chains.iter().map(|o| o.first_ids()).collect();
+    let based = super::Rel::based("edge", &[b'i', b'i'], &old, None).expect("based on the old relation");
+    assert_eq!(based.idx.iter().map(|o| o.first_ids()).collect::<Vec<_>>(), at, "the same ids, where they lie");
+}

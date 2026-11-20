@@ -36,8 +36,9 @@ pub const ADDED: u32 = 4;
 pub const REWRITTEN: u32 = 8;
 /// A key's columns at most: the device's probes' (decision 0325 step 5).
 pub const MAX_KEY: usize = 8;
-/// Indexes a relation can be given after it is made (`try_add_index`): its directory's room.
-pub const ADDED_INDEXES: usize = 8;
+/// Indexes and sorted orders a relation can be given after it is made (`try_add_index`, `try_add_order`): its
+/// directory's room. 16: a frozen relation's orders (up to one a column) beside the hash indexes probes build.
+pub const ADDED_INDEXES: usize = 16;
 
 structure! {
     pub struct Index {
@@ -50,10 +51,37 @@ structure! {
         /// Buckets less one (a power of two less one).
         pub mask: u64,
         /// Bucket `b`'s rows are `rows[offs[b]..offs[b + 1]]`: every key whose hash falls in `b`, in canonical
-        /// order. A reader checks the key (4 bytes a bucket, about one key a bucket; no hash kept).
+        /// order. A reader checks the key (4 bytes a bucket, about one key a bucket; no hash kept). In a sorted order
+        /// (`ORDER`), `rows` is every row in the key's order, and `offs` is empty.
         pub offs: Span<u32>,
         pub rows: Span<u32>,
+        /// A sorted order's (`ORDER`, `ORDER_ROWS`; decision 0450 step 5b): the leading column's value at every
+        /// `FENCE`th row of the order, each row's tag (an order tagged by its lead's hash), each row's key print (an
+        /// order probed by whole keys). Empty when the order keeps none.
+        pub fences: Span<i64>,
+        pub tags: Span<u16>,
+        pub prints: Span<u8>,
+        /// The bytes of the chunks a sorted order's `rows`, `fences`, `tags` and `prints` keep, given back when it is
+        /// forgotten; 0 for a span it does not own.
+        pub held: [u64; 4],
     }
+}
+
+/// `Index::ordered`: a hashed index (buckets of rows).
+pub const HASHED: u32 = 0;
+/// `Index::ordered`: a sorted order whose rows are listed in `rows`, sorted by the key (decision 0450 step 5b).
+pub const ORDER: u32 = 2;
+/// `Index::ordered`: a sorted order of the rows `lo..hi` themselves, already in the key's order (`mask` holds
+/// `lo << 32 | hi`), so no list of them is kept.
+pub const ORDER_ROWS: u32 = 3;
+
+/// A chunk of a relation's block an order is given (`Relation::try_add_order`): its offset, its items, and the bytes
+/// its chunk keeps (0: one it does not own, given back by its owner).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Given {
+    pub at: usize,
+    pub len: usize,
+    pub kept: usize,
 }
 
 structure! {
@@ -204,6 +232,11 @@ impl Relation {
                     (*w).mask = ix.mask;
                     copy_span(block, &to.offs, &ix.offs)?;
                     copy_span(block, &to.rows, &ix.rows)?;
+                    copy_span(block, &to.fences, &ix.fences)?;
+                    copy_span(block, &to.tags, &ix.tags)?;
+                    copy_span(block, &to.prints, &ix.prints)?;
+                    // Its spans are the copy's block's allocations, not chunks it was given.
+                    (*w).held = [0; 4];
                 }
             }
         }
@@ -299,6 +332,110 @@ impl Relation {
         let found = (0..n).find(|&i| ix[i].ordered == 0 && built(i) == cols.len() && ix[i].key[..cols.len()] == *cols && ix[i].rows.len() == rows as usize);
         std::sync::atomic::fence(Acquire);
         found
+    }
+
+    /// The sorted order on `cols` over `rows` rows (decision 0450 step 5b), built: its number.
+    pub fn find_order(&self, cols: &[u16], rows: u32) -> Option<usize> {
+        let n = (self.nindex.load(Acquire) as usize).min(self.indexes.len());
+        let ix = self.indexes.as_slice();
+        // SAFETY: as `find_index`'s.
+        let built = |i: usize| unsafe { std::ptr::read_volatile(&raw const ix[i].ncols) } as usize;
+        let found = (0..n).find(|&i| (ix[i].ordered == ORDER || ix[i].ordered == ORDER_ROWS) && built(i) == cols.len() && ix[i].key[..cols.len()] == *cols && Self::order_rows(&ix[i]) == rows as usize);
+        std::sync::atomic::fence(Acquire);
+        found
+    }
+
+    /// The sorted orders built, by number: every one `find_order` can find.
+    pub fn orders(&self) -> impl Iterator<Item = usize> + '_ {
+        let n = (self.nindex.load(Acquire) as usize).min(self.indexes.len());
+        let ix = self.indexes.as_slice();
+        // SAFETY: as `find_index`'s.
+        let built = move |i: usize| unsafe { std::ptr::read_volatile(&raw const ix[i].ncols) } != 0;
+        let found: Vec<usize> = (0..n).filter(|&i| (ix[i].ordered == ORDER || ix[i].ordered == ORDER_ROWS) && built(i)).collect();
+        std::sync::atomic::fence(Acquire);
+        found.into_iter()
+    }
+
+    /// The rows a sorted order holds.
+    pub fn order_rows(ix: &Index) -> usize {
+        if ix.ordered == ORDER_ROWS {
+            ((ix.mask & 0xffff_ffff) - (ix.mask >> 32)) as usize
+        } else {
+            ix.rows.len()
+        }
+    }
+
+    /// Gives this relation a sorted order on `cols` (decision 0450 step 5b): its rows listed (`ids`) or the rows
+    /// `lo..hi` themselves (`range`), and its fences, tags and prints, each a chunk of `block` written already. The
+    /// relation keeps them from now on and gives them back when its indexes are forgotten. Its number; `None` when
+    /// its directory has no room (the chunks are then still the caller's).
+    ///
+    /// # Safety
+    /// As `try_reserve_index`'s; each chunk lies in `block` and is the caller's to give, written, and nothing writes
+    /// it after.
+    pub unsafe fn try_add_order(&self, block: &Block, cols: &[u16], ids: Option<Given>, range: Option<(u32, u32)>, fences: Given, tags: Given, prints: Given) -> Option<usize> {
+        assert!(!cols.is_empty() && cols.len() <= MAX_KEY, "a key of {} columns", cols.len());
+        assert!(ids.is_some() != range.is_some(), "an order's rows listed or a range, one of them");
+        // SAFETY: the caller's: this relation's descriptor is ours to change.
+        unsafe {
+            let me = std::ptr::from_ref(self).cast_mut();
+            if self.indexes.len() == 0 {
+                let (at, _) = block.try_alloc_chunk_fit_zeroed(ADDED_INDEXES * size_of::<Index>(), 8)?;
+                Span::set(&raw mut (*me).indexes, block.ptr::<Index>(at), ADDED_INDEXES);
+                self.flags.fetch_or(ADDED, Release);
+            }
+            let i = self.nindex.load(Relaxed) as usize;
+            if i >= self.indexes.len() {
+                return None;
+            }
+            let ix = std::ptr::from_ref(&self.indexes.as_slice()[i]).cast_mut();
+            (*ix).ncols = 0;
+            let mut key = [0u16; MAX_KEY];
+            key[..cols.len()].copy_from_slice(cols);
+            (*ix).key = key;
+            /// An empty span, as a zeroed directory holds it (its target its own place, never address 0).
+            fn clear<T>(dst: *mut Span<T>) {
+                // SAFETY: the caller's: `dst` is the entry's.
+                unsafe {
+                    (*dst).off.store(0, Relaxed);
+                    (*dst).len.store(0, Relaxed);
+                }
+            }
+            clear(&raw mut (*ix).offs);
+            let ids = ids.unwrap_or_default();
+            match range {
+                Some((lo, hi)) => {
+                    (*ix).ordered = ORDER_ROWS;
+                    (*ix).mask = u64::from(lo) << 32 | u64::from(hi);
+                    clear(&raw mut (*ix).rows);
+                }
+                None => {
+                    (*ix).ordered = ORDER;
+                    (*ix).mask = 0;
+                    Span::set(&raw mut (*ix).rows, block.ptr::<u32>(ids.at), ids.len);
+                }
+            }
+            fn set<T>(block: &Block, dst: *mut Span<T>, g: Given) {
+                // SAFETY: the caller's: `dst` is the entry's, `g` a chunk of `block` (or none).
+                if g.len == 0 {
+                    // SAFETY: as below.
+                    unsafe {
+                        (*dst).off.store(0, Relaxed);
+                        (*dst).len.store(0, Relaxed);
+                    }
+                    return;
+                }
+                unsafe { Span::set(dst, block.ptr::<T>(g.at), g.len) }
+            }
+            set(block, &raw mut (*ix).fences, fences);
+            set(block, &raw mut (*ix).tags, tags);
+            set(block, &raw mut (*ix).prints, prints);
+            (*ix).held = [ids.kept as u64, fences.kept as u64, tags.kept as u64, prints.kept as u64];
+            self.nindex.store(i as u32 + 1, Release);
+            std::sync::atomic::fence(Release);
+            std::ptr::write_volatile(&raw mut (*ix).ncols, cols.len() as u32);
+            Some(i)
+        }
     }
 
     /// Room for an index on `cols` of rows `0..n` in `block`, which holds this relation: its directory's entry, its
@@ -428,6 +565,16 @@ impl Relation {
         for ix in &self.indexes.as_slice()[..n] {
             // SAFETY: the caller's; `find_index` skips an entry whose `ncols` is 0.
             unsafe { std::ptr::write_volatile(&raw mut (*std::ptr::from_ref(ix).cast_mut()).ncols, 0) };
+            if ix.ordered == ORDER || ix.ordered == ORDER_ROWS {
+                // A sorted order's chunks, each as it was given (`try_add_order`).
+                let spans = [(ix.rows.as_ptr().cast::<u8>(), ix.held[0]), (ix.fences.as_ptr().cast(), ix.held[1]), (ix.tags.as_ptr().cast(), ix.held[2]), (ix.prints.as_ptr().cast(), ix.held[3])];
+                for (p, kept) in spans {
+                    if kept > 0 {
+                        block.free_chunk_fit(block.offset_of(p), kept as usize);
+                    }
+                }
+                continue;
+            }
             let (offs, rows) = (4 * ix.offs.len(), 4 * ix.rows.len().max(1));
             let (o, r) = (block.offset_of(ix.offs.as_ptr()), block.offset_of(ix.rows.as_ptr()));
             // Left resident, as an index's room was before it went back (a few bytes a row; the next index takes it).

@@ -289,8 +289,10 @@ pub struct BlockVec<T: rerail_blocks::Pod> {
     at: usize,
     len: usize,
     cap: usize,
-    /// The bytes its chunk keeps (what `Block::free_chunk_fit` takes back).
+    /// The bytes its chunk keeps (what `Block::free_chunk_fit` takes back); 0 for a borrowed one (`shared`).
     kept: usize,
+    /// A borrowed one's relation, whose directory owns its chunk (decision 0450 step 5b): kept while it lives.
+    owner: Option<Part>,
     _t: std::marker::PhantomData<T>,
 }
 
@@ -310,7 +312,60 @@ pub static BLOCK_VEC_CHUNKS: [std::sync::atomic::AtomicU64; 2] = [const { std::s
 impl<T: rerail_blocks::Pod> BlockVec<T> {
     /// Empty, with no chunk.
     pub const fn new() -> Self {
-        BlockVec { facts: None, ptr: std::ptr::NonNull::dangling(), life: Life::Run, at: 0, len: 0, cap: 0, kept: 0, _t: std::marker::PhantomData }
+        BlockVec { facts: None, ptr: std::ptr::NonNull::dangling(), life: Life::Run, at: 0, len: 0, cap: 0, kept: 0, owner: None, _t: std::marker::PhantomData }
+    }
+
+    /// The `len` `T`s at `at` of `owner`'s block, which `owner`'s relation keeps (its directory's: decision 0450 step
+    /// 5b), read where they lie: borrowed, never given back by this, and never written (a write moves them first).
+    ///
+    /// # Safety
+    /// `len` `T`s are written at `at` of `owner`'s block, and `owner`'s relation keeps them while it lives.
+    pub unsafe fn shared(owner: &Part, at: usize, len: usize) -> Self {
+        if len == 0 {
+            return BlockVec::new();
+        }
+        let facts = owner.facts().clone();
+        let ptr = std::ptr::NonNull::new(facts.block.ptr::<T>(at)).expect("a block's chunk");
+        BlockVec { facts: Some(facts), ptr, life: owner.life(), at, len, cap: len, kept: 0, owner: Some(owner.clone()), _t: std::marker::PhantomData }
+    }
+
+    /// The chunk `into_chunk` handed on, its own again (no directory took it).
+    pub fn from_chunk(facts: &Arc<Facts>, life: Life, g: rerail_blocks::relation::Given) -> Self {
+        if g.len == 0 {
+            return BlockVec::new();
+        }
+        let ptr = std::ptr::NonNull::new(facts.block.ptr::<T>(g.at)).expect("a block's chunk");
+        BlockVec { facts: Some(facts.clone()), ptr, life, at: g.at, len: g.len, cap: g.kept / size_of::<T>(), kept: g.kept, owner: None, _t: std::marker::PhantomData }
+    }
+
+    /// Whether `into_chunk` would hand its chunk on to `facts`' block (or it has none to hand).
+    pub fn can_give(&self, facts: &Arc<Facts>) -> bool {
+        self.len == 0 || (self.facts.as_ref().is_some_and(|f| Arc::ptr_eq(f, facts)) && self.owner.is_none() && self.kept > 0)
+    }
+
+    /// Whether it is borrowed (`shared`).
+    pub fn is_shared(&self) -> bool {
+        self.owner.is_some()
+    }
+
+    /// Its chunk, handed on to `facts`' block's owner of it (an order's directory entry, `Relation::try_add_order`)
+    /// when it lies there and is its own: (offset, items, kept bytes). Otherwise it stays this vector's (`Err`).
+    pub fn into_chunk(mut self, facts: &Arc<Facts>) -> Result<rerail_blocks::relation::Given, Self> {
+        if self.len == 0 {
+            return Ok(rerail_blocks::relation::Given::default());
+        }
+        match &self.facts {
+            Some(f) if Arc::ptr_eq(f, facts) && self.owner.is_none() && self.kept > 0 => {}
+            _ => return Err(self),
+        }
+        let given = rerail_blocks::relation::Given { at: self.at, len: self.len, kept: self.kept };
+        // Handed on: nothing of it is given back here.
+        self.facts = None;
+        self.kept = 0;
+        self.cap = 0;
+        self.len = 0;
+        self.ptr = std::ptr::NonNull::dangling();
+        Ok(given)
     }
 
     /// Empty, with room for `n` `T`s, near `home` (`None`: a run's open block).
@@ -364,7 +419,11 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
 
     /// Its chunk given back.
     fn free(&mut self) {
-        if let Some(f) = self.facts.take() {
+        // A borrowed one's chunk is its owner's.
+        self.owner = None;
+        if let Some(f) = self.facts.take()
+            && self.kept > 0
+        {
             f.block.free_chunk_fit(self.at, self.kept);
         }
         self.ptr = std::ptr::NonNull::dangling();
@@ -458,6 +517,11 @@ impl<T: rerail_blocks::Pod> std::ops::Deref for BlockVec<T> {
 impl<T: rerail_blocks::Pod> std::ops::DerefMut for BlockVec<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut [T] {
+        if self.owner.is_some() {
+            // A borrowed one is its owner's: written, it moves to a chunk of its own first.
+            let near = self.facts.clone();
+            self.realloc(near.as_ref().map(|f| (f, 0)), self.len);
+        }
         // SAFETY: as `deref`, and `&mut self` is the one writer.
         unsafe { std::slice::from_raw_parts_mut(self.ptr_mut(), self.len) }
     }
@@ -482,6 +546,11 @@ impl<'a, T: rerail_blocks::Pod + Copy> Extend<&'a T> for BlockVec<T> {
 impl<T: rerail_blocks::Pod> Clone for BlockVec<T> {
     /// A copy in the same block (or its life's open block): a derived structure written again, as a merge writes one.
     fn clone(&self) -> Self {
+        if let Some(owner) = &self.owner {
+            // Borrowed: another borrow of the same items, where they lie (never written in place).
+            // SAFETY: `owner` keeps them, as it keeps this one's.
+            return unsafe { BlockVec::shared(owner, self.at, self.len) };
+        }
         let mut v = BlockVec::new();
         v.life = self.life;
         if self.len > 0 {
@@ -769,6 +838,11 @@ impl Part {
     }
 
     /// How long its rows live: the blocks it is in.
+    /// Whether nothing else holds its relation (no other part, reader or borrowed array of it).
+    pub fn is_unique(&self) -> bool {
+        Arc::strong_count(&self.held) == 1
+    }
+
     pub fn life(&self) -> Life {
         self.life
     }
@@ -1290,6 +1364,13 @@ impl Rows {
             _ => self.merged.get()?,
         };
         Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows: one.len(), dead: 0, part: Some(one.clone()) })
+    }
+
+    /// The relation that holds its last rows, in its block, whatever its parts: where its sorted orders' directory
+    /// is (decision 0450 step 5b). Its rows are that part's own, not the relation's.
+    pub fn last_in_block(&self) -> Option<InBlock> {
+        let p = self.parts().last()?;
+        Some(p.in_block(p.len()))
     }
 
     /// The rows as one relation: the one part, or every part merged into one (made once and kept).

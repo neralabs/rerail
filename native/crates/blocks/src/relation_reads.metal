@@ -261,7 +261,7 @@ inline ulong clif_rel_group(device const uchar* t,ulong a0,uint a1,ulong a2){
  ulong v4=v0+ulong(136ul);
  ulong v5=v4+v3;
  ulong v6=ulong(v1);
- ulong v7=v6*ulong(64ul);
+ ulong v7=v6*ulong(144ul);
  v8=v5+v7;
  ulong v9=ulong(*(device const ulong*)(t+(v8+ulong(long(40)))));
  uchar v10=uchar((ulong)(v9)==(ulong)(ulong(0ul)));
@@ -298,7 +298,7 @@ inline uint clif_rel_group_row(device const uchar* t,ulong a0,uint a1,uint a2){
  ulong v4=v0+ulong(136ul);
  ulong v5=v4+v3;
  ulong v6=ulong(v1);
- ulong v7=v6*ulong(64ul);
+ ulong v7=v6*ulong(144ul);
  ulong v8=v5+v7;
  ulong v9=ulong(*(device const ulong*)(t+(v8+ulong(long(48)))));
  ulong v10=v8+ulong(48ul);

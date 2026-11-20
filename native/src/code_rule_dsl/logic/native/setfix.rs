@@ -4051,6 +4051,62 @@ impl Csr {
             .map_or(&[], |&(_, start, len)| &self.ids[start as usize..][..len as usize])
     }
 }
+/// A frozen relation's orders (`in_block_orders`): put in its block's directory; read in another relation's directory
+/// (a maintained relation's, `Rel::based`); kept as they were, their arrays in another block or the directory full.
+pub static ORDERS_KEPT: [std::sync::atomic::AtomicU64; 3] = [const { std::sync::atomic::AtomicU64::new(0) }; 3];
+
+/// A frozen relation's orders `idx` (rows `rows`, `n` of `k` values) in its block (decision 0450 step 5b, the user's
+/// choice): each that holds every row, merged into one run, its arrays handed to the directory of the relation that
+/// holds its last rows (`Relation::try_add_order`), where any reader finds it by its key, the device too. What is
+/// returned are handles to them, which read them there (`Run::in_block`) and keep that relation. An order read in
+/// an older relation's directory already (a maintained relation's, `Rel::based`) stays read there. One whose arrays
+/// lie in another block, over fewer rows, or whose directory is full, stays as it was, in its blocks.
+fn in_block_orders(idx: Vec<Index>, rows: &Rows, k: usize, n: usize) -> Vec<Index> {
+    let Some(ib) = rows.last_in_block() else { return idx };
+    let part = ib.part.as_ref().expect("a part's relation");
+    let mut out = Vec::with_capacity(idx.len());
+    for ix in idx {
+        if ix.rows() != n || ix.cols.is_empty() || ix.cols.len() > MAX_KEY {
+            ORDERS_KEPT[2].fetch_add(1, AtomicOrdering::Relaxed);
+            out.push(ix);
+            continue;
+        }
+        if ix.runs() == 1 && ix.borrowed() {
+            ORDERS_KEPT[1].fetch_add(1, AtomicOrdering::Relaxed);
+            out.push(ix);
+            continue;
+        }
+        let Some((cols, printed, run)) = ix.into_one(rows, k) else { continue };
+        let given = match run.give(&ib.facts) {
+            Ok(given) => given,
+            Err(run) => {
+                ORDERS_KEPT[2].fetch_add(1, AtomicOrdering::Relaxed);
+                out.push(Index::of_run(cols, printed, run));
+                continue;
+            }
+        };
+        let key: Vec<u16> = cols.iter().map(|&c| c as u16).collect();
+        let added = {
+            let _g = ib.facts.ix.lock().unwrap_or_else(|e| e.into_inner());
+            // SAFETY: under the block's index lock; the chunks are the run's, in this block, written.
+            unsafe { ib.relation().try_add_order(&ib.facts.block, &key, given.ids, given.range, given.fences, given.tags, given.prints) }
+        };
+        match added {
+            // SAFETY: order `i` was just built in `part`'s relation's directory, which `part` keeps.
+            Some(i) => {
+                ORDERS_KEPT[0].fetch_add(1, AtomicOrdering::Relaxed);
+                out.push(Index::of_run(cols, printed, unsafe { runs::Run::in_block(part, i) }));
+            }
+            None => {
+                // The directory is full: the order stays as it was, its chunks its own again.
+                ORDERS_KEPT[2].fetch_add(1, AtomicOrdering::Relaxed);
+                out.push(Index::of_run(cols, printed, given.into_run(&ib.facts, part.life())));
+            }
+        }
+    }
+    out
+}
+
 /// Drops native relations `tables` of `conn`'s run: no later stratum reads them (`plan::last_reads`), so their rows
 /// and the indexes the waves kept are freed now, not when the run ends.
 pub fn release(conn: &Connection, tables: &[String]) {
@@ -4073,6 +4129,8 @@ pub fn unindex(conn: &Connection, tables: &[String]) {
         if let Some(rel) = derived.get_mut(&(at, t.clone())).and_then(Arc::get_mut) {
             rel.chains = Vec::new();
             *rel.idx.get_mut().unwrap() = HashMap::default();
+            // Its orders lie in its block's directory (decision 0450 step 5b), given back with the relation's other chunks
+            // when it is released (`Relation::release`).
         }
     }
 }
@@ -5145,7 +5203,9 @@ impl InRel {
     fn moved(mut rel: Rel) -> InRel {
         rel.index_rest();
         rel.count_dead();
-        InRel { vers: Default::default(), viewed: false, keyed: None, k: rel.k, n: rel.n, rows: rel.data.freeze(rel.n), view: None, base: false, types: rel.types, stored: rel.stored, idx: Mutex::new(HashMap::default()), chains: rel.idx, sorted: rel.sorted,
+        let rows = rel.data.freeze(rel.n);
+        let chains = in_block_orders(rel.idx, &rows, rel.k, rel.n);
+        InRel { vers: Default::default(), viewed: false, keyed: None, k: rel.k, n: rel.n, rows, view: None, base: false, types: rel.types, stored: rel.stored, idx: Mutex::new(HashMap::default()), chains, sorted: rel.sorted,
                 sketches: rel.sketches, serves: rel.serves, dead: rel.dead, ndead: rel.ndead, summaries: rel.summaries, measured: Default::default(), counted: Default::default(), tables: Default::default(), name: std::sync::OnceLock::from(rel.table), from: rel.from, uid: Default::default(), level: rel.level, stats: rel.stats }
     }
     /// What `delta_since_mark` needs of this relation later, without holding it: its address, rows and dead rows.

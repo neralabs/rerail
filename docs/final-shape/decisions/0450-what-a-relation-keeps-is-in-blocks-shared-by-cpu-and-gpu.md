@@ -398,3 +398,46 @@ that size came from the cache's first use, a 16z block decoded, and nothing else
   Stages run again after an overflow: 96-103 a run, against 91-100. The growths no longer follow the threads, but
   the reruns still differ between runs (the device's room, the text arena): R6 stays open.
 
+## Decided (2026-11-19, the user, on step 5's orders)
+
+Asked what a relation's kept sorted orders become in its block, the user chose **one sorted order**: when a relation
+is frozen into an input (`InRel::from`'s, `Rel::based`'s start), each kept order's runs are merged once into one
+sorted permutation of its rows, written in the relation's block and listed in its index directory as a kind beside
+the hash index (a key, and the rows in its order). The CPU reads it there, and the GPU can (a binary search). The
+heap directory of an input's orders (`Index`'s `Vec<(Arc<Run>, u32)>`, `InRel::chains`) goes. A relation's waves
+(`Rel::idx`, while it is derived) keep their runs until it freezes. Rejected: the runs' directory written as block
+descriptors (no merge, but a format only the CPU reads), and inputs keeping no orders (a maintained relation would
+sort again).
+
+
+## Built (2026-11-19, step 5b: a frozen relation's orders in its block's directory)
+
+- **The directory holds sorted orders.** `rerail_blocks::relation::Index` has three more spans (`fences`, `tags`,
+  `prints`) and the chunks' bytes it owns (`held`). Two kinds join the hash index: `ORDER` (a key, and every row
+  listed in its order in `rows`) and `ORDER_ROWS` (rows `lo..hi` already in the key's order, none listed).
+  `Relation::try_add_order` takes an order's chunks, written already in its block. `find_order` finds one by key
+  and rows, and `orders` lists them. `forget_indexes` (and so `release`) gives back the chunks an order owns. The
+  directory has room for 16 entries (`ADDED_INDEXES`, was 8), since the orders share it with the hash indexes.
+  The generated reads (`generated_reads.rs`, `relation_reads.metal`) were written again for the new layout.
+- **At freeze** (`InRel::moved`, `in_block_orders`), each order over every row has its runs merged into one, and its
+  arrays (`BlockVec`s already in the relation's block) are handed to the directory of the part holding its last rows
+  (`BlockVec::into_chunk`). `InRel::chains` keeps handles only. Each handle's run reads the directory's spans where
+  they lie (`Run::in_block`, a borrowed `BlockVec::shared` that holds the part and never gives the chunk back). A
+  write to a borrowed array moves it to a chunk of its own first, and a clone of one is another borrow.
+- **A maintained relation** (`Rel::based`) starts from the old relation's handles. Nothing is copied: its runs read
+  the old relation's directory, which the handles keep. Frozen again with no new rows, such an order stays read there.
+- **Not handed on** (kept as it was, in its blocks): an order over fewer rows, an order whose arrays lie in another
+  block, or an order whose directory is full (its chunks are its own again, `GivenRun::into_run`). The profile
+  counts each kind ("frozen orders"). On hogql: 130 in their own directory, 130 read in an older relation's, 0 kept
+  as they were, in one phase. None was left outside a directory in any run.
+- Tests: `a_frozen_relations_orders_are_in_its_blocks_directory` and
+  `a_based_relation_reads_its_old_orders_in_the_block` (`setfix/block_index_tests.rs`).
+- **Found while measuring: a directory forgotten early.** A first build forgot a relation's whole directory at
+  `unindex` when no `Part` but its own held it, hash indexes included. One Metal run of three then lost a whole
+  chunk's findings (1,375 of 1,629). The relation's orders are now given back only at its release, as its hash
+  indexes always were. 7 of 7 runs gave 1,629 after that. **Open (R2):** some reader of a directory holds no `Part`
+  of its relation (the device's index by its number, by the sign of it), so `Part::is_unique` was no proof that no one
+  reads it. It should hold one.
+- hogql cold, profiling, format 15, three pairs against step 7's build each:
+  - CPU, load 32-36: 83.1-84.0 B against 83.0-83.5 B. Even.
+  - Metal, the final build, seven runs at load 19-24: 75.5-79.2 B, against 76.2-77.2 B for step 7 at load 24-27.

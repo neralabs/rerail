@@ -293,7 +293,7 @@ v3 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(136isize as 
 v4 = v0.wrapping_add(136i64 as u64);
 v5 = v4.wrapping_add(v3);
 v6 = v1 as u64;
-v7 = v6.wrapping_mul(64i64 as u64);
+v7 = v6.wrapping_mul(144i64 as u64);
 v8 = v5.wrapping_add(v7);
 v9 = unsafe { core::ptr::read_unaligned(((v8 as usize).wrapping_add(40isize as usize)) as *const u64) };
 v10 = ((v9 as u64) == ((0i64 as u64) as u64)) as u8;
@@ -345,7 +345,7 @@ v3 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(136isize as 
 v4 = v0.wrapping_add(136i64 as u64);
 v5 = v4.wrapping_add(v3);
 v6 = v1 as u64;
-v7 = v6.wrapping_mul(64i64 as u64);
+v7 = v6.wrapping_mul(144i64 as u64);
 v8 = v5.wrapping_add(v7);
 v9 = unsafe { core::ptr::read_unaligned(((v8 as usize).wrapping_add(48isize as usize)) as *const u64) };
 v10 = v8.wrapping_add(48i64 as u64);
@@ -5686,4 +5686,4 @@ pub unsafe fn cache_done(desc: *const u8, a1: u64) -> u32 {
 
 
 /// This source's fingerprint (`rust::fingerprint` of what comes before).
-pub const SOURCE: u64 = 0xee658e9321c683b3;
+pub const SOURCE: u64 = 0x8c4c8d67663d95b9;
