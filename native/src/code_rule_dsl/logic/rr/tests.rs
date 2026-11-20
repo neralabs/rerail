@@ -3969,13 +3969,17 @@ fn library_modules_link_to_the_lowering_of_them_together() {
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(&packs).unwrap().map(|e| e.unwrap().path()).filter(|p| p.is_dir()).collect();
     dirs.sort();
     let mut checked = 0;
-    for dir in dirs {
-        let mut programs: Vec<PathBuf> = walk_rr(&dir);
+    // Every pack's programs' include graphs in one run of phase 0 (`modules_of`), not one a program or a pack (Q335).
+    let srcs: Vec<(PathBuf, String)> = dirs.iter().flat_map(|dir| {
+        let mut programs = walk_rr(dir);
         programs.sort();
+        programs.into_iter().filter_map(|p| Some((dir.clone(), std::fs::read_to_string(&p).ok()?))).collect::<Vec<_>>()
+    }).collect();
+    let mut found: Vec<(PathBuf, Result<Option<Modules>, Error>)> = srcs.iter().map(|(d, _)| d.clone()).zip(super::modules_of(&srcs.iter().map(|(_, s)| s.as_str()).collect::<Vec<_>>())).collect();
+    for dir in dirs {
         let mut paths: Vec<PathBuf> = Vec::new();
-        for p in &programs {
-            let Ok(src) = std::fs::read_to_string(p) else { continue };
-            let Ok(Some(m)) = modules(&src) else { continue };
+        for (_, m) in found.extract_if(.., |(d, _)| *d == dir) {
+            let Ok(Some(m)) = m else { continue };
             for (path, _, _) in m.files {
                 if !paths.contains(&path) {
                     paths.push(path);
@@ -3989,7 +3993,7 @@ fn library_modules_link_to_the_lowering_of_them_together() {
         let together = super::lower_statements_version(files.iter().flat_map(|(_, s)| s.iter().cloned()).collect()).unwrap();
         let modules = library_modules(&paths, files).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
         // Each module read back from its image (decision 0246 §6) links to the same program, on versions (0377).
-        let images: Vec<lower::Module> = modules.iter().map(|m| module_image::decode(&module_image::encode(m).unwrap()).unwrap_or_else(|e| panic!("{}: a module image: {e}", dir.display()))).collect();
+        let images: Vec<lower::Module> = modules.iter().map(|m| module_image::decode(std::sync::Arc::new(module_image::encode(m).unwrap())).unwrap_or_else(|e| panic!("{}: a module image: {e}", dir.display()))).collect();
         let on_versions = super::link_library_versions(images).unwrap_or_else(|e| panic!("{}: linked on versions from its images: {e}", dir.display()));
         let linked = super::link_library_versions(modules).unwrap_or_else(|e| panic!("{}: linked on versions: {e}", dir.display()));
         assert_eq!((linked.size(), linked.digest()), (on_versions.size(), on_versions.digest()), "{}: the library linked from its modules' images: {}", dir.display(), crate::code_rule_dsl::logic::program_image::differences(&linked, &on_versions));

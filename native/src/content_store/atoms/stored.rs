@@ -231,7 +231,7 @@ impl Stored {
             (Some(r), Some((seq, w))) if *seq == r.seq && w.first() == r.first && w.tag() == r.tag && !w.frozen() => w.resume(r.upto).map_err(io)?,
             (Some(r), _) => {
                 let path = dir.join(&r.name);
-                self.writer = match AtomsW::reopen(&path, r.upto) {
+                self.writer = match AtomsW::reopen(&path, r.upto, crate::content_store::connection::flush_of(connection)) {
                     Ok(w) => Some((r.seq, checked(w, AtomsW::tag, r.tag, &path)?)),
                     // Frozen (rolled up into): the next block is started.
                     Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => None,
@@ -267,9 +267,9 @@ impl Stored {
                 // transaction's, a deleted store's) may be mapped by a process still reading it, and is never
                 // truncated under it.
                 let made = dir.join(format!("{name}.{tag:016x}.new"));
-                let w = AtomsW::create(&made, id, tag, cap, bytes).map_err(io)?;
+                let w = AtomsW::create(&made, id, tag, cap, bytes, crate::content_store::connection::flush_of(connection)).map_err(io)?;
                 std::fs::rename(&made, dir.join(&name)).map_err(io)?;
-                sync_dir(&dir).map_err(io)?;
+                sync_dir(&dir, crate::content_store::connection::flush_of(connection)).map_err(io)?;
                 connection
                     .prepare_cached("INSERT INTO main.atom_blocks(seq, name, first, upto, tag) VALUES (?1, ?2, ?3, ?3, ?4)")?
                     .execute(rusqlite::params![next_seq, name, i64::from(id), tag as i64])?;
@@ -308,7 +308,7 @@ impl Stored {
         let seq = rows.iter().map(|r| r.seq).max().unwrap_or(0) + 1;
         let (name, tag) = (format!("b{seq}.blk"), new_tag());
         let made = dir.join(format!("{name}.{tag:016x}.new"));
-        let mut w = AtomsW::create(&made, 1, tag, (end - 1).max(1), bytes.max(1)).map_err(io)?;
+        let mut w = AtomsW::create(&made, 1, tag, (end - 1).max(1), bytes.max(1), crate::content_store::connection::flush_of(connection)).map_err(io)?;
         for id in 1..end {
             let (s, h) = (all.str(id).expect("read above"), all.hash(id).expect("read above"));
             if w.append(s, h) != Some(id) {
@@ -317,7 +317,7 @@ impl Stored {
         }
         w.freeze().map_err(io)?;
         std::fs::rename(&made, dir.join(&name)).map_err(io)?;
-        sync_dir(&dir).map_err(io)?;
+        sync_dir(&dir, crate::content_store::connection::flush_of(connection)).map_err(io)?;
         connection.prepare_cached("DELETE FROM main.atom_blocks")?.execute([])?;
         connection
             .prepare_cached("INSERT INTO main.atom_blocks(seq, name, first, upto, tag) VALUES (?1, ?2, 1, ?3, ?4)")?
@@ -332,7 +332,8 @@ impl Stored {
         Ok(())
     }
 
-    /// A block's appends on the disk, then its row's end moved to them, in the transaction.
+    /// A block's appends written back (on the disk with `Flush::Synced`, decision 0481), then its row's end moved to
+    /// them, in the transaction.
     fn seal(connection: &Connection, seq: i64, w: &AtomsW) -> StoreResult<()> {
         w.sync().map_err(io)?;
         connection.prepare_cached("UPDATE main.atom_blocks SET upto = ?1 WHERE seq = ?2")?.execute(rusqlite::params![i64::from(w.end()), seq])?;
@@ -373,8 +374,12 @@ pub(crate) fn private_dir(dir: &Path) -> std::io::Result<()> {
     b.create(dir)
 }
 
-/// A new file's name on the disk before the commit that names it.
-pub(crate) fn sync_dir(dir: &Path) -> std::io::Result<()> {
+/// A new file's name on the disk before the commit that names it, with `Flush::Synced`; otherwise the OS's to write
+/// (decision 0481).
+pub(crate) fn sync_dir(dir: &Path, flush: rerail_blocks::block::Flush) -> std::io::Result<()> {
+    if !flush.waits() {
+        return Ok(());
+    }
     #[cfg(unix)]
     {
         std::fs::File::open(dir)?.sync_all()
@@ -428,7 +433,7 @@ pub fn freeze_blocks(database: &Path) -> StoreResult<()> {
     let dir = atoms_dir(database);
     for r in rows(&connection)? {
         let path = dir.join(&r.name);
-        match AtomsW::reopen(&path, r.upto) {
+        match AtomsW::reopen(&path, r.upto, crate::content_store::connection::flush_of(&connection)) {
             Ok(w) => checked(w, AtomsW::tag, r.tag, &path)?.freeze().map_err(io)?,
             Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => {}
             Err(e) => return Err(io(e)),

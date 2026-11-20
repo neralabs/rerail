@@ -586,8 +586,8 @@ pub(super) fn record(store: &ContentStore, source: Option<SourceId>, text: Strin
     // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`, decision 0264) ships the pointer; its programs'
     // images ship with `program_text::encode_version`.
     crate::code_rule_dsl::logic::rr::images::export(shipped_key(key), &entry);
-    let (packed, bytes) = program_text::pack(programs, entry);
-    store.record("the prepared program", vec![queued(key)], &(source, text, *key, packed), Some(bytes), apply);
+    let (packed, pieces) = program_text::pack(programs, entry);
+    store.record_held("the prepared program", vec![queued(key)], &(source, text, *key, packed), pieces, apply);
 }
 
 fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
@@ -600,7 +600,7 @@ fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_stor
             id
         }
     };
-    let (documents, entry) = program_text::store_packed(cx.store, &packed, cx.bytes)?;
+    let (documents, entry) = program_text::store_packed(cx.store, &packed, cx.pieces)?;
     cx.name(documents);
     let set = pointer_plan(&key);
     cx.store.put_facts_memo(FactsMemoKey { source, fact_schema: POINTER, path: PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry: entry.to_vec() }], &[]).map(drop)

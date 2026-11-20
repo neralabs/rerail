@@ -572,7 +572,7 @@ impl ContentStore {
                 "tape identifiers must be nonnegative".to_owned(),
             ));
         }
-        let mut placing = Placing::write(&self.database_path, &[tape])?;
+        let mut placing = Placing::write(&self.database_path, &[tape], self.connection.flush())?;
         // Retried under `retry_busy`, as `put_source` is.
         let (id, seg) = self.immediate_transaction(|transaction| {
             let seg = placing.number(transaction)?.expect("the tape, placed");
@@ -615,7 +615,7 @@ impl ContentStore {
             ));
         }
         let tape_identity = HashKey::tape_identity(canonical, tape);
-        let mut placing = Placing::write(&self.database_path, &[source, tape])?;
+        let mut placing = Placing::write(&self.database_path, &[source, tape], self.connection.flush())?;
         let (ids, seg) = self.immediate_transaction(|transaction| {
             let created_generation = generation(transaction)?;
             let seg = placing.number(transaction)?.expect("the source and tape, placed");

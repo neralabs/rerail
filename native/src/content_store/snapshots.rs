@@ -410,7 +410,7 @@ impl ContentStore {
                 }
             }
         }
-        let mut placing = Placing::write(&self.database_path, &bytes)?;
+        let mut placing = Placing::write(&self.database_path, &bytes, self.connection.flush())?;
         let mut connection = self
             .connection
             .lock()

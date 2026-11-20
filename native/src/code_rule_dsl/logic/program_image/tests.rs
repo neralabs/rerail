@@ -1468,6 +1468,48 @@ fn a_new_process_reruns_only_the_passes_after_a_stored_step() {
     assert_eq!(runs, [0, 0, 0], "found again under the same part");
 }
 
+/// A run that keeps a pipeline's steps, and a later run that finds them, each name the steps' sources in its manifest
+/// (Q146, decision 0480 §7): the step facts and each step's image, the same sources both times, so a collection between
+/// the two runs keeps them. Read as the run's manifest reads them, by an item at the record's end.
+#[test]
+fn a_found_step_names_its_sources_as_its_keeper_did() {
+    use super::manager::{Pipeline, Ran};
+    use crate::code_rule_dsl::logic::program_text::StoredSteps;
+    use crate::content_store::{ContentStore, SourceId};
+    static NAMED: std::sync::Mutex<Vec<SourceId>> = std::sync::Mutex::new(Vec::new());
+    fn takes(cx: &crate::content_store::record::Apply<'_>, _: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
+        *NAMED.lock().unwrap() = cx.store.take_named_sources();
+        Ok(())
+    }
+    let path = crate::code_rule_dsl::fixtures::temp();
+    let v = managed();
+    let run = || -> (Vec<Ran>, Vec<SourceId>) {
+        let store = ContentStore::open(&path).unwrap();
+        let ran = {
+            let _waves = crate::content_store::write_back::run_waves();
+            let steps = StoredSteps(&store);
+            let mut p = Pipeline::keyed("test", v.clone(), &steps);
+            p.program(&mut DropFacts).program(&mut DropQ);
+            let (_, stages) = p.finish().unwrap();
+            store.record("test/the manifest's names", Vec::new(), &(), None, takes);
+            store.written().unwrap();
+            stages.iter().map(|s| s.ran).collect()
+        };
+        drop(store);
+        ContentStore::forget(&path);
+        let mut named = std::mem::take(&mut *NAMED.lock().unwrap());
+        named.sort_by_key(|id| format!("{id:?}"));
+        named.dedup();
+        (ran, named)
+    };
+    let (ran, kept) = run();
+    assert_eq!(ran, [Ran::Whole; 2]);
+    assert!(kept.len() >= 3, "each step's facts and the images: {kept:?}");
+    let (ran, found) = run();
+    assert_eq!(ran, [Ran::Stored; 2], "both steps found");
+    assert_eq!(found, kept, "the run that finds them names what the run that kept them named");
+}
+
 /// A chain of edits past `REBASE_DEPTH` runs again over each one (decision 0385): at that depth the last run is made
 /// shallow, each deep version flat (a view of one base, its ids, size and digest the deep one's), so the next edit is
 /// still an edit of its input; the output is a run from scratch's every time.
@@ -1659,7 +1701,6 @@ fn asked_of(v: &Arc<Version>, asked: &super::about::Asked) -> Arc<Version> {
 /// last run's record of that step on, so the run's output states the record a run from scratch states. An edit that
 /// adds a request's rule runs the step whole, its record carried from its input.
 #[test]
-#[ignore = "Q249: the rerun states one about part more than a run from scratch, at the edit adding a request rule"]
 fn a_request_record_over_an_edit_is_a_run_from_scratchs() {
     use super::manager::{Pipeline, Ran, rebase};
     let fresh = |v: &Arc<Version>| Version::open(v.fold().unwrap().base_bytes().unwrap()).unwrap();
@@ -1699,12 +1740,13 @@ fn a_request_record_over_an_edit_is_a_run_from_scratchs() {
 /// A stored run is read where the store placed it (decision 0394): its images, its analyses' rows and its facts in
 /// one segment, uncompressed, read there mapped, and each version opened over the mapping, not decompressed, hashed
 /// or copied. An image stored before the run (a prepared program's, `store_encoded`) is in a segment from its write,
-/// as every source is (store floor 7), and is read there before the keep and after it. Its request record is kept with its steps (decision 0393), so a rerun in a new process over an edit states a run from
+/// as every source is (store floor 7), and is read there before the keep and after it. Its request record is kept
+/// with its steps (decision 0393), so a rerun in a new process over an edit states a run from
 /// scratch's.
 #[test]
 fn a_stored_run_is_read_in_place() {
     use super::manager::{Pipeline, Ran, Runs, rebase};
-    use crate::code_rule_dsl::logic::program_text::{Opened, StoredRuns, image_key, store_encoded};
+    use crate::code_rule_dsl::logic::program_text::{Opened, StoredRuns, image_key};
     use crate::content_store::ContentStore;
     use sha2::{Digest as _, Sha256};
     let fresh = |v: &Arc<Version>| Version::open(v.fold().unwrap().base_bytes().unwrap()).unwrap();
@@ -1720,7 +1762,7 @@ fn a_stored_run_is_read_in_place() {
         let store = ContentStore::open(&path).unwrap();
         let bytes = v0.base_bytes().unwrap();
         let digest: [u8; 32] = Sha256::digest(bytes).into();
-        store_encoded(&store, &digest, true, bytes).unwrap();
+        store.put_source(bytes, &[image_key(&digest)]).unwrap();
         let held = |store: &ContentStore| store.sources_by_alias_in_place(&[image_key(&digest)]).unwrap().remove(0).expect("the input's image held");
         assert!(held(&store).in_place(), "a prepared program's image is in a segment from its write");
         let mut p = Pipeline::keeping("test", v0.clone());
@@ -1986,7 +2028,7 @@ fn an_open_rule_writes_what_the_rule_builder_writes() {
         b.put_ast(&mut o, "d", "x", "{\"kind\": \"call\"}", &[("NAME", "v")]);
         b.close_rule_once(o, &mut seen).unwrap();
     }
-    assert_eq!(a.finish_bytes().unwrap(), b.finish_bytes().unwrap());
+    assert_eq!(a.image().unwrap().bytes(), b.image().unwrap().bytes());
     let mut c = Builder::base();
     let o = c.open_rule();
     assert!(c.close_rule(o).is_err(), "a rule with no head is refused");

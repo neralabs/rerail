@@ -1132,7 +1132,7 @@ pass.
   javascript pack's library linked from its modules differs from the one lowered together at line 441,
   `rr_cover135` against `rr_cover121`, 2,383 lines against 2,385).
 - **Done when**: both pass, each traced to its cause (and a commit that made it red, where one did).
-- **Record** (2026-11-16): both pass at the hub's head (after the roll-up of 2026-11-16); neither change traced to
+- **Record**: done (2026-11-16): both pass at the hub's head (after the roll-up of 2026-11-16); neither change traced to
   one commit.
 
 ### Q23. The transducer's Metal tests register no language in `rerail-device-metal`
@@ -1208,6 +1208,15 @@ pass.
 - **Waits for**: the deferrable tier (0295 path step 2), built on final-rerail-shape-phased-facts.
 - **Done when**: Typing-support's version tests pass on blocks, and dl1's trace validation costs no more
   instructions than 0173's.
+- **Built** (2026-11-19, decision 0480): the image is written once in place (`Layout`/`Placing`), a record carries
+  it as its version's `Arc` (record pieces), stored images are placed in segments and opened over the mapping (an
+  older store's inline rows loaded at 16 bytes), and the bundle is read in place. An open checks bounds, references
+  and strings, not node trees (`Depth::Held`), except for foreign bytes and in debug builds. One fold rule (0456 K4's
+  geometric one), kills by range as views, and views stay their own form. The program image, program text, rr,
+  store and logic tests pass (Linux: 204 of the engine's; M1 Max: 703 of the three crates').
+- **Done** (2026-11-19, a282371e9, the M3 at load 35–53): dl1's 44-policy batch, images required, gives 48
+  findings cold and warm. It retires 79.9 G instructions cold (a26e71b5d: 81.7 G) and 3.7 G then 3.3 G warm (5.7 G
+  then 3.3 G). Decision 0480, "Measured".
 
 ### Q27. `value_types_are_ws_value_types` reads only the string-typed values
 
@@ -1594,6 +1603,10 @@ pass.
   - Also: `sql_executor` as a whole, in parallel, passes 3 GB RSS (`tmp/capped.sh 3000`); with four threads too.
 - **Done when**: each passes, the first by binding the long-text nodes before whichever part reads them (or by the
   part not reading node text), the second by classifying each switch from what it does, the third from the cause.
+- **Record**: done (2026-11-19, Typing-support at 049b9aaa6, a Linux farm host): every test named above passes, the phases test, both `convert` tests,
+  `base_relations_read_are_inputs`, `rule_files_use_the_core_prelude_and_unused_inputs_need_no_binding` and
+  `rust_calls_program_agrees_with_rust_analyzer` among them. The four not marked fixed above were not traced to the
+  commits that fixed them.
 
 ### Q43. A prepared program of another store moves its atoms in its image, not through a tree
 
@@ -1605,6 +1618,9 @@ pass.
   reads no tree. Tested by `a_prepared_program_of_another_store_moves_to_this_stores_atoms`.
 - **Done when**: the move rewrites the image's branded name leaves and cells in place (`kind::BRANDED` with the name
   class, `Cell::Branded`), no tree decoded, and the version's digests stay right; the test above passes unchanged.
+- **Record**: done (2026-11-19, Typing-support at 049b9aaa6, a Linux farm host): `lower::relocate` moves the branded name terms and the fact cells in one writer
+  pass (`Builder::rewrite_all`, 0276 §3), and no tree is decoded: 0276 stage 6 D deleted the tree forms. The test
+  passes. Writing the move into the image's own bytes, with no second image, comes with Q26.
 
 ### Q35. Store the general forms through 0281 step 5's keyed preparation steps (done, 2026-11-16)
 
@@ -1615,7 +1631,7 @@ pass.
 - **Done when**: Typing-support's step 5 storage is merged here; each general form is a keyed step, read by a new
   process instead of written; the switch is removed; an edit costs less than today's, with the same rows on the
   five steps.
-- **Record**: merged Typing-support 7a07e4081 (step 5 (a), (b), (c) storage). One semantic conflict, fixed: their
+- **Record**: done (2026-11-16): merged Typing-support 7a07e4081 (step 5 (a), (b), (c) storage). One semantic conflict, fixed: their
   version passes (`Locate`, the `FileLocal` split) were ported before 0290, so the 4 relations naming no document
   were refused, not moved (a debug check against the tree's `locate` stopped every run). Ported: the version split
   holds a `cross_file` relation cross-file with 0290's cause, and `preparation::run` qualifies what `Locate` leaves
@@ -3084,6 +3100,10 @@ and prune): a further pass orders it otherwise.
 
 - **Done when**: a debug build runs the bench's full shape through.
 - **Record**: —
+- **Record**: closed (2026-11-19, Typing-support), superseded: the check compared the version's narrowed
+  requests with the tree form's, and 0276 stage 6 D deleted the tree forms and every such check. The version is
+  the only form; the findings tests check it. Not checked by a debug run of the bench's shape. The request records'
+  own faults are Q212 and Q226.
 
 ### Q219. (Q182 on benchmarks-on-integration) A root spelled with `/./` is told nothing by the journal
 
@@ -3249,15 +3269,28 @@ reuses another's sync.
   `a_canonical_path_is_resolved_again_only_where_the_journal_names_a_change`,
   `an_inner_root_is_answered_by_the_root_above_it`); 34 of 34 passed in one run. Waiting at most 2 s per stream
   and starting another was tried, and is worse: slow but live streams were dropped, and every new one was slow too.
-- **Found, the late streams** (2026-11-19, by reading `journal.rs`): the lateness is a stream's own, not
-  `fseventsd`'s: a new stream had its cookie in 0.5 s while a kept one was told nothing for 20 s. What schedules a
-  stream's delivery is the dispatch queue its callbacks run on, and `start` made it with no QoS
-  (`dispatch_queue_create(.., NULL)`): the handler ran at none of its own, and `sync` waits on a condvar, which lends
-  it no priority. Under `nice -n 19` on a machine at load 20–55 it waited behind everything. The queue is now made
-  at `QOS_CLASS_USER_INITIATED` (`dispatch_queue_attr_make_with_qos_class`), the QoS of a run that waits on it.
-  Still to see: 20 of 20 on a Mac at load (none was usable to run it when this was written).
+- **Found, the late journal** (2026-11-19, Typing-support, on the M3 at load 40–80): `fseventsd` was at a full
+  core in every sample (98–120% CPU, 1,847 CPU minutes, priority 50): saturated, not starved. It delivers and logs
+  the machine's file events in order, and a cookie or a marker waits behind all of them. Traced, history's end came
+  in 0.27–0.38 s on every stream, and the live cookie at 2.7, 6.5, 7.2, 12.3 s, or not in 20 s (no event at all in
+  the stream meanwhile). Streams started later had theirs sooner because they started later, not alongside. A queue
+  QoS for the callbacks was tried first, on the reading that a kept stream's handler starved, and did not help
+  (1 to 5 of 34 still failed in each of 6 runs); it is reverted. No setting of ours shortens `fseventsd`'s backlog.
+- **Fixed, the tests name why a run cannot answer**: the observer counts the roots the journal answered later than
+  their wait (`journal::late`: `SLOWER`, `COOKIE_LATE`) or `Behind` its marker for the whole settle window
+  (`Counts::late`). A test's assertions of the journal's own counts hold where no run of the test so far was late
+  (`journal_answered`), and else say why; the answers are checked in every run. A late run reaches the next: its
+  stream answers from its sync on, so the next run's question from the older stored cursor is a history replay,
+  which misses a change merged into a record older than the cursor (decision 0400), as a new process's would. A
+  run covers that by its settle window, which the test observer turns off, so after a late run an edit is checked
+  as a run reads it, window on. Two faults the lateness had hidden, fixed: `the_journal_names_what_changed_since_its_cursor`
+  asked its zero-bound question with a 5 s settle budget, which is the least a question waits, so it was never
+  bounded and failed whenever the journal answered in time; and the settle-window test's miss can vanish when the
+  journal names the edit anyway (the safe side), which it now says. 22 of 22 runs of the 34 pass on the M3
+  (14 at load 41–48, 8 at 14 falling to 7).
 - **Done when**: the test passes 20 of 20 on a host at load, or names why a run cannot answer.
-- **Record**: —
+- **Record**: done 2026-11-19 (Typing-support): 22 of 22 on the M3, each run naming the questions the journal
+  answered late.
 
 ### Q224. (Q187 on benchmarks-on-integration) The full shape's cold run on Metal hangs, now and then: the main thread waits on the builder's bell, the pool idle
 
@@ -3349,7 +3382,7 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
   Relax run; a cargo check on the farm when a host is free.
 - **Waits on the user:** the placement (question 4).
 
-### Q249. A rerun over an edit that adds a request rule states one more about part than a run from scratch
+### Q332. (done) (Q249 until 2026-11-19; the hub's Q249 is the typing oracles') A rerun over an edit that adds a request rule states one more about part than a run from scratch
 
 - **Found**: merging the hub (65e368a0b) into Typing-support. The hub's new
   `program_image::tests::a_request_record_over_an_edit_is_a_run_from_scratchs` failed at its third edit. That edit
@@ -3361,6 +3394,15 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
   nothing where its length is not the rule count.
 - **Done when**: the rerun's whole-step path writes the record into the same parts that a run from scratch does,
   and the test runs again (its `#[ignore]` removed).
+- **Still** (2026-11-19, Typing-support at 049b9aaa6, a Linux farm host): edit 2 differs as found: only the rerun holds `about program #0 ("a")`.
+- **Cause**: the program's own about row (`program`) was stated by `Builder::set_field` alone, the first time a
+  builder stated a field. `set_asked` and the typed edits wrote about rows without it. So a version held it or not
+  by which edits had touched it: the rerun's whole step stated a field over the edited input, and the run from
+  scratch stated none. `differences` compared sets of texts, so it could not show a part held twice either.
+- **Done** (2026-11-19): `set_about_rows` states the program row with the first about row of any kind, so every
+  version that holds about rows holds it, whichever edit wrote them. `differences` counts each text. The test runs
+  again (no `#[ignore]`) and passes, with the logic crate's tests and the engine's image, preparation and planning
+  tests (484, M3).
 
 ## Questions for the user
 
@@ -4027,6 +4069,12 @@ Q36's pricing (`field($l, "left", $t)` priced at one row a line) is lost again. 
   later run then misses and keeps them again.
 - **Done when**: Typing-support wires the steps into runs, naming their sources in the run's record
   (`Apply::name`), with a test that a collection between two runs keeps them.
+- **Still open** (2026-11-19, read at 049b9aaa6): neither a step's `apply` (stored) nor `find` (a hit) names the
+  image's and the step facts' sources in the run's manifest (`Apply::name`). Built with Q26, which moves a stored
+  image into a block: the sources named are its new home's.
+- **Done** (2026-11-19, decision 0480 §7): `keep`'s apply names the image and the facts it stores or finds, and
+  `find` names both through an item of the run's record. `a_found_step_names_its_sources_as_its_keeper_did`: the
+  run that finds the steps names the sources the keeping run named.
 
 ### Q147. (Q50 on Typing-support) `parse_splice_and_unparse_make_value_documents` fails the debug check of `locate` (Typing-support's)
 
@@ -4035,6 +4083,8 @@ Q36's pricing (`field($l, "left", $t)` priced at one row a line) is lost again. 
   version's pass locates. This is 0281's debug check of a pass against its tree form, and Typing-support has changed
   those passes since 468130306 (6a–6e).
 - **Done when**: the test passes after Typing-support's next merge here, or the difference is traced to one side.
+- **Record**: done (2026-11-19, Typing-support at 049b9aaa6, a Linux farm host): the test passes. The tree's `locate` and the debug check against it went with 0276
+  stage 6 D.
 
 ### Q148. (Q51 on Typing-support; Q22 on Typing-support) Every run parses its 10,047 guest tapes again
 
@@ -4062,6 +4112,7 @@ Q36's pricing (`field($l, "left", $t)` priced at one row a line) is lost again. 
     `Report::file_tapes`, and the profile prints "files' tapes found and parsed in the waves (Q22)".
   - ep2 before the merge: 0 misses per run, where every run missed 10,047. The edit's CPU is about the same: what
     an edit spends is the facts built from the tapes of files whose slice is not run (a partial hit).
+- **Record**: done (2026-11-17), as **Fixed** above.
 
 ### Q149. (Q52 on Typing-support) Three passes still go through a tree on Typing-support's version path (the merge of e829e72a7) — closed
 
@@ -4096,6 +4147,8 @@ Q36's pricing (`field($l, "left", $t)` priced at one row a line) is lost again. 
   (734317304), and a request is narrowed by its reader's readers' asks, its witnesses wildcards (decision 0291,
   f015b1360). Both ported (`Widen::demand_of`, `joined`, `wild_singletons` over the version's items; a demand's asks
   renamed apart through a `Rewrite`). The two tests pass; the combine's tail check compares them on every debug run.
+- **Record**: done (2026-11-19, Typing-support at 049b9aaa6, a Linux farm host): the **Failing** check compared the combine's tail on the version with the tree's;
+  the tree forms and that check went with 0276 stage 6 D, and both tests named pass.
 
 ### Q150. (Q68 on Typing-support; Q49 on final-rerail-shape-phased-facts at dfb0e0e02) `the_run_after_a_cold_one_writes_nothing` fails at the hub's 8e4b6b68e
 
@@ -4460,6 +4513,7 @@ when the round prices it so (hence intermittent: the price is measured), and it 
 (`m.need`) but held only the program's own quiet strata (`unread`), so the reach found neither held and declined.
 Now every needed kept relation the run does not hold, and that is no stratum or input of the program, is held as
 kept (`hold_quiet`). Four runs pass, findings identical to the reference (660 relations, 30,449 rows).
+- **Record**: done (2026-11-17), as above.
 
 ### Q154. (Q87 on Typing-support; Q81 on phased-facts at 77a9d64fc) Frames were written from a copy of each relation's rows (done, first of the in-place removals)
 
@@ -4479,6 +4533,8 @@ runs, `pending` dedup table, lattice maps), `InRel`'s `Csr` and sorted orders wh
 (0325 step 5) can answer, `Exports::add`'s hash map, the base rows copied for the cross part and the memo, vtab
 `Relation::push` staging, `Rows::clone`/`shared` tail copies and `merged`; `live_rows` remains only for traces,
 tests, `read_derived`/`rows_of` (tests and outputs) and the session deltas.
+- **Record**: done (2026-11-17). What was still to do is 0353's list of copies, each marked `copy (0353 step N)` in
+  the code, and is followed there.
 
 ### Q155. (Q82 on Typing-support) Relations declare their shapes; plans come from them (0361)
 
@@ -4486,6 +4542,9 @@ The user (2026-11-17): a directive giving relations enough data in the `.rr` fil
 pay for planning only in exceptional circumstances. Designed with the user in 0361 (`.layout` lines; classes with
 optional numbers; a broken fact replans and is reported; algorithms found from the facts, with a rare override).
 Build steps 1-7 in 0361. Step 7's running aggregate is the `rr_agg56` planner fix, so that fix waits for steps 1-2.
+- **State** (2026-11-19): 0361's steps 1–5 and 7 are built (2026-11-18). Left: step 6, the checks (keys where the
+  rows are written, fan-out from the executors' counts, a broken fact replans and is reported). Done when 0361's
+  "Done when" holds.
 
 ### Q156. (Q88 on Typing-support; Q83 on phased-facts at 77a9d64fc) Exports held where they lie (0325)
 
@@ -4494,6 +4553,7 @@ segments, in `Life::Kept` blocks (`keptrows` spec line), with duplicates marked 
 heap copies gone at 300 files, peak unchanged. Next on the list: the base rows for the cross part (191 MB),
 the memo's rows, `Relation::push` staging, `Rows::clone`/`shared` tails and `merged`, the fixpoint's host indexes,
 and the input relations' hash indexes and sorted orders. Then `rr_agg56` (Q155, 0361 step 7).
+- **Record**: done (2026-11-17), as above.
 
 ### Q157. (Q90 on Typing-support; Q132 at django-bugs cf28cfd53) (done) A debug build's checks of the lowering on the version fail on ep2's rules
 
@@ -4512,7 +4572,7 @@ and the input relations' hash indexes and sorted orders. Then `rr_agg56` (Q155, 
   made different requests and gates. Both ported in that merge; this item's run to be repeated on it.
 - **Done when**: the debug build lowers ep2's rules with both checks passing. A debug run of the combine's splice
   (0373) waits on it; meanwhile `RERAIL_COMBINE_LINK=check` checks the splice in the profiling build.
-- **Record** (2026-11-18): the run repeated on 4d9fad6fe's line, a debug `rerail-engine` over ep2's 317 rules and 3
+- **Record**: done (2026-11-18): the run repeated on 4d9fad6fe's line, a debug `rerail-engine` over ep2's 317 rules and 3
   files, cold, warm, then a rule edit (ruf048's `"."` to `","`), both `RERAIL_PREPARE=whole` and `=parts`: every
   check passes, and the cold and warm outputs are the same rows (`rerail-engine csv`). Three faults, each fixed:
   - **A part's prune dropped another part's requests.** The version's `prune` asked whether a request's reader is
@@ -5223,6 +5283,10 @@ pass, so this is the hub's, the same class as Q169 (a version's step departing f
 has no such check, and its runs are the reference for this merge's outputs.
 
 - **Done when**: the debug 10-file run passes the check, at the step that departs found and fixed.
+- **Record**: closed (2026-11-19, Typing-support), superseded: the check compared the version's narrowed
+  requests with the tree form's, and 0276 stage 6 D deleted the tree forms and every such check. The version is
+  the only form; the findings tests check it. Not checked by a debug run of the bench's shape. The request records'
+  own faults are Q212 and Q226.
 
 ### Q166. `a_library_held_once_is_read_by_each_policy_in_its_own_scope` fails the version's check after `prune` (done)
 
@@ -5273,6 +5337,8 @@ sha) or `program_shared`'s order may hand back the files recorded before the edi
   `prune` gate, Extra's rows): `corpus::tests::the_run_after_a_cold_one_writes_nothing`, whose warm run exits 3 with
   "the observer's store not asked inside the waves in a warm run (…/src: its answers unknown, read again)". Both are
   a run's record of what it read disagreeing with a later read of the same files.
+- **Record**: done (2026-11-19, Typing-support at 049b9aaa6, a Linux farm host): the test passes. The warm-run test named beside it is Q243's, done. Its one
+  failure since, cold under Relax, is Q239.
 
 ### Q167. (Q110 at django-bugs f8eaf234b) A kind no file holds, probed once per delta row
 
@@ -5786,6 +5852,7 @@ native join it falls back to the planner's whole-rule order.
   Neither reads the code 0276 §3 changed.
 - **Done when**: `guest_keys` is a relation the stores own or a listed cache not yet moved (its check passes), and
   the git test makes its commit on any host (or says why it cannot), and both pass.
+- **Record**: done (2026-11-19, Typing-support at 049b9aaa6, a Linux farm host): both tests pass.
 
 ### Q214. (Q104 on Typing-support-final-shape at fcf23b51d) `base_tests::an_unbound_relation_is_named` fails under `RERAIL_PREPARE=parts`
 
@@ -5794,6 +5861,7 @@ native join it falls back to the planner's whole-rule order.
   Nothing runs the parts path in the test suite otherwise.
 - **Done when**: a part's link keeps the declaration the test reads, the test passes under the switch, and a test
   runs the parts path without the switch set by hand.
+- **Still** (2026-11-19, Typing-support at 049b9aaa6, a Linux farm host): `no columns for signed_list` under `RERAIL_PREPARE=parts`; passes without it.
 
 ### Q215. (Q118 on investigate-bend-vs-datalog at fe948c394) A cold replay step lost the findings of files its edit changed: the harness's work tree was pruned under it (closed)
 
@@ -5919,6 +5987,13 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   history, so an empty `Changed` means the marker check passed on a history that did not yet hold the edit's event.
 - **Next**: find what the marker check reads under load: the cookie's event id compared with the edit's, or the
   history's flush. Record it in 0400, and add a test that loads the machine while it replays.
+- **Explained** (2026-11-19, Q223): under load `fseventsd` is saturated and delivers a stream's live events seconds
+  late. A run whose cookie came late answers from its sync on, so the next question, from the older stored cursor,
+  is a history replay, and a replay misses a change merged into a record older than the cursor (0400). The
+  journal's tests now hold its own counts only where no run of the test was late (`journal_answered`), and say why
+  otherwise.
+- **Record**: done (2026-11-19, Typing-support): 22 of 22 runs of the 34 journal and observer tests pass on the M3
+  at load (Q223).
 
 ### Q230. (Q214 on final-rerail-shape-rr-align) ep2's warm peak footprint rose 65 MB with the atoms on blocks, while the heap and RSS fell
 
@@ -6025,6 +6100,7 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   `logical_line_predicates_and_aliases_use_the_vocabulary_batch` (the strings' relations numbered in another order
   than the tests expect, after 0281 step 6c named them by content). None reads `finish` or a version's fields.
 - **Done when**: each list names what it lists once, and the strings tests assert by content, not number.
+- **Record**: done (2026-11-19, Typing-support at 049b9aaa6, a Linux farm host): all five pass.
 
 ### Q238. (Q106 on Typing-support-final-shape at 4ea96a066) Relax's JIT refuses `sha2`'s `sha512h` inline asm
 
@@ -6034,6 +6110,8 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   every test that signs a library through `sha2`'s SHA-512 on aarch64 stops the same way under Relax.
 - **To do:** teach Relax's assembler `sha512h`, `sha512h2`, `sha512su0`, `sha512su1` (FEAT_SHA512), or build `sha2`
   for Relax with its `force-soft` path. A draft for upstream goes to the user (never filed by me).
+- **Record**: done: Relax's fork encodes and decodes `sha512h`, `sha512h2`, `sha512su0` and `sha512su1`
+  (`scripts/dev/relax/rerail.patch`; `scripts/dev/relax/README.md`).
 
 ### Q239. (Q142 on Typing-support-final-shape at 4ea96a066) `programs_are_kept_by_the_hashes_of_what_they_read` failed once, cold
 
@@ -6043,6 +6121,8 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   edit to an included file; which one failed was not printed.
 - **To do:** run it cold beside the 0275 tests until it fails with its message; suspects are the observer's view of
   the edited include (decision 0105's flush) and the store's queued entry being found before its write settles.
+- **Seen again** (2026-11-19, Typing-support at 049b9aaa6, a Linux farm host): passes cold under cargo. The one failure was the first Relax run after an edit; open
+  until it fails again with its message.
 
 ### Q241. (PR #508, t47) A library's relations in a pack: kind sets, stated facts, value cycles, spans, `nearest`
 
@@ -6188,6 +6268,8 @@ Open:
   declares `.layout modn fanout(q -> m, few)` (the program models one crate: a qualified name is one module).
   A refusal now names its product rules and the read it could not key. The 30 oracle tests pass on the M1 Max, with
   the pass's 11 tests (one new), the RIR dumps, the production contracts and the file-local typing tests.
+- **Record**: done (2026-11-19, Typing-support at 049b9aaa6, a Linux farm host): every `typing::oracle_tests` test not ignored passes (30). The ignored ones
+  (benchmarks, spikes, a probe) need their inputs set.
 
 ### Q250. Four observer tests fail at the hub's tip
 
@@ -6226,6 +6308,8 @@ Open:
   never goes by the journal's silence. Every answer recorded in the last 120 s was then `stat`ed again (the tests'
   7 and 9 stats). `trusted` and `missing` now skip the window under a listed root. All four pass on the M3, in every
   run since.
+- **Record**: done (2026-11-19, Typing-support): as **Fixed** above. The journal tests that still failed on a
+  loaded host are Q223's (fseventsd delivering late), done: 22 of 22 runs on the M3.
 
 
 ### Q293. (Q262 on benchmarks-on-integration) The settle-window test's first leg can no longer miss an edit
@@ -7070,3 +7154,62 @@ on an M3 or M5:
   each on the M1 Max, so it is ignored with this item as the reason.
   - **Done when**: a Kotlin step 36 compile takes seconds (0479's aim), or the test has a small grammar with a walk,
     and it is not ignored.
+
+### Q335. (done) Linking every pack's library waits minutes on the store's msync of kept facts (Linux)
+
+- **Found** (2026-11-19, Q26): `rr::tests::library_modules_link_to_the_lowering_of_them_together` takes 217 s at
+  f9c3bd713 and 251 s with Q26 on a DGX Spark (debug), of which 87 s user and 40 s sys. Stack samples show the test
+  waiting in phase 0's graph runs (`phase0::derive` → `run_observed` → `written`) while the store's writer msyncs a
+  kept-facts block of 460–630 MB (`kept::finish` → `Block::sync_mapped`), once a pack. The test was in the quick
+  tier; it is now in the slow tier with 8 periods (`.config/nextest.toml`).
+- **Cause**: the half gigabyte was the kept file's reservation, not its facts: `sync_mapped` msynced the whole
+  mapping. Every block a store wrote was waited for, and the test ran phase 0 once per program.
+- **Done** (decision 0481): a store's flush mode (`synced`, `os` the default, `none`) is its connections'
+  `synchronous`, and every block writer takes it from the connection. The engine's test binary sets `none`. A synced
+  block msyncs its used pages only. The test derives every pack's include graphs in one phase 0 run (`rr::modules_of`)
+  takes 140.6 s → 22.3 s wall, 1.00 T → 262 G instructions (M3, debug, alone; 24.6 s beside other tests on the M1
+  Max); on a DGX Spark 217 s → 19.8 s (`none`) and 19.3 s (`synced`). It stays in the slow tier, without its 8-period
+  override.
+
+
+### Q336. Roll-up 14 (Typing-support-final-shape onto rr-align): what the merge chose, and what stays open
+
+- **Merged** (2026-11-20): Typing-support-final-shape at 39c6f43cea9, base 7070b2ecad. Only theirs' added lines were
+  renumbered, past every number here:
+  - decisions 0464 → 0480 and 0465 → 0481, each file and README row noting its old number;
+  - work queue Q294 → Q335. Theirs' Q292 and Q293 are roll-up 10's Q318 and Q319 here, so theirs' text cites those.
+    Theirs' Q291, the rerun item that was a second Q249 here, keeps the number its renumber gave it: Q332.
+  - 0481 cited "0440 (the deferrable tier)", a number theirs' tree does not hold. It cites 0295 here, the deferrable
+    tier's decision.
+- **Taken from theirs**:
+  - 0480: a program image written once, read where it is held (`read_image`, `shipped_image`), with the record's
+    items' bytes held as their makers hold them (`record::Bytes`).
+  - 0481: a store's flush mode (`Flush`, `RERAIL_FLUSH`), its connections' `synchronous`, and every block writer
+    taking it from the connection. The test binary flushes nothing (`test_flush`).
+  - 0361 step 6: declared keys checked as rows are written (`KeyCheck`), and a broken layout fact plans its
+    relation from statistics.
+  - Q332's request record, Q223's journal tests, and the R7 recheck pricing (Q318).
+- **Kept from ours**, theirs' change adapted to it:
+  - Kept facts (0456): ours' chain of packed files, not theirs' base and delta. `KeptW::finish` takes theirs' flush
+    mode, and the kept writer passes the connection's. Theirs' old-format kept tests are dropped; ours' finish with
+    `Flush::Synced`.
+  - The frames are retired (0439): theirs' change to `frames.rs` and its `Frames` write are dropped.
+  - No inline rows (Q270): theirs' load of an inline frame at 16 bytes (`ObjectFrame::bytes_aligned`,
+    `ObjectBytes::Loaded`) has nothing to read here and is removed. Every source is in a segment, its entries at 64
+    bytes, so an image is read in place at 16. `Placing::write` takes the caller's flush mode.
+  - Run state (0442): theirs' `BROKEN` static is the run's count (`PlanCounts::broken`). Its two tests hold a run
+    that the policy run joins, as `a_policy_run_takes_its_prepared_plans_and_finds_the_same` does.
+  - `ThreadConnection` keeps ours' registry from the shared object (`connections()`) and adds theirs' flush mode.
+  - `schema::initialize` keeps ours' check for retired tables beside theirs' flush.
+  - The settle-window test (still ignored, Q293) takes theirs' `journal_answered` and keeps ours' `forget_streams`.
+    Since 0400 the in-process stream would name the edit whatever the cursor.
+  - A sorted relation (0456 K7) and a keyed one: the key checks end when the component is done, before ours'
+    canonical layout moves the rows, so the two do not meet.
+  - `images::read_all` is gone (theirs' `read_images` replaces it); nothing here called it.
+  - A test of theirs built a `PreparedPlan` without ours' `assumed` (Q290's sizes). It now has none.
+- **Checked** on the m1max:
+  - the workspace's tests and bins check with no warnings;
+  - `rerail-blocks` (38) and `rerail-store` (211, the host-journal `observe::tests` left out);
+  - the engine's broken-fan-out and broken-key runs, the prepared plans' tests, `a_stored_run_is_read_in_place`, the
+    test binary's flush mode, and `library_modules_link_to_the_lowering_of_them_together` (8, 22 s).
+- **Open**: nothing new.

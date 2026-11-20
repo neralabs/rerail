@@ -1808,10 +1808,10 @@ impl<'s> Pipeline<'s> {
 
 /// A version of a stored run, over the versions before it in the run's table (decision 0333 §2).
 pub enum StoredVersion<'r> {
-    /// A base: its image's bytes.
-    Base(&'r [u8]),
-    /// An overlay of version `parent`: its delta's bytes.
-    Overlay { parent: usize, delta: &'r [u8] },
+    /// A base: its image, as the version holds it (a record's piece takes it so, uncopied: decision 0480).
+    Base(&'r Arc<super::Image>),
+    /// An overlay of version `parent`: its delta's image.
+    Overlay { parent: usize, delta: &'r Arc<super::Image> },
     /// A view of version `parent`: the parent's rules it leaves out, ascending.
     View { parent: usize, removed: Vec<u32> },
 }
@@ -1912,10 +1912,10 @@ impl Run {
             if let Some(i) = table.iter().position(|t| Arc::ptr_eq(t, v)) {
                 return i;
             }
-            let stored = match v.layer() {
-                super::Layer::Base(bytes) => StoredVersion::Base(bytes),
-                super::Layer::Overlay(parent, delta) => StoredVersion::Overlay { parent: add(parent, table, out), delta },
-                super::Layer::View(parent, _) => {
+            let stored = match &**v {
+                Version::Base { image, .. } => StoredVersion::Base(image),
+                Version::Overlay { parent, delta, .. } => StoredVersion::Overlay { parent: add(parent, table, out), delta },
+                Version::View { parent, .. } => {
                     let removed = parent.rules().map(|r| r.id()).filter(|&id| !v.contains(id)).map(|id| id.0).collect();
                     StoredVersion::View { parent: add(parent, table, out), removed }
                 }

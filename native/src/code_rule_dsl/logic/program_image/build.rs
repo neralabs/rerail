@@ -158,7 +158,7 @@ impl<'p> Builder<'p> {
                 b.enc.set_from(id.0 - b.enc.rule_base(), src);
             }
         }
-        let base = Version::open(&b.finish_bytes()?)?;
+        let base = Version::of_image(b.image()?)?;
         let mut ranges: Vec<(u32, u32)> = Vec::new();
         for r in v.rules() {
             let k = r.id().0;
@@ -560,6 +560,17 @@ impl<'p> Builder<'p> {
     /// States about relation `name`'s rows, every other about relation kept.
     pub(in crate::code_rule_dsl::logic::program_image) fn set_about_rows(&mut self, name: &str, rows: Vec<Vec<Cell>>) {
         self.own_about();
+        // The program's own row, which every field's reader asks for, is held by every version that states an about
+        // row, whichever edit stated the first: a version from a tree has it (`about_of`), and one a pass's field or
+        // a record (`set_asked`) gave about rows has it too. Stated by one edit only, two runs of one program differed
+        // by it (Q332).
+        if name != "program" && !rows.is_empty() {
+            let program = self.enc.atom("program");
+            if !self.parts.facts.contains_key(&(program | ABOUT_BIT)) {
+                let p = Cell::Str(self.atom(super::ABOUT));
+                self.set_about_rows("program", vec![vec![p]]);
+            }
+        }
         let a = self.enc.atom(name);
         for &c in super::about::relation_columns(name) {
             for row in &rows {
@@ -758,26 +769,24 @@ impl<'p> Builder<'p> {
 
     // -- the version --
 
-    /// The image's bytes: a base's, or a delta's over the parent.
-    pub fn finish_bytes(mut self) -> Result<Vec<u8>, String> {
-        self.removed.sort_unstable();
-        self.removed.dedup();
-        if self.parent.is_none() && (!self.removed.is_empty() || self.parts.inputs.is_none() || self.parts.outputs.is_none() || !self.parts.owns_about) {
-            if !self.removed.is_empty() {
-                return Err(super::bad("a base removes nothing"));
-            }
-            // A base owns every part: what was not stated is empty.
-            if self.parts.inputs.is_none() {
-                self.set_inputs::<&str>(&[]);
-            }
-            if self.parts.outputs.is_none() {
-                self.set_outputs::<&str>(&[]);
-            }
-            if !self.parts.owns_about {
-                self.set_about(&Facts::new());
-            }
+    /// The image written so far, once, in place (decision 0480): a base's, or a delta's over the parent. The builder
+    /// is left as it is, to write on: nothing is cloned to write it.
+    pub fn image(&self) -> Result<super::Image, String> {
+        if self.removed.windows(2).all(|w| w[0] < w[1]) {
+            return self.enc.finish(&self.parts, &self.removed);
         }
-        Ok(self.enc.finish(&self.parts, &self.removed))
+        let mut removed = self.removed.clone();
+        removed.sort_unstable();
+        removed.dedup();
+        self.enc.finish(&self.parts, &removed)
+    }
+
+    /// The base written (`image`), as a version read where it was written.
+    pub fn base_version(&self) -> Result<Arc<Version>, String> {
+        if self.parent.is_some() {
+            return Err(super::bad("an edit of a parent is no base"));
+        }
+        Version::of_image(self.image()?)
     }
 
     /// The edit as an overlay of its parent, never folded: for a version whose ids must stay as written (a
@@ -786,7 +795,7 @@ impl<'p> Builder<'p> {
         let parent = self.parent.ok_or("an overlay of no parent")?;
         self.removed.sort_unstable();
         self.removed.dedup();
-        Version::over(parent, &self.finish_bytes()?)
+        Version::over_image(parent, self.image()?)
     }
     /// The version the edit makes: a view, an overlay, or folded (`Builder`'s doc).
     pub fn finish(self) -> Result<(Arc<Version>, Made), String> {
@@ -800,7 +809,7 @@ impl<'p> Builder<'p> {
     }
     fn finish_as(mut self, placing: bool) -> Result<(Arc<Version>, Made, Option<std::collections::BTreeMap<RuleId, RuleId>>), String> {
         let Some(parent) = self.parent else {
-            return Ok((Version::open(&self.finish_bytes()?)?, Made::Folded, None));
+            return Ok((Version::of_image(self.image()?)?, Made::Folded, None));
         };
         self.removed.sort_unstable();
         self.removed.dedup();
@@ -810,7 +819,7 @@ impl<'p> Builder<'p> {
             return Ok((v, Made::View, None));
         }
         let size = self.size();
-        let overlay = Version::over(parent, &self.finish_bytes()?)?;
+        let overlay = Version::over_image(parent, self.image()?)?;
         if 2 * size >= parent.size().max(1) {
             // `folding_edit` copies the overlay's rules in its order, so the k-th is rule k.
             let order = placing.then(|| overlay.rules().enumerate().map(|(k, r)| (r.id(), RuleId(k as u32))).collect());

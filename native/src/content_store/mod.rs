@@ -19,6 +19,8 @@ mod corpus_runs;
 pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, RETIRED_CORPUS_MEMO_SCHEMAS, StatIndex, live_fact_schema, stat_blob_key};
 #[cfg(not(any(windows, target_family = "wasm")))]
 pub use connection::sqlite_on_jemalloc;
+pub use connection::{flush_of, store_flush};
+pub use rerail_blocks::block::Flush;
 mod derivation;
 mod held;
 pub mod kept_facts;
@@ -726,7 +728,7 @@ impl ContentStore {
     fn sibling(&self) -> ContentStore {
         ContentStore {
             database_path: self.database_path.clone(),
-            connection: ThreadConnection::new(self.database_path.clone(), self.connection.identity()),
+            connection: ThreadConnection::new(self.database_path.clone(), self.connection.identity(), self.connection.flush()),
             compression_level: self.compression_level,
             local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
             facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),
@@ -768,9 +770,10 @@ impl ContentStore {
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
         let mut connection = Connection::open_with_flags(path, flags)?;
+        let flush = connection::store_flush()?;
         // Only creating or migrating the schema takes the write lock (`initialize`).
         let identity = retry_busy(&mut BusyRetries::default(), || {
-            Self::initialize(&mut connection)
+            Self::initialize(&mut connection, flush)
         })?;
         drop(connection);
         // Compiled Neural Engine models are facts of this store (decision 0098 §3).
@@ -782,7 +785,7 @@ impl ContentStore {
         let _ = models;
         Ok(Self {
             database_path: path.to_path_buf(),
-            connection: ThreadConnection::new(path.to_path_buf(), identity),
+            connection: ThreadConnection::new(path.to_path_buf(), identity, flush),
             compression_level: DEFAULT_COMPRESSION_LEVEL,
             local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
             facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),

@@ -1130,7 +1130,7 @@ mod tests {
         let sealed = d.seal();
         assert_eq!(live(), before, "the seal takes it out of the budget");
         assert_eq!(journal::entries(&sealed.reader())[0].digest, 0xfeed, "read in place once sealed");
-        let back = sealed.write_back().unwrap();
+        let back = sealed.write_back(rerail_blocks::block::Flush::Synced).unwrap();
         let e = &journal::entries(&back)[0];
         assert_eq!((e.key, e.digest), (7, 0xfeed));
         assert_eq!(back.bytes(e.start as usize, e.end as usize), &[0x5a; 4096][..]);
