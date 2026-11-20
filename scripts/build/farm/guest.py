@@ -46,8 +46,15 @@ PRL = "PATH=/usr/local/bin:$PATH; "  # (a LaunchAgent's PATH has neither)
 
 
 def log(message):
-    """The guests' own log (`state/guests/log`), a line per start, stop and error."""
-    with open(farm.state("guests", "log"), "a") as f:
+    """The guests' own log (`state/guests/log`), a line per start, stop and error: moved to `log.1`
+    once over 2 MB, so the two stay under 4 MB."""
+    path = farm.state("guests", "log")
+    try:
+        if os.path.getsize(path) > 2 << 20:
+            os.replace(path, path + ".1")
+    except OSError:
+        pass
+    with open(path, "a") as f:
         f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + message + "\n")
 
 

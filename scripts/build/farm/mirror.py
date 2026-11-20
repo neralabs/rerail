@@ -24,6 +24,47 @@ import time
 import farm
 
 SOCKET = farm.state("mirror.sock")
+# The daemon's log (`mirror.log`): a line per job (its host, what it ran, what was sent, how long,
+# its result, what came back), each connection, drop and late file, and the daemon's start and end.
+# Rotated at LOG_BYTES, LOG_KEEP old ones kept (`mirror.log.1` the newest): at most 25 MB.
+LOG_BYTES = 5 << 20
+LOG_KEEP = 4
+_log = None
+
+
+def log(message):
+    """A line in the daemon's log (and in RERAIL_FARM_LOG's, when set)."""
+    global _log
+    farm.log(message)
+    try:
+        if _log is None:
+            import logging
+            import logging.handlers
+            _log = logging.getLogger("rerail-farm-mirror")
+            _log.setLevel(logging.INFO)
+            _log.propagate = False
+            handler = logging.handlers.RotatingFileHandler(farm.state("mirror.log"), maxBytes=LOG_BYTES, backupCount=LOG_KEEP)
+            handler.setFormatter(logging.Formatter("%(asctime)s %(process)d %(message)s", "%Y-%m-%d %H:%M:%S"))
+            _log.addHandler(handler)
+        _log.info(message)
+    except OSError:
+        pass  # never fail a compile over its log
+
+
+def rotated(path):
+    """`path` opened to append (an agent's stderr), its last LOG_BYTES moved to `path.1` first once
+    it is over LOG_BYTES: the two stay under 2 × LOG_BYTES."""
+    try:
+        if os.path.getsize(path) > LOG_BYTES:
+            with open(path, "rb") as f:
+                f.seek(-LOG_BYTES, os.SEEK_END)
+                tail = f.read()
+            with open(path + ".1", "wb") as f:
+                f.write(tail)
+            os.unlink(path)
+    except OSError:
+        pass
+    return open(path, "ab")
 IDLE_SECONDS = 15 * 60
 # How long a scan of a checkout's file list (git ls-files) is reused; a file added since is caught by
 # the read check, and the compile then runs here.
@@ -67,7 +108,7 @@ class Host:
         self.name = name
         self.proc = subprocess.Popen(command or farm.ssh(name, farm.on_host("farm-agent"), "mirror"),
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env,
-                                     stderr=open(farm.state("mirror", f"{name}.err"), "ab"))
+                                     stderr=rotated(farm.state("mirror", f"{name}.err")))
         self.w, self.r = self.proc.stdin, self.proc.stdout
         self.transport = "ssh"
         if farm.config().get("tcp", True) and os.environ.get("RERAIL_FARM_TCP", "1") != "0":
@@ -97,7 +138,7 @@ class Host:
                 ready, _, _ = select.select([listener, self.r], [], [], deadline - time.time())
                 if self.r in ready:
                     header, _ = receive(self.r)  # the agent could not connect, or stopped
-                    farm.log(f"{self.name}: mirror over ssh: {(header or {}).get('why', 'the agent stopped')}")
+                    log(f"{self.name}: mirror over ssh: {(header or {}).get('why', 'the agent stopped')}")
                     return
                 if listener in ready:
                     conn, peer = listener.accept()
@@ -118,11 +159,11 @@ class Host:
                     self.sock = conn
                     self.w, self.r = conn.makefile("wb"), conn.makefile("rb")
                     self.transport = "tcp"
-                    farm.log(f"{self.name}: mirror over tcp")
+                    log(f"{self.name}: mirror over tcp")
                     return
-            farm.log(f"{self.name}: mirror over ssh: the agent did not connect back")
+            log(f"{self.name}: mirror over ssh: the agent did not connect back")
         except OSError as e:
-            farm.log(f"{self.name}: mirror over ssh: {e!r}")
+            log(f"{self.name}: mirror over ssh: {e!r}")
         finally:
             listener.close()
 
@@ -145,6 +186,8 @@ class Host:
         if result is not None and waiting.get("files"):
             result["staged"] = waiting["files"]
         else:
+            if waiting.get("files"):
+                log(f"{self.name}: job {job_id} got no reply in {timeout} s: removed its {len(waiting['files'])} staged outputs")
             for to in waiting.get("files", {}).values():
                 try:
                     os.unlink(to)
@@ -237,6 +280,7 @@ class Host:
                 path = header["path"]
                 waiting = self.waiting.get(header.get("id"))
                 if waiting is None:
+                    log(f"{self.name}: dropped {os.path.basename(path)}: its job {header.get('id')} is no longer waited on")
                     continue
                 to = staged(path, header["id"])
                 tmp = f"{to}.part"
@@ -292,6 +336,7 @@ def drop(name, h, why=None):
     with hosts_lock:
         if hosts.get(name) is h:
             del hosts[name]
+    log(f"{name}: agent dropped" + (f": {why}" if why else ""))
     h.stop()
     if why:
         farm.mark_down(name, why)
@@ -385,7 +430,36 @@ def failed(why):
     return {"code": -1, "stdout": "", "stderr": "", "read": {"?": None}, "why": why}
 
 
+def what(job):
+    """What a job runs, for the log: a compile's crate, else its command's first words."""
+    argv = job.get("run", {}).get("argv") or []
+    if "--crate-name" in argv:
+        i = argv.index("--crate-name")
+        if i + 1 < len(argv):
+            return "compile " + argv[i + 1]
+    return " ".join(os.path.basename(a) for a in argv[:3])[:80] or "?"
+
+
 def work(job):
+    """`run_job`, with its line in the daemon's log."""
+    started = time.time()
+    reply = run_job(job)
+    t = reply.get("times") or {}
+    stale = [p for p, seen in (reply.get("read") or {}).items() if seen is None and p != "?"]
+    outputs = job.get("run", {}).get("outputs") or []
+    staged = reply.get("staged") or {}
+    missing = [os.path.basename(o) for o in outputs if o not in staged] if outputs and reply.get("code") == 0 else []
+    log(f"{job.get('host')}: {what(job)}: code {reply.get('code')}"
+        + (f" ({reply['why']})" if reply.get("why") else "")
+        + f"; sent {t.get('files', 0)} files in {t.get('sync', '-')} s, ran {t.get('compile', '-')} s ({t.get('transport', '-')})"
+        + f"; {len(staged)} outputs back" + (f", MISSING {missing}" if missing else "")
+        + (f"; {len(stale)} reads unknown" if stale else "")
+        + (f"; stderr {reply.get('stderr', '')[-200:]!r}" if reply.get("code") not in (0, None) and reply.get("stderr") else "")
+        + f"; {round(time.time() - started, 2)} s in all")
+    return reply
+
+
+def run_job(job):
     """Sends what `job` may read, then runs it. What fails here never fails twice the same way: a
     host whose agent stopped or could not write is down for its back-off, and one whose run failed
     or read other files than this machine's is asked again what it holds (it may have been cleaned)."""
@@ -477,6 +551,7 @@ def serve():
     if not lock.held:
         return
     started_as = installed()
+    log(f"daemon started: farm version {farm.VERSION}")
     try:
         os.unlink(SOCKET)
     except OSError:
@@ -493,6 +568,7 @@ def serve():
         threading.Thread(target=counted, args=(conn,), daemon=True).start()
     server.close()
     os.unlink(SOCKET)
+    log("daemon stops taking jobs: " + ("idle" if time.time() - last_job[0] >= IDLE_SECONDS else "another farm version is installed"))
     lock.release()
     # The compiles already taken finish (each is bounded by COMPILE_SECONDS); the next daemon may
     # already serve new ones.

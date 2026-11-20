@@ -685,6 +685,15 @@ out and the host is asked for again before each compile) must have the size and 
 it has here, or the compile runs here. The agent refuses to write when its root is under a network
 mount.
 
+The daemon keeps a log, `mirror.log` in the farm's state directory (`~/Library/Caches/rerail-farm`
+on a Mac): its start and end, how each host's stream is carried (TCP, or ssh and why), and a line
+per job: the host, the crate (or the command), its result, how many files went and how long the
+sync and the run took, how many outputs came back (and which ones did not), the reads it could not
+match, and the end of a failed compile's stderr; then each agent dropped and why, and each late
+file thrown away. It rotates at 5 MB and keeps 4 old ones (`mirror.log.1` the newest, 25 MB in
+all). Each agent's own stderr (`mirror/HOST.err`) keeps its last 5 MB in `HOST.err.1` once over
+5 MB, as the guests' log (`guests/log`, at 2 MB) does.
+
 `RERAIL_FARM_LOG=file` logs each decision (hot, hit: nothing logged, here, or which host) with
 where a remote compile's time went, and why a compile did not go remote. `RERAIL_FARM_LOCAL=1`
 compiles every miss here.
