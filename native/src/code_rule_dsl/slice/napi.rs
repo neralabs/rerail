@@ -49,7 +49,7 @@ impl CodeRuleSlice {
         let backend = match backend.as_str() {
             // Interpreted first, the compiled binding swapped in once built (list step 16).
             "cpu" => ExecutionBackend::CpuBackground,
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             "metal" => ExecutionBackend::MetalBackground,
             other => return Err(Error::from_reason(format!("unknown slice backend `{other}`"))),
         };

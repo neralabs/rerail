@@ -48,8 +48,8 @@ pub fn simd_width() -> u32 {
     match std::env::var("RERAIL_CPU_SIMD_WIDTH") {
         Err(_) => 32,
         Ok(w) => match w.parse::<u32>() {
-            Ok(n) if n.is_power_of_two() && n <= 32 => n,
-            _ => panic!("RERAIL_CPU_SIMD_WIDTH={w}: a power of two from 1 to 32"),
+            Ok(n) if n.is_power_of_two() && n <= 64 => n,
+            _ => panic!("RERAIL_CPU_SIMD_WIDTH={w}: a power of two from 1 to 64"),
         },
     }
 }

@@ -4,7 +4,10 @@
 
 use crate::device::ComputeQueue;
 use crate::kernels::{alloc, buffer_of, launch, program, read, Program};
-use crate::library::{compact_u32, histogram, radix_sort_pairs, scan_exclusive_popcount_u32, scan_exclusive_u32, HashTable, RadixKey, Sorted};
+use crate::library::{
+    compact_u32, histogram, radix_sort_pairs, scan_exclusive_popcount_u32, scan_exclusive_u32, scan_exclusive_u32_in, scan_sized, HashTable, RadixKey, ScanSpace, Sorted,
+    SCAN_SIZES,
+};
 use crate::Pod;
 
 const TESTS: &str = include_str!("library_tests.uglykl");
@@ -227,10 +230,10 @@ fn simd_group_operations_and_their_references() {
         })
         .collect();
     let inb = buffer_of(&vals).unwrap();
-    let out = alloc::<u32>(n as usize * 16).unwrap();
+    let out = alloc::<u32>(n as usize * 18).unwrap();
     launch(&q, p.function("t_simd").unwrap()).value("args", &TestArgs { n, w: 0 }).buffer("in", &inb).buffer("out", &out).run(&[(n / 128) as u64], &[128]).unwrap();
     q.flush().await_().unwrap();
-    let got: Vec<u32> = read(&out, n as usize * 16);
+    let got: Vec<u32> = read(&out, n as usize * 18);
     // The device's SIMD groups: 32 lanes, or another width (the CPU's `RERAIL_CPU_SIMD_WIDTH`, an OpenCL device's).
     let w = crate::device::simd_width() as usize;
     for g in 0..n as usize / w {
@@ -243,7 +246,8 @@ fn simd_group_operations_and_their_references() {
             let below = odd[..lane].iter().filter(|&&b| b).count() as u32;
             let mn = *v.iter().min().unwrap();
             let mx = *v.iter().max().unwrap();
-            let same = (0..w).filter(|&j| v[j] % 4 == v[lane] % 4).fold(0u32, |m, j| m | 1 << j);
+            let same = (0..w).filter(|&j| v[j] % 4 == v[lane] % 4).fold(0u64, |m, j| m | 1 << j);
+            let (lo, hi) = (same as u32, (same >> 32) as u32);
             let want = [
                 sum,
                 sum,
@@ -259,11 +263,13 @@ fn simd_group_operations_and_their_references() {
                 odd.iter().filter(|&&b| b).count() as u32,
                 first,
                 v[g % w],
-                same,
-                same,
+                lo,
+                hi,
+                lo,
+                hi,
             ];
             let i = g * w + lane;
-            assert_eq!(&got[i * 16..i * 16 + 16], &want, "{}: group {g}, lane {lane}: sum min max (backend, reference), scans, votes, broadcast, match", crate::device::backend());
+            assert_eq!(&got[i * 18..i * 18 + 18], &want, "{}: group {g}, lane {lane}: sum min max (backend, reference), scans, votes, broadcast, match", crate::device::backend());
         }
     }
 }
@@ -272,7 +278,8 @@ fn simd_group_operations_and_their_references() {
 fn threadgroup_sums_and_scans() {
     let Some((p, mut q)) = setup() else { return };
     let mut rng = Rng(19);
-    for lsz in [32u32, 64, 96, 256, 1024].into_iter().filter(|&l| l <= crate::device::max_threadgroup()) {
+    // Threadgroups of whole SIMD groups (`ukl/group.h`).
+    for lsz in [32u32, 64, 96, 256, 1024].into_iter().filter(|&l| l <= crate::device::max_threadgroup() && l % crate::device::simd_width() == 0) {
         let groups = 5u32;
         let n = lsz * groups;
         let vals: Vec<u32> = (0..n).map(|_| if rng.below(3) == 0 { rng.next() as u32 } else { rng.below(100) as u32 }).collect();
@@ -401,7 +408,7 @@ fn lz4_blocks_decode_as_lz4_does() {
     let (jb, sb) = (buffer_of(&jobs).unwrap(), buffer_of(&src).unwrap());
     let ob = buffer_of(&vec![0u8; out_len]).unwrap();
     let lb = alloc::<u32>(blocks.len()).unwrap();
-    launch(&q, p.function("t_lz4").unwrap()).value("args", &TestArgs { n, w: 0 }).buffer("jobs", &jb).buffer("in", &sb).buffer("outData", &ob).buffer("lengths", &lb).run(&[n as u64], &[32]).unwrap();
+    launch(&q, p.function("t_lz4").unwrap()).value("args", &TestArgs { n, w: 0 }).buffer("jobs", &jb).buffer("in", &sb).buffer("outData", &ob).buffer("lengths", &lb).run(&[n as u64], &[crate::device::simd_width().max(32) as u64]).unwrap();
     q.flush().await_().unwrap();
     let lengths: Vec<u32> = read(&lb, blocks.len());
     let out: Vec<u8> = read(&ob, out_len);
@@ -435,6 +442,35 @@ fn device_wide_scans_and_compaction() {
             assert_eq!(got[i], run, "{}: scan of {n}, at {i}", crate::device::backend());
             if i < n as usize {
                 run = run.wrapping_add(vals[i]);
+            }
+        }
+
+        // In place, its temporaries kept: the same, in the values' own buffer.
+        let mut held = vals.clone();
+        held.push(7);
+        let inplace = buffer_of(&held).unwrap();
+        let space = ScanSpace::new(n).unwrap();
+        scan_exclusive_u32_in(&q, &inplace, &inplace, n, false, &space).unwrap();
+        q.flush().await_().unwrap();
+        assert!(read::<u32>(&inplace, n as usize + 1) == got, "{}: scan of {n} in place", crate::device::backend());
+
+        // Sized on the device: of the count at slot 1, at most a cap below the space's, on the grids it writes.
+        if n > 0 {
+            let space = ScanSpace::new(n + 4100).unwrap();
+            let counts = buffer_of(&[0u32, n, 0]).unwrap();
+            let sizes = alloc::<u32>(SCAN_SIZES).unwrap();
+            for cap in [n + 4099, n - 1] {
+                let mut held = vals.clone();
+                held.resize(n as usize + 4101, 9);
+                let data = buffer_of(&held).unwrap();
+                space.size(&q, &counts, 1, cap, 256, &sizes).unwrap();
+                scan_sized(&q, &data, &sizes, &space).unwrap();
+                q.flush().await_().unwrap();
+                let m = n.min(cap) as usize;
+                let got_sized: Vec<u32> = read(&data, m + 2);
+                assert!(got_sized[..=m] == got[..=m], "{}: sized scan of {m} of {n}, its total last", crate::device::backend());
+                assert_eq!(got_sized[m + 1], held[m + 1], "{}: sized scan of {m}: nothing past its total", crate::device::backend());
+                assert_eq!(read::<u32>(&sizes, SCAN_SIZES)[32], m as u32 / 256 + 1, "{}: the outputs' grid", crate::device::backend());
             }
         }
 
@@ -526,10 +562,6 @@ fn sort_and_check<K: RadixKey + Ord + std::fmt::Debug + Into<u64> + From<u32>>(q
 #[test]
 fn radix_sorts_are_stable() {
     let Some((_, mut q)) = setup() else { return };
-    if crate::device::simd_width() < 8 {
-        eprintln!("SIMD groups of {} lanes: no radix sort (ukl/radix.h): skipped", crate::device::simd_width());
-        return;
-    }
     let mut rng = Rng(41);
     for n in [0usize, 1, 31, 1023, 1024, 1025, 70_000] {
         // Few distinct keys (long runs: stability), and keys over all their bits.

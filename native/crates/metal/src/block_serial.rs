@@ -2416,7 +2416,7 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
             .iter()
             .map(|p| {
                 let ms = encode_passes(std::slice::from_ref(p)).map(|s| s * 1e3).unwrap_or(f64::NAN);
-                let most = p.kernel.metal().map_or(0, |m| m.compute_pipeline_state.max_total_threads_per_threadgroup());
+                let most = crate::lane::limits(&p.kernel).map_or(0, |l| l.threads);
                 format!("{} {ms:.3} ms ({most} threads)", p.name)
             })
             .collect();

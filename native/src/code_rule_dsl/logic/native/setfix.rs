@@ -82,7 +82,7 @@ mod view_tests;
 #[cfg(test)]
 mod base_probe;
 mod inputs_tests;
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 mod blocks_compare_tests;
 #[cfg(test)]
 mod verdict_tests;

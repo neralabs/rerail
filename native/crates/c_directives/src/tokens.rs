@@ -129,7 +129,7 @@ mod tests {
         if interp != image {
             return Err(format!("the interpreter's tape differs ({} / {})", interp.is_some(), image.is_some()));
         }
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         if let Ok(m) = c.metal_images(&[src]) {
             if m[0] != image {
                 return Err(format!("Metal's tape differs ({} / {})", m[0].is_some(), image.is_some()));

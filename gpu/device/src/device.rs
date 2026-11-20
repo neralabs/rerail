@@ -146,9 +146,19 @@ impl Device {
         }
     }
 
-    /// Whether its buffers have a kernels' address (`Buffer::device_address`): every backend's but OpenCL 1.2's.
+    /// Whether every buffer has a kernels' address (`Buffer::device_address`), memory wrapped in place too: every
+    /// backend's but OpenCL's.
     pub fn has_addresses(&self) -> bool {
         !matches!(self, Device::OpenCl(_))
+    }
+
+    /// Whether the buffers it allocates have a kernels' address (not memory wrapped in place): every backend's, and
+    /// OpenCL's where it has Intel's unified shared memory (`ClDevice::allocations_have_addresses`).
+    pub fn allocations_have_addresses(&self) -> bool {
+        match self {
+            Device::OpenCl(d) => d.allocations_have_addresses(),
+            _ => true,
+        }
     }
 
     /// The most threads a threadgroup can have: 1,024 on Metal, CUDA and the CPU; an OpenCL device's own (256 on
@@ -232,13 +242,14 @@ impl Buffer {
     }
 
     /// The kernels' address of the buffer's first byte, for a pointer that a buffer holds (a directory of tapes, a
-    /// view's rows): Metal's GPU address, CUDA's device pointer, the host's on the CPU. `None` on OpenCL 1.2, whose
-    /// kernels follow no pointer a buffer holds (that is SVM's, not written).
+    /// view's rows): Metal's GPU address, CUDA's device pointer, the host's on the CPU, an OpenCL host allocation's
+    /// (Intel's unified shared memory). `None` for other OpenCL buffers: memory wrapped in place, or a device without
+    /// it, whose kernels follow no pointer a buffer holds.
     pub fn device_address(&self) -> Option<u64> {
         match self {
             Buffer::Native(b) => native::device_address(b),
             Buffer::Cpu(b) => Some(b.device_address()),
-            Buffer::OpenCl(_) => None,
+            Buffer::OpenCl(b) => b.address(),
         }
     }
 

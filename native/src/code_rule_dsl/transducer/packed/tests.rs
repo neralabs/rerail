@@ -1,6 +1,6 @@
     use super::*;
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     #[test]
     fn metal_backend_rejects_execution_without_platform_support() {
         assert!(matches!(
@@ -25,7 +25,7 @@
     /// The Metal JIT's result, or None where it refuses the batch: the launch bound (99, list step 13), or a
     /// shared arena sized short for it (`BackendCapacity`, work queue Q64, the grid's retirement having moved these
     /// programs to the JIT). The CPU backends' parity is still asserted.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn metal<T>(result: Result<T, Error>) -> Option<T> {
         match result {
             Err(Error::BackendLaunchLimit) => {
@@ -162,7 +162,7 @@
         }
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn production_corpus_executes_all_files_in_one_packed_grid() {
         const FILE_COUNT: usize = 129;
@@ -232,7 +232,7 @@
                 expected
             );
         }
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
             let backend = ExecutionBackend::MetalJit;
             if let Some(actual) = metal(execute_with_backend(backend, programs, tapes, &anchors))
@@ -262,7 +262,7 @@
         }
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn assert_metal_parity(programs: &[Program], tapes: &[TapeDoc]) {
         let anchors = tapes
             .iter()
@@ -638,7 +638,7 @@
         .unwrap();
         let jit_elapsed = jit_started.elapsed();
         assert_eq!(jit_output[0][0], plain_output);
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         if let Some(actual) = metal(execute_with_backend(ExecutionBackend::MetalJit, &jit_programs, &jit_tapes, &jit_anchors)) {
             assert_eq!(actual[0][0], plain_output);
         }
@@ -780,7 +780,7 @@
             execute_with_backend(ExecutionBackend::CpuJit, &programs, &tapes, &anchors).unwrap(),
             expected
         );
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         assert_metal_parity(&programs, &tapes);
     }
 
@@ -834,7 +834,7 @@
             ]),
             plain(vec![word(GOTO, 0, 1), word(EMIT, 0, 0)]),
         ];
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         let mut metal_programs = programs.clone();
         for required in 0_u8..=0x0f {
             for forbidden in 0_u16..=0x000f {
@@ -872,7 +872,7 @@
                 vec![],
             )
             .unwrap();
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             metal_programs.push(program.clone());
             programs.push(program);
         }
@@ -890,13 +890,13 @@
             vec![],
         )
         .unwrap();
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         metal_programs.push(assertion_program.clone());
         programs.push(assertion_program);
         let source = "# first\nvalue = call(argument)\nif value:\n  pass\n";
         let python_tape = tape(source);
         assert_jit_parity(&programs, std::slice::from_ref(&python_tape));
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
             let alternatives = |blocks: Vec<Vec<u32>>| {
                 let prefix = blocks.len() + 1;
@@ -949,7 +949,7 @@
             )
             .unwrap_err();
             assert_eq!(actual, expected);
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             {
                 let actual = execute_with_backend(
                     ExecutionBackend::MetalJit,
@@ -988,7 +988,7 @@
             std::slice::from_ref(&supertype),
             std::slice::from_ref(&js_tape),
         );
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         assert_metal_parity(std::slice::from_ref(&supertype), &[js_tape]);
 
         let opcodes = programs
@@ -1110,7 +1110,7 @@
                 .collect::<Vec<_>>();
             assert_eq!(actual, expected, "query: {query}");
         }
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         assert_metal_parity(&programs, std::slice::from_ref(&tape));
     }
 
@@ -1188,7 +1188,7 @@
             .iter()
             .flat_map(|program| program.execute(&directive_tape).unwrap())
             .collect::<Vec<_>>();
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
             assert_metal_parity(&directive_programs, std::slice::from_ref(&directive_tape));
             assert_metal_parity(
@@ -1226,7 +1226,7 @@
         .unwrap();
         let value_tape = tape("value\n");
         let output = program.execute(&value_tape).unwrap();
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         assert_metal_parity(
             std::slice::from_ref(&program),
             std::slice::from_ref(&value_tape),
@@ -1983,7 +1983,7 @@
         assert_eq!(negatives, 2);
         assert_eq!(registry.execution_count(batch), Some(1));
         registry.remove_batch(batch);
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
             let anchors = files
                 .iter()

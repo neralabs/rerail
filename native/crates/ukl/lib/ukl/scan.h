@@ -11,12 +11,22 @@
 //
 // The output has `n + 1` values: `out[n]` is the total (an offsets array, as a CSR's starts). Sums wrap at 2^32.
 // With `popcount`, each value counts as its set bits: the scan of a bitset's words gives each word's first rank.
+// `out` may be `in`: each thread writes only the values it read, after reading them.
+//
+// A scan sized on the device (`level` set) takes each level's count from `sizes`, which `ukl_scan_u32_size` writes
+// from a count the work before it made, and is launched on the grids it writes there.
 
 #pragma once
 #include <ukl/group.h>
 
-// Values a thread scans.
+// Values a thread scans, and a tile's (`UKL_SCAN_THREADS` threads).
 #define UKL_SCAN_ITEMS 4u
+#define UKL_SCAN_THREADS 256u
+#define UKL_SCAN_TILE (UKL_SCAN_ITEMS * UKL_SCAN_THREADS)
+// A sized scan's levels at most, and its `sizes` words: each level's count (0..8), its tiles as a grid
+// (8 + 3k..), and a grid over the `n + 1` outputs for the launches around it (32..35).
+#define UKL_SCAN_LEVELS 8u
+#define UKL_SCAN_SIZES 36u
 
 typedef struct UklScanArgs {
     uint32_t n;
@@ -24,8 +34,51 @@ typedef struct UklScanArgs {
     uint32_t hasOffsets;
     // Whether each value counts as its set bits.
     uint32_t popcount;
+    // 0, or a sized scan's level plus one: its count is `sizes[level - 1]`, not `n`.
+    uint32_t level;
 } UklScanArgs;
-UKL_REFLECT_STRUCT(UklScanArgs, n, hasOffsets, popcount)
+UKL_REFLECT_STRUCT(UklScanArgs, n, hasOffsets, popcount, level)
+
+// The arguments with the level's count.
+UKL_INLINE UklScanArgs ukl_scan_sized(UklScanArgs args, UKL_GLOBAL const uint32_t* sizes)
+{
+    if (args.level != 0u)
+        args.n = sizes[args.level - 1u];
+    return args;
+}
+
+typedef struct UklScanSizeArgs {
+    // The count is `min(counts[slot], cap)`.
+    uint32_t slot;
+    uint32_t cap;
+    uint32_t levels;
+    // The threads a group of the grid over the outputs.
+    uint32_t threads;
+} UklScanSizeArgs;
+UKL_REFLECT_STRUCT(UklScanSizeArgs, slot, cap, levels, threads)
+
+// A sized scan's `sizes` (`UKL_SCAN_SIZES` words), from the count the work before it wrote. One thread.
+DEFINE_KERNEL2(ukl, ukl_scan_u32_size,
+               ARGS,     UklScanSizeArgs, args,   ,
+               ROBUFFER, uint32_t,        counts, "[slot + 1]",
+               RWBUFFER, uint32_t,        sizes,  "[UKL_SCAN_SIZES]",
+               GID0,     uint32_t,        t,      )
+{
+    if (t != 0u)
+        return;
+    uint32_t n = ukl_min(counts[args.slot], args.cap);
+    sizes[32] = n / args.threads + 1u;
+    sizes[33] = 1u;
+    sizes[34] = 1u;
+    for (uint32_t k = 0u; k < args.levels && k < UKL_SCAN_LEVELS; k++) {
+        uint32_t g = ukl_max((n + UKL_SCAN_TILE - 1u) / UKL_SCAN_TILE, 1u);
+        sizes[k] = n;
+        sizes[8u + 3u * k] = g;
+        sizes[9u + 3u * k] = 1u;
+        sizes[10u + 3u * k] = 1u;
+        n = g;
+    }
+}
 
 // Value `i` as the scan counts it; zero past `n`.
 UKL_INLINE uint32_t ukl_scan_load(UKL_GLOBAL const uint32_t* in, uint64_t i, UklScanArgs args)
@@ -46,15 +99,17 @@ DEFINE_KERNEL2(ukl, ukl_scan_u32_tile_sums,
                ARGS,     UklScanArgs, args,    ,
                ROBUFFER, uint32_t,    in,      "[n]",
                RWBUFFER, uint32_t,    sums,    "[tiles]",
+               ROBUFFER, uint32_t,    sizes,   "[UKL_SCAN_SIZES]",
                SHARED,   uint32_t,    scratch, UKL_TG_SCRATCH,
                TGID0,    uint32_t,    tile,    ,
                LID0,     uint32_t,    lid,     ,
                LSZ0,     uint32_t,    lsz,     )
 {
+    UklScanArgs a = ukl_scan_sized(args, sizes);
     uint64_t first = ukl_scan_first(tile, lid, lsz);
     uint32_t s = 0u;
     for (uint32_t k = 0u; k < UKL_SCAN_ITEMS; k++)
-        s += ukl_scan_load(in, first + k, args);
+        s += ukl_scan_load(in, first + k, a);
     uint32_t t = ukl_tg_sum(s, lid, lsz, scratch __UKL_ARGS);
     if (lid == 0u)
         sums[tile] = t;
@@ -65,29 +120,31 @@ DEFINE_KERNEL2(ukl, ukl_scan_u32_tiles,
                ROBUFFER, uint32_t,    in,      "[n]",
                RWBUFFER, uint32_t,    out,     "[n + 1]",
                ROBUFFER, uint32_t,    offsets, "[tiles + 1]",
+               ROBUFFER, uint32_t,    sizes,   "[UKL_SCAN_SIZES]",
                SHARED,   uint32_t,    scratch, UKL_TG_SCRATCH,
                TGID0,    uint32_t,    tile,    ,
                LID0,     uint32_t,    lid,     ,
                LSZ0,     uint32_t,    lsz,     )
 {
+    UklScanArgs a = ukl_scan_sized(args, sizes);
     uint64_t first = ukl_scan_first(tile, lid, lsz);
     uint32_t v[UKL_SCAN_ITEMS];
     uint32_t s = 0u;
     for (uint32_t k = 0u; k < UKL_SCAN_ITEMS; k++) {
-        v[k] = ukl_scan_load(in, first + k, args);
+        v[k] = ukl_scan_load(in, first + k, a);
         s += v[k];
     }
     UklScan r = ukl_tg_exclusive_sum(s, lid, lsz, scratch __UKL_ARGS);
-    uint32_t base = args.hasOffsets != 0u ? offsets[tile] : 0u;
+    uint32_t base = a.hasOffsets != 0u ? offsets[tile] : 0u;
     uint32_t run = base + r.exclusive;
     for (uint32_t k = 0u; k < UKL_SCAN_ITEMS; k++) {
-        if (first + k < args.n)
+        if (first + k < a.n)
             out[first + k] = run;
         run += v[k];
     }
     // The total, from the last tile's last thread (tile 0 when there are no values).
     uint32_t tileValues = lsz * UKL_SCAN_ITEMS;
-    uint32_t lastTile = args.n == 0u ? 0u : (args.n - 1u) / tileValues;
+    uint32_t lastTile = a.n == 0u ? 0u : (a.n - 1u) / tileValues;
     if (tile == lastTile && lid == lsz - 1u)
-        out[args.n] = base + r.total;
+        out[a.n] = base + r.total;
 }

@@ -250,7 +250,7 @@ fn symbols_are_the_stores_atoms() {
 /// The device work queue's file-local FIX (list step 17) solves the CPU's system: many components (as
 /// files), with chains, cycles, transfers and conflicting seeds, and one long counting chain,
 /// give the same values on both.
-#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
 #[test]
 fn the_device_fix_waves_reach_the_cpus_fixpoint() {
     let db = connection();
