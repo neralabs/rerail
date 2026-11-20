@@ -5419,6 +5419,15 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   good run's), then the cause; a test that hits it; the fix.
 - **Done when:** 20 Metal runs of hogql give 1,629 each.
 
+- **Lead** (2026-11-19, step 6b's runs: one good, one at 1,358): comparing each stratum's rows, host plus device
+  (`prof/native.tsv`'s last step, `prof/placement.tsv`'s `gpu_rows_made`), only 11 strata differ. In the bad run each
+  of them has one stratum run fewer on the device (`on_gpu` 5 of 6, 11 of 12), so that chunk's run went to the host.
+  For all but one, the host made the rows the device did not, and the totals match. The exception is
+  `xd_fz3398261162_..._rr_diagnostic`: 53,226 rows against 65,468, and 53,226 is exactly what its sibling
+  `xd_fz2220395310_..._violation` made on the device in that run. The diagnostic's host run read an input that the
+  refused chunk had not finished writing. **Next:** in the chunk that fell back, check which input the diagnostic's
+  host run read, and when that input was filled.
+
 ### Q263. A relation's statistics kept by delta are on the heap (0450 R5) — done (0450 step 6f)
 
 - **Seen** (2026-11-19, closing 0450 step 6): `InRel::stats` and `Rel::stats` (`KeptStats`, decision 0096,
