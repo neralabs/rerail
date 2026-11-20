@@ -319,8 +319,7 @@ pub fn assemble(
     // Each part's inputs and outputs; its rules and other fields are a view of the program's version (below), an
     // overlay over it (decision 0244).
     let local_outputs: Vec<String> = f.outputs().filter(|o| is_local(o)).map(str::to_owned).chain(exports.iter().cloned()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
-    // The reference graph is bound for the cross-file part only (no rule reading it is file-local): no chunk has it.
-    let local_inputs: Vec<String> = f.inputs().filter(|i| !matches!(*i, "reference_edge" | "reference_open")).map(str::to_owned).collect();
+    let local_inputs: Vec<String> = f.inputs().map(str::to_owned).collect();
     let cross_outputs: Vec<String> = f.outputs().filter(|o| !is_local(o)).map(str::to_owned).collect();
     let cross_inputs: Vec<String> = base_read.into_iter().chain(exports.iter().cloned()).collect();
     let versions = {

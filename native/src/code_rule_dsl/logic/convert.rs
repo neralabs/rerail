@@ -814,8 +814,8 @@ impl Emitter {
 }
 
 /// The base relations every converted program reads, and those the corpus runner binds for an authored file beyond
-/// them (core.rr's, `facts::vtab::syntax::Extra`): the source text, its spans and node columns T had not; and W's
-/// Python reference graph (`logic::plan::corpus::references`).
+/// them (core.rr's, `facts::vtab::syntax::Extra`): the source text, its spans and node columns T had not. (W's Python
+/// reference graph is `python/references.rr`'s, which an authored file includes: decision 0476.)
 pub(in crate::code_rule_dsl) const BASE: &str = "\
 .decl doc(d: int, path: sym, module: sym)
 .decl node(d: int, n: node, kind: sym, start: int, end: int)
@@ -861,8 +861,6 @@ pub(in crate::code_rule_dsl) const BASE: &str = "\
 .decl dump_sha256(n: node, h: sym)
 .decl body_sha256(f: node, h: sym)
 .decl signature_sha256(f: node, h: sym)
-.decl reference_edge(src: node, dst: node, via: sym)
-.decl reference_open(n: node)
 ";
 
 const BASE_RELATIONS: [&str; 13] = ["doc", "node", "child", "field", "text", "name", "str", "strprefix", "intval", "op", "line", "syntax_error", "node_text"];
@@ -1060,9 +1058,11 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, mut authored: Pr
             }
             // A bridged relation (`typing_<program>__<output>`, the library's calls) is the runner's to give; so are
             // decision 0055's settings (`guest_policy`, the lowering's facts, empty where the program sets none), which
-            // the library reads (`python/names.rr`).
+            // the library reads (`python/names.rr`), and the `.references` setting's (decision 0476), which
+            // `python/references.rr` reads.
             if !(derived.contains(rel) || base_types(rel).is_some() || GIVEN.contains(&rel) || authored.inputs.iter().any(|i| i == rel) || super::plan::corpus::bridge::is_bridged(rel)
-                || rel == crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY) {
+                || rel == crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY
+                || crate::code_rule_dsl::logic::rr::lower::findings::REFERENCE_SETTING.contains(&rel)) {
                 return err(format!("{rel} is read, and nothing derives or inputs it"));
             }
         }

@@ -22,6 +22,7 @@
 //   with spaces);
 // - among several bases at the least depth holding a public method, the one first by route is found greedily
 //   (exact for routes, which are the bases' start offsets in order).
+#include "python/references.rr"
 
 .decl tape_syntax_error(d: number)
 .decl in_scope(d: number)

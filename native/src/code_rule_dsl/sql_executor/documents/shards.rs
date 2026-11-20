@@ -116,7 +116,7 @@ fn domains(name: &str) -> (&'static [usize], &'static [usize]) {
         "sub_tape" => (&[0], &[]),
         "host_node" => (&[1], &[]),
         "str_part" | "str_part_word" => (&[0, 3], &[]),
-        "doc" | "pkg" | "unpackaged" | "path_part" | "file_name" | "source" | "src_line" | "split_line"
+        "doc" | "pkg" | "unpackaged" | "tape_error" | "path_part" | "file_name" | "source" | "src_line" | "split_line"
         | "lf_line" | "line_count" | "syntax_error" | "doc_role" | "tape_of" => (&[], &[0]),
         "name" | "text" | "str" | "strprefix" | "comment" | "value" | "static_value" | "rr_value_lit" | "intval"
         | "op" | "op_t" | "op_at" | "line" | "end_line" | "col" | "visit_index" | "ast_depth" | "node_order"

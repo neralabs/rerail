@@ -16,6 +16,7 @@
 // names, global/nonlocal names, del targets, `type X = …` aliases' names, and match-statement captures (W's
 // `case_pattern` walk, `scope::python`: a lone name, an `as` name, a splat's name, a class pattern's arguments and
 // keyword values, a mapping's values and `**rest`; `_` binds nothing).
+#include "python/references.rr"
 .decl tape_syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)

@@ -910,9 +910,6 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "prev_token" => &["n", "s"],
         "token" | "rr_token_anon" => &["p", "i", "s", "start", "end_"],
         "rr_token_named" => &["p", "i", "c", "start", "end_"],
-        // W's Python reference graph (`logic::plan::corpus::references`).
-        "reference_edge" => &["src", "dst", "via"],
-        "reference_open" => &["n"],
         "rx_span" => &["p", "c", "j", "g", "m"],
         "ast_match" => &["p", "n", "g", "c"],
         // Decision 0055's (`facts::vtab::syntax::guests`).
@@ -934,7 +931,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "package_field" => &["dir", "key", "v"],
         "package_for" => &["path", "dir"],
         "pkg" => &["d", "p"],
-        "unpackaged" => &["d"],
+        "unpackaged" | "tape_error" => &["d"],
         "path_part" | "file_name" => &["d", "s"],
         "tape" => &["n", "par", "size", "depth"],
         "core_node" => &["d", "t", "n"],

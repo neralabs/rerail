@@ -728,7 +728,7 @@ pub fn finish_checks_given(v: &crate::code_rule_dsl::logic::program_image::Versi
             let Lit::Agg { op: op @ (AggRef::Min | AggRef::Max), over: Some(o), atom, .. } = l.view() else { continue };
             let rel = v.rel_name(atom.rel());
             let cols = v.columns_of(rel).unwrap_or_default();
-            if atom.args().enumerate().any(|(i, t)| matches!(t, TermRef::Var(s) if s == o) && cols.get(i).is_some_and(|(_, ty)| ty == "symbol")) {
+            if atom.args().enumerate().any(|(i, t)| matches!(t, TermRef::Var(s) if s == o) && cols.get(i).is_some_and(|(_, ty)| matches!(ty.as_str(), "sym" | "symbol"))) {
                 let op = if matches!(op, AggRef::Min) { "min" } else { "max" };
                 return Err(Error::Syntax(format!(
                     "{op} over a symbol of {rel} in the rule for {}: symbols have no order an aggregate keeps; compare them with `<`",
@@ -1305,7 +1305,7 @@ pub const PRAGMA: &str = "cross-rounds";
 /// A base relation's document column, including raw text views.
 pub fn document_column(relation: &str) -> Option<usize> {
     match relation {
-        "node" | "doc" | "pkg" | "unpackaged" | "path_part" | "file_name" | "syntax_error" | "cpython_syntax_error" |
+        "node" | "doc" | "pkg" | "unpackaged" | "tape_error" | "path_part" | "file_name" | "syntax_error" | "cpython_syntax_error" |
         "source" | "src_line" | "src_line_lf" | "tape_line" | "split_line" | "lf_line" | "line_count" | "parsed"
         // Decision 0055's: a guest and its host are one file (`corpus::guests` attributes its rows to the host).
         | "doc_role" | "doc_root" | "tape_of" | "guest" | "host_node" => Some(0),

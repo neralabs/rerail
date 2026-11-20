@@ -1538,6 +1538,8 @@ impl LibraryFile {
 /// The relations `core.rr` declares for libraries to derive: the engine reads them (decision 0055's embeds).
 /// And the documents they load (t21 E2).
 pub const LIBRARY_DERIVED: [&str; 3] = ["embed", "embed_value", "load"];
+/// The relations `core.rr` declares that one library file derives, and that file (decision 0476: the reference graph).
+pub const DERIVED_BY: [(&str, &str); 2] = [("reference_edge", "python/references.rr"), ("reference_open", "python/references.rr")];
 /// The library's programs the engine adds to a run itself (decision 0076's import components).
 const ENGINE_FILES: [&str; 1] = ["components.rr"];
 
@@ -1933,7 +1935,10 @@ fn check_names(statements: &Files, core_unlisted: bool) -> Result<(), Error> {
                 syntax::Item::Clause { heads, .. } => heads.iter().map(|h| &h.rel).collect(),
                 _ => Vec::new(),
             };
-            if let Some(name) = names.into_iter().find(|n| engine.contains(n)) {
+            let derives = |n: &str| {
+                DERIVED_BY.iter().any(|(rel, by)| *rel == n && library().join(by).canonicalize().is_ok_and(|by| by == **file))
+            };
+            if let Some(name) = names.into_iter().find(|n| engine.contains(n) && !(matches!(item, syntax::Item::Clause { .. }) && derives(n))) {
                 return Err(Error::Syntax(format!("{}:{line}: {name} is core.rr's: a program reads it and cannot declare or derive it", file.display())));
             }
         }
