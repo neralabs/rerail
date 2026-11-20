@@ -559,8 +559,11 @@ function ruleToolCalls(rule: { id: string; examples?: Record<string, { text?: st
   }
 }
 
-/** A test's call in a `.rerail` file: `.tool_call "<tool>" `<input as JSON>``. */
-const TOOL_CALL_LINE = /^\s*\.tool_call\s+"([^"]+)"\s+`(.*)`\s*$/;
+/**
+ * A test's call in a `.rerail` file: `.tool_call "<tool>" `<input as JSON>``, its input in a fence of any number of
+ * backticks closed by as many (an input holding a backtick takes a longer fence), as the engine's test reader takes it.
+ */
+const TOOL_CALL_LINE = /^\s*\.tool_call\s+"([^"]+)"\s+(`+)(.*?)\2\s*$/;
 
 /**
  * The calls a tool-call rule's translation tests with (its `.tool_call` lines, in `file`, named by its line), so the
@@ -571,7 +574,7 @@ export function testToolCalls(rule: string, file: string, text: string): { calls
   const out: { calls: ExampleToolCall[]; skipped: string[] } = { calls: [], skipped: [] };
   text.split("\n").forEach((line, i) => {
     const m = TOOL_CALL_LINE.exec(line);
-    if (m !== null) testToolCall(`${rule} ${file}:${i + 1}`, m[1]!, m[2]!, out);
+    if (m !== null) testToolCall(`${rule} ${file}:${i + 1}`, m[1]!, m[3]!, out);
   });
   return out;
 }
