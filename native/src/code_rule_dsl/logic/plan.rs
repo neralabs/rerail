@@ -2991,6 +2991,7 @@ impl Model {
         }
         // A line planned with the program (decision 0361 step 5): no key, no cache, no price.
         if let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes, b, &self.stats.shapes) {
+            self.log_assumed(line_key(b, first));
             super::profile::decision("prepared plans (decision 0361 step 5)", || "a live plan taken as prepared: not searched or priced".to_owned());
             return Ok((plan, None));
         }
@@ -3257,6 +3258,20 @@ impl Model {
         })
     }
 
+    /// Q184's measurement (`prepared::sizes_log`): a prepared plan taken for `line`, each relation it assumed a size of
+    /// against what this model holds of it, rows per node. A relation still being solved is left out (its rows so far).
+    fn log_assumed(&self, line: u128) {
+        let Some(log) = prepared::sizes_log() else { return };
+        use std::io::Write as _;
+        let n = self.stats.nodes.max(1.0);
+        let mut log = log.lock();
+        for (r, per) in self.stats.prepared.assumed(line) {
+            if !self.stats.solving.contains(r) {
+                let _ = writeln!(log, "seen\t{r}\t{per}\t{}\t{n}", self.card(r) / n);
+            }
+        }
+    }
+
     /// Decision 0361 step 6: a running line's rows step by step (`steps`, the executors' counts, decision 0203) against
     /// the facts its probes were priced by. A probe returning past `shapes::BROKEN_BY` times the most its relation's key
     /// or fan-out lets it, a probe on average, breaks that fact: the run notes it (`shapes::Broken`), names it in the
@@ -3442,6 +3457,7 @@ impl Model {
         if fixed.is_none()
             && let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes, b, &self.stats.shapes)
         {
+            self.log_assumed(line_key(b, first));
             super::profile::decision("prepared plans (decision 0361 step 5)", || "a line's plan taken as prepared: not searched".to_owned());
             let explained = if explain { self.explain_order(pf, b, first, &plan.0) } else { None };
             return Ok((plan, explained));

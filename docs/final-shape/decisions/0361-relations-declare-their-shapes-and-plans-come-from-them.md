@@ -509,3 +509,14 @@ inferred from it left out, in a later model too; a prepared plan reading it not 
 463 findings d067ec2ebf6f; 985.8 G instructions in one run and 1,004.9 and 1,017.7 G in two others, against 982.7 and
 1,045.8 G before.
 
+## Derived relations' estimates: off (2026-11-19, Q184)
+
+The "Wider" step sized each derived relation that no fact sizes from its rules' plans. Measured directly (Q184,
+`RERAIL_SIZES_LOG` and `scripts/profiling/derived_sizes.py`), those estimates were within 2x of the rows a run held for
+15% of relations, 4% weighted by the plans that read them: the facts carry no grammar's kind skew and no kind's fields.
+Sizes a run held do transfer, 85% within 2x from corpus0 to hogql, but they do not save the plans. Sized right, and
+even from the same corpus's own run, the run costs more: 1,203 G instructions against 957-969 G with the estimates off,
+because more lines take a plan priced by the facts' distributions, not by the run's statistics. So derived relations
+are sized by an estimate only under `RERAIL_DERIVED_ESTIMATES=on`, a measurement aid. A rule over a derived relation
+that facts do not size is planned at run time. Rules over relations whose facts size them are prepared as before.
+

@@ -3801,6 +3801,33 @@ native join it falls back to the planner's whole-rule order.
   line's plan taken on a kept-plan miss is kept (`decide`), so its order outlives the run. The diff is not in the
   tree. What the next attempt needs: a plan priced on the run's statistics is what a search gives at 0.1-0.3 s a run
   (search) and 1-2 s (statistics) of about 85 s; a prepared plan has to be priced as well as that to pay.
+- **Measured directly** (2026-11-19). The estimates are now measured on their own, not through a run's time, which
+  moves about 3% between runs of one build. This follows the Release-debugging worktree's deferred-joins lab: capture a
+  run's real outputs once, then judge each strategy against them. `RERAIL_SIZES_LOG=FILE` logs what preparation sized
+  each derived relation at, and, at each prepared plan a run takes, what it assumed of each estimated relation against
+  what the run held then (rows per node). `scripts/profiling/derived_sizes.py` reads one log, or two to compare.
+  `RERAIL_SIZES_FROM=LOG` prepares from the sizes a log's run held: a labelled oracle, a measurement aid only.
+  corpus0 x B-now and hogql (437 files of another project), profiling build, M1 Max at load 5-28, a new store each:
+  - **The estimates from facts:** 15% of the 241 relations a taken plan read were within 2x of what the run held, and
+    4% weighted by plans taken; median held about 400 times assumed. Most hit the 1-row floor. In `attr_of(n, o, a)
+    :- kind(n, "attribute"), field(n, "object", o), field(n, "attribute", at), text(at, a)`, the facts give the kind
+    1/200 of the nodes and each named field 3/50 a node. Python has about 5% attribute nodes, each with both fields
+    once. A grammar's kind skew and its kinds' fields are in no fact.
+  - **What a run held transfers:** per node, corpus0's and hogql's held sizes agree within 2x for 85% of relations,
+    95% weighted by plans.
+  - **Right sizes do not pay:** instructions with derived relations sized by nothing were 957, 969 and 964 G; by their
+    rules' estimates (the default), 1,056, 1,005 and 991 G; by what hogql's run held, 1,128 G (93% within 2x); by what
+    corpus0's own run held, 1,203 G (99% within 2x). The more lines prepared (2,497 off; 5,951-7,935 on), the more the
+    run costs. Findings 463 d067ec2ebf6f in every run. A plan made at the nominal scale from facts is priced by the
+    facts' distributions even where its sizes are right; the run's search, with the run's statistics, plans better
+    for 1-3% of the run.
+- **Done** (2026-11-19): derived relations are no longer sized by an estimate by default (`RERAIL_DERIVED_ESTIMATES`
+  is now off unless `=on`, kept as a measurement aid for the oracle lab). Rules reading a derived relation that facts
+  do not size are planned at run time, as before 0361's "Wider" step. Relations whose facts, declared or inferred,
+  size them are still prepared. The criterion above, refused lines under a tenth, has no subject: no line is refused
+  since prepared plans are taken by default. What it stood for, the joins no worse than with prepared plans off, holds
+  as the default's 957-969 G. Test: `a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it` (on when
+  bound; off by default, the recursion it sized left to run time).
 
 ### Q185. A lowered program's identity is its store's: kept plans and prepared plans miss across stores
 
