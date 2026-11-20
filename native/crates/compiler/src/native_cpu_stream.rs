@@ -6764,7 +6764,10 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                     leave(&mut f, &r);
                 }
                 Op::Push { target, flag } => {
+                    // Calls nested at most `DEPTH` deep, as a native call's (above) and the Rust's (0519).
                     let ret = mget(&mut f, Mem::Ret);
+                    let deep = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, ret, DEPTH);
+                    guard(&mut f, deep, pc);
                     let t = f.ins().iconst(types::I64, i64::from(target));
                     // With context (`REMEMBER`, `FLAG`), two slots a call: its return, then the
                     // caller's word and flags (`context`).

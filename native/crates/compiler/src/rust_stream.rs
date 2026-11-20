@@ -35,7 +35,7 @@ use crate::clif_rust::Shape;
 use crate::native_ir::{FlagOp, On, Structure, StructuralOperation as Op};
 use crate::program::{LocalCheck, LocalOp, TokenMark};
 use crate::stream_ir::{ByteSwitch, DEAD, GONE, KEEP, REFUSE, REMEMBERED, WORD_KIND};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write;
 
 /// A direct format 16 run's word whose node the source's language has no number for (decision 0516): the file is
@@ -3402,7 +3402,8 @@ fn fetched_arms(x: &Facts<'_>, fx: &Fetched, sw: &ByteSwitch, p: &mut Plan) -> S
         // and is not made again (`past_span`).
         let one = past_span(x, t, 1);
         let body = match form {
-            0 => format!("s.rec_end = s.start + 1;\n{}{}", code_set(x, &[one], a), p.to(one)),
+            // Its end only where a word reads it (`end_read`).
+            0 => format!("{}{}{}", if end_read(x, one) { "s.rec_end = s.start + 1;\n" } else { "" }, code_set(x, &[one], a), p.to(one)),
             1 => format!("s.rec_end = s.start + 1;\n{}s.part_at = s.start + 1;\n{}", code_set(x, &[one], a), p.to(one)),
             _ => {
                 let r = a;
@@ -3581,6 +3582,79 @@ fn known_leaf(x: &Facts<'_>, at: u16, code: u32) -> Result<Option<(String, u16)>
         }
     }
     Ok(None)
+}
+
+/// Whether the end a switch's arm makes (`rec_end`) is read from word `t` on, in a direct format 16 run: as the lean
+/// parser makes a node's end where it writes it, an arm makes its token's end only where a word reads it. Each way is
+/// walked twice over: the end itself, and the end a `TOKEN` passes on as the last token's (`last_end`), until a word
+/// makes it again. A word not known to leave both alone reads them; outside a direct run, every end is read.
+fn end_read(x: &Facts<'_>, t: u16) -> bool {
+    if !(x.sixteen && x.coded) || x.flagged {
+        return true;
+    }
+    let words = &x.native.structural;
+    // (word, the last token's end, not this one's)
+    let mut seen: HashSet<(usize, bool)> = HashSet::new();
+    let mut work = vec![(usize::from(t), false)];
+    while let Some((pc, last)) = work.pop() {
+        if pc >= words.len() || !seen.insert((pc, last)) {
+            continue;
+        }
+        // A string reads this end first, and makes the last one again.
+        if x.fetch.as_ref().is_some_and(|fx| fx.part_at(x, pc)) {
+            if last {
+                continue;
+            }
+            return true;
+        }
+        // The words after, as they run: a call's callee, a return's places, else each word's own (not `succ`, which
+        // writes each switch's arms, and so asks this again).
+        let next: Vec<usize> = match (words[pc].operation, &x.one) {
+            (Op::Push { .. }, Some(_)) => vec![crate::native_cpu_stream::callee(x.native, pc)],
+            (Op::Return { .. }, Some(one)) => one.returns.get(&pc).map_or(Vec::new(), |r| r.iter().map(|&(_, t)| t).collect()),
+            _ => plain_succ(x, pc),
+        };
+        let on = |work: &mut Vec<(usize, bool)>, l: bool| work.extend(next.iter().map(|&q| (q, l)));
+        match words[pc].operation {
+            // The end passed on as the last token's; this one's kept until an arm makes it again.
+            Op::Token { .. } if !last => {
+                on(&mut work, false);
+                on(&mut work, true);
+            }
+            Op::Token { .. } => {}
+            Op::Switch { table } => {
+                let sw = &x.native.switches[usize::from(table)];
+                if !(on_kinds(x, sw) && fresh(x, sw)) {
+                    return true;
+                }
+                if last {
+                    on(&mut work, true);
+                } else if sw.end != REFUSE {
+                    // Every arm makes its token's end; at the stream's end, none does.
+                    work.push((usize::from(sw.end), false));
+                }
+            }
+            // A close of its own token's end reads this one's; any other, the last one's.
+            Op::Close { this } => {
+                if this != last {
+                    return true;
+                }
+                on(&mut work, last);
+            }
+            Op::Leaf { deferred, .. } => {
+                if !last || deferred {
+                    return true;
+                }
+                on(&mut work, last);
+            }
+            // A last-byte `SPAN` reads nothing here (`flagged` is out); a length's reads the end.
+            Op::Check { .. } | Op::Span { last: false, .. } if !last => return true,
+            Op::Check { .. } | Op::Span { .. } | Op::Open { .. } | Op::NodeSuper { .. } | Op::NodeField { .. } | Op::Goto { .. } | Op::Count { .. } | Op::Push { .. } | Op::Return { .. } | Op::Empty { .. } => on(&mut work, last),
+            Op::Accept | Op::Stop => {}
+            _ => return true,
+        }
+    }
+    false
 }
 
 /// `s.code = code;`, where a word reached from `to` reads it (`code_read`); nothing where none

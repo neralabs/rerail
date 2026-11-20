@@ -2,7 +2,7 @@
 
 Status: the five items are the user's (2026-11-20: "please implement all of these things"). How each is done is
 the implementer's choice, not the user's, and is marked so below. What the tests hold is under "Checks". What they
-do not hold is under "Not checked" and "Open". Follows 0505, 0508, 0516. Page 40, step 42.
+do not hold is under "Not checked". Follows 0505, 0508, 0516. Page 40, step 42.
 
 ## What the user asked
 
@@ -55,24 +55,29 @@ The gaps found when the generated JSON Rust was set beside simdjson's and the le
   - The refusals' reasons, on files the JIT refuses as well:
     - `[1 2]`, `{"a" 1}`, `[tru]` and `["\q"]` give `BYTE`;
     - `[01]` gives `CHECK`;
-    - `"open` and `["\` give `EMPTY` (tier 1's total of open regions, tested by the rule's first word).
+    - `"open` and `["\` give `EMPTY` (tier 1's total of open regions, tested by the rule's first word);
+    - an array, an object and the two by turns, nested 1,025 deep, give `DEPTH`.
 - `aot_tests::grammars_rust_tapes_are_the_jits`: every grammar's Rust in formats 15, 16 and 16z writes the JIT's
   tapes, with the language from `direct_entries`.
 - `rerail-rr-aot` (generated, on a farm host): 21 tests.
 
 ## Not checked
 
-- These reasons are reached by no test: `ROOM`, `WORD`, `SPAN`, `END`, `STRING`, `TOKEN`, `DEPTH`, `RETURN`, `COUNT`,
+- These reasons are reached by no test: `ROOM`, `WORD`, `SPAN`, `END`, `STRING`, `TOKEN`, `RETURN`, `COUNT`,
   `STOP`, `NUMBER`, `WRITER`, `NODES`, `WIDTH`, `FIELD`. `STRING` is not reachable in JSON: `EMPTY` refuses an open
   region first. Their names say what each site tests, as read from its code, and nothing more is claimed.
 - `open_bound` in a grammar other than JSON's, beyond its tapes equalling the JIT's in the AOT test's documents (none
   nested near the limit).
 - Nothing is claimed about speed: nothing was measured.
 
-## Open
+## Resolved: the depth's limit
 
-- **Past 1,024 levels the JIT and the Rust disagree.** On JSON, the JIT's call (`Push` without native calls) stores
-  its return with no depth test, and parses a document nested 1,025 or 1,100 deep. The Rust refuses it (`DEPTH`).
-  simdjson and the lean parser refuse at 1,024 levels. The difference was already there (`80e54a2a9d`); the deep
-  documents of the checks above first found it. Which limit is right is not decided here. `open_bound` depends on it:
-  it holds only while the Rust's depth is bounded.
+Past 1,024 levels the JIT and the Rust disagreed. On JSON, the JIT's call (`Push` without native calls) stored its
+return with no depth test, and so did the interpreter (`stream::run`), so both parsed a document nested 1,025 deep.
+The Rust refused it, as simdjson and the lean parser do. The difference came in with `80e54a2a9d`, and this step's
+deep documents found it.
+
+The user (2026-11-20): "there should be a 1024 limit". Every call in every run is now limited to
+`native_cpu_stream::DEPTH` (1,024) nested calls: the JIT's plain call and the interpreter's `PUSH` test it, as the
+JIT's native call and the Rust already did. The checks run documents nested 1,022 to 1,027 deep. Those to 1,024 give
+the JIT's tapes; those past it are refused by the JIT and by the Rust, for `DEPTH`.

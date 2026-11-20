@@ -593,6 +593,14 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 43, done: a token's end made only where a word reads it (decision 0521)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| A punctuation's end | none kept; an end computed where it is written | `s.rec_end = s.start + 1;` in every one-byte arm | only where a word reads it (`end_read`): `}` and `]`, not `,`, `:`, `{`, `[` |
+
+Left: the opener `"` still makes its end, which the string's loop copies first (0521, "Left").
+
 ## Step 42, done: each word once, one room check, coded refusals, the source laid out (decision 0519)
 
 These close the five gaps found when the generated JSON Rust was set beside simdjson's and the lean parser's:
@@ -606,7 +614,7 @@ These close the five gaps found when the generated JSON Rust was set beside simd
 | The source's form | indented, labels named by state | flat, `'b21`, `'m129` | indented, `'token_130: loop`, `break 'to_close_22;` |
 
 The bound's formula, the reasons and the label scheme are the implementer's; 0519 lists what the tests hold and
-what they do not. Open: past 1,024 levels the JIT parses what the Rust refuses (0519, "Open").
+what they do not. Every run's calls are limited to 1,024 nested, the JIT's and the interpreter's too (the user; 0519).
 
 ## Step 41, done: the kinds' numbers constants (D7, decision 0516); the tape's reads written directly (0510)
 

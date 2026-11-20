@@ -291,10 +291,9 @@ fn tree_inputs() -> Vec<Vec<u8>> {
     // opened, and values to the side lists (a gap, a length and an inner node's size past 255).
     inputs.push(format!("[{}]", vec!["true"; 3000].join(",")).into_bytes());
     inputs.push(format!("{}1{}", "[".repeat(400), "]".repeat(400)).into_bytes());
-    // At the depth's limit (`DEPTH`, 1,024 calls), arrays and objects and both by turns: the open nodes the writer's
-    // stack is reserved for (`rust_stream::open_bound`, decision 0519), at their most. Not past it: there the JIT
-    // parses what the Rust refuses (0519, "Open").
-    inputs.extend(deep_nests(1022..1025));
+    // At the depth's limit (`DEPTH`, 1,024 calls) and past it, arrays and objects and both by turns: the open nodes
+    // the writer's stack is reserved for (`rust_stream::open_bound`, decision 0519), at their most; past it, refused.
+    inputs.extend(deep_nests(1022..1028));
     inputs.push(format!("{{{}}}", (0..1500).map(|k| format!("\"k{k}\": [{k}, \"v\\n\"]")).collect::<Vec<_>>().join(",")).into_bytes());
     inputs.push(format!("[{}1,{}\"{}\", [{}]]", " ".repeat(300), "\n".repeat(400), "s".repeat(700), vec!["null"; 300].join(", ")).into_bytes());
     inputs.push(format!("[{}]", (0..1100).map(|k| if k % 97 == 0 { format!("{}{k}", " ".repeat(260)) } else { k.to_string() }).collect::<Vec<_>>().join(",")).into_bytes());
@@ -424,6 +423,16 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     let reads: Vec<&str> = rule16.split("\n}\n").next().unwrap_or_default().lines().filter(|l| l.contains("numbers")).collect();
     assert!(reads.is_empty(), "a direct run's rule reads the numbers: {reads:?}");
     assert!(!rule16.contains("s.row(") && !rule16.contains("s.open(") && !rule16.contains("s.leaf::<") && !rule16.contains("s.node_super("), "no row in a format 16 run");
+    // An end made only where a word reads it (`rust_stream::end_read`), as the lean parser makes a node's end where
+    // it writes it: no `,`, `:`, `{` or `[` makes its end; `}` and `]` do, for the close of their container.
+    let flat16 = flat(&src16);
+    for (byte, made) in [("0x2c", false), ("0x3a", false), ("0x7b", false), ("0x5b", false), ("0x7d", true), ("0x5d", true)] {
+        let arms: Vec<&str> = flat16.split(&format!("\n{byte} => {{\n")).skip(1).collect();
+        assert!(!arms.is_empty(), "the arms of {byte}");
+        for arm in arms {
+            assert_eq!(arm.starts_with("s.rec_end = s.start + 1;"), made, "{byte}'s arm makes its end only where it is read: {}", &arm[..arm.len().min(80)]);
+        }
+    }
     // The language holds every key a direct run writes (`direct_entries`): no node word refuses for want of its
     // number (`rust_stream::UNNUMBERED`).
     let unnumbered = src16.matches(rerail_compiler::rust_stream::UNNUMBERED).count();
@@ -474,7 +483,8 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // Each refusal names its reason (`native_cpu_stream::refusal`, decision 0519): a file the JIT refuses, the Rust
     // refuses for the reason its word has.
     let numbers = jit.parser.sixteen().expect("a format 16 tier 2").numbers(&lang);
-    let cases: [(&[u8], &str); 7] = [
+    let deep = deep_nests(1025..1026);
+    let cases: [(&[u8], &str); 10] = [
         (b"[1 2]", "BYTE"),
         (b"{\"a\" 1}", "BYTE"),
         (b"[tru]", "BYTE"),
@@ -484,6 +494,9 @@ fn simdjson_forms_rust_trees_are_the_jits() {
         (b"\"open", "EMPTY"),
         // An escape at the file's end: the region is open too, and `EMPTY` refuses it first (`STRING` is not reached).
         (b"[\"\\", "EMPTY"),
+        (&deep[0], "DEPTH"),
+        (&deep[1], "DEPTH"),
+        (&deep[2], "DEPTH"),
     ];
     for (f, why) in cases {
         let text = rerail_compiler::native_cpu_stream::refusal::NAMES.iter().find(|n| n.0 == why).expect("a reason").1;
