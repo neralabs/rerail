@@ -27,7 +27,7 @@ use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::model::{FileInput, package_marker_directory, python_module_in};
 use crate::code_rule_dsl::scope::{Access, ScopeKind, ScopeTable};
 use crate::code_rule_dsl::typing::file_local::Binding;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -252,6 +252,23 @@ pub(super) fn rules_side_in(dir: &std::path::Path, chunk_nodes: usize) -> Side {
         let stratum = path.split('/').rev().find_map(|s| s.strip_prefix("stratum ")).map(|s| s.trim_end_matches(" (in a job)"));
         let stage = stratum.map_or("(engine)", |r| stage_of(r, &names, &local, &cross));
         *side.cpu.entry(stage).or_default() += t.own;
+    }
+    // `RERAIL_STAGE_TOP=<n>`: the n strata of most own CPU, with their stage, and the engine's spans the same way.
+    if let Some(n) = std::env::var("RERAIL_STAGE_TOP").ok().and_then(|v| v.parse::<usize>().ok()) {
+        let mut by: HashMap<String, f64> = HashMap::new();
+        for (path, t) in &spans {
+            let stratum = path.split('/').rev().find_map(|s| s.strip_prefix("stratum ")).map(|s| s.trim_end_matches(" (in a job)"));
+            let key = match stratum {
+                Some(r) => format!("{} {r}", stage_of(r, &names, &local, &cross)),
+                None => format!("(engine) {}", path.rsplit('/').next().unwrap_or(path)),
+            };
+            *by.entry(key).or_default() += t.own;
+        }
+        let mut by: Vec<(String, f64)> = by.into_iter().collect();
+        by.sort_by(|a, b| b.1.total_cmp(&a.1));
+        for (k, s) in by.into_iter().take(n) {
+            println!("top {s:8.3} {k}");
+        }
     }
     for (ours, rel) in RELATIONS {
         let shown = crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
