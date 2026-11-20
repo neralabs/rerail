@@ -5427,13 +5427,18 @@ Python process for every batch, though `code_rule_dsl::cpython` computes the sam
   on a box, and the worker is deleted.
 - **Record**: —
 
-### Q294. Linking every pack's library waits minutes on the store's msync of kept facts (Linux)
+### Q294. (done) Linking every pack's library waits minutes on the store's msync of kept facts (Linux)
 
 - **Found** (2026-11-19, Q26): `rr::tests::library_modules_link_to_the_lowering_of_them_together` takes 217 s at
   f9c3bd713 and 251 s with Q26 on a DGX Spark (debug), of which 87 s user and 40 s sys. Stack samples show the test
   waiting in phase 0's graph runs (`phase0::derive` → `run_observed` → `written`) while the store's writer msyncs a
   kept-facts block of 460–630 MB (`kept::finish` → `Block::sync_mapped`), once a pack. The test was in the quick
   tier; it is now in the slow tier with 8 periods (`.config/nextest.toml`).
-- **Next**: why a library's phase 0 graph run keeps half a gigabyte of facts, and why its writer syncs the whole
-  mapping and not the pages written. Then the test's time back under 20 s, into the quick tier.
+- **Cause**: the half gigabyte was the kept file's reservation, not its facts: `sync_mapped` msynced the whole
+  mapping. Every block a store wrote was waited for, and the test ran phase 0 once per program.
+- **Done** (decision 0465): a store's flush mode (`synced`, `os` the default, `none`) is its connections'
+  `synchronous`, and every block writer takes it from the connection. The engine's test binary sets `none`. A synced
+  block msyncs its used pages only. The test derives every pack's include graphs in one phase 0 run (`rr::modules_of`)
+  takes 140.6 s → 22.3 s wall, 1.00 T → 262 G instructions (M3, debug, alone; 24.6 s beside other tests on the M1
+  Max), so it stays in the slow tier, without its 8-period override.
 

@@ -1094,7 +1094,7 @@ impl ContentStore {
                 return Ok(segs);
             }
             let entries: Vec<(&[u8], i64, &[u8; 32])> = kept.iter().map(|(row, b)| (b.bytes(), row.3, &[0u8; 32])).collect();
-            let mut placed = super::segments::write_segments(&dir, &entries)?;
+            let mut placed = super::segments::write_segments(&dir, &entries, super::connection::flush_of(t))?;
             if placed.files().len() != 1 {
                 return Err(super::StoreError::Invalid("the frames' compaction made more than one segment".into()));
             }
@@ -1235,7 +1235,7 @@ impl ContentStore {
         let timed = std::env::var_os("RERAIL_WRITES").is_some();
         let files = match segments.as_deref_mut() {
             Some(s) => {
-                s.write_back()?;
+                s.write_back(self.connection.flush())?;
                 s.files()
             }
             None => Vec::new(),

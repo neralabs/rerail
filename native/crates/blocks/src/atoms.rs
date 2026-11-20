@@ -12,7 +12,7 @@
 //! The order of an append makes a reader that sees a slot see its atom: the string, its end and its hash are written,
 //! then the slot (a release store), then the count. A reader loads a slot with acquire.
 
-use crate::block::{Block, FROZEN, PAGE, kind};
+use crate::block::{Block, FROZEN, Flush, PAGE, kind};
 use crate::refs::Span;
 use crate::structure;
 use std::io;
@@ -149,6 +149,8 @@ pub struct AtomsW {
     /// Where it writes back without a shared mapping (WASI): the block lives in memory there.
     #[cfg(not(unix))]
     file: std::fs::File,
+    /// How its write-backs reach the disk (`sync`, decision 0465).
+    flush: Flush,
 }
 
 // SAFETY: one writer appends, through `&mut self`; reads through `&self` are of what it wrote.
@@ -157,7 +159,7 @@ unsafe impl Sync for AtomsW {}
 
 impl AtomsW {
     /// A new block at `path` for ids from `first`, with room for `cap` atoms and `bytes_cap` bytes of strings.
-    pub fn create(path: &Path, first: u32, tag: u64, cap: u32, bytes_cap: u64) -> io::Result<AtomsW> {
+    pub fn create(path: &Path, first: u32, tag: u64, cap: u32, bytes_cap: u64, flush: Flush) -> io::Result<AtomsW> {
         let cap64 = u64::from(cap.max(1));
         let n = slots(cap64);
         let need = 4 * PAGE + (cap64 * 16 + n * 8 + bytes_cap) as usize;
@@ -191,6 +193,7 @@ impl AtomsW {
             raw,
             #[cfg(not(unix))]
             file: std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path)?,
+            flush,
         };
         w.sync()?;
         Ok(w)
@@ -198,7 +201,7 @@ impl AtomsW {
 
     /// The open block at `path`, for its next writer, which continues from `end` (the end the store's last commit
     /// reached, `resume`).
-    pub fn reopen(path: &Path, end: u32) -> io::Result<AtomsW> {
+    pub fn reopen(path: &Path, end: u32, flush: Flush) -> io::Result<AtomsW> {
         let block = Block::map_file(path, kind::ATOMS, true)?;
         if block.header().state == FROZEN {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("{}: frozen, not appended to", path.display())));
@@ -209,6 +212,7 @@ impl AtomsW {
             raw,
             #[cfg(not(unix))]
             file: std::fs::OpenOptions::new().read(true).write(true).open(path)?,
+            flush,
         };
         w.resume(end)?;
         Ok(w)
@@ -297,19 +301,19 @@ impl AtomsW {
         self.raw.first + self.block.root::<AtomsRoot>().count.load(Acquire) as u32
     }
 
-    /// Every append so far on the disk, before the commit that names them: the dirty pages written back, then the
-    /// file flushed (a barrier on macOS, `fdatasync` elsewhere). Without shared mappings, the block's bytes are
-    /// written to its file.
+    /// Every append so far written back for the commit that names them, as its `Flush` says (decision 0465): with
+    /// `Synced`, on the disk (the dirty pages written back, then the file flushed: a barrier on macOS, `fdatasync`
+    /// elsewhere); otherwise the OS's to write. Without shared mappings, the block's bytes are written to its file.
     pub fn sync(&self) -> io::Result<()> {
         #[cfg(unix)]
-        return self.block.sync_mapped();
+        return self.block.sync_mapped(self.flush);
         #[cfg(not(unix))]
         {
             use std::io::{Seek, Write};
             let mut f = &self.file;
             f.seek(io::SeekFrom::Start(0))?;
             f.write_all(self.block.bytes(0, self.block.used()))?;
-            f.sync_data()
+            if self.flush.waits() { f.sync_data() } else { Ok(()) }
         }
     }
 
@@ -440,7 +444,7 @@ mod tests {
     #[test]
     fn an_atoms_block_finds_what_it_holds() {
         let d = dir("finds");
-        let mut w = AtomsW::create(&d.join("d0.blk"), 10, 7, 1000, 1 << 16).unwrap();
+        let mut w = AtomsW::create(&d.join("d0.blk"), 10, 7, 1000, 1 << 16, Flush::Synced).unwrap();
         let words: Vec<String> = (0..1000).map(|i| format!("word-{i}")).chain(["".to_owned()]).collect();
         for (i, s) in words[..1000].iter().enumerate() {
             assert_eq!(w.append(s, h(s)), Some(10 + i as u32));
@@ -457,11 +461,11 @@ mod tests {
         assert_eq!(w.str(9), None);
         assert_eq!(w.str(1010), None);
         // Two strings of one hash (a collision): each found by comparing the string at the slot.
-        let mut c = AtomsW::create(&d.join("d2.blk"), 0, 7, 16, 1024).unwrap();
+        let mut c = AtomsW::create(&d.join("d2.blk"), 0, 7, 16, 1024, Flush::Synced).unwrap();
         assert_eq!((c.append("x", 42), c.append("y", 42)), (Some(0), Some(1)));
         assert_eq!((c.find("y", 42), c.find("x", 42), c.find("z", 42)), (Some(1), Some(0), None));
         // Room for bytes runs out too.
-        let mut small = AtomsW::create(&d.join("d1.blk"), 0, 7, 100, 8).unwrap();
+        let mut small = AtomsW::create(&d.join("d1.blk"), 0, 7, 100, 8, Flush::Synced).unwrap();
         assert_eq!(small.append("12345678", h("12345678")), Some(0));
         assert_eq!(small.append("9", h("9")), None, "full at its bytes");
         let _ = std::fs::remove_dir_all(&d);
@@ -473,7 +477,7 @@ mod tests {
     fn a_reader_reads_only_the_committed_end() {
         let d = dir("end");
         let path = d.join("d0.blk");
-        let mut w = AtomsW::create(&path, 0, 7, 64, 4096).unwrap();
+        let mut w = AtomsW::create(&path, 0, 7, 64, 4096, Flush::Synced).unwrap();
         for s in ["a", "b", "c"] {
             w.append(s, h(s));
         }
@@ -488,7 +492,7 @@ mod tests {
         // A writer that crashed after appending "d": the store's end is 3.
         w.append("d", h("d"));
         drop(w);
-        let mut again = AtomsW::reopen(&path, 3).unwrap();
+        let mut again = AtomsW::reopen(&path, 3, Flush::Synced).unwrap();
         assert_eq!(again.end(), 3);
         assert_eq!(again.find("d", h("d")), None, "an append past the committed end is taken back");
         assert_eq!(again.append("e", h("e")), Some(3), "its id is the next writer's");
@@ -508,7 +512,7 @@ mod tests {
         let frozen = AtomsV::open(&path, 4).unwrap();
         assert_eq!(frozen.find("e", h("e")), Some(3));
         assert_eq!(frozen.str(0), Some("a"));
-        assert!(AtomsW::reopen(&path, 4).is_err(), "a frozen block takes no appends");
+        assert!(AtomsW::reopen(&path, 4, Flush::Synced).is_err(), "a frozen block takes no appends");
         let _ = std::fs::remove_dir_all(&d);
     }
 }

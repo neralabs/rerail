@@ -238,9 +238,11 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
             }
         }
     }
-    w.finish().map_err(io)?;
+    // Written back as the store's flush mode says (decision 0465): by default the OS writes it at its own pace.
+    let flush = crate::content_store::connection::flush_of(t);
+    w.finish(flush).map_err(io)?;
     std::fs::rename(&making, dir.join(&name)).map_err(io)?;
-    sync_dir(&dir).map_err(io)?;
+    sync_dir(&dir, flush).map_err(io)?;
     let (base, delta) = if roll { (Some((name, tag)), None) } else { (row.base.clone(), Some((name, tag))) };
     t.prepare_cached(
         "INSERT INTO main.facts_blocks(space, base, base_tag, delta, delta_tag) VALUES (?1, ?2, ?3, ?4, ?5)

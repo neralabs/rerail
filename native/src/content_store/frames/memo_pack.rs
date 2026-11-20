@@ -251,7 +251,7 @@ impl ContentStore {
         }
         assert_eq!(rows.len(), segments.len(), "a row an entry");
         let database = self.database_path.clone();
-        segments.write_back()?;
+        segments.write_back(self.connection.flush())?;
         let files = segments.files();
         let done = self.immediate_transaction_once(|t| {
             let mut numbers = Vec::with_capacity(files.len());
@@ -376,7 +376,7 @@ impl ContentStore {
             if kept.is_empty() {
                 return Ok((packs, None));
             }
-            let mut placed = write_segments(&pack_dir(&database), &entries)?;
+            let mut placed = write_segments(&pack_dir(&database), &entries, crate::content_store::connection::flush_of(t))?;
             if placed.files().len() != 1 {
                 return Err(StoreError::Invalid("the memo's compaction made more than one segment".into()));
             }

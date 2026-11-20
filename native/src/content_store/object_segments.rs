@@ -389,7 +389,7 @@ impl ContentStore {
     /// again whole after a busy store: written back once, numbered again. The sources' ids, in `rows`' order.
     fn put_objects_placed(&self, rows: &[Row], segments: &mut SealedSegments) -> StoreResult<Vec<SourceId>> {
         self.require_write_capacity()?;
-        segments.write_back()?;
+        segments.write_back(self.connection.flush())?;
         let files = segments.files();
         let segs: &SealedSegments = segments;
         let (ids, numbers) = self.immediate_transaction(|t| {
@@ -431,7 +431,7 @@ impl ContentStore {
             None
         } else {
             let entries: Vec<(&[u8], i64, &[u8; 32])> = new.iter().zip(&digests).map(|(&i, d)| (sources[i].0, 0, d)).collect();
-            Some(super::segments::write_segments(&dir, &entries)?)
+            Some(super::segments::write_segments(&dir, &entries, self.connection.flush())?)
         };
         let files = segments.as_ref().map_or_else(Vec::new, SealedSegments::files);
         let segs = segments.as_ref();
@@ -592,7 +592,7 @@ impl ContentStore {
                 return Ok(segs);
             }
             let entries: Vec<(&[u8], i64, &[u8; 32])> = kept.iter().map(|(_, rowid, b)| (b.bytes(), *rowid, &[0u8; 32])).collect();
-            let mut placed = super::segments::write_segments(&dir, &entries)?;
+            let mut placed = super::segments::write_segments(&dir, &entries, super::connection::flush_of(t))?;
             if placed.files().len() != 1 {
                 return Err(StoreError::Invalid("the objects' compaction made more than one segment".into()));
             }

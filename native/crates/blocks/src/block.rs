@@ -121,6 +121,41 @@ fn round_up(n: usize, to: usize) -> usize {
     n.div_ceil(to) * to
 }
 
+
+/// How a file-backed block's writes reach the disk (decision 0465).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Flush {
+    /// Each write-back waits until the pages are on the disk (`msync` with `MS_SYNC`, then a barrier on macOS,
+    /// `fdatasync` elsewhere) before the store commits what names them: the store survives a power loss.
+    Synced,
+    /// The default: nothing waits, and the OS writes the pages back at its own pace. The store survives the
+    /// process's end (the pages are the OS's), not a power loss or a crash of the OS before they are written.
+    #[default]
+    Os,
+    /// Nothing is flushed, and the store's SQLite syncs nothing either: tests, whose stores are thrown away.
+    None,
+}
+
+impl Flush {
+    /// Whether a write-back waits for the disk.
+    pub fn waits(self) -> bool {
+        self == Flush::Synced
+    }
+
+    /// The mode `RERAIL_FLUSH` names (`synced`, `os`, `none`), else `default`. An unknown value is refused.
+    pub fn from_env_or(default: Flush) -> Result<Flush, String> {
+        match std::env::var("RERAIL_FLUSH") {
+            Err(_) => Ok(default),
+            Ok(v) => match v.as_str() {
+                "synced" => Ok(Flush::Synced),
+                "os" => Ok(Flush::Os),
+                "none" => Ok(Flush::None),
+                other => Err(format!("RERAIL_FLUSH={other}: not synced, os or none")),
+            },
+        }
+    }
+}
+
 impl Block {
     /// An anonymous block of `reserved` bytes of address space: nothing is resident until written.
     pub fn anon(kind: u32, reserved: usize) -> Block {
@@ -646,12 +681,19 @@ impl Block {
         Ok(b)
     }
 
-    /// What is written in a block mapped from its file on the disk: its dirty pages written back, then the file
-    /// flushed (a barrier on macOS, `fdatasync` elsewhere). Nothing to do for a block with no file.
+    /// What is written in a block mapped from its file on the disk, with `Flush::Synced`: its dirty pages written
+    /// back, then the file flushed (a barrier on macOS, `fdatasync` elsewhere). Otherwise nothing: the OS writes the
+    /// pages back at its own pace (decision 0465). Nothing to do for a block with no file.
     #[cfg(unix)]
-    pub fn sync_mapped(&self) -> io::Result<()> {
-        // SAFETY: the block's own mapping, its whole length.
-        if unsafe { libc::msync(self.base.cast(), self.reserved, libc::MS_SYNC) } != 0 {
+    pub fn sync_mapped(&self, flush: Flush) -> io::Result<()> {
+        if !flush.waits() {
+            return Ok(());
+        }
+        // The pages written: nothing past `used` is (a kept file's reservation is hundreds of MB, its facts a few;
+        // asked of the whole, the kernel walked every page of it, Q294).
+        let written = self.used().next_multiple_of(PAGE).min(self.reserved);
+        // SAFETY: the block's own mapping, its first `written` bytes.
+        if unsafe { libc::msync(self.base.cast(), written, libc::MS_SYNC) } != 0 {
             return Err(io::Error::last_os_error());
         }
         let Some(f) = &self.file else { return Ok(()) };

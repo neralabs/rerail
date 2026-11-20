@@ -407,6 +407,26 @@ pub fn modules(src: &str) -> Result<Option<Modules>, Error> {
     Ok(read_text(src)?.modules())
 }
 
+/// `modules` of many texts, in their order: every text's include graph derived by one run of phase 0 first, as a
+/// corpus run reads its programs (`phase0::graphs`), not one nested run a text; then the texts read on the pool, each
+/// finding its graph kept. A text that does not read gives its error in its place.
+pub fn modules_of(srcs: &[&str]) -> Vec<Result<Option<Modules>, Error>> {
+    use rayon::prelude::*;
+    let seeds: Vec<_> = srcs.iter().filter_map(|src| read_seed(src).ok()?.seed).collect();
+    if !seeds.is_empty() {
+        // An error is left to the read that meets it, which reports it in its text's place.
+        let _ = super::plan::corpus::phase0::graphs(&seeds);
+    }
+    // The caller's context on each job's thread (its observer and store, a test's own), as the corpus's reads carry it.
+    let carry = super::run_state::Carry::here();
+    srcs.par_iter()
+        .map(|src| {
+            let _in = carry.enter();
+            modules(src)
+        })
+        .collect()
+}
+
 /// A run's library (decision 0089): its modules, each with its files (canonical paths), and the program linked from
 /// them. A program that asks nothing of the library is lowered against the modules its includes reach
 /// (`Text::lower_in`), and the run holds the linked program once.

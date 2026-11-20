@@ -12,7 +12,7 @@
 //! records a relation the base holds and the space no longer keeps as a gone entry. `KeptView` reads the two as one.
 //! A block is written once, by `KeptW`, under a name no reader opens, and frozen before the store's rows name it.
 
-use crate::block::{Block, FROZEN, kind};
+use crate::block::{Block, FROZEN, Flush, kind};
 use crate::refs::{Ptr, Span};
 use crate::relation::{Relation, View};
 use crate::structure;
@@ -454,9 +454,9 @@ impl KeptW {
         Ok((self.block.offset_of(p), items.len()))
     }
 
-    /// The directory written, sorted by key, then the block frozen (its file truncated to what it holds) and put on
-    /// the disk. A key put twice is refused.
-    pub fn finish(mut self) -> io::Result<()> {
+    /// The directory written, sorted by key, then the block frozen (its file truncated to what it holds) and written
+    /// back as `flush` says (decision 0465). A key put twice is refused.
+    pub fn finish(mut self, flush: Flush) -> io::Result<()> {
         self.pending.sort_by(|a, b| (a.rel.as_str(), &a.ident, a.part).cmp(&(b.rel.as_str(), &b.ident, b.part)));
         if let Some(w) = self.pending.windows(2).find(|w| (w[0].rel.as_str(), &w[0].ident, w[0].part) == (w[1].rel.as_str(), &w[1].ident, w[1].part)) {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("kept relation {} part {} put twice", w[0].rel, w[0].part)));
@@ -525,9 +525,9 @@ impl KeptW {
         }
         #[cfg(unix)]
         {
-            self.block.sync_mapped()?;
+            self.block.sync_mapped(flush)?;
             let frozen = self.block.freeze();
-            frozen.sync_mapped()?;
+            frozen.sync_mapped(flush)?;
         }
         #[cfg(not(unix))]
         {
@@ -535,7 +535,9 @@ impl KeptW {
             let frozen = self.block.freeze();
             let mut f = std::fs::File::create(&self.path)?;
             f.write_all(frozen.bytes(0, frozen.header().length as usize))?;
-            f.sync_data()?;
+            if flush.waits() {
+                f.sync_data()?;
+            }
         }
         Ok(())
     }
@@ -588,7 +590,7 @@ mod tests {
         let mut w = KeptW::create(&d.join("b1.blk"), 11, None, 64 << 20).unwrap();
         let reads = [("defs", 5), ("uses", 6)];
         w.put(Meta { reads: &reads, types: &[1, 2], ..meta(FactKey { rel: "calls", ident: &A, part: 0 }, 99) }, rel, None).unwrap();
-        w.finish().unwrap();
+        w.finish(Flush::Synced).unwrap();
         let k = KeptFacts::open(&d.join("b1.blk"), 11).unwrap();
         let got = k.get(&FactKey { rel: "calls", ident: &A, part: 0 }).unwrap();
         assert!(k.holds(got.rows), "the rows lie in the kept block's mapping");
@@ -617,13 +619,13 @@ mod tests {
         w.put(meta(key("p", &A, 0), 1), r1, None).unwrap();
         w.put(meta(key("p", &A, 7), 2), r2, None).unwrap();
         w.put(meta(key("q", &B, 0), 3), r3, None).unwrap();
-        w.finish().unwrap();
+        w.finish(Flush::Synced).unwrap();
         let base = KeptFacts::open(&d.join("b1.blk"), 1).unwrap();
         let mut w = KeptW::create(&d.join("d2.blk"), 2, Some(1), 16 << 20).unwrap();
         w.put(meta(key("p", &A, 7), 20), r3, None).unwrap();
         w.gone(key("q", &B, 0));
         w.put(meta(key("p", &A, 3), 30), r1, None).unwrap();
-        w.finish().unwrap();
+        w.finish(Flush::Synced).unwrap();
         let delta = KeptFacts::open(&d.join("d2.blk"), 2).unwrap();
         assert_eq!(delta.base_tag(), Some(1));
         let v = KeptView { base: Some(&base), delta: Some(&delta) };
@@ -644,7 +646,7 @@ mod tests {
         let mut w = KeptW::create(&d.join("b1.blk"), 1, None, 16 << 20).unwrap();
         w.put(meta(FactKey { rel: "p", ident: &A, part: 0 }, 1), r, None).unwrap();
         w.put(meta(FactKey { rel: "p", ident: &A, part: 0 }, 1), r, None).unwrap();
-        assert!(w.finish().is_err());
+        assert!(w.finish(Flush::Synced).is_err());
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -661,7 +663,7 @@ mod tests {
         let levels = [1u32, 2, 3];
         w.put(Meta { dead: &dead, levels: &levels, ..meta(FactKey { rel: "m", ident: &A, part: 0 }, 1) }, r, Some((&[0], &f))).unwrap();
         w.put_rows(meta(FactKey { rel: "g", ident: &B, part: 5 }, 2), &[8, 8], &[1, 2, 3, 4, 5, 6], 3).unwrap();
-        w.finish().unwrap();
+        w.finish(Flush::Synced).unwrap();
         assert_eq!(rows_of(&View::full(r)), [vec![10, 1], vec![20, 2], vec![30, 3]], "the run's rows as they were");
         let k = KeptFacts::open(&d.join("b1.blk"), 1).unwrap();
         let m = k.get(&FactKey { rel: "m", ident: &A, part: 0 }).unwrap();
@@ -671,7 +673,7 @@ mod tests {
         assert_eq!((0..3).map(|i| g.view().row(i)).collect::<Vec<_>>(), [vec![1, 2], vec![3, 4], vec![5, 6]]);
         let mut w = KeptW::create(&d.join("d2.blk"), 2, Some(1), 16 << 20).unwrap();
         w.carry(&m, Some(&[("x", 9)])).unwrap();
-        w.finish().unwrap();
+        w.finish(Flush::Synced).unwrap();
         let k2 = KeptFacts::open(&d.join("d2.blk"), 2).unwrap();
         let c = k2.get(&m.key).unwrap();
         assert_eq!(c.reads().collect::<Vec<_>>(), [("x", 9)]);
