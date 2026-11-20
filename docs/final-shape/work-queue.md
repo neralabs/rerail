@@ -3826,3 +3826,18 @@ native join it falls back to the planner's whole-rule order.
   local joins.
 - **Done when**: a run with a product decodes no tree (`trees_decoded` 0), and a test compares the pass with the
   tree's rewrite on the module's programs.
+
+### Q187. The test binaries' unwind info is past what the compact unwind table can address
+
+- **Found** (2026-11-19, a tidy-up of 0442's work): every large test binary's link warns `__eh_frame section too
+  large (max 16MB) to encode dwarf unwind offsets in compact unwind table` (the engine's, `rerail-logic`'s and
+  `rerail-device-metal`'s lib tests, dev profile). The engine's on an M1 Max: `__text` 188 MB, `__eh_frame` 41.7 MB,
+  `__unwind_info` 5.8 MB. A function whose unwinding the compact table cannot point to is unwound from its DWARF
+  entry by a search: a panic in such a test is slower to unwind; nothing else changes.
+- **Next**: find why 41.7 MB of DWARF unwind entries are kept. A frame-pointer function on arm64 has a compact
+  encoding, and ld drops the DWARF entry of a function that has one, so the entries kept are of functions it could
+  not encode, or they are kept for all. Count the kept entries against the functions (`dwarfdump --eh-frame` on the
+  binary), and look at what the compiler and linker are told (`-C force-unwind-tables`, ld's
+  `-no_keep_dwarf_unwind`). If the binary is simply this large, the cause is its size at opt-level 0.
+- **Done when**: the link gives no warning, or the cause is shown to be the binary's size and the choice (a smaller
+  test binary, or the warning accepted with its reason) is the user's.
