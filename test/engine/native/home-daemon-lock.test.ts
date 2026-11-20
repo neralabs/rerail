@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rename } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -91,7 +91,7 @@ describe("the daemon lock of a Rerail home", () => {
 
   it("waits out a process that holds the lock for an instant, as a start asking whether a daemon runs does", async () => {
     const home = await temporaryHome();
-    expect(homeDaemonLockHeld(home)).toBe(false);
+    expect(homeDaemonLockHeld(home)).toBeUndefined();
     // Asking makes nothing: a home where no daemon ever ran gets no lock file.
     expect(existsSync(join(home, LOCKS_DIR))).toBe(false);
     const lease = await holdHomeDaemonLock(home);
@@ -105,6 +105,31 @@ describe("the daemon lock of a Rerail home", () => {
     leases.push(taken!);
     expect(homeDaemonHolder(home)).toBe(process.pid);
   });
+
+  // Windows keeps a loaded DLL from being deleted, and the uninstall's stop asks the lock before it removes `versions/`.
+  it.runIf(process.platform === "win32")("tells on Windows that a daemon holds the home without loading the engine", async () => {
+    const home = await temporaryHome();
+    await holdInAnotherProcess(home);
+    const asking = spawn(process.execPath, [
+      "--import", "tsx", "--input-type=module", "-e",
+      `import { homeDaemonLockHeld } from ${JSON.stringify(lockModule)};
+       process.stdout.write(String(homeDaemonLockHeld(${JSON.stringify(home)})));`,
+    ], { cwd: packageRoot, env: { ...process.env, RERAIL_ENGINE_PATH: join(home, "no-engine.node") }, stdio: ["ignore", "pipe", "pipe"] });
+    children.push(asking);
+    let answer = "";
+    asking.stdout.setEncoding("utf8").on("data", (chunk: string) => { answer += chunk; });
+    await once(asking, "exit");
+    expect(answer).toBe("true");
+  }, 30_000);
+
+  // The daemon holds its lock on a file no path reaches now, and a lock taken at the path would be on another file.
+  it("tells nothing of a home whose lock file was deleted under the daemon that holds it", async () => {
+    const home = await temporaryHome();
+    await holdInAnotherProcess(home);
+    expect(homeDaemonLockHeld(home)).toBe(true);
+    await rm(join(home, LOCKS_DIR, "daemon.lock"));
+    expect(homeDaemonLockHeld(home)).toBeUndefined();
+  }, 30_000);
 
   it("goes on without the lock when its file does not open, as where the engine does not load", async () => {
     const home = await temporaryHome();

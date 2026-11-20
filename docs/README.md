@@ -64,6 +64,7 @@ Internal designs for contributors.
 
 - [content-addressed-workspace-store.md](content-addressed-workspace-store.md): the machine-wide content store
 - [transducer-design.md](transducer-design.md): the tape transducer language used by tests and benchmarks
+- [sql-executor.md](sql-executor.md): SQL sessions over facts, rule lowering, wave execution, and extension queries
 - [merge-assist-v1-build.md](merge-assist-v1-build.md): Merge Assist (experimental, off by default), which detects
   in-flight conflicts, where this checkout's work overlaps other branches and open pull requests, and tells the person
   and their coding agent before they merge

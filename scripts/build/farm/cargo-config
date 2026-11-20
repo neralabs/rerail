@@ -1,0 +1,88 @@
+#!/usr/bin/python3
+"""Writes the machine's one cargo configuration for Rerail's builds into ~/.cargo/config.toml
+(README.md, "One configuration"): the farm's wrapper for every compile, and the environment every
+build has, forced so a script that exports another value cannot change it. Other keys and comments
+of the file stay. Run by `setup`; `--check` only reports (exit 1 when the file differs).
+
+Every worktree, wherever it is, reads this file; a configuration inside a checkout applies to that
+checkout only, and one above the worktrees misses those elsewhere (scratch worktrees, the main
+checkout). Other projects get the same file: the wrapper and `farm-cc` pass their compiles to plain
+sccache and clang, as before.
+"""
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import farm  # noqa: E402
+
+PATH = os.path.join(farm.HOME, ".cargo/config.toml")
+MARK = "# rerail-farm (scripts/build/farm/cargo-config):"
+
+
+# Keys a checkout's own `.cargo/config.toml` also sets (Rerail's sets SOURCE_DATE_EPOCH = "0"):
+# cargo cannot merge a string there with a table here ("expected string, but found table"), and
+# every build of that checkout would fail. They are plain strings; the wrapper still refuses a
+# build whose value differs (`farm.canonical`).
+PLAIN = {"SOURCE_DATE_EPOCH"}
+
+
+def wanted():
+    return {"build": [("rustc-wrapper", f'"{os.path.join(farm.SHARE, "rustc-wrapper")}"')],
+            "env": [(k, f'"{v}"' if k in PLAIN else f'{{ value = "{v}", force = true }}') for k, v in farm.CANONICAL.items()]}
+
+
+def rewrite(text):
+    want = wanted()
+    managed = {(t, k) for t, kv in want.items() for k, _ in kv}
+    out, section, placed = [], None, set()
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("[") and not s.startswith("[["):
+            section = s.strip("[]").strip()
+            out.append(line)
+            if section in want and section not in placed:
+                out.append(MARK)
+                out += [f"{k} = {v}" for k, v in want[section]]
+                placed.add(section)
+            continue
+        if s == MARK:
+            continue
+        key = s.split("=", 1)[0].strip() if "=" in s and not s.startswith("#") else None
+        if (section, key) in managed:
+            continue
+        out.append(line)
+    for section, kv in want.items():
+        if section not in placed:
+            out += ["", f"[{section}]", MARK] + [f"{k} = {v}" for k, v in kv]
+    return "\n".join(out).strip("\n") + "\n"
+
+
+def main(argv):
+    try:
+        text = open(PATH).read()
+    except FileNotFoundError:
+        text = ""
+    new = rewrite(text)
+    try:
+        import tomllib  # Python 3.11 and later: the result must parse
+        tomllib.loads(new)
+    except ImportError:
+        pass
+    if new == text:
+        print(f"cargo-config: {PATH} is the farm's")
+        return 0
+    if "--check" in argv:
+        print(f"cargo-config: {PATH} is not the farm's: run scripts/build/farm/setup")
+        return 1
+    os.makedirs(os.path.dirname(PATH), exist_ok=True)
+    # The file as it was before the farm first wrote it: kept once, never overwritten.
+    if text and MARK not in text and not os.path.exists(PATH + ".before-rerail-farm"):
+        open(PATH + ".before-rerail-farm", "w").write(text)
+    open(PATH + ".tmp", "w").write(new)
+    os.replace(PATH + ".tmp", PATH)
+    print(f"cargo-config: wrote {PATH} (the earlier one: {PATH}.before-rerail-farm)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

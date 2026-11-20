@@ -14,8 +14,12 @@ test-installs it on each platform before publishing.
 <details>
 <summary>Build and check steps</summary>
 
-1. Compile the native kernel for macOS, Linux glibc and Windows MSVC, on arm64 and x64.
-   - Linux builds against glibc 2.17 with napi-rs's cross toolchain; a kernel needing glibc newer than 2.28 is rejected.
+1. Compile the native kernel for macOS, Linux glibc and Windows MSVC, on arm64 and x64
+   (`scripts/build/release-engine.mjs`: the library only, not the engine's developer tool `rerail-engine`).
+   - Linux builds against glibc 2.17 and its libstdc++ with napi-rs's cross toolchain, the C and C++ compiled against
+     that sysroot's headers. A kernel needing glibc newer than 2.28, or leaving a symbol unresolved for the loading
+     machine, is rejected (`scripts/check/check-linux-engine.mjs`). CI's build job builds the Linux x64 kernel the
+     same way, so a pull request that breaks this fails there first.
    - A Windows kernel importing the Visual C++ runtime is rejected. The kernels link it statically, so a clean Windows
      install needs no redistributable.
 2. Smoke-test native loading and device storage on each host.
@@ -182,16 +186,22 @@ that version's Release the repository's latest.
 
 ### Build cache
 
-`.github/workflows/release-cache.yml` keeps the native builds' cargo caches warm. After changing `Cargo.lock`, the Cargo
-manifests, `.cargo/config.toml` or `rust-toolchain.toml`, let it finish before merging the Release pull request.
-Otherwise the release builds cold.
+`.github/workflows/release-cache.yml` keeps the native builds' compile cache warm: on `main` it builds each engine and
+saves its compile cache store (`.github/actions/rust-compile-cache`) as an artifact, which a release's builds start
+from. After changing `Cargo.lock`, the Cargo manifests, `.cargo/config.toml` or `rust-toolchain.toml`, let it finish
+before merging the Release pull request. Otherwise the release compiles more of the engine cold.
 
 <details>
-<summary>How the caches are used</summary>
+<summary>How the stores are used</summary>
 
-- A tag's run restores only caches saved on `main`; `package.yml` restores only the exact match.
-- On `main` it runs nightly and after changes to those files. Each target lacking a matching cache builds from scratch
-  and saves one.
+- A release's builds start from the newest store a push, schedule or manual dispatch on `main` in this repository, of a
+  commit in `main`'s history, saved for the target (`scripts/check/ci/trusted-artifact.mjs`), and compile cold without
+  one. A pull request's run is never read, even one whose head branch is named `main`, nor a push of a tag named
+  `main`. Nothing but `release-cache.yml` saves a store, and no build uses the Actions cache.
+- On `main` it runs nightly (a store's artifact expires after 7 days) and after changes to those files. Each target
+  starts from the newest store, builds, and saves the store again, so a store carries objects compiled by earlier
+  runs on `main`. sccache keys each object by its compile's inputs (sources, flags, dependencies, compiler), so a
+  carried object is reused only for the same compile, and the least recently used ones leave the store first.
 
 </details>
 

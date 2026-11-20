@@ -7,11 +7,11 @@
 use super::lexer::{T, Token, tokenize};
 use std::ops::Range;
 
-pub(super) type Id = usize;
+pub type Id = usize;
 
 /// A scalar property of a node, as phpdoc-parser holds it.
 #[derive(Clone, Debug, PartialEq)]
-pub(super) enum Prop {
+pub enum Prop {
     Str(Vec<u8>),
     Bool(bool),
     Int(i64),
@@ -29,15 +29,15 @@ pub(super) struct Leaf {
 
 /// A node of phpdoc-parser's AST.
 #[derive(Clone, Debug)]
-pub(super) struct Node {
+pub struct Node {
     /// The class without its namespace and `Node` suffix, in snake case.
-    pub(super) kind: &'static str,
+    pub kind: &'static str,
     /// Token indices (`startIndex`, `endIndex`); the end is before the start for no token.
-    pub(super) start: Option<usize>,
-    pub(super) end: Option<usize>,
-    pub(super) props: Vec<(&'static str, Prop)>,
+    pub start: Option<usize>,
+    pub end: Option<usize>,
+    pub props: Vec<(&'static str, Prop)>,
     /// Node-valued properties in declaration order, one entry per element of a list.
-    pub(super) children: Vec<(&'static str, Id)>,
+    pub children: Vec<(&'static str, Id)>,
     pub(super) leaves: Vec<Leaf>,
 }
 
@@ -53,7 +53,7 @@ pub(super) struct Error {
 
 /// An exception `PhpDocParser::parse` throws: its class and message.
 #[derive(Clone, Debug)]
-pub(super) enum Fatal {
+pub enum Fatal {
     /// A `ParserException` no production catches.
     Parser(String),
     /// A `LogicException`.
@@ -61,7 +61,7 @@ pub(super) enum Fatal {
 }
 
 impl Fatal {
-    pub(super) fn message(&self) -> &str {
+    pub fn message(&self) -> &str {
         match self {
             Self::Parser(message) => message,
             Self::Logic(message) => message,
@@ -133,9 +133,9 @@ const MAX_DEPTH: usize = crate::code_rule_dsl::value::MAX_DEPTH;
 /// parse gives up.
 const WORK_PER_TOKEN: usize = 64;
 
-pub(super) struct Parser<'a> {
+pub struct Parser<'a> {
     pub(super) text: &'a str,
-    pub(super) tokens: Vec<Token>,
+    pub tokens: Vec<Token>,
     index: usize,
     /// How many comments `skipNewLineTokensAndConsumeComments` collected and no type took.
     comments: usize,
@@ -149,11 +149,11 @@ pub(super) struct Parser<'a> {
     limit: usize,
     /// Nesting or work passed its bound: every production fails and the tree is unknown.
     exhausted: bool,
-    pub(super) nodes: Vec<Node>,
+    pub nodes: Vec<Node>,
 }
 
 /// Parses a doc comment: the parser, holding the nodes, and the root or what it threw.
-pub(super) fn parse(text: &str) -> (Parser<'_>, Result<Id, Fatal>) {
+pub fn parse(text: &str) -> (Parser<'_>, Result<Id, Fatal>) {
     let mut parser = Parser {
         text,
         tokens: tokenize(text),
@@ -252,7 +252,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Whether nesting or work passed its bound, so the tree is not phpdoc-parser's.
-    pub(super) fn exhausted(&self) -> bool {
+    pub fn exhausted(&self) -> bool {
         self.exhausted
     }
 

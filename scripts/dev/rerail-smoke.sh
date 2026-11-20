@@ -117,7 +117,7 @@ packages:
   "**":
     access: \$all
     publish: \$all
-max_body_size: 200mb
+max_body_size: 1gb
 log: { type: stdout, level: warn }
 EOF
 

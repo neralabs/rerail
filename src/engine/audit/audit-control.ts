@@ -199,8 +199,13 @@ export class SqliteAuditControlStore {
     return { ...owner, active: false };
   }
 
-  getWorkspaceSettings(workspaceRoot: string): AuditSettings | undefined {
-    return this.#settings(canonicalWorkspace(workspaceRoot), { cwd: workspaceRoot });
+  /**
+   * The settings saved for the folder `workspaceRoot` as spelt here. A session reading its own passes the repository
+   * Rerail recorded it in, which ties a row Rerail 0.1.4 saved under that spelling to the folder as its row would
+   * ({@link #savedHere}), so the read needs no session row.
+   */
+  getWorkspaceSettings(workspaceRoot: string, repositoryId: string | null = null): AuditSettings | undefined {
+    return this.#settings(canonicalWorkspace(workspaceRoot), { cwd: workspaceRoot, repositoryId });
   }
 
   #settings(workspaceRoot: string, spelt: SpeltFolder): AuditSettings | undefined {
@@ -414,6 +419,17 @@ export class SqliteAuditControlStore {
     });
     if (lockId === undefined) claimsHereWithoutLock.add(token);
     return { token };
+  }
+  /**
+   * Writes the owner row of `claim`, which this process made (`registerOwner`) and still holds, again where another
+   * connection removed it with the session's rows, as putting back a database copied before the session began does, so
+   * the session's scans are claimed and its end is swept as before. A row already there, this claim's or another
+   * runtime's, is left as it is: a live runtime's claim is never taken.
+   */
+  claimAgain(sessionId: string, delivery: "background" | "next-event", claim: PolicyOwnerClaim): void {
+    this.#database.insert(policySessionOwners)
+      .values({ sessionId, delivery, active: true, processId: process.pid, token: claim.token, updatedAt: Date.now() })
+      .onConflictDoNothing().run();
   }
   /**
    * Whether `claim` still owns the session for this process: the claim a suspended session kept, which its next open

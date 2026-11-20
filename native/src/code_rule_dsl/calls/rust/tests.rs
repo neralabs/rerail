@@ -2,8 +2,8 @@
 //! (`fixtures/rust/calls`): every call it answers must be the target rust-analyzer recorded.
 
 use super::{Callee, Known, callees, definitions, module_of, trait_names};
+use crate::code_rule_dsl::fixtures::oracle;
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::oracle;
 use crate::code_rule_dsl::scope::ScopeTable;
 use crate::code_rule_dsl::scope::rust::build_for_test;
 use ast_grep_core::tree_sitter::LanguageExt;

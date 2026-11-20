@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "rerail-fixtures-root",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Use the fixtures_dir and oracle macros to reach the fixtures directory from Rust code in native, not relative paths or the oracles variable; only they follow its override.",
   "scope": {
@@ -10,7 +10,7 @@
     ],
     "exclude": [
       "native/build.rs",
-      "native/src/code_rule_dsl/mod.rs",
+      "native/src/code_rule_dsl/fixtures.rs",
       "native/target/**"
     ]
   },

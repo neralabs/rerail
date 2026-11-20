@@ -1,0 +1,152 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-c418-unnecessary-literal-within-dict-call",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove dict() calls wrapped around a dict literal or dict comprehension; the inner expression already builds a dictionary.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unnecessary-literal-within-dict-call",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "callee-dict": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^dict$",
+                  "resolves": {
+                    "global": [
+                      "dict"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee-dict"
+                  }
+                }
+              ]
+            },
+            "dict-arg": {
+              "any": [
+                {
+                  "kind": "dictionary"
+                },
+                {
+                  "kind": "dictionary_comprehension"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "dict-arg"
+                  }
+                }
+              ]
+            },
+            "not-argument": {
+              "any": [
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                },
+                {
+                  "regex": "^[(),]$"
+                }
+              ]
+            },
+            "target": {
+              "kind": "call",
+              "has": {
+                "field": "function",
+                "matches": "callee-dict"
+              },
+              "all": [
+                {
+                  "has": {
+                    "field": "arguments",
+                    "kind": "argument_list",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "dict-arg"
+                    },
+                    "count": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "not": {
+                          "matches": "not-argument"
+                        }
+                      },
+                      "max": 1
+                    }
+                  }
+                }
+              ]
+            },
+            "in-annotation": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "target",
+                      "capture": "CALL"
+                    },
+                    {
+                      "matches": "in-annotation"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "target",
+                "pattern": "$CALL"
+              },
+              {
+                "matches": "in-annotation"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.CALL",
+        "code": "C418",
+        "message": "Drop the outer `dict()` call and keep the inner dict literal or comprehension; it already builds a new dictionary.",
+        "each": "CALL",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "C418"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

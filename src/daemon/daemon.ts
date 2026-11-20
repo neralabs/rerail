@@ -12,14 +12,14 @@ import { fileURLToPath } from "node:url";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
 import { spawn } from "../engine/child-process.js";
 import { replaceFile } from "../engine/file-replace.js";
-import { searchGitFrom } from "../engine/git.js";
+import { prepareDaemonGit } from "../engine/git.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
 import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, relaunchDaemon, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
 import { daemonExit } from "./daemon-exit.js";
 import { watchHeap } from "./heap-ceiling.js";
 import { startRemoteSink, type RemoteSinkLoop } from "../runtime/remote-outbox.js";
 import { chooseEngineSocketPath, engineWorktreeWalks, startEngineService, type EngineService } from "../runtime/engine-service.js";
-import { engineIdentity, enginePipeName, fallbackPipe } from "../runtime/engine-pipe.js";
+import { engineIdentity, enginePipeName, fallbackPipe } from "../runtime/daemon/engine-pipe.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { createMergeAssistService, type MergeAssistRuntime } from "../runtime/merge-assist/service.js";
 import { NativeSessionServer } from "./native-session-server.js";
@@ -30,6 +30,7 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { accessCapability, createRerailApi, hostAllowlist, publicHostSet, requestBodyLimit } from "../api/http.js";
 import { createRerailMcpHandler } from "../api/mcp.js";
+import type { RerailApiStores } from "../api/operation.js";
 import { operations } from "../api/operations.js";
 import { DatabaseApiStores } from "../api/stores.js";
 import { nativeHealth as loadNativeHealth, type NativeHealth } from "../engine/native/native.js";
@@ -119,6 +120,12 @@ export interface RerailDaemonOptions {
   /** The coding agent check `GET /api/coding-agents` reports; the daemon's entry point passes set-up's. */
   codingAgents?: () => Promise<CodingAgentState[]>;
   /**
+   * Keeps what a coding agent's status line shows drawn ahead of time, from the daemon's `stores`, until the daemon
+   * closes and stops it. The daemon's entry point passes presentation's (`keepClaudeStatusFiles`), a layer above the
+   * daemon's; omitted, nothing is drawn ahead.
+   */
+  statusLines?: (stores: RerailApiStores) => { stop(): Promise<void> };
+  /**
    * The certificate (a PEM chain, leaf first) and private key to serve https with; omitted, the daemon serves http.
    * The state file records the leaf's SHA-256 fingerprint, which Rerail's own clients pin.
    */
@@ -126,7 +133,7 @@ export interface RerailDaemonOptions {
   /**
    * Why a daemon started with a TLS key serves this computer alone, over plain http on loopback: other accounts can read
    * the key (`serveRerailDaemon`). Its arguments asked for https, and may have asked to be reachable from other
-   * machines. The state file records it, for `rerail status` to say.
+   * machines. The state file records it, for `rerail status` to say. It also names a key that is empty or no key.
    */
   remoteRefused?: string;
   /**
@@ -136,7 +143,7 @@ export interface RerailDaemonOptions {
   onShutdownRequest?: () => void;
 }
 
-/** What `--tls-cert` and `--tls-key` name, read: PEM text. */
+/** What `--tls-cert` and `--tls-key` name, read: PEM text, which `loadDaemonTls` parses before it hands it on. */
 export interface DaemonTlsMaterial {
   cert: string;
   key: string;
@@ -494,6 +501,8 @@ export class RerailDaemon {
   /** What this daemon wrote to the state file, which its close removes only while the file still holds it. */
   #recordText: string | undefined;
   #provenanceMove: { readonly stop: AbortController; readonly done: Promise<void> } | undefined;
+  /** What `RerailDaemonOptions.statusLines` started: stopped first on close, while the stores it reads are open. */
+  #statusLines: { stop(): Promise<void> } | undefined;
 
   private constructor({
     server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken, accessToken, mergeAssist,
@@ -603,6 +612,7 @@ export class RerailDaemon {
         nativeServer: sessions, nativeToken, accessToken, tlsFingerprint256, worktreeWalks, ...sharedMergeAssist,
       });
       await daemon.#announce(remembered);
+      daemon.#statusLines = options.statusLines?.(stores);
       daemon.#startCheckoutPruning();
       daemon.#startProvenanceMove();
       return daemon;
@@ -753,6 +763,7 @@ export class RerailDaemon {
     // A write in flight lands before the state file is removed below, never after.
     await this.#recordChecked;
     try {
+      await this.#statusLines?.stop();
       this.#provenanceMove?.stop.abort();
       await this.#provenanceMove?.done;
       // Pruning stops first: a remote sink that fails to stop must not leave a pass free to commit after close begins.
@@ -949,17 +960,32 @@ export class TlsKeyExposedError extends Error {
 }
 
 /**
+ * A TLS private key file that is empty or does not parse as a private key (`unparsedLine`), whether only its owner
+ * reads it or others can too (`loadDaemonTls`). The daemon serves this computer alone on it, as on a key others can
+ * read, so hooks keep recording; its message names the file and what it must hold, and then, when others can read it,
+ * says so as `TlsKeyExposedError`'s does. Node's https server reads an empty key as no key: it would listen, say https,
+ * and fail every handshake.
+ */
+export class TlsKeyUnparsedError extends Error {
+  override readonly name = "TlsKeyUnparsedError";
+}
+
+/**
  * The PEM files `tls` names, read once at start. The private key must be its owner's alone (`openToOthers`): a key
  * other users can read lets any of them impersonate the daemon, so a key with any group or other permission is refused,
  * as ssh refuses one, and on Windows, which has no mode bits, a key whose ACL lets any account beyond the person,
  * SYSTEM and Administrators read it, as OpenSSH for Windows refuses one. A key outside the profile folder, under
  * `C:\certs` say, inherits an ACL that lets every local user read it. A key file this account reads, which parses as a
  * private key, and others can read too is a `TlsKeyExposedError`, on which the daemon serves this computer alone
- * (`serveRerailDaemon`), when the certificate would serve with it (`certificateServes`). Any other path that is no key
- * this account can read (a missing or misspelled one, a folder, a FIFO, a file this account may not read, one another
- * program holds with a lease or an oplock, one larger than any key, one that holds no key such as the certificate, one
- * whose readers cannot be read), and a certificate that would not serve with the key, is a mistake in the command and
- * stops the start within seconds. `access` is for tests.
+ * (`serveRerailDaemon`), when the certificate would serve with it (`certificateServes`). A key file this account reads
+ * that is empty or does not parse, such as one that holds the certificate, is a `TlsKeyUnparsedError`, on which the
+ * daemon serves this computer alone too: when only its owner reads it, and when others can read it too beside a
+ * certificate the start would take, its line then saying both. A key others can read that is no file this account can
+ * read (a folder, a FIFO, a file this account may not read, one another program holds with a lease or an oplock, one
+ * larger than any key) or that the certificate would not serve with, a key whose readers cannot be read (a missing or
+ * misspelled one), and a key only its owner reads that cannot be read (a folder, a file this account may not read), is
+ * a mistake in the command and stops the start within seconds. So does a certificate that is empty or does not parse
+ * (`refuseUnparsed`), in a line that names the file. `access` is for tests.
  */
 export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = {}): Promise<DaemonTlsMaterial> {
   let others: string | undefined;
@@ -975,51 +1001,111 @@ export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = 
     throw await refusedKey(tls, `${tls.keyFile} ${others}; a TLS private key must be readable by its owner only: ${hint}`);
   }
   const [cert, key] = await Promise.all([readFile(tls.certFile, "utf8"), readFile(tls.keyFile, "utf8")]);
+  // The certificate first: one the start would refuse beside a good key is refused now, not once the key is fixed.
+  refuseUnparsed(CERTIFICATE_FILE, tls.certFile, cert);
+  refuseUnparsed(PRIVATE_KEY_FILE, tls.keyFile, key);
   return { cert, key };
 }
 
 /**
- * What a start whose key others can read throws: `TlsKeyExposedError`, on which the daemon serves this computer alone,
- * when the key is a private key this account reads (`readPrivateKey`) and the certificate would serve with it
- * (`certificateServes`); else `refusal`, main's message for this command line. On Windows a Node child opens the two
- * files first (`openedInChild`). When its open was still waiting at its bound, the start refuses; when it never got to
- * open them, the refusal says why on a line of its own, since the person would otherwise expect the daemon on loopback.
+ * What a TLS file is called, what it must hold, the parse that stands for the one its text meets at start, and what a
+ * file that fails it throws.
+ */
+interface TlsFileKind {
+  readonly name: string;
+  readonly holds: string;
+  readonly parse: (text: string) => unknown;
+  readonly refused: (message: string) => Error;
+}
+
+// The key is parsed as the https server parses it, so every key a server took before is taken still; the certificate
+// as `RerailDaemon.start` parses it for its fingerprint, which refused any other before.
+const PRIVATE_KEY_FILE: TlsFileKind = {
+  name: "TLS private key", holds: "a PEM private key", parse: key => createSecureContext({ key }), refused: message => new TlsKeyUnparsedError(message),
+};
+const CERTIFICATE_FILE: TlsFileKind = {
+  name: "TLS certificate", holds: "a PEM X.509 certificate", parse: pem => new X509Certificate(pem), refused: message => new Error(message),
+};
+
+/**
+ * One line that names `file` and says what is wrong when `text`, read from it, is empty or does not parse as `kind`;
+ * undefined when it parses. The line says the file could not be read as what it must hold, which stays true of a key
+ * that needs a passphrase.
+ */
+function unparsedLine(kind: TlsFileKind, file: string, text: string): string | undefined {
+  if (text === "") return `The ${kind.name} ${file} is empty: it must hold ${kind.holds}`;
+  try {
+    kind.parse(text);
+    return undefined;
+  } catch (error) {
+    return `The ${kind.name} ${file} could not be read as ${kind.holds}: ${errorText(error)}`;
+  }
+}
+
+/** Throws `kind.refused` with `unparsedLine`'s line, when it has one. */
+function refuseUnparsed(kind: TlsFileKind, file: string, text: string): void {
+  const line = unparsedLine(kind, file, text);
+  if (line !== undefined) throw kind.refused(line);
+}
+
+/**
+ * What a start whose key others can read throws, when the key is a file this account reads (`readKeyFile`) beside a
+ * certificate that would serve with it (`certificateServes`): `TlsKeyExposedError` for a private key and
+ * `TlsKeyUnparsedError` for a file that holds none (`servedAlone`), on each of which the daemon serves this computer
+ * alone; else `refusal`, main's message for this command line. On Windows a Node child opens the two files first
+ * (`openedInChild`). When its open was still waiting at its bound, the start refuses; when it never got to open them,
+ * the refusal says why on a line of its own, since the person would otherwise expect the daemon on loopback.
  */
 async function refusedKey(tls: DaemonTlsFiles, refusal: string): Promise<Error> {
   const child = process.platform === "win32" ? await openedInChild([tls.keyFile, tls.certFile]) : OPENED;
   if (child.kind !== "opened") return new Error(child.kind === "held" ? refusal : `${refusal}\n${child.why}`);
-  const key = await readPrivateKey(tls.keyFile);
-  return key !== undefined && (await certificateServes(tls.certFile, key)) ? new TlsKeyExposedError(refusal) : new Error(refusal);
+  const key = await readKeyFile(tls.keyFile);
+  return key !== undefined && (await certificateServes(tls.certFile, key)) ? servedAlone(key, refusal) : new Error(refusal);
+}
+
+/** A key file others can read, as this account read it: a private key, or the line saying it is empty or holds none. */
+type KeyFile = { readonly kind: "key"; readonly key: Buffer } | { readonly kind: "unparsed"; readonly line: string };
+
+/**
+ * The error on which the daemon serves this computer alone for `key`, a file others can read as `refusal` says. For a
+ * file that holds no key, its one line first names the file and says so, then gives `refusal`.
+ */
+function servedAlone(key: KeyFile, refusal: string): Error {
+  return key.kind === "key" ? new TlsKeyExposedError(refusal) : new TlsKeyUnparsedError(`${key.line}; ${refusal}`);
 }
 
 /**
- * What `path` holds, read once (`readWithoutWaiting`), when it is a regular file this account reads that parses as a
- * private key; undefined otherwise. A folder, a FIFO, a file another program holds with a lease, one larger than any
- * key, a certificate or any other file is no key.
+ * What `path` holds, read once (`readWithoutWaiting`), when it is a regular file this account reads: the key, when it
+ * parses as a private key; else the line `unparsedLine` gives it, empty or no key (text, the certificate, a key that
+ * needs a passphrase). Undefined for a folder, a FIFO, a file this account may not read or another program holds with a
+ * lease, one larger than any key, and one the https server would read though `createPrivateKey` does not.
  */
-async function readPrivateKey(path: string): Promise<Buffer | undefined> {
+async function readKeyFile(path: string): Promise<KeyFile | undefined> {
+  const text = await readWithoutWaiting(path).catch(() => undefined);
+  if (text === undefined) return undefined;
   try {
-    const key = await readWithoutWaiting(path);
-    if (key !== undefined) createPrivateKey(key);
-    return key;
+    createPrivateKey(text);
+    return { kind: "key", key: text };
   } catch {
-    return undefined;
+    const line = unparsedLine(PRIVATE_KEY_FILE, path, text.toString("utf8"));
+    return line === undefined ? undefined : { kind: "unparsed", line };
   }
 }
 
 /**
  * Whether the certificate at `certFile` would serve https with `key`, checked as an https start checks the two (the read
  * in `loadDaemonTls`, then `RerailDaemon.start`'s parse and the server's pairing), for a start whose key others can read,
- * which serves with neither. A certificate that cannot be read, holds no certificate or is not `key`'s throws what that
- * start throws for it beside a private key, naming a folder, whose read error names no file. A file
- * `readWithoutWaiting` does not read (a FIFO, one another program holds with a lease, one larger than any certificate)
- * serves nothing.
+ * which serves with neither. A key file that holds no key pairs with nothing: its certificate need only be one the
+ * start would take, as beside such a key only its owner reads. A certificate that cannot be read, holds no certificate
+ * or is not `key`'s throws what that start throws for it beside a private key, naming a folder, whose read error names
+ * no file. A file `readWithoutWaiting` does not read (a FIFO, one another program holds with a lease, one larger than
+ * any certificate) serves nothing.
  */
-async function certificateServes(certFile: string, key: Buffer): Promise<boolean> {
+async function certificateServes(certFile: string, key: KeyFile): Promise<boolean> {
   const cert = (await readWithoutWaiting(certFile))?.toString("utf8");
   if (cert === undefined) return false;
-  certificateFingerprint(cert);
-  createSecureContext({ cert, key });
+  refuseUnparsed(CERTIFICATE_FILE, certFile, cert);
+  if (key.kind === "key") createSecureContext({ cert, key: key.key });
   return true;
 }
 
@@ -1228,7 +1314,7 @@ async function packageVersion(): Promise<string> {
  * from the layers above the daemon, the record check of the home's one daemon, which only `runHomeDaemon` sets, and why
  * it serves this computer alone, which only `serveRerailDaemon`'s loopback restart sets.
  */
-type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "recordCheck" | "remoteRefused">;
+type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "statusLines" | "recordCheck" | "remoteRefused">;
 
 /**
  * Runs the daemon (`serveRerailDaemon`) as the one daemon of its Rerail home, whatever the build. It takes the home's
@@ -1295,7 +1381,8 @@ export function remoteRefusal(argv: readonly string[]): { argv: string[]; reason
  * why (`loopbackOnlyNotice`). The refusal comes before anything is opened, so the second start begins from nothing. A
  * daemon launched with `--remote-refused`, as a restart of such a daemon is, serves this computer alone from the start.
  * Its caller supplies only the services of the layers above: why the daemon serves this computer alone is this
- * function's alone to say, so no caller can record a daemon other machines reach as one they cannot.
+ * function's alone to say, so no caller can record a daemon other machines reach as one they cannot. A key that is
+ * empty or no key (`TlsKeyUnparsedError`) is served on in the same way.
  */
 export async function serveRerailDaemon(argv: readonly string[], services: Omit<RerailDaemonServices, "remoteRefused"> = {}): Promise<void> {
   const relaunched = remoteRefusal(argv);
@@ -1303,7 +1390,7 @@ export async function serveRerailDaemon(argv: readonly string[], services: Omit<
   try {
     await runRerailDaemon(argv, services);
   } catch (error) {
-    if (!(error instanceof TlsKeyExposedError)) throw error;
+    if (!(error instanceof TlsKeyExposedError) && !(error instanceof TlsKeyUnparsedError)) throw error;
     await serveLoopback(argv, error.message, services);
   }
 }
@@ -1366,9 +1453,11 @@ function reportStart(daemon: RerailDaemon): void {
 async function runRerailDaemon(argv: readonly string[], services: RerailDaemonServices = {}): Promise<void> {
   const arguments_ = parseDaemonArguments(argv);
   // The launcher starts the daemon in the Rerail home and names the checkout it serves (`launchDaemonProcess`). Git is
-  // looked for from that checkout, before anything runs Git, so its PATH entries are skipped as a hook skips them.
+  // looked for from that checkout, before anything runs Git, so its PATH entries are skipped as a hook skips them. Only
+  // the daemon, which lives on, asks whether the home share is there: off the network that ask is pending about 21 s,
+  // and it would keep a hook or a command alive that long after its work.
   const workspaceRoot = arguments_.workspaceRoot ?? process.cwd();
-  searchGitFrom(workspaceRoot);
+  prepareDaemonGit(workspaceRoot);
   const tls = arguments_.tls === undefined ? undefined : await loadDaemonTls(arguments_.tls);
   // Before anything opens a store: the main daemon is the machine's one main instance, and a second one stops
   // here naming the first. A checkout's daemon is a dev build with its own content store and skips this lock. Every

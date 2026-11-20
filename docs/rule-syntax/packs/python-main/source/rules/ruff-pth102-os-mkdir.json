@@ -1,0 +1,114 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-pth102-os-mkdir",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Use Path.mkdir() instead of os.mkdir(); path objects read better than string-based os calls.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "os-mkdir",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "utils": {
+      "target": {
+       "any": [
+        {
+         "kind": "identifier"
+        },
+        {
+         "kind": "attribute"
+        }
+       ],
+       "resolves": {
+        "import": [
+         "os.mkdir"
+        ]
+       }
+      },
+      "callee": {
+       "any": [
+        {
+         "matches": "target",
+         "pattern": "$F"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee"
+         }
+        }
+       ]
+      },
+      "none-literal": {
+       "any": [
+        {
+         "kind": "none"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "none-literal"
+         }
+        }
+       ]
+      }
+     },
+     "rule": {
+      "kind": "call",
+      "has": {
+       "field": "function",
+       "matches": "callee"
+      },
+      "not": {
+       "has": {
+        "field": "arguments",
+        "kind": "argument_list",
+        "has": {
+         "stopBy": "neighbor",
+         "kind": "keyword_argument",
+         "all": [
+          {
+           "has": {
+            "field": "name",
+            "regex": "^dir_fd$"
+           }
+          },
+          {
+           "has": {
+            "field": "value",
+            "not": {
+             "matches": "none-literal"
+            }
+           }
+          }
+         ]
+        }
+       }
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.F",
+    "code": "PTH102",
+    "message": "Use `Path(path).mkdir(mode=mode)` instead of `os.mkdir(path, mode)`; leave it where the path is bytes or `dir_fd` comes through `**kwargs`.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "PTH102"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

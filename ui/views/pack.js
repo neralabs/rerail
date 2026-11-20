@@ -10,7 +10,7 @@ import { fmt } from "../format.js";
 import { isWorktreePack } from "../derive.js";
 import { data, ui, packById, repoName, totalFires, rangeLabel, fires, filtering, isAttached } from "../state.js";
 import { writes } from "../shell.js";
-import { pageKey, pageRules, packSwitch, runningOf, shownRules, switchTurnsOn } from "../pack-model.js";
+import { enforcementCounts, pageKey, pageRules, packSwitch, runningOf, shownRules, switchTurnsOn } from "../pack-model.js";
 import { CREATE_COMMAND, renderRuleTable } from "../render/rules.js";
 import { ruleControls, ruleControlActions, ruleControlInput, ruleControlChange } from "../render/rule-controls.js";
 import { removePackControl } from "../render/pack-panel.js";
@@ -52,7 +52,7 @@ function renderNotice(root) {
 function renderHead(all, shown, pack) {
   const name = pack?.name ?? CREATED, onN = runningOf(all);
   setText(page.title, name);
-  setText(page.count, filtering() && shown.length < all.length ? `${fmt(shown.length)} of ${fmt(all.length)} shown` : `${fmt(onN)} of ${fmt(all.length)} on`);
+  setText(page.count, filtering() && shown.length < all.length ? `${fmt(shown.length)} of ${fmt(all.length)} shown` : enforcementCounts(all));
   setClass(page.count, "mix", onN < all.length);
   const total = totalFires(), n = all.reduce((sum, r) => sum + fires(r.rule.id), 0);
   setAttr(page.share, "hidden", total === 0);
@@ -69,10 +69,13 @@ function renderHead(all, shown, pack) {
   setText(page.pitch, pack?.covers ?? "");
 }
 
-/** The whole-pack switch, labelled All: on only while every rule is on; the chip above says how many are. */
+/** The whole-pack switch, labelled All: on while every rule is on, halfway while some are, with how many beside it. */
 function renderPackAll(all, name) {
   const { on, total, state } = packSwitch(all), sw = page.packAll.lastChild;
   setAttr(sw, "aria-checked", state);
+  // A switch has no halfway state: while some rules are on it is announced as a checkbox, which has one.
+  setAttr(sw, "role", state === "mixed" ? "checkbox" : "switch");
+  setText(page.packAll.firstChild, state === "mixed" ? `All · ${fmt(on)} of ${fmt(total)} on` : "All");
   setAttr(sw, "aria-label", `Turn all ${fmt(total)} ${name} rules ${switchTurnsOn(state) ? "on" : "off"}`);
   setAttr(sw, "title", state === "true" ? `Turn all ${fmt(total)} off` : on > 0 ? `Turn the other ${fmt(total - on)} on` : `Turn all ${fmt(total)} on`);
 }
