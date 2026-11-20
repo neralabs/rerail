@@ -152,7 +152,7 @@ speculation, and the oracle checks each one:
 
 **The oracle** is `rerail-c-lean`'s ignored `oracle` test, run live under Relax with shared caches.
 It compares the parser's tape with tree-sitter's, line by line. Its sets come from the shared
-corpus (`~/orca/rerail-shared/lean-corpus/{c,cpp}`, files of the stored repositories):
+corpus (`<shared data>/lean-corpus/{c,cpp}`, files of the stored repositories):
 
 | set | clean texts: same / differ / refused | texts with errors: as tree-sitter / differ / refused |
 |---|---|---|

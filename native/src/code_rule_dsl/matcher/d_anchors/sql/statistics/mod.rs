@@ -1,4 +1,4 @@
-//! Plan inputs read in one batch from SQL-owned summaries (ast-index-spike S241).
+//! Plan inputs read in one batch from SQL-owned summaries (SQL index prototype S241).
 //! These immutable values describe a decision; they are not a second frequency owner.
 use super::super::{AnchorPlan, Condition, Required, Requirement};
 use rusqlite::{Connection, Result, limits::Limit, params_from_iter, types::Value};

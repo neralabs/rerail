@@ -146,9 +146,9 @@ describe("remote sink outbox", () => {
 
   it("names this machine by the remote's --label when it has one", async () => {
     seed();
-    addRemote({ url: sink.url, token: "test-token", content: true, label: "Jeff's laptop" }, home);
+    addRemote({ url: sink.url, token: "test-token", content: true, label: "Alex's laptop" }, home);
     await outbox().sync({ force: true });
-    expect(sink.requests[0]!.header.machineLabel).toBe("Jeff's laptop");
+    expect(sink.requests[0]!.header.machineLabel).toBe("Alex's laptop");
     expect(() => addRemote({ url: sink.url, token: "t", content: true, name: "other", label: "bad\nlabel" }, home)).toThrow(/control characters/u);
   });
 

@@ -1,5 +1,5 @@
 """Writes pure-lazy-runtime-purity.tables.rerail, the linter's name sets and signatures.
-    python3 docs/rule-syntax/data-layer/gen-pure-lazy-runtime-purity.py [--check]
+    DATA_LAYER_REPO=<checkout> python3 docs/rule-syntax/data-layer/gen-pure-lazy-runtime-purity.py [--check]
 The source is scripts/lint_pure_lazy_runtime_purity.py at the pinned commit of the data-layer repository. Each
 named set at module level, and each str set written inline in a function (INLINE), becomes plp_name("<SET>", x)
 rows (RUNTIME_SINK_KEYWORDS is a union there, and is computed the same way here);
@@ -9,7 +9,7 @@ linter become signing.rerail allow_sig rows.
 import ast, json, os, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = "/Users/jeremy/orca/workspaces/data-layer-base-audit"
+REPO = os.environ.get("DATA_LAYER_REPO") or sys.exit("set DATA_LAYER_REPO to a checkout of the data-layer repository")
 COMMIT = "2b1504adc4291daaf080b2e932962b134da1a69a"
 LINTER = "scripts/lint_pure_lazy_runtime_purity.py"
 OUT = os.path.join(HERE, "pure-lazy-runtime-purity.tables.rerail")

@@ -369,7 +369,7 @@ export interface SteerRule {
 /** A conflict a delivery surfaces to the person: its id, the line's words, and its card's page once an adapter links it. */
 export interface ConflictNotice {
   readonly id: string;
-  /** `your edit overlaps PR #398 (Tim): model.rs · GrammarMatcher`. */
+  /** `your edit overlaps PR #398 (Sam): model.rs · GrammarMatcher`. */
   readonly text: string;
   readonly url?: string | undefined;
 }

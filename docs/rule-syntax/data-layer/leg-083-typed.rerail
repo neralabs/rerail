@@ -3,7 +3,7 @@
 // LEG-083 (scripts/lint_legacy_execution_surfaces.py) counts every `x.resolve()` and `x.resolve_async()` as eager,
 // by method name. The lazy terminals are LazyResult's and LazySeq's `resolve(self)` and `resolve_async(self)`.
 // A pathlib path resolving itself, or a lookup such as `catalog.resolve(ref)`, is not one
-// (data-layer/upstream/LEG-083.md: all 18 findings at the 2026-10-18 commit are such calls).
+// (the LEG-083 port note, removed: all 18 findings at the 2026-10-18 commit are such calls).
 // sketches/transitive-eager.rerail's LEG_083_SOUND tells them apart by guessing which names hold a path. This check
 // asks the receiver's type instead, from the Python typing program (python/types.rerail):
 //

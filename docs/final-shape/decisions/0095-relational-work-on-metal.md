@@ -87,7 +87,7 @@ record; step 0 measures it.
 
 ## Prior work consulted
 
-- **ast-index-spike design index, §19 GPU/SIMD.** Nothing was designed or measured for a GPU. The adjacent evidence:
+- **SQL index prototype design index, §19 GPU/SIMD.** Nothing was designed or measured for a GPU. The adjacent evidence:
   - Row and union bookkeeping, not decoding, dominates per-touch cost: 51 of 110 ns/node (D S152 L6687-6721). A
     columnar executor attacks the main cost.
   - Set-based decode is a prefix sum, which suits a GPU (D S053).

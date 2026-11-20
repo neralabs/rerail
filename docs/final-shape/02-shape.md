@@ -144,7 +144,7 @@ Resident state is the **working set of the current wave**, never the corpus:
 - Batches reference slabs through a batch document table. Nothing is repacked or concatenated, and nothing is copied on a hit.
 - An audit streams residency waves: load, pin, execute, release. Decompression costs 59–77 µs per file p50 (M), runs in parallel, and happens outside SQLite transactions.
 - Warm work avoids tapes entirely through result reuse (§7). Tempo's 47 warm workspaces needed no tape at a 499 MB peak (M).
-- Whole-program in-memory designs are excluded because they don't fit: Moti Y3 ~2 GB, Typing program mode 450–640 MB, Tempo Metal 3+ GB (M).
+- Whole-program in-memory designs are excluded because they don't fit: facts-engine Y3 ~2 GB, Typing program mode 450–640 MB, Tempo Metal 3+ GB (M).
 
 ## 7. Invalidation is part of the lattice design
 
@@ -167,7 +167,7 @@ Its value is its output rows in SQLite plus an output digest.
   - Monotone propagation happens only inside a derivation, where lattice values only rise.
 - **Measured instances of this one mechanism, each a special case:**
   - main's `calls` per-consumer stamps;
-  - Moti's Y1 read-set memos with early cutoff and backdating;
+  - The facts-engine stream's Y1 read-set memos with early cutoff and backdating;
   - Typing's interface digests: a body edit re-derives 1 module instead of 408, an interface edit 123 instead of 408 (M);
   - PR 2539's dependency cone.
 - **Rule findings are derivations too.** Result pages are keyed the same way. Main's reuse by (source, file context, catalog) and by clean Git tree become special cases. Cross-file rules become reusable because their read sets are explicit, which main cannot do today.
@@ -204,7 +204,7 @@ Repository-wide recursive relations (call closure, reachability) are cross-file 
 | PIAT | the spec: v9np, §20 residency, §21 facts, transducer set mode + set stage, fusion, stat-driven indexes and plans, tooling | §21.8 DRed → derivation waves with digest cutoff; SQLite-only derived facts → the stat-driven placement in §3 |
 | Tempo | the IR, verifier, side programs, `native_ir` codegen, no-copy MTLBuffer lifetime, reserve-before-allocate, count/scan/scatter, result reuse | the path-enumerating model, exact SCM semantics, MetalNode repacking, per-call private uploads |
 | Typing | lattice declarations, semi-naive waves, interface-digest layering, demand by cost, native set-engine techniques for vtab operators, tape-derived construction | whole-program in-memory evaluation (over budget) |
-| Moti | per-clause memo keys, read-set memos, the mutant gate | the SQLite replacement (the 500 MB budget favours SQLite on disk) |
+| Facts-engine | per-clause memo keys, read-set memos, the mutant gate | the SQLite replacement (the 500 MB budget favours SQLite on disk) |
 | DLRE / SSC / N1562 | the whole-demand batch vtab contract, demand handles, exact-scope grouping, plan identity (`query/plan`), the SSC gate pattern | anchor SQL lowering inside documents, navigation-edge rows, run-time `count(*)` |
 
 ## 10. Decisions this shape fixes, and what is left to measure

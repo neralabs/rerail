@@ -1,6 +1,6 @@
 # Review: the Pulling-it-all-together design and the work since
 
-Date: 2026-10-26. Branch `jeremybarnes/wolfeel`, at main `5cf4246e`.
+Date: 2026-10-26. Branch `wolfeel`, at main `5cf4246e`.
 
 This is the starting point for re-integrating the Rerail rule-engine worktrees into one final shape. It covers:
 
@@ -12,15 +12,15 @@ Sources, with tips as surveyed:
 
 | Stream | Ref | Since PIAT snapshot |
 |---|---|---|
-| PIAT | `jeremybarnes/Pulling-it-all-together` `85098ee3` | (the design itself; 118 commits on main) |
-| Shared-structural-execution | `jeremy/shared-structural-execution` `85098ee3` | same commit as PIAT; no work of its own |
-| Typing-support | `jeremybarnes/Typing-support` `e031592d` | 14 commits, all new (`spikes/datalog-engines/`) |
-| DLRE | `jeremybarnes/Data-layer-rule-expressivity` `a1fcdeb9` | 89 commits since `d3470da2` |
-| N1562 (rerail) | `jbarnes/sql-rerailer` `60e7affa` | 82 commits since `16343282` |
-| SSC | `jeremy/sql-capture-demand-spikes` `b3e97cd4` | 10 commits since `c17d2e47` |
-| Moti facts | `origin/Moti-Velz/facts-engine` `5b0d63a7`, `facts-plan` `a582db97` | 19 and 8 commits since `685db3f7` |
-| Moti on main | `origin/main`, author Moti-Velz | engine-relevant commits since 2026-10-14 |
-| Tempo Metal | Landing `jbarnes/scale-test-the-re-railer` `ed69e91f8` | 64 commits since `a091aa063` |
+| PIAT | `Pulling-it-all-together` `85098ee3` | (the design itself; 118 commits on main) |
+| Shared-structural-execution | `shared-structural-execution` `85098ee3` | same commit as PIAT; no work of its own |
+| Typing-support | `Typing-support` `e031592d` | 14 commits, all new (`spikes/datalog-engines/`) |
+| DLRE | `Data-layer-rule-expressivity` `a1fcdeb9` | 89 commits since `d3470da2` |
+| N1562 (rerail) | `sql-rerailer` `60e7affa` | 82 commits since `16343282` |
+| SSC | `sql-capture-demand-spikes` `b3e97cd4` | 10 commits since `c17d2e47` |
+| Facts-engine | `facts-engine` `5b0d63a7`, `facts-plan` `a582db97` | 19 and 8 commits since `685db3f7` |
+| Facts work on main | `origin/main`, one contributor's commits | engine-relevant commits since 2026-10-14 |
+| Tempo Metal | `scale-test-the-re-railer` `ed69e91f8` | 64 commits since `a091aa063` |
 
 Numbers are the streams' own recorded measurements. Nothing was re-run for this review.
 
@@ -132,11 +132,11 @@ The spike asked whether facts, types and dependencies should run on an off-the-s
   - observed-fanout feedback, which is spec §19's `plan_feedback`, now measured.
 - **Caveats:** the compiler is a spike-quality Python script. Construction copies facts into hash indexes, where it should read the tape and anchor index. Memory is 2× main's resolver. The per-edit path is open.
 
-### Moti's facts engine: the per-edit answer for cross-file state
+### The facts engine: the per-edit answer for cross-file state
 
 `facts-plan:docs/facts/DECISION-CROSSFILE.md` and `facts-engine:spikes/facts-b/src/{ygraph,y2,y3}`.
 
-**Measured** (his agents' runs, not re-verified):
+**Measured** (the stream's own runs, not re-verified):
 - **Two alternatives are eliminated:**
   - Full differential-dataflow maintenance has a memory floor of about 6–7 GB.
   - Recompute-per-edit costs 5–70 s, and inputs change on 88% of edits.
@@ -156,9 +156,9 @@ The spike asked whether facts, types and dependencies should run on an off-the-s
 - interface cutoff, the same mechanism as Typing's digest cutoff;
 - worktree layering, which no other stream has.
 
-The final shape should make this the incremental evaluation mode of the Datalog strata, derived from the rules instead of hand-written. His replay harness becomes the per-edit gate.
+The final shape should make this the incremental evaluation mode of the Datalog strata, derived from the rules instead of hand-written. Its replay harness becomes the per-edit gate.
 
-**On main, from Timo,** these must be kept:
+**On main, from other contributors,** these must be kept:
 - embedded programs as guest documents with `Origin` (tape v6);
 - per-clause work allowances and blind files;
 - "unread" files above 50% error coverage;
