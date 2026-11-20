@@ -175,3 +175,21 @@ row.
     with the spike's, on its shapes and the first 40 corpus units: equal.
   - All 18 evaluator tests pass. The corpus, in batches of up to 300 units: 3,132 units equal,
     the same 3 refused, 4 launches each.
+- **Step 2: push and pop rows (§3; R2).**
+  - The front reads each `#pragma`'s act from its tape (`pp_pragma_act`: `once`, and
+    `push_macro` or `pop_macro` with `( "name"`, its key the string's bytes inside the quotes),
+    into `DIR_ACTS`.
+  - An active push or pop is a row of the definitions' table, its type in `RTYPES`.
+  - After the rows' sort, where the unit has any (`N_STACK`), three phases over the sorted rows:
+    each pop's push (a walk back over its name's rows counting the pops between: the stack's
+    matching), each matched pop's source (the latest row before its push that gives its name a
+    value: a definition, an undef, a built-in, or a matched pop), and a pointer jumping until
+    each source is a value's row (at most 32 rounds, each a barrier, ending at the first that
+    moves none).
+  - A push, and a pop with no push, hold `V_SKIP`: a lookup walks past them, as
+    `resolve_rows` drops them. A walk past 256 rows of one name refuses the unit.
+  - The spike's `p1_of` no longer refuses push and pop: its `vis` already reads them.
+  - R2: `push_and_pop_are_the_spikes`, six shapes (nested pushes, a push of a name not defined,
+    pops with no push, across an include, other names between, a malformed push), C and C++:
+    every name's meaning equals the spike's. All 19 evaluator tests pass; the corpus is
+    unchanged (3,132 equal, the same 3 refused, 4 launches each).

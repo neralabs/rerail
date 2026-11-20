@@ -372,6 +372,31 @@ fn lookups_agree(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::File
     Ok([got.len(), defs, builtins])
 }
 
+/// R2 of decision 0467: `push_macro` and `pop_macro` are rows of the device's table, a pop's
+/// value the one its push saw, matched as a stack per name (the spike's `resolve_rows`): every
+/// name then means on the device what it means in the spike. Nested pushes, a push of a name not
+/// defined, a pop with no push, a push and pop across an include, other names between.
+#[test]
+fn push_and_pop_are_the_spikes() {
+    use rerail_c_pp::Config;
+    use rerail_c_pp::files::Search;
+    let shapes: &[&[(&str, &str)]] = &[
+        &[("main.c", "#define A 1\n#pragma push_macro(\"A\")\n#undef A\nA\n#define A 2\nA\n#pragma pop_macro(\"A\")\nA\n#pragma pop_macro(\"A\")\nA\n")],
+        &[("main.c", "#define A a1\n#pragma push_macro(\"A\")\n#define A a2\n#pragma push_macro(\"A\")\n#define A a3\nA\n#pragma pop_macro(\"A\")\nA\n#pragma pop_macro(\"A\")\nA\n")],
+        &[("main.c", "#pragma push_macro(\"B\")\n#define B 1\nB\n#pragma pop_macro(\"B\")\nB\n#define B 2\nB\n")],
+        &[("main.c", "#define C 1\n#pragma pop_macro(\"C\")\nC\n#pragma push_macro(\"C\")\n#pragma pop_macro(\"C\")\nC\n#pragma pop_macro(\"C\")\nC\n")],
+        &[("main.c", "#define D 1\n#define E 1\n#pragma push_macro(\"D\")\n#include \"d.h\"\nD E\n#pragma pop_macro(\"D\")\nD E\n"), ("d.h", "#undef D\n#define D 2\n#pragma push_macro(\"E\")\n#undef E\n#pragma pop_macro(\"E\")\nD E\n")],
+        &[("main.c", "#define F 1\n#pragma push_macro(\"F\")\n#pragma push_macro(\"F\")\n#undef F\n#pragma pop_macro(\"F\")\nF\n#undef F\n#pragma pop_macro(\"F\")\nF\n#pragma once\n#pragma push_macro(F)\n#pragma other\nF\n")],
+    ];
+    for (k, files) in shapes.iter().enumerate() {
+        for cpp in [false, true] {
+            let m: std::collections::HashMap<String, Vec<u8>> = files.iter().map(|(p, s)| (p.to_string(), s.as_bytes().to_vec())).collect();
+            let mut io = Search::new(vec![], move |p: &str| m.get(p).cloned());
+            lookups_agree(Config::new(crate::pp::options(cpp)), &mut io, "main.c", cpp, &format!("shape {k}")).unwrap();
+        }
+    }
+}
+
 /// R4 of decision 0448: every token of the unit's active text has the meaning on the device that
 /// the spike's `Vis::at` gives it (no name, no macro, a built-in, or the `#define` it sees),
 /// from the visibility rows (a row an active `#define` or `#undef`, one stable sort) and a

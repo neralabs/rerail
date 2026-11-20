@@ -358,6 +358,12 @@ typedef struct PpInst { uint32_t file, dir_first, gap_first; } PpInst;
 // (`__has_include`, `__has_include_next`, `__has_embed`: operators of `#if` alone). A built-in's
 // row holds its answer; a definition's row is below `L_DEFS`.
 #define V_UNDEF (0xffffffffu)
+// A row's type (decision 0467 §3): a value (a definition, an undef, a built-in), a push, a pop.
+#define RT_SET (0u)
+#define RT_PUSH (1u)
+#define RT_POP (2u)
+// A row that gives no value (a push, a pop with no push): a lookup walks past it.
+#define V_SKIP (0xfffffff0u)
 #define L_NOT_NAME (0xffffffffu)
 #define L_NONE (0xfffffffeu)
 #define L_BUILTIN (0xfffffffdu)
@@ -373,7 +379,7 @@ UKL_INLINE bool px_one_token(uint32_t m) { return m >= L_TIMESTAMP && m <= L_FIL
 #define WALK (64u)
 
 // Each instance's directive `j`'s row, where it makes one (a flag, then its place by a scan).
-UKL_INLINE void pe_row_flag(UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32_t* n_insts, UKL_GLOBAL const uint32_t* dactive, UKL_GLOBAL const uint32_t* n_dirs, UKL_GLOBAL const uint32_t* dir_bases, UKL_GLOBAL const PpDir* rows, UKL_GLOBAL const PpDef* defs, UKL_GLOBAL const uint64_t* dir_keys, UKL_GLOBAL uint32_t* flag, uint32_t j) {
+UKL_INLINE void pe_row_flag(UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32_t* n_insts, UKL_GLOBAL const uint32_t* dactive, UKL_GLOBAL const uint32_t* n_dirs, UKL_GLOBAL const uint32_t* dir_bases, UKL_GLOBAL const PpDir* rows, UKL_GLOBAL const PpDef* defs, UKL_GLOBAL const uint64_t* dir_keys, UKL_GLOBAL const uint32_t* acts, UKL_GLOBAL uint32_t* flag, UKL_GLOBAL uint32_t* n_stack, uint32_t j) {
     if (j >= n_dirs[0]) return;
     uint32_t i = 0u, lo = 0u, hi = n_insts[0];
     for (uint32_t k = 0u; k < 32u && hi - lo > 1u; k++) {
@@ -383,13 +389,16 @@ UKL_INLINE void pe_row_flag(UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uin
     i = lo;
     uint32_t r = dir_bases[insts[i].file] + (j - insts[i].dir_first);
     uint32_t kind = rows[r].kind;
-    bool row = dactive[j] != 0u && ((kind == K_DEFINE && (defs[r].flags & D_BAD) == 0u) || (kind == K_UNDEF && dir_keys[r] != 0ul));
+    // A push or a pop (decision 0467 §3) is a row too; the resolution after the sort gives it its value.
+    bool stack = dactive[j] != 0u && kind == PK_PRAGMA && (acts[r] == A_PUSH || acts[r] == A_POP);
+    bool row = stack || (dactive[j] != 0u && ((kind == K_DEFINE && (defs[r].flags & D_BAD) == 0u) || (kind == K_UNDEF && dir_keys[r] != 0ul)));
     flag[j] = row ? 1u : 0u;
+    if (stack) ukl_atomic_add(n_stack, 1u);
 }
 
 // The rows at their places (`at`, the flags' scan) after the `n_builtin` built-ins': each its sort
 // key (the name's upper 32 bits, its slot), its name's key, and its definition.
-UKL_INLINE void pe_rows(UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32_t* n_insts, UKL_GLOBAL const uint32_t* dslot, UKL_GLOBAL const uint32_t* n_dirs, UKL_GLOBAL const uint32_t* dir_bases, UKL_GLOBAL const PpDir* rows, UKL_GLOBAL const uint64_t* dir_keys, UKL_GLOBAL const uint32_t* flag, UKL_GLOBAL const uint32_t* at, UKL_GLOBAL uint64_t* sort_keys, UKL_GLOBAL uint64_t* name_keys, UKL_GLOBAL uint32_t* values, uint32_t n_builtin, uint32_t j) {
+UKL_INLINE void pe_rows(UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32_t* n_insts, UKL_GLOBAL const uint32_t* dslot, UKL_GLOBAL const uint32_t* n_dirs, UKL_GLOBAL const uint32_t* dir_bases, UKL_GLOBAL const PpDir* rows, UKL_GLOBAL const uint64_t* dir_keys, UKL_GLOBAL const uint32_t* acts, UKL_GLOBAL const uint32_t* flag, UKL_GLOBAL const uint32_t* at, UKL_GLOBAL uint64_t* sort_keys, UKL_GLOBAL uint64_t* name_keys, UKL_GLOBAL uint32_t* values, UKL_GLOBAL uint32_t* types, uint32_t n_builtin, uint32_t j) {
     if (j >= n_dirs[0] || flag[j] == 0u) return;
     uint32_t lo = 0u, hi = n_insts[0];
     for (uint32_t k = 0u; k < 32u && hi - lo > 1u; k++) {
@@ -402,6 +411,7 @@ UKL_INLINE void pe_rows(UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32_
     sort_keys[place] = (key & 0xffffffff00000000ul) | ((uint64_t)(dslot[j]));
     name_keys[place] = key;
     values[place] = rows[r].kind == K_DEFINE ? r : V_UNDEF;
+    types[place] = rows[r].kind != PK_PRAGMA ? RT_SET : acts[r] == A_PUSH ? RT_PUSH : RT_POP;
 }
 
 // The rows in all: the built-ins' and the scan's.
@@ -439,11 +449,98 @@ UKL_INLINE uint32_t visible(UKL_GLOBAL const uint64_t* sorted, UKL_GLOBAL const 
         uint32_t p = perm[c];
         if (name_keys[p] == key) {
             uint32_t v = values[p];
+            if (v == V_SKIP) continue;
             return v == V_UNDEF ? L_NONE : v;
         }
     }
     ukl_atomic_or(bad, 1u << 29);
     return L_NONE;
+}
+
+// --- Push and pop (decision 0467 §3) --------------------------------------------------------------
+// After the rows' sort by (name, slot), as the spike's `resolve_rows`: a push makes no row; a pop
+// takes the value its name had at its push, the pushes and pops of a name matched as a stack; a
+// pop with no push changes nothing. Three phases over the sorted rows: each pop's push (a walk
+// back counting the pops between), each matched pop's source (the row before its push that gives
+// the name its value there), then the sources jumped until each is a value's row.
+
+#define STK_WALK (256u)
+
+// Whether sorted row `c` is of name `key` (its upper 32 bits are the run's), in the unit above `floor`.
+UKL_INLINE bool stk_same(UKL_GLOBAL const uint64_t* sorted, UKL_GLOBAL const uint32_t* perm, UKL_GLOBAL const uint64_t* name_keys, uint32_t c, uint64_t key) {
+    return name_keys[perm[c]] == key;
+}
+
+// Sorted row `c`'s push, where it is a pop (`PP_NONE` where it has none, or is no pop).
+UKL_INLINE void pe_stack_match(UKL_GLOBAL const uint64_t* sorted, UKL_GLOBAL const uint32_t* perm, UKL_GLOBAL const uint32_t* n_rows, UKL_GLOBAL const uint64_t* name_keys, UKL_GLOBAL const uint32_t* types,
+                               UKL_GLOBAL const uint32_t* floors, uint32_t n_units, UKL_GLOBAL uint32_t* match, UKL_GLOBAL uint32_t* bad, uint32_t c) {
+    if (c >= n_rows[0]) return;
+    uint32_t p = perm[c], m = PP_NONE;
+    if (types[p] == RT_POP) {
+        uint64_t key = name_keys[p];
+        uint32_t floor = unit_floor(floors, n_units, ((uint32_t)(sorted[c])));
+        uint32_t depth = 0u, k = 0u, x = c;
+        for (; k < STK_WALK; k++) {
+            if (x == 0u || (sorted[x - 1u] >> 32) != (key >> 32)) break;
+            x--;
+            uint32_t at = ((uint32_t)(sorted[x]));
+            if (at < floor) break;
+            if (!stk_same(sorted, perm, name_keys, x, key)) continue;
+            uint32_t t = types[perm[x]];
+            if (t == RT_POP) depth++;
+            else if (t == RT_PUSH) {
+                if (depth == 0u) { m = x; break; }
+                depth--;
+            }
+        }
+        if (k == STK_WALK) ukl_atomic_or(bad, 1u << 29);
+    }
+    match[c] = m;
+}
+
+// A matched pop's source: the latest row before its push, of its name and in its unit (else a
+// built-in's), that gives the name a value: a definition's or an undef's, or a matched pop's.
+UKL_INLINE void pe_stack_src(UKL_GLOBAL const uint64_t* sorted, UKL_GLOBAL const uint32_t* perm, UKL_GLOBAL const uint32_t* n_rows, UKL_GLOBAL const uint64_t* name_keys, UKL_GLOBAL const uint32_t* types,
+                             UKL_GLOBAL const uint32_t* floors, uint32_t n_units, UKL_GLOBAL const uint32_t* match, UKL_GLOBAL uint32_t* src, UKL_GLOBAL uint32_t* bad, uint32_t c) {
+    if (c >= n_rows[0]) return;
+    uint32_t m = match[c], s = PP_NONE;
+    if (m != PP_NONE) {
+        uint64_t key = name_keys[perm[c]];
+        uint32_t floor = unit_floor(floors, n_units, ((uint32_t)(sorted[c])));
+        uint32_t k = 0u, x = m;
+        for (; k < STK_WALK; k++) {
+            if (x == 0u || (sorted[x - 1u] >> 32) != (key >> 32)) break;
+            x--;
+            uint32_t at = ((uint32_t)(sorted[x]));
+            if (at != 0u && at < floor) {
+                x = pb_lower_bound(sorted, n_rows[0], (key & 0xffffffff00000000ul) | 1ul);
+                continue;
+            }
+            if (!stk_same(sorted, perm, name_keys, x, key)) continue;
+            uint32_t t = types[perm[x]];
+            if (t == RT_SET || (t == RT_POP && match[x] != PP_NONE)) { s = x; break; }
+        }
+        if (k == STK_WALK) ukl_atomic_or(bad, 1u << 29);
+    }
+    src[c] = s;
+}
+
+// A round of the jumping: a source that is a pop takes its own source. `changed` is set where one moved.
+UKL_INLINE void pe_stack_jump(UKL_GLOBAL const uint32_t* perm, UKL_GLOBAL const uint32_t* n_rows, UKL_GLOBAL const uint32_t* types, UKL_GLOBAL uint32_t* src, UKL_GLOBAL uint32_t* changed, uint32_t c) {
+    if (c >= n_rows[0]) return;
+    uint32_t s = ukl_atomic_load(&src[c]);
+    if (s == PP_NONE || types[perm[s]] != RT_POP) return;
+    ukl_atomic_store(&src[c], ukl_atomic_load(&src[s]));
+    ukl_atomic_store(changed, 1u);
+}
+
+// Each push's and pop's value: a matched pop its source's (none: the name undefined), the others none.
+UKL_INLINE void pe_stack_values(UKL_GLOBAL const uint32_t* perm, UKL_GLOBAL const uint32_t* n_rows, UKL_GLOBAL const uint32_t* types, UKL_GLOBAL const uint32_t* match, UKL_GLOBAL const uint32_t* src, UKL_GLOBAL uint32_t* values, uint32_t c) {
+    if (c >= n_rows[0]) return;
+    uint32_t p = perm[c], t = types[p];
+    if (t == RT_SET) return;
+    uint32_t s = src[c];
+    values[p] = t == RT_PUSH || match[c] == PP_NONE ? V_SKIP : s == PP_NONE ? V_UNDEF : values[perm[s]];
 }
 
 // --- Setup: the stretches (S8) and their names' meanings (R4) ------------------------------------

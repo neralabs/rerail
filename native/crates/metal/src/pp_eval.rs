@@ -246,6 +246,8 @@ pub struct Front {
     out: Buf,
     pub rows: Buf,
     pub dir_keys: Buf,
+    /// Each directive's pragma act (`A_*`: `once`, `push_macro`, `pop_macro`; decision 0467 §3).
+    pub dir_acts: Buf,
     scan: Scan,
     dir_scan: Scan,
 }
@@ -315,6 +317,7 @@ impl Front {
             out: arena.zeroed::<[u32; 4]>(if nodes { unit.node_bound } else { 1 })?,
             rows: arena.zeroed::<PpDir>(unit.dir_bound)?,
             dir_keys: arena.zeroed::<u64>(unit.dir_bound)?,
+            dir_acts: arena.zeroed::<u32>(unit.dir_bound)?,
             scan: Scan { total: arena.from_slice(&[total])? },
             dir_scan: Scan::new(arena)?,
         })
@@ -333,7 +336,7 @@ impl Front {
         l.at("OWNER_IN", &self.owner_in).at("VHEADS", &self.heads).at("OWNER", &self.owner).at("TFLAG", &self.tflag).at("TRANK", &self.trank);
         l.at("TTOTAL", &self.tscan.total).at("TEXT_NODES", &self.text_nodes);
         l.at("DIR_GROUPS", &self.groups).at("GUARDED", &self.guarded).at("GUARDS", &self.guards).at("BAD", &self.bad).at("KEYS", &self.keys);
-        l.at("NODES_OUT", &self.out).at("ROWS", &self.rows).at("DIR_KEYS", &self.dir_keys);
+        l.at("NODES_OUT", &self.out).at("ROWS", &self.rows).at("DIR_KEYS", &self.dir_keys).at("DIR_ACTS", &self.dir_acts);
         l.word("N_FILES", self.n as u32).word("NODES_FLAG", u32::from(self.nodes)).word("LAST", last);
     }
 

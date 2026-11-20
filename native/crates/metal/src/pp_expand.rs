@@ -291,6 +291,13 @@ pub struct Vis {
     pub(crate) sort_keys: Buf,
     pub(crate) name_keys: Buf,
     pub(crate) values: Buf,
+    // Push and pop rows (decision 0467 §3): each row's type, the active pushes and pops, each
+    // sorted row's matching push and the row its value comes from, and the jumping's rounds.
+    rtypes: Buf,
+    n_stack: Buf,
+    stk_match: Buf,
+    stk_src: Buf,
+    stk_changed: Buf,
     pub(crate) n_rows: Buf,
     pub(crate) sort: Sort,
     // The stretches: a word each, and a lookup a text token.
@@ -311,6 +318,9 @@ pub struct Vis {
 pub fn top_bound(unit: &Unit, lay: &Layout) -> usize {
     lay.nodes.iter().map(|i| unit.file_nodes[i.file as usize] as usize).sum::<usize>().max(1)
 }
+
+/// The pointer-jumping rounds a pop's value takes at most (2^32 pops' chains).
+const STACK_ROUNDS: usize = 32;
 
 const NO_NODE: [PpNode; 1] = [PpNode { file: 0, parent: NO_PARENT, pdir: 0, depth: 0, unit: 0 }];
 
@@ -365,6 +375,11 @@ impl Vis {
             name_keys: arena.from_slice(&nk)?,
             values: arena.from_slice(&vals)?,
             n_rows: zeroed(1)?,
+            rtypes: zeroed(rows)?,
+            n_stack: zeroed(1)?,
+            stk_match: zeroed(rows)?,
+            stk_src: zeroed(rows)?,
+            stk_changed: zeroed(STACK_ROUNDS)?,
             sort: Sort::new(arena, rows)?,
             gcounts: zeroed(ng)?,
             gfirsts: zeroed(ng)?,
@@ -391,6 +406,7 @@ impl Vis {
         l.at("P1_UTOTAL", &self.p1_utotal).at("P1_BASE", &self.p1_base);
         l.at("RFLAG", &self.rflag).at("RAT", &self.rat).at("RTOTAL", &self.rscan.total);
         l.at("SORT_KEYS", &self.sort_keys).at("NAME_KEYS", &self.name_keys).at("VALUES", &self.values).at("N_ROWS", &self.n_rows);
+        l.at("RTYPES", &self.rtypes).at("N_STACK", &self.n_stack).at("STK_MATCH", &self.stk_match).at("STK_SRC", &self.stk_src).at("STK_CHANGED", &self.stk_changed).word("STK_ROUNDS", STACK_ROUNDS as u32);
         l.at("SORT_KB", &self.sort.keys_b).at("SORT_VA", &self.sort.vals_a).at("SORT_VB", &self.sort.vals_b).at("SORT_HIST", &self.sort.hist);
         l.at("GCOUNTS", &self.gcounts).at("GFIRSTS", &self.gfirsts).at("GKEYS", &self.gkeys);
         l.at("GSORT_KB", &self.gsort.keys_b).at("GSORT_VA", &self.gsort.vals_a).at("GSORT_VB", &self.gsort.vals_b).at("GSORT_HIST", &self.gsort.hist);
