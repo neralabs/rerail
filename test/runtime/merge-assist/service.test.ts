@@ -310,7 +310,10 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     github.holdStats();
     const started = github.started();
     const cli = ws.service({ github, now: () => now, answersOnce: true }).status(ws.repo);
-    await started;
+    // gh starts though the stat has not answered: a stat that never answers holds no read of gh.
+    const startedInTime = await Promise.race([started.then(() => true), new Promise<boolean>(resolve => setTimeout(resolve, 10_000, false))]);
+    if (!startedInTime) github.release();
+    expect(startedInTime).toBe(true);
     github.options.readiness = { state: "signed-in", login: "jbarnes", repository: "acme/app" };
     github.options.signInStamp = "after gh auth switch to jbarnes";
     github.release();
