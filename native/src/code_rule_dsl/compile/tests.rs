@@ -155,6 +155,30 @@
         }
     }
 
+    /// A title is for people: a document with one reports what the same document without it reports,
+    /// and an unknown top-level key is still refused.
+    #[test]
+    fn a_title_changes_nothing_the_rule_reports() {
+        let capabilities = serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities");
+        let report = |document: Value| {
+            let compiled = compile_document_with(document, &capabilities)
+                .unwrap_or_else(|error| panic!("{}", error.reason));
+            evaluate_file(&compiled, "typescript", "a.ts", "x;\n")
+        };
+        let plain = regex_document(violation());
+        let mut titled = plain.clone();
+        titled["title"] = json!("No x");
+        let titled = report(titled);
+        assert_violations(&titled, 1);
+        assert_eq!(titled["violations"], report(plain)["violations"]);
+        let mut heading = regex_document(violation());
+        heading["heading"] = json!("No x");
+        assert_eq!(
+            rejection(compile_document_with(heading, &capabilities)),
+            "unknown field `heading` at /"
+        );
+    }
+
     /// A constraint may name what a call binds through a cycle of parameterized calls, whichever
     /// `any` branch the walk collecting the query's metavariables meets first.
     #[test]

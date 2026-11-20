@@ -219,10 +219,9 @@ describe("a shell command's result reads the session folder by its change notice
 
     // The same write as no notice tells of, which the turn's end reads by a whole walk.
     const walked = files("walked");
-    await command(bridge, "shell-2", async () => {
+    await command(bridge, "shell-2", async () => await watch.unnoticed(root, async () => {
       for (const path of walked) await writeFile(path, "eval(x)\n");
-      watch.silence(root);
-    });
+    }));
     await bridge.checkpoint("turn");
     expect(listed.folders.length).toBeGreaterThan(0);
     expect(checked(audits).flat()).toHaveLength(noticed.length + walked.length);
@@ -247,10 +246,7 @@ describe("a shell command's result reads the session folder by its change notice
     const watch = platformWatch();
     const { bridge, audits } = await opened(root, watch);
     // As a memory-mapped write: the watch tells nothing of it.
-    await command(bridge, "shell-1", async () => {
-      await writeFile(join(root, "src", "pkg_0", "m.py"), "eval(y)\n");
-      watch.silence(root);
-    });
+    await command(bridge, "shell-1", async () => await watch.unnoticed(root, () => writeFile(join(root, "src", "pkg_0", "m.py"), "eval(y)\n")));
     expect(audits).toEqual([]);
 
     await bridge.checkpoint("turn");
@@ -268,10 +264,7 @@ describe("a shell command's result reads the session folder by its change notice
     const watch = platformWatch();
     const { bridge } = await opened(root, watch);
     const since = (await bridge.walkResume())?.since;
-    await command(bridge, "shell-1", async () => {
-      await writeFile(join(root, "src", "pkg_0", "m.py"), "eval(y)\n");
-      watch.silence(root);
-    });
+    await command(bridge, "shell-1", async () => await watch.unnoticed(root, () => writeFile(join(root, "src", "pkg_0", "m.py"), "eval(y)\n")));
     // A session suspended now still judges, once opened again, the write no notice told of.
     expect(since).toBeDefined();
     expect((await bridge.walkResume())?.since).toBe(since);
@@ -359,11 +352,8 @@ describe("a shell command's result reads the session folder by its change notice
     await link(join(root, "src", "pkg_0", "m.py"), join(outside, "m.py"));
     const watch = platformWatch();
     const { bridge, audits } = await opened(root, watch);
-    await command(bridge, "shell-1", async () => {
-      await writeFile(join(outside, "m.py"), "eval(z)\n");
-      // No notice of the session folder tells of a write through another folder's name.
-      watch.silence(root);
-    });
+    // No notice of the session folder tells of a write through another folder's name.
+    await command(bridge, "shell-1", async () => await watch.unnoticed(root, () => writeFile(join(outside, "m.py"), "eval(z)\n")));
     expect(listed.folders).toEqual([]);
     expect(audits).toEqual([expect.objectContaining({
       checkpoints: ["edit", "function"],
@@ -396,11 +386,8 @@ describe("a shell command's result reads the session folder by its change notice
     await command(bridge, "shell-1", async () => await link(join(outside, "linked.py"), join(root, "src", "pkg_0", "linked.py")));
     expect(told()).toContain("src/pkg_0/linked.py");
     watch.told.length = 0;
-    // Written and silenced in one step, so no take of the watch can come between them and tell of the write.
-    await command(bridge, "shell-2", async () => {
-      writeFileSync(join(outside, "linked.py"), "eval(z)\n");
-      watch.silence(root);
-    });
+    // Written under a hold, so no take of the watch can tell of the write.
+    await command(bridge, "shell-2", async () => await watch.unnoticed(root, async () => writeFileSync(join(outside, "linked.py"), "eval(z)\n")));
     // No notice named the file: the pass read it as a linked file the last pass found.
     expect(told()).not.toContain("src/pkg_0/linked.py");
     expect(listed.folders).toEqual([]);
@@ -427,10 +414,7 @@ describe("a shell command's result reads the session folder by its change notice
     const outside = await linkedOutside(root, files);
     const watch = platformWatch();
     const { bridge, audits } = await opened(root, watch);
-    await command(bridge, "shell-1", async () => {
-      await writeFile(join(outside, "0.py"), "eval(z)\n");
-      watch.silence(root);
-    });
+    await command(bridge, "shell-1", async () => await watch.unnoticed(root, () => writeFile(join(outside, "0.py"), "eval(z)\n")));
     expect(listed.folders.length).toBeGreaterThan(0);
     // Still checked at its own result: the whole walk finds the write.
     expect(checked(audits)).toEqual([["src/pkg_0/m.py"]]);
@@ -592,10 +576,7 @@ describe("a shell command's result reads the session folder by its change notice
       await bridge.checkpoint("turn");
       at = start + 1_000;
       // As a write through a hard link made to a name outside the folder after that walk: no notice tells of it.
-      await command(bridge, "shell-1", async () => {
-        writeFileSync(join(root, "src", "pkg_0", "m.py"), "eval(w)\n");
-        watch.silence(root);
-      });
+      await command(bridge, "shell-1", async () => await watch.unnoticed(root, async () => writeFileSync(join(root, "src", "pkg_0", "m.py"), "eval(w)\n")));
       listed.folders.length = 0;
       at = start + 599_000;
       await command(bridge, "shell-2", async () => undefined);

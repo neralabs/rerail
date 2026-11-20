@@ -28,7 +28,7 @@ function entriesOf(root: string): Map<string, string> {
 /**
  * A `TreeWatch` that sees every write, as the engine's watch is meant to: each `take` compares each watched root's
  * entries with those of the last take, through `node:fs` calls a test's counted `node:fs/promises` never sees. A test
- * makes it miss writes (`silence`), hand notices late (`hold`), lose notices (`lose`), end a watch (`end`), refuse
+ * makes it miss a change (`unnoticed`), hand notices late (`hold`), lose notices (`lose`), end a watch (`end`), refuse
  * roots (`unwatchable`) or tell of a folder moved away as the system does (`movedAway`), and reads which roots it
  * watches and with which folders, and every notice it handed on (`told`). `byFolder` makes it watch as Linux's
  * watch does: only the entries of the folders a root was watched with, a folder made in one as an entry with nothing
@@ -150,14 +150,31 @@ export class StampTreeWatch implements TreeWatch {
     for (const root of this.#handles.keys()) this.#hold(root, []);
   }
 
-  /** Takes in, with no notice, every write made in `root` so far, as a write through a hard link or a memory map. */
-  silence(root: string): void {
+  /**
+   * Makes `change` in `root` with no notice, as a write through a hard link or a memory map does: a take while it runs
+   * hands none for `root`, so the walks' notice pump asks for no walk on its account, and every write it made is then
+   * taken in silently. A hold the test already had on `root` stays until its own `release`, and the writes made under
+   * that hold before the change are taken in silently with it: their notices never come.
+   */
+  async unnoticed(root: string, change: () => Promise<unknown>): Promise<void> {
+    const heldBefore = this.#held.has(root);
+    this.hold(root);
+    try {
+      await change();
+      this.#silence(root);
+    } finally {
+      if (!heldBefore) this.release(root);
+    }
+  }
+
+  /** Takes in, with no notice, every write made in `root` so far. */
+  #silence(root: string): void {
     if (this.#entries.has(root)) this.#entries.set(root, entriesOf(root));
   }
 
   /** Makes the next take of `root` say notices were lost, with none named. */
   lose(root: string): void {
-    this.silence(root);
+    this.#silence(root);
     this.#lost.add(root);
   }
 
@@ -172,7 +189,7 @@ export class StampTreeWatch implements TreeWatch {
 
   /** Makes the next take of `root` say its watch ended. */
   end(root: string): void {
-    this.silence(root);
+    this.#silence(root);
     this.#ended.add(root);
   }
 

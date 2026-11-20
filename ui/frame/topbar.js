@@ -135,6 +135,16 @@ export function renderStatus() {
   clearTimeout(statusTimer);
   const wait = untilStatusMoves(s);
   statusTimer = wait === null ? null : setTimeout(renderStatus, Math.max(0, wait) + 1);
+  renderVersion(el);
+}
+
+/** The version of Rerail on this computer, in quiet text at the start of the status. */
+function renderVersion(statusEl) {
+  let el = statusEl.querySelector(".ver");
+  const version = data.health?.version ?? null;
+  if (version === null) { el?.remove(); return; }
+  if (!el) { el = h("span.ver", { title: "The version of Rerail on this computer" }); statusEl.prepend(el); }
+  setText(el, `Rerail ${version}`);
 }
 
 /* ---------- the repository and its menu ---------- */

@@ -98,9 +98,10 @@ function documentProblem(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** The pack's entry for one of its rules: titled by its description, else its id; on, in its document's mode. */
+/** The pack's entry for one of its rules: titled by its title, else its description, else its id; on, in its document's mode. */
 function packRuleOf(document: RuleDocument): RulePackRule {
-  const title = document.kind === "code" ? document.rule.description?.trim() || document.rule.id : document.rule.id;
+  const described = document.kind === "code" ? document.rule.description?.trim() : undefined;
+  const title = document.rule.title?.trim() || described || document.rule.id;
   return { id: document.rule.id, kind: document.kind, title, group: "This worktree", mode: document.rule.mode, on: true };
 }
 

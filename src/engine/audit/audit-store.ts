@@ -246,6 +246,8 @@ export interface AuditReader {
   listRepositoryAuditEntries(query: RepositoryAuditEntryQuery): RepositoryAuditEntryPage | undefined;
   ruleActivity(since: number, repositoryIds?: readonly string[]): Map<string, RuleActivityTotals>;
   listViolationHistory(query: ViolationHistoryQuery, repositoryIds?: readonly string[]): ViolationHistoryPage;
+  /** The folder each audit of `auditIds` ran in, which its violations' paths are relative to; an unknown id has none. */
+  workspaceRoots(auditIds: readonly string[]): Map<string, string>;
   /** Distinct sessions with a violation from an audit started at or after `since`. */
   sessionsWithViolations(since: number, repositoryIds?: readonly string[]): number;
 }
@@ -645,6 +647,13 @@ function listViolationHistory(database: RerailDatabase, query: ViolationHistoryQ
   };
 }
 
+function workspaceRoots(database: RerailDatabase, auditIds: readonly string[]): Map<string, string> {
+  // The ids go in as one JSON array, so a page of any size is one statement with one bound value.
+  const rows = database.select({ auditId: audits.auditId, workspaceRoot: audits.workspaceRoot }).from(audits)
+    .where(sql`${audits.auditId} IN (SELECT value FROM json_each(${JSON.stringify(auditIds)}))`).all();
+  return new Map(rows.map(row => [row.auditId, row.workspaceRoot]));
+}
+
 /**
  * Durable, local-only audit bookkeeping. It never emits session events. Every write goes through the database's record
  * writer (`openRecordWriter`): made at once, or, while another process holds the write lock, in order once it is given
@@ -788,6 +797,9 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
   listViolationHistory(query: ViolationHistoryQuery, repositoryIds?: readonly string[]): ViolationHistoryPage {
     return listViolationHistory(this.#recorded(), query, repositoryIds);
   }
+  workspaceRoots(auditIds: readonly string[]): Map<string, string> {
+    return workspaceRoots(this.#recorded(), auditIds);
+  }
   sessionsWithViolations(since: number, repositoryIds?: readonly string[]): number {
     return sessionsWithViolations(this.#recorded(), since, repositoryIds);
   }
@@ -864,6 +876,10 @@ export class SqliteAuditReader implements AuditReader {
     return database === undefined
       ? { violations: [], total: 0, nextCursor: null }
       : listViolationHistory(database, query, repositoryIds ?? this.#repositoryId);
+  }
+  workspaceRoots(auditIds: readonly string[]): Map<string, string> {
+    const database = this.#database.open();
+    return database === undefined ? new Map() : workspaceRoots(database, auditIds);
   }
   sessionsWithViolations(since: number, repositoryIds?: readonly string[]): number {
     const database = this.#database.open();

@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { refreshNow, setNeeds, startPolling } from "../../ui/poll.js";
-import { data, setScope, ui } from "../../ui/state.js";
-import { currentNeeds } from "../../ui/views/index.js";
-import type { MergeAssistStatus } from "../../src/engine/index.js";
-import { sampleStatus } from "../support/merge-assist/status.js";
+import { refreshNow, setNeeds, startPolling } from "../../../ui/poll.js";
+import { data, setScope, ui } from "../../../ui/state.js";
+import { currentNeeds } from "../../../ui/views/index.js";
+import type { MergeAssistStatus } from "../../../src/engine/index.js";
+import { sampleStatus } from "../../support/merge-assist/status.js";
 
 /** The daemon's change stream as the test writes it: `send` one message, `end` it as a stopping daemon does. */
 interface Stream { send: (data: string, event?: string) => void; end: () => void; signal: AbortSignal }

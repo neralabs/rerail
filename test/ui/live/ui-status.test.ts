@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { renderStatus } from "../../ui/frame/topbar.js";
-import { LIVE_MS } from "../../ui/poll.js";
-import { data, setScope } from "../../ui/state.js";
+import { renderStatus } from "../../../ui/frame/topbar.js";
+import { LIVE_MS } from "../../../ui/poll.js";
+import { data, setScope } from "../../../ui/state.js";
 
 /** The status pill's elements as the page holds them: its class and title, its dot, and the words beside the dot. */
 interface FakeElement {

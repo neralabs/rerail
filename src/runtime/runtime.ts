@@ -659,6 +659,14 @@ interface MissedFinding {
  */
 type Kept<T extends PendingSteer | MissedFinding> = T & { digests: FileDigests };
 
+/**
+ * The steer an answer's delivery came from, and its session: one of the session's pending steers, or one the session
+ * owed as it opened (`owed`), which goes back there if no client heard the answer (`returnUndelivered`).
+ */
+type HandedOut =
+  | { state: RuntimeSessionState; pending: PendingSteer; owed?: undefined }
+  | { state: RuntimeSessionState; pending: Kept<PendingSteer>; owed: true };
+
 /** What a closing session owes its agent: what it took back from its ledger (`kept`), and what this opening found. */
 interface Owing {
   kept: { steers: Kept<PendingSteer>[]; findings: Kept<MissedFinding>[] };
@@ -1164,7 +1172,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #audits: SqliteAuditStore;
   readonly #steersInFlight = new Set<Promise<AdapterDelivery | undefined>>();
   /** The steer each answer's delivery came from, and its session, until the answer reaches its asker or comes back (`returnUndelivered`). */
-  readonly #handedOut = new WeakMap<AdapterDelivery, { state: RuntimeSessionState; pending: PendingSteer }>();
+  readonly #handedOut = new WeakMap<AdapterDelivery, HandedOut>();
   /** Evaluator opens still running, each with its own release: disposal waits for them before the stores close under them. */
   readonly #evaluatorOpens = new Set<Promise<CodeRuleBridge | undefined>>();
   /** Every checkout this runtime's sessions touch, with its eligibility and compiled rules. */
@@ -1736,10 +1744,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   /**
    * Gives the session back the steers `deliveries` took when their answer never reached its asker: a hook past its own
    * time limit closes its connection while the daemon still runs its event, and the answer goes nowhere. Each goes back
-   * in front of the session's pending steers, in its order, so the session's next answer carries it; that answer drops
-   * one a newer revision has overtaken, as it drops any (`#performSteer`). The ledger already holds its delivery, so it
-   * is not recorded again, nor after a restart: a close that keeps it owed says so (`recorded`); and a Merge Assist note
-   * was marked given as the answer took it, so it is not marked again. A session closed or opened again since keeps
+   * where the answer took it from (`#giveBack`), so the session's next answer carries it; that answer drops one a newer
+   * revision has overtaken, as it drops any (`#performSteer`, `#stillOwed`). The ledger already holds its delivery, so
+   * it is not recorded again, nor after a restart: a close that keeps it owed says so (`recorded`); and a Merge Assist
+   * note was marked given as the answer took it, so it is not marked again. A session closed or opened again since keeps
    * none: its close counted them as delivered.
    * Never fails: a failure is reported, and the steers stay as the answer left them.
    */
@@ -1749,12 +1757,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         const state = this.#sessions.get(sessionId);
         const returned = deliveries.flatMap(delivery => this.#takeHandedOut(delivery, state));
         if (state === undefined || returned.length === 0) return;
-        for (const pending of returned) {
+        for (const { pending } of returned) {
           pending.recorded = true;
           // It settled as the answer took it.
           delete pending.settled;
         }
-        state.pendingSteers.unshift(...returned);
+        this.#giveBack(state, returned);
       } catch (error) {
         process.stderr.write(`rerail: could not keep the steers of an answer session ${sessionId} never got: ${error instanceof Error ? error.message : String(error)}\n`);
       }
@@ -1762,10 +1770,23 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /** The steer `delivery` came from when an answer of `state`'s took it, no longer counted as handed out; else none. */
-  #takeHandedOut(delivery: AdapterDelivery, state: RuntimeSessionState | undefined): PendingSteer[] {
+  #takeHandedOut(delivery: AdapterDelivery, state: RuntimeSessionState | undefined): HandedOut[] {
     const handed = this.#handedOut.get(delivery);
     this.#handedOut.delete(delivery);
-    return handed === undefined || handed.state !== state ? [] : [handed.pending];
+    return handed === undefined || handed.state !== state ? [] : [handed];
+  }
+
+  /**
+   * Puts each steer of `returned` back in front of the list it came from, in its order: one the session owed as it
+   * opened with what it still owes (`#takeOwed`), which the session's next answer takes whether or not its evaluator has
+   * opened, so an evaluator still opening does not hold it and one that fails to open does not drop it; any other with
+   * the session's pending steers.
+   */
+  #giveBack(state: RuntimeSessionState, returned: readonly HandedOut[]): void {
+    const owed = returned.flatMap(handed => (handed.owed === true ? [handed.pending] : []));
+    const pending = returned.flatMap(handed => (handed.owed === true ? [] : [handed.pending]));
+    state.owed.steers.unshift(...owed);
+    state.pendingSteers.unshift(...pending);
   }
 
   /**
@@ -1789,7 +1810,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       // One an answer no client heard took before the session closed is in the ledger already.
       const delivery = steer.recorded === true ? steer.delivery : await this.#recordedDelivery(steer.delivery);
       deliveries.push(delivery);
-      this.#handedOut.set(delivery, { state, pending: steer });
+      this.#handedOut.set(delivery, { state, pending: steer, owed: true });
     }
     return deliveries;
   }
