@@ -744,7 +744,6 @@ fn tier1_made(c: &Compiled) -> Vec<usize> {
 /// `alphabet`, and `fixed` documents besides; and `also`, for each document, given the
 /// reference's nodes: a difference with another parser, if any. The differences, one per step at
 /// most.
-
 pub fn check_ladder(
     steps: &[(String, String)],
     alphabet: &[u8],
@@ -784,7 +783,7 @@ pub fn check_documents(
     docs.extend(fixed.iter().map(|d| d.as_bytes().to_vec()));
     for (i, bytes) in docs.into_iter().enumerate() {
         let show = || format!("{name}: {:?}", String::from_utf8_lossy(&bytes));
-        let want = reference(&c, &bytes);
+        let want = reference(c, &bytes);
         let run = c.program.block_programs[0].run_files(&[&bytes]).remove(0);
         let interp = crate::stream::run(&c.program, &bytes, &run).ok().map(as_ids);
         let compiled = c.parser.parse(&bytes).ok().map(as_ids);
@@ -822,7 +821,7 @@ pub fn check_documents(
             None => {
                 fell += 1;
                 if i < before {
-                    *reasons.entry(refusal(&c, &bytes)).or_default() += 1;
+                    *reasons.entry(refusal(c, &bytes)).or_default() += 1;
                 }
             }
         }

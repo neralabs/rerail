@@ -547,7 +547,7 @@ fn facts(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, sixtee
         (0..native.strings.len()).map(|i| d[&i].clone()).collect()
     };
     let loses = native.structural.iter().any(|b| matches!(b.operation, Op::LoseLast { .. }));
-    if fetch.is_some() && (flagged || native.extras.len() > 0) {
+    if fetch.is_some() && (flagged || !native.extras.is_empty()) {
         return Err("records made in tier 2, with a token's taking flagged or extras: not yet ahead of time".into());
     }
     let unchecked = crate::native_cpu_stream::bounds(native).unchecked(crate::native_cpu_stream::marks_of(words));
@@ -568,8 +568,8 @@ fn facts(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, sixtee
         return Err("format 16 ahead of time: provisional fields, which `ACCEPT` reads from the rows".into());
     }
     if let Some(fx) = &facts.fetch {
-        for pc in 0..words.len() {
-            if matches!(words[pc].operation, Op::Token { .. }) && fx.seen[pc] == [true, true] {
+        for (pc, word) in words.iter().enumerate() {
+            if matches!(word.operation, Op::Token { .. }) && fx.seen[pc] == [true, true] {
                 return Err(format!("word {pc}: a `TOKEN` where a part may be pending or not"));
             }
             if fx.part_at(&facts, pc) {
@@ -3695,7 +3695,7 @@ fn may_bytes(b: &crate::block_native::BlockNative, x: usize, back: u32) -> [u64;
     use crate::block_native::BlockInst as I;
     const ALL: [u64; 4] = [!0; 4];
     if let Some(set) = crate::native_cpu_lanes::byte_set(b, x) {
-        return if back == 0 { set } else if set == [0; 4] { set } else { ALL };
+        return if back == 0 || set == [0; 4] { set } else { ALL };
     }
     match b.insts[x] {
         I::And(p, q) => {

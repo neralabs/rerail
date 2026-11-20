@@ -1921,7 +1921,7 @@ mod tests {
         let space = crate::native_cpu_lanes::byte_set(&native, 0).expect("a class");
         let word = crate::native_cpu_lanes::byte_set(&native, 1).expect("a class");
         let mut rare = [0u64; 4];
-        for b in [b'"', b'#', b'/'].into_iter().chain(b'0'..=b'9').chain(0xc0..=0xff) {
+        for b in b"\"#/".iter().copied().chain(b'0'..=b'9').chain(0xc0..=0xff) {
             rare[usize::from(b >> 6)] |= 1 << (b & 63);
         }
         let need = Need { set: rare, care: std::array::from_fn(|k| !space[k]) };
