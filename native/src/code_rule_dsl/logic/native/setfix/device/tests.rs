@@ -96,7 +96,22 @@
         }
         assert!(got[0].0.len() > 1000, "{} rows", got[0].0.len());
         assert_eq!(got[0].0, got[1].0, "the device's rows are the CPU's (held: {held})");
-        assert_eq!(got[0].1, got[1].1, "the device's counts per step are the CPU's (held: {held})");
+        // The device's counts per step are the CPU's, but where the CPU's probe read a range of its index that a later
+        // comparison bounds (`ranges`, Q245 item 5): there the probe yields only the rows in it (fewer, from the same
+        // bindings), and the comparison's step, a filter now of rows that all pass, ends where the device's does.
+        let (cpu, dev) = (&got[0].1, &got[1].1);
+        assert_eq!(cpu.len(), dev.len(), "rules (held: {held})");
+        for (rule, (c, d)) in cpu.iter().zip(dev).enumerate() {
+            assert_eq!(c.len(), d.len(), "rule {rule}'s steps (held: {held})");
+            let mut narrowed = false;
+            for (s, (cs, ds)) in c.iter().zip(d).enumerate() {
+                let probe = cs.0 == ds.0 && cs.1 < ds.1;
+                let filter = narrowed && cs.0 < ds.0 && cs.1 == ds.1 && cs.0 == cs.1;
+                assert!(cs == ds || probe || filter, "rule {rule}, step {s}: the CPU's {cs:?}, the device's {ds:?} (held: {held}): {c:?} against {d:?}");
+                narrowed = (narrowed || probe) && cs != ds;
+            }
+            assert_eq!(c.last(), d.last(), "rule {rule}: the head's bindings (held: {held})");
+        }
         }
     }
 
@@ -1086,9 +1101,14 @@
             let core_views = shaped(&store, docs, &Projection::core()).unwrap();
             {
                 let view = |name: &str| core_views.iter().find(|(n, _)| *n == name).unwrap().1.clone();
-                let (docof, line) = (view("docof"), view("line"));
-                let guest: Vec<usize> = (0..docof.len()).filter(|&r| docof.value(r, 1) == 100).collect();
+                let (docof, line, node) = (view("docof"), view("line"), view("node"));
+                // The guest's nodes are those of its own document (node's `d`); its places are its file's (decision
+                // 0431 step 3): `docof` gives the host's key for them.
+                let nodes: std::collections::HashSet<i64> = (0..node.len()).filter(|&r| node.value(r, 0) == 100).map(|r| node.value(r, 1)).collect();
+                assert!(!nodes.is_empty(), "the guest's nodes");
+                let guest: Vec<usize> = (0..docof.len()).filter(|&r| nodes.contains(&docof.value(r, 0))).collect();
                 assert!(!guest.is_empty(), "the guest's places are rows");
+                assert!(guest.iter().all(|&r| docof.value(r, 1) == 7), "the guest's places are its file's");
                 assert!(guest.iter().all(|&r| line.value(r, 1) == 2), "the guest's places are its host's lines");
             }
             // Each document's places read in place (decision 0353 step 4d): the views' reads over the batch's
