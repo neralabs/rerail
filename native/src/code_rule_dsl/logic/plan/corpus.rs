@@ -8074,6 +8074,11 @@ fn run_observed(
             let mut versions = Versions::new();
             for (rel, _) in &stored {
                 let Some(source) = corpus_sources.get(rel) else { continue };
+                // A text test is a test of a string (decision 0464): nothing of it changes with an edit.
+                if cross_vocabulary.tests.iter().any(|(t, _)| t == rel) {
+                    crate::code_rule_dsl::logic::profile::decision("the base relations' versions (decision 0458)", || format!("{rel}: a text test, no version (decision 0464)"));
+                    continue;
+                }
                 let columns = source.columns();
                 let width = columns.len();
                 // A version: its source, in the corpus batch's columns (the same projection's), and its rows.

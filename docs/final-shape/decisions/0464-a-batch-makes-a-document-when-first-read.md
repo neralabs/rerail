@@ -74,7 +74,10 @@ Each has its test before the code that meets it.
    R2, R3. Done (2026-11-19): `syntax::made`; `a_batch_made_by_group_holds_the_eager_batchs_rows` (R1, R3),
    `a_probe_makes_the_document_it_names_alone` (R2); the facts and logic tests pass (557). The views' offsets
    still come from made projections: step 3 gives them counts, and `Batch::lazy` stays false until then.
-2. The text tests as tests of a string. R4.
+2. The text tests as tests of a string. R4. Done (2026-11-19): `made::TextTest` (step 1) answers a probe from the
+   probed strings and a scan from the batch's; the edit's versions skip a text test (a decision says so).
+   `made_batch_tests::r4_a_text_test_has_no_version_after_an_edit`: a join of two files' `text` tested in the cross
+   part, three edits, each equal to a cold run's (it fails with the skip taken out).
 3. The counts kept with the documents' table, and given to the corpus batch. R5.
 4. An edit's versions by group; the kept statistics read, not measured. R6.
 5. Measured. R7.
