@@ -59,26 +59,26 @@ const HELP_STACK_MARGIN: usize = 4 << 20;
 #[inline(never)]
 fn stack_left() -> Option<usize> {
     thread_local! {
-        /// The lowest address of this thread's stack.
-        static LOW: Option<usize> = stack_low();
+        /// This thread's stack: its lowest address and its top.
+        static BOUNDS: Option<(usize, usize)> = stack_bounds();
     }
     let here = 0u8;
     let here = std::ptr::addr_of!(here) as usize;
-    LOW.with(|low| low.map(|low| here.saturating_sub(low)))
+    BOUNDS.with(|b| b.map(|(low, _)| here.saturating_sub(low)))
 }
 
 #[cfg(target_os = "macos")]
-fn stack_low() -> Option<usize> {
+fn stack_bounds() -> Option<(usize, usize)> {
     // SAFETY: this thread's own stack's top and size.
     let (top, size) = unsafe {
         let me = libc::pthread_self();
         (libc::pthread_get_stackaddr_np(me) as usize, libc::pthread_get_stacksize_np(me))
     };
-    (top > size && size > 0).then(|| top - size)
+    (top > size && size > 0).then(|| (top - size, top))
 }
 
 #[cfg(not(target_os = "macos"))]
-fn stack_low() -> Option<usize> {
+fn stack_bounds() -> Option<(usize, usize)> {
     None
 }
 
@@ -1736,10 +1736,14 @@ mod stack_tests {
     /// it is that stack less what the thread has used (2026-11-13: unbounded helps overflowed a pool thread).
     #[test]
     fn the_stack_left_is_measured_on_the_threads_own_stack() {
-        let size = 3 << 20;
-        let left = std::thread::Builder::new().stack_size(size).spawn(super::stack_left).unwrap().join().unwrap().expect("measured");
+        let asked = 3 << 20;
+        // The stack the thread was given: at least what it asked for (std's `Builder::stack_size`: "may be greater";
+        // under Relax far greater, 32 GiB reserved), as the platform reports it.
+        let (left, size) = std::thread::Builder::new().stack_size(asked).spawn(|| (super::stack_left(), super::stack_bounds().map(|(low, top)| top - low))).unwrap().join().unwrap();
+        let (left, size) = (left.expect("measured"), size.expect("the platform's bounds"));
+        assert!(size >= asked - (64 << 10), "{size} given for {asked} asked");
         assert!(left <= size + (64 << 10) && left > size - (256 << 10), "{left} of {size} (the platform counts its guard page)");
-        let deeper = std::thread::Builder::new().stack_size(size).spawn(|| {
+        let deeper = std::thread::Builder::new().stack_size(asked).spawn(|| {
             // Written through a `&mut`, so it is the frame's (optimized, a zero array never written was a constant,
             // and the frame held none of it).
             let mut pad = [0u8; 512 << 10];
