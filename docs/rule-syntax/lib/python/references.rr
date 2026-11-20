@@ -153,8 +153,13 @@ rf_local(i, t) :- rf_expr(i, i, t), rf_bind(i, x, s), kind(s, "lambda"), param(s
 // rf_mbind(m, x, site, form): module or class scope m binds x at site, in form ("def", "class", "assign", "import",
 // …). Other files read these names (`pkg.m.x`, `pkg.m.C.x`). As in W's, `x: T` with no value binds nothing.
 .decl rf_mbind(m: node, x: symbol, site: node, form: symbol)
-rf_mbind(m, x, site, form) :- rf_bscope(m), binding(m, x, site, form).
-rf_mbind(m, x, st, "del") :- rf_bscope(m), del_site(m, n, st), text(n, x).
+rf_mbind(m, x, site, form) :- rf_bscope(m), binding(m, x, site, form), !rf_from_function(m, site).
+rf_mbind(m, x, st, "del") :- rf_bscope(m), del_site(m, n, st), text(n, x), !rf_from_function(m, st).
+// rf_from_function(m, site): site, in a function nested in scope m, binds a name of m (`global x`). W's scope table
+// keeps such a binding in the function's scope: it is no member of m.
+.decl rf_from_function(m: node, site: node)
+rf_from_function(m, site) :- rf_bscope(m), binding(m, _, site, _), nearest(site, f, rf_fnl), within(f, m).
+rf_from_function(m, st) :- rf_bscope(m), del_site(m, _, st), nearest(st, f, rf_fnl), within(f, m).
 .decl rf_bscope(s: node)
 rf_bscope(s) :- kind(s, "module").
 rf_bscope(s) :- kind(s, "class_definition").
@@ -211,16 +216,16 @@ rf_names(i, q) :- rf_bind(i, x, m), kind(m, "module"), rf_mlive_n(m, x, k), k >=
 rf_names(i, q) :- rf_bind(i, x, m), kind(m, "module"), rf_mlive_n(m, x, k), k > 1, rf_mlive_other(m, x),
     rf_mlatest(m, x, _, form), form != "assign", docof(m, d), rf_module(d, md), md != "", q = @dot(md, x).
 // Bound in a function: a nested definition, or an import.
-rf_names(i, q) :- rf_bind(i, x, s), !kind(s, "module"), defn(s, x, f), !rf_rebound(s, x, f), rf_qn(f, q).
-// rf_rebound(s, x, f): function scope s binds x again after definition f (a `del` included): W's walk then reads the
-// definition as known only at run time.
+rf_names(i, q) :- rf_fn_seen(i, s, x, f), defn(s, x, f), !rf_rebound(s, x, f), rf_qn(f, q).
+// rf_rebound(s, x, f): function or class scope s binds x again after definition f (a `del` included): W's walk then
+// reads the definition, where the read sees it, as known only at run time.
 .decl rf_rebound(s: node, x: symbol, f: node)
 rf_rebound(s, x, f) :- defn(s, x, f), !kind(s, "module"), rf_start(f, a), binding(s, x, b, _), rf_start(b, u), u > a.
 rf_rebound(s, x, f) :- defn(s, x, f), !kind(s, "module"), rf_start(f, a), del_site(s, n, st), text(n, x), rf_start(st, u),
     u > a.
 rf_names(i, q) :- rf_fn_seen(i, s, x, site), binding(s, x, site, "import"), rf_fn_follows(i, s, x, site),
     rf_import_target(site, q).
-// rf_fn_seen(i, s, x, site): read i of x, bound in function scope s, sees binding site: the latest before it in s's own
+// rf_fn_seen(i, s, x, site): read i of x, bound in function or class scope s, sees binding site: the latest before it in s's own
 // body, or, read from a function nested in s (which runs after s's body), s's last.
 .decl rf_fn_at(s: node, x: symbol, site: node, u: number)
 rf_fn_at(s, x, site, u) :- binding(s, x, site, _), !kind(s, "module"), rf_start(site, u).
@@ -229,7 +234,7 @@ rf_fn_at(s, x, st, u) :- del_site(s, n, st), !kind(s, "module"), text(n, x), rf_
 rf_fn_read(i, s, x, r) :- rf_bind(i, x, s), !kind(s, "module"), rf_start(i, r).
 // rf_crossing(i, s): read i is in a function or lambda nested in s.
 .decl rf_crossing(i: node, s: node)
-rf_crossing(i, s) :- rf_fn_read(i, s, _, _), nearest(i, f, rf_fnl), f != s.
+rf_crossing(i, s) :- rf_fn_read(i, s, _, _), nearest(i, f, rf_fnl), f != s, within(f, s).
 .decl rf_fnl(k: symbol)
 rf_fnl("function_definition"). rf_fnl("lambda").
 .decl rf_fn_seen_at(i: node, u: number)
@@ -595,6 +600,18 @@ rf_head_open(h) :- rf_value_last(_, h), !kind(h, "identifier"), kind(h, k), !rf_
 rf_head_open(h) :- rf_value_last(_, h), kind(h, "identifier"), text(h, x), !rf_bound_at(h), !builtin(x).
 .decl rf_bound_at(h: node)
 rf_bound_at(h) :- look(h, _, _).
+// A name the scope binds before the read: W's walk follows the binding the read sees. A parameter's value is the
+// caller's; an assignment's is its value's (the value's head open in turn); a loop's, a `with`'s or an `except`'s
+// target is known only at run time.
+rf_head_open(h) :- rf_seen_bind(h, _, "param").
+rf_head_open(h) :- rf_seen_bind(h, b, "assign"), asg(_, _, r, b), rf_value_last(r, g), rf_head_open(g).
+rf_head_open(h) :- rf_seen_bind(h, _, f), f != "def", f != "class", f != "import", f != "assign", f != "param", f != "del".
+// rf_seen_bind(h, b, form): value head h reads binding b of its scope, the latest before it.
+.decl rf_seen_at(h: node, u: number)
+rf_seen_at(h, u) :- rf_value_last(_, h), kind(h, "identifier"), look(h, x, s), rf_start(h, r),
+    u = max t : { binding(s, x, b, _), rf_start(b, t), t < r }.
+.decl rf_seen_bind(h: node, b: node, form: symbol)
+rf_seen_bind(h, b, form) :- rf_seen_at(h, u), look(h, x, s), binding(s, x, b, form), rf_start(b, u).
 // rf_value_head(r, h): value r less its attributes and parentheses.
 .decl rf_value_head(r: node, h: node)
 rf_value_head(r, r) :- asg(_, _, r, _).
