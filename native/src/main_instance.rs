@@ -20,7 +20,7 @@ use std::fs::{File, OpenOptions, TryLockError};
 // Only Unix and Windows have the waiting take (`lock_exclusive`): wasm32-wasip1 has no Node to
 // call it and no thread to wait on.
 #[cfg(any(unix, windows))]
-use napi::{bindgen_prelude::PromiseRaw, Env, JsDeferred, JsValue};
+use napi::{Env, JsDeferred, JsValue, bindgen_prelude::PromiseRaw};
 #[cfg(any(unix, windows))]
 use std::sync::mpsc;
 #[cfg(any(unix, windows))]
