@@ -399,7 +399,7 @@ a path of the entry: one that holds `%`, `!` or `"`, or one with no space that h
 Claude Code finds that `node` on its own `PATH`, and where that is another Node than the recorded one, the launcher
 starts the recorded one as a second process on each event. Set-up reads no `PATH` to choose the entry. Where the recorded Node is there but cannot start, or the launcher ends in a native crash, the `cmd.exe` entry
 exits 0 with no answer, as the launcher answers for a hook that fails, so Claude Code shows no hook error.
-Rerail 0.1.5 and earlier wrote the `node` entry wherever set-up's `PATH` found the recorded Node, though Claude Code's
+Rerail 0.2.0 and earlier wrote the `node` entry wherever set-up's `PATH` found the recorded Node, though Claude Code's
 `PATH` may find another; `rerail update` writes the `cmd.exe` entry over it, and `rerail status` and the dashboard
 count Claude Code as connected with either.
 

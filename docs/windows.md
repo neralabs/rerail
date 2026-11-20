@@ -497,8 +497,9 @@ the one node started.
 
 A coding agent that times out a hook kills the process it started. On macOS and Linux that is node, since the sh
 launcher `exec`s it. On Windows it is the parent node runs under: PowerShell for Codex and Cursor, `cmd.exe` for
-Claude Code where its entry starts `cmd.exe`, and the hook launcher where the `node` entry finds another node on PATH.
-Where that node is the recorded one, the launcher runs the hook in the process Claude Code ends, as on macOS and Linux.
+Claude Code, whose entry set-up writes through `cmd.exe` wherever `cmd.exe` can start its paths, and the hook launcher
+where a `node` entry finds another node on PATH. Where a `node` entry finds the recorded one, the launcher runs the
+hook in the process Claude Code ends, as on macOS and Linux.
 Windows never kills a child with its parent, so the hook ran on holding its session's lock, and the
 session's next hook waited up to 30 s for it. A hook that exits holding its session's lock now removes it as it exits,
 and a lock whose holder has stopped touching it for 10 s is taken by the next hook, even when Windows has given the
