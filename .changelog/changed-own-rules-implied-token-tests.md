@@ -1,0 +1,1 @@
+Your own code rule that tests a token Rerail's syntax trees no longer keep, such as `,`, `=>` or a keyword the grammar implies, stops running: Rerail skips it and says why, and `rerail rules add` and `rerail rules test` refuse it. Rewrite it to test the named structure, or the token as a neighbour (`has`, `follows`, `precedes`).

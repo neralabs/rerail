@@ -5,7 +5,7 @@ The normative text derived from this report is `spec.md` §21 and decision 0005.
 **Sources and short forms**
 - **PR** = the data-layer repository's PR 2539 at tip `281f500d7c`, read from a local checkout of that PR. `dd/` means `docs/design/`.
 - **FE** = `facts-engine` at tip `685db3f7`.
-- **HEAD** = the Pulling-it-all-together worktree.
+- **HEAD** = the PIAT worktree.
 - Gate-corpus row counts come from `rule-profiles/out/facts.sqlite`, `flow.sqlite` and `measure.txt` in a session scratchpad (not kept), plus `research/heavy-rule-profiles.md`.
 
 ---

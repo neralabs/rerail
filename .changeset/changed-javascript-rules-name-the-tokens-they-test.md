@@ -2,4 +2,4 @@
 "@neralabs/rerail-pack-javascript": patch
 ---
 
-Rules that test punctuation such as `,`, `=>` or `[` now name the token and report at it, so they run on the rule engine that leaves those tokens off its syntax trees. What they report is unchanged.
+With Rerail 0.2.0, rules that test punctuation such as `,`, `=>` or `[` run again; 0.2.0 skips the previous version's. They report what they did, except that `eslint-no-with` now spans the whole `with` statement, not only its keyword.

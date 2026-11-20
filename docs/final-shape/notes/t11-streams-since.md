@@ -6,7 +6,7 @@ Research track T11. Read-only notes; nothing was built, run, or benchmarked.
 
 - Worktree roots (all paths below are relative to these):
   - **DLRE** = the `Data-layer-rule-expressivity` worktree (HEAD `b1d36739` "test: require schema reuse, scope isolation and bounded completed rows").
-  - **N1562** = the `scale-test-the-re-railer` worktree (HEAD `e481c192` "TDD-RED: packetize expanded relational navigation").
+  - **N1562** = a worktree of this repository (HEAD `e481c192` "TDD-RED: packetize expanded relational navigation").
   - **SSC** = the `sql-set-composition` worktree (HEAD `b3e97cd4` "Define transition from matcher continuations to shared execution plans").
 - Citations are `file:line` (line numbers of the files at those HEADs).
 - Tags: **M** = a measured number reported by the source; **D** = a decision the source records (keep/reject/selected); **A** = an assertion, proposal, or design requirement that the source does not claim to have measured or implemented.
@@ -380,7 +380,7 @@ In journal order:
 
 ---
 
-## Source 2: N1562 (scale-test-the-re-railer)
+## Source 2: N1562 (a worktree of this repository)
 
 ### 2.1 Design doc: `docs/sql-scope-and-operational-semantics-design.md` (776 lines)
 
@@ -556,7 +556,7 @@ Ordering is not independently verified: I checked that rows are produced file-ma
 
 ### 3.1 `docs/sql-structural-execution-plan.md` (proposed, 2026-10-26; baseline `c6ff8110`; removed; at 7efcac9c67)
 
-Status: "proposed transition plan … changes no engine behavior" (`:3`). The integration reference is `Pulling-it-all-together` at `0b941fb4` (`:5`).
+Status: "proposed transition plan … changes no engine behavior" (`:3`). The integration reference is `PIAT` at `0b941fb4` (`:5`).
 - **Thesis** (`:7-9`): "The target compiler emits a graph of local pattern groups, shared facts, and relational operators. The unit of execution is a producer or a compiled group over a bounded document batch. The cohort interpreter remains a migration oracle. It is absent from the final production execution path."
 
 **Evidence and governing decisions** (`:11-35`):

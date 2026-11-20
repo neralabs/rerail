@@ -32,11 +32,18 @@ export interface SteerRequest {
   readonly generatedEdit: boolean;
 }
 
-/** Where each rule of `provenance` was added from, for a steer to name. */
-export function steerSourceOf(provenance: readonly AuditRuleProvenance[]): SteerSourceOf {
+/**
+ * Where each rule of `provenance` was added from, for a steer to name, with the title `titleOf` gives it (its document's
+ * own; none, and `steerTitle` takes its pack's).
+ */
+export function steerSourceOf(
+  provenance: readonly AuditRuleProvenance[],
+  titleOf: (ruleId: string) => string | undefined = () => undefined,
+): SteerSourceOf {
   return ruleId => {
     const recorded = provenance.find(entry => entry.ruleId === ruleId);
-    return recorded !== undefined && "source" in recorded ? recorded.source : undefined;
+    if (recorded === undefined || !("source" in recorded)) return undefined;
+    return { ...recorded.source, title: titleOf(ruleId) };
   };
 }
 

@@ -26,7 +26,7 @@ Paths are relative to the `wolfeel` worktree. "CAWS" = `docs/content-addressed-w
 - Bulk restoration: clean Git aliases resolve in one JSON-backed joined query; dirty files need reads and hashes; published in batches of ≤ 64; tape frames load in bulk before workers; missing frames go back to parsing without a point lookup.
 
 ### Evidence (:84-142, M)
-- 5,725 files, 95.7 MB source, 160.38 MB raw compact tapes, 56.08 MB zstd-3 frames, 169,014 violations; raw (source + tape) ≈ 2.68 B per source byte; 21.9% after zstd. File access p50 59–77 µs, p95 374–497 µs. The zstd level curve is as in tempo-residency (L3 default).
+- 5,725 files, 95.7 MB source, 160.38 MB raw compact tapes, 56.08 MB zstd-3 frames, 169,014 violations; raw (source + tape) ≈ 2.68 B per source byte; 21.9% after zstd. File access p50 59–77 µs, p95 374–497 µs. The zstd level curve is as in predecessor-residency (L3 default).
 - Machine inventory 2026-09-24: 45 Pi processes, 44 workspaces, 12.19 GiB RSS, 327,565 files, **5.05 GB path-addressed vs 1.47 GB globally unique source (71% cross-workspace reduction)**; 58 GB of source-shaped files under `tmp` dirs.
 - Alternatives (:155-190):
   - path-addressed ~3.0 GiB (scan-limit estimate 6.8 GB) would approach the 10 GB limit at 100 workspaces;
@@ -157,7 +157,7 @@ Paths are relative to the `wolfeel` worktree. "CAWS" = `docs/content-addressed-w
 
 ## docs/transducer-design.md (322 lines, read in full) — main's transducer
 - Main's IR is the older one: STOP, KIND, FIELD, FLAGS, TEXT, SIZE, CHILD, NEXT, PARENT, DESCEND, CAPTURE, FORK, GOTO, EMIT (:88-103), with 32-bit words `opcode|mode<<8|operand<<16` (:36-50) and four tables (strings, predicates, labels, longs) (:61-80).
-  - No SUPERTYPE, FOLLOWING, cursors, repeats or fork policies (Tempo's are newer, per transducer-ir).
+  - No SUPERTYPE, FOLLOWING, cursors, repeats or fork policies (the predecessor's are newer, per transducer-ir).
   - Path enumeration, depth-first output order, no dedup (:116-132). Cycles must progress (:149-154). Exhausted resources mean incomplete output, never a negative (:207).
 - **The ast-grep compiler accepts only exact root-terminal Smart patterns** (:225-227). Benchmark (M): 8 identifier patterns, 5,725 files, 12,967 ranges; ast-grep on trees 12,608.58 ms, on tapes 817.68 ms, **transducers on tapes 359.22 ms**. Parse 8,653 ms; encode+restore 4,575 ms.
 - **`execute_batch` (many programs × many tapes in one native operation) exists, but "production runs node-test programs one node at a time"** (:262-264). Root lists per (file, program); an empty list proves no candidates; missing index coverage means unanchored (:267-275).

@@ -18,7 +18,7 @@ containment, or provided as a built-in computed by the transducer, as `nearest` 
 - **Tree axes are built-ins, as `nearest` is.**
   - They are `inside($n, $a, kindset)` and `has($a, $n, …)`.
   - They run as tape arithmetic in the transducer, and the rules read them as relations.
-- **The NFA is optimized** as in the Pulling-it-all-together workstream, and the built-ins lower
+- **The NFA is optimized** as in the PIAT workstream, and the built-ins lower
   to the appropriate tapes.
 - **If needed, an optimizer** lowers Datalog rules that could be tapes into tapes, probably
   through transducers.

@@ -44,7 +44,7 @@ Packs that port a linter are [linter-equivalent](#linter-equivalent) to it.
 | Node.js | framework | eslint-plugin-n 18.4.1 | 37 (11) | a Node.js server framework (`express`, `koa`, `fastify`, `@nestjs/core` and others) or `electron` dependency, or `*.cjs`/`*.mjs`/`*.cts`/`*.mts` files outside tests, scripts, fixtures and configuration |
 | Vue | framework | eslint-plugin-vue 10.11.1 | 23 (21) | `*.vue` files |
 | React | framework | eslint-plugin-react 7.37.5, eslint-plugin-react-hooks 7.1.1 | 51 (32) | a `react` dependency, or `*.jsx` files |
-| Django | framework | none: Rerail's own rules | 27 (27) | a `django` dependency in `requirements*.txt` or `pyproject.toml`, or a `manage.py` |
+| Django | framework | none: Rerail's own rules | 27 (25) | a `django` dependency in `requirements*.txt` or `pyproject.toml`, or a `manage.py` |
 
 - **A project's own pack** is a `repository` pack you install from its folder with `rerail packs add <folder>`. It counts as a third party's pack.
 - **Starting values** are a pack's `mode` and `on`: what its rules start with in a repository that adds it. Repository or checkout settings override them.
@@ -59,7 +59,7 @@ A project's own pack holds rule documents in `rules/` and a `pack.json` whose ma
 Starting values also apply to rules a later upgrade adds.
 
 - **Mode:** the rule document's (`steer`), unless `pack.json` sets one. A port of a rule upstream only warns about is listed with `"mode": "log"` ([pack format](pack-format.md#packjson)).
-- **On:** a ported rule starts on, unless no approved upstream configuration turns it on or upstream deprecates it. Such a rule is experimental, listed with `"on": false`. A reviewer also holds a rule off when its steer would do harm where no matcher change can tell the cases apart: `"on": false` with `heldOff`, one line saying why (Python's B009 and B010; the pack's README says more). Set-up then turns rules on or off to match the repository's own lint config ([rule scoping](rule-scoping.md#the-repositorys-own-lint-config)), except that it never turns a held-off rule on ([pack format](pack-format.md#packjson)).
+- **On:** a ported rule starts on, unless no approved upstream configuration turns it on or upstream deprecates it. Such a rule is experimental, listed with `"on": false`. A reviewer also holds a rule off when its steer would do harm where no matcher change can tell the cases apart: `"on": false` with `heldOff`, one line saying why (Python's B009 and B010; the pack's README says more). Set-up then turns rules on or off to match the repository's own lint config ([rule scoping](rule-scoping.md#the-repositorys-own-lint-config)), except that it never turns a held-off rule on ([pack format](pack-format.md#packjson)). A rule of Rerail's own, with no upstream, starts on only when at least 90% of its read matches on the pack's corpus were real; below that it ships with `"on": false` (Django's get-handler-writes and host-header-without-get-host).
 - **Suppressions:** a rule honours its linter's suppression comments only if its document says so (`suppress`) and the repository's `suppressions` setting for it is `honour` ([rule scoping](rule-scoping.md#rules-attachments-and-settings)). The pack's `honourSuppressionComments` is the starting value.
 
 </details>
