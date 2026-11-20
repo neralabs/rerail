@@ -304,7 +304,8 @@ Code from npm installs without install scripts and is checked before it runs. Pa
 
 ### B6: Data at rest
 
-Rerail's files are private to the person's OS user: folders 0700, files 0600, ledgers never written through a symlink.
+Rerail's files are private to the person's OS user: folders 0700, files 0600 (except the session records `.gitignore`,
+`0644`, which holds only `*`), ledgers never written through a symlink.
 
 <details>
 <summary>Controls</summary>
@@ -683,15 +684,18 @@ maker's alone.
   and pending-steer files open without following a symlink (`openNoFollow`).
 - A refusal names the path in the daemon log, and the hook fails open.
 - `ignoreInGit` rewrites `.gitignore` in the default root whenever it is not Rerail's own `*` file, so a planted `!*`
-  cannot expose ledgers to `git add -A`; a rewrite that fails fails the session. It keeps one only when it is another
-  account's to write: a file this account may not read that another account owns (on Windows, where no owner is read,
-  one this account may also not add a file beside), or none at all where this account may not add a file, as in a
-  records folder another account repaired. A refused write left to that account is named in the daemon log.
+  cannot expose ledgers to `git add -A`; a rewrite that fails fails the session. It writes it `0644` whatever the
+  umask, so every account's Git reads it. It keeps one only when it is another account's to write: a file this account
+  may not read whose owner and records folder's owner are both another account (a folder's owner rewrites it; on
+  Windows, where no owner is read, one this account may also not add a file beside), or none at all where this account
+  may not add a file, as in a records folder another account repaired. A refused write left to that account is named
+  in the daemon log.
 - A `.rerail/sessions` the repository's own commit makes, which on Windows outside the profile folder takes its
   parent's ACL, is given one of its own when the daemon first opens a session there: each file and folder in it, those
   already there included, grants its maker, SYSTEM and Administrators alone, and an account an entry the folder
-  inherits let add a folder there may still add one, never list it (an entry set on the folder itself for an account
-  is left as it is). Every `icacls` on the records folder or a folder in it runs with `/l`, so a junction swapped in
+  inherits let add a folder there may still add one, never list it (an allow entry set on the folder itself for such
+  an account stays, with that right added; an account a deny entry set there names is given nothing). Every `icacls`
+  on the records folder or a folder in it runs with `/l`, so a junction swapped in
   for one cannot redirect a grant to a folder this user owns. That session's own folder is private before the session
   writes (`makeLedgerFolder` with `repair`). Elsewhere it loses the group's and others' read, and gets the sticky bit
   while they may still add to it (`2775` becomes `3731`, `0777` `1733`, `0755` `0711`): no other account lists it, one

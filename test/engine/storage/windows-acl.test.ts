@@ -492,17 +492,21 @@ describe("an owner-only ACL on Windows", () => {
     expect(sddlWriters("D:NO_ACCESS_CONTROL", USER)).toEqual(["S-1-1-0"]);
   });
 
-  it("keeps, as a records folder stops inheriting, the right to make a folder there for the accounts an inherited entry gives it, never one an entry set on the folder names", () => {
-    // Authenticated Users and Users may change what is in it by inheritance; an entry set on the folder lets one account
-    // write, and others name Users (a denial) and another account that also inherits the right (read only).
-    const found = "D:AI(A;;FW;;;S-1-5-21-1-2-3-1002)(A;;FR;;;S-1-5-21-1-2-3-1003)(D;;WD;;;BU)(A;OICIID;FA;;;BA)(A;OICIID;FA;;;SY)"
+  it("keeps, as a records folder stops inheriting, the right to make a folder there for the accounts an inherited entry gives it, an allow entry set on the folder for one of them included, never one a deny entry set there names", () => {
+    // Authenticated Users, Users and another account may change what is in it by inheritance; entries set on the folder
+    // let one account that inherits nothing write, let Users only read and run what is there, and deny the other one
+    // writing.
+    const found = "D:AI(A;;FW;;;S-1-5-21-1-2-3-1002)(A;;0x1200a9;;;BU)(D;;WD;;;S-1-5-21-1-2-3-1003)(A;OICIID;FA;;;BA)(A;OICIID;FA;;;SY)"
       + "(A;ID;0x1301bf;;;AU)(A;OICIID;0x1301bf;;;BU)(A;ID;0x1301bf;;;S-1-5-21-1-2-3-1003)";
-    expect(sddlInheritedWriters(found, USER)).toEqual(["S-1-5-11"]);
+    // Users keeps the right beside its own read entry, which `icacls /grant` adds it to; the denied account gets none.
+    expect(sddlInheritedWriters(found, USER)).toEqual(["S-1-5-11", "S-1-5-32-545"]);
     expect(sddlWriters(found, USER)).toEqual(["S-1-5-21-1-2-3-1002", "S-1-5-11", "S-1-5-32-545", "S-1-5-21-1-2-3-1003"]);
+    // A deny entry the folder inherits is not one set there.
+    expect(sddlInheritedWriters("D:AI(D;ID;WD;;;BU)(A;OICIID;0x1301bf;;;BU)", USER)).toEqual(["S-1-5-32-545"]);
     expect(sddlInheritedWriters("D:NO_ACCESS_CONTROL", USER)).toEqual([]);
   });
 
-  it("runs each icacls of a records folder's repair on a link there itself, never on what it points to, and each but the one that passes the new ACL on within its time limit", async () => {
+  it("runs each icacls of a records folder's repair on a link there itself, never on what it points to, and each but those that change the folder's own ACL within its time limit", async () => {
     const runs: Array<[readonly string[], number | undefined]> = [];
     vi.mocked(execFile).mockImplementation(((_file: string, args: readonly string[], options: { timeout?: number }, done: (error: Error | null, stdout: string, stderr: string) => void) => {
       runs.push([args, options.timeout]);
@@ -520,10 +524,19 @@ describe("an owner-only ACL on Windows", () => {
     await WINDOWS_ACL.keepEachOwnersOwn(sessions, ["S-1-5-11"]);
     await WINDOWS_ACL.restrictFolderToOwner(`${sessions}\\${"a".repeat(64)}`);
     expect(runs.map(([args]) => [args[0], args.includes("/l")])).toEqual([
-      [sessions, true], [sessions, true], [sessions, true], [`${sessions}\\claude-code-locks`, true], [sessions, true], [`${sessions}\\${"a".repeat(64)}`, true],
+      [sessions, true], [sessions, true], [sessions, true], [`${sessions}\\claude-code-locks`, true], [sessions, true], [sessions, true],
+      [`${sessions}\\${"a".repeat(64)}`, true],
     ]);
-    expect(runs.map(([, timeout]) => timeout)).toEqual([30_000, 30_000, 30_000, 30_000, undefined, 30_000]);
+    // Windows passes the records folder's ACL again to all it holds on each change of it, so those two have no time limit.
+    expect(runs.map(([, timeout]) => timeout)).toEqual([30_000, 30_000, 30_000, 30_000, undefined, undefined, 30_000]);
     expect(runs[3]?.[0]).toEqual([`${sessions}\\claude-code-locks`, "/grant", "*S-1-5-11:(X,WD,RA,S)", "/l", "/q"]);
+    // Each account that may make a folder there gets that right on the folder itself before it stops inheriting the
+    // entry that gave it, added to any entry already set there for that account.
+    expect(runs[4]?.[0]).toEqual([sessions, "/grant", "*S-1-5-11:(X,AD,RA,RC,S)", "/l", "/q"]);
+    expect(runs[5]?.[0]).toEqual([
+      sessions, "/inheritance:r", "/grant:r", expect.stringMatching(/^\*S-1-[\d-]+:F$/u), "*S-1-3-0:(OI)(CI)(IO)F",
+      "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F", "/l", "/q",
+    ]);
   });
 
   it.runIf(process.platform === "win32")("keeps each account's records its own in a records folder under a drive, and lets each account that could make a folder there still make one", async () => {

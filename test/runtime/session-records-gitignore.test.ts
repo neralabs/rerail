@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { chmod, lstat, mkdir, readdir, readFile, realpath, stat, symlink, writeFile } from "node:fs/promises";
+import type * as FsPromises from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { RerailRuntime } from "../../src/runtime/index.js";
@@ -39,6 +40,19 @@ vi.mock("../../src/engine/file-replace.js", async () => {
     renameWithRetry: async (from: string, to: string, options?: Parameters<typeof actual.renameWithRetry>[2]) => {
       if (!refusedRenames.has(to)) return await actual.renameWithRetry(from, to, options);
       throw Object.assign(new Error(`EPERM: Windows refused for 2 s to rename ${from} to ${to}, as another program held one of them open.`), { code: "EPERM" });
+    },
+  };
+});
+
+/** The paths whose lstat names another account as their owner, as it does a file that account wrote. */
+const foreignOwned = vi.hoisted(() => new Set<string>());
+vi.mock("node:fs/promises", async importOriginal => {
+  const actual = await importOriginal<typeof FsPromises>();
+  return {
+    ...actual,
+    lstat: async (path: Parameters<typeof actual.lstat>[0], options?: Parameters<typeof actual.lstat>[1]) => {
+      const stats = await actual.lstat(path, options);
+      return foreignOwned.has(String(path)) ? Object.assign(stats, { uid: Number(stats.uid) + 1 }) : stats;
     },
   };
 });
@@ -196,11 +210,16 @@ describe("session records in a checkout", () => {
     expect(await readFile(gitignore, "utf8")).toBe("!*\n");
   });
 
-  it("write the .gitignore readable by the person only, like the ledgers", async ({ skip }) => {
+  it("write the .gitignore readable by every account whose Git reads it, whatever the umask", async ({ skip }) => {
     skip(!POSIX_MODES, NO_POSIX_MODES);
     const { checkout, storageRoot, databasePath } = await checkoutWithSessionStorage();
-    await openOneSession(checkout, storageRoot, databasePath);
-    expect((await stat(join(storageRoot, ".gitignore"))).mode & 0o777).toBe(0o600);
+    const umask = process.umask(0o077);
+    try {
+      await openOneSession(checkout, storageRoot, databasePath);
+    } finally {
+      process.umask(umask);
+    }
+    expect((await stat(join(storageRoot, ".gitignore"))).mode & 0o777).toBe(0o644);
   });
 
   it("are kept private once a session opens in a records folder Git, a person or an earlier release made, earlier ones included", async () => {
@@ -244,7 +263,7 @@ describe("session records in a checkout", () => {
     expect(ledger).toContain("Add a priority score to each todo");
   });
 
-  it("leave a .gitignore another account owns and this one may not read in place, so that account's Git still reads it", async ({ skip }) => {
+  it("leave a .gitignore another account owns and this one may not read in place where that account owns the records folder too, so that account's Git still reads it", async ({ skip }) => {
     skip(!POSIX_MODES, NO_POSIX_MODES);
     skip(process.getuid?.() === 0, "root reads a file whatever its mode");
     const { checkout, storageRoot, databasePath } = await checkoutWithSessionStorage();
@@ -253,7 +272,7 @@ describe("session records in a checkout", () => {
     await writeFile(gitignore, "# Created by Rerail: session records stay out of Git.\n*\n");
     await chmod(gitignore, 0o000);
     const { ino } = await lstat(gitignore);
-    // The file's owner, this account's uid, reads as another account's.
+    // The owner of the file and of the records folder, this account's uid, reads as another account's.
     const uid = vi.spyOn(process, "getuid").mockReturnValue(process.getuid!() + 1);
     try {
       await openOneSession(checkout, storageRoot, databasePath);
@@ -262,6 +281,26 @@ describe("session records in a checkout", () => {
     }
     expect((await lstat(gitignore)).ino).toBe(ino);
     expect((await stat(gitignore)).mode & 0o777).toBe(0);
+  });
+
+  it("rewrite a .gitignore another account owns and this one may not read where this account owns the records folder, so its own Git reads one", async ({ skip }) => {
+    skip(!POSIX_MODES, NO_POSIX_MODES);
+    skip(process.getuid?.() === 0, "root reads a file whatever its mode");
+    const { checkout, storageRoot, databasePath } = await checkoutWithSessionStorage();
+    const gitignore = join(storageRoot, ".gitignore");
+    await mkdir(storageRoot, { recursive: true });
+    // Another account's Rerail wrote it owner-only, as one did before it wrote the file 0644, after a `git clean -fdX`
+    // removed this account's.
+    await writeFile(gitignore, "# Created by Rerail: session records stay out of Git.\n*\n");
+    await chmod(gitignore, 0o000);
+    foreignOwned.add(gitignore);
+    try {
+      await openOneSession(checkout, storageRoot, databasePath);
+    } finally {
+      foreignOwned.delete(gitignore);
+    }
+    expect(await readFile(gitignore, "utf8")).toBe("# Created by Rerail: session records stay out of Git.\n*\n");
+    expect(execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: checkout, encoding: "utf8" })).toBe("");
   });
 
   it("rewrite a .gitignore this account owns but may not read, which no other account's Rerail keeps", async ({ skip }) => {

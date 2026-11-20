@@ -981,28 +981,39 @@ const SESSION_RECORDS_GITIGNORE = "# Created by Rerail: session records stay out
  * repository's own ignores. Only the default root is Rerail's alone: a custom one (`RERAIL_STORAGE_ROOT`) may hold the
  * person's own files, so it is left as it is. In Rerail's own folder the file is rewritten whenever it holds anything
  * else, or is no regular file: a repository that commits one with `!*` would otherwise have the person's next
- * `git add -A` commit their prompts and pre-edit source. A rewrite that fails fails the session, as one onto a
- * `.gitignore` folder or onto a file another program holds open does, except where the file is another account's to
- * write. One this account may not read and another account owns is kept, not replaced: that account's Rerail wrote
- * it, and a file this account put there would be one that account's Git may not read. One this account owns is
- * rewritten even when it may not read it. On Windows, whose lstat names no owner, one this account may not read is
- * rewritten too, and kept only when this account may not add a file to the folder, as in a records folder another
- * account repaired. There, with no file at the path either, the account that may list the folder, the one whose Git
- * could add what is in it, writes it. Each time this account leaves the file to another one, stderr names it.
+ * `git add -A` commit their prompts and pre-edit source. It is written `0644` whatever the umask: it holds only
+ * Rerail's `*`, and every account that records there, whose Git reads it, may then read it whoever wrote it. A rewrite
+ * that fails fails the session, as one onto a `.gitignore` folder or onto a file another program holds open does,
+ * except where the file is another account's to write. One this account may not read is rewritten when this account
+ * owns it or owns the records folder, whose owner may rename over any entry in it, sticky or not; it is kept, not
+ * replaced, only when another account owns both the file and the folder, as that account's Rerail wrote it. On
+ * Windows, whose lstat names no owner, one this account may not read is rewritten too, and kept only when this account
+ * may not add a file to the folder, as in a records folder another account repaired. There, with no file at the path
+ * either, the account that may list the folder, the one whose Git could add what is in it, writes it. Each time this
+ * account leaves the file to another one, stderr names it.
  */
 async function ignoreInGit(storageRoot: string): Promise<void> {
   const path = join(storageRoot, ".gitignore");
-  const found = await foundGitignore(path, storageRoot);
-  if (found.kind === "another account's" || (found.kind === "text" && found.text === SESSION_RECORDS_GITIGNORE)) return;
+  if (keptAsFound(await foundGitignore(path, storageRoot))) return;
   try {
-    await writeLedgerFile(path, storageRoot, SESSION_RECORDS_GITIGNORE);
+    await writeLedgerFile(path, storageRoot, SESSION_RECORDS_GITIGNORE, 0o644);
   } catch (error) {
-    if (!newFileRefused(error)) throw error;
-    const { kind } = await foundGitignore(path, storageRoot);
-    const anotherAccounts = kind === "missing" || kind === "another account's" || (kind === "unreadable" && process.platform === "win32");
-    if (!anotherAccounts) throw error;
+    if (!newFileRefused(error) || !leftToAnother(await foundGitignore(path, storageRoot))) throw error;
     process.stderr.write(`rerail: left ${path} to the account that may add files to ${storageRoot}: this account may not, and that account's Rerail writes it\n`);
   }
+}
+
+/** Whether a `.gitignore` found before any write is left as it is: Rerail's own, or another account's to write. */
+function keptAsFound(found: FoundGitignore): boolean {
+  return found.kind === "another account's" || (found.kind === "text" && found.text === SESSION_RECORDS_GITIGNORE);
+}
+
+/**
+ * Whether what is at a `.gitignore` this account may not add a file beside is another account's to write: nothing, a
+ * file another account keeps, or on Windows, where no owner is read, a file this account may not read.
+ */
+function leftToAnother({ kind }: FoundGitignore): boolean {
+  return kind === "missing" || kind === "another account's" || (kind === "unreadable" && process.platform === "win32");
 }
 
 /** Whether a file operation failed because this account may not do it there (EACCES, or EPERM as Windows reports it). */
@@ -1021,9 +1032,9 @@ function newFileRefused(error: unknown): boolean {
 
 /**
  * What is at a storage root's `.gitignore`: its text, nothing, something that is no regular file, a file this account
- * may not read that another account owns, or one it may not read whose owner is this account or, on Windows, whose
- * lstat names no owner (its uid is always 0), not known. A file Windows refuses even to lstat, as one in a folder this
- * account may not list, is one this account may not read.
+ * may not read that another account keeps ({@link whoseUnreadable}), or one it may not read that this account may
+ * replace, not known. A file Windows refuses even to lstat, as one in a folder this account may not list, is one this
+ * account may not read.
  */
 type FoundGitignore =
   | { readonly kind: "text"; readonly text: string }
@@ -1034,9 +1045,7 @@ async function foundGitignore(path: string, storageRoot: string): Promise<FoundG
   try {
     stats = await lstat(path);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { kind: "missing" };
-    if (accessRefused(error)) return { kind: "unreadable" };
-    throw error;
+    return lstatRefusal(error);
   }
   if (!stats.isFile()) return { kind: "not a file" };
   let text: string | undefined;
@@ -1044,9 +1053,26 @@ async function foundGitignore(path: string, storageRoot: string): Promise<FoundG
     text = await readLedgerFile(path, storageRoot);
   } catch (error) {
     if (!accessRefused(error)) throw error;
-    return { kind: process.platform !== "win32" && stats.uid !== process.getuid?.() ? "another account's" : "unreadable" };
+    return { kind: await whoseUnreadable(stats, storageRoot) };
   }
   return text === undefined ? { kind: "missing" } : { kind: "text", text };
+}
+
+/** What a `.gitignore` whose lstat failed with `error` is: nothing, or one this account may not read; else it throws. */
+function lstatRefusal(error: unknown): FoundGitignore {
+  if ((error as NodeJS.ErrnoException).code === "ENOENT") return { kind: "missing" };
+  if (accessRefused(error)) return { kind: "unreadable" };
+  throw error;
+}
+
+/**
+ * Whose to write a `.gitignore` this account may not read is, given its lstat `stats`: another account's when another
+ * account owns both it and the records folder `storageRoot`; this account's to replace when it owns either, since a
+ * folder's owner may rename over any entry in it, and on Windows, whose lstat names no owner (its uid is always 0).
+ */
+async function whoseUnreadable(stats: Stats, storageRoot: string): Promise<"another account's" | "unreadable"> {
+  if (process.platform === "win32" || stats.uid === process.getuid?.()) return "unreadable";
+  return (await lstat(storageRoot)).uid === process.getuid?.() ? "unreadable" : "another account's";
 }
 
 /** Replays a session ledger into its registry and returns the turn the session had reached. */

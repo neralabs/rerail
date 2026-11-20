@@ -193,8 +193,9 @@ A repository controls its own `.rerail/` folder, so this stops it redirecting yo
 the error and log; the agent continues without Rerail.
 
 Exception: a symlinked or edited `.rerail/sessions/.gitignore` is overwritten with `*`, so a committed `!*` cannot make
-`git add -A` commit your records. One Rerail cannot overwrite stops the session's records instead; one another
-account's Rerail wrote and you may not read is left as it is.
+`git add -A` commit your records. One Rerail cannot overwrite stops the session's records instead. Rerail writes it
+readable by every account (`0644`), since it holds only `*`; one another account's Rerail wrote and you may not read
+is left as it is when that account also owns the `sessions` folder, and rewritten when you own the folder.
 
 </details>
 

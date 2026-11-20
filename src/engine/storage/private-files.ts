@@ -120,11 +120,12 @@ function cannotShare(folder: string, error: unknown): void {
 
 /**
  * Gives a found folder the ACL under which what each account makes there is that account's alone
- * ({@link WindowsAcl.keepEachOwnersOwn}), keeping for the accounts an entry it inherits lets make a folder there that
- * right and no other: first each shared folder already in it lets them add files, so their hooks there go on through
- * the change. A shared folder another account made, whose ACL only that account may change, stays its maker's and is
- * named on stderr. One that failed in a way that may pass by itself ({@link mayPassByItself}) ends the repair before
- * the folder's ACL changes, so the next try lets those accounts add files there first.
+ * ({@link WindowsAcl.keepEachOwnersOwn}), keeping for the accounts an entry it inherits lets make a folder there, but
+ * for any a deny entry set on the folder names, that right and giving them no other: first each shared folder already
+ * in it lets them add files, so their hooks there go on through the change. A shared folder another account made, whose
+ * ACL only that account may change, stays its maker's and is named on stderr. One that failed in a way that may pass by
+ * itself ({@link mayPassByItself}) ends the repair before the folder's ACL changes, so the next try lets those accounts
+ * add files there first.
  */
 async function keepEachOwnersOwn(folder: string, acl: WindowsAcl, shared: (name: string) => boolean): Promise<void> {
   const writers = await acl.inheritedWriters(folder);
@@ -174,14 +175,15 @@ function repairUnderWay(folder: string, acl: WindowsAcl, shared: (name: string) 
  * entries from its parent's, as one Git, `mkdir` or an earlier release made does, gives it an ACL of its own
  * ({@link keepEachOwnersOwn}): what is already there becomes its owner's alone, as does what any account makes there
  * next, and an account an entry the folder inherits let make a folder there still can, to record its own sessions, but
- * lists nothing. An entry set on the folder itself for another account is someone's choice and stays as it is, and a
- * folder with an ACL of its own is left as it is. It resolves once the ACL is read: Windows passes a new one on in the
- * background, in time in step with what is in the folder, and {@link FoundFolderRepair.keepInside} keeps a folder in
- * it private meanwhile, so nobody waits for that. A folder whose ACL it cannot read or change (on Windows, another
- * account's, say) or whose mode change the system refuses is named on stderr, which a daemon writes to its log, and
- * never fails the caller: its `kept` resolves `transient` or `refused`, and on Windows each folder kept inside it then
- * gets the owner-only ACL of its own. Elsewhere than Windows, another account's folder is left as it is and resolves
- * `kept`.
+ * lists nothing. An entry set on the folder itself for another account is someone's choice and stays: an allow entry
+ * for an account the folder inherited that right for gains it, and a deny entry keeps that account from being given
+ * it. A folder with an ACL of its own is left as it is. It resolves once the ACL is read: Windows passes a new one on
+ * in the background, in time in step with what is in the folder, and {@link FoundFolderRepair.keepInside} keeps a
+ * folder in it private meanwhile, so nobody waits for that. A folder whose ACL it cannot read or change (on Windows,
+ * another account's, say) or whose mode change the system refuses is named on stderr, which a daemon writes to its
+ * log, and never fails the caller: its `kept` resolves `transient` or `refused`, and on Windows each folder kept inside
+ * it then gets the owner-only ACL of its own. Elsewhere than Windows, another account's folder is left as it is and
+ * resolves `kept`.
  */
 export async function keepFoundFolderPrivate(folder: string, machine: FoundFolder = {}): Promise<FoundFolderRepair> {
   const { acl = WINDOWS_ACL, platform = process.platform, profile = homedir(), shared = () => false } = machine;

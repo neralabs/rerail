@@ -208,11 +208,11 @@ export async function makeLedgerFolder(directory: string, options: LedgerFolderO
 
 /**
  * Opens a session record file below a checked folder without following a symlink at its name; a symlink there is
- * refused. `flags` are `fs.constants` open flags; a file it creates gets `0600`.
+ * refused. `flags` are `fs.constants` open flags; a file it creates gets `mode`, `0600` unless given, less the umask.
  */
-export async function openLedgerFile(path: string, flags: number): Promise<FileHandle> {
+export async function openLedgerFile(path: string, flags: number, mode = 0o600): Promise<FileHandle> {
   try {
-    return await openNoFollow(path, flags, 0o600);
+    return await openNoFollow(path, flags, mode);
   } catch (error) {
     if (errno(error) === "ELOOP") refuse(path, "a symbolic link");
     throw error;
@@ -239,13 +239,15 @@ export async function readLedgerFile(path: string, directory: string): Promise<s
 /**
  * Replaces a session record file whole: written to a new file beside it, then renamed over it, so a symlink at its
  * name is replaced, never followed, and a reader never sees half of it. Creates its folder as `makeLedgerFolder` does.
+ * The file gets `0600` less the umask, or `mode` when it is given, set whole whatever the umask.
  */
-export async function writeLedgerFile(path: string, directory: string, text: string): Promise<void> {
+export async function writeLedgerFile(path: string, directory: string, text: string, mode?: number): Promise<void> {
   await makeLedgerFolder(directory);
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
   try {
-    const handle = await openLedgerFile(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL);
+    const handle = await openLedgerFile(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, mode);
     try {
+      if (mode !== undefined) await handle.chmod(mode);
       await handle.writeFile(text, "utf8");
     } finally {
       await handle.close();

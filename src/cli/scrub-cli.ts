@@ -614,11 +614,19 @@ export async function runScrubCommand(args: readonly string[], usage: () => stri
   if (existsSync(copy)) complete = scrubDatabaseFile(copy, () => openSqliteDatabase(copy)) && complete;
   const files = await scrubSessionFiles(scrubbed.recorded);
   const daemonLogLines = await scrubDaemonLog(home, files);
+  return reportScrub(files, daemonLogLines, complete);
+}
+
+/**
+ * Prints what `rerail scrub` scrubbed and what it left, and gives its exit code: 1 when the databases were not all
+ * scrubbed or a file was left for another run, 0 otherwise.
+ */
+function reportScrub(files: SessionFilesReport, daemonLogLines: number, databasesComplete: boolean): number {
   process.stdout.write(
     `Scrubbed ${plural(files.lines, "line")} in ${plural(files.files, "session ledger")} and ${plural(files.pendingFiles, "held steer file")} `
     + `across ${plural(files.checkouts, "checkout")}; ${plural(daemonLogLines, "line")} of daemon.log.\n`,
   );
   for (const unlisted of files.unlisted) process.stdout.write(`Could not list ${unlisted}; a session it does not record is left.\n`);
   for (const skipped of files.skipped) process.stdout.write(`Left ${skipped}; run rerail scrub again.\n`);
-  return complete && files.skipped.length === 0 ? 0 : 1;
+  return databasesComplete && files.skipped.length === 0 ? 0 : 1;
 }

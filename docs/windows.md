@@ -676,8 +676,9 @@ preimages and held steers.
   first opens a session there: the daemon reads the folder's ACL with `icacls` once per folder in its life and, when
   the folder still inherits its parent's, gives it one under which what each account makes there is that account's
   alone. The person may list the folder; each account an entry the folder inherits from its parent let add a folder
-  there, and that no entry set on the folder itself names, may still add one, pass through it and read its attributes
-  and ACL, never list it; an account such an entry names keeps what that entry gives it. Each file and folder in it,
+  there, unless a deny entry set on the folder itself names it, may still add one, pass through it and read its
+  attributes and ACL, never list it: it gets that right on the folder itself, added to any entry already set there
+  for it, before the folder stops inheriting. Each file and folder in it,
   the records already there included, grants its maker (CREATOR OWNER), SYSTEM and Administrators alone. Before that,
   each agent host's lock and held-steer folder there (`<host>-locks`, `<host>-pending`) lets those accounts add files,
   and one made later gets the same entry from whoever makes it, so an account sharing the checkout keeps recording. If
@@ -685,7 +686,9 @@ preimages and held steers.
   before the records folder's ACL changes, and the next session tries again. Each `icacls` that reads or sets a
   records folder's ACL, or that of a folder in it, runs with `/l`: a junction or symbolic link another account puts in
   place of one has its own ACL read or changed, never that of what it points to. Windows takes about 0.1 to 0.2 ms per
-  file or folder already there to pass the ACL on, and no session waits for that: a session waits only for the read,
+  file or folder already there to pass the ACL on, twice when other accounts keep the right to add a folder there (one
+  `icacls` adds their entry, the next stops the inheritance), neither with a time limit, and no session waits for
+  that: a session waits only for the read,
   and one whose own folder is made before the ACL has been passed on (while it is, or just before it is done) first
   gives its own folder the same ACL, one more `icacls`, so what it writes in its own folder is private from its first
   byte. A session, lock or held-steer folder another account made before the first
