@@ -2938,6 +2938,11 @@ submitted" now hold device memory at once.
   `expand_view` branch; a view read in place leases nothing), and 0353 step 4 left only the axis's made, which step 5
   writes once into the chunk block (its "the residency cache's view entries go"); step 6 deletes `DevRel::upload`.
   A shared residency would be a home built for a copy 0353 removes: the fix of (c)'s largest holder is 0353 step 5.
+  Done (the user chose 0353 step 5 over a shared residency, 2026-11-19): the solved axes are one relation of ids in a
+  block, read in place (cd091ab09, ec0835fc7). Refusals at 512 MB 21-68 a run against 44-88; the holders left at a
+  refusal are the tape residency's slab, relations' rows in `Device::May` slabs (`hold_rows`, the vtab's `from_rows`),
+  and a stratum's own leases while it encodes. Next for (c): `has` (0353 step 5's last part), then what admission
+  counts (relations' rows in spare slabs are in no reservation).
   (d) a derived relation's frame is still
   encoded into the segments while it is in the chain (`held_placed`, 0.05 s on 300 files), as item 4 was.
 - **Record**: —

@@ -372,7 +372,7 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 3 | The chunk block's node columns: `core`, `up`, `fielded`, `low`, `start`, `end`, `kind`, `field`, and the canonical code copy. `low` is made by one scan of the granule table. `core`, `up` and `fielded` are made here from the rank index and the walk, now that the host holds no arrays of them. | `device_chunk.rs`, `build` (`made`, `made_in_order`, `put`) | 22 bytes a node; 0.07 s a run | Step 4 |
 | 4 | Views expanded into device relations | `metal_join.rs`, `expand_view`; `device.rs`, `resident` | 660.8 MB, 111.5 ms a run | Step 4 |
 | 5 | Views, flat relations and names uploaded from the host | `metal_join.rs`, `DevRel::upload`; `device.rs`, `resident`, `texts` | 7.4 MB, 22.1 ms a run | Steps 4, 6 |
-| 6 | An axis's pairs copied into the chunk, then expanded to ids | `within.rs`; `device_chunk.rs`, `put_pairs`; `VIEW_AXIS` | 8 bytes a pair, then the expansion | Step 5 |
+| 6 | Gone (step 5, 2026-11-19): an axis's pairs copied into the chunk, then expanded to ids. The solve's answer is one relation of ids in a block of its own (`Within::ids`), read in place by the device and by a whole read's own index. | — | — | Done |
 | 7 | `core.rr`'s and the vtab's per-node rows: tape answers (`line`, `end_line`, `col`, `docof`, `visit_index`, `doc_root`, `host_node`) and eager derived values (`text`, `parts`, `words`, `intval`, `op_t`) | `syntax.rs` `node rows`, `NodeRows`; `core_rr`; `tree.rs`; `guests.rs` | 0.45–0.49 s of CPU a run | Step 3 |
 | 8 | The CPU's head rows, staged in `Fresh`, merged by `extend_from_slice`, then pushed into the relation | `setfix.rs`, `Fresh` | Every row a CPU stratum derives | Step 6 |
 | 9 | A second key's index copies the relation (`DevIndex::moved`); a relation over several blocks merged for the device (`in_block`) | `metal_join.rs`; `facts/rows.rs` | Q85 counts them | Step 6 |
@@ -611,6 +611,17 @@ Each step ends with:
    - Check: the device's rows equal the CPU's (`device::parity`), for every view.
    - Measure: the 660.8 MB is 0, and the device budget's refusals and strata run apart, against Q86's.
 5. **Axes are derived relations written once.**
+   - Done for the solved axes (`nearest`, `inside`, the tree's containment), 2026-11-19: `Within::ids` writes each
+     row's two ids once, on the first whole read, into a relation of two columns alone in a block with room for an
+     index on each, reported as `Source::in_block`; the device's residency reads it where it lies (`DevRel::in_block`),
+     and a CPU index over a whole axis is the relation's own. `put_pairs`, `VIEW_AXIS` and the expansion's axis branch
+     went. A device solve's pairs stay in the chunk block, its ids written from them on the host. Tests:
+     `syntax::tests::a_solved_axis_is_one_relation_of_ids_in_a_block`, `device::tests::views_made_on_the_device_are_the_hosts_rows`.
+     Measured (the bench's full shape on the M3, a 512 MB budget, Q203 (c)): the residency's made views (142 MB of
+     511 at a refusal) are gone; refusals 21-68 a run (mean 41, 5 runs) against 44-88 (mean 63) before; 463
+     violations in each. A first version reserved no index room, and each device index copied the relation whole
+     (16 MB at a refusal); two of its 7 runs failed (a span prefilter's `BackendCapacity`, one hang), none of 6 since.
+   - Left: `has` (below).
    - The solve, on the CPU or the GPU, writes its answers as ids into a relation in the chunk block, which both read.
    - `put_pairs` and `VIEW_AXIS` go.
    - `has`, made per looked-up node, is a probe that climbs the tape, not an upload.
