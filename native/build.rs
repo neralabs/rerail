@@ -42,7 +42,12 @@ fn main() {
 /// exported). Relax (`RELAX_STD` set) builds with its own (itself, or none), and `RERAIL_FARM_ANY_ENV=1` allows any
 /// (a measurement of the compiler itself). Elsewhere (CI, a machine without the farm) it does nothing.
 fn check_compiler_cache() {
-    for name in ["RUSTC_WRAPPER", "RERAIL_FARM_ANY_ENV", "RELAX_STD"] {
+    for name in [
+        "RUSTC_WRAPPER",
+        "RERAIL_FARM_ANY_ENV",
+        "RELAX_STD",
+        "RERAIL_FARM_CONFIG",
+    ] {
         println!("cargo:rerun-if-env-changed={name}");
     }
     let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
