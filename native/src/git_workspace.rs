@@ -55,10 +55,10 @@ const SIZE_PRESERVING_CONVERSIONS: [&str; 3] = ["filter", "ident", "working-tree
 #[path = "git_workspace/worktree_stat.rs"]
 mod worktree_stat;
 
-pub use worktree_stat::VerifiedFiles;
 #[cfg(windows)]
 pub use worktree_stat::recalls_data;
 use worktree_stat::{ChangeStamp, Proof, WorktreeStat, stat_decides};
+pub use worktree_stat::{VerifiedFiles, file_clock};
 
 #[cfg(any(test, feature = "test-hooks"))]
 static SOURCE_ALIAS_HASHES: AtomicUsize = AtomicUsize::new(0);
@@ -785,22 +785,43 @@ impl GitWorkspace {
         stamp: Option<ChangeStamp>,
         verified: &mut VerifiedFiles<'_>,
     ) -> bool {
-        let read_from = std::time::SystemTime::now();
+        // Read before the file: a write the read misses comes after this reading.
+        let clock = file_clock();
         match self.read_source(relative_path, blob_length) {
             Err(error) => stat_decides(&error),
             Ok(bytes) => {
                 let blob = self.source_alias(relative_path, &bytes);
                 if let Some(blob) = blob {
-                    verified.learn(relative_path, stamp, blob, read_from);
+                    verified.learn(relative_path, stamp, blob, clock);
                 }
                 blob.is_some()
             }
         }
     }
 
-    /// A clean base file's blob, unread: the path has no overlay and its worktree stat is exactly its index entry's
-    /// (`BaseFile::checkout`), so its bytes are the blob's (phase 0, t23). `None` where only a hash could tell.
+    /// A clean base file's blob, unread: the path has no overlay, its worktree stat is exactly its index entry's
+    /// (`BaseFile::checkout`) and, on Windows, nothing changed the file after its last write, or its volume leaves
+    /// the stat to decide (`VerifiedFiles::proof`), so its bytes are the blob's (phase 0, t23). `None` where only a
+    /// hash could tell.
     pub fn clean_blob_unread(&self, relative_path: &str) -> Option<HashKey> {
+        let file = self.unedited_base_file(relative_path)?;
+        let recorded = file.checkout?;
+        let current = WorktreeStat::read(&self.worktree_root.join(relative_path))?;
+        let proven = current.metadata.is_file()
+            && current.matches(&recorded)
+            && matches!(
+                VerifiedFiles::new(None, &self.worktree_root).proof(
+                    relative_path,
+                    file.blob,
+                    &current
+                ),
+                Proof::Held
+            );
+        proven.then_some(file.blob)
+    }
+
+    /// The base file at `relative_path` where no overlay replaces it.
+    fn unedited_base_file(&self, relative_path: &str) -> Option<&BaseFile> {
         if self
             .overlays
             .binary_search_by(|o| o.path.as_str().cmp(relative_path))
@@ -808,18 +829,11 @@ impl GitWorkspace {
         {
             return None;
         }
-        let file = &self.base_files[self
+        let index = self
             .base_files
             .binary_search_by(|f| f.path.as_str().cmp(relative_path))
-            .ok()?];
-        let recorded = file.checkout?;
-        let metadata =
-            gix::index::fs::Metadata::from_path_no_follow(&self.worktree_root.join(relative_path))
-                .ok()?;
-        (metadata.is_file()
-            && gix::index::entry::Stat::from_fs(&metadata)
-                .is_ok_and(|now| recorded.matches(&now, RESTORE_STAT)))
-        .then_some(file.blob)
+            .ok()?;
+        Some(&self.base_files[index])
     }
 
     /// Every file of the worktree as Git sees it, relative and sorted: HEAD's (less those deleted), the staged new
@@ -1838,8 +1852,9 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    /// A change time not older than the read that hashed the file is not remembered: a write
-    /// after the read could carry the same time. Each restore reads such a file.
+    /// A change time the file clock had not left when the read that hashed the file began is not
+    /// remembered: a write after the read, in the same tick of that clock, gets the same time.
+    /// Each restore reads such a file until one begins after the clock has left it.
     #[cfg(windows)]
     #[test]
     fn a_change_time_as_new_as_the_read_is_not_remembered() {
@@ -1850,12 +1865,47 @@ mod tests {
             return;
         }
         let (root, path, workspace) = committed_long_ago("stat-recent", b"print(1)\n");
-        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(3_600);
-        set_change_time(&path, later);
+        let changed = written_long_ago() + std::time::Duration::from_secs(3_600);
+        set_change_time(&path, changed);
         let mut memory = VerifiedFiles::new(None, &root);
+        worktree_stat::file_clock_reads(Some(file_time_of(changed)));
         assert!(workspace.holds_blob_bytes("a.py", 9, &mut memory));
         assert!(workspace.holds_blob_bytes("a.py", 9, &mut memory));
-        assert_eq!(memory.learned(), 0, "the change time was not remembered");
+        assert_eq!(
+            memory.learned(),
+            0,
+            "read in the tick that stamped the change"
+        );
+        worktree_stat::file_clock_reads(Some(file_time_of(changed) + 1));
+        assert!(workspace.holds_blob_bytes("a.py", 9, &mut memory));
+        assert_eq!(memory.learned(), 1, "read once the clock left that tick");
+        worktree_stat::file_clock_reads(None);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A clean file's blob is taken unread only where the restore's proof holds with no read: a
+    /// same-size write that puts the modification time back keeps the stat Git recorded and moves
+    /// NTFS's change time, so only a hash can tell.
+    #[cfg(windows)]
+    #[test]
+    fn a_clean_blob_is_unread_only_while_nothing_changed_the_file_after_its_last_write() {
+        if ran_with_a_git_setup(
+            module_path!(),
+            "a_clean_blob_is_unread_only_while_nothing_changed_the_file_after_its_last_write",
+        ) {
+            return;
+        }
+        let (root, path, workspace) = committed_long_ago("unread-blob", b"print(1)\n");
+        let base = &workspace.base_files[0];
+        assert_eq!(workspace.clean_blob_unread("a.py"), Some(base.blob));
+        rewrite_keeping_its_time(&path, b"pront(1)\n");
+        assert!(
+            WorktreeStat::read(&path)
+                .unwrap()
+                .matches(&base.checkout.unwrap()),
+            "the stat Git recorded"
+        );
+        assert_eq!(workspace.clean_blob_unread("a.py"), None, "other bytes");
         std::fs::remove_dir_all(root).unwrap();
     }
 

@@ -637,6 +637,20 @@ impl Stamp {
     fn stands_for(&self, cached: &Self) -> bool {
         self == cached
     }
+
+    /// Whether NTFS's change time is older than the file clock's reading `clock`, so every later
+    /// change moves it (`git_workspace::file_clock`).
+    #[cfg(windows)]
+    fn changed_before(&self, clock: Option<i64>) -> bool {
+        clock.is_some_and(|clock| self.changed < clock)
+    }
+
+    /// No file clock is read off Windows (`git_workspace::file_clock`): the modification time
+    /// alone decides.
+    #[cfg(not(windows))]
+    fn changed_before(&self, _clock: Option<i64>) -> bool {
+        true
+    }
 }
 
 /// One summary read from disk, kept while the file's `Stamp` stands.
@@ -722,13 +736,15 @@ fn disk_summaries(
     overlay: Option<(&str, Option<&str>)>,
 ) -> Option<BTreeMap<String, Summary>> {
     let (mut files, misses) = cached_summaries(folder, sources, overlay);
+    // Both read before the sources: a write a read misses comes after them.
     let now = SystemTime::now();
+    let clock = crate::git_workspace::file_clock();
     let mut read = Vec::new();
     for miss in misses {
         let Some(summary) = read_miss(&miss)? else {
             continue;
         };
-        if let Some(stamp) = miss.stamp.filter(|stamp| settled(stamp, now)) {
+        if let Some(stamp) = miss.stamp.filter(|stamp| settled(stamp, now, clock)) {
             read.push((miss.absolute, (stamp, Arc::new(summary.clone()))));
         }
         files.insert(miss.path, summary);
@@ -806,11 +822,14 @@ fn source_text(absolute: &Path, length: u64) -> std::io::Result<String> {
     })
 }
 
-/// Whether a source last written at `stamp.modified` is settled at `now`: a rewrite within its
-/// timestamp's tick could leave its stamp unchanged before then (`SETTLED_AFTER`).
-fn settled(stamp: &Stamp, now: SystemTime) -> bool {
+/// Whether a source whose read began at `now`, with the file clock reading `clock`
+/// (`git_workspace::file_clock`), is settled: no later rewrite can leave its stamp as it is. Its
+/// modification time is `SETTLED_AFTER` old and, on Windows, its change time older than the
+/// reading, which a rewrite in the change's own tick shares (`Stamp::stands_for`).
+fn settled(stamp: &Stamp, now: SystemTime, clock: Option<i64>) -> bool {
     now.duration_since(stamp.modified)
         .is_ok_and(|age| age >= SETTLED_AFTER)
+        && stamp.changed_before(clock)
 }
 
 /// Puts `read` in the disk cache, first dropping the cache whole past `MAX_CACHED_SUMMARIES`.

@@ -7,12 +7,15 @@ use super::RESTORE_STAT;
 use crate::content_store::{ContentStore, HashKey, VerifiedWorktreeFile};
 use std::collections::HashMap;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-/// How far a change time can trail the write it records, in 100 ns units: NTFS and ReFS stamp a
-/// write with the system time of the last clock tick, at most 15.6 ms old. A change time older
-/// than this before a read began cannot be the stamp of a write after that read.
-const CHANGE_TIME_LAG: i64 = 10_000_000;
+/// A reading of the clock this system stamps a file's changes with, in 100 ns units since 1601:
+/// every change after the reading gets a change time no earlier than it. On Windows the system
+/// time as of the clock's last tick (`GetSystemTimeAsFileTime`), which NTFS and ReFS stamp a
+/// change with, so changes within one tick (up to 15.6 ms) share one change time. `None` where no
+/// change time is kept beside the stat (`WorktreeStat`): no stamp is compared with a reading.
+pub fn file_clock() -> Option<i64> {
+    platform::file_clock()
+}
 
 /// A worktree file's stat, as `lstat` gives it without following a link, with what this system
 /// keeps beside it.
@@ -71,6 +74,13 @@ pub(super) fn file_ids_answer(answer: bool) {
     platform::NO_FILE_ID.set(!answer);
 }
 
+/// Makes the file clock read `reading` on this thread, as on a tick these cases cannot time, or
+/// read the system's clock again (`None`).
+#[cfg(all(test, windows))]
+pub(super) fn file_clock_reads(reading: Option<i64>) {
+    platform::CLOCK.set(reading);
+}
+
 /// A file's identity and change time: every write through any of its names, every time set and
 /// every change of its permissions moves the change time, and a file a rename put in its place has
 /// another identity.
@@ -90,19 +100,12 @@ impl ChangeStamp {
         }
     }
 
-    /// Whether the change time is older than `read_from`, when a read of the file began, by more
-    /// than `CHANGE_TIME_LAG`: a write after that read then moves it.
-    fn older_than(&self, read_from: SystemTime) -> bool {
-        file_time(read_from).is_some_and(|read_from| self.changed < read_from - CHANGE_TIME_LAG)
+    /// Whether every change after the file clock read `clock` (`file_clock`) moves this change
+    /// time: each gets a time no earlier than the reading, so only a change time older than it is
+    /// no later change's. One equal to the reading may be shared by a write in the same tick.
+    fn older_than(&self, clock: Option<i64>) -> bool {
+        clock.is_some_and(|clock| self.changed < clock)
     }
-}
-
-/// `time` in Windows file time units: 100 ns intervals since 1601.
-fn file_time(time: SystemTime) -> Option<i64> {
-    let since_1970 = time.duration_since(UNIX_EPOCH).ok()?;
-    i64::try_from(since_1970.as_nanos() / 100)
-        .ok()?
-        .checked_add(116_444_736_000_000_000)
 }
 
 /// How a clean file whose stat equals the stat Git recorded is shown to hold its blob's bytes.
@@ -167,16 +170,17 @@ impl<'a> VerifiedFiles<'a> {
             .or_insert_with(|| change.volume_keeps_change_times())
     }
 
-    /// Remembers that the file at `path` held `blob`'s bytes under `stamp`, read from `read_from`
-    /// on, where its change time is older than that read by more than `CHANGE_TIME_LAG`.
+    /// Remembers that the file at `path` held `blob`'s bytes under `stamp`, read after the file
+    /// clock read `clock`, where the stamp's change time is older than that reading
+    /// (`ChangeStamp::older_than`): a write the read missed then moved it.
     pub(super) fn learn(
         &mut self,
         path: &str,
         stamp: Option<ChangeStamp>,
         blob: HashKey,
-        read_from: SystemTime,
+        clock: Option<i64>,
     ) {
-        let Some(stamp) = stamp.filter(|stamp| stamp.older_than(read_from)) else {
+        let Some(stamp) = stamp.filter(|stamp| stamp.older_than(clock)) else {
             return;
         };
         let file = VerifiedWorktreeFile {
@@ -293,6 +297,11 @@ mod platform {
         pub(super) fn stamp(&self) -> Option<ChangeStamp> {
             None
         }
+    }
+
+    /// No change time is kept beside the stat here, so no reading is compared with one.
+    pub(super) fn file_clock() -> Option<i64> {
+        None
     }
 }
 
@@ -414,6 +423,24 @@ mod platform {
         /// Whether the file id query answers nothing on this thread, as on a volume that gives
         /// no file id.
         pub(super) static NO_FILE_ID: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        /// The file clock's reading on this thread, where a case sets one (`super::file_clock_reads`).
+        pub(super) static CLOCK: std::cell::Cell<Option<i64>> = const { std::cell::Cell::new(None) };
+    }
+
+    /// The system time as of the clock's last tick (`GetSystemTimeAsFileTime`), which NTFS and
+    /// ReFS stamp a change with: a change after this reading gets a time no earlier than it,
+    /// whether the file system takes this clock or a finer one.
+    pub(super) fn file_clock() -> Option<i64> {
+        #[cfg(test)]
+        if let Some(reading) = CLOCK.get() {
+            return Some(reading);
+        }
+        let mut now = windows_sys::Win32::Foundation::FILETIME::default();
+        // SAFETY: a buffer of the type the call fills, which lives across the call.
+        unsafe {
+            windows_sys::Win32::System::SystemInformation::GetSystemTimeAsFileTime(&raw mut now)
+        };
+        Some((i64::from(now.dwHighDateTime) << 32) | i64::from(now.dwLowDateTime))
     }
 
     /// Counts a query; whether it is a file id query this thread's volume does not answer.
@@ -508,8 +535,35 @@ mod platform {
 
 #[cfg(test)]
 mod tests {
-    use super::{keeps_change_times, stat_decides};
+    use super::{ChangeStamp, HashKey, VerifiedFiles, keeps_change_times, stat_decides};
     use std::io::{Error, ErrorKind};
+    use std::path::Path;
+
+    /// A read's hash is remembered under a change time older than the file clock's reading taken
+    /// before the read, since every later write gets a time no earlier than that reading. A change
+    /// time on the reading itself, or past it, may be a later write's too (a write in the same
+    /// tick of the clock), and with no reading nothing is remembered.
+    #[test]
+    fn only_a_change_time_older_than_the_file_clock_before_the_read_is_remembered() {
+        let changed = 134_000_000_000_000_000;
+        let stamp = ChangeStamp {
+            volume: 7,
+            file_id: [1; 16],
+            changed,
+        };
+        let blob = HashKey::git_sha1([7; 20]);
+        let mut memory = VerifiedFiles::new(None, Path::new("worktree"));
+        for clock in [None, Some(changed - 1), Some(changed)] {
+            memory.learn("a.py", Some(stamp), blob, clock);
+            assert!(memory.learned.is_empty(), "{clock:?}");
+        }
+        memory.learn("a.py", Some(stamp), blob, Some(changed + 1));
+        assert_eq!(
+            memory.learned.len(),
+            1,
+            "a change time older than the reading"
+        );
+    }
 
     /// A read that failed for any reason but the file being gone or grown leaves the stat's
     /// answer: its permissions, another process holding or locking it (Windows' sharing and lock

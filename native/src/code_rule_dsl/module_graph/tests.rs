@@ -846,6 +846,34 @@ fn a_rewrite_restoring_length_and_modification_time_is_read_again() {
     std::fs::remove_dir_all(&root).unwrap();
 }
 
+/// A source whose change time the file clock had not left when the walk read it is read again by
+/// the next walk: a rewrite in that change's own tick, keeping the length and modification time,
+/// leaves the whole stamp as it was. A change time ahead of the clock stands for that tick.
+#[cfg(windows)]
+#[test]
+fn a_source_changed_in_the_tick_of_its_read_is_read_again() {
+    let root = temp_root("same-tick");
+    write_file(&root, "package.json", NEXT_MANIFEST);
+    write_file(&root, "app/page.tsx", "import './a';\nexport default 1;\n");
+    write_file(&root, "app/b.ts", "");
+    let source = root.join("app/a.ts");
+    let settled = SystemTime::now() - Duration::from_secs(3600);
+    let ahead = SystemTime::now() + Duration::from_secs(3600);
+    let rewrite = |directive: &str| {
+        std::fs::write(&source, format!("'{directive}';\nimport './b';\n")).unwrap();
+        crate::git_workspace::backdate(&source, settled);
+        crate::git_workspace::set_change_time(&source, ahead);
+    };
+    rewrite("use server");
+    assert_eq!(
+        disk_graph(&root, "").unwrap(),
+        ["app/a.ts", "app/b.ts", "app/page.tsx"]
+    );
+    rewrite("use client");
+    assert_eq!(disk_graph(&root, "").unwrap(), ["app/page.tsx"]);
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
 /// A source whose read a person denied after the walk cached its summary keeps the summary of its
 /// last write, as its modification time and length show it: the denial moves NTFS's change time
 /// alone. A write of another length or at another time has no summary until it is read.

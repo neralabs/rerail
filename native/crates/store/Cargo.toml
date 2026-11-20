@@ -39,8 +39,9 @@ zstd = "=0.14.3"
 tikv-jemalloc-sys = { version = "=0.7.1", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
-# NTFS's change time, file id, attributes and volume beside a worktree file's stat (`git_workspace`).
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+# NTFS's change time, file id, attributes and volume beside a worktree file's stat, and the clock it stamps a
+# change with (`git_workspace`).
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_SystemInformation"] }
 
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
