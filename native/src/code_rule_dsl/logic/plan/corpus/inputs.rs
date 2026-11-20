@@ -275,29 +275,32 @@ fn blob_id(bytes: &[u8]) -> String {
 }
 
 /// The files of `root` the corpus sees (`corpus_paths`: Git's listing in a work tree, so none Git ignores, else the
-/// walk; none under a directory the host's walk never enters), relative and sorted. Git lists a committed symbolic
-/// link as an entry of its own (mode 120000), where the walk enters a linked folder: a link to a folder is no file.
-fn walk(root: &Path) -> Result<Vec<String>> {
+/// walk; none under a directory the host's walk never enters) that `set` matches, relative and sorted. Git lists a
+/// committed symbolic link as an entry of its own (mode 120000), where the walk enters a linked folder: a link to a
+/// folder is no file.
+fn inputs(root: &Path, set: &globset::GlobSet) -> Result<Vec<String>> {
     let mut out = super::corpus_paths(root)?;
-    out.retain(|path| root.join(path).is_file());
+    out.retain(|path| set.is_match(path) && root.join(path).is_file());
     out.sort();
     Ok(out)
+}
+
+/// An artifact's input globs; `*` does not cross a `/`.
+fn input_globs(globs: &[String]) -> std::result::Result<globset::GlobSet, String> {
+    let mut set = globset::GlobSetBuilder::new();
+    for glob in globs {
+        set.add(globset::GlobBuilder::new(glob).literal_separator(true).build().map_err(|e| format!("input glob {glob:?}: {e}"))?);
+    }
+    set.build().map_err(|e| e.to_string())
 }
 
 /// The digest of an artifact's inputs on the tree at `root` (RUN-FACTS.md section 4): SHA-256 over the sorted lines
 /// `path NUL blob-id LF`, one per file the walk sees that a glob matches.
 pub(in crate::code_rule_dsl) fn inputs_digest(root: &Path, globs: &[String]) -> std::result::Result<String, String> {
     use sha2::Digest as _;
-    let mut set = globset::GlobSetBuilder::new();
-    for glob in globs {
-        set.add(globset::GlobBuilder::new(glob).literal_separator(true).build().map_err(|e| format!("input glob {glob:?}: {e}"))?);
-    }
-    let set = set.build().map_err(|e| e.to_string())?;
+    let set = input_globs(globs)?;
     let mut hash = sha2::Sha256::new();
-    for path in walk(root).map_err(|e| format!("{}: {e}", root.display()))? {
-        if !set.is_match(&path) {
-            continue;
-        }
+    for path in inputs(root, &set).map_err(|e| format!("{}: {e}", root.display()))? {
         let bytes = std::fs::read(root.join(&path)).map_err(|e| format!("{path}: {e}"))?;
         hash.update(path.as_bytes());
         hash.update([0]);
@@ -906,7 +909,7 @@ grew(e) :- now_entry(e), !was(_, e).
             if linked {
                 std::os::unix::fs::symlink("../shared", root.join("docs/shared")).unwrap();
             }
-            let git = |args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(root).args(args).output().unwrap().status.success(), "git {args:?}");
+            let git = |args: &[&str]| assert!(std::process::Command::new("git").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").arg("-C").arg(root).args(args).output().unwrap().status.success(), "git {args:?}");
             git(&["init", "-q"]);
             git(&["add", "-A"]);
             git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "files"]);
