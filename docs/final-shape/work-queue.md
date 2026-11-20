@@ -7669,15 +7669,17 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
     a run's: it now holds a run that the corpus runs join, as the policy-run test does.
   - `every_switch_lowering_reads_is_classified` ended its region of `corpus.rs` at `merge_and_drop_repeats`, which
     #508 removed; it now ends at the runner's `GIVEN`.
-- **Seen, not fixed (not this branch's):**
-  - `a_partial_hit_makes_only_the_guests_its_cone_can_see` (Q77, done before) fails: an edit of `ids` does not see
-    the annotations' identifiers (`Bar`). It fails without this branch's corpus change too, so it came in with
-    the hub.
-  - `programs_hidden_alone_keep_their_attribute_copies_declared` reads the data-layer pack's rule files, which
-    are not in git (`npm run fixtures:pull`).
-  - `scm_quantified_runs_preserve_each_distinct_middle_capture` bounds the JIT's run at 2 s of wall time. In a test
-    build it takes 0.94-1.17 s, with this branch's JIT change or without it, against 77-96 ms for the interpreter,
-    so it fails at load 40 and over. The JIT being slower than the interpreter is a finding of its own. The Linux failures of accel's
+- **Seen after the first hub merge, since settled** (2026-11-20):
+  - `a_partial_hit_makes_only_the_guests_its_cone_can_see` (Q77) failed, an edit of `ids` not seeing the
+    annotations' identifiers (`Bar`), with or without this branch's change. It passes after the second hub merge
+    (51ddaaeaaa), whose 84f329973a changed the partial hits' cones.
+  - `programs_hidden_alone_keep_their_attribute_copies_declared` read the data-layer pack's rule files, not in git:
+    placed from a checkout whose canonical archive is the one `test-data.lock` pins; it passes.
+  - `wave0_a_negation_gain_inside_recursion` aborted 2 runs in 10 (a run's last handle dropped on a pool thread
+    holding no run, its store's drop reading the run's shared object): fixed in 6b5d8525c0.
+  - `scm_quantified_runs_preserve_each_distinct_middle_capture` bounded the JIT's run at 2 s of wall time, and
+    failed at load 40 and over. Its bounds are now its work alone (states, pending paths, bytes); the JIT's speed
+    is Q397. The Linux failures of accel's
   tests (they came with the CUDA merge) are fixed: two device-block tests were gated on macOS where the pool is the
   GPU lane's (CUDA's too), and the GPU tests failed on a host whose device was absent; off macOS they now skip
   without one, as the blocks tests do (64 of 64 on a Linux host with a device and on one without).
@@ -7711,6 +7713,27 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
     as it is evaluated (on the pool) and merged, as before 0458;
   - the memo's base rows of the corpus views (0.33 s): kept only if a later run reads them; else not made (0353:
     they are the tape's rows written again).
+
+### Q397. (Q266 on Native-GPU-strata) The CPU JIT runs a quantified query 6-10 times slower than the interpreter, and more so as its runs grow
+
+- **Asked** (the user, 2026-11-20, on `scm_quantified_runs_preserve_each_distinct_middle_capture`): no wall clock,
+  and the speed improved; perhaps compilation.
+- **Measured** (a test build on this Mac, CPU only): `(module (comment)+ (comment) @middle (comment)+)` over n
+  comments. The interpreter: 2, 4, 15-19, 81-93 ms at n = 16, 32, 64, 128 (1,090 to 66,050 explored states, about
+  4n²). The JIT: 10-14, 59-73, 440-580 ms at n = 32, 64, 128, every execution alike: about n³. At n = 256 it refuses
+  (`BackendCapacity`).
+- **Not compilation:** lowering takes 0.1 ms and the straight-line compile 90-110 ms, once (`compile_cached`); a
+  sample of repeated executions has 1,996 of 2,031 samples of the working thread in the jitted code.
+- **Not the state queue's tombstones:** after each task its table (8 k-65 k records, zeroed per task) is about 90%
+  empty, with at most 6,158 tombstones, so a probe stays short.
+- **Not a different state identity:** the interpreter admits a state by (pc, node, cursors, active repeats,
+  sibling requirement) and its exact capture set; the JIT's queue and admit tables compare the same.
+- **Seen:** the largest task (the module root, n = 128) charges 2.5 M steps and holds 128 repeat records, 127
+  captures and 57,920 query members; each smaller root's task grows with the comments after it. The JIT's charged
+  steps count other work than the interpreter's explored states, so the two are not compared yet.
+- **Next:** count, in both, the states admitted and the comparisons each admission makes (capture sets, repeat
+  chains: the JIT compares chains, `capture_contains` and `repeat_equal`, where the interpreter compares interned
+  `Arc`s). An admission that walks a chain of length n is the n³.
 
 ### Q338. (Q263 on Native-GPU-strata) A relation's statistics kept by delta are on the heap (0478 R5) — done (0478 step 6f)
 
