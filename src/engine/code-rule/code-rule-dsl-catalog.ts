@@ -33,6 +33,7 @@ import { checkoutStatus, followsGitignore, parentCheckouts, recordedCheckoutsVer
 import { loadCheckoutRuleSet, ruleConfigurationSignature } from "../catalog/rule-configuration.js";
 import { LIBRARY_OWNER, quarantinedLibraryRules } from "../catalog/rule-library.js";
 import type { ConversationRule } from "../catalog/rule-schema.js";
+import type { RerailRule } from "../catalog/rerail-rule.js";
 import { checkouts, ruleAttachments, ruleSettings } from "../storage/schema.js";
 import { compareDeterministicStrings, stableJsonText } from "../stable-json.js";
 
@@ -120,17 +121,32 @@ export interface CompiledCodeRuleDslEntry {
   readonly placement: CodeRulePlacement;
 }
 
+/**
+ * A rule written in `.rerail` that the checkout runs, placed per folder as a compiled rule is. The `.rerail` runner
+ * runs it over the files on disk (`src/engine/rr/`); the native workspace never holds it.
+ */
+export interface RerailRuleEntry {
+  readonly id: string;
+  /** The rule's file, installed in its pack. */
+  readonly path: string;
+  readonly placement: CodeRulePlacement;
+  readonly provenance: RepositoryAuditRuleProvenance;
+}
+
 /** Immutable provenance and executables used to construct one native evaluation workspace. */
 export interface CompiledCodeRuleDslSnapshot {
   readonly version: string;
   readonly codeRules: readonly CompiledCodeRuleDslEntry[];
+  /** The provenance of `codeRules`. */
   readonly provenance: readonly AuditRuleProvenance[];
+  /** The rules written in `.rerail` the checkout runs, each with its own provenance. */
+  readonly rerailRules: readonly RerailRuleEntry[];
 }
 
 export interface CodeRuleDslCatalogStatus {
-  /** Code rules compiled and placed somewhere in the checkout. */
+  /** Code rules placed somewhere in the checkout: those compiled, and those written in `.rerail`. */
   readonly ruleCount: number;
-  /** Digest of the compiled set: capabilities, and each code rule's id, source, source digest and placement. */
+  /** Digest of the placed set: capabilities, and each code rule's id, source, source digest and placement. */
   readonly version: string;
   /** Source identity captured before loading; never advanced by presentation reads or failed compilation. */
   readonly sourceSignature: string;
@@ -213,6 +229,94 @@ function placementOf(decisions: readonly RulePlacementDecision[], folders: reado
   return kept;
 }
 
+/** A rule present somewhere in the checkout, with how it runs in each folder. */
+interface PlacedEntry {
+  readonly id: string;
+  readonly rule: EffectiveRule;
+  readonly decisions: RulePlacementDecision[];
+  readonly placement: CodeRulePlacement;
+}
+
+/** What one load of a checkout's rules builds. */
+interface CatalogParts {
+  readonly codeRules: CompiledCodeRuleDslEntry[];
+  readonly rerailRules: RerailRuleEntry[];
+  readonly provenance: RepositoryAuditRuleProvenance[];
+  /** What the catalog's version digests, per rule. */
+  readonly versioned: unknown[];
+  readonly quarantined: QuarantinedRule[];
+}
+
+function provenanceOf(ruleSet: CheckoutRuleSet, { id, rule, decisions }: PlacedEntry): RepositoryAuditRuleProvenance {
+  return {
+    ruleId: id,
+    revision: rule.revision,
+    payloadHash: rule.payloadHash,
+    source: { ...rule.source },
+    repositoryKey: ruleSet.checkout.repositoryKey,
+    checkoutPath: ruleSet.checkout.checkoutPath,
+    placement: decisions,
+  };
+}
+
+/** Why a placed rule runs nowhere: config that does not apply, or a `relational` clause waiting for its experiment. */
+function placedRefusal({ id, rule }: PlacedEntry): QuarantinedRule | undefined {
+  if (rule.configError !== null) {
+    return { ruleId: id, kind: "code", owner: RERAIL_OWNER, reason: `The repository's config for this rule does not apply: ${rule.configError}` };
+  }
+  const relationalOff = rule.document.kind === "code" ? relationalRulesOff(rule.document.rule) : undefined;
+  if (relationalOff === undefined) return undefined;
+  return { ruleId: id, kind: "code", owner: rule.source.kind === "library_rule" ? LIBRARY_OWNER : RERAIL_OWNER, reason: relationalOff };
+}
+
+/** A rule the engine does not compile; one naming a language it does not read yet is inactive by design, with that code. */
+function compileQuarantine({ id, rule }: PlacedEntry, reason: string): QuarantinedRule {
+  const unsupported = languageNotSupportedOf(reason);
+  return {
+    ruleId: id, kind: "code", owner: rule.source.kind === "library_rule" ? LIBRARY_OWNER : RERAIL_OWNER,
+    reason: unsupported?.reason ?? reason,
+    ...(unsupported === undefined ? {} : { code: unsupported.code }),
+  };
+}
+
+/** A placed JSON code rule, compiled into an executable the native workspace runs. */
+function addCompiledRule(parts: CatalogParts, ruleSet: CheckoutRuleSet, placed: PlacedEntry, capabilities: CodeRuleCapabilities): void {
+  const { id, rule, placement } = placed;
+  const sourceText = stableJsonText(rule.document.rule);
+  if (sourceText === undefined) throw new Error(`Policy ${id} is not JSON representable`);
+  const sourceDigest = digest(sourceText);
+  const outcome = compiledRules.compile(capabilities, id, sourceText, sourceDigest, stableJsonText(rule.config) ?? "");
+  if (!outcome.ok) {
+    parts.quarantined.push(compileQuarantine(placed, outcome.reason));
+    return;
+  }
+  parts.codeRules.push({ id, executable: outcome.executable, placement });
+  parts.provenance.push(provenanceOf(ruleSet, placed));
+  parts.versioned.push({ id, sourceDigest, placement, source: rule.source });
+}
+
+/** A placed rule written in `.rerail`, kept with its placement for the `.rerail` runner; its digest is its content's. */
+function addRerailRule(parts: CatalogParts, ruleSet: CheckoutRuleSet, placed: PlacedEntry, rule: RerailRule): void {
+  const { id, placement } = placed;
+  parts.rerailRules.push({ id, path: rule.path, placement, provenance: provenanceOf(ruleSet, placed) });
+  parts.versioned.push({ id, kind: "rerail", sourceDigest: placed.rule.payloadHash, placement, source: placed.rule.source });
+}
+
+function placeRule(parts: CatalogParts, ruleSet: CheckoutRuleSet, placed: PlacedEntry, capabilities: CodeRuleCapabilities): void {
+  const refusal = placedRefusal(placed);
+  const { document } = placed.rule;
+  if (refusal !== undefined) parts.quarantined.push(refusal);
+  else if (document.kind === "rerail") addRerailRule(parts, ruleSet, placed, document.rule);
+  else addCompiledRule(parts, ruleSet, placed, capabilities);
+}
+
+/** The catalog's version: a digest of the capabilities rules compile against and each placed rule's `versioned` entry. */
+function catalogVersion(capabilities: CodeRuleCapabilities, versioned: readonly unknown[]): string {
+  const canonical = stableJsonText({ capabilitiesDigest: capabilities.digest, format: "rerail.policy-dsl-catalog/v3", policies: versioned });
+  if (canonical === undefined) throw new Error("Policy catalog version is not JSON representable");
+  return digest(canonical);
+}
+
 interface CatalogState {
   readonly status: CodeRuleDslCatalogStatus;
   readonly snapshot: CompiledCodeRuleDslSnapshot;
@@ -260,58 +364,20 @@ export class CheckoutCodeRuleCatalog implements CodeRuleDslCatalog {
   }
 
   #build(loaded: LoadedCheckoutRules, sourceSignature: string): CatalogState {
-    const quarantined = [...loaded.quarantined];
-    const codeRules: CompiledCodeRuleDslEntry[] = [];
-    const provenance: RepositoryAuditRuleProvenance[] = [];
-    const versioned: unknown[] = [];
+    const parts: CatalogParts = { codeRules: [], rerailRules: [], provenance: [], versioned: [], quarantined: [...loaded.quarantined] };
     const ruleSet = loaded.ruleSet;
     const placed = ruleSet === undefined ? new Map<string, PlacedRule>() : placedRules(ruleSet, loaded.folders);
     for (const id of [...placed.keys()].sort(compareDeterministicStrings)) {
       const { rule, decisions } = placed.get(id)!;
       const placement = placementOf(decisions, loaded.folders);
-      if (placement.length === 0) continue;
-      if (rule.configError !== null) {
-        quarantined.push({ ruleId: id, kind: "code", owner: RERAIL_OWNER, reason: `The repository's config for this rule does not apply: ${rule.configError}` });
-        continue;
-      }
-      const relationalOff = rule.document.kind === "code" ? relationalRulesOff(rule.document.rule) : undefined;
-      if (relationalOff !== undefined) {
-        quarantined.push({ ruleId: id, kind: "code", owner: rule.source.kind === "library_rule" ? LIBRARY_OWNER : RERAIL_OWNER, reason: relationalOff });
-        continue;
-      }
-      const sourceText = stableJsonText(rule.document.rule);
-      if (sourceText === undefined) throw new Error(`Policy ${id} is not JSON representable`);
-      const sourceDigest = digest(sourceText);
-      const outcome = compiledRules.compile(this.#capabilities, id, sourceText, sourceDigest, stableJsonText(rule.config) ?? "");
-      if (!outcome.ok) {
-        // A rule naming a language the engine does not read yet is inactive by design: quarantined with that code, not reported.
-        const unsupported = languageNotSupportedOf(outcome.reason);
-        quarantined.push({
-          ruleId: id, kind: "code", owner: rule.source.kind === "library_rule" ? LIBRARY_OWNER : RERAIL_OWNER,
-          reason: unsupported?.reason ?? outcome.reason,
-          ...(unsupported === undefined ? {} : { code: unsupported.code }),
-        });
-        continue;
-      }
-      codeRules.push({ id, executable: outcome.executable, placement });
-      provenance.push({
-        ruleId: id,
-        revision: rule.revision,
-        payloadHash: rule.payloadHash,
-        source: { ...rule.source },
-        repositoryKey: ruleSet!.checkout.repositoryKey,
-        checkoutPath: ruleSet!.checkout.checkoutPath,
-        placement: decisions,
-      });
-      versioned.push({ id, sourceDigest, placement, source: rule.source });
+      if (placement.length > 0) placeRule(parts, ruleSet!, { id, rule, decisions, placement }, this.#capabilities);
     }
-    for (const entry of quarantined) if (entry.code === undefined) reportQuarantinedRule(this.#source.label, entry);
-    const canonical = stableJsonText({ capabilitiesDigest: this.#capabilities.digest, format: "rerail.policy-dsl-catalog/v3", policies: versioned });
-    if (canonical === undefined) throw new Error("Policy catalog version is not JSON representable");
+    for (const entry of parts.quarantined.filter(quarantined => quarantined.code === undefined)) reportQuarantinedRule(this.#source.label, entry);
+    const version = catalogVersion(this.#capabilities, parts.versioned);
     return {
-      status: { ruleCount: codeRules.length, version: digest(canonical), sourceSignature },
-      snapshot: { version: digest(canonical), codeRules, provenance },
-      quarantined,
+      status: { ruleCount: parts.codeRules.length + parts.rerailRules.length, version, sourceSignature },
+      snapshot: { version, codeRules: parts.codeRules, provenance: parts.provenance, rerailRules: parts.rerailRules },
+      quarantined: parts.quarantined,
     };
   }
 }

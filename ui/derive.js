@@ -71,16 +71,25 @@ export const categoryLabel = category => CATEGORY_LABEL[category] ?? "";
 export const isRunning = stored => stored.enabled && !stored.configError;
 
 const titles = new WeakMap();
-/** Sentence the row leads with: the rule's title; else a conversation rule's reference, a file rule's first clause's message, else its id. */
+/**
+ * Sentence the row leads with: the rule's title; else a conversation rule's reference, a file rule's first clause's
+ * message, a `.rerail` rule's description, else its id.
+ */
 export function ruleTitle(stored) {
   let title = titles.get(stored);
   if (title === undefined) {
-    const rule = stored.rule;
-    const clause = stored.kind === "conversation" ? undefined : rule.clauses[0];
-    title = collapse(rule.title) || collapse(stored.kind === "conversation" ? rule.reference : clause?.violation?.message) || rule.id;
+    title = collapse(stored.rule.title) || collapse(untitledLead(stored)) || stored.rule.id;
     titles.set(stored, title);
   }
   return title;
+}
+
+/** What a rule with no title is led by: a conversation rule's reference, a JSON code rule's first message, a `.rerail` rule's description. */
+function untitledLead(stored) {
+  if (stored.kind === "conversation") return stored.rule.reference;
+  // A `.rerail` rule's messages are written in its file, which the dashboard is not given clause by clause.
+  if (stored.kind === "rerail") return stored.rule.description;
+  return stored.rule.clauses[0]?.violation?.message;
 }
 
 /** `rule.id` before the first `:`; the whole id when it has none. */
@@ -181,9 +190,10 @@ export function conditionText(stored) {
   return collapse(rule.description ?? "");
 }
 
-/** What the coding agent is told (Steer) or what is recorded (Log), before any violation exists. */
+/** What the coding agent is told (Steer) or what is recorded (Log), before any violation exists; for a `.rerail` rule, only its violations say. */
 export function messageText(stored) {
   if (stored.kind === "conversation") return stored.rule.action.content;
+  if (stored.kind === "rerail") return "";
   return stored.rule.clauses[0]?.violation?.message ?? "";
 }
 
