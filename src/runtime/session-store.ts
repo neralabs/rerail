@@ -347,12 +347,12 @@ function listDiscoveryGaps(database: RerailDatabase, sessionId: string, limit: n
     });
 }
 
-/** A row's payload, or undefined when its text is no JSON: a read passes over that row and fails on none. */
+/** A row's payload, or null when its text is no JSON: a read takes that row as one with no payload and fails on none. */
 function parsedRow(payloadJson: string): unknown {
   try {
     return JSON.parse(payloadJson) as unknown;
   } catch {
-    return undefined;
+    return null;
   }
 }
 
@@ -871,7 +871,7 @@ export class SqliteSessionReader {
     if (backwards) rows.reverse();
     // A row whose text is no JSON keeps its place with no payload: the page stays whole, so a reader's next page and
     // its "earlier events" read as for any other page.
-    return rows.map(({ payloadJson, ...row }) => ({ ...row, payload: parsedRow(payloadJson) ?? null }));
+    return rows.map(({ payloadJson, ...row }) => ({ ...row, payload: parsedRow(payloadJson) }));
   }
 
   workLinks(sessionId: string): readonly WorkLinkRecord[] {
