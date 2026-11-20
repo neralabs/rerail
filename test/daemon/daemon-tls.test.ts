@@ -354,6 +354,33 @@ Start-Sleep 60`;
     expect(message).not.toContain("\n");
   });
 
+  // A key file that holds no key pairs with no certificate, so beside one others can read only the certificate's own read
+  // and check stop the start. Such a certificate stops it with the error it gets beside a private key, never serving this
+  // computer alone. No text: the certificate is a path with no file, or the folder, and the error is its read's.
+  it.each<[string, string, string, string, string | undefined]>([
+    ["empty", "a misspelled path", "", "certt.pem", undefined],
+    ["empty", "a folder", "", ".", undefined],
+    ["empty", "empty", "", "cert.pem", ""],
+    ["empty", "text", "", "cert.pem", "not a certificate\n"],
+    ["of text", "a misspelled path", "not a key\n", "certt.pem", undefined],
+    ["of text", "a folder", "not a key\n", ".", undefined],
+    ["of text", "empty", "not a key\n", "cert.pem", ""],
+    ["of text", "text", "not a key\n", "cert.pem", "not a certificate\n"],
+  ])("stops the start beside a key file others can read that is %s, for a certificate that is %s, as beside a private key", async (_key, _certificate, keyText, certName, certText) => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
+    const keyFile = join(root, "key.pem");
+    await writeFile(keyFile, keyText);
+    const certFile = join(root, certName);
+    if (certText !== undefined) await writeFile(certFile, certText);
+    const error = certText === undefined
+      ? await readFile(certFile, "utf8").then(() => "read", (thrown: Error) => thrown.message)
+      : `The TLS certificate ${certFile} ${certText === "" ? "is empty: it must hold" : "could not be read as"} a PEM X.509 certificate`;
+    const shared = { platform: "win32" as const, acl: { otherReaders: () => ["BU"] } };
+    const refused = loadDaemonTls({ certFile, keyFile }, shared);
+    await expect(refused).rejects.toThrow(error);
+    await expect(refused).rejects.not.toBeInstanceOf(TlsKeyUnparsedError);
+  });
+
   it.skipIf(process.platform === "win32")("stops the start at once for a FIFO others can read, never waiting for a writer", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
     const fifo = join(root, "key.pem");
