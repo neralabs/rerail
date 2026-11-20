@@ -191,6 +191,8 @@ export class WorktreeNotices {
   readonly #watched = new Map<string, Watched>();
   /** When each worktree that could not be watched failed. */
   readonly #failed = new Map<string, number>();
+  /** The read after a refused watch of each worktree's read folders (`#follow`), until it settles. */
+  readonly #refusing = new Map<string, Promise<void>>();
   /** The watch of each worktree that last ended. */
   readonly #ended = new Map<string, Ended>();
   /** The folders where Git registers the worktrees that are watched (`watchRegistry`), each with the folders it follows on Linux. */
@@ -231,7 +233,17 @@ export class WorktreeNotices {
    * cannot be watched. A worktree not watched yet has its folder read first (`folderAt`), which the walk awaits.
    */
   async changed(root: string): Promise<boolean> {
-    return (this.#watched.get(root) ?? (await this.#open(root)))?.changed ?? true;
+    return (this.#watched.get(root) ?? (await this.#openSettled(root)))?.changed ?? true;
+  }
+
+  /**
+   * `#open`, once the read after a refused watch of `root`'s read folders (`#follow`) settled: what that read records
+   * decides whether `root` waits for `WATCH_RETRY_MS`, so no walk decides before it, and none erases what it records.
+   */
+  async #openSettled(root: string): Promise<Watched | undefined> {
+    const refusing = this.#refusing.get(root);
+    if (refusing !== undefined) await refusing;
+    return await this.#open(root);
   }
 
   /** Whether `root` is watched now, so a notice would tell of a change in it. */
@@ -406,8 +418,9 @@ export class WorktreeNotices {
     if (!this.#watch!.watch(root, [...folders])) {
       this.#watched.delete(root);
       this.#watch!.unwatch(root);
-      // The walk's read found its folder there: only a read after the refusal may find none.
-      void this.#refused(root, false);
+      // The walk's read found its folder there: only a read after the refusal may find none. The next `changed` waits for it.
+      const refusing = this.#refused(root, false).finally(() => this.#refusing.delete(root));
+      this.#refusing.set(root, refusing);
       return;
     }
     watched.folders = folders;

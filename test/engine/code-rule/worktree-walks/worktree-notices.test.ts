@@ -99,6 +99,42 @@ async function states(subject: WorktreeNotices, roots: readonly string[]): Promi
   return answers;
 }
 
+/**
+ * A Linux worktree `/w` watched with its folder `a`, then read as `refuse` makes the watch refuse the read's folders.
+ * `folderAt` answers each read at once with the folder `folders` holds, except a read asked while `hold` is on, as the
+ * read after the refusal is: it waits in `held` for the case to answer it. `stamped` settles as the clock is first read,
+ * which here only a failed watch's record does.
+ */
+async function refusedAfterRead(refuse: (watch: ScriptedWatch) => void) {
+  const watch = new ScriptedWatch();
+  const clock = { now: 0 };
+  const folders = new Map([["/w", "a"]]);
+  const held: ((folder: string) => void)[] = [];
+  const reads = { asked: 0, hold: false };
+  const stamped = Promise.withResolvers<void>();
+  const folderAt = async (root: string): Promise<string> => {
+    reads.asked += 1;
+    return reads.hold ? await new Promise<string>(done => held.push(done)) : folders.get(root) ?? "";
+  };
+  const now = (): number => {
+    stamped.resolve();
+    return clock.now;
+  };
+  const subject = new WorktreeNotices({ treeWatch: watch, platform: "linux", now, folderAt });
+  await subject.changed("/w");
+  subject.reading("/w");
+  refuse(watch);
+  reads.hold = true;
+  subject.read("/w", seen);
+  reads.hold = false;
+  return { subject, watch, clock, folders, held, reads, stamped: stamped.promise };
+}
+
+/** The watch budget cannot hold `src/deep`, which `seen` walked. */
+function overBudget(watch: ScriptedWatch): void {
+  watch.overBudget.add("src/deep");
+}
+
 describe("WorktreeNotices", () => {
   it("counts every worktree changed on every walk with no engine watch", async () => {
     const { notices: subject } = notices(undefined);
@@ -322,43 +358,51 @@ describe("WorktreeNotices", () => {
     const { notices: subject } = notices(watch, "linux");
     await subject.changed("/w");
     subject.reading("/w");
-    watch.refused.add("/w");
+    watch.overBudget.add("src/deep");
     subject.read("/w", seen);
     expect(watch.calls.at(-1)).toBe("unwatch /w");
     expect([await subject.changed("/w"), subject.watching("/w")]).toEqual([true, false]);
   });
 
-  it("reads a Linux worktree's path again once the watch budget refused the folders its read walked, the read having found its folder", async () => {
-    const watch = new ScriptedWatch();
-    let reads = 0;
-    const folderAt = async (): Promise<string> => {
-      reads += 1;
-      return "a";
-    };
-    const subject = new WorktreeNotices({ treeWatch: watch, platform: "linux", now: () => 0, folderAt });
-    await subject.changed("/w");
-    subject.reading("/w");
-    watch.overBudget.add("src/deep");
-    subject.read("/w", seen);
+  it("reads a Linux worktree's path again once the watch budget refused the folders its read walked, and while its folder stands reads it on every walk until the retry", async () => {
+    const { subject, watch, clock, held, reads } = await refusedAfterRead(overBudget);
     // Read as the watch began, and again after the refusal: only that read can find the folder gone.
-    expect([reads, watch.calls]).toEqual([2, ["watch /w []", "watch /w [,src,src/deep]", "unwatch /w"]]);
+    expect([reads.asked, watch.calls]).toEqual([2, ["watch /w []", "watch /w [,src,src/deep]", "unwatch /w"]]);
+    held[0]!("a");
+    expect(await states(subject, ["/w"])).toEqual([[true, false]]);
+    clock.now = WATCH_RETRY_MS - 1;
+    expect(await states(subject, ["/w"])).toEqual([[true, false]]);
+    clock.now = WATCH_RETRY_MS;
+    expect(await states(subject, ["/w"])).toEqual([[true, true]]);
   });
 
   it("tries to watch at the next walk a Linux worktree whose folder went after its read, before the watch followed the read's folders", async () => {
-    const watch = new ScriptedWatch();
-    const folders = new Map([["/w", "a"]]);
-    const subject = new WorktreeNotices({ treeWatch: watch, platform: "linux", now: () => 0, folderAt: async root => folders.get(root) ?? "" });
-    await subject.changed("/w");
-    subject.reading("/w");
-    // Gone as the read ends: the engine refuses a path with no folder.
-    folders.delete("/w");
-    watch.refused.add("/w");
-    subject.read("/w", seen);
+    // The engine refuses a path with no folder.
+    const { subject, watch, folders, held } = await refusedAfterRead(scripted => scripted.refused.add("/w"));
     expect(watch.calls.at(-1)).toBe("unwatch /w");
+    // Gone as the read after the refusal looks.
+    held[0]!("");
     // Made again: the next walk watches it, though `WATCH_RETRY_MS` has not passed.
     folders.set("/w", "b");
     watch.refused.delete("/w");
     expect(await states(subject, ["/w"])).toEqual([[true, true]]);
+  });
+
+  it.each(["the read after the refusal", "the walk's own read"])("keeps unwatched until the retry a Linux worktree whose folder stands after the watch budget refused its read's folders, when a walk asks before the read after the refusal ends and %s ends first", async first => {
+    const { subject, held, reads, stamped } = await refusedAfterRead(overBudget);
+    // A read the walk asks of the path while the read after the refusal runs waits too.
+    reads.hold = true;
+    const next = subject.changed("/w");
+    reads.hold = false;
+    if (first === "the read after the refusal") {
+      held[0]!("a");
+      await stamped;
+      for (const answer of held.slice(1)) answer("a");
+    } else {
+      for (const answer of held.slice(1)) answer("a");
+      held[0]!("a");
+    }
+    expect([await next, subject.watching("/w")]).toEqual([true, false]);
   });
 
   it("watches again at once a worktree whose watch ended once another folder stands at its path, and waits while the same folder, or none, does", async () => {
