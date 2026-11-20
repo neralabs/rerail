@@ -173,7 +173,7 @@ fn check_lowering(name: &str, p: &Program) {
     for width in [16usize, 32, 64] {
         let carried = native.insts.iter().any(block_native::BlockInst::carried);
         for (strategy, msl) in metal_program_backend_generate(&native, width) {
-            println!("== {name}: generated MSL, {width}-byte lanes, {strategy} ==\n{msl}");
+            println!("== {name}: generated UKL, {width}-byte lanes, {strategy} ==\n{msl}");
             // The lane code (the carry helpers and each program's function) is straight-line;
             // only the look-backs loop, over predecessor groups, and the workers' loop takes
             // groups. A program's only branches leave the group unfinished when a look-back has
@@ -181,16 +181,18 @@ fn check_lowering(name: &str, p: &Program) {
             for (section, code) in lane_code(&msl) {
                 let code: String = code.lines().filter(|l| !CONTROL.iter().any(|c| l.trim_start().starts_with(c))).map(|l| format!("{l}\n")).collect();
                 for word in ["for (", "while", "switch", "goto", "?", "if (", "break"] {
-                    assert!(!code.contains(word), "{name}: generated MSL ({strategy}), {section}, has `{word}`");
+                    assert!(!code.contains(word), "{name}: generated UKL ({strategy}), {section}, has `{word}`");
                 }
                 // SIMD-group operations only combine carries: none without a carried instruction.
                 if !carried && section.starts_with("program_") {
-                    assert!(!code.contains("simd_"), "{name}: generated MSL ({strategy}) has a SIMD-group operation");
+                    for op in SIMD_GROUP_OPERATIONS {
+                        assert!(!code.contains(op), "{name}: generated UKL ({strategy}) has a SIMD-group operation (`{op}`)");
+                    }
                 }
             }
             // The only memory a class formula reads is the bytes: no tables.
             if strategy == "Planes" {
-                assert!(!msl.contains("constant uchar"), "{name}: the planes form reads a table");
+                assert!(!msl.contains("UKL_TABLE uint8_t"), "{name}: the planes form reads a table");
             }
         }
     }
@@ -198,20 +200,30 @@ fn check_lowering(name: &str, p: &Program) {
 
 /// A program function's control lines, each the same in every lane: those that leave the group
 /// unfinished, and the full group's bodies.
-const CONTROL: [&str; 6] = ["if (!look_back(", "if (!halo_exchange(", "if (!count_sink(", "if (simd_any(", "if (g > 0u && (g + 1u) * ", "if (simd_all(ascii))"];
+const CONTROL: [&str; 6] = ["if (!look_back(", "if (!halo_exchange(", "if (!count_sink(", "if (sg_any(", "if (g > 0u && (g + 1u) * ", "if (sg_all(ascii __UKL_ARGS))"];
 
-/// The generated MSL's lane code: every function (the carry helpers, `load16`,
-/// and each `program_P`). The look-backs and exchanges, which loop over predecessor groups, and
-/// the workers' kernel, which loops over groups, are left out.
+/// The SIMD-group operations of the generated code (`block_common.uglykl`'s and UKL's).
+const SIMD_GROUP_OPERATIONS: [&str; 8] = ["ukl_sg_", "sg_any(", "sg_all(", "sg_bcast", "sg_up64(", "sg_down64(", "SG_UP_BM(", "SG_BCAST_BM("];
+
+/// The functions of `block_common.uglykl` that loop: the look-backs and exchanges, over predecessor groups; the
+/// sinks that write positions, over a lane's set bits, and finish a count; the interpreter's byte tests, over a
+/// lane's chunks. (Metal's source declared them without `inline`.)
+const LOOPING: [&str; 9] = ["look_back", "halo_exchange", "exchange_word", "count_sink", "write_positions", "totals_or", "count_finish", "eq_file", "plane_file"];
+
+/// The generated UKL's lane code: every function (the carry helpers, `load16`,
+/// and each `program_P`). The functions that loop (`LOOPING`), and the workers' kernel, which loops over groups,
+/// are left out.
 fn lane_code(msl: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
-    for marker in ["static inline "] {
+    for marker in ["UKL_INLINE "] {
         for (at, _) in msl.match_indices(marker) {
             let code = &msl[at..];
-            let end = code.find("\n}\n").map_or(code.find('\n').unwrap_or(code.len()), |e| e + 2);
+            // A function on one line ends with it; any other at its closing brace.
+            let line = code.find('\n').unwrap_or(code.len());
+            let end = if code[..line].trim_end().ends_with('}') { line } else { code.find("\n}\n").map_or(line, |e| e + 2) };
             let code = &code[..end.min(code.len())];
             let name = code[..code.find('(').unwrap_or(0)].rsplit(' ').next().unwrap_or("").to_owned();
-            if ["look_back", "halo_exchange", "exchange_word"].contains(&name.as_str()) {
+            if LOOPING.contains(&name.as_str()) {
                 continue;
             }
             out.push((name, code.to_owned()));
@@ -221,18 +233,14 @@ fn lane_code(msl: &str) -> Vec<(String, String)> {
     out
 }
 
-/// The generated MSL of every class strategy, from its first line (helpers included).
+/// The generated UKL of every class strategy, from its first line (helpers included).
 #[cfg(target_os = "macos")]
 fn metal_program_backend_generate(native: &block_native::BlockNative, width: usize) -> Vec<(String, String)> {
     use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_with};
     let width = LaneWidth::ALL.into_iter().find(|w| w.bytes() == width).expect("a width");
     ClassStrategy::ALL
         .into_iter()
-        .map(|s| {
-            let msl = generate_with(native, width, s);
-            let body = msl[msl.find("using namespace metal;").expect("the prelude")..].to_owned();
-            (format!("{s:?}"), body)
-        })
+        .map(|s| (format!("{s:?}"), generate_with(native, width, s)))
         .collect()
 }
 
@@ -257,29 +265,32 @@ fn interpreters_have_no_byte_loops() {
     for word in ["for ", "while ", "loop {", ".iter()", "[j]", "[i]"] {
         assert!(!kernel.contains(word), "the CPU eq kernel has `{word}`");
     }
-    // The Metal interpreter's `interpret_file`: one loop over operations, and loops over the
-    // program's outputs and extracts (sizes); a lane's chunks are a loop over `sizeof(M) / 2`.
+    // The device interpreter's `interpret_file`: one loop over operations, and loops over the
+    // program's outputs and extracts (sizes); a lane's chunks are a loop over `BW / 16`.
     // Its only branches leave the group unfinished when a look-back has to wait.
-    let metal = include_str!("../../metal/src/block_program.metal");
-    let run = &metal[metal.find("static bool interpret_file(").expect("interpret_file")..];
+    let interpreter = include_str!("../../metal/src/block_program.uglykl");
+    let common = include_str!("../../metal/src/block_common.uglykl");
+    let run = &interpreter[interpreter.find("UKL_INLINE bool interpret_file(").expect("interpret_file")..];
     let run = &run[..run.find("\n}\n").expect("its end")];
     let loops: Vec<&str> = run.lines().filter(|l| l.contains("for (")).map(str::trim).collect();
     assert_eq!(loops.len(), 3, "{loops:?}");
-    assert!(loops[0].starts_with("for (uint at = 0u; at < pr.steps; at++)"), "{loops:?}");
-    assert!(loops[1].starts_with("for (uint k = 0u; k < pr.outs; k++)") && loops[2].starts_with("for (uint c = 0u; c < pr.exts; c++)"), "{loops:?}");
-    for word in ["while", "simd_ballot"] {
-        assert!(!run.contains(word), "the Metal interpreter has `{word}`");
+    assert!(loops[0].starts_with("for (uint32_t at = 0u; at < pr.steps; at++)"), "{loops:?}");
+    assert!(loops[1].starts_with("for (uint32_t k = 0u; k < pr.outs; k++)") && loops[2].starts_with("for (uint32_t c = 0u; c < pr.exts; c++)"), "{loops:?}");
+    for word in ["while", "ukl_sg_ballot"] {
+        assert!(!run.contains(word), "the device interpreter has `{word}`");
     }
     for line in run.lines().filter(|l| l.contains("if (")) {
         let line = line.trim();
-        assert!(["if (!halo_exchange(", "if (!look_back(", "if (!count_sink("].iter().any(|c| line.starts_with(c)), "the Metal interpreter branches: `{line}`");
+        assert!(["if (!halo_exchange(", "if (!look_back(", "if (!count_sink("].iter().any(|c| line.starts_with(c)), "the device interpreter branches: `{line}`");
     }
     for helper in ["eq_file", "plane_file"] {
-        let code = &metal[metal.find(&format!("M {helper}(")).expect("helper")..];
+        let code = &common[common.find(&format!("BM {helper}(")).expect("helper")..];
         let code = &code[..code.find("\n}\n").expect("its end")];
-        assert!(code.contains("for (uint c = 0u; c < uint(sizeof(M)) / 2u; c++)"), "{helper} loops over chunks only");
+        let loops: Vec<&str> = code.lines().filter(|l| l.contains("for (")).map(str::trim).collect();
+        assert!(loops.len() == 1 && loops[0].starts_with("for (uint32_t c = 0u; c < (uint32_t)BW / 16u; c++)"), "{helper} loops over chunks only: {loops:?}");
     }
-    let carry = include_str!("../../metal/src/block_carry.metal");
+    // The carries: from the look-back states to the polls, straight-line.
+    let carry = &common[common.find("// A look-back state").expect("the carries")..common.find("#if BLOCK_POLL_RMW").expect("the polls")];
     for word in ["for (", "while", "if (", "?"] {
         assert!(!carry.contains(word), "the carry helpers have `{word}`");
     }
@@ -511,7 +522,7 @@ fn pair_equals_reference_on_every_executor() {
 }
 
 /// The planes form (`class` as formulas of bit-planes, which Metal runs) equals the reference on
-/// the CPU too, through Cranelift; it has no `class` left, and the Metal interpreter reads no
+/// the CPU too, through Cranelift; it has no `class` left, and the device interpreter reads no
 /// table.
 #[test]
 fn class_planes_form_equals_reference() {
@@ -523,8 +534,8 @@ fn class_planes_form_equals_reference() {
     for bytes in inputs() {
         assert_eq!(compiled.run(&bytes), simdjson_want(&bytes), "{} bytes", bytes.len());
     }
-    let metal = include_str!("../../metal/src/block_program.metal");
-    assert!(!metal.contains("constant uchar") && !metal.contains("tables"), "the Metal interpreter reads a table");
+    let interpreter = include_str!("../../metal/src/block_program.uglykl");
+    assert!(!interpreter.contains("UKL_TABLE") && !interpreter.contains("tables"), "the device interpreter reads a table");
 }
 
 #[test]
@@ -927,7 +938,7 @@ fn lookback_fallback_equals_reference() {
     }
 }
 
-/// Generated MSL is one kernel, each instruction three times at most (a full group's body, its
+/// Generated UKL is one kernel, each instruction three times at most (a full group's body, its
 /// ASCII twin and the general one): a few lines per instruction.
 #[test]
 #[cfg(target_os = "macos")]
@@ -938,7 +949,7 @@ fn generated_msl_is_one_kernel() {
     for width in LaneWidth::ALL {
         for strategy in ClassStrategy::ALL {
             let msl = generate_with(&native, width, strategy);
-            assert_eq!(msl.matches("kernel void ").count(), 1, "{msl}");
+            assert_eq!(msl.matches("DEFINE_KERNEL2(").count(), 1, "{msl}");
             let lines = msl.lines().filter(|l| l.starts_with("  const ") || l.starts_with("  if (!")).count();
             assert!(lines < 36 * native.insts.len(), "{lines} lines for {} instructions", native.insts.len());
         }

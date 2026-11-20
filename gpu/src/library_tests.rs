@@ -7,7 +7,7 @@ use crate::kernels::{alloc, buffer_of, launch, program, read, Program};
 use crate::library::{compact_u32, histogram, radix_sort_pairs, scan_exclusive_popcount_u32, scan_exclusive_u32, HashTable, RadixKey, Sorted};
 use crate::Pod;
 
-const TESTS: &str = include_str!("library_tests.ukl");
+const TESTS: &str = include_str!("library_tests.uglykl");
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -23,7 +23,7 @@ fn setup() -> Option<(&'static Program, ComputeQueue)> {
         eprintln!("no device: the UKL library's tests did not run");
         return None;
     };
-    let p = program("library_tests.ukl", TESTS).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
+    let p = program("library_tests.uglykl", TESTS).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
     Some((p, ComputeQueue::new(&shared.queue)))
 }
 
@@ -112,16 +112,40 @@ fn byte_stores_at_unaligned_addresses() {
 }
 
 #[test]
+fn word_stores_at_unaligned_addresses() {
+    let Some((p, mut q)) = setup() else { return };
+    let n = 200u32;
+    let bytes = buffer_of(&vec![0u8; n as usize * 32]).unwrap();
+    let out = alloc::<u64>(n as usize * 4).unwrap();
+    launch(&q, p.function("t_word_stores").unwrap()).value("args", &TestArgs { n, w: 0 }).buffer("bytes", &bytes).buffer("out", &out).run(&[n.div_ceil(64) as u64], &[64]).unwrap();
+    q.flush().await_().unwrap();
+    let got: Vec<u64> = read(&out, n as usize * 4);
+    let mem: Vec<u8> = read(&bytes, n as usize * 32);
+    let mut want_mem = vec![0u8; n as usize * 32];
+    for i in 0..n as usize {
+        let v = (i as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ 0x0123_4567_89ab_cdef;
+        let at = [i * 32 + i % 7, i * 32 + 8 + i % 5, i * 32 + 16 + i % 9 % 8, i * 32 + 31];
+        let vals = [v & 0xffff, (v >> 7) & 0xffff_ffff, v >> 3, (v >> 11) & 0xff];
+        for (k, (a, x)) in at.iter().zip(vals).enumerate() {
+            let len = [2, 4, 8, 1][k];
+            want_mem[*a..a + len].copy_from_slice(&x.to_le_bytes()[..len]);
+        }
+        assert_eq!(&got[i * 4..i * 4 + 4], &vals, "{}: thread {i}'s word stores, read back", crate::device::backend());
+    }
+    assert_eq!(mem, want_mem, "{}: the word stores' bytes, and no others", crate::device::backend());
+}
+
+#[test]
 fn bits_within_words() {
     let Some((p, mut q)) = setup() else { return };
     let mut rng = Rng(11);
     let n = 4096u32;
     let words: Vec<u64> = (0..n).map(|_| rng.word()).collect();
     let inb = buffer_of(&words).unwrap();
-    let out = alloc::<u64>(n as usize * 12).unwrap();
+    let out = alloc::<u64>(n as usize * 15).unwrap();
     launch(&q, p.function("t_bits").unwrap()).value("args", &TestArgs { n, w: 0 }).buffer("words", &inb).buffer("out", &out).run(&[(n / 64) as u64], &[64]).unwrap();
     q.flush().await_().unwrap();
-    let got: Vec<u64> = read(&out, n as usize * 12);
+    let got: Vec<u64> = read(&out, n as usize * 15);
     let select = |w: u64, k: u32, width: u32| (0..width).filter(|b| w >> b & 1 == 1).nth(k as usize).unwrap_or(width) as u64;
     for (i, &w) in words.iter().enumerate() {
         let lo = w as u32;
@@ -140,8 +164,11 @@ fn bits_within_words() {
             select(w, i32_ % 65, 64),
             bits(w, i32_ % 64, i32_ * 7 % 65, 64),
             bits(lo as u64, i32_ % 33, i32_ * 5 % 33, 32) & 0xffff_ffff,
+            lo.reverse_bits() as u64,
+            w.reverse_bits(),
+            ((w as u128 * words[(i + 1) % n as usize] as u128) >> 64) as u64,
         ];
-        assert_eq!(&got[i * 12..i * 12 + 12], &want, "{}: word {i} ({w:#x}): popcount clz ctz (32, 64), rank, select, bits", crate::device::backend());
+        assert_eq!(&got[i * 15..i * 15 + 15], &want, "{}: word {i} ({w:#x}): popcount clz ctz (32, 64), rank, select, bits, reverse, umulhi", crate::device::backend());
     }
 }
 

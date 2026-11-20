@@ -6703,11 +6703,11 @@ pub fn rust_source(program: &Words) -> Result<String, String> {
     Ok(format!("{one}\n/// This source's fingerprint (`clif_rust::fingerprint` of what comes before).\npub const SOURCE: u64 = {h:#x};\n"))
 }
 
-/// The words' compiled code as MSL (`clif_msl`, decision 0348 stage 5): the JIT's functions, the
+/// The words' compiled code as UKL (`clif_ukl`, decisions 0348 stage 5, 0440 step D): the JIT's functions, the
 /// run's entry the kernel `pp_batch` over a batch of contexts, and its fingerprint.
-pub fn msl_source(program: &Words) -> Result<String, String> {
+pub fn ukl_source(program: &Words) -> Result<String, String> {
     let c = compile_kept(program, true).map_err(|e| format!("{e:?}"))?;
-    let one = crate::clif_msl::translate(&c.ir, &[(c.run_id, "pp_batch")])?;
+    let one = crate::clif_ukl::translate(&c.ir, &[(c.run_id, "pp_batch")])?;
     let h = crate::clif_rust::fingerprint(&one);
     Ok(format!("{one}\n// This source's fingerprint (`clif_rust::fingerprint` of what comes before): {h:#x}.\n"))
 }

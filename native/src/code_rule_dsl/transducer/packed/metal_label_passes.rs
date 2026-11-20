@@ -1137,7 +1137,7 @@ pub(in crate::code_rule_dsl) fn pattern_sources(patterns: &[&PackedPattern], fac
 /// `format` is the batch's tape format, the kernels' function constant (`pattern_pipeline`).
 pub(in crate::code_rule_dsl) fn patterns_ready(sources: &[String], format: u32) -> bool {
     // Each asked, so every one missing is recorded, not only the first.
-    sources.iter().map(|source| rerail_accel::gpu::kernels::ready(source, patterns::KERNEL, Some(format)).is_some()).fold(true, |all, ready| all && ready)
+    sources.iter().map(|source| rerail_accel::gpu::kernels::ready_function(source, patterns::KERNEL, Some(format)).is_some()).fold(true, |all, ready| all && ready)
 }
 
 /// One group's pattern kernel, compiled once per distinct source.

@@ -1,83 +1,51 @@
-//! Cranelift IR as Metal's shading language (decision 0348, stage 5): the same functions the JIT
-//! runs and `clif_rust` prints as Rust, printed as MSL, so the device runs the same code.
+//! Cranelift IR as UKL (decisions 0348 stage 5, 0440 step D): the same functions the JIT runs and `clif_rust` prints
+//! as Rust, printed as UKL's C, so every GPU (Metal, CUDA, OpenCL, the CPU's backend) runs the same code.
 //!
-//! - **Values:** each a local of its type's unsigned C++ type, declared once (as `clif_rust`'s).
-//!   Arithmetic is on the type's width, its shifts' counts masked as Cranelift's are.
-//! - **Memory:** an address is a GPU address in the batch's one arena, and each access is the
-//!   arena's pointer at the address's offset (`AT`). An integer cast to a pointer is never
-//!   accessed: the device compiler took two such pointers to one byte as different objects and
-//!   read a byte back from before its store (`!(1/0)` was true; 0348, stage 5).
-//! - **Alignment:** a byte, or a context field at its size's multiple, is one access. Any other
-//!   access is a helper over the aligned words around it, so no access is unaligned. The IR's
-//!   `aligned` flag is the CPU's, and is not used.
-//! - **Control:** `clif_rust::Shape`'s structure, printed without labels (`Shape::msl`).
-//! - **Calls:** each function an MSL function, called directly; the graph has no recursion
-//!   (Metal's rule), which the translation checks.
+//! - **Values:** each a local of its type's unsigned C type, declared once (as `clif_rust`'s). Arithmetic is on the
+//!   type's width (32 bits below it: no promotion to `int`), its shifts' counts masked as Cranelift's are. Casts are
+//!   C casts (OpenCL C 1.2 has no other).
+//! - **Memory:** an address is the device's address of a byte of the batch's one arena, and each access is the
+//!   arena's pointer at the address's offset from the arena's first byte (`hb`). An integer cast to a pointer is never
+//!   accessed: the device compiler took two such pointers to one byte as different objects and read a byte back from
+//!   before its store (`!(1/0)` was true; 0348, stage 5).
+//! - **Widths:** the words read and write the same bytes at several widths (a field stored as 32 bits, read in a
+//!   64-bit word), so every access is a byte or an aligned 64-bit word (`ukl_ldw_*`, `ukl_stw_*`): no direct access
+//!   of another width the compiler's type-based alias rules could reorder, and none unaligned. The IR's `aligned` flag
+//!   is the CPU's, and is not used.
+//! - **Control:** `clif_rust::Shape`'s structure, printed as C without labels (`Shape::c`).
+//! - **Calls:** each function `UKL_CALLED`, called directly, the compiler inlining as it chooses; the graph has no
+//!   recursion (no GPU language has it), which the translation checks.
 //!
-//! What it does not print is an error, never a fallback: vectors, stack slots, the stack
-//! pointer, traps, and more than one result.
+//! What it does not print is an error, never a fallback: vectors, stack slots, the stack pointer, traps, and more than
+//! one result.
 
 use crate::clif_rust::{Shape, absorbed, returned_call, successors};
 use cranelift_codegen::ir::{self, InstructionData, Opcode, condcodes::IntCC, types};
 use std::fmt::Write;
 
-/// A type's unsigned and signed C++ names and its bits.
+/// A type's unsigned and signed C names and its bits.
 fn ty(t: ir::Type) -> Result<(&'static str, &'static str, u32), String> {
     Ok(match t {
-        types::I8 => ("uchar", "char", 8),
-        types::I16 => ("ushort", "short", 16),
-        types::I32 => ("uint", "int", 32),
-        types::I64 => ("ulong", "long", 64),
+        types::I8 => ("uint8_t", "int8_t", 8),
+        types::I16 => ("uint16_t", "int16_t", 16),
+        types::I32 => ("uint32_t", "int32_t", 32),
+        types::I64 => ("uint64_t", "int64_t", 64),
         t => return Err(format!("the type {t}")),
     })
 }
 
-/// The helpers every translation carries: loads and stores at any byte, by the aligned words
-/// around it.
-const PRELUDE: &str = "#include <metal_stdlib>\nusing namespace metal;\n\n\
-// Every address the words hold is a GPU address in the batch's one arena: each access is the\n\
-// arena's pointer at the address's offset (`hb` its first byte's address), never an integer\n\
-// cast to a pointer, so the compiler sees one object and orders its accesses.\n\
-#define AT(T, a) (reinterpret_cast<device T*>(heap + ((a) - hb)))\n\
-// Every access through a type that may alias any other: the words read and write the same\n\
-// bytes at several widths (a field stored as 32 bits, read in a 64-bit word), which C++\'s\n\
-// type-based alias rules would let the compiler reorder.\n\
-typedef ulong __attribute__((__may_alias__)) ulong_a; typedef uint __attribute__((__may_alias__)) uint_a;\n\
-typedef ushort __attribute__((__may_alias__)) ushort_a; typedef uchar __attribute__((__may_alias__)) uchar_a;\n\
-typedef char __attribute__((__may_alias__)) char_a; typedef short __attribute__((__may_alias__)) short_a; typedef int __attribute__((__may_alias__)) int_a;\n\
-// Loads and stores at any address: the access itself where the address is its size's multiple,\n\
-// else by the aligned words around it (a 64-bit value on a 4-byte boundary as two halves).\n\
-static inline ulong ld_any(device uchar* heap, ulong hb, ulong a) {\n\
-  const ulong w = a & ~7ul; const uint s = uint(a & 7ul) * 8u;\n\
-  const ulong lo = *AT(ulong_a, w);\n\
-  if (s == 0u) return lo;\n\
-  const ulong hi = *AT(ulong_a, w + 8ul);\n\
-  return (lo >> s) | (hi << (64u - s));\n\
-}\n\
-static inline ulong ld64(device uchar* heap, ulong hb, ulong a) {\n\
-  if ((a & 7ul) == 0ul) return *AT(ulong_a, a);\n\
-  if ((a & 3ul) == 0ul) return ulong(*AT(uint_a, a)) | (ulong(*AT(uint_a, a + 4ul)) << 32);\n\
-  return ld_any(heap, hb, a);\n\
-}\n\
-static inline uint ld32(device uchar* heap, ulong hb, ulong a) { return (a & 3ul) == 0ul ? *AT(uint_a, a) : uint(ld_any(heap, hb, a)); }\n\
-static inline ushort ld16(device uchar* heap, ulong hb, ulong a) { return (a & 1ul) == 0ul ? *AT(ushort_a, a) : ushort(ld_any(heap, hb, a)); }\n\
-static inline void st_bytes(device uchar* heap, ulong hb, ulong a, ulong x, uint n) {\n\
-  device uchar_a* p = AT(uchar_a, a);\n\
-  for (uint i = 0u; i < n; i++) p[i] = uchar(x >> (8u * i));\n\
-}\n\
-static inline void st64(device uchar* heap, ulong hb, ulong a, ulong x) {\n\
-  if ((a & 7ul) == 0ul) { *AT(ulong_a, a) = x; return; }\n\
-  if ((a & 3ul) == 0ul) { *AT(uint_a, a) = uint(x); *AT(uint_a, a + 4ul) = uint(x >> 32); return; }\n\
-  st_bytes(heap, hb, a, x, 8u);\n\
-}\n\
-static inline void st32(device uchar* heap, ulong hb, ulong a, uint x) { if ((a & 3ul) == 0ul) *AT(uint_a, a) = x; else st_bytes(heap, hb, a, x, 4u); }\n\
-static inline void st16(device uchar* heap, ulong hb, ulong a, ushort x) { if ((a & 1ul) == 0ul) *AT(ushort_a, a) = x; else st_bytes(heap, hb, a, x, 2u); }\n\n";
+/// What every translation starts with: the library's backend and its word loads and stores.
+const PRELUDE: &str = "#include <ukl/backend.h>\n#include <ukl/memory.h>\n\n\
+// The batch's launch: its contexts' count, and the device's address of the arena's first byte (`hb`): each access is\n\
+// the arena's pointer at an address's offset from it.\n\
+typedef struct PpBatch { uint64_t hb; uint32_t count; uint32_t pad; } PpBatch;\n\
+UKL_REFLECT_STRUCT(PpBatch, hb, count, pad)\n\n";
 
-/// The functions (by their user name's index), as MSL: each of `entries` called from a kernel
-/// of its name over a batch, one context a thread taken by ticket (decision 0027's workers):
-/// `ctxs[t]` the context's address, `results[t]` its run's result.
+/// The functions (by their user name's index), as UKL: each of `entries` called from a kernel of its name over a
+/// batch, one context a thread taken by ticket (decision 0027's workers): `ctxs[t]` the context's address,
+/// `results[t]` its run's result.
 pub fn translate(funcs: &[(u32, ir::Function)], entries: &[(u32, &str)]) -> Result<String, String> {
-    let mut out = String::from("// Generated by rerail_compiler::clif_msl from the Cranelift IR. Do not edit.\n");
+    let mut out = String::from("// Generated by rerail_compiler::clif_ukl from the Cranelift IR. Do not edit.\n");
     out.push_str(PRELUDE);
     // Callees before callers, as C++ needs: by the call graph, which may have no cycle.
     let calls = |f: &ir::Function| -> Vec<u32> {
@@ -91,7 +59,7 @@ pub fn translate(funcs: &[(u32, ir::Function)], entries: &[(u32, &str)]) -> Resu
     fn visit(id: u32, funcs: &[(u32, ir::Function)], calls: &dyn Fn(&ir::Function) -> Vec<u32>, state: &mut std::collections::HashMap<u32, u8>, order: &mut Vec<u32>) -> Result<(), String> {
         match state.get(&id) {
             Some(2) => return Ok(()),
-            Some(_) => return Err(format!("u0:{id} is called in a cycle: Metal has no recursion")),
+            Some(_) => return Err(format!("u0:{id} is called in a cycle: no GPU language has recursion")),
             None => {}
         }
         state.insert(id, 1);
@@ -118,11 +86,13 @@ pub fn translate(funcs: &[(u32, ir::Function)], entries: &[(u32, &str)]) -> Resu
         writeln!(
             out,
             "// The entry over a batch: each worker takes contexts by ticket until none is left.\n\
-             kernel void {n}(device ulong* ctxs [[buffer(0)]], device ulong* results [[buffer(1)]], device atomic_uint* ticket [[buffer(2)]], constant uint& count [[buffer(3)]], device uchar* heap [[buffer(4)]], constant ulong& hb [[buffer(5)]]) {{\n\
-             \x20 for (uint k = 0u; k < count; k++) {{\n\
-             \x20   const uint t = atomic_fetch_add_explicit(ticket, 1u, memory_order_relaxed);\n\
-             \x20   if (t >= count) return;\n\
-             \x20   results[t] = f{entry}(0ul, heap, hb, ctxs[t]);\n\
+             DEFINE_KERNEL2(pp, {n}, RWBUFFER, uint64_t, ctxs, \"[count + 1]\", RWBUFFER, uint64_t, results, \"[count]\",\n\
+             \x20              RWBUFFER, uint32_t, ticket, \"[1]\", RWBUFFER, uint8_t, heap, \"[arena]\", ARGS, PpBatch, p, )\n\
+             {{\n\
+             \x20 for (uint32_t k = 0u; k < p.count; k++) {{\n\
+             \x20   const uint32_t t = ukl_atomic_add(ticket, 1u);\n\
+             \x20   if (t >= p.count) return;\n\
+             \x20   results[t] = f{entry}(0ul, heap, p.hb, ctxs[t]);\n\
              \x20 }}\n\
              }}\n"
         )
@@ -145,7 +115,7 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<(), String> {
     let name = |v: ir::Value| format!("v{}", dfg.resolve_aliases(v).as_u32());
     let entry = f.layout.entry_block().ok_or("no entry block")?;
     let params: Vec<String> = dfg.block_params(entry).iter().map(|&v| Ok(format!("{} a{}", ty(dfg.value_type(v))?.0, v.as_u32()))).collect::<Result<_, String>>()?;
-    writeln!(out, "static {ret_ty} f{id}(ulong pin, device uchar* heap, ulong hb{}{}) {{", if params.is_empty() { "" } else { ", " }, params.join(", ")).unwrap();
+    writeln!(out, "UKL_CALLED {ret_ty} f{id}(uint64_t pin, UKL_GLOBAL uint8_t* heap, uint64_t hb{}{}) {{", if params.is_empty() { "" } else { ", " }, params.join(", ")).unwrap();
     let absorbed = absorbed(f);
     if !absorbed.is_empty() {
         return Err("a vector test".into());
@@ -167,14 +137,14 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<(), String> {
     for &v in dfg.block_params(entry) {
         writeln!(out, "  v{0} = a{0};", v.as_u32()).unwrap();
     }
-    out.push_str("  uint d = 0u, j = 0u;\n");
+    out.push_str("  uint32_t d = 0u, j = 0u;\n");
     let blocks: Vec<ir::Block> = std::iter::once(entry).chain(f.layout.blocks().filter(|&b| b != entry)).collect();
     let node_of: std::collections::HashMap<ir::Block, usize> = blocks.iter().enumerate().map(|(i, &b)| (b, i)).collect();
     let first: Vec<Vec<usize>> = blocks.iter().map(|&b| successors(f, b).iter().map(|t| node_of[t]).collect()).collect();
     let sizes: Vec<usize> = blocks.iter().map(|&b| f.layout.block_insts(b).count()).collect();
     match Shape::of(first, &sizes) {
         Some(mut shape) => {
-            shape.msl = true;
+            shape.c = true;
             let emit = |node: usize, jump: &dyn Fn(usize) -> Result<String, String>| -> Result<String, String> {
                 let mut s = String::new();
                 for inst in f.layout.block_insts(blocks[node]) {
@@ -220,8 +190,8 @@ fn goto(f: &ir::Function, call: &ir::BlockCall, k: usize, name: &dyn Fn(ir::Valu
     if params.len() == 1 {
         write!(s, "v{} = {}; ", params[0].as_u32(), args[0]).unwrap();
     } else if !params.is_empty() {
-        for (i, a) in args.iter().enumerate() {
-            write!(s, "const auto t{i} = {a}; ").unwrap();
+        for (i, (a, p)) in args.iter().zip(params).enumerate() {
+            write!(s, "const {} t{i} = {a}; ", ty(dfg.value_type(*p))?.0).unwrap();
         }
         for (i, p) in params.iter().enumerate() {
             write!(s, "v{} = t{i}; ", p.as_u32()).unwrap();
@@ -232,9 +202,9 @@ fn goto(f: &ir::Function, call: &ir::BlockCall, k: usize, name: &dyn Fn(ir::Valu
     Ok(s)
 }
 
-/// A 64-bit constant as C++, of type `u`.
+/// A 64-bit constant as C, of type `u`.
 fn konst(c: i64, u: &str) -> String {
-    format!("{u}({:#x}ul)", c as u64)
+    format!("(({u})({:#x}ul))", c as u64)
 }
 
 fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> String, jump: &dyn Fn(usize, ir::Block) -> Result<String, String>) -> Result<String, String> {
@@ -250,87 +220,85 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         return Err(format!("{op} on vectors"));
     }
     let set = |e: String| -> String { format!("{} = {e};", r.clone().expect("a result")) };
-    let (u, s, bits) = rt.and_then(|t| ty(t).ok()).unwrap_or(("ulong", "long", 64));
+    let (u, s, bits) = rt.and_then(|t| ty(t).ok()).unwrap_or(("uint64_t", "int64_t", 64));
     // The width arithmetic is done at: no promotion to `int` below 32 bits.
-    let w = if bits == 64 { "ulong" } else { "uint" };
-    let ws = if bits == 64 { "long" } else { "int" };
-    let bin = |o: &str| set(format!("{u}({w}({}) {o} {w}({}))", args[0], args[1]));
+    let w = if bits == 64 { "uint64_t" } else { "uint32_t" };
+    let ws = if bits == 64 { "int64_t" } else { "int32_t" };
+    let bin = |o: &str| set(format!("(({u})((({w})({})) {o} (({w})({}))))", args[0], args[1]));
     let imm = || -> Result<i64, String> {
         match data {
             InstructionData::UnaryImm { imm, .. } | InstructionData::BinaryImm64 { imm, .. } | InstructionData::IntCompareImm { imm, .. } => Ok(imm.bits()),
             _ => Err(format!("{op}: no immediate")),
         }
     };
-    let bimm = |o: &str| -> Result<String, String> { Ok(set(format!("{u}({w}({}) {o} {w}({}))", args[0], konst(imm()?, u)))) };
+    let bimm = |o: &str| -> Result<String, String> { Ok(set(format!("(({u})((({w})({})) {o} (({w}){})))", args[0], konst(imm()?, u)))) };
+    // A value as its signed type, at the width arithmetic is done at.
+    let signed = |x: &str| format!("(({ws})(({s})({x})))");
+    // The arena's byte at the address: its offset from the arena's first byte.
     let addr = |p: &str| -> String {
         let off = data.load_store_offset().unwrap_or(0);
-        if off == 0 { format!("ulong({p})") } else { format!("(ulong({p}) + {})", konst(i64::from(off), "ulong")) }
+        if off == 0 { format!("(({p}) - hb)") } else { format!("(({p}) + {} - hb)", konst(i64::from(off), "uint64_t")) }
     };
-    // An access known aligned: a byte, or a field of the context (the function's first
-    // parameter, which the host places at 16 bytes) at its size's multiple. The IR's own
-    // `aligned` flag is the CPU's, where a 64-bit access at a 4-byte boundary is one access.
-    let known = |base: ir::Value, n: u32| -> bool {
-        let entry_ctx = f.layout.entry_block().and_then(|e| dfg.block_params(e).first().copied());
-        n == 1 || (Some(dfg.resolve_aliases(base)) == entry_ctx && data.load_store_offset().is_some_and(|o| o % n as i32 == 0))
+    let load = |n: u32| -> String { format!("ukl_ldw_u{}(heap, {})", n * 8, addr(&args[0])) };
+    let store = |n: u32, x: &str| -> String { format!("ukl_stw_u{}(heap, {}, (uint64_t)({x}));", n * 8, addr(&args[1])) };
+    let shift = |x: &str| format!("(((uint32_t)({x})) & {}u)", bits - 1);
+    // The operand's bits counted by the library's 32- or 64-bit count.
+    let (aw, abits) = match at.and_then(|t| ty(t).ok()) {
+        Some((_, _, 64)) => (64, 64),
+        Some((_, _, b)) => (32, b),
+        None => (64, 64),
     };
-    let load = |t: &str, n: u32| -> String {
-        let base = dfg.inst_args(inst)[0];
-        if known(base, n) {
-            return format!("*AT({t}_a, {})", addr(&args[0]));
-        }
-        format!("{t}(ld{}(heap, hb, {}))", n * 8, addr(&args[0]))
-    };
-    let store = |t: &str, n: u32, x: &str| -> String {
-        let base = dfg.inst_args(inst)[1];
-        if known(base, n) {
-            return format!("*AT({t}_a, {}) = {t}({x});", addr(&args[1]));
-        }
-        let wide = match n { 2 => "ushort", 4 => "uint", _ => "ulong" };
-        format!("st{}(heap, hb, {}, {wide}({x}));", n * 8, addr(&args[1]))
-    };
-    let shift = |x: &str| format!("(uint({x}) & {}u)", bits - 1);
     Ok(match op {
         Opcode::Iconst => set(konst(imm()?, u)),
         Opcode::Iadd => bin("+"),
         Opcode::Isub => bin("-"),
         Opcode::Imul => bin("*"),
-        Opcode::Ineg => set(format!("{u}(-{w}({}))", args[0])),
+        Opcode::Ineg => set(format!("(({u})(0u - (({w})({}))))", args[0])),
         Opcode::Udiv => bin("/"),
         Opcode::Urem => bin("%"),
-        Opcode::Sdiv => set(format!("{u}({ws}({s}({})) / {ws}({s}({})))", args[0], args[1])),
-        Opcode::Srem => set(format!("{u}({ws}({s}({})) % {ws}({s}({})))", args[0], args[1])),
-        Opcode::Umulhi if bits == 64 => set(format!("mulhi({}, {})", args[0], args[1])),
-        Opcode::Umulhi => set(format!("{u}((ulong({}) * ulong({})) >> {bits})", args[0], args[1])),
+        Opcode::Sdiv => set(format!("(({u})({} / {}))", signed(&args[0]), signed(&args[1]))),
+        Opcode::Srem => set(format!("(({u})({} % {}))", signed(&args[0]), signed(&args[1]))),
+        Opcode::Umulhi if bits == 64 => set(format!("ukl_umulhi64({}, {})", args[0], args[1])),
+        Opcode::Umulhi => set(format!("(({u})((((uint64_t)({})) * ((uint64_t)({}))) >> {bits}))", args[0], args[1])),
         Opcode::Band => bin("&"),
         Opcode::Bor => bin("|"),
         Opcode::Bxor => bin("^"),
-        Opcode::BandNot => set(format!("{u}({w}({}) & ~{w}({}))", args[0], args[1])),
-        Opcode::BorNot => set(format!("{u}({w}({}) | ~{w}({}))", args[0], args[1])),
-        Opcode::BxorNot => set(format!("{u}({w}({}) ^ ~{w}({}))", args[0], args[1])),
-        Opcode::Bnot => set(format!("{u}(~{w}({}))", args[0])),
-        Opcode::Bitrev => set(format!("reverse_bits({})", args[0])),
+        Opcode::BandNot => set(format!("(({u})((({w})({})) & ~(({w})({}))))", args[0], args[1])),
+        Opcode::BorNot => set(format!("(({u})((({w})({})) | ~(({w})({}))))", args[0], args[1])),
+        Opcode::BxorNot => set(format!("(({u})((({w})({})) ^ ~(({w})({}))))", args[0], args[1])),
+        Opcode::Bnot => set(format!("(({u})(~(({w})({}))))", args[0])),
+        // The library's reverse of 32 or 64 bits, the type's bits at the top: shifted down to its width.
+        Opcode::Bitrev if bits == 64 => set(format!("ukl_reverse64({})", args[0])),
+        Opcode::Bitrev => set(format!("(({u})(ukl_reverse32((uint32_t)({})) >> {}u))", args[0], 32 - bits)),
         Opcode::IaddImm => bimm("+")?,
         Opcode::ImulImm => bimm("*")?,
         Opcode::UdivImm => bimm("/")?,
         Opcode::BandImm => bimm("&")?,
         Opcode::BorImm => bimm("|")?,
         Opcode::BxorImm => bimm("^")?,
-        Opcode::IrsubImm => set(format!("{u}({w}({}) - {w}({}))", konst(imm()?, u), args[0])),
-        Opcode::Ishl => set(format!("{u}({w}({}) << {})", args[0], shift(&args[1]))),
-        Opcode::Ushr => set(format!("{u}({w}({}) >> {})", args[0], shift(&args[1]))),
-        Opcode::Sshr => set(format!("{u}({ws}({s}({})) >> {})", args[0], shift(&args[1]))),
-        Opcode::IshlImm => set(format!("{u}({w}({}) << {}u)", args[0], (imm()? as u32) % bits)),
-        Opcode::UshrImm => set(format!("{u}({w}({}) >> {}u)", args[0], (imm()? as u32) % bits)),
-        Opcode::SshrImm => set(format!("{u}({ws}({s}({})) >> {}u)", args[0], (imm()? as u32) % bits)),
-        Opcode::RotlImm => set(format!("rotate({}, {u}({}))", args[0], (imm()? as u32) % bits)),
-        Opcode::Popcnt => set(format!("{u}(popcount({}))", args[0])),
-        Opcode::Clz => set(format!("{u}(clz({}))", args[0])),
-        Opcode::Ctz => set(format!("{u}(ctz({}))", args[0])),
-        Opcode::Umin => set(format!("min({}, {})", args[0], args[1])),
-        Opcode::Umax => set(format!("max({}, {})", args[0], args[1])),
-        Opcode::Smin => set(format!("{u}(min({s}({}), {s}({})))", args[0], args[1])),
-        Opcode::Smax => set(format!("{u}(max({s}({}), {s}({})))", args[0], args[1])),
-        Opcode::UaddOverflow => format!("{0} = {2}({3} + {4}); {1} = uchar({0} < {3});", name(results[0]), name(results[1]), u, args[0], args[1]),
+        Opcode::IrsubImm => set(format!("(({u})((({w}){}) - (({w})({}))))", konst(imm()?, u), args[0])),
+        Opcode::Ishl => set(format!("(({u})((({w})({})) << {}))", args[0], shift(&args[1]))),
+        Opcode::Ushr => set(format!("(({u})((({w})({})) >> {}))", args[0], shift(&args[1]))),
+        Opcode::Sshr => set(format!("(({u})({} >> {}))", signed(&args[0]), shift(&args[1]))),
+        Opcode::IshlImm => set(format!("(({u})((({w})({})) << {}u))", args[0], (imm()? as u32) % bits)),
+        Opcode::UshrImm => set(format!("(({u})((({w})({})) >> {}u))", args[0], (imm()? as u32) % bits)),
+        Opcode::SshrImm => set(format!("(({u})({} >> {}u))", signed(&args[0]), (imm()? as u32) % bits)),
+        // A rotate by a constant: two shifts at the type's width (none for a count of 0).
+        Opcode::RotlImm => match (imm()? as u32) % bits {
+            0 => set(args[0].clone()),
+            k => set(format!("(({u})(((({w})({x})) << {k}u) | ((({w})({x})) >> {r}u)))", x = args[0], r = bits - k)),
+        },
+        Opcode::Popcnt => set(format!("(({u})(ukl_popcount{aw}({})))", args[0])),
+        // Below 32 bits, the count of a 32-bit value less the bits above the type's.
+        Opcode::Clz => set(format!("(({u})(ukl_clz{aw}({}) - {}u))", args[0], aw - abits)),
+        // Below 32 bits, the bit past the type's set: a value of 0 counts the type's bits.
+        Opcode::Ctz if abits < 32 => set(format!("(({u})(ukl_ctz32(((uint32_t)({})) | {:#x}u)))", args[0], 1u32 << abits)),
+        Opcode::Ctz => set(format!("(({u})(ukl_ctz{aw}({})))", args[0])),
+        Opcode::Umin => set(format!("(({u})(ukl_min((({w})({})), (({w})({})))))", args[0], args[1])),
+        Opcode::Umax => set(format!("(({u})(ukl_max((({w})({})), (({w})({})))))", args[0], args[1])),
+        Opcode::Smin => set(format!("(({u})(ukl_min({}, {})))", signed(&args[0]), signed(&args[1]))),
+        Opcode::Smax => set(format!("(({u})(ukl_max({}, {})))", signed(&args[0]), signed(&args[1]))),
+        Opcode::UaddOverflow => format!("{0} = (({2})((({w})({3})) + (({w})({4})))); {1} = (uint8_t)({0} < {3});", name(results[0]), name(results[1]), u, args[0], args[1]),
         Opcode::Icmp | Opcode::IcmpImm => {
             let cc = data.cond_code().ok_or("a compare with no condition")?;
             let (au, asg, _) = ty(dfg.value_type(dfg.inst_args(inst)[0]))?;
@@ -348,28 +316,28 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
                 IntCC::UnsignedLessThanOrEqual => (false, "<="),
             };
             let t = if sig { asg } else { au };
-            set(format!("uchar({t}({}) {o} {t}({b}))", args[0]))
+            set(format!("((uint8_t)((({t})({})) {o} (({t})({b}))))", args[0]))
         }
         Opcode::Select => set(format!("{} != 0 ? {} : {}", args[0], args[1], args[2])),
-        Opcode::Uextend | Opcode::Ireduce | Opcode::Bitcast => set(format!("{u}({})", args[0])),
+        Opcode::Uextend | Opcode::Ireduce | Opcode::Bitcast => set(format!("(({u})({}))", args[0])),
         Opcode::Sextend => {
             let from = ty(dfg.value_type(dfg.inst_args(inst)[0]))?;
-            set(format!("{u}({s}({}({})))", from.1, args[0]))
+            set(format!("(({u})(({s})(({})({}))))", from.1, args[0]))
         }
-        Opcode::Load => set(load(u, bits / 8)),
-        Opcode::Uload8 => set(format!("{u}({})", load("uchar", 1))),
-        Opcode::Uload16 => set(format!("{u}({})", load("ushort", 2))),
-        Opcode::Uload32 => set(format!("{u}({})", load("uint", 4))),
-        Opcode::Sload8 => set(format!("{u}({s}({}))", load("char", 1))),
-        Opcode::Sload16 => set(format!("{u}({s}({}))", load("short", 2))),
-        Opcode::Sload32 => set(format!("{u}({s}({}))", load("int", 4))),
+        Opcode::Load => set(format!("(({u})({}))", load(bits / 8))),
+        Opcode::Uload8 => set(format!("(({u})({}))", load(1))),
+        Opcode::Uload16 => set(format!("(({u})({}))", load(2))),
+        Opcode::Uload32 => set(format!("(({u})({}))", load(4))),
+        Opcode::Sload8 => set(format!("(({u})(({s})((int8_t)({}))))", load(1))),
+        Opcode::Sload16 => set(format!("(({u})(({s})((int16_t)({}))))", load(2))),
+        Opcode::Sload32 => set(format!("(({u})(({s})((int32_t)({}))))", load(4))),
         Opcode::Store => {
-            let (vt, _, vb) = ty(dfg.value_type(dfg.inst_args(inst)[0]))?;
-            store(vt, vb / 8, &args[0])
+            let (_, _, vb) = ty(dfg.value_type(dfg.inst_args(inst)[0]))?;
+            store(vb / 8, &args[0])
         }
-        Opcode::Istore8 => store("uchar", 1, &args[0]),
-        Opcode::Istore16 => store("ushort", 2, &args[0]),
-        Opcode::Istore32 => store("uint", 4, &args[0]),
+        Opcode::Istore8 => store(1, &args[0]),
+        Opcode::Istore16 => store(2, &args[0]),
+        Opcode::Istore32 => store(4, &args[0]),
         Opcode::GetPinnedReg => set("pin".to_string()),
         Opcode::SetPinnedReg => format!("pin = {};", args[0]),
         Opcode::Nop => String::new(),

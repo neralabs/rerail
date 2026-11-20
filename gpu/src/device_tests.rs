@@ -55,7 +55,7 @@ impl Drop for Pages {
 #[test]
 fn wrapped_host_memory_is_read_and_written_in_place() {
     let Some(shared) = crate::shared::get() else { return };
-    let p = program("device_tests.ukl", KERNELS).unwrap_or_else(|e| panic!("{e}"));
+    let p = program("device_tests.uglykl", KERNELS).unwrap_or_else(|e| panic!("{e}"));
     let f = p.function("d_in_place").unwrap();
     const N: usize = 3000;
     let mut pages = Pages::new(N);
@@ -141,7 +141,7 @@ DEFINE_KERNEL2(device_tests, d_mark,
 #[test]
 fn an_indirect_launch_runs_the_groups_its_counts_give() {
     let Some(shared) = crate::shared::get() else { return };
-    let p = program("device_tests_indirect.ukl", INDIRECT).unwrap_or_else(|e| panic!("{e}"));
+    let p = program("device_tests_indirect.uglykl", INDIRECT).unwrap_or_else(|e| panic!("{e}"));
     #[repr(C)]
     #[derive(Clone, Copy)]
     struct Counts {
@@ -206,7 +206,7 @@ fn a_kernel_follows_the_device_address_a_buffer_holds() {
         assert_eq!(crate::device::backend(), "OpenCL", "only OpenCL has no device addresses");
         return;
     };
-    let p = program("device_tests_pointers.ukl", POINTERS).unwrap_or_else(|e| panic!("{e}"));
+    let p = program("device_tests_pointers.uglykl", POINTERS).unwrap_or_else(|e| panic!("{e}"));
     let dir = crate::kernels::buffer_of(&[pa, 100, pb, 30]).unwrap();
     let out = crate::kernels::alloc::<u32>(2).unwrap();
     let mut q = crate::device::ComputeQueue::new(&shared.queue);
@@ -237,7 +237,7 @@ fn a_specialized_program_is_one_program_a_value() {
     let Some(shared) = crate::shared::get() else { return };
     let mut got = Vec::new();
     for scale in ["3u", "5u", "3u"] {
-        let p = crate::kernels::program_with("device_tests_specialized.ukl", SPECIALIZED, &[("SCALE", scale)]).unwrap_or_else(|e| panic!("{e}"));
+        let p = crate::kernels::program_with("device_tests_specialized.uglykl", SPECIALIZED, &[("SCALE", scale)]).unwrap_or_else(|e| panic!("{e}"));
         let out = crate::kernels::alloc::<u32>(32).unwrap();
         let mut q = crate::device::ComputeQueue::new(&shared.queue);
         launch(&q, p.function("d_scale").unwrap()).buffer("out", &out).run(&[1], &[32]).unwrap();
@@ -246,7 +246,7 @@ fn a_specialized_program_is_one_program_a_value() {
     }
     assert_eq!(got.iter().map(|g| g.1).collect::<Vec<_>>(), [93, 155, 93]);
     assert!(got[0].0 == got[2].0 && got[0].0 != got[1].0, "one program a value, made once");
-    assert!(crate::kernels::program("device_tests_specialized.ukl", SPECIALIZED).is_err(), "unspecialized, it does not compile");
+    assert!(crate::kernels::program("device_tests_specialized.uglykl", SPECIALIZED).is_err(), "unspecialized, it does not compile");
 }
 
 /// A block's device buffer (`rerail_blocks::Block::device_buffer`) is the block's own pages, on every backend: a
@@ -255,7 +255,7 @@ fn a_specialized_program_is_one_program_a_value() {
 #[test]
 fn a_blocks_device_buffer_is_its_pages() {
     let Some(shared) = crate::shared::get() else { return };
-    let p = program("device_tests.ukl", KERNELS).unwrap_or_else(|e| panic!("{e}"));
+    let p = program("device_tests.uglykl", KERNELS).unwrap_or_else(|e| panic!("{e}"));
     #[repr(C)]
     #[derive(Clone, Copy)]
     struct Args {
@@ -299,7 +299,7 @@ fn a_kernel_compiled_once_is_loaded_from_the_store() {
     // A source no earlier run compiled: the first compile is a compile.
     let nonce = format!("{}-{:?}", std::process::id(), std::time::SystemTime::now());
     let text = format!("// {nonce}\n{KERNELS}");
-    let source = crate::kernels::preprocess("device_tests_store.ukl", &text).unwrap();
+    let source = crate::kernels::preprocess("device_tests_store.uglykl", &text).unwrap();
     let run = |lib: &ComputeFunctionLibrary| {
         let f = Box::leak(Box::new(lib.get_function(&shared.device, "d_in_place").unwrap()));
         #[repr(C)]
@@ -317,7 +317,7 @@ fn a_kernel_compiled_once_is_loaded_from_the_store() {
     };
     let compile = || {
         let before = store::here();
-        let lib = ComputeFunctionLibrary::compile_from_source(&shared.device, &source, "device_tests_store.ukl").unwrap_or_else(|e| panic!("{e}"));
+        let lib = ComputeFunctionLibrary::compile_from_source(&shared.device, &source, "device_tests_store.uglykl").unwrap_or_else(|e| panic!("{e}"));
         let after = store::here();
         (lib, (after.0 - before.0, after.1 - before.1))
     };

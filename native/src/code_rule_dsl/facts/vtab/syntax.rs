@@ -4088,7 +4088,10 @@ impl Source for Viewed {
         // lines) is on the device.
         #[cfg(target_os = "macos")]
         let loc = matches!(self.view, View::Loc(_));
-        let in_place = (loc || matches!(view, device_chunk::VIEW_NODE | device_chunk::VIEW_CHILD | device_chunk::VIEW_FIELD | device_chunk::VIEW_CORE | device_chunk::VIEW_LINE))
+        // The directory is of the process's device's addresses, which the stages read it by (decision 0440 step C):
+        // none where its buffers have none (`views_in_place`).
+        let on_device = rerail_accel::gpu::join::device().is_ok();
+        let in_place = (on_device && (loc || matches!(view, device_chunk::VIEW_NODE | device_chunk::VIEW_CHILD | device_chunk::VIEW_FIELD | device_chunk::VIEW_CORE | device_chunk::VIEW_LINE)))
             .then(|| device_chunk::views_in_place(&self.batch, chunk))
             .flatten()
             .filter(|v| (view != device_chunk::VIEW_LINE || v.lines) && (!loc || v.locs))

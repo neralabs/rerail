@@ -6789,3 +6789,13 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
 - **Step 1 done** (2026-11-19): R1–R4, R5 for a Python rule, R6 (PostHog unchanged, 29,747). Open, step 2: a run of
   the embedded language reads the files holding its programs (0470 "Steps"); an HTML run sees no Python file's
   program, nor a JavaScript run an HTML file's `<script>`.
+
+### Q328. `logic/native/setfix/device.rs` and its `device/tests.rs` are compiled by no crate
+
+- **Found** (2026-11-20, roll-up 4's CUDA-support merge): the crate split (2a116f7478, `tools/cratify/moves.tsv`
+  row 9) moved `setfix::device` to `logic/device.rs`, and no `mod` names the old file since. Merges still carry edits
+  into both files (CUDA-support's to `device/tests.rs`), and `facts_only.rs` and `run_state.rs` list statics by the old
+  path. `views_made_on_the_device_are_the_hosts_rows` and the file's other tests run nowhere.
+- **Steps**: each test the old `tests.rs` holds that `logic/device.rs`'s tests lack goes there (or to the device
+  crate's); then both files are removed and the two lists' rows cut.
+- **Done when**: no source file is outside every crate's module tree, with a check that says so.

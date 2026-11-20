@@ -3176,7 +3176,7 @@ dependencies = [
  "rayon",
  "windows-sys 0.61.2",
  "rerail-device",
- "rerail-ukl",
+ "rerail-gpu",
 ]
 
 [[package]]
@@ -3310,6 +3310,7 @@ dependencies = [
  "rerail-accel",
  "rerail-blocks",
  "rerail-compiler",
+ "rerail-device",
  "rerail-device-metal",
  "rerail-facts",
  "rerail-lang",
@@ -3507,6 +3508,7 @@ dependencies = [
  "rerail-blocks",
  "rerail-clif",
  "rerail-compiler",
+ "rerail-device",
  "rerail-facts",
  "rerail-lang",
  "rerail-prof",

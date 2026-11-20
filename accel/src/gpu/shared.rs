@@ -962,10 +962,12 @@ mod tests {
         crate::budget::METAL_TEST.with(|m| m.set(other() + live + idle_before + (40 << 20)));
         let host = rerail_blocks::block::Block::anon(rerail_blocks::block::kind::FACTS, 512 << 20);
         host.try_alloc_chunk(256 << 20, 1 << 14).unwrap();
-        let wrap = host.gpu_buffer(&s.device);
+        let wrap = host.device_buffer(&s.layer).unwrap();
         assert!(wrap.length() >= 256 << 20, "a wrap of the host block's used extent");
         trim_idle();
-        assert_eq!(idle(), idle_before, "the idle buffers keep their room");
+        // This test's idle 64 MB stays: other tests lease and return small buffers from the same pool meanwhile, so
+        // the pool's whole idle count is not this test's to compare.
+        assert!(idle() >= 64 << 20, "the idle buffers keep their room: {} of {idle_before} bytes idle", idle());
         assert!(lease_within(32 << 20).is_ok(), "a lease that fitted still fits");
         crate::budget::METAL_TEST.with(|m| m.set(0));
         drop((wrap, host));
@@ -1020,14 +1022,14 @@ mod tests {
         let lock = Mutex::new(());
         // 23 MiB: a class (24 MiB) no other test leases.
         let b = lease_block(kind::FACTS, 23 << 20).unwrap();
-        let first = b.gpu_buffer(&get().unwrap().device).gpu_address();
+        let first = b.device_buffer(&get().unwrap().layer).unwrap().device_address();
         let r = Relation::create(&b, &spec, None);
         RelW { block: &b, rel: r, lock: &lock }.extend(&(0..20_000).flat_map(|i| [i % 300, i % 7]).collect::<Vec<_>>());
         relation::freeze(&b, r, &spec, None);
         assert_eq!(View::full(r).live_len(), 2_100);
         drop(b);
         let b = lease_block(kind::FACTS, 23 << 20).unwrap();
-        assert_eq!(b.gpu_buffer(&get().unwrap().device).gpu_address(), first, "the slab came back, with its buffer");
+        assert_eq!(b.device_buffer(&get().unwrap().layer).unwrap().device_address(), first, "the slab came back, with its buffer");
         let r = Relation::create(&b, &spec, None);
         assert_eq!(r.rows.len(), 0);
         assert!(!r.is_frozen(), "a new relation in a recycled slab reads fresh");

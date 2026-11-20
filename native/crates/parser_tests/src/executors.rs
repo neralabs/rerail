@@ -104,20 +104,22 @@ impl<'a> Executors<'a> {
             let mut keep = |name: String, got: Result<Vec<Vec<u64>>, Error>| match got {
                 Ok(got) => out.push((name, got)),
                 Err(Error::BackendLaunchLimit) => skipped.push(name),
+                // A device whose SIMD groups are not 32 lanes runs no block program (`block_program::ready`).
+                Err(Error::UnsupportedBackend) if metal_program_backend::block_program::ready().is_err() => {}
                 Err(e) => panic!("{name} runs: {e:?}"),
             };
             for width in LaneWidth::ALL {
                 let w = width.bytes();
-                keep(format!("metal interpreter, {w}-byte lanes"), interpret(self.block, bytes, width));
+                keep(format!("device interpreter, {w}-byte lanes"), interpret(self.block, bytes, width));
                 for strategy in ClassStrategy::ALL {
-                    keep(format!("generated msl, {w}-byte lanes, {strategy:?}"), run_generated_with(&self.native, bytes, width, strategy).map(|(got, _)| got));
+                    keep(format!("generated ukl, {w}-byte lanes, {strategy:?}"), run_generated_with(&self.native, bytes, width, strategy).map(|(got, _)| got));
                 }
             }
             // The forward carry (`metal_block_serial`): segments of three blocks, so that a file of
             // a few blocks has segments that speculate their start and run again.
             use metal_program_backend::block_program::serial::{Segments, run_serial_split};
             let file = [block::BatchFile { bytes, program: 0 }];
-            keep("metal forward carry, segments of 3".to_owned(), run_serial_split(&[&self.native], &file, Segments { blocks: 3, warm: 1 }).map(|mut r| r.run.files.remove(0).outputs));
+            keep("device forward carry, segments of 3".to_owned(), run_serial_split(&[&self.native], &file, Segments { blocks: 3, warm: 1 }).map(|mut r| r.run.files.remove(0).outputs));
         }
         #[cfg(not(target_os = "macos"))]
         let _ = metal;
