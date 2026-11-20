@@ -1557,7 +1557,7 @@ fn logic_command(args: &[String]) -> Result<String, String> {
             .map_err(|e| format!("{program}: {e}"))?
             .filter_map(|entry| entry.ok().map(|e| e.path()))
             // and every JSON policy (`rerail.policy/v1`), translated as it is read (decision 0175)
-            .filter(|path| path.extension().is_some_and(|x| x == "rr") || crate::code_rule_dsl::logic::json_rules::is_policy_path(path))
+            .filter(|path| path.extension().is_some_and(|x| x == "rerail") || crate::code_rule_dsl::logic::json_rules::is_policy_path(path))
             .collect();
         files.sort();
         // A file another one `#include`s is a library of it (`…confusables.rerail`), not a program of its own: alone it
