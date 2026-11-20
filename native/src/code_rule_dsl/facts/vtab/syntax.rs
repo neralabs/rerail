@@ -4719,11 +4719,10 @@ pub fn shaped(store: &ContentStore, documents: Vec<Document>, projection: &Proje
     Ok(out)
 }
 
-/// The batch's views: `node`, `child`, `field`, `tape` and the `py.*` families.
-fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> {
-    let mut out: Vec<(&'static str, Arc<dyn Source>)> = Vec::new();
+/// The views a batch of `shape` binds by name (`views`).
+fn named_views(shape: Shape) -> Vec<(&'static str, View)> {
     let mut named = vec![("node", View::Node), ("child", View::Child), ("field", View::Field), ("tape", View::Tape), ("core_node", View::Core), ("node_order", View::Order)];
-    match batch.shape {
+    match shape {
         Shape::T => named.push(("line", View::Line)),
         Shape::Core => named.extend([
             ("line", View::Loc(Place::Line)),
@@ -4735,6 +4734,18 @@ fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> {
             ("next_sibling", View::Sibling),
         ]),
     }
+    named
+}
+
+/// Whether a batch of `shape` binds a view named `name`.
+pub fn has_view(shape: Shape, name: &str) -> bool {
+    named_views(shape).iter().any(|(n, _)| *n == name)
+}
+
+/// The batch's views: `node`, `child`, `field`, `tape` and the `py.*` families.
+fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> {
+    let mut out: Vec<(&'static str, Arc<dyn Source>)> = Vec::new();
+    let named = named_views(batch.shape);
     // A relation the batch made as rows (`Batch::made`: its spans have places too) is bound in place of the view.
     for (name, view) in named.into_iter().filter(|(name, _)| !batch.made.contains(name)) {
         out.push((name, Arc::new(Viewed { batch: Arc::clone(batch), view, home: std::sync::OnceLock::new() })));

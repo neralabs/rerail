@@ -34,7 +34,7 @@ pub(in crate::code_rule_dsl) struct Ran {
 
 /// An input's delta given by the caller, who knows how its rows changed (the guests' rounds, decision 0331): from its
 /// old rows and its new, the rows gone and the rows new. `None` leaves it to `retain::document_delta`.
-pub(in crate::code_rule_dsl) type Delta<'d> = &'d dyn Fn(&str, &dyn Source, &dyn Source) -> Option<(Arc<dyn Source>, Arc<dyn Source>)>;
+pub(in crate::code_rule_dsl) type Delta<'d> = &'d dyn Fn(&str, &Arc<dyn Source>, &Arc<dyn Source>) -> Option<(Arc<dyn Source>, Arc<dyn Source>)>;
 
 /// Runs `prog` over `inputs` on `db`, maintaining what `kept` holds of it (of the same `key`); `keep` the relations
 /// the caller reads after (held, not inlined). Each input is given with its digest, and whether it is bound already
@@ -98,7 +98,7 @@ pub(in crate::code_rule_dsl) fn run_with(
     };
     // What the strata that run read of a part kept in the frames is read back now; the rest stays in the store.
     if let (Some(k), Some(store)) = (kept.as_mut(), store) {
-        k.load(store, &cut, &placed, false)?;
+        k.load(store, &cut, &placed, &no_locations, false, None)?;
     }
     let frames = kept.as_mut().and_then(retain::Retained::take_frames);
     let by_name: HashMap<&str, &Arc<dyn Source>> = inputs.iter().map(|(r, s, ..)| (r.as_str(), s)).collect();
@@ -110,10 +110,10 @@ pub(in crate::code_rule_dsl) fn run_with(
         let kept = kept.as_ref()?;
         let new = by_name.get(rel)?;
         let old = kept.input_source(rel)?;
-        if let Some(given) = delta.and_then(|d| d(rel, old.as_ref(), new.as_ref())) {
+        if let Some(given) = delta.and_then(|d| d(rel, old, new)) {
             return Some(given);
         }
-        let (delta, docs) = retain::document_delta(rel, old.as_ref(), kept.input_docs(rel).map(|d| d.as_ref()), new.as_ref(), retain::group_col(&placed, &no_locations, rel), &retain::cells_of(&atoms, &placed, &prog.domains, rel, new.columns().len()))?;
+        let (delta, docs) = retain::document_delta(rel, old, kept.input_docs(rel).map(|d| d.as_ref()), new, retain::group_col(&placed, &no_locations, rel), &retain::cells_of(&atoms, &placed, &prog.domains, rel, new.columns().len()))?;
         input_docs.insert(rel.to_owned(), docs);
         Some(delta)
     };
@@ -171,24 +171,21 @@ pub(in crate::code_rule_dsl) fn run_with(
             modules.bind(db, rel, Arc::clone(source))?;
         }
     }
-    // The kept relations, old rows and deltas, bound as a session binds them (`bind_kept`): a kept relation's
-    // statistics are kept with it while it is kept as it is, by delta where the run maintains it (decisions 0094 §4,
-    // 0096 step 4, 0123), not measured again each run.
+    // The kept relations, bound as a session binds them (`bind_kept`): a kept relation's statistics are kept with it
+    // while it is kept as it is (decisions 0094 §4, 0123), not measured again each run.
     let mut binder = super::Binder {
         constants: super::constants_tested_in(&part_placed.v).into_iter().map(|(r, c)| (r.to_owned(), c)).collect(),
         cell: kept.as_ref(),
         measured_kept: kept.as_ref().map(retain::Retained::measured_all).unwrap_or_default(),
-        bound_old: HashMap::new(),
         lazy_kept: true,
         lazies: Vec::new(),
-        copies: HashMap::new(),
     };
     let clean = kept.as_ref().map(|k| cut.sources(k, &|r| part_f.is_input(r))).unwrap_or_default();
     let mut bound: Vec<String> = Vec::new();
     // The clean relations, and the changed inputs' deltas.
     for (rel, source, held) in clean {
         bound.push(rel.clone());
-        super::bind_kept(&mut binder, modules, db, stats, rel, source, held, false)?;
+        super::bind_kept(&mut binder, modules, db, stats, rel, source, held)?;
     }
     let mut wanted = keep.clone();
     wanted.extend(derived.iter().filter(|rel| !part_f.is_output(rel)).cloned());
@@ -213,15 +210,16 @@ pub(in crate::code_rule_dsl) fn run_with(
                 maintains: BTreeSet::new(),
                 seeds,
                 given: maintained.given.clone(),
-                counts: (0, 0, 0),
-                again: Vec::new(),
-                walked: (0, 0, 0),
+                // A chunk's guest rounds have no split: the run checks its part's own version.
+                proofs: None,
             };
             let hooks = super::super::Hooks { maintain: Some(&mut driver), texts: Some(Arc::clone(texts)), ..Default::default() };
             let got = super::super::run_atoms_native_hooked(part, db, "main", stats.clone(), wanted, modes, hooks)?;
-            (maintained.maintained, maintained.derived_again, maintained.recursive) = driver.counts;
-            maintained.again = std::mem::take(&mut driver.again);
-            let (reached, quiet, of) = driver.walked;
+            // Each stratum's one outcome, as the run counted it (0364 R9).
+            (maintained.maintained, maintained.recursive) = got.maintained;
+            maintained.again = got.again.clone();
+            maintained.derived_again = maintained.again.len();
+            let (reached, quiet, of) = got.walked;
             let mut why: BTreeMap<&str, usize> = BTreeMap::new();
             for (_, w) in &maintained.again {
                 *why.entry(w).or_default() += 1;
@@ -234,7 +232,7 @@ pub(in crate::code_rule_dsl) fn run_with(
         None => super::super::run_atoms_native_hooked(part, db, "main", stats.clone(), wanted, modes, super::super::Hooks { texts: Some(Arc::clone(texts)), ..Default::default() })?,
     };
     drop(s);
-    let super::Binder { constants, mut measured_kept, bound_old, lazies, .. } = binder;
+    let super::Binder { mut measured_kept, lazies, .. } = binder;
     let s = span("collect");
     let ran_native: BTreeSet<&str> = got.native.iter().flat_map(|k| k.split('/')).collect();
     let rows = derived
@@ -262,8 +260,8 @@ pub(in crate::code_rule_dsl) fn run_with(
     let outputs: BTreeMap<String, (std::sync::Arc<crate::code_rule_dsl::logic::plan::output::Rows>, Vec<usize>)> = got.outputs.iter().map(|(rel, rows)| (rel.clone(), (std::sync::Arc::clone(rows), got.nodes[rel].clone()))).collect();
     drop(s);
     let _s = span("retain");
-    let (patched, _, _) = super::kept_statistics(lazies, bound_old, &mut measured_kept, &rows, &HashMap::new(), &constants);
-    let mut next = retain::after(kept, key, digests, &cut, rows, &outputs, &sources, measured_kept, HashMap::new(), input_docs, Default::default(), patched, retain::budget(), store.is_none());
+    super::kept_statistics(lazies, &mut measured_kept);
+    let mut next = retain::after(kept, key, digests, &cut, rows, &outputs, &sources, measured_kept, input_docs, Default::default(), retain::budget(), store.is_none());
     if let Some(frames) = frames {
         next.with_frames(frames, &cut);
     }

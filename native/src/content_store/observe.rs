@@ -915,8 +915,11 @@ impl Observer {
                 self.stored_roots.push(root.clone());
             }
             let volume = self.volume(&root);
-            // A cursor is of the volume it was taken on: kept under the volume's id with the root.
-            let cursor = volume.and_then(|v| self.db.as_ref()?.meta.get(&cursor_key(&root, v)).cloned());
+            // A cursor is of the volume it was taken on: kept under the volume's id with the root. A small root's is
+            // kept under no volume where the system names none (`check_listed`), and read back from there: read by
+            // the volume alone, a system that names none (Linux) found no cursor, and each warm run wrote it again.
+            let key_volume = if self.listable(&root) { Some(volume.unwrap_or([0; 16])) } else { volume };
+            let cursor = key_volume.and_then(|v| self.db.as_ref()?.meta.get(&cursor_key(&root, v)).cloned());
             // A cursor is the journal's own text (an FSEvents id, a Watchman clock); one kept as a number is an id.
             let cursor = cursor.and_then(|c| match c {
                 rusqlite::types::Value::Text(t) => Some(t),
@@ -1221,7 +1224,25 @@ impl Observer {
         let mut above: Vec<PathBuf> = self.stored_roots.iter().filter(|r| under(&root, r) && r.as_path() != root).cloned().collect();
         above.sort_by_key(|r| r.as_os_str().len());
         let here = self.volume(root);
-        above.into_iter().find(|r| here.is_some() && self.volume(r) == here).unwrap_or_else(|| root.to_path_buf())
+        // With no journal there is no volume's id (Linux, no Watchman): the same device holds both. Folded by the
+        // id alone, a root under another stored one was never folded there, and kept a listing cursor of its own.
+        let dev = |p: &Path| {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt as _;
+                std::fs::metadata(p).ok().map(|m| m.dev())
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = p;
+                None::<u64>
+            }
+        };
+        let here_dev = if here.is_none() { dev(root) } else { None };
+        above.into_iter().find(|r| match here {
+            Some(_) => self.volume(r) == here,
+            None => here_dev.is_some() && self.volume(r).is_none() && dev(r) == here_dev,
+        }).unwrap_or_else(|| root.to_path_buf())
     }
 
     /// `root`'s volume, asked once a process.
@@ -2778,10 +2799,10 @@ mod tests {
     }
 
     /// A path's canonical form is resolved once: under a root the journal says is unchanged, the next run answers it
-    /// with no `realpath`, and a symlink retargeted under the root is resolved again. The journal is
-    /// FSEvents's: elsewhere nothing is trusted.
-    #[cfg(target_os = "macos")]
+    /// with no `realpath`, and a symlink retargeted under the root is resolved again. The journal's (FSEvents), as
+    /// the other journal tests: with none (Linux, no Watchman), nothing is trusted by it.
     #[test]
+    #[cfg(target_os = "macos")]
     fn a_canonical_path_is_resolved_again_only_where_the_journal_names_a_change() {
         let base = std::env::temp_dir().join(format!("rerail-canonical-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);

@@ -3332,6 +3332,10 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
   from a directory's entries) do not get a second load posted ahead of the failing one's error, and the test passes
   without the stopped check too. The full shape on Metal did, 3 of 13 times.
 - **Record**: the fix 1fc292eb2; the runs in working-data/bench-1118/ab41-t54.txt.
+- **On Native-and-GPU-strata** (its Q224, merged at d719a840ef, 2026-11-19):
+  - **Open**: no test fails a load's chunk (the builder is local to `run_observed`, and no hook fails a load), and
+  12 more cold Metal runs are owed for the 20.
+  - **Record**: —
 
 ### Q232. (Q40 on Go-C-and-C-support) Step 22 reads float chains and long floats in tier 1 (0413)
 
@@ -3611,6 +3615,14 @@ device-budget failures surfaced as a bare `BackendFailure`: a `String` error tur
 (`compiler::Error::from`), so a refusal names no cause; naming it is part of Q86.
 
 Q86 (step 6's prices) waits for step 4: most of what it prices goes.
+- **On Native-and-GPU-strata** (its Q87, merged at d719a840ef, 2026-11-19):
+  4. Step 5 is built for the batch's solve (2026-11-18, 0353 step 5): the axis's ids written once into a relation of
+   its own in a run's block, with room for its two indexes, read in place by the CPU and the device. hogql 16z:
+   copies 125.9 MB a run against 792.4 MB, refusals at run time 2 a run against 5–22, findings 1,629. Left: `has`'s
+   probe on the device (with 4b's parent probes), then step 6.
+  Q68 after step 5: the refusals that remain on hogql are 2 a run (binding tables, one index of 0.8 M rows). The
+  device-budget failures surfaced as a bare `BackendFailure`: a `String` error turned into `Error` loses its text
+  (`compiler::Error::from`), so a refusal names no cause; naming it is part of Q68.
 
 ### Q58. 0325's FACTS blocks raise a CPU run's footprint, and the memory line cuts a third more chunks
 
@@ -5446,6 +5458,8 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
 - **Since the fix**: 184 hogql runs (16z and 16 in turn, three at a time, M3; batches of 30, 36, 40, 36 and 42),
   all 1,629, no panic, no bound fired; the device join's 29 tests pass.
 - **Done when**: 180 format 16 runs, three at a time, have no panic. Met (184).
+- **On Native-and-GPU-strata** (its Q256, merged at d719a840ef, 2026-11-19):
+  - **Done when**: 180 format 16 runs, three at a time, have no panic.
 
 ### Q269. (Q190 on oscar until 2026-11-18) The packed transducer's JIT runs the 128-comment quantifier stress 13× slower than its interpreter
 
@@ -6045,6 +6059,178 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
 - **To do:** run it cold beside the 0275 tests until it fails with its message; suspects are the observer's view of
   the edited include (decision 0105's flush) and the store's queued entry being found before its write settles.
 
+### Q350. (Q311 on investigate-bend-vs-datalog; Q241 there before the merge of rr-align 62618b2e0a) Four observer tests fail in `rerail-store`'s own test target
+
+- **Found** (2026-11-19, beside 0364's kept-facts gather): `cargo nextest run -p rerail-store --lib --features
+  test-hooks` did not compile. `rerail-clif`'s `view_reads` needed its `ir` feature, and two journal tests called
+  `since` without `settle`. Both are fixed, and the merge in 718434dca had dropped the caller's bound (Q184) from
+  `fsevents::since_within`, which is restored: `the_journal_names_what_changed_since_its_cursor` passes.
+- Four `observe::tests` fail with and without that restore, on the M1 Max:
+  `an_answer_recorded_within_the_settle_window_is_checked_though_the_journal_names_nothing`,
+  `a_directory_that_cannot_be_listed_names_what_it_held`, `a_small_root_is_checked_by_listings_not_stats`,
+  `a_listing_names_an_edited_file_and_no_other`. Their stats run past what they expect (for example 7 stats where
+  none are wanted).
+- **To do:** run them on this Mac to tell a host's journal from the code. Then bisect from 718434dca, the last
+  merge into `journal.rs` and `observe.rs`.
+- **Done** (2026-11-19). The same four fail on this Mac, so the cause was the code. Two merged rules met:
+  - Q189's settle window (`settling`: an answer recorded in the last 120 s is checked by `stat`, since the
+    journal's silence may hide a merged event) was applied under roots checked by their listings (0400) too. No
+    silence of the journal's vouches for an answer there; its own listing check does, racy rule and all
+    (`listed_holds`). So 0400's tests, which run twice within seconds, statted every path. The window now applies
+    only where the journal vouches (`Observer::listed_root`).
+  - The settle test hid its edit by storing `current_id()` as the root's cursor. Since 718434dca a replay answers
+    by arrival: a cursor that is no sync's is told everything the stream saw, so nothing was hidden. Its small
+    root was also checked by listings, which read the edit anyway. It now asks the journal (`list_max = 0`) and
+    stores the cursor of a sync taken after the edit, which is what a merged event amounts to.
+  - All 34 `observe` and journal tests pass on this Mac, twice. On the M3 at load 35, four more failed on timing:
+    a run there sees the journal late.
+
+- **Seen again** (2026-11-19, the merge of rr-align 62618b2e0a, targeted `observe`/`journal` tests): on the M3 four
+  journal-trust tests fail on timing (`a_canonical_path_is_resolved_again_only_where_the_journal_names_a_change`,
+  `a_watched_root_is_not_statted_where_the_journal_says_nothing_changed`, `an_inner_root_is_answered_by_the_root_above_it`,
+  `rerails_own_files_are_outside_the_observer`: nothing trusted by the journal); all four pass on the M1 Max. There,
+  `journal::tests::the_journal_names_what_changed_since_its_cursor` fails 1 run in 3 at "an access time set is no
+  change" (`kept.py` named after its times are set): the metadata-only filter (4d9fad6fe9) predates the merge.
+  **Open:** whether a replay's coalesced flags carry the file's earlier write (`ItemModified`) onto the times event.
+
+### Q351. (Q312 on investigate-bend-vs-datalog; Q242 there before the merge of rr-align 62618b2e0a) The data layer's 9,010-file ladder (0364 Scale)
+
+- **Corrected** (2026-11-19): the ladder measured here (`tmp/dl-mid`, `tmp/dl-whole`, made by `dl-history.sh`) is
+  one policy, `conditional-architecture`, with its `.scope` lines dropped, over trees of every file. It is not the
+  data layer's workload, and its times (515 s of CPU at 2,410 files, "35-40 min" at 9,618) say nothing about it.
+  The workload is the data layer's 50 policies (`docs/rule-syntax/data-layer/*.rr`, scoped) together over the
+  repository at 2b1504adc (9,010 `.py` files), against the data layer's own linters, which take about a minute of
+  wall on the whole repository (t3, "PR full repo 70.6 s wall"). The target is seconds. Q354 is that work.
+- **The maintain-mode ladder** stays a test of 0364 at size: run it with the policies' scopes kept.
+
+### Q354. (Q315 on investigate-bend-vs-datalog; Q245 there before the merge of rr-align 62618b2e0a) The data layer's 50 policies together: four structural regressions (2026-11-19)
+
+- **The run** (`tmp/dl9010`, not in git: the tree at 2b1504adc, `run.sh`, `each.sh`, samples `s100` of 91
+  `.py` files and `s10` of 901, each with the root's other files). On the 91 files, each policy alone took 26 s of
+  CPU summed (profiling build), and all 50 together passed 120 s (killed): the program of 50 policies made strata
+  no single policy makes. The 2026-11-17 engine was as slow (its warm run 116 s on the same files).
+- **1. A negation split's `pre_<i>` that was every pair of nodes in a def** (`demand/over.rs`). `reached` took
+  every derived relation as a small anchor, so `pre_292(a, c, f) :- mf_def(c, f), mf_def(a, f)` (52,314 rows,
+  420 a def) was a split's kept body. Also, the pass's `nearest_` tests were dead since the lowering names those
+  relations `rr_nearest_…`: a `nearest` frame read as a derived relation. Now: `front::is_transduced` for both, and
+  a derived relation of a row per node (`per_node_relations`: its key read only at a per-node read's key, through
+  other such relations) is no anchor. 2 policies: 10.98 → 4.05 s CPU; 4: 9.07 → 4.41.
+- **2. An aggregate's demand inlined into the aggregate** (`keeps::refusals`). Priced on the up-front estimates
+  (`p49_need` 9.5×10⁹ rows), the 805-row demand `p49_rr_demand_agg_rr_agg1` was unfolded into `p49_rr_agg1`,
+  which then read the demand's own join (`need ⋈ docof ⋈ reset ⋈ docof ⋈ reset`): 25M rows priced, 14-45 s of one
+  stratum. An aggregate's demand (`Body::demand_first`) is now stored always, as decision 0099 lists demanded
+  relations.
+- **3. The aggregate's cover inlined the same way** (`rr/lower.rs`): `rr_cover<i>` is declared `no_inline` where
+  lowering makes it. After 2 and 3 the 50 policies end: 20.6 s wall, 25.9 s CPU, 53 findings (the 2026-11-17
+  engine's warm run: 53).
+- **4. The factorized store's key of a part that is a join** (`typing/file_local/passes/factorize.rs`): each part's
+  key relation was made from its unreduced body, so `fzk…_vmi_known(a) :- mf_def(c, f), mf_def(a, f)` was every
+  pair in a def again. The keys are chained now, fewest atoms first, each part's keys within the previous key, and
+  each part is reduced by the last (the keys every part holds, as before). `vmi_known`'s strata 3.2 s → 0.004 s;
+  the pair 5.29 → 1.78 s CPU, findings equal to `RERAIL_FACTORIZE=off`.
+- **5. A zero count over a range** (`bounded-composed-graph-paths`' `bcgp_decorated`, `count : { bcgp_line(p, l, _),
+  l > a, l < b, !bcgp_at_line(p, l) } = 0`: 8.2 s of the policy's 9.9 s alone). Four parts, each needed:
+  - `preparation/simplify.rs` (`file_local_reads`): the read is `!rr_agg15($a, $b, $p, _)`, but the projection kept
+    the line's span as a location column, so the helper was a row per line between each pair. A location is kept only
+    where every relation the rules read is a file's; `rr_ctx16` (the pairs) is none.
+  - `plan.rs`, the search: past the bound head a step passes on one binding (`setfix::tail`), as the greedy order
+    priced it; the step's reads stay priced (priced at one row, a pair-led order read every line of its file: 28.6 s).
+  - `setfix::ranges`, `Found::within`, `InRel::index_then`, and `range_pass` in the search: a probe whose new column
+    later comparisons bound by values bound before reads a range of an order on its key then that column, which a
+    held input (`Stats::held`: the cross part's held bases and exports) or a derived relation has. The comparisons
+    stay as filters.
+  - `setfix`, a fused step (`rowcode`) past the head: it stopped at no witness, so every line in range reached the
+    head (25.4 M for 25,426 pairs). It now ends at the first, gathering 8 rows first, then 8 times more.
+  - `rr_agg15`: 8.15 s → 0.036 s, 201,542 lines read; the policy 9.9 → 0.85 s CPU, 154 G → 8.3 G instructions; the
+    50 policies 320 G → 261.5 G instructions, 0.80 GB peak, 53 findings, the same as before.
+- **Fixed on the way:** `retain/frame_tests.rs` called `KeptInput::load` without its `news` argument since t43
+  step 19, so `rerail-logic`'s test target did not build.
+- **Open, in order:**
+  - 11,500 strata for 50 policies, about 1 ms each, on 91 files: fixed costs that do not shrink with the files.
+  - The peak: 2.4 GB on 91 files before 5, 0.80 GB after.
+  - The rest by policy (`each.sh`), then the 901-file sample, once the per-file cost is known from the 91.
+
+### Q355. (Q316 on investigate-bend-vs-datalog; Q246 there before the merge of rr-align 62618b2e0a) The 50 policies at 901 files: what a file costs, and what ended the runs (2026-11-19)
+
+- **The samples' root files**: `s100` and `s10` hold their `.py` files alone, the root's other 25 files moved to
+  `rootfiles/` (with them, `bounded-composed-graph-paths` ran 13 strata and found BCGP001s none of the earlier
+  measurements had). The real repository has them: a measurement of it is not comparable with these.
+- **A chunk of a block failed under two threads** (`facts/rows.rs`, `open_chunk`). `BlockVec::realloc` checked the
+  open block's room under its lock and took the chunk after letting it go: another thread's chunk took the room
+  between, or the free list's room was not one piece, and the run panicked ("an open block with room holds 2540944
+  bytes", the 901 files, 17 s in). The check and the take are one step under the lock now, a new open block when
+  that one has no such chunk.
+- **The chunks the memory line makes** (`RUN_MB`, 1,024 MB): the footprint near 1 GB leaves each chunk the 8,192-node
+  floor, 116 chunks for the 901 files, each running the whole program: 364,000 strata, killed at 240 s. With
+  `RERAIL_RUN_MB=4000`, 13 chunks: 43,900 strata, 377 s of strata CPU, still killed at 240 s. The cost is per file and
+  linear (91 files: 37 s of strata; 901: about 10 times), spread over every rule (the largest, `unparen`, 11 s in 40
+  runs): about 0.3-0.4 s of CPU a file, an hour for the 9,010.
+- **A segment file per input's frames** (`retain.rs`, `write_input_frames`): each input's job made its own
+  `FramePlacer`, so a segment file each (leased, mapped, named, written back): 1,317 files in the frames directory on
+  91 files, 1,111 of them under 8 KB, 12-15% of the run's CPU in `Deferrable::create` and the writes (`sample`). One
+  placer serves every input's job now (its writer under its lock; the encoding outside it), its frames queued once
+  in the inputs' order, none when none was placed: 48 files; 261.5 → 248.3 G instructions, 5.7 → 2.2 s system,
+  findings the same (53).
+- **The program normalized on every chunk** (`body::Placed::normalized`): `passes::normalize` (and `stated_apart`)
+  ran in a pipeline of no store, once a chunk: 84 times on 901 files, 2.5 s of `leg-083-typed`'s CPU. Both are now
+  analyses held by the version they are of (`NormalForm`, `ApartForm`; decision 0281 §2): made once. The policy on
+  901 files: 580 → 541 G instructions, 52.3 → 48.0 s user, its findings the same.
+- **What a chunk of 901 files costs, `leg-083-typed` alone** (84 chunks of about 23,000 nodes; 48 s user against
+  4.2 s on 91 files): joins 9.9 s; per chunk, the statistics (`make_plan`, 58 ms) and `views and tables` (45 ms);
+  the memo's base rows 3.4 s; the inputs' frames 2.8 s. The typing program measured up to 30,622 bytes a node (a
+  10,000-node chunk added 257 MB) over a run already at 740 MB: the chunks stay at the floor, and every per-chunk
+  cost is paid 84 times.
+- **Fixed on the way** (`cache_architecture`, failing since 0399 step 1 and decision 0323 added their tables):
+  `guest_keys` (names) and `observed_changes` (the observer's journal) are on `NOT_CACHES`. And (Linux, the farm's hosts): a listed root's cursor (decision 0400) is kept under no volume
+  where the system names none, but was read by the volume alone, so every warm run wrote it again; and a root under a
+  stored one was folded into it only by the volumes' ids, which Linux has none of (with the journal off, a Mac
+  neither): by the device now. `the_run_after_a_cold_one_writes_nothing` passes on Linux. The journal test
+  `a_canonical_path_is_resolved_again_only_where_the_journal_names_a_change` is the Mac's alone, as the other journal
+  tests are.
+- **Open, in order:**
+  - The per-file cost: the joins are 43% of the CPU (`run_seed`), spread over the rules; a stratum's fixed costs on
+    each chunk the rest. Next: the strata a chunk runs that no file of it needs, and the per-chunk planning.
+  - The memory line that cuts chunks to the floor: what holds the 1 GB before the first chunk.
+  - `an_answer_recorded_within_the_settle_window_is_checked_though_the_journal_names_nothing` fails 4 of 5 on the M3
+    at load 35-107 (`0 trusted by the journal`: the run's own question timed out, and the answer was checked by
+    `stat`), as Q223's test does: the journal's timing at load.
+  - ~~The typing program's bytes a node (30 KB at most), and the 740 MB before the first chunk~~ (done 2026-11-19, with
+    the merge of Native-and-GPU-strata 84f7a8649a and decision 0469). Neither was the chunk's: the 30 KB was the
+    footprint's rise over a chunk, and the 740 MB the footprint, which `RUN_MB` cut by. Measured by 0435's count and
+    0469's measure, a typing chunk is 932-1,043 bytes a node (about 120 in its blocks, the rest its scopes' heap
+    peaks), and the run is at 144-297 MB when the chunks begin. `leg-083-typed` on the 901 files: 8 chunks at the
+    caller's most (262,144 nodes), was 80 at the floor; statistics 4.95 to 0.02 s, views and tables 3.73 to 0.02 s,
+    order probes 1.6 s to 0; findings the same; peak 1,342 to 1,124 MB; user 48.0 to 47.0 s, 541 to 591 G instructions
+    (the merge's other changes: its spans' own CPU 51.4 to 43.2 s), 34.6 s wall at load 27-43.
+  - **Next, by its share of the 43.2 s** (spans' own CPU, the run above): the chunks' strata 15.3 s (the joins 11.3);
+    the export to the cross part 8.8 s, of it the memo entries' base rows 4.3 s and 1.28 GB allocated (decision
+    0458's copy 2, its step 4 not yet done); the cross part 6.6 s; the corpus batch 3.8 s, which projects every
+    document's node rows and string annotations and runs the matchers again beside the chunks (0458: "made when
+    first read"; 0353 copy 7 and step 3); the windows of files resolved 2.3 s.
+
+### Q352. (Q313 on investigate-bend-vs-datalog; Q243 there before the merge of rr-align 62618b2e0a) At 2,410 files the mode is priced above a derive for deltas of 0.1% of the rows read
+
+- **Found** (2026-11-19, t43 step 20): at steps 02-03, `rr_agg37` (mode 98,707 against a derive's 70,337) and
+  `rr_demand_agg_rr_agg37` (252,165 against 247,433) are derived again by §4's second clause, 16 s of a 46 s edit,
+  with deltas of 9,576-15,534 rows of 10-17 million read. `ca_alias_at`'s lines are priced at 217,777,417 against
+  793,332, which no 14,000-row delta should cost.
+- **To do:** print the mode's lines for `ca_alias_at` (`RERAIL_MODE_TRACE`, the plans `mode_costs` prices) and see
+  which line's estimate is past its rows; a delta-led line should cost in proportion to its delta (R4).
+
+### Q353. (Q314 on investigate-bend-vs-datalog; Q244 there before the merge of rr-align 62618b2e0a) 0364's open items not taken up on 2026-11-19, and why
+
+- **Levels as a column of the relation's block** (0328 decision 1; now a `Vec<u32>` beside the rows): the kept
+  blocks' format is being aligned on the phased-facts and rr-align branches (0401 step 7, 0402). Levels go into the
+  block with that format, once it is in.
+- **The static check's string length and tree helpers** (`plan/wellfounded.rs`): no running program's component
+  fails the check for them now; take it when one does, with that program as its test.
+- **The dump artifact** (210 `dotted_expr` rows at the data layer's first state): to look at with the 9,010-file
+  runs (Q351), which split into chunks the same way.
+- **A cross-file recursive `min` lattice:** only if the least-route item is closed with one; no program has one.
+- **Inputs found by hashing** (`doc_key`, `observer__source_file`): 2 of a session edit's inputs, a few hundred
+  rows; no measurable cost at 2,410 files.
+
+
 ### Q241. (PR #508, t47) A library's relations in a pack: kind sets, stated facts, value cycles, spans, `nearest`
 
 - **Seen** (2026-11-18, the hub at ffc390de8 on the M3): six of Tim's tests fail on the hub's `combine_texts`. A
@@ -6186,6 +6372,10 @@ Open:
   through a relation's declared key or a fan-out of one, few or at most 16 rows (`.layout`, 0361), as a variable
   set to a constant already was. calls.rerail declares `.layout qv fanout(q, k -> v, few)`, and calls_rust.rerail
   declares `.layout modn fanout(q -> m, few)` (the program models one crate: a qualified name is one module).
+- **At the merge of investigate-bend-vs-datalog** (c61fae98f, 2026-11-20): that branch fixes a variable every positive
+  read of which is a lookup on constants (`qv("builtins.object", "cls", $c)`), without a layout, the user's choice there
+  (356f1b5164, a day before this item's fan-outs). Both are taken: the lookup on constants after `fixed_vars`. This
+  item's test asserted the rule without its layout refused, which the user's rule fixes: that half now asserts it fixed.
   A refusal now names its product rules and the read it could not key. The 30 oracle tests pass on the M1 Max, with
   the pass's 11 tests (one new), the RIR dumps, the production contracts and the file-local typing tests.
 - **Also seen** (Q263 on django-bugs, 2026-11-19): the same refusal in `base` on the M1 Max and the M3, in
@@ -7221,3 +7411,31 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   `span(after_odd_run(x), 20) & after(high) & starts(ws)` and `after_odd_run(prev(bs & alpha, 54))`.
 - **Done when**: the program's gated region keeps its vectors inside its branch (or the gate is
   not taken for it), and the corpus test passes whole.
+
+### Q356. (Q331 on investigate-bend-vs-datalog) Native-and-GPU-strata's process-global state, merged before 0442 reached it (d719a840ef, 2026-11-19)
+
+- **Seen**: the merge of Native-and-GPU-strata d719a840ef brought statics written before decision 0442 reached that
+  branch. `check-no-global-state.py` lists them in `global-state.txt` by where they go, and the list is to shrink:
+  `text/automata.rs::AUTOMATA` (shared: the automata block, decision 0478 step 2e; its `Automaton::bytes` reads are
+  `&'static`, so the move gives the reads the shared object's lifetime), `facts/rows.rs::MOVED` and
+  `setfix.rs::ORDERS_KEPT` (run: a profile's counts, onto `run_counts()`), `accel/src/budget.rs::MOST` and
+  `accel/src/gpu/join.rs::SAID` (machine). `joins.rs`' `SEED` moved to a run's setting in the merge itself.
+- **Do**: move each where its class says, and cut its line.
+- **Done when**: none of the five is in `global-state.txt`.
+- **Done** (2026-11-20, at the hub's merge of investigate-bend-vs-datalog c61fae98f): the hub's own merge of Native-GPU-strata had
+  moved them already (`moved()` and `run_counts()`'s fields, the automata on the shared object, `budget`'s and
+  `join`'s onto the machine); the merge took none of the five lines into `global-state.txt`.
+
+### Q357. Engine tests of one process disturb each other: maintain, session and the normalization count
+
+- **Seen** (2026-11-20, the merge of investigate-bend-vs-datalog, on the M3): `cargo test -p rerail-engine --lib --
+  maintain_tests session::tests kept_tests corpus::tests` fails `r8_a_session_edit_reads_no_kept_frame`,
+  `a_runs_chunks_normalize_the_program_once` ("11 normalizations for 8 chunks, 13 for 2") and one or two more of
+  `r1_r2_an_edit_holds_no_maintenance_relation_and_copies_no_rows`, `r2_a_new_process_hashes_only_the_changed_documents_rows_of_its_inputs`,
+  `a_session_maintains_a_cross_file_aggregate`; each passes alone. The hub before the merge (59135cb7ca) fails the
+  same way. `plan::body::NORMALIZED` is a process count the test reads around its runs, so another test's
+  normalizations land in it; the maintain and session tests' cause is not read yet.
+- **Do**: each count a test reads is its run's (`run_counts()`, decision 0442), or the test's own shared object
+  (`profile::within`); find what the maintain and session tests share.
+- **Done when**: the group passes run together, three times.
+

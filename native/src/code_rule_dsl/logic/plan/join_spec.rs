@@ -232,6 +232,13 @@ impl<'a> Run<'a, '_> {
             }
             // A recheck's spec binds its head first: not the spec of the same rule run from no binding.
             d.u64(u64::from(b.head_bound()));
+            // And a maintain line's given variables (`Body::with_bound`): two lines bound by other variables have
+            // other specs.
+            let given = b.bound_before();
+            d.u64(given.len() as u64);
+            for v in given.iter() {
+                d.u64(v.index() as u64);
+            }
             d.u64(at.map_or(u64::MAX, |a| a as u64));
             match self.model.inputs.atoms {
                 Some(ops) => ops.iter().for_each(|&o| d.u64(o as u64)),
@@ -305,12 +312,14 @@ impl<'a> Run<'a, '_> {
         let pf = self.fields();
         let atoms = self.model.inputs.atoms;
         let mut slots = Slots::default();
-        // A recheck's head variables are bound by its candidate before the first step (the executor's `pre`, the
-        // head's slots): their slots first, so a step reads them as bound. An aggregate whose group only the head
-        // binds (`fanout(f, n) :- def(f, _), n = count : { uses(_, f) }`, priced from the aggregate) had no spec, and
-        // the recheck fell back to the rule's own order, unpriced (0364 R7).
-        if b.head_bound() && !bare {
-            for v in b.head().args().filter_map(|t| t.var()) {
+        // What the body has bound before its first step (a recheck's head, `Body::with_head_bound`; a maintain line's
+        // given variables, `with_bound`): slots before any item, which the engine fills from the candidate or the delta
+        // (the executor's `pre`). A step then reads them as bound, and a test of them can come first, as the planner
+        // orders it (Q208). Unregistered, an aggregate whose group only the head binds (`fanout(f, n) :- def(f, _),
+        // n = count : { uses(_, f) }`) had no spec, and the recheck fell back to the rule's own order, unpriced (0364
+        // R7). A bare prefix of a recheck has no head to bind them.
+        if !(bare && b.head_bound()) {
+            for v in b.bound_before().iter() {
                 slots.slot(Key::Var(v));
             }
         }

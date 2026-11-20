@@ -668,9 +668,9 @@ pub fn lower_module_seeded_written(statements: Vec<Statement>, seeds: &Seeds) ->
     }
     // Each directive names what its rules read: a relation of their body, and the variables it waits for.
     for (shape, line) in shapes {
-        use crate::code_rule_dsl::logic::front::{ShapeWait, shape_base};
+        use crate::code_rule_dsl::logic::front::ShapeWait;
         let rules: Vec<&crate::code_rule_dsl::logic::front::Rule> = l.written_of(&shape.head);
-        let reads = |rel: &str| rules.iter().any(|r| r.body.iter().filter_map(|x| x.atom()).any(|a| shape_base(&a.rel) == rel));
+        let reads = |rel: &str| rules.iter().any(|r| r.body.iter().filter_map(|x| x.atom()).any(|a| a.rel == rel));
         let missing = match &shape.wait {
             _ if !reads(&shape.lit) => Some(format!("no rule of `{}` reads `{}`", shape.head, shape.lit)),
             ShapeWait::After(a) if !reads(a) => Some(format!("no rule of `{}` reads `{a}`", shape.head)),
@@ -3900,6 +3900,12 @@ impl Lowerer {
             let types = cols.iter().map(|c| (c.clone(), self.type_of(c, &alts))).collect();
             let args: Vec<Term> = cols.iter().map(|c| Term::Var(c.clone().into())).collect();
             let rel = self.helper_once(rel, "cover", types, alts.into_iter().map(|b| (args.clone(), b)).collect());
+            // Stored (decision 0099's `no_inline`): the cover is the groups the context reaches, made once. Unfolded
+            // into its reader (an aggregate's witnesses), its join runs again for every witness: `p49_rr_cover5`'s
+            // `need` and `reset` of each name in a document, 45 s of one stratum over 91 files of the data layer.
+            self.prog.edit(|b| b.qualifiers(), |q| Field::Qualifiers(q), |all| {
+                all.entry(rel.clone()).or_default().insert("no_inline".to_owned());
+            });
             out.push(Lit::Atom { rel, args: cols.into_iter().map(STerm::Var).collect(), neg: false });
         }
         Ok(out)

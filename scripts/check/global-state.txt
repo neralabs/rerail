@@ -91,6 +91,7 @@ native/src/code_rule_dsl/facts/nearest.rs::CHUNK_AXIS	stays	compiled once from t
 native/src/code_rule_dsl/facts/nearest.rs::NEAREST	stays	compiled once from the engine's own code
 native/src/code_rule_dsl/facts/rows.rs::BLOCK_DEVICE	stays	code a crate above registers at load
 native/src/code_rule_dsl/facts/rows.rs::HEAP_NET	stays	code a crate above registers at load (the allocator's net count)
+native/src/code_rule_dsl/facts/rows.rs::HEAP_PEAK	stays	the allocator's per-thread peak a crate above registers once (decision 0469)
 native/src/code_rule_dsl/facts/span_prefilter.rs::SPAN_PREFILTER	stays	compiled once from the engine's own code
 native/src/code_rule_dsl/facts/vtab.rs::CLOSES	stays	a generation counter: append-only
 native/src/code_rule_dsl/facts/vtab.rs::FORGET	stays	code registered at load
@@ -184,6 +185,7 @@ native/src/code_rule_dsl/matcher/p_anchors/sql/lower/waves.rs::IDENTIFIER	stays	
 native/src/code_rule_dsl/matcher/term.rs::TERMS	stays	code registered at load
 native/src/code_rule_dsl/matcher/transform.rs::NUMBER_TEXT	stays	code a crate above registers at load
 native/src/code_rule_dsl/matcher/value.rs::NEXT_READING_ID	stays	an id counter: append-only
+native/src/code_rule_dsl/mod.rs::MIBS	stays	jemalloc's control ids for its per-thread peak, looked up once (the allocator's own)
 native/src/code_rule_dsl/module_graph.rs::SERVER_ENTRY	stays	a regex of a literal
 native/src/code_rule_dsl/npm_ignore/mod.rs::BLANK	stays	a regex of a literal
 native/src/code_rule_dsl/npm_ignore/mod.rs::DOUBLE_BACKSLASH	stays	a regex of a literal

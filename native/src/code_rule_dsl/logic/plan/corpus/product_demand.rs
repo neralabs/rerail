@@ -244,7 +244,28 @@ fn fixed_vars<'r>(rule: &'r Rule, program: &Program) -> BTreeSet<&'r str> {
 }
 
 fn disconnected_nodes(rule: &Rule, program: &Program, varies: &BTreeSet<&str>) -> bool {
-    let fixed = fixed_vars(rule, program);
+    let mut fixed = fixed_vars(rule, program);
+    // A variable bound only by lookups on constants (`qv("builtins.object", "cls", $c)`): every positive atom that
+    // reads it reads no other variable and no wildcard, and at least one does. Fixed as `$c = constant` is: a
+    // product of it is one side times that lookup's rows.
+    let positive: Vec<&Atom> = rule.body.iter().filter_map(|l| match l {
+        Literal::Atom(a) if !a.neg => Some(a),
+        _ => None,
+    }).collect();
+    let constant = |t: &Term| plain(t) && !matches!(t, Term::Var(_));
+    for a in &positive {
+        let vars: Vec<&str> = a.args.iter().filter_map(|t| match t {
+            Term::Var(v) => Some(v.as_str()),
+            _ => None,
+        }).collect();
+        let Some(&v) = vars.first() else { continue };
+        let lookup = |a: &Atom| a.args.iter().all(|t| matches!(t, Term::Var(x) if x.as_str() == v) || constant(t))
+            && a.args.iter().any(constant);
+        let reads = |a: &&&Atom| a.args.iter().any(|t| matches!(t, Term::Var(x) if x.as_str() == v));
+        if lookup(a) && positive.iter().filter(reads).all(|a| lookup(a)) {
+            fixed.insert(v);
+        }
+    }
     let node_vars: BTreeSet<&str> = rule
         .head
         .args
@@ -528,8 +549,8 @@ mod tests {
         assert!(rules.contains("missing($x, $y) :- edge($x, $y), !relay($x, $y)"));
     }
 
-    /// Q249: a node reached from constants through a declared few-row fan-out is no side of a product; without the
-    /// fan-out the same rule is one, and its refusal names it.
+    /// Q249: a node reached from constants through a declared few-row fan-out is no side of a product. Without the
+    /// fan-out this rule's node is bound by a lookup on constants alone, which fixes it too.
     #[test]
     fn a_node_a_few_row_fanout_reaches_from_constants_makes_no_product() {
         let text = |layout: &str| {
@@ -549,9 +570,29 @@ mod tests {
         let before = program.rules.clone();
         assert!(rewrite(&mut program, true).unwrap().products.is_empty());
         assert_eq!(program.rules, before);
+        // Without the layout, `y` is bound only by a lookup on constants, fixed all the same (the user's choice, on
+        // investigate-bend-vs-datalog: `a_node_bound_by_a_lookup_on_constants_is_fixed`).
         let mut program = parse(&text("")).unwrap();
+        assert!(rewrite(&mut program, true).unwrap().products.is_empty());
+    }
+
+    /// A node bound only by a lookup on constants (`qv("builtins.object", "cls", c)`, in `calls.rr`) is fixed, as
+    /// `c = constant` is: the product is one side times that lookup's few rows, and an output may hold it. A lookup
+    /// with a wildcard in its key reads every row: still a product, refused as an output.
+    #[test]
+    fn a_node_bound_by_a_lookup_on_constants_is_fixed() {
+        const LOOKUP: &str = "
+            .decl a(n: node)
+            .decl named(k: symbol, t: symbol, n: node)
+            .input a, named
+            .decl pair(x: node, y: node)
+            .output pair
+        ";
+        let mut program = parse(&format!("{LOOKUP}\npair(x, y) :- a(x), named(\"builtins.object\", \"cls\", y).\n")).unwrap();
+        assert!(rewrite(&mut program, true).unwrap().products.is_empty());
+        let mut program = parse(&format!("{LOOKUP}\npair(x, y) :- a(x), named(_, \"cls\", y).\n")).unwrap();
         let error = rewrite(&mut program, true).err().unwrap();
-        assert!(error.contains("unbounded node Cartesian product in `out`") && error.contains("the products: out($x, $y) :- a($x), named("), "{error}");
+        assert!(error.contains("unbounded node Cartesian product in `pair`"), "{error}");
     }
 
     #[test]

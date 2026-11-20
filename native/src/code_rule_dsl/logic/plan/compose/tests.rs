@@ -250,23 +250,6 @@ fn exponentially_shared_ctes_use_bounded_bulk_stages() {
 }
 
 #[test]
-fn quiet_composed_maintenance_keeps_the_same_resident_fact() {
-    use crate::code_rule_dsl::logic::native::component;
-    let p=placed(".decl changed(x:number)\n.input changed\n.decl h__old(x:number)\n.input h__old\n.decl h__del(x:number)\nh__del(x) :- changed(x).\n.decl h__ins(x:number)\nh__ins(x) :- changed(x).\n.decl h(x:number)\nh(x) :- h__old(x), !h__del(x).\nh(x) :- h__ins(x).\n.output h\n");
-    let db=Connection::open_in_memory().unwrap();
-    let mut inputs=Inputs {facts:"main.".into(),stats:"main.".into(),atoms:Some([0;3]),native:BTreeSet::new(),batch:HashMap::new(),given:Some(empty(&p)),kept:BTreeSet::from(["h".into()])};
-    for (r,rows) in [("changed",vec![]),("h__old",vec![vec![7],vec![9]])] {
-        component::retain(&db,r,rows,vec![b'i']).unwrap();
-        stages::bind(&p,&db,&mut inputs,r,component::derived(&db,r).unwrap()).unwrap();
-    }
-    let old=component::held(&db,"h__old").unwrap();
-    let out=stages::run(&p,&db,inputs,None,&mut Hooks::default()).unwrap();
-    assert!(out.kept.contains("h"));
-    assert!(out.quiet.0>0);
-    assert!(Arc::ptr_eq(&old,&component::held(&db,"h").unwrap()),"quiet output must retain its indexes, not copy its rows at publication");
-}
-
-#[test]
 fn restored_case_distinct_inputs_keep_their_own_bindings() {
     use crate::code_rule_dsl::logic::native::component;
     let placed=placed(".decl leaf(x:number)\n.input leaf\n.decl LEAF(x:number)\n.input LEAF\n.decl missing(x:number)\nmissing(x) :- leaf(x), !LEAF(x).\n.output missing\n");

@@ -351,6 +351,9 @@ fn clone_dir(from: &Path, to: &Path) -> std::io::Result<()> {
         if kind.is_file() {
             clone_file(&e.path(), &to.join(e.file_name()))?;
         } else if kind.is_dir() {
+            // A folder's own folders too: the kept facts' blocks are in one per space (`kept_facts::space_dir`,
+            // decision 0401). Copied flat, a copy's rows named blocks it did not have, and its first run failed:
+            // "a space's kept facts: No such file or directory".
             clone_dir(&e.path(), &to.join(e.file_name()))?;
         }
     }

@@ -164,6 +164,28 @@ impl<'a> Part<'a> {
     }
 }
 
+/// One end of a range of values: the value, and whether it is in the range (`<=`, `>=`) or not (`<`, `>`).
+pub(super) type End = Option<(i64, bool)>;
+
+impl<'a> Part<'a> {
+    /// Its ids whose column `c` lies between `lo` and `hi`, where they are sorted by it: a part a key found in an order
+    /// whose next column is `c` (its rows equal on the key's columns are in `c`'s order). Two searches, no row walked.
+    pub(super) fn within<D: RowData + ?Sized>(self, data: &D, k: usize, c: usize, lo: End, hi: End) -> Part<'a> {
+        let id = |i: usize| match self {
+            Part::Ids(v) => v[i],
+            Part::Rows(l, _) => l + i as u32,
+        };
+        let v = |i: usize| data.value(id(i), k, c);
+        let n = self.len();
+        let s = lo.map_or(0, |(x, eq)| split_at_pos(0, n, |i| if eq { v(i) < x } else { v(i) <= x }));
+        let e = hi.map_or(n, |(x, eq)| split_at_pos(s, n, |i| if eq { v(i) <= x } else { v(i) < x }));
+        match self {
+            Part::Ids(ids) => Part::Ids(&ids[s..e.max(s)]),
+            Part::Rows(l, _) => Part::Rows(l + s as u32, l + e.max(s) as u32),
+        }
+    }
+}
+
 /// A part's ids in turn.
 pub(super) enum PartIter<'a> {
     Ids(std::slice::Iter<'a, u32>),
@@ -891,6 +913,18 @@ impl<'a> Found<'a> {
             i -= p.len();
         }
         panic!("a position past the found ids")
+    }
+    /// Its ids whose column `c` lies between `lo` and `hi`, each run's part narrowed (`Part::within`): found in an
+    /// order whose column after the key's is `c`.
+    pub(super) fn within<D: RowData + ?Sized>(&self, data: &D, k: usize, c: usize, lo: End, hi: End) -> Found<'a> {
+        let mut out = Found::default();
+        for p in self.parts() {
+            let q = p.within(data, k, c, lo, hi);
+            if !q.is_empty() {
+                out.add(q);
+            }
+        }
+        out
     }
     /// Its ids, over every run.
     pub(super) fn ids(&self) -> impl Iterator<Item = u32> + '_ {
@@ -1824,6 +1858,28 @@ pub mod tests {
         by10.tier(&rows, k, 2);
         assert_eq!(by10.runs(), 2);
         assert_eq!(by10.find(&rows, k, &[3], None).len(), (0..2000).filter(|i| i % 7 == 3).count());
+    }
+
+    /// A key's rows in an order whose next column is `c` narrowed to a range of `c` (`Found::within`) are the rows a
+    /// filter of the key's rows keeps, over several runs, each end in the range or not, one end or both.
+    #[test]
+    fn a_keys_rows_in_a_range_of_the_next_column_are_found_by_searching() {
+        let k = 3;
+        let rows: Vec<i64> = (0..2000u32).flat_map(|i| [i64::from(i % 10), i64::from((i * 7) % 300), i64::from(i)]).collect();
+        let mut by = Index::new(vec![0, 1, 2]);
+        for (w, (lo, hi)) in [(0, 700), (700, 1500), (1500, 2000)].into_iter().enumerate() {
+            by.add_run(&rows, k, lo, hi, w as u32 + 1);
+        }
+        let value = |id: u32, c: usize| rows[id as usize * k + c];
+        for (lo, hi) in [(Some((40, false)), Some((90, false))), (Some((40, true)), Some((90, true))), (None, Some((5, false))), (Some((295, false)), None), (Some((90, false)), Some((40, false)))] {
+            let found = by.find_at(&rows, k, &[3], None, &mut [0; HINTS]);
+            let mut got: Vec<u32> = found.within(&rows, k, 1, lo, hi).ids().collect();
+            got.sort_unstable();
+            let inside = |v: i64| lo.is_none_or(|(x, eq)| v > x || eq && v == x) && hi.is_none_or(|(x, eq)| v < x || eq && v == x);
+            let mut want: Vec<u32> = found.ids().filter(|&id| inside(value(id, 1))).collect();
+            want.sort_unstable();
+            assert_eq!(got, want, "{lo:?} {hi:?}");
+        }
     }
 
     /// A small run merged into a large one by binary searches (`galloped`) is the walking merge's run: the same ids,

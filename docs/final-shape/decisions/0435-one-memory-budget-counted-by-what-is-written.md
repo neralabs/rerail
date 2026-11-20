@@ -45,7 +45,7 @@ This decision makes the budget one, counted by what the engine wrote, and lets c
    it, in their order (`sizing::Schedule`): while chunks grow, by chunk `n - 1`; once the size holds, by chunk
    `n - window` (the plans' window of Q88, never fewer than the chunks at once). The builder holds a cut until its
    size is decided. The measure is what the chunk's own blocks wrote (`rows::in_chunk_measured`: every block it made,
-   at its most, and the part still held when it ends), not the process's count, which other chunks and threads
+   at its most, and the part still held when it ends), and since decision 0469 its scopes' heap at their most, not the process's count, which other chunks and threads
    move. The room is three quarters of the limit, less the count when the chunks begin (in 64 MB steps) and the rows
    the filed chunks hold. Before, the builder cut documents by the size last stored while it worked ahead: two runs
    at one setting cut 16 and 20 chunks, and planned from different chunks (Q88's plans follow the cuts).

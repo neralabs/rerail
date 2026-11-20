@@ -97,6 +97,8 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/context/src/lib.rs", "CONTEXT", Carried, ""),
     ("src/code_rule_dsl/facts/rows.rs", "GIVEN", Thread, "the bytes this thread's chunk scopes gave their chunks: the thread's own allocation counts, read against its jemalloc net"),
     ("src/code_rule_dsl/facts/rows.rs", "NET", Thread, "inside rows.rs's tests module (a test build only): a test's stand-in for the allocator's net counter"),
+    ("src/code_rule_dsl/facts/rows.rs", "PEAK", Thread, "this thread's innermost chunk scope's heap peak so far: the thread's own allocation counts (decision 0469)"),
+    ("src/code_rule_dsl/facts/rows.rs", "PEAK_AT", Thread, "inside rows.rs's tests module (a test build only): a test's stand-in for the allocator's per-thread peak"),
     ("src/code_rule_dsl/facts/rows.rs", "TOP", Carried, ""),
     ("src/code_rule_dsl/mod.rs", "COUNTERS", Thread, "jemalloc's counters of this thread's allocations"),
     ("src/code_rule_dsl/logic/native/setfix.rs", "IN_MORSELS", Thread, "the walks this thread ran in morsels, read by tests"),

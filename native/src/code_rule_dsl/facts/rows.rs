@@ -107,10 +107,23 @@ impl Drop for Facts {
 /// most (a block's used bytes never fall), and of the blocks still held when it ended (rows it handed on), the bytes
 /// past their free lists (decision 0445). A
 /// function of the chunk and its plans, not of the threads' timing, as the process's count is not.
+///
+/// `heap` is its scopes' heap at their most (decision 0469): each scope of the chunk on a thread (its evaluation, a
+/// job carried into it) from the allocator's per-thread peak, reset at the scope's entry, so a scope's is its own
+/// allocation, whatever ran on other threads meanwhile. Their sum bounds what they held at once, and a scope's peak
+/// is a function of its work, not of the threads' timing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Written {
     pub bytes: usize,
     pub held: usize,
+    pub heap: usize,
+}
+
+impl Written {
+    /// What sizes the chunks after it (decision 0469): its blocks' bytes and its scopes' heap at their most.
+    pub fn measure(&self) -> usize {
+        self.bytes + self.heap
+    }
 }
 
 /// How long a relation's rows live, which picks the blocks they go in: a block is given back with its last part,
@@ -175,12 +188,15 @@ pub struct Chunk {
     heap: std::sync::atomic::AtomicI64,
     /// The most its live blocks and its jobs' heap held at once, seen at a block made or a job's end.
     most: std::sync::atomic::AtomicUsize,
+    /// Its scopes' heap at their most, summed (`Written::heap`): each scope's own (`enter_chunk`), whatever ran
+    /// beside it.
+    peaks: std::sync::atomic::AtomicUsize,
 }
 
 impl Chunk {
     /// Notes what it holds now (`most`).
     fn note(&self) {
-        let blocks: usize = self.made.lock().unwrap_or_else(|e| e.into_inner()).iter().filter_map(std::sync::Weak::upgrade).map(|f| f.block.reserved()).sum();
+        let blocks: usize = self.made.lock().unwrap_or_else(|e| e.into_inner()).iter().filter_map(std::sync::Weak::upgrade).map(|f| f.block.used()).sum();
         let heap = self.heap.load(std::sync::atomic::Ordering::Relaxed).max(0) as usize;
         self.most.fetch_max(blocks + heap, std::sync::atomic::Ordering::Relaxed);
     }
@@ -205,12 +221,37 @@ fn heap_net() -> i64 {
     HEAP_NET.get().map_or(0, |f| f())
 }
 
+/// This thread's most allocated less freed since its last reset, above what it was at the reset, and the reset, from
+/// the allocator's own counters (jemalloc's `thread.peak`; installed by the engine: `install_heap_peak`); 0 without.
+static HEAP_PEAK: std::sync::OnceLock<(fn() -> i64, fn())> = std::sync::OnceLock::new();
+
+/// Installs the allocator's per-thread peak (`read`, since the last `reset`) and its reset; the first one stays.
+pub fn install_heap_peak(read: fn() -> i64, reset: fn()) {
+    let _ = HEAP_PEAK.set((read, reset));
+}
+
+fn peak_reset() {
+    if let Some((_, reset)) = HEAP_PEAK.get() {
+        reset();
+    }
+}
+
+/// The innermost scope's own allocation at its most so far: its most before the last reset, or what it held at the
+/// reset and the most since.
+fn scope_peak() -> i64 {
+    let (most, at) = PEAK.with(std::cell::Cell::get);
+    most.max(at + HEAP_PEAK.get().map_or(0, |(read, _)| read()))
+}
+
 thread_local! {
     /// The bytes this thread's chunk scopes (`enter_chunk`) gave their chunks so far: a scope's own are its thread's
     /// net less what the scopes inside it gave theirs (a job of another chunk run while it waited).
     static GIVEN: std::cell::Cell<i64> = const { std::cell::Cell::new(0) };
     /// The innermost scope's thread net and `GIVEN` at its entry: its allocation so far, for `chunk_held_most`.
     static TOP: std::cell::Cell<(i64, i64)> = const { std::cell::Cell::new((0, 0)) };
+    /// The innermost scope's own allocation at its most before the allocator's peak was last reset, and its own
+    /// allocation at that reset (`scope_peak`).
+    static PEAK: std::cell::Cell<(i64, i64)> = const { std::cell::Cell::new((0, 0)) };
 }
 
 /// A chunk scope entered on this thread (`enter_chunk`): when it drops, what this thread allocated less freed meanwhile
@@ -220,22 +261,35 @@ pub struct ChunkScope {
     net: i64,
     given: i64,
     top: (i64, i64),
+    /// The scope it is inside: its own allocation at its most so far (`scope_peak`), held while this one runs.
+    outer_peak: i64,
 }
 
 /// Enters a scope of `chunk` on this thread, for a job carried into it (`setfix::carried`) or its own evaluation
 /// (`in_chunk`).
 pub fn enter_chunk(chunk: Option<Arc<Chunk>>) -> ChunkScope {
+    // The scope it is inside stops at its most so far; this one's peak counts from here (decision 0469).
+    let outer_peak = scope_peak();
+    PEAK.with(|p| p.set((0, 0)));
+    peak_reset();
     let (net, given) = (heap_net(), GIVEN.with(std::cell::Cell::get));
-    ChunkScope { chunk, net, given, top: TOP.with(|t| t.replace((net, given))) }
+    ChunkScope { chunk, net, given, top: TOP.with(|t| t.replace((net, given))), outer_peak }
 }
 
 impl Drop for ChunkScope {
     fn drop(&mut self) {
         let own = (heap_net() - self.net) - (GIVEN.with(std::cell::Cell::get) - self.given);
+        let most = scope_peak().max(0) as usize;
         GIVEN.with(|g| g.set(g.get() + own));
         TOP.with(|t| t.set(self.top));
+        // The scope it was inside goes on from its own allocation now, its most so far kept.
+        let (net, given) = self.top;
+        let outer_now = (heap_net() - net) - (GIVEN.with(std::cell::Cell::get) - given);
+        PEAK.with(|p| p.set((self.outer_peak, outer_now)));
+        peak_reset();
         if let Some(c) = &self.chunk {
             c.heap.fetch_add(own, std::sync::atomic::Ordering::Relaxed);
+            c.peaks.fetch_add(most, std::sync::atomic::Ordering::Relaxed);
             c.note();
         }
     }
@@ -275,7 +329,7 @@ fn held_of(live: &[(Life, usize, usize)]) -> usize {
     live.iter().filter(|l| l.0 != Life::Device).map(|l| l.2).sum()
 }
 
-/// `in_chunk`, and what the chunk's blocks wrote (`Written`).
+/// `in_chunk`, and what the chunk's blocks wrote and its scopes' heap at their most (`Written`).
 pub fn in_chunk_measured<R>(f: impl FnOnce() -> R) -> (R, Written) {
     struct Leave(Option<(ChunkScope, crate::code_rule_dsl::logic::profile::Bound)>, Arc<Chunk>);
     impl Drop for Leave {
@@ -317,7 +371,8 @@ pub fn in_chunk_measured<R>(f: impl FnOnce() -> R) -> (R, Written) {
     // Its open blocks are let go here: a block none of its relations holds is given back, and tallied.
     drop(leave);
     let held = chunk.held.load(std::sync::atomic::Ordering::Relaxed);
-    (r, Written { bytes: chunk.tally.load(std::sync::atomic::Ordering::Relaxed) + chunk.live.load(std::sync::atomic::Ordering::Relaxed), held })
+    let heap = chunk.peaks.load(std::sync::atomic::Ordering::Relaxed);
+    (r, Written { bytes: chunk.tally.load(std::sync::atomic::Ordering::Relaxed) + chunk.live.load(std::sync::atomic::Ordering::Relaxed), held, heap })
 }
 
 /// A block of at least `bytes` for relations, from the one block policy (decision 0342): a run bound to the device
@@ -353,20 +408,24 @@ fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<F
     Ok(f)
 }
 
-/// The open block of `life`'s relations (the chunk's, if a chunk's evaluation runs) with room for `need` bytes past
-/// its others' margin, a new one made when it has none.
-fn open_with_room(life: Life, need: usize) -> Result<Arc<Facts>, String> {
+/// A chunk of `need` bytes (aligned to `align`) in the open block of `life`'s relations (the chunk's, if a chunk's
+/// evaluation runs), past its others' margin, taken under the block's lock. Checked for room under the lock and taken
+/// after it, the room could be another thread's by then, or not in one piece (a free list's), and the chunk failed
+/// (an index's 2.5 MB, the data layer's 50 policies on 901 files). A new open block when that one has no such chunk.
+fn open_chunk(life: Life, need: usize, align: usize) -> Result<(Arc<Facts>, (usize, usize)), String> {
     let chunk = current_chunk();
     let runs = crate::code_rule_dsl::logic::profile::local::<Open>();
     let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
-    match &*open {
-        Some(f) if f.block.reserved().saturating_sub(f.block.used()) >= need + MARGIN => Ok(f.clone()),
-        _ => {
-            let f = new_open(&chunk, life, need)?;
-            *open = Some(f.clone());
-            Ok(f)
-        }
+    if let Some(f) = &*open
+        && f.block.reserved().saturating_sub(f.block.used()) >= need + MARGIN
+        && let Some(c) = f.block.try_alloc_chunk_fit(need, align)
+    {
+        return Ok((f.clone(), c));
     }
+    let f = new_open(&chunk, life, need)?;
+    *open = Some(f.clone());
+    let c = f.block.try_alloc_chunk_fit(need, align).ok_or_else(|| format!("a new open block holds no chunk of {need} bytes"))?;
+    Ok((f, c))
 }
 
 /// Where the structures derived from a relation's rows go (its indexes' arrays, `BlockVec`, decision 0384 step 4):
@@ -531,9 +590,7 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
             Some(found) => found,
             None => {
                 let life = if self.life == Life::Device { Life::Run } else { self.life };
-                let f = open_with_room(life, bytes).unwrap_or_else(|e| panic!("a block for {bytes} bytes of an index: {e}"));
-                let c = f.block.try_alloc_chunk_fit(bytes, align).unwrap_or_else(|| panic!("an open block with room holds {bytes} bytes"));
-                (f, c)
+                open_chunk(life, bytes, align).unwrap_or_else(|e| panic!("a block for {bytes} bytes of an index: {e}"))
             }
         };
         if self.len > 0 {
@@ -2047,11 +2104,55 @@ mod tests {
         /// The allocator's net counter, for these tests: a test moves it as its "work" allocates.
         static NET: std::cell::Cell<i64> = const { std::cell::Cell::new(0) };
     }
+    thread_local! {
+        /// The allocator's peak, for these tests: the net at its last reset, and the most above it since.
+        static PEAK_AT: std::cell::Cell<(i64, i64)> = const { std::cell::Cell::new((0, 0)) };
+    }
     fn net() -> i64 {
         NET.with(std::cell::Cell::get)
     }
     fn alloc(bytes: i64) {
         NET.with(|n| n.set(n.get() + bytes));
+        PEAK_AT.with(|p| {
+            let (base, most) = p.get();
+            p.set((base, most.max(net() - base)));
+        });
+    }
+    fn peak() -> i64 {
+        PEAK_AT.with(std::cell::Cell::get).1
+    }
+    fn reset() {
+        PEAK_AT.with(|p| p.set((net(), 0)));
+    }
+
+    /// Decision 0469: a chunk's heap is its scopes' own allocation at their most: what it freed before its end counts
+    /// at its most, a job of another chunk run inside it is that chunk's, and the same work measures the same.
+    #[test]
+    fn a_chunks_heap_is_its_scopes_own_peaks() {
+        install_heap_net(net);
+        install_heap_peak(peak, reset);
+        let other = Arc::new(Chunk::default());
+        let run = || {
+            in_chunk_measured(|| {
+                alloc(100 << 20);
+                alloc(-60 << 20);
+                {
+                    // Another chunk's job, run while this one waited: 50 MB at its most, all freed.
+                    let _job = enter_chunk(Some(other.clone()));
+                    alloc(50 << 20);
+                    alloc(-50 << 20);
+                }
+                // From its 40 MB, to 120 MB: its most, past the 100 MB before the job.
+                alloc(80 << 20);
+                alloc(-120 << 20);
+            })
+            .1
+        };
+        let (w, again) = (run(), run());
+        assert_eq!(w.heap, 120 << 20, "{} MB", w.heap >> 20);
+        assert_eq!(w, again, "the same work measures the same");
+        assert_eq!(w.measure(), w.bytes + w.heap);
+        assert_eq!(other.peaks.load(std::sync::atomic::Ordering::Relaxed), 2 * (50 << 20), "the job's peak is its own chunk's");
     }
 
     /// Q203 item 3: a chunk is sized by what its own work held, not the process's footprint: what its scope
@@ -2623,6 +2724,8 @@ mod tests {
         if !RESERVES_ADDRESS_SPACE {
             return;
         }
+        // Its own shared object (decision 0442): the moves counted are this test's, none of a test beside it.
+        let _own = crate::code_rule_dsl::logic::profile::within(crate::code_rule_dsl::logic::profile::Shared::new());
         in_chunk(|| {
             let before = moved().0;
             let mut r = Rows::new(1);
