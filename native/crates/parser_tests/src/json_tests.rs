@@ -250,6 +250,14 @@ fn tree_inputs() -> Vec<Vec<u8>> {
             inputs.push(format!("{}[\"{}\\n{}\", \"\\\\\\\"{}\", {}]", " ".repeat(pad), "s".repeat(n), "t".repeat(n), "u".repeat(n), "9".repeat(n.max(1))).into_bytes());
         }
     }
+    // Past a block (1,024 nodes) and past a cell's width (the tests' widths are a byte): the writer's block switch,
+    // a block made final by the next block's first node and by a late close, an ancestor closed blocks after it
+    // opened, and values to the side lists (a gap, a length and an inner node's size past 255).
+    inputs.push(format!("[{}]", vec!["true"; 3000].join(",")).into_bytes());
+    inputs.push(format!("{}1{}", "[".repeat(400), "]".repeat(400)).into_bytes());
+    inputs.push(format!("{{{}}}", (0..1500).map(|k| format!("\"k{k}\": [{k}, \"v\\n\"]")).collect::<Vec<_>>().join(",")).into_bytes());
+    inputs.push(format!("[{}1,{}\"{}\", [{}]]", " ".repeat(300), "\n".repeat(400), "s".repeat(700), vec!["null"; 300].join(", ")).into_bytes());
+    inputs.push(format!("[{}]", (0..1100).map(|k| if k % 97 == 0 { format!("{}{k}", " ".repeat(260)) } else { k.to_string() }).collect::<Vec<_>>().join(",")).into_bytes());
     if std::env::var("RERAIL_JSON_CORPUS").is_ok() {
         inputs.extend(files_in("RERAIL_JSON_CORPUS").iter().map(|p| std::fs::read(p).expect("reads")));
     }

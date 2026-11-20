@@ -8811,6 +8811,56 @@ pub unsafe fn w_finish_tail(desc: *const u8) -> u32 {
     unsafe { f1048584(u64::MAX, desc as u64) }
 }
 
+/// The read `w_fail` of the relation (or rows) whose descriptor is at `desc`.
+///
+/// # Safety
+/// `desc` is a live descriptor of its kind in a block, and the read's arguments are in its bounds.
+#[inline(always)]
+pub unsafe fn w_fail(desc: *const u8, a1: u32, a2: u32) -> u32 {
+    // SAFETY: the caller's.
+    unsafe { f1048585(u64::MAX, desc as u64, a1, a2) }
+}
+
+/// The read `w_put` of the relation (or rows) whose descriptor is at `desc`.
+///
+/// # Safety
+/// `desc` is a live descriptor of its kind in a block, and the read's arguments are in its bounds.
+#[inline(always)]
+pub unsafe fn w_put(desc: *const u8, a1: u32, a2: u32, a3: u64) -> u32 {
+    // SAFETY: the caller's.
+    unsafe { f1048586(u64::MAX, desc as u64, a1, a2, a3) }
+}
+
+/// The read `w_put_code` of the relation (or rows) whose descriptor is at `desc`.
+///
+/// # Safety
+/// `desc` is a live descriptor of its kind in a block, and the read's arguments are in its bounds.
+#[inline(always)]
+pub unsafe fn w_put_code(desc: *const u8, a1: u32, a2: u32) -> u32 {
+    // SAFETY: the caller's.
+    unsafe { f1048588(u64::MAX, desc as u64, a1, a2) }
+}
+
+/// The read `w_new_block` of the relation (or rows) whose descriptor is at `desc`.
+///
+/// # Safety
+/// `desc` is a live descriptor of its kind in a block, and the read's arguments are in its bounds.
+#[inline(always)]
+pub unsafe fn w_new_block(desc: *const u8, a1: u32) -> u32 {
+    // SAFETY: the caller's.
+    unsafe { f1048589(u64::MAX, desc as u64, a1) }
+}
+
+/// The read `w_settle` of the relation (or rows) whose descriptor is at `desc`.
+///
+/// # Safety
+/// `desc` is a live descriptor of its kind in a block, and the read's arguments are in its bounds.
+#[inline(always)]
+pub unsafe fn w_settle(desc: *const u8, a1: u32) -> u32 {
+    // SAFETY: the caller's.
+    unsafe { f1048590(u64::MAX, desc as u64, a1) }
+}
+
 /// The read `w_lz4` of the relation (or rows) whose descriptor is at `desc`.
 ///
 /// # Safety
@@ -8823,4 +8873,4 @@ pub unsafe fn w_lz4(desc: *const u8, a1: u64, a2: u64, a3: u64) -> u64 {
 
 
 /// This source's fingerprint (`rust::fingerprint` of what comes before).
-pub const SOURCE: u64 = 0xd64427a0d628f9f0;
+pub const SOURCE: u64 = 0x642347b2dd344d5;

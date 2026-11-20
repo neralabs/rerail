@@ -593,6 +593,24 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 39, done: the writer's per-node work written directly (decision 0505)
+
+Order item 1 of step 38. `rust_stream` writes `W16`, a direct run's writer, in the lean parser's `Walk` shape. Its
+state is a field of the walk, and `open16`, `leaf16`, `close` and `accept` call its methods. Next to the two
+references:
+
+| | simdjson / the lean parser | the generated Rust, before | now |
+|---|---|---|---|
+| The writer's state | fields of a local struct (`tape_builder`, `Walk`) | the ops' `State` behind `desc`, loaded and stored every op | `S::wr`, a `W16`: read once at the start, stored only before a cold call and at the end |
+| A node's place | a cursor (`next_tape_loc`), a cursor a column | `(b, j)`, the block's room from the table, every op | the current block's room kept; a cell at `room + at[r] + j * w[r]` |
+| The calls a node | none | `w_open` + `w_commit`, `w_leaf` + `w_commit`, `w_close`, out of line | `open`, `leaf`, `close` inline; no commit |
+| The cold paths | `allocate`, out of line | inside each op | a block's room, a side list, `settle`, a failure: `#[cold] #[inline(never)]`, still the ops |
+| The source's form | named fields, expressions | SSA values as `let mut vN`, offsets as literals | named fields, expressions, in the per-node work |
+
+Left of step 38's order: the cold paths and the document's end written directly, so that the `w` module leaves the
+source (items 2 and 3); one stack of open nodes, not tier 2's beside the writer's frames (D2); the kinds' numbers
+constants (D7); the host's writer (item 5).
+
 ## Step 38: the writer's ops next to simdjson's tape builder and the lean parser's `Walk`
 
 **Why this step.** Steps 35–37 picked and kept their cuts by profiles and instructions a byte. The user (2026-11-20):
