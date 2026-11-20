@@ -31,11 +31,22 @@ async function databaseFile(): Promise<string> {
   return path;
 }
 
-/** A connection of its own that holds the write lock of the database at `path`. */
+/**
+ * A connection of its own that holds the write lock of the database at `path`. It syncs nothing as it commits, so it
+ * gives the lock back as soon as its pages are in the log, however busy the disk.
+ */
 function holding(path: string): Database.Database {
   const holder = new Database(path);
+  holder.pragma("synchronous = OFF");
   holder.exec("BEGIN IMMEDIATE");
   return holder;
+}
+
+/** When the first of SQLite's tries from `since` at or after `at` comes. */
+function nextSqliteTry(since: number, at: number): number {
+  let next = 0;
+  while (since + sqliteTryAtMs(next) < at) next += 1;
+  return since + sqliteTryAtMs(next);
 }
 
 /** Now, in ms, on the clock the wait's `since` is read on. */
@@ -95,9 +106,10 @@ describe("waiting for the write lock", () => {
     try {
       const since = now();
       const answered = waitForWriteLock(path, undefined, since).then(now);
-      // 15 ms after one of the tries SQLite's busy handler makes from `since`, 85 ms before the next.
-      const released = await releaseAt(holder, since + sqliteTryAtMs(15) + 15, true);
-      expect(await answered - released).toBeLessThan(50);
+      // 5 ms after one of the tries SQLite's busy handler makes from `since`, 95 ms before the next.
+      const released = await releaseAt(holder, since + sqliteTryAtMs(15) + 5, true);
+      // Well before that next try, which the busy handler's times alone would wait for.
+      expect(await answered).toBeLessThan(nextSqliteTry(since, released) - 20);
     } finally {
       holder.close();
     }
@@ -124,10 +136,8 @@ describe("waiting for the write lock", () => {
         const since = release + 10 - sqliteTryAtMs(18);
         const answered = waitForWriteLock(path, undefined, since).then(now);
         const released = await releaseAt(holder, release, false);
-        let next = 0;
-        while (since + sqliteTryAtMs(next) < released) next += 1;
         // Up to 35 ms for the answer's way back and the timers' steps, which are about 16 ms on Windows.
-        expect(await answered).toBeLessThanOrEqual(since + sqliteTryAtMs(next) + 35);
+        expect(await answered).toBeLessThanOrEqual(nextSqliteTry(since, released) + 35);
       } finally {
         holder.close();
       }
