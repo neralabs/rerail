@@ -2273,6 +2273,31 @@ describe("CodeRuleBridge", () => {
       expect(toldPaths(onDiscoveryGaps)).toEqual(["src/z.py"]);
     });
 
+    it("orders a session's looks by its own walks alone: a file an earlier session on the bridge found being deleted, denied now, is recorded at the first turn end", async () => {
+      const root = await workspace();
+      const earlier = join(root, "src", "a.py");
+      await writeFile(earlier, "x = 1\n");
+      refuseReads(earlier);
+      discovery.accesses.set(earlier, Array.from({ length: 50 }, () => deletePending(earlier)));
+      const onDiscoveryGaps = vi.fn();
+      const bridge = gapBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
+      await bridge.openWorkspace("session-1");
+      await bridge.checkpoint("turn");
+      await bridge.settleWalk();
+      expect(toldPaths(onDiscoveryGaps)).toEqual([]);
+      // Denied now, and 300 files whose deletes stay pending sort after it: the next session's walks look at it first.
+      discovery.accesses.delete(earlier);
+      const going = Array.from({ length: 3 * MAX_TOLD_AT_ONCE }, (_, index) => join(root, "src", `b${String(index).padStart(3, "0")}.py`));
+      for (const file of going) {
+        await writeFile(file, "x = 1\n");
+        refuseReads(file);
+        discovery.accesses.set(file, Array.from({ length: 50 }, () => deletePending(file)));
+      }
+      await bridge.openWorkspace("session-2");
+      await bridge.checkpoint("turn");
+      expect(toldPaths(onDiscoveryGaps)).toEqual(["src/a.py"]);
+    });
+
     // The walk of the other worktrees is shared by every session watching them; what it had no room to look at again
     // reaches each session marked so, and is said, not recorded, until a later walk looks at it, as in the session folder.
     it(`tells the refusals past the first ${MAX_TOLD_AT_ONCE} in path order in another worktree once a later walk looked at them, none whose delete is pending`, async () => {
@@ -2324,6 +2349,42 @@ describe("CodeRuleBridge", () => {
       // holds it; the second's does not, so the read it takes part in looks again.
       discovery.accesses.set(folder, Array.from({ length: 50 }, () => deletePending(folder)));
       expect(await told("session-2")).toEqual([]);
+    });
+
+    it(`records a denied folder in another worktree that ${MAX_TOLD_AT_ONCE + 1} folders being deleted sort before, when the next read goes through another session`, async () => {
+      const root = await twoBranches();
+      const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+      const walks = new WorktreeWalks({ gapMs: 0 });
+      /** A turn end, and the read of the worktree its walk asks for. */
+      const turn = async (bridge: CodeRuleBridge): Promise<void> => {
+        await bridge.checkpoint("turn");
+        await bridge.settleWorktreeWalk();
+      };
+      const watching = async (sessionId: string) => {
+        const onDiscoveryGaps = vi.fn();
+        const audit = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+        const bridge = gapBridge(root, { ...auditor(audit), ...extra }, { worktreeWalks: walks, onDiscoveryGaps });
+        await bridge.openWorkspace(sessionId);
+        await turn(bridge);
+        return { bridge, onDiscoveryGaps };
+      };
+      const first = await watching("session-1");
+      const second = await watching("session-2");
+      // Made once both sessions watch, so the first, which watched first, reads them; the first 101 in path order are
+      // being deleted at every look.
+      const going = Array.from({ length: MAX_TOLD_AT_ONCE + 1 }, (_, index) => join(worktree, "src", `a${String(index).padStart(3, "0")}`));
+      const denied = join(worktree, "src", "z");
+      for (const folder of [...going, denied]) {
+        await mkdir(folder);
+        denyFolder(folder, "EPERM");
+      }
+      for (const folder of going) discovery.accesses.set(folder, Array.from({ length: 50 }, () => deletePending(folder)));
+      await turn(first.bridge);
+      // The next read goes through the second session, the first having closed.
+      await first.bridge.close();
+      await turn(second.bridge);
+      await second.bridge.checkpoint("turn");
+      expect(toldPaths(second.onDiscoveryGaps)).toEqual([`${relative(root, worktree).split(sep).join("/")}/src/z`]);
     });
 
     // `git worktree remove` takes a worktree's folder before Git stops listing the worktree, so a walk that began with the

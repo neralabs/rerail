@@ -119,6 +119,11 @@ export interface WorktreeScan {
    * refusal there is a gap, and is not looked at again, so each read looks at those some session has not recorded yet.
    */
   readonly held: (path: string) => boolean;
+  /**
+   * The refusals the worktree's reads withdrew (`SourceWalk.withdrawn`), through whichever session read it: kept here,
+   * by the walk, so a read through another session orders its looks by the same facts.
+   */
+  readonly withdrawn: Set<string>;
   /** Filesystem-clock reading taken as the walk began. */
   readonly observedAt: number;
   /**
@@ -394,6 +399,8 @@ export class WorktreeWalks {
   readonly #kept = new Map<string, Kept>();
   /** Worktrees a walk began to read and has not kept findings of: the next walk reads them whatever the notices say. */
   readonly #owed = new Set<string>();
+  /** The refusals each worktree's reads withdrew (`WorktreeScan.withdrawn`), by its path, while a session watches it. */
+  readonly #withdrawn = new Map<string, Set<string>>();
   readonly #readUnmerged = gitUnmergedReader();
   readonly #readTrackedIgnored = gitTrackedIgnoredReader();
   /**
@@ -628,6 +635,7 @@ export class WorktreeWalks {
     const roots = new Set(watched.flatMap(worktrees => [...worktrees]));
     for (const root of this.#kept.keys()) if (!roots.has(root)) this.#kept.delete(root);
     for (const root of this.#owed) if (!roots.has(root)) this.#owed.delete(root);
+    for (const root of this.#withdrawn.keys()) if (!roots.has(root)) this.#withdrawn.delete(root);
     this.#notices.retain(roots);
     this.#looks.retain(roots);
   }
@@ -856,6 +864,7 @@ export class WorktreeWalks {
       root,
       ...this.#lastRead(root),
       held: path => watchers.every(walk => walk.holdsRefusal(root, path)),
+      withdrawn: this.#withdrawnIn(root),
       startedAt: Math.min(...watchers.map(walk => walk.startedAt)),
       observedAt: read.observedAt,
       skip: begun.skip,
@@ -873,6 +882,13 @@ export class WorktreeWalks {
       return { findings, scan };
     }
     return undefined;
+  }
+
+  /** The refusals the reads of `root` withdrew (`WorktreeScan.withdrawn`): an empty set before its first read. */
+  #withdrawnIn(root: string): Set<string> {
+    const withdrawn = this.#withdrawn.get(root) ?? new Set<string>();
+    this.#withdrawn.set(root, withdrawn);
+    return withdrawn;
   }
 
   /** What a read of `root` asks with of what the last read kept (`WorktreeScan`): nothing for a first read. */
