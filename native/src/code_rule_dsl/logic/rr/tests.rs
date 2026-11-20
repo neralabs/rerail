@@ -3235,6 +3235,61 @@ Call(c) :- kind(c, "call").
     ], "{outcome:?}");
 }
 
+/// A file's tests run again add no corpus root to the store: each test runs in the same directory every run
+/// (`testing::in_work`), so the store's root for it, and the frames kept by its path, are the last run's. A directory
+/// of each run's own made the store a root and its frames more on every run of the same tests.
+#[test]
+fn running_a_files_tests_again_adds_no_root_to_the_store() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-test-again");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("t.rerail");
+    std::fs::write(&file, r#".policy "t:again" revision 1
+.language python
+.scope include "**/*.py"
+.violation Call(at: node) code "C1" "a call"
+Call(c) :- kind(c, "call").
+.test one
+    .fixture "a.py" ```
+        f()
+        ```
+    .expect C1 at "a.py":1
+.end
+"#).unwrap();
+    let roots = || -> std::collections::BTreeSet<String> {
+        let store = crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().expect("the test's store");
+        let c = rusqlite::Connection::open_with_flags(&store, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        let mut st = c.prepare("SELECT path FROM corpus_roots").unwrap();
+        st.query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap()
+    };
+    let mut seen = Vec::new();
+    for _ in 0..2 {
+        let report = super::testing::report(std::slice::from_ref(&file), None).unwrap();
+        assert_eq!(report[0]["status"], "pass", "{report}");
+        seen.push(roots());
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert!(!seen[0].is_empty(), "the test's run recorded its root");
+    assert_eq!(seen[1], seen[0], "the store's corpus roots after the first run, then after the second");
+}
+
+/// A test's directory is the same every run over one store, so the store keeps one root for it; with no store
+/// (`RERAIL_TAPE_CACHE=off`) nothing is kept, and each run has a directory of its own, so two processes at once never
+/// share one.
+#[test]
+fn a_tests_directory_is_the_stores_or_the_runs_own() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-test-dirs");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("t.rerail");
+    std::fs::write(&file, "").unwrap();
+    let store = dir.join("store.sqlite");
+    let at = |store: Option<&std::path::Path>| super::testing::in_work(store, &file, "t", |work| work.to_owned()).unwrap();
+    let (first, second) = (at(Some(&store)), at(Some(&store)));
+    let (own, other) = (at(None), at(None));
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(first, second, "over one store, the same directory");
+    assert_ne!(own, other, "with no store, each run's own");
+}
+
 /// A test's block is checked as it is parsed: closed by `.end`, not nested, and no `.end` outside one.
 #[test]
 fn test_blocks_parse_only_whole() {
