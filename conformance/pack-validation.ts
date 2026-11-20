@@ -5,7 +5,7 @@
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
-import { basename, dirname, join, matchesGlob, posix, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, join, matchesGlob, posix, relative, resolve, sep } from "node:path";
 import semver from "semver";
 import { z } from "zod";
 import {
@@ -28,6 +28,9 @@ import {
   engineRegexIssues,
   type RegexIssue,
   parseConversationRule,
+  RERAIL_DOCUMENT_EXTENSION,
+  type RerailDescription,
+  type RrDescription,
 } from "../src/engine/index.js";
 import { resolveModelPath } from "../src/runtime/index.js";
 import { PACK_LIST_MODULE_PATH, PACKS_DIRECTORY, renderPackListModule } from "../scripts/generate/packs/pack-list.js";
@@ -35,7 +38,8 @@ import { CONFORMANCE_FILE, documentPath, loadPack, packSchema, RERAIL_ROOT, type
 import { reportFailures, runPack } from "./languages/runner.js";
 import { decidingPattern, inToolSubdirectory, licenceAllowed, licenceAlternatives, packFixtureAbsence, pathGlob, PUBLISH_DIRECTORY, readUpstreamSources } from "../scripts/s3/pack-fixtures.mjs";
 import { isPrivatePack } from "../scripts/release/packs.mjs";
-import { admitsRefusingCore, HELD_OFF_SINCE, heldOffRules, LANGUAGE_SINCE, raisedCoreRange, shippedLanguages } from "../scripts/release/core.mjs";
+import { admitsRefusingCore, HELD_OFF_SINCE, heldOffRules, LANGUAGE_SINCE, raisedCoreRange, RERAIL_DOCUMENTS_SINCE, rerailRules, shippedLanguages } from "../scripts/release/core.mjs";
+import { describeListed, includedPackFiles, rerailExamplePairFailures, rerailListed, rerailProofFailures, rerailTestFailures } from "./rerail-pack-rules.js";
 import { capabilitiesJson } from "./engine.js";
 import { BIOME_SAME_SOURCES } from "./biome-same-sources.generated.js";
 
@@ -126,6 +130,7 @@ const documentSchema = z.object({
 type Compiled =
   | { kind: "compiled"; compiled: NativeCompiledCodeRuleDsl; codes: ReadonlySet<string> }
   | { kind: "conversation"; rule: ConversationRule }
+  | { kind: "rerail"; described: RerailDescription }
   | { kind: "not-supported-yet"; reason: string }
   | { kind: "failed"; message: string };
 
@@ -519,6 +524,15 @@ export function languageRangeFailure(range: string, languages: readonly string[]
   return `package.json: the core range ${range} admits Rerail older than ${since}, which reads no ${refused.map(entry => entry.language).join(" or ")} rule; raise it to ${raisedCoreRange(since)}`;
 }
 
+/**
+ * Why a pack's core range `range` admits a core that cannot read its rules written in `.rerail` (`rerail`, their ids),
+ * or undefined: as for `heldOff`, once core is at `RERAIL_DOCUMENTS_SINCE`.
+ */
+export function rerailRangeFailure(range: string, rerail: readonly string[], coreVersion: string): string | undefined {
+  if (rerail.length === 0 || !admitsRefusingCore(range, RERAIL_DOCUMENTS_SINCE, coreVersion)) return undefined;
+  return `package.json: the core range ${range} admits Rerail older than ${RERAIL_DOCUMENTS_SINCE}, which reads no rule written in .rerail (${rerail.join(", ")}); raise it to ${raisedCoreRange(RERAIL_DOCUMENTS_SINCE)}`;
+}
+
 /** The SPDX ids an SPDX expression names. */
 const spdxIds = (expression: string): string[] =>
   expression
@@ -727,6 +741,12 @@ export function textFailures(file: string, text: string): string[] {
   } catch {
     return []; // Check 1 reports a document that does not parse.
   }
+  const description = typeof document === "object" && document !== null && "description" in document ? document.description : undefined;
+  return descriptionFailures(file, description);
+}
+
+/** Check 8 on a rule's description, from its JSON document or its `.rerail` file's `.description`. */
+export function descriptionFailures(file: string, description: unknown): string[] {
   const failures: string[] = [];
   const sentence = (what: string, value: string, limit: number, form: boolean): void => {
     const plain = value.replace(QUOTED, "''").replace(ABBREVIATION, "");
@@ -735,7 +755,6 @@ export function textFailures(file: string, text: string): string[] {
     if (form && SENTENCE_BREAK.test(plain)) failures.push(`${file}: ${what} is more than one sentence: ${value}`);
     if (TOOL_NAMES.test(plain)) failures.push(`${file}: ${what} names an upstream tool: ${value}`);
   };
-  const description = (document as { description?: unknown }).description;
   if (typeof description !== "string" || description.trim() === "") failures.push(`${file}: has no description`);
   else {
     sentence("description", description, DESCRIPTION_CHARS, true);
@@ -821,8 +840,8 @@ function readPackJson({ directory, fail }: Validation): Pick<ReadPack, "pack" | 
   return { pack: undefined, packJson };
 }
 
-/** Check 1 on pack.json's listing: no rule listed twice, no document listed for two rules, every rules/ file listed. */
-function checkListing({ directory, fail }: Validation, pack: RulePackFile): void {
+/** Each listed rule by its document, failing a rule listed twice or a document listed for two rules. */
+function listedDocuments({ fail }: Validation, pack: RulePackFile): ReadonlyMap<string, string> {
   const byDocument = new Map<string, string>();
   const seen = new Set<string>();
   for (const rule of pack.rules) {
@@ -832,31 +851,59 @@ function checkListing({ directory, fail }: Validation, pack: RulePackFile): void
     if (other !== undefined) fail("rules", `${rule.id}: ${rule.document} is also ${other}'s document`, rule.id);
     byDocument.set(rule.document, rule.id);
   }
-  for (const file of filesUnder(directory, join(directory, "rules"))) {
-    if (!byDocument.has(file)) fail("rules", `${file} is not listed in pack.json`);
+  return byDocument;
+}
+
+/**
+ * Check 1 on pack.json's listing: no rule listed twice, no document listed for two rules, every rules/ file listed or
+ * included by a listed `.rerail` rule (`included`, the pack's own library files).
+ */
+function checkListing(validation: Validation, pack: RulePackFile, included: ReadonlySet<string>): void {
+  const byDocument = listedDocuments(validation, pack);
+  for (const file of filesUnder(validation.directory, join(validation.directory, "rules"))) {
+    if (!byDocument.has(file) && !included.has(file)) validation.fail("rules", `${file} is not listed in pack.json, and no listed rule includes it`);
   }
 }
 
-/** Check 1 on one listed rule: its document is named for its id, exists, carries the id and compiles; undefined when it is missing. */
-function compileListed({ directory, fail }: Validation, rule: ListedRule): Compiled | undefined {
-  if (basename(rule.document, ".json") !== rule.id) fail("rules", `${rule.id}: its document is ${rule.document}; name it rules/${rule.id}.json`, rule.id);
+/** Check 1 on a listed JSON document's text: it carries the listed id and compiles. */
+function compileJsonListed({ fail }: Validation, rule: ListedRule, text: string): Compiled {
+  const documentId = documentIdOf(text);
+  if (documentId !== undefined && documentId !== rule.id) fail("rules", `${rule.id}: ${rule.document} has id ${documentId}`, rule.id);
+  return compileRuleDocument(text);
+}
+
+/**
+ * Check 1 on one listed rule: its document is named for its id, exists, carries the id and compiles (one written in
+ * `.rerail`: the engine reads and checks it, `described`, by path); undefined when it is missing.
+ */
+function compileListed(validation: Validation, rule: ListedRule, described: ReadonlyMap<string, RrDescription>): Compiled | undefined {
+  const { directory, fail } = validation;
+  const extension = extname(rule.document);
+  if (basename(rule.document, extension) !== rule.id) fail("rules", `${rule.id}: its document is ${rule.document}; name it rules/${rule.id}${extension}`, rule.id);
   const path = join(directory, rule.document);
   if (!existsSync(path)) {
     fail("rules", `${rule.id}: ${rule.document} does not exist`, rule.id);
     return undefined;
   }
-  const text = readFileSync(path, "utf8");
-  const documentId = documentIdOf(text);
-  if (documentId !== undefined && documentId !== rule.id) fail("rules", `${rule.id}: ${rule.document} has id ${documentId}`, rule.id);
-  const result = compileRuleDocument(text);
+  const result = extension === RERAIL_DOCUMENT_EXTENSION ? rerailListed(rule.id, described.get(path), rule.mode) : compileJsonListed(validation, rule, readFileSync(path, "utf8"));
   if (result.kind === "failed") fail("rules", `${rule.id}: ${rule.document} ${result.message}`, rule.id);
   return result;
 }
 
+/** The engine's reading of every listed `.rerail` document that exists, by its path. */
+function describeRerailDocuments(directory: string, pack: RulePackFile): ReadonlyMap<string, RrDescription> {
+  const paths = pack.rules
+    .filter(rule => extname(rule.document) === RERAIL_DOCUMENT_EXTENSION)
+    .map(rule => join(directory, rule.document))
+    .filter(path => existsSync(path));
+  return paths.length === 0 ? new Map() : describeListed(paths);
+}
+
 /**
- * Check 1: rules. pack.json parses, every rules/*.json is listed, every listed document is named for its id, exists,
- * carries the listed id and compiles against core's capabilities (a conversation rule: parses, and the engine accepts
- * its patterns); candidates and ports follow the same id rule.
+ * Check 1: rules. pack.json parses, every rules/ file is listed or included by a listed `.rerail` rule, every listed
+ * document is named for its id, exists, carries the listed id and compiles against core's capabilities (a
+ * conversation rule: parses, and the engine accepts its patterns; a `.rerail` rule: the engine reads and checks it);
+ * candidates and ports follow the same id rule.
  */
 function checkRules(validation: Validation): ReadPack {
   const { directory, id, fail } = validation;
@@ -864,9 +911,10 @@ function checkRules(validation: Validation): ReadPack {
   const compiled = new Map<string, Compiled>();
   if (pack !== undefined) {
     if (pack.id !== id) fail("rules", `pack.json: id is ${pack.id}; the directory is ${id}`);
-    checkListing(validation, pack);
+    const described = describeRerailDocuments(directory, pack);
+    checkListing(validation, pack, includedPackFiles(directory, described.values()));
     for (const rule of pack.rules) {
-      const result = compileListed(validation, rule);
+      const result = compileListed(validation, rule, described);
       if (result !== undefined) compiled.set(rule.id, result);
     }
   }
@@ -951,6 +999,20 @@ function checkExamples(validation: Validation, { pack, compiled }: ReadPack, loa
   if (pack === undefined) fail("examples", "pack.json does not parse; see check 1");
   for (const rule of pack?.rules ?? []) checkRuleExamples(validation, rule, compiled.get(rule.id), conversationRegistry);
   for (const port of loaded?.pack.rules ?? []) checkPortExamples(validation, port);
+}
+
+/**
+ * Checks 2 and 3 on the rules written in `.rerail`: a pack's own rule sets no `suppress` and carries a `.test` block;
+ * its examples, run through the `.rerail` runner, catch and pass as they say; and its `.test` blocks pass.
+ */
+async function checkRerailRules({ directory, fail }: Validation, { pack, compiled }: ReadPack): Promise<void> {
+  for (const rule of pack?.rules ?? []) {
+    const result = compiled.get(rule.id);
+    if (result?.kind !== "rerail") continue;
+    for (const failure of rerailProofFailures(rule.id, result.described)) fail("proof", failure, rule.id);
+    const examples = rule.examples === undefined ? [] : await rerailExamplePairFailures(rule.id, result.described, rule.examples);
+    for (const failure of [...examples, ...rerailTestFailures(rule.id, join(directory, rule.document))]) fail("examples", failure, rule.id);
+  }
 }
 
 /** Per port id, the pack.json rule that ships the port (`ruleOfPort`), and why the port is not supported yet (`notSupported`). */
@@ -1127,10 +1189,12 @@ function checkPublishedFiles({ directory, fail }: Validation, manifest: PackPack
 function checkCoreRange({ directory, options, fail }: Validation, manifest: PackPackage, pack: RulePackFile | undefined): void {
   const range = manifest.peerDependencies["@neralabs/rerail"];
   const coreVersion = options.coreVersion ?? rootPackage().version;
-  const heldOffRange = heldOffRangeFailure(range, heldOffRules(pack), coreVersion);
-  if (heldOffRange !== undefined) fail("package", heldOffRange);
-  const languageRange = languageRangeFailure(range, shippedLanguages(directory), coreVersion);
-  if (languageRange !== undefined) fail("package", languageRange);
+  const failures = [
+    heldOffRangeFailure(range, heldOffRules(pack), coreVersion),
+    languageRangeFailure(range, shippedLanguages(directory), coreVersion),
+    rerailRangeFailure(range, rerailRules(pack), coreVersion),
+  ];
+  for (const failure of failures) if (failure !== undefined) fail("package", failure);
 }
 
 /**
@@ -1212,11 +1276,14 @@ function checkManifest({ directory, options, fail }: Validation, packJson: unkno
  * criteria a machine can check; violation messages are left to review. Probes are facts the ports are built on, read
  * by no one, so are left out.
  */
-function checkText({ directory, fail }: Validation, pack: RulePackFile | undefined): void {
+function checkText({ directory, fail }: Validation, { pack, compiled }: Pick<ReadPack, "pack" | "compiled">): void {
   const listedBy = new Map((pack?.rules ?? []).map(rule => [rule.document, rule.id]));
   const documents = [...filesUnder(directory, join(directory, "rules")), ...candidateDocuments(directory, filesUnder(directory, join(directory, "candidates"))).filter(file => !file.startsWith("candidates/probes/"))];
   for (const file of documents) {
-    for (const failure of textFailures(file, readFileSync(join(directory, file), "utf8"))) fail("text", failure, listedBy.get(file));
+    const id = listedBy.get(file);
+    const result = id === undefined ? undefined : compiled.get(id);
+    const failures = result?.kind === "rerail" ? descriptionFailures(file, result.described.description) : textFailures(file, readFileSync(join(directory, file), "utf8"));
+    for (const failure of failures) fail("text", failure, id);
   }
 }
 
@@ -1251,11 +1318,12 @@ export async function validatePack(directory: string, options: ValidatePackOptio
   // failure, so check 3 records its failures first.
   checkExamples(validation, read, loaded);
   checkProof(validation, read.pack, loaded);
+  await checkRerailRules(validation, read);
   await checkPorts(validation, read, loaded);
   const sources = readSources(directory);
   checkPackage(validation, read.pack, sources);
   checkLicences(validation, sources);
   checkManifest(validation, read.packJson);
-  checkText(validation, read.pack);
+  checkText(validation, read);
   return { id, directory, checks, rules: ruleResults(read, ruleFailures), pass: Object.values(checks).every(failures => failures.length === 0) };
 }

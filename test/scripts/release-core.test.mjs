@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import semver from "semver";
 import { afterEach, describe, expect, it } from "vitest";
 import { changesPackage, coreChanges, lockChangesCore, matrixChanges, publishRetryRefusal, retrySummary, shipsWithCore } from "../../scripts/release/core-paths.mjs";
-import { admitsRefusingCore, CHANGE_TYPES, changelogEntries, changelogEntryFileRefusal, changelogEntryType, changelogEntryTypeRefusal, changelogLead, changelogLeadRefusal, changelogSection, coreBeforeFloor, coreFloor, coreTagRefusal, firstChangelogSection, handWrittenChangelogEntries, HELD_OFF_SINCE, heldOffRules, isOpenRange, LANGUAGE_SINCE, newChangelogEntries, nextCoreVersion, NO_CHANGELOG_ENTRIES, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages, unreleasedChangelogEntries } from "../../scripts/release/core.mjs";
+import { admitsRefusingCore, CHANGE_TYPES, changelogEntries, changelogEntryFileRefusal, changelogEntryType, changelogEntryTypeRefusal, changelogLead, changelogLeadRefusal, changelogSection, coreBeforeFloor, coreFloor, coreTagRefusal, firstChangelogSection, handWrittenChangelogEntries, HELD_OFF_SINCE, heldOffRules, isOpenRange, LANGUAGE_SINCE, newChangelogEntries, nextCoreVersion, NO_CHANGELOG_ENTRIES, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, RERAIL_DOCUMENTS_SINCE, rerailRules, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages, unreleasedChangelogEntries } from "../../scripts/release/core.mjs";
 import { RELEASE_NOTE_WORDS, releaseNoteRefusal } from "../../scripts/release/release-notes.mjs";
 import { compareVersions, distTagReport, nextTrails, parseDistTagList, parseExpectation, previewRefusal, raiseNext } from "../../scripts/release/dist-tags.mjs";
 import { linkFolder } from "../support/platform/links.ts";
@@ -533,6 +533,11 @@ describe("coreFloor", () => {
     const newest = [HELD_OFF_SINCE, java].sort().at(-1);
     expect(coreFloor(["held"], ["java"])).toBe(newest);
   });
+
+  it("is the release that first reads a rule written in .rerail for a pack that ships one", () => {
+    expect(coreFloor([], ["python"], ["django-practice-count-not-len"])).toBe(RERAIL_DOCUMENTS_SINCE);
+    expect(coreFloor([], ["python"], [])).toBeUndefined();
+  });
 });
 
 describe("admitsRefusingCore", () => {
@@ -585,6 +590,14 @@ describe("heldOffRules", () => {
     expect(heldOffRules({ rules: [{ id: "a" }, { id: "b", on: false, heldOff: "why" }] })).toEqual(["b"]);
     expect(heldOffRules({})).toEqual([]);
     expect(heldOffRules(undefined)).toEqual([]);
+  });
+});
+
+describe("rerailRules", () => {
+  it("names the rules pack.json ships written in .rerail, and none for a pack.json without rules", () => {
+    expect(rerailRules({ rules: [{ id: "a", document: "rules/a.json" }, { id: "b", document: "rules/b.rerail" }] })).toEqual(["b"]);
+    expect(rerailRules({})).toEqual([]);
+    expect(rerailRules(undefined)).toEqual([]);
   });
 });
 
