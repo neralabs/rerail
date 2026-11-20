@@ -36,7 +36,8 @@ pub struct Docs {
 
 struct Slot {
     input: Document,
-    made: OnceLock<MadeDoc>,
+    /// Shared with the batch it was built again from (`Batch::take_groups`), where made there.
+    made: OnceLock<Arc<MadeDoc>>,
 }
 
 /// A made document: its projection, whether the policy is withheld it (it does not parse), and its first error.
@@ -147,8 +148,17 @@ impl Docs {
                     view_counts(&made.p)
                 ));
             }
-            made
+            Arc::new(made)
         })
+    }
+    /// The first `n` documents' projections `from` made, shared: they are made in its block, which this batch's
+    /// projections are made in too (`Batch::take_groups`).
+    fn take_made(&self, from: &Docs, n: usize) {
+        for i in 0..n {
+            if let Some(m) = from.slots[i].made.get() {
+                let _ = self.slots[i].made.set(Arc::clone(m));
+            }
+        }
     }
     /// Document `i`'s projection (decision 0289 §3: in the batch's block), its verdict and its module.
     fn project(&self, i: usize) -> MadeDoc {
@@ -429,6 +439,45 @@ impl Batch {
             s.groups.push(Arc::new(Group { docs: need, rels, bases, strings, symbols }));
             return;
         }
+    }
+
+    /// `from`'s groups taken as this batch's own (Q355), before any read of it: a batch built again with more
+    /// documents (a chunk's guests, decision 0055) has the rows its documents were made in the batch before, shared,
+    /// not made again. Only where `from`'s documents are this batch's first, the same documents in the same places,
+    /// and its rows are made as this batch's are (the projection, the regexes, the markers, the matchers); a document's
+    /// rows name it alone (`group_rels`), so they do not depend on the documents beside it. Its projections are
+    /// shared too where this batch's block is `from`'s (`grown`): a batch's projections are in its block (decision
+    /// 0289 §3). Whether they were taken.
+    pub(super) fn take_groups(&self, from: &Batch) -> bool {
+        let n = from.docs.len();
+        let same_documents = n <= self.docs.len() && (0..n).all(|i| from.docs.key(i) == self.docs.key(i) && from.docs.input(i).digest == self.docs.input(i).digest);
+        let same_making = *from.projection == *self.projection
+            && from.metal == self.metal
+            && from.markers == self.markers
+            && from.matches.len() == self.matches.len()
+            && from.matches.iter().zip(&self.matches).all(|(a, b)| a.as_str() == b.as_str())
+            && match (&from.wave, &self.wave) {
+                (None, None) => true,
+                (Some((a, x)), Some((b, y))) => a.same(b) && x == y,
+                _ => false,
+            }
+            && from.rows.names == self.rows.names;
+        if !same_documents || !same_making || from.docs.failure().is_some() {
+            return false;
+        }
+        let taken = from.rows.state.lock();
+        let mut s = self.rows.state.lock();
+        if !s.groups.is_empty() {
+            return false;
+        }
+        s.groups = taken.groups.clone();
+        // copy: not block data (each document's group number, the batch's bookkeeping; the groups' rows are shared).
+        s.of[..n].copy_from_slice(&taken.of[..n]);
+        s.totals = taken.totals.clone();
+        if Arc::ptr_eq(&from.block, &self.block) {
+            self.docs.take_made(&from.docs, n);
+        }
+        true
     }
 
     /// A group's rows as its relations, in `Rows::names`' order: it makes each the batch names and no other, and

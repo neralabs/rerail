@@ -6452,7 +6452,8 @@ fn run_observed_within(
                     // Made from the entries, the batch is built once, after the last round: no slice reads it between.
                     if replay.is_none() {
                         let _rebuild = crate::code_rule_dsl::logic::profile::span(|| "batch with guests".into());
-                        sources = syntax::with_matchers(&store, docs.clone(), &sets, &chunk_matchers, &vocabulary, binding, &projection, &HashMap::new()).map_err(|e| Error::Plan(e.to_string()))?;
+                        // The documents before keep the rows the round made of them (Q355).
+                        sources = syntax::grown(Some(&sources), &store, docs.clone(), &sets, &chunk_matchers, &vocabulary, binding, &projection, &HashMap::new()).map_err(|e| Error::Plan(e.to_string()))?;
                     }
                 }
                 if replay.is_some() && docs.len() > documents_len {

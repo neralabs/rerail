@@ -440,3 +440,35 @@ fn a_partial_hit_makes_only_the_guests_its_cone_can_see() {
     assert_eq!(rows, fresh("ids", &program), "the rows of a full run");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Q355: a chunk's batch built again with the guests its slice asked for (decision 0055) takes the rows the round
+/// before made of its files, and makes only the guests': each document's rows are made once. Before, the batch with
+/// guests made every file's rows again (773 of `leg-083-typed`'s 901 files, 0.8 s of its chunks' CPU).
+#[test]
+fn a_batch_built_again_with_guests_makes_its_files_rows_once() {
+    use crate::code_rule_dsl::logic::profile;
+    let marker = format!("{:?}", std::time::SystemTime::now());
+    let dir = corpus("guests-once", &marker, ANNOTATED);
+    // The run's scope, which the corpus run joins: its decisions are the run's (decision 0442).
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    profile::set(true);
+    profile::take_decisions();
+    let (_, rows) = run(&dir, &annotated("n0", "f0", "i0"), ANNOTATED_OUTPUTS);
+    let made = profile::take_decisions();
+    profile::set(false);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(rows[0].iter().any(|r| r[0] == "Foo"), "the annotations' names: {:?}", rows[0]);
+    let said = |title: &str| made.keys().filter(|(t, _)| t == title).map(|(_, x)| x.clone()).collect::<BTreeSet<String>>();
+    let again = said("a batch built again with more documents (Q355)");
+    assert_eq!(again, BTreeSet::from(["the rows of the documents before taken".to_owned()]), "every batch built again takes the rows before");
+    // The batch with guests makes a group of its guests alone: `g of g + 2` documents, not `g + 2 of g + 2`.
+    let groups = said("a batch's documents made by group (decision 0474)");
+    let parse = |x: &str| -> Option<(usize, usize)> {
+        let (made, rest) = x.split_once(" of ")?;
+        Some((made.parse().ok()?, rest.strip_suffix(" documents")?.parse().ok()?))
+    };
+    assert!(
+        groups.iter().filter_map(|x| parse(x)).any(|(made, of)| made > 0 && made + ANNOTATED.len() == of),
+        "a group of the guests alone, the files' rows taken: {groups:?}"
+    );
+}

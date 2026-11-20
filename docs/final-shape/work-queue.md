@@ -6075,7 +6075,7 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
     documents). Its cold count read every cell through `Source::value` (6.0 s); by the sources' walks
     (40103ffcb4), 2.55 s. `leg-083-typed` on the 901 files: 591 G to 564 G instructions, user 47.0 to 34.3 s, 18.1 s
     wall at load 18-31, peak 1,124 to 1,165 MB; outputs equal (7e44639d6fb0). Spans' own CPU 43.2 to 34.9 s: the
-    memo's base rows 4.4 s to 0, the export to the cross part 4.4 to 2.2 s; the chunks 15.3 to 16.5 s (Q355).
+    memo's base rows 4.4 s to 0, the export to the cross part 4.4 to 2.2 s; the chunks 15.3 to 16.5 s (Q355: the guest rounds made their files again; fixed, 542 G).
 
 ### Q313. (Q243 here before the merge of rr-align 62618b2e0a) At 2,410 files the mode is priced above a derive for deltas of 0.1% of the rows read
 
@@ -6497,16 +6497,23 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
 - **Do**: move each where its class says, and cut its line.
 - **Done when**: none of the five is in `global-state.txt`.
 
-### Q355. 0474's lazy batch makes 773 of a chunk run's documents twice (open)
+### Q355. 0474's lazy batch makes 773 of a chunk run's documents twice (done)
 
 Found 2026-11-19 merging phased-facts (10d3b38139) here: `leg-083-typed` on the 901 files, profiling build, the M1 Max.
 - **What.** Under `a chunk evaluated`, the batch's documents' rows were made for 2,145 documents (901 files and their
   guests) before 0474; after it, `node rows` 2,918 calls and `tree document rows` 1,674 (901 files), the AST wave
-  14 times for 8 chunk batches (1,021 MB allocated, 558 MB before), 0.6-1.2 s more CPU. `a batch's documents made by
-  group` names one group a batch.
-- **Not why.** Concurrent first reads racing in `Batch::ensure` (each making the same group, all but one discarded):
-  a claim on a group's documents while it is made left every count the same, so it was taken out again.
-- **Next.** Name which reads make the second groups (a guest group's projection of its hosts, or a group made and
-  then discarded because a read inside its making published one of its documents first), with the decision line
-  counting the discarded groups too; then make each document once.
-
+  14 times for 8 chunk batches (1,021 MB allocated, 558 MB before), 0.6-1.2 s more CPU.
+- **Not why.** Concurrent first reads racing in `Batch::ensure`: a claim on a group's documents while it is made left
+  every count the same.
+- **Why** (2026-11-20). The guest rounds (decision 0055, `corpus.rs`, "batch with guests"): a round that asks for new
+  guests builds the chunk's batch again, its files and the guests, and the next round reads it. Eager, the batch
+  before was made whole and so was this one; lazy (0474), the round before had made the files' rows and projections,
+  and the new batch made them again. Every file of a chunk with guests: 773.
+- **Fix.** `syntax::grown`: the batch built again takes the batch before's groups (`Batch::take_groups`), shared, its
+  documents being the new one's first, the same, made the same way (projection, regexes, markers, matchers); and makes
+  its projections in the batch before's block, where the new documents fit in its slack, sharing the projections
+  there (0289 §3 holds: a batch's projections are in its block). A file's rows name it alone (`group_rels`), and no
+  file's row reads its guests. Test: `partial_tests::a_batch_built_again_with_guests_makes_its_files_rows_once`.
+- **Measured** (same run, m16 to m18): `node rows` and `projected` 2,918 to 2,017 calls (each document once; the
+  guests no read reaches are not made), `relations` 0.91 to 0.68 s; 564 G to 542 G instructions; outputs equal
+  (3775f8dd2719); peak 1,165 to 1,192 MB. Load 28-34 (wall 23.4 s, user 42.5 s: not comparable to m16's 18-31).

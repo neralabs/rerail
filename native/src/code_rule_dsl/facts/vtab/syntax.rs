@@ -78,7 +78,7 @@ pub enum Shape {
 /// The projection a run binds: its shape, and the relations its program reads (`None`: all). A relation no rule
 /// reads is not made where making it costs (`text` of every node, the tokens); one the program derives is not bound
 /// (`derived`).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Projection {
     pub shape: Shape,
     pub reads: Option<BTreeSet<String>>,
@@ -127,6 +127,13 @@ pub struct CompiledSpans(Arc<std::sync::OnceLock<(Vec<(crate::code_rule_dsl::log
 
 /// One `rx_span` pattern, compiled: its regex and its block program, if it has one.
 type CompiledSpan = (regex::Regex, Option<Arc<dyn crate::code_rule_dsl::facts::span_prefilter::SpanEnds>>);
+
+/// Compiled from `rx_spans`, which the projections compare: two that hold the same patterns compile them the same.
+impl PartialEq for CompiledSpans {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
 
 impl std::fmt::Debug for CompiledSpans {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -3299,6 +3306,10 @@ impl NodeRows {
     }
 }
 
+/// The address space a batch's block reserves past what its documents take: a batch built again from it with more
+/// documents (`grown`) makes theirs there, up to half of it.
+const BLOCK_SLACK: usize = 1 << 30;
+
 /// Every batch built in a test, by its documents' keys, held weakly: a run releases its batches when it returns
 /// (`logic::rr::tests`), so a chunk's facts are not kept by a binding past it.
 #[cfg(any(test, feature = "test-hooks"))]
@@ -3312,6 +3323,23 @@ impl Batch {
     /// space is counted from where given; a document made whose counts differ fails, named.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        store: &ContentStore,
+        documents: Vec<Document>,
+        projection: &Projection,
+        matches: &[Arc<regex::Regex>],
+        markers: &[String],
+        metal: bool,
+        wave: Option<(Matchers, crate::code_rule_dsl::facts::nearest::Binding)>,
+        given: &HashMap<u32, made::ViewCounts>,
+    ) -> StoreResult<Arc<Self>> {
+        Self::new_in(None, store, documents, projection, matches, markers, metal, wave, given)
+    }
+
+    /// [`Batch::new`], its projections made in `block` where given: the block of a batch it is built again from, with
+    /// more documents (`grown`), whose projections it then shares (`take_groups`). Otherwise a block of its own.
+    #[allow(clippy::too_many_arguments)]
+    fn new_in(
+        block: Option<Arc<Block>>,
         store: &ContentStore,
         documents: Vec<Document>,
         projection: &Projection,
@@ -3338,7 +3366,7 @@ impl Batch {
         // each of `parent`, `start`, `end`, `kind`, `core.rr`'s places; `field`'s 2), its tables, and the starts of the
         // axes the device solves (4 bytes a node; their rows are relations of their own, decision 0353 step 5). The
         // block reserves address space, not memory.
-        let block = cells::block((documents.iter().map(|d| Projected::bytes(&d.facts) + 22 * d.facts.len() + 4096).sum::<usize>() + (1 << 20) + (1 << 30)).next_power_of_two());
+        let block = block.unwrap_or_else(|| cells::block((documents.iter().map(Self::document_bytes).sum::<usize>() + (1 << 20) + BLOCK_SLACK).next_power_of_two()));
         // Decision 0055: each guest's host. A guest's key is past every file's (`corpus::guests`).
         let host: HashMap<u32, u32> = documents.iter().filter_map(|d| d.guest.as_ref().map(|g| (d.key, g.host))).collect();
         // W's values on request (decision 0174): the tapes of the documents W reads values of.
@@ -3410,6 +3438,11 @@ impl Batch {
         #[cfg(any(test, feature = "test-hooks"))]
         BATCHES.lock().push((batch.docs.keys().to_vec(), Arc::downgrade(&batch)));
         Ok(batch)
+    }
+
+    /// What a document's projection and the chunk's arrays of it may take of the batch's block.
+    fn document_bytes(d: &Document) -> usize {
+        Projected::bytes(&d.facts) + 22 * d.facts.len() + 4096
     }
 
     /// A batch with every document made, as one group, and that group's rows: the small relations, the `match_all`
@@ -4731,6 +4764,14 @@ impl Matchers {
     pub fn new(wave: Arc<dyn AstWave>) -> Self {
         Self(Some(wave))
     }
+    /// Whether both are the same compiled matchers, or both none.
+    pub fn same(&self, other: &Self) -> bool {
+        match (&self.0, &other.0) {
+            (None, None) => true,
+            (Some(a), Some(b)) => std::ptr::addr_eq(Arc::as_ptr(a), Arc::as_ptr(b)),
+            _ => false,
+        }
+    }
     pub fn len(&self) -> usize {
         self.0.as_ref().map_or(0, |wave| wave.len())
     }
@@ -4775,9 +4816,37 @@ pub fn with_matchers(
     projection: &Projection,
     given: &HashMap<u32, made::ViewCounts>,
 ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
+    grown(None, store, documents, sets, matchers, tests, binding, projection, given)
+}
+
+/// [`with_matchers`], the batch `before`'s documents among `documents` (a chunk's batch built again with its guests,
+/// decision 0055): their projections and the rows they were made, `before`'s groups, are this batch's too
+/// (`Batch::take_groups`), shared, not made again (Q355). A `before` that holds other documents, or was made otherwise,
+/// gives none.
+#[allow(clippy::too_many_arguments)]
+pub fn grown(
+    before: Option<&[(String, Arc<dyn Source>)]>,
+    store: &ContentStore,
+    documents: Vec<Document>,
+    sets: &[(String, Vec<i64>)],
+    matchers: &Matchers,
+    tests: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
+    binding: crate::code_rule_dsl::facts::nearest::Binding,
+    projection: &Projection,
+    given: &HashMap<u32, made::ViewCounts>,
+) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
     let built = crate::code_rule_dsl::logic::profile::span(|| "project and intern".into());
     let metal = matches!(binding, crate::code_rule_dsl::facts::nearest::Binding::Metal);
-    let batch = Batch::new(store, documents, projection, &tests.matches, &tests.markers, metal, Some((matchers.clone(), binding)), given)?;
+    let before = before.and_then(|b| b.iter().find_map(|(_, s)| s.python_batch()));
+    // The batch before's block, where the documents past its own fit in its slack: its projections are shared there.
+    let held: HashSet<u32> = before.iter().flat_map(|b| b.docs.keys().iter().copied()).collect();
+    let past: usize = documents.iter().filter(|d| !held.contains(&d.key)).map(Batch::document_bytes).sum();
+    let block = before.as_ref().filter(|_| past <= BLOCK_SLACK / 2).map(|b| Arc::clone(&b.block));
+    let batch = Batch::new_in(block, store, documents, projection, &tests.matches, &tests.markers, metal, Some((matchers.clone(), binding)), given)?;
+    if let Some(before) = before {
+        let taken = batch.take_groups(&before);
+        crate::code_rule_dsl::logic::profile::decision("a batch built again with more documents (Q355)", || if taken { "the rows of the documents before taken".into() } else { "made again: the batch before differs".into() });
+    }
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, (0..batch.docs.len()).map(|i| batch.docs.input(i).facts.len() as u64).sum());
     drop(built);
     // The batch's relations, the `match_all` relations (`logic::strings::as_relations`: each regex's matches in the
