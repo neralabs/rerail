@@ -1218,7 +1218,9 @@ struct Run<'p> {
 /// dead rows' delta, `InBlock::dead`, which the kernels skip), or a whole view's source's (the vtab's `Relation`).
 fn placed(rel: &Arc<InRel>) -> Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)> {
     match &rel.view {
-        Some(view) if view.whole() && rel.ndead == 0 => view.src.in_block().filter(|b| b.rows as usize == rel.len()).map(|b| (b, view.src.columns().len())),
+        // A source made on lookup numbers only the rows looked up so far; the relation it is bound by holds every pair
+        // (a layered axis's, its tape values' too, decision 0431 §8).
+        Some(view) if view.whole() && rel.ndead == 0 => view.src.in_block().filter(|b| b.rows as usize == rel.len() || view.src.made_on_lookup()).map(|b| (b, view.src.columns().len())),
         _ => rel.in_block().map(|b| (b, rel.k)),
     }
 }
