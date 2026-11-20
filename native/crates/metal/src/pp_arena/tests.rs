@@ -166,3 +166,25 @@ fn the_source_compiles() {
         kernel(name);
     }
 }
+
+/// §5 of decision 0460: the evaluator's source is UKL for every backend, not Metal's alone: for
+/// OpenCL (its SIMD group emulated, width 32) it is OpenCL C 1.2 that clang's front end accepts,
+/// so it holds no C++ and every function that reaches a SIMD-group operation takes its state
+/// (`__UKL_PARAMS`). The OpenCL gate of decision 0440 §3.5.
+#[test]
+fn the_source_is_opencl_c_1_2() {
+    use rerail_ukl::{Backend, Preprocess};
+    let main = "/<kernels>/pp.cl";
+    let src = Preprocess::new(Backend::OpenCl).define("UKL_SIMD_WIDTH", Some("32u")).file(main, source()).run(main).unwrap_or_else(|e| panic!("{e}"));
+    let file = std::env::temp_dir().join(format!("rerail-pp-cl-{}.cl", std::process::id()));
+    std::fs::write(&file, &src).unwrap();
+    let Ok(o) = std::process::Command::new("clang").args(["-x", "cl", "-cl-std=CL1.2", "-fsyntax-only", "-Werror=implicit-function-declaration", "-ferror-limit=40"]).arg(&file).output() else {
+        eprintln!("no clang here: the evaluator preprocessed for OpenCL, not compiled");
+        return;
+    };
+    let errors = String::from_utf8_lossy(&o.stderr).lines().filter(|l| l.contains("error")).take(40).collect::<Vec<_>>().join("\n");
+    if o.status.success() {
+        std::fs::remove_file(&file).ok();
+    }
+    assert!(o.status.success(), "the evaluator is not OpenCL C 1.2 ({}):\n{errors}", file.display());
+}

@@ -425,3 +425,9 @@ with the unit, because each primitive's number of levels was chosen by its capac
     through the lane), and `the_source_compiles` (every kernel; `RERAIL_PP_DUMP` writes the
     preprocessed source). All 18 evaluator tests and the 3 arena tests pass. The corpus: 3,132
     units equal, the same 3 refused, 4 launches each.
+- **The evaluator is OpenCL C 1.2 too (§5).** `the_source_is_opencl_c_1_2` preprocesses the
+  source for OpenCL, its SIMD group emulated at width 32, and runs clang's OpenCL C 1.2 front end
+  over it (0440 §3.5's gate). It found what Metal's C++ front end accepted:
+  - MSL's references into device memory (`device PxList& L`): 15 functions. They are pointers now.
+  - One `__UKL_ARGS` placed inside the wrong call: Metal's `__UKL_ARGS` is empty, so only
+    OpenCL's front end could catch it.
