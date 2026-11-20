@@ -3055,13 +3055,9 @@ submitted" now hold device memory at once.
   removes no refusals: what remains of (c) is what admission counts. Its `fits` counts every live lease, held rows too,
   so the refusals are leases a stratum makes past its own reservation (uploads, sorts' scratch, rows put in spare slabs)
   that `expected()` does not estimate. Next: the refused leases at 1 GB by kind against the reservation they came under.
-  The interpreter's compile (parked 2026-11-20, no Metal until this Mac's GPU crashes are understood): the transducer's
-  `run_batch` took 44.7 s to build on an M5 Max with every hot tape read inlined, 7.1 s with the six largest written
-  `UKL_COLD` (`ukl::translate_reads`, a body past 70 statements; a draft decision 0507 and its patch are in the
-  worktree's `tmp/parked/`). Not committed: `lowered_clauses_find_the_same_roots_on_the_resident_interpreter` then has 4
-  clauses fail (`BackendFailure`, a lane status, not a GPU error) where the base has 1 (`log001`, red there too), and 18
-  refused where the base has 12. Next: the lane status code the three new failures return, then the reads whose call
-  changes it.
+  The interpreter's compile: done (decision 0507). `run_batch` builds in 7.1 s, not 44.7 s, with the six largest
+  tape reads written `UKL_COLD`. The resident interpreter's results are the same with and without it. Its four
+  `BackendFailure` clauses were the interpreted runs' chain levels (0463), never doubled; they are doubled now.
   Also waiting on Metal: `every_operation_runs_on_every_executor`'s ledger has no row for `@ascii_lower/1`
   (`source-language.rerail`, from #508). It runs natively on Linux; its device cell needs `RERAIL_BLESS_COVERAGE=1` on a
   farm Mac.

@@ -56,12 +56,12 @@ UKL_STATIC_ASSERT(__builtin_offsetof(Numbering, rank_ends) == 336, "Numbering.ra
 UKL_STATIC_ASSERT(__builtin_offsetof(Numbering, jumps) == 368, "Numbering.jumps");
 UKL_INLINE uint32_t clif_num_is(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2);
 UKL_INLINE uint32_t clif_num_rank(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2);
-UKL_INLINE uint32_t clif_num_select(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2);
+UKL_COLD uint32_t clif_num_select(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2);
 UKL_COLD uint64_t clif_num_granule(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2);
-UKL_INLINE uint32_t clif_num_low_of(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2);
+UKL_COLD uint32_t clif_num_low_of(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2);
 UKL_COLD uint32_t clif_num_number_in(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2,uint32_t a3,uint32_t a4);
-UKL_INLINE uint64_t clif_num_number_of(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1);
-UKL_INLINE uint32_t clif_num_order_of(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1);
+UKL_COLD uint64_t clif_num_number_of(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1);
+UKL_COLD uint32_t clif_num_order_of(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1);
 UKL_INLINE uint32_t clif_num_number_of_order(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1);
 UKL_INLINE uint32_t clif_num_is(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2){
  uint64_t v0=0;
@@ -175,7 +175,7 @@ UKL_INLINE uint32_t clif_num_rank(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32
  }
  return v6;
 }
-UKL_INLINE uint32_t clif_num_select(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2){
+UKL_COLD uint32_t clif_num_select(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2){
  uint64_t v0=0;
  uint32_t v1=0;
  uint32_t v2=0;
@@ -447,7 +447,7 @@ UKL_COLD uint64_t clif_num_granule(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint3
  }
  return v54;
 }
-UKL_INLINE uint32_t clif_num_low_of(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2){
+UKL_COLD uint32_t clif_num_low_of(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2){
  uint64_t v0=0;
  uint32_t v1=0;
  uint32_t v2=0;
@@ -671,7 +671,7 @@ UKL_COLD uint32_t clif_num_number_in(UKL_GLOBAL const uint8_t* t,uint64_t a0,uin
  }
  return v47;
 }
-UKL_INLINE uint64_t clif_num_number_of(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1){
+UKL_COLD uint64_t clif_num_number_of(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1){
  uint64_t v0=0;
  uint32_t v1=0;
  uint32_t v2=0;
@@ -865,7 +865,7 @@ UKL_INLINE uint64_t clif_num_number_of(UKL_GLOBAL const uint8_t* t,uint64_t a0,u
  }
  return v62;
 }
-UKL_INLINE uint32_t clif_num_order_of(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1){
+UKL_COLD uint32_t clif_num_order_of(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1){
  uint64_t v0=0;
  uint32_t v1=0;
  uint32_t v3=0;

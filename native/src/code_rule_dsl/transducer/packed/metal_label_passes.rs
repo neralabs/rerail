@@ -1917,8 +1917,9 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
     loop {
         let mut outcome = match encode(device, plan, files, &rounds, lanes, micro, deep, chain_levels, budget) {
             // A chain's reach outgrew the levels its phases hold (0463): the run again with twice them, past the most
-            // the interpreter's.
-            Err(Error::ChainLevels) if chain_levels < PHASE_CHAIN_MOST && micro => {
+            // the interpreter's. The interpreter's passes run the same phases, so its runs double them too: refused
+            // at the first level, a chain one level deep failed the run.
+            Err(Error::ChainLevels) if chain_levels < PHASE_CHAIN_MOST => {
                 crate::code_rule_dsl::prof::count("run.chain_levels", 1);
                 chain_levels *= 2;
                 continue;

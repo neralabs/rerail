@@ -180,6 +180,8 @@ pub fn command_times(command: &CommandBufferRef) -> [f64; 3] {
 pub fn wait_checked(command: &CommandBufferRef) -> Result<(), Error> {
     command.wait_until_completed();
     if command.status() != metal::MTLCommandBufferStatus::Completed {
+        // Said once a run, as the joins' are: a failure the GPU reports is otherwise a bare `BackendFailure`.
+        rerail_accel::gpu::join::say_failure(command);
         return Err(Error::BackendFailure);
     }
     mark_command(command, true);
